@@ -155,6 +155,57 @@ export async function postCoordinationKind(
   });
 }
 
+// ── §19 acknowledgement ──────────────────────────────────────────────────────
+
+export interface AnnouncementAcknowledgementView {
+  messageId: string;
+  announcedBy: string;
+  createdAt: string;
+  title: string;
+  requiresAcknowledgement: boolean;
+  acknowledgedBy: Array<{ userId: string; at: string; note: string | null }>;
+  /** Null when the roster could not be read — never an empty list in that case. */
+  outstanding: string[] | null;
+  complete: boolean | null;
+}
+
+export interface AnnouncementsResponse {
+  threadId: string;
+  announcements: AnnouncementAcknowledgementView[];
+  derivedFrom: 'ACKNOWLEDGEMENT_MESSAGES_ONLY';
+  rosterKnown: boolean;
+  scanned: number;
+}
+
+export async function fetchAnnouncements(
+  threadId: string,
+): Promise<CoordinationResult<AnnouncementsResponse>> {
+  return call<AnnouncementsResponse>(`/api/threads/${threadId}/announcements`);
+}
+
+/**
+ * §19's acknowledgement — the write behind the ANNOUNCEMENT card's "Got it".
+ *
+ * Before this existed the button called an `onAcknowledge` prop that no caller
+ * passed, so pressing it did nothing on the only surface that mounts the
+ * renderer. `app/messages/[id].tsx` now passes one, and
+ * `src/features/telegraph/__tests__/kinds.component.test.tsx` asserts that it
+ * still does.
+ */
+export async function acknowledgeAnnouncement(
+  threadId: string,
+  announcementMessageId: string,
+  note?: string | null,
+): Promise<CoordinationResult<{ id: string }>> {
+  return call(`/api/threads/${threadId}/coordination`, {
+    method: 'POST',
+    body: JSON.stringify({
+      kind: 'ACKNOWLEDGEMENT',
+      payload: { announcementMessageId, ...(note ? { note } : {}) },
+    }),
+  });
+}
+
 /** §9's per-state affordances, as data — §9's table, one row each. */
 export const STATE_AFFORDANCES: Readonly<Record<CoordinationState, readonly QuickState[]>> = {
   PREPARING: ['CANT_MAKE_IT', 'RUNNING_LATE'],

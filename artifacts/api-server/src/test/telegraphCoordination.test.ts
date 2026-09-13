@@ -34,6 +34,7 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
+import { readFile } from "node:fs/promises";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import telegraphCoordinationRouter from "../routes/telegraphCoordination.js";
@@ -46,6 +47,7 @@ import {
   leaveByFor,
   legalNextStates,
   parseCoordinationEnvelope,
+  projectAcknowledgements,
   projectCommitment,
   projectDecision,
   threadIsCoordinating,
@@ -700,5 +702,231 @@ describe("GET /threads/:id/coordination", () => {
     assert.equal(r.status, 200);
     assert.equal(r.body.coordination.plan, null);
     assert.equal(r.body.coordination.state, null);
+  });
+});
+
+// ── §19 acknowledgement, and why it is not Seen ──────────────────────────────
+
+const ANN = "ann-1";
+const ANN_NO_ACK = "ann-2";
+const ANN_OTHER_THREAD = "ann-3";
+
+function announcement(id: string, requiresAcknowledgement: boolean, at: string, over: Record<string, any> = {}) {
+  return {
+    id,
+    thread_id: THREAD,
+    sender_id: ALICE,
+    created_at: at,
+    deleted_at: null,
+    msg_type: "announcement",
+    subtype: null,
+    body: env("ANNOUNCEMENT", { title: "Leaving at eight", body: "meet downstairs", requiresAcknowledgement }),
+    ...over,
+  };
+}
+
+function ackMsg(id: string, sender: string, target: string, at: string, note: string | null = null) {
+  return {
+    id,
+    thread_id: THREAD,
+    sender_id: sender,
+    created_at: at,
+    deleted_at: null,
+    msg_type: "acknowledgement",
+    subtype: null,
+    body: env("ACKNOWLEDGEMENT", { announcementMessageId: target, note }),
+  };
+}
+
+const annInput = (id: string, requires: boolean, at: string, sender = ALICE) => ({
+  id,
+  sender_id: sender,
+  created_at: at,
+  title: "Leaving at eight",
+  requiresAcknowledgement: requires,
+});
+
+const ackInput = (id: string, sender: string, target: string, at: string, note: string | null = null) => ({
+  id,
+  sender_id: sender,
+  created_at: at,
+  payload: { announcementMessageId: target, note },
+});
+
+describe("§19 — projectAcknowledgements", () => {
+  it("the FIRST acknowledgement by a person wins; pressing twice does not move the time", () => {
+    const [p] = projectAcknowledgements(
+      [annInput(ANN, true, min(-60))],
+      [ackInput("a1", BOB, ANN, min(-30)), ackInput("a2", BOB, ANN, min(-5))],
+    );
+    assert.equal(p!.acknowledgedBy.length, 1);
+    assert.equal(p!.acknowledgedBy[0]!.userId, BOB);
+    assert.equal(p!.acknowledgedBy[0]!.at, min(-30));
+  });
+
+  it("an acknowledgement naming a message this projection never saw is DROPPED", () => {
+    const [p] = projectAcknowledgements(
+      [annInput(ANN, true, min(-60))],
+      [ackInput("a1", BOB, "some-other-message", min(-30))],
+    );
+    assert.deepEqual(p!.acknowledgedBy, []);
+  });
+
+  it("the announcer is not outstanding on their own announcement", () => {
+    const [p] = projectAcknowledgements([annInput(ANN, true, min(-60), ALICE)], [], [ALICE, BOB, CAROL]);
+    assert.deepEqual(p!.outstanding, [BOB, CAROL]);
+    assert.equal(p!.complete, false);
+  });
+
+  it("complete only once every other member has acknowledged", () => {
+    const [p] = projectAcknowledgements(
+      [annInput(ANN, true, min(-60), ALICE)],
+      [ackInput("a1", BOB, ANN, min(-30)), ackInput("a2", CAROL, ANN, min(-20))],
+      [ALICE, BOB, CAROL],
+    );
+    assert.deepEqual(p!.outstanding, []);
+    assert.equal(p!.complete, true);
+  });
+
+  it("an unknown roster gives outstanding NULL, never an empty list", () => {
+    const [p] = projectAcknowledgements([annInput(ANN, true, min(-60))], []);
+    assert.equal(p!.outstanding, null);
+    assert.equal(p!.complete, null);
+  });
+
+  it("an announcement that did not ask is never reported complete", () => {
+    const [p] = projectAcknowledgements([annInput(ANN_NO_ACK, false, min(-60))], [], [ALICE, BOB, CAROL]);
+    assert.equal(p!.outstanding, null);
+    assert.equal(p!.complete, null);
+  });
+
+  it("is STRUCTURALLY unable to derive an acknowledgement from a read receipt", async () => {
+    // §19 asks that acknowledgement be distinct from passive Seen. The
+    // projection takes announcements, acknowledgement MESSAGES and a roster —
+    // there is no parameter a read receipt could arrive through, and the
+    // module names no receipt column. Asserted rather than described, so a
+    // later "helpful" change that filled the gap from last_read_at goes red.
+    assert.equal(projectAcknowledgements.length, 3);
+    const src = await readFile(
+      new URL("../services/telegraph/coordination.ts", import.meta.url),
+      "utf8",
+    );
+    // Comments are stripped first: the module EXPLAINS that it never touches a
+    // read receipt, and a scan that counted the explanation as the offence
+    // would be unfalsifiable.
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+    assert.equal(/last_read_at|lastReadAt/.test(code), false);
+  });
+});
+
+describe("§19 — POST an ACKNOWLEDGEMENT", () => {
+  it("acknowledges an announcement that asked for one", async () => {
+    const c = useState({ extraMessages: [announcement(ANN, true, min(-60))] });
+    const r = await post(`/threads/${THREAD}/coordination`, BOB, {
+      kind: "ACKNOWLEDGEMENT",
+      payload: { announcementMessageId: ANN },
+    });
+    assert.equal(r.status, 201);
+    assert.equal(r.body.msgType, "acknowledgement");
+    const row = (c as any)._inserted.find((i: any) => i.table === "messages");
+    assert.equal(JSON.parse(row.row.body).payload.announcementMessageId, ANN);
+  });
+
+  it("refuses an announcement that did not ask to be acknowledged, and says so", async () => {
+    useState({ extraMessages: [announcement(ANN_NO_ACK, false, min(-60))] });
+    const r = await post(`/threads/${THREAD}/coordination`, BOB, {
+      kind: "ACKNOWLEDGEMENT",
+      payload: { announcementMessageId: ANN_NO_ACK },
+    });
+    assert.equal(r.status, 400);
+    assert.ok(String(r.body.message).includes("did not ask to be acknowledged"));
+  });
+
+  it("refuses a message that is not an announcement", async () => {
+    useState({
+      extraMessages: [msg("q1", ALICE, "coordination", { state: "ARRIVED", provenance: "USER_DECLARED" }, min(-30))],
+    });
+    const r = await post(`/threads/${THREAD}/coordination`, BOB, {
+      kind: "ACKNOWLEDGEMENT",
+      payload: { announcementMessageId: "q1" },
+    });
+    assert.equal(r.status, 404);
+  });
+
+  it("refuses an announcement in ANOTHER conversation", async () => {
+    useState({
+      extraMessages: [
+        { ...announcement(ANN_OTHER_THREAD, true, min(-60)), thread_id: THREAD_NONE },
+      ],
+    });
+    const r = await post(`/threads/${THREAD}/coordination`, BOB, {
+      kind: "ACKNOWLEDGEMENT",
+      payload: { announcementMessageId: ANN_OTHER_THREAD },
+    });
+    assert.equal(r.status, 404);
+  });
+
+  it("refuses a deleted announcement", async () => {
+    useState({ extraMessages: [announcement(ANN, true, min(-60), { deleted_at: min(-5) })] });
+    const r = await post(`/threads/${THREAD}/coordination`, BOB, {
+      kind: "ACKNOWLEDGEMENT",
+      payload: { announcementMessageId: ANN },
+    });
+    assert.equal(r.status, 404);
+  });
+
+  it("an unreadable messages table refuses rather than acknowledging blindly", async () => {
+    useState({ errorTable: "messages", extraMessages: [announcement(ANN, true, min(-60))] });
+    const r = await post(`/threads/${THREAD}/coordination`, BOB, {
+      kind: "ACKNOWLEDGEMENT",
+      payload: { announcementMessageId: ANN },
+    });
+    assert.equal(r.status, 500);
+  });
+});
+
+describe("GET /threads/:id/announcements", () => {
+  it("reports who acknowledged, who is outstanding, and what it derived that from", async () => {
+    useState({
+      extraMessages: [
+        announcement(ANN, true, min(-60)),
+        announcement(ANN_NO_ACK, false, min(-50)),
+        ackMsg("a1", BOB, ANN, min(-30), "on my way"),
+      ],
+    });
+    const r = await get(`/threads/${THREAD}/announcements`, ALICE);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.derivedFrom, "ACKNOWLEDGEMENT_MESSAGES_ONLY");
+    assert.equal(r.body.rosterKnown, true);
+    assert.equal(r.body.announcements.length, 2);
+    const asked = r.body.announcements.find((a: any) => a.messageId === ANN);
+    assert.equal(asked.acknowledgedBy.length, 1);
+    assert.equal(asked.acknowledgedBy[0].userId, BOB);
+    assert.equal(asked.acknowledgedBy[0].note, "on my way");
+    assert.deepEqual(asked.outstanding, []);
+    assert.equal(asked.complete, true);
+    const notAsked = r.body.announcements.find((a: any) => a.messageId === ANN_NO_ACK);
+    assert.equal(notAsked.outstanding, null);
+    assert.equal(notAsked.complete, null);
+  });
+
+  it("a member who has read the thread and not pressed the button is OUTSTANDING", async () => {
+    // The fixture's roster is Alice and Bob; only Alice announced. Bob has
+    // read everything the ordinary way — nothing here consults that — so he
+    // is outstanding. This is §19's whole point.
+    useState({ extraMessages: [announcement(ANN, true, min(-60))] });
+    const r = await get(`/threads/${THREAD}/announcements`, ALICE);
+    assert.deepEqual(r.body.announcements[0].outstanding, [BOB]);
+    assert.equal(r.body.announcements[0].complete, false);
+  });
+
+  it("a non-member cannot read it", async () => {
+    useState({});
+    assert.equal((await get(`/threads/${THREAD_NONE}/announcements`, ALICE)).status, 403);
+  });
+
+  it("an unreadable messages table is a 500, never an empty announcement list", async () => {
+    useState({ errorTable: "messages" });
+    assert.equal((await get(`/threads/${THREAD}/announcements`, ALICE)).status, 500);
   });
 });

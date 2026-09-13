@@ -41,7 +41,17 @@ export interface TypedMessageRendererProps {
   /** §11.3 / §6.3 — a viewer-level preference; the thread passes it down. */
   dataSaver?: boolean;
   onPressAction?: (action: string, payload: any) => void;
+  /**
+   * §19 — pressed when the viewer acknowledges an ANNOUNCEMENT that asked for
+   * one. UNDEFINED MEANS THE SURFACE CANNOT ACKNOWLEDGE, and the button is not
+   * drawn at all: until this prop existed the only mount passed nothing, so
+   * the "Got it" button was rendered and inert on every announcement in the
+   * app. A button that does nothing is worse than an absent one — so an
+   * acknowledgement affordance now requires a handler to appear.
+   */
   onAcknowledge?: (payload: any) => void;
+  /** True once this viewer has acknowledged; the button becomes a statement. */
+  acknowledged?: boolean;
 }
 
 /** True when this renderer knows the kind — the dispatcher asks first. */
@@ -59,6 +69,7 @@ export function TypedMessageRenderer({
   dataSaver = false,
   onPressAction,
   onAcknowledge,
+  acknowledged = false,
 }: TypedMessageRendererProps) {
   const palette = useTelegraphPalette();
   const reduceMotion = useReducedMotionSetting();
@@ -94,16 +105,31 @@ export function TypedMessageRenderer({
           <Text style={styles.kindWord}>ACTION</Text>
           <Text style={styles.title}>{p.title}</Text>
           <Text style={styles.meta}>{prettyAction(p.action)}</Text>
-          {/* §8.2: a proposal, never a done deed, until someone confirms. */}
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`Confirm ${prettyAction(p.action)}`}
-            onPress={() => onPressAction?.(p.action, p)}
-            style={styles.actionButton}
-            testID="telegraph-kind-action-confirm"
-          >
-            <Text style={styles.actionButtonText}>Confirm</Text>
-          </Pressable>
+          {/*
+            §8.2: a proposal, never a done deed, until someone confirms — and
+            the confirm control appears only where a confirm can actually
+            happen. It used to be drawn unconditionally over an optional
+            `onPressAction` that the conversation screen never passed, so
+            "Confirm" was inert on every ACTION message in the app. The
+            handler is still not wired on that screen (an ACTION typed message
+            carries no command id for /telegraph/commands/:id/confirm-action
+            to execute), and this is what saying so looks like.
+          */}
+          {onPressAction ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Confirm ${prettyAction(p.action)}`}
+              onPress={() => onPressAction(p.action, p)}
+              style={styles.actionButton}
+              testID="telegraph-kind-action-confirm"
+            >
+              <Text style={styles.actionButtonText}>Confirm</Text>
+            </Pressable>
+          ) : (
+            <Text style={styles.caption} testID="telegraph-kind-action-unconfirmable">
+              Confirmation is not available on this screen
+            </Text>
+          )}
         </View>
       );
 
@@ -113,16 +139,31 @@ export function TypedMessageRenderer({
           <Text style={styles.kindWord}>ANNOUNCEMENT</Text>
           <Text style={styles.title}>{p.title}</Text>
           {p.body ? <Text style={styles.caption}>{p.body}</Text> : null}
-          {p.requiresAcknowledgement ? (
+          {p.requiresAcknowledgement && acknowledged ? (
+            <Text style={styles.caption} testID="telegraph-kind-announcement-acked">
+              Acknowledged
+            </Text>
+          ) : null}
+          {/*
+            §19 — the button appears only when the surface can actually write
+            the acknowledgement. `onAcknowledge` undefined used to still draw
+            it, and every mount in the app left it undefined.
+          */}
+          {p.requiresAcknowledgement && !acknowledged && onAcknowledge ? (
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Acknowledge announcement"
-              onPress={() => onAcknowledge?.(p)}
+              onPress={() => onAcknowledge(p)}
               style={styles.actionButton}
               testID="telegraph-kind-announcement-ack"
             >
               <Text style={styles.actionButtonText}>Got it</Text>
             </Pressable>
+          ) : null}
+          {p.requiresAcknowledgement && !acknowledged && !onAcknowledge ? (
+            <Text style={styles.caption} testID="telegraph-kind-announcement-ack-unavailable">
+              Acknowledgement is not available on this screen
+            </Text>
           ) : null}
         </View>
       );

@@ -55,6 +55,8 @@ import { ThreadSafetySheet } from '../../src/components/ThreadSafetySheet';
 import { SharedContextRail, shouldCollapseOnScroll } from '../../src/features/telegraph/index.ts';
 import { PortavaObjectMessage } from '../../src/features/telegraph/sharing/PortavaObjectMessage.tsx';
 import { TypedMessageRenderer, rendersTypedKind } from '../../src/features/telegraph/kinds/TypedMessageRenderer.tsx';
+import { parseKindEnvelope as parseTelegraphKindEnvelope } from '../../src/features/telegraph/kinds/kindsApi.ts';
+import { useAnnouncementAcknowledgement } from '../../src/features/telegraph/kinds/useAnnouncementAcknowledgement.ts';
 import { CoordinationPanel } from '../../src/features/telegraph/coordination/CoordinationPanel.tsx';
 import { ContentDrawerSheet } from '../../src/features/telegraph/drawer/ContentDrawerSheet.tsx';
 import { RecapSheet } from '../../src/features/telegraph/memory/RecapSheet.tsx';
@@ -780,6 +782,21 @@ function MessageBubble({
   const [pickerPayload, setPickerPayload] = useState<AddToTripPayload | null>(null);
   const [showOriginal, setShowOriginal] = useState(defaultShowOriginal || !autoTranslate);
 
+  // Telegraph §19 — an ANNOUNCEMENT that asks to be acknowledged. Computed
+  // before the early returns because the hook below cannot be conditional; it
+  // makes no request when `enabled` is false.
+  const announcementEnvelope =
+    item.msgType === 'announcement' ? parseTelegraphKindEnvelope(item.msgType, item.body ?? null) : null;
+  const announcementNeedsAck =
+    announcementEnvelope?.kind === 'ANNOUNCEMENT' &&
+    announcementEnvelope.payload?.requiresAcknowledgement === true;
+  const announcementAck = useAnnouncementAcknowledgement({
+    threadId,
+    messageId: item.id,
+    viewerId: currentUserId,
+    enabled: announcementNeedsAck,
+  });
+
   // Brief highlight when a pending translation resolves to 'translated'
   const flashAnim = useRef(new Animated.Value(0)).current;
   const prevStatusRef = useRef<string | undefined>(item.translationStatus);
@@ -826,7 +843,19 @@ function MessageBubble({
   if (rendersTypedKind(item.msgType)) {
     return (
       <Pressable onLongPress={onLongPress} delayLongPress={300}>
-        <TypedMessageRenderer msgType={item.msgType ?? null} body={item.body ?? null} mine={mine} />
+        <TypedMessageRenderer
+          msgType={item.msgType ?? null}
+          body={item.body ?? null}
+          mine={mine}
+          acknowledged={announcementAck.acknowledged}
+          // §19 — undefined when this thread cannot be written to, so the
+          // renderer says acknowledgement is unavailable instead of drawing a
+          // button that does nothing. That inert button is exactly what was
+          // here before: no mount passed this prop at all.
+          onAcknowledge={
+            announcementNeedsAck && threadId ? () => void announcementAck.acknowledge() : undefined
+          }
+        />
       </Pressable>
     );
   }

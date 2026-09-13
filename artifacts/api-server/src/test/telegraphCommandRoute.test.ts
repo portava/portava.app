@@ -208,6 +208,16 @@ describe("Telegraph §13.1 — the command vocabulary", () => {
     }
   });
 
+  it("SET_COORDINATION_STATUS names the route that exists, not a nonexistent vocabulary", () => {
+    // §9.1's seven quick states shipped with the coordination surface. This
+    // command sat in UNIMPLEMENTED_COMMANDS afterwards, so the endpoint told
+    // callers "nothing in this repository implements it" while
+    // POST /threads/:id/coordination was implementing it. A refusal that is
+    // wrong in that direction sends a caller away from the working route.
+    assert.equal(UNIMPLEMENTED_COMMANDS.includes("SET_COORDINATION_STATUS"), false);
+    assert.match(String(LEGACY_PATH_COMMANDS.SET_COORDINATION_STATUS), /coordination/);
+  });
+
   it("every §13.1 command is accounted for: issuable, legacy, or unimplemented", () => {
     const unaccounted = (TELEGRAPH_COMMANDS as readonly string[]).filter(
       (c) => !(ISSUABLE_COMMANDS as readonly string[]).includes(c)

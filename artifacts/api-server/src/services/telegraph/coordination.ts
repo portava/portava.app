@@ -415,6 +415,136 @@ export function projectCommitment(
   };
 }
 
+// ── §19 acknowledgement, and why it is not Seen ──────────────────────────────
+
+/**
+ * §19's "Acknowledgment for important operational changes is distinct from
+ * passive Seen" (census T261), and §30A.5's ANNOUNCEMENT, whose payload has
+ * carried `requiresAcknowledgement` since §11 with nothing behind it.
+ *
+ * ── THE DEFECT THIS CLOSES ──────────────────────────────────────────────────
+ * `AnnouncementPayload.requiresAcknowledgement` existed, the renderer drew a
+ * "Got it" button for it, and the button called an `onAcknowledge` prop that
+ * NO CALLER PASSED. Pressing it did nothing, on the only surface that mounts
+ * the renderer. An affordance that looks built and is inert is worse for a
+ * reader than an absent one — the census says exactly that about the content
+ * drawer's dead `false` (T294) — so this is a defect closed, not a feature
+ * added.
+ *
+ * ── WHY AN ACKNOWLEDGEMENT IS A MESSAGE ─────────────────────────────────────
+ * Appendix A: the spec's schema names are architectural names, not permission
+ * to create tables when an equivalent canonical structure exists. An
+ * acknowledgement is a thing a person SAID in a thread, which is a message,
+ * and it is projected back exactly the way §8's commitments and votes are.
+ * That is also what keeps this reachable: a side table would need a migration,
+ * and migrations 2810-2813 show what that costs — four of them exist in NO
+ * database and every flag they add is seeded FALSE.
+ *
+ * ── WHY IT IS NOT SEEN, MECHANICALLY ────────────────────────────────────────
+ * `projectAcknowledgements` takes acknowledgement MESSAGES and nothing else.
+ * It is a pure function with no access to `message_thread_members.last_read_at`
+ * and no parameter that could carry one, so a read receipt cannot become an
+ * acknowledgement by accident or by a later edit that "helpfully" filled the
+ * gap. The test asserts that separation directly: a member who has read the
+ * thread and not pressed the button is OUTSTANDING.
+ */
+export const AcknowledgementPayload = z.object({
+  /** The ANNOUNCEMENT message being acknowledged. */
+  announcementMessageId: z.string().min(1).max(64),
+  note: z.string().max(280).nullish(),
+});
+
+/** The ANNOUNCEMENT fields this projection needs, already parsed. */
+export interface AnnouncementInputMessage {
+  id: string;
+  sender_id: string;
+  created_at: string;
+  title: string;
+  requiresAcknowledgement: boolean;
+}
+
+export interface ProjectedAnnouncement {
+  messageId: string;
+  announcedBy: string;
+  createdAt: string;
+  title: string;
+  requiresAcknowledgement: boolean;
+  /** First acknowledgement per person, in the order they arrived. */
+  acknowledgedBy: Array<{ userId: string; at: string; note: string | null }>;
+  /**
+   * Members who have not acknowledged, or NULL when the roster was not
+   * supplied. Null rather than `[]`, because an empty list reads as "everybody
+   * has acknowledged" and that is the one answer this must never invent.
+   */
+  outstanding: string[] | null;
+  /** True only when the roster is known AND nobody is outstanding. */
+  complete: boolean | null;
+}
+
+/**
+ * §19's acknowledgement state for a thread's announcements.
+ *
+ * Rules, each asserted in `src/test/telegraphCoordination.test.ts`:
+ *   - The FIRST acknowledgement by a person wins. Pressing twice does not move
+ *     the timestamp; an acknowledgement is a fact about when somebody saw a
+ *     change, and re-asserting it later does not make it later.
+ *   - An acknowledgement naming a message that is not an announcement here is
+ *     DROPPED, because the OUTPUT is keyed by the announcements passed in and
+ *     never by what an acknowledgement claims to answer. There was a
+ *     `known.has(target)` filter here as well; a mutation deleting it left
+ *     every test green, which made it decoration, so it is gone and the
+ *     structural property is what the test pins instead.
+ *   - The announcer is not outstanding on their own announcement.
+ *   - An announcement that does not ask for acknowledgement has `outstanding`
+ *     and `complete` NULL, not `[]` and `true`: there is nothing for it to be
+ *     complete about, and reporting it complete would let a notice nobody was
+ *     asked to acknowledge look acknowledged by everyone.
+ */
+export function projectAcknowledgements(
+  announcements: AnnouncementInputMessage[],
+  acknowledgements: DecisionInputMessage[],
+  memberIds?: readonly string[],
+): ProjectedAnnouncement[] {
+  const byAnnouncement = new Map<string, Map<string, { at: string; note: string | null }>>();
+
+  for (const m of [...acknowledgements].sort(
+    (a, b) => (ms(a.created_at) ?? 0) - (ms(b.created_at) ?? 0),
+  )) {
+    const parsed = AcknowledgementPayload.safeParse(m.payload);
+    if (!parsed.success) continue;
+    const target = parsed.data.announcementMessageId;
+    const bucket = byAnnouncement.get(target) ?? new Map();
+    // First wins: a repeat press must not move the time.
+    if (!bucket.has(m.sender_id)) {
+      bucket.set(m.sender_id, { at: m.created_at, note: parsed.data.note ?? null });
+    }
+    byAnnouncement.set(target, bucket);
+  }
+
+  return announcements.map((a) => {
+    const bucket = byAnnouncement.get(a.id) ?? new Map<string, { at: string; note: string | null }>();
+    const acknowledgedBy = [...bucket.entries()].map(([userId, v]) => ({
+      userId,
+      at: v.at,
+      note: v.note,
+    }));
+    let outstanding: string[] | null = null;
+    if (a.requiresAcknowledgement && memberIds) {
+      outstanding = memberIds.filter((id) => id !== a.sender_id && !bucket.has(id));
+    }
+    return {
+      messageId: a.id,
+      announcedBy: a.sender_id,
+      createdAt: a.created_at,
+      title: a.title,
+      requiresAcknowledgement: a.requiresAcknowledgement,
+      acknowledgedBy,
+      outstanding,
+      complete: outstanding === null ? null : outstanding.length === 0,
+    };
+  });
+}
+
 // ── §8.1 native actions, as messages ─────────────────────────────────────────
 
 export const ActionMessagePayload = z.object({
@@ -455,11 +585,19 @@ export function isCoordinationAction(v: unknown): v is TelegraphAction {
 
 /**
  * §8 and §9 need carriers, and §6.2's thirteen kinds do not include one for a
- * quick state, a decision, a vote, a rendezvous or a commitment. These five
- * are therefore ADDITIONAL kinds serving §8/§9, not members of §6.2's list —
+ * quick state, a decision, a vote, a rendezvous or a commitment. These are
+ * therefore ADDITIONAL kinds serving §8/§9/§19, not members of §6.2's list —
  * and saying so is the point: §6.2's thirteen are accounted for exactly in
  * `services/telegraph/messageKinds.ts`, and nothing here silently grows that
  * list.
+ *
+ * ACKNOWLEDGEMENT is the eighth and it is the odd one: it serves §19's
+ * "acknowledgment … distinct from passive Seen" rather than §8 or §9, and it
+ * answers a §6.2 ANNOUNCEMENT rather than a coordination message. It lives
+ * here because this module is where a fact a person asserts in a thread is
+ * carried as a message and read back as a projection, and duplicating that
+ * machinery next to the ANNOUNCEMENT schema would be a second convention for
+ * one job.
  */
 export const COORDINATION_KINDS = [
   "COORDINATION",
@@ -469,6 +607,7 @@ export const COORDINATION_KINDS = [
   "COMMITMENT",
   "COMMITMENT_RESPONSE",
   "ACTION_PROPOSAL",
+  "ACKNOWLEDGEMENT",
 ] as const;
 
 export type CoordinationKind = (typeof COORDINATION_KINDS)[number];
@@ -481,6 +620,7 @@ const COORDINATION_PAYLOADS = {
   COMMITMENT: CommitmentPayload,
   COMMITMENT_RESPONSE: CommitmentResponsePayload,
   ACTION_PROPOSAL: ActionMessagePayload,
+  ACKNOWLEDGEMENT: AcknowledgementPayload,
 } as const;
 
 export const COORDINATION_ENVELOPE_VERSION = "1" as const;
