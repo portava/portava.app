@@ -238,6 +238,39 @@ interface IdCell { ids: string[]; label: string }
 
 function parseIdCell(cellRaw: string): IdCell | null {
   const t = cellRaw.trim().replace(/\*/g, "").trim();
+
+  // ── TWO MORE SHAPES, BOTH MEASURED ON census-trust §12 (2026-09-13) ────────
+  //
+  // 4. A LETTERED SERIES. `TV-P1` … `TV-P5` are census-trust's five privacy
+  //    invariants. The pattern below requires a DIGIT straight after the
+  //    prefix, so `TV-P1` matched nothing and all five rows were dropped —
+  //    silently, exactly like CX-03 was. This is checked FIRST and returns a
+  //    single id, because a lettered series is never a range: `TV-P1–TV-P5`
+  //    has never been written and would be ambiguous with a label if it were.
+  //
+  // 5. A PREFIX THAT ENDS IN A DIGIT. `TRV2-03` is one requirement of
+  //    `Portava_Trust_Architecture_Upgrade_v2.md`. The general pattern read
+  //    `TRV` as the prefix, `2` as the first number and `-03` as a RANGE
+  //    separator, and expanded one row into the invented ids TRV2, TRV3. Worse
+  //    than dropping it: `TRV2-11` expanded to ten ids, last-statement-wins
+  //    overwrote each earlier expansion, and one `CV` row vanished into nine
+  //    fabricated `C`s. The trust tally read 91 rows / 73 C where the document
+  //    said 93 / 69 — a machine disagreeing with a census by four correct rows,
+  //    in its favour, which is the one direction that must never be silent.
+  //
+  // Both are recognised before the general range grammar, never inside it, so
+  // no existing census's parse can change. PROVED, not argued: the full
+  // per-census table was captured before and after this edit and every one of
+  // the other twelve censuses is byte-identical.
+  const lettered = /^([A-Z]{1,4}-[A-Z]{1,2}[0-9]{1,4})(?![0-9A-Za-z-])/.exec(t);
+  if (lettered) {
+    return { ids: [lettered[1]!], label: t.slice(lettered[1]!.length).trim() };
+  }
+  const digitPrefixed = /^([A-Z]{1,4}[0-9]-[0-9]{1,4})(?![0-9A-Za-z-])/.exec(t);
+  if (digitPrefixed) {
+    return { ids: [digitPrefixed[1]!], label: t.slice(digitPrefixed[1]!.length).trim() };
+  }
+
   const lead = /^([A-Z]{1,4}-?)([0-9]{1,4})/.exec(t);
   if (!lead) return null;
   const prefix = lead[1]!;
