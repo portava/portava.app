@@ -12,8 +12,9 @@
  * writes a fresh query against `posts` and blocks / mutes / private accounts /
  * moderation / delayed publish / hidden-gem ceilings are re-implemented, or
  * quietly forgotten. Nothing here queries `posts` itself. It calls
- * `MediaProjectionService.loadEligibleCandidates` (the shared, fail-closed
- * candidate loader with the eligibility gate and the private-account guard) and
+ * `MediaProjectionService.loadEligibleCandidatesOrRefuse` (the shared candidate
+ * loader with the eligibility gate and the private-account guard, which
+ * REFUSES rather than reporting an unreadable table as no rows) and
  * `projectCandidatesProtected` (the coarse projector behind the
  * lib/mediaLocationVisibility choke point) — the same two functions every §43
  * lens uses. A gate added to either binds here for free; a gate removed from
@@ -50,7 +51,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
-  loadEligibleCandidates,
+  loadEligibleCandidatesOrRefuse,
   projectCandidatesProtected,
   type ViewerResolved,
 } from "./MediaProjectionService.js";
@@ -141,6 +142,21 @@ export interface MediaSearchResults {
   };
   /** What this search cannot answer. Copied from MEDIA_SEARCH_UNSUPPORTED. */
   unsupported: readonly string[];
+  /**
+   * Result lists that could NOT be determined on this request because a
+   * secondary read failed — NOT lists that came back empty.
+   *
+   * The primary media read refuses outright (MediaCandidatesUnavailableError):
+   * without it there is no answer at all. The gem and experience roll-ups are
+   * different — they narrow an answer that already exists — so failing the
+   * whole search on them would be worse for the caller than saying so. What is
+   * NOT acceptable is the old behaviour: returning `hiddenGems: []` when the
+   * gem table could not be read, which tells the viewer "there are no hidden
+   * gems here" on the strength of a query that did not answer. A name in this
+   * array means "not looked at", and the matching list is empty for that reason
+   * rather than the factual one.
+   */
+  undetermined: readonly string[];
 }
 
 function emptyResults(nowMs: number, criteriaUsed: string[] = []): MediaSearchResults {
@@ -154,6 +170,7 @@ function emptyResults(nowMs: number, criteriaUsed: string[] = []): MediaSearchRe
     experiences: [],
     totals: { media: 0, places: 0, people: 0, hiddenGems: 0, experiences: 0 },
     unsupported: MEDIA_SEARCH_UNSUPPORTED,
+    undetermined: [],
   };
 }
 
@@ -255,20 +272,26 @@ function rollUpPeople(media: MediaProjection[]): MediaSearchPersonResult[] {
  * The predicate is `mayDiscloseGemIdentity` — the `hidden_gems_public_read` RLS
  * policy plus the owner bypass — exactly as MediaActionResolver uses it, because
  * naming a gem against a searchable place de-anonymizes it just as surely as
- * handing out its coordinates. FAIL CLOSED: an unreadable lookup yields nothing.
+ * handing out its coordinates.
+ *
+ * FAIL CLOSED AND SAY SO. An unreadable lookup still yields no gems — that part
+ * was right and is unchanged — but it now reports `determined: false` so the
+ * caller can distinguish "no gems here" from "the gem table did not answer".
+ * Withholding the rows is the privacy decision; claiming the rows do not exist
+ * is a separate, false statement that the old `return []` made for free.
  */
 async function resolveGemResults(
   sc: SupabaseClient,
   viewerId: string,
   placeIds: string[],
-): Promise<MediaSearchGemResult[]> {
-  if (placeIds.length === 0) return [];
+): Promise<{ gems: MediaSearchGemResult[]; determined: boolean }> {
+  if (placeIds.length === 0) return { gems: [], determined: true };
   try {
     const { data, error } = await (sc as any)
       .from("hidden_gems")
       .select("id, name, status, sensitivity_level, submitted_by, canonical_place_id")
       .in("canonical_place_id", placeIds.slice(0, MAX_LIMIT));
-    if (error || !Array.isArray(data)) return [];
+    if (error || !Array.isArray(data)) return { gems: [], determined: false };
     const out: MediaSearchGemResult[] = [];
     for (const g of data as any[]) {
       if (!g?.id || !mayDiscloseGemIdentity(g, viewerId)) continue;
@@ -278,15 +301,21 @@ async function resolveGemResults(
         placeId: String(g.canonical_place_id),
       });
     }
-    return out;
+    return { gems: out, determined: true };
   } catch {
-    return [];
+    return { gems: [], determined: false };
   }
 }
 
 /**
- * Run a §38 media search for one viewer. Never throws; an empty or
- * criteria-free query yields a well-formed EMPTY result, never the feed.
+ * Run a §38 media search for one viewer.
+ *
+ * An empty or criteria-free query yields a well-formed EMPTY result, never the
+ * feed. A query whose CANDIDATE READ FAILED yields neither: it throws
+ * `MediaCandidatesUnavailableError`, which the global error handler turns into
+ * a retryable 503. A search that could not read is not a search that found
+ * nothing, and reporting the second when the first happened is the defect this
+ * signature used to guarantee.
  */
 export async function searchMedia(
   sc: SupabaseClient,
@@ -322,7 +351,7 @@ export async function searchMedia(
   // The shared, fail-closed candidate loader. `scope=me` narrows through the
   // loader's own single-author escape hatch, which keeps the viewer's own
   // unlisted media reachable to the viewer and to nobody else.
-  const candidates = await loadEligibleCandidates(sc, viewer, {
+  const candidates = await loadEligibleCandidatesOrRefuse(sc, viewer, {
     feedType: scope === "me" ? "following" : "for_you",
     authorId: scope === "me" ? viewer.viewerId : null,
     city: city ?? undefined,
@@ -350,14 +379,29 @@ export async function searchMedia(
   const media = matched.slice(0, limit);
   const places = rollUpPlaces(matched, nowMs);
   const people = rollUpPeople(matched);
-  const hiddenGems = await resolveGemResults(sc, viewer.viewerId, places.map((p) => p.placeId));
+  const undetermined: string[] = [];
+  const gemResult = await resolveGemResults(sc, viewer.viewerId, places.map((p) => p.placeId));
+  const hiddenGems = gemResult.gems;
+  if (!gemResult.determined) undetermined.push("hiddenGems");
 
   // Experiences (§23) — resolved through the EXISTING viewer-gated resolver, so
   // a trip/event the viewer may not see resolves to null and never appears.
+  //
+  // `null` from the resolver is a DECISION (not visible to this viewer, or no
+  // perspectives). A rejection is not: it means the resolver's own candidate
+  // read refused, and dropping it silently would put this list back in the
+  // state the rest of this change is removing. So the two are separated: a null
+  // is skipped, a rejection marks the list undetermined.
   const matchedIds = new Set(matched.map((m) => m.id));
   const experiences: MediaExperienceProjection[] = [];
   for (const t of tripIdsOf(candidates, matchedIds).slice(0, MAX_EXPERIENCES)) {
-    const exp = await resolveExperience(sc, viewer, t, nowMs).catch(() => null);
+    let exp: MediaExperienceProjection | null = null;
+    try {
+      exp = await resolveExperience(sc, viewer, t, nowMs);
+    } catch {
+      if (!undetermined.includes("experiences")) undetermined.push("experiences");
+      continue;
+    }
     if (exp) experiences.push(exp);
   }
 
@@ -377,5 +421,6 @@ export async function searchMedia(
       experiences: experiences.length,
     },
     unsupported: MEDIA_SEARCH_UNSUPPORTED,
+    undetermined,
   };
 }

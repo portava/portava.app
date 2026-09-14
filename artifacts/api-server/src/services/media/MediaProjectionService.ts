@@ -171,11 +171,71 @@ export interface CandidateFilter {
 }
 
 /**
- * Fetch and eligibility-filter media candidates. Returns the eligible raw rows
- * (post_media + profiles attached), or [] on any failure / empty result. Never
- * throws to the route.
+ * Which candidate-loader input could not be read. Carried on the refusal so a
+ * log line names the failing read rather than "media unavailable".
  */
-export async function loadEligibleCandidates(
+export type MediaCandidateInput = "posts" | "eligibility";
+
+/**
+ * Raised when the candidate read could not be performed — NOT when it found
+ * nothing.
+ *
+ * supabase-js RESOLVES on a database error: a failed read arrives as
+ * `{ data: null, error: {...} }`, which the old `if (error) return []` made
+ * byte-identical to `{ data: [], error: null }`. Every §43 surface then served
+ * an unreadable `posts` table to the client as a 200 carrying a confident,
+ * well-formed, EMPTY world. "There is no media anywhere near you" is a claim
+ * about the world, and it may not be assembled out of a query that did not
+ * answer.
+ *
+ * This is the mechanism `TripAccessUnavailableError` (lib/http.ts) established
+ * and for the same structural reason: the return type has nowhere to put a
+ * third state. `MediaCandidateRow[]` can express "rows" and "no rows"; it
+ * cannot express "I could not look". Widening it to a result union would
+ * rewrite every builder AND `services/wall/WallCandidateLoaders.ts`, which this
+ * lane does not own — so the refusal is an exception and the old swallowing
+ * signature stays available, deprecated, for that one caller.
+ *
+ * `status` and `code` are read by the global error handler
+ * (lib/errorEnvelope.ts), so an uncaught one becomes exactly the response the
+ * route would have sent by hand: 503 `degraded_unavailable`, `retryable: true`.
+ * Express 5 forwards a rejected async handler there automatically, so no media
+ * route needs a try/catch for this to arrive correctly.
+ *
+ * WHAT THIS IS NOT. It is not a fail-closed empty result wearing a new name.
+ * Genuine emptiness still resolves to `[]` and every media route still answers
+ * 200 with a well-formed empty projection — the router's "pre-launch = empty is
+ * normal" invariant is preserved, and `mediaWorldProjection.test.ts` pins both
+ * halves with paired controls so neither can quietly swallow the other.
+ */
+export class MediaCandidatesUnavailableError extends Error {
+  /** Which read failed. */
+  readonly input: MediaCandidateInput;
+  /** Read by the global error handler (lib/errorEnvelope.ts). */
+  readonly status: number = 503;
+  /** Read by the global error handler (lib/errorEnvelope.ts). */
+  readonly code = "degraded_unavailable" as const;
+  constructor(input: MediaCandidateInput, detail: string) {
+    super(`media candidate input ${input} unavailable — refusing to answer: ${detail}`);
+    this.name = "MediaCandidatesUnavailableError";
+    this.input = input;
+  }
+}
+
+/** Narrow an unknown caught value to this lane's refusal. */
+export function isMediaCandidatesUnavailable(e: unknown): e is MediaCandidatesUnavailableError {
+  return e instanceof MediaCandidatesUnavailableError;
+}
+
+/**
+ * Fetch and eligibility-filter media candidates.
+ *
+ * Returns the eligible raw rows (post_media + profiles attached), or `[]` when
+ * the query genuinely matched nothing. THROWS `MediaCandidatesUnavailableError`
+ * when a read could not be performed — see that class for why the third state
+ * cannot live in the return type.
+ */
+export async function loadEligibleCandidatesOrRefuse(
   sc: SupabaseClient,
   viewer: ViewerResolved,
   filter: CandidateFilter,
@@ -222,12 +282,27 @@ export async function loadEligibleCandidates(
   if (filter.postIds && filter.postIds.length > 0) query = query.in("id", filter.postIds.slice(0, limit));
 
   let rows: any[] = [];
-  try {
-    const { data, error } = await query;
-    if (error || !Array.isArray(data)) return [];
-    rows = data;
-  } catch {
-    return [];
+  {
+    // BOUND, not discarded. `error` here is a RESOLVED PostgREST failure; the
+    // `catch` is the transport/driver rejection. Both used to `return []`.
+    let settled: { data: unknown; error: unknown };
+    try {
+      settled = (await query) as { data: unknown; error: unknown };
+    } catch (err) {
+      throw new MediaCandidatesUnavailableError("posts", String((err as any)?.message ?? err));
+    }
+    if (settled.error) {
+      throw new MediaCandidatesUnavailableError(
+        "posts",
+        String((settled.error as any)?.message ?? (settled.error as any)?.code ?? "db_error"),
+      );
+    }
+    if (!Array.isArray(settled.data)) {
+      // A non-array payload with no error is not an empty page — it is a shape
+      // this code cannot read, which is the same unknown as a failed read.
+      throw new MediaCandidatesUnavailableError("posts", "candidate read returned a non-array payload");
+    }
+    rows = settled.data;
   }
   if (rows.length === 0) return [];
 
@@ -246,9 +321,14 @@ export async function loadEligibleCandidates(
     sc,
     null,
   );
-  // Fail-closed: a block-fetch failure means we cannot prove nothing is from a
-  // blocked user, so we surface nothing rather than risk it.
-  if (blockFetchFailed) return [];
+  // A block-fetch failure means we cannot prove nothing is from a blocked user.
+  // Surfacing nothing was the safe half of the answer and the dishonest half of
+  // the report: the viewer was told the world is empty when in fact the block
+  // list could not be read. Refuse — which withholds exactly as much content as
+  // the empty list did, and says so.
+  if (blockFetchFailed) {
+    throw new MediaCandidatesUnavailableError("eligibility", "viewer block/mute list could not be read");
+  }
 
   // ── Private-account guard ───────────────────────────────────────────────────
   // filterEligibleMediaCandidates gates blocks, mutes, suspension, status,
@@ -278,6 +358,36 @@ export async function loadEligibleCandidates(
     { profilesKey: "profiles" },
   );
   return visible as unknown as MediaCandidateRow[];
+}
+
+/**
+ * DEPRECATED — the swallowing signature. `[]` here means EITHER "no rows" OR
+ * "the read failed", which is the defect `loadEligibleCandidatesOrRefuse`
+ * exists to remove. Prefer that function in anything new.
+ *
+ * It is kept for exactly one caller: `services/wall/WallCandidateLoaders.ts`,
+ * which this lane does not own. Changing that file's failure behaviour is a
+ * Wall decision — a Wall page that currently degrades to "no quick media" would
+ * start refusing the whole page — so the choice is left to the Wall lane rather
+ * than taken on its behalf. Every media-owned caller (all six World-shell
+ * builders, the experience resolver, the action rail and §38 search) has moved
+ * to the refusing form; this wrapper has ONE remaining call site and should
+ * reach zero.
+ *
+ * It does not re-implement the swallow: it calls the refusing loader and
+ * converts, so the two can never drift apart.
+ */
+export async function loadEligibleCandidates(
+  sc: SupabaseClient,
+  viewer: ViewerResolved,
+  filter: CandidateFilter,
+): Promise<MediaCandidateRow[]> {
+  try {
+    return await loadEligibleCandidatesOrRefuse(sc, viewer, filter);
+  } catch (err) {
+    if (isMediaCandidatesUnavailable(err)) return [];
+    throw err;
+  }
 }
 
 // ── Location disclosure: the choke point, applied to every projection ────────
@@ -571,7 +681,7 @@ export async function buildWorldProjection(
   nowMs: number,
 ): Promise<WorldProjection> {
   const generatedAt = new Date(nowMs).toISOString();
-  const candidates = await loadEligibleCandidates(sc, viewer, {
+  const candidates = await loadEligibleCandidatesOrRefuse(sc, viewer, {
     feedType: "for_you",
     city: city ?? undefined,
     limit: DEFAULT_CANDIDATE_LIMIT,
@@ -703,7 +813,7 @@ export async function buildPlaceProjection(
     /* non-fatal — labels stay null */
   }
 
-  const candidates = await loadEligibleCandidates(sc, viewer, {
+  const candidates = await loadEligibleCandidatesOrRefuse(sc, viewer, {
     feedType: "for_you",
     placeId,
     limit: DEFAULT_CANDIDATE_LIMIT,
@@ -913,13 +1023,13 @@ export async function buildPeopleProjection(
   );
 
   const [followed, affinity] = await Promise.all([
-    loadEligibleCandidates(sc, viewer, {
+    loadEligibleCandidatesOrRefuse(sc, viewer, {
       feedType: "following",
       limit: DEFAULT_CANDIDATE_LIMIT,
     }),
     affinityIds.length === 0
       ? Promise.resolve([] as MediaCandidateRow[])
-      : loadEligibleCandidates(sc, viewer, {
+      : loadEligibleCandidatesOrRefuse(sc, viewer, {
           feedType: "for_you",
           authorIds: affinityIds,
           limit: DEFAULT_CANDIDATE_LIMIT,
@@ -1024,17 +1134,40 @@ export async function buildMyWorldProjection(
 ): Promise<MyWorldProjection> {
   const generatedAt = new Date(nowMs).toISOString();
 
+  // THE OWNER'S OWN LIBRARY. This read did not even DESTRUCTURE `error`, so an
+  // unreadable `posts` table rendered My World as an empty library — a person
+  // being shown "you have no media" when in fact the database did not answer.
+  // Of every surface this loader feeds, this is the one where the empty reading
+  // is least survivable: the viewer knows it is false and has no way to tell
+  // whether their uploads are gone. Refuse.
+  //
+  // My World does NOT go through the shared loader (it is owner-scoped, so the
+  // blocks/mutes/private-account gates that loader exists to apply are all
+  // no-ops against your own rows). It therefore needs the same refusal spelled
+  // out here rather than inherited.
   let rows: MediaCandidateRow[] = [];
-  try {
-    const { data } = await (sc as any)
-      .from("posts")
-      .select(SELECT)
-      .eq("author_id", viewer.viewerId)
-      .order("created_at", { ascending: false })
-      .limit(DEFAULT_CANDIDATE_LIMIT);
-    rows = Array.isArray(data) ? (data as MediaCandidateRow[]) : [];
-  } catch {
-    rows = [];
+  {
+    let settled: { data: unknown; error: unknown };
+    try {
+      settled = (await (sc as any)
+        .from("posts")
+        .select(SELECT)
+        .eq("author_id", viewer.viewerId)
+        .order("created_at", { ascending: false })
+        .limit(DEFAULT_CANDIDATE_LIMIT)) as { data: unknown; error: unknown };
+    } catch (err) {
+      throw new MediaCandidatesUnavailableError("posts", String((err as any)?.message ?? err));
+    }
+    if (settled.error) {
+      throw new MediaCandidatesUnavailableError(
+        "posts",
+        String((settled.error as any)?.message ?? (settled.error as any)?.code ?? "db_error"),
+      );
+    }
+    if (!Array.isArray(settled.data)) {
+      throw new MediaCandidatesUnavailableError("posts", "owner library read returned a non-array payload");
+    }
+    rows = settled.data as MediaCandidateRow[];
   }
 
   const published: MediaProjection[] = [];
@@ -1229,7 +1362,7 @@ export async function loadTaggedMedia(
 ): Promise<MediaProjection[]> {
   const ids = await loadTaggedPostIds(sc, viewer.viewerId);
   if (ids.length === 0) return [];
-  const rows = await loadEligibleCandidates(sc, viewer, {
+  const rows = await loadEligibleCandidatesOrRefuse(sc, viewer, {
     feedType: "for_you",
     postIds: ids,
     limit: DEFAULT_CANDIDATE_LIMIT,
@@ -1298,7 +1431,7 @@ export async function buildTimelineProjection(
   const nowMs = opts.nowMs;
   const generatedAt = new Date(nowMs).toISOString();
 
-  const candidates = await loadEligibleCandidates(sc, viewer, {
+  const candidates = await loadEligibleCandidatesOrRefuse(sc, viewer, {
     feedType: opts.placeId ? "for_you" : "following",
     placeId: opts.placeId ?? undefined,
     limit: DEFAULT_CANDIDATE_LIMIT,
@@ -1380,7 +1513,7 @@ export async function buildMediaMapProjection(
   nowMs: number,
 ): Promise<MediaMapProjection> {
   const generatedAt = new Date(nowMs).toISOString();
-  const candidates = await loadEligibleCandidates(sc, viewer, {
+  const candidates = await loadEligibleCandidatesOrRefuse(sc, viewer, {
     feedType: "for_you",
     city: city ?? undefined,
     limit: DEFAULT_CANDIDATE_LIMIT,

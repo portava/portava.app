@@ -40,7 +40,7 @@ import { isKillSwitchEngaged } from "../../lib/featureFlags.js";
 import { isCompassEnabled } from "../../compass/flags.js";
 import {
   disclosureForRow,
-  loadEligibleCandidates,
+  loadEligibleCandidatesOrRefuse,
   loadProjectionGemContext,
   type ViewerResolved,
 } from "./MediaProjectionService.js";
@@ -207,7 +207,7 @@ export async function loadEligibleMediaRow(
   const ownedOrFollowed =
     !!authorId && (authorId === viewer.viewerId || viewer.followedCreatorIds.has(authorId));
 
-  const rows = await loadEligibleCandidates(sc, viewer, {
+  const rows = await loadEligibleCandidatesOrRefuse(sc, viewer, {
     feedType: ownedOrFollowed ? "following" : "for_you",
     authorId: ownedOrFollowed ? authorId : null,
     postIds: [mediaId],

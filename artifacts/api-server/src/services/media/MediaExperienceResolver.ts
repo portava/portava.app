@@ -20,7 +20,8 @@ import {
   type MediaProjection,
 } from "../../lib/media/mediaProjection.js";
 import {
-  loadEligibleCandidates,
+  loadEligibleCandidatesOrRefuse,
+  isMediaCandidatesUnavailable,
   projectCandidatesProtected,
   readCurrentState,
   type CurrentState,
@@ -133,6 +134,15 @@ const TRIP_MEMBER_ROLES = ["owner", "co_host", "member", "viewer"];
  * Resolve an experience id into a projection, or null when the viewer may not
  * see it (private / blocked / ineligible) or it does not exist. Never throws.
  */
+/**
+ * A catch handler that lets THIS lane's refusal through and swallows the rest.
+ * Written once so the two branches below cannot drift apart.
+ */
+function rethrowUnavailable(err: unknown): null {
+  if (isMediaCandidatesUnavailable(err)) throw err;
+  return null;
+}
+
 export async function resolveExperience(
   sc: SupabaseClient,
   viewer: ViewerResolved,
@@ -142,9 +152,21 @@ export async function resolveExperience(
   if (!UUID_RE.test(experienceId)) return null;
 
   // Try Event first, then Trip. Both are uuids; an id that is neither → null.
-  const asEvent = await resolveEvent(sc, viewer, experienceId, nowMs).catch(() => null);
+  //
+  // `null` MEANS "NOT AVAILABLE TO YOU", AND THE ROUTE SAYS SO. Both branches
+  // used to be `.catch(() => null)`, which folded a REFUSED read into that
+  // answer: `GET /media/experiences/:id` then served a 200 carrying
+  // `available: false` — a confident statement that looks like an authorization
+  // outcome — on the strength of a query that never answered. A caller cannot
+  // tell that from a genuine private trip, and would not retry.
+  //
+  // So the lane's refusal is re-thrown and becomes a retryable 503 through the
+  // global error handler. Everything else is still swallowed: an unexpected
+  // error here is not evidence the viewer may see the experience, and widening
+  // that is a separate change with its own tests.
+  const asEvent = await resolveEvent(sc, viewer, experienceId, nowMs).catch(rethrowUnavailable);
   if (asEvent) return asEvent;
-  const asTrip = await resolveTrip(sc, viewer, experienceId, nowMs).catch(() => null);
+  const asTrip = await resolveTrip(sc, viewer, experienceId, nowMs).catch(rethrowUnavailable);
   return asTrip;
 }
 
@@ -213,7 +235,7 @@ async function resolveEvent(
 
   let media: MediaProjection[] = [];
   if (linkedPostIds.length > 0) {
-    const candidates = await loadEligibleCandidates(sc, viewer, {
+    const candidates = await loadEligibleCandidatesOrRefuse(sc, viewer, {
       feedType: "for_you",
       postIds: linkedPostIds,
       limit: 200,
@@ -284,7 +306,7 @@ async function resolveTrip(
   if (!mayView) return null;
 
   // Hero media: the viewer's-eligible posts attached to this trip.
-  const candidates = await loadEligibleCandidates(sc, viewer, {
+  const candidates = await loadEligibleCandidatesOrRefuse(sc, viewer, {
     feedType: "for_you",
     tripId,
     limit: 200,
