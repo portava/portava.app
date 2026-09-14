@@ -76,8 +76,13 @@ function seedDb() {
     // so every real row carries a tier; the projection reads it per-stamp and
     // fails closed on an absent one. Staged explicitly so the fixture matches.
     user_stamps: [
-      { user_id: OWNER, city: "Da Nang", country: "Vietnam", is_revoked: false, visibility: "public", earned_at: "2025-03-30", stamp_definitions: { category: "trip", name: "Vietnam" } },
-      { user_id: OWNER, city: "Bangkok", country: "Thailand", is_revoked: false, visibility: "public", earned_at: "2025-02-01", stamp_definitions: { category: "city", name: "Bangkok" } },
+      // Both stamps EVIDENCE PRESENCE (migration 2970): the Da Nang stamp is
+      // awarded by trip completion (trip-past below is `status: "completed"`),
+      // the Bangkok one by a GPS-verified postcard. Since §K.4 only such stamps
+      // reach `stats.countries` — a destination attached to a stamp earned
+      // without going there is no longer counted as a country visited.
+      { user_id: OWNER, city: "Da Nang", country: "Vietnam", is_revoked: false, visibility: "public", earned_at: "2025-03-30", stamp_definitions: { category: "trip", name: "Vietnam", slug: "first_trip_completed", evidences_presence: true } },
+      { user_id: OWNER, city: "Bangkok", country: "Thailand", is_revoked: false, visibility: "public", earned_at: "2025-02-01", stamp_definitions: { category: "city", name: "Bangkok", slug: "city_explorer", evidences_presence: true } },
     ],
     passport_stamps: [],
     trip_members: [

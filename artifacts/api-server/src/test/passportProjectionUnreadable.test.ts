@@ -76,7 +76,11 @@ const A_STAMP = {
   id: "s1", user_id: OWNER, stamp_definition_id: "d1", source_type: "system",
   city: "Hanoi", country: "VN", earned_at: "2026-01-01T00:00:00Z",
   is_revoked: false, visibility: "public", catalog_id: null,
-  stamp_definitions: { name: "First trip", rarity: "common", stamp_type: "trip", category: "trip", slug: "first_event_joined" },
+  // A stamp that EVIDENCES PRESENCE (migration 2970): this fixture's job is to
+  // make `countries` non-zero on a healthy read, and after §K.4 only a
+  // presence-evidencing stamp can do that. `first_trip_completed` is awarded
+  // only when a trip actually reaches status 'completed'.
+  stamp_definitions: { name: "First Journey Complete", rarity: "common", stamp_type: "trip", category: "trip", slug: "first_trip_completed", evidences_presence: true },
 };
 const A_MEMORY = {
   id: "m1", user_id: OWNER, status: "active", title: "Hanoi", city: "Hanoi",

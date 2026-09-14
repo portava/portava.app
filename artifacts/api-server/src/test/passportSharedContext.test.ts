@@ -61,8 +61,14 @@ describe("buildSharedContext", () => {
         { follower_id: VIEWER, following_id: "u-common" },
       ],
       user_stamps: [
-        { user_id: OWNER, city: "Bangkok", is_revoked: false },
-        { user_id: VIEWER, city: "Bangkok", is_revoked: false },
+        // `shared_cities` means "places both have BEEN". These carry a
+        // presence-evidencing definition (migration 2970) because both people
+        // actually completed a trip to Bangkok. A stamp without one is not a
+        // visit — see the two cases at the bottom of this file.
+        { user_id: OWNER, city: "Bangkok", is_revoked: false,
+          stamp_definitions: { slug: "first_trip_completed", evidences_presence: true } },
+        { user_id: VIEWER, city: "Bangkok", is_revoked: false,
+          stamp_definitions: { slug: "first_trip_completed", evidences_presence: true } },
       ],
     });
     const r = await buildSharedContext(db, OWNER, VIEWER, ALL);
@@ -313,5 +319,84 @@ describe("GET /passport/:userId/shared-context — blocked/unavailable guard (D2
     assert.notEqual(res.json.restricted, true, "a normal viewer is not restricted");
     assert.ok("viewerContext" in res.json, "the normal branch ran and returned a shared context");
     assert.ok(res.json.sharedContext, "shared context facts are present for a permitted viewer");
+  });
+});
+
+/**
+ * §K.4, the SharedContextService half.
+ *
+ * `shared_cities` is labelled "places both have been". It read every non-revoked
+ * `user_stamps` row's city, and `POST /api/trips` writes the DESTINATION of a
+ * trip at CREATION (`first_trip_created` / `trip_planner`, with
+ * `city: destinationCity`). So two strangers who had each PLANNED a trip to
+ * Lisbon — and taken neither — were told they shared a city.
+ *
+ * Both directions are asserted: the exclusion, and a positive control that a
+ * city both people really visited still produces the fact. A test that only
+ * checks the fact disappeared would also pass if the fact had been deleted.
+ */
+describe("shared_cities — a city you both merely PLANNED to visit is not shared", () => {
+  it("two planned-never-taken trips to the same city produce NO shared_cities fact", async () => {
+    const db = makePassportDb({
+      profiles: [
+        { id: OWNER, current_city: "Da Nang", home_city: "Da Nang", interests: [], availability_tags: [] },
+        { id: VIEWER, current_city: "Hanoi", home_city: "Hanoi", interests: [], availability_tags: [] },
+      ],
+      user_stamps: [
+        { user_id: OWNER, city: "Lisbon", is_revoked: false,
+          stamp_definitions: { slug: "first_trip_created", evidences_presence: false } },
+        { user_id: VIEWER, city: "Lisbon", is_revoked: false,
+          stamp_definitions: { slug: "trip_planner", evidences_presence: false } },
+      ],
+    });
+    const r = await buildSharedContext(db, OWNER, VIEWER, ALL);
+    assert.ok(
+      !factKeys(r).includes("shared_cities"),
+      "neither traveller has been to Lisbon — 'places both have been' must not claim it",
+    );
+  });
+
+  it("POSITIVE CONTROL: a city both really visited still produces the fact", async () => {
+    const db = makePassportDb({
+      profiles: [
+        { id: OWNER, current_city: "Da Nang", home_city: "Da Nang", interests: [], availability_tags: [] },
+        { id: VIEWER, current_city: "Hanoi", home_city: "Hanoi", interests: [], availability_tags: [] },
+      ],
+      user_stamps: [
+        { user_id: OWNER, city: "Lisbon", is_revoked: false,
+          stamp_definitions: { slug: "first_trip_completed", evidences_presence: true } },
+        { user_id: VIEWER, city: "Lisbon", is_revoked: false,
+          stamp_definitions: { slug: "city_explorer", evidences_presence: true } },
+      ],
+    });
+    const r = await buildSharedContext(db, OWNER, VIEWER, ALL);
+    const fact = r.facts.find((f) => f.key === "shared_cities");
+    assert.ok(fact, "a completed trip and a GPS-verified postcard are both real visits");
+    assert.equal(fact!.magnitude, 1);
+  });
+
+  it("the mix: only the visited city is shared, and only once", async () => {
+    const db = makePassportDb({
+      profiles: [
+        { id: OWNER, current_city: "Da Nang", home_city: "Da Nang", interests: [], availability_tags: [] },
+        { id: VIEWER, current_city: "Hanoi", home_city: "Hanoi", interests: [], availability_tags: [] },
+      ],
+      user_stamps: [
+        { user_id: OWNER, city: "Lisbon", is_revoked: false,
+          stamp_definitions: { slug: "first_trip_created", evidences_presence: false } },
+        { user_id: VIEWER, city: "Lisbon", is_revoked: false,
+          stamp_definitions: { slug: "first_trip_created", evidences_presence: false } },
+        { user_id: OWNER, city: "Kyoto", is_revoked: false,
+          stamp_definitions: { slug: "first_trip_completed", evidences_presence: true } },
+        { user_id: VIEWER, city: "Kyoto", is_revoked: false,
+          stamp_definitions: { slug: "first_trip_completed", evidences_presence: true } },
+      ],
+    });
+    const r = await buildSharedContext(db, OWNER, VIEWER, ALL);
+    const fact = r.facts.find((f) => f.key === "shared_cities");
+    assert.ok(fact, "Kyoto is genuinely shared");
+    assert.equal(fact!.magnitude, 1, "Kyoto only — Lisbon was planned by both and visited by neither");
+    assert.ok((fact!.detail ?? "").toLowerCase().includes("kyoto"));
+    assert.ok(!(fact!.detail ?? "").toLowerCase().includes("lisbon"));
   });
 });
