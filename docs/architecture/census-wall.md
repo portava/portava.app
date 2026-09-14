@@ -1129,3 +1129,84 @@ that wrote them and are **not** rewritten — that is this document's convention
 
 199 + 0 + 0 + 6 = 205. These are the §2 rows, counted; the §6, §7 and §9 headlines
 above are the dated records of those passes and are deliberately left as written.
+
+---
+
+## §11 — The six-row pass, 2026-09-14: every `?` re-executed, none moved, and each now names a person or a machine rather than a gap
+
+*Worktree `/home/user/wt-wallpass` at `7c6255de7`. Scope was the only six rows this
+census does not grade `C`: W71, W146, W149, W159, W167, W168. This pass touched **no Wall
+code** — not because the rows are decorative, but because after re-executing each one,
+**not a single blocker was a missing piece of Wall engineering.** That is the finding, and
+it is worth more than a moved row would have been, because it means the Wall's remaining
+2.9 % is not work anyone on this lane is failing to do.*
+
+§10.3 already grouped them. This pass opened each one instead of inheriting the grouping,
+and confirmed the pin each row rests on is still at the line it claims.
+
+### 11.1 Every pin re-executed at this tree
+
+| id | the pin the row rests on | still there? |
+|---|---|---|
+| W71 | `artifacts/api-server/src/test/wallSessionIntent.test.ts:203#a misspelling typed into the Wall reaches the database ALREADY typo-normalized` | yes |
+| W146 | `artifacts/api-server/src/test/wallPerformance.test.ts:489#const ROUND_TRIP_DEPTH_RATCHET = 110;` and `artifacts/api-server/src/test/wallPerformance.test.ts:468#const FIRST_PAGE_TARGET_MS = 500;` | yes |
+| W149 | `travel-buddy-standalone/src/features/wall/components/__tests__/WallFeed.renderCost.component.test.tsx:191#the declared scroll-windowing budget has not been silently widened` | yes |
+| W159 | `travel-buddy-standalone/src/features/wall/components/__tests__/WallDesignSystem.component.test.tsx:181#no Wall style sets an in-scale-band spacing value that is not a token` | yes |
+| W167 | `travel-buddy-standalone/src/features/wall/components/__tests__/WallDesignSystem.component.test.tsx:231#nothing in the Wall lays content out in a grid` and `travel-buddy-standalone/src/features/wall/components/__tests__/WallDesignSystem.component.test.tsx:261#an object with many actions renders at most THREE chips` | yes |
+| W168 | `travel-buddy-standalone/src/features/wall/components/__tests__/WallDesignSystem.component.test.tsx:372#no viewer-facing string names a piece of the Wall machinery` | yes |
+
+### 11.2 What would move each, and who can do it
+
+| id | blocker, stated as an action | who | verdict |
+|---|---|---|---|
+| W71 | A speech-capture surface that produces text and hands it to `generateSuggestions`. The Wall's half is executed and under test; the Wall cannot tell a transcript from a keystroke, so **no Wall-side change can move this row in either direction**. | **Global Input Intelligence lane** (`census-input-intelligence.md`) | ? |
+| W146 | The existing harness pointed at a real Postgres: `_setTestClient` replaced by a supabase-js client against a `supabase start` stack or the CI project, the same 150-post corpus seeded, Wall flags on, p50/p95 of `GET /wall?mode=for_you` read off the wire. **Attempted this pass and abandoned for a stated reason**: this worktree has no database, no `SUPABASE_URL` and no service-role key in its environment, and the only writable project is shared CI — seeding it is an infrastructure change, and the CI workflow files are outside this lane's ownership. No Wall code is needed, and the depth ratchet (~92 serialized round trips) already says what the answer will hinge on. | **CI / infrastructure owner** | ? |
+| W149 | A frame-time capture on a named device — a Perfetto trace or Flipper frame graph on the supported Android floor scrolling a 60-item For You feed with video, reporting the share of frames over 16.7 ms. Needs hardware and a person; needs no Wall code. | **A person with a device** | ? |
+| W159 | A named designer's sign-off, or refusal, against a screenshot set of the five object renderers at the supported width range, dated in this census. *"Generous"* is a judgement and will never stop being one. The token-band scanner means the spacing cannot drift away from whatever is signed off. | **Owner / design** | ? |
+| W167 | The same sign-off, answering one question the code cannot: whether one action row + at most three chips + at most one context thread per card is already too much. Three of the four clauses are structural and are checked; **"excessive" is the whole of what remains.** | **Owner / design** | ? |
+| W168 | An unmoderated comprehension test — five to eight people who have never seen the Wall, with the failure threshold agreed in advance and the result recorded here. The machinery-vocabulary scan stops the one regression that could break comprehension silently; it cannot establish that comprehension exists. | **A researcher and users** | ? |
+
+**Note on the design rows.** `docs/architecture/brand-palette-decision.md` is live and was
+checked against W159 and W167 rather than assumed irrelevant. It does not reach either:
+it amends colour clauses and says so twice, and neither row fails on a colour. W159 fails
+on density and whitespace, W167 on quantity. A palette ruling is not a designer's
+sign-off — §10.3 said that, and re-opening the rows confirms it rather than merely
+repeating it.
+
+### 11.3 One citation repaired, verdict untouched
+
+W71 carried this file's only broken anchor (`check:doc-citations`). The row claimed the
+shared alias table is applied at line 164 of
+`artifacts/api-server/src/lib/inputAssistance/gateway.ts`. **The claim is still true and
+the pointer is not**: the gateway delegated normalization to the §40 QueryNormalizer, the
+alias application moved with it, and that line is now blank. Repointed
+by reading the claim: the gateway normalizes at
+`artifacts/api-server/src/lib/inputAssistance/gateway.ts:175#normalizeQuery`, and the
+shared table is applied inside it at
+`artifacts/api-server/src/lib/inputAssistance/queryNormalizer.ts:565#applyAliases(deEmoji)`,
+from the same definition the row already cited
+(`artifacts/api-server/src/routes/discoverySearchHelpers.ts:148#export function applyAliases(q: string): string {`).
+**W71's verdict is unchanged** — the pointer moved, the finding did not.
+
+### 11.4 Headline — unchanged, and that is the honest result
+
+> **Wall, at `7c6255de7` (worktree): 205 requirements · 199 BUILT-AND-CORRECT · 0
+> BUILT-BUT-WRONG · 0 NOT-BUILT · 6 CANNOT-VERIFY → CONSTRUCTED 199 / 205 = 97.1 % ·
+> CORRECT 199 / 205 = 97.1 %.** No row moved. The six `?` rows resolve to **two machine
+> measurements nobody has the machine for** (W146 a database, W149 a device), **three
+> judgements that need a named person** (W159, W167, W168) and **one that belongs to
+> another lane's engine** (W71). None of the six is blocked on Wall code, and this pass
+> establishes that by opening each rather than by asserting it.
+
+| BUILT-AND-CORRECT | **199** |
+|---|---|
+| BUILT-BUT-WRONG | **0** |
+| NOT-BUILT | **0** |
+| CANNOT-VERIFY | **6** |
+
+199 + 0 + 0 + 6 = 205.
+
+**The Wall is not at 100 % and is not deployed.** 97.1 % is the correct figure, the
+remaining 2.9 % is six rows, and §3's deployment facts stand unchanged: the Wall is
+flag-dark and no viewer has seen any of it. Code on a detached head in a worktree is not
+merged, and merged is not deployed.
