@@ -36,14 +36,44 @@ import type {
 export const POLICY_VERSION = 'input-2026-08';
 
 // The §44 events every field participates in unless it opts to log less.
+//
+// WHY THIS LIST GREW. Until the serve log existed (migration 2950 +
+// lib/inputAssistance/telemetry.ts) this list was DECLARATIVE ONLY — census G33
+// records that `telemetryPolicy` is enforced on the client and read by nothing
+// on the server. It named five of the fourteen §44 event names, which was
+// harmless while nothing consulted it.
+//
+// It is now load-bearing: POST /input-assistance/telemetry REFUSES an event a
+// field's policy does not declare. Left at five, that gate would have silently
+// discarded nine of the funnel arms SmartInput actually emits — the ignored
+// arm, the edited arm, the validation impression and both §19/§10 acceptance
+// events — which is the defect this build exists to close, reintroduced one
+// layer down. So a standard field now declares the funnel it participates in.
+//
+// `downstream_task_completed` and `action_completed` are deliberately INCLUDED:
+// both are emitted by a feature screen rather than by SmartInput, and a policy
+// that refused them would make the outcome arm unreachable before its caller is
+// ever written.
+//
+// The NARROW list below (METADATA_ONLY_TELEMETRY) is what a private-message
+// field gets, and it is unchanged. That contrast is the point of the mechanism.
 const STANDARD_TELEMETRY: InputTelemetryPolicy = {
   logRawText: false,
   events: [
     'input_opened',
+    'query_length_changed',
+    'suggestion_request_started',
     'suggestion_request_completed',
     'suggestion_rendered',
     'suggestion_selected',
+    'suggestion_dismissed',
     'raw_search_submitted',
+    'manual_value_kept',
+    'validation_shown',
+    'correction_accepted',
+    'disambiguation_selected',
+    'action_completed',
+    'downstream_task_completed',
   ],
 };
 

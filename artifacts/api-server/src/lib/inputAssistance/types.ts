@@ -339,4 +339,17 @@ export interface SuggestResponse {
   context: InputContext;
   fieldId?: string;
   suggestions: InputSuggestion[];
+  /**
+   * §44/§57 — the serve's OWN wall-clock cost in milliseconds, measured around
+   * candidate generation in routes/inputAssistance.ts. Additive and optional so
+   * an older client is unaffected.
+   *
+   * This is the number no client can compute: a device only ever observes
+   * server time PLUS network. The client hands it back on
+   * `suggestion_request_completed` alongside the round trip it did see, and the
+   * difference between the two is the network. Census G372 ("No latency
+   * instrumentation anywhere; the response carries no server timing") is the
+   * row this field answers the first half of.
+   */
+  serverMs?: number;
 }
