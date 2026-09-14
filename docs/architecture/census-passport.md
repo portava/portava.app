@@ -917,7 +917,7 @@ Every row below was opened and re-measured; the verdicts are unchanged unless §
 | P50 | Confirmed unchanged and deliberately so: the band is still `stats.stamps + stats.trips * 2 + (verified ? 3 : 0)`. §13.2's work did NOT touch it, and the new test asserts `confidence` still reports one of the three existing bands, so a recalibration remains a deliberate diff. D-WORD. | W |
 | P61 | Re-executed with counting greps, not samples: `grep -rn stamp_type` over `src/**` (`.ts` and `.sql` both) returns **0** occurrences of `'place'` and **0** of `'contributor'`, and `2309_passport_stamp_type_vocabulary.sql:116#CHECK` is still the only migration defining the constraint. The nine that ARE covered were each re-confirmed present in that array. Nine of eleven stands. **The classification is corrected** — see §13.4. | W |
 | P75 | Built and closed. §13.1. | **C** |
-| P77 | Re-executed: `travel-buddy-standalone/src/components/MemoriesTab.tsx:917#[['all',` still offers exactly two views. **Deferred** — see §13.5, for a reason §12.7 did not have. | W |
+| P77 | Re-executed: `travel-buddy-standalone/src/components/MemoriesTab.tsx:769#const MEMORY_VIEW_TABS` offered exactly two views when this was written. **Superseded 2026-09-14 (§17.6): four of five now exist; the verdict is unchanged, held by People.**. **Deferred** — see §13.5, for a reason §12.7 did not have. | W |
 | P126 | Built and closed. §13.1. | **C** |
 | P154 | Confirmed: it is P45/P50 under a phase number and moves when they do. | W |
 | P159 | Re-executed, and the row's word *"absent"* is too strong — see §13.4. Still W: two of three. | W |
@@ -1076,7 +1076,7 @@ what it cites.
 | **P42** | *"Neither Compass nor Discovery reads the discovery-card variant"*, and §12.6's *"Compass's traveler recommendation list does not"* consume explicit intent. | **Both Compass people-ranking surfaces now consume it.** The compatibility tool at `artifacts/api-server/src/compass/CompassTools.ts:1629#readVisibleExplicitIntent(sc, targetId` (already known), AND the traveler suggestion list at `artifacts/api-server/src/routes/compass.ts:3770#const viewerIntentRead = await readVisibleExplicitIntent`, which reads each candidate at the visibility the viewer is entitled to and applies the shared bounded weight through `artifacts/api-server/src/routes/compass.ts:4223#export function applyExplicitIntentWeighting`. The demand side is **two of two in Compass**, not one of four. The row's own citation is also stale twice over: the function is at `artifacts/api-server/src/services/passport/PassportConsumerProjections.ts:519#readVisibleExplicitIntent`, not `:445` (`:445` is now `explicitIntentBoost`), and `buildConsumerProjection`'s three named call sites became seven in §12. |
 | **P59** | *"the tree's only current posture on visas is the OPPOSITE one — the three places the word appears are Layover disclaimers (`LayoverSafetyEngine.ts:585`, `:619`, `:628`)"*. | **Wrong on the count, the lines and the posture — and the truth makes the N stronger.** Those three Layover lines are now `artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:1198#Verify visa rules`, `:1246` and `:1256`. More to the point the word appears in two systems the row did not see. (1) A whole curated entry-intelligence subsystem: `artifacts/api-server/src/lib/entryRequirements.ts:4#HONESTY CONTRACT` — admin-curated corridor rows only, every row carrying an `official_source_url`, unknown corridors explicit, and `artifacts/api-server/src/lib/entryRequirements.ts:20#export const DISCLAIMER` shipped with every assessment. (2) A live abuse policy that classifies the *peer-to-peer* version of this capability as fraud: `artifacts/api-server/src/domain/telegraph/policies/travelScamSignals.ts:111#family: "VISA_HELP"`, whose patterns include the embassy-insider and fast-track-your-visa offers. So the tree does not merely lack a Visa Buddy; **it ships a policy that reads one as a scam signal and an architecture that answers visa questions from official sources with a disclaimer.** |
 | **P61** | *"there is **no Contributor stamp type at all** (contributions surface as a credential via `PassportReputationService`, never as a stamp)"*. Hence *"nine of eleven"*. | **There is one, it is seeded, and it has a live producer.** `artifacts/api-server/src/migrations/0198_place_contributor_stamps.sql:9#INSERT INTO stamp_definitions` seeds three definitions carrying `stamp_type = 'place_contributor'`, awarded at 10 / 50 / 100 posts by `artifacts/api-server/src/lib/places/placeCollectionsWorker.ts:172#definitionSlug: "place_contributor"`, and the label reaches the Passport's own collection verbatim through `artifacts/api-server/src/services/passport/UnifiedStampService.ts:219#stampType: r.stamp_definitions?.stamp_type ?? null`, with TABLE 16 provenance `contribution_earned` (`artifacts/api-server/src/services/passport/UnifiedStampService.ts:100#case "posts"`). **Ten of eleven, not nine.** |
-| **P77** | *"two of five"* Memories views. | **One of five.** §15 names Trips, Places, People, Timeline and Map. `travel-buddy-standalone/src/components/MemoriesTab.tsx:917#[['all', 'All'], ['timeline', 'Timeline']]` offers exactly two tabs, and only **Timeline** is one of the five — "All" is the ungrouped grid, which is the surface the five views are views *of*, not a sixth view. The row is one worse than it says. |
+| **P77** | *"two of five"* Memories views. | **One of five.** §15 names Trips, Places, People, Timeline and Map. `travel-buddy-standalone/src/components/MemoriesTab.tsx:769#const MEMORY_VIEW_TABS` (**superseded 2026-09-14 — see §17.6; the two-tab catalogue this cited is gone, the verdict is not**) offers exactly two tabs, and only **Timeline** is one of the five — "All" is the ungrouped grid, which is the surface the five views are views *of*, not a sixth view. The row is one worse than it says. |
 
 ### 14.3 The fourteen, re-executed
 
@@ -1092,7 +1092,7 @@ are not.
 | P59 | **Evidence false — see §14.2, and the correction strengthens the N.** Re-confirmed absent: `canProvideVisaBuddyService`, `VisaBuddy` and `visa_buddy` return **0** across the server and client trees, and `artifacts/api-server/src/services/passport/PassportProjectionService.ts:740#export function buildOwnerCapabilities` returns exactly six keys. Now pinned by `artifacts/api-server/src/test/passportProjection.test.ts:579#§11 capabilities — six built` so a seventh cannot arrive by accident. | N |
 | P61 | **Evidence false on Contributor — see §14.2. Ten of eleven, not nine.** PLACE is the only type with no representation, and re-executing it shows the gap is narrower than "no label": the column is already written (`artifacts/api-server/src/services/passport/PassportStampService.ts:146#place_id: placeId ?? null`), and **no caller anywhere passes `placeId`** — all five `createStamp` call sites (`routes/location.ts`, `routes/hiddenGems.ts`, `routes/geofence.ts`, `routes/safeReturn.ts`, `routes/airport.ts`) omit it. So Place needs a CHECK label (migration, owner) AND a rule for what earns one (product, D-STAMP); it does not need schema work. Pinned by `artifacts/api-server/src/test/passportStampTypeVocabulary.test.ts:202#Contributor exists, Place does not`. | W |
 | P66 | Unchanged and still undecidable statically. The perforated half re-confirmed at all four cited files. New evidence the earlier passes did not have, and it is NOT enough to close the row: three RENDERED premium stamps are committed at the repo root (`premium-test-epic.png`, `premium-test-common.png`, `premium-hero-raw.png`) and the epic one shows a gold metallic ring, a scalloped edge, a unique per-city motif and an "OPEN EDITION · EPIC" rarity band. They arrived as a side effect of an unrelated Discovery PR (`a745ba11b`), no code in the tree references them, and a repo-root PNG of unknown provenance is not a rendered screen of the shipped app. | ? |
-| P77 | **Evidence false — one of five, not two (§14.2).** Re-executed: `travel-buddy-standalone/src/components/MemoriesTab.tsx:917#[['all', 'All'], ['timeline', 'Timeline']]` still offers exactly two tabs. §13.5's sequencing reason holds and is now sharper: People is blocked on memory-participant visibility, which is live in this tree as another lane's in-flight work (`artifacts/api-server/src/services/memory/**`), and Trips / Places / Map are client surfaces in `travel-buddy-standalone/**`. No part of this row lies in this census's own paths. | W |
+| P77 | **Evidence false — one of five, not two (§14.2).** Re-executed: `travel-buddy-standalone/src/components/MemoriesTab.tsx:769#const MEMORY_VIEW_TABS` (**superseded 2026-09-14 — see §17.6; the two-tab catalogue this cited is gone, the verdict is not**) still offers exactly two tabs. §13.5's sequencing reason holds and is now sharper: People is blocked on memory-participant visibility, which is live in this tree as another lane's in-flight work (`artifacts/api-server/src/services/memory/**`), and Trips / Places / Map are client surfaces in `travel-buddy-standalone/**`. No part of this row lies in this census's own paths. | W |
 | P128 | Confirmed unmoved: `travel-buddy-standalone/src/theme/passportTokens.ts:8#paper:        '#FFFFFF',` and `travel-buddy-standalone/src/theme/passportTokens.ts:11#ink:          '#1C1C1A',`, under a file header that states the direction in its first line. `grep -ci` over that file returns **0** for each of purple, navy, teal, indigo and violet — five counts, re-run, none truncated. D-DESIGN. **Half-closed 2026-09-14 — surfaces ratified, `dark-mode first` still open (§15.3).** | W |
 | P129 | Confirmed unmoved: the identity accent is `travel-buddy-standalone/src/theme/passportTokens.ts:15#seal:         '#D32F2F',` — red. No purple token exists. D-DESIGN. **MOVED W→C 2026-09-14 (§15.1).** | W |
 | P132 | Confirmed unmoved: no blue or teal token exists in the passport palette at all; availability and shared-context surfaces run on paper/ink/seal. D-DESIGN. **MOVED W→C 2026-09-14, and this finding was FALSE — it read one palette file and the screens use the other (§15.4).** | W |
@@ -1448,7 +1448,7 @@ reader itself remains unbuilt and small.
 | P59 | Re-executed with counting greps: `canProvideVisaBuddyService`, `VisaBuddy` and `visa_buddy` return **0** across both trees outside the guard test itself, and `buildOwnerCapabilities` still returns six keys. | A product decision that a seventh capability should exist and gate something. Today it would gate nothing and be read by nothing. `VISA_BUDDY_CAPABILITY` on the blocker ledger. | **Owner / product** | N |
 | P61 | Re-executed: `2309_passport_stamp_type_vocabulary.sql` still contains **no** `'place'` label; `place_contributor` is seeded 8× by `0198_place_contributor_stamps.sql`. Ten of eleven. | A **migration** adding the `place` CHECK label, plus a product rule for what earns one. **This lane was instructed not to write a migration and did not.** | **Owner** (label) + **product** (rule); then a migration lane | W |
 | P66 | Re-executed: the perforated half holds (`travel-buddy-standalone/src/components/PassportStamps.tsx:104#borderStyle: 'dashed',`), and the three repo-root PNGs are still referenced by **nothing but this census**. | A designer's sign-off against a rendered screen of the shipped stamp surfaces, recorded here with a date. Noted for whoever runs it: the tree DOES ship rarity affordances the earlier passes did not credit — `travel-buddy-standalone/src/components/StampDetailArtwork.tsx:158#rarityBadge` plus sawtooth/wave frames and a legendary glow ring — so the question put to the designer is "is this premium enough", not "is there any premium treatment". | **Owner / design** | ? |
-| P77 | Re-executed: `travel-buddy-standalone/src/components/MemoriesTab.tsx:917#[['all', 'All'], ['timeline', 'Timeline']]` still offers exactly two tabs. One of five. | Four views. People is blocked on memory-participant visibility under `artifacts/api-server/src/services/memory/**` — another lane's tree. Trips / Places / Map are buildable client work, but they reach at most four of five, so the row cannot close without the People blocker lifting first. | **Highlights/Memories lane** first, then a client lane | W |
+| P77 | Re-executed: `travel-buddy-standalone/src/components/MemoriesTab.tsx:769#const MEMORY_VIEW_TABS` (**superseded 2026-09-14 — see §17.6; the two-tab catalogue this cited is gone, the verdict is not**) still offers exactly two tabs. One of five. | Four views. People is blocked on memory-participant visibility under `artifacts/api-server/src/services/memory/**` — another lane's tree. Trips / Places / Map are buildable client work, but they reach at most four of five, so the row cannot close without the People blocker lifting first. | **Highlights/Memories lane** first, then a client lane | W |
 | P128 | Re-executed: `useColorScheme` returns **0** across `travel-buddy-standalone/src/theme/`, `src/components/passport/` and `src/features/passport/`. The Passport has no dark mode at all, not a non-default one. | A ruling on whether *"dark-mode first"* is stale in the same way its *"deep navy/black surfaces"* half was. Building a dark theme today would contradict the palette decision's own ratified light paper identity. `PASSPORT_DARK_MODE_FIRST` on the blocker ledger. | **Owner** | W |
 | P133 | Re-executed: `blurview`, `backdropFilter` and `expo-blur` return **0** across both passport directories; the portrait is still in `:671#leftCol:`. Two of four. | The same layout ruling P13 needs, plus a decision on whether "restrained glass" survives the paper metaphor at all. | **Owner / design** | W |
 | P154 | Confirmed: it is P45 and P50 under a phase number. **P45 moved and P154 did not**, because P154's own text names the fabricated central NUMBER, which is P50. | P50 moving. | **Owner / product** | W |
@@ -1504,3 +1504,136 @@ soft-dismiss column" is a grading question this pass did not have standing to se
 **This census is NOT 100 %, is not close to it on the rows that remain, and none of it is
 deployed.** The Passport code in this worktree is on a detached head that has not been
 merged; merged would not be deployed either. Nothing in §16 describes running software.
+
+## §17 — The Passport UI pass, 2026-09-14: four views built, ZERO verdicts moved, and a rejected requirement pinned so it cannot be resurrected
+
+This section records a build pass in which **no verdict changed**. That is the
+result, not a failure to reach one: of the five rows the pass opened, three are
+held by a ratified owner decision that says in terms not to build what they ask
+for, one is held by another lane's data model, and one is held by a designer's
+judgement that engineering cannot supply. Code was written for all five anyway —
+what could be built inside the decisions was built, and what could not was
+PINNED so that the next sweep reads a reason rather than an absence.
+
+### 17.1 The five rows
+
+| id | before | after | why it did not move |
+|---|---|---|---|
+| P13 | W | **W** | Owner ruling. `docs/architecture/brand-palette-decision.md:131` rules on this row BY NAME — *"stays W"*, change *"none"* — as §4's own worked counter-example. |
+| P128 | W | **W** | Owner ruling, same artifact, line 129: *"deep navy/black surfaces … the light paper identity is ratified"*. On the blocker ledger as `PASSPORT_DARK_MODE_FIRST`. |
+| P133 | W | **W** at two of four clauses. The portrait-over-hero rebuild is ruled out by the same artifact (line 130, *"it was never a colour row"*); whether restrained glass survives the paper metaphor is genuinely UNDECIDED and was left undecided. |
+| P77 | W | **W** | Four of §15's five views now exist. The fifth, People, needs a participant field `PassportMemory` does not have. Four of five does not close a row that names five. |
+| P66 | X | **X** | Render evidence was produced. The designer's question is *"is this premium ENOUGH"*, not *"is there any premium treatment"*, and that is not an engineering verdict. |
+
+### 17.2 The chronology, because a superseded requirement must prove its authority
+
+`census-passport.md` was first committed **2026-09-09** (`42aeac38e`).
+`docs/architecture/brand-palette-decision.md` was ratified **2026-09-14
+09:28:13** (`5b60439b1`) — **five days later**, and it rules on P13, P128, P132,
+P129 and P133 individually rather than as a class. The later artifact therefore
+supersedes the earlier prose for those rows, and the ruling's own sentence bounds
+how far: *"The mockup approves the palette only — not a new layout. Build upon
+existing components and shared tokens; do not rebuild working screens."*
+
+**The superseded behaviour was NOT implemented.** No Passport dark mode was
+added; `useColorScheme` was not introduced; the portrait was not moved over the
+hero; no theme token changed. Those are the three things the ruling forbids and
+none of them is in this pass's diff.
+
+**They also did NOT become `C`.** A requirement removed from scope is not a
+requirement that was met, and `W` — built, and not what the spec's prose asked
+for — remains the truthful cell for a screen that exists and deliberately
+differs from an older description of it.
+
+### 17.3 The census-schema defect this exposes, restated here rather than worked around
+
+`type Verdict = "C" | "W" | "N" | "X"`
+(`artifacts/api-server/src/scripts/checkCensusIntegrity.ts:119#type Verdict`)
+has **no terminal state for a requirement intentionally removed from scope**. A
+row written `SUPERSEDED` parses to nothing and drops out of the denominator,
+which is worse than any of the four wrong answers. So these three rows sit at
+`W` with the ruling cited beside them, and the missing fifth verdict is recorded
+as a SCHEMA DEFECT — in `docs/architecture/reconciled-baseline-v1.md` §11 and
+again here — rather than papered over by abusing `C`, `N` or `X`.
+
+### 17.4 The guard, so a future sweep cannot silently resurrect the rejected work
+
+`travel-buddy-standalone/src/components/passport/__tests__/PassportRatifiedIdentity.decision.component.test.ts`
+is a DECISION test, not a behaviour test: every assertion's failure message names
+the artifact, the commit `5b60439b1` and the date, so an agent that trips it
+reads *why the thing it was about to add was rejected* instead of a bare
+red. It also discharges §15.5's cross-lane request — P129 (seal red) and P132
+(teal-ink availability) were closed `C` on the ruling and were pinned by NO test
+until now.
+
+Deliberately NOT guarded: P133's *"restrained glass"*. Freezing an open question
+would be this pass quietly deciding it. `expo-blur` is already a dependency, so
+a grep-satisfying import was available and was not taken.
+
+### 17.5 P77 — what was built, and the exact shape of the fifth
+
+Built: **Trips** (keyed by `tripId`, titled from `TripRow.title`), **Places**
+(city + country, NFC-normalised on the same key convention as
+`travel-buddy-standalone/src/utils/destinationGrouping.ts`), and **Map** (real
+MapLibre pins, one per city, trip destination coordinate preferred and
+`cityCentroids` as fallback). **Timeline** already existed. Leftover buckets are
+RENDERED rather than dropped, and the Map states the count it cannot plot.
+
+**People's dependency, precisely:** `PassportMemory`
+(`travel-buddy-standalone/src/services/passportStamps.ts:51#export interface PassportMemory`)
+carries no participant field, and the memory-participant visibility contract
+belongs to the Highlights/Memories lane under
+`artifacts/api-server/src/services/memory/`. The component test **asserts
+People's ABSENCE**, so the gap stays visible in a green suite instead of being
+inferrable only from a missing tab.
+
+### 17.6 Evidence corrected: the "exactly two tabs" citation, four times over
+
+Four rows in §12.7, §13.5, §14.2 and §16 cite
+MemoriesTab.tsx line 917, anchored on the two-entry array literal for the
+statement *"still offers exactly two tabs"*. **That statement was true when each
+was written and is false now**, and the cited TEXT no longer exists — this is a
+re-read, not a repoint. The catalogue is now
+`travel-buddy-standalone/src/components/MemoriesTab.tsx:769#const MEMORY_VIEW_TABS`
+and holds five entries: `all`, `trips`, `places`, `timeline`, `map`. Each of the
+four rows is marked in place with the date and this section, and none of their
+verdicts changes: P77 was `W` for the People blocker, and still is.
+
+### 17.7 A pre-existing failure that had stopped EVERY test in the standalone package
+
+`scripts/check-test-mocks.mjs` runs first in **both** `pnpm test` and
+`pnpm test:component`, and was failing at clean `HEAD` on three bare
+object-literal `jest.mock` factories in
+`travel-buddy-standalone/src/features/passport/__tests__/TrustDomainsFromServer.component.test.tsx`.
+**No test ran, for any lane, in that package** — confirmed by stashing and
+re-running at `HEAD`, and confirmed independently by CI, which reported exactly
+these three findings on `a6bb9e3bf` and failed the `standalone · check:all` job
+for both of its halves.
+
+Fixed with the guard's own documented escape hatch, written **into the blank
+line above each mock so the file's line count is unchanged** — a first attempt
+added nine lines and broke the anchor at `census-passport.md:1406`.
+
+### 17.8 Headline — unchanged, and that is the point
+
+> **Passport, at `a2dd0837d`: 169 requirements · 158 BUILT-AND-CORRECT · 9
+> BUILT-BUT-WRONG · 1 NOT-BUILT · 1 CANNOT-VERIFY → CONSTRUCTED 167 / 169 =
+> 98.8 % · CORRECT 158 / 169 = 93.5 %.** Identical to §16.5. Three commits, four
+> new test files, 30 new tests and a decision guard moved **no** verdict, because
+> every row they touched is held by a person and not by a keyboard.
+
+| BUILT-AND-CORRECT | **158** |
+|---|---|
+| BUILT-BUT-WRONG | **9** |
+| NOT-BUILT | **1** |
+| CANNOT-VERIFY | **1** |
+
+158 + 9 + 1 + 1 = 169.
+
+**Screenshots were SPECIFIED, not rendered.** No image was produced by this
+pass: there is no playwright, puppeteer or chromium in `node_modules` or on
+`PATH`. The fixture header carries the exact capture commands. A device
+requirement is not discharged from code, and this section does not claim it.
+
+**None of this is deployed.** Three commits on a branch; merged would not be
+deployed either.
