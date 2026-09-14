@@ -134,7 +134,7 @@ structured `city` field behind `showCity` (`isSelf || canSeeLocationContext`) bu
 built the human-readable `label` from the raw city — so a public viewer whose
 owner had not shared location context received `city: null` **but**
 `label: "Traveling · Da Nang"`. The projection test already asserted
-`travelerState.city === null` for that viewer (`passportProjection.test.ts:189#assert.equal(p.travelerState?.city, null);`);
+`travelerState.city === null` for that viewer (`passportProjection.test.ts:194#assert.equal(p.travelerState?.city, null);`);
 the label was the un-gated leak.
 
 Fix: compute a single `displayCity = showCity ? city : null` and derive both the
