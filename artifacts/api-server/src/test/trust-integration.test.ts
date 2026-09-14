@@ -654,10 +654,33 @@ describe("trust-admin routes — cap/override (C22: removal must be observed)", 
     // trust_events unreadable makes `recalculateTrustScore` fail closed and
     // THROW. Before the fix the throw was swallowed by a fire-and-forget
     // `.catch(() => {})` and the route answered `{ ok: true }` regardless.
-    // Mutation that turns this red: restore the fire-and-forget call.
+    // Mutation that turns this red: restore the fire-and-forget call —
+    //   `await recalculateTrustScore(db, targetUserId).catch(() => {});`
+    // in TrustAdminService.adminRemoveOverride.
+    //
+    // ── WHY THIS FIXTURE SEEDS trust_profiles, AND WHY IT HAD TO ────────────
+    // THE PIN WAS A LIE. This case stayed GREEN under the very mutation its own
+    // comment names, and passed for a reason that has nothing to do with
+    // recalculation: `makeTables()` starts `trust_profiles` EMPTY, and the only
+    // thing that ever puts a row there is `recalculateTrustScore`'s own upsert.
+    // So with the recalculation swallowed, the NEXT step —
+    // `confirmOverrideRemoved`'s read-back — found no profile, read `absent`,
+    // and threw on its own account. The route 500'd either way and every
+    // assertion below passed either way.
+    //
+    // Seeding the profile removes that second reason to fail. Now the ONLY
+    // thing standing between this request and a `{ ok: true }` is the thrown
+    // recalculation, which is precisely the property the title claims. Measured
+    // by applying the mutation: red with the seed, green without it.
     const tables = makeTables();
     const capId = "00000000-0000-0000-0000-0000000000c5";
     tables.trust_caps.push(capRow({ id: capId, user_id: USER_A, category: "communication" }));
+    tables.trust_profiles.push({
+      user_id: USER_A, overall_score: 40, public_level: "reliable",
+      plan_attendance: 40, host_quality: 40, communication: 40, respect_safety: 40,
+      location_honesty: 40, content_quality: 40, community_value: 40,
+      guide_accuracy: 40, passport_auth: 40,
+    });
     setClientsWithUnreadable({ tables, table: "trust_events" });
 
     const { status, body } = await httpReq("POST", `/admin/trust/users/${USER_A}/cap/override`, {
