@@ -34,6 +34,16 @@ import {
   certificationHeader,
 } from "./LayoverFeasibility.js";
 import { sanitizeRecommendation, type SafeRecommendation } from "./LayoverPrivacyGuard.js";
+// §13 L117/L122 — the feasibility state a candidate PIN carries. Attached after
+// the privacy sanitiser and deliberately coordinate-free; see that module.
+import {
+  candidateFeasibilityFrom,
+  unbandedCandidateFeasibility,
+  AIRSIDE_UNBANDED_REASON,
+  NO_POSITION_UNBANDED_REASON,
+  STORED_UNBANDED_REASON,
+  type CandidateFeasibility,
+} from "./layoverRankingFeasibility.js";
 import { localHour } from "./AirportTime.js";
 // Sensing §11 — intersect feasibility with live Experience value, forecast,
 // friction and safe-return (census-sensing S85). Behind
@@ -428,8 +438,23 @@ export interface GenerateRecommendationsOptions {
  * the stable-identity path where that state is what suppresses an admin-hidden
  * card. See the stale-scan below.
  */
+/**
+ * A sanitised card plus the §13 feasibility state its PIN carries.
+ *
+ * The two are separate objects rather than one widened `SafeRecommendation`
+ * because `sanitizeRecommendation` is a PRIVACY boundary: everything it emits
+ * has been through it, and a field bolted into its return type would be a field
+ * that looks sanitised without having been. `feasibility` is assembled here,
+ * from the envelope this request cut, and is coordinate-free by construction —
+ * see `layoverRankingFeasibility`.
+ */
+export type CertifiedRecommendation = SafeRecommendation & {
+  /** census L122 — the band the map pin renders. Never absent. */
+  feasibility: CandidateFeasibility;
+};
+
 export type GenerateResult =
-  | { ok: true; recommendations: SafeRecommendation[] }
+  | { ok: true; recommendations: CertifiedRecommendation[] }
   | { ok: false; message: string };
 
 export async function generateRecommendations(
@@ -540,7 +565,15 @@ export async function generateRecommendations(
   // envelope, a bound that could not be computed — each leaves the card
   // standing and lets `assess` rate it as before. Nothing is withheld without
   // the proof.
-  const envelope = safeEnvelope(usableMinutes, airportPoint(airport));
+  // `certified.confidence` is NOT decoration. It is what contracts the planning
+  // edge (`ENVELOPE_UNCERTAINTY_BUDGET` holds back 25% of the window at LOW,
+  // which is what every production session on this tree certifies), and
+  // `routes/airport.ts` has been publishing the envelope FOR THE MAP with it
+  // since census L63 — `safeEnvelopeFor(airport, record)`. Omitting it here
+  // banded candidates against a WIDER disc than the one the traveller was
+  // shown: the map drew the contracted edge and nothing was ever measured
+  // against it. One envelope, one confidence, both surfaces.
+  const envelope = safeEnvelope(usableMinutes, airportPoint(airport), certified.confidence);
   const bands = await bandCandidates(
     envelope,
     discoveryCandidates.map((c) => ({ key: recommendationKey(c), point: c.point })),
@@ -824,7 +857,14 @@ export async function generateRecommendations(
   return { ok: true, recommendations: rows.flatMap((row, idx) => {
     const status = statusByKey.get(keys[idx]);
     if (status === USER_HIDDEN_RECOMMENDATION_STATUS) return [];
-    return [sanitizeRecommendation({
+    // census L122 — the pin's band, from the envelope THIS request cut. An
+    // airside row was never handed to `bandCandidates` (it has no position and
+    // no landside leg), so it gets the explicit unbanded state with the reason,
+    // not a measured-looking `UNCERTIFIED` it never earned.
+    const feasibility = row.inside_airport
+      ? unbandedCandidateFeasibility(AIRSIDE_UNBANDED_REASON)
+      : candidateFeasibilityFrom(bands.get(keys[idx]), NO_POSITION_UNBANDED_REASON);
+    return [{ ...sanitizeRecommendation({
       id:              idByKey.get(keys[idx]),
       recType:         row.rec_type,
       title:           row.title,
@@ -847,7 +887,7 @@ export async function generateRecommendations(
       sortOrder:       row.sort_order,
       placeId:         row.place_id ?? null,
       planItemId:      null,
-    })];
+    }), feasibility }];
   }) };
 }
 
@@ -883,7 +923,7 @@ export const USER_HIDDEN_RECOMMENDATION_STATUS = "hidden" as const;
  * route reads by id — so an admin can still see and act on everything.
  */
 export type RecommendationsRead =
-  | { ok: true; recommendations: SafeRecommendation[] }
+  | { ok: true; recommendations: CertifiedRecommendation[] }
   | { ok: false; message: string };
 
 export async function getRecommendations(
@@ -911,7 +951,15 @@ export async function getRecommendations(
       return { ok: false, message: String(error.message ?? "layover_recommendations unreadable") };
     }
 
-    return { ok: true, recommendations: (data ?? []).map((row: any) => sanitizeRecommendation({
+    // census L122 — the stored path re-cuts NO envelope. It has no airport, no
+    // session and no certified window: `getRecommendations` takes a sessionId
+    // and a client, which is all the route needs to serve a card it wrote
+    // earlier. So every card here is explicitly UNBANDED with the reason, and
+    // the client renders "we have not re-checked this against your current
+    // window" rather than a band that would be a claim about an older one. The
+    // route regenerates whenever `layover_safety_engine_enabled` is on, so the
+    // banded path is the one a traveller actually gets there.
+    return { ok: true, recommendations: (data ?? []).map((row: any) => ({ ...sanitizeRecommendation({
       id:             row.id,
       recType:        row.rec_type,
       title:          row.title,
@@ -938,6 +986,8 @@ export async function getRecommendations(
       sortOrder:      row.sort_order,
       placeId:        row.place_id,
       planItemId:     row.plan_item_id,
-    })) };
+    }), feasibility: unbandedCandidateFeasibility(
+      row.inside_airport ? AIRSIDE_UNBANDED_REASON : STORED_UNBANDED_REASON,
+    ) })) };
   }
 }
