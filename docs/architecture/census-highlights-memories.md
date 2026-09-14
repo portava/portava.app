@@ -4185,3 +4185,143 @@ an invariant actually lives:
 
 Five rows to `C`, three from `N` to `W`. CONSTRUCTED moves this time — three things that did not
 exist now do — and the gap closes by 0.7 points, which is what one honest section costs.
+
+---
+
+## L. §K.4 overstated the blast radius, and a second live instance of the same defect — 2026-09-14, the INTEGRATION OWNER
+
+Written after cherry-picking `e291dab4e`, `dc4909918` and `6cbff1112`. **No verdict
+moves.** The section exists for a correction I owe and two findings the fix turned up.
+
+### L.1 The correction — §K.4's last link was wrong, and I wrote it
+
+§K.4 ends: *"`PassportIdentityCard.tsx` renders it as **"Countries"**, and earns
+the **"World Traveler — 5 or more countries visited"** watermark from the same
+number. Plan five trips, take none, become a World Traveler."*
+
+**The watermark cannot render.** Measured, not assumed:
+
+- `grep -rn "PassportIdentityCard" travel-buddy-standalone/src` returns the
+  component, its own tests, and one stale `jest.mock` for a module the component
+  under test does not import. **No production file imports it.**
+- the watermark's only input is a `countriesVisited` **prop nothing passes** —
+  `grep -rn "countriesVisited=" src` → zero hits — so `(undefined ?? 0) >= 5` is
+  permanently false.
+- `MyWorldScreen.tsx`'s "Countries" tile is a **different number**, built by
+  `buildMapPayload` over the legacy `passport_stamps` table, which carries its own
+  `verification_level` and is not affected.
+
+**What IS real and reachable** is the server's own answer: `GET /me/passport/stats`
+returns the inflated `countries`, and `SharedContextService#loadStampCities` — a
+function whose own comment reads *"places both have been"* — told two strangers who
+had each **planned** Lisbon and taken neither that they shared a city.
+
+So the defect is a false statement the server sends, not a badge a user can earn.
+That is a smaller claim than §K.4 made, and §K.4 made it because I wrote the chain
+down without reading the last link. **A five-link chain is only as verified as its
+weakest link, and I verified four.**
+
+### L.2 A SECOND live instance, found by classifying the whole vocabulary
+
+`routes/hiddenGems.ts` awards **`hidden_gem_explorer`** to a gem's **submitter**
+when an **admin approves the submission**, passing the gem's city and country.
+Approval verifies the gem. It does not verify that the submitter was ever there.
+
+A third instance is latent rather than live: `lib/stamps/criteria/metrics.ts`
+computes `countries_visited` as `distinctStampField(sc, u, "country")` over the
+same unfiltered rows — so planning five trips also pushes a user past the
+`globe_trotter_5` threshold (*"Visit 5 different countries"*), and **the criteria
+engine mints the Globe Trotter stamp from planning.** It is gated by
+`stamp_criteria_engine_enabled`, seeded FALSE at `0179_stamp_criteria_engine.sql`,
+and production's value was not read.
+
+And `compass/CompassGraphEngine.ts` writes `person —visited→ city` edges for every
+non-revoked stamp row carrying a city — literally the word *visited*, from a
+planned trip.
+
+### L.3 Sixty-three slugs, classified — and why it needed a new column
+
+Thirteen slugs evidence presence: nine from `awardTripCompletionStamps` (the trip
+reached `status='completed'`) and four from the GPS-verified postcard path. Fifty
+do not, in four distinct shapes: awarded at **creation** (the defect), **location
+attached but the gate is not presence** (`hidden_gem_explorer`, `first_postcard`),
+**no place written so inert either way** (nine), and **seeded but awarded by no
+writer in this tree** (thirty-seven).
+
+**No existing column could draw the line.** `trip_planner` is category `community`
+and `first_trip_created` is `trip` — and so is `first_trip_completed`.
+`criteria_type` is `automatic` for both. The planned/occurred distinction cuts
+straight through every column `stamp_definitions` already has, which is why 2970
+adds one rather than reusing one.
+
+The rule used, stated so it can be argued with: a slug is presence only when an
+**actual award site can be named**, **its gate is evidence of having been there**,
+and **it attaches the city the claim is made from**. Description text is not
+enough — `first_trip` reads *"Complete your first trip"* and nothing awards it;
+marking it true plants a trap for whoever writes its first writer.
+
+**The weakest admitted link, named:** trip completion is the owner PATCHing
+`status='completed'` — self-attested, not GPS. Admitted because it is the system's
+own record that the journey *occurred*, which is exactly what "created" is not.
+If the owner wants Countries to be GPS-only, nine of the thirteen are wrong.
+
+### L.4 H4 and H239 stay `W`, against the lane's own proposal
+
+The lane proposed both `W → C` and capped both itself. Taking the caps:
+
+- **Migration 2970 has been applied nowhere** — not production, not `portava-ci`.
+  Every precondition, postcondition and `RAISE NOTICE` in it is **unexecuted**. The
+  column the readers now select does not exist in any database, so against a real
+  one every stamp reads `undefined`.
+- **The fixes are at the READER, not the WRITER.** `routes/hiddenGems.ts` still
+  attaches a city to a stamp its gate cannot vouch for, and `criteria/metrics.ts`
+  still makes the same claim on a flag-off path. H4 is a **prohibition**; a
+  prohibition whose violation is filtered out downstream is not satisfied.
+
+This is the rule census-discovery §17.2, census-layover §22.2, §K.2 and
+census-input-intelligence §12.2 all apply. **What would move them:** 2970 applied,
+and the two writers stopping rather than the readers filtering.
+
+### L.5 Two survivors, and the one that should worry a reader most
+
+- **B2** — swapping `trip_planner` INTO the presence list while swapping a genuine
+  slug OUT keeps the count at 13 and satisfied every check. The migration's own SQL
+  postcondition refuses it — **and that postcondition runs only when the migration
+  is applied, which is nowhere.** A count is not an identity assertion.
+- **C** — `/DEFAULT\s+false/i.test(sql)` over the whole file passed **with the DDL
+  set to `DEFAULT true`**, because the header prose and the `COMMENT ON COLUMN`
+  both contain the words. The assertion was matching its own documentation. Without
+  the mutation the migration could have shipped defaulting `true` — the exact
+  opposite of the fail-safe direction its header spends three paragraphs defending.
+- **G, and the gate that did NOT catch it.** Removing `evidences_presence` from
+  `buildStats`'s select was killed by **one** test — the one asserting the select
+  string. All six behavioural tests passed, because the embedded
+  `stamp_definitions(...)` makes the fixture helper return the whole row. Against a
+  real database an unselected column reads `undefined`, every stamp reads
+  non-presence, and **Countries silently becomes 0 for everyone.** A typo mutation
+  (`evidences_presenc`) **survived `check:schema-references` unchanged** — that
+  checker does not parse columns inside embedded resources, so its passing is not
+  evidence that an embedded column reference is valid.
+
+### L.6 A green citation gate is not evidence
+
+`check:doc-citations` reported `RESULT clean` while **eight bare `path:N-M` spans
+were already stale**. Its own output says so: 6,430 citations are UNANCHORED and
+*"nothing here can tell you it is wrong"*. `check:citation-targets` judges
+unanchored **single-line** spans only, so a range is covered by neither. The
+checker found 3 of the 11 repoints this lane made; a person reading the claim found
+the other 8.
+
+### L.7 Tally — unchanged
+
+| figure | section K | **now** |
+|---|---:|---:|
+| Denominator | 266 | **266** |
+| BUILT-AND-CORRECT | 61 | **61** |
+| BUILT-BUT-WRONG | 129 | **129** |
+| NOT-BUILT | 74 | **74** |
+| CANNOT-VERIFY | 2 | **2** |
+
+Nothing moved. A false statement the server sends is now filtered at both readers
+that make it, one more live instance and one latent instance are named with their
+chains, and §K.4's overstatement is corrected in the document that made it.

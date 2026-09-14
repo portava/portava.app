@@ -2519,3 +2519,140 @@ the checker before and after the one commit that changed source.
    unchanged and every verdict is unaffected — this is line drift and nothing else. **The line numbers
    above were read one at a time from the file, not derived by adding the diff's offset**, which is the
    failure mode a swapped two-line `sed` produced on this repository once already.
+
+---
+
+## §18 — Two of the five fabrication classes and the whole policy surface, and one row I would not close on its own stated condition
+
+Written by the integration owner after cherry-picking `ebbcfef1f`, `b815485e9` and
+`57ec9c5cd`. OLD verdicts read from `CENSUS_INTEGRITY_DUMP=ALL`, never from prose.
+
+### §18.1 Two moves
+
+| **ID** | **was** | **now** | why |
+|---|---|---|---|
+| **CCL-11** | **W** | **C** | the fifth of five fabrication classes now has a trigger — `CompassGroundingEnvelope.ts#if (!evidence.hasRouteDatum && DURATION_FIGURE.test(s) && TRAVEL_MODE.test(s))` — ungated, on every deployment, exactly like the three beside it that this census already credits |
+| **CCL-15** | **W** | **C** | `lib/compassPolicy.ts#compassPolicyContract` resolves all seven policy values at call time, and each is proven by a decision it changes. The clause complained of *"compile-time constants read from no environment variable, flag or settings row"* — an environment variable is one of the three it names |
+
+**The cap on CCL-15, stated rather than buried:** configuration is by environment
+variable, so it needs a process restart, not a deploy. That is what the clause
+asked for and it is weaker than a settings row an owner could change live. And
+**no deployment sets any `COMPASS_*` variable** — a configurable value nobody has
+configured is still running on its default.
+
+**What turns CCL-11 red:** a tool returning a travel term under a key not in
+`ROUTE_KEYS` (a new route producer would publish unhedged), or `TRAVEL_MODE`
+missing a phrasing a model actually writes. It is a regex boundary, the same class
+of evidence this census already credits for *open status* and *current crowd* —
+not a semantic parser.
+
+### §18.2 CCL-12 stays `W`, against its own stated closing condition
+
+The row says *"What closes it: carry the subject id beside each datum and match it
+against the subject the sentence names."* **That is done** — `bandForSentence`
+attributes evidence per subject and checks a sentence against the subjects it
+names, and eight mutations kill it.
+
+It stays `W` anyway, because the row's *clause* is not met: **a sentence naming a
+subject the turn never returned still falls back to the turn-level band** — which
+is literally *"a general valid citation covering unsupported prose"*.
+
+Closing that by proper-noun detection was considered and refused: the module's own
+posture is *"a guard that fires on innocent sentences gets turned off"*, and test
+F6 pins that a pronoun sentence must not be flagged. **A grader who reads the
+row's stated closing condition as the criterion should move this to `C`** — it is
+satisfied and mutation-proven. Both readings are recorded rather than the
+flattering one. **Red condition for the row as graded:** it moves when a sentence
+naming a proper noun the turn did not return is *refused* rather than covered.
+
+### §18.3 CCL-08 is an OWNER row, and §13.9 classifies it wrong by omission
+
+`CompassDecisionResult` carries eight of the clause's nine parts and no
+confirmation field — re-measured, still true. It was **not** built, and the reason
+is not effort:
+
+The decision vocabulary is advisory (GO/WAIT/STAY/SWITCH/SKIP/RETURN), and the
+engine's only input bearing on CPV2-09's four confirmation classes — money,
+bookings, messages, location sharing — is `walkIn`, whose `false` branch always
+returns SKIP before any enacting decision. **A field that could only ever answer
+"not applicable" is `W` by the same rule this corpus applies everywhere else**, and
+inventing the mapping is what *"Decisions that must not be invented"* forbids.
+
+§13.9 lists CCL-08 among the code-closable rows. It is not one. The owner question
+is a single line: **which decisions, if wired to an action, cross money, booking,
+message or location-sharing?**
+
+### §18.4 A stale sentence, and a census contradicting itself
+
+**CCL-12** says the evidence band is *"reduced to **four** turn-level booleans"*.
+There were **three** booleans and one string array. This census's own CX-04
+re-grade cell says so: *"checks three claim shapes against three booleans —
+`hasVerifiedLive`, `hasWaitDatum`, `hasCrowdDatum`"*. The verdict is unaffected;
+the count was wrong in one cell and right in another.
+
+Also disproved, in a census this lane does not own and therefore only reports:
+**census-trust §14.6's TV-1a** — *"One word. `routes/verification.ts:239#status:`
+writes `pending` where the plan says `created`"* — and §14.7's cross-lane request
+to change it. Both are false at HEAD: that line reads `status: "created"`, landed
+in `bed5f395f` with a registered test, and **the dump already grades TV-1a `C`**.
+§14.6 and §14.7 are prose left behind their own row.
+
+### §18.5 Two mutations survived, and both were guarded only by a comment I had written
+
+- **M13** — adding `durationminutes` to `ROUTE_KEYS` broke nothing. The module
+  header asserted *"a dwell time is not a route"* and **no test said so**, while
+  the tool set spends `durationMinutes` on trip free windows and Live session
+  lengths. So a turn that measured no route at all could have licensed *"it's a
+  ten-minute walk"* — the exact fail-open the trigger exists to prevent, one edit
+  away, guarded by prose.
+- **M18** — `readMinutes` refused `0` and nothing tested it, and the single shared
+  rule was **wrong in both directions**. The dwell horizon is a **divisor**, so
+  `sinceMinutes / 0` is `Infinity` and every dwell would be instantly full weight.
+  The queue tolerance is a **comparison**, where `0` is a legitimate owner ruling
+  ("any measured queue is a reason to wait") that the shared rule made
+  inexpressible. The fix was not the missing test; it was splitting the rule.
+
+### §18.6 A hazard worth naming: a cited line's TEXT is part of the contract
+
+The first build rewrote `export const AWARE_DAILY_CAP = 3;` to read from the
+contract and renamed the `evidence` parameter. **Both lines are quoted verbatim as
+census evidence in three documents, and neither is repointable** — a line number
+can move, a quotation cannot. Caught only by running the checker, and resolved by
+reshaping the build around the anchors rather than editing the census.
+
+**A citation that quotes a source line as its evidence makes that line's text part
+of the census's contract, and a lane that "improves" it silently destroys the
+evidence.** 71 line numbers were repointed across four documents by following the
+identical source line through a diff opcode map — not by offset, not to a nearest
+candidate — with a script that refuses to write any repoint in the batch if one
+proposed line fails to carry its anchor. It was run to refusal once before it wrote
+anything. **Every one of the 45 changed document lines is byte-identical to its
+predecessor once the `:N#` numbers are masked**, verified by script rather than by eye.
+
+### §18.7 Trust and Sensing got a re-measurement, not a build
+
+Both were examined and neither moved. `census-trust §14.6` and `census-sensing
+§10.5` have already classified their residuals row by row into OWNER / DEPLOY /
+CLIENT-LANE, and **no row in either is closable from code the lane owns**. Six of
+their sentences were re-verified as still true — S79's *"zero references"* (grep
+returns 0/0/0), S83's single export, TRV2-08's *"no call to `getRestrictionState`
+in `src/compass/` or `routes/discovery*.ts`"* (0 hits) — and one was disproved
+(TV-1a, above).
+
+### §18.8 Nothing here has met a model
+
+The grounding triggers are regexes over prose **a language model has not been asked
+to produce in this environment**. CPH-01 and CPH-EVAL remain the measurement rows,
+this box has no model provider, and **no answer produced by an actual model has
+passed through the new travel-duration or per-subject checks.** Their false-positive
+and false-negative rates on real Compass output are unmeasured; E4/E5/E6/F6 bound
+that risk only for the phrasings a person could think of.
+
+### §18.9 Tally
+
+> **Compass, after §18: 141 requirements · 100 BUILT-AND-CORRECT · 33 BUILT-BUT-WRONG ·
+> 6 NOT-BUILT · 2 CANNOT-VERIFY → CONSTRUCTED 94.3 % · CORRECT 70.9 %.**
+
+Two rows moved. CONSTRUCTED does not, and should not: nothing here was BUILT that
+was not built before — two fabrication classes and a policy surface that existed as
+constants were made *right*.
