@@ -433,6 +433,13 @@ export interface PresenceDisclosure {
   /** Empty when nothing was withheld. */
   withheld: SharingDenialReason[];
   degraded: boolean;
+  /**
+   * WHY the answer is degraded, named. census L294/C2 asks for "structured
+   * logging AND degraded confidence": a boolean says the count is not a
+   * measurement, and these say which read failed to make it one. Empty
+   * whenever `degraded` is false.
+   */
+  degradedReasons: string[];
 }
 
 /**
@@ -464,8 +471,21 @@ export function disclosePresence(input: {
   ladderEnabled: boolean;
   count: number;
   travelers: PresenceTraveler[];
+  /**
+   * census L294/C2. The PRESENCE READ's own degradation, as `cityPresence`
+   * reports it. Before this, `degraded` was fed by the sharing GATE alone, so
+   * an unreadable `layover_sessions` served `count: 0` with `degraded: false`
+   * — "nobody else is here", stated from a read that never happened.
+   *
+   * OPTIONAL, and its absence degrades nothing: a caller that does not report a
+   * read gets exactly the disclosure it got before.
+   */
+  presenceRead?: { degraded: boolean; reasons: string[] };
 }): PresenceDisclosure {
   const { gate, sessionOptedIn, ladderEnabled } = input;
+  const read = input.presenceRead ?? { degraded: false, reasons: [] as string[] };
+  const degraded = gate.degraded || read.degraded;
+  const degradedReasons = [...read.reasons];
   if (!gate.allowed || !sessionOptedIn) {
     return {
       level: "L0_AGGREGATE",
@@ -473,7 +493,8 @@ export function disclosePresence(input: {
       count: 0,
       travelers: [],
       withheld: gate.allowed ? [] : [...gate.reasons],
-      degraded: gate.degraded,
+      degraded,
+      degradedReasons,
     };
   }
   if (ladderEnabled) {
@@ -483,7 +504,8 @@ export function disclosePresence(input: {
       count: input.count,
       travelers: [],
       withheld: [],
-      degraded: gate.degraded,
+      degraded,
+      degradedReasons,
     };
   }
   return {
@@ -492,6 +514,7 @@ export function disclosePresence(input: {
     count: input.count,
     travelers: input.travelers,
     withheld: [],
-    degraded: gate.degraded,
+    degraded,
+    degradedReasons,
   };
 }

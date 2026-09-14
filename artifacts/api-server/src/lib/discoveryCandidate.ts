@@ -61,15 +61,24 @@
  *                cache entry was. `ageMs` is null when the serve point does not
  *                know (the Compass candidate cache does not expose its stamp).
  *
- *   whyForUser   the ranker's OWN per-feature contributions, positive ones,
- *                strongest first, at most three, named by the feature key
- *                portavaRank already logs to rank_events.features
- *                (categoryAffinity, followedAuthor, distance, …). No new
- *                vocabulary is invented; when no per-user ranker ran on this
- *                serve (the unranked cache-A points, an anonymous caller, or
- *                the Compass path whose scores are a different shape) the list
- *                is EMPTY and `rankedBy` says why. An empty list is "nothing
- *                was computed", never "nothing applies".
+ *   whyForUser   the ranker's OWN reasons, strongest first, at most three, in
+ *                whichever ranker's vocabulary ran. PDE: the positive
+ *                per-feature contributions portavaRank already logs to
+ *                rank_events.features (categoryAffinity, followedAuthor,
+ *                distance, …). Compass: the grounded `RankingFactor.key` list
+ *                its pipeline produced, carried here by
+ *                lib/discoveryRankProvenance. No new vocabulary is invented in
+ *                either case; when no per-user ranker ran on this serve (the
+ *                unranked cache-A points, an anonymous caller) the list is
+ *                EMPTY and `rankedBy` says why. An empty list is "nothing was
+ *                computed", never "nothing applies".
+ *
+ *   provenance   `06` §5's five cache-metadata fields plus the feature vector
+ *                `01` §7 says a cached final order must not be stored without.
+ *                Built by lib/discoveryRankProvenance at the moment the ranker
+ *                returns and REPLAYED verbatim on a cache-B hit — so
+ *                `rankedAt` reports when the rank happened, never when the
+ *                cache was read. Null when no rank is on file for this serve.
  *
  * INERT UNTIL SEEDED ON
  * =====================
@@ -103,6 +112,8 @@
  * than as done.
  */
 import type { RankCandidate, ScoredCandidate } from "./portavaRank.js";
+import type { DiscoveryRankProvenance } from "./discoveryRankProvenance.js";
+import { explainReasons, type DiscoveryReason } from "./discoveryReasonCodes.js";
 import { isFlagEnabled } from "./featureFlags.js";
 import { loadPdeViewer, rankForViewer, type PdePlace } from "./discoveryPde.js";
 import type { DiscoveryLiveRank } from "./discoveryLiveRank.js";
@@ -142,6 +153,29 @@ export interface DiscoveryCandidate {
     servedFrom: string;
   };
   truthClass: DiscoveryTruthClass;
+  /**
+   * `06` §5 cache metadata — model_version, feature_version, candidate source,
+   * recommendation reasons, the feature vector and the ranking timestamp — for
+   * the rank that produced this row's position.
+   *
+   * NULL, never a blank record, whenever no ranker ran for this serve or the
+   * serve point carries no provenance (the unranked cache-A points, an
+   * anonymous caller). A record of empty strings would assert that a rank
+   * happened and had no version; null says no rank is on file.
+   */
+  provenance: DiscoveryRankProvenance | null;
+  /**
+   * `01` §11 — the internal reason codes for this row, each with its
+   * plain-language explanation. Translated by lib/discoveryReasonCodes from the
+   * SAME signal list `whyForUser` reports, so the two can never disagree: one
+   * is the ranker's vocabulary, the other the product's.
+   *
+   * Empty whenever no ranker ran, and also whenever every signal that fired is
+   * one the `01` §10 guardrails forbid rendering. Both are "nothing to say",
+   * and they are deliberately indistinguishable from outside — saying which
+   * would leak what the guardrail withholds.
+   */
+  reasons: DiscoveryReason[];
 }
 
 /** The subset of a served place this module reads. Structural, so the Map can pass its own rows. */
@@ -166,6 +200,14 @@ export interface CandidateServeContext {
    * is off) ⇒ every `whyNow` is null, exactly as before this existed.
    */
   liveRankById?: Map<string, DiscoveryLiveRank> | null;
+  /**
+   * `06` §5 provenance for the rank that produced this page, keyed by served
+   * row id. Present on both Compass serve points — the fresh rank builds it,
+   * and the cache-B hit REPLAYS the stored one rather than re-stamping a new
+   * `rankedAt`, because the ranking timestamp is when the ranker ran and a
+   * cache read is not a rank.
+   */
+  provenanceById?: ReadonlyMap<string, DiscoveryRankProvenance> | null;
   /** Clock, injectable for tests. */
   nowMs?: number;
 }
@@ -206,13 +248,16 @@ export function classifyFreshness(
  * Zero and negative contributions are not reasons FOR the user; they are
  * omitted rather than sign-flipped into a different claim.
  */
-export function whyForUserFromFeatures(features: Record<string, number> | undefined): string[] {
+export function whyForUserFromFeatures(
+  features: Record<string, number> | undefined,
+  limit: number = WHY_FOR_USER_MAX,
+): string[] {
   if (!features) return [];
-  return Object.entries(features)
+  const ordered = Object.entries(features)
     .filter(([, v]) => typeof v === "number" && Number.isFinite(v) && v > 0)
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .slice(0, WHY_FOR_USER_MAX)
     .map(([k]) => k);
+  return Number.isFinite(limit) ? ordered.slice(0, limit) : ordered;
 }
 
 /**
@@ -234,7 +279,21 @@ export function projectDiscoveryCandidate(row: CandidateSourceRow, ctx: Candidat
   const nowMs = ctx.nowMs ?? Date.now();
   const truthClass = classifyTruth(row, ctx.cacheLevel);
   const scored = ctx.scoredById?.get(row.id);
-  const whyForUser = ctx.rankedBy === "pde" && scored ? whyForUserFromFeatures(scored.features) : [];
+  const provenance = ctx.provenanceById?.get(row.id) ?? null;
+  // Both rankers explain themselves, in their own vocabulary and from their own
+  // output: PDE from the per-feature contributions it logs to rank_events, and
+  // Compass from the grounded RankingFactor keys its pipeline produced. Neither
+  // list is composed here. When no ranker ran, the list stays empty and
+  // `rankedBy` says which case that is.
+  // The UNCAPPED signal list, in the ranker's own strength order. `whyForUser`
+  // caps it for display; `reasons` translates the whole list, because a code is
+  // grounded by ANY signal that fired and truncating first would drop a real
+  // reason for a display limit that has nothing to do with it.
+  const signals =
+    ctx.rankedBy === "pde" && scored ? whyForUserFromFeatures(scored.features, Number.POSITIVE_INFINITY)
+    : ctx.rankedBy === "compass" && provenance ? provenance.reasons
+    : [];
+  const whyForUser = signals.slice(0, WHY_FOR_USER_MAX);
   return {
     id: row.id,
     whyNow: whyNowOf(row.id, ctx),
@@ -243,6 +302,8 @@ export function projectDiscoveryCandidate(row: CandidateSourceRow, ctx: Candidat
     confidence: CONFIDENCE_PRIOR[truthClass as keyof typeof CONFIDENCE_PRIOR] ?? CONFIDENCE_PRIOR.unknown,
     freshness: classifyFreshness(ctx.cacheLevel, ctx.cachedAt, nowMs),
     truthClass,
+    provenance,
+    reasons: explainReasons(signals),
   };
 }
 

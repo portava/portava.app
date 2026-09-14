@@ -65,6 +65,23 @@ export type TelegraphEventType =
   | "typing.started"
   | "typing.stopped"
   | "read.updated"
+  /**
+   * Telegraph §13.2 `message.seen`. census-telegraph T179: "`read.updated` …
+   * carries a **thread-level** `lastReadAt`, not a per-message seen fact, so no
+   * consumer can answer 'was *this* message seen'."
+   *
+   * It joins `read.updated` rather than replacing it: the two answer different
+   * questions and both have consumers. `read.updated` says where a person's
+   * marker now is — which is what an unread count needs. This one names the
+   * MESSAGE IDS that crossed the marker on this advance, which is what a sender
+   * watching their own message needs, and what §7.4's unseen-unsend window is
+   * closed by.
+   *
+   * The payload carries ids, a reader and a timestamp, and never a body: a
+   * seen event is a fact about delivery, not a copy of the conversation, and it
+   * is fanned out to a whole thread.
+   */
+  | "message.seen"
   | "request.created"
   | "request.accepted"
   | "request.declined"

@@ -269,6 +269,8 @@ interface State {
   /** Stamp this member's read DURING the unsend write, to force the race. */
   raceRead?: { userId: string; at: string };
   restoreFails?: boolean;
+  /** Rows appended to `messages`, so a new case cannot perturb an old one. */
+  extraMessages?: any[];
 }
 
 function fixture(state: State): Record<string, any[]> {
@@ -285,6 +287,7 @@ function fixture(state: State): Record<string, any[]> {
       { id: M_SEEN, thread_id: THREAD, sender_id: ALICE, created_at: mins(-50), deleted_at: null, edited_at: null, body: "seen already" },
       { id: M_NOT_MINE, thread_id: THREAD, sender_id: BOB, created_at: mins(-10), deleted_at: null, edited_at: null, body: "bob's" },
       { id: M_DELETED, thread_id: THREAD, sender_id: ALICE, created_at: mins(-10), deleted_at: mins(-2), edited_at: null, body: "" },
+      ...(state.extraMessages ?? []),
     ],
   };
 }
@@ -612,5 +615,148 @@ describe("GET /threads/:id/receipts", () => {
     useState({ errorTable: "message_thread_members" });
     const r = await call("GET", `/api/threads/${THREAD}/receipts?messageIds=${M_UNSEEN}`, ALICE);
     assert.ok(r.status >= 400);
+  });
+});
+
+// ── §13.2 `message.seen` — a PER-MESSAGE seen fact ───────────────────────────
+//
+// census-telegraph T179: "`read.updated` … carries a thread-level
+// `lastReadAt`, not a per-message seen fact, so no consumer can answer 'was
+// *this* message seen'."
+//
+// And T70: seen "is whatever the client asserts: `routes/messaging.ts`
+// stamps `message_thread_members.last_read_at = now()` on any authenticated
+// call, with no visibility predicate the server can check."
+//
+// Both are about the same hole from two sides. What is asserted here is the
+// predicate and the fact:
+//   - the threshold a client may assert is a MESSAGE it is authorized to see,
+//     not a clock reading, so "seen" cannot run ahead of what was sent;
+//   - the event names the message ids that crossed, so a consumer can answer
+//     "was this one seen" without re-deriving anything;
+//   - the reader's own messages are never announced as seen by the reader;
+//   - the marker never moves backwards.
+
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { subscribe as subscribeEvents, type TelegraphEvent } from "../lib/telegraphEvents.js";
+
+function recordEvents(userIds: string[]) {
+  const seen = new Map<string, { events: TelegraphEvent[]; stop: () => void }>();
+  for (const u of userIds) {
+    const events: TelegraphEvent[] = [];
+    const stop = subscribeEvents(u, (e) => events.push(e));
+    seen.set(u, { events, stop });
+  }
+  return seen;
+}
+
+const settleEvents = () => new Promise<void>((r) => setTimeout(r, 20));
+
+async function postJson(path: string, asUser: string, body: unknown) {
+  const r = await fetch(`${baseUrl}${path}`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${asUser}`, "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const text = await r.text();
+  let parsed: any = null;
+  try { parsed = JSON.parse(text); } catch { parsed = text; }
+  return { status: r.status, body: parsed };
+}
+
+describe("POST /threads/:id/seen — §7.2's threshold, §13.2's message.seen", () => {
+  it("names the messages that crossed, not a thread-level timestamp", async () => {
+    const c = useState({ bobReadAt: mins(-60) });
+    const rec = recordEvents([ALICE, BOB, CAROL]);
+    const r = await postJson(`/api/threads/${THREAD}/seen`, BOB, { upToMessageId: M_UNSEEN });
+    assert.equal(r.status, 200);
+    // M_SEEN (-50) and M_UNSEEN (-10) are Alice's and both precede the
+    // threshold; M_NOT_MINE is Bob's own and is never "seen by Bob".
+    assert.deepEqual([...r.body.seenMessageIds].sort(), [M_SEEN, M_UNSEEN].sort());
+    await settleEvents();
+    const ev = rec.get(ALICE)!.events.find((e) => e.type === "message.seen");
+    assert.ok(ev, "the sender was not told which of their messages were seen");
+    assert.equal((ev!.payload as any).readerId, BOB);
+    assert.deepEqual([...((ev!.payload as any).messageIds as string[])].sort(), [M_SEEN, M_UNSEEN].sort());
+    for (const x of rec.values()) x.stop();
+    assert.ok(c);
+  });
+
+  it("the marker is the MESSAGE's time, not the request clock — a later message is NOT seen", async () => {
+    // M_LATER is sent after the threshold M_UNSEEN. If the marker were stamped
+    // `now()` the way the legacy read path does, M_LATER would be swept up as
+    // "seen" by a person who has not reached it.
+    const M_LATER = "11110000-0000-4000-8000-00000000000e";
+    const c = useState({
+      bobReadAt: mins(-60),
+      extraMessages: [
+        { id: M_LATER, thread_id: THREAD, sender_id: CAROL, created_at: mins(-5), deleted_at: null, edited_at: null, body: "after the threshold" },
+      ],
+    });
+    const r = await postJson(`/api/threads/${THREAD}/seen`, BOB, { upToMessageId: M_UNSEEN });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.seenMessageIds.includes(M_LATER), false, "a message the reader has not reached was marked seen");
+    assert.equal(r.body.lastReadAt, mins(-10), "the marker was not the threshold message's own timestamp");
+    const bob = c._db.message_thread_members.find((m: any) => m.thread_id === THREAD && m.user_id === BOB);
+    assert.equal(bob.last_read_at, mins(-10));
+  });
+
+  it("does not announce the reader's OWN messages as seen by the reader", async () => {
+    useState({ bobReadAt: mins(-60) });
+    const r = await postJson(`/api/threads/${THREAD}/seen`, BOB, { upToMessageId: M_UNSEEN });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.seenMessageIds.includes(M_NOT_MINE), false);
+  });
+
+  it("refuses a threshold that is not a message in this thread — seen cannot outrun what was sent", async () => {
+    useState({});
+    const r = await postJson(`/api/threads/${THREAD}/seen`, BOB, {
+      upToMessageId: "99990000-0000-4000-8000-000000000099",
+    });
+    assert.equal(r.status, 404);
+    // The code, not just the status: before this route existed, express's own
+    // 404 satisfied `status === 404` and the assertion could not fail.
+    assert.equal(r.body.error, "not_found");
+  });
+
+  it("refuses a threshold that belongs to another conversation", async () => {
+    useState({});
+    // Dave's thread. Bob is not in it and its messages are not his to assert on.
+    const r = await postJson(`/api/threads/${OTHER_THREAD}/seen`, BOB, { upToMessageId: M_UNSEEN });
+    assert.equal(r.status, 403);
+  });
+
+  it("never moves the marker backwards, and says so instead of pretending it did", async () => {
+    // Bob has already read past everything.
+    const c = useState({ bobReadAt: mins(10) });
+    const r = await postJson(`/api/threads/${THREAD}/seen`, BOB, { upToMessageId: M_SEEN });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.advanced, false);
+    assert.deepEqual(r.body.seenMessageIds, []);
+    const bob = c._db.message_thread_members.find((m: any) => m.thread_id === THREAD && m.user_id === BOB);
+    assert.equal(bob.last_read_at, mins(10), "the read marker went backwards");
+  });
+
+  it("a non-member is refused", async () => {
+    useState({});
+    const r = await postJson(`/api/threads/${THREAD}/seen`, DAVE, { upToMessageId: M_UNSEEN });
+    assert.equal(r.status, 403);
+  });
+
+  it("an unreadable messages table is a 500, never a silent advance", async () => {
+    useState({ errorTable: "messages" });
+    const r = await postJson(`/api/threads/${THREAD}/seen`, BOB, { upToMessageId: M_UNSEEN });
+    assert.equal(r.status, 500);
+  });
+});
+
+describe("§13.2 — message.seen is in the event union", () => {
+  it("is declared, and read.updated is kept alongside it", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(join(here, "../lib/telegraphEvents.ts"), "utf8");
+    assert.ok(src.includes('| "message.seen"'), "message.seen is not in TelegraphEventType");
+    assert.ok(src.includes('| "read.updated"'), "read.updated was replaced rather than joined");
   });
 });

@@ -49,7 +49,8 @@
  * mean before a flag can be trusted as a rollback.
  */
 import { isFlagEnabled } from "./featureFlags.js";
-import { loadLocalMomentum } from "./discoveryLocalMomentum.js";
+import { loadLocalMomentum, readLocalTrendStates } from "./discoveryLocalMomentum.js";
+import type { TrendReading } from "./discoveryTrendState.js";
 import { getCityConfidence, type CityConfidence } from "../compass/CompassGraphEngine.js";
 import {
   GOVERNOR_BUDGET_MIN_PCT, GOVERNOR_BUDGET_MAX_PCT,
@@ -70,6 +71,16 @@ export interface DiscoveryModifiers {
   reason: ModifiersReason;
   /** place id → momentum in [0,1], already scaled by `momentumScale`. Empty when off. */
   localMomentum: Record<string, number>;
+  /**
+   * `03` §9 place-momentum stage per place — unknown · emerging · trending ·
+   * established · cooling · rediscovered — with the three window rates behind
+   * it. Empty when the modifiers are off, for the same reason `localMomentum`
+   * is: nothing was read, so nothing is known, and an empty map says exactly
+   * that. UNSCALED and never fed to the ranker: a stage is an explanation
+   * (`03` §11 / `01` §11), not a score, and turning one into a weight would
+   * re-open the momentum cap this module exists to respect.
+   */
+  trendStates: Record<string, TrendReading>;
   /** The confidence record consulted, or null (not read when off, or absent). */
   cityConfidence: CityConfidence | null;
   /** [MOMENTUM_SCALE_MIN, MOMENTUM_SCALE_MAX] when enabled; 0 in the inert record (nothing to scale). */
@@ -84,6 +95,7 @@ export function inertModifiers(reason: ModifiersReason): DiscoveryModifiers {
     enabled: false,
     reason,
     localMomentum: {},
+    trendStates: {},
     cityConfidence: null,
     momentumScale: 0,
     explorationBudgetPct: GOVERNOR_BUDGET_MIN_PCT + (GOVERNOR_BUDGET_MAX_PCT - GOVERNOR_BUDGET_MIN_PCT) / 2,
@@ -174,5 +186,14 @@ export async function loadDiscoveryModifiers(
     if (scaled > 0) localMomentum[id] = scaled;
   }
 
-  return { enabled: true, reason: "flag_on", localMomentum, cityConfidence, momentumScale, explorationBudgetPct };
+  // `03` §9 stages, read out of the SAME cache entry the momentum load just
+  // populated — no second query, and no possibility of the stage and the scalar
+  // describing different corpora. Unscaled on purpose: see `trendStates` above.
+  let trendStates: Record<string, TrendReading> = {};
+  try { trendStates = readLocalTrendStates(params.cacheKey, nowMs); } catch { trendStates = {}; }
+
+  return {
+    enabled: true, reason: "flag_on",
+    localMomentum, trendStates, cityConfidence, momentumScale, explorationBudgetPct,
+  };
 }

@@ -127,6 +127,174 @@ export function compareServedOrders(legacyIds: string[], pdeIds: string[]): Shad
   return { overlapCount, displacedCount, topChanged };
 }
 
+// ── Phase 9 comparison dimensions ─────────────────────────────────────────────
+//
+// `12` Phase 9 (`docs/specs/discovery-v1/12_Claude_Code_Implementation.md:125`):
+// "Compare: overlap, save rate potential, diversity, creator concentration,
+// place diversity, estimated travel intent."
+//
+// `compareServedOrders` above answers the first. These answer three more, and
+// say plainly that two are not answerable from a served Discovery page:
+//
+//   creator concentration    A served row is a `DiscoveryPlace`, and a
+//                            DiscoveryPlace carries NO author — no
+//                            `submitted_by`, `authorId` or `creatorId` field
+//                            exists on it (the block filter runs where the rows
+//                            are READ, precisely because the served shape has
+//                            nobody on it). Concentration over creators cannot
+//                            be computed from a page that does not name any.
+//   estimated travel intent  No trip-add or itinerary-add signal is attached to
+//                            a served item (census-discovery DV-40: no
+//                            recommendation object, no per-item intent
+//                            outcome). Substituting distance would be a proxy
+//                            wearing a measurement's name.
+//
+// Both are reported as `null` and NAMED in `unmeasured`. A zero would read as
+// "measured, and it was none", which is the failure this whole census exists to
+// stop being possible.
+
+/** The per-item facts the Phase 9 dimensions read. Structural, so the route can pass its own rows. */
+export interface ShadowPageItem {
+  id: string;
+  /** Content type / category slug — the "diversity" axis. */
+  category?: string | null;
+  /** Neighbourhood label, when the row carries one — one of the "place diversity" axes. */
+  neighborhood?: string | null;
+  lat?: number | null;
+  lng?: number | null;
+  /**
+   * Demonstrated saves for this place. The Phase 9 axis is "save rate
+   * POTENTIAL", and this is a PROXY for it, not a predicted rate: it is what
+   * travellers have already done, not what this page will cause. Reported with
+   * its own coverage so a mean over three of twenty items cannot be read as a
+   * mean over twenty.
+   */
+  savedCount?: number | null;
+}
+
+export interface ShadowPageDimensions {
+  /** Items measured. */
+  n: number;
+  /** Phase 9 "diversity" — how many distinct content categories the page holds. */
+  categoryDistinct: number;
+  /**
+   * Normalized Shannon entropy over categories, 0–1. A distinct COUNT cannot
+   * tell four-evenly-spread from three-of-one-plus-one; this can. 1 for an even
+   * spread, 0 when everything is one category (and for a page of one item).
+   */
+  categoryEntropy: number;
+  /** Phase 9 "place diversity" — distinct served places. */
+  placeDistinct: number;
+  /** Distinct neighbourhood labels among the rows that carry one. */
+  neighborhoodDistinct: number;
+  /** Distinct ~1 km geo cells — geography, which neighbourhood LABELLING is not. */
+  geoCellDistinct: number;
+  /** Mean of the KNOWN save counts; null when none is known. */
+  meanSavedCount: number | null;
+  /** Fraction of items whose save count was known. Travels with the mean, always. */
+  savedCountCoverage: number;
+}
+
+/**
+ * ~1 km at the equator, and never coarser than that anywhere — good enough to
+ * separate "same block" from "across town".
+ *
+ * A fixed grid, so two points 150 m apart that straddle a boundary count as two
+ * cells. That is a known property of bucketing, not a defect: the measure is
+ * "how spread out is this page", and the error it makes is to report a page as
+ * slightly MORE spread than it is, never less. Recorded here because a reader
+ * comparing two pages needs to know which way the bias runs.
+ */
+const GEO_CELL_DEG = 0.01;
+
+function normalizedEntropy(counts: readonly number[], total: number): number {
+  if (total <= 0 || counts.length <= 1) return 0;
+  let h = 0;
+  for (const c of counts) {
+    if (c <= 0) continue;
+    const p = c / total;
+    h -= p * Math.log2(p);
+  }
+  return h / Math.log2(counts.length);
+}
+
+/** Pure: one page → its Phase 9 dimensions. No clock, no client, no throw. */
+export function pageDimensions(items: readonly ShadowPageItem[]): ShadowPageDimensions {
+  const n = items.length;
+  const catCounts = new Map<string, number>();
+  const places = new Set<string>();
+  const hoods = new Set<string>();
+  const cells = new Set<string>();
+  let savedSum = 0;
+  let savedKnown = 0;
+
+  for (const it of items) {
+    if (!it) continue;
+    places.add(it.id);
+    const cat = typeof it.category === "string" && it.category.length > 0 ? it.category : "(unknown)";
+    catCounts.set(cat, (catCounts.get(cat) ?? 0) + 1);
+    if (typeof it.neighborhood === "string" && it.neighborhood.length > 0) hoods.add(it.neighborhood);
+    if (typeof it.lat === "number" && Number.isFinite(it.lat) && typeof it.lng === "number" && Number.isFinite(it.lng)) {
+      cells.add(`${Math.floor(it.lat / GEO_CELL_DEG)}:${Math.floor(it.lng / GEO_CELL_DEG)}`);
+    }
+    if (typeof it.savedCount === "number" && Number.isFinite(it.savedCount)) {
+      savedSum += it.savedCount;
+      savedKnown += 1;
+    }
+  }
+
+  return {
+    n,
+    categoryDistinct: n === 0 ? 0 : catCounts.size,
+    categoryEntropy: normalizedEntropy([...catCounts.values()], n),
+    placeDistinct: places.size,
+    neighborhoodDistinct: hoods.size,
+    geoCellDistinct: cells.size,
+    meanSavedCount: savedKnown === 0 ? null : savedSum / savedKnown,
+    savedCountCoverage: n === 0 ? 0 : savedKnown / n,
+  };
+}
+
+/** The axes this surface cannot measure today, named on every row. */
+export const UNMEASURED_PHASE9_AXES = ["creator_concentration", "estimated_travel_intent"] as const;
+
+export interface ShadowPhase9Comparison {
+  legacy: ShadowPageDimensions;
+  pde: ShadowPageDimensions;
+  /** Phase 9 "creator concentration" — NOT measurable: a served page names no author. */
+  creatorConcentration: null;
+  /** Phase 9 "estimated travel intent" — NOT measurable: no per-item trip/itinerary signal. */
+  estimatedTravelIntent: null;
+  /** The unmeasured axes, by name, so silence cannot be read as zero. */
+  unmeasured: readonly string[];
+}
+
+export interface ShadowPageComparison extends ShadowComparison {
+  dimensions: ShadowPhase9Comparison;
+}
+
+/**
+ * The full Phase 9 comparison of two served pages: the existing order
+ * comparison plus the dimensions above, computed per PAGE and never blended
+ * into one number. "Legacy is more diverse" and "PDE is more diverse" are
+ * different findings and a single delta would hide which.
+ */
+export function compareShadowPages(
+  legacy: readonly ShadowPageItem[],
+  pde: readonly ShadowPageItem[],
+): ShadowPageComparison {
+  return {
+    ...compareServedOrders(legacy.map((i) => i.id), pde.map((i) => i.id)),
+    dimensions: {
+      legacy: pageDimensions(legacy),
+      pde: pageDimensions(pde),
+      creatorConcentration: null,
+      estimatedTravelIntent: null,
+      unmeasured: UNMEASURED_PHASE9_AXES,
+    },
+  };
+}
+
 export interface ShadowServeParams {
   userId: string;
   sessionId?: string | null;
@@ -144,11 +312,19 @@ export interface ShadowServeParams {
 
   /** Ids of the page legacy actually served, in served order. */
   legacyIds: string[];
+  /**
+   * The legacy page's ROWS, for the Phase 9 dimensions. Optional: a caller that
+   * has only ids still writes a valid row, and the dimensions are then absent
+   * rather than zero. Absence and zero are different facts.
+   */
+  legacyItems?: readonly ShadowPageItem[];
   legacyTotal: number;
   legacyMs?: number | null;
 
   /** Ids of the page PDE would have served, in its order. */
   pdeIds: string[];
+  /** The PDE page's ROWS, for the Phase 9 dimensions. Optional, as above. */
+  pdeItems?: readonly ShadowPageItem[];
   pdeTotal: number;
   pdeMs?: number | null;
   pdeStages?: Record<string, unknown> | null;
@@ -182,6 +358,15 @@ export async function logDiscoveryShadowServe(sc: any, p: ShadowServeParams): Pr
     if (!sc) return;
 
     const cmp = compareServedOrders(p.legacyIds, p.pdeIds);
+    // `12` Phase 9's remaining axes, computed HERE — at write time, from the
+    // pages themselves — rather than in the reader, because the reader only
+    // ever sees the columns and `legacy_ids`/`pde_ids` alone cannot answer
+    // them. Stored inside the existing `pde_stages` jsonb under its own key, so
+    // no column and no migration is added; a row written before this existed
+    // simply has no `phase9` key and the reader reports it as unknown.
+    const phase9 = p.legacyItems && p.pdeItems
+      ? compareShadowPages(p.legacyItems, p.pdeItems).dimensions
+      : null;
 
     const { error } = await sc.from("discovery_shadow_serves").insert({
       user_id:     p.userId,
@@ -203,7 +388,7 @@ export async function logDiscoveryShadowServe(sc: any, p: ShadowServeParams): Pr
       pde_ids:   p.pdeIds,
       pde_total: p.pdeTotal,
       pde_ms:    p.pdeMs ?? null,
-      pde_stages: p.pdeStages ?? {},
+      pde_stages: phase9 ? { ...(p.pdeStages ?? {}), phase9 } : (p.pdeStages ?? {}),
       pde_suppressed_writes: p.pdeSuppressedWrites ?? 0,
 
       overlap_count:   cmp.overlapCount,

@@ -289,3 +289,173 @@ describe("H. source guards", () => {
     }
   });
 });
+
+// ── I. `01` §11 Explainability — the reason vocabulary (census DV-18) ─────────
+//
+// REQUIREMENT
+// ===========
+// docs/specs/discovery-v1/01_Portava_Discovery_Engine.md §11 (:242):
+//   "Every served recommendation must have internal reasons such as:
+//    trail_affinity, trip_match, nearby_now, trending_local, creator_affinity,
+//    exploration, saved_similar, social_context, season_match."
+//   "User-facing explanations should be plain language, e.g. 'Popular with solo
+//    travelers this week.' …"
+//
+// THE GAP THIS COVERS
+// ===================
+// Before this module, `grep -rn "trail_affinity\|trip_match\|nearby_now\|
+// trending_local\|creator_affinity\|saved_similar\|social_context\|
+// season_match" artifacts/api-server/src` returned NO Discovery hit, and no
+// plain-language string was produced anywhere on this surface. What existed was
+// adjacent and is not this: the PDE projection carried the ranker's own
+// FEATURE KEYS (`categoryAffinity`, `followedAuthor`, …) — internal variable
+// names, not a reason vocabulary.
+//
+// WHAT MUST NOT HAPPEN
+// ====================
+// A code with no producer must never be emitted. Three of the nine have none on
+// this surface today (no Trail object exists — DV-20; no trip-fit term reaches
+// the recommendation ranker; no seasonality signal exists), and emitting them
+// anyway would be inventing evidence — the same defect `05` §1.1 names for
+// why-now. The test pins the absence as deliberately as it pins the presence.
+import {
+  DISCOVERY_REASON_CODES,
+  REASON_CODES_WITHOUT_PRODUCER,
+  reasonCodeForSignal,
+  reasonCodesFromSignals,
+  explainReasonCode,
+  explainReasons,
+  UNMAPPED_SIGNALS,
+} from "../lib/discoveryReasonCodes.js";
+
+describe("I. 01 §11 reason vocabulary", () => {
+  it("I1. defines all nine codes, in the specification's own wording", () => {
+    assert.deepEqual(
+      [...DISCOVERY_REASON_CODES],
+      [
+        "trail_affinity", "trip_match", "nearby_now", "trending_local",
+        "creator_affinity", "exploration", "saved_similar", "social_context",
+        "season_match",
+      ],
+      "01 §11 lists nine internal reason codes; the vocabulary must be that list, not a paraphrase of it",
+    );
+  });
+
+  it("I2. maps the Compass pipeline's own factor keys onto codes", () => {
+    assert.equal(reasonCodeForSignal("distance"), "nearby_now");
+    assert.equal(reasonCodeForSignal("open_now"), "nearby_now");
+    assert.equal(reasonCodeForSignal("history"), "saved_similar");
+    assert.equal(reasonCodeForSignal("memory_preference"), "saved_similar");
+    assert.equal(reasonCodeForSignal("circle_memory_preference"), "social_context");
+  });
+
+  it("I3. maps the PDE ranker's own feature keys onto codes", () => {
+    assert.equal(reasonCodeForSignal("followedAuthor"), "creator_affinity");
+    assert.equal(reasonCodeForSignal("categoryAffinity"), "saved_similar");
+    assert.equal(reasonCodeForSignal("localMomentum"), "trending_local");
+    assert.equal(reasonCodeForSignal("socialProof"), "social_context");
+    assert.equal(reasonCodeForSignal("governorSlot"), "exploration");
+    assert.equal(
+      reasonCodeForSignal("governor_new_creator"), "exploration",
+      "the exploration governor stamps governor_<reason> keys; each is still the exploration reason",
+    );
+  });
+
+  it("I4. emits NO code that has no producer on this surface", () => {
+    for (const code of REASON_CODES_WITHOUT_PRODUCER) {
+      const producers = [...Object.keys(UNMAPPED_SIGNALS), "distance", "open_now", "history", "followedAuthor",
+        "localMomentum", "socialProof", "governorSlot", "categoryAffinity", "interest_match"]
+        .filter((sig) => reasonCodeForSignal(sig) === code);
+      assert.deepEqual(
+        producers, [],
+        `${code} has no producer in Discovery today; emitting it would be inventing evidence`,
+      );
+    }
+    assert.deepEqual(
+      [...REASON_CODES_WITHOUT_PRODUCER].sort(),
+      ["season_match", "trail_affinity", "trip_match"],
+      "the three unproducible codes must be named, so the absence is checkable rather than silent",
+    );
+  });
+
+  it("I5. GUARDRAIL 01 §10: no safety, moderation or block signal becomes a user-facing reason", () => {
+    for (const sig of ["safety_fit", "risk", "reports", "spam", "blocked", "trust", "seenPenalty"]) {
+      assert.equal(
+        reasonCodeForSignal(sig), null,
+        `${sig} must not become a public explanation — 01 §10 forbids exposing block/unfollow reasons and making safety events into public signals`,
+      );
+    }
+  });
+
+  it("I6. dedupes and keeps the ranker's strength order", () => {
+    assert.deepEqual(
+      reasonCodesFromSignals(["distance", "open_now", "followedAuthor", "city_match"]),
+      ["nearby_now", "creator_affinity"],
+      "four signals collapsing to two codes must yield each code once, first-seen order (the ranker sorted by strength)",
+    );
+    assert.deepEqual(reasonCodesFromSignals([]), []);
+    assert.deepEqual(reasonCodesFromSignals(["language_match"]), [],
+      "an unmapped signal contributes nothing rather than a fabricated code");
+  });
+
+  it("I7. every emittable code has a plain-language string, and none leaks private context", () => {
+    for (const code of DISCOVERY_REASON_CODES) {
+      const text = explainReasonCode(code);
+      if (REASON_CODES_WITHOUT_PRODUCER.includes(code)) {
+        assert.equal(text, null, `${code} has no producer, so it must have no user-facing claim either`);
+        continue;
+      }
+      assert.equal(typeof text, "string", `${code} must have a plain-language explanation (01 §11)`);
+      assert.ok(text!.length > 0, `${code}'s explanation must not be blank`);
+      assert.ok(
+        /^[A-Z]/.test(text!) && /[.!]$/.test(text!),
+        `${code}'s explanation must read as a sentence, not a key: got ${JSON.stringify(text)}`,
+      );
+      assert.ok(
+        !/block|unfollow|report|@|\buser\b|\bid\b/i.test(text!),
+        `${code}'s explanation must not disclose private social context or moderation state: got ${JSON.stringify(text)}`,
+      );
+    }
+  });
+
+  it("I8. explainReasons pairs each code with its text and drops what cannot be explained", () => {
+    const out = explainReasons(["distance", "trust", "followedAuthor"]);
+    assert.deepEqual(
+      out.map((r) => r.code), ["nearby_now", "creator_affinity"],
+      "a guardrailed signal contributes no reason at all",
+    );
+    assert.ok(out.every((r) => typeof r.text === "string" && r.text.length > 0));
+  });
+});
+
+describe("I9. the projection carries reasons, and says nothing when nothing ranked", () => {
+  it("a Compass-ranked row carries codes and plain language", () => {
+    const c = projectDiscoveryCandidate({ id: "db/x" }, ctx({
+      rankedBy: "compass",
+      cacheLevel: "compass_fresh_rank",
+      provenanceById: new Map([["db/x", {
+        modelVersion: "m", featureVersion: "f", candidateSource: "curated_db" as const,
+        reasons: ["distance", "open_now", "followedAuthor"],
+        features: { factor_distance: 1 }, scores: { finalScore: 1 }, rankedAt: NOW,
+      }]]),
+    }));
+    assert.deepEqual(c.reasons.map((r) => r.code), ["nearby_now", "creator_affinity"]);
+    assert.ok(c.reasons.every((r) => r.text.length > 0), "01 §11 requires a plain-language explanation per reason");
+  });
+
+  it("a PDE-ranked row carries codes derived from its own positive features", () => {
+    const c = projectDiscoveryCandidate({ id: "db/y" }, ctx({
+      rankedBy: "pde",
+      scoredById: new Map([["db/y", scored("db/y", { followedAuthor: 0.9, distance: 0.4, trust: 0.8 })]]),
+    }));
+    assert.deepEqual(
+      c.reasons.map((r) => r.code), ["creator_affinity", "nearby_now"],
+      "strongest first, and the guardrailed `trust` feature contributes no public reason",
+    );
+  });
+
+  it("an unranked serve carries NO reasons — an empty list is 'nothing was computed'", () => {
+    const c = projectDiscoveryCandidate({ id: "node/1" }, ctx({ rankedBy: "none" }));
+    assert.deepEqual(c.reasons, [], "no ranker ran, so there is nothing to explain and nothing is claimed");
+  });
+});

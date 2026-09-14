@@ -448,3 +448,348 @@ describe("cache B — 06 §5 cache metadata", () => {
     );
   });
 });
+
+// ── DV-04 / DSV2-06 — 06 §5 cache metadata, all five fields ───────────────────
+//
+// THE DEFECT THIS COVERS
+// ======================
+// `01` §7 "Cache B problem": *"Caching final ranked order without feature
+// vectors makes re-ranking, diagnostics, and counterfactual analysis
+// impossible."* The allowed pattern ends *"always preserve recommendation
+// metadata and feature/version references."*  `06` §5 names the five fields
+// exactly: model_version, feature_version, candidate source, recommendation
+// reasons, ranking timestamp.
+//
+// Before the fix, `_compassCandidateCache` stored `{ places, at, blockKey }` —
+// the ranked ORDER and a write clock, nothing else — and BOTH Compass serve
+// points handed the projection `scoredById: null`, so even the FRESH rank threw
+// away the `rankingFactors` the Compass pipeline had just computed. Four of the
+// five fields did not exist anywhere in the request, and the fifth (`at`) is a
+// cache write clock, not a ranking timestamp.
+//
+// WHY THE SHARPEST ASSERTION IS EQUALITY ACROSS THE HIT
+// ====================================================
+// DSV2-06: *"feature and model provenance survives cache reuse."* An
+// implementation that re-stamps `rankedAt: Date.now()` on the replay would
+// satisfy "the field is present" and still be wrong: it would report the moment
+// the cache was READ as the moment the ranker RAN. So the hit is compared to
+// the fresh rank field by field, and `rankedAt` in particular must be the
+// ORIGINAL ranking time.
+//
+// The projection is gated by `discovery_candidate_projection_enabled`
+// (migration 2361, seeded FALSE). This block's fake client reports that flag
+// ENABLED so the projection leg can be exercised at all; no production flag is
+// touched and the shipping default is still OFF.
+import {
+  invalidateCandidateProjectionFlagCache,
+  type DiscoveryCandidate,
+} from "../lib/discoveryCandidate.js";
+
+function fakeClientProjectionOn(state: { blocks: Array<{ blocker_id: string; blocked_id: string }>; blocksError: boolean }) {
+  const base = fakeClient(state);
+  return {
+    ...base,
+    from(table: string) {
+      if (table === "feature_flags") {
+        let flag = "";
+        const COMPASS_ROWS = [{ flag: "COMPASS_V1_RULE_BASED_ENABLED", enabled: true }];
+        const q: any = {
+          select: () => q,
+          eq: (col: string, val: any) => { if (col === "flag") flag = val; return q; },
+          like: () => ({ then: (r: any) => Promise.resolve({ data: COMPASS_ROWS, error: null }).then(r) }),
+          maybeSingle: async () => {
+            if (flag === "COMPASS_V1_RULE_BASED_ENABLED") return { data: { enabled: true }, error: null };
+            if (flag === "discovery_candidate_projection_enabled") return { data: { enabled: true }, error: null };
+            if (flag === "DISCOVERY_ENGINE_MODE") {
+              return { data: { enabled: false, metadata: { mode: "legacy" } }, error: null };
+            }
+            return { data: null, error: null };
+          },
+          then: (r: any) => Promise.resolve({ data: [], error: null }).then(r),
+        };
+        return q;
+      }
+      return base.from(table);
+    },
+  } as any;
+}
+
+describe("cache B — 06 §5 the five metadata fields survive the cache (DV-04 / DSV2-06)", () => {
+  let server: Server;
+  let url: string;
+
+  async function serve(token: string) {
+    const res = await fetch(
+      `${url}/discovery?destination=${DEST}&category=for_you&lat=25.77&lng=-80.19&radiusKm=${RADIUS}`,
+      { headers: { authorization: `Bearer ${token}` } },
+    );
+    assert.equal(res.status, 200, `expected 200, got ${res.status}`);
+    const body = (await res.json()) as {
+      cached: boolean;
+      places: Array<{ id: string; candidate?: DiscoveryCandidate }>;
+    };
+    return { cached: body.cached, places: body.places ?? [] };
+  }
+
+  beforeEach(async () => {
+    ({ server, url } = await startServer());
+    _setTestServiceClient(fakeClientProjectionOn({ blocks: [], blocksError: false }));
+    _clearTestCompassCache();
+    invalidateDiscoveryEngineModeCache();
+    invalidateCandidateProjectionFlagCache();
+    _setTestDbPlacesOverride(async () => ALL_ROWS());
+  });
+
+  afterEach(async () => {
+    _setTestDbPlacesOverride(null);
+    _setTestServiceClient(null);
+    _clearTestCompassCache();
+    invalidateDiscoveryEngineModeCache();
+    invalidateCandidateProjectionFlagCache();
+    await new Promise<void>((r) => server.close(() => r()));
+  });
+
+  it("L. the FRESH Compass rank emits all five 06 §5 fields", async () => {
+    const fresh = await serve(TOKEN);
+    assert.equal(fresh.cached, false, "precondition: first request is a fresh Compass rank");
+
+    const row = fresh.places[0];
+    assert.ok(row?.candidate, "precondition: the projection flag is on in this block, so every row carries `candidate`");
+
+    const prov = row.candidate!.provenance;
+    assert.ok(prov, "06 §5: a ranked serve must carry recommendation metadata; got none");
+    assert.equal(typeof prov!.modelVersion, "string", "06 §5 model_version");
+    assert.ok(prov!.modelVersion.length > 0, "06 §5 model_version must not be blank");
+    assert.equal(typeof prov!.featureVersion, "string", "06 §5 feature_version");
+    assert.ok(prov!.featureVersion.length > 0, "06 §5 feature_version must not be blank");
+    assert.equal(
+      prov!.candidateSource, "curated_db",
+      "06 §5 candidate source: these rows came from loadCuratedAndCanonicalPlaces, not from Overpass",
+    );
+    assert.ok(Array.isArray(prov!.reasons), "06 §5 recommendation reasons must be a list");
+    assert.ok(
+      Number.isFinite(prov!.rankedAt),
+      "06 §5 ranking timestamp: the moment the RANKER ran, which the cache write clock is not",
+    );
+  });
+
+  it("M. DEFECT: every one of the five survives the cache-B HIT, and rankedAt is the ORIGINAL ranking time", async () => {
+    const fresh = await serve(TOKEN);
+    assert.equal(fresh.cached, false, "precondition: fresh rank");
+    const freshProv = fresh.places[0]?.candidate?.provenance;
+    assert.ok(freshProv, "precondition: the fresh rank carries provenance (see L)");
+
+    const hit = await serve(TOKEN);
+    assert.equal(hit.cached, true, "precondition: the second request is a cache-B hit");
+    assert.deepEqual(
+      hit.places.map((p) => p.id), fresh.places.map((p) => p.id),
+      "precondition: the hit replays the stored order",
+    );
+
+    const hitProv = hit.places[0]?.candidate?.provenance;
+    assert.ok(
+      hitProv,
+      "DSV2-06: feature and model provenance must survive cache reuse — a replayed page with no metadata is exactly the `01` §7 Cache B defect",
+    );
+    assert.equal(hitProv!.modelVersion,   freshProv!.modelVersion,   "model_version must survive the cache");
+    assert.equal(hitProv!.featureVersion, freshProv!.featureVersion, "feature_version must survive the cache");
+    assert.equal(hitProv!.candidateSource, freshProv!.candidateSource, "candidate source must survive the cache");
+    assert.deepEqual(hitProv!.reasons,    freshProv!.reasons,        "recommendation reasons must survive the cache");
+    assert.equal(
+      hitProv!.rankedAt, freshProv!.rankedAt,
+      "the ranking timestamp must be when the RANKER ran, not when the cache was read — re-stamping it on replay reports a rank that never happened",
+    );
+  });
+
+  it("N. DEFECT: the feature vector survives, so a cached page can still be re-ranked and diagnosed", async () => {
+    const fresh = await serve(TOKEN);
+    const hit   = await serve(TOKEN);
+    assert.equal(hit.cached, true, "precondition: cache-B hit");
+
+    // `01` §7: caching final ranked order WITHOUT FEATURE VECTORS is the named
+    // defect. The order alone cannot be re-ranked or explained after the fact.
+    const freshProv = fresh.places[0]?.candidate?.provenance;
+    const hitProv   = hit.places[0]?.candidate?.provenance;
+    assert.ok(freshProv, "a ranked serve must carry what it ranked on");
+    assert.ok(
+      hitProv,
+      "01 §7: a cached final order with no feature vector makes re-ranking, diagnostics and counterfactual analysis impossible",
+    );
+    assert.deepEqual(hitProv!.features, freshProv!.features, "the cached RAW feature bag must be the one the ranker produced");
+    assert.deepEqual(hitProv!.scores,   freshProv!.scores,   "the cached DERIVED scores must survive too");
+    assert.ok(
+      Object.keys(hitProv!.scores).length > 0,
+      "an empty score bag is the same absence wearing a field name",
+    );
+  });
+
+  it("N2. 04 §13: raw and derived are SEPARATED — no derived score leaks into the feature bag", async () => {
+    const hitOrFresh = (await serve(TOKEN)).places[0]?.candidate?.provenance;
+    assert.ok(hitOrFresh, "precondition: a ranked serve carries provenance");
+
+    for (const k of Object.keys(hitOrFresh!.features)) {
+      assert.ok(
+        k.startsWith("factor_"),
+        `04 §13: \`features\` holds only RAW per-signal contributions; ${k} is a derived score and belongs in \`scores\``,
+      );
+    }
+    for (const k of Object.keys(hitOrFresh!.scores)) {
+      assert.ok(
+        !k.startsWith("factor_"),
+        `04 §13: \`scores\` holds only DERIVED values; ${k} is a raw signal and belongs in \`features\``,
+      );
+    }
+    assert.deepEqual(
+      Object.keys(hitOrFresh!.features).filter((k) => k in hitOrFresh!.scores), [],
+      "no key may appear in both bags — a value that is both raw and derived is neither",
+    );
+  });
+
+  it("O. rankedBy says `compass` on both Compass serve points — the projection must not report `none` where a ranker ran", async () => {
+    const fresh = await serve(TOKEN);
+    const hit   = await serve(TOKEN);
+    assert.equal(fresh.places[0]?.candidate?.rankedBy, "compass", "the fresh Compass rank DID run a per-user ranker");
+    assert.equal(hit.places[0]?.candidate?.rankedBy,   "compass", "the replayed page was ranked by Compass, and says so");
+  });
+});
+
+// ── DSV2-06 — "Bound final caches by authorized context, VERSION and freshness" ──
+//
+// The census recorded DSV2-06 as W with the permission leg closed (§11.8's
+// blockKey) and the provenance leg open. The third noun in the requirement is
+// the one nothing bound: a page ranked by one model/feature shape stayed usable
+// after a deploy that changed that shape, because the entry recorded no version
+// and the hit path compared none. `06` §5's allowed pattern is explicit —
+// "optionally cache short-lived ranking results keyed by user + context +
+// MODEL/VERSION".
+//
+// The acceptance rule is extracted into lib/discoveryCacheEligibility so the
+// precedence between its four rejection reasons can be tested without standing
+// up the route; the route test below pins that the route actually consults it.
+import {
+  rankVersionKey,
+  cacheBEntryUsable,
+  CACHE_B_TTL_MS,
+} from "../lib/discoveryCacheEligibility.js";
+import {
+  DISCOVERY_MODEL_VERSION,
+  DISCOVERY_FEATURE_VERSION,
+} from "../lib/discoveryRankProvenance.js";
+import { _testPokeCompassCacheRankVersion } from "../routes/discovery.js";
+
+describe("cache B — version binding (DSV2-06)", () => {
+  const NOW = 1_800_000_000_000;
+  const V = rankVersionKey(DISCOVERY_MODEL_VERSION, DISCOVERY_FEATURE_VERSION);
+  const base = { at: NOW - 1_000, blockKey: "none", rankVersion: V };
+  const req  = { nowMs: NOW, blockKey: "none", rankVersion: V, ttlMs: CACHE_B_TTL_MS };
+
+  it("P1. an entry matching on every axis is usable", () => {
+    assert.deepEqual(cacheBEntryUsable(base, req), { usable: true, reason: "hit" });
+  });
+
+  it("P2. a missing entry is 'absent', not a silent false", () => {
+    assert.deepEqual(cacheBEntryUsable(null, req), { usable: false, reason: "absent" });
+  });
+
+  it("P3. an entry past the TTL is 'expired'", () => {
+    assert.deepEqual(
+      cacheBEntryUsable({ ...base, at: NOW - CACHE_B_TTL_MS }, req),
+      { usable: false, reason: "expired" },
+      "an entry exactly at the TTL is expired — the boundary must not be usable, or the TTL is TTL+1ms",
+    );
+  });
+
+  it("P4. a changed block set is rejected, and named as such", () => {
+    assert.deepEqual(
+      cacheBEntryUsable({ ...base, blockKey: "1:u9" }, req),
+      { usable: false, reason: "block_set_changed" },
+    );
+  });
+
+  it("P5. DEFECT: a page ranked under a DIFFERENT model/feature version is not this request's to reuse", () => {
+    assert.deepEqual(
+      cacheBEntryUsable({ ...base, rankVersion: rankVersionKey("older-model", DISCOVERY_FEATURE_VERSION) }, req),
+      { usable: false, reason: "rank_version_changed" },
+      "06 §5: a ranking cache is keyed by user + context + model/version; replaying across a version boundary serves an order the current ranker never produced",
+    );
+    assert.deepEqual(
+      cacheBEntryUsable({ ...base, rankVersion: rankVersionKey(DISCOVERY_MODEL_VERSION, "older-features") }, req),
+      { usable: false, reason: "rank_version_changed" },
+      "the FEATURE version must bind too — a same-model page whose feature bag has a different shape cannot be re-ranked against the current one",
+    );
+  });
+
+  it("P6. an entry with NO recorded version is rejected, never accepted by default", () => {
+    assert.deepEqual(
+      cacheBEntryUsable({ ...base, rankVersion: null }, req),
+      { usable: false, reason: "rank_version_changed" },
+      "an unversioned entry pre-dates version binding; treating unknown as matching is the fail-open direction",
+    );
+  });
+
+  it("P7. eligibility outranks version — a page the viewer may not see is rejected as such", () => {
+    assert.deepEqual(
+      cacheBEntryUsable({ ...base, blockKey: "1:u9", rankVersion: "stale" }, req),
+      { usable: false, reason: "block_set_changed" },
+      "when both fail, the reported reason must be the authorization one: it is the one that matters operationally",
+    );
+  });
+});
+
+describe("cache B — the route consults the version binding (DSV2-06)", () => {
+  let server: Server;
+  let url: string;
+
+  async function serve(token: string) {
+    const res = await fetch(
+      `${url}/discovery?destination=${DEST}&category=for_you&lat=25.77&lng=-80.19&radiusKm=${RADIUS}`,
+      { headers: { authorization: `Bearer ${token}` } },
+    );
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { cached: boolean };
+    return body.cached;
+  }
+
+  beforeEach(async () => {
+    ({ server, url } = await startServer());
+    _setTestServiceClient(fakeClient({ blocks: [], blocksError: false }));
+    _clearTestCompassCache();
+    invalidateDiscoveryEngineModeCache();
+    _setTestDbPlacesOverride(async () => ALL_ROWS());
+  });
+
+  afterEach(async () => {
+    _setTestDbPlacesOverride(null);
+    _setTestServiceClient(null);
+    _clearTestCompassCache();
+    invalidateDiscoveryEngineModeCache();
+    await new Promise<void>((r) => server.close(() => r()));
+  });
+
+  it("Q1. a stored page records the rank version it was produced under", async () => {
+    assert.equal(await serve(TOKEN), false, "precondition: fresh rank");
+    const entry = _testCompassCacheEntry(cacheKeyFor(VIEWER));
+    assert.equal(
+      entry!.rankVersion, rankVersionKey(DISCOVERY_MODEL_VERSION, DISCOVERY_FEATURE_VERSION),
+      "the stored page must record the model/feature shape that produced it",
+    );
+  });
+
+  it("Q2. DEFECT: after a rank-version change the stored page MISSES and re-ranks", async () => {
+    assert.equal(await serve(TOKEN), false, "precondition: fresh rank");
+    assert.equal(await serve(TOKEN), true, "precondition: an unchanged version hits");
+
+    // Stand in for "this page was ranked before the ranker changed".
+    _testPokeCompassCacheRankVersion(cacheKeyFor(VIEWER), "some-older-model|some-older-features");
+
+    assert.equal(
+      await serve(TOKEN), false,
+      "a page ranked under a different model/feature version must not be replayed — 06 §5 keys a ranking cache by model/version",
+    );
+    assert.equal(
+      _testCompassCacheEntry(cacheKeyFor(VIEWER))!.rankVersion,
+      rankVersionKey(DISCOVERY_MODEL_VERSION, DISCOVERY_FEATURE_VERSION),
+      "the re-rank must re-stamp the entry with the CURRENT version, or every subsequent request re-ranks forever",
+    );
+  });
+});

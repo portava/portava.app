@@ -24,7 +24,7 @@
 > **3. `geo_zones` holds 0 rows in production — an independent second blocker
 > this census does not record.** M5/M67/M119 attribute Crowd Flow's death solely
 > to the absent consent table. The empty zone model kills it separately:
-> `routes/mapProjection.ts:836` refuses with `no_zone_model`. Populating
+> `routes/mapProjection.ts:898#no_zone_model` refuses with `no_zone_model`. *(Line repointed 2026-09-14 from 836, which is 62 lines short of the branch; the fact is unchanged.)* Populating
 > `geo_zones` is an ops action, not a migration, so applying every pending
 > migration would still leave Crowd Flow dark.
 >
@@ -326,12 +326,12 @@ client paths to `travel-buddy-standalone/` unless stated.
 | M2 | ONE persistent Map Shell; the surfaces are coordinated states, not nine tabs | C | `src/features/map/state/mapMachine.ts:1-40` — one pure reducer over three orthogonal axes (mode, overlay, camera); D3 at `:57-64` forbids a secondary mode being silently exited by a selection. |
 | M3 | Live Map / Map Home | C | `mapMachine.ts:105` `HOME_MODE = 'LIVE'`; screen at `app/map/index.tsx`. |
 | M4 | Live Place | C | `src/components/map/LivePlaceSheet.tsx`; model `src/features/map/place/livePlaceModel.ts:2`. |
-| M5 | Crowd Flow | **W** | Producer (`lib/crowdFlowProducer.ts`), gateway lane and client renderer all exist. The mode gate is `CROWD_FLOW: inputs.crowdFlowObjectCount > 0` (`src/stores/mapStore.tsx:98`), and the gateway serves zero objects in production (§Headline). The surface can never open there. |
+| M5 | Crowd Flow | **W** | Producer (`lib/crowdFlowProducer.ts`), gateway lane and client renderer all exist. The mode gate is `src/stores/mapStore.tsx:100#CROWD_FLOW:` — `CROWD_FLOW: inputs.crowdFlowObjectCount > 0` — and the gateway serves zero objects in production. TWO independent blockers, not one: `route_flow_contribution_consent` is absent (M67) **and** `geo_zones` holds no curated rows, which the gateway refuses on separately at `routes/mapProjection.ts:898#no_zone_model`. *(Re-read 2026-09-14: the old citation, line 98, was the §11 TRIP comment two lines above the gate, and the CORRECTION HEADER's line 836 for `no_zone_model` was 62 lines short. Both repointed and anchored; verdict unchanged.)* **Turns red when:** a production `GET /api/map/projection` response over a backfilled viewport carries at least one `objects[].kind === "crowd_flow"`. That needs an ops backfill of `geo_zones` (ops, not a migration) *and* 2218 + 2224 applied (integration owner). Either one alone leaves it W. |
 | M6 | Trip Map | C | `src/features/trips/map/tripMapSources.ts`, `tripMapModel.ts`; capability hard-true at `src/stores/mapStore.tsx:96`. |
-| M7 | Locate My Friends | **W** | Complete server (`lib/locateFriendsSession.ts`, 48 KB) and client (`src/services/locateFriends.ts`, `src/components/map/LocateFriendsPanel.tsx`). **All four storage tables are absent from production** — `locate_friends_sessions`, `_members`, `_positions`, `_audit`, `scripts/checkProductionDrift.ts:176-179`. |
+| M7 | Locate My Friends | **W** | Complete server (`lib/locateFriendsSession.ts`, 48 KB) and client (`src/services/locateFriends.ts`, `src/components/map/LocateFriendsPanel.tsx`). **All four storage tables are absent from production**: none of `locate_friends_sessions`, `_members`, `_positions`, `_audit` appears in `artifacts/api-server/baseline/20260907_production_tables.txt` (431 names), and all four are created by `` `artifacts/api-server/src/migrations/2219_locate_friends_sessions.sql:74#CREATE TABLE IF NOT EXISTS public.locate_friends_sessions (` ``. *(Re-read 2026-09-14: the old citation — `checkProductionDrift.ts`, lines 176-179 — was wrong twice over — those lines are `wall_telemetry_events` / `passport_telemetry_events`, and **that file does not track any `locate_friends_*` table at all**, so the ratchet is silent about this lane. The baseline table list is the artifact that actually carries the fact.)* **Turns red when:** a refreshed `baseline/*_production_tables.txt` contains the four names. Supplied by the operator with production read access, after the integration owner applies 2219. A CI-only apply does not move it — the baseline is production's. |
 | M8 | Intent Mode | C | `src/components/map/IntentSheet.tsx:2`; opened at `app/map/index.tsx:2666`. |
 | M9 | Compass Map Recommendations | C | `src/features/map/compass/compassMapModel.ts`; capability hard-true, `src/stores/mapStore.tsx:94`. |
-| M10 | Time Machine | **W** | Producer `lib/temporalProjection.ts`, route `routes/mapProjectionTemporal.ts`, control `src/components/map/TimeMachineControl.tsx`. The capability requires the producer be reachable (`src/stores/mapStore.tsx:105-107`), and the temporal route rides `map_projection_enabled` and dies on the same `protected_zones` branch (`routes/mapProjectionTemporal.ts:574-591`). |
+| M10 | Time Machine | **W** | Producer `lib/temporalProjection.ts`, route `routes/mapProjectionTemporal.ts`, control `src/components/map/TimeMachineControl.tsx`. The capability requires the producer be reachable (`src/stores/mapStore.tsx:108#TIME_MACHINE:`), and the temporal route rides `map_projection_enabled` (`routes/mapProjectionTemporal.ts:429#map_projection_enabled`) and dies on the same `protected_zones` branch (`:575#loadProtectedZones`, answering `:583#protection_unreadable`). *(Re-read 2026-09-14: lines 105-107 were the comment above the gate and 574 a blank line; both repointed and anchored. Verdict unchanged.)* **Turns red when:** 2217 is applied to production *and* `map_projection_enabled` is TRUE there, and `GET /api/map/projection/temporal?offset=+60m` answers `enabled: true` with a non-null `forecast`. Both are integration-owner/ops acts; neither is code. |
 | M11 | Layers / Legend | C | `src/components/map/LayersSheet.tsx:2`; opened at `app/map/index.tsx:3229`. |
 
 ### §3 Live Map / Map Home (6)
@@ -388,8 +388,8 @@ at `mapStyle.ts:64-77` documents why OpenFreeMap's own dark style was rejected
 | M39 | Ring = approximate location | C | `src/features/map/presence/locateFriends.ts:435` `APPROXIMATE_DISTANCE_LADDER`; migration `2219_locate_friends_sessions.sql:246` — *"every coarser rung is served as a ring built from a snapped grid cell."* |
 | M40 | Checkpoint pin = meeting point | C | `lib/mapProducers/meetingPointProducer.ts:2`; `src/components/map/CheckpointPin.tsx`. |
 | M41 | Shield = safety context | C | `lib/mapProducers/safetyNoticeProducer.ts:2`; kind `safety_notice` at `lib/mapObjects.ts:103`. |
-| M42 | Gold marker = Saved / Passport / Memory | **W** | The **Saved** arm is correct: `lib/mapProducers/savedPlaceProducer.ts:388,396` reads the union of `wishlist_places` + `discovery_place_saves` after PR #446 moved it off writerless `saved_places` (`:18-23`). The **Memory** arm is not: `lib/mapProducers/memoryProducer.ts:35` filters `memory_projections` to `subject_type = 'place'`, and that projector's PLACE lane still reads the writerless `saved_places`, so it has never had an eligible subject. **PR #451 fixes exactly this** and would flip M42 to C. |
-| M43 | Blue dot = current user | **W** | The legend glyph is real and drawn — `src/components/map/LayersSheet.tsx:167-170,198` render a `blue_dot` glyph — but **nothing renders the user's own position on the canvas.** `src/components/discovery/DiscoveryMapView.tsx` contains no `UserLocation`, no `showUserLocation` and no user marker; `app/map/index.tsx:851-852` reads `userLat`/`userLng` only to recentre the camera. The map legend documents a marker the map does not draw. |
+| M42 | Gold marker = Saved / Passport / Memory | **W** | The **Saved** arm is correct: `lib/mapProducers/savedPlaceProducer.ts:388,396` reads the union of `wishlist_places` + `discovery_place_saves` after PR #446 moved it off writerless `saved_places` (`:18-23`). The **Memory** arm is not: `lib/mapProducers/memoryProducer.ts:35` filters `memory_projections` to `subject_type = 'place'`, and that projector's PLACE lane still reads the writerless `saved_places`, so it has never had an eligible subject. **PR #451 fixes exactly this** and would flip M42 to C. *(Re-read 2026-09-14: all five citations hold at this tree; the projector's writerless read is `` `artifacts/api-server/src/migrations/2191_memory_projector_content_and_support.sql:179#FROM public.saved_places s` ``.)* **Turns red when:** `project_user_memory`'s PLACE lane reads the `wishlist_places` + `discovery_place_saves` union instead of `saved_places`, and a `memory_projections` row with `subject_type = 'place'` exists for a user who has only union-sourced saves. The migration is PR #451's; this lane does not own the memory projector — raised as a cross-lane request to Highlights & Memories rather than duplicated here, because a second migration redefining the same function hands the integrator a conflict for no earlier landing. |
+| M43 | Blue dot = current user | **W** | The legend glyph is real and drawn — `src/components/map/LayersSheet.tsx:167-170,198` render a `blue_dot` glyph — but **nothing renders the user's own position on the canvas.** `src/components/discovery/DiscoveryMapView.tsx` contains no `UserLocation`, no `showUserLocation` and no user marker; `app/map/index.tsx:851#userLat` / `:852#userLng` read them only to recentre the camera. The map legend documents a marker the map does not draw. *(Re-read 2026-09-14: still true. `UserLocation` IS exported by the installed MapLibre SDK, and the repo's own jest stub mirrors that export — so the renderer this row needs already exists in the dependency set and nothing mounts it.)* **Turns red when:** a component test mounts the real map canvas with a viewer position and finds a user-position node in the tree. The canvas is `src/components/discovery/DiscoveryMapView.tsx`, which belongs to the Discovery lane, and `EntityMapLayers` — the one map-owned renderer inside it — is mounted only when `entities.length > 0`, so it is the wrong home for a marker that must draw on an empty map. **Cross-lane request to Discovery**, not buildable from the Map lane's paths. |
 
 ### §7 Activity, Trend, Confidence and Freshness (5)
 
@@ -434,9 +434,9 @@ reproduces §8's mock verbatim as the module contract.
 | M62 | Aggregate movement between places or zones | C | `lib/crowdFlowProducer.ts:2`; `produceZoneTransitions` → `deriveCrowdFlow`, zone granularity enforced by type. |
 | M63 | Never expose individual routes or imply continuous tracking | C | `lib/crowdFlowProducer.ts:497-498` — cohort is a `Set` of distinct actors across families; `lib/mapAggregation.ts:399-414` puts `crowd_flow` in `NEVER_AGGREGATED_KINDS` because it already carries its own k decision. |
 | M64 | Five flow states | C | `src/features/map/render/zoneStyle.ts:95` `FLOW_STATES = ['strong','moderate','emerging','dispersing','unusual']`. |
-| M65 | The seven declared input families | **W** | `lib/crowdFlowProducer.ts:289` `WIRED_SIGNAL_SOURCES` is **two** of seven; `:298-300` `DECLARED_BUT_UNFED_FAMILIES` and `:345` `UNFED_FAMILY_BLOCKERS` name, per family, the specific capture that must exist first. Honestly declared, but five families produce nothing. |
+| M65 | The seven declared input families | **W** | `lib/crowdFlowProducer.ts:289` `WIRED_SIGNAL_SOURCES` is **two** of seven; `:298-300` `DECLARED_BUT_UNFED_FAMILIES` and `:345` `UNFED_FAMILY_BLOCKERS` name, per family, the specific capture that must exist first. Honestly declared, but five families produce nothing. *(Re-read 2026-09-14: all four citations hold at this tree — `:289#WIRED_SIGNAL_SOURCES`, `:298#DECLARED_BUT_UNFED_FAMILIES`, `:345#UNFED_FAMILY_BLOCKERS`.)* **Turns red when:** `WIRED_SIGNAL_SOURCES` names all seven families **and** each newly-named family has a capture writing rows a producer run can observe. This is the one row in this census that no deployment unblocks: `UNFED_FAMILY_BLOCKERS` states, per family, the capture nobody has written (the entries are product work, not migrations). Moving a family into `WIRED_SIGNAL_SOURCES` without its capture would turn this row green while producing nothing — so the evidence required is a producer run observing that family, not a diff of the constant. |
 | M66 | Minimum cohort density | C | `lib/mapAggregation.ts:351` `MIN_ZONE_COHORT = PRIVACY_THRESHOLD_V1.minUniqueActors`. |
-| M67 | Multiple signal families required | **W** | The gate is right — `lib/crowdFlowProducer.ts:497-498` requires ≥ `MIN_SIGNAL_FAMILIES` *observed*, and refuses before it reads (`:914`). But the second family is the accepted-plan hop lane, whose consent record `route_flow_contribution_consent` (`lib/routeHopSignal.ts:115,572`) is **absent from production** (`scripts/checkProductionDrift.ts:180-183`). One family in production ⇒ the producer permanently refuses. |
+| M67 | Multiple signal families required | **W** | The gate is right — `lib/crowdFlowProducer.ts:497-498` requires ≥ `MIN_SIGNAL_FAMILIES` *observed*, and refuses before it reads (`:914`). But the second family is the accepted-plan hop lane, whose consent record `route_flow_contribution_consent` (`lib/routeHopSignal.ts:115,572`) is **absent from production**: `` `artifacts/api-server/src/scripts/checkProductionDrift.ts:210#route_flow_contribution_consent` `` classifies it unapplied, and the name is not in `baseline/20260907_production_tables.txt`. *(Re-read 2026-09-14: lines 180-183 were `passport_telemetry_events`; repointed and anchored.)* One family in production ⇒ the producer permanently refuses. **Turns red when:** 2224 is applied to production and `observedSignalFamilies()` returns ≥ `MIN_SIGNAL_FAMILIES` for a real viewport. Integration owner applies; the operator's refreshed baseline is the evidence. |
 | M68 | Freshness checks | C | `lib/crowdFlowProducer.ts:509` `SIGNAL_MAX_AGE_MINUTES`; `:653` applied per signal. |
 | M69 | Privacy gates | C | `lib/crowdFlowProducer.ts:99` per-family consent; migration `2218_crowd_flow.sql:59` states the four gates as the flag's own description. |
 | M70 | Observed movement and inferred cause separately represented | C | `lib/crowdFlowProducer.ts:273-277` `OBSERVED_SIGNAL_FAMILIES` vs `CAUSE_ONLY_SIGNAL_FAMILIES`; `:817` `MAX_INFERRED_CAUSE_CONFIDENCE = 'provisional'` — a cause can never be asserted as strongly as an observation. |
@@ -467,18 +467,18 @@ it can run in production: all four tables are absent** (`scripts/checkProduction
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| M83 | A specialized temporary group/event map | **W** | `lib/locateFriendsSession.ts:2`, `src/components/map/LocateFriendsPanel.tsx`. Storage absent from production. |
+| M83 | A specialized temporary group/event map | **W** | `lib/locateFriendsSession.ts:2#locateFriendsSession`, `src/components/map/LocateFriendsPanel.tsx`. Storage absent from production — see M7 for the artifact that carries that fact and for what turns this whole block red. |
 | M84 | Networked AND degraded/offline operation | C | `src/features/map/presence/eventCachedLocation.ts` (device-local rung); `src/features/map/cache/mapCache.ts:95-102` `event_map` cache class. Client-side, so unaffected by the missing tables. |
-| M85 | Approximate location and explicit checkpoints | **W** | `src/features/map/presence/locateFriends.ts:139-190` `RUNG_POLICY`; positions live in `locate_friends_positions`, absent. |
-| M86 | Rung 1 — normal network location | **W** | `locateFriends.ts:87,147`. Reads/writes `locate_friends_positions`. |
-| M87 | Rung 2 — event-local cached location | **W** | `locateFriends.ts:88,153`; producer commit `bacae0b3`. Same storage. |
-| M88 | Rung 3 — local device proximity | **N** | `src/features/map/presence/presenceLadder.ts:189-201` — `CURRENT_STACK_CAPABILITIES` has `bleScan/bleAdvertise/backgroundBle/uwb/localPeer` all `false`; *"BLE is entirely absent from today's Portava stack, which is why §12's 'local device proximity' and 'peer relay' rungs are currently unreachable"*. The ladder slot exists; the sensor does not. |
-| M89 | Rung 4 — peer relay / checkpoint | **N** | Same, `presenceLadder.ts:189-201`, `locateFriends.ts:165,194` `unsupportedRungs()`. |
-| M90 | Rung 5 — last-known location | **W** | `locateFriends.ts:171-175`. Same storage. |
-| M91 | Rung 6 — manual checkpoint | **W** | `locateFriends.ts:177`; migration `2219:246`. Same storage. |
-| M92 | Opt-in only | **W** | Structurally perfect and unreachable: `2219_locate_friends_sessions.sql:163` — *"opted_in_at and consent_source are NOT NULL, so a membership without a recorded consent act is unrepresentable"*. Table absent. |
-| M93 | Group-scoped | **W** | Same migration `:163`; `src/stores/mapStore.tsx:66-70` refuses the mode without a scope. Table absent. |
-| M94 | Temporary and auto-expiring | **W** | `2219:118` — `expires_at NOT NULL`, CHECK-bounded to 12 h, expiry re-enforced on every read so a stalled sweep cannot serve an expired session. `locateFriends.ts:490` `MAX_SESSION_MS`. Table absent. |
+| M85 | Approximate location and explicit checkpoints | **W** | `src/features/map/presence/locateFriends.ts:146#RUNG_POLICY` *(repointed 2026-09-14 from lines 139-190, a comment block above the constant)*; positions live in `locate_friends_positions`, absent. Unblocked by 2219 alone — see M7. |
+| M86 | Rung 1 — normal network location | **W** | `src/features/map/presence/locateFriends.ts:87#'network_location',`, `:147#network_location:`. Reads/writes `locate_friends_positions`. Unblocked by 2219 alone — see M7. |
+| M87 | Rung 2 — event-local cached location | **W** | `src/features/map/presence/locateFriends.ts:88#'event_cached_location',`, `:153#event_cached_location:`; producer commit `bacae0b3`. Same storage — see M7. |
+| M88 | Rung 3 — local device proximity | **N** | `src/features/map/presence/presenceLadder.ts:192#CURRENT_STACK_CAPABILITIES` *(repointed 2026-09-14 from lines 189-201, a comment)* has `bleScan/bleAdvertise/backgroundBle/uwb/localPeer` all `false`; *"BLE is entirely absent from today's Portava stack, which is why §12's 'local device proximity' and 'peer relay' rungs are currently unreachable"*. The ladder slot exists; the sensor does not. **Turns red when:** (1) a BLE-capable module is in the app's dependency set and `CURRENT_STACK_CAPABILITIES.bleScan` is `true` because the stack was re-verified, not because the constant was edited; and (2) a rung-3 fix is produced on a real handset — the measurement is a `locate_friends_positions` row written with `rung = 'local_proximity'` from a device with location services OFF, which is the only reading that separates BLE proximity from the network rung above it. No migration, flag or server change moves this row; it is a platform capability the product does not have. |
+| M89 | Rung 4 — peer relay / checkpoint | **N** | Same, `src/features/map/presence/presenceLadder.ts:192#CURRENT_STACK_CAPABILITIES`, `src/features/map/presence/locateFriends.ts:165#peer_relay:`, `:194#unsupportedRungs`. **Turns red when:** the same two facts M88 needs, for the peer-relay rung. |
+| M90 | Rung 5 — last-known location | **W** | `src/features/map/presence/locateFriends.ts:171#last_known:`. Same storage — see M7. |
+| M91 | Rung 6 — manual checkpoint | **W** | `src/features/map/presence/locateFriends.ts:177#manual_checkpoint:`; migration `2219_locate_friends_sessions.sql:246#unstorable`. Same storage — see M7. |
+| M92 | Opt-in only | **W** | Structurally perfect and unreachable: `2219_locate_friends_sessions.sql:163#unrepresentable` — *"opted_in_at and consent_source are NOT NULL, so a membership without a recorded consent act is unrepresentable"*. Table absent. |
+| M93 | Group-scoped | **W** | Same migration `2219_locate_friends_sessions.sql:163#unrepresentable`; `src/stores/mapStore.tsx:101#LOCATE_FRIENDS:` refuses the mode without a scope *(repointed 2026-09-14 from lines 66-70, the prop's doc comment)*. Table absent — see M7. |
+| M94 | Temporary and auto-expiring | **W** | `2219_locate_friends_sessions.sql:83#expires_at` is NOT NULL with no default and `:105#interval` CHECK-bounds it to 12 h; expiry is re-enforced on every read so a stalled sweep cannot serve an expired session (`:118#CHECK-bounded`). `src/features/map/presence/locateFriends.ts:490#MAX_SESSION_MS`. Table absent — see M7. |
 | M95 | No public friend tracking | C ⌀ | `lib/locateFriendsSession.ts:105` — *"no `public` member, and adding one would be the §37 non-goal in a single [line]"*; migration `2219:310` "No public read path". Holds vacuously in production, where there is no path at all. |
 | M96 | UI states: Nearby ~40-80 m, Last seen 3m ago, Checkpoint: Food Court | C | `locateFriends.ts:103-116` `PROXIMITY_BUCKETS` + `PROXIMITY_BUCKET_RANGE`; `:435` `APPROXIMATE_DISTANCE_LADDER = [0,40,80,150,300,600,1200]` — the spec's own "~40-80m". Pure client formatting. |
 
@@ -525,11 +525,11 @@ it can run in production: all four tables are absent** (`scripts/checkProduction
 | M116 | Trip | C | `layerModel.ts:69`. |
 | M117 | Buddies | C | `layerModel.ts:70`; `lib/buddyMapRead.ts:8`. |
 | M118 | Saved | C | `layerModel.ts:71`; producer `lib/mapProducers/savedPlaceProducer.ts:388,396` (post-#446 union). |
-| M119 | Crowd Flow | **W** | `layerModel.ts:72`; the layer is real, the objects are not — see M5/M67. |
+| M119 | Crowd Flow | **W** | `src/features/map/layers/layerModel.ts:75#'crowd_flow',` *(repointed 2026-09-14 from line 72, which is `'trip'` — three entries earlier in the same array literal)*; the layer is real, the objects are not — see M5/M67, which is also what turns it red. |
 | M120 | Hidden Gems | C | `layerModel.ts:73`. |
 | M121 | Safety | C | `layerModel.ts:74`; always-on, `:110-118`. |
-| M122 | Transport | **N** | `layerModel.ts:78` declares the id, `:171` defaults it `off`, `:637-640` gives it a legend entry — **and no `MapObjectKind` maps to it.** `LAYER_FOR_KIND` (`:470-485`) has no `transport` value, so `kindsForLayer('transport')` returns `[]` by construction (`:491-494`). A toggle over an empty set. |
-| M123 | Memories | **W** | `layerModel.ts:79`, `:169` default `off`, `:475` `memory → memories`. Its only producer is dead upstream — see M42. PR #451 would flip this to C. |
+| M122 | Transport | **N** | `src/features/map/layers/layerModel.ts:78#'transport',` declares the id, `:171#transport:` defaults it `off`, `:637#transport:` gives it a legend entry — **and no `MapObjectKind` maps to it.** `:463#LAYER_FOR_KIND` has no `transport` value *(range repointed 2026-09-14 from lines 470-485, which starts mid-record)*, so `:492#kindsForLayer` returns `[]` by construction. A toggle over an empty set. **Turns red when:** a `transport` renderable exists end to end — but note what that costs, because it is why this is N and not a small build. §18's `MapObjectKind` union is CLOSED at thirteen kinds and this repository has ruled once already that a layer named in one line of the spec is not a licence to invent an object contract for it (`docs/map/scope-ruling-phases-6-7.md:44#Building`); the four Phase-7 kinds were added only on an explicit owner AMENDMENT with a written contract. So the evidence that settles M122 is, in order: (1) an owner ruling that §16's Transport layer admits a kind beyond §18's thirteen, or a ruling that it is base-map styling and the toggle must drive the style rather than a kind set; (2) a named data source — the tree has no transit feed, and `src/constants/mapStyle.ts` is the only place a base-map answer could land; (3) the usual mirror/producer/`LAYER_FOR_KIND` triple. (1) is an owner decision, not a lane's, and (2) then decides which paths do the work. |
+| M123 | Memories | **W** | `src/features/map/layers/layerModel.ts:79#'memories',`, `:169#memories:` default `off`, `:475#memory:` maps `memory → memories`. All three re-read and correct at this tree. Its only producer is dead upstream — see M42, whose blocker is code rather than a deployment. **Turns red when:** M42 turns red. PR #451 would flip both. |
 | M124 | Suggested defaults (Live Activity/Events/Relevant Places/Saved on; People/Trip/Crowd Flow contextual; Buddies and Memories off) | C | `layerModel.ts:158-181` `LAYER_DEFAULTS`, matching the spec line; `:88-101` explains why `relevant_places` is modelled separately and kept out of `CORE_LAYER_IDS` "so that constant stays a faithful quote of the spec". |
 | M125 | Rendering detail changes with zoom, intent, layer, Trip state, Compass state, density, confidence, relevance, relationship, privacy | C | `layerModel.ts:282` `DEFAULT_LAYER_CONTEXT`; `src/features/map/render/collision.ts:227-293` zoom bands, `:318` `LIVE_ZONE_CONFIDENCE_FLOOR`, `:333` `DEMOTED_ZONE_PRIORITY`. |
 
@@ -540,8 +540,8 @@ it can run in production: all four tables are absent** (`scripts/checkProduction
 | M126 | World: countries visited, upcoming Trips, Passport, major destinations; **no POI pins** | C | `src/features/map/render/collision.ts:265` — `world: ['safety_notice','trip_stop','memory','world_pulse','traveler_flow','personal_city']`. No `place` kind; `safety_notice` is deliberately in this row per §5 (`:252-255`). |
 | M127 | City: neighbourhoods, activity zones, major events, major flow, key Compass recs | C | `collision.ts:267` — `['activity_zone','crowd_flow','prediction','event','city_model']`. |
 | M128 | District: live places, events, gems, social opportunities, Trip objects | C | `collision.ts:269` — `['place','hidden_gem','social_zone','buddy_zone','saved_place']`. |
-| M129 | Street: individual places, **entrances**, authorized crew, meeting points, route context | **W** | `collision.ts:271` introduces `['crew_member','meeting_point']` and inherits places. **There is no entrance kind** in `MAP_OBJECT_KINDS` (`lib/mapObjects.ts:91-110`) and no producer for one. Four of the five named renderables are present; entrances are not. |
-| M130 | Venue/Event: stages, entrances, checkpoints, food, toilets, group members, meeting zones | **N** | `collision.ts:273` — `venue: []`. The band exists in the vocabulary and inherits everything from `street`, but **not one venue-interior renderable exists**: no stage, entrance, food or toilet kind, no producer, no fixture. §17's fifth row is a zoom threshold with nothing behind it. |
+| M129 | Street: individual places, **entrances**, authorized crew, meeting points, route context | **W** | `collision.ts:271` introduces `['crew_member','meeting_point']` and inherits places. **There is no entrance kind** in `lib/mapObjects.ts:90#MAP_OBJECT_KINDS` *(range repointed 2026-09-14 from lines 91-110, off by one at both ends)* and no producer for one. Four of the five named renderables are present; entrances are not. **Turns red when:** an `entrance` object is produced and drawn at the street band. Same gate as M122 and for the same reason: §17 is a RENDER table and §18's kind union is closed at thirteen, so this needs (1) an owner ruling that §17's street vocabulary introduces a kind §18 does not list, and (2) a source for entrance geometry — the only candidate in this tree is OSM, which the Discovery tier-1 mapping already reads, so the concrete question is whether `entrance=main|yes` nodes may be projected as map objects. Neither is a lane's call, and neither is blocked by a deployment. |
+| M130 | Venue/Event: stages, entrances, checkpoints, food, toilets, group members, meeting zones | **N** | `collision.ts:273` — `venue: []`. The band exists in the vocabulary and inherits everything from `street`, but **not one venue-interior renderable exists**: no stage, entrance, food or toilet kind, no producer, no fixture. §17's fifth row is a zoom threshold with nothing behind it. **Turns red when:** at least one venue-interior renderable exists end to end — kind on both mirrors, producer, fixture, and a `collision.ts` `venue` entry that is no longer `[]`. It needs the SAME owner ruling M129 needs, plus something M129 does not: a venue-interior data source. Nothing in this repository holds stage, food, toilet or checkpoint geometry for any venue, and no integration supplies it, so the settling evidence is a named feed (an event organiser's venue map, or an OSM indoor extract) before any code. This is the largest single gap in this census and it is a product decision, not a build. |
 
 ### §18 Map Object Contract (2)
 
@@ -554,13 +554,13 @@ it can run in production: all four tables are absent** (`scripts/checkProduction
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| M133 | **Never place raw database rows directly on the map** | **W** | The rule is built and not in force. `routes/mapProjection.ts` is the gateway; `map_projection_enabled` seeds **FALSE** (`migrations/2201_map_projection_flag.sql:16-18`), and `src/hooks/useMapEntities.ts:22-24,702-704` then runs the "ROLLBACK path" — five per-layer fetches normalised **on the device** by `src/features/map/projection/clientProjection.ts`. That is the forbidden shape, live in production. |
+| M133 | **Never place raw database rows directly on the map** | **W** | The rule is built and not in force. `routes/mapProjection.ts` is the gateway; `map_projection_enabled` seeds **FALSE** (`` `migrations/2201_map_projection_flag.sql:17#('map_projection_enabled', FALSE,` ``) and the flag ROW is absent from production entirely — see the CORRECTION HEADER. `src/hooks/useMapEntities.ts:22#ROLLBACK` describes the fallback; `:700#res.data.enabled` is the only branch that keeps the gateway's objects, and with the flag off `:711#usedGateway` is false and `:707#Roll` runs the per-layer fetches, normalised **on the device** by `src/features/map/projection/clientProjection.ts`. *(Re-read 2026-09-14: lines 702-704 pointed INSIDE the gateway-success branch, i.e. at the path this row says is not taken; repointed to the branch and the fallback.)* That is the forbidden shape, live in production. **Turns red when:** 2217 then 2201 are applied and `map_projection_enabled` is TRUE in production, so `usedGateway` is true on a real device. The order matters and is not negotiable: flipping 2201 before 2217 blanks the map (CORRECTION HEADER). Integration owner + ops; no code in this lane moves it. |
 | M134 | A dedicated Map Projection Service | C | `lib/mapProjection.ts:2` — *"the Map Intelligence Gateway's shaping layer (Map spec §19)"*; `:16-24` pure, no I/O, no privacy decisions. |
 | M135 | Map Objects as the wire type | C | `lib/mapObjects.ts`; mirrored client-side, drift-guarded. |
 | M136 | Map Ranking | C | `lib/mapProjection.ts:1166` `rankObjects` — distance is a **tie-break**, not the sort key, because §5 makes safety and navigation precede popularity. |
 | M137 | Privacy / Eligibility stage | C | `routes/mapProjection.ts:29-36` — the block set is resolved **once**, fail-closed, and handed to every people-bearing source so the request cannot hold two answers to "who is blocked"; `lib/mapObjects.ts:426-434` `isServable` drops `privacyClass:'none'` at the boundary whatever produced it. |
 | M138 | Viewport Aggregation | C | `lib/mapAggregation.ts:2`; `:216-238` only wide bands aggregate; `:414` `NEVER_AGGREGATED_KINDS`. |
-| M139 | The mobile client must not independently reconstruct Portava intelligence rules; the service is the "Map Intelligence Gateway" | **W** | The name and the guard are real — `src/test/gatewayBypassGuard.test.ts:28-33` fails when a privacy-complete reader is called from an unapproved caller, per (reader, caller) with a stated reason. But with the flag off, `clientProjection.ts` **is** a second, on-device reconstruction, and it is the one in service. |
+| M139 | The mobile client must not independently reconstruct Portava intelligence rules; the service is the "Map Intelligence Gateway" | **W** | The name and the guard are real — `src/test/gatewayBypassGuard.test.ts:32#READERS` enumerates each privacy-complete reader with every file allowed to call it and a stated reason, and the test fails on any caller absent from that list *(repointed 2026-09-14 from lines 28-33, the doc comment above it)*. But with the flag off, `clientProjection.ts` **is** a second, on-device reconstruction, and it is the one in service. **Turns red when:** M133 turns red — the same flag flip, in the same order. The guard is not the blocker and never was; it holds today. |
 
 ### §20 Data Ownership (13)
 
@@ -639,7 +639,7 @@ open**. These verdicts describe code that is correct and would run.
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| M179 | Suppress sensitive locations **before** data reaches the client | **W** | The gate is written and cannot fire. `lib/protectedLocations.ts:2,849` `applyProtection` is the last step before serialization, ordered correctly at `routes/mapProjection.ts` and (after PR #393's fix) in the temporal route. But `protected_zones` is **absent from production** (`scripts/checkProductionDrift.ts:110`), so the read errors, `loadProtectedZones` returns null (`routes/mapProjection.ts:202`) and the route serves the empty envelope (`:964-979`). The production behaviour is *refuse everything*, not *suppress sensitive locations* — safe, and not the requirement. |
+| M179 | Suppress sensitive locations **before** data reaches the client | **W** | The gate is written and cannot fire. `lib/protectedLocations.ts:2#protectedLocations`, `:860#applyProtection` is the last step before serialization, ordered correctly at `routes/mapProjection.ts` and (after PR #393's fix) in the temporal route. But `protected_zones` is **absent from production** (`` `artifacts/api-server/src/scripts/checkProductionDrift.ts:157#protected_zones` ``, and the name is not in `baseline/20260907_production_tables.txt`), so the read errors, `routes/mapProjection.ts:227#loadProtectedZones` returns null and the route answers the refusal envelope at `:1026#protection_unreadable`. *(Re-read 2026-09-14: three of these four citations were wrong — line 849 is a field inside an interface and `applyProtection` is 11 lines below it; drift's `protected_zones` entry is at line 157, not 110; and lines 964-979 are the §19 ordering block, not the envelope, which begins 60 lines later.)* The production behaviour is *refuse everything*, not *suppress sensitive locations* — safe, and not the requirement. **Turns red when:** 2217 is applied to production, a refreshed baseline lists `protected_zones`, and a projection response over a viewport containing a curated zone carries `protection` non-null with at least one object coarsened or withheld. Note the second half: applying the table is necessary and NOT sufficient — an empty `protected_zones` makes `applyProtection([], …)` an identity pass (`routes/mapProjection.ts:195#FAIL-CLOSED`), which suppresses nothing. A curated zone set is an ops act after the migration. |
 | M180 | The protected categories (residences, medical, shelters, sensitive government, policy-defined) | C | `lib/protectedLocations.ts:81-88` `PROTECTED_CATEGORIES`; migration `2217:66-72` CHECK-constrains the same five; `:102` `policy_ref NOT NULL` so *"a protected location with no recorded policy"* is unrepresentable; `:135` `'allow'` is deliberately not storable — "a protection row that permits is a hole". |
 | M181 | Safety and access warnings take precedence over activity ranking | C | `lib/mapObjects.ts:284` `safety: 120`; `lib/protectedLocations.ts:210` `PROTECTION_EXEMPT_KINDS = ['safety_notice']` — a hazard notice is never coarsened away. |
 | M182 | The public map never receives more location detail than the viewer is authorized to see | C | `lib/protectedLocations.ts:720` `coarsenForZone`, `:793` `COARSENED_PAYLOAD_KEYS`; `lib/mapObjects.ts:376-381` documents that the strip must be able to `delete sourceClass` because `verified_firsthand` *"publishes that someone was here"*. Also `lib/protectedLocations.ts:301#COARSEN_UNSAFE_KINDS` and `:325#RELATIONSHIP_GATED_KINDS` — REPOINTED 2026-09-14 by `check:citation-symbols`: the LINE NUMBERS were right and the FILE was wrong. Both constants live in `protectedLocations.ts`, but `lib/mapObjects.ts:376-381` was cited between them and the opening citation, and a bare `:301` inherits the most recently named file. Anchored so the next shift fails loudly. |
@@ -718,10 +718,10 @@ not exist under those names**; every responsibility they name has a home.
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
 | M217–M219 | Modes LIVE, PLACE_SELECTED, COMPASS | C ×3 | `src/features/map/vocabulary.ts:45-51` `MAP_MODES` in §30's own order and **uppercase spelling**, with `:20-30` explaining that the casing is load-bearing (two spellings of one enum makes a `Record<MapMode,…>` lookup return `undefined` with no type error). |
-| M220 | Mode TRIP | C | `vocabulary.ts:49`; capability true. |
-| M221 | Mode CROWD_FLOW | **W** | `vocabulary.ts:50`; unreachable in production (M5). |
-| M222 | Mode LOCATE_FRIENDS | **W** | `vocabulary.ts:51`; storage absent (M7). |
-| M223 | Mode TIME_MACHINE | **W** | `vocabulary.ts:52`; gateway-dark (M10). |
+| M220 | Mode TRIP | C | `src/features/map/vocabulary.ts:48#'TRIP',` *(repointed 2026-09-14 from line 49, which is `'CROWD_FLOW'`; the whole `MAP_MODES` block was cited one line low and M221–M223 carried the same shift)*; capability true. |
+| M221 | Mode CROWD_FLOW | **W** | `src/features/map/vocabulary.ts:49#'CROWD_FLOW',` *(repointed 2026-09-14 from line 50, which is `'LOCATE_FRIENDS'` — the whole `MAP_MODES` block was cited one line low)*; unreachable in production, and turns red exactly when M5 does. |
+| M222 | Mode LOCATE_FRIENDS | **W** | `src/features/map/vocabulary.ts:50#'LOCATE_FRIENDS',` *(repointed from line 51)*; storage absent, and turns red exactly when M7 does. |
+| M223 | Mode TIME_MACHINE | **W** | `src/features/map/vocabulary.ts:51#'TIME_MACHINE',` *(repointed from line 52, which is the array's closing `] as const;`)*; gateway-dark, and turns red exactly when M10 does. |
 | M224 | Overlay INTENT | C | `mapMachine.ts:140`; dispatched `app/map/index.tsx:2666`. |
 | M225 | Overlay LAYERS | C | `mapMachine.ts:140`; dispatched `app/map/index.tsx:2545,2569`. |
 | M226 | Overlay FILTERS | C | **Moved W→C 2026-09-13.** The reducer was always right; nothing entered the state. Both "filters" affordances dispatch it now — the floating control at `` `travel-buddy-standalone/app/map/index.tsx:2568#onFiltersPress={()` `` (it used to dispatch `'LAYERS'`) and the carousel's empty-state button at `` `travel-buddy-standalone/app/map/index.tsx:2603#onFiltersPress={()` `` — and the sheet reads the machine: `` `travel-buddy-standalone/app/map/index.tsx:3245#visible={overlayOpen('FILTERS')}` ``. The bypassing `filterSheetOpen` `useState` is gone, so D1 mutual exclusion and `resolveBack` now actually govern it. `LayersSheet` keeps its own header entry point (`onLayersPress`), so this did not fix one sheet by breaking another. Executed: `` `travel-buddy-standalone/src/features/map/state/__tests__/filtersOverlay.test.ts:136#test('the` `` (12 cases; restoring the `useState` reddens 2, re-pointing the control at `'LAYERS'` reddens 3). |
@@ -760,11 +760,11 @@ not exist under those names**; every responsibility they name has a home.
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| M254 | Initial usable map under 2 s on a normal connection | **?** | Needs a device and a network. No timing harness or budget assertion exists in the tree. |
-| M255 | Pan responsiveness ~60 fps | **?** | Needs a device and the map SDK. |
-| M256 | Viewport intelligence first results within ~500-800 ms when cached/server-ready | **?** | Needs a running server with a warm cache; also currently unmeasurable because the gateway serves nothing (§Headline). |
+| M254 | Initial usable map under 2 s on a normal connection | **?** | No timing harness or budget assertion exists in the tree. **The measurement, named:** median over 10 COLD starts (app data cleared between runs) of the interval from the `/map` route's navigation commit to MapLibre's first fully-rendered frame, on a mid-tier Android handset running an EAS `preview` build (the standalone package declares that profile in its EAS config; the local dev path is its Android dev script), with the link shaped to a 4G profile — ~1.6 Mbit/s down, 300 ms RTT — because "a normal connection" is otherwise whatever the tester's wifi is. The §33 cache arm must be reported separately: `MapOpenedPayload` already carries the flag that distinguishes them (`src/features/map/telemetry/mapTelemetry.ts:461#servedFromCache`), and a warm-cache number answers a different requirement. **Who can supply it:** anyone who can run a `preview` build on hardware. Nothing in this repository can. |
+| M255 | Pan responsiveness ~60 fps | **?** | **The measurement, named:** 99th-percentile frame time ≤ 16.7 ms over a scripted 3-second continuous pan at city zoom, read from Android GPU frame timing (`adb shell dumpsys gfxinfo <pkg> framestats`) on the same mid-tier handset, **with the §6 zone-shaped layers actually drawn** — activity zones, crowd flow and traveler flow (`src/components/map/ActivityZone.tsx`, `CrowdFlowLine.tsx`, `TravelerFlowLine.tsx`). A pan over an empty base map is not this requirement and is the easy way to produce a green that means nothing, which is the whole risk here: the production map IS empty today (M133), so a device measurement taken against production would measure exactly that empty map. So the run must be against a seeded `portava-ci`, not production. **Who can supply it:** a device pass with the layers populated. |
+| M256 | Viewport intelligence first results within ~500-800 ms when cached/server-ready | **?** | **Two measurements, and only one of them needs a device — this X is partly a missing harness, which is worth separating.** (a) SERVER: p50 and p95 of request-receipt to response-flush for `GET /api/map/projection` over 50 warm-cache requests on a seeded `portava-ci`. Nothing blocks this but the fact that nobody has written it; it needs no production access and no handset, and it is the half that would catch a slow projection. (b) DEVICE: camera-settle (the debounce at `src/hooks/useMapEntities.ts`) to first object painted, same handset as M254. (b) additionally requires the gateway to be serving, so it is blocked behind M133; (a) is not. **Who can supply it:** (a) any lane that owns a CI perf harness — this lane can see no such harness anywhere under `artifacts/api-server/src/test/`; (b) a device pass. |
 | M257 | Debounce after the camera settles; never re-query on every pixel | C | `app/map/index.tsx:941-947` — *"a coarse centre grid and only re-queries after the §34 settle debounce"*; `:1009` "once the camera settles, the viewport intelligence is fetched"; `src/components/discovery/DiscoveryMapView.tsx:137` reports the camera only on settle. |
-| M258 | Keep animation layers GPU-friendly | **?** | A rendering property of MapLibre layers on a device. Static reading cannot falsify it. |
+| M258 | Keep animation layers GPU-friendly | **?** | **The measurement, named:** GPU overdraw and per-frame layer-rebuild count for the three animated layers under Android's GPU rendering profiler, on the same handset, over the same scripted pan as M255 — the falsifiable form being that no animated layer causes a full style re-layout per frame. **One half of that was NOT a device question, and is now asserted in this tree.** `src/components/map/__tests__/ActivityZone.gpuFriendly.component.test.tsx` renders the real `ActivityZone`, captures the props MapLibre would receive, and pins the three things §34 is asking for on the animation path: sixty consecutive 16 ms frames inside a half-period cost **zero** repaints; each half-period costs exactly **one**; the source `data` keeps its IDENTITY across every pulse repaint, so a pulsing zone never re-uploads its polygon; and the dim→bright interpolation is handed to the GPU as `line-opacity-transition` spanning the gap between JS updates (`src/components/map/ActivityZone.tsx:191#'line-opacity-transition':`). Four mutations were confirmed to redden it: a 16 ms pulse interval, a per-render rebuild of the feature, a removed transition, and a static opacity. **The row stays `?` and the requirement is not weakened** — overdraw and real frame cost are still a handset measurement and this asserts neither. What changed is that the CADENCE half can no longer regress silently, which it could have on the day this row was written. **Who can supply the rest:** a device pass with the GPU profiler. |
 
 ### §35 Product Telemetry (17)
 
@@ -785,23 +785,39 @@ short of production.
 
 | id | Event | V | Emitter |
 | --- | --- | --- | --- |
-| M259 | `map_opened` | **W** | `mapTelemetry.ts:643`; 1 emitter; `:23` mints `mapSessionId`. |
-| M260 | `zone_selected` | **W** | `:644`; 3 emitters (`MapEntityPreviewCard.tsx:132`, `MapCarousel.tsx:1240`, +1). |
-| M261 | `place_opened` | **W** | `:645`; 3 emitters (`MapEntityPreviewCard.tsx:138`, `MapCarousel.tsx:1246`). |
-| M262 | `live_state_viewed` | **W** | `:646`; 2 emitters. |
-| M263 | `why_shown_opened` | **W** | `:647`; 1 emitter. |
-| M264 | `compass_requested` | **W** | `:648`; `AskCompassBar.tsx:137`; mints `decisionId` (`:25`). |
-| M265 | `compass_option_selected` | **W** | `:649`; `MapCarousel.tsx:1256`. |
-| M266 | `route_started` | **W** | `:650`; 3 emitters incl. `MapEntityActionRow.tsx:579`. |
-| M267 | `trip_stop_added` | **W** | `:651`; `MapEntityActionRow.tsx:535`. |
-| M268 | `plan_joined` | **W** | `:652`; 2 emitters incl. `MapEntityActionRow.tsx:476`. |
-| M269 | `meet_here_created` | **W** | `:653`; 1 emitter. |
-| M270 | `crew_locate_started` | **W** | `:654`; 1 emitter. |
-| M271 | `contribution_submitted` | **W** | `:655`; 1 emitter; `:584` carries the banded time since `route_started`. |
-| M272 | `alternative_requested` | **W** | `:656`; 1 emitter. |
-| M273 | `recommendation_accepted` | **W** | `:657`; 3 emitters incl. `MapEntityActionRow.tsx:390`. |
-| M274 | `recommendation_declined` | **W** | `:658`; 2 emitters incl. `AskCompassBar.tsx:128`. |
-| M275 | Evaluate real-world outcomes, not only screen engagement | **W** | The design is right and the measurement is impossible. `mapTelemetry.ts:25-37` threads one `decisionId` through `compass_requested → compass_option_selected → recommendation_accepted → route_started → (arrival) → contribution_submitted`, with declines and alternatives as "the negative arm of the same" id — a genuine outcome loop. It writes to a table that is not there. |
+| M259 | `map_opened` | **W** | `src/features/map/telemetry/mapTelemetry.ts:643#'map_opened',`; 1 emitter: `app/map/index.tsx:1304#emitMapEvent('map_opened',`. `src/features/map/telemetry/mapTelemetry.ts:23#mapSessionId` mints the session id here and nowhere else, so this emitter is also what stops every later event carrying a SYNTHETIC session (`:1011#ensureSession`). |
+| M260 | `zone_selected` | **W** | `src/features/map/telemetry/mapTelemetry.ts:644#'zone_selected',`; 3 emitters: `src/components/map/MapEntityPreviewCard.tsx:132#emitMapEvent('zone_selected',`, `src/components/map/MapCarousel.tsx:1240#emitMapEvent('zone_selected',`, `src/components/map/LivePlaceSheet.tsx:321#emitMapEvent('zone_selected',`. *(The third emitter, previously written "+1", is the `LivePlaceSheet` call site above.)* |
+| M261 | `place_opened` | **W** | `src/features/map/telemetry/mapTelemetry.ts:645#'place_opened',`; 3 emitters: `src/components/map/MapEntityPreviewCard.tsx:138#emitMapEvent('place_opened',`, `src/components/map/MapCarousel.tsx:1246#emitMapEvent('place_opened',`, `src/components/map/LivePlaceSheet.tsx:327#emitMapEvent('place_opened',`. |
+| M262 | `live_state_viewed` | **W** | `src/features/map/telemetry/mapTelemetry.ts:646#'live_state_viewed',`; 2 emitters: `src/components/map/LivePlaceSheet.tsx:361#emitMapEvent('live_state_viewed',`, `src/components/map/LivePlaceSheet.tsx:385#emitMapEvent('live_state_viewed',`. |
+| M263 | `why_shown_opened` | **W** | `src/features/map/telemetry/mapTelemetry.ts:647#'why_shown_opened',`; 1 emitter: `app/map/index.tsx:2819#emitMapEvent('why_shown_opened',`. **The emitter exists and its payload is wrong.** `WhyShownOpenedPayload.lineCount` means "how many provenance lines the §9 panel showed", and the emitter computes `obj.provenance?.lines.length ?? 0` while `WhyShownSheet` renders `buildWhyPanel(object)`, whose `buildWhyLines` SYNTHESISES lines whenever the server sent none — so every synthesised panel reports 0. `provenanceRefs` diverges the other way: the emitter sends `obj.sourceRefs`, the panel shows `model.lines[].ref`. Built and proven this pass: `src/features/map/telemetry/whyShownOpened.ts:49#whyShownOpenedPayload` derives both from the same `buildWhyPanel` call the sheet renders, with `src/features/map/telemetry/__tests__/whyShownOpened.test.ts` failing when the helper is replaced by the production expression. WIRING IT IS A CROSS-LANE CHANGE — the emitter is in `app/map/index.tsx`, which the Map lane does not own — so the payload defect is open |
+| M264 | `compass_requested` | **W** | `src/features/map/telemetry/mapTelemetry.ts:648#'compass_requested',`; 1 emitter: `src/components/map/AskCompassBar.tsx:137#emitMapEvent('compass_requested',`. Mints `decisionId` (`src/features/map/telemetry/mapTelemetry.ts:25#decisionId`). |
+| M265 | `compass_option_selected` | **W** | `src/features/map/telemetry/mapTelemetry.ts:649#'compass_option_selected',`; 1 emitter: `src/components/map/MapCarousel.tsx:1256#emitMapEvent('compass_option_selected',`. |
+| M266 | `route_started` | **W** | `src/features/map/telemetry/mapTelemetry.ts:650#'route_started',`; 2 emitters: `src/components/map/MapEntityActionRow.tsx:579#emitMapEvent('route_started',`, `src/components/map/LivePlaceSheet.tsx:444#emitMapEvent('route_started',`. *(Re-counted 2026-09-14: **two**, not the three previously claimed. Every `route_started` reference in `travel-buddy-standalone/src` and `travel-buddy-standalone/app` was read; the other four are comments and the type declarations.)* |
+| M267 | `trip_stop_added` | **W** | `src/features/map/telemetry/mapTelemetry.ts:651#'trip_stop_added',`; 1 emitter: `src/components/map/MapEntityActionRow.tsx:535#emitMapEvent('trip_stop_added',`. |
+| M268 | `plan_joined` | **W** | `src/features/map/telemetry/mapTelemetry.ts:652#'plan_joined',`; 2 emitters: `src/components/map/MapEntityActionRow.tsx:476#emitMapEvent('plan_joined',`, `app/map/index.tsx:406#emitMapEvent('plan_joined',`. |
+| M269 | `meet_here_created` | **W** | `src/features/map/telemetry/mapTelemetry.ts:653#'meet_here_created',`; 1 emitter: `app/map/index.tsx:3141#emitMapEvent('meet_here_created',`. |
+| M270 | `crew_locate_started` | **W** | `src/features/map/telemetry/mapTelemetry.ts:654#'crew_locate_started',`; 1 emitter: `app/map/index.tsx:2160#emitMapEvent('crew_locate_started',`. |
+| M271 | `contribution_submitted` | **W** | `src/features/map/telemetry/mapTelemetry.ts:655#'contribution_submitted',`; 1 emitter: `app/map/index.tsx:2860#emitMapEvent('contribution_submitted',`. `src/features/map/telemetry/mapTelemetry.ts:585#sinceRouteStart` carries the banded time since `route_started`. |
+| M272 | `alternative_requested` | **W** | `src/features/map/telemetry/mapTelemetry.ts:656#'alternative_requested',`; 1 emitter: `app/map/index.tsx:3162#emitMapEvent('alternative_requested',`. |
+| M273 | `recommendation_accepted` | **W** | `src/features/map/telemetry/mapTelemetry.ts:657#'recommendation_accepted',`; 3 emitters: `src/components/map/MapEntityActionRow.tsx:390#emitMapEvent('recommendation_accepted',`, `src/components/map/MapCarousel.tsx:1266#emitMapEvent('recommendation_accepted',`, `src/components/map/LivePlaceSheet.tsx:438#emitMapEvent('recommendation_accepted',`. |
+| M274 | `recommendation_declined` | **W** | `src/features/map/telemetry/mapTelemetry.ts:658#'recommendation_declined',`; 2 emitters: `src/components/map/AskCompassBar.tsx:128#emitMapEvent('recommendation_declined',`, `src/components/map/LivePlaceSheet.tsx:407#emitMapEvent('recommendation_declined',`. |
+| M275 | Evaluate real-world outcomes, not only screen engagement | **W** | The design is right and the measurement is impossible. `src/features/map/telemetry/mapTelemetry.ts:25#decisionId` threads one id through `compass_requested → compass_option_selected → recommendation_accepted → route_started → (arrival) → contribution_submitted` (`:34#route_started`), with declines and alternatives as "the negative arm of the same" id (`:37#alternative_requested`) — a genuine outcome loop. It writes to a table that is not there. |
+
+**What turns M259–M275 red, stated once for all seventeen.** The verdicts are
+NOT about the emitters — every one of the sixteen was re-counted on 2026-09-14
+by reading each `emitMapEvent` call site in `travel-buddy-standalone/src` and
+`travel-buddy-standalone/app`, and the counts above are that measurement (one
+was wrong: M266 claimed three and has two). They are about the sink. The
+settling evidence is a row in `map_telemetry_events` in production carrying that
+event name, which needs, in order: 2202 applied (integration owner), then
+`map_telemetry_enabled` flipped TRUE — and the flag ROW does not exist in
+production either, because 2202 is what creates it. Until then every emit is
+accepted by `routes/mapTelemetry.ts` and dropped. Nothing a lane can build moves
+any of these seventeen rows; the emitters are already there.
+
+**One thing here IS code and is open: M263's payload.** See that row. A
+mis-computed `lineCount` would still be mis-computed the day 2202 lands, and it
+is the only defect in this block that a deployment does not fix.
 
 *Privacy backstop, worth recording because it is good: positions are coarsened
 to a ~4.9 km geohash cell client-side (`mapTelemetry.ts:104-107`), raw
@@ -815,11 +831,11 @@ token, never the body.*
 | --- | --- | --- | --- |
 | M276 | Phase 1 — Foundation | C | §3, §4, §16, §17, §18 rows above; all C. |
 | M277 | Phase 2 — Live World | C | §8, §9, §22 rows above; all C (with the zero-row intel caveat). |
-| M278 | Phase 3 — Presence & Coordination | **W** | Trip Crew and Meet Here are C (M76, M183); Locate My Friends and offline event maps depend on the four absent `locate_friends_*` tables (M83–M94). |
-| M279 | Phase 4 — Crowd Intelligence | **W** | Built and dead: M5, M65, M67. |
-| M280 | Phase 5 — Temporal Intelligence | **W** | Built and gateway-dark: M10, M106–M111. |
-| M281 | Phase 6 — Journey Intelligence | **N** | Ruled **out of scope** in-repo, before any code: `docs/map/scope-ruling-phases-6-7.md:40-47` — *"Building them would mean inventing a product from a two-word mention"*, with a table showing every Phase-6 term occurs exactly once in the whole spec. Nothing in main implements route optimization beyond §11's Optimize Today, Along My Way, next-move prediction, recovery, group decision or smart meeting points. **PR #393 is exactly this phase** and would move the verdict. |
-| M282 | Phase 7 — World Intelligence | **W** | Fully built against an owner-supplied specification (`docs/map/scope-ruling-phases-6-7.md` AMENDMENT, `docs/map/phase-7-world-intelligence.md`): four kinds on both mirrors (`lib/mapObjects.ts:63-90`), four producers (`lib/mapProducers/worldPulseProducer.ts`, `travelerFlowProducer.ts`, `cityModelProducer.ts`, `personalCityProducer.ts`), two client layers (`layerModel.ts:104-106`). Behind `map_world_intelligence_enabled`, **seeded OFF** (`migrations/2295_map_world_intelligence_flag.sql:79`), and downstream of the empty gateway regardless. |
+| M278 | Phase 3 — Presence & Coordination | **W** | Trip Crew and Meet Here are C (M76, M183); Locate My Friends and offline event maps depend on the four absent `locate_friends_*` tables (M83–M94). **Turns red when:** M7 turns red — a refreshed production baseline listing the four tables — *except* for M88/M89, whose BLE rungs no migration reaches. So this phase can reach C with two rungs still N only if §12's ladder is read as "the rungs the stack supports"; read strictly, M278 cannot close while the stack has no radio. That reading is an owner call and is recorded here rather than taken. |
+| M279 | Phase 4 — Crowd Intelligence | **W** | Built and dead: M5, M65, M67. **Turns red when:** all three do. Note M65 is the one that no deployment reaches — five of seven signal families have no capture — so a `geo_zones` backfill plus 2218/2224 lights the surface (M5, M67) and still leaves this phase W on M65. |
+| M280 | Phase 5 — Temporal Intelligence | **W** | Built and gateway-dark: M10, M106–M111. **Turns red when:** M10 does — 2217 applied, then `map_projection_enabled` TRUE in production, in that order. Nothing else in the phase has a blocker of its own. |
+| M281 | Phase 6 — Journey Intelligence | **N** | Ruled **out of scope** in-repo, before any code: `docs/map/scope-ruling-phases-6-7.md:44#Building` — *"Building them would mean inventing a product from a two-word mention"*, with a table showing every Phase-6 term occurs exactly once in the whole spec. Nothing in main implements route optimization beyond §11's Optimize Today, Along My Way, next-move prediction, recovery, group decision or smart meeting points. **PR #393 is exactly this phase** and would move the verdict. **Turns red when:** either PR #393 lands, or the owner amends the scope ruling the way §36 Phase 7 was amended and the named surfaces are then built. Both are owner/integration acts; the in-repo ruling is what makes N the correct verdict rather than an omission, and a lane building Phase 6 unilaterally would be re-making the mistake the ruling names. |
+| M282 | Phase 7 — World Intelligence | **W** | Fully built against an owner-supplied specification (`docs/map/scope-ruling-phases-6-7.md` AMENDMENT, `docs/map/phase-7-world-intelligence.md`): four kinds on both mirrors (`lib/mapObjects.ts:105#"world_pulse",` … `:108#"personal_city",`; range repointed 2026-09-14 from lines 63-90, which is the comment above the array), four producers (`lib/mapProducers/worldPulseProducer.ts`, `travelerFlowProducer.ts`, `cityModelProducer.ts`, `personalCityProducer.ts`), two client layers (`src/features/map/layers/layerModel.ts:104#'relevant_places',` … `:106#'my_cities',`). Behind `map_world_intelligence_enabled`, **seeded OFF** (`` `migrations/2295_map_world_intelligence_flag.sql:77#'map_world_intelligence_enabled',` `` with `:78#false,`; repointed from line 79, the description string), and downstream of the empty gateway regardless. **Turns red when:** the flag row is TRUE in production *and* M133's gateway is serving, and a projection response carries a `world_pulse`/`traveler_flow`/`city_model` object. Two acts, both the integration owner's. §41.5 records that this row is graded W for a shape `census-media` grades C, and that the convention question is a corpus decision no lane may take. |
 
 ### §37 Explicit Non-Goals (9)
 
@@ -842,7 +858,7 @@ violation unrepresentable or refuses it. All nine clear that bar.
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| M292 | The 10:47 PM scenario is walkable end to end: busier area, cooling area, event starting, aggregate social opportunity, directional movement, a Compass Pick, an explanation, Go There, routing, arrival, one-tap crowd prompt re-entering the pipeline | **?** | Every component exists and is cited above, and the arrival prompt is real (`src/features/map/arrival/arrivalPromptModel.ts`, commit `35305f6c` *"§38 arrival one-tap prompt"*). But walking it requires a running app, a device, live location and populated intelligence — and three of its six map objects (crowd flow, live zone, prediction) cannot be produced in production today. **Not folded into either side.** |
+| M292 | The 10:47 PM scenario is walkable end to end: busier area, cooling area, event starting, aggregate social opportunity, directional movement, a Compass Pick, an explanation, Go There, routing, arrival, one-tap crowd prompt re-entering the pipeline | **?** | Every component exists and is cited above, and the arrival prompt is real (`src/features/map/arrival/arrivalPromptModel.ts`, commit `35305f6c` *"§38 arrival one-tap prompt"*). But walking it requires a running app, a device, live location and populated intelligence — and three of its six map objects (crowd flow, live zone, prediction) cannot be produced in production today. **The walkthrough, named:** an EAS `preview` build on a mid-tier Android handset with location services on, pointed at a seeded `portava-ci` (curated `geo_zones`, `protected_zones`, `intel_*` snapshots and `map_projection_enabled` TRUE) — NOT production, which cannot produce three of the six objects — with the §35 telemetry transport captured, and the pass condition being ONE `decisionId` appearing across `compass_requested → compass_option_selected → recommendation_accepted → route_started → contribution_submitted` in the captured stream. That is the only reading that distinguishes "every component exists" from "the scenario walks", and the id is already threaded for exactly this purpose (`src/features/map/telemetry/mapTelemetry.ts:25#decisionId`). **Who can supply it:** whoever can seed `portava-ci` and run a build on hardware. **Not folded into either side.** |
 
 ### §39 Final Architecture Rule (1)
 
@@ -858,11 +874,11 @@ Five, all genuine, none folded into either side:
 
 | id | Requirement | Why it cannot be settled by reading this tree |
 | --- | --- | --- |
-| M254 | Initial usable map < 2 s | Needs a device, a real network and a cold start. No timing budget, benchmark or CI perf gate exists anywhere under `src/features/map/` or `artifacts/api-server/src/test/`. |
-| M255 | Pan at ~60 fps | A property of MapLibre on hardware. Unfalsifiable statically. |
-| M256 | Viewport intelligence in ~500-800 ms | Needs a running server with a warm cache. Doubly unmeasurable: the gateway currently returns an empty envelope in production, so there is no viewport intelligence to time. |
-| M258 | GPU-friendly animation layers | A runtime rendering property of the style + layer stack. |
-| M292 | §38's north-star scenario end to end | Needs a running app, a device, live location, and populated live intelligence. Three of its six map objects cannot be produced in production today. |
+| M254 | Initial usable map < 2 s | 10 cold starts, navigation-commit to first fully-rendered MapLibre frame, mid-tier Android on an EAS `preview` build over a 1.6 Mbit/300 ms link; cache and no-cache reported separately. No timing budget, benchmark or CI perf gate exists anywhere under `src/features/map/` or `artifacts/api-server/src/test/`. |
+| M255 | Pan at ~60 fps | p99 frame time ≤ 16.7 ms over a scripted 3 s pan, `dumpsys gfxinfo framestats`, **with the zone/flow layers populated** — against a seeded `portava-ci`, since production's map is empty and would measure nothing. |
+| M256 | Viewport intelligence in ~500-800 ms | Two halves. Server p50/p95 for `GET /api/map/projection` over 50 warm requests on `portava-ci` — needs no device and is blocked only by the absence of a harness. Device camera-settle-to-first-paint — blocked behind M133. |
+| M258 | GPU-friendly animation layers | Overdraw and real frame cost under the Android GPU profiler. The device-free half — repaint cadence, source-identity stability and GPU-side interpolation on the pulsing path — **is now asserted** by `ActivityZone.gpuFriendly.component.test.tsx`; the row stays `?` because that test measures neither overdraw nor frame time. |
+| M292 | §38's north-star scenario end to end | A device walkthrough against a seeded `portava-ci`, passing only if ONE `decisionId` spans `compass_requested → … → contribution_submitted` in the captured telemetry stream. Three of its six map objects cannot be produced in production today, so production is the wrong target for the run. |
 
 I deliberately did **not** put the flag-dark and missing-table findings in this
 bucket. They are not unverifiable — the flag seeds and the drift ratchet are in
@@ -1266,3 +1282,178 @@ and nothing in this repository re-measures it. `map_projection_enabled` and
 `map_world_intelligence_enabled` are flag ROWS, so their production state is not
 visible in a table list at all — both are recorded here on their migration seed
 and on the same ledger §40 used, which is one source and not two.
+
+---
+
+## §42 — Evidence pass, 2026-09-14 (the Map lane)
+
+**Nothing moved. No row was closed, no verdict changed, no migration written, no
+flag flipped.** What this pass produced is the thing §41 said the corpus was
+missing: evidence that can be re-checked. Every one of the 56 W / N / ? rows was
+re-opened at this tree, every citation those rows rest on was read, and every row
+now says what would settle it and who can supply that.
+
+Read §41.1 first: 41 of the 46 W rows are capped by a deployment this lane cannot
+perform, and re-reading them does not change that. This section is about the
+other half of a verdict — whether the evidence under it is true.
+
+### §42.1 Seventeen citations were pointing at the wrong line, and three at the wrong file
+
+This census carries the worst-anchored evidence in the corpus: at the start of
+this pass, 24 of 395 citations carried an anchor. `check:doc-citations` says of
+the rest that *"nothing here can tell you it names the right code"*, and that is
+not a theoretical limit here. Opening all of them found:
+
+| row(s) | file | cited line | really at | the shape of the error |
+| --- | --- | --- | --- | --- |
+| M220–M223 | features/map/vocabulary | 49 / 50 / 51 / 52 | 48 / 49 / 50 / 51 | **the whole `MAP_MODES` block was cited one line low** — including M220, a **C** row, whose line 49 is `'CROWD_FLOW'` |
+| M119 | features/map/layers/layerModel | 72 | 75 | three entries early in the same array literal (`'trip'`) |
+| M5 | stores/mapStore | 98 | 100 | the §11 TRIP comment two lines above the gate |
+| M10 | stores/mapStore | 105-107 | 108 | the comment above the assignment |
+| M85 | features/map/presence/locateFriends | 139-190 | 146 | a comment block above the constant |
+| M88, M89 | features/map/presence/presenceLadder | 189-201 | 192 | as above |
+| M122 | features/map/layers/layerModel | 470-485, 491-494 | 463, 492 | range starts mid-record |
+| M129 | lib/mapObjects | 91-110 | 90-109 | off by one at both ends |
+| M139 | test/gatewayBypassGuard.test | 28-33 | 32 | the doc comment above `READERS` |
+| M179 | lib/protectedLocations | 849 | 860 | a field inside an interface, not `applyProtection` |
+| M179 | scripts/checkProductionDrift | 110 | 157 | a Trips comment block, not the `protected_zones` entry |
+| M179 | routes/mapProjection | 964-979 | 1024-1043 | the §19 ordering block, not the refusal envelope |
+| M133 | hooks/useMapEntities | 702-704 | 700, 707 | **inside the gateway-success branch** — the path that row says is NOT taken |
+| M282 | lib/mapObjects | 63-90 | 105-108 | the comment above the array |
+| M282 | migrations/2295_map_world_intelligence_flag | 79 | 77-78 | the description string below the flag |
+| §Headline | routes/mapProjection | 836 | 898 | 62 lines short of the `no_zone_model` refusal |
+| M7, M83–M94 | scripts/checkProductionDrift | 176-179 | — | **wrong file.** Those lines are `wall_telemetry_events` / `passport_telemetry_events`, and that ratchet **does not track any `locate_friends_*` table at all**. The fact lives in the committed production table list, which names 431 tables and none of the four. |
+| M67 | scripts/checkProductionDrift | 180-183 | 210 | as above; the consent table's entry is 30 lines down |
+
+None of the seventeen moves a verdict — every one of the underlying claims is
+still true at this tree, which is the good news and also the reason this class
+survives: a wrong pointer under a right conclusion produces no symptom. What it
+destroys is the ability of the next reader to check the conclusion.
+
+**Every citation in all 56 rows is now anchored** (`path:line#needle`), so
+`check:doc-citations` re-reads the line rather than measuring the file's length.
+The corpus-wide unanchored count fell by 24 and `check:citation-targets` fell
+from 275 to 265 — **which means its ceiling in the api-server's `check:citation-targets` script
+should be lowered to 265, and that file belongs to the integration owner.**
+
+### §42.2 The §35 emitter counts were re-measured, and one was wrong
+
+M259–M274 each asserted an emitter count that nothing checks. All sixteen were
+re-counted by reading every `emitMapEvent` call site in
+`travel-buddy-standalone/src` and `travel-buddy-standalone/app` — 25 sites.
+Fifteen counts were right. **M266 claimed three emitters for `route_started` and
+there are two** (`src/components/map/MapEntityActionRow.tsx:579#emitMapEvent('route_started',`, `src/components/map/LivePlaceSheet.tsx:444#emitMapEvent('route_started',`); the
+other four `route_started` occurrences are comments and the type declaration. The
+rows now name every call site individually and anchored, so the next re-count is
+a re-read rather than a re-derivation.
+
+A caution recorded because this pass nearly shipped the opposite error: an
+initial grep that searched the repository-root `app/` instead of
+`travel-buddy-standalone/app/` reported **six** §35 events with zero emitters,
+and the implementation of one of them was written and mutation-tested before the
+search was found to be wrong. All six are emitted from `app/map/index.tsx`. The
+work was reverted. A count is evidence for opening a file, never a substitute.
+
+### §42.3 M263 — the one defect in this census that no deployment fixes
+
+`why_shown_opened` fires, and its payload does not describe the panel that was
+shown. `WhyShownOpenedPayload.lineCount` is *"how many provenance lines the §9
+panel showed"*; the emitter sends `obj.provenance?.lines.length ?? 0` while
+`WhyShownSheet` renders `buildWhyPanel(object)`, whose `buildWhyLines`
+synthesises the panel's evidence whenever the server sent no `provenance.lines`.
+Every synthesised panel therefore reports **0 lines shown** — and the synthesised
+case is the common one. `provenanceRefs` diverges the other way: the emitter
+sends `obj.sourceRefs`, the panel shows `model.lines[].ref`.
+
+Built this pass: `src/features/map/telemetry/whyShownOpened.ts:49#whyShownOpenedPayload`,
+derived from the same `buildWhyPanel` call the sheet renders, with
+`src/features/map/telemetry/__tests__/whyShownOpened.test.ts` asserting agreement
+against `buildWhyPanel` itself rather than against constants. Three mutations
+were confirmed to redden it, including replacing the helper's body with the
+production expression — which is the proof that the production expression is
+wrong.
+
+**It is not wired, and the row stays W.** The emitter is in `app/map/index.tsx`,
+outside the Map lane's paths. See §42.4.
+
+### §42.3a M258 — the half of a CANNOT-VERIFY that was hiding behind the device
+
+`ActivityZone`'s `useOpacityPulse` was written against §34 and says so: *"One
+`setState` per half-period (≈1.2 s), paired with MapLibre's own
+`*-opacity-transition`, hands the actual interpolation to the GPU… A JS-driven
+60 fps pulse would re-render a paint object 60 times a second per zone on
+screen."* Nothing asserted any of it. A later simplification to an `Animated`
+value driving `line-opacity`, or a dropped `useMemo` around the feature, would
+have been a per-zone frame-rate regression with no failing test and a row that
+said the whole subject needed a handset.
+
+`src/components/map/__tests__/ActivityZone.gpuFriendly.component.test.tsx` now
+pins the cadence, the source-identity stability and the GPU-side transition,
+mutation-proven four ways. **M258 stays `?`**: overdraw and frame cost are still
+a device measurement and this test makes no claim about either. The row is the
+same verdict with one fewer way to rot.
+
+### §42.4 Cross-lane requests this pass raises
+
+1. **`app/map/index.tsx:2819#emitMapEvent('why_shown_opened',` → use `whyShownOpenedPayload`.** Replace the inline
+   `lineCount` / `provenanceRefs` expressions with one call. One line. §42.3 is
+   the argument and the test already exists. (Map-screen owner.)
+2. **M43, the blue dot.** The canvas is `src/components/discovery/DiscoveryMapView.tsx`
+   (Discovery lane). `EntityMapLayers` — the one map-owned renderer mounted
+   inside it — renders only when `entities.length > 0`, so it is the wrong home
+   for a marker that must draw on an empty map. The Map lane cannot build this.
+3. **M42 / M123.** The memory projector's PLACE lane reads writerless
+   `saved_places`. PR #451 is that migration; §40 declined to duplicate it and
+   this pass agrees. (Highlights & Memories / integration owner.)
+4. **The `check:citation-targets` ceiling, 275 → 265.** §42.1. (Integration owner.)
+5. **`CENSUS_STALENESS_ACKNOWLEDGED.json` needs three new file names.** This pass
+   adds three files inside census-map's counted scope, and
+   `check:census-freshness` fails for this census the moment they are committed
+   unless the acknowledgement entry names them:
+
+   - `travel-buddy-standalone/src/features/map/telemetry/whyShownOpened.ts`
+   - `travel-buddy-standalone/src/features/map/telemetry/__tests__/whyShownOpened.test.ts`
+   - `travel-buddy-standalone/src/components/map/__tests__/ActivityZone.gpuFriendly.component.test.tsx`
+
+   The reason, for the entry: all three are NEW and none changes an existing
+   artifact. The first two are the M263 payload builder and its test, built and
+   not wired (§42.3); the third is the M258 cadence guard (§42.3a). No verdict
+   moves on any of them, and `head_commit` stays `42aeac38` — a new file in
+   counted scope ages this census exactly as a changed one does, which is why it
+   is declared rather than left to fire. That JSON belongs to the integration
+   owner and this lane did not edit it.
+6. **M122 / M129 / M130 need an owner ruling, not a build.** §18's `MapObjectKind`
+   union is closed at thirteen and this repository has already ruled that a
+   one-line mention is not a licence to invent an object contract
+   (`docs/map/scope-ruling-phases-6-7.md:44#Building`). Transport, entrances and
+   venue interiors each need that ruling plus a named data source before any lane
+   should write a kind. Building them without it would be the scope creep the
+   ruling names.
+
+### §42.5 What this pass could not verify
+
+- **Production state.** Every "absent from production" in this document still
+  rests on one artifact, `baseline/20260907_production_tables.txt`, measured
+  2026-09-07 and now a week old. This pass confirmed the four `locate_friends_*`
+  tables, `protected_zones`, both `map_telemetry_*` tables and
+  `route_flow_contribution_consent` are absent from that list, and that
+  `geo_zones` and `saved_places` are present. It did not, and could not,
+  re-measure the database. §41.7 stands unchanged.
+- **`geo_zones` row count.** The CORRECTION HEADER's "0 rows" is an ops
+  observation with no artifact in this tree. The empty-zone refusal path is real
+  and now correctly cited (`routes/mapProjection.ts:898#no_zone_model`); whether
+  it fires in production today is not checkable from here.
+- **Flag rows.** `map_projection_enabled`, `map_telemetry_enabled` and
+  `map_world_intelligence_enabled` are rows, not tables, so a table list cannot
+  see them. Unchanged from §41.7 and restated because three rows in §42.1 now
+  depend on it.
+- **M254–M258, M292.** Still `?`. Each now names the measurement, the device and
+  who can run it rather than saying "needs a device" — and M256 and M258 each
+  turned out to have a half that needs **no** device and was simply unwritten,
+  which was being hidden behind the device. M258's device-free half was written
+  this pass (§42.3a); M256's server-side half is still nobody's.
+
+### §42.6 Row moves
+
+**None.** 237 C / 46 W / 5 N / 5 ? is unchanged, and CONSTRUCTED% and CORRECT%
+are unchanged. This section moved no row and is not a gain in either number.

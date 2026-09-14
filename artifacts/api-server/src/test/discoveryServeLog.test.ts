@@ -313,3 +313,74 @@ describe("discoveryServeLog — flag read caching", () => {
     assert.equal(DISCOVERY_SERVE_LOG_FLAG, "discovery_serve_log_enabled");
   });
 });
+
+// ── `12` stop-condition evidence (census DV-82) ───────────────────────────────
+//
+// This writer is the only instrument that knows whether a Discovery event
+// actually landed, so it is the only thing that can feed `12`'s first two stop
+// conditions. The Phase 9 lesson applies: with the evaluator fully covered by
+// its own tests, deleting the CALL that feeds it left everything green. A stop
+// condition with no evidence never trips, which is indistinguishable from one
+// that is working.
+import {
+  evaluateStopConditions,
+  _resetStopConditionsForTest,
+} from "../lib/discoveryStopConditions.js";
+
+describe("discoveryServeLog — feeds the 12 stop conditions", () => {
+  beforeEach(() => {
+    invalidateServeLogFlagCache();
+    _resetStopConditionsForTest();
+  });
+
+  it("M. a REJECTED insert is recorded as evidence, not only logged", async () => {
+    const { client } = makeClient({ flagRow: { enabled: true }, insertError: { message: "check violation" } });
+    await logDiscoveryServe(client as any, {
+      userId: USER_ID, servePoint: DiscoveryServePoint.CACHE_A_L1, items: ITEMS,
+    });
+    const v = evaluateStopConditions();
+    assert.equal(v.attempts, 1, "the attempt must reach the stop-condition window");
+    assert.equal(v.eventRejectionRate, 1, "a rejected batch is a rejection");
+    assert.equal(v.loggingGapRate, 1, "and every served item failed to become a row");
+  });
+
+  it("M2. a LANDED insert is recorded as healthy evidence", async () => {
+    const { client } = makeClient({ flagRow: { enabled: true } });
+    await logDiscoveryServe(client as any, {
+      userId: USER_ID, servePoint: DiscoveryServePoint.CACHE_A_L1, items: ITEMS,
+    });
+    const v = evaluateStopConditions();
+    assert.equal(v.attempts, 1);
+    assert.equal(v.eventRejectionRate, 0);
+    assert.equal(v.loggingGapRate, 0);
+  });
+
+  it("M3. a THROWN insert is recorded — the failure most likely to be invisible", async () => {
+    const { client } = makeClient({ flagRow: { enabled: true }, insertThrows: true });
+    await logDiscoveryServe(client as any, {
+      userId: USER_ID, servePoint: DiscoveryServePoint.CACHE_A_L1, items: ITEMS,
+    });
+    const v = evaluateStopConditions();
+    assert.equal(v.attempts, 1, "a throw leaves no error object and no rejected row; if it is not recorded here it is recorded nowhere");
+    assert.equal(v.eventRejectionRate, 1);
+  });
+
+  it("M4. the FLAG BEING OFF is not evidence of anything — no attempt, no gap", async () => {
+    const { client } = makeClient({ flagRow: { enabled: false } });
+    await logDiscoveryServe(client as any, {
+      userId: USER_ID, servePoint: DiscoveryServePoint.CACHE_A_L1, items: ITEMS,
+    });
+    assert.equal(
+      evaluateStopConditions().attempts, 0,
+      "counting a disabled writer as a logging gap would make the stop trip hardest precisely while the feature is off",
+    );
+  });
+
+  it("M5. a serve with NO items records nothing — an empty page is not a dropped page", async () => {
+    const { client } = makeClient({ flagRow: { enabled: true } });
+    await logDiscoveryServe(client as any, {
+      userId: USER_ID, servePoint: DiscoveryServePoint.CACHE_A_L1, items: [],
+    });
+    assert.equal(evaluateStopConditions().attempts, 0);
+  });
+});

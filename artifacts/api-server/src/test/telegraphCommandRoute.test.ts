@@ -389,3 +389,233 @@ describe("Telegraph §12/§13.1 ADD_REACTION / REMOVE_REACTION", () => {
     assert.equal(left[0].user_id, BOB, "someone else's reaction must survive");
   });
 });
+
+// ── §30A.10 the executable-action registry ───────────────────────────────────
+//
+// census-telegraph T410: "Every executable action registers authorize /
+// preview / execute / optional compensate; Telegraph orchestrates, source
+// domains retain truth … Three of four hooks exist for ONE action family:
+// `ProposedAction.label` (preview), `confirm-action` (execute), and `:390`'s
+// re-verification (authorize). **No registry, no compensate.**"
+//
+// Three things are pinned here, and the third is the one that is easy to fake:
+//   1. the registry is EXHAUSTIVE over the action kinds the route can produce —
+//      checked against the route's own source, so a fifth kind turns this red;
+//   2. every registration declares all four hooks, and where there is no
+//      compensate it says WHY rather than being silently absent;
+//   3. compensate actually RUNS. §30A.11 asks for the source-domain capability
+//      to be rechecked at execution time; when the recheck fails after the
+//      orchestration record was written, the record is UNDONE and the caller is
+//      told, rather than left with a confirmation nothing backs.
+
+import { readFileSync as readSrc } from "node:fs";
+import { dirname as dirOf, join as joinPath } from "node:path";
+import { fileURLToPath as urlToPath } from "node:url";
+import {
+  TELEGRAPH_ACTION_REGISTRY,
+  ACTION_HOOKS,
+  registrationFor,
+  registeredActionIds,
+} from "../services/telegraph/actionRegistry.js";
+import telegraphCommandsRouter from "../routes/telegraphCommands.js";
+
+const TRIP = "77770000-0000-4000-8000-000000000001";
+
+interface ActionState {
+  /** Membership answers true, then false — the §30A.11 recheck race. */
+  membershipFlipsAfterWrite?: boolean;
+  memberOfTrip?: boolean;
+}
+
+function makeActionClient(state: ActionState = {}) {
+  // The flip is keyed off the orchestration WRITE, not off a read count: the
+  // submit call reads membership too, and counting reads made the race fire
+  // before the write it is supposed to follow.
+  let wroteRecord = false;
+  const rows: Record<string, any[]> = {
+    trip_members: [{ trip_id: TRIP, user_id: ALICE, role: "member", status: "accepted" }],
+    trips: [{ id: TRIP, owner_id: BOB }],
+    user_preference_events: [],
+  };
+  const writes: Array<{ table: string; op: string; payload: any }> = [];
+
+  function from(table: string) {
+    const preds: Array<(r: any) => boolean> = [];
+    let pending: { op: string; payload: any } | null = null;
+    const rowsNow = () => (rows[table] ?? []).filter((r) => preds.every((f) => f(r)));
+    const target: any = {
+      select() { return proxy; },
+      insert(row: any) { pending = { op: "insert", payload: row }; return proxy; },
+      delete() { pending = { op: "delete", payload: null }; return proxy; },
+      eq(col: string, val: any) { preds.push((r) => String(r[col]) === String(val)); return proxy; },
+      is(col: string, val: any) { preds.push((r) => (val === null ? r[col] == null : r[col] === val)); return proxy; },
+      limit() { return proxy; },
+      order() { return proxy; },
+      maybeSingle() {
+        if (table === "trip_members") {
+          if (state.memberOfTrip === false) return Promise.resolve({ data: null, error: null });
+          if (state.membershipFlipsAfterWrite && wroteRecord) {
+            return Promise.resolve({ data: null, error: null });
+          }
+        }
+        return Promise.resolve({ data: rowsNow()[0] ?? null, error: null });
+      },
+      then(resolve: (v: any) => void, reject?: (e: any) => void) {
+        if (pending) {
+          const p = pending; pending = null;
+          writes.push({ table, op: p.op, payload: p.payload });
+          if (p.op === "insert") {
+            (rows[table] ??= []).push({ ...p.payload });
+            if (table === "user_preference_events") wroteRecord = true;
+          }
+          if (p.op === "delete") rows[table] = (rows[table] ?? []).filter((r) => !preds.every((f) => f(r)));
+          return Promise.resolve({ data: null, error: null }).then(resolve, reject);
+        }
+        return Promise.resolve({ data: rowsNow(), error: null, count: null }).then(resolve, reject);
+      },
+    };
+    const proxy: any = new Proxy(target, {
+      get(t, prop) {
+        if (prop in t) return t[prop as string];
+        if (prop === "catch" || prop === "finally") return undefined;
+        return () => proxy;
+      },
+    });
+    return proxy;
+  }
+
+  return {
+    _rows: rows,
+    _writes: writes,
+    from,
+    rpc: async () => ({ data: null, error: { message: "rpc not modelled" } }),
+    auth: { getUser: async (token: string) => ({ data: { user: { id: token } }, error: null }) },
+  };
+}
+
+describe("§30A.10 — every executable action registers four hooks", () => {
+  const here = dirOf(urlToPath(import.meta.url));
+  const routeSrc = readSrc(joinPath(here, "../routes/telegraphCommands.ts"), "utf8");
+
+  it("the registry is EXHAUSTIVE over the kinds the route can actually produce", () => {
+    const produced = new Set(
+      [...routeSrc.matchAll(/kind:\s*"([a-z_]+)"/g)].map((m) => m[1] as string),
+    );
+    assert.ok(produced.size >= 4, `expected the route to produce action kinds; found ${produced.size}`);
+    for (const kind of produced) {
+      assert.ok(
+        registeredActionIds().includes(kind),
+        `${kind} is produced by the route and is not in TELEGRAPH_ACTION_REGISTRY`,
+      );
+    }
+  });
+
+  it("names §30A.10's four hooks, and every registration has all four", () => {
+    assert.deepEqual([...ACTION_HOOKS], ["authorize", "preview", "execute", "compensate"]);
+    for (const reg of TELEGRAPH_ACTION_REGISTRY) {
+      assert.equal(typeof reg.preview, "function", `${reg.actionId} has no preview`);
+      assert.equal(typeof reg.authorize, "function", `${reg.actionId} has no authorize`);
+      assert.equal(typeof reg.execute, "function", `${reg.actionId} has no execute`);
+      assert.ok(reg.compensate, `${reg.actionId} declares no compensate at all`);
+      // Optional means "optional to IMPLEMENT", not "optional to answer".
+      const c: any = reg.compensate;
+      assert.ok(
+        typeof c.run === "function" || typeof c.reason === "string",
+        `${reg.actionId}'s compensate is neither a function nor a stated reason`,
+      );
+    }
+  });
+
+  it("every registration names the domain that retains canonical truth, and it is never Telegraph", () => {
+    for (const reg of TELEGRAPH_ACTION_REGISTRY) {
+      assert.ok(reg.canonicalOwner, `${reg.actionId} names no canonical owner`);
+      assert.notEqual(reg.canonicalOwner.domain, "telegraph", `${reg.actionId} claims Telegraph owns the truth`);
+    }
+  });
+
+  it("registrationFor answers null for an action nobody registered", () => {
+    assert.equal(registrationFor("delete_the_trip"), null);
+  });
+});
+
+describe("§30A.11 — the recheck, and the compensate that makes it safe", () => {
+  let actionServer: any;
+  let actionBase = "";
+
+  before(async () => {
+    const app = express();
+    app.use(express.json());
+    app.use((req: any, _res: any, next: any) => { req.log = { error() {}, warn() {}, info() {}, debug() {} }; next(); });
+    app.use("/api", telegraphCommandsRouter);
+    actionServer = createServer(app);
+    await new Promise<void>((r) => actionServer.listen(0, "127.0.0.1", r));
+    actionBase = `http://127.0.0.1:${actionServer.address().port}/api`;
+  });
+
+  after(async () => {
+    await new Promise<void>((r) => actionServer.close(() => r()));
+  });
+
+  async function submit(client: any) {
+    _setTestClient(client, true);
+    const r = await fetch(`${actionBase}/telegraph/commands`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${ALICE}`, "content-type": "application/json" },
+      body: JSON.stringify({ text: "plan my day", tripId: TRIP }),
+    });
+    const body: any = await r.json();
+    return body;
+  }
+
+  async function confirm(actionId: string, commandId: string) {
+    const r = await fetch(`${actionBase}/telegraph/commands/${commandId}/confirm-action`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${ALICE}`, "content-type": "application/json" },
+      body: JSON.stringify({ actionId }),
+    });
+    return { status: r.status, body: (await r.json()) as any };
+  }
+
+  it("a confirmed action reports the four hooks it ran and who owns the write", async () => {
+    const c = makeActionClient({});
+    const cmd = await submit(c);
+    const action = cmd.proposedActions[0];
+    const r = await confirm(action.id, cmd.commandId);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.confirmed, true);
+    assert.equal(r.body.orchestration.authorized, true);
+    assert.equal(typeof r.body.orchestration.preview, "string");
+    assert.ok(r.body.orchestration.preview.length > 0);
+    assert.notEqual(r.body.orchestration.canonicalOwner.domain, "telegraph");
+    assert.equal(r.body.orchestration.compensated, false);
+  });
+
+  it("membership lost between authorize and the recheck UNDOES the orchestration record", async () => {
+    const c = makeActionClient({ membershipFlipsAfterWrite: true });
+    const cmd = await submit(c);
+    const action = cmd.proposedActions[0];
+    const r = await confirm(action.id, cmd.commandId);
+    assert.equal(r.status, 409);
+    assert.equal(r.body.compensated, true);
+    // The record must be GONE, not merely reported as undone.
+    assert.equal(
+      (c._rows.user_preference_events ?? []).length,
+      0,
+      "the orchestration record survived the compensate",
+    );
+  });
+
+  it("a non-member is refused by authorize and nothing is written at all", async () => {
+    const c = makeActionClient({ memberOfTrip: false });
+    _setTestClient(c, true);
+    const submitted = await fetch(`${actionBase}/telegraph/commands`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${ALICE}`, "content-type": "application/json" },
+      body: JSON.stringify({ text: "plan my day", tripId: TRIP }),
+    });
+    const cmd: any = await submitted.json();
+    const r = await confirm(cmd.proposedActions[0].id, cmd.commandId);
+    assert.equal(r.status, 403);
+    assert.equal((c._rows.user_preference_events ?? []).length, 0);
+  });
+});

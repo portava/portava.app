@@ -44,12 +44,20 @@
  * answer including the deterministic fallbacks.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { openai } from "../../lib/openai.js";
+// `getOpenAI()`, not the bare `openai` export. The bare export is the real
+// client always, so this file could not be driven with a model answer in a
+// test — which meant the §12 boundary below could only ever be exercised
+// against strings handed to it directly, and nothing proved the PRODUCTION
+// path passed the certified verdict to it. It does now, and
+// `__tests__/layoverCompassEntryBoundary.test.ts` drives a widening answer
+// through this function to prove it.
+import { getOpenAI } from "../../lib/openai.js";
 import type { AirportProfile } from "./AirportProfileService.js";
 import type { LayoverSession } from "./LayoverSessionService.js";
 import {
   safetyLabel,
   type LayoverReturnState,
+  type LeaveAdvice,
   type SafetyRating,
 } from "./LayoverSafetyEngine.js";
 import {
@@ -151,7 +159,7 @@ Answer (max ${maxLength} characters):`;
 
   let answer: string;
   try {
-    const completion = await openai.chat.completions.create({
+    const completion = await getOpenAI().chat.completions.create({
       model: "gpt-5-mini",
       max_completion_tokens: 300,
       messages: [
@@ -175,6 +183,10 @@ Answer (max ${maxLength} characters):`;
     airport,
     hardReturnTime,
     usableMinutes: usableMin,
+    // The CERTIFIED verdict, from the same record the deadline came from. The
+    // risk-band check is inert without it, so this argument is what makes
+    // census L101's third noun enforced rather than declared.
+    verdict: record.verdict,
   });
   const boundaryViolations = bounded.violations;
   const boundedText = bounded.ok
@@ -251,9 +263,19 @@ function deterministicAnswer(input: {
 // §12 — the boundary, enforced on the model's own words
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type CompassBoundaryViolationKind =
-  | "return_deadline_widened"
-  | "usable_time_widened";
+/**
+ * The whole violation vocabulary, declared once so a new check cannot invent a
+ * spelling and so a test can count them. Two were built by §18; the two below
+ * them are census L101's remaining nouns.
+ */
+export const COMPASS_BOUNDARY_KINDS = [
+  "return_deadline_widened",
+  "usable_time_widened",
+  "entry_status_asserted",
+  "risk_band_widened",
+] as const;
+
+export type CompassBoundaryViolationKind = (typeof COMPASS_BOUNDARY_KINDS)[number];
 
 export interface CompassBoundaryViolation {
   kind: CompassBoundaryViolationKind;
@@ -307,7 +329,18 @@ function clockToMinutes(raw: string): number | null {
  */
 export function enforceCompassEnvelope(
   answer: string,
-  ctx: { airport: Pick<AirportProfile, "timezone">; hardReturnTime: Date; usableMinutes: number },
+  ctx: {
+    airport: Pick<AirportProfile, "timezone">;
+    hardReturnTime: Date;
+    usableMinutes: number;
+    /**
+     * The CERTIFIED §9 verdict for this session. Optional only so that a caller
+     * which genuinely holds no verdict (there is none today) is not forced to
+     * invent one — when it is absent the risk-band check does not run, which is
+     * the direction a missing input must fail for a guard that REFUSES.
+     */
+    verdict?: LeaveAdvice["verdict"];
+  },
 ): { ok: boolean; text: string; violations: CompassBoundaryViolation[] } {
   const violations: CompassBoundaryViolation[] = [];
   const tz = ctx.airport.timezone ?? "UTC";
@@ -356,8 +389,81 @@ export function enforceCompassEnvelope(
     }
   }
 
+  // ── census L101: VISA / ENTRY STATUS ───────────────────────────────────────
+  //
+  // "Visa/entry is not a field at all on main, so a model assertion about it is
+  // unconstrained by anything." Nothing on this tree reads entry permission —
+  // `adviseLeaving` emits `ENTRY_NOT_CONFIRMED` on every session and carries
+  // "Visa or transit-permit requirements for your nationality" as a standing
+  // UNKNOWN. So any answer that ASSERTS the permission is contradicting the
+  // server's own certified unknown, and this is the one question whose wrong
+  // answer ends with a traveller refused at a border.
+  //
+  // NEGATION-AWARE, and that is the whole difficulty. "You won't need a visa"
+  // is an assertion; "we can't confirm whether you need a visa" is the truth
+  // the server itself publishes, and a guard that refuses the second would be
+  // switched off inside a week. The rule is therefore: an entry/visa sentence
+  // trips ONLY when it is not hedged by an uncertainty marker or a
+  // check-it-yourself instruction.
+  for (const m of answer.matchAll(ENTRY_ASSERTION)) {
+    const sentence = m[0];
+    if (ENTRY_HEDGE.test(sentence)) continue;
+    violations.push({
+      kind: "entry_status_asserted",
+      stated: sentence.trim().slice(0, 140),
+      certified: "ENTRY_NOT_CONFIRMED — no entry permission state exists on this tree",
+    });
+  }
+
+  // ── census L101 / L3: THE RISK BAND ────────────────────────────────────────
+  //
+  // ONE-DIRECTIONAL BY CONSTRUCTION. Talking the band DOWN ("it is not safe to
+  // leave") is always allowed — a model may be more cautious than the record,
+  // never less. Only an upgrade is a widening, so the trigger is an explicit
+  // permission phrase on a session the record did not certify as `yes`.
+  if (ctx.verdict !== undefined && ctx.verdict !== "yes") {
+    for (const m of answer.matchAll(SAFE_TO_LEAVE)) {
+      const sentence = m[0];
+      if (NEGATED_SAFETY.test(sentence)) continue;
+      violations.push({
+        kind: "risk_band_widened",
+        stated: sentence.trim().slice(0, 140),
+        certified: `certified verdict: ${ctx.verdict}`,
+      });
+    }
+  }
+
   return { ok: violations.length === 0, text: answer, violations };
 }
+
+/**
+ * A sentence that mentions entry, a visa or a transit permit. Sentence-scoped
+ * (`[^.!?]*`) so the hedge test below reads the SAME sentence rather than the
+ * whole answer — an answer that hedges once and asserts twice must still trip.
+ */
+const ENTRY_ASSERTION =
+  /[^.!?]*\b(?:visas?|visa-free|permits?|entry\s+requirements?|immigration\s+clearance|enter\s+the\s+country)\b[^.!?]*[.!?]?/gi;
+
+/**
+ * The hedges that make an entry sentence honest rather than an assertion: an
+ * admission of not knowing, or an instruction to verify.
+ *
+ * `may`, `might` and `could` are DELIBERATELY ABSENT. They read as hedges in
+ * English generally and as PERMISSION in exactly this context — "you may enter
+ * without a visa" is the assertion this guard exists to catch, not a hedge of
+ * it. Leaving them out makes the guard refuse a few honest sentences and never
+ * pass a permission claim, which is the direction a refusal must fail.
+ */
+const ENTRY_HEDGE =
+  /\b(?:can(?:'|’)?t|cannot|can\s+not|don(?:'|’)?t|do\s+not|unable\s+to|not\s+able\s+to|unknown|unsure|uncertain|we\s+have\s+not|haven(?:'|’)?t|check|verify|confirm\s+with|depends?)\b/i;
+
+/** An explicit permission to go landside. */
+const SAFE_TO_LEAVE =
+  /[^.!?]*\b(?:safe\s+to\s+(?:leave|go|head\s+out)|you\s+can\s+safely\s+(?:leave|go)|plenty\s+of\s+time|go\s+ahead\s+and\s+leave|you(?:'|’)?ll\s+easily\s+make\s+it)\b[^.!?]*[.!?]?/gi;
+
+/** …unless the sentence is a refusal wearing the same words. */
+const NEGATED_SAFETY =
+  /\b(?:not|isn(?:'|’)?t|is\s+not|don(?:'|’)?t|do\s+not|won(?:'|’)?t|rather\s+than|instead\s+of|avoid)\b/i;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // §12.1 value-of-information

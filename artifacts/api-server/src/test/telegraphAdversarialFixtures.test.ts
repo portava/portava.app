@@ -565,8 +565,24 @@ describe("F-10 — AI summary sees conflicting messages", () => {
 
   it("confirmation re-verifies trip membership at execution rather than trusting the proposal", () => {
     const s = src();
-    assert.ok(/isAcceptedTripMember\(client, stored\.tripId, user\.id\)/.test(s),
-      "the confirm path must re-derive membership from the source domain at execution time");
+    const registry = readFileSync(resolve(process.cwd(), "src/services/telegraph/actionRegistry.ts"), "utf8");
+    /*
+     * §30A.10 moved the four hooks out of this handler and into
+     * `services/telegraph/actionRegistry.ts`. The REQUIREMENT is unchanged and
+     * this assertion follows it rather than the line it used to live on: the
+     * confirm path must RE-DERIVE membership from the source domain at
+     * execution time. It now does so twice — once to authorize, and once as
+     * §30A.11's post-write recheck, which is what makes `compensate` reachable.
+     * Each clause below fails if that chain is broken at a different link.
+     */
+    assert.ok(/isAcceptedTripMember\(ctx\.client, ctx\.tripId, ctx\.userId\)/.test(registry),
+      "the registry's authorize hook must re-derive membership from trip_members");
+    assert.ok(/const authorization = await registration\.authorize\(ctx\);/.test(s),
+      "the confirm path must call the authorize hook before writing anything");
+    assert.ok(/const recheck = await registration\.authorize\(ctx\);/.test(s),
+      "…and recheck it AFTER the write, so a membership lost mid-flight fails safely (§30A.11)");
+    assert.ok(/compensateFor\(registration, ctx, execution\)/.test(s),
+      "…compensating the record it had already written");
     assert.ok(/stored\._userId !== user\.id/.test(s),
       "and a command may only be confirmed by the user who issued it");
   });

@@ -37,6 +37,7 @@
 import { z } from "zod";
 import {
   COORDINATION_QUICK_STATES,
+  COORDINATION_STATES,
   QUICK_STATE_PROVENANCE,
   isCoordinationQuickState,
   isTelegraphAction,
@@ -547,6 +548,35 @@ export function projectAcknowledgements(
 
 // ── §8.1 native actions, as messages ─────────────────────────────────────────
 
+/**
+ * §8.2's other half — the CONFIRMATION an action proposal is waiting for.
+ *
+ * `ActionMessagePayload` has carried `requiresConfirmation: true` since §8 was
+ * built and nothing could satisfy it: the renderer's Confirm control says
+ * "Confirmation is not available on this screen" in so many words
+ * (`travel-buddy-standalone/src/features/telegraph/kinds/TypedMessageRenderer.tsx`),
+ * because an in-thread ACTION carries no command id for
+ * `/telegraph/commands/:id/confirm-action` to execute. A proposal that can
+ * never be answered is not "awaiting confirmation"; it is stuck — and §2.3's
+ * PLAN layer would have filled with items that could never leave it, which is
+ * the failure mode `services/telegraph/layers.ts` exists to avoid.
+ *
+ * DECLINED is here for the same reason a reaction needs a way to be taken
+ * back: an answer a person cannot give in the negative is not an answer, it is
+ * a countdown to agreement.
+ *
+ * This EXECUTES NOTHING. It records what a person said about a proposal, in
+ * the thread, exactly the way a vote and an acknowledgement do; the canonical
+ * write still belongs to the owning domain (§30A.11), which is why there is no
+ * side effect anywhere in this module.
+ */
+export const ActionResponsePayload = z.object({
+  /** The ACTION_PROPOSAL (or §6.2 ACTION) message being answered. */
+  actionMessageId: z.string().min(1).max(64),
+  response: z.enum(["CONFIRMED", "DECLINED"]),
+  note: z.string().max(280).nullish(),
+});
+
 export const ActionMessagePayload = z.object({
   action: z.string().min(1).max(40),
   title: z.string().min(1).max(200),
@@ -581,6 +611,163 @@ export function isCoordinationAction(v: unknown): v is TelegraphAction {
   return isTelegraphAction(v) && (COORDINATION_ACTIONS as readonly string[]).includes(v);
 }
 
+// ── §8 CoordinationSession, as an ENTITY ─────────────────────────────────────
+
+/**
+ * census-telegraph T85, verbatim: "the session's BEHAVIOUR exists (a derived
+ * state, legal transitions, per-state affordances, arrival counts, a panel that
+ * appears and disappears) but there is no session ENTITY: nothing has an id,
+ * nothing records who started it or when it ended, and a DISRUPTED transition
+ * cannot be recorded because there is nowhere to record it. Deriving the state
+ * was the right call under Appendix A; a session object would need a table and
+ * would then be capped at W by the migration anyway."
+ *
+ * ── WHY IT DOES NOT NEED A TABLE ────────────────────────────────────────────
+ * The row's last sentence is the one this disagrees with, and it disagrees
+ * using this module's own precedent. A ConversationDecision has an id, an
+ * asker, a deadline and a result, and it is carried as a MESSAGE: the message
+ * id IS the decision id. So is a commitment. So is an acknowledgement. A
+ * session is the same shape — something one person started, that other people
+ * added facts to, inside one conversation — and Appendix A's rule ("not
+ * permission to create duplicate tables if equivalent canonical structures
+ * already exist") points at messages here exactly as it did there.
+ *
+ * That is what makes this reachable rather than capped: migrations 2810-2813
+ * exist in no database, and an entity that needed one would be W on arrival.
+ *
+ * ── DERIVED AND DECLARED STAY APART ─────────────────────────────────────────
+ * §9.1: "User-declared status must remain distinguishable from system-derived
+ * ETA or location-derived estimates." A session therefore carries BOTH —
+ * `derivedState` from the plan's own timeline and `declaredState` from what a
+ * person said — in two fields that are never merged. `state` is the answer to
+ * "what is happening", and it prefers the declaration, because a human saying
+ * "we are stuck in traffic" outranks a clock that thinks the table is booked.
+ * A reader who needs to know which is which has both.
+ *
+ * ── AN ILLEGAL TRANSITION IS RECORDED, NOT SILENTLY DROPPED ─────────────────
+ * The route refuses one at post time with the legal set named. A transition
+ * that is nevertheless present in the thread — posted before an earlier one
+ * landed, say — is projected with `applied: false` rather than discarded: it
+ * happened, somebody pressed something, and a projection that erased it would
+ * make the record of the evening disagree with the evening.
+ */
+export const CoordinationSessionPayload = z.object({
+  title: z.string().min(1).max(200),
+  /** The plan this session is coordinating around, when there is one. */
+  planObjectId: z.string().max(200).nullish(),
+  note: z.string().max(500).nullish(),
+});
+
+export const CoordinationTransitionPayload = z.object({
+  /** The COORDINATION_SESSION message this transition belongs to. */
+  sessionId: z.string().min(1).max(64),
+  to: z.enum(COORDINATION_STATES),
+  reason: z.string().max(280).nullish(),
+});
+
+export interface SessionTransition {
+  messageId: string;
+  declaredBy: string;
+  at: string;
+  from: CoordinationState;
+  to: CoordinationState;
+  reason: string | null;
+  /** False when §9's diagram has no arrow from `from` to `to`. */
+  applied: boolean;
+}
+
+export interface CoordinationSession {
+  /** The COORDINATION_SESSION message's own id. */
+  sessionId: string;
+  startedBy: string;
+  startedAt: string;
+  title: string;
+  planObjectId: string | null;
+  /** §9.1 DECLARED — the last legal transition somebody posted, or null. */
+  declaredState: CoordinationState | null;
+  /** §9.1 DERIVED — from the plan's timeline, or null when there is no plan. */
+  derivedState: CoordinationState | null;
+  /** What is happening: the declaration when there is one, else the derivation. */
+  state: CoordinationState | null;
+  /** Set when the session reached COMPLETE or CANCELLED, and only then. */
+  endedAt: string | null;
+  transitions: SessionTransition[];
+  legalNext: readonly CoordinationState[];
+}
+
+/**
+ * The state a transition posted now would have to be legal from.
+ *
+ * Separate from the full projection because the ROUTE needs exactly this and
+ * nothing else, and giving it the whole projection would invite it to re-derive
+ * legality with a second rule.
+ */
+export function sessionStateNow(
+  session: DecisionInputMessage,
+  transitions: DecisionInputMessage[],
+  derived: CoordinationState | null,
+): CoordinationState {
+  return projectCoordinationSession(session, transitions, derived).state ?? "PREPARING";
+}
+
+/**
+ * §8's CoordinationSession, projected from the message that opened it and the
+ * transitions that followed.
+ *
+ * The fold starts from the DERIVED state at projection time, or PREPARING when
+ * the session has no plan: a session that nobody has declared anything about is
+ * exactly the behaviour that already existed, which is the point — this adds an
+ * identity and a record, it does not change the state machine.
+ */
+export function projectCoordinationSession(
+  session: DecisionInputMessage,
+  transitions: DecisionInputMessage[],
+  derived: CoordinationState | null,
+): CoordinationSession {
+  const parsed = CoordinationSessionPayload.safeParse(session.payload);
+  const title = parsed.success ? parsed.data.title : "Coordination";
+  const planObjectId = parsed.success ? (parsed.data.planObjectId ?? null) : null;
+
+  let current: CoordinationState = derived ?? "PREPARING";
+  let declaredState: CoordinationState | null = null;
+  let endedAt: string | null = null;
+  const applied: SessionTransition[] = [];
+
+  for (const m of [...transitions].sort((a, b) => (ms(a.created_at) ?? 0) - (ms(b.created_at) ?? 0))) {
+    const t = CoordinationTransitionPayload.safeParse(m.payload);
+    if (!t.success) continue;
+    if (t.data.sessionId !== session.id) continue;
+    const legal = isLegalTransition(current, t.data.to);
+    applied.push({
+      messageId: m.id,
+      declaredBy: m.sender_id,
+      at: m.created_at,
+      from: current,
+      to: t.data.to,
+      reason: t.data.reason ?? null,
+      applied: legal,
+    });
+    if (!legal) continue;
+    current = t.data.to;
+    declaredState = t.data.to;
+    endedAt = isTerminalCoordinationState(t.data.to) ? m.created_at : null;
+  }
+
+  return {
+    sessionId: session.id,
+    startedBy: session.sender_id,
+    startedAt: session.created_at,
+    title,
+    planObjectId,
+    declaredState,
+    derivedState: derived,
+    state: declaredState ?? derived,
+    endedAt,
+    transitions: applied,
+    legalNext: legalNextStates(current),
+  };
+}
+
 // ── the message kinds this module writes ─────────────────────────────────────
 
 /**
@@ -607,7 +794,16 @@ export const COORDINATION_KINDS = [
   "COMMITMENT",
   "COMMITMENT_RESPONSE",
   "ACTION_PROPOSAL",
+  /**
+   * The answer to an ACTION_PROPOSAL. Ninth, and it is the one that lets
+   * §2.3's PLAN layer empty itself — see `services/telegraph/layers.ts`.
+   */
+  "ACTION_RESPONSE",
   "ACKNOWLEDGEMENT",
+  /** §8's CoordinationSession — the message that opens one is its identity. */
+  "COORDINATION_SESSION",
+  /** A declared move through §9's state machine, DISRUPTED included. */
+  "COORDINATION_TRANSITION",
 ] as const;
 
 export type CoordinationKind = (typeof COORDINATION_KINDS)[number];
@@ -620,7 +816,10 @@ const COORDINATION_PAYLOADS = {
   COMMITMENT: CommitmentPayload,
   COMMITMENT_RESPONSE: CommitmentResponsePayload,
   ACTION_PROPOSAL: ActionMessagePayload,
+  ACTION_RESPONSE: ActionResponsePayload,
   ACKNOWLEDGEMENT: AcknowledgementPayload,
+  COORDINATION_SESSION: CoordinationSessionPayload,
+  COORDINATION_TRANSITION: CoordinationTransitionPayload,
 } as const;
 
 export const COORDINATION_ENVELOPE_VERSION = "1" as const;
@@ -666,9 +865,12 @@ function coordinationSubtype(kind: CoordinationKind, payload: any): string | nul
     case "ACTION_PROPOSAL":
       return typeof payload?.action === "string" ? payload.action.toLowerCase() : null;
     case "COMMITMENT_RESPONSE":
+    case "ACTION_RESPONSE":
       return typeof payload?.response === "string" ? payload.response.toLowerCase() : null;
     case "DECISION":
       return typeof payload?.resolutionRule === "string" ? payload.resolutionRule.toLowerCase() : null;
+    case "COORDINATION_TRANSITION":
+      return typeof payload?.to === "string" ? payload.to.toLowerCase() : null;
     default:
       return null;
   }
@@ -721,6 +923,8 @@ export interface ThreadCoordination {
   /** §9 Assembling: "arrival counts", derived from declared states only. */
   arrivedCount: number;
   onMyWayCount: number;
+  /** §8's CoordinationSession for this thread, when one has been opened. */
+  session: CoordinationSession | null;
   decisions: ConversationDecision[];
   commitments: ConversationCommitment[];
   rendezvous: Array<{ messageId: string; setBy: string; at: string; payload: any }>;

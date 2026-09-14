@@ -55,6 +55,11 @@
  */
 import { pruneAndBound } from "./boundedMapCache.js";
 import { logger as rootLogger } from "./logger.js";
+// `03` §9's six place-momentum stages, computed from the SAME rows this module
+// already pages in. Separate module, separate function, and the scalar above is
+// not touched: a number the ranker consumes must not move because a diagnostic
+// was added beside it.
+import { computeTrendStates, type TrendReading } from "./discoveryTrendState.js";
 
 const logger = rootLogger.child({ mod: "localMomentum" });
 
@@ -158,7 +163,12 @@ export function computeLocalMomentum(rows: readonly MomentumRow[], nowMs: number
 
 // ── Loader, with a bounded per-key cache ──────────────────────────────────────
 
-interface CacheEntry { at: number; map: Record<string, number> }
+interface CacheEntry {
+  at: number;
+  map: Record<string, number>;
+  /** `03` §9 stages for the same places. Empty when the read failed, exactly like `map`. */
+  trends: Record<string, TrendReading>;
+}
 const _cache = new Map<string, CacheEntry>();
 
 /** Test hook: drop every cached momentum map. */
@@ -186,6 +196,7 @@ export async function loadLocalMomentum(
   if (hit && nowMs - hit.at < MOMENTUM_CACHE_TTL_MS) return hit.map;
 
   let map: Record<string, number> = {};
+  let trends: Record<string, TrendReading> = {};
   try {
     const since = new Date(nowMs - MOMENTUM_BASELINE_WINDOW_MS).toISOString();
     const ids = [...new Set(placeIds)];
@@ -229,14 +240,39 @@ export async function loadLocalMomentum(
         "localMomentum: row ceiling reached — baseline window is bounded to the most recent rows",
       );
     }
-    if (!failed) map = computeLocalMomentum(rows, nowMs);
+    if (!failed) {
+      map = computeLocalMomentum(rows, nowMs);
+      // Same rows, second pass. Cheap relative to the read that produced them,
+      // and computed here rather than at the call site so the two can never be
+      // derived from different corpora and then compared.
+      trends = computeTrendStates(rows, nowMs);
+    }
   } catch {
     // resolves-not-throws-ok: a momentum read failure degrades to "no surge",
     // which is the documented honest default; the ranker must never throw here.
     map = {};
+    trends = {};
   }
 
-  _cache.set(opts.cacheKey, { at: nowMs, map });
+  _cache.set(opts.cacheKey, { at: nowMs, map, trends });
   pruneAndBound(_cache, { max: MOMENTUM_CACHE_MAX, ttlMs: MOMENTUM_CACHE_TTL_MS, timestampOf: (e) => e.at, now: nowMs });
   return map;
+}
+
+/**
+ * `03` §9 stages for a candidate set already loaded by `loadLocalMomentum`.
+ *
+ * A READ-ONLY companion: it never issues a query of its own, so it cannot make
+ * the stages diverge from the momentum scalar by measuring a different corpus,
+ * and it cannot add a round trip to a serve path. An entry that is absent or
+ * expired returns `{}` — "not computed", which is what the caller must treat it
+ * as, and never a set of stages inferred from nothing.
+ */
+export function readLocalTrendStates(
+  cacheKey: string,
+  nowMs: number = Date.now(),
+): Record<string, TrendReading> {
+  const hit = _cache.get(cacheKey);
+  if (!hit || nowMs - hit.at >= MOMENTUM_CACHE_TTL_MS) return {};
+  return hit.trends;
 }

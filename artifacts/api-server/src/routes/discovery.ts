@@ -70,13 +70,28 @@ import { annotateNewToMe, recordDiscoveryAlreadyKnown } from "../lib/placeIdBrid
 // (2361, seeded OFF): with the flag off withDiscoveryCandidates returns the very
 // array it was handed, so the served JSON is byte-identical.
 import { withDiscoveryCandidates } from "../lib/discoveryCandidate.js";
+// `06` §5 cache metadata / `01` §7 "Cache B problem" — the five fields a cached
+// final order must not be stored without. Built once when the Compass ranker
+// returns, stored beside the page, and replayed verbatim on a hit.
+import {
+  buildRankProvenance,
+  candidateSourceMap,
+  DISCOVERY_MODEL_VERSION,
+  DISCOVERY_FEATURE_VERSION,
+  type DiscoveryRankProvenance,
+} from "../lib/discoveryRankProvenance.js";
 // Sensing §8 live ranking (census-sensing S68/S66/S70/S72). Re-orders the HEAD
 // WINDOW of an already-ranked feed on the live claims lib/liveClaimRead serves,
 // behind discovery_live_rank_enabled (2850, seeded OFF): with the flag off
 // withDiscoveryLiveRank returns the very array it was handed, same reference,
 // having read no claim — so the served order and JSON are byte-identical.
 import { parseIntentMode, withDiscoveryLiveRank } from "../lib/discoveryLiveRankRead.js";
-import { blockFingerprint } from "../lib/discoveryCacheEligibility.js";
+import {
+  blockFingerprint,
+  cacheBEntryUsable,
+  rankVersionKey,
+  CACHE_B_TTL_MS,
+} from "../lib/discoveryCacheEligibility.js";
 import { logger } from "../lib/logger.js";
 
 const router = Router();
@@ -236,12 +251,33 @@ const GEOCODE_MAX_ENTRIES            = 2_000;
 // rankItemsForDiscovery) on repeated For You requests within the TTL window
 // — e.g. the user swipes away to another tab and back within a few minutes.
 // 10-minute TTL matches the Compass feed TTL used elsewhere.
-const COMPASS_CANDIDATE_CACHE_TTL_MS = 10 * 60 * 1_000;
+// The TTL now lives beside the rest of the acceptance rule (DSV2-06); this
+// alias keeps the local call sites reading as they did.
+const COMPASS_CANDIDATE_CACHE_TTL_MS = CACHE_B_TTL_MS;
+
+/** The model/feature shape a cache-B page must have been ranked under to be replayed. */
+const CURRENT_RANK_VERSION = rankVersionKey(DISCOVERY_MODEL_VERSION, DISCOVERY_FEATURE_VERSION);
 // `blockKey` binds the stored FINAL ORDER to the block set it was ranked under.
 // The hit path below runs only applyFilters, which applies no block rule and
 // re-reads nothing, so without this a block taken inside the TTL would not reach
 // the viewer's own results (lib/discoveryCacheEligibility.ts states the rule).
-const _compassCandidateCache = new Map<string, { places: DiscoveryPlace[]; at: number; blockKey: string }>();
+// `provenanceById` is the `06` §5 half: model/feature version, candidate source,
+// recommendation reasons, the raw feature vector and the RANKING TIMESTAMP for
+// the rank that produced `places`. `01` §7 names storing the order without them
+// as the Cache B defect — "caching final ranked order without feature vectors
+// makes re-ranking, diagnostics, and counterfactual analysis impossible". It is
+// stored alongside the order, not derived from it, and the hit path replays it
+// rather than re-stamping: `at` is when the CACHE was written, and each
+// provenance record's `rankedAt` is when the RANKER ran. Those are different
+// facts and a cache hit must not report the second as the first.
+const _compassCandidateCache = new Map<string, {
+  places: DiscoveryPlace[];
+  at: number;
+  blockKey: string;
+  /** `06` §5 — the model/feature shape this page was ranked under (DSV2-06). */
+  rankVersion: string;
+  provenanceById: Map<string, DiscoveryRankProvenance>;
+}>();
 
 function compassCandidateCacheKey(userId: string, destination: string, radiusKm: number, sortBy: string | null): string {
   return `${userId}:${destination.toLowerCase().trim()}:r${radiusKm}:s${sortBy ?? "default"}`;
@@ -829,9 +865,30 @@ export const _testEnrichOsmSavedCounts = enrichOsmSavedCounts;
 /** Test hooks: READ / CLEAR cache B. The blockKey is exposed because the thing
  * worth asserting is WHICH block set a stored page was ranked under, not merely
  * that an entry exists — that is what separates a real invalidation from luck. */
-export function _testCompassCacheEntry(key: string): { ids: string[]; at: number; blockKey: string } | null {
+export function _testCompassCacheEntry(key: string): {
+  ids: string[];
+  at: number;
+  blockKey: string;
+  rankVersion: string;
+  provenanceById: ReadonlyMap<string, DiscoveryRankProvenance>;
+} | null {
   const e = _compassCandidateCache.get(key);
-  return e ? { ids: e.places.map((p) => p.id), at: e.at, blockKey: e.blockKey } : null;
+  return e
+    ? {
+        ids: e.places.map((p) => p.id), at: e.at, blockKey: e.blockKey,
+        rankVersion: e.rankVersion, provenanceById: e.provenanceById,
+      }
+    : null;
+}
+
+/**
+ * Test hook: stand in for "this page was ranked before the ranker changed".
+ * A deploy is the only real producer of a version mismatch, and a test cannot
+ * deploy; poking the stored version is the smallest faithful stand-in.
+ */
+export function _testPokeCompassCacheRankVersion(key: string, rankVersion: string): void {
+  const e = _compassCandidateCache.get(key);
+  if (e) _compassCandidateCache.set(key, { ...e, rankVersion });
 }
 export function _clearTestCompassCache(): void { _compassCandidateCache.clear(); }
 export const _testCompassCandidateCacheKey = compassCandidateCacheKey;
@@ -1835,9 +1892,14 @@ router.get("/discovery", async (req, res) => {
               destination: destination!, category, radiusKm, page, pageSize: PAGE_SIZE, sortBy,
               servePoint, cacheLevel,
               legacyIds:   slice.map((p) => p.id),
+              // `12` Phase 9's diversity / place-diversity / save-rate axes are
+              // computed from the PAGES, and both pages are in hand right here.
+              // Passing ids alone is what made five of the six axes unanswerable.
+              legacyItems: slice,
               legacyTotal: filtered.length,
               legacyMs:    totalMs,
               pdeIds:      pdeSlice.map((p) => p.id),
+              pdeItems:    pdeSlice,
               pdeTotal:    pdeFiltered.length,
               pdeMs:       Date.now() - shadowT0,
               pdeStages:   outcome.stages as unknown as Record<string, unknown>,
@@ -1968,10 +2030,19 @@ router.get("/discovery", async (req, res) => {
             const skipCache = sortBy === "nearest";
             const cBlockKey = blockFingerprint(viewerBlockedIds);
             const cStored   = skipCache ? undefined : _compassCandidateCache.get(cCacheKey);
-            // A page ranked under a DIFFERENT block set is not this request's to
-            // reuse; a mismatch is a miss, so it falls through and re-ranks.
-            const cCacheHit = cStored && cStored.blockKey === cBlockKey ? cStored : undefined;
-            if (cCacheHit && Date.now() - cCacheHit.at < COMPASS_CANDIDATE_CACHE_TTL_MS) {
+            // A page ranked under a DIFFERENT block set, or by a DIFFERENT
+            // model/feature version, is not this request's to reuse; either
+            // mismatch is a miss, so it falls through and re-ranks. The whole
+            // rule — absence, freshness, authorization, version — is one pure
+            // function so its precedence is testable (lib/discoveryCacheEligibility).
+            const cAcceptance = cacheBEntryUsable(cStored ?? null, {
+              nowMs: Date.now(),
+              blockKey: cBlockKey,
+              rankVersion: CURRENT_RANK_VERSION,
+              ttlMs: COMPASS_CANDIDATE_CACHE_TTL_MS,
+            });
+            const cCacheHit = cAcceptance.usable ? cStored : undefined;
+            if (cCacheHit) {
               const cFiltered = applyFilters(cCacheHit.places);
               const cSlice = cFiltered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(toPublic);
               req.log.info({ destination, cacheLevel: "compass_candidate_hit" }, "discovery: compass candidate cache hit");
@@ -1980,6 +2051,10 @@ router.get("/discovery", async (req, res) => {
               // check above already reads. Passing null discarded it.
               const cCandidates = await withDiscoveryCandidates(getServiceClient(), cAnnotated, {
                 cacheLevel: "compass_candidate_hit", cachedAt: cCacheHit.at, scoredById: null, rankedBy: "compass",
+                // `06` §5 / DSV2-06 — the stored provenance is REPLAYED, not
+                // rebuilt. `rankedAt` inside it is the moment the ranker ran;
+                // re-stamping it here would report a rank that never happened.
+                provenanceById: cCacheHit.provenanceById,
               });
               res.json({ places: cCandidates, total: cFiltered.length, destination, context: ctxLabel, cached: true, ageFilterMeta,
                 sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 } });
@@ -2008,6 +2083,23 @@ router.get("/discovery", async (req, res) => {
               compassItems, compassProfile, compassContext, compassSc,
             );
 
+            // `06` §5 candidate source — recorded from the READS that produced
+            // the rows, before the merge loses the distinction. An id shape is
+            // a guess; which retrieval returned the row is a fact.
+            const cSourceById = candidateSourceMap(
+              dbPlaces.map((p) => p.id),
+              osmForMerge.map((p) => p.id),
+            );
+            // `06` §5 ranking timestamp — read ONCE, when the ranker returned,
+            // and stamped identically on every row of this page.
+            const cRankedAt = Date.now();
+            const cProvenanceById = buildRankProvenance(scored, cSourceById, cRankedAt, {
+              // rankItemsForDiscovery namespaces ids as `discovery:<id>`; the
+              // served rows do not. Normalise so the provenance keys are the
+              // ids the projection will look up.
+              normalize: (id) => id.replace(/^discovery:/, ""),
+            });
+
             // Build lookup so we can restore all original DiscoveryPlace fields
             const placeById = new Map(places.map((p) => [p.id, p]));
             const compassRanked: DiscoveryPlace[] = scored.map((r) => {
@@ -2025,7 +2117,11 @@ router.get("/discovery", async (req, res) => {
             // requests within the TTL skip the full scoring pipeline.
             // Skip storage for nearest sort — position-dependent results must not be cached.
             if (!skipCache) {
-              _compassCandidateCache.set(cCacheKey, { places: compassRanked, at: Date.now(), blockKey: cBlockKey });
+              _compassCandidateCache.set(cCacheKey, {
+                places: compassRanked, at: Date.now(), blockKey: cBlockKey,
+                rankVersion: CURRENT_RANK_VERSION,
+                provenanceById: cProvenanceById,
+              });
               // Keyed per USER, so this is the Map that grows with adoption
               // rather than with content. Reclaim on every write.
               pruneAndBound(_compassCandidateCache, {
@@ -2042,6 +2138,7 @@ router.get("/discovery", async (req, res) => {
             const cFreshAnnotated = await annotateNewToMe(getServiceClient(), callerUserId, cSlice);
             const cFreshCandidates = await withDiscoveryCandidates(getServiceClient(), cFreshAnnotated, {
               cacheLevel: "compass_fresh_rank", cachedAt: Date.now(), scoredById: null, rankedBy: "compass",
+              provenanceById: cProvenanceById,
             });
             res.json({ places: cFreshCandidates, total: cFiltered.length, destination, context: ctxLabel, cached: false, ageFilterMeta,
               sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 } });

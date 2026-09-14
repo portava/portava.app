@@ -62,6 +62,8 @@ const CAROL = "cccccccc-0000-4000-8000-000000000003";
 
 const THREAD = "dddddddd-0000-4000-8000-00000000000d";
 const THREAD_NONE = "dddddddd-0000-4000-8000-00000000000f";
+/** A second thread Alice and Bob are both in — §8's "across threads" case. */
+const THREAD_B = "dddddddd-0000-4000-8000-0000000000ab";
 const MEETUP = "20000000-0000-4000-8000-000000000001";
 
 const NOW = Date.now();
@@ -101,11 +103,14 @@ function fixture(state: State): Record<string, any[]> {
     ],
     message_threads: [
       { id: THREAD, is_e2ee: false },
+      { id: THREAD_B, is_e2ee: false },
       { id: THREAD_NONE, is_e2ee: false },
     ],
     message_thread_members: [
       { thread_id: THREAD, user_id: ALICE, left_at: null, visible_from_at: null },
       { thread_id: THREAD, user_id: BOB, left_at: null, visible_from_at: null },
+      { thread_id: THREAD_B, user_id: ALICE, left_at: null, visible_from_at: null },
+      { thread_id: THREAD_B, user_id: BOB, left_at: null, visible_from_at: null },
       { thread_id: THREAD_NONE, user_id: CAROL, left_at: null, visible_from_at: null },
     ],
     blocks: [],
@@ -928,5 +933,576 @@ describe("GET /threads/:id/announcements", () => {
   it("an unreadable messages table is a 500, never an empty announcement list", async () => {
     useState({ errorTable: "messages" });
     assert.equal((await get(`/threads/${THREAD}/announcements`, ALICE)).status, 500);
+  });
+});
+
+// ── §2.3 the semantic layers ─────────────────────────────────────────────────
+//
+// census-telegraph T11: "ACTION and ANNOUNCEMENT give the stream a genuinely
+// different class of item … It stays W because there is still no LAYER:
+// unresolved actions are interleaved with conversation rather than separated,
+// which is what §2.3 asks for."
+//
+// The property these tests pin is SEPARATION, not decoration: a message that
+// is in the PLAN layer is NOT in the TALK stream, and it re-enters the stream
+// the moment it resolves. A "layer" that merely tagged messages and left them
+// in the stream would pass a weaker test and would be the thing the row calls
+// interleaved.
+
+const ACT = "act-1";
+
+function actionProposal(id: string, at: string, action = "SPLIT_RIDE", over: Record<string, any> = {}) {
+  return {
+    id,
+    thread_id: THREAD,
+    sender_id: ALICE,
+    created_at: at,
+    deleted_at: null,
+    msg_type: "action_proposal",
+    subtype: action.toLowerCase(),
+    body: env("ACTION_PROPOSAL", { action, title: "Share the cab", requiresConfirmation: true }),
+    ...over,
+  };
+}
+
+function actionResponse(id: string, sender: string, target: string, response: string, at: string) {
+  return {
+    id,
+    thread_id: THREAD,
+    sender_id: sender,
+    created_at: at,
+    deleted_at: null,
+    msg_type: "action_response",
+    subtype: response.toLowerCase(),
+    body: env("ACTION_RESPONSE", { actionMessageId: target, response }),
+  };
+}
+
+function textMsg(id: string, at: string, body = "hello") {
+  return {
+    id,
+    thread_id: THREAD,
+    sender_id: BOB,
+    created_at: at,
+    deleted_at: null,
+    msg_type: "text",
+    subtype: null,
+    body,
+  };
+}
+
+function quickState(id: string, sender: string, state: string, at: string) {
+  return {
+    id,
+    thread_id: THREAD,
+    sender_id: sender,
+    created_at: at,
+    deleted_at: null,
+    msg_type: "coordination",
+    subtype: state.toLowerCase(),
+    body: env("COORDINATION", { state, provenance: "USER_DECLARED" }),
+  };
+}
+
+describe("§2.3 — TALK / PLAN / NOW are layers, not labels", () => {
+  it("names §2.3's three layers", async () => {
+    useState({ extraMessages: [textMsg("t1", min(-20))] });
+    const r = await get(`/threads/${THREAD}/layers`, ALICE);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.layers, ["TALK", "PLAN", "NOW"]);
+  });
+
+  it("an unresolved action is in PLAN and is LIFTED OUT of the TALK stream", async () => {
+    useState({ extraMessages: [textMsg("t1", min(-20)), actionProposal(ACT, min(-10))] });
+    const r = await get(`/threads/${THREAD}/layers`, ALICE);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.plan.map((i: any) => i.messageId), [ACT]);
+    assert.equal(r.body.talk.includes(ACT), false, "an unresolved action was left interleaved in the stream");
+    assert.equal(r.body.talk.includes("t1"), true);
+  });
+
+  it("…and RE-ENTERS the stream once it is answered", async () => {
+    useState({
+      extraMessages: [
+        textMsg("t1", min(-20)),
+        actionProposal(ACT, min(-10)),
+        actionResponse("ar1", BOB, ACT, "CONFIRMED", min(-5)),
+      ],
+    });
+    const r = await get(`/threads/${THREAD}/layers`, ALICE);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.plan, []);
+    assert.equal(r.body.talk.includes(ACT), true, "a resolved action never came back to the conversation");
+  });
+
+  it("an unresolved decision is in PLAN with the reason it is still open", async () => {
+    useState({
+      extraMessages: [
+        {
+          id: "d9", thread_id: THREAD, sender_id: ALICE, created_at: min(-60), deleted_at: null,
+          msg_type: "decision", subtype: "plurality",
+          body: env("DECISION", {
+            question: "Where do we eat?",
+            options: [{ id: "a", label: "Bun cha" }, { id: "b", label: "Banh xeo" }],
+            resolutionRule: "PLURALITY",
+            deadlineAt: min(120),
+          }),
+        },
+      ],
+    });
+    const r = await get(`/threads/${THREAD}/layers`, ALICE);
+    assert.equal(r.status, 200);
+    const item = r.body.plan.find((i: any) => i.messageId === "d9");
+    assert.ok(item, "an open decision is not in the PLAN layer");
+    assert.equal(item.openReason, "decision_open");
+    assert.equal(r.body.talk.includes("d9"), false);
+  });
+
+  it("an announcement waiting on THIS viewer is in their PLAN layer and not in another's", async () => {
+    useState({
+      extraMessages: [announcement(ANN, true, min(-60)), ackMsg("a1", BOB, ANN, min(-30))],
+    });
+    const forBob = await get(`/threads/${THREAD}/layers`, BOB);
+    assert.equal(forBob.status, 200);
+    assert.equal(forBob.body.plan.some((i: any) => i.messageId === ANN), false, "Bob acknowledged; it is not waiting on him");
+    assert.equal(forBob.body.talk.includes(ANN), true);
+    // Alice announced it. An announcer is not outstanding on their own notice.
+    const forAlice = await get(`/threads/${THREAD}/layers`, ALICE);
+    assert.equal(forAlice.body.plan.some((i: any) => i.messageId === ANN), false);
+  });
+
+  it("a quick state is NOW, not TALK and not PLAN", async () => {
+    useState({ extraMessages: [textMsg("t1", min(-20)), quickState("q1", BOB, "ON_MY_WAY", min(-2))] });
+    const r = await get(`/threads/${THREAD}/layers`, ALICE);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.now.map((i: any) => i.messageId), ["q1"]);
+    assert.equal(r.body.talk.includes("q1"), false);
+    assert.equal(r.body.plan.some((i: any) => i.messageId === "q1"), false);
+  });
+
+  it("the three layers are disjoint — every message is in exactly one", async () => {
+    useState({
+      extraMessages: [
+        textMsg("t1", min(-40)),
+        actionProposal(ACT, min(-30)),
+        quickState("q1", BOB, "ARRIVED", min(-2)),
+        announcement(ANN, true, min(-20)),
+      ],
+    });
+    const r = await get(`/threads/${THREAD}/layers`, BOB);
+    assert.equal(r.status, 200);
+    const ids = [
+      ...r.body.plan.map((i: any) => i.messageId),
+      ...r.body.now.map((i: any) => i.messageId),
+      ...r.body.talk,
+    ];
+    assert.equal(new Set(ids).size, ids.length, "a message appeared in more than one layer");
+    assert.deepEqual([...new Set(ids)].sort(), ["act-1", "ann-1", "q1", "t1"].sort());
+  });
+
+  it("a non-member cannot read the layers", async () => {
+    useState({});
+    assert.equal((await get(`/threads/${THREAD_NONE}/layers`, ALICE)).status, 403);
+  });
+
+  it("an unreadable messages table is a 500, never an empty PLAN layer", async () => {
+    useState({ errorTable: "messages" });
+    assert.equal((await get(`/threads/${THREAD}/layers`, ALICE)).status, 500);
+  });
+});
+
+// ── §8 ConversationCommitment, ACROSS threads ────────────────────────────────
+//
+// census-telegraph T84: "a projection over one thread's messages is not a
+// queryable store, so 'what have I agreed to this week' cannot be answered
+// across threads. The spec's Object row implies something a surface can list."
+//
+// These tests are about the ACROSS. A per-thread answer already existed and is
+// asserted above; what is pinned here is that one call answers for every
+// conversation the caller is still in, and for no conversation they are not.
+
+function commitmentMsg(id: string, threadId: string, what: string, byWhen: string | null, at: string, askedOf: string[] = []) {
+  return {
+    id,
+    thread_id: threadId,
+    sender_id: BOB,
+    created_at: at,
+    deleted_at: null,
+    msg_type: "commitment",
+    subtype: null,
+    body: env("COMMITMENT", { what, byWhen, askedOf }),
+  };
+}
+
+function commitmentResponse(id: string, threadId: string, sender: string, target: string, response: string, at: string) {
+  return {
+    id,
+    thread_id: threadId,
+    sender_id: sender,
+    created_at: at,
+    deleted_at: null,
+    msg_type: "commitment_response",
+    subtype: response.toLowerCase(),
+    body: env("COMMITMENT_RESPONSE", { commitmentId: target, response }),
+  };
+}
+
+describe("GET /me/commitments — §8's commitment as something a surface can LIST", () => {
+  it("answers across every thread the caller is still in, naming the thread each came from", async () => {
+    useState({
+      extraMessages: [
+        commitmentMsg("c1", THREAD, "book the bus", min(600), min(-120)),
+        commitmentResponse("r1", THREAD, ALICE, "c1", "AGREED", min(-110)),
+        commitmentMsg("c2", THREAD_B, "bring the adapter", min(900), min(-100)),
+        commitmentResponse("r2", THREAD_B, ALICE, "c2", "AGREED", min(-90)),
+      ],
+    });
+    const r = await get(`/me/commitments`, ALICE);
+    assert.equal(r.status, 200);
+    const ids = r.body.commitments.map((c: any) => c.commitmentId).sort();
+    assert.deepEqual(ids, ["c1", "c2"], "a commitment in a second thread was not listed");
+    const byId = Object.fromEntries(r.body.commitments.map((c: any) => [c.commitmentId, c]));
+    assert.equal(byId.c1.threadId, THREAD);
+    assert.equal(byId.c2.threadId, THREAD_B);
+    assert.equal(byId.c1.what, "book the bus");
+    assert.equal(byId.c1.viewerResponse, "AGREED");
+  });
+
+  it("does not list a commitment from a thread the caller is not in", async () => {
+    useState({
+      extraMessages: [commitmentMsg("c9", THREAD_NONE, "carol's errand", null, min(-60))],
+    });
+    const r = await get(`/me/commitments`, ALICE);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.commitments.some((c: any) => c.commitmentId === "c9"), false);
+  });
+
+  it("flags an overdue commitment the caller agreed to", async () => {
+    useState({
+      extraMessages: [
+        commitmentMsg("c3", THREAD, "pay the guesthouse", min(-30), min(-300)),
+        commitmentResponse("r3", THREAD, ALICE, "c3", "AGREED", min(-290)),
+      ],
+    });
+    const r = await get(`/me/commitments`, ALICE);
+    const c = r.body.commitments.find((x: any) => x.commitmentId === "c3");
+    assert.ok(c);
+    assert.equal(c.overdue, true);
+  });
+
+  it("a completed commitment is out of the open list, and back with includeCompleted", async () => {
+    useState({
+      extraMessages: [
+        commitmentMsg("c4", THREAD, "collect the deposit", min(600), min(-300)),
+        commitmentResponse("r4", THREAD, ALICE, "c4", "AGREED", min(-290)),
+        commitmentResponse("r5", THREAD, ALICE, "c4", "COMPLETED", min(-10)),
+      ],
+    });
+    const open = await get(`/me/commitments`, ALICE);
+    assert.equal(open.body.commitments.some((c: any) => c.commitmentId === "c4"), false);
+    const all = await get(`/me/commitments?includeCompleted=true`, ALICE);
+    const c = all.body.commitments.find((x: any) => x.commitmentId === "c4");
+    assert.ok(c, "includeCompleted did not return the completed commitment");
+    assert.equal(c.completedBy, ALICE);
+  });
+
+  it("an unreadable messages table is a 500, never an empty commitment list", async () => {
+    useState({ errorTable: "messages" });
+    assert.equal((await get(`/me/commitments`, ALICE)).status, 500);
+  });
+
+  it("an unreadable membership table is a 500, never 'you have agreed to nothing'", async () => {
+    useState({ errorTable: "message_thread_members" });
+    assert.equal((await get(`/me/commitments`, ALICE)).status, 500);
+  });
+});
+
+// ── §8 CoordinationSession as an ENTITY ──────────────────────────────────────
+//
+// census-telegraph T85: "the session's BEHAVIOUR exists … but there is no
+// session ENTITY: nothing has an id, nothing records who started it or when it
+// ended, and a DISRUPTED transition cannot be recorded because there is
+// nowhere to record it. Deriving the state was the right call under Appendix A;
+// a session object would need a table…"
+//
+// It does not. A decision, a commitment and an acknowledgement are all objects
+// with ids in this module already, and all three are carried as messages — the
+// message id IS the object id. A session is the same shape. What these tests
+// pin is the four things the row says are missing: an id, a starter, an end,
+// and a recordable DISRUPTED.
+
+const SESSION = "sess-1";
+
+function sessionMsg(id: string, at: string, sender = ALICE, over: Record<string, any> = {}) {
+  return {
+    id,
+    thread_id: THREAD,
+    sender_id: sender,
+    created_at: at,
+    deleted_at: null,
+    msg_type: "coordination_session",
+    subtype: null,
+    body: env("COORDINATION_SESSION", { title: "Dinner run", planObjectId: MEETUP }),
+    ...over,
+  };
+}
+
+function transitionMsg(id: string, sessionId: string, to: string, at: string, sender = ALICE) {
+  return {
+    id,
+    thread_id: THREAD,
+    sender_id: sender,
+    created_at: at,
+    deleted_at: null,
+    msg_type: "coordination_transition",
+    subtype: to.toLowerCase(),
+    body: env("COORDINATION_TRANSITION", { sessionId, to, reason: "traffic" }),
+  };
+}
+
+describe("§8 CoordinationSession — an object with an id, a starter and an end", () => {
+  it("the session has an id, who started it and when", async () => {
+    useState({ extraMessages: [sessionMsg(SESSION, min(-120))] });
+    const r = await get(`/threads/${THREAD}/coordination`, ALICE);
+    assert.equal(r.status, 200);
+    const s = r.body.coordination.session;
+    assert.ok(s, "there is no session entity in the coordination view");
+    assert.equal(s.sessionId, SESSION);
+    assert.equal(s.startedBy, ALICE);
+    assert.equal(s.startedAt, min(-120));
+    assert.equal(s.endedAt, null);
+  });
+
+  it("a DISRUPTED transition is RECORDED and becomes the session's state", async () => {
+    useState({
+      extraMessages: [
+        sessionMsg(SESSION, min(-120)),
+        transitionMsg("tr1", SESSION, "DISRUPTED", min(-20)),
+      ],
+    });
+    const r = await get(`/threads/${THREAD}/coordination`, ALICE);
+    const s = r.body.coordination.session;
+    assert.equal(s.state, "DISRUPTED");
+    assert.equal(s.declaredState, "DISRUPTED");
+    assert.equal(s.transitions.length, 1);
+    assert.equal(s.transitions[0].to, "DISRUPTED");
+    assert.equal(s.transitions[0].declaredBy, ALICE);
+    assert.equal(s.transitions[0].applied, true);
+  });
+
+  it("declared and derived are SEPARATE fields — §9.1's rule survives the session", async () => {
+    useState({
+      extraMessages: [
+        sessionMsg(SESSION, min(-120)),
+        transitionMsg("tr1", SESSION, "DISRUPTED", min(-20)),
+      ],
+    });
+    const r = await get(`/threads/${THREAD}/coordination`, ALICE);
+    const s = r.body.coordination.session;
+    // The fixture meetup starts in 30 minutes, so the DERIVED state is ASSEMBLING.
+    assert.equal(s.derivedState, "ASSEMBLING");
+    assert.equal(s.declaredState, "DISRUPTED");
+    assert.notEqual(s.derivedState, s.declaredState);
+  });
+
+  it("a terminal transition ENDS the session and leaves no legal next", async () => {
+    useState({
+      extraMessages: [
+        sessionMsg(SESSION, min(-120)),
+        transitionMsg("tr1", SESSION, "CANCELLED", min(-10)),
+      ],
+    });
+    const r = await get(`/threads/${THREAD}/coordination`, ALICE);
+    const s = r.body.coordination.session;
+    assert.equal(s.state, "CANCELLED");
+    assert.equal(s.endedAt, min(-10));
+    assert.deepEqual(s.legalNext, []);
+  });
+
+  it("an ILLEGAL transition is refused by the route, with the legal set named", async () => {
+    useState({
+      extraMessages: [
+        sessionMsg(SESSION, min(-120)),
+        transitionMsg("tr1", SESSION, "CANCELLED", min(-10)),
+      ],
+    });
+    const r = await post(`/threads/${THREAD}/coordination`, ALICE, {
+      kind: "COORDINATION_TRANSITION",
+      payload: { sessionId: SESSION, to: "ACTIVE" },
+    });
+    assert.equal(r.status, 400);
+    assert.match(String(r.body.message), /CANCELLED/);
+  });
+
+  it("a legal transition is accepted; legality is judged against what was DECLARED, not the clock", async () => {
+    useState({ extraMessages: [sessionMsg(SESSION, min(-120))] });
+    // A fresh session is PREPARING. §9 allows PREPARING -> ASSEMBLING.
+    const ok = await post(`/threads/${THREAD}/coordination`, ALICE, {
+      kind: "COORDINATION_TRANSITION",
+      payload: { sessionId: SESSION, to: "ASSEMBLING" },
+    });
+    assert.equal(ok.status, 201);
+    // …and PREPARING -> ACTIVE is not an arrow §9 has, even though the
+    // fixture's plan starts in thirty minutes and the DERIVED state is
+    // ASSEMBLING. A declared move is checked against declared history, so the
+    // same request does not start succeeding because time passed.
+    useState({ extraMessages: [sessionMsg(SESSION, min(-120))] });
+    const skipped = await post(`/threads/${THREAD}/coordination`, ALICE, {
+      kind: "COORDINATION_TRANSITION",
+      payload: { sessionId: SESSION, to: "ACTIVE" },
+    });
+    assert.equal(skipped.status, 400);
+    assert.match(String(skipped.body.message), /PREPARING/);
+  });
+
+  it("a transition naming a session that is not in this thread is refused", async () => {
+    useState({ extraMessages: [sessionMsg(SESSION, min(-120))] });
+    const r = await post(`/threads/${THREAD}/coordination`, ALICE, {
+      kind: "COORDINATION_TRANSITION",
+      payload: { sessionId: "not-a-session", to: "ACTIVE" },
+    });
+    assert.equal(r.status, 404);
+  });
+});
+
+// ── §15.2 conversation-level safety mode ─────────────────────────────────────
+//
+// census-telegraph T217: "Safety mode NORMAL → SAFETY_ATTENTION → SAFETY_EVENT
+// … Two escalation ladders exist and neither is this one: Safe Return sessions
+// escalate via `trigger-missed` … and circle presence escalates via
+// `needs_help` … **Neither is a conversation-level mode.**" §13.4 classified it
+// NEITHER — "A conversation-level safety mode does not exist in either tree."
+//
+// It does not need one to exist: both carriers are already in the thread. §6.2's
+// SAFETY kind has `check_in | heads_up | need_help | all_clear`, and §9.1's
+// quick states include NEED_HELP. The mode is a projection over those, and the
+// rules these tests pin are the ones a careless projection gets wrong:
+//   - a SAFETY_EVENT is cleared only by an explicit ALL CLEAR, never by time;
+//   - a routine "checked in safe" does NOT clear a help request;
+//   - attention decays, an event does not.
+
+function safetyMsg(id: string, sender: string, kind: string, at: string) {
+  return {
+    id,
+    thread_id: THREAD,
+    sender_id: sender,
+    created_at: at,
+    deleted_at: null,
+    msg_type: "safety",
+    subtype: kind,
+    body: env("SAFETY", { kind, label: kind.replace("_", " ") }),
+  };
+}
+
+describe("§15.2 — NORMAL → SAFETY_ATTENTION → SAFETY_EVENT, as a conversation mode", () => {
+  it("a thread with no safety signal is NORMAL and promotes nothing", async () => {
+    useState({ extraMessages: [textMsg("t1", min(-20))] });
+    const r = await get(`/threads/${THREAD}/safety-mode`, ALICE);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.mode, "NORMAL");
+    assert.deepEqual(r.body.affordances.promoted, []);
+    assert.deepEqual(r.body.affordances.deprioritized, []);
+    assert.deepEqual(r.body.modes, ["NORMAL", "SAFETY_ATTENTION", "SAFETY_EVENT"]);
+  });
+
+  it("a heads-up raises SAFETY_ATTENTION and names who raised it", async () => {
+    useState({ extraMessages: [safetyMsg("s1", BOB, "heads_up", min(-30))] });
+    const r = await get(`/threads/${THREAD}/safety-mode`, ALICE);
+    assert.equal(r.body.mode, "SAFETY_ATTENTION");
+    assert.equal(r.body.raisedBy, BOB);
+    assert.equal(r.body.since, min(-30));
+  });
+
+  it("a need-help raises SAFETY_EVENT — the top of the ladder, not the middle", async () => {
+    useState({
+      extraMessages: [
+        safetyMsg("s1", BOB, "heads_up", min(-60)),
+        safetyMsg("s2", BOB, "need_help", min(-10)),
+      ],
+    });
+    const r = await get(`/threads/${THREAD}/safety-mode`, ALICE);
+    assert.equal(r.body.mode, "SAFETY_EVENT");
+  });
+
+  it("a heads-up posted AFTER a need-help does not de-escalate the thread", async () => {
+    // The mode is the HIGHEST unresolved signal, not the latest one. A
+    // projection that took the last signal would answer SAFETY_ATTENTION here,
+    // which is a conversation quietly stepping down from an emergency because
+    // somebody typed something calmer afterwards.
+    useState({
+      extraMessages: [
+        safetyMsg("s1", BOB, "need_help", min(-30)),
+        safetyMsg("s2", CAROL, "heads_up", min(-5)),
+      ],
+    });
+    const r = await get(`/threads/${THREAD}/safety-mode`, ALICE);
+    assert.equal(r.body.mode, "SAFETY_EVENT");
+    assert.equal(r.body.raisedBy, BOB, "the later, lesser signal took over the mode");
+    assert.equal(r.body.since, min(-30));
+  });
+
+  it("§9.1's NEED_HELP quick state raises the mode too — one ladder, two carriers", async () => {
+    useState({ extraMessages: [quickState("q1", BOB, "NEED_HELP", min(-5))] });
+    const r = await get(`/threads/${THREAD}/safety-mode`, ALICE);
+    assert.equal(r.body.mode, "SAFETY_EVENT");
+    assert.equal(r.body.signals.some((s: any) => s.source === "QUICK_STATE"), true);
+  });
+
+  it("a SAFETY_EVENT is cleared by an explicit ALL CLEAR", async () => {
+    useState({
+      extraMessages: [
+        safetyMsg("s1", BOB, "need_help", min(-60)),
+        safetyMsg("s2", BOB, "all_clear", min(-5)),
+      ],
+    });
+    const r = await get(`/threads/${THREAD}/safety-mode`, ALICE);
+    assert.equal(r.body.mode, "NORMAL");
+    assert.equal(r.body.clearedAt, min(-5));
+  });
+
+  it("a routine CHECK-IN does NOT clear a help request", async () => {
+    useState({
+      extraMessages: [
+        safetyMsg("s1", BOB, "need_help", min(-60)),
+        safetyMsg("s2", BOB, "check_in", min(-5)),
+      ],
+    });
+    const r = await get(`/threads/${THREAD}/safety-mode`, ALICE);
+    assert.equal(r.body.mode, "SAFETY_EVENT", "a check-in silently cleared a help request");
+  });
+
+  it("a SAFETY_EVENT does not expire with time; attention does", async () => {
+    useState({ extraMessages: [safetyMsg("s1", BOB, "need_help", min(-60 * 72))] });
+    const stale = await get(`/threads/${THREAD}/safety-mode`, ALICE);
+    assert.equal(stale.body.mode, "SAFETY_EVENT", "an uncleared help request aged out of the mode");
+
+    useState({ extraMessages: [safetyMsg("s2", BOB, "heads_up", min(-60 * 72))] });
+    const old = await get(`/threads/${THREAD}/safety-mode`, ALICE);
+    assert.equal(old.body.mode, "NORMAL");
+  });
+
+  it("§15.2's promotion list is served in the spec's order, and entertainment is de-prioritized", async () => {
+    useState({ extraMessages: [safetyMsg("s1", BOB, "heads_up", min(-30))] });
+    const r = await get(`/threads/${THREAD}/safety-mode`, ALICE);
+    assert.deepEqual(r.body.affordances.promoted, [
+      "TRUSTED_CONTACT",
+      "CURRENT_STATUS",
+      "OFFICIAL_HELP",
+      "ROUTE_OR_RETURN",
+      "CALL",
+      "BLOCK_OR_REPORT",
+      "LOCATION_SCOPE",
+    ]);
+    assert.deepEqual(r.body.affordances.deprioritized, ["ENTERTAINMENT"]);
+  });
+
+  it("a non-member cannot read a thread's safety mode", async () => {
+    useState({});
+    assert.equal((await get(`/threads/${THREAD_NONE}/safety-mode`, ALICE)).status, 403);
+  });
+
+  it("an unreadable messages table is a 500, never a NORMAL thread", async () => {
+    useState({ errorTable: "messages" });
+    assert.equal((await get(`/threads/${THREAD}/safety-mode`, ALICE)).status, 500);
   });
 });

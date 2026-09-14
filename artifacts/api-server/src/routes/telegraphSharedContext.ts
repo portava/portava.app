@@ -329,4 +329,195 @@ router.get(
   }),
 );
 
+// ── GET /api/threads/:threadId/trip-context ──────────────────────────────────
+
+/** How many plan items one trip-context read will scan. */
+export const TRIP_CONTEXT_SCAN_LIMIT = 400;
+
+/**
+ * The plan-item fields this surface returns. Deliberately NOT `lat` / `lng`.
+ *
+ * `trip_plan_items.lat` carries a comment saying it is "Public-safe latitude …
+ * Always null when location_is_private=true", and that is a rule about the
+ * TRIPS surface. This is a CONVERSATION surface: a crew thread answers "what
+ * are we doing today", and no answer to that question needs coordinates. Not
+ * selecting them is stronger than stripping them, because there is then no
+ * branch that could stop stripping.
+ */
+const TRIP_CONTEXT_COLUMNS =
+  "id, trip_id, title, category, status, day_date, starts_at, ends_at, location_name, city, country, sort_order, removed_at";
+
+interface TripContextItem {
+  id: string;
+  title: string;
+  category: string;
+  status: string;
+  dayDate: string | null;
+  startsAt: string | null;
+  endsAt: string | null;
+  locationName: string | null;
+  city: string | null;
+  country: string | null;
+}
+
+function toContextItem(r: any): TripContextItem {
+  return {
+    id: String(r.id),
+    title: (r.title as string) ?? "Plan item",
+    category: (r.category as string) ?? "activity",
+    status: (r.status as string) ?? "tentative",
+    dayDate: (r.day_date as string) ?? null,
+    startsAt: (r.starts_at as string) ?? null,
+    endsAt: (r.ends_at as string) ?? null,
+    locationName: (r.location_name as string) ?? null,
+    city: (r.city as string) ?? null,
+    country: (r.country as string) ?? null,
+  };
+}
+
+/** The instant an item is ordered by: its start, else the start of its day. */
+function itemInstant(r: any): number | null {
+  const starts = typeof r.starts_at === "string" ? Date.parse(r.starts_at) : NaN;
+  if (!Number.isNaN(starts)) return starts;
+  if (typeof r.day_date === "string" && r.day_date.length >= 10) {
+    const d = Date.parse(`${r.day_date.slice(0, 10)}T00:00:00.000Z`);
+    return Number.isNaN(d) ? null : d;
+  }
+  return null;
+}
+
+/**
+ * §20 Trips — "crew threads, shared Trip cards, **today/next context**,
+ * membership authorization, Trip Kernel commands".
+ *
+ * census-telegraph T262 scored this two of five and named today/next context as
+ * one of the three missing. This is that context, read from `trip_plan_items`
+ * — Trips' own canonical table — and written by nothing here.
+ *
+ * ── THE SECOND GATE, AND WHY IT IS NOT REDUNDANT ────────────────────────────
+ * Thread membership is checked first, as everywhere else in this file. Then
+ * ACCEPTED TRIP membership is checked again, against `trip_members`. That is
+ * not belt-and-braces: census-telegraph T319 records that the trip-membership
+ * write and the thread-membership write are NOT one transaction, so between a
+ * removal and the next `syncTripChatMembers` run a removed member is still on
+ * the thread roster. Reading the trip's plan through the thread in that window
+ * would be exactly the divergence T319 measures, arriving through a new door.
+ *
+ * ── "TODAY" IS UTC, AND THIS SAYS SO ────────────────────────────────────────
+ * §30A.14 asks for destination/user timezone semantics and census T423 records
+ * that Telegraph does not have them. This endpoint therefore states its own
+ * frame in the response (`dayFrame: "UTC"`) rather than implying a local one it
+ * cannot compute. A traveller two hours ahead of UTC sees the right items on
+ * the wrong side of midnight, and the field is how a client knows that.
+ */
+router.get(
+  "/threads/:threadId/trip-context",
+  asyncHandler(async (req: any, res: any) => {
+    const auth = await requireUser(req, res);
+    if (!auth) return;
+    const { client, user } = auth;
+    const { threadId } = req.params;
+
+    if (!UUID.test(threadId)) {
+      sendError(res, "invalid_payload", "Invalid threadId");
+      return;
+    }
+
+    const loaded = await loadThreadContext(client, threadId, user.id);
+    if (!loaded.ok) {
+      sendError(res, loaded.code, loaded.message);
+      return;
+    }
+
+    const tripId = loaded.ctx.tripId;
+    if (loaded.ctx.threadType !== "trip" || !tripId) {
+      // NOT APPLICABLE is a different answer from "the plan is empty", and a
+      // client that cannot tell them apart will render "nothing planned today"
+      // over a direct message.
+      res.status(200).json({
+        threadId,
+        applicable: false,
+        tripId: null,
+        reason:
+          "This conversation is not a trip crew thread, so it has no trip plan to show. " +
+          "§20's today/next context is a Trips integration and belongs to threads a trip owns.",
+        today: [],
+        next: null,
+      });
+      return;
+    }
+
+    // The second gate — see the header.
+    const { data: membership, error: mErr } = await client
+      .from("trip_members")
+      .select("user_id, status")
+      .eq("trip_id", tripId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (mErr) {
+      log.error({ threadId, tripId, message: mErr.message }, "trip membership read failed");
+      sendError(res, "db_error", "Could not verify your membership of this trip");
+      return;
+    }
+    if (!membership || (membership as any).status !== "accepted") {
+      sendError(res, "forbidden", "You are not an accepted member of this trip");
+      return;
+    }
+
+    const { data, error } = await client
+      .from("trip_plan_items")
+      .select(TRIP_CONTEXT_COLUMNS)
+      .eq("trip_id", tripId)
+      .is("removed_at", null)
+      .limit(TRIP_CONTEXT_SCAN_LIMIT);
+    if (error) {
+      // An unreadable plan is not an empty day. Answering `today: []` here
+      // would tell a crew they have nothing on.
+      log.error({ threadId, tripId, message: error.message }, "trip plan read failed");
+      sendError(res, "db_error", "Could not read this trip's plan");
+      return;
+    }
+
+    const rows = ((data as any[]) ?? []).filter((r) => r.removed_at == null);
+    const now = new Date();
+    const todayKey = now.toISOString().slice(0, 10);
+
+    const withInstant = rows
+      .map((r) => ({ row: r, at: itemInstant(r) }))
+      .sort((a, b) => (a.at ?? Number.MAX_SAFE_INTEGER) - (b.at ?? Number.MAX_SAFE_INTEGER));
+
+    const isToday = (e: { row: any; at: number | null }) => {
+      if (typeof e.row.day_date === "string" && e.row.day_date.length >= 10) {
+        return e.row.day_date.slice(0, 10) === todayKey;
+      }
+      return e.at !== null && new Date(e.at).toISOString().slice(0, 10) === todayKey;
+    };
+
+    const today = withInstant.filter(isToday).map((e) => toContextItem(e.row));
+    const next =
+      withInstant
+        .filter((e) => !isToday(e) && e.at !== null && e.at > now.getTime())
+        .map((e) => toContextItem(e.row))[0] ?? null;
+
+    res.status(200).json({
+      threadId,
+      applicable: true,
+      tripId,
+      generatedAt: now.toISOString(),
+      today,
+      next,
+      /** §30A.14 / census T423 — stated, not implied. See the header. */
+      dayFrame: "UTC",
+      /**
+       * Stated in the response because it is a guarantee and not an accident:
+       * this surface does not select `lat` / `lng` from `trip_plan_items`, so
+       * there is no branch that could stop stripping them.
+       */
+      coordinatesReturned: false,
+      scanned: rows.length,
+      truncated: rows.length >= TRIP_CONTEXT_SCAN_LIMIT,
+    });
+  }),
+);
+
 export default router;

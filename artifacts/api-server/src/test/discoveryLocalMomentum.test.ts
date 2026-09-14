@@ -327,3 +327,181 @@ describe("loadLocalMomentum — the window is bounded deliberately, never silent
     assert.deepEqual(await loadLocalMomentum(f.client, ["p"], { cacheKey: "k", nowMs: NOW }), {});
   });
 });
+
+// ── `03` §9 place-momentum stages (census DV-28, DV-33) ───────────────────────
+//
+// REQUIREMENT
+// ===========
+// docs/specs/discovery-v1/03_Trending.md §9 (`:122`) — "Conceptual stages:
+// unknown, emerging, trending, established, cooling, rediscovered." §14's
+// acceptance criteria include "it can distinguish emerging vs established" and
+// "it can explain major trend reasons"; §11 gives the shape of an explanation
+// ("Rising quickly in Sukhumvit tonight", "Emerging across several independent
+// traveler groups").
+//
+// THE GAP
+// =======
+// census DV-28: "No trend state machine (`03` §4's seven states) under any name.
+// `lib/discoveryLocalMomentum.ts` computes one 48h-vs-baseline scalar; a scalar
+// is not a lifecycle." DV-33: "no reason vocabulary exists."
+//
+// A scalar genuinely cannot answer the question. `emerging` and `cooling` can
+// produce the SAME momentum number — one has no history and a little activity,
+// the other has a long history and less of it than before — and the whole point
+// of §9 is that those are different things to say about a place. What separates
+// them is a THIRD window, which the same rows already contain.
+//
+// WHAT IS NOT BUILT, AND WHY THE ROW STAYS W
+// ==========================================
+// `03` §4's seven-state CONTENT lifecycle (emerging/growing/peak/cooling/
+// evergreen/rediscovered/inactive) is a different object: §4 says "Trend
+// lifecycle must depend on content type — a nightclub event decays in hours, a
+// temple guide may remain valuable for years", and a place-scoped signal has no
+// content-type dimension to decay differently by.
+import {
+  computeTrendStates,
+  classifyTrendState,
+  explainTrendState,
+  TREND_STATES,
+  TREND_MIN_RATE,
+  type TrendEvidence,
+} from "../lib/discoveryTrendState.js";
+
+const TREND_DAY = 24 * 60 * 60 * 1_000;
+const TNOW = 1_800_000_000_000;
+
+/** n impression rows for `id`, all `agoMs` before TNOW. */
+function impressions(id: string, n: number, agoMs: number) {
+  return Array.from({ length: n }, () => ({
+    item_id: id, outcome: "impression",
+    served_at: new Date(TNOW - agoMs).toISOString(), outcome_at: null,
+  }));
+}
+
+const ev = (recent: number, mid: number, prior: number): TrendEvidence =>
+  ({ recentRate: recent, midRate: mid, priorRate: prior, totalWeight: recent + mid + prior });
+
+describe("03 §9 — the six place-momentum stages", () => {
+  it("names the six stages in the specification's own order", () => {
+    assert.deepEqual([...TREND_STATES], [
+      "unknown", "emerging", "trending", "established", "cooling", "rediscovered",
+    ]);
+  });
+
+  it("DEFECT: emerging and cooling are distinguishable — a scalar cannot tell them apart", () => {
+    // Same recent rate. Opposite stories. This is the case DV-28 is about.
+    const emerging = ev(TREND_MIN_RATE * 2, 0, 0);
+    const cooling  = ev(TREND_MIN_RATE * 2, TREND_MIN_RATE * 20, TREND_MIN_RATE * 20);
+    assert.equal(classifyTrendState(emerging), "emerging");
+    assert.equal(classifyTrendState(cooling),  "cooling");
+    assert.notEqual(
+      classifyTrendState(emerging), classifyTrendState(cooling),
+      "a place with no history and a little activity is not the same as one with a long history and less of it",
+    );
+  });
+
+  it("distinguishes emerging from established — 03 §14's own acceptance criterion", () => {
+    const established = ev(TREND_MIN_RATE * 10, TREND_MIN_RATE * 10, TREND_MIN_RATE * 10);
+    assert.equal(classifyTrendState(established), "established");
+    assert.equal(classifyTrendState(ev(TREND_MIN_RATE * 2, 0, 0)), "emerging");
+  });
+
+  it("trending is acceleration against the recent past, not absolute volume", () => {
+    assert.equal(classifyTrendState(ev(TREND_MIN_RATE * 10, TREND_MIN_RATE * 2, TREND_MIN_RATE * 2)), "trending");
+    assert.equal(
+      classifyTrendState(ev(TREND_MIN_RATE * 100, TREND_MIN_RATE * 100, TREND_MIN_RATE * 100)), "established",
+      "a permanently busy place is established, not trending — 03 §1: 'Trending is not equivalent to most liked'",
+    );
+  });
+
+  it("rediscovered needs the QUIET MIDDLE — activity, then silence, then activity", () => {
+    assert.equal(classifyTrendState(ev(TREND_MIN_RATE * 5, 0, TREND_MIN_RATE * 5)), "rediscovered");
+    assert.notEqual(
+      classifyTrendState(ev(TREND_MIN_RATE * 5, TREND_MIN_RATE * 5, TREND_MIN_RATE * 5)), "rediscovered",
+      "uninterrupted activity is not a rediscovery; without the middle window this state cannot exist at all",
+    );
+  });
+
+  it("no evidence is `unknown`, and unknown is never a claim about the place", () => {
+    assert.equal(classifyTrendState(ev(0, 0, 0)), "unknown");
+    assert.equal(explainTrendState("unknown"), null, "a place nobody has been served has no trend to explain");
+  });
+
+  it("a below-floor recent window cannot trend, however empty the past", () => {
+    assert.equal(
+      classifyTrendState(ev(TREND_MIN_RATE * 0.5, 0, 0)), "unknown",
+      "one or two impressions is not a surge; acting on it manufactures a signal",
+    );
+  });
+
+  it("03 §11 — every state that IS a claim has a plain-language explanation, and none names a person or place", () => {
+    for (const s of TREND_STATES) {
+      const text = explainTrendState(s);
+      if (s === "unknown") { assert.equal(text, null); continue; }
+      assert.equal(typeof text, "string", `${s} must be explainable (03 §14 'it can explain major trend reasons')`);
+      assert.ok(/^[A-Z].*[.!]$/.test(text!), `${s}'s explanation must read as a sentence: ${JSON.stringify(text)}`);
+      assert.ok(!/@|\buser\b|\bid\b/i.test(text!), `${s}'s explanation must not name anyone`);
+    }
+  });
+});
+
+describe("03 §9 — computeTrendStates over real rank_events rows", () => {
+  it("reads THREE windows out of the same rows the scalar already reads", () => {
+    const rows = [
+      ...impressions("p_new", 8, 6 * 60 * 60 * 1_000),      // recent only
+      ...impressions("p_old", 8, 20 * TREND_DAY),                  // prior only
+      // 40, not 8: the prior window is 23 days long and is normalised to a
+      // 48-hour RATE before the floor is applied, so a handful of impressions
+      // three weeks ago is not "history" — it is the same trickle the floor
+      // exists to ignore. The three windows are compared as rates or they are
+      // not comparable at all.
+      ...impressions("p_back", 8, 6 * 60 * 60 * 1_000),      // recent …
+      ...impressions("p_back", 40, 20 * TREND_DAY),          // … and long ago, nothing between
+      ...impressions("p_steady", 8, 6 * 60 * 60 * 1_000),
+      ...impressions("p_steady", 20, 4 * TREND_DAY),
+      ...impressions("p_steady", 92, 20 * TREND_DAY),
+    ];
+    const out = computeTrendStates(rows, TNOW);
+    assert.equal(out["p_new"].state, "emerging");
+    assert.equal(out["p_back"].state, "rediscovered");
+    assert.equal(out["p_steady"].state, "established");
+    assert.equal(
+      out["p_old"]?.state, "unknown",
+      "a place with only old activity has no current trend — and `unknown` says so rather than inventing `cooling` from nothing recent",
+    );
+  });
+
+  it("carries the evidence, so an explanation can be checked against the numbers behind it", () => {
+    const out = computeTrendStates(impressions("p", 8, 6 * 60 * 60 * 1_000), TNOW);
+    assert.ok(out["p"].evidence.recentRate > 0);
+    assert.equal(out["p"].evidence.midRate, 0);
+    assert.equal(out["p"].evidence.priorRate, 0);
+  });
+
+  it("does not change the existing momentum scalar — the two are computed side by side", () => {
+    const rows = impressions("p", 8, 6 * 60 * 60 * 1_000);
+    const before = computeLocalMomentum(rows, TNOW);
+    computeTrendStates(rows, TNOW);
+    assert.deepEqual(computeLocalMomentum(rows, TNOW), before, "adding a state machine must not move a number the ranker already uses");
+  });
+});
+
+describe("03 §9 — the two modules must weigh the same rows the same way", () => {
+  it("DEFECT GUARD: the trend floor and event weights equal the momentum module's", async () => {
+    // They are declared twice rather than imported, because a VALUE import from
+    // discoveryTrendState back into discoveryLocalMomentum would be an ES-module
+    // cycle through a `const` — which fails at IMPORT time ("cannot access
+    // before initialization"), i.e. as a startup crash rather than a test
+    // failure. This test is what keeps the duplication honest.
+    const mom = await import("../lib/discoveryLocalMomentum.js");
+    const trd = await import("../lib/discoveryTrendState.js");
+    assert.equal(
+      trd.TREND_MIN_RATE, mom.MOMENTUM_MIN_RECENT_WEIGHT,
+      "a place the scalar calls noise and the stage calls a surge is worse than either being wrong alone",
+    );
+    assert.deepEqual(
+      { ...trd.TREND_EVENT_WEIGHTS }, { ...mom.MOMENTUM_EVENT_WEIGHTS },
+      "two modules weighing the same rank_events rows differently produce a stage and a scalar that disagree about the same place",
+    );
+  });
+});

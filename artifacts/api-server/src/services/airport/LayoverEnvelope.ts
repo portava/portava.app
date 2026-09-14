@@ -55,6 +55,7 @@
  *  - Transport reliability, route alternatives, queue friction, weather and
  *    re-entry cost (L62) are not inputs. The bound is geometry and two speeds.
  */
+import type { EstimateConfidence } from "./LayoverFeasibility.js";
 import {
   estimateTravel,
   haversineMeters,
@@ -102,6 +103,34 @@ export const ENVELOPE_BAND_CERTIFIES_FIT: Record<EnvelopeBand, boolean> = {
  * tree cannot compute it — that is stated in `certifiedInward: false` rather
  * than left for a reader to infer from the absence of a polygon.
  */
+/**
+ * census L63 — "Envelope edges contract as confidence drops."
+ *
+ * The share of the certified window that is NOT planned against, per §6.2
+ * confidence band. It is spent on the PLANNING edge only: the proved edge above
+ * is an arithmetic fact and does not move (see `plannedRadiusMetres`).
+ *
+ *   HIGH          0 %   nothing to hedge; the two edges coincide.
+ *   MEDIUM       10 %
+ *   LOW          25 %   every production session on this tree is LOW — the
+ *                       record's confidence is the weakest of its estimates and
+ *                       `timeOfDayExtra` is a STATIC_DEFAULT everywhere.
+ *   INSUFFICIENT 100 %  a window this uncertain plans nothing landside at all.
+ *                       Not a block: the proved edge is unchanged and every
+ *                       candidate inside it is still served and still rated.
+ *
+ * The figures are a POLICY, not a measurement, and are declared here as one
+ * table so that the day a real error distribution exists (`measureCalibration`
+ * in LayoverAirportTruth already computes p90 coverage) this is the one place
+ * that changes.
+ */
+export const ENVELOPE_UNCERTAINTY_BUDGET: Record<EstimateConfidence, number> = {
+  HIGH: 0,
+  MEDIUM: 0.10,
+  LOW: 0.25,
+  INSUFFICIENT: 1,
+};
+
 export interface SafeEnvelope {
   centre: GeoPoint;
   /**
@@ -119,6 +148,31 @@ export interface SafeEnvelope {
   certifiedOutward: true;
   /** FALSE: a point inside the disc is NOT certified to fit. Always false. */
   certifiedInward: false;
+
+  // ── census L63: the edge that reads confidence ──────────────────────────────
+
+  /**
+   * The §6.2 confidence band this envelope was cut under, or `null` when the
+   * caller supplied none (in which case nothing below contracts and the
+   * envelope is byte-identical to the pre-L63 one).
+   */
+  confidence: EstimateConfidence | null;
+  /** Minutes of the certified window deliberately not planned against. >= 0. */
+  uncertaintyBudgetMinutes: number;
+  /** `maxOneWayMinutes` after the budget. <= `maxOneWayMinutes`. */
+  plannedMaxOneWayMinutes: number;
+  /**
+   * The CONTRACTED edge: the reach of a leg that leaves the uncertainty budget
+   * unspent. Always <= `radiusMetres`, equal to it only at HIGH.
+   *
+   * This is a PLANNING bound, not a proof, and the distinction is the reason
+   * there are two numbers rather than one smaller one. Outside `radiusMetres`
+   * nothing fits at any speed — that is arithmetic. Outside this, a candidate
+   * fits only if every estimate behind the window was right, which at LOW
+   * confidence is not something this tree can say. A candidate between the two
+   * is FLAGGED (`withinPlannedEdge: false`) and never blocked.
+   */
+  plannedRadiusMetres: number;
 }
 
 /**
@@ -149,8 +203,19 @@ function reachMetres(maxOneWaySeconds: number): number {
  * envelope and NOT a default one. This is the direction every refusal in this
  * surface fails: no proof, no block.
  */
-export function safeEnvelope(usableMinutes: number, centre: GeoPoint | null): SafeEnvelope | null {
+export function safeEnvelope(
+  usableMinutes: number,
+  centre: GeoPoint | null,
+  /**
+   * census L63. The certified record's own `confidence` — `record.confidence`,
+   * the weakest of its §6.2 estimates. OPTIONAL, and its absence spends no
+   * budget: an existing caller that does not hold a band gets exactly the
+   * envelope it got before, which is what keeps this additive.
+   */
+  confidence?: EstimateConfidence | null,
+): SafeEnvelope | null {
   if (!centre) return null;
+  const band = confidence ?? null;
   if (!Number.isFinite(usableMinutes) || usableMinutes <= 0) {
     return {
       centre,
@@ -160,6 +225,10 @@ export function safeEnvelope(usableMinutes: number, centre: GeoPoint | null): Sa
       basis: "straight_line_lower_bound",
       certifiedOutward: true,
       certifiedInward: false,
+      confidence: band,
+      uncertaintyBudgetMinutes: 0,
+      plannedMaxOneWayMinutes: 0,
+      plannedRadiusMetres: 0,
     };
   }
   // FLOORED, and the floor is not a rounding convenience — it is what makes the
@@ -171,6 +240,13 @@ export function safeEnvelope(usableMinutes: number, centre: GeoPoint | null): Sa
   // past the window — measured: a 45-minute window admitted a 46-minute round
   // trip — which would have been a disc that disagreed with the block.
   const maxOneWayMinutes = Math.floor(usableMinutes / 2);
+  // census L63. CEIL on the budget and FLOOR on what is left, so the haircut is
+  // never rounded in the traveller's favour — the same direction every other
+  // rounding in this surface fails.
+  const budgetShare = band ? ENVELOPE_UNCERTAINTY_BUDGET[band] : 0;
+  const uncertaintyBudgetMinutes = Math.ceil(usableMinutes * budgetShare);
+  const plannedUsableMinutes = Math.max(0, usableMinutes - uncertaintyBudgetMinutes);
+  const plannedMaxOneWayMinutes = Math.floor(plannedUsableMinutes / 2);
   return {
     centre,
     radiusMetres: Math.floor(reachMetres(maxOneWayMinutes * 60)),
@@ -179,6 +255,10 @@ export function safeEnvelope(usableMinutes: number, centre: GeoPoint | null): Sa
     basis: "straight_line_lower_bound",
     certifiedOutward: true,
     certifiedInward: false,
+    confidence: band,
+    uncertaintyBudgetMinutes,
+    plannedMaxOneWayMinutes,
+    plannedRadiusMetres: Math.floor(reachMetres(plannedMaxOneWayMinutes * 60)),
   };
 }
 
@@ -197,6 +277,15 @@ export interface EnvelopeVerdict {
    * itself, and inventing one would read as a measurement.
    */
   reason: string | null;
+  /**
+   * census L63. Whether the point is inside the CONTRACTED planning edge.
+   * `null` when there is no envelope or no point to measure. FALSE is a FLAG
+   * and never a refusal: the band above is what decides whether a candidate is
+   * served, and a confidence haircut may not change it.
+   */
+  withinPlannedEdge: boolean | null;
+  /** Why the planning edge excluded it, naming the band. `null` when inside. */
+  plannedEdgeReason: string | null;
 }
 
 const NO_VERDICT: EnvelopeVerdict = {
@@ -204,6 +293,8 @@ const NO_VERDICT: EnvelopeVerdict = {
   distanceMetres: null,
   lowerBoundOneWayMin: null,
   reason: null,
+  withinPlannedEdge: null,
+  plannedEdgeReason: null,
 };
 
 /**
@@ -239,6 +330,14 @@ export async function bandCandidate(
   if (r.kind !== "estimate") return NO_VERDICT;
   const oneWay = Number(r.estimate.minutes);
   if (!Number.isFinite(oneWay) || oneWay < 0) return NO_VERDICT;
+  // census L63 — the contracted edge, evaluated on the same bound. A point can
+  // be outside it and still not blocked; that is the whole distinction.
+  const withinPlannedEdge = oneWay <= envelope.plannedMaxOneWayMinutes;
+  const plannedEdgeReason = withinPlannedEdge
+    ? null
+    : `beyond what we would plan on ${envelope.confidence ?? "unknown"} confidence — ` +
+      `${envelope.uncertaintyBudgetMinutes} of the ${envelope.usableMinutes} usable minutes are held back`;
+
   if (oneWay * 2 > envelope.usableMinutes) {
     return {
       band: "BLOCKED",
@@ -247,6 +346,8 @@ export async function bandCandidate(
       reason:
         `${Math.round(metres / 100) / 10} km from the airport — at least ${oneWay * 2} min there and back, ` +
         `against ${envelope.usableMinutes} min of usable time`,
+      withinPlannedEdge,
+      plannedEdgeReason,
     };
   }
   return {
@@ -254,6 +355,8 @@ export async function bandCandidate(
     distanceMetres: Math.round(metres),
     lowerBoundOneWayMin: oneWay,
     reason: null,
+    withinPlannedEdge,
+    plannedEdgeReason,
   };
 }
 

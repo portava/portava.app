@@ -228,7 +228,7 @@ below, reviewed as such, one at a time.
 | `src/services/appeals/resolveAppeal.ts` | `trips` | update |
 | `src/services/hiddenGems/HiddenGemService.ts` | `trip_plan_items` | insert |
 
-### Routes under /trips — 164 (73 reads; writes: 7 kernel, 36 direct, 22 both, 26 neither)
+### Routes under /trips — 165 (74 reads; writes: 7 kernel, 36 direct, 22 both, 26 neither)
 
 | method | path | file | writes through |
 | --- | --- | --- | --- |
@@ -326,6 +326,7 @@ below, reviewed as such, one at a time.
 | POST | `/trips/:tripId/members` | `src/routes/trips.ts` | both |
 | DELETE | `/trips/:tripId/members/:userId` | `src/routes/trips.ts` | both |
 | GET | `/trips/:tripId/members/:userId/passport` | `src/routes/trips.ts` | read |
+| GET | `/trips/:tripId/memories/recap` | `src/routes/memories.ts` | read |
 | GET | `/trips/:tripId/memory` | `src/routes/memories.ts` | read |
 | POST | `/trips/:tripId/memory` | `src/routes/memories.ts` | none |
 | GET | `/trips/:tripId/memory-candidates` | `src/routes/tripPostTrip.ts` | read |

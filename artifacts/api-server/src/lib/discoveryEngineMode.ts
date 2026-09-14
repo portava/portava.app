@@ -59,6 +59,10 @@ import {
   parseDiscoveryCohort, COHORT_NONE,
   type DiscoveryCohort, type CohortParseReason,
 } from "./discoveryCohort.js";
+// `12` "Stop conditions" — the automatic half of the stop. `disable_discovery_pde`
+// is a human pulling a lever; this is the system pulling it when the evidence
+// instrument itself is failing. It can only ever resolve DOWNWARD, to legacy.
+import { evaluateStopConditions } from "./discoveryStopConditions.js";
 
 export const DISCOVERY_ENGINE_MODE_FLAG = "DISCOVERY_ENGINE_MODE";
 export const DISCOVERY_PDE_KILL_SWITCH  = "disable_discovery_pde";
@@ -78,7 +82,8 @@ export type ModeReason =
   | "flag_unreadable"      // getFlagRow returned null on error
   | "mode_missing"         // enabled, but metadata carries no mode
   | "mode_invalid"         // enabled, but metadata.mode is not one of the three
-  | "kill_switch_engaged"  // mode was pde, but the stop is engaged
+  | "kill_switch_engaged"  // mode was pde, but the MANUAL stop is engaged
+  | "stop_condition"       // mode was non-legacy, but a `12` stop condition has tripped
   | "no_client"            // no service client available
   | "resolved";            // the configured mode was used as-is
 
@@ -186,6 +191,32 @@ async function resolveUncached(sc: any): Promise<ResolvedMode> {
     // remember.
     if (mode === "legacy") {
       return { mode, reason: "resolved", cohort: COHORT_NONE, cohortReason: "absent" };
+    }
+
+    // `12` Stop conditions — "Stop rollout if: event rejection rises,
+    // recommendation logging gaps appear…". Consulted for every NON-legacy mode,
+    // shadow included: shadow costs real reads and writes real observations off
+    // the same instrument whose failure is being detected, so continuing to
+    // shadow through a logging fault produces a comparison nobody should trust.
+    //
+    // Deliberately AFTER the legacy short-circuit above, so a tripped condition
+    // can never rewrite the reason a legacy request was legacy, and after the
+    // manual stop, so `kill_switch_engaged` stays the reported reason when a
+    // human has already halted pde. It reads no database and cannot throw.
+    //
+    // Latency of the halt is bounded by this resolver's 30-second cache, not by
+    // the evaluator: a condition that trips mid-TTL takes effect on the next
+    // uncached resolution. Stated because "it halts" and "it halts within 30
+    // seconds" are different promises.
+    const stop = evaluateStopConditions();
+    if (stop.tripped.length > 0) {
+      logger.warn(
+        { mode, tripped: stop.tripped, attempts: stop.attempts,
+          eventRejectionRate: stop.eventRejectionRate, loggingGapRate: stop.loggingGapRate,
+          unenforced: stop.unenforced },
+        "discoveryEngineMode: a 12 stop condition has tripped — serving legacy",
+      );
+      return LEGACY("stop_condition");
     }
 
     const parsed = parseDiscoveryCohort((row.metadata as Record<string, unknown> | null)?.cohort);

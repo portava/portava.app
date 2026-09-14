@@ -41,6 +41,10 @@
 import { randomUUID } from "node:crypto";
 import { isFlagEnabled } from "./featureFlags.js";
 import { logger } from "./logger.js";
+// `12` "Stop conditions" — this writer is the only instrument that knows whether
+// an event actually landed, so it is the only place that can feed the two stop
+// conditions Discovery can enforce. Recording is in-process and cannot throw.
+import { recordServeLogOutcome } from "./discoveryStopConditions.js";
 import { recordImpressionDistributionStats } from "../services/ranking/DiscoveryRankingService.js";
 
 /** Feature flag gating every write in this module. Absent row ⇒ disabled. */
@@ -227,6 +231,11 @@ export async function logDiscoveryServe(
   sc:     any,
   params: DiscoveryServeLogParams,
 ): Promise<void> {
+  // Declared OUTSIDE the try so the catch can see it, and LOCAL rather than
+  // module-level because several serves are in flight at once — a module-level
+  // counter would be clobbered by an interleaved call and attribute one serve's
+  // item count to another's throw.
+  let attemptedItems = 0;
   try {
     if (!sc) return;
     const { userId, servePoint, items, route, sessionId, context } = params;
@@ -259,7 +268,18 @@ export async function logDiscoveryServe(
       session_id: effectiveSessionId,
     }));
 
+    attemptedItems = rows.length;
     const { error } = await sc.from("rank_events").insert(rows);
+    // `12` stop condition evidence. Recorded ONLY here, after an insert was
+    // actually attempted: a serve that wrote nothing because the flag was off
+    // returned above and is not a logging gap — it is the flag doing its job,
+    // and counting it would make the stop trip hardest while the feature is
+    // disabled.
+    recordServeLogOutcome({
+      outcome: error ? "rejected" : "landed",
+      servedItems: rows.length,
+      landedRows: error ? 0 : rows.length,
+    });
     if (error) {
       // Deliberately NOT silent — see the module header.
       logger.warn(
@@ -274,6 +294,14 @@ export async function logDiscoveryServe(
       await recordImpressionDistributionStats(sc, rows.map((r) => r.item_id), userId);
     }
   } catch (err) {
+    // A throw AFTER the rows were built is an attempt that produced nothing, and
+    // it is the failure mode most likely to be invisible: no `error` object, no
+    // rejected row, no count anywhere. `attemptedItems` is set immediately before
+    // the insert and reset after it, so a throw from anywhere else — the flag
+    // read, the client lookup — records nothing and cannot manufacture a gap.
+    if (attemptedItems > 0) {
+      recordServeLogOutcome({ outcome: "threw", servedItems: attemptedItems, landedRows: 0 });
+    }
     logger.warn({ err }, "discoveryServeLog: impression insert threw");
   }
 }

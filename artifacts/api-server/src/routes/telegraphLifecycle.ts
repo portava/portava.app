@@ -35,6 +35,7 @@ import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { logger as rootLogger } from "../lib/logger.js";
+import { publishToThread } from "../lib/telegraphEvents.js";
 import {
   detectReadRace,
   planUnsend,
@@ -378,6 +379,217 @@ router.post(
         "public.messages has no lifecycle column; an unsent message is a tombstone, " +
         "indistinguishable in storage from a deleted one.",
     });
+  }),
+);
+
+// ── POST /api/threads/:threadId/seen ─────────────────────────────────────────
+
+/** How many rows one seen-advance will scan to name what crossed. */
+export const SEEN_SCAN_LIMIT = 500;
+
+const SeenSchema = z.object({
+  /**
+   * The threshold, expressed as a MESSAGE rather than a clock reading. That is
+   * the whole point — see the header below.
+   */
+  upToMessageId: z.string().min(1).max(64),
+});
+
+/**
+ * §7.2 "Seen = crossed the approved visibility threshold", and §13.2's
+ * `message.seen`.
+ *
+ * ── THE TWO DEFECTS THIS CLOSES ─────────────────────────────────────────────
+ * census-telegraph T70: seen "is whatever the client asserts:
+ * `routes/messaging.ts:1202-1218` stamps `message_thread_members.last_read_at
+ * = now()` on any authenticated call, with no visibility predicate the server
+ * can check."
+ *
+ * census-telegraph T179: "`read.updated` … carries a THREAD-LEVEL
+ * `lastReadAt`, not a per-message seen fact, so no consumer can answer 'was
+ * *this* message seen'."
+ *
+ * ── WHY THE THRESHOLD IS A MESSAGE AND NOT A TIMESTAMP ──────────────────────
+ * `now()` is not checkable: the server cannot tell a claim about what was on
+ * screen from a claim about what the clock said. A MESSAGE ID is checkable,
+ * and every clause the check applies is a real refusal:
+ *
+ *   - it must exist, in THIS thread (a 404 that does not distinguish "no such
+ *     message" from "not yours", because the distinction is itself a
+ *     disclosure);
+ *   - it must not be a tombstone;
+ *   - it must be inside the caller's own §14.3 window, so a member cannot
+ *     assert they read past a bound that exists to stop them seeing it;
+ *   - and the marker it sets is the MESSAGE's `created_at`, never the request
+ *     time, so "seen" cannot run ahead of what was actually sent.
+ *
+ * ── WHY THE MARKER ONLY EVER GOES FORWARD ───────────────────────────────────
+ * A backwards write would re-open §7.4's unseen-unsend window on a message a
+ * recipient has already read, which is the one thing that rule exists to
+ * prevent. A request that would move it back is answered `advanced: false` and
+ * writes nothing — stated rather than silently ignored, because a client that
+ * cannot tell a refusal from a success will keep sending it.
+ *
+ * ── WHAT IT DOES NOT DO ─────────────────────────────────────────────────────
+ * It does not add per-message receipt rows, and §7.3 forbids them ("Do not
+ * create permanent row-per-message-per-user receipt explosions"). The
+ * per-message fact is DERIVED from the one row per member that already exists,
+ * exactly as `GET /threads/:id/receipts` derives it. And it does not replace
+ * the legacy `POST /threads/:id/read` in `routes/messaging.ts`, which still
+ * stamps `now()`: this is a second, checkable path, not a removal of the first,
+ * and until the legacy path is retired T70 is only half closed.
+ */
+router.post(
+  "/threads/:threadId/seen",
+  asyncHandler(async (req: any, res: any) => {
+    const auth = await requireUser(req, res);
+    if (!auth) return;
+    const { client, user } = auth;
+    const { threadId } = req.params;
+
+    if (!UUID.test(threadId)) {
+      sendError(res, "invalid_payload", "Invalid threadId");
+      return;
+    }
+    const parsed = SeenSchema.safeParse(req.body);
+    if (!parsed.success) {
+      sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "upToMessageId is required");
+      return;
+    }
+
+    const gate = await memberGate(client, threadId, user.id);
+    if (!gate.ok) {
+      sendError(res, gate.code as any, gate.message);
+      return;
+    }
+
+    // The threshold message, bound to this thread in the QUERY as well as in
+    // the check — two gates, because this one decides what a person may assert
+    // about someone else's message.
+    const { data: target, error: targetErr } = await client
+      .from("messages")
+      .select(MESSAGE_COLUMNS)
+      .eq("id", parsed.data.upToMessageId)
+      .eq("thread_id", threadId)
+      .maybeSingle();
+    if (targetErr) {
+      log.error({ threadId, message: targetErr.message }, "seen threshold read failed");
+      sendError(res, "db_error", "Could not read that message");
+      return;
+    }
+    const t = target as any;
+    if (!t || t.deleted_at != null || !withinWindow(t.created_at, gate.visibleFrom)) {
+      sendError(res, "not_found", "No such message in this conversation");
+      return;
+    }
+    const threshold = String(t.created_at);
+    const thresholdMs = Date.parse(threshold);
+    if (Number.isNaN(thresholdMs)) {
+      sendError(res, "not_found", "No such message in this conversation");
+      return;
+    }
+
+    // The caller's own marker. A failed read is never treated as "they have
+    // read nothing" — that would move the marker backwards to the beginning.
+    const { data: mine, error: mineErr } = await client
+      .from("message_thread_members")
+      .select("user_id, last_read_at")
+      .eq("thread_id", threadId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (mineErr || !mine) {
+      log.error({ threadId, message: mineErr?.message }, "seen marker read failed");
+      sendError(res, "db_error", "Could not read your position in this conversation");
+      return;
+    }
+    const previous = ((mine as any).last_read_at ?? null) as string | null;
+    const previousMs = previous ? Date.parse(previous) : null;
+
+    if (previousMs !== null && !Number.isNaN(previousMs) && previousMs >= thresholdMs) {
+      res.status(200).json({
+        threadId,
+        readerId: user.id,
+        lastReadAt: previous,
+        advanced: false,
+        seenMessageIds: [],
+        reason: "already_past_this_message",
+      });
+      return;
+    }
+
+    // What CROSSED. Everything in this member's window, at or before the
+    // threshold, after their previous marker, that they did not send
+    // themselves — a person does not "see" their own message.
+    const floor = previous ?? gate.visibleFrom;
+    let q = client
+      .from("messages")
+      .select(MESSAGE_COLUMNS)
+      .eq("thread_id", threadId)
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false })
+      .limit(SEEN_SCAN_LIMIT);
+    if (floor) q = q.gte("created_at", floor);
+    const { data: rows, error: rowsErr } = await q;
+    if (rowsErr) {
+      log.error({ threadId, message: rowsErr.message }, "seen crossing read failed");
+      sendError(res, "db_error", "Could not read this conversation");
+      return;
+    }
+
+    const crossed = ((rows as any[]) ?? [])
+      .filter((r) => r.deleted_at == null)
+      .filter((r) => r.sender_id !== user.id)
+      .filter((r) => withinWindow(r.created_at, gate.visibleFrom))
+      .filter((r) => {
+        const at = Date.parse(r.created_at);
+        if (Number.isNaN(at)) return false;
+        if (at > thresholdMs) return false;
+        if (previousMs !== null && !Number.isNaN(previousMs) && at <= previousMs) return false;
+        return true;
+      })
+      .map((r) => String(r.id));
+
+    const { error: writeErr } = await client
+      .from("message_thread_members")
+      .update({ last_read_at: threshold })
+      .eq("thread_id", threadId)
+      .eq("user_id", user.id);
+    if (writeErr) {
+      log.error({ threadId, message: writeErr.message }, "seen marker write failed");
+      sendError(res, "db_error", "Could not record that you read this");
+      return;
+    }
+
+    res.status(200).json({
+      threadId,
+      readerId: user.id,
+      lastReadAt: threshold,
+      advanced: true,
+      seenMessageIds: crossed,
+      /**
+       * §7.3, stated in the response: this created no receipt rows. The
+       * per-message answer is derived from the one row per member that already
+       * existed.
+       */
+      receiptRowsWritten: 0,
+      scanned: ((rows as any[]) ?? []).length,
+    });
+
+    if (crossed.length > 0) {
+      void publishToThread(
+        client,
+        threadId,
+        { type: "message.seen", payload: { readerId: user.id, messageIds: crossed, seenAt: threshold } },
+        { excludeUserId: user.id },
+      );
+    }
+    // Kept alongside, for the consumers that only want the marker.
+    void publishToThread(
+      client,
+      threadId,
+      { type: "read.updated", payload: { userId: user.id, lastReadAt: threshold } },
+      { excludeUserId: user.id },
+    );
   }),
 );
 

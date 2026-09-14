@@ -114,6 +114,8 @@ interface State {
   bobWindows?: any[];
   /** Bob has consented to circle presence sharing. */
   bobPresenceConsent?: boolean;
+  /** Rows for `trip_plan_items`, so a new case cannot perturb an old one. */
+  planItems?: any[];
 }
 
 function fixture(state: State): Record<string, any[]> {
@@ -148,6 +150,7 @@ function fixture(state: State): Record<string, any[]> {
         deleted_at: null,
       },
     ],
+    trip_plan_items: state.planItems ?? [],
     trip_members: [
       { trip_id: TRIP_ACTIVE, user_id: ALICE, status: "accepted", role: "owner" },
       { trip_id: TRIP_ACTIVE, user_id: BOB, status: "accepted", role: "member" },
@@ -641,5 +644,110 @@ describe("GET /threads/:threadId/conversation-header", () => {
     useState({ windowsFlag: false, bobPresenceConsent: true });
     const r = await get(`/threads/${THREAD_D}/conversation-header`, ALICE);
     assert.equal(r.body.participants[0].safePresence, null);
+  });
+});
+
+// ── §20 Trips — today / next context in the crew thread ──────────────────────
+//
+// census-telegraph T262: "Two of five. Crew threads are real and auto-synced …
+// and membership authorizes … **No shared Trip card, no today/next context, no
+// Trip Kernel commands.**" §13.1 corrected the first of those three — TRIP is
+// shareable now (T37) — leaving today/next context and the Trip Kernel
+// commands. This is the today/next half.
+//
+// Two properties are pinned beyond "it returns rows":
+//   - the endpoint re-verifies ACCEPTED TRIP membership rather than trusting
+//     the thread roster. T319 records that the trip-membership write and the
+//     thread-membership write are not one transaction, so a removed member can
+//     still be on the thread until a sync runs — and this read must not hand
+//     them the trip's plan in that window;
+//   - it returns NO COORDINATES, ever, whatever the item carries.
+
+function planItem(id: string, over: Record<string, any> = {}) {
+  return {
+    id,
+    trip_id: TRIP_ACTIVE,
+    creator_id: ALICE,
+    title: "Something",
+    category: "activity",
+    status: "confirmed",
+    day_date: dayString(0),
+    starts_at: null,
+    ends_at: null,
+    location_name: "An Thuong",
+    city: "Da Nang",
+    lat: 16.04,
+    lng: 108.24,
+    location_is_private: false,
+    removed_at: null,
+    sort_order: 0,
+    ...over,
+  };
+}
+
+describe("GET /threads/:id/trip-context — §20's today/next for a crew thread", () => {
+  it("answers today's items and the next one after them", async () => {
+    useState({
+      planItems: [
+        planItem("p-today-1", { title: "Beach", starts_at: hours(2) }),
+        planItem("p-today-2", { title: "Dinner", starts_at: hours(6) }),
+        planItem("p-next", { title: "Hoi An day trip", day_date: dayString(2), starts_at: days(2) }),
+        planItem("p-past", { title: "Airport pickup", day_date: dayString(-3), starts_at: days(-3) }),
+        planItem("p-removed", { title: "Cancelled tour", day_date: dayString(0), removed_at: hours(-1) }),
+      ],
+    });
+    const r = await get(`/threads/${THREAD_T}/trip-context`, ALICE);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.applicable, true);
+    assert.equal(r.body.tripId, TRIP_ACTIVE);
+    assert.deepEqual(r.body.today.map((i: any) => i.id), ["p-today-1", "p-today-2"]);
+    assert.equal(r.body.next?.id, "p-next");
+    assert.equal(
+      r.body.today.some((i: any) => i.id === "p-removed"),
+      false,
+      "a removed plan item reached the conversation",
+    );
+  });
+
+  it("returns NO coordinates, whatever the item carries", async () => {
+    useState({ planItems: [planItem("p-today-1", { lat: 16.04, lng: 108.24, location_is_private: false })] });
+    const r = await get(`/threads/${THREAD_T}/trip-context`, ALICE);
+    const serialized = JSON.stringify(r.body);
+    assert.equal(serialized.includes("16.04"), false, "a latitude left the API");
+    assert.equal(serialized.includes("108.24"), false, "a longitude left the API");
+    assert.equal("lat" in r.body.today[0], false);
+    assert.equal("lng" in r.body.today[0], false);
+  });
+
+  it("a direct thread is NOT APPLICABLE, and says so rather than answering empty", async () => {
+    useState({});
+    const r = await get(`/threads/${THREAD_D}/trip-context`, ALICE);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.applicable, false);
+    assert.equal(r.body.tripId, null);
+    assert.ok(String(r.body.reason).length > 0);
+  });
+
+  it("a thread member who is NOT an accepted trip member is refused — T319's window", async () => {
+    // Alice is on THREAD_T's roster in the fixture. Remove her accepted
+    // membership of the trip and the plan must stop being readable, without
+    // waiting for a roster sync.
+    const c = useState({ planItems: [planItem("p-today-1")] });
+    const row = c._db.trip_members.find(
+      (m: any) => m.trip_id === TRIP_ACTIVE && m.user_id === ALICE,
+    );
+    row.status = "removed";
+    const r = await get(`/threads/${THREAD_T}/trip-context`, ALICE);
+    assert.equal(r.status, 403);
+  });
+
+  it("a non-member of the thread is refused before anything is read", async () => {
+    useState({});
+    assert.equal((await get(`/threads/${THREAD_N}/trip-context`, ALICE)).status, 403);
+  });
+
+  it("an unreadable trip_plan_items is a 500, never an empty day", async () => {
+    useState({ errorTable: "trip_plan_items" });
+    assert.equal((await get(`/threads/${THREAD_T}/trip-context`, ALICE)).status, 500);
   });
 });

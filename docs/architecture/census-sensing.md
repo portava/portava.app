@@ -795,11 +795,11 @@ portava-ci and never on production.
   applied → the two session cases red → 2480 and 2481 re-applied → 13 / 13.
   The suite cleans both tables and its seeded profile after itself (0 rows
   either side, measured).
-- **Two pins no suite held** — `test/sensingCensusRederivation.test.ts:32#server`
+- **Two pins no suite held** — `test/sensingCensusRederivation.test.ts:33#server`
   pins the server-side epoch fold separately from the device-side one: the
   first mutation of the server fold stayed **green** (46 / 46) because the
   device layer already rotates the commitment, so the layer was unpinned and
-  is now pinned on its own; `test/sensingCensusRederivation.test.ts:50#viewer,`
+  is now pinned on its own; `test/sensingCensusRederivation.test.ts:51#viewer,`
   pins that the Map's Experience fold names no viewer, user, profile,
   preference or taste and that a preference-shaped field on its input changes
   nothing in the state.
@@ -3040,3 +3040,290 @@ an asserted absence. It was settled by opening every reference rather than by a
 grep that stops, which is the strongest method available in this tree — and
 there is still nothing in this repository that can check whether a stated
 absence was actually searched for.
+
+## §10 — 2026-09-14: the twenty-nine non-C rows re-derived, and what would turn each of them red
+
+Measured by the Sensing lane at worktree `wt-483`, HEAD `292a117ec`, against
+`docs/specs/Portava_Sensing_World_Experience_Intelligence_Upgrade_Architecture_v1.docx`
+(sha256 `08f5465c…`, the copy the owner re-supplied) rather than against the
+`.txt` alone. `head_commit` is unchanged.
+
+§8 sorted the 26 W rows by *who can move them* and §9 opened the largest
+bucket. Neither said, per row, **what evidence would settle it** — so a reader
+holding this census still could not tell a row that is waiting from a row that
+is merely unexamined. §10 is that column, for all twenty-nine non-C rows
+(26 W, 2 N, 1 X), written only after opening the cited code at this tree.
+
+**One row moved a part of itself and none moved a verdict.** What this section
+adds is one build (§10.1), two document defects (§10.2), one asserted absence
+made executable (§10.3), and the red-condition column (§10.5).
+
+### §10.1 What was built — the §5.1 truth block on the spec-literal read model (part of S49)
+
+§8 read S49 as one field on one interface: `DiscoveryCandidate` carrying three
+of the four. It reached that by examining `MapObject` and `DiscoveryCandidate`.
+It did not examine the **§19 read models**, and one of them is the
+spec-literal surface for the very question S49 is about.
+
+`GET /v1/experiences/:id/live-state` is described in its own header as *"the
+spec-literal §19 name for 'what is true at this experience right now?'"*. It
+served `band`, `sourceCountBucket`, `observedAt` and `validUntil` — the intel
+vocabulary — and **no truth class at all, and no §5.1 coverage**. The claim
+objects it serves are `LiveClaimEnvelope`s, which carry neither
+(`` `artifacts/api-server/src/lib/liveClaimRead.ts:113#export interface LiveClaimEnvelope {` ``);
+every consumer that needs the §5.1 block derives it through one shared module,
+`` `artifacts/api-server/src/lib/liveEnvelopeTruth.ts:16#export function truthOfEnvelope` ``,
+which seven other production modules already use — `compassDecision`,
+`crowdState`, `safetyCandidate`, `liveReference`, `wallMoments`,
+`contextKernelRead` and `routes/telegraphLiveReferences`. The §19 read model
+was the notable non-adopter.
+
+It now carries the block, per claim and composed for the answer as a whole:
+
+  - `` `artifacts/api-server/src/routes/intelReadModels.ts:192#  const claims = resolved.claims.map((c) => ({ ...c, truth: truthOfEnvelope(c, nowMs) }));` ``
+  - `` `artifacts/api-server/src/routes/intelReadModels.ts:211#    truth: truthOfEnvelopes(resolved.claims, nowMs),` ``
+
+Three things about this, stated so it is not read as more than it is.
+
+**It adds no second vocabulary and no second derivation.** The values are
+`truthOfEnvelope`'s, and the test asserts *equality* with that function
+evaluated at the response's own `generated_at`, not merely that four fields are
+present. A hand-rolled block that happened to look plausible fails. The
+vocabulary is the spec's seven, asserted verbatim against
+`` `artifacts/api-server/src/lib/truthClass.ts:47#export const TRUTH_CLASSES = [` ``
+and not against any list this endpoint declares about itself.
+
+**It publishes nothing new, and that answers the §24 objection for THIS
+surface only.** §8 declined to copy `coverage` onto `DiscoveryCandidate`
+because the Map strips it inside a protected zone
+(`` `artifacts/api-server/src/lib/protectedLocations.ts:748#delete out.coverage;` ``)
+and Discovery runs no such pass. Here `coverage` is
+`coverageFromBucket(sourceCountBucket)`, and `sourceCountBucket` is **already in
+every served claim** — the bucket is restated in the truth vocabulary, not
+disclosed for the first time. The test asserts the two are equal, so a future
+change that made `coverage` finer than the bucket would go red. The §24
+question for Discovery is untouched and still the owner's.
+
+**The other §19 read model was examined and deliberately left alone.**
+`GET /v1/experiences/:id/typical-patterns`, in the same file, serves
+`confidence`, `band`, `cohort_bucket` and `source_label` and carries no truth
+class and no freshness either. It was NOT given the block, for a reason worth
+recording rather than a budget one: `truthOfEnvelope` derives freshness from the
+observation instant, and `deriveWallTruthClass` ranks `stale` ABOVE `predicted`
+in its fail-weak order, so a pattern computed a week ago would come out
+`stale` — losing the one thing its truth class most needs to say, that it is a
+§12 pattern and not a current fact (§2 *"prediction ≠ current truth"*). Fixing
+that means changing the precedence in `lib/wallProjection.ts`, which is another
+lane's file and another lane's contract. **What would settle it**: a ruling on
+whether a stale prediction's class should read `stale` or `predicted`, from
+whoever owns `deriveWallTruthClass`. Until then this read model carries none of
+the four and S49 has a third open part, now written down.
+
+**S49 stays W.** One of the three gaps this row now names is closed; the one §8
+named is not, and a third is recorded above. Per §5 of the lane rules, a row
+with a part closed stays where it is and says which part.
+
+Mutations run, each watched red and restored:
+
+| # | mutation | result |
+|---|---|---|
+| M15 | replace the per-claim block with `{...truthOfEnvelope(c), truthClass: "observed"}` — a hand-rolled class over the shared block | **red** (2 of 6): the equality assertion and the corroborated case |
+| M16 | delete the composed top-level `truth` | **red** (2 of 6): the composite case and "no coverage is not quiet" |
+| M17 | compose with `truthOfEnvelope(claims[0])` — the FIRST member instead of the weakest over all | **red** (2 of 6): the same two |
+
+`src/test/intelLiveStateEndpoint.test.ts` is 26/26 green after restore; the six
+new cases were watched fail 4/6 before the implementation existed (the two that
+passed beforehand are the vocabulary assertion, which is about `truthClass.ts`,
+and the privacy-floor guard, which passes vacuously over an absent block — said
+here because a test that passes before the fix is not evidence for it).
+
+### §10.2 Two document defects, and the row correction one of them forces
+
+**(a) S26's last statement is a PR-comparison row, and the parser reads it.**
+`check:census-integrity` reports `[3 row(s) in a PR-comparison table — skipped,
+they describe UNMERGED work]` for this census. The table at *"PR #475 delta"*
+has **four** rows — S18, S19, S26, S112 — and S26's is the one that is not
+skipped. The skip fires only on a row carrying TWO bare verdict tokens, and
+S26's second cell reads `**BC** for the anon store`, which is not bare; the
+row therefore falls through to the ordinary path and its first cell, `BW`, is
+read as a statement about HEAD. (S18, S19 and S112 are also restated later —
+in §1.3 and in the §3 body — so nothing rests on their skip.) The newest
+statement any reader or tool finds for S26 is
+*"`BW` | `**BC**` for the anon store | 72 h structural cap"* — a sentence about
+work that was **not in the tree when it was written**. Its verdict survives
+(the tool still counts S26 as W, from the `BW` cell), but its *evidence* is a
+hypothetical. §10.5 gives S26 a statement about HEAD.
+
+For the record, the hypothetical has since half come true and half not:
+`2315_sensing_anon_contributions.sql` **is** in this tree, and the 72-hour cap
+is structural —
+`` `artifacts/api-server/src/migrations/2315_sensing_anon_contributions.sql:172#    CHECK (expires_at > created_at AND expires_at <= created_at + interval '72 hours'),` ``
+— but it is applied to no database, has no writer, and `intel_observations`
+still keeps 180 days of actor-linked raw contributions behind a flag that is
+FALSE.
+
+**(b) S19 cites two lines that have moved.** The row reads *"same on
+`intel_evidence:236` and `intel_confirmations:265`"*. At this tree
+`2130_intel_storage.sql:236` is an index on `intel_claims` and `:265` is
+`intel_confirmations.claim_id`. The FKs the row is about are one and eight
+lines further down. Repointed, anchored, in §10.5. This is the
+bare-citation decay the doc-citation checker's own header describes: both
+numbers pass a range check over a 480-line file and point a reader at the wrong
+statement.
+
+### §10.3 §9.1's enumeration, made executable — because §9.5 said nothing could check it
+
+§9.1 settled what `SENSING_AUTH_POSTURE` blocks by opening every reference to
+the sensing contribution stack by hand, and §9.5 then recorded the weakness in
+its own method: *"there is still nothing in this repository that can check
+whether a stated absence was actually searched for."* Thirteen W rows — half
+this census's correctness gap — rest on that hand-run enumeration.
+
+It is now a test. `src/test/sensingCensusRederivation.test.ts` walks every
+non-test, non-migration module under `src/` for a real **import** of any of the
+ten sensing contribution modules and asserts the importer set is exactly the
+eight siblings §9.1 named, with a reason per entry; that no file under
+`routes/` or `services/` is among them; that `sensingSubjectReconciliation`
+(S111's resolver) has **zero** importers; and that the posture still reads
+`undecided` and refuses all three eligibility contexts.
+
+This is deliberately not the tripwire already in `sensingAnonStore.test.ts`:
+that one forbids a *mention* of two modules and the table and is why a route
+cannot appear. This one is about real imports of the whole ten-module stack,
+which is the fact the thirteen rows actually turn on — *built, and unaddressed*
+rather than *built and refusing*.
+
+| # | mutation | result |
+|---|---|---|
+| M18 | add `import { resolveSensingSubject } from "../lib/sensingSubjectReconciliation.js";` to `routes/intel.ts` | **red** (3 of 4): the allowlist, the no-route rule, and S111's zero-caller assertion |
+
+**Honest limit, reported rather than implied.** The fourth case — that
+`SENSING_AUTH_POSTURE` still reads `undecided` — was **not** mutation-proven
+here: the constant lives in `src/lib/sensingAuthPosture.ts`, which this lane
+does not own, and editing another lane's file to prove a test is not a trade
+this worktree can afford. Its *refusal* half is already mutation-covered by
+`src/test/sensingAuthPosture.test.ts`. Treat that one assertion as weaker than
+the other three until someone with that file mutates it.
+
+### §10.4 What this pass looked for and did not find
+
+**No backward move.** Seven claims underneath the twenty-nine were re-executed
+at this tree and each held: `2130:142`'s FK (S19/S118/S111), the absence of any
+sensor or acoustic capture in `travel-buddy-standalone/` (S28/S29), the
+server-side `location_snapshots` reads in `PresenceVerifier` (S21), the
+nearest-place zone anchor and its caller (S97), the four coexisting presence
+models (S3), and `routes/intel.ts`'s capture being identity-bound human-claim
+capture rather than signal ingest (S32).
+
+**Three evidence corrections, no verdict change.** S19's two citations (§10.2b);
+S106/S3's *"only `locateFriends` consumes it"*, which is now false — the
+anonymous contribution policy takes its precision ceiling from the same ladder
+(`` `artifacts/api-server/src/lib/sensingContributionPolicy.ts:49#import { FEATURE_PRECISION_CEILING, type LocationPrecision } from "../presence/domain/types.js";` ``)
+— and S51's *"the inference over exactly those signals"*, which overstates by
+one: §5.2's candidate list names **density**, and
+`` `artifacts/api-server/src/lib/vibeInference.ts:69#export interface VibeFeatureInput {` ``
+carries `coverage` (how much evidence stands behind the features) and no
+density (how crowded the place is). Those are different quantities and the
+module's own comment says so. Neither changes a verdict; both change what a
+reader would go and check.
+
+**One reading of the spec that this section declines to act on, and says so.**
+§3's sentence is disjunctive — *"Raw precise location should be reduced
+on-device **or inside a narrow trusted boundary** as early as practical"* (spec
+`.txt:42`) — and `services/intel/PresenceVerifier.ts` **is** a narrow boundary:
+coordinates enter, buckets leave, nothing persists a coordinate, and that is
+pinned by a test that walks the audit row and the stored verdict
+(`src/test/intelPresenceVerification.test.ts`, *"coordinates NEVER reach the
+audit row or the stored verifier verdict"*). A lane looking for a cheap C could
+read S21 as already satisfied. It is not, for a reason the row states less
+sharply than it could: the boundary is entered **by profile id**, against
+`location_snapshots`
+(`` `artifacts/api-server/src/services/intel/PresenceVerifier.ts:248#    .from("location_snapshots")` ``,
+`` `artifacts/api-server/src/services/intel/PresenceVerifier.ts:275#    .from("location_snapshots")` ``),
+which is the *personal* branch of §3's own diagram. Reducing one identified
+person's precise history inside the World Intelligence path is the branch
+crossing the diagram exists to prevent, whatever the boundary's width. S21
+stays W.
+
+### §10.5 Row moves — none, and the red-condition for each of the twenty-nine
+
+No verdict moved. Every row below is restated at the verdict it already
+carried, so `check:census-integrity` still reads **98 C / 26 W / 2 N / 1 X**.
+What each row gains is the last column: the evidence that would settle it and
+who can supply it. "A lane" means work inside these trees; "the owner" means a
+decision no diff can substitute for.
+
+| id | was | now | why — and what settles it |
+| --- | --- | --- | --- |
+| S3 | W | **W** | Four presence models still coexist and `presence/domain` still has *"no store, no fusion layer"* (`` `artifacts/api-server/src/lib/crowdFlowProducer.ts:388#      "src/presence/domain/** — Phase-0 types and a transport selector; no store, no fusion layer",` ``). **RED WHEN** one `PresenceEstimate` store and fusion layer exists behind the ladder and all four of `circle_presence`, `trip_crew_location_sessions`, `locateFriendsSession` and the map's `social_zone`/`buddy_zone`/`crew_member` kinds read through it — proven by a test that a second presence write path is unrepresentable, not by the store's existence. **WHO**: a commissioned build across `src/presence/**`, `lib/crowdFlowProducer.ts`, `services/tripCrew/` and `lib/mapAggregation.ts`; the crew half is in trees this lane may not enter. |
+| S17 | X | **X** | Half is code-answerable and already built (helmet/HSTS in `app.ts`; the store's at-rest control is application-level — peppered HMAC tokens, the device secret never stored). The other half is not in any tree. **RED WHEN** the operator supplies two artifacts: the served response headers of the deployed origin showing TLS termination and an HSTS `max-age`, and Supabase's at-rest encryption attestation for the production project. Neither is a diff. **WHO**: the operator. An honest X until then; no code change can move it. |
+| S18 | W | **W** | Two-layer rotation built, executed, mutation-proven (M1/M1b); `sensing_anon_contributions` has no writer. **RED WHEN** `SENSING_AUTH_POSTURE` leaves `undecided` (`` `artifacts/api-server/src/lib/sensingAuthPosture.ts:54#export const SENSING_AUTH_POSTURE: SensingAuthPosture = "undecided";` ``) **and** a writer is registered. Note the second gate is not only the posture: `src/test/sensingAnonStore.test.ts` asserts *"no route touches the store — a transport is an owner decision, not an implementation detail"*, so a lane that wired one today would turn that test red by design. **WHO**: the owner, then a lane. |
+| S19 | W | **W** | `` `artifacts/api-server/src/migrations/2130_intel_storage.sql:142#  actor_id           uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,` `` stands, and so do its two siblings — **repointed**: `` `artifacts/api-server/src/migrations/2130_intel_storage.sql:244#  actor_id       uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,` `` on `intel_evidence` and `` `artifacts/api-server/src/migrations/2130_intel_storage.sql:266#  actor_id   uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,` `` on `intel_confirmations` (the row said 236 and 265; both were in range and wrong). **RED WHEN** a reviewed migration drops or nulls the FK on the table that has a writer. **WHO**: the owner rules, the integration owner numbers the migration. **NOT** by reclassifying `intel_observations` as a non-anonymous store — that shrinks the population and §5 forbids it. |
+| S20 | W | **W** | Eligibility, credential and session are three modules and a table with no identity column; eligibility refuses everyone. **RED WHEN** the posture is decided **and** an ingest exists that receives only the opaque credential — the separation is only observable when something crosses it. **WHO**: the owner, then a lane. |
+| S21 | W | **W** | The store is right; the boundary is narrow and coordinate-free and still entered **by profile id** from the personal-location branch (§10.4). **RED WHEN** `travel-buddy-standalone/` reduces on device — bucketed features, no coordinate leaving the handset — **and** a server path accepts them without reading `location_snapshots` by `actor_id`. Half of that is a client capture change this lane cannot make; half is `services/intel/PresenceVerifier.ts`, which it can. **WHO**: a client build, then this lane. |
+| S24 | W | **W** | The gate holds over two real reads (M4 red) and rare-path suppression stands; nothing publishes an aggregate for it to guard. **RED WHEN** a real publisher hands `` `artifacts/api-server/src/lib/sensingDifferencingGate.ts:46#export function evaluateDifferencing(` `` a previous and a current aggregate. Its own header says *"the caller keeps the last published aggregate and hands it back in"*, so that caller needs DURABLE state for the previous publication. **This lane examined its one aggregate-publishing surface, `GET /v1/neighborhoods/:id/pulse`, and declined, having first checked the obvious shortcut and found it closed**: the intuition is that the previous publication is recoverable from snapshot history, and it is not — `` `artifacts/api-server/src/migrations/2130_intel_storage.sql:310#CREATE UNIQUE INDEX IF NOT EXISTS intel_state_snapshots_subject_claim` `` makes `intel_state_snapshots` one row per (subject, zone, claim), upserted in place, so the value the gate needs to compare against has already been overwritten by the time anything could read it. That leaves process memory, and a differencing control that does not hold across replicas is a control in name. The gate needs a new durable last-published store, which is a migration. **WHO**: the integration owner (a table), then decision #9 (the owner), then a lane. |
+| S25 | W | **W** | The seven verbs are distinct on the anonymous path (`` `artifacts/api-server/src/lib/sensingContributionPolicy.ts:66#export const CONTRIBUTION_PURPOSE_SCOPES = [` ``, with infer/personalize/surface/share NOT granted) and the human-claim path is still one boolean (`` `artifacts/api-server/src/lib/intelConsent.ts:51#    return data.enabled === true &&` ``). **RED WHEN** `intel_contribution_consent` carries a scope set and a capture refuses a verb it was not granted. That is a migration plus `lib/intelConsent.ts` — neither this lane's file. **WHO**: the integration owner and whoever owns `intelConsent`. |
+| S26 | W | **W** | **Evidence replaced: the statement this row carried was a PR-comparison row about unmerged work (§10.2a), not a statement about HEAD.** At HEAD: 2315 IS in the tree and its 72-hour bound is structural (`` `artifacts/api-server/src/migrations/2315_sensing_anon_contributions.sql:172#    CHECK (expires_at > created_at AND expires_at <= created_at + interval '72 hours'),` ``), and it is applied to no database and has no writer; `intel_observations` still keeps 180 days of actor-linked raw contributions behind `intel_contribution_retention_enabled`, which is FALSE in production. **RED WHEN** either half becomes true of a database: 2173 applied with the flag on and 180 days ruled or shortened to "short", or 2315 applied and written to. **WHO**: the owner (what "short" means for identifiable rows), then ops. |
+| S28 | N | **N** | Re-executed: no `expo-sensors`, `DeviceMotion`, `Accelerometer`, `Gyroscope` or `Pedometer` anywhere in `travel-buddy-standalone/` — source or `package.json`. **RED WHEN** a client capture module produces the nine named features. **WHO**: a client build nobody has commissioned; no lane in this wave owns that tree. Everything downstream (S42, S51, S52) is waiting on exactly this. |
+| S29 | N | **N** | Re-executed and narrowed: `expo-av` IS present, for video **playback** only; there is no `Audio.Recording`, no microphone permission in `app.json`, and no acoustic feature anywhere. The census's *"no acoustic capture"* is right; *"no permission scaffold"* is right for capture and would be easy to misread as "no audio dependency". **RED WHEN** a separate, explicit microphone permission exists and gates a coarse energy/rhythm extractor — separate being the requirement, so reusing a video permission would not close it. **WHO**: a client build. |
+| S30 | W | **W** | All eight §4.2 properties are bound on `` `artifacts/api-server/src/lib/sensingContributionSession.ts:69#export interface SensingContributionSessionRow {` `` and the budget is consumed in SQL (M11 red); nothing issues a session and 2480 is applied to no database. **RED WHEN** 2480 is applied and an issuer runs. **WHO**: the owner (posture), the integration owner (migration), then a lane. |
+| S32 | W | **W** | Re-executed: `routes/intel.ts` capture is `requireUser`-bound human-claim capture (`` `artifacts/api-server/src/routes/intel.ts:193#router.post("/v1/intel/observations", asyncHandler(async (req, res) => {` ``) whose actor id IS the storage key. There is no signal ingest. **RED WHEN** a route accepts privacy-reduced device features under an opaque credential. **Blocked twice, and the second gate is the one a lane would trip over**: the posture refuses every caller, and `sensingAnonStore.test.ts` forbids any route from touching the store. Building the route today would add a handler that answers `posture_undecided` forever and turn a green tripwire red — which moves no row. **WHO**: the owner. |
+| S33 | W | **W** | Replay index and session budget are both keyed on the credential (M2, M11 red); the ingest they protect does not exist. **RED WHEN** S32 does. **WHO**: as S32. |
+| S35 | W | **W** | All four rejections exist and three are executed against the database (M3, M10, M11 red); there is no ingest to reject anything. **RED WHEN** S32 does. **WHO**: as S32. |
+| S39 | W | **W** | `` `artifacts/api-server/src/lib/sensingPresenceState.ts:69#  presence: "observed"` `` — two values, no `absent`, no zero, no person named (M8 red, executed on k and k − 1 real contributors); no surface consumes it. **RED WHEN** decision #9 is taken and a surface reads `buildSensingPresenceState`. Note this lane's read-model routes cannot be that surface while the anon-store tripwire stands. **WHO**: the owner (decision #9), then a lane. |
+| S42 | W | **W** | The engine and its guards are pinned (M5 red); not one input has a producer. **RED WHEN** S28 exists. **WHO**: a client build. |
+| S49 | W | **W** | **Part closed this pass (§10.1): the §19 read model now carries all four §5.1 fields, per claim and composed, through the one shared derivation.** The gap §8 named is untouched — `` `artifacts/api-server/src/lib/discoveryCandidate.ts:122#export interface DiscoveryCandidate {` `` still carries truth class, confidence and freshness and no coverage, and `lib/discoveryLiveRank.ts` computes the value in the same function. **RED WHEN** the owner rules the §24 question — either route `DiscoveryCandidate` through `protectedLocations`, or rule that a four-value bucket over an already k-gated state is not protected-zone sensitive — and Discovery adds the field. §10.1's argument that the bucket was already served does **not** transfer: `DiscoveryCandidate` carries no cohort signal today, so adding one there is a first disclosure. **WHO**: the owner, then the Discovery lane. |
+| S51 | W | **W** | The inference exists and is guarded; not one signal is produced anywhere. **Narrowed**: §5.2's candidate list names `density` and the input carries `coverage` instead (§10.4), so this row needs one more signal than the census said. **RED WHEN** S28 exists AND a density input joins `VibeFeatureInput`. **WHO**: a client build, then whoever owns `lib/vibeInference.ts`. |
+| S52 | W | **W** | Checked field-for-field against the SPEC's §5.2 list rather than the module's own: energy, sociality, dance_likelihood, volatility, momentum, scene/context tags, confidence, coverage, freshness, provenance — all ten present on `` `artifacts/api-server/src/lib/vibeInference.ts:93#export interface SensingVibeState {` ``, truth class always `inferred`, band structurally below the live floor. **RED WHEN** something can populate it, i.e. S28. **WHO**: a client build. |
+| S66 | W | **W** | Re-executed at both surfaces: Discovery demotes a Live-qualified `unsafe_density` behind every other row before any score is compared (`` `artifacts/api-server/src/lib/discoveryLiveRank.ts:462#    if (a.grade.safety.demoted !== b.grade.safety.demoted) return a.grade.safety.demoted ? 1 : -1;` ``) and the layover surface removes the card (`` `artifacts/api-server/src/lib/layoverLiveIntersection.ts:194#  if (state.unsafe) { drop = true; dropReason = "unsafe_density"; }` ``). **RED WHEN** a dangerous place is actually refused rather than refusable — the flags these paths ride are ON in a database and real `unsafe_density` state reaches them. **WHO**: nobody, deliberately: this is the census working, and it is recorded so the count of "W rows a lane should move" is not inflated by it. |
+| S79 | W | **W** | Re-executed as an absence, by opening the three modules rather than by a grep that stops: `routes/compass.ts`, `compass/CompassStructuredContext.ts` and `routes/telegraph.ts` contain **zero** references to `liveClaimRead`, `readLiveClaimEnvelopes`, `resolvePlaceIntelState` or `truthOfEnvelope`. The decision surface is grounded by construction; the conversational path has no structured truth in its context to be grounded against. **RED WHEN** live claims are carried into `/compass/ask`'s context and a grounding checker constrains the generated language to the band of its inputs — in that order, because a checker over an empty context is vacuous. **WHO**: the Compass lane. |
+| S83 | W | **W** | `compass/CompassTripContext.ts` still exports exactly one function, `buildTripContextLines`, and it is trip grounding — no world state, no opportunities, no disruptions, no sessions. **RED WHEN** S54 (`ExperienceSession`) exists and a `TripWorldContext` projection carries the five named parts. **WHO**: the Compass lane, after a commissioned `ExperienceSession`. |
+| S92 | W | **W** | Eligibility and decay exist; the bridge is a graph-edge projection and `grep` over `lib/memoryProjectionScheduler.ts` and `services/memoryProjections/` finds no `ExperienceSession` of any spelling. **RED WHEN** S54 exists and memory eligibility is computed from a session's outcome rather than from a graph edge. **WHO**: the Highlights & Memories lane, after a commissioned `ExperienceSession`. |
+| S97 | W | **W** | Re-executed and the §7 ruling stands. `` `artifacts/api-server/src/routes/mapObservations.ts:656#export async function resolveZoneAnchorSubject(` `` resolves a §22 zone contribution to the *nearest* active place (`` `artifacts/api-server/src/routes/mapObservations.ts:648# * NEAREST active place within the zone's radius, and returns that place as the` ``) and the caller stores the observation against it (`` `artifacts/api-server/src/routes/mapObservations.ts:802#    subjectId = anchored.subjectId;` ``), with the FK given as the motive in its own header. **RED WHEN** the proximity resolution is removed, which needs either the Map's zone-contribution feature deleted or `subject_id NOT NULL REFERENCES places(id)` dropped. **WHO**: the owner. Both alternatives are rulings, not diffs. |
+| S106 | W | **W** | The ladder is still right and still has no store and no fusion layer. **Corrected**: *"only `locateFriends` consumes it"* is no longer true — the anonymous contribution policy takes its precision ceiling from the same ladder (§10.4), which is a second consumer and is the shape the row asks for. It changes no verdict: two type consumers are not a fusion layer. **RED WHEN** S3 does. **WHO**: as S3. |
+| S111 | W | **W** | All four §18.3 outcomes are representable and proximity never resolves ownership (M6 red) — `` `artifacts/api-server/src/lib/sensingSubjectReconciliation.ts:69#export type SensingSubjectRef =` ``. The resolver has no caller, and that is **now machine-checked** (§10.3, M18 red). **RED WHEN** `intel_observations.subject_id NOT NULL REFERENCES places(id)` is dropped so that `unknown` and `temporary_world_object` can be STORED. Giving the resolver a caller does not close it — the two outcomes that matter have nowhere to go. **WHO**: the owner, the same ruling as S19 and S97. |
+| S112 | W | **W** | Five stages are defined and executable (`` `artifacts/api-server/src/lib/sensingRevocationLineage.ts:50#export const SENSING_LINEAGE_STAGES = ["raw", "aggregate", "inference", "session", "memory"] as const;` ``) and proven against the SQL on a real cohort (M14 red). The session and memory stages are prevented only because nothing bridges to them. **RED WHEN** a session exists (S30) and a memory bridge exists (S54/S92) for a revocation to reach. **WHO**: the owner for the first, a commissioned build for the second. |
+| S118 | W | **W** | The published side is right — k-gated, no contributor id. The stored side fails outright and for the same one line as S19. **RED WHEN** S19 does, and only then: k-gating the publication cannot repair a store that resolves a contribution to an account by design. **WHO**: the owner. |
+
+### §10.6 What this section could not settle, and two things the integrator must do
+
+**It could not close a single row, and the reason is structural rather than
+budgetary.** Of the twenty-nine, this lane's ownership — `services/intel/**`,
+six `routes/intel*.ts` files, the sensing and intel tests, and this document —
+contains the gap for exactly two: S21 (half of it) and S49 (one of its two).
+The rest live in `src/lib/sensing*.ts`, `src/lib/vibeInference.ts`,
+`src/presence/**`, `src/migrations/`, `lib/discoveryCandidate.ts`,
+`compass/`, the memory services and `travel-buddy-standalone/`. Nineteen wait on
+a named owner decision, six on work nobody has commissioned, one is held W on
+purpose. That is §8's sort, re-derived independently and reaching the same
+shape — which is worth more than agreeing with it would have been.
+
+**`check:doc-citations` is red in this worktree, and not because of this
+document.** Nine of census-sensing's anchored citations fail against the
+*working tree* — all of them into `lib/discoveryCandidate.ts` and
+`routes/discovery.ts`, both being edited concurrently by the Discovery lane.
+Every one of the nine **resolves correctly against HEAD** (checked line by line
+with `git show HEAD:<path>`). They were therefore NOT repointed: repointing a
+citation at another lane's uncommitted line numbers would break it the moment
+that lane's diff lands or changes. S49's row above re-cites
+`lib/discoveryCandidate.ts:122` for the same reason and with the same caveat: it
+is right at HEAD and currently fails against the working tree. The integrator should re-run the checker
+after merging and repoint then, once, against a settled tree.
+
+**Bookkeeping, so a reader is not surprised by it.** §10.3 added two import
+lines to `src/test/sensingCensusRederivation.test.ts`, which moved §1's two
+anchored citations into that file down by one line (`:32#server` → `:33`,
+`:50#viewer,` → `:51`). Both were repointed here; they are the only citations in
+this document this pass changed, and they are changed because the code moved,
+not because the claim did.
+
+**Two requests, both on files this lane may not edit.**
+`artifacts/api-server/src/scripts/checkCensusFreshness.ts` gives this census a
+scope that covers `src/services/intel/` and `src/routes/intel.ts` but **not**
+`src/routes/intelReadModels.ts`, which now carries a row's evidence (§10.1) —
+so a change to it would age no census. It should be added. And
+`src/test/sensingCensusRederivation.test.ts` **is** in scope and was changed by
+§10.3, so once this is committed the census needs an acknowledgement entry in
+`CENSUS_STALENESS_ACKNOWLEDGED.json` naming it, with the reason: the file is a
+pin on rows this section re-derived and its change is that re-derivation, not a
+verdict moving under it.

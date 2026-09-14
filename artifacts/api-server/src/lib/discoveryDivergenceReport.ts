@@ -40,6 +40,33 @@ export interface ShadowServeRow {
   legacy_ms: number | null;
   pde_ms: number | null;
   pde_suppressed_writes: number;
+  /**
+   * `12` Phase 9's remaining axes, computed at write time and stored inside the
+   * existing `pde_stages` jsonb (lib/discoveryShadow.ts). ABSENT on rows written
+   * before that existed, and on rows whose caller passed ids only — those are
+   * reported as unknown, never as zero.
+   */
+  pde_stages?: { phase9?: ShadowPhase9Blob | null } | null;
+}
+
+/** The shape `lib/discoveryShadow.ts` writes under `pde_stages.phase9`. */
+export interface ShadowPhase9Blob {
+  legacy: ShadowPageDimensionsBlob;
+  pde: ShadowPageDimensionsBlob;
+  creatorConcentration: null;
+  estimatedTravelIntent: null;
+  unmeasured: readonly string[];
+}
+
+export interface ShadowPageDimensionsBlob {
+  n: number;
+  categoryDistinct: number;
+  categoryEntropy: number;
+  placeDistinct: number;
+  neighborhoodDistinct: number;
+  geoCellDistinct: number;
+  meanSavedCount: number | null;
+  savedCountCoverage: number;
 }
 
 export type ServePointClass = "cache_a" | "cold_rank" | "other";
@@ -72,6 +99,36 @@ export interface DivergenceGroup {
   pdeMsP50: number | null;
   pdeMsP95: number | null;
   meanSuppressedWrites: number;
+  /**
+   * `12` Phase 9 axes, aggregated over the rows in this group THAT CARRY THEM.
+   * `null` when no row in the group does — a group of rows written before the
+   * dimensions existed reports unknown, not a diversity of zero.
+   */
+  phase9: Phase9Aggregate | null;
+}
+
+export interface Phase9Aggregate {
+  /** Rows in this group that actually carried Phase 9 dimensions. */
+  n: number;
+  /** Mean distinct content categories per page — Phase 9 "diversity". */
+  meanCategoryDistinctLegacy: number;
+  meanCategoryDistinctPde: number;
+  /** Mean normalized category entropy per page — the shape a distinct COUNT cannot see. */
+  meanCategoryEntropyLegacy: number;
+  meanCategoryEntropyPde: number;
+  /** Phase 9 "place diversity", on both of its axes. */
+  meanNeighborhoodDistinctLegacy: number;
+  meanNeighborhoodDistinctPde: number;
+  meanGeoCellDistinctLegacy: number;
+  meanGeoCellDistinctPde: number;
+  /** Phase 9 "save rate potential" — mean of the per-page means, over pages that had one. */
+  meanSavedCountLegacy: number | null;
+  meanSavedCountPde: number | null;
+  /** Mean fraction of items whose save count was known. Travels with the means, always. */
+  meanSavedCoverageLegacy: number;
+  meanSavedCoveragePde: number;
+  /** The Phase 9 axes this surface cannot measure, by name. Never summarised away. */
+  unmeasured: readonly string[];
 }
 
 function mean(xs: number[]): number {
@@ -90,6 +147,45 @@ export function percentile(xs: readonly number[], p: number): number | null {
 
 function groupKey(r: ShadowServeRow): string {
   return `${classifyServePoint(r.serve_point)}|${r.sort_by ?? "default"}|${r.cohort_reason ?? "unknown"}`;
+}
+
+/**
+ * Aggregate the Phase 9 dimensions over the rows in one group THAT CARRY THEM.
+ *
+ * Rows without a `phase9` blob are EXCLUDED from the mean rather than counted
+ * as zero, and the count of rows that did carry one is reported — a mean over
+ * three of four hundred rows is a different fact from a mean over four hundred,
+ * and reporting only the mean makes them look identical.
+ */
+export function aggregatePhase9(rows: readonly ShadowServeRow[]): Phase9Aggregate | null {
+  const blobs = rows
+    .map((r) => r.pde_stages?.phase9)
+    .filter((b): b is ShadowPhase9Blob => !!b && !!b.legacy && !!b.pde);
+  if (blobs.length === 0) return null;
+
+  const meanOfKnown = (xs: Array<number | null>): number | null => {
+    const known = xs.filter((x): x is number => typeof x === "number" && Number.isFinite(x));
+    return known.length === 0 ? null : mean(known);
+  };
+
+  return {
+    n: blobs.length,
+    meanCategoryDistinctLegacy: mean(blobs.map((b) => b.legacy.categoryDistinct)),
+    meanCategoryDistinctPde:    mean(blobs.map((b) => b.pde.categoryDistinct)),
+    meanCategoryEntropyLegacy:  mean(blobs.map((b) => b.legacy.categoryEntropy)),
+    meanCategoryEntropyPde:     mean(blobs.map((b) => b.pde.categoryEntropy)),
+    meanNeighborhoodDistinctLegacy: mean(blobs.map((b) => b.legacy.neighborhoodDistinct)),
+    meanNeighborhoodDistinctPde:    mean(blobs.map((b) => b.pde.neighborhoodDistinct)),
+    meanGeoCellDistinctLegacy:  mean(blobs.map((b) => b.legacy.geoCellDistinct)),
+    meanGeoCellDistinctPde:     mean(blobs.map((b) => b.pde.geoCellDistinct)),
+    meanSavedCountLegacy: meanOfKnown(blobs.map((b) => b.legacy.meanSavedCount)),
+    meanSavedCountPde:    meanOfKnown(blobs.map((b) => b.pde.meanSavedCount)),
+    meanSavedCoverageLegacy: mean(blobs.map((b) => b.legacy.savedCountCoverage)),
+    meanSavedCoveragePde:    mean(blobs.map((b) => b.pde.savedCountCoverage)),
+    // Taken from the rows themselves rather than re-declared here, so the
+    // report can never claim to have measured an axis the writer did not.
+    unmeasured: blobs[0].unmeasured ?? [],
+  };
 }
 
 /**
@@ -128,6 +224,7 @@ export function aggregateDivergence(rows: readonly ShadowServeRow[]): Divergence
       pdeMsP50: percentile(pdeMs, 0.5),
       pdeMsP95: percentile(pdeMs, 0.95),
       meanSuppressedWrites: mean(rs.map((r) => r.pde_suppressed_writes)),
+      phase9: aggregatePhase9(rs),
     });
   }
 
@@ -149,5 +246,23 @@ export function formatGroup(g: DivergenceGroup): string[] {
     `     top-1 changed ... ${pctOf(g.topChangedRate)}`,
     `     displaced/page .. ${g.meanDisplaced.toFixed(2)}   membership Δ/page .. ${g.meanMembershipChange.toFixed(2)}   overlap .. ${pctOf(g.meanOverlapRate)}`,
     `     cost pde p50/p95  ${ms(g.pdeMsP50)} / ${ms(g.pdeMsP95)}   legacy p50/p95 ${ms(g.legacyMsP50)} / ${ms(g.legacyMsP95)}   suppressed writes/serve ${g.meanSuppressedWrites.toFixed(1)}`,
+    ...formatPhase9(g.phase9),
+  ];
+}
+
+/** `12` Phase 9 lines. Absent dimensions print as "not recorded", never as zeros. */
+export function formatPhase9(p: Phase9Aggregate | null): string[] {
+  if (!p) {
+    return ["     phase 9 dims ... not recorded on any row in this group"];
+  }
+  const n2 = (x: number) => x.toFixed(2);
+  const nOrDash = (x: number | null) => (x == null ? "—" : x.toFixed(1));
+  const pct = (x: number) => `${(x * 100).toFixed(0)}%`;
+  return [
+    `     phase 9 (n=${p.n} of the rows above)`,
+    `       diversity      cats/page legacy ${n2(p.meanCategoryDistinctLegacy)} → pde ${n2(p.meanCategoryDistinctPde)}   entropy ${n2(p.meanCategoryEntropyLegacy)} → ${n2(p.meanCategoryEntropyPde)}`,
+    `       place div.     hoods/page ${n2(p.meanNeighborhoodDistinctLegacy)} → ${n2(p.meanNeighborhoodDistinctPde)}   geo cells ${n2(p.meanGeoCellDistinctLegacy)} → ${n2(p.meanGeoCellDistinctPde)}`,
+    `       save potential mean saves/item ${nOrDash(p.meanSavedCountLegacy)} → ${nOrDash(p.meanSavedCountPde)}   (coverage ${pct(p.meanSavedCoverageLegacy)} → ${pct(p.meanSavedCoveragePde)})`,
+    `       NOT measured   ${p.unmeasured.join(", ") || "—"}`,
   ];
 }
