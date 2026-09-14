@@ -1,4 +1,13 @@
-# The reconciled baseline, v1 — 2026-09-14
+# The reconciled baseline — 2026-09-14
+
+> **⚠ v1 IS SUPERSEDED BY v2 IN §9. READ §9 FIRST.**
+> v1's numbers are preserved below unchanged, because the owner asked that
+> version history not be rewritten. **Two v1 statements are corrected in §9.2
+> and §9.3 and must not be quoted from §1 or §2.1:** the headline counts, and
+> the claim that nine `CPV2` clauses are UNGRADED. **Nothing in the corpus is
+> ungraded. That claim was wrong.**
+
+## v1 — 2026-09-14 (superseded)
 
 One record covering **every** requirement in the corpus, including the 24 no
 tool could previously read. Produced on the owner's instruction to stop moving
@@ -365,3 +374,160 @@ The owner's four standing decisions are recorded and in force: the brand palette
 (`docs/architecture/brand-palette-decision.md`), Trust override CAP-now/PIN-later,
 send the twelve families for review, and rehearse the whole batch against
 portava-ci first. All four are honoured in the work above.
+
+---
+
+# 9. Baseline v2 — 2026-09-14, after five lanes and the integration round
+
+**This supersedes §1 and §2.** It is the consolidated record; the integration
+lead is the only author of it.
+
+| | |
+|---|---|
+| `head_commit` | `38ba7759b` on `claude/sweet-fermat-fmx7up` |
+| Previous baseline | v1 above, at `7c6255de7` |
+| Lanes consolidated | Citation repair · Tooling · Trust · Wall+Passport · Compass |
+
+## 9.1 The reconciled totals
+
+| | count | of 3,517 |
+|---|---:|---:|
+| **C** — built and correct | **2,173** | 61.8 % |
+| **W** — built but wrong | **890** | 25.3 % |
+| **N** — not built | **423** | 12.0 % |
+| **X** — cannot verify | **31** | 0.9 % |
+| **UNGRADED** | **0** | 0 % |
+| **TOTAL** | **3,517** | 100 % |
+
+- **CONSTRUCTED** (C+W) = 3,063 / 3,517 = **87.1 %**
+- **CORRECT** (C) = 2,173 / 3,517 = **61.8 %**
+- **GRADED = 3,517 / 3,517 = 100 %**
+
+| census | C | W | N | X | denom | sums | constructed | correct |
+|---|---:|---:|---:|---:|---:|:---:|---:|---:|
+| compass | 98 | 35 | 6 | 2 | 141 | ✓ | 94.3 % | 69.5 % |
+| discovery | 74 | 67 | 43 | 3 | 187 | ✓ | 75.4 % | 39.6 % |
+| highlights-memories | 56 | 131 | 77 | 2 | 266 | ✓ | 70.3 % | 21.1 % |
+| input-intelligence | 262 | 55 | 52 | 4 | 373 | ✓ | 85.0 % | 70.2 % |
+| layover | 61 | 136 | 99 | 0 | 296 | ✓ | 66.6 % | 20.6 % |
+| map | 237 | 46 | 5 | 5 | 293 | ✓ | 96.6 % | 80.9 % |
+| media | 297 | 83 | 68 | 2 | 450 | ✓ | 84.4 % | 66.0 % |
+| passport | 158 | 9 | 1 | 1 | 169 | ✓ | 98.8 % | 93.5 % |
+| sensing | 98 | 26 | 2 | 1 | 127 | ✓ | 97.6 % | 77.2 % |
+| telegraph | 229 | 158 | 61 | 3 | 451 | ✓ | 85.8 % | 50.8 % |
+| trips | 320 | 128 | 3 | 0 | 451 | ✓ | 99.3 % | 71.0 % |
+| trust | 84 | 16 | 6 | 2 | 108 | ✓ | 92.6 % | 77.8 % |
+| wall | 199 | 0 | 0 | 6 | 205 | ✓ | 97.1 % | 97.1 % |
+| **TOTAL** | **2,173** | **890** | **423** | **31** | **3,517** | ✓ | **87.1 %** | **61.8 %** |
+
+**Every census row sums to its own denominator**, and so does the corpus.
+
+## 9.2 CORRECTION — "nine ungraded requirements" was wrong
+
+v1 §2.1 stated that nine `CPV2` clauses were *"the only requirements in the
+entire corpus with no verdict of any kind."* **That is false, and the error was
+mine, not the census's.**
+
+How it happened: I derived the nine by subtracting the ids the parser reads from
+every id-shaped token in `census-compass.md`, found twelve `CPV2` ids of which
+three were paired to graded rows, and concluded 12 − 3 = 9 ungraded. The
+subtraction was right and the **inference was wrong** — an id the parser cannot
+read is not an id without a verdict.
+
+What the nine actually are:
+
+| ids | what they are | verdict |
+|---|---|---|
+| `CPV2-03`, `CPV2-11`, `CPV2-12` | graded in §13.3 since 2026-09-13, unparsed only because the id cell was written in backticks | **W · N · W** |
+| `C1-01`, `C1-02`, `C1-03`, `C1-04`, `C1-05`, `C1-07` | Phase-1 spec rows, same backtick cause (**there is no `C1-06`**) | **5 C + 1 W** |
+
+Verified independently of the lane that reported it: every one printed from the
+census, and `C1-02`'s last statement is `C` at line 1572 — it moved W→C when its
+build landed, which is exactly why the arithmetic closes at 5 C and not 4.
+
+The six remaining `CPV2` ids (`-01`, `-02`, `-04`, `-08`, `-09`, `-10`) are §13.2
+DUPLICATEs: they add no requirement to any denominator and their verdict is their
+carrier's. So **no `CPV2` clause was ever ungraded either.**
+
+The true, narrower statement — which v1 should have made — is that **no `CPV2`
+id carried a verdict cell addressed to its own acceptance bar**. census-compass
+§17.1 now fixes that, grading all twelve against their own bars: **C 3 · W 5 ·
+N 1** across the nine non-duplicates.
+
+## 9.3 Every change since v1, classified
+
+| classification | C | W | N | X | UNGRADED | rows |
+|---|---:|---:|---:|---:|---:|---:|
+| **Code fix** — a verdict moved because the code changed | +3 | −2 | −1 | 0 | 0 | **3** |
+| **Corrected assessment** — v1 mis-stated a verdict that already existed | +5 | +3 | +1 | 0 | −9 | **9** |
+| **Added scope** | 0 | 0 | 0 | 0 | 0 | **0** |
+| **Accounting correction** — rows became machine-readable; no verdict changed | 0 | 0 | 0 | 0 | 0 | **0** |
+| **NET** | **+8** | **+1** | **0** | **0** | **−9** | |
+
+### The three code fixes — each failing-first, each with a revert proof
+
+| id | move | what was actually wrong |
+|---|---|---|
+| **TV-1a** | W → C | Verification sessions were born in `pending`; the column default and first documented lifecycle state is `created`. RED 3/2 → GREEN 3/3; revert the one literal → 2/1. |
+| **TV-6c** | N → C | The V-6 obligation *"monitor attempts per verified user"* had no measurement at all. Built `attemptMetrics.ts` + a reachable admin caller. RED 9/6/3 → GREEN 9/9, with **five** named mutations. |
+| **P45** | W → C | The worst of the three. The Passport Trust screen **rebuilt six domain rows from capability flags and printed the constant `In good standing` on every in-scope domain** — so a domain the server measured as "Building" or "New" was shown to a person as good standing. The client was not duplicating the server, it was overriding a measured verdict with a flattering constant. RED 9 failed/3 passed → GREEN 12/12; revert → 9/3 again. |
+
+### The accounting correction, stated separately because it moved no verdict
+
+The parser read **3,493** rows at v1 and reads **3,499** now. Six rows became
+machine-readable: discovery's three (`DSV2-04/05/12`, rewritten from prose into a
+verdict table) and compass's three (`CPV2-03/11/12`, restated with plain ids).
+The corpus prose gap fell **24 → 18**. Denominators did not move; **no verdict
+changed**; a full `CENSUS_INTEGRITY_DUMP=ALL` diff over all thirteen censuses
+showed **+3 lines, 0 removed, 0 changed** for the discovery half.
+
+### A v1 backlog item that was already done
+
+v1 §8 listed **B10**, "fix the `parseIdCell` digit-suffix range defect." It was
+**already repaired** by `e8f5552b1` on 2026-09-13; census-discovery §12.3 was
+written the next day still claiming it was open, and three sections repeated the
+claim. The claim was stale when written and nobody re-ran it. No parser change
+was needed — the rows simply had to be written as table rows. The repair is now
+**pinned** by `censusDigitPrefixIds.test.ts`, whose positive control writes a copy
+of the parser with the branch deleted and *requires the copy to fail*.
+
+## 9.4 The 18 that remain unparsed — all graded
+
+| census | count | ids | verdicts | cause |
+|---|---:|---|---|---|
+| compass | 6 | `C1-01`…`C1-05`, `C1-07` | 5 C + 1 W | **id cell written in backticks — `parseIdCell` silently drops it** |
+| telegraph | 12 | `T1, T26, T212, T366, T367, T393, T404, T405, T406, T408, T416, T446` | 12 N | marked `∅` *unguarded absence*, not a verdict cell |
+
+The compass six have a known, measured, one-line cause and are the cheapest
+remaining accounting fix in the corpus. **`parseIdCell` silently dropping a
+backticked id cell is a parser defect that will recur**, and it is now the only
+thing between the corpus and a fully machine-readable record.
+
+## 9.5 Production availability — unchanged, and the hold stands
+
+Nothing in this round was merged or deployed. `main` is still `014a25d56`.
+The 32 migrations `2778–2870` exist in **no** database.
+
+**What did change is the evidence for one of them.** `2870` was rehearsed
+**alone** on portava-ci inside `BEGIN … ROLLBACK` (runbook **D4**), and the
+rehearsal observed the failure the migration exists to fix rather than arguing
+it: `UPDATE profiles SET verification_level='id_verified'` → **`23514` check
+constraint violation** before, **7 of 7 values accepted** after, **nothing
+persisted** (constraint reverted, ledger still 500/2777, 0 sessions idle).
+Production was read read-only and its four preconditions re-confirmed.
+**THE PRODUCTION HOLD REMAINS IN PLACE.**
+
+## 9.6 CI: `check:doc-citations` is clean for the first time
+
+| guard | at `dd8ec0afe` | now |
+|---|---|---|
+| `check:doc-citations` | **failed** — 255 findings, 125 broken anchors | **RESULT clean — 0 / 0** |
+| `check:citation-targets` | **failed** — 276 of ceiling 275 | **253 of ceiling 257** |
+| `check:citation-symbols` | PASSED | PASSED |
+| `check:test-registration` | passing, but **4 suites unregistered and silently never run** | **1187 / 1216, all four registered** |
+| `check:census-integrity` | PASSED | PASSED, 3,499 rows |
+
+**96 anchors were repointed by reading the claim and locating the line — never
+by offset.** Three citations were found already correct with corrupted anchor
+*text*, the signature of an earlier bad automated repair; a naive "fix" would
+have moved the line and broken them.

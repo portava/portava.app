@@ -2294,9 +2294,9 @@ names no specification at all.
 *Measured 2026-09-14 at `7c6255de7` (PR #483 head). Sections are APPEND-ONLY and
 LAST-STATEMENT-WINS. This section changes one counted source file and says so in §17.6.*
 
-`docs/architecture/reconciled-baseline-v1.md:82#CPV2-01, CPV2-02, CPV2-03, CPV2-04, CPV2-08` names nine
+`docs/architecture/reconciled-baseline-v1.md:91#CPV2-01, CPV2-02, CPV2-03, CPV2-04, CPV2-08` names nine
 requirements as **"the only requirements in the entire corpus with no verdict of any kind"** and
-`docs/architecture/reconciled-baseline-v1.md:338#Grade the 9` makes grading them backlog item B1.
+`docs/architecture/reconciled-baseline-v1.md:347#Grade the 9` makes grading them backlog item B1.
 This section grades all nine against the code, and it opens by correcting the premise, because the
 premise is checkable and it is wrong in a way that matters to the corpus arithmetic.
 
