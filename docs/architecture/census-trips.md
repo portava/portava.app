@@ -6545,7 +6545,7 @@ code changes in this section.
   (`travel-buddy-standalone/src/features/map/cache/mapCache.ts:472#rehydrate(`).
   The points of an event's map are cached; the map is not. W.
 - **TR133 holds W, at two of four.** Compass's `get_freedom_windows`
-  (`compass/CompassTools.ts:1963#case "get_freedom_windows":`) consumes the
+  (`compass/CompassTools.ts:1993#case "get_freedom_windows":`) consumes the
   engine, and so do Saved Ideas: the opportunity projection compiles the
   crew's saved places against each window rather than computing free time
   of its own (`domain/trips/projections/TripOpportunityProjection.ts:292#from("trip_saved_places")`).
@@ -8132,7 +8132,7 @@ the work.
 | TR160 | `tripCrewLocation.ts` line 142 is `liveShareExpiresAt` | the accuracy-banding comment again | `artifacts/api-server/src/domain/trips/services/tripCrewLocation.ts:225#expires_at` |
 | TR170 | `tripCrewLocation.ts` lines 155-156 is `checkInStatus` | the `exactCoords` doc comment | `artifacts/api-server/src/domain/trips/services/tripCrewLocation.ts:286#shareSafeReturnStatus` is the nearest real code; the check-in fields are at lines 59-60, which the row also cites and which IS right |
 | TR214 | `CompassTools.ts` lines 245-249 "is exactly this instruction set" | JSON-schema boilerplate (`parameters: { type: "object" …`) | `artifacts/api-server/src/compass/CompassTools.ts:523#explain` |
-| TR215 | `CompassTools.ts` lines 734-738 runs the gates, line 821 is the relationship gate | a comment about trip selection; a `discovery_places` query | `artifacts/api-server/src/compass/CompassTools.ts:1464#canEditPlan` and `artifacts/api-server/src/compass/CompassTools.ts:1571#Relationship gate` |
+| TR215 | `CompassTools.ts` lines 734-738 runs the gates, line 821 is the relationship gate | a comment about trip selection; a `discovery_places` query | `artifacts/api-server/src/compass/CompassTools.ts:1464#canEditPlan` and `artifacts/api-server/src/compass/CompassTools.ts:1601#Relationship gate` |
 | TR216 | `CompassTools.ts` lines 261-269 strips coordinate-shaped keys | JSON-schema boilerplate | `artifacts/api-server/src/compass/CompassTools.ts:543#sanitizeToolResult` |
 | TR289 | `tripReservations.ts` line 118 paste-import, line 189 manual create | neither is a route | `artifacts/api-server/src/routes/tripReservations.ts:216#router.post` (and line 145) |
 | TR296 | `tripReservations.ts` line 309, line 390, line 416 are confirm / dismiss / delete | line 309 is a **blank line**; none of the three is a route | `artifacts/api-server/src/routes/tripReservations.ts:365#confirm` (dismiss line 500, delete line 526) |

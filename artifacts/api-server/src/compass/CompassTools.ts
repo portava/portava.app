@@ -42,7 +42,7 @@ import { randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CompassItem, CompassProfile } from "./types.js";
 import { stripCoordinateFields, wrapUgc, buildStructuredCompassContext } from "./CompassStructuredContext.js";
-import { isAcceptedTripMember, canEditPlan } from "../lib/http.js";
+import { isAcceptedTripMember, canEditPlan, TripAccessUnavailableError } from "../lib/http.js";
 import { buildTripCompassProjection } from "../domain/trips/projections/TripCompassProjection.js";
 import { resolveCurrentTrip, TOOL_TRIP_STATUSES } from "./CompassCurrentTrip.js";
 import { buildTripFreedomProjection } from "../domain/trips/projections/TripFreedomProjection.js";
@@ -1465,22 +1465,52 @@ async function toolAddToTrip(
   if (permitted === null) return { error: "Trip not found." };
   if (!permitted) return { error: "The user does not have permission to edit this trip's plan." };
 
-  const { data: trip } = await sc
+  // BOUND, both of them. supabase-js RESOLVES on a database failure, so a
+  // discarded `error` here is byte-identical to "no such row" — and the two
+  // reads below turned that into two different lies. This one made the proposal
+  // lose the trip's name; the catalog read below told the person the place they
+  // are looking at does not exist. `toolSearchPlaces`, ten lines up the same
+  // file, has always bound its error and answers "Place search unavailable
+  // right now."; step 1 of this journey was honest and step 2 was not.
+  //
+  // THIS ONE IS DEFENCE IN DEPTH AND IS NOT REACHED TODAY — said plainly,
+  // because a mutation proved it. Deleting this `tripErr` branch leaves the
+  // whole journey suite GREEN: `canEditPlan` above reads the same `trips` row
+  // first and THROWS TripAccessUnavailableError on an unreadable one, so a
+  // failure never survives to here. The branch stays for two reasons that are
+  // not "it might help" — the read would otherwise be a DISCARDED read, which
+  // `check:unchecked-supabase-reads` is entitled to fail; and the ordering
+  // above is a fact about today's code, not a contract. It is not covered by a
+  // test and this comment is the record of that, rather than a green case
+  // implying otherwise.
+  const { data: trip, error: tripErr } = await sc
     .from("trips")
     .select("id, title")
     .eq("id", tripId)
     .maybeSingle();
+  if (tripErr) {
+    return { error: "Trips are unreadable right now — this is temporary, not a statement about the trip. Nothing was added." };
+  }
 
   let title    = typeof args["title"] === "string" ? (args["title"] as string).slice(0, 120) : "";
   let category = typeof args["category"] === "string" ? (args["category"] as string).slice(0, 60) : "activity";
   let placeId: string | null = null;
 
   if (typeof args["placeId"] === "string" && args["placeId"]) {
-    const { data: place } = await sc
+    const { data: place, error: placeErr } = await sc
       .from("discovery_places")
       .select("id, name, category")
       .eq("id", args["placeId"] as string)
       .maybeSingle();
+    // AN OUTAGE IS NOT A FINDING. Without this branch an unreadable catalog
+    // produced `data: null`, took the `!place` arm, and answered "Place not
+    // found — only real catalog places can be proposed." — a SETTLED claim
+    // about the world in answer to a RETRYABLE failure. It is worse here than
+    // in a UI, because the model will relay the denial to the person as fact
+    // and they will believe the place they are looking at is not real.
+    if (placeErr) {
+      return { error: "The place catalog is unreadable right now — this is temporary, not a statement that the place does not exist. Nothing was added; try again shortly." };
+    }
     if (!place) return { error: "Place not found — only real catalog places can be proposed." };
     placeId  = (place as any).id as string;
     title    = String((place as any).name ?? title);
@@ -2001,6 +2031,27 @@ export async function executeCompassTool(
     }
     return sanitizeToolResult(raw);
   } catch (err) {
+    // A READ THAT COULD NOT HAPPEN IS NOT A CRASH, and this file says so twice
+    // already about throws from the Telegraph and Memory blocks: "a throw here
+    // becomes 'Tool execution failed', which tells the model nothing it can say
+    // honestly." The same was true of the trip-access seam, which throws
+    // TripAccessUnavailableError (status 503, code `degraded_unavailable`) on an
+    // unreadable `trips` / `trip_members` / `plan_editors` — by design, so that
+    // an unreadable table never reads as "you are not a member". That care was
+    // then flattened here into the same sentence as a genuine bug, and a model
+    // handed "Tool execution failed" will say something vague or invent a
+    // reason. It is now relayed as the retryable outage it is.
+    //
+    // ONLY that class. An unexpected throw is still "Tool execution failed",
+    // because calling a real crash temporary would be the opposite error.
+    if (err instanceof TripAccessUnavailableError) {
+      return {
+        error:
+          "That trip's records are unreadable right now — this is temporary and is NOT a statement " +
+          "about the trip or about who belongs to it. Nothing was changed; try again shortly.",
+        retryable: true,
+      };
+    }
     return { error: "Tool execution failed.", detail: err instanceof Error ? err.message.slice(0, 200) : "unknown" };
   }
 }
