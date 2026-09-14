@@ -110,6 +110,14 @@ const REPO_ROOT = path.resolve(path.dirname(SCRIPT), '..', '..', '..');
 // ---------------------------------------------------------------------------
 export const COVERED = [
   {
+    // The trust ratification packet and the plan it reconciles against. Added
+    // 2026-09-14 with docs/trust/scoring-parameters-for-ratification.md, whose
+    // whole content is `file:line#symbol` evidence about production behaviour —
+    // a document of that kind with unchecked citations is the rot this checker
+    // exists to stop, and it would have been the only such document in the tree.
+    dir: 'docs/trust',
+  },
+  {
     // The unit that produced this checker. Its status table is the thing the
     // "maintain it in the same PR" rule is about, and its reconciliation is
     // built entirely out of citations.
