@@ -459,3 +459,49 @@ describe("I9. the projection carries reasons, and says nothing when nothing rank
     assert.deepEqual(c.reasons, [], "no ranker ran, so there is nothing to explain and nothing is claimed");
   });
 });
+
+// ── `04` §5 reason codes on the exposure record (DV-40 / DV-18) ───────────────
+//
+// The recommendation denominator's eighth field is "reason codes". The ranker
+// hands the route its own raw signal keys (`RankingFactor.key`), not codes, and
+// the mapping from one to the other is DV-18's `reasonCodeForSignal`. This
+// helper is the bridge the serve path needs: provenance in, codes out, with the
+// same guardrails — a signal that must not become public text produces nothing,
+// and an item the ranker said nothing about gets an empty list rather than a
+// missing key that a reader has to interpret.
+import { reasonCodesByIdFromProvenance } from "../lib/discoveryReasonCodes.js";
+
+describe("reasonCodesByIdFromProvenance — 04 §5's reason codes, from what the ranker actually produced", () => {
+  it("I9. maps each item's grounded signals onto codes, keyed by item id", () => {
+    const prov = new Map([
+      ["node/1", { reasons: ["distance", "open_now"] }],
+      ["db/2",   { reasons: ["followedAuthor"] }],
+    ]);
+    assert.deepEqual(reasonCodesByIdFromProvenance(prov), {
+      "node/1": ["nearby_now"],
+      "db/2":   ["creator_affinity"],
+    });
+  });
+
+  it("I10. GUARDRAIL: a moderation signal in the provenance produces NO code on the record", () => {
+    const prov = new Map([["node/1", { reasons: ["trust", "blocked", "distance"] }]]);
+    assert.deepEqual(
+      reasonCodesByIdFromProvenance(prov), { "node/1": ["nearby_now"] },
+      "01 §10: author trust and block state are moderation inputs; the exposure record must not carry them as reasons",
+    );
+  });
+
+  it("I11. an item whose signals ground NOTHING gets an empty list, not a missing key", () => {
+    const prov = new Map([["node/1", { reasons: ["language_match"] }]]);
+    assert.deepEqual(
+      reasonCodesByIdFromProvenance(prov), { "node/1": [] },
+      "a missing key makes a reader guess between 'no reasons' and 'not measured'; those are different facts",
+    );
+  });
+
+  it("I12. an absent or empty provenance map is an empty record, and never throws", () => {
+    assert.deepEqual(reasonCodesByIdFromProvenance(null), {});
+    assert.deepEqual(reasonCodesByIdFromProvenance(undefined), {});
+    assert.deepEqual(reasonCodesByIdFromProvenance(new Map()), {});
+  });
+});

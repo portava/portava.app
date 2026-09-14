@@ -76,6 +76,10 @@ interface State {
   meetupEndsAt?: string | null;
   meetupStatus?: string;
   extraMessages?: any[];
+  /** Replaces the default roster — the catch-up cases need markers and windows. */
+  members?: any[];
+  /** §14.3's flag, off by default exactly as it is seeded. */
+  historyBound?: boolean;
 }
 
 function env(kind: string, payload: unknown) {
@@ -99,19 +103,19 @@ function fixture(state: State): Record<string, any[]> {
   return {
     feature_flags: [
       { flag: "disable_messaging", enabled: false },
-      { flag: "telegraph_history_bound_enabled", enabled: false },
+      { flag: "telegraph_history_bound_enabled", enabled: state.historyBound === true },
     ],
     message_threads: [
       { id: THREAD, is_e2ee: false },
       { id: THREAD_B, is_e2ee: false },
       { id: THREAD_NONE, is_e2ee: false },
     ],
-    message_thread_members: [
-      { thread_id: THREAD, user_id: ALICE, left_at: null, visible_from_at: null },
-      { thread_id: THREAD, user_id: BOB, left_at: null, visible_from_at: null },
-      { thread_id: THREAD_B, user_id: ALICE, left_at: null, visible_from_at: null },
-      { thread_id: THREAD_B, user_id: BOB, left_at: null, visible_from_at: null },
-      { thread_id: THREAD_NONE, user_id: CAROL, left_at: null, visible_from_at: null },
+    message_thread_members: state.members ?? [
+      { thread_id: THREAD, user_id: ALICE, left_at: null, visible_from_at: null, last_read_at: null },
+      { thread_id: THREAD, user_id: BOB, left_at: null, visible_from_at: null, last_read_at: null },
+      { thread_id: THREAD_B, user_id: ALICE, left_at: null, visible_from_at: null, last_read_at: null },
+      { thread_id: THREAD_B, user_id: BOB, left_at: null, visible_from_at: null, last_read_at: null },
+      { thread_id: THREAD_NONE, user_id: CAROL, left_at: null, visible_from_at: null, last_read_at: null },
     ],
     blocks: [],
     meetups:
@@ -1206,6 +1210,59 @@ describe("GET /me/commitments — §8's commitment as something a surface can LI
     assert.equal(c.completedBy, ALICE);
   });
 
+  /**
+   * The DEFAULT scope is "mine", and that is a privacy property rather than a
+   * convenience: `scope=all` is the thread-wide view and it is opt-in so this
+   * route cannot become a way to watch what other people have promised. The
+   * mutation that deleted the `scope === "mine"` filter passed the whole suite
+   * before this case existed — every commitment in the fixtures happened to be
+   * one Alice had agreed to, so "mine" and "all" returned the same list and the
+   * branch that separates them was never exercised.
+   */
+  it("scope=mine excludes a promise somebody else made, and scope=all returns it", async () => {
+    useState({
+      extraMessages: [
+        // Bob's own promise, in a thread Alice is in. Nothing was asked of her
+        // and she agreed to nothing.
+        commitmentMsg("c10", THREAD, "bob books the ferry", min(600), min(-200)),
+        commitmentResponse("r10", THREAD, BOB, "c10", "AGREED", min(-190)),
+      ],
+    });
+    const mine = await get(`/me/commitments`, ALICE);
+    assert.equal(mine.status, 200);
+    assert.equal(mine.body.scope, "mine");
+    assert.equal(
+      mine.body.commitments.some((c: any) => c.commitmentId === "c10"),
+      false,
+      "the default list leaked a commitment the caller neither made nor was asked for",
+    );
+    const all = await get(`/me/commitments?scope=all`, ALICE);
+    assert.equal(all.body.scope, "all");
+    const c = all.body.commitments.find((x: any) => x.commitmentId === "c10");
+    assert.ok(c, "scope=all did not return the thread-wide commitment");
+    assert.equal(c.viewerResponse, null);
+    assert.equal(c.askedOfViewer, false);
+  });
+
+  /**
+   * An unanswered ask IS the caller's, and it is the other half of the same
+   * branch: "mine" is what they agreed to PLUS what was explicitly asked of
+   * them and is still open. Without this case the filter could be narrowed to
+   * `viewerResponse === "AGREED"` and nothing would notice.
+   */
+  it("scope=mine includes an open ask addressed to the caller", async () => {
+    useState({
+      extraMessages: [
+        commitmentMsg("c11", THREAD, "alice to call the hostel", min(600), min(-200), [ALICE]),
+      ],
+    });
+    const mine = await get(`/me/commitments`, ALICE);
+    const c = mine.body.commitments.find((x: any) => x.commitmentId === "c11");
+    assert.ok(c, "an unanswered ask addressed to the caller was dropped from their own list");
+    assert.equal(c.askedOfViewer, true);
+    assert.equal(c.viewerResponse, null);
+  });
+
   it("an unreadable messages table is a 500, never an empty commitment list", async () => {
     useState({ errorTable: "messages" });
     assert.equal((await get(`/me/commitments`, ALICE)).status, 500);
@@ -1504,5 +1561,223 @@ describe("§15.2 — NORMAL → SAFETY_ATTENTION → SAFETY_EVENT, as a conversa
   it("an unreadable messages table is a 500, never a NORMAL thread", async () => {
     useState({ errorTable: "messages" });
     assert.equal((await get(`/threads/${THREAD}/safety-mode`, ALICE)).status, 500);
+  });
+});
+
+// ── §20 the conversation CATCH-UP ────────────────────────────────────────────
+//
+// census-telegraph T267 (§20 Compass): "Authorized thread context,
+// meeting/recommendation tools, catch-up." Thread context and the tools exist
+// (T245-T251 are C); the catch-up did not.
+//
+// What is pinned here is not "a summary came back". It is the four rules that
+// separate a catch-up from a message count, each of which a careless
+// implementation gets wrong in a way no smoke test would notice:
+//
+//   1. A person did not miss what they SENT.
+//   2. §14.3's window is a BOUND, not a preference — a marker older than the
+//      viewer's own join must not widen the answer, and the response says
+//      which of the two decided.
+//   3. What still awaits the viewer is NOT filtered by the marker. A question
+//      nobody answered does not stop awaiting them because they were online
+//      when it was asked.
+//   4. Nothing is read out of prose (§18.3).
+
+const CATCH_UP = `/threads/${THREAD}/catch-up`;
+
+function plainMsg(id: string, sender: string, at: string) {
+  return {
+    id, thread_id: THREAD, sender_id: sender, created_at: at,
+    deleted_at: null, msg_type: "text", subtype: null, body: "just talking",
+  };
+}
+
+function cardMsg(id: string, sender: string, at: string, subtype: string) {
+  return {
+    id, thread_id: THREAD, sender_id: sender, created_at: at,
+    deleted_at: null, msg_type: "system", subtype, body: JSON.stringify({ title: "Casa do Bacalhau" }),
+  };
+}
+
+describe("GET /threads/:id/catch-up — §20's catch-up", () => {
+  it("counts what arrived after the reader's marker, and NOT what the reader sent", async () => {
+    useState({
+      members: [
+        { thread_id: THREAD, user_id: ALICE, left_at: null, visible_from_at: null, last_read_at: min(-100) },
+        { thread_id: THREAD, user_id: BOB, left_at: null, visible_from_at: null, last_read_at: null },
+      ],
+      extraMessages: [
+        plainMsg("old-1", BOB, min(-200)),      // before the marker
+        plainMsg("new-1", BOB, min(-50)),       // after — missed
+        plainMsg("new-2", BOB, min(-40)),       // after — missed
+        plainMsg("mine-1", ALICE, min(-30)),    // Alice's own: NOT missed
+      ],
+    });
+    const r = await get(CATCH_UP, ALICE);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.sinceBasis, "read_marker");
+    assert.equal(r.body.since, min(-100));
+    assert.equal(r.body.missedCount, 2, "the reader's own message was counted as something they missed");
+    assert.deepEqual(r.body.missedFrom, [{ userId: BOB, count: 2 }]);
+    assert.equal(r.body.inferredFromProse, false);
+  });
+
+  it("a reader who has never opened the thread is told so, not handed a null", async () => {
+    useState({
+      members: [
+        { thread_id: THREAD, user_id: ALICE, left_at: null, visible_from_at: null, last_read_at: null },
+      ],
+      extraMessages: [plainMsg("new-1", BOB, min(-50))],
+    });
+    const r = await get(CATCH_UP, ALICE);
+    assert.equal(r.body.sinceBasis, "conversation_start");
+    assert.equal(r.body.since, null);
+    assert.equal(r.body.missedCount, 1);
+  });
+
+  it("§14.3's window wins over an older marker, and the response says which", async () => {
+    // Alice was added to the crew thread an hour ago and her marker predates
+    // that. A catch-up that trusted the marker would hand her a month of a
+    // conversation she is not entitled to.
+    useState({
+      historyBound: true,
+      members: [
+        { thread_id: THREAD, user_id: ALICE, left_at: null, visible_from_at: min(-60), last_read_at: min(-600) },
+      ],
+      extraMessages: [
+        plainMsg("before-join", BOB, min(-300)),
+        plainMsg("after-join", BOB, min(-10)),
+      ],
+    });
+    const r = await get(CATCH_UP, ALICE);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.sinceBasis, "history_window",
+      "an older read marker widened the catch-up past the viewer's own join");
+    assert.equal(r.body.since, min(-60));
+    assert.equal(r.body.missedCount, 1);
+    assert.equal(
+      r.body.missedFrom.length > 0 && r.body.missedCount === 1,
+      true,
+    );
+  });
+
+  it("names the typed objects that arrived — decisions, commitments, shares — and no prose", async () => {
+    useState({
+      members: [
+        { thread_id: THREAD, user_id: ALICE, left_at: null, visible_from_at: null, last_read_at: min(-100) },
+        { thread_id: THREAD, user_id: BOB, left_at: null, visible_from_at: null, last_read_at: null },
+      ],
+      extraMessages: [
+        msg("d1", BOB, "decision", { question: "Beach or old town?", options: [{ id: "b", label: "Beach" }, { id: "o", label: "Old town" }], resolutionRule: "PLURALITY" }, min(-60)),
+        msg("c1", BOB, "commitment", { what: "book the bus", byWhen: min(600), askedOf: [] }, min(-55)),
+        cardMsg("card-1", BOB, min(-50), "discovery_card"),
+        plainMsg("chatter", BOB, min(-45)),
+      ],
+    });
+    const r = await get(CATCH_UP, ALICE);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.decisionsOpened.map((d: any) => d.messageId), ["d1"]);
+    assert.equal(r.body.decisionsOpened[0].title, "Beach or old town?");
+    assert.deepEqual(r.body.commitmentsMade.map((c: any) => c.messageId), ["c1"]);
+    assert.deepEqual(r.body.shared.map((x: any) => x.messageId), ["card-1"],
+      "a registered source-object card did not appear as a share");
+    assert.equal(
+      JSON.stringify(r.body).includes("just talking"),
+      false,
+      "prose from an ordinary message reached the catch-up",
+    );
+  });
+
+  it("an ordinary text message is never reported as a shared object", async () => {
+    useState({
+      members: [
+        { thread_id: THREAD, user_id: ALICE, left_at: null, visible_from_at: null, last_read_at: min(-100) },
+      ],
+      extraMessages: [plainMsg("chatter", BOB, min(-45))],
+    });
+    const r = await get(CATCH_UP, ALICE);
+    assert.deepEqual(r.body.shared, []);
+  });
+
+  it("what still awaits the reader is NOT filtered by their marker", async () => {
+    // Alice opened the decision herself and read past it. It is still open,
+    // and it is still hers to resolve.
+    useState({
+      members: [
+        { thread_id: THREAD, user_id: ALICE, left_at: null, visible_from_at: null, last_read_at: min(-10) },
+      ],
+      extraMessages: [
+        msg("d-old", ALICE, "decision", { question: "Which hostel?", options: [{ id: "a", label: "A" }, { id: "b", label: "B" }], resolutionRule: "PLURALITY" }, min(-300)),
+      ],
+    });
+    const r = await get(CATCH_UP, ALICE);
+    assert.equal(r.body.missedCount, 0, "nothing arrived after the marker");
+    assert.deepEqual(
+      r.body.needsYou.map((i: any) => i.messageId),
+      ["d-old"],
+      "an unresolved decision from before the marker dropped out of the catch-up",
+    );
+    assert.equal(r.body.needsYou[0].openReason, "decision_open");
+  });
+
+  it("reports §9 moves with the state they moved FROM, even when the reader missed only the last one", async () => {
+    useState({
+      members: [
+        { thread_id: THREAD, user_id: ALICE, left_at: null, visible_from_at: null, last_read_at: min(-40) },
+      ],
+      extraMessages: [
+        msg("s1", BOB, "coordination_session", { title: "Dinner" }, min(-120)),
+        msg("t1", BOB, "coordination_transition", { sessionId: "s1", to: "ASSEMBLING" }, min(-100)),
+        msg("t2", BOB, "coordination_transition", { sessionId: "s1", to: "ACTIVE" }, min(-20)),
+      ],
+    });
+    const r = await get(CATCH_UP, ALICE);
+    assert.equal(r.body.transitions.length, 1, "only the missed move belongs in the catch-up");
+    assert.equal(r.body.transitions[0].to, "ACTIVE");
+    assert.equal(
+      r.body.transitions[0].from,
+      "ASSEMBLING",
+      "the missed move reported no origin — a reader cannot tell a move from an opening",
+    );
+    assert.equal(r.body.transitions[0].legal, true);
+  });
+
+  it("a safety escalation that happened while they were away is flagged as such", async () => {
+    useState({
+      members: [
+        { thread_id: THREAD, user_id: ALICE, left_at: null, visible_from_at: null, last_read_at: min(-100) },
+      ],
+      extraMessages: [
+        msg("sf1", BOB, "safety", { kind: "need_help", label: "I need help", note: "lost my bag" }, min(-30), "need_help"),
+      ],
+    });
+    const r = await get(CATCH_UP, ALICE);
+    assert.equal(r.body.safetyMode, "SAFETY_EVENT");
+    assert.equal(r.body.safetyChangedWhileAway, true);
+  });
+
+  it("a safety event raised BEFORE the marker is still the mode, but not 'while you were away'", async () => {
+    useState({
+      members: [
+        { thread_id: THREAD, user_id: ALICE, left_at: null, visible_from_at: null, last_read_at: min(-10) },
+      ],
+      extraMessages: [
+        msg("sf1", BOB, "safety", { kind: "need_help", label: "I need help", note: "lost my bag" }, min(-300), "need_help"),
+      ],
+    });
+    const r = await get(CATCH_UP, ALICE);
+    assert.equal(r.body.safetyMode, "SAFETY_EVENT", "an uncleared event does not expire");
+    assert.equal(r.body.safetyChangedWhileAway, false);
+  });
+
+  it("a non-member cannot read a catch-up", async () => {
+    useState({});
+    assert.equal((await get(`/threads/${THREAD_NONE}/catch-up`, ALICE)).status, 403);
+  });
+
+  it("an unreadable messages table is a 500, never 'nothing happened while you were away'", async () => {
+    useState({ errorTable: "messages" });
+    const r = await get(CATCH_UP, ALICE);
+    assert.equal(r.status, 500);
   });
 });

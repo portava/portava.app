@@ -112,6 +112,13 @@ function makeFakeClient(opts: {
   users?: Record<string, { id: string; email: string }>;
   threadMembers?: FakeRow[];
   messageRequests?: FakeRow[];
+  /**
+   * Tables whose reads resolve with an ERROR rather than rows. supabase-js does
+   * not throw on a database error — it resolves `{ data: null, error }` — so a
+   * route that discards the error sees exactly what an empty table looks like.
+   * A double that cannot express that cannot test for it.
+   */
+  errorTables?: string[];
 } = {}) {
   const tableData: Record<string, FakeRow[]> = {
     message_thread_members: opts.threadMembers ?? [],
@@ -150,6 +157,12 @@ function makeFakeClient(opts: {
       update(data: FakeRow) { isUpdate = true; updatePatch = data; return q; },
       insert(_data: FakeRow | FakeRow[]) { return q; },
       then(resolve: (v: any) => void, _reject?: (e: any) => void) {
+        if ((opts.errorTables ?? []).includes(table)) {
+          return resolve({
+            data: null,
+            error: { message: `permission denied for relation ${table}`, code: "42501" },
+          });
+        }
         if (isUpdate) {
           // Apply the patch in place. `rows` is a shallow copy of the table's
           // array, so the row OBJECTS are shared with tableData and a later
@@ -220,6 +233,27 @@ describe("A. Typing endpoint — auth, membership gate, event fan-out", () => {
     const r = await httpReq(streamServer, "POST", `/api/threads/${THREAD_ID}/typing`, TOKEN_OTHER, { typing: true });
     assert.equal(r.status, 403);
     assert.equal(r.body.error, "forbidden");
+  });
+
+  /**
+   * census-telegraph §20.7. The membership read below the typing relay
+   * discarded its error, so an unreadable `message_thread_members` produced
+   * `{ data: null }` and the route answered *"Not a member of this thread"* —
+   * a statement about the caller's membership that no read supports. The
+   * control above (A3) proves a genuine non-member is still refused 403, so
+   * this is a narrowing of the refusal rather than a removal of it.
+   */
+  it("A3b: an unreadable membership table REFUSES — it does not deny membership", async () => {
+    _setTestClient(makeFakeClient({
+      users: { [TOKEN_ACTOR]: ACTOR },
+      threadMembers: [{ thread_id: THREAD_ID, user_id: ACTOR.id, left_at: null }],
+      errorTables: ["message_thread_members"],
+    }), true);
+    const r = await httpReq(streamServer, "POST", `/api/threads/${THREAD_ID}/typing`, TOKEN_ACTOR, { typing: true });
+    assert.equal(r.body?.error, "degraded_unavailable",
+      "a membership read that never happened cannot say the caller is not a member");
+    assert.equal(r.status, 503);
+    assert.equal(String(r.body?.message ?? "").includes("Not a member"), false);
   });
 
   it("A4: 200 and relays typing.started to other members only — actor excluded", async () => {

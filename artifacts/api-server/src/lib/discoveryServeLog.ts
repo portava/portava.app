@@ -46,6 +46,13 @@ import { logger } from "./logger.js";
 // conditions Discovery can enforce. Recording is in-process and cannot throw.
 import { recordServeLogOutcome } from "./discoveryStopConditions.js";
 import { recordImpressionDistributionStats } from "../services/ranking/DiscoveryRankingService.js";
+// `04` §5 "Recommendation denominator" — every served item must have a
+// recommendation_id, and the nine-field minimum record must be recoverable from
+// the row. Six fields were already columns here; these complete the other
+// three without a migration. See lib/discoveryRecommendationId for why the
+// Compass token could not be reused as-is.
+import { recommendationIdFor } from "./discoveryRecommendationId.js";
+import { DISCOVERY_MODEL_VERSION } from "./discoveryRankProvenance.js";
 
 /** Feature flag gating every write in this module. Absent row ⇒ disabled. */
 export const DISCOVERY_SERVE_LOG_FLAG = "discovery_serve_log_enabled";
@@ -184,6 +191,13 @@ export interface DiscoveryServeLogParams {
   sessionId?:  string;
   /** Free-form context, e.g. { destination, category }. Never coordinates. */
   context?:    Record<string, string | number | boolean | null>;
+  /**
+   * `04` §5 "reason codes" — the GROUNDED codes the ranker produced for each
+   * item, keyed by item id. Absent for a serve point that ran no ranker, and an
+   * item the ranker said nothing about gets `[]` rather than an invented code:
+   * a reason nothing backs is worse on a denominator than no reason at all.
+   */
+  reasonCodesById?: Readonly<Record<string, readonly string[]>>;
 }
 
 // ── Flag read, with a short TTL cache ─────────────────────────────────────────
@@ -238,7 +252,7 @@ export async function logDiscoveryServe(
   let attemptedItems = 0;
   try {
     if (!sc) return;
-    const { userId, servePoint, items, route, sessionId, context } = params;
+    const { userId, servePoint, items, route, sessionId, context, reasonCodesById } = params;
     if (!userId || items.length === 0) return;
 
     if (!(await serveLogEnabled(sc))) return;
@@ -261,6 +275,16 @@ export async function logDiscoveryServe(
         // a ranker, but not from this request.
         rankedInRequest: RANKED_IN_REQUEST.has(servePoint),
         ...(context ?? {}),
+        // `04` §5 — placed AFTER the context spread ON PURPOSE. These three are
+        // the record, not decoration: a caller passing a `context` key of the
+        // same name must not be able to overwrite the denominator with its own
+        // value, and putting them first would let it.
+        recommendationId: recommendationIdFor({
+          userId, sessionId: effectiveSessionId, servedAt,
+          surface: "discovery", position: idx, itemId: item.id,
+        }),
+        modelVersion: DISCOVERY_MODEL_VERSION,
+        reasonCodes: reasonCodesById?.[item.id] ?? [],
       },
       outcome:    "impression",
       served_at:  servedAt,

@@ -422,10 +422,10 @@ reproduces §8's mock verbatim as the module contract.
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| M58 | Every meaningful live claim supports a Why? interaction | C | `lib/mapObjects.ts:347-357` `MapProvenance` on `MapObject`; `src/components/map/WhyShownSheet.tsx`. |
-| M59 | Evidence lines, per claim | C | `lib/mapProjection.ts:833` `describeClaim`; `:607` `eventAdjacencyLine`, `:615` `qualifiedMediaLine` — copy is *"Table 7 VERBATIM"* (`:586`). |
-| M60 | "Updated N minutes ago" | C | `lib/mapObjects.ts:355` `MapProvenance.updatedAt`. |
-| M61 | Confidence stated on the panel | C | `lib/mapObjects.ts:354` `confidence: ConfidenceState`, required on the provenance bundle. |
+| M58 | Every meaningful live claim supports a Why? interaction | C | `lib/mapObjects.ts:408-412#MapProvenance` carries `lines`/`confidence`/`updatedAt`, hung on `MapObject` at `lib/mapObjects.ts:457#provenance`; `src/components/map/WhyShownSheet.tsx` renders it. *(Repointed 2026-09-14 from lines 347-357, which are 61 lines short of the interface; the fact is unchanged.)* |
+| M59 | Evidence lines, per claim | C | One line per claim at `lib/mapProjection.ts:725#describeClaim`, whose text is built by `lib/mapProjection.ts:880#describeClaim`; the two Table 7 contextual lines at `lib/mapProjection.ts:615#eventAdjacencyLine` and `lib/mapProjection.ts:623#qualifiedMediaLine` — copy is *"Table 7 VERBATIM"* (`lib/mapProjection.ts:594#VERBATIM`). *(All five repointed 2026-09-14; line 833 named no `describeClaim` at all, and lines 607 and 615 each sat 8 lines above their function.)* |
+| M60 | "Updated N minutes ago" | C | `lib/mapObjects.ts:411#updatedAt` on `MapProvenance`. *(Repointed 2026-09-14 from line 355.)* |
+| M61 | Confidence stated on the panel | C | `lib/mapObjects.ts:410#ConfidenceState` — `confidence` is REQUIRED on the provenance bundle, so a panel without a stated confidence is unrepresentable. *(Repointed 2026-09-14 from line 354.)* |
 
 ### §10 Crowd Flow Mode (9)
 
@@ -452,7 +452,7 @@ reproduces §8's mock verbatim as the module contract.
 | M75 | Saved ideas | C | `tripMapSources.ts:220` — ideas with no coordinate are dropped, *"a saved idea with no known location is a wish"*. |
 | M76 | Crew | C | `tripMapSources.ts:29-31,64-102` — crew surfaced as **coarse area labels** (`crewAreas`), `source.crew` left empty because it would require coordinates the §23 rung did not grant. The privacy-correct rendering, not a gap. |
 | M77 | Routes | C | `tripMapSources.ts:251-253` — one LineString through the plan's stops, styled as a dashed guess rather than a routed path. |
-| M78 | Meeting points | C | `tripMapSources.ts:213` `meetingPoints`; producer `lib/mapProducers/meetingPointProducer.ts`. |
+| M78 | Meeting points | C | `tripMapSources.ts:234#meetingPoints.push` is the `meeting_point` branch of `partitionPlanItems`; producer `lib/mapProducers/meetingPointProducer.ts:147#projectMeetingPoint`, read at `:266#readMeetingPoints`. *(Repointed 2026-09-14 from line 213, which sits between two other `meetingPoints` mentions and names none of them.)* |
 | M79 | Safe Return context | C | `tripMapSources.ts:282-293` — anchored to lodging because the session itself carries no coordinate (§24). |
 | M80 | Compass alternatives | C | `app/map/index.tsx:89` `fetchCompassRecommendations`; `src/features/map/compass/compassMapModel.ts`. |
 | M81 | Optimize Today weighs the eight named factors | C | `tripMapModel.ts:29-30` quotes them; `:312-319` `OPTIMIZE_FACTORS` enumerates all eight including `weather`. |
@@ -519,7 +519,7 @@ it can run in production: all four tables are absent** (`scripts/checkProduction
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
 | M112 | Explicit layers plus automatic relevance; do not turn every layer on at once | C | `src/features/map/layers/layerModel.ts:5-30` — a layer is not a boolean; `LAYER_DEFAULT_STATES` at `:143` is `on / off / contextual / always_on`, and a contextual layer has **no stored value**, resolving from context each time, with an explicit user choice outranking it and surviving every context change. |
-| M113 | Live Activity | C | `layerModel.ts:66` `live_activity`; `:158` default `on`. |
+| M113 | Live Activity | C | `layerModel.ts:69#live_activity` declares the id; `layerModel.ts:159#live_activity` defaults it `on`. *(Both repointed 2026-09-14, each 1-3 lines low.)* |
 | M114 | People | C | `layerModel.ts:67`. |
 | M115 | Events | C | `layerModel.ts:68`; default `on`. |
 | M116 | Trip | C | `layerModel.ts:69`. |
@@ -557,7 +557,7 @@ it can run in production: all four tables are absent** (`scripts/checkProduction
 | M133 | **Never place raw database rows directly on the map** | **W** | The rule is built and not in force. `routes/mapProjection.ts` is the gateway; `map_projection_enabled` seeds **FALSE** (`` `migrations/2201_map_projection_flag.sql:17#('map_projection_enabled', FALSE,` ``) and the flag ROW is absent from production entirely — see the CORRECTION HEADER. `src/hooks/useMapEntities.ts:22#ROLLBACK` describes the fallback; `:700#res.data.enabled` is the only branch that keeps the gateway's objects, and with the flag off `:711#usedGateway` is false and `:707#Roll` runs the per-layer fetches, normalised **on the device** by `src/features/map/projection/clientProjection.ts`. *(Re-read 2026-09-14: lines 702-704 pointed INSIDE the gateway-success branch, i.e. at the path this row says is not taken; repointed to the branch and the fallback.)* That is the forbidden shape, live in production. **Turns red when:** 2217 then 2201 are applied and `map_projection_enabled` is TRUE in production, so `usedGateway` is true on a real device. The order matters and is not negotiable: flipping 2201 before 2217 blanks the map (CORRECTION HEADER). Integration owner + ops; no code in this lane moves it. |
 | M134 | A dedicated Map Projection Service | C | `lib/mapProjection.ts:2` — *"the Map Intelligence Gateway's shaping layer (Map spec §19)"*; `:16-24` pure, no I/O, no privacy decisions. |
 | M135 | Map Objects as the wire type | C | `lib/mapObjects.ts`; mirrored client-side, drift-guarded. |
-| M136 | Map Ranking | C | `lib/mapProjection.ts:1166` `rankObjects` — distance is a **tie-break**, not the sort key, because §5 makes safety and navigation precede popularity. |
+| M136 | Map Ranking | C | `lib/mapProjection.ts:1217#rankObjects` — distance is a **tie-break**, not the sort key, because §5 makes safety and navigation precede popularity. *(Repointed 2026-09-14 from line 1166, 51 lines short.)* |
 | M137 | Privacy / Eligibility stage | C | `routes/mapProjection.ts:29-36` — the block set is resolved **once**, fail-closed, and handed to every people-bearing source so the request cannot hold two answers to "who is blocked"; `lib/mapObjects.ts:426-434` `isServable` drops `privacyClass:'none'` at the boundary whatever produced it. |
 | M138 | Viewport Aggregation | C | `lib/mapAggregation.ts:2`; `:216-238` only wide bands aggregate; `:414` `NEVER_AGGREGATED_KINDS`. |
 | M139 | The mobile client must not independently reconstruct Portava intelligence rules; the service is the "Map Intelligence Gateway" | **W** | The name and the guard are real — `src/test/gatewayBypassGuard.test.ts:32#READERS` enumerates each privacy-complete reader with every file allowed to call it and a stated reason, and the test fails on any caller absent from that list *(repointed 2026-09-14 from lines 28-33, the doc comment above it)*. But with the flag off, `clientProjection.ts` **is** a second, on-device reconstruction, and it is the one in service. **Turns red when:** M133 turns red — the same flag flip, in the same order. The guard is not the blocker and never was; it holds today. |
@@ -571,7 +571,7 @@ reader rather than querying: `routes/mapProjection.ts:14-27` and `:52-66`.
 | id | Owner → Owns | V | Evidence |
 | --- | --- | --- | --- |
 | M140 | Places → place identity and location | C | `lib/mapProjectPlace.ts:3`; `routes/mapProjection.ts` `places` lane. |
-| M141 | Live Intelligence → current claims and state | C | `lib/mapProjection.ts:1049` `enrichWithLiveClaims` — read-only over `readLiveClaims` envelopes; `:667` "Never upgrades". |
+| M141 | Live Intelligence → current claims and state | C | `lib/mapProjection.ts:1096#enrichWithLiveClaims` — read-only over `readLiveClaims` envelopes; the no-upgrade rule is stated at `lib/mapProjection.ts:675#Never upgrades` and enforced by `lib/mapProjection.ts:696#applyLiveClaims`. *(Repointed 2026-09-14 from lines 1049 and 667.)* |
 | M142 | Discovery → candidate relevance | C | `src/services/discovery.ts` consumed, never re-ranked, by `src/features/map/search/searchAdapter.ts:4`. |
 | M143 | Compass → next-best action | C | `src/features/map/compass/compassMapModel.ts:8`. |
 | M144 | Presence → people/place presence | C | `lib/mapTravelers.ts` + `readCircleLocations`, both approved-caller-only in `gatewayBypassGuard.test.ts`. |
@@ -600,7 +600,7 @@ open**. These verdicts describe code that is correct and would run.
 | M156 | Confidence | C | `lib/confidenceScore.ts`; banded by `lib/intelContracts.ts`. |
 | M157 | Freshness | C | `lib/freshnessPolicy.ts`, per claim_type TTL; consumed at `lib/mapObjects.ts:135-146`. |
 | M158 | Correction / Contradiction | C | `IntelCaptureService.ts:599-608` — a correction supersedes the prior claim and emits `intel.correction.invalidation.completed` for the keys it expired; `lib/intelConflict.ts`. |
-| M159 | Projected Map State | C | `lib/intelProjection.ts` → `lib/mapProjection.ts:676` `applyLiveClaims`. |
+| M159 | Projected Map State | C | `lib/intelProjection.ts` → `lib/mapProjection.ts:696#applyLiveClaims`. *(Repointed 2026-09-14 from line 676; `lib/intelProjection.ts` is the Sensing lane's and is cited, not touched, here.)* |
 
 ### §22 Map Contributions (11)
 
@@ -627,7 +627,7 @@ open**. These verdicts describe code that is correct and would run.
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
 | M171 | Default public rendering aggregates social presence | C | `lib/mapProjection.ts:41-49`; `:117-121` a traveler is a `social_zone`, never an identified person. |
-| M172 | The five-rung `LocationVisibility` ladder | C | `lib/mapObjects.ts:258-266` `PRIVACY_CLASSES`; `:269` `precisionRank`, `:274` `narrowestPrivacyClass` — combining can only ever tighten. |
+| M172 | The five-rung `LocationVisibility` ladder | C | `lib/mapObjects.ts:309-316#PRIVACY_CLASSES`; `lib/mapObjects.ts:319#precisionRank`, `lib/mapObjects.ts:324#narrowestPrivacyClass` — combining can only ever tighten. *(All three repointed 2026-09-14, each ~50 lines low.)* |
 | M173 | Public stranger → aggregate only | C | `lib/mapProjection.ts:110` `travelerPrivacyClass` defaults to `aggregate_only`; mirrored `src/features/map/projection/clientProjection.ts:226`. |
 | M174 | Shared Moment → place-level or delayed | C | `src/features/map/interaction/longPress.ts:273` `SHARE_PRECISION_CEILING = 'place_level'`, `:276` `DEFAULT_SHARE_PURPOSE = 'shared_moment'`; delayed-publish gate at `lib/eventPostsDiscovery.ts:186`. |
 | M175 | Trip Crew → approximate, or permitted temporary precise | C | `lib/mapProjection.ts:266-281` — *"A consented circle member is ALWAYS `approximate` — never `place_level`"*, `CIRCLE_PRIVACY_CLASS`. |
@@ -642,7 +642,7 @@ open**. These verdicts describe code that is correct and would run.
 | M179 | Suppress sensitive locations **before** data reaches the client | **W** | The gate is written and cannot fire. `lib/protectedLocations.ts:2#protectedLocations`, `:860#applyProtection` is the last step before serialization, ordered correctly at `routes/mapProjection.ts` and (after PR #393's fix) in the temporal route. But `protected_zones` is **absent from production** (`` `artifacts/api-server/src/scripts/checkProductionDrift.ts:157#protected_zones` ``, and the name is not in `baseline/20260907_production_tables.txt`), so the read errors, `routes/mapProjection.ts:227#loadProtectedZones` returns null and the route answers the refusal envelope at `:1026#protection_unreadable`. *(Re-read 2026-09-14: three of these four citations were wrong — line 849 is a field inside an interface and `applyProtection` is 11 lines below it; drift's `protected_zones` entry is at line 157, not 110; and lines 964-979 are the §19 ordering block, not the envelope, which begins 60 lines later.)* The production behaviour is *refuse everything*, not *suppress sensitive locations* — safe, and not the requirement. **Turns red when:** 2217 is applied to production, a refreshed baseline lists `protected_zones`, and a projection response over a viewport containing a curated zone carries `protection` non-null with at least one object coarsened or withheld. Note the second half: applying the table is necessary and NOT sufficient — an empty `protected_zones` makes `applyProtection([], …)` an identity pass (`routes/mapProjection.ts:195#FAIL-CLOSED`), which suppresses nothing. A curated zone set is an ops act after the migration. |
 | M180 | The protected categories (residences, medical, shelters, sensitive government, policy-defined) | C | `lib/protectedLocations.ts:81-88` `PROTECTED_CATEGORIES`; migration `2217:66-72` CHECK-constrains the same five; `:102` `policy_ref NOT NULL` so *"a protected location with no recorded policy"* is unrepresentable; `:135` `'allow'` is deliberately not storable — "a protection row that permits is a hole". |
 | M181 | Safety and access warnings take precedence over activity ranking | C | `lib/mapObjects.ts:284` `safety: 120`; `lib/protectedLocations.ts:210` `PROTECTION_EXEMPT_KINDS = ['safety_notice']` — a hazard notice is never coarsened away. |
-| M182 | The public map never receives more location detail than the viewer is authorized to see | C | `lib/protectedLocations.ts:720` `coarsenForZone`, `:793` `COARSENED_PAYLOAD_KEYS`; `lib/mapObjects.ts:376-381` documents that the strip must be able to `delete sourceClass` because `verified_firsthand` *"publishes that someone was here"*. Also `lib/protectedLocations.ts:301#COARSEN_UNSAFE_KINDS` and `:325#RELATIONSHIP_GATED_KINDS` — REPOINTED 2026-09-14 by `check:citation-symbols`: the LINE NUMBERS were right and the FILE was wrong. Both constants live in `protectedLocations.ts`, but `lib/mapObjects.ts:376-381` was cited between them and the opening citation, and a bare `:301` inherits the most recently named file. Anchored so the next shift fails loudly. |
+| M182 | The public map never receives more location detail than the viewer is authorized to see | C | `lib/protectedLocations.ts:720#coarsenForZone`, `lib/protectedLocations.ts:798#COARSENED_PAYLOAD_KEYS`; `lib/mapObjects.ts:221-226#verified_firsthand` documents that the strip must be able to delete `sourceClass` because it *"publishes that someone was here"*. *(These three repointed 2026-09-14: line 793 was 5 lines short, and lines 376-381 sat 155 lines past the passage they quote.)* Also `lib/protectedLocations.ts:301#COARSEN_UNSAFE_KINDS` and `:325#RELATIONSHIP_GATED_KINDS` — REPOINTED 2026-09-14 by `check:citation-symbols`: the LINE NUMBERS were right and the FILE was wrong. Both constants live in `protectedLocations.ts`, but `lib/mapObjects.ts:376-381` was cited between them and the opening citation, and a bare `:301` inherits the most recently named file. Anchored so the next shift fails loudly. |
 
 ### §25 Interaction System (7)
 
@@ -732,7 +732,7 @@ not exist under those names**; every responsibility they name has a home.
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| M236 | Viewport queries | C | `lib/mapProjection.ts:1124` `parseBbox` — rejects malformed, out-of-range and antimeridian-crossing viewports rather than guessing; `lib/mapAggregation.ts:105` `bboxContains`. |
+| M236 | Viewport queries | C | `lib/mapProjection.ts:1175#parseBbox` — rejects malformed, out-of-range and antimeridian-crossing viewports rather than guessing; `lib/mapAggregation.ts:105#bboxContains`. *(`parseBbox` repointed 2026-09-14 from line 1124; `bboxContains` was already right and is now anchored.)* |
 | M237 | Server aggregation | C | `lib/mapAggregation.ts:2,216-238,272-335`. |
 | M238 | Client clustering | C | `src/features/map/render/collision.ts:474-645`. |
 | M239 | Render thresholds | C | `collision.ts:227-236` `ZOOM_BAND_MIN` → band; `:276-293` `VISIBLE_BY_BAND` built cumulatively so "a kind visible at a wider band is always visible closer in". |
@@ -848,8 +848,8 @@ violation unrepresentable or refuses it. All nine clear that bar.
 | M284 | No public real-time people tracker | C | `lib/locateFriendsSession.ts:4,105` — *"§37 names two things this feature is one careless decision away from becoming"*; there is no `public` member and no public read path (`migrations/2219:310`). |
 | M285 | No permanent exact-location sharing | C | `longPress.ts:323` `SHARE_MAX_TTL_MS = 1 h`; `presenceLadder.ts:529-565` the four-stage decay; `2219:118` the 12-hour CHECK; `locateFriendsSession.ts:874,943` names the exact failure mode it is preventing. |
 | M286 | Not a place-rating directory | C | `lib/mapObjects.ts:363-400` — `MapObject` has **no rating axis at all**; §7's four axes are activity, trend, confidence and freshness. |
-| M287 | No screen full of unranked POI pins | C | `lib/mapProjection.ts:1166` `rankObjects`; `collision.ts:617` `resolveCollisions`; `mapAggregation.ts:219` wide bands collapse to cells. |
-| M288 | Compass must not invent live conditions | C | `compassMapModel.ts:8,191`; `lib/mapProjection.ts:667` `applyLiveClaims` "Never upgrades: if the claims are empty the object is returned untouched". |
+| M287 | No screen full of unranked POI pins | C | `lib/mapProjection.ts:1217#rankObjects`; `collision.ts:634#resolveCollisions`; `lib/mapAggregation.ts:219#AGGREGATING_BANDS` — only `world` and `city` aggregate, so wide bands collapse to cells. *(`rankObjects` and `resolveCollisions` repointed 2026-09-14.)* |
+| M288 | Compass must not invent live conditions | C | `compassMapModel.ts:8,191`; `lib/mapProjection.ts:675#Never upgrades` — *"if the claims are empty the object is returned untouched"* — enforced in `lib/mapProjection.ts:696#applyLiveClaims`. *(Repointed 2026-09-14 from line 667.)* |
 | M289 | Predictions must not look like observations | C | `lib/mapObjects.ts:112` `FORECAST_KINDS` + `isForecastKind`; `timeMachine.ts:30-39` the discriminated union; `zoneStyle.ts:22-25,183` dashed **and** dimmed; `lib/mapProjectPlace.ts:202` cites §37 twice. |
 | M290 | Paid businesses must not buy factual confidence | C | `lib/mapProjection.ts:518` `sourceCountBucket` nullable and load-bearing; `lib/mapObjects.ts:199-217` publishes the source **class** as a value so a renderer never has to regex English to learn a claim was sponsored; `routes/mapObservations.ts:70` rewards and observations do not join. |
 | M291 | Stale claims must not remain visually live | C | `lib/mapObjects.ts:124-127` `mayRenderAsLive` admits only `live`/`recent`; `:158-172` expiry beats the age bucket and a future clock earns `unknown`, not the strongest label; `mapCache.ts:11-26` downgrades cached freshness on the way out; `crowdFlowProducer.ts:507` and `mapAggregation.ts:464,1164` cite the same line. |
@@ -1368,10 +1368,9 @@ sends `obj.sourceRefs`, the panel shows `model.lines[].ref`.
 Built this pass: `src/features/map/telemetry/whyShownOpened.ts:49#whyShownOpenedPayload`,
 derived from the same `buildWhyPanel` call the sheet renders, with
 `src/features/map/telemetry/__tests__/whyShownOpened.test.ts` asserting agreement
-against `buildWhyPanel` itself rather than against constants. Three mutations
-were confirmed to redden it, including replacing the helper's body with the
-production expression — which is the proof that the production expression is
-wrong.
+against `buildWhyPanel` itself rather than against constants. Four mutations are
+recorded in §42.7, including replacing the helper's body with the production
+expression — which is the proof that the production expression is wrong.
 
 **It is not wired, and the row stays W.** The emitter is in `app/map/index.tsx`,
 outside the Map lane's paths. See §42.4.
@@ -1389,9 +1388,53 @@ said the whole subject needed a handset.
 
 `src/components/map/__tests__/ActivityZone.gpuFriendly.component.test.tsx` now
 pins the cadence, the source-identity stability and the GPU-side transition,
-mutation-proven four ways. **M258 stays `?`**: overdraw and frame cost are still
+mutation-proven five ways (§42.7). **M258 stays `?`**: overdraw and frame cost are still
 a device measurement and this test makes no claim about either. The row is the
 same verdict with one fewer way to rot.
+
+### §42.3b M256 — the same shape again: a device-free half nobody had written
+
+M256 reads *"viewport intelligence first results within ~500-800 ms **when
+cached/server-ready**"*, and §42.5 recorded that its server-side half was still
+nobody's. It is written now, for the same reason §42.3a was: the millisecond
+budget needs a device and a warm database, but the property the budget RESTS on
+does not.
+
+`routes/mapProjection.ts` carries three module-level read-through caches with
+30 s TTLs — `protected_zones` at `routes/mapProjection.ts:228#_zoneCache`, flow
+`geo_zones` at `routes/mapProjection.ts:282#_flowZoneCache`, and Phase 7's city
+model at `routes/mapProjection.ts:317#_cityZoneCache`. Each exports a
+`_clear*Cache()` hook, and **eleven map test files import one.** Every single one
+uses the hook to DEFEAT the cache so fixtures cannot leak between cases. Not one
+asserted that a cache hit avoids the read. The only thing this corpus pinned
+about the "cached" in M256's precondition was that the cache can be switched off.
+
+Three cases were added to `src/test/geoZoneSeed.test.ts` — which already drives
+the real `/map/projection` route against a fake client, so this is three cases
+and a read counter, not a new harness:
+
+1. a second poll inside the TTL re-reads **neither** `geo_zones` nor
+   `protected_zones`, and returns the same zone model rather than a cheaper
+   emptier one;
+2. after `_clearFlowZoneCache()` the next poll **does** read again — without
+   this, case 1 is also satisfied by a route that stopped reading altogether;
+3. a FAILED read is **not** cached, so a transient database error cannot darken
+   Crowd Flow for a full TTL.
+
+**Two things were learned by being wrong.** Case 3 was written expecting an
+unreadable `geo_zones` to refuse with `no_zone_model`; the route answers
+`zone_read_failed` and keeps the two distinct — an unreadable zone table and an
+empty one are different operator problems, and the refusal says which. That is
+better than this pass assumed and is now pinned. And `loadProtectedZones` reads
+`Date.now()` itself while `loadFlowZones` takes the handler's injected `nowMs`,
+even though `routes/mapProjection.ts:486#ONE clock read` states the handler makes
+exactly one clock read. The invariant is stated and not held. It is harmless
+today — both are TTL comparisons — and it is not a Map-lane fix to smuggle into
+an evidence pass, so it is recorded here and nowhere else.
+
+**M256 stays `?`.** No milliseconds are claimed, no device is involved, and
+nothing here says anything about a warm production cache. One falsifiable
+sub-property closed; the row's own measurement still needs a running server.
 
 ### §42.4 Cross-lane requests this pass raises
 
@@ -1422,6 +1465,12 @@ same verdict with one fewer way to rot.
    counted scope ages this census exactly as a changed one does, which is why it
    is declared rather than left to fire. That JSON belongs to the integration
    owner and this lane did not edit it.
+
+   `check:census-freshness` confirms exactly this and nothing more: census-map
+   is STALE on precisely those three names and no others. **A fourth is coming**
+   — the resumed pass extended `src/test/geoZoneSeed.test.ts` for M256 (§42.3b),
+   which is not in `CENSUS_SCOPE` today and so does not yet age this census. It
+   should be, and then it will; see request 10.
 6. **M122 / M129 / M130 need an owner ruling, not a build.** §18's `MapObjectKind`
    union is closed at thirteen and this repository has already ruled that a
    one-line mention is not a licence to invent an object contract
@@ -1429,6 +1478,41 @@ same verdict with one fewer way to rot.
    venue interiors each need that ruling plus a named data source before any lane
    should write a kind. Building them without it would be the scope creep the
    ruling names.
+
+7. **The standalone `run-node-tests` script spawns `node --import tsx/esm
+   --test`, and nothing runs under it.** Every standalone `node:test` file dies
+   with `ERR_REQUIRE_CYCLE_MODULE` before a test executes; `--import tsx` runs
+   them. Evidence and reproduction in §42.8.1. One word in one `spawnSync`
+   argument list. This is not a Map-lane file and the Map lane did not edit it,
+   but if it is really dark then every `node:test` assertion in the client —
+   Map's included — is currently unexecuted in CI, which would make a large
+   number of green-looking claims across several censuses unearned. Someone
+   should confirm this against CI's actual logs before believing either me or
+   the runner. (Standalone test-infra owner / integration owner.)
+8. **`check:citation-symbols` MISPLACED ceiling, 60 → 44.** §42.9 removed all
+   sixteen of census-map's entries and the script now prints
+   *"44 < 60 — LOWER MAX_MISPLACED_SYMBOLS to 44."* `MAX_MISPLACED_SYMBOLS` lives
+   in the `check-citation-symbols` guard, which is not this lane's.
+   (Integration owner.)
+9. **`check-citation-symbols` belongs in `NOT_GRADED`.** The scope-coverage
+   guard's machinery list already carries `check-doc-citations` by name, with a
+   comment saying it is *"the one machinery file in the tree that the convention
+   already covers in spirit and missed in letter"* — it is no longer the one.
+   `check-citation-symbols` sits beside it, same directory, same extension, same
+   role, and is not on the list, so a census that names it as the thing that
+   measured its citations pays for it in coverage. This pass hit exactly that and
+   worked around it by not spelling the filename, which is the wrong fix made by
+   the only lane that could not make the right one. (Integration owner —
+   `checkCensusScopeCoverage.ts` is explicitly not a lane file.)
+10. **`artifacts/api-server/src/test/geoZoneSeed.test.ts` belongs in census-map's
+   `CENSUS_SCOPE`.** §42.3b put M256's evidence in that file, so this census now
+   cites it — and because it is not watched, census-map's scope coverage fell to
+   **exactly its 96% floor** (108 cited, 104 watched) and the file can change
+   without aging this census. Both are wrong in the same direction: the test that
+   carries a row's evidence is the archetype of a watched file. Adding it raises
+   coverage and adds a fourth name to the staleness declaration in request 5.
+   `CENSUS_SCOPE` lives in `checkCensusFreshness.ts`, which is explicitly not a
+   lane file. (Integration owner.)
 
 ### §42.5 What this pass could not verify
 
@@ -1451,9 +1535,182 @@ same verdict with one fewer way to rot.
   who can run it rather than saying "needs a device" — and M256 and M258 each
   turned out to have a half that needs **no** device and was simply unwritten,
   which was being hidden behind the device. M258's device-free half was written
-  this pass (§42.3a); M256's server-side half is still nobody's.
+  in the first half of this pass (§42.3a) and M256's in the resumed half
+  (§42.3b). **M254, M255 and M292 have no device-free half** and are not
+  pretending to: a first-paint budget, a pan frame rate and a walk-through of the
+  10:47 PM scenario each need a handset, and no amount of static reading
+  substitutes. Saying that plainly is the whole of what this pass can do for
+  them.
+
+### §42.7 The failing-first proof, re-established after the restart (2026-09-14)
+
+The container restart took the agent that ran the original mutations, so the
+evidence for both new tests existed only in a dead process. §42.3 and §42.3a are
+claims about tests, and a claim about a test is worth exactly what its mutation
+record is worth. Both were re-run from scratch at this tree. Every mutation below
+was applied to the IMPLEMENTATION, never to the test, and every one was restored
+and the file checksummed back to its committed bytes before the next was applied.
+The third subject, `routes/mapProjection.ts`, belongs to §42.3b rather than to
+the restart, and is recorded here with the other two so the whole failing-first
+record for this pass sits in one place.
+
+**Runner.** The client suites do not share the api-server's runner:
+
+```
+# the §35 payload test (node:test)
+cd travel-buddy-standalone && node --import tsx --test \
+  src/features/map/telemetry/__tests__/whyShownOpened.test.ts
+
+# the §34 cadence test (jest, component)
+cd travel-buddy-standalone && npx jest --forceExit --runTestsByPath \
+  src/components/map/__tests__/ActivityZone.gpuFriendly.component.test.tsx
+```
+
+`--import tsx`, **not** `--import tsx/esm`, is load-bearing and is not a
+preference — see §42.8.
+
+#### M263 — `src/features/map/telemetry/whyShownOpened.ts`, four mutations
+
+Baseline 4/4 pass.
+
+| # | mutation applied to `whyShownOpened.ts` | result | the assertion that caught it |
+| --- | --- | --- | --- |
+| A1 | body replaced with the production expression: `lineCount: object.provenance?.lines.length ?? 0`, `provenanceRefs: object.sourceRefs ?? []` | **3 of 4 red** | *"synthesised provenance"* — **expected 5, actual 0.** The panel drew five lines and the shipped expression reports none. This is the defect, executed. |
+| A2 | `provenanceRefs` always assigned, empty list included | **1 red** | *"omitted rather than empty"* — `hasOwnProperty` true where false was required |
+| A3 | refs taken from `object.sourceRefs` instead of `panel.lines[].ref` | **2 red** | *"counts and refs are the panel's own"* — `'src:unused-by-the-panel'` appeared in the payload |
+| A4 | `object.title` spread into the §35 `ref` | **1 red** | *"no title, no coordinate"* — `title: 'Cong Caphe'` in the diff |
+
+A1 is the one that matters: it is not a synthetic defect but a verbatim copy of
+what `app/map/index.tsx` sends today, and the test rejects it. The row still does
+not move — the helper is not wired (§42.4.1) — but the claim that the shipped
+emitter is wrong is now executable rather than argued.
+
+#### M258 — `src/components/map/ActivityZone.tsx`, five mutations
+
+Baseline 6/6 pass.
+
+| # | mutation applied to `ActivityZone.tsx` | result | the assertion that caught it |
+| --- | --- | --- | --- |
+| B1 | `useMemo` dropped from `feature`, rebuilt every render | **1 red** | *"never re-uploads the geometry"* — `toBe` failed with *"serializes to the same string"*, i.e. a fresh polygon object per pulse |
+| B2 | `halfPeriod` forced to 16 ms — a JS-driven 60 fps pulse | **2 red** | *"does not re-render at frame rate"* — **expected 0 repaints in one second, got 60**; and the transition duration collapsed 1200 → 16 |
+| B3 | `'line-opacity-transition'` deleted from the outline paint | **1 red** | *"hands the interpolation to the GPU"* — transition `undefined` |
+| B4 | `useOpacityPulse` returns `pulse.maxOpacity` always — a static zone | **1 red** | *"animates: the outline opacity really does change"* — the anti-vacuity guard fired, as designed |
+| B5 | the component returns `null` — nothing rendered at all | **5 of 6 red** | everything except *"does not re-render at frame rate"* |
+
+**B5 is recorded because of what it does NOT catch.** A component that renders
+nothing satisfies *"a frame of elapsed time costs nothing"* vacuously. That test
+is therefore not load-bearing on its own, and the file is only honest because
+test 1 asserts the opacity actually changes before anything else is claimed. Said
+plainly rather than left for a reader to discover.
+
+A second limitation, found by B2 and worth the same honesty: *"re-renders exactly
+once per half-period"* **passed** under a 16 ms interval, because React batches
+the 75 `setState` calls inside one `act()` into a single render. The cadence
+property is really pinned by test 2 (zero repaints across sixty discrete frames),
+not by test 3. Test 3 is a weaker restatement, and it survived a mutation it
+reads as though it should have caught.
+
+Both subjects were restored and re-verified green: `whyShownOpened.ts` 4/4,
+`ActivityZone.gpuFriendly` 6/6, both files byte-identical to `88b9e8e1a`.
+
+#### M256 — `routes/mapProjection.ts`, four mutations
+
+Baseline 29/29 pass (26 pre-existing + the 3 of §42.3b). Run with
+`SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy node --import
+tsx/esm --test src/test/geoZoneSeed.test.ts`.
+
+| # | mutation applied to `routes/mapProjection.ts` | result | the assertion that caught it |
+| --- | --- | --- | --- |
+| C1 | the flow-zone cache-hit branch never taken | **2 red** | *"the warm poll re-read geo_zones"* (expected 0 extra reads, got 1) and the clear/re-read case |
+| C2 | the protected-zone cache-hit branch never taken | **1 red** | *"the warm poll re-read protected_zones"* |
+| C3 | a failed `geo_zones` read cached as `[]` for the full TTL | **1 red** | *"a failed read was cached — a transient database error would darken Crowd Flow for a full TTL"* |
+| C4 | `loadFlowZones` returns `[]` without reading anything | **5 red** — all three new cases plus two pre-existing | *"the cold request never read geo_zones"* and *"after a clear the loader must go back to the database; if it does not, the first case above proves nothing about caching"* |
+
+C4 is the one that makes the other three mean anything. A cache-hit test that
+counted only "zero reads on the second poll" passes a route that has stopped
+reading the table at all — the cheapest possible false green, and the exact shape
+of the failure this programme has already shipped once. Both anti-vacuity
+assertions fired with the messages written for them.
+
+`routes/mapProjection.ts` was restored and confirmed byte-identical
+(`git diff` empty); 29/29 green.
+
+### §42.8 Two findings from re-running the suites
+
+1. **`node --import tsx/esm` cannot run any `node:test` file in
+   `travel-buddy-standalone` at this tree.** Every single-file invocation dies
+   with `ERR_REQUIRE_CYCLE_MODULE` before a test executes, and so does a
+   two-file batch. It is not specific to the new test and not specific to the
+   Map lane: the pre-existing
+   `src/features/map/truth/__tests__/liveTruth.test.ts` fails identically, and
+   an import of `src/types/mapObjects.ts` — a file with no imports of its own —
+   reproduces it on its own. `--import tsx` (no `/esm`) runs all of them.
+   The standalone `run-node-tests` script spawns `--import tsx/esm`, so **the
+   standalone node:test runner is dark**, which would mean these suites are not
+   running in CI at all. That script is not the Map lane's; see §42.4.7.
+2. **The standalone test-typecheck ratchet is unmoved.**
+   `node ../scripts/check-test-typecheck.mjs --package travel-buddy-standalone`
+   reports 176 diagnostics across 61 files against a baseline of 176 across 61 —
+   OK, no file above its baseline and no baseline stale. The two new client test
+   files added none, which is the outcome required and not a coincidence worth
+   celebrating.
+
+### §42.9 Sixteen more citations were pointing at the wrong line — all in **C** rows
+
+§42.1 anchored every citation in the 56 W / N / ? rows. It did not touch the C
+rows, and `check:citation-symbols` — which did not exist when that pass ran —
+then found sixteen citations in this census that NAME a symbol the cited line
+does not contain. Every one is under a **C** verdict, which is the worse place
+for a rotten pointer: nobody re-opens a closed row.
+
+| row | was | is | drift |
+| --- | --- | --- | --- |
+| M58 | `mapObjects line 347-357` `MapProvenance` | `lib/mapObjects.ts:408-412#MapProvenance` | +61 |
+| M59 | `mapProjection line 833` `describeClaim` | `lib/mapProjection.ts:725#describeClaim` (per-claim) + `:880#describeClaim` (the formatter) | the cited line named neither |
+| M59 | `mapProjection line 607` `eventAdjacencyLine` | `lib/mapProjection.ts:615#eventAdjacencyLine` | +8 |
+| M59 | `mapProjection line 615` `qualifiedMediaLine` | `lib/mapProjection.ts:623#qualifiedMediaLine` | +8 |
+| M59 | `mapProjection line 586` "Table 7 VERBATIM" | `lib/mapProjection.ts:594#VERBATIM` | +8 |
+| M60 | `mapObjects line 355` `updatedAt` | `lib/mapObjects.ts:411#updatedAt` | +56 |
+| M61 | `mapObjects line 354` `ConfidenceState` | `lib/mapObjects.ts:410#ConfidenceState` | +56 |
+| M78 | `tripMapSources line 213` `meetingPoints` | `tripMapSources.ts:234#meetingPoints.push` | +21 |
+| M113 | `layerModel line 66` `live_activity`, line 158 for the default | `layerModel.ts:69#live_activity`, `:159#live_activity` | +3 / +1 |
+| M136, M287 | `mapProjection line 1166` `rankObjects` | `lib/mapProjection.ts:1217#rankObjects` | +51, twice |
+| M141 | `mapProjection line 1049` `enrichWithLiveClaims` | `lib/mapProjection.ts:1096#enrichWithLiveClaims` | +47 |
+| M141, M288 | `mapProjection line 667` "Never upgrades" | `lib/mapProjection.ts:675#Never upgrades` + `:696#applyLiveClaims` | +8, twice |
+| M159 | `mapProjection line 676` `applyLiveClaims` | `lib/mapProjection.ts:696#applyLiveClaims` | +20 |
+| M172 | `mapObjects line 258-266` `PRIVACY_CLASSES`, lines 269 and 274 | `lib/mapObjects.ts:309-316#PRIVACY_CLASSES`, `:319#precisionRank`, `:324#narrowestPrivacyClass` | ~+51 each |
+| M182 | `protectedLocations line 793` `COARSENED_PAYLOAD_KEYS` | `lib/protectedLocations.ts:798#COARSENED_PAYLOAD_KEYS` | +5 |
+| M182 | `mapObjects line 376-381` for the `verified_firsthand` quote | `lib/mapObjects.ts:221-226#verified_firsthand` | **-155** |
+| M236 | `mapProjection line 1124` `parseBbox` | `lib/mapProjection.ts:1175#parseBbox` | +51 |
+| M287 | `collision line 617` `resolveCollisions` | `collision.ts:634#resolveCollisions` | +17 |
+
+Each replacement was verified by reading the target line before it was written,
+not by trusting the checker's suggestion — `describeClaim` in particular has four
+mentions and one definition, and the guard's "found at" list omits the
+definition, so the obvious repair would have cited a comment. **No verdict moves:
+all sixteen underlying claims are true at this tree.** `check:citation-symbols`
+falls from 60 misplaced to **44**, ABSENT stays 0, and census-map now contributes
+**zero** rows to either class.
+
+**A trap worth naming, because this pass fell into it.** The first draft of these
+repairs wrote each old pointer in the repair note as `` `:833` ``. That shape is
+not prose — `check:doc-citations` reads a backticked bare `:NNN` as a citation
+INHERITING the last file named on the line, so eleven notes about wrong citations
+silently became eleven new citations, two of them immediately broken — one
+pointed a 347-357 range at `WhyShownSheet`, a 220-line file. The table above then
+did the same thing a second way: writing each OLD pointer in its "was" column
+re-entered four of the sixteen wrong citations into the corpus, and
+`check:citation-symbols` counted them straight back. Historical line numbers in
+this census are now written as plain `line 833`, with no extension and no colon,
+so nothing parses them. A census that documents its own repairs in the citation
+grammar manufactures the rot it is describing — twice, here, before it stopped.
 
 ### §42.6 Row moves
 
 **None.** 237 C / 46 W / 5 N / 5 ? is unchanged, and CONSTRUCTED% and CORRECT%
 are unchanged. This section moved no row and is not a gain in either number.
+The 2026-09-14 resumed pass (§42.3b, §42.7-§42.9) moved none either: it
+re-executed the evidence for two tests under nine mutations, wrote M256's
+device-free half and proved it under four more, repaired sixteen pointers under
+**C** rows, and found two things about the runners. 293 rows, 237 C / 46 W / 5 N
+/ 5 ? at both ends — confirmed by `check:census-integrity` after every edit.

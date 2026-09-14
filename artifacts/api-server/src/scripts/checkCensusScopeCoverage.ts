@@ -100,6 +100,15 @@ const NOT_GRADED: readonly string[] = [
   // spirit and missed in letter. Several censuses name it as the thing that
   // MEASURED their citations; none grades it, and it is not product code.
   "artifacts/api-server/scripts/check-doc-citations.mjs",
+  // Its two siblings, added 2026-09-14 for exactly the reason the comment above
+  // gives. The MAP lane raised it against itself: census-map names
+  // check-citation-symbols as the guard that found sixteen of its mis-pointed
+  // citations, and naming it cost that census coverage — so the lane worked
+  // around the rule by NOT SPELLING THE FILENAME, which is the wrong fix made by
+  // the only lane that could not make the right one. A census should be able to
+  // say what measured it.
+  "artifacts/api-server/scripts/check-citation-symbols.mjs",
+  "artifacts/api-server/scripts/check-citation-targets.mjs",
   ".github/workflows/ci.yml",
   ".github/workflows/live-db.yml",
 ];

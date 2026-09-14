@@ -191,6 +191,93 @@ describe("an unreadable suggestions table is not an empty suggestions list", () 
   });
 });
 
+/**
+ * §20.7, executed. Three sites in this tree answered `forbidden` — "You are not
+ * an active member of this thread", "You are not an accepted member of that
+ * trip" — from a membership read whose error was discarded. That is SAFE, so it
+ * is not the T344/T363 defect and it did not count against those rows. It is
+ * still false: the server does not know whether the caller is a member, and it
+ * told them, by name, that they are not.
+ *
+ * Two properties are asserted together, and neither is sufficient alone. A
+ * suite that only asserted "an outage is not a 200" would pass against a route
+ * that refuses everybody, so each case is PAIRED with a control proving a
+ * genuine non-member is still refused 403 with the same words. And the refusal
+ * must not be `forbidden`: a 403 tells the client the answer is settled and
+ * there is nothing to retry.
+ */
+describe("an unreadable membership is not a non-membership — the thread gate", () => {
+  it("CONTROL — a genuine non-member is still refused 403, by name", async () => {
+    use(store({ message_thread_members: [] }));
+    const r = await call(harness.base, "GET", SUGGESTIONS, A);
+    assert.equal(r.status, 403);
+    assert.equal(r.body?.error, "forbidden");
+  });
+
+  it("CONTROL — a member who LEFT is still refused 403", async () => {
+    use(store({
+      message_thread_members: [
+        { thread_id: THREAD, user_id: A, role: "owner", left_at: "2026-01-01T00:00:00.000Z" },
+      ],
+    }));
+    assert.equal((await call(harness.base, "GET", SUGGESTIONS, A)).status, 403);
+  });
+
+  it("an unreadable `message_thread_members` REFUSES, and does not say they are not a member", async () => {
+    use(store(), { errors: { message_thread_members: down("message_thread_members") } });
+    const r = await call(harness.base, "GET", SUGGESTIONS, A);
+    assert.equal(
+      r.body?.error,
+      "degraded_unavailable",
+      "a membership read that never happened cannot state that the caller is not a member",
+    );
+    assert.equal(r.status, 503);
+    assert.equal(
+      String(r.body?.message ?? "").includes("not an active member"),
+      false,
+      "the outage still told the caller they are not a member of their own conversation",
+    );
+  });
+
+  it("every handler behind this gate refuses the same way, not just the first", async () => {
+    // `verifyThreadMember` is called from five handlers. A fix applied at one
+    // call site and not the helper would pass a single-route case.
+    for (const [method, path, body] of [
+      ["GET", SUGGESTIONS, undefined],
+      ["POST", `${SUGGESTIONS}/${SUG}/add-to-plan`, { tripId: TRIP, title: "Tapas near the hotel" }],
+      ["POST", `${SUGGESTIONS}/${SUG}/create-meetup`, {}],
+      ["POST", `${SUGGESTIONS}/${SUG}/start-poll`, { options: ["Morning", "Evening"] }],
+    ] as const) {
+      use(store(), { errors: { message_thread_members: down("message_thread_members") } });
+      const r = await call(harness.base, method as any, path, A, body as any);
+      assert.equal(r.body?.error, "degraded_unavailable", `${method} ${path} still claimed non-membership`);
+    }
+  });
+});
+
+describe("an unreadable membership is not a non-membership — the trip gate", () => {
+  const ADD = `${SUGGESTIONS}/${SUG}/add-to-plan`;
+  const BODY = { tripId: TRIP, title: "Tapas near the hotel" };
+
+  it("CONTROL — somebody genuinely not on the trip is still refused 403", async () => {
+    use(store({ trip_members: [] }));
+    const r = await call(harness.base, "POST", ADD, A, BODY);
+    assert.equal(r.status, 403);
+    assert.equal(r.body?.error, "forbidden");
+  });
+
+  it("an unreadable `trip_members` REFUSES rather than denying trip membership", async () => {
+    use(store(), { errors: { trip_members: down("trip_members") } });
+    const r = await call(harness.base, "POST", ADD, A, BODY);
+    assert.equal(r.body?.error, "degraded_unavailable");
+    assert.equal(r.status, 503);
+    assert.equal(
+      String(r.body?.message ?? "").includes("not an accepted member"),
+      false,
+    );
+  });
+});
+
 // Each handler validates its own body before it reads the suggestion, so the
 // body has to be VALID for that route or the case never reaches the read it is
 // about — it would assert `invalid_payload` and prove nothing. Measured: with a

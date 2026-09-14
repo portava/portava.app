@@ -251,3 +251,38 @@ export function explainReasons(signalKeys: readonly string[]): DiscoveryReason[]
   }
   return out;
 }
+
+/**
+ * `04` §5 "reason codes" for the exposure record — provenance in, codes out.
+ *
+ * The rank provenance carries the ranker's OWN signal keys (Compass
+ * `RankingFactor.key`, portavaRank feature names). The recommendation record
+ * wants `01` §11's vocabulary. This is the bridge, and it exists as one
+ * function so the serve path cannot accidentally write raw signal names onto a
+ * record that other systems will read as codes.
+ *
+ * Three properties are deliberate and each is pinned by a test:
+ *   - every key in the map gets an entry, `[]` included. A missing key makes a
+ *     reader guess between "no reasons" and "not measured"; those are different
+ *     facts and only one of them is true here.
+ *   - guardrailed signals (`UNMAPPED_SIGNALS`) yield nothing, so a moderation
+ *     input cannot reach the record by this route any more than it can reach
+ *     the user-facing projection.
+ *   - a null/absent map is `{}`, never a throw: this runs on a fire-and-forget
+ *     instrumentation path that must not break a served response.
+ *
+ * Typed structurally rather than against `DiscoveryRankProvenance` so the
+ * reason vocabulary does not take a dependency on the provenance module; the
+ * only field it needs is `reasons`.
+ */
+export function reasonCodesByIdFromProvenance(
+  provenanceById: ReadonlyMap<string, { reasons?: readonly string[] }> | null | undefined,
+): Record<string, DiscoveryReasonCode[]> {
+  const out: Record<string, DiscoveryReasonCode[]> = {};
+  if (!provenanceById || typeof provenanceById.forEach !== "function") return out;
+  provenanceById.forEach((p, id) => {
+    if (typeof id !== "string" || id.length === 0) return;
+    out[id] = reasonCodesFromSignals(p?.reasons ?? []);
+  });
+  return out;
+}

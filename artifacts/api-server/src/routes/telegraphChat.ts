@@ -50,19 +50,69 @@ const UUID = /^[0-9a-f-]{36}$/i;
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
+/**
+ * The answer a membership check may give, as three outcomes rather than two.
+ *
+ * census-telegraph §20.7: this helper used to discard the read's error and
+ * return a bare boolean. supabase-js RESOLVES on a database error rather than
+ * throwing, so an unreadable `message_thread_members` produced
+ * `{ data: null, error }`, the `!data` branch fired, and every caller told the
+ * traveller *"You are not an active member of this thread"* — a positive,
+ * specific statement about their relationship to their own conversation, made
+ * from a read that never happened.
+ *
+ * That is not the T344/T363 defect: it denies rather than admits, and a refusal
+ * is not a plausible empty state. It is still false, and it is false in the one
+ * direction that matters to somebody who needs the conversation — a 403 tells
+ * the client the answer is SETTLED and there is nothing to retry, so the app
+ * will not recover when the table does.
+ *
+ * `unreadable` is the third outcome, and it is the same posture the six reads
+ * this file already fixed take (`degraded_unavailable`, the only code
+ * `lib/http.ts` marks retryable). §20.7 declined to make this change on the
+ * grounds that it alters the contract of live routes; it is made here because
+ * the alternative contract — "we assert you are not a member" — is a claim the
+ * server is not entitled to, and because the same file already accepted exactly
+ * this contract change for its other six reads.
+ */
+type ThreadMembership = "member" | "not_member" | "unreadable";
+
 async function verifyThreadMember(
   client: any,
   threadId: string,
   userId: string,
-): Promise<boolean> {
-  const { data } = await client
+): Promise<ThreadMembership> {
+  const { data, error } = await client
     .from("message_thread_members")
     .select("user_id, left_at")
     .eq("thread_id", threadId)
     .eq("user_id", userId)
     .maybeSingle();
-  if (!data) return false;
-  return (data as any).left_at === null;
+  if (error) {
+    chatLogger.error({ threadId, userId, message: (error as any).message }, "thread membership read failed");
+    return "unreadable";
+  }
+  if (!data) return "not_member";
+  return (data as any).left_at === null ? "member" : "not_member";
+}
+
+/**
+ * The refusal every caller of `verifyThreadMember` sends, in one place so the
+ * two outcomes cannot drift apart at five call sites. Returns true when it
+ * refused, so the caller reads as one line.
+ */
+function refuseUnlessMember(res: any, membership: ThreadMembership, deniedMessage: string): boolean {
+  if (membership === "member") return false;
+  if (membership === "unreadable") {
+    sendError(
+      res,
+      "degraded_unavailable",
+      "We could not check your membership of this conversation just now. Please try again shortly.",
+    );
+    return true;
+  }
+  sendError(res, "forbidden", deniedMessage);
+  return true;
 }
 
 // ── GET /api/threads/:threadId/telegraph/suggestions ─────────────────────────
@@ -79,11 +129,8 @@ router.get("/threads/:threadId/telegraph/suggestions", async (req, res) => {
   }
 
   // Verify active membership
-  const isMember = await verifyThreadMember(client, threadId, user.id);
-  if (!isMember) {
-    sendError(res, "forbidden", "You are not an active member of this thread");
-    return;
-  }
+  const membership = await verifyThreadMember(client, threadId, user.id);
+  if (refuseUnlessMember(res, membership, "You are not an active member of this thread")) return;
 
   // Optionally run intent detection on a new message body
   const messageText = typeof req.query.message === "string" ? req.query.message : null;
@@ -168,11 +215,8 @@ router.post(
       return;
     }
 
-    const isMember = await verifyThreadMember(client, threadId, user.id);
-    if (!isMember) {
-      sendError(res, "forbidden", "Not a thread member");
-      return;
-    }
+    const membership = await verifyThreadMember(client, threadId, user.id);
+    if (refuseUnlessMember(res, membership, "Not a thread member")) return;
 
     // Fetch suggestion data before updating so we can write the preference event.
     // The event is best-effort (see the warn below), so a failed READ does not
@@ -241,11 +285,8 @@ router.post(
       return;
     }
 
-    const isMember = await verifyThreadMember(client, threadId, user.id);
-    if (!isMember) {
-      sendError(res, "forbidden", "Not a thread member");
-      return;
-    }
+    const membership = await verifyThreadMember(client, threadId, user.id);
+    if (refuseUnlessMember(res, membership, "Not a thread member")) return;
 
     const parsed = AddToPlanSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -254,15 +295,29 @@ router.post(
     }
     const { tripId, title, dayDate, startsAt } = parsed.data;
 
-    // Verify the acting user is an accepted member of the chosen trip
-    const { data: membership } = await client
+    // Verify the acting user is an accepted member of the chosen trip.
+    // §20.7 again: an unreadable `trip_members` used to answer "You are not an
+    // accepted member of that trip" from a read that never happened.
+    const { data: tripMembership, error: tripMembershipErr } = await client
       .from("trip_members")
       .select("role")
       .eq("trip_id", tripId)
       .eq("user_id", user.id)
       .in("role", ["owner", "member"])
       .maybeSingle();
-    if (!membership) {
+    if (tripMembershipErr) {
+      chatLogger.error(
+        { threadId, tripId, userId: user.id, message: (tripMembershipErr as any).message },
+        "trip membership read failed",
+      );
+      sendError(
+        res,
+        "degraded_unavailable",
+        "We could not check your membership of that trip just now. Please try again shortly.",
+      );
+      return;
+    }
+    if (!tripMembership) {
       sendError(res, "forbidden", "You are not an accepted member of that trip");
       return;
     }
@@ -371,11 +426,8 @@ router.post(
       return;
     }
 
-    const isMember = await verifyThreadMember(client, threadId, user.id);
-    if (!isMember) {
-      sendError(res, "forbidden", "Not a thread member");
-      return;
-    }
+    const membership = await verifyThreadMember(client, threadId, user.id);
+    if (refuseUnlessMember(res, membership, "Not a thread member")) return;
 
     const { data: suggestion, error: suggestionErr } = await client
       .from("telegraph_chat_suggestions")
@@ -439,11 +491,8 @@ router.post(
       return;
     }
 
-    const isMember = await verifyThreadMember(client, threadId, user.id);
-    if (!isMember) {
-      sendError(res, "forbidden", "Not a thread member");
-      return;
-    }
+    const membership = await verifyThreadMember(client, threadId, user.id);
+    if (refuseUnlessMember(res, membership, "Not a thread member")) return;
 
     // Never write server-readable plaintext into an end-to-end encrypted thread.
     // A direct thread can be e2ee and telegraph suggestions surface in DMs, so a

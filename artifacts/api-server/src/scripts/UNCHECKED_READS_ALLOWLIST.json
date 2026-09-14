@@ -102,7 +102,6 @@
     "routes/safeReturn.ts::post /me/safe-return/sessions/:id/confirm::feature_flags.maybeSingle#2": "FAIL-CLOSED: inline *_enabled capability flag reads as off and the side effect (stamp/memory/compass context) is skipped; the DB error is reported as a disabled feature",
     "routes/stamps.ts::use *::feature_flags.maybeSingle": "FAIL-CLOSED: stamp_system_v2_enabled unreadable -> 503 feature_not_available on every /stamps route; the DB error is reported as a disabled feature",
     "routes/telegraph.ts::post /telegraph/recommend::feature_flags.maybeSingle": "FAIL-CLOSED: inline *_enabled capability flag reads as off and the side effect (stamp/memory/compass context) is skipped; the DB error is reported as a disabled feature",
-    "routes/telegraphChat.ts::verifyThreadMember::message_thread_members.maybeSingle": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",
     "routes/tripCrewLocation.ts::getMemberRole::trips.maybeSingle": "FAIL-CLOSED: owner lookup unreadable -> not owner -> falls to the member check; commit 9df204fa documents the direction, the error is still never observed",
     "routes/tripCrewLocation.ts::getMemberRole::trip_members.maybeSingle": "FAIL-CLOSED: `if (!member) return null` -> 403; commit 9df204fa documents the direction, the error is still never observed (a DB outage reports as not_member)",
     "routes/tripCrewLocation.ts::getMemberRoleAny::trips.maybeSingle": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",

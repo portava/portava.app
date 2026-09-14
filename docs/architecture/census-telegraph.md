@@ -4199,9 +4199,9 @@ exists. §8's commitments and decisions are already carried this way.
 | The payload | `artifacts/api-server/src/services/telegraph/coordination.ts:452#export const AcknowledgementPayload` |
 | The eighth coordination kind | `artifacts/api-server/src/services/telegraph/coordination.ts:802#ACKNOWLEDGEMENT` |
 | The projection | `artifacts/api-server/src/services/telegraph/coordination.ts:504#export function projectAcknowledgements` |
-| The write, and its four refusals | `artifacts/api-server/src/routes/telegraphCoordination.ts:296#did not ask to be acknowledged` |
-| The announcement reader (one answer for every reason a caller must not distinguish) | `artifacts/api-server/src/routes/telegraphCoordination.ts:120#function readAnnouncementRow` |
-| The read | `artifacts/api-server/src/routes/telegraphCoordination.ts:610#/threads/:threadId/announcements` |
+| The write, and its four refusals | `artifacts/api-server/src/routes/telegraphCoordination.ts:301#did not ask to be acknowledged` |
+| The announcement reader (one answer for every reason a caller must not distinguish) | `artifacts/api-server/src/routes/telegraphCoordination.ts:125#function readAnnouncementRow` |
+| The read | `artifacts/api-server/src/routes/telegraphCoordination.ts:615#/threads/:threadId/announcements` |
 | The client hook, one fetch per thread | `travel-buddy-standalone/src/features/telegraph/kinds/useAnnouncementAcknowledgement.ts:70#export function useAnnouncementAcknowledgement` |
 | The API call | `travel-buddy-standalone/src/features/telegraph/coordination/coordinationApi.ts:195#export async function acknowledgeAnnouncement` |
 | The mount that was missing | `travel-buddy-standalone/app/messages/[id].tsx:794#useAnnouncementAcknowledgement({` |
@@ -4226,7 +4226,7 @@ exists. §8's commitments and decisions are already carried this way.
   acknowledgement MESSAGES and a roster; there is no parameter a read receipt
   could arrive through, and the module names no receipt column. The test asserts
   the arity AND scans the module's code (comments stripped) for `last_read_at`
-  (`artifacts/api-server/src/test/telegraphCoordination.test.ts:808#is STRUCTURALLY unable to derive an acknowledgement from a read receipt`),
+  (`artifacts/api-server/src/test/telegraphCoordination.test.ts:812#is STRUCTURALLY unable to derive an acknowledgement from a read receipt`),
   so a later "helpful" change that fills the gap from the read receipt goes red.
 
 ### 13.7 The mutations, and what went red
@@ -5972,17 +5972,17 @@ Read against the code, one by one, they are NOT all benign:
 | file / site | classification |
 | --- | --- |
 | `routes/telegraph.ts` — 5 sites (a `feature_flags` gate, hashtag-follow enrichment, hashtag resolution, mention-profile resolution, the follow sets) | **Fail-closed or enrichment.** An unreadable table degrades the prompt or links nobody; `friends_only` users are EXCLUDED rather than admitted. The `blocks` read in the same block already binds and logs. Nothing here makes a claim to a traveller about their own data. |
-| `routes/telegraphStream.ts:168#const { data: membership } = await client` | **Fail-closed.** Unreadable membership resolves to `forbidden`, and §17.8's own rule is that a refusal is not a plausible empty state. |
-| `artifacts/api-server/src/routes/telegraphChat.ts:58#const { data } = await client` and `artifacts/api-server/src/routes/telegraphChat.ts:258#const { data: membership } = await client` | **Fail-closed**, the same shape: 403. |
-| `routes/telegraphChat.ts:153#res.status(200).json({ suggestions: suggestions ?? [] });` | **OPEN when §19 measured; CLOSED by §20.2.** The line still exists and is cited here at its current number; a refusal now stands above it, so the sentence that follows describes the tree at `6d4327d66`, not this one. It was T363's exact shape. An unreadable `telegraph_chat_suggestions` answers `{ suggestions: [] }` — "you have none" from a read that never happened. |
-| `routes/telegraphChat.ts:285#sendError(res, "not_found", "Suggestion not found");`, `artifacts/api-server/src/routes/telegraphChat.ts:394#sendError(res, "not_found", "Suggestion not found");`, `artifacts/api-server/src/routes/telegraphChat.ts:494#sendError(res, "not_found", "Suggestion not found");` | **OPEN when §19 measured; CLOSED by §20.2** — each now sits below a bound-error refusal, and each is cited at its current number. They were §18's class — three MORE sites of the defect §18 declared closed at twelve.** Same table, same `.maybeSingle()`, same confident 404 from a dropped error. |
-| `routes/telegraphChat.ts:181#const { data: suggestion, error: suggestionErr } = await client` | **OPEN when §19 measured; CLOSED by §20.2, and the anchor text itself changed** — the error is bound now, so the line §19 quoted no longer exists in that form. Small. The dismiss handler reads the suggestion only to write a preference event; an unreadable read silently writes no event and says nothing. |
-| `routes/telegraphChat.ts:467#if ((threadMeta as any)?.is_e2ee === true) {` | **OPEN when §19 measured; CLOSED by §20.1–§20.3, which re-derived it from the file before accepting the lane's report. It was the worst site in this document's class — a FAIL-OPEN on the E2EE invariant.** The read above it drops its error, so an unreadable `message_threads` arrives as `null`, `undefined === true` is false, and a poll body — JSON **plaintext** — is written into a thread that may be end-to-end encrypted. The route's own comment names the invariant it is failing (*"Never write server-readable plaintext into an end-to-end encrypted thread … audit MSG-3"*). `routes/messaging.ts` fixed its own equivalents: the media handler's is `artifacts/api-server/src/routes/messaging.ts:3077#const { data: threadMetaForMedia, error: threadMetaForMediaErr } = await client`. This is a divergence between two files that make the same decision, not an open design question. |
+| `routes/telegraphStream.ts:178#const { data: membership, error: membershipErr } = await client` | **Fail-closed when §19 measured; CLOSED by §22.3, and the anchor text itself changed** — the read named here WAS the defect and the line now binds the error it used to drop, exactly as §16.6 and §20.4 record for their own sites. §19's classification was right on its own terms: an unreadable membership resolved to `forbidden`, and a refusal is not a plausible empty state. It was still a false statement about the caller's own membership, and §20.7 named it. |
+| `artifacts/api-server/src/routes/telegraphChat.ts:80#async function verifyThreadMember` and `artifacts/api-server/src/routes/telegraphChat.ts:301#const { data: tripMembership, error: tripMembershipErr } = await client` | **Fail-closed when §19 measured; CLOSED by §22.3, and BOTH anchor texts changed** — the first is now cited by the function rather than by a line that no longer exists in that form, because `verifyThreadMember` returns three outcomes instead of a boolean. The same shape as the `telegraphStream.ts` row above and closed the same way. |
+| `routes/telegraphChat.ts:200#res.status(200).json({ suggestions: suggestions ?? [] });` | **OPEN when §19 measured; CLOSED by §20.2.** The line still exists and is cited here at its current number; a refusal now stands above it, so the sentence that follows describes the tree at `6d4327d66`, not this one. It was T363's exact shape. An unreadable `telegraph_chat_suggestions` answers `{ suggestions: [] }` — "you have none" from a read that never happened. |
+| `routes/telegraphChat.ts:340#sendError(res, "not_found", "Suggestion not found");`, `artifacts/api-server/src/routes/telegraphChat.ts:446#sendError(res, "not_found", "Suggestion not found");`, `artifacts/api-server/src/routes/telegraphChat.ts:543#sendError(res, "not_found", "Suggestion not found");` | **OPEN when §19 measured; CLOSED by §20.2** — each now sits below a bound-error refusal, and each is cited at its current number. They were §18's class — three MORE sites of the defect §18 declared closed at twelve.** Same table, same `.maybeSingle()`, same confident 404 from a dropped error. |
+| `routes/telegraphChat.ts:225#const { data: suggestion, error: suggestionErr } = await client` | **OPEN when §19 measured; CLOSED by §20.2, and the anchor text itself changed** — the error is bound now, so the line §19 quoted no longer exists in that form. Small. The dismiss handler reads the suggestion only to write a preference event; an unreadable read silently writes no event and says nothing. |
+| `routes/telegraphChat.ts:516#if ((threadMeta as any)?.is_e2ee === true) {` | **OPEN when §19 measured; CLOSED by §20.1–§20.3, which re-derived it from the file before accepting the lane's report. It was the worst site in this document's class — a FAIL-OPEN on the E2EE invariant.** The read above it drops its error, so an unreadable `message_threads` arrives as `null`, `undefined === true` is false, and a poll body — JSON **plaintext** — is written into a thread that may be end-to-end encrypted. The route's own comment names the invariant it is failing (*"Never write server-readable plaintext into an end-to-end encrypted thread … audit MSG-3"*). `routes/messaging.ts` fixed its own equivalents: the media handler's is `artifacts/api-server/src/routes/messaging.ts:3077#const { data: threadMetaForMedia, error: threadMetaForMediaErr } = await client`. This is a divergence between two files that make the same decision, not an open design question. |
 
 **Thirteen of the fourteen are invisible to `check:unchecked-supabase-reads`** — verified by
 running it with `--all` on this tree, which prints every out-of-scope and ledgered site it knows
 of. Exactly two of the fourteen appear, both already ledgered FAIL-CLOSED
-(`artifacts/api-server/src/routes/telegraphChat.ts:58#const { data } = await client` and the
+(the `verifyThreadMember` read, `artifacts/api-server/src/routes/telegraphChat.ts:80#async function verifyThreadMember`, and the
 `feature_flags` gate in `routes/telegraph.ts`); the `{ suggestions: [] }`, the three confident
 404s, the silent preference-event skip and the E2EE fail-open are all outside its scope and none
 is on any ledger. That is §18.5's prediction landing, one section later and from a direction
@@ -6024,7 +6024,7 @@ enumeration that has just been shown to be short by three files.
 
 | id | was | now | evidence |
 | --- | --- | --- | --- |
-| T344 | W | W | **Still W, and for a different reason than §18.4 gave.** Both of §18.4's blockers are closed: this section shut §17.8 item 2's three durable sites plus three more of the same defect in the same two functions (§19.1), and the four reads this row's own statement names were re-derived and are all bound (§19.5's table). What keeps it W is new: `routes/telegraph.ts`, `routes/telegraphChat.ts` and `routes/telegraphStream.ts` are in this census's `CENSUS_SCOPE` and hold FOURTEEN sites of this class that no section had counted, of which `routes/telegraphChat.ts:153#res.status(200).json({ suggestions: suggestions ?? [] });` is a plausible empty context and three more are confident 404s (§19.4). **Ceiling: those three files are not this lane's, and a row is closed by whoever can close all of it.** |
+| T344 | W | W | **Still W, and for a different reason than §18.4 gave.** Both of §18.4's blockers are closed: this section shut §17.8 item 2's three durable sites plus three more of the same defect in the same two functions (§19.1), and the four reads this row's own statement names were re-derived and are all bound (§19.5's table). What keeps it W is new: `routes/telegraph.ts`, `routes/telegraphChat.ts` and `routes/telegraphStream.ts` are in this census's `CENSUS_SCOPE` and hold FOURTEEN sites of this class that no section had counted, of which `routes/telegraphChat.ts:200#res.status(200).json({ suggestions: suggestions ?? [] });` is a plausible empty context and three more are confident 404s (§19.4). **Ceiling: those three files are not this lane's, and a row is closed by whoever can close all of it.** |
 | T363 | W | W | **Still W, same evidence, same ceiling.** T363's wording — "plausible empty **state**" — is if anything a closer fit for `{ suggestions: [] }` than T344's is. The messaging-tree half this row has always cited is now down to the eleven refusals and three neither-sites §17.8 classified (§19.6 re-reads all three and confirms the classification); the open remainder is outside `routes/messaging.ts` entirely. |
 
 Restated plainly, because it is the finding a reader should take from this section rather than
@@ -6235,7 +6235,7 @@ travels through it and an empty map could plausibly have meant "nothing is block
 
 | id | Was | Now | Evidence |
 |---|---|---|---|
-| T344 | W | **C** | §19's statement named its own blocker precisely: fourteen uncounted sites in three files, "of which `routes/telegraphChat.ts:153#res.status(200).json({ suggestions: suggestions ?? [] });` is a plausible empty context and three more are confident 404s". That plausible empty context and those three 404s are closed in §20.2, with the red measurement in §20.3. The messaging-tree half was re-derived and bound in §19.5. The eight sites that remain are enumerated and classified in §20.5 and not one of them produces a plausible empty context. |
+| T344 | W | **C** | §19's statement named its own blocker precisely: fourteen uncounted sites in three files, "of which `routes/telegraphChat.ts:200#res.status(200).json({ suggestions: suggestions ?? [] });` is a plausible empty context and three more are confident 404s". That plausible empty context and those three 404s are closed in §20.2, with the red measurement in §20.3. The messaging-tree half was re-derived and bound in §19.5. The eight sites that remain are enumerated and classified in §20.5 and not one of them produces a plausible empty context. |
 | T363 | W | **C** | Same evidence. T363's wording — "plausible empty **state**" — was §19's closer fit for `{ suggestions: [] }`, and `{ suggestions: [] }` is the thing that no longer happens on an unread. |
 | | | | |
 
@@ -6298,7 +6298,7 @@ still true, one was true with a stale reason, and one had been true and is no lo
 ### 21.2 §2.3's layers exist on the server, and the conversation screen still ignores them
 
 `services/telegraph/layers.ts` computes §2.3's TALK / PLAN / NOW for one viewer, and
-`GET /api/threads/:id/layers` serves it (`routes/telegraphCoordination.ts:719#"/threads/:threadId/layers"`).
+`GET /api/threads/:id/layers` serves it (`routes/telegraphCoordination.ts:724#"/threads/:threadId/layers"`).
 
 The property that makes it a layer rather than a tag is a **partition**: an id in `plan` or `now`
 is not in `talk`, and a PLAN item that has resolved is back in `talk`
@@ -6343,7 +6343,7 @@ those three.
 DISRUPTED included (`services/telegraph/coordination.ts:661#export const CoordinationTransitionPayload`).
 The projection folds them (`services/telegraph/coordination.ts:722#export function projectCoordinationSession`)
 and the route REFUSES an arrow §9 does not have, naming the legal set
-(`routes/telegraphCoordination.ts:332#§9 allows`). §9.1's separation survives: `declaredState` and
+(`routes/telegraphCoordination.ts:337#§9 allows`). §9.1's separation survives: `declaredState` and
 `derivedState` are two fields that are never merged, and `state` prefers the declaration because a
 person saying "we are stuck in traffic" outranks a clock that thinks the table is booked.
 
@@ -6351,10 +6351,10 @@ person saying "we are stuck in traffic" outranks a clock that thinks the table i
 
 | id | Was | Now | Evidence |
 |---|---|---|---|
-| T84 | W | **C** | **`ConversationCommitment` — who agreed to what, by when, completed.** The four questions were already answered per thread; what the row asked for was "something a surface can list". `GET /api/me/commitments` (`routes/telegraphCoordination.ts:830#"/me/commitments"`) answers ACROSS every conversation the caller is still an active member of, from the caller's own memberships, each thread's rows bounded by that thread's own §14.3 window, built from the SAME `projectCommitment` the thread view uses (`services/telegraph/coordination.ts:374#projectCommitment`). Not a new store: a query is a route, not a table, and every bound the answer was computed under is reported so a truncated list cannot read as "that is everything you owe". |
+| T84 | W | **C** | **`ConversationCommitment` — who agreed to what, by when, completed.** The four questions were already answered per thread; what the row asked for was "something a surface can list". `GET /api/me/commitments` (`routes/telegraphCoordination.ts:919#"/me/commitments"`) answers ACROSS every conversation the caller is still an active member of, from the caller's own memberships, each thread's rows bounded by that thread's own §14.3 window, built from the SAME `projectCommitment` the thread view uses (`services/telegraph/coordination.ts:374#projectCommitment`). Not a new store: a query is a route, not a table, and every bound the answer was computed under is reported so a truncated list cannot read as "that is everything you owe". |
 | T85 | W | **C** | **`CoordinationSession`.** The four things the row said were missing now exist: an id (the opening message's own), who started it (`startedBy`), when it ended (`endedAt`, set only on COMPLETE or CANCELLED), and a recordable DISRUPTED (`services/telegraph/coordination.ts:722#export function projectCoordinationSession`). Reachable at `POST /api/threads/:id/coordination` and returned as `coordination.session`. The row's "would need a table" is answered in §21.3. |
 | T179 | W | **C** | **§13.2 `message.seen`.** In the union and deliberately alongside `read.updated` rather than replacing it (`lib/telegraphEvents.ts:84#message.seen`), published with the MESSAGE IDS that crossed the reader's marker by `POST /api/threads/:id/seen` (`routes/telegraphLifecycle.ts:443#"/threads/:threadId/seen"`). A consumer can now answer "was this one seen" from the event itself. |
-| T217 | W | **C** | **§15.2 safety mode NORMAL → SAFETY_ATTENTION → SAFETY_EVENT.** The row's gap was "neither [ladder] is a conversation-level mode", and §13.4 classified it NEITHER — "A conversation-level safety mode does not exist in either tree". It does now, and it needed no table: both carriers were already in the thread and already written by shipped routes — §6.2's SAFETY kind (`check_in \| heads_up \| need_help \| all_clear`) and §9.1's `NEED_HELP` quick state. `projectSafetyMode` (`services/telegraph/safetyMode.ts:239#export function projectSafetyMode`) folds them; `GET /api/threads/:id/safety-mode` (`routes/telegraphCoordination.ts:982#"/threads/:threadId/safety-mode"`) serves it, membership-gated and §14.3-bounded, and answers 500 rather than NORMAL on an unreadable thread. Three rules are asserted because a careless projection gets each of them wrong: a SAFETY_EVENT is cleared only by an explicit ALL CLEAR and never by time; a routine CHECK-IN does not clear a help request; and the mode is the HIGHEST unresolved signal, not the latest. |
+| T217 | W | **C** | **§15.2 safety mode NORMAL → SAFETY_ATTENTION → SAFETY_EVENT.** The row's gap was "neither [ladder] is a conversation-level mode", and §13.4 classified it NEITHER — "A conversation-level safety mode does not exist in either tree". It does now, and it needed no table: both carriers were already in the thread and already written by shipped routes — §6.2's SAFETY kind (`check_in \| heads_up \| need_help \| all_clear`) and §9.1's `NEED_HELP` quick state. `projectSafetyMode` (`services/telegraph/safetyMode.ts:239#export function projectSafetyMode`) folds them; `GET /api/threads/:id/safety-mode` (`routes/telegraphCoordination.ts:1071#"/threads/:threadId/safety-mode"`) serves it, membership-gated and §14.3-bounded, and answers 500 rather than NORMAL on an unreadable thread. Three rules are asserted because a careless projection gets each of them wrong: a SAFETY_EVENT is cleared only by an explicit ALL CLEAR and never by time; a routine CHECK-IN does not clear a help request; and the mode is the HIGHEST unresolved signal, not the latest. |
 | T410 | W | **C** | **§30A.10 every executable action registers authorize / preview / execute / optional compensate; Telegraph orchestrates, source domains retain truth.** The row's gap was "No registry, no compensate". `TELEGRAPH_ACTION_REGISTRY` (`services/telegraph/actionRegistry.ts:213#export const TELEGRAPH_ACTION_REGISTRY`) registers all four hooks for every `ProposedAction.kind` the route can produce, and the registry is EXHAUSTIVE by test rather than by intention — `src/test/telegraphCommandRoute.test.ts:500#the registry is EXHAUSTIVE` reads the route's own source, extracts every `kind: "…"` literal, and fails on one that is not registered. `confirm-action` REFUSES an unregistered kind (`routes/telegraphCommands.ts:419#const registration = registrationFor(action.kind);`) rather than confirming it with three hooks silently skipped. Compensate is reachable, not decorative: §30A.11's capability recheck runs AFTER the write (`routes/telegraphCommands.ts:468#const recheck = await registration.authorize(ctx);`) and a membership lost in that window UNDOES the orchestration record (`services/telegraph/actionRegistry.ts:180#const undoConfirmation`), answering 409. "Source domains retain truth" is enforced by the same test: every registration names a `canonicalOwner` and it may not be `telegraph`. |
 | T268 | W | **C** | **§20 Memories — safe share derivatives · Memory Notes · explicit Save to Memory · post-experience recap.** MIS-GRADED, and the correction at §13.1 ("Safe-share derivatives are the remaining half and they are loaders") is itself stale: the loader exists and is registered. `loadMemory` (`services/telegraph/shareables.ts:452#const loadMemory`) is a derivative — title and city only, no items, no media, no graph — that re-checks `state`, `visibility`, `allowed_user_ids`, `hidden_user_ids` and blocks, and degrades rather than approximating. Memory Notes are T117/T118 C, Save to Memory is T119 C (`services/telegraph/memoryNotes.ts:144#export function memoryDraftRow`), recap is T121 C (`services/telegraph/memoryNotes.ts:242#export function buildRecap`). Four of four. |
 
@@ -6505,3 +6505,280 @@ here.
     endpoint a client already calls.
   - The census's own headline is not restated (§21.8), and the 149 W rows this section does not
     name were not re-read.
+
+---
+
+## 22. TELEGRAPH lane, resumed — §21's six rows re-proved from scratch, two tests that could not fail, and §20.7's three false refusals
+
+The container running the lane that wrote §21 restarted and took the agent with it. The work
+survived at `88b9e8e1a`; **the evidence did not.** No mutation had been re-run and no failing-first
+proof existed for anything in §21 outside that agent's own transcript. This section is the debt
+paid, and then the list continued.
+
+Same worktree (`/home/user/wt-483`), same ownership — `services/telegraph/**`,
+`services/telegraph*.ts`, `routes/telegraph*.ts`, `lib/*telegraph*` and this file. **Nothing is
+merged, nothing is deployed, and no flag was enabled.**
+
+### 22.1 §21's six moves, re-proved — and the ratio holds
+
+Every row §21.4 moved was re-executed against the tree: its suite run, the implementation mutated,
+the suite re-run, the mutation reverted by file copy, and the suite re-run green. Twenty-three
+mutations, every one of them RED. **No row is moved back**, and none needed to be.
+
+| row | mutation | result |
+| --- | --- | --- |
+| T84 | `/me/commitments` queries only the first thread | 94 → 93/1 |
+| T84 | the completed-commitment filter deleted | 94 → 93/1 |
+| T84 | **the `scope=mine` filter deleted** | **94 → 94/0 — GREEN**, then 93/1 once two cases were added (§22.2) |
+| T85 | `endedAt` never set | 94 → 93/1 |
+| T85 | `derivedState` merged into `declaredState` (§9.1's separation) | 94 → 92/2 |
+| T85 | the route accepts any §9 transition | 94 → 92/2 |
+| T179 | `message.seen` names no message ids | 43 → 42/1 |
+| T179 | the seen threshold stamps `now()` instead of the message's `created_at` | 43 → 42/1 |
+| T179 | the crossed set includes the reader's own messages | 43 → 41/2 |
+| T217 | a `check_in` clears like an `all_clear` | 94 → 93/1 |
+| T217 | a SAFETY_EVENT decays on the attention timer | 94 → 93/1 |
+| T217 | the mode takes the LATEST signal instead of the HIGHEST | 94 → 93/1 |
+| T217 | the §9.1 `NEED_HELP` quick state is not read as a safety signal | 94 → 93/1 |
+| T410 | one kind dropped from the action registry | 28 → 27/1 |
+| T410 | `compensate` reports `undone: true` without deleting the row | 28 → 27/1 |
+| T410 | the §30A.11 post-write recheck deleted | 28 → 27/1 |
+| T410 | the registry's `authorize` stops reading `trip_members` | 27 → 26/1 (`telegraphAdversarialFixtures` F-10) |
+| T268 | `loadMemory`'s visibility gate deleted | 36 → 35/1 |
+| T11/T12 | `projectSemanticLayers` pushes PLAN items into `talk` as well | 94 → 91/3 |
+| T11/T12 | a resolved PLAN item never leaves the layer | 94 → 92/2 |
+| T262 | the trip-context second gate (accepted trip membership) removed | 39 → 38/1 |
+| T262 | trip-context selects **and returns** `lat`/`lng` | 39 → 38/1 |
+| T262 | removed plan items kept in today's list | 39 → 38/1 |
+
+**Two of §21.6's recorded mutations did not reproduce as written, and the difference is not
+cosmetic.** §21.6 recorded "trip-context selects and returns `lat` / `lng`" and "removed plan
+items kept in today's list" as 38/1. Re-run with the NARROWEST possible mutation — adding
+`lat, lng` to `TRIP_CONTEXT_COLUMNS` and nothing else; deleting the post-query `removed_at` filter
+and nothing else — both were **GREEN**. The fixture client honours `.is("removed_at", null)` in the
+query, so the second filter is unreachable defence; and the response test pins the PROJECTION, so a
+select list that pulls coordinates into process memory is invisible to it. Both went red only when
+the mutation was made faithful to the sentence (also mutating `toContextItem`, removing both
+filters). §21.6's numbers were therefore right about the ROUTE and wrong about what the suite
+actually constrains. §22.2 closes the gap the narrow mutation exposed.
+
+### 22.2 Three tests that could not fail, and the cases added
+
+The programme's stated ratio — roughly one hollow assertion per five mutations — held again.
+
+1. **`/me/commitments` scope.** The route's own comment says `scope=all` "is opt-in rather than the
+   default so this route cannot become a way to watch what other people have promised." Deleting
+   the `scope === "mine"` filter passed 94/94. Every commitment in the fixtures happened to be one
+   Alice had agreed to, so "mine" and "all" returned the same list and the branch that separates
+   them was never exercised. Two cases were added — a promise **Bob** made and agreed to himself,
+   which must not appear in Alice's default list and must appear under `scope=all`; and an
+   unanswered ask addressed **to** Alice, which must appear, so the filter cannot be narrowed to
+   `viewerResponse === "AGREED"` instead. The same mutation then failed 93/1.
+
+2. **The trip-context select list.** `GET /threads/:id/trip-context` states
+   `coordinatesReturned: false` and its header argues that "not selecting them is stronger than
+   stripping them, because there is then no branch that could stop stripping". Nothing pinned the
+   SELECT. A test now reads the route's own source, parses `TRIP_CONTEXT_COLUMNS` and fails on
+   `lat`, `lng`, `latitude`, `longitude` or `location_is_private`
+   (`routes/telegraphSharedContext.ts:347#const TRIP_CONTEXT_COLUMNS`). The narrow mutation then
+   failed 39/1. The difference this buys is concrete: a later `...r` spread in `toContextItem`
+   would leak coordinates with no change to the select, and the select is where the promise is made.
+
+3. Both of §21.6's own hollow assertions — the `now()` seen threshold and the latest-vs-highest
+   safety fold — were re-checked and **reproduce red**, so the cases §21 added survived the commit.
+
+### 22.3 §20.7 executed — three routes that told a traveller they were not a member, from a read that never happened
+
+§20.7 named this defect precisely and declined to fix it: three sites answer `forbidden` — *"You
+are not an active member of this thread"*, *"You are not an accepted member of that trip"*, *"Not a
+member of this thread"* — from a membership read whose error was discarded. supabase-js resolves
+`{ data: null, error }` rather than throwing, so an unreadable `message_thread_members` is
+byte-identical to a genuine non-member.
+
+**Why §20.7's hesitation was answered rather than overruled.** Its stated reason was that
+`degraded_unavailable` is the only code `lib/http.ts` marks retryable, so the change alters the
+retry behaviour of three live routes. That is true. It is also the contract change §20.2 had
+already made for the SIX other discarded reads in the same file, for the same reason, three
+sections earlier — and the alternative contract is a claim the server is not entitled to make. A
+403 tells the client the answer is settled; a member locked out by a database blip is told, by
+name, that they are not in their own conversation, and the app will not recover when the table does.
+
+- `verifyThreadMember` returns three outcomes rather than a boolean
+  (`routes/telegraphChat.ts:78#type ThreadMembership`), and one shared refusal sends them
+  (`routes/telegraphChat.ts:104#function refuseUnlessMember`) so the five call sites cannot drift
+  apart. A fix applied at one call site and not the helper is checked, not trusted: a case drives
+  all four reachable handlers.
+- The trip gate beside it binds its own error
+  (`routes/telegraphChat.ts:301#const { data: tripMembership, error: tripMembershipErr } = await client`).
+- The typing relay does the same (`routes/telegraphStream.ts:178#const { data: membership, error: membershipErr } = await client`).
+
+**Every case is PAIRED.** A suite asserting only "an outage is not a 200" would pass against a
+route that refuses everybody, so each outage case sits beside a control proving a genuine
+non-member — and a member who LEFT — is still refused 403 with the same words. The refusal was
+narrowed, not removed.
+
+### 22.4 §20's catch-up — the third member of T267, built as a projection rather than a summary
+
+§20's Compass row names three integrations: *"Authorized thread context, meeting/recommendation
+tools, catch-up."* T267's stated reason — "Meeting tools (T248) and catch-up do not exist" — is
+**half stale**: T248 is C, and so are T245, T246, T247, T249, T250 and T251. Catch-up was the only
+member still missing.
+
+`services/telegraph/catchUp.ts:224#export function projectCatchUp` is its server half, served at
+`routes/telegraphCoordination.ts:823#"/threads/:threadId/catch-up"`, membership-gated and
+§14.3-bounded like every other read in that file.
+
+Four properties are what separate it from a message count, and each is a rule a careless
+implementation gets wrong:
+
+- **A person did not miss what they SENT.** The viewer's own messages are excluded from
+  `missedCount`, and from nothing else.
+- **§14.3's window is a BOUND, not a preference.** `since` is `max(lastReadAt, visibleFrom)` and
+  `sinceBasis` says which won — `read_marker`, `history_window`, or `conversation_start`
+  (`services/telegraph/catchUp.ts:86#export const CATCH_UP_BASES`). A member added to a crew thread
+  yesterday cannot catch up on last month because an older marker says so. A single nullable
+  `since` would have collapsed all three into "null means everything", which is this document's
+  standing complaint: an absence presented as a fact.
+- **What still AWAITS the viewer is not filtered by the marker.** A question nobody answered does
+  not stop awaiting them because they were online when it was asked. `needsYou` is §2.3's PLAN
+  layer, and `safetyMode` is §15.2's fold — **not re-derived here**. A catch-up that disagreed with
+  the conversation it summarises would be worse than none, which is the same rule
+  `GET /me/commitments` follows for T84.
+- **Nothing is read out of prose.** §18.3 forbids Compass "silently creat[ing] canonical plans from
+  uncertain prose", and the cheap implementation of "what did I miss" is exactly that. Every item is
+  a count or a typed object some route already validated. `inferredFromProse` is a field on the
+  response, not a promise in a comment.
+
+What counts as a shared object is not a hand-written list either: it is derived from
+`TELEGRAPH_SHARE_PRODUCERS`, the registry `check:telegraph-share-producers` keeps exhaustive
+against the tree, filtered to producers that name a `sourceDomain` — so chrome (text, system
+notices, call receipts) is excluded because it points at no source object, and a new card family
+enters the catch-up the day it is registered.
+
+### 22.5 NO ROW MOVES, and the reason is T267's own sentence
+
+§16.4's rule — a row that is W because a class is unfinished does not become C when one member of
+the class is closed — applies, and so does the narrower objection:
+
+| id | Verdict | What closed, and what did not |
+|---|---|---|
+| T267 | **W** | **Evidence correction plus a half.** "Meeting tools (T248) and catch-up do not exist" is wrong on the first clause: T245–T251 are all C. The catch-up's SERVER half now exists and is reachable (`routes/index.ts:190#telegraphCoordinationRouter`). It stays W because the row is the **Compass** integration row and nothing in Compass reaches it: §18.3's tool set is closed at eight named accessors, `TELEGRAPH_TOOL_SPEC_NAMES` asserts that closure, and a ninth tool would break the one claim that file makes about itself. The right wiring is to carry the catch-up inside `getConversationContext()` — one import, no new tool name — and `compass/TelegraphConversationTools.ts` is not this lane's file. **Cross-lane request, §22.8.** |
+| T308 | **W** | **Evidence correction.** "One of four: translation … No transcript, no thread tools (T245–T251), no catch-up" is now one of four understated by two: thread tools exist and the catch-up's server half exists. It stays W and is NEITHER-capped on the voice transcript, which needs the audio MIME and storage widening no migration provides (§13.4, T40). |
+| T344 · T363 | **C, unchanged, and strengthened** | §22.3 does not move them and could not: both are C already, and §20.6's rule is that a refusal is not a plausible empty state, so the three sites never counted against them. What §22.3 removes is the defect §20.7 named separately. |
+
+### 22.6 The mutations for §22.3 and §22.4, every one shown red
+
+| mutation | result |
+| --- | --- |
+| `verifyThreadMember` returns `not_member` on a read error again | 18 → 16/2 |
+| the unreadable outcome sends `forbidden` instead of `degraded_unavailable` | 18 → 16/2 |
+| `refuseUnlessMember` admits everybody | 18 → 14/4 — the CONTROLS, which is what makes the pairing worth having |
+| the `trip_members` error branch deleted | 18 → 17/1 |
+| the typing relay's `membershipErr` branch deleted | 9 → 8/1 |
+| the catch-up counts the reader's own messages as missed | 105 → 104/1 |
+| `since` ignores the §14.3 window floor | 105 → 104/1 |
+| `sinceBasis` never reports `history_window` | 105 → 104/1 |
+| `needsYou` filtered by the read marker | 105 → 104/1 |
+| a transition's `from` derived only from the missed slice | 105 → 104/1 |
+| `safetyChangedWhileAway` is true whenever the mode is not NORMAL | 105 → 104/1 |
+| the shared-object set includes producers with no `sourceDomain` (chrome) | 105 → 103/2 |
+
+The eleven catch-up cases were written and run BEFORE the route existed: **11 failures, all 404.**
+
+### 22.7 Checks
+
+`npx tsc -p tsconfig.json --noEmit` was clean across the whole package at the start of this
+section and reports five diagnostics at the end — every one of them in another lane's in-flight
+file in this shared worktree (`compass/CompassMediaContext.ts`, `services/media/MediaActionResolver.ts`,
+`services/safeReturn/__tests__/safeReturnLiveShareExpiryHonesty.test.ts`,
+`services/airport/__tests__/layoverExpirySweepVisible.test.ts`). **None is in a file this lane
+owns**, which was verified by name rather than by the count. `typecheck:tests` reports **881
+diagnostics across 118 files against a baseline of 864 across 116**; all seventeen new ones are in
+`src/test/mediaIndependentSources.test.ts` and `src/test/mediaWorldProjection.test.ts`, the Media
+lane's files. **This lane added none**, and did not touch the baseline.
+
+`check:telegraph-certification`, `check:telegraph-package-boundaries`,
+`check:telegraph-share-producers`, `check:telegraph-slos`, `check:census-integrity` and
+`check:citation-symbols` all PASS. **All 44 Telegraph-named suites green — 1,030 assertions, 0
+failures** — plus `messaging` 22, `groupChat` 39, `accessControl` 33, `failOpenServiceReads` 34,
+`tripKernel` 36, `adminPhase12` 31 and `intelligence` 80, each run individually. A green partial
+run is not a green run and none is claimed.
+
+`check:telegraph-share-producers` failed once during this section and the reason is worth
+recording: `catchUp.ts` rebuilt its input rows field by field, and `msg_type: r.msg_type ?? null`
+is indistinguishable to a literal scan from a WRITE. The checker was right to refuse — a registry
+that silently misses producers reads as complete — and the fix was to pass the rows through rather
+than to declare a producer that produces nothing.
+
+**`check:unchecked-supabase-reads` is RED, and it is this lane's, with a one-line remedy this lane
+may not apply.** Fixing `verifyThreadMember` made its allowlist entry stale, and the checker's own
+instruction is to delete the line:
+
+```
+routes/telegraphChat.ts::verifyThreadMember::message_thread_members.maybeSingle
+```
+
+in `artifacts/api-server/src/scripts/UNCHECKED_READS_ALLOWLIST.json`. That file is not on this
+lane's ownership list. **Cross-lane request, §22.8.** It is named here rather than quietly edited,
+and rather than left for CI to surprise somebody with.
+
+**`check:doc-citations` — repointed, and one anchor set whose TEXT changed.** Inserting into
+`routes/telegraphChat.ts`, `routes/telegraphCoordination.ts` and `routes/telegraphStream.ts`
+shifted sixteen anchored citations in this document. Each was re-anchored mechanically, by
+occurrence index against `git show 88b9e8e1a:` where the needle was not unique, so a citation can
+never be quietly pointed at a different occurrence. Three more could not be repointed because the
+line they named no longer exists in that form — they are the three reads §22.3 fixed, and §16.6's
+convention was followed: the anchor now names the arm that replaced it and the row says so. The
+remaining broken anchors in this file are into `services/media/MediaProjectionService.ts` and
+`routes/memories.ts`, both being edited by other lanes in this worktree, and were left alone
+exactly as §21.7 left them.
+
+`check:census-freshness` will report this document STALE. `CENSUS_STALENESS_ACKNOWLEDGED.json` is
+the integration owner's file and this lane did not touch it.
+
+### 22.8 Cross-lane requests
+
+1. **`artifacts/api-server/src/scripts/UNCHECKED_READS_ALLOWLIST.json`** — delete the entry
+   `routes/telegraphChat.ts::verifyThreadMember::message_thread_members.maybeSingle`. The site is
+   fixed (§22.3); the stale entry is the only thing keeping `check:unchecked-supabase-reads` red.
+2. **`compass/TelegraphConversationTools.ts`** — carry the catch-up inside
+   `telegraph_get_conversation_context` by calling `projectCatchUp`. That is what T267 needs to
+   close, and it adds no ninth accessor to §18.3's closed set of eight.
+3. **`domain/telegraph/policies/shareAuthorizationPolicy.ts`** — §21.9's request still stands: add
+   `action_response`, `coordination_session` and `coordination_transition` to the computed site's
+   `produces` list. `check:telegraph-share-producers` does not verify that list is exhaustive, so
+   CI will not catch it.
+
+### 22.9 Rows re-derived against this tree and NOT touched, with the reason
+
+The three gaps carried into this session as "largest concrete" were each re-executed against the
+code before anything was built. **All three were stale.**
+
+| id | What the tree said on re-derivation |
+|---|---|
+| T2 | "`message_reactions` does not exist and unsend does not exist on this branch" is wrong twice. `message_reactions` is created by `migrations/2811_telegraph_message_side_tables.sql:115#CREATE TABLE IF NOT EXISTS public.message_reactions` with RLS and an idempotent primary key, and it has a live consumer (`server/telegraph/commandRoute.ts:299`). Unsend is `services/telegraph/unsend.ts` and `routes/telegraphLifecycle.ts:194#messages/:messageId/unsend`. The row is still W and this lane cannot move it: §13.3 caps both halves on migrations 2810/2811, which are on no database and behind a flag seeded FALSE, and the VOICE clause inside the same row is NEITHER — no audio MIME exists anywhere and no migration widens `messages.media_type`. |
+| T4 | Unchanged from §21.5b, and re-checked: §13.5 reclassified it BRANCH → NEITHER on an **owner decision** about whether private-by-default content may surface in a shared rail, and no ruling has landed (`docs/architecture/` holds two decision documents, on the brand palette and on Sensing's auth posture; neither touches this). The rail admits candidates only from `CANONICAL_MUTUALITY_SOURCES`, a closed list of five tables that `admitCandidate` refuses to widen at runtime and TypeScript refuses to widen at compile time; adding `memory_tags` as a sixth IS the decision the owner was asked to take. Left alone a second time. |
+| T11 | "ACTION and ANNOUNCEMENT are interleaved rather than layered" is stale on the server: §21.2 built the partition and `routes/telegraphCoordination.ts:724#"/threads/:threadId/layers"` serves it, with `partitionViolations` asserted on every response. It stays W for the half §21.5 named — nothing DRAWS it, and the conversation screen is a client file this lane does not hold. |
+
+Also re-read and deliberately not touched: T31 (a fail-closed protected-zone gate would refuse
+every exact-location message on every deployment, because `protected_zones` is not one of
+production's 431 tables), T104 (a conflict detector over an availability read that returns
+`enabled:false` on every deployment cannot be exercised), T39 (the Visa Buddy half has no referent
+anywhere in Portava), T157 · T166 · T169 · T170 · T220 · T379 · T397 · T409 (cross-lane files),
+and T201 (`message_threads.chk_thread_context` makes an add-participant operation a schema
+violation, not a missing feature).
+
+### 22.10 Not claimed
+
+  - Nothing here is merged, deployed or flag-enabled, and nothing above depends on a migration.
+  - `GET /threads/:id/catch-up` has **no client**. It is REACHABLE — mounted at
+    `routes/index.ts:190#telegraphCoordinationRouter` — and unmounted in the app's UI, which is
+    precisely why T267 does not move.
+  - `POST /threads/:id/typing` and the four `telegraph/suggestions` handlers changed behaviour on
+    a path clients already call: an outage on the membership read now answers 503
+    `degraded_unavailable` where it answered 403. That is a new retry, not a new refusal — a
+    genuine non-member still gets the same 403 with the same words, and a control asserts it.
+  - The headline is NOT restated. `check:census-integrity` reads **C=229 W=158 N=49 X=3** across
+    451 rows, unchanged by this section, against §1's stated 209 / 176 / 51 / 3. That gap is §21.8's
+    and is still not this lane's to close.
+  - The 155 W rows this section does not name were not re-read.

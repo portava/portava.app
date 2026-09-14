@@ -719,6 +719,37 @@ describe("GET /threads/:id/trip-context — §20's today/next for a crew thread"
     assert.equal("lng" in r.body.today[0], false);
   });
 
+  /**
+   * The test above proves nothing LEAVES the API. This one proves the stronger
+   * claim the route states about itself — that coordinates are never SELECTED,
+   * so there is no branch that could stop stripping them.
+   *
+   * It is here because the mutation that added `lat` / `lng` to
+   * `TRIP_CONTEXT_COLUMNS` alone passed the whole suite: the projection is what
+   * the response test pins, and a select list that pulls coordinates into
+   * process memory is invisible to it. That is a real difference — a later
+   * `...r` spread in `toContextItem` would then leak without any change to the
+   * select — so the guarantee is asserted where it is actually made.
+   */
+  it("the select list itself names no coordinate column — §20 / census T423", () => {
+    const src = readFileSync(new URL("../routes/telegraphSharedContext.ts", import.meta.url), "utf8");
+    const m = src.match(/const TRIP_CONTEXT_COLUMNS\s*=\s*([\s\S]*?);/);
+    assert.ok(m, "TRIP_CONTEXT_COLUMNS is no longer a literal — this test can no longer read it");
+    const columns = m![1]
+      .replace(/["'`+\n\r]/g, " ")
+      .split(",")
+      .map((c) => c.trim())
+      .filter(Boolean);
+    assert.ok(columns.includes("title"), "the select list was not parsed");
+    for (const banned of ["lat", "lng", "latitude", "longitude", "location_is_private"]) {
+      assert.equal(
+        columns.includes(banned),
+        false,
+        `trip-context selects ${banned}; the route promises it does not`,
+      );
+    }
+  });
+
   it("a direct thread is NOT APPLICABLE, and says so rather than answering empty", async () => {
     useState({});
     const r = await get(`/threads/${THREAD_D}/trip-context`, ALICE);

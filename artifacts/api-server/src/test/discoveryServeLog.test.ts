@@ -384,3 +384,184 @@ describe("discoveryServeLog — feeds the 12 stop conditions", () => {
     assert.equal(evaluateStopConditions().attempts, 0);
   });
 });
+
+// ── `04` §5 — the recommendation denominator (DV-40) ─────────────────────────
+//
+// "Every served item must have a `recommendation_id`", plus a nine-field
+// minimum record: recommendation_id, user_id, session_id, candidate_type/id,
+// surface, rank_position, model_version, reason codes, served_at.
+//
+// The census recorded DV-40 as N on the evidence that `recommendation_id` has
+// "zero occurrences in Discovery" and that the `10` §3 recommendation tables are
+// absent. The second half is true. The first half was false even when written:
+// Compass mints an HMAC-signed `recommendation_id` per served item and
+// registers it in the production table `compass_served_recommendations`
+// (migration 0055_compass_admin.sql:22). What was absent is a denominator on
+// DISCOVERY's serves — and seven of the nine fields were already on the row.
+//
+// So this does not build a recommendation subsystem. It completes the record
+// Discovery already writes, on the table Discovery already writes to, with no
+// migration: the three missing fields go into the `features` jsonb that every
+// serve-log row already carries.
+//
+// WHY NOT REUSE THE COMPASS TOKEN. `encodeRecommendationToken`
+// (src/compass/CompassExplanationEngine.ts:283) is deterministic over
+// (userId, itemId, itemType, sectionName, explanationKey) — deliberately, since
+// Compass dedupes on it (`dedupeByRecommendationId`) and hands it to the client
+// as a `/why` lookup handle. A DENOMINATOR has the opposite requirement: two
+// serves of the same item to the same user are TWO exposures, and an id that
+// collapses them under-counts exactly the quantity `04` §5 exists to measure.
+// The id below therefore binds the serve, not the item.
+import {
+  recommendationIdFor,
+  RECOMMENDATION_RECORD_FIELDS,
+} from "../lib/discoveryRecommendationId.js";
+import { DISCOVERY_MODEL_VERSION } from "../lib/discoveryRankProvenance.js";
+
+describe("discoveryServeLog — 04 §5 the recommendation denominator (DV-40)", () => {
+  beforeEach(() => {
+    invalidateServeLogFlagCache();
+  });
+
+  it("R1. every served item carries a recommendation_id — none is blank, and a REPEATED item still gets two", async () => {
+    // The repeat is the whole point of this fixture. A page of three DISTINCT
+    // items cannot tell whether the id binds the exposure or merely the item —
+    // both hypotheses predict three different ids — so the one arrangement that
+    // separates them is the same item served twice at two rank positions.
+    // (Found by mutation: pinning `position` to 0 in the derivation left an
+    // all-distinct fixture entirely green.)
+    const REPEATED = [
+      { id: "node/1001" },
+      { id: "db/22222222-2222-2222-2222-222222222222" },
+      { id: "node/1001" },
+    ];
+    const { client, captured } = makeClient({ flagRow: { enabled: true } });
+    await logDiscoveryServe(client as any, {
+      userId: USER_ID, servePoint: DiscoveryServePoint.COLD_FETCH_LEGACY_RANK, items: REPEATED,
+    });
+    const rows = captured[0]?.rows ?? [];
+    assert.equal(rows.length, REPEATED.length, "precondition: one row per served item");
+
+    const ids = rows.map((r: any) => r.features?.recommendationId);
+    for (const id of ids) {
+      assert.equal(typeof id, "string", "04 §5: every served item must have a recommendation_id");
+      assert.ok((id as string).length > 0, "a blank id is an absent id wearing a field name");
+    }
+    assert.equal(
+      new Set(ids).size, ids.length,
+      "the same item at two rank positions is TWO exposures; one id for both under-counts the denominator",
+    );
+  });
+
+  it("R2. all nine 04 §5 fields are recoverable from the row the writer produces", async () => {
+    const { client, captured } = makeClient({ flagRow: { enabled: true } });
+    await logDiscoveryServe(client as any, {
+      userId: USER_ID, servePoint: DiscoveryServePoint.COLD_FETCH_LEGACY_RANK, items: ITEMS,
+      context: { destination: "miami" },
+    });
+    const row = (captured[0]?.rows ?? [])[1];
+    assert.ok(row, "precondition: a row was written");
+
+    // The six the columns already carried.
+    assert.equal(row.user_id, USER_ID, "04 §5 user_id");
+    assert.equal(typeof row.session_id, "string", "04 §5 session_id");
+    assert.ok(row.item_id && row.item_kind, "04 §5 candidate type/id");
+    assert.equal(row.surface, "discovery", "04 §5 surface");
+    assert.equal(row.position, 1, "04 §5 rank_position");
+    assert.ok(row.served_at, "04 §5 served_at");
+    // The three this adds, in the jsonb the row already writes.
+    assert.equal(typeof row.features.recommendationId, "string", "04 §5 recommendation_id");
+    assert.equal(row.features.modelVersion, DISCOVERY_MODEL_VERSION, "04 §5 model_version");
+    assert.ok(Array.isArray(row.features.reasonCodes), "04 §5 reason codes");
+
+    // And the list itself is exported, so a reader can check the record against
+    // the specification rather than against this test's own memory of it.
+    assert.equal(RECOMMENDATION_RECORD_FIELDS.length, 9, "04 §5 names nine fields");
+  });
+
+  it("R3. the id binds the SERVE, not the item — the same item served twice is two exposures", async () => {
+    const a = recommendationIdFor({
+      userId: USER_ID, sessionId: "s1", servedAt: "2026-09-14T00:00:00.000Z",
+      surface: "discovery", position: 0, itemId: "node/1001",
+    });
+    const b = recommendationIdFor({
+      userId: USER_ID, sessionId: "s2", servedAt: "2026-09-14T00:00:00.000Z",
+      surface: "discovery", position: 0, itemId: "node/1001",
+    });
+    assert.notEqual(a, b, "a second session is a second exposure; collapsing them under-counts the denominator");
+
+    const c = recommendationIdFor({
+      userId: USER_ID, sessionId: "s1", servedAt: "2026-09-14T00:00:00.000Z",
+      surface: "discovery", position: 1, itemId: "node/1001",
+    });
+    assert.notEqual(a, c, "the same item at a different rank position is a different exposure");
+
+    const d = recommendationIdFor({
+      userId: "aaaaaaaa-aaaa-aaaa-aaaa-000000000002", sessionId: "s1",
+      servedAt: "2026-09-14T00:00:00.000Z", surface: "discovery", position: 0, itemId: "node/1001",
+    });
+    assert.notEqual(a, d, "another viewer's exposure is not this viewer's");
+  });
+
+  it("R4. the id is DETERMINISTIC — the identical batch replayed yields the identical ids", async () => {
+    const args = {
+      userId: USER_ID, sessionId: "s1", servedAt: "2026-09-14T00:00:00.000Z",
+      surface: "discovery", position: 0, itemId: "node/1001",
+    } as const;
+    assert.equal(
+      recommendationIdFor(args), recommendationIdFor(args),
+      "DV-37: a retried batch must not manufacture a second exposure for the same serve — a random id would",
+    );
+  });
+
+  it("R5. the id is opaque and leaks no identifier — a user id must not be readable out of it", async () => {
+    const id = recommendationIdFor({
+      userId: USER_ID, sessionId: "s1", servedAt: "2026-09-14T00:00:00.000Z",
+      surface: "discovery", position: 0, itemId: "node/1001",
+    });
+    assert.ok(!id.includes(USER_ID), "the viewer's id must not be recoverable from the recommendation id");
+    assert.ok(!id.includes("node/1001"), "nor the item id");
+    // base64/hex-safe: it goes into jsonb and may later become a URL segment.
+    assert.match(id, /^[A-Za-z0-9_-]+$/, "an opaque id must be transport-safe wherever it is later carried");
+  });
+
+  it("R6. reason codes on the row are the GROUNDED ones, and a serve with no ranker claims none", async () => {
+    const { client, captured } = makeClient({ flagRow: { enabled: true } });
+    await logDiscoveryServe(client as any, {
+      userId: USER_ID, servePoint: DiscoveryServePoint.CACHE_A_L1, items: ITEMS,
+    });
+    const rows = captured[0]?.rows ?? [];
+    for (const r of rows) {
+      assert.deepEqual(
+        r.features.reasonCodes, [],
+        "serve point 1 replays a cache and ran no ranker; inventing reason codes there would be a claim nothing backs",
+      );
+    }
+  });
+
+  it("R8. a caller's free-form context cannot overwrite the record — the denominator is not decoration", async () => {
+    const { client, captured } = makeClient({ flagRow: { enabled: true } });
+    await logDiscoveryServe(client as any, {
+      userId: USER_ID, servePoint: DiscoveryServePoint.COLD_FETCH_LEGACY_RANK, items: ITEMS,
+      // A caller that happens to use these names — or a malicious one — must not
+      // be able to decide what the exposure record says about itself.
+      context: { recommendationId: "forged", modelVersion: "v0-forged" } as any,
+    });
+    const row = (captured[0]?.rows ?? [])[0];
+    assert.notEqual(row.features.recommendationId, "forged", "04 §5: the id is derived from the serve, never taken from the caller");
+    assert.equal(row.features.modelVersion, DISCOVERY_MODEL_VERSION, "nor may the caller restate which model ranked the page");
+  });
+
+  it("R7. per-item reason codes are carried when the ranker DID supply them", async () => {
+    const { client, captured } = makeClient({ flagRow: { enabled: true } });
+    await logDiscoveryServe(client as any, {
+      userId: USER_ID, servePoint: DiscoveryServePoint.COLD_FETCH_LEGACY_RANK, items: ITEMS,
+      reasonCodesById: { "way/3003": ["nearby_now", "saved_similar"] },
+    });
+    const rows = captured[0]?.rows ?? [];
+    const third = rows.find((r: any) => r.item_id === "way/3003");
+    assert.deepEqual(third.features.reasonCodes, ["nearby_now", "saved_similar"], "the ranker's own codes reach the row");
+    const first = rows.find((r: any) => r.item_id === "node/1001");
+    assert.deepEqual(first.features.reasonCodes, [], "an item the ranker gave no codes for claims none");
+  });
+});

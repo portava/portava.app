@@ -127,6 +127,44 @@ if (run.status !== 0 && total === 0) {
   process.exit(2);
 }
 
+// ── A RUN THAT MEASURED ALMOST NOTHING IS NOT AN IMPROVEMENT ────────────────
+//
+// TypeScript stops after parsing when a program will not parse, and it does so
+// for the WHOLE PROGRAM — every semantic error in every other file silently
+// disappears. Measured on 2026-09-14 rather than reasoned about: one in-flight
+// file with unquoted-codepoint object keys collapsed the run to "27 diagnostics
+// across 1 files", and this script then reported all 116 baselined files as
+// IMPROVED. `--update` at that moment would have written 864 real ceilings down
+// to nothing, in a file whose own header says counts may only go DOWN — the
+// erasure would have looked exactly like the success it is meant to record, and
+// the next 864 regressions would have sailed through.
+//
+// THE TEST IS THE SHAPE OF THE RESULT, NOT THE ERROR CODE, and that distinction
+// was learned the hard way. The first version of this guard failed on any TS1xxx
+// code. `src/test/geofence.test.ts` carried a TS1117 — a duplicate object key,
+// which tsc reports AFTER a successful parse and alongside full semantic
+// checking — and it was one of the 864 baselined diagnostics all along. A code
+// taxonomy would have failed the build on a diagnostic the ratchet was
+// legitimately counting. So this asks the only question that actually matters:
+// did this run look at the same corpus the baseline did?
+if (existsSync(baselinePath)) {
+  let prior;
+  try { prior = JSON.parse(readFileSync(baselinePath, 'utf8')); } catch { prior = null; }
+  const priorFiles = prior && prior.files ? Object.keys(prior.files) : [];
+  const stillOnDisk = priorFiles.filter((f) => existsSync(join(pkgPath, f)));
+  if (stillOnDisk.length >= 8 && counts.size * 2 < stillOnDisk.length && total * 2 < (prior.total ?? 0)) {
+    console.error(
+      `check-test-typecheck: this run reported diagnostics in ${counts.size} file(s) against a ` +
+        `baseline covering ${stillOnDisk.length} that are still on disk, and ${total} total against ` +
+        `${prior.total}. A corpus does not improve that way all at once — the usual cause is a file ` +
+        'that will not PARSE, which makes TypeScript skip semantic checking for the entire program.\n\n' +
+        'Look for a syntax error first. This is exit 2 — the result could not be established — and ' +
+        'emphatically NOT a baseline that may be recorded with --update.',
+    );
+    process.exit(2);
+  }
+}
+
 const sorted = Object.fromEntries([...counts.entries()].sort(([a], [b]) => (a < b ? -1 : 1)));
 
 if (update) {

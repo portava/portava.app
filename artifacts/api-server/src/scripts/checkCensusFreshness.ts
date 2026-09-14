@@ -1349,6 +1349,12 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   // that this is "a worse lie than CANNOT BE CHECKED". That is a lane's stated
   // decision about its own document; the six above carry no such refusal.
   "census-map.md": [
+    // ADDED 2026-09-14 on the Map lane's request. `geoZoneSeed.test.ts` now
+    // carries M256's evidence — the first assertions in this repository that a
+    // cache HIT avoids the read, where eleven map suites had only ever used the
+    // `_clear*Cache()` hooks to DEFEAT the cache. It was unwatched, and adding
+    // its citation pushed census-map to exactly its coverage floor.
+    "artifacts/api-server/src/test/geoZoneSeed.test.ts",
     "artifacts/api-server/src/lib/mapProducers/",
     "artifacts/api-server/src/lib/mapObjects.ts",
     "artifacts/api-server/src/lib/mapProjectionTripContract.ts",
@@ -1852,6 +1858,14 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/2258_input_selection_history.sql",
   ],
   "census-discovery.md": [
+    // ADDED 2026-09-14, second widening this session as the Discovery lane works.
+    // Three consumers its rows are now evidenced by: Compass's feedback and
+    // outcome engines — which is where a served candidate's fate is recorded, so
+    // a change there can falsify a row about what Discovery learns — and the
+    // media-independent-sources suite.
+    "artifacts/api-server/src/compass/CompassFeedbackEngine.ts",
+    "artifacts/api-server/src/compass/CompassOutcomeEngine.ts",
+    "artifacts/api-server/src/test/mediaIndependentSources.test.ts",
     // WIDENED 2026-09-14. The Discovery lane's four new modules and the suites
     // its rows are evidenced by. A verdict whose evidence names a file nothing
     // watches has an unmonitored floor under it — and these four are NEW code

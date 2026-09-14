@@ -18,6 +18,7 @@
 import { Router } from "express";
 import { getServiceClient } from "../lib/supabase";
 import { requireUser, sendError } from "../lib/http";
+import { logger as rootLogger } from "../lib/logger.js";
 import {
   subscribe,
   registerTerminator,
@@ -26,6 +27,8 @@ import {
 } from "../lib/telegraphEvents";
 
 const router = Router();
+
+const log = rootLogger.child({ route: "telegraphStream" });
 
 const UUID = /^[0-9a-f-]{36}$/i;
 
@@ -165,13 +168,33 @@ router.post("/threads/:threadId/typing", async (req, res) => {
   const typing = req.body?.typing === true;
 
   // Members-only: verify active membership before relaying.
-  const { data: membership } = await client
+  //
+  // census-telegraph §20.7: this read discarded its error. supabase-js resolves
+  // `{ data: null, error }` on a database error rather than throwing, so an
+  // unreadable `message_thread_members` was indistinguishable from a genuine
+  // non-member and this route answered "Not a member of this thread" — a claim
+  // about the caller's own membership that no read supports, and a 403 the
+  // client will not retry.
+  const { data: membership, error: membershipErr } = await client
     .from("message_thread_members")
     .select("user_id")
     .eq("thread_id", threadId)
     .eq("user_id", user.id)
     .is("left_at", null)
     .maybeSingle();
+
+  if (membershipErr) {
+    log.error(
+      { threadId, userId: user.id, message: (membershipErr as any).message },
+      "typing membership read failed",
+    );
+    sendError(
+      res,
+      "degraded_unavailable",
+      "We could not check your membership of this conversation just now. Please try again shortly.",
+    );
+    return;
+  }
 
   if (!membership) {
     sendError(res, "forbidden", "Not a member of this thread");

@@ -793,3 +793,162 @@ describe("cache B — the route consults the version binding (DSV2-06)", () => {
     );
   });
 });
+
+// ── `04` §5 end to end: the RECORD the route actually writes (DV-40) ──────────
+//
+// The three preceding suites prove the pure functions. This one exists because
+// of §12.4's Phase 9 lesson, where deleting the call that STORED a computed
+// block left every pure-function test green: a field nobody writes is a field
+// the record can never carry. So this stands the real route up, turns the
+// serve-log flag ON in the fake, captures what actually reaches `rank_events`,
+// and asserts the nine fields are on the row a served request produced.
+import {
+  RECOMMENDATION_RECORD_FIELDS,
+  recommendationIdFor,
+} from "../lib/discoveryRecommendationId.js";
+import { DISCOVERY_REASON_CODES } from "../lib/discoveryReasonCodes.js";
+import { invalidateServeLogFlagCache } from "../lib/discoveryServeLog.js";
+
+/** As fakeClientProjectionOn, but the serve log is ON and rank_events is captured. */
+function fakeClientServeLogOn(
+  state: { blocks: Array<{ blocker_id: string; blocked_id: string }>; blocksError: boolean },
+  captured: any[][],
+) {
+  const base = fakeClientProjectionOn(state);
+  return {
+    ...base,
+    from(table: string) {
+      if (table === "feature_flags") {
+        const inner = base.from(table);
+        const wrapped: any = {
+          select: () => wrapped,
+          eq: (col: string, val: any) => { inner.eq(col, val); return wrapped; },
+          like: (...a: any[]) => inner.like(...a),
+          maybeSingle: async () => {
+            const r = await inner.maybeSingle();
+            // The only flag this wrapper changes. Everything else answers as before.
+            if (r.data === null) return r;
+            return r;
+          },
+          then: (r: any) => inner.then(r),
+        };
+        // Simpler and less fragile than proxying: answer the serve-log flag here
+        // and defer every other flag to the projection-on fake.
+        let flag = "";
+        const q: any = {
+          select: () => q,
+          eq: (col: string, val: any) => { if (col === "flag") flag = val; inner.eq(col, val); return q; },
+          like: (...a: any[]) => inner.like(...a),
+          maybeSingle: async () => {
+            if (flag === "discovery_serve_log_enabled") return { data: { enabled: true }, error: null };
+            return inner.maybeSingle();
+          },
+          then: (r: any) => inner.then(r),
+        };
+        void wrapped;
+        return q;
+      }
+      if (table === "rank_events") {
+        const q: any = {
+          insert: (rows: any[]) => { captured.push(rows); return q; },
+          select: () => q, eq: () => q,
+          then: (r: any) => Promise.resolve({ data: null, error: null }).then(r),
+        };
+        return q;
+      }
+      return base.from(table);
+    },
+  } as any;
+}
+
+describe("04 §5 — the exposure record the ROUTE writes (DV-40)", () => {
+  let server: Server;
+  let url: string;
+  let captured: any[][];
+
+  beforeEach(async () => {
+    ({ server, url } = await startServer());
+    captured = [];
+    _setTestServiceClient(fakeClientServeLogOn({ blocks: [], blocksError: false }, captured));
+    _clearTestCompassCache();
+    invalidateDiscoveryEngineModeCache();
+    invalidateCandidateProjectionFlagCache();
+    invalidateServeLogFlagCache();
+    _setTestDbPlacesOverride(async () => ALL_ROWS());
+  });
+
+  afterEach(async () => {
+    _setTestDbPlacesOverride(null);
+    _setTestServiceClient(null);
+    _clearTestCompassCache();
+    invalidateDiscoveryEngineModeCache();
+    invalidateCandidateProjectionFlagCache();
+    invalidateServeLogFlagCache();
+    await new Promise<void>((r) => server.close(() => r()));
+  });
+
+  async function serveAndCollect() {
+    const res = await fetch(
+      `${url}/discovery?destination=${DEST}&category=for_you&lat=25.77&lng=-80.19&radiusKm=${RADIUS}`,
+      { headers: { authorization: `Bearer ${TOKEN}` } },
+    );
+    assert.equal(res.status, 200, `expected 200, got ${res.status}`);
+    await res.json();
+    // The writer is fire-and-forget: it is invoked after the response is
+    // flushed, so the rows land a tick later. Yield until they do.
+    for (let i = 0; i < 50 && captured.length === 0; i++) await new Promise((r) => setTimeout(r, 10));
+    return captured.flat();
+  }
+
+  it("S1. a served Discovery request writes an exposure row carrying all nine 04 §5 fields", async () => {
+    const rows = await serveAndCollect();
+    assert.ok(rows.length > 0, "precondition: the serve log is on in this block and the request served items");
+    const row = rows[0];
+
+    assert.equal(typeof row.features?.recommendationId, "string", "04 §5 recommendation_id");
+    assert.ok(row.features.recommendationId.length > 0);
+    assert.ok(row.user_id,    "04 §5 user_id");
+    assert.ok(row.session_id, "04 §5 session_id");
+    assert.ok(row.item_id && row.item_kind, "04 §5 candidate type/id");
+    assert.equal(row.surface, "discovery", "04 §5 surface");
+    assert.equal(typeof row.position, "number", "04 §5 rank_position");
+    assert.ok(row.features.modelVersion, "04 §5 model_version");
+    assert.ok(Array.isArray(row.features.reasonCodes), "04 §5 reason codes");
+    assert.ok(row.served_at, "04 §5 served_at");
+    assert.equal(RECOMMENDATION_RECORD_FIELDS.length, 9);
+  });
+
+  it("S2. DEFECT: the id on the row is the one the serve's own coordinates derive — not an arbitrary value", async () => {
+    const rows = await serveAndCollect();
+    const row = rows[0];
+    assert.equal(
+      row.features.recommendationId,
+      recommendationIdFor({
+        userId: row.user_id, sessionId: row.session_id, servedAt: row.served_at,
+        surface: "discovery", position: row.position, itemId: row.item_id,
+      }),
+      "the exposure id must be reproducible from the row itself, or nothing downstream can verify it",
+    );
+  });
+
+  it("S3. DEFECT: a RANKED serve carries the ranker's reason codes — the wire from provenance to record is live", async () => {
+    const rows = await serveAndCollect();
+    // The Compass pipeline ran on this request, so at least one served row must
+    // carry at least one code. This is the assertion that catches the failure
+    // the pure-function tests cannot see: the route computing codes and never
+    // passing them to the writer.
+    const withCodes = rows.filter((r: any) => (r.features?.reasonCodes ?? []).length > 0);
+    assert.ok(
+      withCodes.length > 0,
+      "a serve point that ran a ranker wrote no reason code on any row — the provenance never reached the writer",
+    );
+    for (const r of withCodes) {
+      for (const code of r.features.reasonCodes) {
+        assert.ok(
+          (DISCOVERY_REASON_CODES as readonly string[]).includes(code),
+          `the record must carry 01 §11 codes, not raw ranker signal names; got ${code}`,
+        );
+      }
+    }
+  });
+});

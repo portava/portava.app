@@ -58,6 +58,7 @@ import {
 import type { CoordinationState } from "../services/telegraph/vocabulary.js";
 import { parseKindEnvelope } from "../services/telegraph/messageKinds.js";
 import { projectSafetyMode, type SafetyInputRow } from "../services/telegraph/safetyMode.js";
+import { projectCatchUp, type CatchUpInputRow } from "../services/telegraph/catchUp.js";
 import {
   SEMANTIC_LAYERS,
   partitionViolations,
@@ -85,7 +86,7 @@ const PostSchema = z.object({
 });
 
 type MemberGate =
-  | { ok: true; visibleFrom: string | null }
+  | { ok: true; visibleFrom: string | null; lastReadAt: string | null }
   | { ok: false; code: "forbidden" | "db_error"; message: string };
 
 async function memberWindow(
@@ -96,7 +97,7 @@ async function memberWindow(
   const boundOn = await historyBoundEnabled(client);
   const { data, error } = await client
     .from("message_thread_members")
-    .select(membershipSelect("user_id, left_at", boundOn))
+    .select(membershipSelect("user_id, left_at, last_read_at", boundOn))
     .eq("thread_id", threadId)
     .eq("user_id", userId)
     .maybeSingle();
@@ -104,7 +105,11 @@ async function memberWindow(
   if (!data || (data as any).left_at !== null) {
     return { ok: false, code: "forbidden", message: "Not an active member of this thread" };
   }
-  return { ok: true, visibleFrom: visibleFromOf(data as any, boundOn) };
+  return {
+    ok: true,
+    visibleFrom: visibleFromOf(data as any, boundOn),
+    lastReadAt: ((data as any).last_read_at ?? null) as string | null,
+  };
 }
 
 /**
@@ -785,6 +790,90 @@ router.get(
       viewerId: projection.viewerId,
       scanned: rows.length,
       truncated: rows.length >= COORDINATION_SCAN_LIMIT,
+    });
+  }),
+);
+
+// ── GET /api/threads/:threadId/catch-up ──────────────────────────────────────
+
+/** How many recent rows a catch-up reads. */
+export const CATCH_UP_SCAN_LIMIT = 400;
+
+/**
+ * §20 — "what did I miss", for one viewer of one conversation.
+ *
+ * census-telegraph T267 is §20's Compass row: "Authorized thread context,
+ * meeting/recommendation tools, catch-up." The thread context and the tools
+ * exist (T245-T251); the catch-up did not, and this is its server half.
+ *
+ * ── WHY IT IS NOT A SUMMARY ─────────────────────────────────────────────────
+ * §18.3 forbids the obvious implementation in so many words — Compass "cannot
+ * … silently create canonical plans from uncertain prose." Every item in the
+ * response is a COUNT or a TYPED object some route already validated on the
+ * way in, and the response says so (`inferredFromProse: false`) rather than
+ * this file promising it in a comment.
+ *
+ * ── THE SAME BOUNDS EVERY OTHER READ HERE APPLIES ───────────────────────────
+ * Membership-gated, §14.3-windowed, tombstones excluded, and an unreadable
+ * `messages` answers 500. "Nothing happened while you were away" is the single
+ * worst plausible-empty-state this surface could produce, so it is never
+ * produced by a failed read.
+ */
+router.get(
+  "/threads/:threadId/catch-up",
+  asyncHandler(async (req: any, res: any) => {
+    const auth = await requireUser(req, res);
+    if (!auth) return;
+    const { client, user } = auth;
+    const { threadId } = req.params;
+
+    if (!UUID.test(threadId)) {
+      sendError(res, "invalid_payload", "Invalid threadId");
+      return;
+    }
+
+    const gate = await memberWindow(client, threadId, user.id);
+    if (!gate.ok) {
+      sendError(res, gate.code, gate.message);
+      return;
+    }
+
+    let q = client
+      .from("messages")
+      .select(COORD_COLUMNS)
+      .eq("thread_id", threadId)
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false })
+      .limit(CATCH_UP_SCAN_LIMIT);
+    if (gate.visibleFrom) q = q.gte("created_at", gate.visibleFrom);
+
+    const { data, error } = await q;
+    if (error) {
+      log.error({ threadId, message: error.message }, "catch-up read failed");
+      sendError(res, "db_error", "Could not read this conversation");
+      return;
+    }
+
+    const rows = ((data as any[]) ?? []).filter((r) => withinWindow(r.created_at, gate.visibleFrom));
+
+    const projection = projectCatchUp({
+      threadId,
+      viewerId: user.id,
+      rows: rows as CatchUpInputRow[],
+      lastReadAt: gate.lastReadAt,
+      windowFrom: gate.visibleFrom,
+      nowMs: Date.now(),
+    });
+
+    res.status(200).json({
+      ...projection,
+      /**
+       * Every bound this answer was computed under, stated. A catch-up that
+       * scanned the cap and stopped must not read as "that is everything".
+       */
+      scanned: rows.length,
+      truncated: rows.length >= CATCH_UP_SCAN_LIMIT,
+      windowFrom: gate.visibleFrom,
     });
   }),
 );

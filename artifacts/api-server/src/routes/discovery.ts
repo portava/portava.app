@@ -80,6 +80,10 @@ import {
   DISCOVERY_FEATURE_VERSION,
   type DiscoveryRankProvenance,
 } from "../lib/discoveryRankProvenance.js";
+// `04` §5's eighth field. The provenance carries the ranker's own signal keys;
+// the exposure record wants `01` §11's vocabulary, and this is the only bridge
+// between them — see lib/discoveryReasonCodes.
+import { reasonCodesByIdFromProvenance } from "../lib/discoveryReasonCodes.js";
 // Sensing §8 live ranking (census-sensing S68/S66/S70/S72). Re-orders the HEAD
 // WINDOW of an already-ranked feed on the live claims lib/liveClaimRead serves,
 // behind discovery_live_rank_enabled (2850, seeded OFF): with the flag off
@@ -2066,6 +2070,11 @@ router.get("/discovery", async (req, res) => {
                   destination, category, cacheLevel: "compass_candidate_hit",
                   engineMode: engineMode.mode, modeReason: engineMode.reason,
                 },
+                // The stored provenance is the SAME record the fresh rank wrote
+                // (DV-04), so a replayed page reports the reasons the ranker
+                // actually produced rather than none. `rankedInRequest` stays
+                // false: the codes came from a ranker, not from this request.
+                reasonCodesById: reasonCodesByIdFromProvenance(cCacheHit.provenanceById),
               });
               return;
             }
@@ -2151,6 +2160,9 @@ router.get("/discovery", async (req, res) => {
                 destination, category, cacheLevel: "compass_fresh_rank",
                 engineMode: engineMode.mode, modeReason: engineMode.reason,
               },
+              // `04` §5 reason codes. The Compass pipeline ran in THIS request,
+              // so its grounded factors are the honest source for them.
+              reasonCodesById: reasonCodesByIdFromProvenance(cProvenanceById),
             });
             return;
           }
