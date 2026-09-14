@@ -75,6 +75,7 @@ import type { TruthMetadata } from "./experienceTruth.js";
 import { envelopeIsObservational, truthOfEnvelope, truthOfEnvelopes } from "./liveEnvelopeTruth.js";
 import type { LiveClaimEnvelope } from "./liveClaimRead.js";
 import { isEmergingInfluenceEligible, isLiveConstraintEligible } from "../compass/CompassLiveConstraints.js";
+import { compassPolicyContract, type CompassPolicy } from "./compassPolicy.js";
 
 /** §10's seven decisions, verbatim. */
 export const COMPASS_DECISIONS = ["GO_NOW", "GO_SOON", "WAIT", "STAY", "SWITCH", "SKIP", "RETURN"] as const;
@@ -143,6 +144,11 @@ export interface DecisionInput {
   queueToleranceMinutes?: number | null;
   /** The claim family's TTL, for the horizon; null ⇒ validUntil alone. */
   ttlSecondsFor?: (claimType: string) => number | null;
+  /**
+   * CCL-15 — the configurable policy contract. Omitted, it is resolved from
+   * configuration at call time, which with nothing set is the shipped default.
+   */
+  policy?: CompassPolicy;
 }
 
 export interface PeakInterception {
@@ -342,7 +348,10 @@ export function decideCompass(input: DecisionInput, nowMs: number): CompassDecis
   const candidateValue = experienceValue(candidate, intent);
   const currentValue = current ? currentExperienceValue(current, intent, input.current?.sinceMinutes ?? null) : null;
   const interception = interceptPeak(input.etaMinutes, candidate.horizonAt, nowMs);
-  const switching: SwitchingCostReport = { applied: false, cost: SWITCHING_COST, currentValue, candidateValue };
+  // CCL-15 — the owner's number, not the module's. With nothing configured this
+  // resolves to SWITCHING_COST, which is the same constant by definition.
+  const policy = input.policy ?? compassPolicyContract();
+  const switching: SwitchingCostReport = { applied: false, cost: policy.switchingCost, currentValue, candidateValue };
   const reasons: DecisionReason[] = [];
 
   const finish = (decision: CompassDecision): CompassDecisionResult => ({
@@ -388,7 +397,7 @@ export function decideCompass(input: DecisionInput, nowMs: number): CompassDecis
   if (current) {
     if (currentValue === null || candidateValue === null) { reasons.push("current_value_unknown"); return finish("STAY"); }
     switching.applied = true;
-    if (candidateValue - currentValue > SWITCHING_COST) { reasons.push("better_by_more_than_switching_cost"); return finish("SWITCH"); }
+    if (candidateValue - currentValue > policy.switchingCost) { reasons.push("better_by_more_than_switching_cost"); return finish("SWITCH"); }
     reasons.push("switching_cost_not_exceeded"); return finish("STAY");
   }
   // 9. Go.

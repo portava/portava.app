@@ -61,7 +61,9 @@ export type GroundingViolationKind =
   /** A wait/queue figure when no tool returned a wait datum. */
   | "wait_time_without_source"
   /** "everyone is dancing" — a present-progressive crowd assertion with no crowd datum. */
-  | "crowd_claim_without_observation";
+  | "crowd_claim_without_observation"
+  /** "it's a ten-minute walk" when no tool returned a travel term for any route. */
+  | "travel_duration_without_route";
 
 export interface GroundingViolation {
   kind: GroundingViolationKind;
@@ -82,15 +84,44 @@ export interface GroundingEvidence {
   hasWaitDatum: boolean;
   /** Some tool result carried a crowd / occupancy / busyness reading. */
   hasCrowdDatum: boolean;
+  /** Some tool result carried a MEASURED travel term for a route or hop. */
+  hasRouteDatum: boolean;
   /** Every distinct `sourceClass` seen, sorted — for the log line and the note. */
   sourceClasses: string[];
+  /**
+   * CCL-12 — the same four facts, attached to the SUBJECT each datum was read
+   * under rather than pooled across the turn. A sentence that names a subject
+   * is checked against that subject's own band; the turn-level booleans above
+   * are the fallback for a sentence that names none.
+   */
+  subjects: readonly SubjectEvidence[];
 }
+
+/** What one named subject's own tool data carried. */
+export interface SubjectEvidence {
+  /** The subject's id where the tool result gave one; null when it gave only a name. */
+  subjectId: string | null;
+  /** The name as the model would write it — UGC wrapper removed. */
+  name: string;
+  hasVerifiedLive: boolean;
+  hasWaitDatum: boolean;
+  hasCrowdDatum: boolean;
+  hasRouteDatum: boolean;
+}
+
+/** The four bands a claim can be checked against, for a subject or for the turn. */
+type EvidenceBand = Pick<
+  GroundingEvidence,
+  "hasVerifiedLive" | "hasWaitDatum" | "hasCrowdDatum" | "hasRouteDatum"
+>;
 
 export const EMPTY_GROUNDING_EVIDENCE: GroundingEvidence = Object.freeze({
   hasVerifiedLive: false,
   hasWaitDatum: false,
   hasCrowdDatum: false,
+  hasRouteDatum: false,
   sourceClasses: Object.freeze([]) as unknown as string[],
+  subjects: Object.freeze([]) as readonly SubjectEvidence[],
 });
 
 /**
@@ -111,6 +142,39 @@ const CROWD_KEYS = new Set([
   "packedlevel", "packed_level", "popularity_now", "popularitynow",
 ]);
 
+/**
+ * Keys that ARE a MEASURED travel term. `durationMinutes` is deliberately NOT
+ * here: the tool set uses it for a free window and for a live session's length,
+ * and a dwell time is not a route. CPV2-03's "an unmeasured route remains
+ * unknown, not zero" is carried by the same null rule the wait keys use — a hop
+ * that reports `boundMinutes: null` with an `unknownReason` says it could not
+ * measure the term, and counting that as evidence is the fail-open this trigger
+ * exists to prevent.
+ */
+const ROUTE_KEYS = new Set([
+  "boundminutes", "bound_minutes", "expectedminutes", "expected_minutes",
+  "etaminutes", "eta_minutes", "travelminutes", "travel_minutes",
+  "traveltimeminutes", "travel_time_minutes", "routeminutes", "route_minutes",
+  "walkminutes", "walk_minutes", "walkingminutes", "walking_minutes",
+  "drivingminutes", "driving_minutes", "transitminutes", "transit_minutes",
+]);
+
+/**
+ * Keys whose string value NAMES a subject. A tool result that carries one is
+ * the node every datum beneath it is attributed to (CCL-12).
+ */
+const SUBJECT_NAME_KEYS = new Set(["name", "title", "placename", "place_name", "venuename", "venue_name"]);
+/** Keys whose string value IDENTIFIES the subject a name belongs to. */
+const SUBJECT_ID_KEYS = new Set(["id", "placeid", "place_id", "subjectid", "subject_id", "venueid", "venue_id"]);
+
+/** A name short enough to collide with ordinary prose is not usable for attribution. */
+const MIN_SUBJECT_NAME_LENGTH = 3;
+
+/** Remove the UGC envelope a tool wraps user text in, so the name matches the prose. */
+function unwrapUgc(text: string): string {
+  return text.replace(/<\/?portava:ugc>/gi, "").trim();
+}
+
 /** Recursion bounds — a tool result is attacker-adjacent data, not a config file. */
 const MAX_DEPTH = 10;
 const MAX_NODES = 50_000;
@@ -127,38 +191,79 @@ export function readGroundingEvidence(toolResults: readonly unknown[]): Groundin
   const sourceClasses = new Set<string>();
   let hasWaitDatum = false;
   let hasCrowdDatum = false;
+  let hasRouteDatum = false;
   let nodes = 0;
 
-  const visit = (node: unknown, depth: number): void => {
+  /**
+   * CCL-12 — one accumulator per subject, keyed on its id where the tool gave
+   * one and on its name otherwise, so the same place returned twice in a turn
+   * accumulates rather than splitting into two half-evidenced subjects.
+   */
+  const subjects = new Map<string, { subjectId: string | null; name: string } & EvidenceBand>();
+
+  /** A datum counts only when it carries a reading; see the WAIT_KEYS note. */
+  const present = (value: unknown): boolean => value !== null && value !== undefined && value !== false;
+
+  const visit = (node: unknown, depth: number, subjectKey: string | null): void => {
     if (node === null || node === undefined) return;
     if (depth > MAX_DEPTH) return;
     if (++nodes > MAX_NODES) return;
     if (Array.isArray(node)) {
-      for (const item of node) visit(item, depth + 1);
+      for (const item of node) visit(item, depth + 1, subjectKey);
       return;
     }
     if (typeof node !== "object") return;
-    for (const [rawKey, value] of Object.entries(node as Record<string, unknown>)) {
+    const entries = Object.entries(node as Record<string, unknown>);
+
+    // Does THIS node name a subject? If so it, and everything under it, is
+    // attributed to that subject rather than to the enclosing one.
+    let name: string | null = null;
+    let id: string | null = null;
+    for (const [rawKey, value] of entries) {
+      const key = rawKey.toLowerCase();
+      if (name === null && SUBJECT_NAME_KEYS.has(key) && typeof value === "string") {
+        const unwrapped = unwrapUgc(value);
+        if (unwrapped.length >= MIN_SUBJECT_NAME_LENGTH) name = unwrapped;
+      }
+      if (id === null && SUBJECT_ID_KEYS.has(key) && typeof value === "string" && value.length > 0) id = value;
+    }
+    let here = subjectKey;
+    if (name !== null) {
+      here = id ?? `name:${name.toLowerCase()}`;
+      if (!subjects.has(here)) {
+        subjects.set(here, {
+          subjectId: id, name,
+          hasVerifiedLive: false, hasWaitDatum: false, hasCrowdDatum: false, hasRouteDatum: false,
+        });
+      }
+    }
+    const bucket = here === null ? null : subjects.get(here) ?? null;
+
+    for (const [rawKey, value] of entries) {
       const key = rawKey.toLowerCase();
       if (key === "sourceclass" && typeof value === "string" && value) {
         sourceClasses.add(value);
+        if (bucket && value === "verified_live") bucket.hasVerifiedLive = true;
       }
       // A datum counts only when it actually carries a reading. `waitMinutes:
       // null` is a tool saying it could not measure one, and reading that as
       // evidence is the fail-open the CONFIDENCE RULE exists to prevent.
-      if (WAIT_KEYS.has(key) && value !== null && value !== undefined && value !== false) hasWaitDatum = true;
-      if (CROWD_KEYS.has(key) && value !== null && value !== undefined && value !== false) hasCrowdDatum = true;
-      visit(value, depth + 1);
+      if (WAIT_KEYS.has(key) && present(value)) { hasWaitDatum = true; if (bucket) bucket.hasWaitDatum = true; }
+      if (CROWD_KEYS.has(key) && present(value)) { hasCrowdDatum = true; if (bucket) bucket.hasCrowdDatum = true; }
+      if (ROUTE_KEYS.has(key) && present(value)) { hasRouteDatum = true; if (bucket) bucket.hasRouteDatum = true; }
+      visit(value, depth + 1, here);
     }
   };
 
-  for (const r of toolResults) visit(r, 0);
+  for (const r of toolResults) visit(r, 0, null);
 
   return {
     hasVerifiedLive: sourceClasses.has("verified_live"),
     hasWaitDatum,
     hasCrowdDatum,
+    hasRouteDatum,
     sourceClasses: [...sourceClasses].sort(),
+    subjects: [...subjects.values()].map((v) => ({ ...v })),
   };
 }
 
@@ -181,6 +286,18 @@ const LIVE_STATE =
 const WAIT_CLAIM =
   /\b(?:wait|queue|line)\b[^.!?]{0,40}?(\d{1,3})\s*(?:minutes?|mins?|m)\b|(\d{1,3})\s*(?:minutes?|mins?)\b[^.!?]{0,20}?\b(?:wait|queue|line)\b/i;
 
+/**
+ * A duration figure, in digits or in the small words a model writes. Paired
+ * with TRAVEL_MODE below, never read on its own: a number of minutes is a dwell
+ * time as often as it is a journey.
+ */
+const DURATION_FIGURE =
+  /\b(?:\d{1,3}|a (?:few|couple of)|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|forty|forty[- ]five|sixty|ninety)[\s-]*(?:minutes?|mins?|hours?|hrs?)\b/i;
+
+/** The words that make a duration a TRAVEL duration rather than a dwell time. */
+const TRAVEL_MODE =
+  /\b(?:walk|walks|walking|on foot|stroll|drive|drives|driving|ride|rides|riding|cycle|cycling|bike|biking|away|door[- ]to[- ]door|commute|transit|taxi|uber|cab|metro|subway|tube|tram|bus|train|ferry)\b/i;
+
 /** The spec's own example: "everyone is dancing". */
 const CROWD_PROGRESSIVE =
   /\b(?:everyone|everybody|the whole place|the place|the crowd|the room|the bar|the floor)\s+(?:is|are|'s)\s+\w+ing\b/i;
@@ -202,6 +319,8 @@ const NOTE_FOR: Record<GroundingViolationKind, string> = {
     "no wait or queue reading was returned by any tool in this turn, so any wait figure above is not a measurement.",
   crowd_claim_without_observation:
     "no crowd reading was returned by any tool in this turn, so any statement above about how busy a place is right now is not a measurement.",
+  travel_duration_without_route:
+    "no route or travel time was returned by any tool in this turn, so any journey time above is an estimate rather than a measured route.",
 };
 
 export interface GroundingResult {
@@ -214,21 +333,71 @@ export interface GroundingResult {
   violations: GroundingViolation[];
 }
 
+/** Escape a subject name for use inside a name-matching expression. */
+function escapeForRegex(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Does this sentence name this subject? Whole-phrase, case-insensitive. */
+function sentenceNames(sentence: string, name: string): boolean {
+  return new RegExp(`(?<![\\p{L}\\p{N}])${escapeForRegex(name)}(?![\\p{L}\\p{N}])`, "iu").test(sentence);
+}
+
+/**
+ * CCL-12 — the evidence band one sentence may be checked against.
+ *
+ * The clause is "attach evidence to the particular claim it supports; do not
+ * attach a general valid citation to unsupported generated prose". The turn's
+ * pooled booleans ARE that general citation: a `verified_live` datum about
+ * place A licensed an unhedged live sentence about place B, because nothing
+ * was bound to a subject. So: when a sentence names subjects the turn returned
+ * data for, it is checked against THOSE subjects — and against all of them,
+ * since a claim covering two places is licensed only when both carry the datum.
+ * A sentence naming no returned subject has nothing to attach to and keeps the
+ * turn-level band, which is the behaviour every existing case pins.
+ */
+function bandForSentence(sentence: string, evidence: GroundingEvidence): EvidenceBand {
+  const named = evidence.subjects.filter((sub) => sentenceNames(sentence, sub.name));
+  if (named.length === 0) {
+    return {
+      hasVerifiedLive: evidence.hasVerifiedLive,
+      hasWaitDatum: evidence.hasWaitDatum,
+      hasCrowdDatum: evidence.hasCrowdDatum,
+      hasRouteDatum: evidence.hasRouteDatum,
+    };
+  }
+  return {
+    hasVerifiedLive: named.every((sub) => sub.hasVerifiedLive),
+    hasWaitDatum: named.every((sub) => sub.hasWaitDatum),
+    hasCrowdDatum: named.every((sub) => sub.hasCrowdDatum),
+    // A route term is about a JOURNEY, not about a place, so a hop the turn
+    // returned licenses the sentence whichever endpoint it names.
+    hasRouteDatum: evidence.hasRouteDatum,
+  };
+}
+
 /**
  * Sensing `:148` — read the prose back against the confidence band of its
  * inputs, and publish nothing that over-claims without saying so.
  */
 export function enforceCompassGroundingEnvelope(
   answer: string,
-  evidence: GroundingEvidence,
+  turnEvidence: GroundingEvidence,
 ): GroundingResult {
   const violations: GroundingViolation[] = [];
-  const availableBand = evidence.sourceClasses.length > 0
-    ? evidence.sourceClasses.join(", ")
+  const availableBand = turnEvidence.sourceClasses.length > 0
+    ? turnEvidence.sourceClasses.join(", ")
     : "no source class in any tool result";
 
   for (const s of sentencesOf(answer)) {
     if (HEDGE.test(s)) continue;
+
+    // CCL-12 — `evidence` is the band THIS SENTENCE may be checked against,
+    // not the turn's pooled one. A sentence that names subjects is checked
+    // against those subjects' own data; naming none falls back to the turn.
+    // Naming several requires EVERY one of them to carry the datum, because
+    // the claim covers all of them.
+    const evidence = bandForSentence(s, turnEvidence);
 
     if (!evidence.hasVerifiedLive && NOW_MARKER.test(s) && LIVE_STATE.test(s)) {
       violations.push({
@@ -252,6 +421,15 @@ export function enforceCompassGroundingEnvelope(
         available: "no crowd datum",
       });
     }
+    // CCL-11 — the fifth of the five classes the spec names. A journey time is
+    // a measurement only when some tool returned a travel term for a route.
+    if (!evidence.hasRouteDatum && DURATION_FIGURE.test(s) && TRAVEL_MODE.test(s)) {
+      violations.push({
+        kind: "travel_duration_without_route",
+        stated: s.slice(0, 200),
+        available: "no route or travel-time datum",
+      });
+    }
   }
 
   if (violations.length === 0) return { ok: true, text: answer, correction: null, violations };
@@ -262,6 +440,7 @@ export function enforceCompassGroundingEnvelope(
     "live_claim_without_verified_source",
     "wait_time_without_source",
     "crowd_claim_without_observation",
+    "travel_duration_without_route",
   ];
   const seen = new Set(violations.map((v) => v.kind));
   const parts = kinds.filter((k) => seen.has(k)).map((k) => NOTE_FOR[k]);

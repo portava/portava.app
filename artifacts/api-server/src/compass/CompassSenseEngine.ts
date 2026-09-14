@@ -47,6 +47,7 @@ import { NotificationService } from "../services/notifications/NotificationServi
 import { NotificationRouter } from "../services/notifications/NotificationRouter.js";
 import { fetchUserTimezone, localHourFor, nowUtcInstant } from "../lib/localTime.js";
 import { resolveCurrentTrip } from "./CompassCurrentTrip.js";
+import { compassPolicyContract, type CompassPolicy } from "../lib/compassPolicy.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -68,8 +69,28 @@ export const AWARE_CATEGORIES: ReadonlySet<SenseCategory> = new Set([
   "weather",
 ]);
 
+/**
+ * The shipped defaults, kept as literals because `census-compass.md` cites this
+ * exact text as evidence for CCL-15. They are the SAME numbers the policy
+ * contract defaults to, and a drift between the two is caught by a test rather
+ * than prevented by a shared constant — `compassCensusClosure.test.ts` G7
+ * asserts the equality, so a number changed in one place and not the other goes
+ * red instead of shipping two truths.
+ */
 export const AWARE_DAILY_CAP = 3;
 export const ACTIVE_DAILY_CAP = 6;
+
+/**
+ * The cap this presence level actually applies, resolved from configuration at
+ * call time. `passive` never reaches here — it returns before any cap is read —
+ * so the two levels that can deliver are the two this answers for.
+ */
+export function senseDailyCap(
+  level: PresenceLevel,
+  policy: CompassPolicy = compassPolicyContract(),
+): number {
+  return level === "active" ? policy.activeDailyCap : policy.awareDailyCap;
+}
 export const DEDUPE_WINDOW_MS = 24 * 60 * 60 * 1_000;
 
 export interface SenseSettings {
@@ -601,7 +622,7 @@ export async function runSense(
   const suppressed: SuppressedNudge[] = [];
 
   const quiet = await loadQuietWindow(sc, userId);
-  const cap = settings.presenceLevel === "active" ? ACTIVE_DAILY_CAP : AWARE_DAILY_CAP;
+  const cap = senseDailyCap(settings.presenceLevel);
   let deliveredToday = await countDeliveredToday(sc, userId, nowMs);
 
   const notifSvc = new NotificationService(sc);

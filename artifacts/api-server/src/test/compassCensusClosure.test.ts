@@ -60,6 +60,15 @@ import {
   genericInterestWeight,
   explicitIntentBoost,
 } from "../services/passport/PassportConsumerProjections.js";
+import {
+  EMPTY_GROUNDING_EVIDENCE,
+  enforceCompassGroundingEnvelope,
+  readGroundingEvidence,
+} from "../compass/CompassGroundingEnvelope.js";
+import { COMPASS_POLICY_DEFAULTS, compassPolicyContract, type CompassPolicy } from "../lib/compassPolicy.js";
+import { SWITCHING_COST, decideCompass } from "../lib/compassDecision.js";
+import type { LiveClaimEnvelope } from "../lib/liveClaimRead.js";
+import { ACTIVE_DAILY_CAP, AWARE_DAILY_CAP, senseDailyCap } from "../compass/CompassSenseEngine.js";
 import { readFileSync } from "node:fs";
 import {
   ALGORITHM_VERSION_KEY,
@@ -521,5 +530,256 @@ describe("D. CT-13 — automated suggestions are explainable from stored inputs 
     assert.match(why, /algorithmVersion: snapshot\.algorithmVersion \?\? null/);
     assert.ok(!/algorithmVersion: COMPASS_RANKING_ALGORITHM_VERSION/.test(why),
       "the answer must not substitute the current constant for the stored one");
+  });
+});
+
+/* ── E. CCL-11 — travel duration is the fifth of five, and it had no trigger ── */
+
+describe("E. CCL-11 — an unmeasured travel duration is not published as a measurement", () => {
+  it("E1: 'it's a ten-minute walk' with NO route datum in the turn is corrected", () => {
+    const r = enforceCompassGroundingEnvelope(
+      "Head to Club Nine — it's a ten-minute walk from where you are.",
+      EMPTY_GROUNDING_EVIDENCE,
+    );
+    assert.equal(r.ok, false);
+    assert.ok(r.violations.some((v) => v.kind === "travel_duration_without_route"),
+      "the fifth of CCL-11's five fabrication classes must have a trigger");
+    assert.match(r.text, /Grounding note:/);
+  });
+
+  it("E2: the SAME sentence is published untouched when a tool returned a travel term", () => {
+    const ev = readGroundingEvidence([
+      { chain: { hops: [{ boundMinutes: 9, expectedMinutes: 11, unknownReason: null }] } },
+    ]);
+    assert.equal(ev.hasRouteDatum, true);
+    const r = enforceCompassGroundingEnvelope(
+      "Head to Club Nine — it's a ten-minute walk from where you are.",
+      ev,
+    );
+    assert.equal(r.ok, true);
+    assert.equal(r.correction, null);
+  });
+
+  it("E3: an UNMEASURED hop is not a route datum — unknown stays unknown, not zero (CPV2-03)", () => {
+    const ev = readGroundingEvidence([
+      { chain: { hops: [{ boundMinutes: null, expectedMinutes: null, unknownReason: "no_coordinates" }] } },
+    ]);
+    assert.equal(ev.hasRouteDatum, false,
+      "a hop that says it could not be measured must not license a duration claim");
+  });
+
+  it("E4: a NON-travel duration is not a travel claim — the trigger needs a mode word", () => {
+    const r = enforceCompassGroundingEnvelope(
+      "The tasting menu runs about 90 minutes, so book early.",
+      EMPTY_GROUNDING_EVIDENCE,
+    );
+    assert.equal(r.ok, true, "a dwell time is not a travel duration and must not be flagged");
+  });
+
+  it("E5: a hedged travel duration is never flagged, as with every other trigger", () => {
+    const r = enforceCompassGroundingEnvelope(
+      "It is probably a ten-minute walk, but I could not check a route.",
+      EMPTY_GROUNDING_EVIDENCE,
+    );
+    assert.equal(r.ok, true);
+  });
+
+  it("E7: a DWELL time is not a route term — `durationMinutes` must not license a journey claim", () => {
+    // Found by mutation M13, which added `durationminutes` to ROUTE_KEYS and
+    // SURVIVED: the module header already said a dwell time is not a route and
+    // nothing asserted it. The tool set spends `durationMinutes` on a trip's
+    // free windows and on a Live session's length, so admitting it would let a
+    // turn that measured no route at all publish "it's a ten-minute walk".
+    const ev = readGroundingEvidence([
+      { plan: { freeWindows: [{ id: "w1", durationMinutes: 180, confidence: "high" }] } },
+      { session: { durationMinutes: 42 } },
+    ]);
+    assert.equal(ev.hasRouteDatum, false);
+    assert.equal(
+      enforceCompassGroundingEnvelope("Club Nine is a ten-minute walk away.", ev).ok,
+      false,
+      "a free window's length is not a travel term",
+    );
+  });
+
+  it("E6: the wait trigger and the travel trigger are distinct — a queue figure is not a route claim", () => {
+    const r = enforceCompassGroundingEnvelope("The queue is about 20 minutes.", EMPTY_GROUNDING_EVIDENCE);
+    assert.deepEqual(r.violations.map((v) => v.kind), ["wait_time_without_source"]);
+  });
+});
+
+/* ── F. CCL-12 — evidence is attached to the claim it supports ─────────────── */
+
+describe("F. CCL-12 — a datum about place A does not license a live claim about place B", () => {
+  const TURN = [
+    {
+      places: [
+        { id: "p1", name: "Bar One", confidence: { sourceClass: "verified_live" }, crowdLevel: "packed" },
+        { id: "p2", name: "Club Nine", confidence: { sourceClass: "historical" } },
+      ],
+    },
+  ];
+
+  it("F1: the evidence is read PER SUBJECT, not only as four turn-level booleans", () => {
+    const ev = readGroundingEvidence(TURN);
+    const byName = new Map(ev.subjects.map((s) => [s.name, s]));
+    assert.equal(byName.get("Bar One")?.hasVerifiedLive, true);
+    assert.equal(byName.get("Club Nine")?.hasVerifiedLive, false,
+      "a subject with no verified_live datum of its own must not inherit the turn's");
+  });
+
+  it("F2: the sentence about the UNEVIDENCED subject is corrected", () => {
+    const ev = readGroundingEvidence(TURN);
+    assert.equal(ev.hasVerifiedLive, true, "the turn-level band still says a live datum exists");
+    const r = enforceCompassGroundingEnvelope("Club Nine is packed right now.", ev);
+    assert.equal(r.ok, false,
+      "a general valid citation must not cover unsupported prose about another subject");
+    assert.ok(r.violations.some((v) => v.kind === "live_claim_without_verified_source"));
+  });
+
+  it("F3: the sentence about the EVIDENCED subject is published untouched", () => {
+    const ev = readGroundingEvidence(TURN);
+    const r = enforceCompassGroundingEnvelope("Bar One is packed right now.", ev);
+    assert.equal(r.ok, true);
+  });
+
+  it("F4: both in one answer — one sentence corrected, the other left alone", () => {
+    const ev = readGroundingEvidence(TURN);
+    const r = enforceCompassGroundingEnvelope(
+      "Bar One is packed right now. Club Nine is packed right now.",
+      ev,
+    );
+    assert.equal(r.ok, false);
+    assert.equal(r.violations.length, 1);
+    assert.match(r.violations[0]!.stated, /Club Nine/);
+  });
+
+  it("F5: a sentence naming BOTH subjects needs the datum for BOTH — the weaker one governs", () => {
+    const ev = readGroundingEvidence(TURN);
+    const r = enforceCompassGroundingEnvelope("Bar One and Club Nine are both packed right now.", ev);
+    assert.equal(r.ok, false,
+      "a claim covering two subjects is licensed only when every subject it names carries the datum");
+  });
+
+  it("F6: a sentence naming NO subject falls back to the turn-level band, unchanged", () => {
+    const ev = readGroundingEvidence(TURN);
+    const r = enforceCompassGroundingEnvelope("It is packed right now.", ev);
+    assert.equal(r.ok, true, "with no subject named there is nothing to attach evidence to");
+  });
+
+  it("F7: the subject's name is read through the UGC wrapper, not around it", () => {
+    const ev = readGroundingEvidence([
+      { stops: [{ planItemId: "s1", title: "<portava:ugc>Night Market</portava:ugc>" }] },
+    ]);
+    assert.ok(ev.subjects.some((s) => s.name === "Night Market"),
+      "a wrapped title must be matched by the name the model writes, which is unwrapped");
+  });
+
+  it("F8: per-subject attribution governs the wait and crowd triggers too, not only live status", () => {
+    const ev = readGroundingEvidence([
+      { places: [
+        { id: "p1", name: "Bar One", queueWaitMinutes: 20 },
+        { id: "p2", name: "Club Nine" },
+      ] },
+    ]);
+    assert.equal(ev.hasWaitDatum, true);
+    assert.equal(enforceCompassGroundingEnvelope("The queue at Bar One is about 20 minutes.", ev).ok, true);
+    assert.equal(enforceCompassGroundingEnvelope("The queue at Club Nine is about 20 minutes.", ev).ok, false);
+  });
+});
+
+/* ── G. CCL-15 — the policy values are configurable, not compile-time ──────── */
+
+const CCL15_NOW = Date.parse("2026-09-12T20:00:00.000Z");
+const CCL15_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const CCL15_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+let ccl15Seq = 0;
+function ccl15Crowd(level: string): LiveClaimEnvelope {
+  ccl15Seq += 1;
+  return {
+    id: `ccl15-${ccl15Seq}`, claimType: "crowd.level", value: { level }, confidence: 0.85,
+    band: "live", sourceClass: "firsthand_unverified", sourceCountBucket: "few",
+    observedAt: new Date(CCL15_NOW - 3 * 60_000).toISOString(),
+    validUntil: new Date(CCL15_NOW + 27 * 60_000).toISOString(),
+    state: "live", conflictState: "none", conflict: null,
+  };
+}
+/** busy candidate (1.0 for social) against a quiet current (0.3) — a 0.7 gap. */
+const decideSwitch = (policy: CompassPolicy | undefined) =>
+  decideCompass(
+    {
+      candidate: { subjectId: CCL15_A, envelopes: [ccl15Crowd("busy")], readable: true },
+      current: { subjectId: CCL15_B, envelopes: [ccl15Crowd("quiet")], readable: true, sinceMinutes: 10 },
+      etaMinutes: 10,
+      intent: "social",
+      ...(policy ? { policy } : {}),
+    },
+    CCL15_NOW,
+  );
+
+describe("G. CCL-15 — an owner who approves a different number does not need a deploy", () => {
+  it("G1: every policy value in the contract is resolved at call time from configuration", () => {
+    assert.deepEqual(
+      compassPolicyContract({}),
+      { awareDailyCap: 3, activeDailyCap: 6, switchingCost: 0.25 },
+      "the defaults are the values the tree shipped — configuration must change nothing by default",
+    );
+  });
+
+  it("G2: a configured value replaces the default", () => {
+    const c = compassPolicyContract({
+      COMPASS_AWARE_DAILY_CAP: "5",
+      COMPASS_ACTIVE_DAILY_CAP: "9",
+      COMPASS_SWITCHING_COST: "0.4",
+    });
+    assert.deepEqual(c, { awareDailyCap: 5, activeDailyCap: 9, switchingCost: 0.4 });
+  });
+
+  it("G3: an UNREADABLE configured value falls back to the default rather than to zero", () => {
+    // A cap that reads a typo as 0 silences every nudge; a switching cost that
+    // reads one as 0 promotes every switch. Both are worse than the default.
+    for (const bad of ["", "abc", "-1", "NaN", "1e999"]) {
+      const c = compassPolicyContract({
+        COMPASS_AWARE_DAILY_CAP: bad,
+        COMPASS_ACTIVE_DAILY_CAP: bad,
+        COMPASS_SWITCHING_COST: bad,
+      });
+      assert.deepEqual(c, { awareDailyCap: 3, activeDailyCap: 6, switchingCost: 0.25 }, `accepted ${bad}`);
+    }
+  });
+
+  it("G4: the switching cost is bounded to 0..1 — it is a fraction of experience value", () => {
+    assert.equal(compassPolicyContract({ COMPASS_SWITCHING_COST: "2" }).switchingCost, 0.25);
+    assert.equal(compassPolicyContract({ COMPASS_SWITCHING_COST: "0" }).switchingCost, 0);
+  });
+
+  it("G5: the DECISION reads the configured switching cost, and the value CHANGES the decision", () => {
+    // A configurable value nothing reads is a setting, not a contract. The same
+    // pair of experiences is a SWITCH at the shipped cost and a STAY at a
+    // higher one, so the number is load-bearing and not decorative.
+    const shipped = decideSwitch(undefined);
+    assert.equal(shipped.switchingCost.cost, 0.25);
+    assert.equal(shipped.decision, "SWITCH");
+
+    const raised = decideSwitch(compassPolicyContract({ COMPASS_SWITCHING_COST: "0.8" }));
+    assert.equal(raised.switchingCost.cost, 0.8);
+    assert.equal(raised.decision, "STAY", "the owner's number must reach the decision");
+  });
+
+  it("G7: the contract's DEFAULTS are the literals the surfaces still export — no second truth", () => {
+    // The census cites `export const AWARE_DAILY_CAP = 3;` and the two beside
+    // it as the evidence for CCL-15, so the literals stay. That leaves two
+    // spellings of each number, and this is the assertion that keeps them one
+    // number: change either side alone and this goes red.
+    assert.equal(COMPASS_POLICY_DEFAULTS.awareDailyCap, AWARE_DAILY_CAP);
+    assert.equal(COMPASS_POLICY_DEFAULTS.activeDailyCap, ACTIVE_DAILY_CAP);
+    assert.equal(COMPASS_POLICY_DEFAULTS.switchingCost, SWITCHING_COST);
+  });
+
+  it("G6: the SENSE cap the engine applies is the configured one", () => {
+    assert.equal(senseDailyCap("active", compassPolicyContract({ COMPASS_ACTIVE_DAILY_CAP: "9" })), 9);
+    assert.equal(senseDailyCap("aware", compassPolicyContract({ COMPASS_AWARE_DAILY_CAP: "1" })), 1);
+    assert.equal(senseDailyCap("active", compassPolicyContract({})), 6);
+    assert.equal(senseDailyCap("aware", compassPolicyContract({})), 3);
   });
 });
