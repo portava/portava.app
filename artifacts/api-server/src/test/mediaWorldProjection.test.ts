@@ -1160,15 +1160,36 @@ describe("a failed candidate read refuses; an empty one does not", () => {
   const get = (base: string, path: string) =>
     fetch(`${base}${path}`, { headers: { authorization: `Bearer ${TOKEN}` } }).then(async (r) => ({
       status: r.status,
-      body: await r.json().catch(() => null),
+      body: (await r.json().catch(() => null)) as unknown,
     }));
+
+  /**
+   * Read the parsed body, ASSERTING it was JSON at all.
+   *
+   * `r.json()` is typed `Promise<unknown>`, so `r.body.error` does not compile —
+   * and the tempting fixes are the two this repository's test-typecheck gate
+   * exists to stop: `any`, or a `.catch(() => ({}))` that makes "the body was
+   * not JSON" indistinguishable from "the body was an empty object". A refusal
+   * test whose whole subject is the envelope must not silently accept a
+   * response that carried no envelope.
+   *
+   * So the narrowing is a real runtime check with its own failure message, and
+   * the cast below is to a structural record rather than to `any`.
+   */
+  const body = (r: { status: number; body: unknown }): Record<string, unknown> => {
+    assert.ok(
+      r.body !== null && typeof r.body === "object",
+      `the response carried no JSON body to assert on (status ${r.status})`,
+    );
+    return r.body as Record<string, unknown>;
+  };
 
   it("CONTROL — a healthy but EMPTY posts table is still a 200 empty projection", async () => {
     await withServer(false, async (base) => {
       const r = await get(base, "/api/media/world");
       assert.equal(r.status, 200, `pre-launch emptiness must stay a 200; got ${r.status} ${JSON.stringify(r.body)}`);
-      assert.equal(r.body.totalPerspectives, 0);
-      assert.deepEqual(r.body.cityVisualState, []);
+      assert.equal(body(r).totalPerspectives, 0);
+      assert.deepEqual(body(r).cityVisualState, []);
     });
   });
 
@@ -1176,8 +1197,8 @@ describe("a failed candidate read refuses; an empty one does not", () => {
     await withServer(true, async (base) => {
       const r = await get(base, "/api/media/world");
       assert.equal(r.status, 503, `an unreadable posts table must not be served as an empty world; got ${r.status}`);
-      assert.equal(r.body.error, "degraded_unavailable");
-      assert.equal(r.body.retryable, true);
+      assert.equal(body(r).error, "degraded_unavailable");
+      assert.equal(body(r).retryable, true);
     });
   });
 
@@ -1186,7 +1207,7 @@ describe("a failed candidate read refuses; an empty one does not", () => {
       for (const path of ["/api/media/people", "/api/media/me", "/api/media/timeline", "/api/media/search?q=rooftop"]) {
         const r = await get(base, path);
         assert.equal(r.status, 503, `${path} served an unreadable posts table as a settled answer (${r.status})`);
-        assert.equal(r.body.error, "degraded_unavailable", `${path} envelope`);
+        assert.equal(body(r).error, "degraded_unavailable", `${path} envelope`);
       }
     });
   });
@@ -1204,8 +1225,8 @@ describe("a failed candidate read refuses; an empty one does not", () => {
         `a refused read must not be served as an availability verdict; got 200 ${JSON.stringify(r.body)}`,
       );
       assert.equal(r.status, 503);
-      assert.equal(r.body.error, "degraded_unavailable");
-      assert.equal(r.body.retryable, true);
+      assert.equal(body(r).error, "degraded_unavailable");
+      assert.equal(body(r).retryable, true);
     });
   });
 
@@ -1215,7 +1236,7 @@ describe("a failed candidate read refuses; an empty one does not", () => {
     await withServer(false, async (base) => {
       const r = await get(base, `/api/media/experiences/${ABSENT_EXPERIENCE}`);
       assert.equal(r.status, 200, `absence is not an outage; got ${r.status}`);
-      assert.equal(r.body.available, false);
+      assert.equal(body(r).available, false);
     });
   });
 

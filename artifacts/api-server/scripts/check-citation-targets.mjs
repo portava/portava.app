@@ -148,8 +148,18 @@ import {
  *     claim ("read by exactly one consumer — the caller's own unread count"), so
  *     the same repair would have been wrong here. Same trap as `:1841` above.
  *   CTG-03's `:3918` -> `:4068#await invalidateCompassCache(..., "message_report")`.
- * Each gained an `#anchor`, so doc-citations owns them now. */
-export const MAX_DEAD_TARGETS = 255;
+ * Each gained an `#anchor`, so doc-citations owns them now.
+ *
+ * LOWERED AGAIN 2026-09-14, 255 -> 253, by the Media lane. Six citations were
+ * ALREADY dead before that pass and had been for some time — most of them
+ * unanchored, and `MediaProjectionService.ts:379` was cited THREE times as
+ * `readCurrentState` while that line actually read
+ * `if (typeof id === "string" && label != null) out.set(id, label);`.
+ * That is the failure this ceiling exists to bound: a citation that resolves to
+ * a real line and supports nothing. All six were repaired by reading the claim
+ * and given an `#anchor`, which is why the count fell by two net while the same
+ * pass moved thirty-one others. */
+export const MAX_DEAD_TARGETS = 253;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);
