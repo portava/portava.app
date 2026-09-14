@@ -399,9 +399,41 @@ export async function adminOverrideScore(
 }
 
 /**
- * Remove a previously applied score override for a category.
- * Lifts the admin_override cap, then triggers a full recalculation so the
- * score returns to its naturally-computed value.
+ * Remove a previously applied score override for a category: lift the
+ * `admin_override` cap(s), recompute, and confirm the score came back.
+ *
+ * ── THIS PATH HAD THE DEFECT THE APPLY PATH NO LONGER HAS ──────────────────
+ * `adminOverrideScore` above was fixed: its recalculation is awaited and not
+ * swallowed, the persisted value is READ BACK from `trust_profiles` rather than
+ * computed, and no audit row is written unless the ceiling is observed in force.
+ * The removal path was the mirror image of the old bug and nothing had noticed:
+ *
+ *   - `liftCap(...).catch(() => {})` — a lift that failed was discarded, and
+ *     because `liftCap` also could not tell "lifted one" from "matched nothing",
+ *     even a lift that SUCCEEDED proved nothing about the ceiling being gone.
+ *   - `recalculateTrustScore(...).catch(() => {})` — and that function is
+ *     deliberately fail-closed: an unreadable `trust_settings`, `trust_events`
+ *     or `trust_caps` makes it THROW and write nothing. Swallowed, the ceiling
+ *     stayed on `trust_profiles` with nothing scheduled to remove it.
+ *   - the audit row and `{ ok: true }` were then written unconditionally.
+ *
+ * So an admin could be told an override was removed while the user's score was
+ * still being held down by it, with a `score_override` audit row asserting a
+ * removal that had not happened. Ceiling persistence was confirmed on apply and
+ * unconfirmed on remove, which is half a guarantee.
+ *
+ * Every step is now awaited, nothing is swallowed, and the result is a
+ * MEASUREMENT: the caps are re-read after the recalculation and the function
+ * refuses to report success while an `admin_override` ceiling is still active.
+ * Same rule `confirmEvent`, `dismissEvent` and `adminResolveReview` already
+ * apply to their own transitions.
+ *
+ * ── WHAT IS DELIBERATELY UNCHANGED ─────────────────────────────────────────
+ * The selection is still keyed on (user, category, reason_code): one admin's
+ * removal clears every admin's override in that category, and it touches no
+ * moderation cap. That is characterized behaviour and a pending owner question,
+ * not a defect to fix here. Removing NOTHING now throws rather than reporting a
+ * removal, which is the same fail-closed rule and not a change of that policy.
  */
 export async function adminRemoveOverride(
   db: SupabaseClient,
@@ -409,7 +441,8 @@ export async function adminRemoveOverride(
   targetUserId: string,
   category: TrustCategory,
   reason: string,
-): Promise<{ ok: boolean }> {
+  sourceCapId?: string,
+): Promise<{ ok: boolean; liftedCapIds: string[]; persistedScore: number }> {
   // Find the active admin_override cap for this user+category. A failed read
   // must not be audited as "override removed" — nothing was lifted.
   const { data: caps, error: capsErr } = await db
@@ -421,18 +454,85 @@ export async function adminRemoveOverride(
     .is("lifted_at", null);
   if (capsErr) throw new Error(`adminRemoveOverride: trust_caps read failed — ${capsErr.message ?? capsErr.code ?? "db_error"}`);
 
-  if (caps && Array.isArray(caps)) {
-    await Promise.all((caps as any[]).map(cap =>
-      liftCap(db, (cap as any).id, adminId).catch(() => {}),
-    ));
+  const capIds = (Array.isArray(caps) ? caps : []).map((c) => String((c as any).id));
+  if (capIds.length === 0) {
+    throw new Error(
+      `adminRemoveOverride: no active admin_override ceiling on ${category} for this user — nothing was removed`,
+    );
   }
 
-  // Recompute from raw events — no override cap ceiling any more
-  await recalculateTrustScore(db, targetUserId).catch(() => {});
+  // Sequential, not Promise.all: each lift is a separate confirmation and a
+  // partial failure must name which cap is still standing.
+  const liftedCapIds: string[] = [];
+  for (const capId of capIds) {
+    if (await liftCap(db, { capId, userId: targetUserId, liftedBy: adminId })) liftedCapIds.push(capId);
+  }
+  if (liftedCapIds.length !== capIds.length) {
+    const missed = capIds.filter((id) => !liftedCapIds.includes(id));
+    throw new Error(
+      `adminRemoveOverride: ${missed.length} of ${capIds.length} admin_override cap(s) were not lifted (${missed.join(", ")}) — the ceiling may still be in force`,
+    );
+  }
+
+  // Recompute from raw events — no override cap ceiling any more. Fail-closed
+  // and NOT swallowed: a removal whose recalculation did not run has not taken
+  // effect, and must not be reported or audited as if it had.
+  await recalculateTrustScore(db, targetUserId);
+
+  const persistedScore = await confirmOverrideRemoved(db, targetUserId, category);
 
   await logAdminAction(db, adminId, targetUserId, "score_override", reason,
-    { action: "remove_override", category });
-  return { ok: true };
+    { action: "remove_override", category, liftedCapIds, persistedScore }, sourceCapId);
+  return { ok: true, liftedCapIds, persistedScore };
+}
+
+/**
+ * Read back the state a removal claims to have produced, and return the
+ * category value now on the row.
+ *
+ * Two reads, because "the cap row is lifted" and "the score the product gates on
+ * no longer carries the ceiling" are different facts and the old code asserted
+ * neither. `recalculateTrustScore` persists NON-fatally — it logs and returns
+ * the computed result even when its own upsert failed — so the computed number
+ * is not evidence that anything reached `trust_profiles`.
+ */
+async function confirmOverrideRemoved(
+  db: SupabaseClient,
+  targetUserId: string,
+  category: TrustCategory,
+): Promise<number> {
+  const { data: stillActive, error: recheckErr } = await db
+    .from("trust_caps")
+    .select("id")
+    .eq("user_id", targetUserId)
+    .eq("category", category)
+    .eq("reason_code", "admin_override")
+    .is("lifted_at", null);
+  if (recheckErr) {
+    throw new Error(
+      `adminRemoveOverride: caps lifted but NOT confirmed — trust_caps re-read failed (${recheckErr.message ?? recheckErr.code ?? "db_error"})`,
+    );
+  }
+  if (Array.isArray(stillActive) && stillActive.length > 0) {
+    throw new Error(
+      `adminRemoveOverride: ${stillActive.length} admin_override ceiling(s) on ${category} are still active after the lift`,
+    );
+  }
+
+  const read = await getTrustProfileResult(db, targetUserId);
+  if (read.state !== "ok") {
+    throw new Error(
+      `adminRemoveOverride: ceiling lifted but the score was NOT confirmed on trust_profiles — read is '${read.state}'` +
+      (read.state === "unavailable" ? ` (${read.reason})` : ""),
+    );
+  }
+  const persistedScore = Number((read.profile.categories as Record<string, unknown>)[category]);
+  if (!Number.isFinite(persistedScore)) {
+    throw new Error(
+      `adminRemoveOverride: trust_profiles.${category} reads ${String(persistedScore)} after the removal`,
+    );
+  }
+  return persistedScore;
 }
 
 /** Resolve a trust_review item */

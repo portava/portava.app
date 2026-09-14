@@ -49,7 +49,7 @@ export function isPublicTrustLevel(value: unknown): value is PublicTrustLevel {
   return typeof value === "string" && (PUBLIC_TRUST_LEVELS as readonly string[]).includes(value);
 }
 
-const ALL_CATEGORIES: TrustCategory[] = [
+export const ALL_CATEGORIES: TrustCategory[] = [
   "plan_attendance","host_quality","communication","respect_safety",
   "location_honesty","content_quality","community_value",
   "guide_accuracy","passport_authenticity",

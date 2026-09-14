@@ -63,18 +63,41 @@ export async function createCap(
   };
 }
 
-/** Lift a specific cap (admin or expiry) */
+/**
+ * Lift one specific cap (admin or expiry).
+ *
+ * ── THE CAP MUST BELONG TO THE USER IT IS BEING LIFTED FOR ──────────────────
+ * This filtered on `id` alone. A cap id is the only thing an admin surface
+ * passes, and the user id travelling beside it was used for the audit row and
+ * the cache invalidation and NOT for the update — so lifting cap X "for user A"
+ * lifted user B's ceiling, filed an audit row saying it happened to A, and left
+ * B's cached compass standing on a score that had just changed. Scoping is a
+ * required argument rather than an optional one precisely so no future caller
+ * can reintroduce that by omission.
+ *
+ * ── AND THE OUTCOME IS OBSERVED, NOT ASSUMED ───────────────────────────────
+ * The update carried no `.select()`, so "lifted one cap" and "matched nothing"
+ * were the same resolved value: lifting a nonexistent id, an already-lifted cap,
+ * or another user's cap all returned success. The `.select("id")` makes the
+ * difference visible and the boolean makes callers handle it — a removal that
+ * lifted nothing must never be reported or audited as a removal.
+ *
+ * Returns true when a cap was actually lifted, false when nothing matched.
+ * Throws only on a database error: not-found and unreadable stay distinct.
+ */
 export async function liftCap(
   db: SupabaseClient,
-  capId: string,
-  liftedBy: string,
-): Promise<void> {
-  const { error } = await db
+  input: { capId: string; userId: string; liftedBy: string },
+): Promise<boolean> {
+  const { data, error } = await db
     .from("trust_caps")
-    .update({ lifted_at: new Date().toISOString(), lifted_by: liftedBy })
-    .eq("id", capId)
-    .is("lifted_at", null);
+    .update({ lifted_at: new Date().toISOString(), lifted_by: input.liftedBy })
+    .eq("id", input.capId)
+    .eq("user_id", input.userId)
+    .is("lifted_at", null)
+    .select("id");
   if (error) throw new Error(`liftCap DB error: ${error.message}`);
+  return Array.isArray(data) && data.length > 0;
 }
 
 /** Expire all caps whose expires_at has passed (call from cleanup job) */
