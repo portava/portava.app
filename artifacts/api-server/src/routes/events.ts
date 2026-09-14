@@ -201,10 +201,12 @@ import {
 import { affectedRows } from "../lib/affectedRows.js";
 import {
   resolveGateAge,
+  gateAgeFrom,
   ageForFailClosedFilter,
   AGE_NOT_VERIFIED_ADULT_MESSAGE,
   AGE_CHECK_UNAVAILABLE_MESSAGE,
 } from "../lib/gateAge.js";
+import { readVerifiedAgeSignal } from "../lib/travelerVerification.js";
 import { tripKernelClient, executeTripCommand, TRIP_VERSION_RESPONSE_HEADER } from "../domain/trips/commands/tripKernel.js";
 import { readBlockExclusions, sendExclusionsUnavailable } from "../lib/exclusionSet.js";
 import { appStorageUrlInfo } from "../lib/mediaUrl.js";
@@ -1142,13 +1144,15 @@ router.get("/events", async (req, res) => {
       // `date_of_birth` the same way the other two did. It is routed through
       // the seam with them, because a fix that leaves a known sibling behind is
       // the shape of defect being fixed.
-      const [profileRes, tpRes, gateAgeList] = await Promise.all([
-        // `date_of_birth` is no longer selected: the age comes from the seam on
-        // the next line, and leaving the column here would leave the next
-        // author a raw birthday to compute with.
-        sc.from("profiles").select("verified").eq("id", user.id).maybeSingle(),
+      const [profileRes, tpRes, ageSignal] = await Promise.all([
+        sc.from("profiles").select("verified, date_of_birth").eq("id", user.id).maybeSingle(),
         getTrustProfileResult(sc, user.id),
-        resolveGateAge(sc, user.id),
+        // Only the SIGNAL is read here, not a second copy of the profile:
+        // `resolveGateAge` would have read `profiles` again alongside the read
+        // on the line above. This is the seam's "caller already holds the row"
+        // path — the same one routes/requests.ts and routes/profile.ts use —
+        // and it keeps this gate at two reads rather than three.
+        readVerifiedAgeSignal(sc, user.id),
       ]);
       const profile = (profileRes as any).data;
       viewerVerified = !!profile?.verified;
@@ -1170,7 +1174,7 @@ router.get("/events", async (req, res) => {
       // below returns false on it), so collapsing a contradiction or an outage
       // to null is the fail-closed answer and tells the viewer nothing untrue —
       // the events simply are not listed.
-      viewerAge = ageForFailClosedFilter(gateAgeList);
+      viewerAge = ageForFailClosedFilter(gateAgeFrom(profile?.date_of_birth, ageSignal));
     }
   }
 
