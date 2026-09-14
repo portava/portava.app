@@ -1997,3 +1997,160 @@ this programme's own unruled constants).
 - **BUILT ON A BRANCH IS NOT MERGED. MERGED IS NOT DEPLOYED. DEPLOYED IS NOT FLAG ENABLED.**
   Discovery is dark on the last reading anyone took: 13 `surface='discovery'` rows ever, the most
   recent 2026-08-15.
+
+---
+
+## 15. Three prose-counted rows become table rows — an accounting correction, 2026-09-14
+
+*Appended under APPEND-ONLY / LAST-STATEMENT-WINS, as §11 established. This
+section moves nothing between buckets and re-grades nothing. It is backlog item
+**B10** in `docs/architecture/reconciled-baseline-v1.md` §8, and it exists only
+because three requirements this document has graded since §11.4 could not be
+read by the tool that counts it.*
+
+### 15.1 The reason those three rows sat in prose no longer holds, and that was measurable
+
+§11.13, §12.3 and §14.5 all say the same thing: `DSV2-04`, `DSV2-05` and
+`DSV2-12` are **graded**, but they live in a mapping table rather than a verdict
+table because `parseIdCell` in `artifacts/api-server/src/scripts/checkCensusIntegrity.ts`
+would read a prefix ending in a digit as a line RANGE. §11.13 named the worst
+case precisely — *"`DSV2-04` is the dangerous middle case: `DSV2`→`DSV4` is a
+valid forward range, so it would expand to three phantom ids"* — and §12.3 added
+that the defect *"is not fixed, and that script is not this lane's to fix."*
+
+**That last sentence was already false when it was written, and this section is
+the first thing to check it rather than repeat it.** The repair landed on
+2026-09-13 in commit `e8f5552b1`, *"The tallier read one census row as nine, and
+read five others as none"*, which added a branch recognising a prefix that ends
+in a digit **before** the general range grammar. It was made for census-trust's
+`TRV2-nn` ids; `DSV2-nn` is the same shape and was carried with it. Three
+sections of this census went on citing a defect that a sibling lane had closed
+the previous day, and nobody re-ran the measurement because the claim read like
+a fact about the tool rather than a claim about it.
+
+Re-run here, against the parser as it stands:
+
+| cell, written exactly as a verdict table would write it | ids the parser returns |
+|---|---|
+| `DSV2-04` | **one**: `DSV2-04` |
+| `DSV2-05` | **one**: `DSV2-05` |
+| `DSV2-12` | **one**: `DSV2-12` |
+| the same three with the repair removed | **eleven**: `DSV2` … `DSV12`, and no `DSV2-04` anywhere |
+
+So the three rows below cost nothing and are owed. The repair is now pinned by
+`artifacts/api-server/src/test/censusDigitPrefixIds.test.ts`, which reads a
+fixture carrying these three ids **and** four range cells copied verbatim out of
+census-trips, census-highlights-memories, census-media and census-layover, so
+that reading `DSV2-04` as one id cannot be bought by breaking the ids that
+genuinely are ranges. That test carries a POSITIVE CONTROL: it deletes the
+branch from a copy of the parser and requires the copy to fail. Watched red
+before green, both ways round.
+
+### 15.2 The three rows, carrying the verdicts they already hold
+
+**No verdict moves here.** Each is restated from the section that graded it,
+unchanged, in the form the tool can read.
+
+| id | Requirement | V | Evidence |
+|---|---|---|---|
+| **DSV2-04** | `02-DISCOVERY-v2.md` DSV2-04, the **client** leg split off A03 (§11.4): *"Observed and predicted recommendations render distinctly; expired why-now claims disappear or become explicitly stale."* A03 grades the server projection and holds at **W**; this is the separately-testable client half. | **N** | Unchanged from §11.4, which graded it: *"A03 **W** holds; new row DSV2-04 **N**."* No Discovery client renders the observed/predicted distinction, and §11.11's headline has counted this row as `N` since it was written. |
+| **DSV2-05** | `02-DISCOVERY-v2.md` DSV2-05, the **eligibility** leg split off DV-03 (§11.4): eligibility is enforced on cache-hit paths, not only on the ranking path. Different failure, different test from DV-03's ranking-bypass leg. | **C** | Unchanged from §11.8, which built it and moved it `W → C` with a test watched red first. DV-03 itself remains **W** on its own leg and is not restated here. |
+| **DSV2-12** | `02-DISCOVERY-v2.md` DSV2-12, the **traceability** leg split off DV-19 (§11.4): *"Trace served recommendation→exposure→permitted outcome with versions and coverage."* DV-19 grades *optimise for travel value* and remains **N** on its own clause. | **N** | Unchanged from §11.4 and §13. Held down by the same absence as DV-06, DV-26, DV-40 and DV-46: no `recommendation_id` exists on this surface, so no served item can be traced to an outcome. |
+
+`DSV2-06` is **not** restated. §12.2 moved it to `C` and it has parsed as a
+single id ever since; restating it would make it a revised row for no reason.
+
+### 15.3 What this changes in the tool's reading, measured
+
+Before this section, `check:census-integrity` reported
+`discovery 184 · 73 · 67 · 41 · 3 → 187, 3 counted where this tool cannot read`.
+After it, the same command reports **`discovery 187 · 74 · 67 · 43 · 3 → 187,
+0 counted where this tool cannot read`**, and the corpus total moves from 3,493
+parsed rows to 3,496 with the corpus-wide prose gap falling from 24 to 21.
+
+**Every one of those three rows was already inside this census's headline.** The
+buckets are identical before and after — `73 + 1 = 74` `C`, `67` `W`,
+`41 + 2 = 43` `N`, `3` `?` — which is the arithmetic §14.5 already stated by
+hand. What changes is who can check it: the difference between what this
+document says about itself and what the repository can verify about it is now
+**zero rows**, where it was three.
+
+That has a consequence worth naming rather than discovering later. `check:census-integrity`
+only enforces that a stated headline equals its own table when parsed rows equal
+the stated denominator — which, for this census, is true for the first time as
+of this section. The headline below is therefore now machine-checked against the
+rows, not merely published beside them.
+
+### 15.4 Restated headline — unchanged in every bucket
+
+> **Discovery, at `3ca68cb06` + §11–§15: 187 requirements · 74 BUILT-AND-CORRECT ·
+> 67 BUILT-BUT-WRONG · 43 NOT-BUILT · 3 CANNOT-VERIFY → CONSTRUCTED 141 / 187 =
+> 75.4 % · CORRECT 74 / 187 = 39.6 %.**
+> Identical to §14.5. Nothing was re-graded, re-measured or re-read; three rows
+> changed shape and none changed value.
+
+### 15.5 What would turn this red (P24)
+
+- **The parser regressing.** `censusDigitPrefixIds.test.ts` fails, and so does
+  `check:census-integrity` itself: with the repair removed the three cells
+  expand to eleven phantom ids, this census parses 188 rows against a stated
+  denominator of 187, and the tool reports *"more rows than requirements is
+  arithmetically impossible"*. Measured by removing it, not argued.
+- **Any later section restating one of these three ids** with a different
+  verdict. Last-statement-wins would take the later one and this section's
+  arithmetic would stop holding — which the headline check would now catch,
+  because there is no prose gap left for a difference to hide in.
+- **Something else in this census changing a bucket without re-deriving §15.4.**
+  The headline is now checked against the rows, so a row moved in a later
+  section and not reflected here fails the guard rather than drifting quietly.
+
+### 15.6 What this section did NOT do
+
+- **No verdict was re-read against the code.** Not one of the three rows was
+  re-derived; each is carried verbatim from the section that graded it. This is
+  an accounting correction and nothing more, and it must not be read as
+  re-certifying `DSV2-05`'s `C`.
+- **`head_commit` is unchanged at `3ca68cb06`** and is deliberately not
+  re-declared: no code was measured here, so declaring a newer commit would
+  claim a re-measurement that did not happen.
+- **The two cross-lane requests §14.7 raised alongside X4 are still open.** X1
+  (the specification installed twice) is unresolved — see §15.7. X3 (the
+  unwired `DiscoveryRankingService.ts`) is untouched.
+- **X2 is now closed and this census's citations were not moved back.** The ten
+  product files the DC rows are evidenced by are in
+  `CENSUS_SCOPE["census-discovery.md"]` as of this pass, so a change to any of
+  them ages this census. The anchors themselves stay where §14.7 put them, in
+  `docs/discovery/compliance-v1.md`; moving ~40 anchored citations between two
+  documents is a citation-rot risk taken for no gain, and the coverage guard
+  reads the same either way.
+
+### 15.7 X1 re-measured, and why nothing was deleted
+
+The duplicate install is real and was verified by content hash at this commit,
+not by `diff` over three files as §12.1 did: **all thirteen specification
+documents in `docs/specs/discovery-v1/` are byte-identical to their renamed
+counterparts in `docs/specs/discovery-architecture-v1/`**, and all **17 / 17**
+`SOURCE-MANIFEST.json` entries resolve by content hash under `docs/` — including
+after a hypothetical deletion of the first directory, because every hash they
+need is also present in the second.
+
+**The deletion was still not performed, and the reason is a count.** Thirty-seven
+references to `docs/specs/discovery-v1/` live outside that directory: twenty-six
+in `docs/discovery/compliance-v1.md`, six in `artifacts/api-server/src/lib/`,
+four in `artifacts/api-server/src/test/`, one in
+`docs/architecture/reconciled-baseline-v1.md`. Deleting the directory without
+repointing all thirty-seven trades one drift surface for thirty-seven dangling
+citations in a corpus that is already carrying 124 broken anchors, and none of
+those twelve files belongs to the lane that measured this. **A dangling
+reference is worse than a duplicate**, so the duplicate stands and the repoint
+is handed over with the hashes that make it safe. The fourteenth file,
+`docs/specs/discovery-v1/00-PROVENANCE.md`, has no counterpart in the surviving
+directory and must be moved rather than deleted; it is watched for staleness as
+of this pass so that its disappearance is loud.
+
+| BUILT-AND-CORRECT | **74** |
+|---|---|
+| BUILT-BUT-WRONG | **67** |
+| NOT-BUILT | **43** |
+| CANNOT-VERIFY | **3** |
+| **total** | **187** |
