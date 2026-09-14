@@ -1635,8 +1635,42 @@ router.post('/me/highlights/mark-viewed', async (req, res) => {
 /* ---------------------------------------------------------------------------
  * POST /api/threads/:threadId/read
  * ---------------------------------------------------------------------------
- * Marks the thread as read for the current user by updating last_read_at.
- * Idempotent — safe to call on every thread open.
+ * Marks the thread as read for the current user, up to a THRESHOLD the server
+ * can check. Idempotent — safe to call on every thread open.
+ *
+ * ── §7.2 / census T70: `now()` IS NOT A THRESHOLD ───────────────────────────
+ * This handler used to write `last_read_at = new Date()` for any authenticated
+ * caller, with no membership check at all. T70's verdict quoted that line
+ * directly — *"seen is whatever the client asserts"* — and §21.5 recorded it as
+ * the ONE half of the row still open after `POST /threads/:id/seen` was built:
+ *
+ *   > "while both paths exist, seen is still whatever the client asserts on the
+ *   > one that is wired into the app."
+ *
+ * This is the path the app calls (`markThreadRead`). Three things were wrong
+ * with a clock reading, and they are different from each other:
+ *
+ *  1. It claims the caller saw messages that DO NOT EXIST. `now()` is later
+ *     than every message in the thread, so the marker asserts a position past
+ *     the end of the conversation. Every consumer of the marker — the unread
+ *     count, the group "seen by" row — reads it as a fact about messages.
+ *  2. It ignores §14.3. A member added yesterday, whose window starts
+ *     yesterday, was marked as having read a month of history they cannot load.
+ *  3. It answered `{ ok: true }` to a stranger. The update matched zero rows,
+ *     so nothing was written — but the caller was told it was, and the thread
+ *     got a `read.updated` broadcast naming a person who is not in it.
+ *
+ * The threshold is now the newest NON-DELETED message inside the caller's own
+ * §14.3 window, which is the only value whose existence the server can verify,
+ * and it NEVER moves backwards. Those are `routes/telegraphLifecycle.ts`'s two
+ * rules, taken from there rather than invented here, so the two paths cannot
+ * disagree about what "seen" means.
+ *
+ * "Active foreground conversation" is T71 and remains unanswerable: the server
+ * cannot observe foreground and nothing here pretends to.
+ *
+ * Every read binds its error. An unreadable membership is not a non-member and
+ * an unreadable `messages` is not an empty conversation — §20.7.
  */
 router.post('/threads/:threadId/read', async (req, res) => {
   const auth = await requireUser(req, res);
@@ -1648,10 +1682,64 @@ router.post('/threads/:threadId/read', async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
-  const now = new Date().toISOString();
+  const boundOn = await historyBoundEnabled(sc);
+
+  const { data: membership, error: membershipErr } = await sc
+    .from('message_thread_members')
+    .select(membershipSelect('user_id, left_at, last_read_at', boundOn))
+    .eq('thread_id', threadId)
+    .eq('user_id', user.id)
+    .maybeSingle();
+
+  if (membershipErr) { refuseUnreadableAccess(req, res, 'message_thread_members', { err: membershipErr, threadId, userId: user.id }); return; }
+  if (!membership) { sendError(res, 'forbidden', 'Not a member of this thread'); return; }
+  if ((membership as any).left_at !== null) { sendError(res, 'forbidden', 'You no longer have access to this thread'); return; }
+
+  const visibleFrom = visibleFromOf(membership as any, boundOn);
+  const previous = ((membership as any).last_read_at ?? null) as string | null;
+
+  // The threshold: the newest message this member is entitled to have loaded.
+  let newestQuery = sc
+    .from('messages')
+    .select('id, created_at')
+    .eq('thread_id', threadId)
+    .is('deleted_at', null)
+    .order('created_at', { ascending: false })
+    .limit(1);
+  if (visibleFrom) newestQuery = newestQuery.gte('created_at', visibleFrom);
+  const { data: newestRows, error: newestErr } = await newestQuery;
+
+  // An unreadable `messages` must NOT collapse to "there is nothing to mark
+  // read" — that is silent, and the caller is told `ok: true` for a read that
+  // never happened.
+  if (newestErr) {
+    req.log.error({ err: newestErr, threadId, userId: user.id },
+      'read marker: messages read failed — refusing rather than reporting an empty conversation');
+    sendError(res, 'degraded_unavailable', 'We could not update your place in this conversation right now. Please try again shortly.');
+    return;
+  }
+
+  const threshold = ((newestRows ?? [])[0] as any)?.created_at as string | undefined;
+  if (!threshold) {
+    res.status(200).json({ ok: true, threadId, lastReadAt: previous, advanced: false, reason: 'nothing_visible_to_mark' });
+    return;
+  }
+
+  const thresholdMs = Date.parse(String(threshold));
+  const previousMs = previous ? Date.parse(previous) : null;
+  if (Number.isNaN(thresholdMs)) {
+    req.log.error({ threadId, threshold }, 'read marker: unparseable message timestamp — leaving the marker alone');
+    res.status(200).json({ ok: true, threadId, lastReadAt: previous, advanced: false, reason: 'nothing_visible_to_mark' });
+    return;
+  }
+  if (previousMs !== null && !Number.isNaN(previousMs) && previousMs >= thresholdMs) {
+    res.status(200).json({ ok: true, threadId, lastReadAt: previous, advanced: false, reason: 'already_past_this_message' });
+    return;
+  }
+
   const { error } = await sc
     .from('message_thread_members')
-    .update({ last_read_at: now })
+    .update({ last_read_at: threshold })
     .eq('thread_id', threadId)
     .eq('user_id', user.id);
 
@@ -1661,13 +1749,15 @@ router.post('/threads/:threadId/read', async (req, res) => {
     return;
   }
 
-  res.status(200).json({ ok: true, threadId, lastReadAt: now });
+  res.status(200).json({ ok: true, threadId, lastReadAt: threshold, advanced: true });
 
-  // Realtime: let other members update read receipts for this user.
+  // Realtime: let other members update read receipts for this user. The
+  // THRESHOLD is broadcast, not the wall clock — a receipt that named `now()`
+  // told every other member the caller had read past the end of the thread.
   void publishToThread(
     sc,
     threadId,
-    { type: 'read.updated', payload: { userId: user.id, lastReadAt: now } },
+    { type: 'read.updated', payload: { userId: user.id, lastReadAt: threshold } },
     { excludeUserId: user.id },
   );
 });
