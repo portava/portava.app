@@ -2119,6 +2119,18 @@ let checked = 0;
 let stale = 0;
 let unscoped = 0;
 let undeclared = 0;
+/**
+ * Print every uncovered file instead of the first eight.
+ *
+ * The truncation is right for a normal run — eight names say "this census is
+ * stale" without burying the verdict. It is wrong the moment somebody sits down
+ * to CLOSE the finding, because the job is precisely to argue about each file by
+ * name, and "…and 41 more" is the half that cannot be argued with. Measured
+ * 2026-09-14: 235 uncovered file-census pairs across 12 censuses, of which the
+ * default output names 96.
+ */
+const LIST_ALL = process.env.CENSUS_FRESHNESS_LIST === "1";
+
 const rows: string[] = [];
 
 for (const f of files) {
@@ -2228,8 +2240,8 @@ for (const f of files) {
     stale++;
     problems.push(
       `::error::${f} is STALE. Its acknowledgement covers ${covered.size} named file(s), but ` +
-        `${uncovered.length} counted file(s) changed that it does NOT name:\n    ${uncovered.slice(0, 8).join("\n    ")}` +
-        (uncovered.length > 8 ? `\n    …and ${uncovered.length - 8} more` : "") +
+        `${uncovered.length} counted file(s) changed that it does NOT name:\n    ${(LIST_ALL ? uncovered : uncovered.slice(0, 8)).join("\n    ")}` +
+        (!LIST_ALL && uncovered.length > 8 ? `\n    …and ${uncovered.length - 8} more (CENSUS_FRESHNESS_LIST=1 prints them)` : "") +
         `\n  An acknowledgement silences the changes whose harmlessness it ARGUES, not every change that ` +
         `happens to follow it. Either name these files and say why they cannot have moved a verdict, or ` +
         `re-measure the census.`,
@@ -2239,8 +2251,8 @@ for (const f of files) {
   stale++;
   problems.push(
     `::error::${f} is STALE. It declares head_commit ${commit.slice(0, 8)}, and ${changed.length} file(s) it counts have ` +
-      `changed since:\n    ${changed.slice(0, 8).join("\n    ")}` +
-      (changed.length > 8 ? `\n    …and ${changed.length - 8} more` : "") +
+      `changed since:\n    ${(LIST_ALL ? changed : changed.slice(0, 8)).join("\n    ")}` +
+      (!LIST_ALL && changed.length > 8 ? `\n    …and ${changed.length - 8} more (CENSUS_FRESHNESS_LIST=1 prints them)` : "") +
       `\n  Its headline percentages therefore describe a tree that no longer exists, and anyone quoting them is quoting ` +
       `history. Re-measure it against HEAD and update head_commit, or add an entry to ` +
       `src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json naming this commit as \`since\` and saying why these changes ` +
