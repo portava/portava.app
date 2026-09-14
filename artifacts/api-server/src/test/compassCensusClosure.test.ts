@@ -65,8 +65,17 @@ import {
   enforceCompassGroundingEnvelope,
   readGroundingEvidence,
 } from "../compass/CompassGroundingEnvelope.js";
-import { COMPASS_POLICY_DEFAULTS, compassPolicyContract, type CompassPolicy } from "../lib/compassPolicy.js";
-import { SWITCHING_COST, decideCompass } from "../lib/compassDecision.js";
+import { COMPASS_POLICY_DEFAULTS, COMPASS_POLICY_ENV, compassPolicyContract, type CompassPolicy } from "../lib/compassPolicy.js";
+import {
+  DEFAULT_QUEUE_TOLERANCE_MINUTES,
+  DWELL_FULL_WEIGHT_MINUTES,
+  INTENT_CONFLICT_FLOOR,
+  RETURN_FAVOURABLE_VALUE,
+  SWITCHING_COST,
+  currentExperienceValue,
+  decideCompass,
+  summariseLiveState,
+} from "../lib/compassDecision.js";
 import type { LiveClaimEnvelope } from "../lib/liveClaimRead.js";
 import { ACTIVE_DAILY_CAP, AWARE_DAILY_CAP, senseDailyCap } from "../compass/CompassSenseEngine.js";
 import { readFileSync } from "node:fs";
@@ -704,6 +713,9 @@ function ccl15Crowd(level: string): LiveClaimEnvelope {
     state: "live", conflictState: "none", conflict: null,
   };
 }
+function ccl15Queue(minMinutes: number): LiveClaimEnvelope {
+  return { ...ccl15Crowd("busy"), claimType: "queue.wait", value: { minMinutes, maxMinutes: null } };
+}
 /** busy candidate (1.0 for social) against a quiet current (0.3) — a 0.7 gap. */
 const decideSwitch = (policy: CompassPolicy | undefined) =>
   decideCompass(
@@ -718,33 +730,48 @@ const decideSwitch = (policy: CompassPolicy | undefined) =>
   );
 
 describe("G. CCL-15 — an owner who approves a different number does not need a deploy", () => {
+  const SHIPPED = {
+    awareDailyCap: 3, activeDailyCap: 6, switchingCost: 0.25,
+    queueToleranceMinutes: 30, dwellFullWeightMinutes: 60,
+    intentConflictFloor: 0.2, returnFavourableValue: 0.5,
+  };
+
   it("G1: every policy value in the contract is resolved at call time from configuration", () => {
     assert.deepEqual(
       compassPolicyContract({}),
-      { awareDailyCap: 3, activeDailyCap: 6, switchingCost: 0.25 },
+      SHIPPED,
       "the defaults are the values the tree shipped — configuration must change nothing by default",
     );
   });
 
-  it("G2: a configured value replaces the default", () => {
+  it("G2: a configured value replaces the default, for every field", () => {
     const c = compassPolicyContract({
       COMPASS_AWARE_DAILY_CAP: "5",
       COMPASS_ACTIVE_DAILY_CAP: "9",
       COMPASS_SWITCHING_COST: "0.4",
+      COMPASS_QUEUE_TOLERANCE_MINUTES: "45",
+      COMPASS_DWELL_FULL_WEIGHT_MINUTES: "90",
+      COMPASS_INTENT_CONFLICT_FLOOR: "0.35",
+      COMPASS_RETURN_FAVOURABLE_VALUE: "0.6",
     });
-    assert.deepEqual(c, { awareDailyCap: 5, activeDailyCap: 9, switchingCost: 0.4 });
+    assert.deepEqual(c, {
+      awareDailyCap: 5, activeDailyCap: 9, switchingCost: 0.4,
+      queueToleranceMinutes: 45, dwellFullWeightMinutes: 90,
+      intentConflictFloor: 0.35, returnFavourableValue: 0.6,
+    });
+    // Every field the contract declares is settable — a field with no variable
+    // is a value that still needs a deploy, which is the whole complaint.
+    assert.equal(Object.keys(c).length, Object.keys(COMPASS_POLICY_ENV).length);
   });
 
   it("G3: an UNREADABLE configured value falls back to the default rather than to zero", () => {
     // A cap that reads a typo as 0 silences every nudge; a switching cost that
     // reads one as 0 promotes every switch. Both are worse than the default.
-    for (const bad of ["", "abc", "-1", "NaN", "1e999"]) {
-      const c = compassPolicyContract({
-        COMPASS_AWARE_DAILY_CAP: bad,
-        COMPASS_ACTIVE_DAILY_CAP: bad,
-        COMPASS_SWITCHING_COST: bad,
-      });
-      assert.deepEqual(c, { awareDailyCap: 3, activeDailyCap: 6, switchingCost: 0.25 }, `accepted ${bad}`);
+    for (const bad of ["", "abc", "-1", "NaN", "1e999", "0.5.1"]) {
+      const c = compassPolicyContract(
+        Object.fromEntries(Object.values(COMPASS_POLICY_ENV).map((k) => [k, bad])),
+      );
+      assert.deepEqual(c, SHIPPED, `accepted ${bad}`);
     }
   });
 
@@ -774,6 +801,67 @@ describe("G. CCL-15 — an owner who approves a different number does not need a
     assert.equal(COMPASS_POLICY_DEFAULTS.awareDailyCap, AWARE_DAILY_CAP);
     assert.equal(COMPASS_POLICY_DEFAULTS.activeDailyCap, ACTIVE_DAILY_CAP);
     assert.equal(COMPASS_POLICY_DEFAULTS.switchingCost, SWITCHING_COST);
+    assert.equal(COMPASS_POLICY_DEFAULTS.queueToleranceMinutes, DEFAULT_QUEUE_TOLERANCE_MINUTES);
+    assert.equal(COMPASS_POLICY_DEFAULTS.dwellFullWeightMinutes, DWELL_FULL_WEIGHT_MINUTES);
+    assert.equal(COMPASS_POLICY_DEFAULTS.intentConflictFloor, INTENT_CONFLICT_FLOOR);
+    assert.equal(COMPASS_POLICY_DEFAULTS.returnFavourableValue, RETURN_FAVOURABLE_VALUE);
+  });
+
+  it("G8: every OTHER configured value reaches the decision, proven by the decision it changes", () => {
+    // Each is asserted by the outcome it changes, not by reading it back: a
+    // value the engine resolves and then ignores is not configurable.
+    const busyQueued = { subjectId: CCL15_A, envelopes: [ccl15Crowd("busy"), ccl15Queue(40)], readable: true };
+    assert.equal(decideCompass({ candidate: busyQueued, etaMinutes: 5, intent: "social" }, CCL15_NOW).decision, "WAIT");
+    assert.equal(
+      decideCompass({ candidate: busyQueued, etaMinutes: 5, intent: "social",
+        policy: compassPolicyContract({ COMPASS_QUEUE_TOLERANCE_MINUTES: "60" }) }, CCL15_NOW).decision,
+      "GO_NOW",
+      "a raised queue tolerance must stop a 40-minute queue being a reason to wait",
+    );
+
+    // A quiet place for a social intent is worth 0.3 — above the shipped 0.2
+    // floor, at or below a configured 0.4 one.
+    const quiet = { subjectId: CCL15_A, envelopes: [ccl15Crowd("quiet")], readable: true };
+    assert.equal(decideCompass({ candidate: quiet, etaMinutes: 5, intent: "social" }, CCL15_NOW).decision, "GO_NOW");
+    const conflicted = decideCompass({ candidate: quiet, etaMinutes: 5, intent: "social",
+      policy: compassPolicyContract({ COMPASS_INTENT_CONFLICT_FLOOR: "0.4" }) }, CCL15_NOW);
+    assert.equal(conflicted.decision, "SKIP");
+    assert.deepEqual(conflicted.reasons, ["intent_conflict"]);
+
+    // The same 0.3 is below the shipped 0.5 return threshold and above a
+    // configured 0.2 one.
+    const back = { candidate: quiet, etaMinutes: 5, intent: "social" as const, returnSubjectId: CCL15_A };
+    assert.notEqual(decideCompass(back, CCL15_NOW).decision, "RETURN");
+    assert.equal(
+      decideCompass({ ...back, policy: compassPolicyContract({ COMPASS_RETURN_FAVOURABLE_VALUE: "0.2" }) }, CCL15_NOW).decision,
+      "RETURN",
+    );
+
+    // Dwell: the same hour at the same place is worth less when full weight is
+    // four hours away instead of one.
+    const state = summariseLiveState({ subjectId: CCL15_B, envelopes: [ccl15Crowd("moderate")], readable: true }, CCL15_NOW);
+    const shippedDwell = currentExperienceValue(state, "social", 60);
+    const slowerDwell = currentExperienceValue(state, "social", 60, compassPolicyContract({ COMPASS_DWELL_FULL_WEIGHT_MINUTES: "240" }));
+    assert.ok(shippedDwell !== null && slowerDwell !== null && shippedDwell > slowerDwell,
+      "a configured dwell horizon must change how much an hour is worth");
+  });
+
+  it("G9: ZERO is a ruling on one field and a divide-by-zero on the other, and they are told apart", () => {
+    // Found by mutation M18, which removed the minimum and SURVIVED. A dwell
+    // horizon of 0 makes `sinceMinutes / horizon` Infinity, so every dwell is
+    // instantly full weight — refused, and the shipped horizon stands.
+    const zeroDwell = compassPolicyContract({ COMPASS_DWELL_FULL_WEIGHT_MINUTES: "0" });
+    assert.equal(zeroDwell.dwellFullWeightMinutes, 60);
+    const state = summariseLiveState({ subjectId: CCL15_B, envelopes: [ccl15Crowd("moderate")], readable: true }, CCL15_NOW);
+    assert.equal(currentExperienceValue(state, "social", 1, zeroDwell), currentExperienceValue(state, "social", 1));
+
+    // A queue tolerance of 0 is a real ruling — "any measured queue is a reason
+    // to wait" — so it is ACCEPTED, and it changes the decision.
+    const strict = compassPolicyContract({ COMPASS_QUEUE_TOLERANCE_MINUTES: "0" });
+    assert.equal(strict.queueToleranceMinutes, 0);
+    const shortQueue = { subjectId: CCL15_A, envelopes: [ccl15Crowd("busy"), ccl15Queue(5)], readable: true };
+    assert.equal(decideCompass({ candidate: shortQueue, etaMinutes: 5, intent: "social" }, CCL15_NOW).decision, "GO_NOW");
+    assert.equal(decideCompass({ candidate: shortQueue, etaMinutes: 5, intent: "social", policy: strict }, CCL15_NOW).decision, "WAIT");
   });
 
   it("G6: the SENSE cap the engine applies is the configured one", () => {

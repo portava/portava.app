@@ -50,6 +50,14 @@ export interface CompassPolicy {
   readonly activeDailyCap: number;
   /** Decision: how much better (0..1) a candidate must be before SWITCH. */
   readonly switchingCost: number;
+  /** Decision: queue wait (minutes) past which a live candidate is WAIT, not GO. */
+  readonly queueToleranceMinutes: number;
+  /** Decision: dwell (minutes) at which revealed preference reaches full weight. */
+  readonly dwellFullWeightMinutes: number;
+  /** Decision: intent-relative value at or below which a candidate is a conflict. */
+  readonly intentConflictFloor: number;
+  /** Decision: value at or above which a left-earlier place is favourable again. */
+  readonly returnFavourableValue: number;
 }
 
 /**
@@ -61,6 +69,10 @@ export const COMPASS_POLICY_DEFAULTS: CompassPolicy = Object.freeze({
   awareDailyCap: 3,
   activeDailyCap: 6,
   switchingCost: 0.25,
+  queueToleranceMinutes: 30,
+  dwellFullWeightMinutes: 60,
+  intentConflictFloor: 0.2,
+  returnFavourableValue: 0.5,
 });
 
 /** The environment variable that carries each value, named after the field. */
@@ -68,10 +80,16 @@ export const COMPASS_POLICY_ENV: Readonly<Record<keyof CompassPolicy, string>> =
   awareDailyCap: "COMPASS_AWARE_DAILY_CAP",
   activeDailyCap: "COMPASS_ACTIVE_DAILY_CAP",
   switchingCost: "COMPASS_SWITCHING_COST",
+  queueToleranceMinutes: "COMPASS_QUEUE_TOLERANCE_MINUTES",
+  dwellFullWeightMinutes: "COMPASS_DWELL_FULL_WEIGHT_MINUTES",
+  intentConflictFloor: "COMPASS_INTENT_CONFLICT_FLOOR",
+  returnFavourableValue: "COMPASS_RETURN_FAVOURABLE_VALUE",
 });
 
 /** Maximum a daily nudge cap may be set to — a ceiling on the ceiling. */
 const MAX_DAILY_CAP = 100;
+/** Maximum a minute-valued policy may be set to — one day. */
+const MAX_MINUTES = 1_440;
 
 /** A non-negative integer no larger than the ceiling, or null. */
 function readCap(raw: string | undefined): number | null {
@@ -80,6 +98,25 @@ function readCap(raw: string | undefined): number | null {
   if (!/^\d+$/.test(text)) return null;
   const n = Number(text);
   if (!Number.isSafeInteger(n) || n < 0 || n > MAX_DAILY_CAP) return null;
+  return n;
+}
+
+/**
+ * An integer count of minutes in `min..MAX_MINUTES`, or null.
+ *
+ * `min` is not decoration. The dwell horizon is a DIVISOR — zero there makes
+ * `sinceMinutes / horizon` Infinity and every dwell instantly full-weight — so
+ * it takes `min` 1. The queue tolerance is a COMPARISON, and zero there is a
+ * legitimate ruling ("any measured queue is a reason to wait"), so it takes 0.
+ * Collapsing the two into one rule would either forbid a real policy or admit a
+ * division by zero.
+ */
+function readMinutes(raw: string | undefined, min: number): number | null {
+  if (typeof raw !== "string") return null;
+  const text = raw.trim();
+  if (!/^\d+$/.test(text)) return null;
+  const n = Number(text);
+  if (!Number.isSafeInteger(n) || n < min || n > MAX_MINUTES) return null;
   return n;
 }
 
@@ -107,5 +144,13 @@ export function compassPolicyContract(
     awareDailyCap: readCap(env[COMPASS_POLICY_ENV.awareDailyCap]) ?? COMPASS_POLICY_DEFAULTS.awareDailyCap,
     activeDailyCap: readCap(env[COMPASS_POLICY_ENV.activeDailyCap]) ?? COMPASS_POLICY_DEFAULTS.activeDailyCap,
     switchingCost: readFraction(env[COMPASS_POLICY_ENV.switchingCost]) ?? COMPASS_POLICY_DEFAULTS.switchingCost,
+    queueToleranceMinutes:
+      readMinutes(env[COMPASS_POLICY_ENV.queueToleranceMinutes], 0) ?? COMPASS_POLICY_DEFAULTS.queueToleranceMinutes,
+    dwellFullWeightMinutes:
+      readMinutes(env[COMPASS_POLICY_ENV.dwellFullWeightMinutes], 1) ?? COMPASS_POLICY_DEFAULTS.dwellFullWeightMinutes,
+    intentConflictFloor:
+      readFraction(env[COMPASS_POLICY_ENV.intentConflictFloor]) ?? COMPASS_POLICY_DEFAULTS.intentConflictFloor,
+    returnFavourableValue:
+      readFraction(env[COMPASS_POLICY_ENV.returnFavourableValue]) ?? COMPASS_POLICY_DEFAULTS.returnFavourableValue,
   };
 }

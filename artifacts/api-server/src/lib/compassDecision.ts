@@ -311,11 +311,11 @@ export function experienceValue(state: LiveStateSummary, intent: DecisionIntent 
 }
 
 /** Revealed preference: dwell can raise a KNOWN current value, bounded; it creates none. */
-export function currentExperienceValue(state: LiveStateSummary, intent: DecisionIntent | null | undefined, sinceMinutes: number | null): number | null {
+export function currentExperienceValue(state: LiveStateSummary, intent: DecisionIntent | null | undefined, sinceMinutes: number | null, policy: CompassPolicy = compassPolicyContract()): number | null {
   const base = experienceValue(state, intent);
   if (base === null) return null;
   if (sinceMinutes === null || !Number.isFinite(sinceMinutes) || sinceMinutes <= 0) return base;
-  const dwell = Math.min(1, sinceMinutes / DWELL_FULL_WEIGHT_MINUTES);
+  const dwell = Math.min(1, sinceMinutes / policy.dwellFullWeightMinutes);
   return Math.min(1, base + (1 - base) * 0.3 * dwell);
 }
 
@@ -345,12 +345,12 @@ export function decideCompass(input: DecisionInput, nowMs: number): CompassDecis
   const intent = input.intent ?? null;
   const candidate = summariseLiveState(input.candidate, nowMs, input.ttlSecondsFor);
   const current = input.current ? summariseLiveState(input.current, nowMs, input.ttlSecondsFor) : null;
-  const candidateValue = experienceValue(candidate, intent);
-  const currentValue = current ? currentExperienceValue(current, intent, input.current?.sinceMinutes ?? null) : null;
-  const interception = interceptPeak(input.etaMinutes, candidate.horizonAt, nowMs);
-  // CCL-15 — the owner's number, not the module's. With nothing configured this
-  // resolves to SWITCHING_COST, which is the same constant by definition.
+  // CCL-15 — the owner's numbers, not the module's. With nothing configured
+  // every field resolves to the constant beside it, by definition.
   const policy = input.policy ?? compassPolicyContract();
+  const candidateValue = experienceValue(candidate, intent);
+  const currentValue = current ? currentExperienceValue(current, intent, input.current?.sinceMinutes ?? null, policy) : null;
+  const interception = interceptPeak(input.etaMinutes, candidate.horizonAt, nowMs);
   const switching: SwitchingCostReport = { applied: false, cost: policy.switchingCost, currentValue, candidateValue };
   const reasons: DecisionReason[] = [];
 
@@ -382,15 +382,15 @@ export function decideCompass(input: DecisionInput, nowMs: number): CompassDecis
   }
   // 4. Friction.
   if (candidate.walkIn === false) { reasons.push("walk_in_refused"); return finish("SKIP"); }
-  const tolerance = input.queueToleranceMinutes ?? DEFAULT_QUEUE_TOLERANCE_MINUTES;
+  const tolerance = input.queueToleranceMinutes ?? policy.queueToleranceMinutes;
   if (candidate.queueMinMinutes !== null && candidate.queueMinMinutes > tolerance) { reasons.push("queue_exceeds_tolerance"); return finish("WAIT"); }
   // 5. Intent compatibility.
-  if (candidateValue !== null && candidateValue <= INTENT_CONFLICT_FLOOR) { reasons.push("intent_conflict"); return finish("SKIP"); }
+  if (candidateValue !== null && candidateValue <= policy.intentConflictFloor) { reasons.push("intent_conflict"); return finish("SKIP"); }
   // 6. Peak interception.
   if (interception.reachable === false) { reasons.push("window_may_decay_before_arrival"); return finish("WAIT"); }
   if (interception.reachable === null) reasons.push("interception_unknown");
   // 7. Return.
-  if (input.returnSubjectId && input.returnSubjectId === input.candidate.subjectId && (candidateValue === null || candidateValue >= RETURN_FAVOURABLE_VALUE)) {
+  if (input.returnSubjectId && input.returnSubjectId === input.candidate.subjectId && (candidateValue === null || candidateValue >= policy.returnFavourableValue)) {
     reasons.push("left_earlier_now_favourable"); return finish("RETURN");
   }
   // 8. Switching cost.

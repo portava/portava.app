@@ -2393,7 +2393,7 @@ The baseline is now a three-state answer and the conflicted axis is named to the
 **RED → GREEN, and the link proved by reverting.** The suite cited on the `CPV2-02` row above
 ran **0 pass / 5 fail** against the tree before the change and **5 pass / 0 fail** after; reverting
 `CompassMediaContext.ts` alone and leaving the test returns it to **0 pass / 5 fail**. The
-pre-existing `artifacts/api-server/src/test/compassCensusClosure.test.ts:324#assert.deepEqual(Object.keys(q).sort(), ["axis", "band", "claimType", "conflictState", "grounded", "observedAt", "sourceClass"]);`
+pre-existing `artifacts/api-server/src/test/compassCensusClosure.test.ts:333#assert.deepEqual(Object.keys(q).sort(), ["axis", "band", "claimType", "conflictState", "grounded", "observedAt", "sourceClass"]);`
 went red on its own exhaustive key list — the guard working — and that list now names
 `conflictState`; 33 / 33 green. **P24 — what turns it red:** dropping `conflictState` from the baseline, folding a
 conflicted axis back into "grounded", or reading an unrecognised conflict marker as anything but
