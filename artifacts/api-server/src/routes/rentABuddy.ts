@@ -1699,7 +1699,7 @@ export async function enforceCityRestrictions(opts: {
  * no rewrite of the contradicted date of birth. Those are a separate owner
  * decision; this function is the refusal only.
  */
-async function refuseKnownMinorTraveler(serviceClient: any, res: any, userId: string): Promise<boolean> {
+export async function refuseKnownMinorTraveler(serviceClient: any, res: any, userId: string): Promise<boolean> {
   const signal = await readVerifiedAgeSignal(serviceClient, userId);
   if (signal.verificationUnreadable) {
     res.status(503).json({
@@ -6282,9 +6282,23 @@ router.get("/rent-a-buddy/me/eligibility", async (req, res) => {
   const idVerified = travIdentity.idVerified;
   if (requireId && !idVerified) reasons.push("id_not_verified");
 
+  // THREE REASONS, NOT ONE. `loadTravelerIdentity` collapses BOTH the verified-
+  // minor contradiction and an unreadable `identity_verifications` into
+  // `age === null`, and this endpoint reported all of it as `age_unverified` —
+  // a statement that this user has no date of birth on file. For a verified
+  // minor that is false (it is on file and contradicted), and during an outage
+  // of a DIFFERENT table it is a verdict invented out of a failed read. The
+  // interface already carries `verifiedMinor` and `verificationUnreadable`;
+  // this reads them instead of guessing from the hole they leave behind.
   let ageOk = true;
   const age: number | null = travIdentity.age;
-  if (age !== null) {
+  if (travIdentity.verificationUnreadable) {
+    reasons.push("age_check_unavailable");
+    ageOk = false;
+  } else if (travIdentity.verifiedMinor) {
+    reasons.push("age_not_verified_adult");
+    ageOk = false;
+  } else if (age !== null) {
     if (age < minAge) { reasons.push(`age_under_${minAge}`); ageOk = false; }
     if (isNightlife && age < nightlifeMinAge) { reasons.push(`nightlife_requires_${nightlifeMinAge}`); ageOk = false; }
   } else {
