@@ -313,11 +313,20 @@ describe("H. source guards", () => {
 //
 // WHAT MUST NOT HAPPEN
 // ====================
-// A code with no producer must never be emitted. Three of the nine have none on
-// this surface today (no Trail object exists — DV-20; no trip-fit term reaches
-// the recommendation ranker; no seasonality signal exists), and emitting them
-// anyway would be inventing evidence — the same defect `05` §1.1 names for
-// why-now. The test pins the absence as deliberately as it pins the presence.
+// A code with no producer must never be emitted. TWO of the nine have none on
+// this surface today (no trip-fit term reaches the recommendation ranker; no
+// seasonality signal exists), and emitting them anyway would be inventing
+// evidence — the same defect `05` §1.1 names for why-now. The test pins the
+// absence as deliberately as it pins the presence.
+//
+// It was three until 2026-09-14. `trail_affinity`'s stated reason was "no Trail
+// object exists — DV-20"; migration 2910 and services/trails/TrailService.ts
+// make that false, so the code now has a producer and a plain-language string.
+// What is still true, and is NOT claimed away: 2910 is applied to the
+// `portava-ci` rehearsal project only, not to production, and the producer sits
+// behind `discovery_ranking_modifiers_enabled` (OFF), so the signal does not
+// fire in production. A mapped code whose producer has nothing to read is a
+// different state from an unmapped one.
 import {
   DISCOVERY_REASON_CODES,
   REASON_CODES_WITHOUT_PRODUCER,
@@ -373,8 +382,13 @@ describe("I. 01 §11 reason vocabulary", () => {
     }
     assert.deepEqual(
       [...REASON_CODES_WITHOUT_PRODUCER].sort(),
-      ["season_match", "trail_affinity", "trip_match"],
-      "the three unproducible codes must be named, so the absence is checkable rather than silent",
+      ["season_match", "trip_match"],
+      // `trail_affinity` LEFT this list on 2026-09-14 and must not return to it
+      // silently: migration 2910 defines the Trail object,
+      // TrailService.loadViewerTrailModifier reads it, and portavaRank scores
+      // the result under the feature key `trailAffinity`. Its producer is
+      // pinned in test/discoveryTrailModifier.test.ts ("WIRING 1").
+      "the unproducible codes must be named, so the absence is checkable rather than silent",
     );
   });
 

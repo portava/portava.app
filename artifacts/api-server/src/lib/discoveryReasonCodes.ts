@@ -37,15 +37,23 @@
  * A signal that did not fire produces no code. A code with no signal is never
  * emitted at all — see below.
  *
- * THREE OF THE NINE HAVE NO PRODUCER, AND ARE NOT FAKED
- * =====================================================
+ * TWO OF THE NINE HAVE NO PRODUCER, AND ARE NOT FAKED
+ * ===================================================
  * `REASON_CODES_WITHOUT_PRODUCER` names them, so the absence is checkable
- * rather than silent:
+ * rather than silent. `trail_affinity` USED to be a third, on the reason "There
+ * is no Trail object in this repository or in production". That reason is false
+ * as of 2026-09-14: migration 2910 defines `trails` / `content_trails` /
+ * `trail_edges`, `services/trails/TrailService.loadViewerTrailModifier` reads
+ * them, and `lib/portavaRank.scoreCandidate` scores the result under the
+ * feature key `trailAffinity`. The code is mapped below.
  *
- *   trail_affinity   There is no Trail object in this repository or in
- *                    production (census-discovery DV-20; `trails`,
- *                    `content_trails`, `trail_edges` all absent). Nothing can
- *                    compute affinity to a thing that does not exist.
+ * WHAT THE MAPPING STILL DOES NOT CLAIM: the producer runs behind
+ * `discovery_ranking_modifiers_enabled`, seeded OFF, and 2910 is applied to the
+ * `portava-ci` rehearsal project only, not to production. So in production today
+ * the signal never fires and the code is never emitted — which is the correct
+ * behaviour of a mapped code with a producer that has nothing to read, and is
+ * NOT the same state as having no producer at all. The remaining two:
+ *
  *   trip_match       The trip projection Discovery consumes
  *                    (lib/discoveryTripProjectionConsumer.ts) reaches the
  *                    SEARCH route, not the recommendation ranker; no trip-fit or
@@ -103,7 +111,6 @@ export type DiscoveryReasonCode = (typeof DISCOVERY_REASON_CODES)[number];
  * can tell "not built" from "forgotten".
  */
 export const REASON_CODES_WITHOUT_PRODUCER: readonly DiscoveryReasonCode[] = [
-  "trail_affinity",
   "trip_match",
   "season_match",
 ];
@@ -128,6 +135,14 @@ const SIGNAL_TO_CODE: Readonly<Record<string, DiscoveryReasonCode>> = {
   actionability:     "nearby_now",   // PDE
   availabilityFit:   "nearby_now",   // PDE
   capacityOpen:      "nearby_now",   // PDE
+
+  // ── trail_affinity — this place sits in a Trail the viewer follows ─────────
+  // The key is lib/discoveryTrailAffinity.TRAIL_AFFINITY_SIGNAL_KEY verbatim
+  // and portavaRank's own `f.trailAffinity` feature name; the two are the same
+  // string on purpose, so the reason cannot drift from the number that earned
+  // it. Producer: services/trails/TrailService.loadViewerTrailModifier →
+  // lib/discoveryModifiers → ViewerContext.trailAffinity → scoreCandidate.
+  trailAffinity:     "trail_affinity", // PDE (lib/discoveryTrailAffinity.ts)
 
   // ── trending_local — more activity here than this place's own baseline ─────
   localMomentum:     "trending_local", // PDE (lib/discoveryLocalMomentum.ts)
@@ -219,6 +234,12 @@ export function reasonCodesFromSignals(signalKeys: readonly string[]): Discovery
  * would be a claim nothing backs.
  */
 const PLAIN_LANGUAGE: Readonly<Partial<Record<DiscoveryReasonCode, string>>> = {
+  // Names no Trail. `01` §11's own examples interpolate ("Frequently added to
+  // Tokyo trips"), and the fixed-text rule in this module's header applies here
+  // too: which Trails a viewer follows is their own social context, and a
+  // shared screen rendering "Because you follow Bangkok After Dark" discloses
+  // it. The bounded fact — that a followed Trail is why — is said without it.
+  trail_affinity:   "From a trail you follow.",
   nearby_now:       "Close to you and open around now.",
   trending_local:   "Picking up locally this week.",
   creator_affinity: "From travelers whose posts you follow.",

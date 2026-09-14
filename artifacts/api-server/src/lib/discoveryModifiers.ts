@@ -13,6 +13,12 @@
  *
  *   localMomentum          [0, 1] per place, contribution capped in portavaRank
  *                          at LOCAL_MOMENTUM_MAX_CONTRIBUTION (0.15)
+ *   trailAffinity          [0, 1] per place FOR THIS VIEWER, contribution capped
+ *                          in portavaRank at TRAIL_AFFINITY_MAX_CONTRIBUTION
+ *                          (0.10 — the owner's approved initial setting,
+ *                          2026-09-14, provisional). Already scaled by `02` §11
+ *                          Trail health and DV-25 Trail momentum before it
+ *                          leaves TrailService.
  *   momentumScale          [0.5, 1]   from city confidence — thin cities halve
  *                          the momentum signal, because velocity computed over
  *                          little data is mostly noise
@@ -52,6 +58,7 @@ import { isFlagEnabled } from "./featureFlags.js";
 import { loadLocalMomentum, readLocalTrendStates } from "./discoveryLocalMomentum.js";
 import type { TrendReading } from "./discoveryTrendState.js";
 import { getCityConfidence, type CityConfidence } from "../compass/CompassGraphEngine.js";
+import { loadViewerTrailModifier } from "../services/trails/TrailService.js";
 import {
   GOVERNOR_BUDGET_MIN_PCT, GOVERNOR_BUDGET_MAX_PCT,
 } from "../services/ranking/FeedSlotAllocator.js";
@@ -71,6 +78,21 @@ export interface DiscoveryModifiers {
   reason: ModifiersReason;
   /** place id → momentum in [0,1], already scaled by `momentumScale`. Empty when off. */
   localMomentum: Record<string, number>;
+  /**
+   * place id → Trail affinity in [0,1] for THIS VIEWER
+   * (services/trails/TrailService.loadViewerTrailModifier), already scaled by
+   * `02` §11 Trail health and DV-25 Trail momentum. Empty when the modifiers
+   * are off, when no viewer id was supplied, and — the normal case today —
+   * when migration 2910 is not applied to the deployment, which the Trail
+   * service reports as a refusal rather than as an empty catalogue.
+   *
+   * THIS ONE IS USER-DEPENDENT, and it is the only field here that is. The
+   * momentum map and the city confidence describe the world; this describes the
+   * viewer's own follow graph, so a record carrying it must never be shared
+   * between viewers or cached across them (`06` §4: "Candidate caches may be
+   * user-independent. Final ranking must not be.").
+   */
+  trailAffinity: Record<string, number>;
   /**
    * `03` §9 place-momentum stage per place — unknown · emerging · trending ·
    * established · cooling · rediscovered — with the three window rates behind
@@ -95,6 +117,7 @@ export function inertModifiers(reason: ModifiersReason): DiscoveryModifiers {
     enabled: false,
     reason,
     localMomentum: {},
+    trailAffinity: {},
     trendStates: {},
     cityConfidence: null,
     momentumScale: 0,
@@ -145,6 +168,13 @@ async function modifiersEnabled(sc: any, nowMs: number): Promise<boolean> {
 }
 
 export interface LoadModifiersParams {
+  /**
+   * The viewer this request is being ranked FOR. Drives the Trail modifier and
+   * nothing else. Null/absent means no Trail read happens at all — which is the
+   * honest behaviour for an anonymous or unidentified request, because a
+   * follow-graph modifier with no viewer has nothing to be about.
+   */
+  viewerId?: string | null;
   /** Lowercased destination city, or null. Drives the confidence read. */
   city: string | null;
   /** Candidate place ids — the momentum read is scoped to exactly these. */
@@ -186,6 +216,32 @@ export async function loadDiscoveryModifiers(
     if (scaled > 0) localMomentum[id] = scaled;
   }
 
+  // `02` Trails as a bounded MODIFIER — the fourth input, and the only
+  // user-dependent one. Individually non-fatal on the same principle as the two
+  // reads above: a Trail read that refuses (no table, no client, a db error)
+  // means "no Trail evidence for this viewer", which is an empty map, not a
+  // failed request. In production today that refusal is `trails_unavailable`
+  // because migration 2910 is applied to the `portava-ci` rehearsal project
+  // only, and this path is the reason that state costs one read and changes no
+  // served order.
+  //
+  // There is deliberately NO `if (!t.refusal)` here. Every refusal branch of
+  // loadViewerTrailModifier returns the same empty map, so such a guard could
+  // not change an outcome — and a branch nothing can reach is a claim about
+  // the code that is not true, which the next reader would take for the reason
+  // the map can be empty. The invariant it would have asserted is pinned where
+  // it is actually decided, by "every refusal path yields an EMPTY affinity
+  // map" in test/discoveryTrailRoutes.test.ts, so a future change that returns
+  // rows alongside a refusal fails there rather than leaking through here.
+  let trailAffinity: Record<string, number> = {};
+  if (typeof params.viewerId === "string" && params.viewerId.length > 0) {
+    try {
+      trailAffinity = (await loadViewerTrailModifier(
+        sc, params.viewerId, params.placeIds, { nowMs },
+      )).trailAffinity;
+    } catch { trailAffinity = {}; }
+  }
+
   // `03` §9 stages, read out of the SAME cache entry the momentum load just
   // populated — no second query, and no possibility of the stage and the scalar
   // describing different corpora. Unscaled on purpose: see `trendStates` above.
@@ -194,6 +250,6 @@ export async function loadDiscoveryModifiers(
 
   return {
     enabled: true, reason: "flag_on",
-    localMomentum, trendStates, cityConfidence, momentumScale, explorationBudgetPct,
+    localMomentum, trailAffinity, trendStates, cityConfidence, momentumScale, explorationBudgetPct,
   };
 }

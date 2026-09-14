@@ -542,6 +542,10 @@ export async function rankForViewer<T extends PdePlace>(
   } else {
     try {
       modifiers = await loadDiscoveryModifiers(sc, {
+        // The Trail modifier is the one user-dependent input, so the viewer is
+        // named here rather than implied. Without it loadDiscoveryModifiers
+        // performs no Trail read at all.
+        viewerId: viewer.userId,
         city: viewer.city,
         placeIds: places.map((p) => p.id),
         cacheKey: opts.candidateKey ?? deriveCandidateKey(viewer.city, places.map((p) => p.id)),
@@ -572,6 +576,12 @@ export async function rankForViewer<T extends PdePlace>(
     // Capped local momentum (portavaRank LOCAL_MOMENTUM_MAX_CONTRIBUTION).
     // Undefined with the flag off ⇒ the feature is 0 for every candidate.
     localMomentum: modifiers.enabled ? modifiers.localMomentum : undefined,
+    // `02` Trails as a bounded MODIFIER — the viewer's followed Trails, already
+    // scaled by §11 health and DV-25 momentum, capped in portavaRank at
+    // TRAIL_AFFINITY_MAX_CONTRIBUTION. Gated on `enabled` and NOT on the map
+    // being empty: an inert record must leave the feature vector byte-identical
+    // to the pre-Trail pipeline, which is what makes the flag a rollback.
+    trailAffinity: modifiers.enabled ? modifiers.trailAffinity : undefined,
   };
 
   // Map place → RankCandidate.

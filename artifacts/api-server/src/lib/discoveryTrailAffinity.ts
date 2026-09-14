@@ -25,9 +25,25 @@
  * If a future change needs Trails to ORDER anything, that is the peer-scoring
  * system the ruling marked STALE, and it needs a new owner ruling first.
  *
- * THE CAP IS THE PROOF
- * ====================
- * `TRAIL_AFFINITY_MAX_CONTRIBUTION` is 0.10:
+ * THE CAP IS THE PROOF — AND THE NUMBER IS THE OWNER'S, NOT THIS LANE'S
+ * ====================================================================
+ * `TRAIL_AFFINITY_MAX_CONTRIBUTION` is 0.10 because the OWNER RULED IT SO on
+ * 2026-09-14, verbatim: "Use 0.10 as the provisional Trail affinity cap,
+ * subject to any explicit spec constraints." It is an APPROVED INITIAL
+ * SETTING, PROVISIONAL AND SUBJECT TO REVISION — not a value this code chose
+ * and not a value a reader should treat as derived.
+ *
+ * The spec constraint the ruling defers to was searched for and is NOT THERE.
+ * `docs/specs/discovery-v1/02_Trails.md` §11 states the obligation in words
+ * only — "Trail health should influence ranking but not silently erase
+ * legitimate content" (`:163`) — and names no number anywhere in the file;
+ * `docs/specs/discovery-v1/06_Recommendation_Engine.md` §3 lists
+ * `trail_relevance` as one feature family among eleven and gives no weight,
+ * no bound and no cap. So 0.10 stands on the ruling alone.
+ *
+ * What the repository CAN say about 0.10 is that it is consistent with the
+ * bounds already ratified elsewhere, which is why the cap tests pin these
+ * relations rather than the digits:
  *   - at or below LOCAL_MOMENTUM_MAX_CONTRIBUTION (0.15), the bound step 7
  *     already set for the other modifier, because Trail membership is an
  *     EDITORIAL fact about content and momentum is a measured fact about the
@@ -41,7 +57,9 @@
  *     which is the honest place for a signal this indirect.
  * `trailAffinityContribution` clamps in CODE, not by the weight, so an admin
  * weight override cannot turn the modifier into a driver — the same defence
- * portavaRank applies to localMomentum.
+ * portavaRank applies to localMomentum. `lib/portavaRank.ts` imports that
+ * function rather than restating the bound, so there is exactly one place the
+ * cap is written and exactly one place a revision has to land.
  *
  * DV-25 REUSES THE MOMENTUM KERNEL THAT ALREADY SHIPS
  * ===================================================
@@ -56,31 +74,52 @@
  * census-discovery rows: DV-25 (behaviour → Trail momentum), DV-18's
  * `trail_affinity` producer (see below), DC-05's ranking input.
  *
- * THE REASON CODE — WHAT THIS FILE CAN AND CANNOT CLOSE
- * ====================================================
- * `lib/discoveryReasonCodes.ts` lists `trail_affinity` in
+ * THE REASON CODE — NOW WIRED, AND WHAT THAT DOES AND DOES NOT MEAN
+ * =================================================================
+ * `lib/discoveryReasonCodes.ts` used to list `trail_affinity` in
  * `REASON_CODES_WITHOUT_PRODUCER` with the reason "There is no Trail object in
- * this repository or in production". That reason is now false: the object
- * exists (migration 2910) and this module computes the signal.
- * `TRAIL_AFFINITY_SIGNAL_KEY` is the verbatim key that module's
- * `SIGNAL_TO_CODE` map would need. THIS LANE MAY NOT EDIT THAT FILE, so the
- * mapping is a cross-lane request, not a claim: until the entry exists,
- * `reasonCodeForSignal("trailAffinity")` still returns null and no served row
- * carries the code. Said plainly rather than reported as closed.
+ * this repository or in production". The first half of that reason is false as
+ * of migration 2910, so the code now has its producer:
+ * `TRAIL_AFFINITY_SIGNAL_KEY` is the verbatim key in that module's
+ * `SIGNAL_TO_CODE`, and it is also `portavaRank`'s own feature name, so the
+ * reason and the number that earned it cannot drift apart.
+ *
+ * The SECOND half of the old reason still stands and is not papered over: 2910
+ * is applied to the `portava-ci` rehearsal project ONLY — six tables, RLS on,
+ * zero rows, verified 2026-09-14 — and NOT to production; and the modifier runs
+ * behind `discovery_ranking_modifiers_enabled`, seeded OFF. In production today
+ * the signal never fires and the code is never emitted. A mapped code whose
+ * producer has nothing to read is a different state from an unmapped one, and
+ * only the first is claimed here.
+ *
+ * THE FULL PATH, so a reader can check it rather than take it:
+ *   TrailService.loadViewerTrailModifier  (reads trail_follows + content_trails)
+ *     → trailAffinityMap                   (this file — health- and momentum-scaled)
+ *     → DiscoveryModifiers.trailAffinity   (lib/discoveryModifiers.ts, under the flag)
+ *     → ViewerContext.trailAffinity        (lib/discoveryPde.ts)
+ *     → scoreCandidate f.trailAffinity     (lib/portavaRank.ts, capped here)
  */
 import {
   computeLocalMomentum, type MomentumRow,
 } from "./discoveryLocalMomentum.js";
+import { TRAIL_HEALTH_MIN_SCALE } from "./discoveryTrailHealth.js";
 import type { TrailRelationship } from "./discoveryTrailObject.js";
 
 /**
  * The largest score contribution a Trail may ever make, whatever weight is
- * passed. See the header for why 0.10 and not more. Change it only with a
- * ruling; the cap tests in test/discoveryTrailModifier.test.ts pin it against
- * portavaRank's own weight table, so raising it fails the build rather than
- * quietly changing the product.
+ * passed. See the header: the VALUE is the owner's ruling of 2026-09-14 and
+ * the RELATIONS below it are what this repository can defend. The cap tests in
+ * test/discoveryTrailModifier.test.ts pin it against portavaRank's own weight
+ * table AND against the real ranker's output, so raising it fails the build
+ * rather than quietly changing the product.
  */
 export const TRAIL_AFFINITY_MAX_CONTRIBUTION = 0.10;
+// ^ OWNER-APPROVED INITIAL SETTING, 2026-09-14. Provisional and subject to
+//   revision. No spec constraint overrides it: `02_Trails.md` and
+//   `06_Recommendation_Engine.md` were both read for an explicit cap and state
+//   none (see the header). Changing it changes served rank, so it changes only
+//   by a further ruling — not by a weight table, not by an admin override, and
+//   not by a reader who mistakes it for a tuned constant.
 
 /**
  * The ranker-signal key this modifier would appear under, verbatim.
@@ -134,6 +173,39 @@ export interface TrailAffinityOptions {
    * make a failed read look like a cold Trail.
    */
   trailMomentum?: Record<string, number>;
+  /**
+   * trail id → `lib/discoveryTrailHealth.trailHealthScale(health)`.
+   *
+   * `02` §11: "Trail health should influence ranking but not silently erase
+   * legitimate content." THIS is where the influence half happens — the health
+   * multiplier was computed and returned by TrailService and multiplied
+   * nothing, which made §11 a sentence the code did not implement.
+   *
+   * Two properties, and both are enforced HERE rather than trusted from the
+   * caller, because a bound that lives only at the call site is a bound one new
+   * call site removes:
+   *   INFLUENCE   a lower scale yields a strictly lower affinity;
+   *   NOT ERASE   the value is clamped into [TRAIL_HEALTH_MIN_SCALE, 1], so a
+   *               caller that passed 0 (or a negative, or a NaN) still cannot
+   *               zero a place out of the map, and a caller that passed 3
+   *               cannot promote one above its own relationship weight.
+   *
+   * An ABSENT entry is unscaled, like `trailMomentum`: a Trail whose health
+   * could not be measured is not evidence of ill health, and defaulting it to
+   * the floor would punish exactly the newest Trails §9 exists to protect.
+   */
+  trailHealthScale?: Record<string, number>;
+}
+
+/**
+ * The §11 health multiplier, re-clamped at the point of use. See
+ * `TrailAffinityOptions.trailHealthScale`.
+ */
+function healthFactor(scales: Record<string, number> | undefined, trailId: string): number {
+  if (!scales) return 1;
+  const raw = scales[trailId];
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return 1;
+  return Math.min(1, Math.max(TRAIL_HEALTH_MIN_SCALE, raw));
 }
 
 /**
@@ -175,7 +247,13 @@ export function trailAffinityMap(
       ? TRAIL_MOMENTUM_SCALE_FLOOR + (1 - TRAIL_MOMENTUM_SCALE_FLOOR) * clamp01(momentum[m.trail_id])
       : 1;
 
-    const value = round3(base * clamp01(m.confidence) * scale);
+    // §11 health, §9/DV-25 momentum, §4 confidence and §4's relationship class,
+    // in that order and all multiplicative: each can only ever DAMP the one
+    // before it, so the relationship weight remains the ceiling of the term and
+    // no combination of the three can manufacture rank.
+    const value = round3(
+      base * clamp01(m.confidence) * scale * healthFactor(opts?.trailHealthScale, m.trail_id),
+    );
     if (value <= 0) continue;
     if (value > (out[m.source_id] ?? 0)) out[m.source_id] = value;
   }

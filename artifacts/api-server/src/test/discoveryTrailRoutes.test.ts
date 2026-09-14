@@ -28,6 +28,13 @@ import { recordTrailHealthSnapshot, moveTrailLifecycle } from "../services/trail
 import {
   computeTrailHealth, TRAIL_HEALTH_METRICS, TRAIL_HEALTH_MODEL_VERSION,
 } from "../lib/discoveryTrailHealth.js";
+import { loadViewerTrailModifier } from "../services/trails/TrailService.js";
+import {
+  loadDiscoveryModifiers, invalidateDiscoveryModifiersFlagCache,
+  DISCOVERY_MODIFIERS_FLAG,
+} from "../lib/discoveryModifiers.js";
+import { scoreCandidate } from "../lib/portavaRank.js";
+import { TRAIL_AFFINITY_MAX_CONTRIBUTION } from "../lib/discoveryTrailAffinity.js";
 
 const USER = "11111111-1111-4111-8111-111111111111";
 const OTHER = "11111111-1111-4111-8111-111111111112";
@@ -41,6 +48,18 @@ const M1 = "44444444-4444-4444-8444-444444444401";
 const M2 = "44444444-4444-4444-8444-444444444402";
 
 type Row = Record<string, any>;
+
+/**
+ * A deterministic v4-shaped uuid for a row the fake inserts. Deterministic so a
+ * failure is reproducible; uuid-shaped so the routes' own `z.string().uuid()`
+ * guards accept it on the NEXT request of the same flow.
+ */
+function generatedUuid(table: string, n: number): string {
+  let h = 2166136261;
+  for (const ch of `${table}:${n}`) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); }
+  const hex = (h >>> 0).toString(16).padStart(8, "0");
+  return `${hex}-0000-4000-8000-${hex}00000000`.slice(0, 36);
+}
 
 const iso = (msAgo: number) => new Date(Date.now() - msAgo).toISOString();
 
@@ -135,7 +154,11 @@ function makeDb(
           return r;
         }
         writes.push({ table, op: "insert", rows: inserted });
-        const stored = inserted.map((x, i) => ({ id: `gen-${table}-${store().length + i}`, ...x }));
+        // A generated id must be a UUID: every :id route validates one with zod
+        // before it reaches a service, so a fake that minted `gen-trails-0`
+        // could never be followed by a second request in the same story — the
+        // end-to-end flow would 400 at step two and look like a route bug.
+        const stored = inserted.map((x, i) => ({ id: generatedUuid(table, store().length + i), ...x }));
         store().push(...stored);
         const result: any = { data: stored, error: null };
         result.select = () => result;
@@ -200,7 +223,11 @@ const member = (id: string, over: Row = {}): Row => ({
   contributor_id: USER, content_state: "just_arrived", created_at: iso(3_600_000), ...over,
 });
 
-const SEED = () => ({
+// Typed as the fake's own store shape rather than inferred: an inferred literal
+// type makes `seed.rank_events = …` and `{ ...SEED(), trail_follows: [] }` both
+// compile errors in a fixture that the fake accepts perfectly well, which is a
+// gate firing on the test's shape instead of on production's.
+const SEED = (): Record<string, Row[]> => ({
   trails: [
     trail(T_DARK, { slug: "bangkok-after-dark", title: "Bangkok After Dark" }),
     trail(T_ROOF, { slug: "bangkok-rooftops", title: "Bangkok Rooftops", parent_trail_id: T_DARK }),
@@ -251,7 +278,7 @@ async function call(
 }
 
 const withDb = (
-  seed = SEED(), missing: string[] = [],
+  seed: Record<string, Row[]> = SEED(), missing: string[] = [],
   style: "postgres" | "schema-cache" | "message-only" = "postgres",
 ) => {
   _resetLocalMomentumCacheForTest();
@@ -779,5 +806,235 @@ describe("The IG trail in the same router is untouched", () => {
     await call("GET", `/v1/discovery/trails/${T_DARK}/modules`, USER);
     assert.equal(db._tables.route_plans, undefined, "route_plans was never touched");
     assert.equal(db._tables.route_stops, undefined, "route_stops was never touched");
+  });
+});
+
+// ── THE COMPLETE FLOW (2026-09-14) ──────────────────────────────────────────
+//
+// `02` §11's "influence ranking" half, DV-18's producer and DV-25's momentum
+// were all UNWIRED: the viewer modifier load had no caller, the health
+// multiplier multiplied nothing, and the affinity contribution was called only
+// by tests. The block below drives ONE story end to end over real loopback
+// HTTP — propose a Trail, follow it, attach a place to it, serve it — and then
+// takes the SAME database the HTTP writes landed in through
+// `loadDiscoveryModifiers` and the SHIPPING ranker, so the claim "the Trail
+// term reaches served rank" is a transcript rather than an assertion.
+//
+// Every step also asserts its ACCESS CONTROL, because a feature that works and
+// leaks is not finished:
+//   · unauthenticated is refused at every one of the four steps;
+//   · a non-owner cannot detach another contributor's membership row;
+//   · one viewer's Trail follows never enter another viewer's ranking — the
+//     service client bypasses RLS, so the `user_id` filter in application code
+//     is the only thing standing where `trail_follows_own_select` cannot;
+//   · nothing the serializer withholds (health, metrics, momentum, confidence)
+//     appears in any body served along the way.
+
+const PLACE_E2E = "33333333-3333-4333-8333-3333333333e1";
+
+describe("END TO END — propose → follow → attach → serve → ranked, with its access controls", () => {
+  it("drives the whole flow over loopback HTTP and lands a bounded term in the shipping ranker", async () => {
+    const db = withDb({ trails: [], content_trails: [], trail_follows: [], feature_flags: [] });
+    invalidateDiscoveryModifiersFlagCache();
+    const transcript: string[] = [];
+    const step = async (label: string, ...args: Parameters<typeof call>) => {
+      const r = await call(...args);
+      transcript.push(`${args[0]} ${args[1]} as ${args[2] ?? "-"} → ${r.status}`);
+      void label;
+      return r;
+    };
+
+    // 1 — PROPOSE. Unauthenticated first: the refusal is part of the flow.
+    assert.equal((await step("propose/anon", "POST", "/v1/discovery/trails", null,
+      { title: "Bangkok Night Markets" })).status, 401);
+    const created = await step("propose", "POST", "/v1/discovery/trails", USER,
+      { title: "Bangkok Night Markets", destination: "Bangkok" });
+    assert.equal(created.status, 201);
+    const trailId: string = created.body.trail.id;
+
+    // 2 — FOLLOW.
+    assert.equal((await step("follow/anon", "PUT", `/v1/discovery/trails/${trailId}/follow`, null)).status, 401);
+    assert.equal((await step("follow", "PUT", `/v1/discovery/trails/${trailId}/follow`, USER)).status, 200);
+
+    // 3 — ATTACH a place.
+    const label = { labels: [{ sourceType: "place", sourceId: PLACE_E2E, relationship: "primary" }] };
+    assert.equal((await step("attach/anon", "POST", `/v1/discovery/trails/${trailId}/content`, null, label)).status, 401);
+    const attached = await step("attach", "POST", `/v1/discovery/trails/${trailId}/content`, USER, label);
+    assert.equal(attached.status, 201);
+    assert.equal(attached.body.attached, 1);
+
+    // 4 — SERVE. §12's word, and not one number.
+    assert.equal((await step("serve/anon", "GET", `/v1/discovery/trails/${trailId}`, null)).status, 401);
+    const served = await step("serve", "GET", `/v1/discovery/trails/${trailId}`, USER);
+    assert.equal(served.status, 200);
+    assert.equal(served.body.trail.lifecycle, "active", "§5 community growth promoted it on first content");
+    for (const withheld of ["healthScale", "metrics", "momentum", "confidence", "contributor_id"]) {
+      assert.ok(!JSON.stringify(served.body).includes(withheld),
+        `the serializer withholds ${withheld}; it must not appear in a served body`);
+    }
+
+    // 5 — THE RANKER. Same client, same rows, one flag on.
+    db._tables.feature_flags.push({ flag: DISCOVERY_MODIFIERS_FLAG, enabled: true });
+    invalidateDiscoveryModifiersFlagCache();
+    const mods = await loadDiscoveryModifiers(db, {
+      viewerId: USER, city: "bangkok", placeIds: [PLACE_E2E, PLACE_A], cacheKey: "e2e", nowMs: Date.now(),
+    });
+    assert.equal(mods.enabled, true);
+    assert.ok((mods.trailAffinity[PLACE_E2E] ?? 0) > 0,
+      "the place attached over HTTP must carry Trail affinity into the request's modifiers");
+
+    const ctx = { userId: USER, city: "bangkok", trailAffinity: mods.trailAffinity };
+    const cand = (id: string) => ({ id, kind: "place" as const, city: "bangkok" });
+    const gained = scoreCandidate(cand(PLACE_E2E), ctx).score - scoreCandidate(cand("untrailed"), ctx).score;
+    assert.ok(gained > 0, "the term must MOVE the place, or it is not wired");
+    assert.ok(gained <= TRAIL_AFFINITY_MAX_CONTRIBUTION + 1e-9,
+      `the owner's cap bounds the whole movement: gained ${gained}`);
+
+    // 6 — PRIVACY. Another signed-in viewer must inherit none of it.
+    invalidateDiscoveryModifiersFlagCache();
+    const otherMods = await loadDiscoveryModifiers(db, {
+      viewerId: OTHER, city: "bangkok", placeIds: [PLACE_E2E, PLACE_A], cacheKey: "e2e", nowMs: Date.now(),
+    });
+    assert.deepEqual(otherMods.trailAffinity, {},
+      "trail_follows is own-select under RLS; the service client bypasses RLS, so the user_id filter is the control");
+
+    // 7 — OWNERSHIP. A stranger cannot detach the owner's membership row.
+    const rowId = db._tables.content_trails.find((r: Row) => r.source_id === PLACE_E2E)!.id;
+    const stolen = await step("detach/stranger", "DELETE",
+      `/v1/discovery/trails/${trailId}/content/${rowId}`, OTHER);
+    assert.equal(stolen.status, 404, "unknown and not-yours must be the same answer");
+    assert.ok(db._tables.content_trails.some((r: Row) => r.id === rowId), "and nothing may be deleted");
+
+    assert.deepEqual(transcript, [
+      "POST /v1/discovery/trails as - → 401",
+      "POST /v1/discovery/trails as " + USER + " → 201",
+      `PUT /v1/discovery/trails/${trailId}/follow as - → 401`,
+      `PUT /v1/discovery/trails/${trailId}/follow as ${USER} → 200`,
+      `POST /v1/discovery/trails/${trailId}/content as - → 401`,
+      `POST /v1/discovery/trails/${trailId}/content as ${USER} → 201`,
+      `GET /v1/discovery/trails/${trailId} as - → 401`,
+      `GET /v1/discovery/trails/${trailId} as ${USER} → 200`,
+      `DELETE /v1/discovery/trails/${trailId}/content/${rowId} as ${OTHER} → 404`,
+    ]);
+  });
+
+  it("with the modifiers flag OFF the Trail tables are not read at all", async () => {
+    const db = withDb();
+    invalidateDiscoveryModifiersFlagCache();
+    const mods = await loadDiscoveryModifiers(db, {
+      viewerId: USER, city: "bangkok", placeIds: [PLACE_A], cacheKey: "off", nowMs: Date.now(),
+    });
+    assert.equal(mods.enabled, false);
+    assert.deepEqual(mods.trailAffinity, {},
+      "an OFF flag must leave the ranker byte-identical to the pre-Trail pipeline");
+  });
+
+  it("an absent `trail_follows` table degrades to no modifier, never to a thrown request", async () => {
+    const db = withDb(SEED(), ["trail_follows"]);
+    db._tables.feature_flags.push({ flag: DISCOVERY_MODIFIERS_FLAG, enabled: true });
+    invalidateDiscoveryModifiersFlagCache();
+    const mods = await loadDiscoveryModifiers(db, {
+      viewerId: USER, city: "bangkok", placeIds: [PLACE_A], cacheKey: "gone", nowMs: Date.now(),
+    });
+    assert.equal(mods.enabled, true);
+    assert.deepEqual(mods.trailAffinity, {},
+      "migration 2910 is applied to no deployment; that is the NORMAL path and it must not 500");
+  });
+});
+
+describe("DV-25 + §11 — momentum and health reach the affinity the ranker receives", () => {
+  const NOWMS = Date.parse("2026-09-14T12:00:00.000Z");
+  const ago = (ms: number) => new Date(NOWMS - ms).toISOString();
+
+  /** One followed Trail, one member place, plus whatever else the case needs. */
+  const followedSeed = (extra: Record<string, Row[]> = {}) => ({
+    trails: [trail(T_DARK)],
+    trail_follows: [{ trail_id: T_DARK, user_id: USER }],
+    content_trails: [member(M1, { created_at: ago(3_600_000) })],
+    ...extra,
+  });
+
+  it("DV-25 — rank_events on the Trail's members SCALE the affinity the ranker receives", async () => {
+    // A surge: twelve impressions inside the 48 h window against a 30 d
+    // baseline. The kernel is lib/discoveryLocalMomentum's, unchanged.
+    const surge = Array.from({ length: 12 }, (_, i) => ({
+      surface: "discovery", item_id: PLACE_A, outcome: "impression",
+      served_at: ago(i * 3_600_000), outcome_at: null,
+    }));
+    const hot = await loadViewerTrailModifier(
+      withDb(followedSeed({ rank_events: surge })), USER, [PLACE_A], { nowMs: NOWMS });
+    const cold = await loadViewerTrailModifier(
+      withDb(followedSeed({ rank_events: [] })), USER, [PLACE_A], { nowMs: NOWMS });
+
+    assert.ok(hot.trailAffinity[PLACE_A] > cold.trailAffinity[PLACE_A],
+      "DV-25: behaviour must influence Trail momentum, and momentum must reach the modifier");
+    assert.ok(cold.trailAffinity[PLACE_A] > 0,
+      "a quiet Trail is damped, never zeroed — a followed Trail is still the viewer's taste");
+  });
+
+  it("a FAILED momentum read is unscaled, not treated as a cold Trail", async () => {
+    const read = await loadViewerTrailModifier(
+      withDb(followedSeed(), ["rank_events"]), USER, [PLACE_A], { nowMs: NOWMS });
+    const measuredFlat = await loadViewerTrailModifier(
+      withDb(followedSeed({ rank_events: [] })), USER, [PLACE_A], { nowMs: NOWMS });
+    assert.ok(read.trailAffinity[PLACE_A] > measuredFlat.trailAffinity[PLACE_A],
+      "no momentum INFORMATION is a different fact from measured-and-flat, and they must not collapse");
+  });
+
+  it("§11 — an unhealthy Trail contributes LESS, and a reported one still contributes", async () => {
+    // Health is a property of the WHOLE Trail, so the unhealthy fixture loads
+    // one contributor posting the same place repeatedly, with open reports.
+    const sick = followedSeed({
+      content_trails: [
+        member(M1, { created_at: ago(120 * 86_400_000) }),
+        member("m-s2", { id: "m-s2", created_at: ago(120 * 86_400_000), confidence: 0.1 }),
+        member("m-s3", { id: "m-s3", created_at: ago(120 * 86_400_000), confidence: 0.1 }),
+      ],
+      trail_reports: [
+        { id: "r1", trail_id: T_DARK, resolution: null },
+        { id: "r2", trail_id: T_DARK, resolution: null },
+        { id: "r3", trail_id: T_DARK, resolution: null },
+      ],
+    });
+    const ill = await loadViewerTrailModifier(withDb(sick), USER, [PLACE_A], { nowMs: NOWMS });
+    const well = await loadViewerTrailModifier(withDb(followedSeed()), USER, [PLACE_A], { nowMs: NOWMS });
+
+    assert.ok(ill.trailAffinity[PLACE_A] < well.trailAffinity[PLACE_A],
+      "§11: Trail health should INFLUENCE ranking");
+    assert.ok(ill.trailAffinity[PLACE_A] > 0,
+      "§11: and must not SILENTLY ERASE legitimate content");
+  });
+
+  it("the read is scoped to the VIEWER — another signed-in user inherits none of it", async () => {
+    const mine = await loadViewerTrailModifier(withDb(followedSeed()), USER, [PLACE_A], { nowMs: NOWMS });
+    const theirs = await loadViewerTrailModifier(withDb(followedSeed()), OTHER, [PLACE_A], { nowMs: NOWMS });
+    assert.ok(mine.trailAffinity[PLACE_A] > 0);
+    assert.deepEqual(theirs.trailAffinity, {},
+      "the service client bypasses RLS; without the user_id filter this read would hand one viewer another's follows");
+    assert.deepEqual(theirs.followedTrailIds, []);
+  });
+
+  it("every refusal path yields an EMPTY affinity map — the invariant discoveryModifiers relies on", async () => {
+    // lib/discoveryModifiers.ts consumes `trailAffinity` without re-checking
+    // `refusal`, because there is no refusal branch here that can return rows.
+    // That is the invariant, and it is asserted over EVERY refusal this service
+    // can produce rather than over the one that happens to be common.
+    const cases: Array<[string, Promise<{ refusal: unknown; trailAffinity: Record<string, number> }>]> = [
+      ["no_service_client", loadViewerTrailModifier(null, USER, [PLACE_A], { nowMs: NOWMS })],
+      ["trails_unavailable (follows)", loadViewerTrailModifier(
+        withDb(followedSeed(), ["trail_follows"]), USER, [PLACE_A], { nowMs: NOWMS })],
+      ["trails_unavailable (members)", loadViewerTrailModifier(
+        withDb(followedSeed(), ["content_trails"]), USER, [PLACE_A], { nowMs: NOWMS })],
+    ];
+    for (const [label, p] of cases) {
+      const r = await p;
+      assert.deepEqual(r.trailAffinity, {},
+        `${label} must yield no affinity; a refusal that also returned rows would reach the ranker unchecked`);
+    }
+  });
+
+  it("a place in NO followed Trail is absent from the map, never present at zero", async () => {
+    const r = await loadViewerTrailModifier(withDb(followedSeed()), USER, [PLACE_B], { nowMs: NOWMS });
+    assert.deepEqual(r.trailAffinity, {});
   });
 });

@@ -517,7 +517,7 @@ describe("PDE modifiers (ROADMAP step 7/8) — OFF is inert, ON is bounded", () 
 
   function onModifiers(over: Partial<DiscoveryModifiers> = {}): DiscoveryModifiers {
     return {
-      enabled: true, reason: "flag_on", localMomentum: {}, trendStates: {}, cityConfidence: null,
+      enabled: true, reason: "flag_on", localMomentum: {}, trailAffinity: {}, trendStates: {}, cityConfidence: null,
       momentumScale: 0.5, explorationBudgetPct: GOVERNOR_BUDGET_MAX_PCT, ...over,
     };
   }

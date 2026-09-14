@@ -493,42 +493,157 @@ export interface TrailModifierResult {
   followedTrailIds: string[];
 }
 
+/** A viewer with more followed Trails than this has the newest N read. */
+export const MAX_FOLLOWED_TRAILS_PER_VIEWER = 50;
+/**
+ * Members read across the followed Trails, newest first.
+ *
+ * The affinity itself needs only the CANDIDATE places, and a filtered read
+ * would be far smaller. It is deliberately not filtered: `02` §11 health is a
+ * property of the WHOLE Trail — contributor concentration, duplicate density
+ * and staleness are all counts over its full membership — so a health scale
+ * computed from the handful of members that happen to be on this page would be
+ * a different metric wearing §11's name. The bound is stated rather than
+ * unlimited, and `memberCount` on each health record reports the denominator
+ * the metrics were actually computed over.
+ */
+export const MAX_TRAIL_MEMBERS_SCANNED = 1000;
+/** rank_events rows folded onto the followed Trails for DV-25 momentum. */
+export const MAX_TRAIL_MOMENTUM_EVENTS = 1000;
+
+/**
+ * Open `trail_reports` counts for several Trails in ONE read.
+ *
+ * Non-fatal, and 0 is the honest floor for the same reason `readOpenReportCount`
+ * gives: it understates health risk rather than inventing one, and a failed
+ * diagnostic read must not change what a viewer is served.
+ */
+async function readOpenReportCounts(
+  sc: any, trailIds: readonly string[],
+): Promise<Record<string, number>> {
+  const out: Record<string, number> = {};
+  const { data, error } = await sc.from("trail_reports").select("id, trail_id")
+    .in("trail_id", trailIds).is("resolution", null);
+  if (error) return out;
+  for (const r of (data ?? []) as any[]) {
+    if (typeof r?.trail_id === "string") out[r.trail_id] = (out[r.trail_id] ?? 0) + 1;
+  }
+  return out;
+}
+
+/**
+ * DV-25 — `rank_events` on the Trails' member items, folded onto the Trails.
+ *
+ * Returns `undefined` when the read FAILED and a map (possibly empty) when it
+ * succeeded. The two are different facts and `trailAffinityMap` treats them
+ * differently on purpose: an absent map is UNSCALED (no momentum information),
+ * an empty map is measured-and-flat (the floor). Collapsing them would make a
+ * failed read look like a cold Trail, which is the quiet kind of wrong.
+ */
+async function readTrailMomentum(
+  sc: any, members: readonly TrailMembershipRow[], nowMs: number,
+): Promise<Record<string, number> | undefined> {
+  const itemIds = [...new Set(members.map((m) => m.source_id))];
+  if (itemIds.length === 0) return {};
+  try {
+    const { data, error } = await sc.from("rank_events")
+      .select("item_id, outcome, served_at, outcome_at")
+      .in("item_id", itemIds)
+      .order("served_at", { ascending: false })
+      .limit(MAX_TRAIL_MOMENTUM_EVENTS);
+    if (error) return undefined;
+    return trailMomentumFromRankEvents((data ?? []) as any[], members, nowMs);
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * The viewer's Trail modifier: which Trails they follow, and what per-place
  * affinity that implies. Bounded in lib/discoveryTrailAffinity.ts; this
- * function only supplies the rows.
+ * function supplies the rows and the two scalings `02` requires on them.
  *
- * This is the producer `lib/discoveryReasonCodes.ts` says `trail_affinity` does
- * not have. It now does. The MAPPING from the signal key to the reason code
- * lives in that file, which this lane may not edit — so until the entry is
- * added, this map is computable and no served row carries the code. Stated
- * rather than counted as closed.
+ * THIS IS THE PRODUCER `lib/discoveryReasonCodes.ts` USED TO SAY DOES NOT EXIST.
+ * It is called by `lib/discoveryModifiers.loadDiscoveryModifiers` behind
+ * `discovery_ranking_modifiers_enabled`, and its output reaches
+ * `portavaRank.scoreCandidate` as `ViewerContext.trailAffinity`, where the cap
+ * is applied. Nothing here orders anything: the ONE number per place is handed
+ * to the existing ranker, which is the whole of what the re-scope permits.
+ *
+ * THE ACCESS CONTROL THAT LIVES IN THIS FUNCTION AND NOWHERE ELSE
+ * ==============================================================
+ * `trail_follows` carries RLS policy `trail_follows_own_select`
+ * (`user_id = auth.uid()`) precisely because who follows a Trail is social
+ * context DSV2's privacy section forbids disclosing. This read runs on the
+ * SERVICE client, which bypasses RLS. The `.eq("user_id", viewerId)` below is
+ * therefore not a convenience filter — it is the only thing standing where the
+ * policy cannot, and removing it would hand every viewer every other viewer's
+ * follows as ranking input. Pinned by "the read is scoped to the VIEWER" in
+ * test/discoveryTrailRoutes.test.ts.
  */
 export async function loadViewerTrailModifier(
   sc: any, viewerId: string, placeIds: readonly string[],
+  opts: { nowMs?: number } = {},
 ): Promise<TrailModifierResult> {
   const none: TrailModifierResult = { refusal: null, trailAffinity: {}, followedTrailIds: [] };
   if (!sc) return { ...none, refusal: "no_service_client" };
   if (typeof viewerId !== "string" || viewerId.length === 0) return none;
-  const ids = [...new Set((placeIds ?? []).filter((p) => typeof p === "string" && p.length > 0))];
-  if (ids.length === 0) return none;
+  const ids = new Set((placeIds ?? []).filter((p) => typeof p === "string" && p.length > 0));
+  if (ids.size === 0) return none;
+  const nowMs = opts?.nowMs ?? Date.now();
 
-  const follows = await sc.from("trail_follows").select("trail_id").eq("user_id", viewerId);
+  const follows = await sc.from("trail_follows").select("trail_id")
+    .eq("user_id", viewerId)
+    .limit(MAX_FOLLOWED_TRAILS_PER_VIEWER);
   if (follows.error) return { ...none, refusal: refusalFor(follows.error, "loadViewerTrailModifier.follows") };
   const followedTrailIds = ((follows.data ?? []) as any[]).map((r) => r.trail_id).filter(Boolean);
   if (followedTrailIds.length === 0) return none;
 
   const members = await sc.from("content_trails")
-    .select("trail_id, source_type, source_id, relationship, confidence")
+    .select("trail_id, source_type, source_id, relationship, confidence, contributor_id, content_state, created_at")
     .in("trail_id", followedTrailIds)
-    .in("source_id", ids);
+    .order("created_at", { ascending: false })
+    .limit(MAX_TRAIL_MEMBERS_SCANNED);
   if (members.error) return { ...none, refusal: refusalFor(members.error, "loadViewerTrailModifier.members") };
 
-  const rows = ((members.data ?? []) as any[]).map((r) => ({
+  const raw = (members.data ?? []) as any[];
+  const rows: TrailMembershipRow[] = raw.map((r) => ({
     trail_id: r.trail_id, source_type: r.source_type, source_id: r.source_id,
     relationship: r.relationship as TrailRelationship, confidence: Number(r.confidence),
   }));
-  return { refusal: null, trailAffinity: trailAffinityMap(followedTrailIds, rows), followedTrailIds };
+
+  // `02` §11 — "Trail health should influence ranking". One health record per
+  // followed Trail, over that Trail's own membership, turned into the bounded
+  // multiplier §11 permits. The floor lives in trailHealthScale and is
+  // re-applied inside trailAffinityMap, so no caller can erase a place here.
+  const reportCounts = await readOpenReportCounts(sc, followedTrailIds);
+  const healthScaleByTrail: Record<string, number> = {};
+  for (const trailId of followedTrailIds) {
+    const own = raw.filter((r) => r.trail_id === trailId);
+    if (own.length === 0) continue;
+    healthScaleByTrail[trailId] = trailHealthScale(computeTrailHealth({
+      members: own.map((r) => ({
+        source_id: r.source_id, contributor_id: r.contributor_id ?? null,
+        confidence: Number(r.confidence), content_state: r.content_state, created_at: r.created_at,
+      })),
+      reportCount: reportCounts[trailId] ?? 0,
+      nowMs,
+    }));
+  }
+
+  // DV-25 — behaviour → Trail momentum, through the SHIPPING kernel. Computed
+  // over every member item (a Trail surges because of its posts as much as its
+  // places) and applied to the candidate places below.
+  const trailMomentum = await readTrailMomentum(sc, rows, nowMs);
+
+  const affinityRows = rows.filter((r) => ids.has(r.source_id));
+  return {
+    refusal: null,
+    trailAffinity: trailAffinityMap(followedTrailIds, affinityRows, {
+      trailMomentum, trailHealthScale: healthScaleByTrail,
+    }),
+    followedTrailIds,
+  };
 }
 
 // ── Writes ───────────────────────────────────────────────────────────────────

@@ -34,7 +34,17 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { DEFAULT_WEIGHTS, LOCAL_MOMENTUM_MAX_CONTRIBUTION } from "../lib/portavaRank.js";
+import {
+  DEFAULT_WEIGHTS, LOCAL_MOMENTUM_MAX_CONTRIBUTION,
+  scoreCandidate, rankCandidates,
+  type RankCandidate, type ViewerContext,
+} from "../lib/portavaRank.js";
+import {
+  reasonCodeForSignal, reasonCodesFromSignals, explainReasonCode,
+  REASON_CODES_WITHOUT_PRODUCER,
+} from "../lib/discoveryReasonCodes.js";
+import { inertModifiers } from "../lib/discoveryModifiers.js";
+import { rankForViewer } from "../lib/discoveryPde.js";
 import {
   TRAIL_AFFINITY_MAX_CONTRIBUTION,
   TRAIL_AFFINITY_SIGNAL_KEY,
@@ -436,5 +446,180 @@ describe("DV-22 — §9 every eligible NEW item gets a bounded exploration oppor
   it("nothing here promises a number of impressions to any caller — §9's public prohibition", () => {
     const r = fairExposureSlots([cand("n", "just_arrived", 0, 0)], { pageSize: 10 });
     assert.deepEqual(Object.keys(r).sort(), ["decisions", "denominators", "retestable", "slots"]);
+  });
+});
+
+// ── THE WIRING (2026-09-14) ─────────────────────────────────────────────────
+//
+// Everything above this line proves the Trail term is BOUNDED. None of it
+// proved the term was CONNECTED, and the previous lane said so plainly: the
+// affinity contribution was called only by tests, the viewer modifier load had
+// no caller at all, the health multiplier multiplied nothing, and the momentum
+// map never reached `trailAffinityMap`. A bounded number nothing consumes is
+// not a modifier; it is a constant with a test suite.
+//
+// The four blocks below are the connections, each pinned where it can actually
+// break: in the SHIPPING ranker (`lib/portavaRank.ts`), in the one modifier
+// assembler (`lib/discoveryModifiers.ts`), and in the reason vocabulary
+// (`lib/discoveryReasonCodes.ts`).
+
+describe("WIRING 1 — DV-18: `trail_affinity` has a producer, so the code is emittable", () => {
+  it("the signal key the modifier emits maps to `01` §11's code", () => {
+    assert.equal(reasonCodeForSignal(TRAIL_AFFINITY_SIGNAL_KEY), "trail_affinity");
+  });
+
+  it("`trail_affinity` is no longer listed as unproducible — the stated reason is now false", () => {
+    assert.ok(!REASON_CODES_WITHOUT_PRODUCER.includes("trail_affinity"),
+      "the listed reason was 'There is no Trail object in this repository'; migration 2910 and TrailService make that false");
+    assert.deepEqual([...REASON_CODES_WITHOUT_PRODUCER].sort(), ["season_match", "trip_match"],
+      "only the two codes with no signal at all may remain listed");
+  });
+
+  it("the code carries plain language that names no person, place, circle or id", () => {
+    const text = explainReasonCode("trail_affinity");
+    assert.equal(typeof text, "string");
+    assert.ok(/^[A-Z]/.test(text!) && /[.!]$/.test(text!), `must read as a sentence: ${JSON.stringify(text)}`);
+    assert.ok(!/block|unfollow|report|@|\buser\b|\bid\b/i.test(text!),
+      `must not disclose private social context or moderation state: ${JSON.stringify(text)}`);
+  });
+
+  it("the ranker's OWN feature key is what reasonCodesFromSignals receives", () => {
+    assert.deepEqual(reasonCodesFromSignals(["trailAffinity", "localMomentum"]),
+      ["trail_affinity", "trending_local"]);
+  });
+});
+
+// ── WIRING 2 — the term enters portavaRank, and the CAP holds in the real flow
+
+/** Two candidates identical in every feature the ranker reads. */
+const twin = (id: string): RankCandidate => ({
+  id, kind: "place", city: "bangkok", category: "nightlife",
+  createdAt: new Date(NOW).toISOString(), distanceKm: 1,
+});
+const viewer = (over: Partial<ViewerContext> = {}): ViewerContext =>
+  ({ userId: "v1", city: "bangkok", nowMs: NOW, ...over });
+
+describe("WIRING 2 — the Trail term moves rank through portavaRank, by at most the cap", () => {
+  it("a place in a followed Trail scores exactly the capped contribution MORE than its twin", () => {
+    const ctx = viewer({ trailAffinity: { a: 1 } });
+    const withTrail = scoreCandidate(twin("a"), ctx);
+    const without = scoreCandidate(twin("b"), ctx);
+    assert.equal(withTrail.features.trailAffinity, TRAIL_AFFINITY_MAX_CONTRIBUTION);
+    assert.equal(without.features.trailAffinity, 0);
+    assert.equal(
+      Math.round((withTrail.score - without.score) * 1e6) / 1e6,
+      TRAIL_AFFINITY_MAX_CONTRIBUTION,
+      "the owner's 0.10 cap is the WHOLE movement a saturated Trail affinity buys in the real ranker",
+    );
+  });
+
+  it("an ADMIN WEIGHT OVERRIDE cannot raise the real-flow movement past the cap", () => {
+    const ctx = viewer({ trailAffinity: { a: 1 } });
+    const w = { ...DEFAULT_WEIGHTS, trailAffinity: 100 };
+    const withTrail = scoreCandidate(twin("a"), ctx, w);
+    const without = scoreCandidate(twin("b"), ctx, w);
+    assert.equal(withTrail.features.trailAffinity, TRAIL_AFFINITY_MAX_CONTRIBUTION);
+    assert.equal(
+      Math.round((withTrail.score - without.score) * 1e6) / 1e6,
+      TRAIL_AFFINITY_MAX_CONTRIBUTION,
+      "the clamp is in CODE, not in the weight table — an override must not turn the modifier into a driver");
+  });
+
+  it("a rival ahead by MORE than the cap is not overtaken; ahead by LESS, it is", () => {
+    // `interestTag` (0.3) is the lever: one matching tag is a lead of 0.3, which
+    // a saturated Trail affinity must NOT close. A lead of 0.05 — modelled with
+    // a weight table whose only change is that one number — must close.
+    const ctx = viewer({ trailAffinity: { trail: 1 }, interestTags: new Set(["rooftop"]) });
+    const tagged = { ...twin("tasty"), tags: ["rooftop"] };
+    const order = (weights: typeof DEFAULT_WEIGHTS) =>
+      rankCandidates([twin("trail"), tagged], ctx, { weights, diversity: false, exploration: false })
+        .map((s) => s.candidate.id);
+
+    assert.deepEqual(order(DEFAULT_WEIGHTS), ["tasty", "trail"],
+      "taste is the spine: a 0.3 taste lead survives a saturated Trail affinity");
+    assert.deepEqual(order({ ...DEFAULT_WEIGHTS, interestTag: 0.05 }), ["trail", "tasty"],
+      "a tie the viewer's taste rates alike is what a modifier is allowed to break");
+  });
+
+  it("no trailAffinity map ⇒ the feature is 0, and the score is the pre-Trail ranker's", () => {
+    const before = scoreCandidate(twin("a"), viewer());
+    assert.equal(before.features.trailAffinity, 0);
+    assert.equal(scoreCandidate(twin("a"), viewer({ trailAffinity: {} })).score, before.score);
+    assert.equal(scoreCandidate(twin("a"), viewer({ trailAffinity: { a: Number.NaN } })).score, before.score);
+    assert.equal(scoreCandidate(twin("a"), viewer({ trailAffinity: { a: -5 } })).score, before.score,
+      "this modifier may promote and may decline to promote; it may never demote");
+  });
+
+  it("the shipping weight table carries the Trail weight, and it IS the cap", () => {
+    assert.equal(DEFAULT_WEIGHTS.trailAffinity, TRAIL_AFFINITY_MAX_CONTRIBUTION);
+  });
+});
+
+// ── WIRING 3 — §11 health scales the term, and can never erase it ───────────
+
+describe("WIRING 3 — §11: Trail health influences ranking but cannot silently erase", () => {
+  it("an unhealthy Trail contributes strictly LESS than a healthy one", () => {
+    const healthy = trailAffinityMap(["tr-1"], [M({})], { trailHealthScale: { "tr-1": 1 } });
+    const sick = trailAffinityMap(["tr-1"], [M({})], { trailHealthScale: { "tr-1": TRAIL_HEALTH_MIN_SCALE } });
+    assert.ok(sick.p1 < healthy.p1, "§11: health should INFLUENCE ranking");
+  });
+
+  it("the worst possible health still leaves the place in the map — not erased", () => {
+    const sick = trailAffinityMap(["tr-1"], [M({})], { trailHealthScale: { "tr-1": 0 } });
+    assert.ok(sick.p1 > 0,
+      "§11: health must not SILENTLY ERASE legitimate content; the floor is enforced here, not trusted from the caller");
+    assert.equal(sick.p1, Math.round(TRAIL_HEALTH_MIN_SCALE * RELATIONSHIP_AFFINITY.primary * 1000) / 1000,
+      "a caller passing 0 must be floored HERE, at the floor §11 already fixed — not trusted to have floored it itself");
+  });
+
+  it("an absent health entry is unscaled — absence of evidence is not evidence of ill health", () => {
+    assert.equal(trailAffinityMap(["tr-1"], [M({})], { trailHealthScale: {} }).p1,
+      trailAffinityMap(["tr-1"], [M({})]).p1);
+  });
+
+  it("health can never RAISE the affinity above the relationship's own weight", () => {
+    const m = trailAffinityMap(["tr-1"], [M({})], { trailHealthScale: { "tr-1": 99 } });
+    assert.equal(m.p1, RELATIONSHIP_AFFINITY.primary);
+  });
+});
+
+// ── WIRING 4 — the modifier record reaches the ranker on the PDE serve path ──
+//
+// lib/discoveryModifiers.ts assembles the record and lib/portavaRank.ts scores
+// it, but between them sits lib/discoveryPde.rankForViewer, which builds the
+// ViewerContext the ranker actually receives. A field the assembler fills and
+// the bridge drops is the same gap as a field nobody fills, so the bridge is
+// pinned here on the SERVE path rather than inferred from the two ends.
+
+describe("WIRING 4 — rankForViewer carries the Trail modifier into ViewerContext", () => {
+  const place = (id: string) => ({
+    id, name: id, category: "food", distanceKm: 1, savedCount: 5, rating: 4,
+    tags: ["t"], lat: 13.75, lng: 100.5, headerImageUrl: null, description: null,
+  });
+  const pdeViewer = { userId: "v1", city: "bangkok", followedIds: new Set<string>(), interestTags: new Set<string>() };
+
+  it("ON: a place with Trail affinity carries the feature, bounded by the cap", async () => {
+    const out = await rankForViewer([place("in-trail"), place("plain")], pdeViewer, {
+      sc: null, served: false, nowMs: NOW,
+      modifiers: { ...inertModifiers("flag_off"), enabled: true, reason: "flag_on", trailAffinity: { "in-trail": 1 } },
+    });
+    const scored = out.scoredById.get("in-trail")!;
+    assert.equal(scored.features.trailAffinity, TRAIL_AFFINITY_MAX_CONTRIBUTION,
+      "the assembler filled the field; the bridge must hand it to the ranker");
+    assert.equal(out.scoredById.get("plain")!.features.trailAffinity, 0);
+    assert.ok(out.ranked.findIndex((p) => p.id === "in-trail") <
+              out.ranked.findIndex((p) => p.id === "plain"),
+      "and the served ORDER must move, which is the only thing a modifier is for");
+  });
+
+  it("OFF: the map is not consulted, so rank_events.features carries a clean 0", async () => {
+    const out = await rankForViewer([place("in-trail"), place("plain")], pdeViewer, {
+      sc: null, served: false, nowMs: NOW,
+      // An inert record that nonetheless carries a map: the ONLY thing that may
+      // gate the feature is `enabled`, never the map being empty by luck.
+      modifiers: { ...inertModifiers("flag_off"), trailAffinity: { "in-trail": 1 } },
+    });
+    assert.equal(out.scoredById.get("in-trail")!.features.trailAffinity, 0,
+      "an OFF flag must leave the feature vector byte-identical to the pre-Trail pipeline");
   });
 });
