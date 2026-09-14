@@ -1,7 +1,13 @@
 # Live blocker ledger
 
-**Updated 2026-09-08.** Every row measured, not inferred. Types: `CODE` ·
+**Updated 2026-09-14.** Every row measured, not inferred. Types: `CODE` ·
 `MANUAL_SQL` · `OPS_DATA` · `OWNER` · `EXTERNAL` · `HOLD`.
+
+*2026-09-14: `WALL_ACCENT_COLOUR` is **RESOLVED** — the owner ruled SPEC IS STALE.
+The entry is kept in full below, because this repository keeps the reasoning and
+because a resolved decision that leaves no record of what was weighed is a
+decision that gets re-litigated. One residue was opened by the same ruling and is
+NOT resolved: `PASSPORT_DARK_MODE_FIRST`.*
 
 "Buildable now?" means: can engineering finish it without owner action, without
 production SQL, and without data that does not exist.
@@ -128,6 +134,8 @@ zone covering the viewport, Crowd Flow refuses rather than approximating.
 | `LAYOVER_RETURN_REMINDER_DELIVERY` | *nothing* | **OWNER** | Yes, safely | **NEW 2026-09-08.** The server-side push path for the return deadline is dead code — see below |
 | `MODERATION_TARGET_NULLABILITY` | *needs a schema change* | **OWNER** | No | **NEW 2026-09-08.** `moderation_actions.target_user_id` is NOT NULL, which is what forces the skip-vs-fabricate dilemma — see below |
 | `INTERACTION_COOLDOWN_READ_DIRECTION` | *nothing* | **OWNER** | Yes, safely | **NEW 2026-09-08.** A measured fail-open; flipping it blocks legitimate pairs during an outage across 15+ routes — see below |
+| ~~`WALL_ACCENT_COLOUR`~~ | *nothing* | **OWNER** | — | **RESOLVED 2026-09-14: SPEC IS STALE.** `docs/architecture/brand-palette-decision.md`. Closed `census-wall.md` W166 and `census-passport.md` P129/P132 — see below, entry kept in full |
+| `PASSPORT_DARK_MODE_FIRST` | *nothing* | **OWNER** | Yes, expensively | **NEW 2026-09-14.** The residue of the palette ruling: §27 asks for dark-mode-first and the ruling ratified a light identity without retiring that clause — see below |
 
 ### `PASSPORT_CREW_PRESENCE_AUDIENCE` — surfaced while separating Safe Return from Locate Friends
 
@@ -679,7 +687,51 @@ on the answer, and no code change improves the situation before it.
 
 ---
 
-## `WALL_ACCENT_COLOUR` — the last open row in the Wall census, and it is a brand decision
+## `WALL_ACCENT_COLOUR` — **RESOLVED 2026-09-14: SPEC IS STALE**
+
+> ### THE RULING, AND WHAT IT DID AND DID NOT DO
+>
+> **The owner chose SPEC IS STALE.** Keep Portava's existing palette — Paper
+> `#FFFFFF` · Ink `#1C1C1A` · Seal red `#D32F2F` · Vermilion `#FF4D2E` · Teal ink
+> `#0A3D4A` — retain the Passport and Wall colour identities, and update the
+> conflicting purple/navy requirements. The amendment is
+> `docs/architecture/brand-palette-decision.md`; the supplied spec bytes are
+> deliberately NOT edited, because their sha256 digests are what prove what the
+> owner supplied.
+>
+> **This entry is NOT deleted.** Everything below is the measurement and the
+> argument as they stood when the question was open, preserved unchanged. Read
+> the paragraphs that say "is not built", "cannot choose" and "nothing is
+> buildable" as answered by the block you are reading.
+>
+> **What it closed, and it took verification rather than the ruling alone** — the
+> ruling attaches its own condition: *"Verify each affected requirement before
+> closing it; this decision does not automatically resolve unrelated theme,
+> layout, or accessibility criteria."* Each row below was opened at
+> `/home/user/wt-483` and established individually:
+>
+> | row | outcome | why |
+> |---|---|---|
+> | `census-wall.md` W166 | **W → C** | the colour half was the whole remainder; the structural half is enforced by a test that binds on token NAMES, not hexes, so it held either way. `census-wall.md` §10.1 |
+> | `census-passport.md` P129 | **W → C** | a pure colour-to-role clause; seal red `#D32F2F` is ratified and is what ships. `census-passport.md` §15.1 |
+> | `census-passport.md` P132 | **W → C** | and the row's own evidence was FALSE — teal-ink already carried availability and social context; the ruling's contribution was ratifying that a Passport screen may draw from the shared palette. `census-passport.md` §15.4 |
+> | `census-passport.md` P128 | **stays W** | half-closed. Surfaces ratified; *"dark-mode first"* is a THEME criterion the ruling reserves in terms, and the Passport has no dark mode at all. Now `PASSPORT_DARK_MODE_FIRST`, below |
+> | `census-passport.md` P13 | **stays W** | a composition, not a colour — the ruling's own worked counter-example. *"The mockup approves the palette only — not a new layout"* |
+> | `census-passport.md` P133 | **stays W** | the same: portrait placement and an absent glass treatment. Never a palette row |
+>
+> **So: three rows closed across two censuses, not six.** §9.3 of `census-wall.md`
+> and §12.4 of `census-passport.md` both estimated six (five plus W166) by
+> counting rows that shared a *heading*, and half of that count did not survive
+> being opened. The estimate was 3.0 points of the Passport census; the measured
+> figure is 1.2. **A count of rows sharing a cause is not evidence about any of
+> them.**
+>
+> **What it cost: nothing.** The branch not taken — PALETTE IS WRONG — required
+> `theme/tokens.ts` accent values and every AA pairing recomputed across the whole
+> client. The contrast suite's thresholds are computed against the ratified values,
+> so nothing is recomputed and `census-wall.md` W190 is untouched. **No token was
+> edited, nothing was repainted, no screen was rebuilt** — the ruling's closing
+> paragraph forbids all three.
 
 Raised 2026-09-08 by the Wall recensus (`census-wall.md` §6). W166 is the **one**
 remaining non-CANNOT-VERIFY row between the Wall and 205/205: 196 correct, 1
@@ -727,10 +779,83 @@ IS WRONG the first step is a design decision about which purple, and the contras
 consequences follow from that value. There is no commit that improves the
 situation before the answer.
 
+> **ANSWERED 2026-09-14.** SPEC IS STALE, so the work was documentary and it is
+> done: the amendment is written, three rows verified and closed, three verified
+> and left open with their remainders named. The prediction above was right about
+> the shape and wrong about the size — "a sentence in a document" was in fact six
+> requirements to re-open one at a time, and half of them did not move. It was
+> also right that no commit improves the situation before the answer: this pass
+> changed no code at all.
+
 **Note on scope, so this is not read as bigger than it is:** W166 is worth 0.5 %
 of one census. It is on this ledger because it is the LAST row, not because it is
 urgent — and because a census that says "1 BUILT-BUT-WRONG" with no explanation
 of who can fix it is the shape that quietly becomes permanent.
+
+> **2026-09-14: that 0.5 % is now zero.** The Wall census carries **no
+> BUILT-BUT-WRONG row at all** — 205 · 199 C · 0 W · 0 N · 6 ? — so its
+> CONSTRUCTED and CORRECT figures are the same number for the first time and the
+> whole remainder is CANNOT-VERIFY. None of the six is a palette question: three
+> need a designer or users, two need a device or a database, and one belongs to
+> the Input Intelligence lane.
+
+---
+
+## `PASSPORT_DARK_MODE_FIRST` — the one thing the palette ruling opened rather than closed
+
+Raised 2026-09-14 while executing `WALL_ACCENT_COLOUR`'s resolution. OWNER, and it
+exists only because the ruling was careful: *"this decision does not automatically
+resolve unrelated theme, layout, or accessibility criteria."* Without that sentence
+this would have been closed by accident, inside a row that looked entirely like a
+colour row.
+
+### The measurement
+
+`census-passport.md` P128 grades one spec sentence:
+`docs/specs/Portava_Passport_Engineering_Architecture_and_Design_Spec.txt:273#Dark-mode first with deep navy/black surfaces.`
+It is **two** requirements wearing one clause, and the ruling reaches exactly one of
+them.
+
+- **Surfaces — settled.** The owner ratified Paper `#FFFFFF` and Ink `#1C1C1A` by
+  name and said *"retain the existing Passport and Wall colour identities"*. That is
+  `travel-buddy-standalone/src/theme/passportTokens.ts:8#paper:        '#FFFFFF',`
+  and `travel-buddy-standalone/src/theme/passportTokens.ts:11#ink:          '#1C1C1A',`.
+  There is nothing left to decide about what colour a Passport surface is.
+- **Theme — untouched, and the gap is wider than "the default is light".** Measured
+  at `/home/user/wt-483`: `grep -rn useColorScheme` over
+  `travel-buddy-standalone/src/theme/`, `src/components/passport/` and
+  `src/features/passport/` returns **0**. `PP` is a single frozen object with one
+  value per role and no dark counterpart, read directly by 60+ call sites with no
+  theme provider between them. The client's only two scheme readers are
+  `travel-buddy-standalone/src/features/telegraph/theme/telegraphTheme.ts:117#const scheme = useColorScheme();`
+  and the tab bar, neither of which is a Passport surface. **The Passport does not
+  have a light-first dark mode. It has one theme.**
+
+### The question
+
+| | Meaning | What changes | Cost |
+|---|---|---|---|
+| **CLAUSE RETIRED** | a ratified light paper identity supersedes "dark-mode first" the same way vermilion superseded purple | one paragraph in `docs/architecture/brand-palette-decision.md`; P128 becomes `C` with no code change | none |
+| **DARK MODE IS STILL REQUIRED** | the Passport must ship two themes, dark as the primary | a second `PP` token set, a provider, every Passport surface moved off its direct `PP` import, and a dark value chosen for all 14 roles — then re-run for contrast | the largest client change on this ledger, and it is a rebuild of working screens |
+
+### Why engineering is not choosing
+
+Because the second option is the thing the ruling's last paragraph forbids —
+*"build upon existing components and shared tokens; do not rebuild working
+screens"* — while the first option is an owner amending an owner's document.
+Engineering can state that the tree has one theme, which it now has; it cannot
+decide whether that is a defect or the design.
+
+**What is buildable now, either way:** nothing, in the same sense
+`WALL_ACCENT_COLOUR` meant it. If the clause is retired the change is a paragraph;
+if dark mode is required the first step is a palette decision for 14 roles, and
+every line of code follows from those values.
+
+**Note on scope.** P128 is worth 0.6 % of one census and is **one** row, not five —
+P13 and P133 fail on composition and P129/P132 are closed, so this is the entire
+residue of the palette question across both censuses. It is on this ledger because
+a row half-closed by a ruling is the shape most likely to be quietly finished off
+by the next pass that reads only the heading.
 
 ---
 

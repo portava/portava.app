@@ -13,26 +13,30 @@
 | --- | --- |
 | `head_commit` | `42aeac38` — RE-DECLARED 2026-09-10 from `9f8122ff5ed233a367fda6431589c9cb97df7979`, the working-tree commit this census was measured at. It was necessary because `9f8122ff` is PRE-SQUASH — this repository squash-merges, so it is an ancestor of nothing, is on no remote branch, and `check:census-freshness` could resolve it only on the clone that wrote it (`CENSUS_HEAD_COMMITS_UNREACHABLE_IN_CI`). Reproduced 2026-09-10 in a fresh clone of this branch: `git diff 9f8122ff..HEAD` aborts with `Invalid revision range`, and the check reported this census as unreadable rather than checking it. `42aeac38` is #476's squash, where this document's content reached `main`. **This is a RE-DECLARATION, not a re-measurement.** ONE counted file changed between `9f8122ff` and `42aeac38`: `travel-buddy-standalone/src/features/wall/components/__tests__/WallPromotionDisclosure.component.test.tsx`. The move is defensible only because it was re-verified mechanically on 2026-09-10 over `9f8122ff..42aeac38`: filtered to lines that are neither comment nor blank, that diff is EMPTY against a `--stat` of 4 insertions and 3 deletions — the edit rewords a `jest.mock` header so it begins with the literal word NOTE, which is what `check-test-mocks.mjs` requires. It is the TEST for W178; the verdict rests on the producers and render sites, none of which it touches, and a comment can neither render a disclosure nor assert one. The full argument is preserved under `retired` in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json`, where it had been written as an acknowledgement. **Changed by the Trips lane, not this one**, because CI could not run this check against this census at all until it was; nothing else in this document is touched, and reverting it costs only the check. |
 | **Denominator (testable requirements)** | **205** |
-| BUILT-AND-CORRECT | **198** |
-| BUILT-BUT-WRONG | **1** |
+| BUILT-AND-CORRECT | **199** |
+| BUILT-BUT-WRONG | **0** |
 | NOT-BUILT | **0** |
 | CANNOT-VERIFY | **6** |
 | **CONSTRUCTED%** = (correct+wrong)/denominator | **199 / 205 = 97.1%** |
-| **CORRECT%** = correct/denominator | **198 / 205 = 96.6%** |
+| **CORRECT%** = correct/denominator | **199 / 205 = 97.1%** |
 | CANNOT-VERIFY share | **6 / 205 = 2.9%** |
 
-**These are the §9 numbers (2026-09-14), counted from the rows in §2 as they now
-stand.** They differ from the §7 headline by two rows: W170 and W173 moved ?→C
-when the client test toolchain that §7.3 could not run was run. The §6 and §7
+**These are the §10 numbers (2026-09-14), counted from the rows in §2 as they now
+stand.** They differ from the §9 headline by ONE row: W166 moved W→C when the
+owner ruled on the brand palette (`docs/architecture/brand-palette-decision.md`)
+and the colour half of the clause was re-read against the ratified accent. The
+Wall now has **no BUILT-BUT-WRONG row at all**, so CONSTRUCTED and CORRECT are
+the same number and the whole remainder is CANNOT-VERIFY. The §6, §7 and §9
 figures below are preserved as the dated records of those passes and are NOT
-restated — see §9 for what moved and why, and §9.1 for the one W, which did not.
+restated — see §10 for what moved and why, and §10.3 for what the ruling did
+**not** close.
 
 Those five numbers are COUNTED FROM THE ROWS in §2 at the commit named above,
 not carried forward from the previous pass and adjusted. The distinction is not
 pedantic: the layover census's headline summed to 299 against a denominator of
 296 for exactly that reason — moves were added to an old headline instead of the
 rows being recounted — and `check:census-integrity` now refuses a census whose
-`C + W + N + X` does not equal its stated denominator. 198 + 1 + 0 + 6 = 205.
+`C + W + N + X` does not equal its stated denominator. 199 + 0 + 0 + 6 = 205.
 
 The figures BEFORE the §6 recensus, for comparison: 188 / 7 / 1 / 9, i.e. 95.1%
 constructed and 91.7% correct at `ebe72b34`.
@@ -446,7 +450,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | W163 | Postcards visibly break the normal feed language | C | `components/objects/PostcardWallItem.tsx` — distinct paper frame, rotation, date stamp. |
 | W164 | Video remains inline and cinematic | C | Inline is enforced (`VideoWallItem.tsx:82-88`); "cinematic" is a full-bleed wide frame (`ratio={aspect.wide}`). |
 | W165 | Context Threads visually quieter than the post | C | `components/ContextThreadView.tsx:145-156` — muted `t.small` type, `color.faint` reason line, paper background with a hairline border. |
-| W166 | Portava purple is an interaction/accent colour, not a background wash | **W** | **The clause has two halves. The tree satisfies the STRUCTURAL half — now mechanically, not by a grep somebody ran once — and contradicts the BRAND half, which is not engineering's to resolve. See §9.1: this is one owner decision, shared with `census-passport.md`'s five §27 rows.** SPEC: `docs/specs/Portava_Wall_Engineering_Architecture_and_Design_Spec.txt:279#Portava purple is an interaction/accent color, not a background wash for every card.` — one sentence, no hex, and the only colour named anywhere in the spec. CODE: the Wall's accents are `travel-buddy-standalone/src/theme/tokens.ts:12#signal: '#FF4D2E', // vermilion — primary action + live pulse only` and `travel-buddy-standalone/src/theme/tokens.ts:14#deep: '#0A3D4A', // teal-ink — destination accents`, inside a palette that declares its own direction in its first lines (`travel-buddy-standalone/src/theme/tokens.ts:3#Editorial / passport visual direction. One bold device (the stamp),`). `grep -rniE 'purple\|violet\|indigo'` over `travel-buddy-standalone/src/theme/` returns nothing. STRUCTURAL HALF — **now enforced**: `travel-buddy-standalone/src/features/wall/components/__tests__/WallDesignSystem.component.test.tsx:123#no Wall surface paints an accent background outside the named affordances` permits an accent background at exactly three named interaction affordances (the notification badge, the selected feed-mode tab, the Buddy tag) and fails on any other, and `travel-buddy-standalone/src/features/wall/components/__tests__/WallDesignSystem.component.test.tsx:141#NO feed object card paints its own surface in the accent` admits no allowlist at all for the five object renderers. Painting `SocialPostWallItem`'s card in `color.signal` turns both red. Whatever colour the accent is, it is used as an accent and never as a card wash. BRAND HALF — unresolvable here. Moving this to `C` requires either repainting the accent purple (a user-visible change to a direction the tokens file states in its first line and every other Portava surface shares) or re-reading the requirement until it passes. Neither is an engineering call. **WHAT WOULD TURN THIS RED:** decision **D-WALL-COLOUR** (§7.1), taken by the product owner, in one of two forms — (a) amend `docs/specs/Portava_Wall_Engineering_Architecture_and_Design_Spec.txt:279#Portava purple is an interaction/accent color` to name the shipped accent, which moves this row to `C` and `census-passport.md`'s P13/P128/P129/P132/P133 with it, or (b) supply the Portava purple hex, after which engineering changes `tokens.ts` and re-runs the AA contrast suite across the whole client (some pairings will fail and need new tokens — see `docs/architecture/blocker-ledger.md:714`). Engineering cannot choose; it has now stated both sides and made the half it owns fail loudly. |
+| W166 | Portava purple is an interaction/accent colour, not a background wash | C | **RULED 2026-09-14 and CLOSED on verification, not on the ruling alone — see §10.1.** The clause has two halves; both now hold. **BRAND HALF — closed by owner decision.** `docs/architecture/brand-palette-decision.md` records the owner's ruling of **SPEC IS STALE** on the question this row and the ledger posed: the palette moved and the spec did not. Every spec sentence naming purple, navy or indigo as a brand accent is superseded, and the *rule* each states — accent for interaction and emphasis, never a background wash — survives unchanged. So `docs/specs/Portava_Wall_Engineering_Architecture_and_Design_Spec.txt:279#Portava purple is an interaction/accent color, not a background wash for every card.` is read as: **vermilion `#FF4D2E`** is an interaction/accent colour, not a background wash. The supplied spec bytes are deliberately NOT edited — their sha256 digests are committed — so this row cites the amendment beside the superseded line, which is the form `docs/architecture/brand-palette-decision.md` §3 requires. **The ratified accent is the one that ships here**, read at this tree: `travel-buddy-standalone/src/theme/tokens.ts:12#signal: '#FF4D2E', // vermilion — primary action + live pulse only` and `travel-buddy-standalone/src/theme/tokens.ts:14#deep: '#0A3D4A', // teal-ink — destination accents`, and both are live on Wall surfaces — the selected feed-mode tab's underline at `travel-buddy-standalone/src/features/wall/components/FeedModeSwitcher.tsx:74#backgroundColor: color.signal,` and the Buddy tag at `travel-buddy-standalone/src/features/wall/components/objects/wallItemShared.tsx:570#backgroundColor: color.deep,`. **STRUCTURAL HALF — enforced, and re-run for this move.** `travel-buddy-standalone/src/features/wall/components/__tests__/WallDesignSystem.component.test.tsx:123#no Wall surface paints an accent background outside the named affordances` permits an accent background at exactly three named interaction affordances (notification badge, selected feed-mode tab, Buddy tag) and fails on any other; `travel-buddy-standalone/src/features/wall/components/__tests__/WallDesignSystem.component.test.tsx:141#NO feed object card paints its own surface in the accent` admits no allowlist at all for the five object renderers. Run in this worktree on 2026-09-14: **16/16 green**, including the file's own two anti-vacuity cases (`travel-buddy-standalone/src/features/wall/components/__tests__/WallDesignSystem.component.test.tsx:80#finds the Wall source files` asserts the scan reads >20 real Wall files, and `travel-buddy-standalone/src/features/wall/components/__tests__/WallDesignSystem.component.test.tsx:114#the rule is real: it matches an accent wash and not an accent icon` asserts the regex catches a wash and spares a tint). **Why the test is the right evidence for a colour row:** its predicate is `backgroundColor: color.(signal|signalDim|deep)` — bound to the token NAMES, not to the hex — so it enforces *how the accent is used* independently of *which colour the accent is*. That is exactly the half the ruling left standing, and it would still bind if the owner had ruled the other way. **WHAT WOULD TURN THIS RED:** painting any Wall surface outside the three named affordances in `color.signal`/`color.deep` (both cases above go red), or an owner decision reversing `docs/architecture/brand-palette-decision.md` and supplying a purple hex — after which `tokens.ts` changes and the AA contrast suite re-runs across the whole client. Neither is true today. |
 | W167 | Avoid dashboard grids, event-page density, giant recommendation modules, excessive badges | **?** | **Three of the four clauses name a structure and are now checked; "excessive" remains a judgement, which is why the row does not move.** NO DASHBOARD GRID: `travel-buddy-standalone/src/features/wall/components/__tests__/WallDesignSystem.component.test.tsx:231#nothing in the Wall lays content out in a grid` — no `numColumns` anywhere in the Wall, and the single wrapping flex row in the tree is the action-chip row, named. NO GIANT RECOMMENDATION MODULE: the same file pins exactly one `<LiveForYouStrip` on the screen and exactly two horizontal scrollers in the whole tree (the strip and the quick-media row). BADGES: the cap the code states is the cap it applies — `components/objects/wallItemShared.tsx:430#{actions.slice(0, 3).map(` is pinned by `travel-buddy-standalone/src/features/wall/components/__tests__/WallDesignSystem.component.test.tsx:261#an object with many actions renders at most THREE chips`, together with the deliberate exclusions (`save` and `ask_compass` already have a home and are never ALSO chips), so raising the slice to 6 turns it red. **WHAT WOULD TURN THIS RED:** the same designer sign-off W159 needs, answering one question this census cannot — whether one action row + at most three chips + at most one context thread per card is already too much. The threshold is a product choice; the code now merely refuses to drift past whatever it is. |
 | W168 | The user should understand the Wall without knowing Portava's architecture | **?** | **Comprehension needs users. The one way a regression can silently break it does not, and is now checked.** `travel-buddy-standalone/src/features/wall/components/__tests__/WallDesignSystem.component.test.tsx:372#no viewer-facing string names a piece of the Wall machinery` extracts every `accessibilityLabel`, `accessibilityHint`, JSX text node and rendered string literal from the non-test Wall tree (with template interpolations stripped, since those are data) and refuses twenty terms that name the Wall's internals — `projection`, `canonical`, `candidate`, `context thread`, `truth class`, `ranking`, `eligibility`, `session intent`, `cursor`, `allowlist` and the rest. Measured: relabelling the header's `Clear feed steer` to `Clear session intent` turns it red. The copy in the tree today is plain product language throughout. **WHAT WOULD TURN THIS RED:** an unmoderated comprehension test — five to eight people who have never seen the Wall, asked what the screen is and what the Live strip is telling them, with the failure threshold agreed in advance and the result recorded here. That needs users and a researcher. No tool substitutes for it. |
 
@@ -582,7 +586,7 @@ the spec asks, and there is no cell in that ledger to record them:
 
 - **§2 / §40** — `join` and `message` have **no server producer** anywhere (they exist only in the client's route resolver, `wallItemShared.tsx:117,129`, for actions the server never emits), and `save` is a React state toggle that writes nothing (`wallItemShared.tsx:392-396`). Three of the eight real-world actions §2 names are not real. §2 and §40 both score BUILT in the certification.
 - **§21** — the "interpret a cluster of social signals" behaviour is absent; only the safe per-object prompt exists.
-- **§35** — the Wall's accent colours are vermilion (`#FF4D2E`) and teal-ink (`#0A3D4A`); Portava purple, which §35 names explicitly, appears nowhere in the Wall tree. The certification scores §35 BUILT citing "purple as accent".
+- **§35** — the Wall's accent colours are vermilion (`#FF4D2E`) and teal-ink (`#0A3D4A`); Portava purple, which §35 names explicitly, appears nowhere in the Wall tree. The certification scores §35 BUILT citing "purple as accent". *(Superseded 2026-09-14: the owner ruled SPEC IS STALE — `docs/architecture/brand-palette-decision.md` — so vermilion IS the named accent and this is no longer a divergence. The certification's §35 verdict was right for the wrong reason. See §10.)*
 - **§37** — moderation takedowns propagate server-side on every request but **not** through the 24-hour client first-page cache, which is the one path where a taken-down object can still paint. The certification scores §37 BUILT.
 - **§38** — the accessibility test family proves reduced motion four ways and proves nothing about focus order or contrast; there is no accessibility test file in the Wall tree. The certification scores §38 BUILT citing "TABLE 6 families all represented".
 - **§41** — the loop's return leg (outcome → future relevance) has no deployed destination.
@@ -1015,3 +1019,113 @@ in this repository**, because `VirtualizedList` never scrolls under jest. It is 
 
 198 + 1 + 0 + 6 = 205. These are the §2 rows, counted; the §6 and §7 headlines above are
 the dated records of those passes and are deliberately left as written.
+
+---
+
+## §10 — The palette ruling, 2026-09-14: one row moved, and only after it was opened
+
+*Worktree `/home/user/wt-483` at `7d1f2d498`. This pass touched **no code at all** —
+no token, no component, no test. The ruling's own closing paragraph forbids it:
+"Build upon existing components and shared tokens; do not rebuild working screens."*
+
+**Headline: 205 · 199 C · 0 W · 0 N · 6 ? → CONSTRUCTED 199/205 = 97.1 % · CORRECT
+199/205 = 97.1 % · CANNOT-VERIFY 6/205 = 2.9 %.** One row moved `W→C` (W166). The
+Wall now carries **no BUILT-BUT-WRONG row**, so CONSTRUCTED and CORRECT are the same
+number for the first time; the whole remainder is the six CANNOT-VERIFY rows §9.3
+already specified, and none of them is a palette question.
+
+### 10.1 W166 moved, and the ruling is not what moved it
+
+The owner ruled **SPEC IS STALE** on `D-WALL-COLOUR` / the blocker ledger's
+`WALL_ACCENT_COLOUR` entry: keep the existing palette, update the conflicting
+purple/navy requirements. The ruling is recorded at
+`docs/architecture/brand-palette-decision.md`, and it attaches a condition to itself:
+
+> *Verify each affected requirement before closing it; this decision does not
+> automatically resolve unrelated theme, layout, or accessibility criteria.*
+
+So the ruling did not close W166. What closed it is that the row was opened and
+both halves were established at this tree:
+
+| half | what it asks | established how |
+|---|---|---|
+| BRAND | the named accent is the accent that ships | `travel-buddy-standalone/src/theme/tokens.ts:12#signal: '#FF4D2E', // vermilion — primary action + live pulse only` and `travel-buddy-standalone/src/theme/tokens.ts:14#deep: '#0A3D4A', // teal-ink — destination accents` are the two colours the ruling ratifies by name, and they are on Wall surfaces at `travel-buddy-standalone/src/features/wall/components/FeedModeSwitcher.tsx:74#backgroundColor: color.signal,` and `travel-buddy-standalone/src/features/wall/components/objects/wallItemShared.tsx:570#backgroundColor: color.deep,` |
+| STRUCTURAL | the accent is an accent and never a card wash | `travel-buddy-standalone/src/features/wall/components/__tests__/WallDesignSystem.component.test.tsx:123#no Wall surface paints an accent background outside the named affordances` and `travel-buddy-standalone/src/features/wall/components/__tests__/WallDesignSystem.component.test.tsx:141#NO feed object card paints its own surface in the accent` — **run in this worktree, 16/16 green** |
+
+**§9.3 asked whether that test is the evidence a `C` row needs. It is, and the reason
+is a property of the test rather than of the ruling.** Its predicate is
+`backgroundColor: color.(signal|signalDim|deep)` — matched on the token NAMES, never
+on a hex. So it enforces *how the accent may be used* while having no opinion about
+*which colour the accent is*, which is precisely the division the ruling drew: the
+colour moves, the rule survives. Had the owner ruled PALETTE IS WRONG and supplied a
+purple, the same two cases would bind unchanged against the repainted tokens. A test
+that only held for one of the two possible rulings would not have been evidence for
+either.
+
+The file also carries its own anti-vacuity cases, and they were run, not assumed:
+`travel-buddy-standalone/src/features/wall/components/__tests__/WallDesignSystem.component.test.tsx:80#finds the Wall source files`
+asserts the scan reaches more than twenty real Wall sources including
+`objects/PostcardWallItem.tsx`, and
+`travel-buddy-standalone/src/features/wall/components/__tests__/WallDesignSystem.component.test.tsx:114#the rule is real: it matches an accent wash and not an accent icon`
+asserts the regex catches `backgroundColor: color.signal` and spares
+`tintColor={color.signal}`. A scan that found no files, or a regex that matched
+nothing, would fail before the two load-bearing cases could pass vacuously.
+
+**WHAT WOULD TURN W166 RED.** A `backgroundColor: color.signal` or `color.deep` on
+any Wall surface outside the three named affordances, or on any of the five object
+renderers at all — both cases go red and no allowlist edit hides the second. Or an
+owner reversal of `docs/architecture/brand-palette-decision.md`. Neither holds today.
+
+### 10.2 What this pass superseded, and what it deliberately left standing
+
+Three earlier sections describe W166 as open. They are dated records of the passes
+that wrote them and are **not** rewritten — that is this document's convention for
+§6 and §7 and it applies here too. Read each as superseded by this section:
+
+- **§6** — *"W166 … stays W … This is an OWNER decision about the brand"*. The owner
+  has now made it.
+- **§7.1 / §7.2** — *"W166 is not a defect. It is a brand decision nobody has made"*,
+  and the `D-WALL-COLOUR` row's *"Until one happens W166 is permanently W"*. The
+  first of the two forms that table names — *"amend … to name the shipped accent"* —
+  is the form the owner chose. **D-WALL-COLOUR is CLOSED.**
+- **§9.3** — *"W166 … is decision D-WALL-COLOUR, unchanged and still open, and …
+  across the two censuses one unmade brand call holds **six** requirements wrong."*
+  That count was an estimate made from the other census's summary rather than from
+  its rows, and it did not survive being checked. The real figure is **three** rows
+  closed by this ruling across both censuses — W166 here, and P129 and P132 in
+  `census-passport.md` §15 — because three of the six (`P13`, `P128`, `P133`) fail on
+  something the ruling explicitly does not touch. See `census-passport.md` §15.2.
+
+### 10.3 What the ruling did NOT close, stated so nobody reads this as bigger than it is
+
+- **All six `?` rows are untouched.** Three are judgements (W159, W167, W168), two
+  need hardware or a database (W146, W149), and one belongs to another lane's engine
+  (W71). A palette ruling is not a designer's sign-off and not a frame capture.
+- **W190's contrast verdict is unaffected and was not recomputed.** It is arithmetic
+  over the real tokens, and the ruling ratified exactly those tokens, so there is
+  nothing to recompute — which was the entire cost of the branch the owner did not
+  take.
+- **`mapChrome.ts` is out of scope.** Its near-black navy is the Map spec's dark-mode
+  ground, a surface rather than a brand accent, and no row in this census grades it.
+- **Nothing here says any of it runs.** §3's six deployment facts are unchanged: the
+  Wall is flag-dark. 199 of 205 requirements built on a branch is not 199
+  requirements working, and no viewer has seen any of it.
+
+### 10.4 Headline — restated from the rows, which is the only form that can be checked
+
+> **Wall, at `7d1f2d498` (worktree): 205 requirements · 199 BUILT-AND-CORRECT · 0
+> BUILT-BUT-WRONG · 0 NOT-BUILT · 6 CANNOT-VERIFY → CONSTRUCTED 199 / 205 = 97.1 % ·
+> CORRECT 199 / 205 = 97.1 %.** The CONSTRUCTED-to-CORRECT gap is **zero**: the 0.5
+> points §9.6 recorded as *"held by a colour name that is an owner's to choose"* was
+> held by exactly that, and the owner chose. The CANNOT-VERIFY share is unchanged at
+> **2.9 %, six rows** — two a machine could still answer (W146 with a database, W149
+> with a device) and four that need a designer or users and always will.
+
+| BUILT-AND-CORRECT | **199** |
+|---|---|
+| BUILT-BUT-WRONG | **0** |
+| NOT-BUILT | **0** |
+| CANNOT-VERIFY | **6** |
+
+199 + 0 + 0 + 6 = 205. These are the §2 rows, counted; the §6, §7 and §9 headlines
+above are the dated records of those passes and are deliberately left as written.
