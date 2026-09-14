@@ -795,11 +795,11 @@ portava-ci and never on production.
   applied → the two session cases red → 2480 and 2481 re-applied → 13 / 13.
   The suite cleans both tables and its seeded profile after itself (0 rows
   either side, measured).
-- **Two pins no suite held** — `test/sensingCensusRederivation.test.ts:33#server`
+- **Two pins no suite held** — `test/sensingCensusRederivation.test.ts:36#server`
   pins the server-side epoch fold separately from the device-side one: the
   first mutation of the server fold stayed **green** (46 / 46) because the
   device layer already rotates the commitment, so the layer was unpinned and
-  is now pinned on its own; `test/sensingCensusRederivation.test.ts:51#viewer,`
+  is now pinned on its own; `test/sensingCensusRederivation.test.ts:54#viewer,`
   pins that the Map's Experience fold names no viewer, user, profile,
   preference or taste and that a preference-shaped field on its input changes
   nothing in the state.
@@ -883,7 +883,7 @@ W → W): the shared envelope carries all six and enforces `predicted_for` iff
 of six are served, up from four of six declared. **S49** (every consumed
 state carries all four fields, W → W): Wall yes, Map yes behind the flag,
 Discovery's candidate carries truth class, confidence and freshness and **no
-coverage** (`lib/discoveryCandidate.ts:122#DiscoveryCandidate`), Compass's
+coverage** (`lib/discoveryCandidate.ts:133#DiscoveryCandidate`), Compass's
 states carry none of the four.
 
 **(d) The Map behind migration 2350 — three flags seeded FALSE, wired, route-tested.**
@@ -949,8 +949,8 @@ class but no calibration attached.
 **(e) Discovery behind 2361.** **S70** (DiscoveryCandidate with why-now,
 why-for-user, confidence, freshness, truth class, W → W): built and wired
 into `GET /discovery` behind `discovery_candidate_projection_enabled`
-(`lib/discoveryCandidate.ts:111#DISCOVERY_CANDIDATE_PROJECTION_FLAG`), and
-`whyNow` is always null (`lib/discoveryCandidate.ts:130#whyNow:`) because no
+(`lib/discoveryCandidate.ts:122#DISCOVERY_CANDIDATE_PROJECTION_FLAG`), and
+`whyNow` is always null (`lib/discoveryCandidate.ts:141#whyNow:`) because no
 live producer exists for a place on that surface — the module says so itself.
 Built, wrong on the one field the row is named for.
 *(Re-anchored 2026-09-12 by §7: both line numbers drifted when §7 gave the
@@ -2511,19 +2511,19 @@ makes (`:130#withDiscoveryLiveRank`), which with the flag off returns the very
 array it was handed (`:142`) having read no claim. It is wired into the REAL
 feed at both serve points, and **before the page slice** so it decides what page
 one contains rather than shuffling what page one already held:
-`routes/discovery.ts:1737#withDiscoveryLiveRank` (the cache-A path) and
-`:2097#withDiscoveryLiveRank` (the cold path). Migration 2850 seeds
+`routes/discovery.ts:1794#withDiscoveryLiveRank` (the cache-A path) and
+`:2194#withDiscoveryLiveRank` (the cold path). Migration 2850 seeds
 `discovery_live_rank_enabled` FALSE
 (`src/migrations/2850_discovery_live_rank_flag.sql:39`) and its postcondition
 refuses to commit over a TRUE row (`:46`).
 
 **(b) `whyNow` has a producer.** §1 recorded S70 as built and wrong on exactly
 one field: `whyNow` was always null because no live producer existed for a place
-on that surface. It exists now. `lib/discoveryCandidate.ts:225#whyNowOf` copies
+on that surface. It exists now. `lib/discoveryCandidate.ts:270#whyNowOf` copies
 the grounded reasons the rank engine produced — `crowd_busy`,
 `trajectory_building`, `walk_in_refused`, `queue_45m`, `reported_vibe_going_off`
 — in the claims' own vocabulary, and answers **null**, never `[]`, whenever no
-grade was computed or the grade found no reading (`:240#whyNowOf`). "Absent" and
+grade was computed or the grade found no reading (`:299#whyNowOf`). "Absent" and
 "nothing observed" both read as null; neither can read as "nothing applies".
 The route suite asserts both arms with the candidate projection on: the place
 with a reading carries `["crowd_busy"]`, the two without carry null.
@@ -2664,9 +2664,9 @@ not the only resolver in the tree, and the row is about the tree.
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| S68 Rank using live ExperienceState, forecast, travel time, friction, compatibility, freshness, safety and Opportunity value | N | **C** | All eight inputs are axes of one pure engine (`lib/discoveryLiveRank.ts:369#gradeLiveRow`) over the one gated live read, reusing Compass's own `summariseLiveState` / `experienceValue` rather than restating them; wired into the REAL `GET /discovery` at both serve points and before the page slice (`routes/discovery.ts:1737#withDiscoveryLiveRank`, `:2097#withDiscoveryLiveRank`) behind 2850's FALSE flag; influence bounded in positions, absence never scored, "could not look" distinguishable from "saw nothing". Mutations B7-M1 to B7-M10 and B7-R1 to B7-R5 each red. |
+| S68 Rank using live ExperienceState, forecast, travel time, friction, compatibility, freshness, safety and Opportunity value | N | **C** | All eight inputs are axes of one pure engine (`lib/discoveryLiveRank.ts:369#gradeLiveRow`) over the one gated live read, reusing Compass's own `summariseLiveState` / `experienceValue` rather than restating them; wired into the REAL `GET /discovery` at both serve points and before the page slice (`routes/discovery.ts:1794#withDiscoveryLiveRank`, `:2194#withDiscoveryLiveRank`) behind 2850's FALSE flag; influence bounded in positions, absence never scored, "could not look" distinguishable from "saw nothing". Mutations B7-M1 to B7-M10 and B7-R1 to B7-R5 each red. |
 | S66 Safety constraints outrank opportunity/vibe; a dangerous place is never simultaneously promoted as "best move now" | W | **W** | **Built on three more surfaces and still W, deliberately.** The gap the row named is closed in CODE: Discovery's ranker reads safety state now — a Live-qualified `unsafe_density` demotes behind every other row before any score is compared (`lib/discoveryLiveRank.ts:462`), asserted over all eight modes and from first position — and on the layover surface the same reading removes the card (`lib/layoverLiveIntersection.ts:179`). It does not move because of **this census's own stricter rule for prohibitions** (see *"The rule for prohibitions"*): a "must never" is C when an artifact makes the violation unrepresentable or refuses it, and on a DEFAULT deployment nothing refuses it. Discovery's demotion is behind 2850, seeded FALSE; the layover drop is behind 2851, seeded FALSE; Compass's exclusion is behind an env constant whose own comment reads *"Default OFF"* (`src/compass/CompassLiveConstraints.ts:79#liveConstraintsEnabled`). Only the Map's unconditional priority sort (`lib/mapObjects.ts:335#safety`) holds everywhere, and §1's promotion-stripping addition to it is itself behind 2350. Four surfaces can refuse; one does. B7-M1 and B7-L3 red. |
-| S70 Server-built DiscoveryCandidate with why-now, why-for-user, confidence, freshness and truth class | W | **C** | The one field the row is named for has a producer: `whyNow` carries grounded reasons in the claims' own vocabulary (`lib/discoveryCandidate.ts:240#whyNowOf`) and is null — never `[]` — when no grade was computed or no reading was found (`:225#whyNowOf`); route-tested with the candidate projection on, both arms. The other four fields were already carried. B7-R5 red. |
+| S70 Server-built DiscoveryCandidate with why-now, why-for-user, confidence, freshness and truth class | W | **C** | The one field the row is named for has a producer: `whyNow` carries grounded reasons in the claims' own vocabulary (`lib/discoveryCandidate.ts:299#whyNowOf`) and is null — never `[]` — when no grade was computed or no reading was found (`:270#whyNowOf`); route-tested with the candidate projection on, both arms. The other four fields were already carried. B7-R5 red. |
 | S72 Intent modes — Right Now, Tonight, Explore, Quiet, Social, High Energy, Nearby, Trip — on the same shared intelligence | W | **C** | The spec's eight, verbatim and in order (`lib/discoveryLiveRank.ts:99#DISCOVERY_INTENT_MODES`), each a weight vector over the SAME axes of the SAME engine (`:152#INTENT_MODE_PROFILES`) — the suite asserts no mode has an axis of its own — and the crowd preference they declare is Compass's `experienceValue`, so "the same shared intelligence" is literal. Reachable as `GET /discovery?intentMode=…`; an unknown string is not honoured as a mode (B7-R4 red). |
 | S85 Layover Temporal Freedom Engine intersects feasibility with live Experience value, forecast, friction and safe-return | W | **C** | The row's finding was `grep -rn liveClaimRead services/airport/` → nothing. It reads it now, and intersects rather than competing: a live queue becomes minutes the EXISTING `LayoverSafetyEngine` rates against the certified deadline (`services/airport/LayoverRecommendationService.ts:496`, `lib/layoverLiveIntersection.ts:190`), a live `unsafe_density` or refused walk-in removes the card, a decaying window demotes and never drops, and a card with no reading is untouched. Driven through the real `generateRecommendations` (90 → 180 minutes under a 90-minute queue). B7-L1 to B7-L4 red. |
 | S97 Temporary activity must not be forced onto the nearest place ID when ownership is unknown; never assign to the nearest place merely to satisfy a foreign key | C | **W** | **The C rested on a grep that is now false.** `resolveZoneAnchorSubject` (`routes/mapObservations.ts:656#resolveZoneAnchorSubject`) resolves a §22 zone contribution by finding the **nearest** active place in the zone (`:648#NEAREST`) and storing the observation against it (`:802`); its own header gives the motive as the FK — *"`intel_observations.subject_id` FKs `public.places`, and a zone is not a place"*. Mounted (`src/routes/index.ts:306#mapObservationsRouter`) behind `map_contributions_enabled` (`routes/mapObservations.ts:741`). The 3 km ceiling and the recorded `zone_id` bound the mis-attribution; they do not make it absent, and §14's sentence carries no radius. Not fixable in this lane: the alternatives are deleting a §22 Map feature or removing `subject_id NOT NULL REFERENCES places(id)` (`src/migrations/2130_intel_storage.sql:142`), both owner decisions. |
@@ -2879,7 +2879,7 @@ four. `MapObject` carries `freshness`, `confidence`, `sourceClass` and
 **The row stays W for a different reason, one nobody had written down.** The one
 server-built state Discovery consumes, `DiscoveryCandidate`, carries truth class,
 confidence and freshness and **no coverage**
-(`` `artifacts/api-server/src/lib/discoveryCandidate.ts:122#export interface DiscoveryCandidate {` ``)
+(`` `artifacts/api-server/src/lib/discoveryCandidate.ts:133#export interface DiscoveryCandidate {` ``)
 — even though the grade it is built from already carries a full `TruthMetadata`
 including coverage
 (`` `artifacts/api-server/src/lib/discoveryLiveRank.ts:210#TruthMetadata` ``).
@@ -3006,7 +3006,7 @@ re-executed here rather than taken:
   `` `artifacts/api-server/src/lib/protectedLocations.ts:748#delete out.coverage;` ``,
   under a comment reading *"`coverage` restates the cohort that `count` was
   deleted for."*
-- Discovery does not run it. `` `artifacts/api-server/src/lib/discoveryCandidate.ts:122#export interface DiscoveryCandidate {` ``,
+- Discovery does not run it. `` `artifacts/api-server/src/lib/discoveryCandidate.ts:133#export interface DiscoveryCandidate {` ``,
   `lib/discoveryLiveRank.ts` and the `routes/discovery*.ts` handlers contain
   **zero** references to `protectedLocations`, `protected_zones` or
   `protectedZone`.
@@ -3080,8 +3080,8 @@ was the notable non-adopter.
 
 It now carries the block, per claim and composed for the answer as a whole:
 
-  - `` `artifacts/api-server/src/routes/intelReadModels.ts:192#  const claims = resolved.claims.map((c) => ({ ...c, truth: truthOfEnvelope(c, nowMs) }));` ``
-  - `` `artifacts/api-server/src/routes/intelReadModels.ts:211#    truth: truthOfEnvelopes(resolved.claims, nowMs),` ``
+  - `` `artifacts/api-server/src/routes/intelReadModels.ts:199#  const claims = resolved.claims.map((c) => ({ ...c, truth: truthOfEnvelope(c, nowMs) }));` ``
+  - `` `artifacts/api-server/src/routes/intelReadModels.ts:218#    truth: truthOfEnvelopes(resolved.claims, nowMs),` ``
 
 Three things about this, stated so it is not read as more than it is.
 
@@ -3136,6 +3136,12 @@ new cases were watched fail 4/6 before the implementation existed (the two that
 passed beforehand are the vocabulary assertion, which is about `truthClass.ts`,
 and the privacy-floor guard, which passes vacuously over an absent block — said
 here because a test that passes before the fix is not evidence for it).
+
+*M15–M17 were run in the session a container restart then killed, and their
+output did not survive it. **§10.8 re-executes them** — M16 as M19, M17 as M22,
+and M15 as M21, which is a strictly harder version of it — and adds three more.
+Read M15–M17 as superseded by §10.8's table rather than as independently
+standing evidence.*
 
 ### §10.2 Two document defects, and the row correction one of them forces
 
@@ -3197,13 +3203,19 @@ rather than *built and refusing*.
 |---|---|---|
 | M18 | add `import { resolveSensingSubject } from "../lib/sensingSubjectReconciliation.js";` to `routes/intel.ts` | **red** (3 of 4): the allowlist, the no-route rule, and S111's zero-caller assertion |
 
-**Honest limit, reported rather than implied.** The fourth case — that
-`SENSING_AUTH_POSTURE` still reads `undecided` — was **not** mutation-proven
-here: the constant lives in `src/lib/sensingAuthPosture.ts`, which this lane
-does not own, and editing another lane's file to prove a test is not a trade
-this worktree can afford. Its *refusal* half is already mutation-covered by
-`src/test/sensingAuthPosture.test.ts`. Treat that one assertion as weaker than
-the other three until someone with that file mutates it.
+*M18's output did not survive the container restart either. **§10.8 re-executes
+it** as M26 — same shape, through `routes/intelReadModels.ts` — and adds M25,
+M27 and M28 so that all four of this section's cases are mutation-covered.*
+
+**Honest limit, reported rather than implied — and CLOSED in §10.8.** As first
+written, the fourth case — that `SENSING_AUTH_POSTURE` still reads `undecided` —
+was **not** mutation-proven here: the constant lives in
+`src/lib/sensingAuthPosture.ts`, which this lane does not own. §10.8's M27 and
+M28 now run it, each as a single mutate/run/restore command with the file
+checksummed back to its pristine value, so both halves of the assertion — the
+constant and the refusal — are covered and the four cases are of equal strength.
+The limit is recorded rather than deleted because a reader of §10.3 alone should
+see what it did not have when it was written.
 
 ### §10.4 What this pass looked for and did not find
 
@@ -3272,9 +3284,9 @@ decision no diff can substitute for.
 | S35 | W | **W** | All four rejections exist and three are executed against the database (M3, M10, M11 red); there is no ingest to reject anything. **RED WHEN** S32 does. **WHO**: as S32. |
 | S39 | W | **W** | `` `artifacts/api-server/src/lib/sensingPresenceState.ts:69#  presence: "observed"` `` — two values, no `absent`, no zero, no person named (M8 red, executed on k and k − 1 real contributors); no surface consumes it. **RED WHEN** decision #9 is taken and a surface reads `buildSensingPresenceState`. Note this lane's read-model routes cannot be that surface while the anon-store tripwire stands. **WHO**: the owner (decision #9), then a lane. |
 | S42 | W | **W** | The engine and its guards are pinned (M5 red); not one input has a producer. **RED WHEN** S28 exists. **WHO**: a client build. |
-| S49 | W | **W** | **Part closed this pass (§10.1): the §19 read model now carries all four §5.1 fields, per claim and composed, through the one shared derivation.** The gap §8 named is untouched — `` `artifacts/api-server/src/lib/discoveryCandidate.ts:122#export interface DiscoveryCandidate {` `` still carries truth class, confidence and freshness and no coverage, and `lib/discoveryLiveRank.ts` computes the value in the same function. **RED WHEN** the owner rules the §24 question — either route `DiscoveryCandidate` through `protectedLocations`, or rule that a four-value bucket over an already k-gated state is not protected-zone sensitive — and Discovery adds the field. §10.1's argument that the bucket was already served does **not** transfer: `DiscoveryCandidate` carries no cohort signal today, so adding one there is a first disclosure. **WHO**: the owner, then the Discovery lane. |
+| S49 | W | **W** | **Part closed this pass (§10.1): the §19 read model now carries all four §5.1 fields, per claim and composed, through the one shared derivation.** The gap §8 named is untouched — `` `artifacts/api-server/src/lib/discoveryCandidate.ts:133#export interface DiscoveryCandidate {` `` still carries truth class, confidence and freshness and no coverage, and `lib/discoveryLiveRank.ts` computes the value in the same function. **RED WHEN** the owner rules the §24 question — either route `DiscoveryCandidate` through `protectedLocations`, or rule that a four-value bucket over an already k-gated state is not protected-zone sensitive — and Discovery adds the field. §10.1's argument that the bucket was already served does **not** transfer: `DiscoveryCandidate` carries no cohort signal today, so adding one there is a first disclosure. **WHO**: the owner, then the Discovery lane. |
 | S51 | W | **W** | The inference exists and is guarded; not one signal is produced anywhere. **Narrowed**: §5.2's candidate list names `density` and the input carries `coverage` instead (§10.4), so this row needs one more signal than the census said. **RED WHEN** S28 exists AND a density input joins `VibeFeatureInput`. **WHO**: a client build, then whoever owns `lib/vibeInference.ts`. |
-| S52 | W | **W** | Checked field-for-field against the SPEC's §5.2 list rather than the module's own: energy, sociality, dance_likelihood, volatility, momentum, scene/context tags, confidence, coverage, freshness, provenance — all ten present on `` `artifacts/api-server/src/lib/vibeInference.ts:93#export interface SensingVibeState {` ``, truth class always `inferred`, band structurally below the live floor. **RED WHEN** something can populate it, i.e. S28. **WHO**: a client build. |
+| S52 | W | **W** | Checked field-for-field against the SPEC's §5.2 list rather than the module's own: energy, sociality, dance_likelihood, volatility, momentum, scene/context tags, confidence, coverage, freshness, provenance — all ten present on `` `artifacts/api-server/src/lib/vibeInference.ts:93#export interface SensingVibeState {` ``. **Evidence corrected 2026-09-14 (§10.9)**: the earlier sentence *"truth class always `inferred`"* restated the module's own header, which is false about its own code — the no-coverage branch returns `unknown`, deliberately (*"Nothing is inferred from nothing"*), and `unknown` is one of §5.1's seven. So the state carries `inferred` where there is coverage and `unknown` where there is none, and the band is structurally below the live floor in both. That is the spec behaving correctly, not a defect, and it moves no verdict. **RED WHEN** something can populate it, i.e. S28. **WHO**: a client build. |
 | S66 | W | **W** | Re-executed at both surfaces: Discovery demotes a Live-qualified `unsafe_density` behind every other row before any score is compared (`` `artifacts/api-server/src/lib/discoveryLiveRank.ts:462#    if (a.grade.safety.demoted !== b.grade.safety.demoted) return a.grade.safety.demoted ? 1 : -1;` ``) and the layover surface removes the card (`` `artifacts/api-server/src/lib/layoverLiveIntersection.ts:194#  if (state.unsafe) { drop = true; dropReason = "unsafe_density"; }` ``). **RED WHEN** a dangerous place is actually refused rather than refusable — the flags these paths ride are ON in a database and real `unsafe_density` state reaches them. **WHO**: nobody, deliberately: this is the census working, and it is recorded so the count of "W rows a lane should move" is not inflated by it. |
 | S79 | W | **W** | Re-executed as an absence, by opening the three modules rather than by a grep that stops: `routes/compass.ts`, `compass/CompassStructuredContext.ts` and `routes/telegraph.ts` contain **zero** references to `liveClaimRead`, `readLiveClaimEnvelopes`, `resolvePlaceIntelState` or `truthOfEnvelope`. The decision surface is grounded by construction; the conversational path has no structured truth in its context to be grounded against. **RED WHEN** live claims are carried into `/compass/ask`'s context and a grounding checker constrains the generated language to the band of its inputs — in that order, because a checker over an empty context is vacuous. **WHO**: the Compass lane. |
 | S83 | W | **W** | `compass/CompassTripContext.ts` still exports exactly one function, `buildTripContextLines`, and it is trip grounding — no world state, no opportunities, no disruptions, no sessions. **RED WHEN** S54 (`ExperienceSession`) exists and a `TripWorldContext` projection carries the five named parts. **WHO**: the Compass lane, after a commissioned `ExperienceSession`. |
@@ -3298,24 +3310,14 @@ a named owner decision, six on work nobody has commissioned, one is held W on
 purpose. That is §8's sort, re-derived independently and reaching the same
 shape — which is worth more than agreeing with it would have been.
 
-**`check:doc-citations` is red in this worktree, and not because of this
-document.** Nine of census-sensing's anchored citations fail against the
-*working tree* — all of them into `lib/discoveryCandidate.ts` and
-`routes/discovery.ts`, both being edited concurrently by the Discovery lane.
-Every one of the nine **resolves correctly against HEAD** (checked line by line
-with `git show HEAD:<path>`). They were therefore NOT repointed: repointing a
-citation at another lane's uncommitted line numbers would break it the moment
-that lane's diff lands or changes. S49's row above re-cites
-`lib/discoveryCandidate.ts:122` for the same reason and with the same caveat: it
-is right at HEAD and currently fails against the working tree. The integrator should re-run the checker
-after merging and repoint then, once, against a settled tree.
-
 **Bookkeeping, so a reader is not surprised by it.** §10.3 added two import
 lines to `src/test/sensingCensusRederivation.test.ts`, which moved §1's two
 anchored citations into that file down by one line (`:32#server` → `:33`,
-`:50#viewer,` → `:51`). Both were repointed here; they are the only citations in
-this document this pass changed, and they are changed because the code moved,
-not because the claim did.
+`:50#viewer,` → `:51`). Both were repointed here, because the code moved and
+not because the claim did. §10.7 below repoints eleven more, for the same
+reason and after the condition this section set for doing so came true, and
+§10.9's four added cases moved the same two down by three more (to `:36` and
+`:54`) — repointed again, in §1 where they live.
 
 **Two requests, both on files this lane may not edit.**
 `artifacts/api-server/src/scripts/checkCensusFreshness.ts` gives this census a
@@ -3323,7 +3325,262 @@ scope that covers `src/services/intel/` and `src/routes/intel.ts` but **not**
 `src/routes/intelReadModels.ts`, which now carries a row's evidence (§10.1) —
 so a change to it would age no census. It should be added. And
 `src/test/sensingCensusRederivation.test.ts` **is** in scope and was changed by
-§10.3, so once this is committed the census needs an acknowledgement entry in
-`CENSUS_STALENESS_ACKNOWLEDGED.json` naming it, with the reason: the file is a
-pin on rows this section re-derived and its change is that re-derivation, not a
-verdict moving under it.
+§10.3 and again by §10.9, so once this is committed the census needs an
+acknowledgement entry in `CENSUS_STALENESS_ACKNOWLEDGED.json` naming it, with
+the reason: the file is a pin on rows these sections re-derived and its change
+is that re-derivation, not a verdict moving under it.
+
+*Re-checked 2026-09-14 after §10.8/§10.9.* `check:census-freshness` reports
+census-sensing STALE on exactly four counted files, and **none of them is this
+lane's**: `compass/CompassTripContext.ts`, `lib/discoveryModifiers.ts`,
+`lib/discoveryShadow.ts` and `test/discoveryCandidate.test.ts`, all changed by
+the Compass and Discovery lanes in this worktree. This lane cannot name them and
+should not: an acknowledgement argues that a change could not have moved a
+verdict, and only the lane that made the change can argue that. The integration
+owner reconciles. Two of the four touch rows this census cites (S83 reads
+`CompassTripContext.ts`, S49 and S70 read the Discovery projection), so they are
+worth re-reading before the acknowledgement is written rather than silenced by
+it.
+
+### §10.7 The deferred repointing, closed — nine citations moved by reading the claim
+
+*Added 2026-09-14, after the container restart that took this lane's agent
+mid-pass. §10.6 deferred these on a condition; the condition came true.*
+
+As §10 was written, nine of census-sensing's anchored citations failed
+against the *working tree* — all of them into `lib/discoveryCandidate.ts` and
+`routes/discovery.ts`, both being edited concurrently by the Discovery lane —
+while every one of the nine still **resolved correctly against HEAD**. They were
+therefore NOT repointed: repointing a citation at another lane's uncommitted
+line numbers would break it the moment that lane's diff landed.
+
+**The deferral is now closed.** The Discovery lane's diff has since landed:
+`88b9e8e1a` committed it, and `/home/user/wt-483` is clean at that commit, so
+the nine no longer fail only against a working tree — **they fail against HEAD**,
+which is the condition this paragraph said to wait for. All nine were repointed
+on 2026-09-14, each one by reading the claim the sentence makes and choosing the
+line that carries it, never by taking the first line the checker offered as a
+candidate — which for two of them would have been wrong:
+
+*(The old line numbers below are written bare, without their needles, on
+purpose: an anchored citation written out in prose is still an anchored
+citation to `check:doc-citations`, and a section explaining a repointing must
+not reintroduce the nine anchors it just retired.)*
+
+  - discoveryCandidate line 122, needle `DiscoveryCandidate` → **133**, the
+    `export interface DiscoveryCandidate {` whose field list is what "carries
+    truth class, confidence and freshness and **no coverage**" is a claim about.
+    The checker offered 2, 7 and 85 — a file header line and two doc comments,
+    none of which carries the claim. Three sentences cite this (§8, §9.3, §10.5)
+    and all three were moved together.
+  - discoveryCandidate line 111, needle `DISCOVERY_CANDIDATE_PROJECTION_FLAG` →
+    **122**, the `export const` that binds the literal
+    `discovery_candidate_projection_enabled` the sentence quotes. The other
+    candidate, 322, is the `isFlagEnabled` read; the sentence cites the name.
+  - discoveryCandidate line 130, needle `whyNow:` → **141**, the interface field
+    the "always null" sentence is about (superseded by §7, left standing as §1
+    measured it). The other candidate, 299, is the projection's assignment.
+  - discoveryCandidate line 225, needle `whyNowOf` → **270** (the function
+    definition, which is what "answers null, never `[]`" describes) and line 240
+    → **299** (the call site in `projectDiscoveryCandidate`, which is what
+    "copies the grounded reasons" describes). §7.1 and §7.2 cite the pair in
+    opposite orders; each was moved to its own referent, not to the other's.
+  - discovery line 1737, needle `withDiscoveryLiveRank` → **1794** (the cache-A
+    path, over `servedFiltered`) and line 2097 → **2194**
+    (the cold path, over `filtered`). The checker listed 86, 88 and 1794 and
+    stopped: 86 and 88 are the import and its comment, and 2194 — the cold path,
+    which is the one the second citation is about — was not offered at all.
+    Taking the checker's first candidate would have pointed both serve-point
+    citations at an import line.
+
+  Two of §10.1's own citations into `routes/intelReadModels.ts` had also drifted
+  by seven lines (`:192` → **`:199`**, `:211` → **`:218`**) and were repointed
+  the same way. `check:doc-citations` now reports **zero** failures for
+  census-sensing in either failing class, and `check:citation-symbols` passes
+  with 0 absent symbols. The branch stays red from other censuses' anchors,
+  which are not this lane's to move.
+
+**The standing caveat, and what it covers at the end of this pass.** Every one
+of the seven repointed lines was read at `88b9e8e1a`, where it carries its
+claim. They are therefore repointed at a COMMITTED tree, which is what §10.6
+asked for, and not at another lane's scratch state.
+
+`lib/discoveryCandidate.ts` — five of the seven — is byte-identical to
+`88b9e8e1a` and its five anchors were re-read and still hold as this section
+closed.
+
+**`routes/discovery.ts` — the other two — is still moving, and they are LEFT
+where they are, deliberately.** The Discovery lane modified it twice during this
+pass; at the end of it the file carries twelve uncommitted lines that push the
+cache-A call to 1798 and the cold call to 2206. That is not a reason to chase
+them to 1798/2206: those numbers belong to a working tree that has already
+changed twice in one hour and is not the tree anyone will read this census
+against. 1794 and 2194 are right at HEAD and wrong only against that in-flight
+diff — which is precisely the condition §10.6 set for **not** repointing, and it
+is now true again of this one file. Both remain flagged for the integrator to
+re-run once the Discovery lane lands. The same is true of four citations into
+`routes/mapProjection.ts` (§1(d), at census lines 893, 904, 924 and 931), which
+were green at the start of this pass and went red under the Map lane's
+uncommitted work while it ran; they were not touched either, for the same
+reason.
+
+All seven were checked one by one with `git show 88b9e8e1a:<path>` and each
+carries its needle at its cited line there. So `check:doc-citations` is red for
+census-sensing against the WORKING TREE and green against HEAD — which is a
+statement about two other lanes being mid-edit, not about this document, and is
+exactly the state §10.6 told the integrator to reconcile once after everything
+lands.
+
+
+### §10.8 The proof pass, re-executed after the container restart
+
+*Added 2026-09-14. The container this worktree lives in restarted mid-pass and
+killed this lane's agent. Every file §10 wrote survived — committed at
+`88b9e8e1a` — but the **evidence** did not: the mutation runs behind §10.1's
+M15–M17 and §10.3's M18 existed only in the agent that is gone. A verdict whose
+proof nobody can re-execute is not a verdict, so this section re-executes it
+rather than restating it. Nothing below moves a row; §10.5 still reads 98 C /
+26 W / 2 N / 1 X, unchanged.*
+
+Ten mutations, each watched red, each restored and verified byte-identical
+against the pristine copy (`md5sum`, and `git diff` empty for every file
+touched) before the next one was applied. No file outside this lane's ownership
+was left changed for longer than the single command that mutated, ran and
+restored it.
+
+**Against `src/test/intelLiveStateEndpoint.test.ts`** (26 cases, 6 of them
+§10.1's; green before and after every mutation):
+
+| # | mutation | result |
+|---|---|---|
+| M19 | delete the composed top-level `truth` (re-run of M16) | **red** 2/6 — the composite case and *"no coverage is not quiet"* |
+| M20 | serve `resolved.claims` unmapped, so no claim carries a block at all | **red** 2/6 — the equality case and the corroborated case |
+| M21 | a SECOND, hand-rolled derivation carrying all four §5.1 axes **with the correct values**, omitting only `provenance` (strictly harder than M15) | **red** 1/6 — and on exactly the right assertion: *"the served truth block must BE lib/liveEnvelopeTruth's, not a second derivation of it"* |
+| M22 | compose from `truthOfEnvelope(claims[0])` — the FIRST member, not the weakest (re-run of M17) | **red** 1/6 — the diff shows the weak member's `observed`/`few` lifted to the strong member's `corroborated`/`many`, which is the failure mode the case exists for |
+| M23 | merge the exact cohort `sourceCount` into the truth block | **red** 4 — §10.1's privacy case (*"the truth block must not carry sourceCount"*) **and** two pre-existing §19 privacy-floor cases, so the floor is not relying on the new test |
+| M24 | drop `corroborated` from `TRUTH_CLASSES` in `lib/truthClass.ts` | **red** 3 — including the vocabulary assertion: *"the truth vocabulary drifted from the spec's seven"* |
+
+M21 is the one that matters. §10.1 claimed the property under test is
+*agreement*, not presence. M21 builds the exact object a lane would write if it
+had reached for the four §5.1 names by hand and got every value right — a
+presence check passes it, and the equality check does not. The claim holds.
+
+M24 also settles the vocabulary against the SPEC's list rather than the code's:
+`TRUTH_CLASSES` is `observed, corroborated, inferred, predicted, conflicting,
+stale, unknown` — §5.1's seven, verbatim and in order.
+
+**Against `src/test/sensingCensusRederivation.test.ts`** (9 cases, 4 of them
+§10.3's):
+
+| # | mutation | result |
+|---|---|---|
+| M25 | a **route** imports the sensing contribution stack — `routes/intelReadModels.ts` (this lane's own file) imports `sensingAnonStore` | **red** 2/4 — the allowlist and the no-route rule, both naming `routes/intelReadModels.ts` as the offender |
+| M26 | the same route imports `sensingSubjectReconciliation` (re-run of M18, through a file this lane owns) | **red** 3/4 — including S111's zero-caller assertion: *"sensingSubjectReconciliation acquired a caller; re-derive S111"* |
+| M27 | `SENSING_AUTH_POSTURE` set to `anonymous_capable` | **red** 1/4 — *"the owner decided the posture — re-derive S18, S20, S24, S25, S30, S33, S35, S39, S42, S51, S52, S111, S112"* |
+| M28 | `sensingEligibility` admits an attested device while the posture is still `undecided` | **red** 1/4 — the three-context refusal loop |
+
+**§10.3's honest limit is closed.** That section reported the posture assertion
+as weaker than its three siblings because proving it needed a mutation of
+`src/lib/sensingAuthPosture.ts`, which this lane does not own. M27 and M28 run
+it — as a single mutate/run/restore command each, with the file's `md5sum`
+checked back to its pristine value and `git diff` empty afterwards, so no other
+lane in this shared worktree ever saw a changed file. Both halves of the
+assertion — the constant and the refusal — are now mutation-covered, and the
+four cases of §10.3 are of equal strength.
+
+**What this pass did NOT re-establish.** M1–M14, cited across §§1–9 for the
+sensing modules, were run in earlier sessions and are not re-run here; they are
+recorded at their own sections and this lane did not re-execute them. Their
+subject files are unchanged at `88b9e8e1a`, which is a reason to expect they
+still hold and not evidence that they do.
+
+### §10.9 Three rows re-verified against the SPEC's own vocabularies, and one evidence correction
+
+*Added 2026-09-14, in the same pass as §10.8. §10.5 re-derived all twenty-nine,
+but three of them turn on a list the spec states and the code also states about
+itself — the failure mode where a census reads the module's header instead of
+the module. Those three were re-opened against
+`docs/specs/Portava_Sensing_World_Experience_Intelligence_Upgrade_Architecture_v1.txt`
+directly. No verdict moves; one sentence of evidence was wrong and is corrected.*
+
+**S49 — the seven truth classes.** Spec §5.1's list is `observed`,
+`corroborated`, `inferred`, `predicted`, `conflicting`, `stale`, `unknown`.
+`` `artifacts/api-server/src/lib/truthClass.ts:47#export const TRUTH_CLASSES = [` ``
+carries exactly those seven, verbatim and in that order. §10.1's new case
+asserts the array against the spec's list rather than against anything the
+endpoint declares, and §10.8's M24 proves that assertion can fail. Confirmed,
+no change.
+
+**S51 — the candidate signals, including the optional ones.** Spec §5.2 names
+ten: motion_energy, movement periodicity, bounded spatial movement, dwell,
+arrival velocity, departure velocity, density, event/venue context, *optional*
+user observations, and *optional* explicitly-permitted acoustic energy.
+`` `artifacts/api-server/src/lib/vibeInference.ts:69#export interface VibeFeatureInput {` ``
+carries eight of the ten — `motionEnergy`, `periodicity`, `boundedMovement`,
+`dwellBucket`, `arrivalVelocity`, `departureVelocity`, `venueContext`, and the
+acoustic pair behind `acousticPermissionGranted`. **Two are absent and they are
+not equivalent**: `density` is an unqualified item on the spec's list and is
+genuinely missing (the input's `coverage` is a cohort-size bucket, which is how
+MANY contributed, not how crowded the place is — §10.4 found this and it holds);
+*optional* user observations is marked optional by the spec itself, so its
+absence is permitted and is **not** a second gap. §10.5's narrowing of this row
+stands exactly as written — checked, this time, including the items it would
+have been convenient to overlook.
+
+**S52 — the ten `VibeState` fields, and one sentence that was wrong.** All ten
+of §5.2's outputs are on
+`` `artifacts/api-server/src/lib/vibeInference.ts:93#export interface SensingVibeState {` ``:
+`energy`, `sociality`, `danceLikelihood`, `volatility`, `momentum`,
+`contextTags` (the spec's "scene/context tags where legitimately sourced"), and
+confidence / coverage / freshness / provenance carried together on `truth`.
+That half of the row is right.
+
+The other half was not. §10.5 wrote *"truth class always `inferred`"* — which
+is the module's **own header** (line 11: *"its truth class is always
+`inferred`"*), and that header is false about the code beneath it. The
+no-coverage branch returns `truthClass: "unknown"` with every output null, under
+a comment that says exactly why: *"No coverage ≠ quiet. Nothing is inferred from
+nothing… not `inferred`, because nothing was."* Two of §5.1's seven classes are
+reachable, not one.
+
+**This is the census being wrong in the safe direction, and it is still worth
+correcting.** The code is *better* than the sentence claimed: `unknown` on no
+coverage is one of the spec's four hard prohibitions honoured (*"no no-coverage
+=> quiet"*), and a reader who trusted the sentence would have gone looking for a
+violation of it. But the sentence was arrived at by reading the module's
+self-description rather than the module, which is the one method this census is
+supposed to refuse. The row's text in §10.5 is corrected in place.
+
+**The verdict does not move.** S52 is W because nothing can populate the state,
+not because of what it carries — S28 is the gate, and S28 is still N.
+
+**The correction is pinned, not just written down.** Four cases were added to
+`src/test/sensingCensusRederivation.test.ts` (13/13 green) asserting that the
+no-coverage branch grades `unknown` with every output **null** (a low number
+would be a quiet reading, which is a named prohibition), that the covered branch
+grades `inferred` with a band structurally below `MIN_BAND_FOR_LIVE_STATE`, that
+exactly two classes are reachable across all four coverage buckets and both are
+members of `TRUTH_CLASSES` — checked against `lib/truthClass.ts`, never against
+`vibeInference.ts`'s own header, which is the sentence that was wrong — and that
+`predictedFor` is null on both branches.
+
+| # | mutation | result |
+|---|---|---|
+| M29 | no-coverage branch grades `inferred` instead of `unknown` | **red** 2/4 — *"no coverage must not be graded `inferred`"* and *"a third class became reachable — re-derive S52"* |
+| M30 | no-coverage branch returns `energy: 0, sociality: 0` instead of null | **red** 1/4 — *"energy must be null with no coverage, never a low value"* |
+| M31 | `inferredConfidenceBand` returns `MIN_BAND_FOR_LIVE_STATE` | **GREEN — reported, not hidden.** The naive mutation does not redden, because `inferredConfidenceBand` defends itself: its last line re-floors any band at or above the live floor back to `unverified`. The test was right and the mutation was too weak. |
+| M31b | the same, **with that defence-in-depth line removed** and the band set to `live` | **red** 1/4 — *"an inference carried live, at or above the live floor likely_current"* |
+| M32 | `predictedFor` set to the observation instant | **red** 1/4 — *"a prediction rendered as an inference — a named spec prohibition"* |
+
+M31 is left in the table on purpose. A mutation that fails to redden is either a
+test that cannot fail or a guard that is stronger than the mutation, and the two
+are told apart by finding the guard — which here is
+`` `artifacts/api-server/src/lib/vibeInference.ts:140#  return bands.indexOf(band) < bands.indexOf(MIN_BAND_FOR_LIVE_STATE) ? band : "unverified";` ``.
+M31b removes it and the case goes red, so the case can fail and the band
+guarantee has two independent defences rather than one. Recording only M31b
+would have made a weaker system look like a stronger test.
+
+All mutations in §10.8 and §10.9 were applied to files outside this lane's
+ownership as a single mutate/run/restore command, with each file's `md5sum`
+checked back to its pristine value and `git diff` empty for it afterwards. No
+other lane sharing `wt-483` ever saw a changed file.

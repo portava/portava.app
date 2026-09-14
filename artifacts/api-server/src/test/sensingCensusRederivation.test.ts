@@ -15,6 +15,9 @@ import { fileURLToPath } from "node:url";
 import { deriveContributorToken, deriveEpochSecret, deriveGroupToken, revocationCommitment } from "../lib/sensingAnonStore.js";
 import { buildExperienceState } from "../lib/mapExperienceState.js";
 import { SENSING_AUTH_POSTURE, sensingEligibility } from "../lib/sensingAuthPosture.js";
+import { inferVibe, type SensingVibeState, type VibeFeatureInput } from "../lib/vibeInference.js";
+import { TRUTH_CLASSES } from "../lib/truthClass.js";
+import { CONFIDENCE_BANDS, MIN_BAND_FOR_LIVE_STATE } from "../lib/intelContracts.js";
 
 const SRC = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const stripComments = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
@@ -171,6 +174,82 @@ describe("§9.1 — the sensing contribution stack is imported by its own siblin
       const e = sensingEligibility(ctx);
       assert.equal(e.eligible, false);
       assert.equal((e as { reason: string }).reason, "posture_undecided");
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// census-sensing §10.9 — S52's truth class, pinned against the SPEC's seven and
+// against the CODE, not against the module's own header.
+//
+// §10.5 said of `SensingVibeState`: "truth class always `inferred`". That is
+// lib/vibeInference.ts's own header sentence (line 11), and it is false about
+// the code beneath it: the no-coverage branch returns `unknown`, on purpose —
+// "No coverage ≠ quiet. Nothing is inferred from nothing… not `inferred`,
+// because nothing was." The census had restated a module's self-description
+// instead of reading the module, which is the one method it is supposed to
+// refuse, so the corrected sentence is pinned here rather than left as prose.
+//
+// WHAT THIS DOES NOT CLAIM. It moves no verdict. S52 is W because nothing can
+// populate a `VibeFeatureInput` (S28 is N), not because of what the state
+// carries. This pins the EVIDENCE under the row so the correction cannot rot
+// back into the original wrong sentence unnoticed.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("§10.9 / S52 — the vibe state's reachable truth classes are the spec's, and `unknown` is one of them", () => {
+  const NOW = Date.parse("2026-09-14T12:00:00.000Z");
+  const base = {
+    motionEnergy: 0.8, periodicity: 0.7, boundedMovement: true, dwellBucket: 3,
+    arrivalVelocity: 0.6, departureVelocity: 0.2,
+    venueContext: null, observedAt: new Date(NOW - 60_000).toISOString(),
+  };
+
+  it("no coverage ⇒ `unknown`, every output null — not `inferred`, and never a quiet reading", () => {
+    const r = inferVibe({ ...base, coverage: "unknown" } as VibeFeatureInput, NOW);
+    assert.equal(r.ok, true);
+    const s = (r as { ok: true; state: SensingVibeState }).state;
+    assert.equal(s.truth.truthClass, "unknown", "no coverage must not be graded `inferred`");
+    assert.equal(s.truth.coverage, "unknown");
+    // "No coverage ⇒ quiet" is a named spec prohibition: a LOW number would be
+    // a quiet reading. Only null is an absence.
+    for (const [k, v] of Object.entries({
+      energy: s.energy, sociality: s.sociality, danceLikelihood: s.danceLikelihood,
+      volatility: s.volatility, momentum: s.momentum,
+    })) {
+      assert.equal(v, null, `${k} must be null with no coverage, never a low value`);
+    }
+    assert.deepEqual([...s.contextTags], []);
+  });
+
+  it("coverage ⇒ `inferred`, and a band structurally below the live floor", () => {
+    const r = inferVibe({ ...base, coverage: "many" } as VibeFeatureInput, NOW);
+    assert.equal(r.ok, true);
+    const s = (r as { ok: true; state: SensingVibeState }).state;
+    assert.equal(s.truth.truthClass, "inferred");
+    const bands = CONFIDENCE_BANDS as readonly string[];
+    assert.ok(
+      bands.indexOf(s.truth.confidence) < bands.indexOf(MIN_BAND_FOR_LIVE_STATE),
+      `an inference carried ${s.truth.confidence}, at or above the live floor ${MIN_BAND_FOR_LIVE_STATE}`,
+    );
+  });
+
+  it("both reachable classes are members of the SPEC's seven — checked against truthClass.ts, not vibeInference.ts", () => {
+    const reached = new Set<string>();
+    for (const coverage of ["unknown", "few", "several", "many"] as const) {
+      const r = inferVibe({ ...base, coverage } as VibeFeatureInput, NOW);
+      assert.equal(r.ok, true);
+      reached.add((r as { ok: true; state: SensingVibeState }).state.truth.truthClass);
+    }
+    assert.deepEqual([...reached].sort(), ["inferred", "unknown"], "a third class became reachable — re-derive S52");
+    for (const c of reached) {
+      assert.ok(TRUTH_CLASSES.includes(c as never), `${c} is not one of §5.1's seven`);
+    }
+  });
+
+  it("an inference is never a prediction — `predictedFor` is null on both branches", () => {
+    for (const coverage of ["unknown", "many"] as const) {
+      const r = inferVibe({ ...base, coverage } as VibeFeatureInput, NOW);
+      const s = (r as { ok: true; state: SensingVibeState }).state;
+      assert.equal(s.temporal.predictedFor, null, "a prediction rendered as an inference — a named spec prohibition");
     }
   });
 });

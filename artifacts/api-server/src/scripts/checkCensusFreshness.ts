@@ -1406,6 +1406,13 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/2610_map_trip_projection_anchor.sql",
   ],
   "census-sensing.md": [
+    // ADDED 2026-09-14 on the Sensing lane's standing request. The scope covered
+    // `services/intel/` and `routes/intel.ts` but not `routes/intelReadModels.ts`,
+    // which now carries S49's evidence — the seven truth classes read against the
+    // spec's list rather than against a list the code declares about itself. A
+    // change to that file aged no census, which is precisely the gap that lets a
+    // verdict go on standing after the code under it has moved.
+    "artifacts/api-server/src/routes/intelReadModels.ts",
     "artifacts/api-server/src/lib/sensingAnonStore.ts",
     "artifacts/api-server/src/lib/intelThrottle.ts",
     "artifacts/api-server/src/lib/liveClaimRead.ts",
