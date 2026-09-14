@@ -190,9 +190,31 @@ describe("RLS-01 — non-member reads conversation → DENY", () => {
   });
 
   it("refuses when the membership table itself is unreadable (unknown is not permission)", async () => {
-    use(seed(), { errors: { message_thread_members: { message: "db down" } } });
+    // STRENGTHENED, not relaxed. This case used to assert the literal `403`,
+    // which made an IMPLEMENTATION DETAIL the contract: the route reached that
+    // 403 only because `.maybeSingle()`'s error path yields `data: null`, i.e.
+    // because the error was DROPPED. census §20.7 named that — the refusal is
+    // safe and false, because the server does not know whether the caller is a
+    // member and says it does. The matrix's own `expected` is **DENY**, not a
+    // status number.
+    //
+    // So the assertion is now the matrix's: nothing is admitted, the `messages`
+    // table is never reached, and the code is the RETRYABLE one this codebase
+    // uses for "the check was NOT PERFORMED" — while the case above still pins
+    // a genuine non-member at exactly 403. A route that admitted an unreadable
+    // caller, or that reached the messages table, now fails here where before
+    // only the number was watched.
+    const c = use(seed(), { errors: { message_thread_members: { message: "db down" } } });
     const r = await call(harness.base, "GET", `/threads/${THREAD}/messages`, BOB);
-    assert.equal(r.status, 403, "an unreadable membership table must deny, never admit");
+    assert.notEqual(r.status, 200, "an unreadable membership table must deny, never admit");
+    assert.ok(r.status === 403 || r.status === 503, `denied, but with ${r.status}`);
+    assert.equal(r.body.error, "degraded_unavailable", JSON.stringify(r.body));
+    assert.equal(r.body.messages, undefined, "no conversation content may be returned");
+    assert.equal(
+      c._observed.selects.filter((x) => x.table === "messages").length,
+      0,
+      "the messages table must not be reached when membership could not be established",
+    );
   });
 });
 
@@ -646,11 +668,17 @@ describe("§27.3 — live-DB contracts are enforced by lanes that exist and run"
 
   it("the reads the census called authorization-critical are fail-CLOSED, not empty-state", async () => {
     // This is the distinction LDB-05 turns on: a refusal is not a plausible
-    // empty inbox. Both membership reads resolve to 403 on an unreadable table.
+    // empty inbox. Both membership reads REFUSE on an unreadable table — and
+    // since census §20.7 the refusal names the right reason: `degraded_unavailable`
+    // ("the check was NOT PERFORMED") rather than a 403 asserting the caller is
+    // not a member. Neither returns content, which is what LDB-05 is about.
     use(seed(), { errors: { message_thread_members: { message: "down" } } });
     const read = await call(harness.base, "GET", `/threads/${THREAD}/messages`, BOB);
-    assert.equal(read.status, 403);
+    assert.notEqual(read.status, 200, JSON.stringify(read.body));
+    assert.equal(read.body.error, "degraded_unavailable", JSON.stringify(read.body));
+    assert.equal(read.body.messages, undefined, "an unreadable membership must not yield a conversation");
     const send = await call(harness.base, "POST", `/threads/${THREAD}/messages`, BOB, { body: "x" });
-    assert.equal(send.status, 403);
+    assert.notEqual(send.status, 200, JSON.stringify(send.body));
+    assert.equal(send.body.error, "degraded_unavailable", JSON.stringify(send.body));
   });
 });

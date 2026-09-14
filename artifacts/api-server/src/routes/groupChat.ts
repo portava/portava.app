@@ -37,35 +37,65 @@ const INITIAL_MSG_LIMIT = 50;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/**
+ * ── AN UNREADABLE AUTHORIZATION TABLE IS NOT A SETTLED REFUSAL ───────────────
+ * census §20.7, executed for `routes/telegraphChat.ts` and
+ * `routes/telegraphStream.ts` by §22.3 and for this file here.
+ *
+ * supabase-js RESOLVES on a database failure, so `const { data } = await …`
+ * arrived as `data: null` — byte-identical to a genuine non-member — and both
+ * helpers below answered `false`. The route then told a traveller, by name,
+ * that they are not in their own conversation. That is SAFE (it denies rather
+ * than admits) and FALSE (the server did not perform the check), and a 403 is
+ * the refusal a client acts on by GIVING UP: it will not recover when the table
+ * does.
+ *
+ * Both helpers now return three outcomes rather than a boolean, and the third
+ * one — `unreadable` — is refused with `degraded_unavailable`, this codebase's
+ * own code for "the check was NOT PERFORMED" and the only code `lib/http.ts`
+ * marks retryable. A genuine non-member still gets the same 403 with the same
+ * words, which every case in `src/test/telegraphMembershipHonesty.test.ts`
+ * asserts beside its outage case.
+ */
+type CircleMembership = 'member' | 'not_member' | 'unreadable';
+
 async function isAcceptedCircleMember(
   sc: any,
   circleOwnerId: string,
   userId: string,
-): Promise<boolean> {
-  if (userId === circleOwnerId) return true;
-  const { data } = await sc
+): Promise<CircleMembership> {
+  if (userId === circleOwnerId) return 'member';
+  const { data, error } = await sc
     .from('circle_memberships')
     .select('other_id')
     .eq('user_id', circleOwnerId)
     .eq('other_id', userId)
     .maybeSingle();
-  return Boolean(data);
+  if (error) return 'unreadable';
+  return data ? 'member' : 'not_member';
 }
 
 async function isActiveThreadMember(
   sc: any,
   threadId: string,
   userId: string,
-): Promise<{ active: boolean; left: boolean }> {
-  const { data } = await sc
+): Promise<{ active: boolean; left: boolean; unreadable: boolean }> {
+  const { data, error } = await sc
     .from('message_thread_members')
     .select('user_id, left_at')
     .eq('thread_id', threadId)
     .eq('user_id', userId)
     .maybeSingle();
-  if (!data) return { active: false, left: false };
+  if (error) return { active: false, left: false, unreadable: true };
+  if (!data) return { active: false, left: false, unreadable: false };
   const left = (data as any).left_at !== null;
-  return { active: !left, left };
+  return { active: !left, left, unreadable: false };
+}
+
+/** The one refusal both unreadable outcomes send, so the five call sites cannot drift apart. */
+function refuseUnreadable(req: any, res: any, table: string, ctx: Record<string, unknown>): void {
+  req.log.error({ ...ctx }, `${table} read failed — refusing rather than asserting the caller is not a member`);
+  sendError(res, 'degraded_unavailable', 'We could not check your access to this chat right now. Please try again shortly.');
 }
 
 /**
@@ -206,13 +236,21 @@ router.get('/trips/:tripId/chat', asyncHandler(async (req, res) => {
 
   const isMember = await isAcceptedTripMember(sc, tripId, user.id);
   if (!isMember) {
-    const { data: invited } = await sc
+    // §20.7. The two answers below are NOT interchangeable: `pending_invite`
+    // is an instruction the caller can act on, `not_member` is a dead end. The
+    // read that decides between them dropped its error, so an unreadable
+    // `trip_members` sent a person holding a live invite to the dead end.
+    const { data: invited, error: invitedErr } = await sc
       .from('trip_members')
       .select('role')
       .eq('trip_id', tripId)
       .eq('user_id', user.id)
       .eq('role', 'invited')
       .maybeSingle();
+    if (invitedErr) {
+      refuseUnreadable(req, res, 'trip_members', { err: invitedErr, tripId, userId: user.id });
+      return;
+    }
     if (invited) {
       res.status(403).json({
         error: 'pending_invite',
@@ -230,7 +268,11 @@ router.get('/trips/:tripId/chat', asyncHandler(async (req, res) => {
   const threadId = await syncTripChatMembers(tripId, sc);
   if (!threadId) { sendError(res, 'db_error', 'Failed to resolve trip chat thread', { exposeDetail: true }); return; }
 
-  const { active, left } = await isActiveThreadMember(sc, threadId, user.id);
+  const { active, left, unreadable } = await isActiveThreadMember(sc, threadId, user.id);
+  if (unreadable) {
+    refuseUnreadable(req, res, 'message_thread_members', { threadId, userId: user.id });
+    return;
+  }
 
   // ── AN UNREADABLE THREAD IS NOT AN ACTIVE THREAD ──────────────────────────
   // census T344/T363, §17.8 item 2. supabase-js RESOLVES on a database failure,
@@ -295,15 +337,24 @@ router.get('/circles/:circleId/chat', asyncHandler(async (req, res) => {
   const { circleId: circleOwnerId } = req.params;
   if (!isUuid(circleOwnerId)) { sendError(res, 'invalid_payload', 'Invalid circleId'); return; }
 
-  const isMember = await isAcceptedCircleMember(sc, circleOwnerId, user.id);
-  if (!isMember) {
-    const { data: invited } = await sc
+  const circleMembership = await isAcceptedCircleMember(sc, circleOwnerId, user.id);
+  if (circleMembership === 'unreadable') {
+    refuseUnreadable(req, res, 'circle_memberships', { circleOwnerId, userId: user.id });
+    return;
+  }
+  if (circleMembership === 'not_member') {
+    // §20.7, the circle half of the same two-answer decision.
+    const { data: invited, error: invitedErr } = await sc
       .from('circle_invites')
       .select('id')
       .eq('owner_id', circleOwnerId)
       .eq('recipient_id', user.id)
       .eq('status', 'pending')
       .maybeSingle();
+    if (invitedErr) {
+      refuseUnreadable(req, res, 'circle_invites', { err: invitedErr, circleOwnerId, userId: user.id });
+      return;
+    }
     if (invited) {
       res.status(403).json({
         error: 'pending_invite',
@@ -321,7 +372,11 @@ router.get('/circles/:circleId/chat', asyncHandler(async (req, res) => {
   const threadId = await syncCircleChatMembers(circleOwnerId, sc);
   if (!threadId) { sendError(res, 'db_error', 'Failed to resolve circle chat thread', { exposeDetail: true }); return; }
 
-  const { active, left } = await isActiveThreadMember(sc, threadId, user.id);
+  const { active, left, unreadable } = await isActiveThreadMember(sc, threadId, user.id);
+  if (unreadable) {
+    refuseUnreadable(req, res, 'message_thread_members', { threadId, userId: user.id });
+    return;
+  }
 
   // The circle half of the same defect, and the same posture. `'Trusted Circle'`
   // is a cosmetic lie; `status: 'active'` on a thread the owner closed is not.
@@ -402,7 +457,11 @@ router.patch('/messages/:messageId', asyncHandler(async (req, res) => {
   if (m.deleted_at) { sendError(res, 'invalid_payload', 'Cannot edit a deleted message'); return; }
   if (m.sender_id !== user.id) { sendError(res, 'forbidden', 'Only the sender can edit this message'); return; }
 
-  const { active } = await isActiveThreadMember(sc, m.thread_id, user.id);
+  const { active, unreadable } = await isActiveThreadMember(sc, m.thread_id, user.id);
+  if (unreadable) {
+    refuseUnreadable(req, res, 'message_thread_members', { threadId: m.thread_id, userId: user.id });
+    return;
+  }
   if (!active) { sendError(res, 'forbidden', 'You no longer have access to this thread'); return; }
 
   const now = new Date().toISOString();
@@ -484,7 +543,11 @@ router.delete('/messages/:messageId', asyncHandler(async (req, res) => {
   if (m.deleted_at) { sendError(res, 'invalid_payload', 'Message is already deleted'); return; }
   if (m.sender_id !== user.id) { sendError(res, 'forbidden', 'Only the sender can delete this message'); return; }
 
-  const { active } = await isActiveThreadMember(sc, m.thread_id, user.id);
+  const { active, unreadable } = await isActiveThreadMember(sc, m.thread_id, user.id);
+  if (unreadable) {
+    refuseUnreadable(req, res, 'message_thread_members', { threadId: m.thread_id, userId: user.id });
+    return;
+  }
   if (!active) { sendError(res, 'forbidden', 'You no longer have access to this thread'); return; }
 
   const now = new Date().toISOString();
@@ -534,12 +597,18 @@ router.post('/trips/:tripId/chat/sync', asyncHandler(async (req, res) => {
   const { tripId } = req.params;
   if (!isUuid(tripId)) { sendError(res, 'invalid_payload', 'Invalid tripId'); return; }
 
-  const { data: ownerRow } = await sc
+  // §20.7. An unreadable `trip_members` used to tell the trip's own owner that
+  // only the owner may do this.
+  const { data: ownerRow, error: ownerRowErr } = await sc
     .from('trip_members')
     .select('role')
     .eq('trip_id', tripId)
     .eq('user_id', user.id)
     .maybeSingle();
+  if (ownerRowErr) {
+    refuseUnreadable(req, res, 'trip_members', { err: ownerRowErr, tripId, userId: user.id });
+    return;
+  }
   if (!ownerRow || (ownerRow as any).role !== 'owner') {
     sendError(res, 'forbidden', 'Only the trip owner can trigger sync'); return;
   }

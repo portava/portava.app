@@ -39,9 +39,13 @@ export const TELEGRAPH_RLS_MATRIX: readonly RlsMatrixCase[] = [
       "GET /threads/:threadId/messages reads the CALLER'S OWN membership row " +
       "(thread_id + user_id + left_at IS NULL) and returns 403 'Not a member of " +
       "this thread' before any message query runs. A caller with no row cannot " +
-      "reach the messages table at all. The membership read uses .maybeSingle(), " +
-      "whose error path yields data:null — which lands on the same 403, so an " +
-      "unreadable membership table denies rather than admits.",
+      "reach the messages table at all. An UNREADABLE membership table also " +
+      "denies, and since census §20.7 it denies with the right reason rather " +
+      "than the convenient one: the read binds its error and answers 503 " +
+      "degraded_unavailable ('the check was NOT PERFORMED'), because a 403 is a " +
+      "claim about the caller's membership that a failed read does not support. " +
+      "DENY is satisfied either way; nothing is admitted and the messages table " +
+      "is still never reached.",
   },
   {
     id: "RLS-02",

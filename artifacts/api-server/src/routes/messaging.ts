@@ -151,6 +151,46 @@ const DM_THREAD_SCAN_CAP = 1000;
 /** Default number of cumulative offenses (including the current one) that suspends a buddy. */
 export const OFF_APP_SUSPENSION_THRESHOLD_DEFAULT = 3;
 
+/**
+ * ── AN UNREADABLE AUTHORIZATION TABLE IS NOT A SETTLED REFUSAL ───────────────
+ * census §20.7, named there and declined; executed for `routes/telegraphChat.ts`
+ * and `routes/telegraphStream.ts` by §22.3 and for this file here.
+ *
+ * supabase-js RESOLVES on a database failure, so `const { data: membership } =
+ * await …` arrived as `data: null` — byte-identical to a genuine non-member —
+ * and nine gates in this file answered 403 "Not a member of this thread". That
+ * is SAFE (it denies rather than admits) and it is FALSE: the server did not
+ * perform the check and says it did, by name, to a person looking at their own
+ * conversation. A 403 is the refusal a client acts on by GIVING UP; it will not
+ * recover when the table does.
+ *
+ * §20.7's stated hesitation was that `degraded_unavailable` is the only code
+ * `lib/http.ts` marks retryable, so the change alters the retry behaviour of
+ * live routes. That is true, and it is the same contract change this file
+ * ALREADY made for the ten dropped-error reads §18 closed and for the roster
+ * read at the send step. A genuine non-member still receives the identical 403
+ * with the identical words — every case in
+ * `src/test/telegraphMembershipHonesty.test.ts` asserts both halves.
+ *
+ * One refusal, so nine call sites cannot drift apart.
+ */
+function refuseUnreadableAccess(
+  req: any,
+  res: any,
+  table: string,
+  ctx: Record<string, unknown>,
+): void {
+  req.log.error(
+    { ...ctx, table },
+    `${table} read failed — refusing rather than asserting the caller is not entitled`,
+  );
+  sendError(
+    res,
+    'degraded_unavailable',
+    'We could not check your access to this conversation right now. Please try again shortly.',
+  );
+}
+
 interface ThresholdLogger { error: (obj: unknown, msg: string) => void }
 
 /**
@@ -1720,7 +1760,7 @@ router.post('/threads/:threadId/e2ee', async (req, res) => {
   }
 
   // THE PRECONDITION. No Welcome, no flag.
-  const { data: welcome } = await sc
+  const { data: welcome, error: welcomeErr } = await sc
     .from('messages')
     .select('id')
     .eq('thread_id', threadId)
@@ -1729,6 +1769,13 @@ router.post('/threads/:threadId/e2ee', async (req, res) => {
     .limit(1)
     .maybeSingle();
 
+  // §20.7. This precondition exists to stop a thread being stranded — the flag
+  // is never un-set, so flipping it before the Welcome lands makes the thread
+  // permanently unreadable. An unreadable `messages` used to ASSERT that the
+  // Welcome had not been delivered, refusing a person's own key exchange on
+  // evidence nobody has. Refusing retryably keeps the ordering guarantee and
+  // stops claiming to know why.
+  if (welcomeErr) { refuseUnreadableAccess(req, res, 'messages', { err: welcomeErr, threadId, userId: user.id }); return; }
   if (!welcome) {
     sendError(
       res,
@@ -2096,7 +2143,7 @@ router.get('/threads/:threadId/messages', async (req, res) => {
   // the query it was before 2400, column list included.
   const boundOn = await historyBoundEnabled(client);
 
-  const { data: membership } = await client
+  const { data: membership, error: membershipErr } = await client
     .from('message_thread_members')
     .select(membershipSelect('user_id, left_at', boundOn))
     .eq('thread_id', threadId)
@@ -2104,6 +2151,7 @@ router.get('/threads/:threadId/messages', async (req, res) => {
     .is('left_at', null)
     .maybeSingle();
 
+  if (membershipErr) { refuseUnreadableAccess(req, res, 'message_thread_members', { err: membershipErr, threadId, userId: user.id }); return; }
   if (!membership) { sendError(res, 'forbidden', 'Not a member of this thread'); return; }
   if ((membership as any).left_at !== null) { sendError(res, 'forbidden', 'You no longer have access to this thread'); return; }
 
@@ -2482,7 +2530,7 @@ router.post('/threads/:threadId/messages', async (req, res) => {
   // server message (echoed in the response and in the realtime event).
   const clientId = typeof req.body?.clientId === 'string' ? req.body.clientId.slice(0, 64) : null;
 
-  const { data: membership } = await client
+  const { data: membership, error: membershipErr } = await client
     .from('message_thread_members')
     .select('user_id, left_at')
     .eq('thread_id', threadId)
@@ -2490,6 +2538,7 @@ router.post('/threads/:threadId/messages', async (req, res) => {
     .is('left_at', null)
     .maybeSingle();
 
+  if (membershipErr) { refuseUnreadableAccess(req, res, 'message_thread_members', { err: membershipErr, threadId, userId: user.id }); return; }
   if (!membership) { sendError(res, 'forbidden', 'Not a member of this thread'); return; }
   if ((membership as any).left_at !== null) { sendError(res, 'forbidden', 'You no longer have access to this thread'); return; }
 
@@ -3028,7 +3077,7 @@ router.post('/threads/:threadId/media', async (req, res) => {
   }
 
   // Verify thread membership
-  const { data: membership } = await client
+  const { data: membership, error: membershipErr } = await client
     .from('message_thread_members')
     .select('user_id, left_at')
     .eq('thread_id', threadId)
@@ -3036,6 +3085,7 @@ router.post('/threads/:threadId/media', async (req, res) => {
     .is('left_at', null)
     .maybeSingle();
 
+  if (membershipErr) { refuseUnreadableAccess(req, res, 'message_thread_members', { err: membershipErr, threadId, userId: user.id }); return; }
   if (!membership) { sendError(res, 'forbidden', 'Not a member of this thread'); return; }
   if ((membership as any).left_at !== null) { sendError(res, 'forbidden', 'You no longer have access to this thread'); return; }
 
@@ -3236,23 +3286,28 @@ router.post('/messages/:messageId/translate/retry', async (req, res) => {
     return;
   }
 
-  const { data: mem } = await client
+  const { data: mem, error: memErr } = await client
     .from('message_thread_members')
     .select('user_id')
     .eq('thread_id', m.thread_id)
     .eq('user_id', user.id)
     .maybeSingle();
 
+  if (memErr) { refuseUnreadableAccess(req, res, 'message_thread_members', { err: memErr, threadId: m.thread_id, userId: user.id }); return; }
   if (!mem) { sendError(res, 'forbidden', 'Not a member of this thread'); return; }
 
   // Check this user has a failed translation row.
-  const { data: tRow } = await sc
+  const { data: tRow, error: tRowErr } = await sc
     .from('message_translations')
     .select('id, status')
     .eq('message_id', messageId)
     .eq('recipient_id', user.id)
     .maybeSingle();
 
+  // §20.7. "No failed translation to retry" is a statement about what exists. An
+  // unreadable `message_translations` used to make it, and the caller — whose
+  // message really did fail to translate — was told there was nothing to retry.
+  if (tRowErr) { refuseUnreadableAccess(req, res, 'message_translations', { err: tRowErr, messageId, userId: user.id }); return; }
   if (!tRow || (tRow as any).status === 'translated' || (tRow as any).status === 'skipped') {
     sendError(res, 'invalid_payload', 'No failed translation to retry');
     return;
@@ -3304,12 +3359,13 @@ router.patch('/threads/:threadId/messages/:messageId', async (req, res) => {
   if (newBody.length > 4000) { sendError(res, 'invalid_payload', 'body must be 4000 characters or fewer'); return; }
 
   // Verify thread membership.
-  const { data: mem } = await client
+  const { data: mem, error: memErr } = await client
     .from('message_thread_members')
     .select('user_id')
     .eq('thread_id', threadId)
     .eq('user_id', user.id)
     .maybeSingle();
+  if (memErr) { refuseUnreadableAccess(req, res, 'message_thread_members', { err: memErr, threadId, userId: user.id }); return; }
   if (!mem) { sendError(res, 'forbidden', 'Not a member of this thread'); return; }
 
   const sc = getServiceClient();
@@ -3411,7 +3467,7 @@ router.get('/trips/:tripId/chat', async (req, res) => {
   if (!isUuid(tripId)) { sendError(res, 'invalid_payload', 'Invalid trip id'); return; }
 
   // Verify caller is an accepted trip member.
-  const { data: tripMembership } = await sc
+  const { data: tripMembership, error: tripMembershipErr } = await sc
     .from('trip_members')
     .select('role')
     .eq('trip_id', tripId)
@@ -3419,6 +3475,7 @@ router.get('/trips/:tripId/chat', async (req, res) => {
     .in('role', ['owner', 'member'])
     .maybeSingle();
 
+  if (tripMembershipErr) { refuseUnreadableAccess(req, res, 'trip_members', { err: tripMembershipErr, tripId, userId: user.id }); return; }
   if (!tripMembership) {
     sendError(res, 'forbidden', 'You must be an accepted trip member to access the trip chat');
     return;
@@ -3481,13 +3538,14 @@ router.get('/circles/:circleOwnerId/chat', async (req, res) => {
   // Verify caller is the owner or an accepted member of this circle.
   const isOwner = user.id === circleOwnerId;
   if (!isOwner) {
-    const { data: circleMembership } = await sc
+    const { data: circleMembership, error: circleMembershipErr } = await sc
       .from('circle_memberships')
       .select('other_id')
       .eq('user_id', circleOwnerId)
       .eq('other_id', user.id)
       .maybeSingle();
 
+    if (circleMembershipErr) { refuseUnreadableAccess(req, res, 'circle_memberships', { err: circleMembershipErr, circleOwnerId, userId: user.id }); return; }
     if (!circleMembership) {
       sendError(res, 'forbidden', 'You must be a member of this circle to access the circle chat');
       return;
@@ -3558,7 +3616,7 @@ router.patch('/threads/:threadId/mute', async (req, res) => {
   const muted = req.body?.muted === true;
   const now = new Date().toISOString();
 
-  const { data: member } = await sc
+  const { data: member, error: memberErr } = await sc
     .from('message_thread_members')
     .select('user_id')
     .eq('thread_id', threadId)
@@ -3566,6 +3624,7 @@ router.patch('/threads/:threadId/mute', async (req, res) => {
     .is('left_at', null)
     .maybeSingle();
 
+  if (memberErr) { refuseUnreadableAccess(req, res, 'message_thread_members', { err: memberErr, threadId, userId: user.id }); return; }
   if (!member) { sendError(res, 'forbidden', 'Not a member of this thread'); return; }
 
   const { error } = await sc
@@ -3825,9 +3884,10 @@ router.post('/threads/:threadId/messages/:messageId/save', async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
-  const { data: membership } = await sc
+  const { data: membership, error: membershipErr } = await sc
     .from('message_thread_members').select('user_id')
     .eq('thread_id', threadId).eq('user_id', user.id).is('left_at', null).maybeSingle();
+  if (membershipErr) { refuseUnreadableAccess(req, res, 'message_thread_members', { err: membershipErr, threadId, userId: user.id }); return; }
   if (!membership) { sendError(res, 'forbidden', 'Not a member of this thread'); return; }
 
   // Verify message belongs to this thread (prevents cross-thread saves).
