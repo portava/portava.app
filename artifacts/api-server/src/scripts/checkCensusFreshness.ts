@@ -503,6 +503,17 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/2462_meetup_time_votes_write_boundary.sql",
   ],
   "census-highlights-memories.md": [
+    // WIDENED 2026-09-14. Five files this census cites as CONSUMERS of Memory
+    // and Highlight data — the Compass grounding envelope and conversation
+    // tools, the Trip Kernel command surface, Discovery's ranking modifiers and
+    // the Layover envelope suite. Each is another lane's file; watching it does
+    // not claim ownership, it says that if the consumer changes, a row here that
+    // describes what the consumer does may have stopped being true.
+    "artifacts/api-server/src/compass/CompassGroundingEnvelope.ts",
+    "artifacts/api-server/src/compass/TelegraphConversationTools.ts",
+    "artifacts/api-server/src/domain/trips/commands/tripKernel.ts",
+    "artifacts/api-server/src/lib/discoveryModifiers.ts",
+    "artifacts/api-server/src/services/airport/__tests__/layoverEnvelopeConfidence.test.ts",
     // WIDENED 2026-09-14 for section J, which built the Memory audience-revocation
     // resolver, the five-state deletion lifecycle and the §13/§18 read surfaces.
     // These three are cited as that work's evidence and were watched by nothing:
@@ -902,6 +913,15 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   // while the contracts it grades moved underneath it — the same trap the trust
   // scope above avoids.
   "census-wall.md": [
+    // WIDENED 2026-09-14 for the palette ruling's evidence. `mapChrome.ts` is
+    // cited to record that it is OUT of scope — its near-black navy is the Map
+    // spec's dark-mode GROUND, not a brand accent — and a citation that says
+    // "not this file" still ages this census if that file changes, because the
+    // sentence would stop being true. The two deletion files carry W66's
+    // cascade evidence.
+    "travel-buddy-standalone/src/theme/mapChrome.ts",
+    "artifacts/api-server/src/lib/deletionDispositions.ts",
+    "artifacts/api-server/src/test/accountDeletionCascade.test.ts",
     "artifacts/api-server/src/services/wall/",
     "artifacts/api-server/src/routes/wall.ts",
     // ADDED 2026-09-14, and it is a scope gain rather than a scope grant. The
@@ -1825,6 +1845,20 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/2258_input_selection_history.sql",
   ],
   "census-discovery.md": [
+    // WIDENED 2026-09-14. The Discovery lane's four new modules and the suites
+    // its rows are evidenced by. A verdict whose evidence names a file nothing
+    // watches has an unmonitored floor under it — and these four are NEW code
+    // this census now grades, not incidental references.
+    "artifacts/api-server/src/lib/discoveryRankProvenance.ts",
+    "artifacts/api-server/src/lib/discoveryReasonCodes.ts",
+    "artifacts/api-server/src/lib/discoveryStopConditions.ts",
+    "artifacts/api-server/src/lib/discoveryTrendState.ts",
+    "artifacts/api-server/src/test/discoveryShadow.test.ts",
+    "artifacts/api-server/src/test/discoveryNegativeSignalWriter.test.ts",
+    "artifacts/api-server/src/test/discoveryLocalMomentum.test.ts",
+    // Cited once by a cross-surface row; the Layover lane owns the file, this
+    // census only grades what it reads from it.
+    "artifacts/api-server/src/services/airport/__tests__/layoverPresenceDegraded.test.ts",
     // WIDENED 2026-09-13 with A20's new evidence. That row was re-measured N → W
     // because the Telegraph §1–§11 lane published the content capability
     // contract A20 said did not exist, and a row is only as fresh as the files

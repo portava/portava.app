@@ -532,3 +532,110 @@ preconditions, the destructive review, the rollback inventory, the
 postcondition query and the flag decision. **The remaining action is the
 owner's: run the 22 files in the order in C5 against production, one
 transaction each, stopping at the first failure.**
+
+---
+
+## Batch D — `2778 → 2870` (32 files), and the one of them that is ready alone
+
+*Added 2026-09-14. Every production figure below was read from
+`ajrurzioarfkagpuxfnb` read-only on that date. Nothing was applied.*
+
+### D0. Where production is, measured not assumed
+
+| Object | In production? |
+| --- | --- |
+| `schema_migration_ledger` | **NO** — still absent, as on 2026-09-07 |
+| `trip_plans` | **NO** — so Batch C has not been applied either |
+| `trip_subgroups`, `trip_subgroup_members`, `trip_decisions`, `trip_transport_segments`, `trip_reservation_events`, `trip_disruptions`, `trip_transport_policies`, `trip_meeting_checkpoints`, `trip_meeting_checkpoint_participants` | NO |
+| `telegraph_outbox`, `message_edits`, `message_reactions`, `message_attachments`, `conversation_action_refs`, `telegraph_report_evidence` | NO |
+| `airport_fact_observations`, `layover_external_events` | NO |
+| `profiles`, `feature_flags`, `trip_members` | yes |
+
+**The absent ledger is the structural fact.** `db:apply-migrations` writes each
+migration and its ledger row in one transaction and cannot run without the
+table, so the sanctioned applier cannot be pointed at production at all. Batch D
+is hand-applied or not applied, exactly like A, B and C. That is not a new
+constraint; it is the one this document has recorded since 2026-09-07, restated
+because it decides the shape of everything below.
+
+**Batch D sits on top of an unapplied Batch C.** Every trip table Batch D
+extends is absent, and `trip_plans` — Batch C's — is absent too. So the trips
+half of Batch D (2778–2795) cannot be applied before Batch C, and this document
+makes no attempt to order the two: C5 is the plan for C, and D is after it.
+
+### D1. `2870_profiles_verification_level_identity_vocabulary.sql` — READY ALONE
+
+This one is different from every other file in Batch D and it is the file the
+owner asked about, so it is stated separately and in full.
+
+**What it does.** One constraint swap on `public.profiles`. A `DO` block finds
+the CHECK constraint whose definition matches both `%verification_level%` and
+`%buddy_verified%`, drops it by name, and adds
+`profiles_verification_level_check` accepting the five values it already
+accepted plus `'id_verified'` and `'id_selfie_verified'`. No row is moved, no
+value is removed, no grant changes, no flag is flipped.
+
+**Why it matters.** Production's constraint today is exactly:
+
+```
+CHECK ((verification_level = ANY (ARRAY['none'::text, 'basic_verified'::text,
+  'trusted_traveler'::text, 'host_verified'::text, 'buddy_verified'::text])))
+```
+
+`'id_verified'` is not in that list. `routes/verification.ts#applyVerifiedProfile`
+writes it through `toVerificationLevel()`. **So a completed government-ID check
+is rejected by the constraint and no user can become ID-verified in production
+today.** That is measured, not inferred: the constraint definition above was read
+from `pg_constraint` on 2026-09-14.
+
+**Preconditions — all four measured, all satisfied.**
+
+1. `public.profiles.verification_level` EXISTS (one matching column in
+   `information_schema.columns`).
+2. The constraint the `DO` block searches for EXISTS and its definition matches
+   both predicates — it is `profiles_verification_level_check`, quoted above. If
+   it did not match, the block would fall through and `ADD CONSTRAINT` would
+   fail on the duplicate name; it matches, so the drop runs first.
+3. `trg_profiles_verification_privileged` (migration 2163) EXISTS and is
+   ENABLED, which is the write restriction the new values rely on. Verified from
+   `pg_trigger`: `tgenabled = 'O'`.
+4. **Every existing row validates against the new constraint.** All 58 profile
+   rows hold `'none'`. `ADD CONSTRAINT` validates the table on the way in, so
+   this is the precondition that decides whether the statement succeeds or
+   aborts — and it is satisfied with no row to correct.
+
+**Dependencies: none inside Batch D.** 2870 names no object created by
+2778–2869 — checked by grepping the file for every `trip_*`, `telegraph_*`,
+`layover_*`, `airport_*`, `message_*` and `conversation_*` identifier and
+finding none. It touches `public.profiles` only. **It therefore does not wait
+for Batch C, and it does not wait for the other 31 files in Batch D.**
+
+**Destructive review.** `DROP CONSTRAINT` is the only destructive verb, and it
+drops a constraint that is re-added in the same transaction with a strictly
+wider predicate. If the transaction aborts after the drop, the rollback restores
+it. The window in which `profiles` is unconstrained is inside one transaction
+and invisible to any other session.
+
+**Rollback.** Re-add the five-value constraint — but only after confirming no
+row has acquired `'id_verified'` or `'id_selfie_verified'` in the meantime, or
+the re-add aborts. That check is the rollback's first statement, not an
+afterthought.
+
+**What it does NOT do.** It does not make anyone ID-verified. It removes the
+database-level refusal; the provider integration, the webhook signature path and
+`IMPLEMENTED_PROVIDERS` (still `["mock"]`) all sit above it and are recorded in
+`docs/architecture/census-trust.md`. Applying 2870 is necessary and nowhere near
+sufficient.
+
+### D2. The remaining 31
+
+Rehearsed against portava-ci inside a rolled-back transaction rather than
+applied — the results of that rehearsal are recorded separately. They are NOT
+ready to apply to production, for the reason in D0: the trips half depends on an
+unapplied Batch C, and nothing here has been ordered against it.
+
+### D3. The boundary, unchanged
+
+C8 applies verbatim. Applying anything to `ajrurzioarfkagpuxfnb` is the owner's
+action; no workflow targets it, the in-process guard refuses it, and the
+standing instruction is that production is not hand-mutated from a session.
