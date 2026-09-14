@@ -57,6 +57,10 @@ import {
   resolveByGps,
   resolveByCity,
   searchAirports,
+  lookupByIata,
+  lookupByGps,
+  lookupByCity,
+  lookupAirports,
   buildFallbackProfile,
   upsertAirportProfile,
   type AirportProfile,
@@ -72,6 +76,7 @@ import {
   setShareStatus,
   setReturnReminder,
   expireOldSessions,
+  expirySweepDisclosure,
   emitLayoverEvent,
   type LayoverSession,
   LAYOVER_RETURNING_READERS_WIDENED,
@@ -429,21 +434,30 @@ router.get("/airport/search", async (req, res) => {
   }
   const { iata, lat, lng, city, q } = parsed.data;
 
-  let results: Awaited<ReturnType<typeof searchAirports>> = [];
+  // census L294/C2. The lookups answer a RECORD now, so an unreadable
+  // `airport_profiles` is distinguishable from an airport this product has
+  // never curated. Both still serve the static dataset — taking the picker away
+  // would cost more than a label — but only one of them is a fault, and the
+  // buffers a degraded answer carries are generic constants rather than the
+  // curated figures this airport actually has.
+  let results: AirportProfile[] = [];
+  let degraded = false;
+  let degradedReasons: string[] = [];
   if (q) {
-    results = await searchAirports(sc, q);
+    const r = await lookupAirports(sc, q);
+    results = r.airports; degraded = r.degraded; degradedReasons = r.degradedReasons;
   } else if (iata) {
-    const r = await resolveByIata(sc, iata);
-    results = r ? [r] : [];
+    const r = await lookupByIata(sc, iata);
+    results = r.airport ? [r.airport] : []; degraded = r.degraded; degradedReasons = r.degradedReasons;
   } else if (lat != null && lng != null) {
-    const r = await resolveByGps(sc, lat, lng);
-    results = r ? [r] : [];
+    const r = await lookupByGps(sc, lat, lng);
+    results = r.airport ? [r.airport] : []; degraded = r.degraded; degradedReasons = r.degradedReasons;
   } else if (city) {
-    const r = await resolveByCity(sc, city);
-    results = r ? [r] : [];
+    const r = await lookupByCity(sc, city);
+    results = r.airport ? [r.airport] : []; degraded = r.degraded; degradedReasons = r.degradedReasons;
   }
 
-  res.json({ airports: results, featureEnabled: true });
+  res.json({ airports: results, featureEnabled: true, degraded, degradedReasons });
 });
 
 // ── POST /api/airport/sessions ────────────────────────────────────────────────
@@ -483,11 +497,30 @@ router.post("/airport/sessions", async (req, res) => {
     }
     airport = resolved.airport.iataCode === "UNK" ? null : resolved.airport;
   }
+  // census L294/C2 — THE SAME REFUSAL THE `airportId` BRANCH ABOVE ALREADY
+  // MAKES, now made on the other two. `lookupBy*` degrades ONLY when the table
+  // could not be read; an airport that is genuinely not curated reads cleanly,
+  // answers from the static set, and still creates the session (the §22 L0
+  // tier, which is a designed state and must not become a refusal). What is
+  // refused is creating a layover whose generic default buffers came from an
+  // outage — `upsertAirportProfile` below WRITES those defaults into
+  // `airport_profiles` and links the session to them, so the transient failure
+  // would otherwise be permanent for that traveller's whole layover.
   if (!airport && (p.iata ?? p.manualIata)) {
-    airport = await resolveByIata(sc, (p.iata ?? p.manualIata)!);
+    const looked = await lookupByIata(sc, (p.iata ?? p.manualIata)!);
+    if (looked.degraded) {
+      sendError(res, "degraded_unavailable", "Airport details could not be loaded. Please try again.");
+      return;
+    }
+    airport = looked.airport;
   }
   if (!airport && p.manualCity) {
-    airport = await resolveByCity(sc, p.manualCity);
+    const looked = await lookupByCity(sc, p.manualCity);
+    if (looked.degraded) {
+      sendError(res, "degraded_unavailable", "Airport details could not be loaded. Please try again.");
+      return;
+    }
+    airport = looked.airport;
   }
 
   // Ensure a DB profile row exists so the session can reference it (static and
@@ -1681,14 +1714,25 @@ router.get("/airport/sessions", async (req, res) => {
     ? statusParam as "active" | "completed" | "cancelled" | "expired"
     : undefined;
 
-  if (status === "active") await expireOldSessions(sc);
+  // census L294/C2. The sweep's answer is no longer discarded: `null` means it
+  // could not run, and the rows it would have retired are still being listed as
+  // live layovers. `swept === null` is the only case that degrades; a sweep that
+  // ran and expired nothing is a measurement.
+  const swept = status === "active" ? await expireOldSessions(sc) : 0;
   const listed = await listSessions(sc, user.id, status);
   // "You have no layovers" is a claim. An unreadable table cannot make it.
   if (!listed.ok) {
     sendError(res, "degraded_unavailable", "Your layovers could not be loaded. Please try again.");
     return;
   }
-  res.json({ sessions: listed.sessions, featureEnabled: true });
+  const sweep = expirySweepDisclosure(swept, listed.sessions);
+  res.json({
+    sessions: listed.sessions,
+    featureEnabled: true,
+    degraded: sweep.degraded,
+    degradedReasons: sweep.degradedReasons,
+    possiblyExpiredSessions: sweep.possiblyExpired,
+  });
 });
 
 // ── GET /api/airport/sessions/active ──────────────────────────────────────────
@@ -1704,7 +1748,11 @@ router.get("/airport/sessions/active", async (req, res) => {
     res.json({ session: null, featureEnabled: false }); return;
   }
 
-  await expireOldSessions(sc);
+  // census L294/C2 — see the `/sessions` handler above. This endpoint is the
+  // one that matters most: `session` is what mounts the whole Layover surface,
+  // hard-return countdown included, so a session the sweep failed to retire is
+  // a countdown to a flight that has already departed.
+  const swept = await expireOldSessions(sc);
   const activeRead = await getActiveSession(sc, user.id);
   // `session: null` is what the client reads as "you are not in a layover
   // right now" and it hides the whole Layover surface — hard-return countdown
@@ -1714,14 +1762,31 @@ router.get("/airport/sessions/active", async (req, res) => {
     return;
   }
   const session = activeRead.session;
-  if (!session) { res.json({ session: null, featureEnabled: true }); return; }
+  const sweep = expirySweepDisclosure(swept, session ? [session] : []);
+  if (!session) {
+    res.json({
+      session: null,
+      featureEnabled: true,
+      degraded: sweep.degraded,
+      degradedReasons: sweep.degradedReasons,
+      possiblyExpiredSessions: sweep.possiblyExpired,
+    });
+    return;
+  }
 
   const airport = await airportOr503(sc, res, session);
   if (!airport) return;
+  // The session is SERVED, not withheld. Hiding a possibly-stale layover would
+  // take the countdown from a traveller whose flight has not gone in every case
+  // where the flag is wrong, and there is no reading of the flag that is worse
+  // than the silence it replaces.
   res.json({
     session,
     airport: publicAirport(airport),
     featureEnabled: true,
+    degraded: sweep.degraded,
+    degradedReasons: sweep.degradedReasons,
+    possiblyExpiredSessions: sweep.possiblyExpired,
   });
 });
 
@@ -2659,7 +2724,15 @@ router.get("/admin/airport/profiles", async (req, res) => {
   // empty list, which reads as "no airport is configured" — the state an
   // operator would respond to by creating profiles that already exist.
   const { data, error } = await sc.from("airport_profiles").select("*").order("name");
-  if (error) { sendError(res, "degraded_unavailable", "Airport profiles could not be listed. Please try again."); return; }
+  if (error) {
+    // census L294/C2 has TWO clauses. The 503 below is the "degraded
+    // confidence" half and was already right; the log is the "structured
+    // logging" half, and without it an operator gets a refusal nobody can
+    // explain — on the one screen whose job is diagnosing airport data.
+    logger.warn({ err: error }, "admin airport profiles list failed — refusing rather than serving an empty configuration");
+    sendError(res, "degraded_unavailable", "Airport profiles could not be listed. Please try again.");
+    return;
+  }
   res.json({ profiles: data ?? [] });
 });
 

@@ -83,11 +83,33 @@ describe("the priority is the app's own, measured through the pipeline that uses
     quietHoursEnabled: true, quietStart: "00:00", quietEnd: "23:59", quietTimezone: null,
   } as any;
 
-  it("a NORMAL-rung push is correctly suppressed inside quiet hours", () => {
+  /**
+   * STRENGTHENED BY THE §20 MUTATION PASS. This test previously passed
+   * `[...rung.channels]` — and the NORMAL rung asks for `in_app` only, so the
+   * assertion "push was dropped" held for a reason that had nothing to do with
+   * the priority: there was no push to drop. Mutating NORMAL's priority from
+   * `low` to `urgent` left it GREEN, which means it did not test the thing its
+   * own name claims.
+   *
+   * The claim is about the PRIORITY, so the push is requested explicitly and
+   * only the rung's priority is allowed to decide. `filterChannels` drops it
+   * unless `priority === "urgent"`, so this now goes red the moment a calm rung
+   * is given an override it has not earned.
+   */
+  it("a NORMAL-rung priority does not buy a push through quiet hours", () => {
     const svc = new NotificationPreferenceService(null as any);
     const rung = returnEscalationRung("NORMAL");
-    const out = svc.filterChannels([...rung.channels], prefs, undefined, rung.priority, "airport");
+    assert.equal(rung.piercesQuietHours, false, "the rung must not claim to pierce");
+    const out = svc.filterChannels(["in_app", "push"], prefs, undefined, rung.priority, "airport");
     assert.ok(!out.includes("push"), "a calm nudge must not wake a traveller at 03:00");
+  });
+
+  it("a RETURN_SOON-rung priority does not buy one either — only the top two rungs do", () => {
+    const svc = new NotificationPreferenceService(null as any);
+    const rung = returnEscalationRung("RETURN_SOON");
+    assert.equal(rung.piercesQuietHours, false);
+    const out = svc.filterChannels(["in_app", "push"], prefs, undefined, rung.priority, "airport");
+    assert.ok(!out.includes("push"), "a thirty-minute warning must not spend the override");
   });
 
   it("a RETURN_NOW-rung push survives quiet hours — this is the whole point of the priority", () => {

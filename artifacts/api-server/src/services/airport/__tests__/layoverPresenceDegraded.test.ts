@@ -119,6 +119,35 @@ describe("L294/C2 — an unreadable presence read degrades visibly", () => {
     assert.equal(r.body.degraded, false, "a working read must not claim to be degraded");
     assert.deepEqual(r.body.degradedReasons ?? [], []);
   });
+
+  /**
+   * ADDED BY THE §20 MUTATION PASS. The three tests above all leave
+   * `cityPresence` through its FINAL return or through `refuse(...)`; none of
+   * them leaves through the `empty` constant, so a mutation that made `empty`
+   * itself claim `degraded: true` turned NOTHING red. That is the other
+   * direction of the same requirement and it is not cosmetic: a city where
+   * nobody is sharing is a MEASURED zero, and reporting it as degraded teaches
+   * a client to distrust a number the server is entitled to stand behind — the
+   * fastest way for a degraded flag to stop being read at all.
+   *
+   * The read below succeeds and matches nobody: `user-2` is in a different
+   * city, so `userIds` is empty and the `empty` constant is the return.
+   */
+  it("a genuinely empty city is a MEASURED zero, not a degraded one", async () => {
+    const db = makeLayoverDb(
+      {
+        layover_sessions: [
+          sessionRow({ id: "session-9", user_id: "user-9", share_city_status: true, manual_city: "Reykjavik", airport_id: null }),
+        ],
+        blocks: [], profiles: [], location_preferences: [],
+      },
+      {},
+    );
+    const r = await cityPresence(db as any, USER_ID, "Taoyuan");
+    assert.equal(r.count, 0);
+    assert.equal(r.degraded, false, "a successful read that found nobody is a measurement, not an outage");
+    assert.deepEqual(r.degradedReasons, []);
+  });
 });
 
 describe("disclosePresence carries the read's degradation, not only the gate's", () => {

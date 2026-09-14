@@ -5026,3 +5026,477 @@ the §18 headline stands exactly:
 > plan out to an edge its own confidence does not support. None of those
 > refusals closes a requirement on its own. Every one of them is a sentence the
 > product can no longer say to somebody who would have acted on it.
+
+## §20 — the failing-first proof §19 never recorded, and three tests that could not fail
+
+The container this worktree runs in restarted and killed the lane agent that
+wrote §19. Its work survived on disk and was committed at `88b9e8e1a`; its
+EVIDENCE did not. The integration owner ran the six new suites before committing
+and got **68/68 across 23 suites** — which is a pass, not a proof. Nobody had
+mutated a single implementation to check that any of those 68 assertions can go
+red.
+
+This section is that check, re-executed from scratch rather than copied from
+§19.9. **It moves no verdict and builds nothing.** Its whole subject is whether
+the tests §19 leans on are load-bearing.
+
+> **STILL ON A WORKTREE. NOT MERGED, NOT DEPLOYED, NOT FLAG-GATED.** Every count
+> below is a `node --test` run in `/home/user/wt-483`, and the six suites are
+> STILL not in `artifacts/api-server/package.json`'s curated `test` script, so
+> none of this runs in CI yet. See 19.8 item 1, which is unchanged and still the
+> integration owner's to act on.
+
+### 20.1 The result first
+
+**Thirty-nine mutations across eight implementation files. Thirty-six turned a
+test red for the reason the test claims. THREE DID NOT, and all three were
+tests of mine that could not fail.** They are named in 20.3, repaired, and the
+mutation that exposed each was re-run against the repair.
+
+The suites are now **70/70 across 23 suites** — two assertions more than the
+integration owner measured, because two of the three repairs added coverage
+rather than only tightening a regex. `tsc --noEmit` exits 0.
+
+Every implementation file was restored from a byte-for-byte backup after each
+mutation and verified against `git show HEAD:<path>` at the end: all eight are
+IDENTICAL to `88b9e8e1a`. The only files this pass changed are three test files.
+
+### 20.2 The mutations
+
+Each row is one edit to production code, the suite re-run, and the file
+restored. "red" names the assertion that caught it.
+
+| # | file | mutation | result |
+| --- | --- | --- | --- |
+| 1 | `LayoverBuddyGate.ts` | `safetyGate.passed` hard-coded `true` | **2 red** — "a traveller who cannot leave must not be offered someone to leave with" |
+| 2 | `LayoverBuddyGate.ts` | `const tight = record.verdict === "tight"` → `false` | **2 red** — the trust requirement is never applied |
+| 3 | `LayoverBuddyGate.ts` | `filterLayoverCompatible` keeps every row | **1 red** — "a nightlife/packages-only profile is not a layover service" |
+| 4 | `LayoverBuddyGate.ts` | trust filter drops the `buddy_level !== "new"` clause | **1 red** — a brand-new buddy is served on a tight window |
+| 5 | `routes/airport.ts` | unreadable `rent_buddy_profiles` serves `ok:true, buddies:[]` | **1 red** — "expected 503, got 200" |
+| 6 | `LayoverCompassService.ts` | the entry-assertion loop iterates an empty array | **6 red** — five refusal cases and the production path |
+| 7 | `LayoverCompassService.ts` | risk-band check runs on `yes` verdicts too | **1 red** — "the guard must not refuse an answer that agrees with the record" |
+| 8 | `LayoverCompassService.ts` | `ENTRY_HEDGE` ignored | **2 red** — false positives on the server's own honest wording |
+| 9 | `LayoverCompassService.ts` | `verdict: record.verdict` deleted at the call site | **1 red** — "the certified verdict must reach the guard" |
+| 10 | `LayoverCompassService.ts` | the §18 usable-time check disabled | **1 red** — the §18 checks are still pinned |
+| 11 | `LayoverCompassService.ts` | a fifth kind added to `COMPASS_BOUNDARY_KINDS` | **1 red** — the vocabulary is counted, not sampled |
+| 12 | `LayoverEnvelope.ts` | `LOW` budget set to 0 | **4 red** — "a contraction that never contracts is not a contraction" |
+| 13 | `LayoverEnvelope.ts` | the PROVED `radiusMetres` cut from the planned minutes | **2 red** — "the proved outer bound moved with confidence" |
+| 14 | `LayoverEnvelope.ts` | `!withinPlannedEdge` added to the BLOCK condition | **1 red** — "a confidence haircut may never produce a BLOCK" |
+| 15 | `routes/airport.ts` | `record.confidence` not passed at `safeEnvelopeFor` | **1 red** — the wired edge stops contracting |
+| 16 | `routes/airport.ts` | unreadable `layover_sessions` returns a silent `empty` | **1 red** — "the zero must not be reported as a measurement" |
+| 17 | `routes/airport.ts` | unreadable `blocks` returns a silent `empty` | **1 red** — `blocks_unreadable` is never named |
+| 18 | `LayoverPrivacyGuard.ts` | `disclosePresence` ignores `presenceRead` | **2 red** — the gate's degradation is not the read's |
+| 19 | `routes/airport.ts` | the `empty` constant claims `degraded: true` | **GREEN — see 20.3 (a)** |
+| 20 | `LayoverPrivacyGuard.ts` | `presenceRead` forced degraded | **4 red** — both positive controls hold |
+| 21 | `LayoverReturnEscalation.ts` | RETURN_NOW `urgent` → `important` | **1 red** — "a traveller who must leave NOW is not told 'quiet hours'" |
+| 22 | `LayoverSafeReturnService.ts` | posture pinned at `NORMAL` | **1 red** — `'low' !== 'urgent'` on a session past its hard return |
+| 23 | `LayoverReturnEscalation.ts` | CONNECTION_AT_RISK level 3 → 1 | **2 red** — "level 1 did not increase past 2" |
+| 24 | `LayoverReturnEscalation.ts` | `computeWindow` imported into the ladder | **1 red** — L18's "must not recompute core feasibility" |
+| 25 | `LayoverReturnEscalation.ts` | the wire posture publishes no channels | **1 red** — the overview's rung loses its channels |
+| 26 | `LayoverReturnEscalation.ts` | NORMAL `low` → `urgent` | **GREEN on the quiet-hours test — see 20.3 (b)** |
+| 27 | `LayoverReturnEscalation.ts` | the NORMAL rung deleted from the ladder | **4 red** — totality, ordering, and the calm posture |
+| 28 | `LayoverReturnEscalation.ts` | RETURN_SOON `important` → `urgent` | **1 red** (after the 20.3 (b) repair) — "a thirty-minute warning must not spend the override" |
+| 29 | `LayoverSafeReturnService.ts` | posture pinned at `RETURN_NOW` | **1 red** — a calm session is shouted at |
+| 30 | `LayoverSessionService.ts` | `updateSession` swallows the write error | **2 red** — service and route, 404 instead of 503 |
+| 31 | `LayoverSessionService.ts` | `endSessionWrite` swallows | **2 red** — `DELETE` answers 404 on a refused close |
+| 32 | `LayoverSessionService.ts` | `updateSession` reports a MISSING row as a refusal | **1 red** — "an empty table is a successful read of an empty table" |
+| 33 | `LayoverSessionService.ts` | `createSessionWrite` swallows a failed INSERT | **1 red** |
+| 34 | `LayoverSessionService.ts` | `setShareStatus` swallows | **2 red** — service and the `PATCH /share` wire |
+| 35 | `LayoverSessionService.ts` | `setReturnReminder` swallows | **1 red** |
+| 36 | `routes/airport.ts` | a bare `} catch {` restored on one line | **1 red** |
+| 37 | `routes/airport.ts` | the same bare catch written as `}\n  catch {` | **GREEN — see 20.3 (c)** |
+| 38 | `LayoverSessionService.ts` | a bare `catch {` on its own line | **1 red** |
+| 39 | `routes/airport.ts` | the `createSession` shim re-imported | **1 red** — "routes must not bind the createSession shim" |
+
+Mutation 38 was run in two shapes. The multi-line one reddened; the SAME
+construct written inline (`try { … } catch { … }` on one line) did not, which is
+the third finding in 20.3.
+
+### 20.3 The three that did not redden
+
+**(a) `cityPresence`'s `empty` constant was pinned in one direction only.**
+Mutation 19 made every genuinely-empty answer claim `degraded: true` and all
+five assertions stayed green. Every test in that suite leaves `cityPresence`
+through its final return or through `refuse(...)`; none left through `empty`.
+The DANGEROUS direction — an outage reported as a measured zero — was covered.
+The other direction was not, and it is not cosmetic: a city where nobody is
+sharing is a measurement the server is entitled to stand behind, and a
+`degraded` flag that also fires on honest zeros is a flag clients stop reading.
+**Repaired by adding an assertion** ("a genuinely empty city is a MEASURED zero,
+not a degraded one") that drives a SUCCESSFUL read matching nobody. Mutation 19
+re-run: red.
+
+**(b) the quiet-hours test asked a question its own fixture answered.**
+`a NORMAL-rung push is correctly suppressed inside quiet hours` passed
+`[...rung.channels]` to `filterChannels` — and the NORMAL rung asks for `in_app`
+ONLY. So "push was dropped" held because there was no push to drop, and
+mutation 26 (NORMAL's priority `low` → `urgent`) left it green. The test named
+the priority and measured the channel list. **Repaired** by requesting
+`["in_app", "push"]` explicitly so that only `rung.priority` can decide, and by
+adding the same assertion one rung up (RETURN_SOON must not buy the override
+either). Mutations 26 and 28 re-run: red.
+
+**(c) both bare-catch guards were line-shaped regexes, and syntax is not lines.**
+`routes/airport.ts`'s guard required `}` and `catch` on the SAME line
+(`/}\s*catch\s*\{/`), so `}\n  catch {` walked through it. `LayoverSessionService`'s
+guard anchored on end-of-line (`/catch\s*\{\s*$/`), so an inline
+`try { … } catch { … }` walked through that one. Neither evasion is exotic —
+both are how a person writes code without meaning anything by it, which is the
+case a guard has to survive. **Repaired**: both now strip comments and then
+match `/\bcatch\s*\{/` over the whole file, so the rule is shaped like the
+syntax it polices rather than like the formatting it happened to meet.
+Mutations 36, 37 and 38-inline re-run: all red.
+
+> This is the fourth, fifth and sixth time this programme has found a test that
+> could not fail, and the pattern in all three is the same one §19 warned about
+> in its own §12 finding: **the test measured a proxy for the claim instead of
+> the claim.** A channel list instead of a priority; a formatting convention
+> instead of a keyword; one direction of a two-directional rule. None of them
+> was a careless test — each was a careful test of the wrong quantity.
+
+### 20.4 What this changes about §19
+
+Nothing in §19's verdicts, and one thing in how §19.9 should be read. §19.9's
+nineteen mutations are the previous agent's record and are NOT re-verifiable —
+that agent is gone and no output survived. The table in 20.2 supersedes it as
+this document's mutation evidence: it is larger (39 vs 19), it was executed at
+this commit, and it names three failures §19.9 does not, which is the strongest
+evidence available that the two runs were genuinely independent.
+
+**The six suites STILL do not run in CI.** Everything in §19 and §20 is a local
+measurement until `artifacts/api-server/package.json` registers them. The exact
+list, confirmed at this commit — all six are under
+`src/services/airport/__tests__/`, and **none is under `src/services/safeReturn/__tests__/`,
+which does not exist** (`LayoverReturnEscalation` is filed beside the layover
+posture that consumes it, for the reason its own file header gives):
+
+```
+src/services/airport/__tests__/layoverBuddySafetyGate.test.ts
+src/services/airport/__tests__/layoverCompassEntryBoundary.test.ts
+src/services/airport/__tests__/layoverEnvelopeConfidence.test.ts
+src/services/airport/__tests__/layoverPresenceDegraded.test.ts
+src/services/airport/__tests__/layoverReturnEscalation.test.ts
+src/services/airport/__tests__/layoverSessionWriteFailClosed.test.ts
+```
+
+### 20.5 Headline
+
+**UNCHANGED, and this section could not have changed it** — it moved no row and
+built no behaviour.
+
+| Measure | §19 | §20 |
+| --- | ---: | ---: |
+| BUILT-AND-CORRECT | 61 | **61** |
+| BUILT-BUT-WRONG | 136 | **136** |
+| NOT-BUILT | 99 | **99** |
+| CANNOT-VERIFY | 0 | **0** |
+| CONSTRUCTED% | 66.6 % | **66.6 %** |
+| CORRECT% raw | 20.6 % | **20.6 %** |
+
+## §21 — L294 swept rather than counted, and the one swallow the sweep found that reading never did
+
+§20 re-established the proof for §19's work. This section continues the list,
+and it spends the whole pass on ONE row — census **L294**, C2:
+
+> *"Never swallow a schema/data error into plausible empty operational state
+> **without structured logging and degraded confidence**."*
+
+L294 was chosen because §19.2 did the rare thing of naming its own remaining
+gap in three specific, checkable sentences instead of a summary. All three are
+now done. **The row still does not move, and 21.6 says exactly what is left and
+why a sweep cannot reach it.**
+
+> **BUILT ON A WORKTREE. NOT MERGED, NOT DEPLOYED, NOT FLAG-GATED** (none of it
+> is behind a flag; all of it is behind a merge). Every measurement below is a
+> `node --test` run in `/home/user/wt-483`.
+
+### 21.1 The three things §19.2 said were still true, and what happened to each
+
+| # | §19.2's own words | at this commit |
+| --- | --- | --- |
+| 1 | *"`expireOldSessions` now answers `number \| null` … and **both callers ignore the return value entirely**, so at the route the failed sweep is still invisible."* | **CLOSED.** Both routes publish it, with a measurement beside it (21.2). |
+| 2 | *"Four bare catches remain in `services/safeReturn/` … they belong to a different census's subject."* | **RE-MEASURED, and §19 was wrong about them.** Three of the four bind and LOG their error at the read; the bare `catch` beneath is the throw path with an honest fallback string. The subject argument was not needed. But the sweep found a swallow in that directory that `grep catch` could never have: `expireShare`'s `if (error || !data) return null` (21.4). |
+| 3 | *"A read that returns `?? []` on an unbound error is the same defect without the keyword, and **no exhaustive sweep of THAT shape was done**. Claiming `C` would be claiming a sweep that was not run."* | **THE SWEEP WAS RUN, and it is now a test rather than a thing a pass did once** (21.3). 84 supabase reads; zero unbound; zero bound-and-unread; one tested-and-discarded, fixed in 21.5. |
+
+### 21.2 The expiry sweep, and a stale layover served as a live one
+
+`expireOldSessions` is what retires a session whose flight has already gone.
+§19 made it answer `null` rather than `0` when it could not run, and then both
+callers threw that value away — so at `GET /airport/sessions?status=active` and
+`GET /airport/sessions/active` a failed sweep looked exactly like a sweep that
+found nothing to do.
+
+The rows it would have retired stay `active`, and those two endpoints serve
+them. `/sessions/active` is the one that matters: its `session` is what mounts
+the entire Layover surface, hard-return countdown included. **A countdown to a
+flight that has already departed is the most confident lie this surface can
+tell**, and nothing in the response could say the sweep behind it had failed.
+
+`expirySweepDisclosure`
+(`artifacts/api-server/src/services/airport/LayoverSessionService.ts:499#expirySweepDisclosure`)
+publishes it, and adds the one thing the server can honestly measure: how many
+of the rows it is about to serve as live have a departure time already in the
+past. A sweep that RAN degrades nothing — including a sweep that expired zero,
+because that is a measurement and degrading on it is how a degraded flag stops
+being read. A departure that does not parse is not counted as past.
+
+**It is not a 503, deliberately.** The list is readable and mostly right, and
+refusing the endpoint over a housekeeping sweep would take the countdown from
+every traveller whose layover is genuinely live. C2 asks for degraded
+CONFIDENCE, not for a refusal.
+
+### 21.3 The sweep, as a test rather than as a thing a pass did once
+
+Every previous pass on this row counted SITES: §9 found nine bare catches,
+§13.5 re-counted six, §18 re-counted six again, §19 removed all six. A per-site
+test proves a site. **C2 is a rule over a SURFACE, and the only evidence that
+fits a rule over a surface is a sweep of the surface a later reader can
+re-execute.**
+
+`artifacts/api-server/src/services/airport/__tests__/layoverSurfaceErrorBinding.test.ts`
+reads every source file in `services/airport/`, `services/safeReturn/` and
+`routes/airport.ts` and fails on three SHAPES:
+
+1. a supabase destructure that does not bind `error` at all — supabase-js
+   RESOLVES on a database error, so this is an outage read as an empty table;
+2. an `error` bound and never mentioned in the window that follows — identical
+   at runtime to (1), and harder to see because the binding makes the file look
+   careful;
+3. an `error` TESTED and then thrown away — a site that branches, answers an
+   honest 503, and records nothing. That is C2's "degraded confidence" without
+   its "structured logging", and it leaves an operator with a refusal nobody
+   can explain.
+
+**The window is bounded and the bound is the point.** The first shape of (2)
+scanned to end of file, and a mutation walked straight through it: `error` is
+the commonest identifier in `routes/airport.ts`, so any later read's binding
+satisfied the search. The second shape stopped at 25 lines and a mutation still
+walked through, because eleven lines below the discarded `error` sits a
+`const { data: blockRows, error: blockErr }` — and a naive `\berror\b` matched
+the word inside that binding. The window now ends at whichever comes first: 25
+lines, or the next supabase destructure; and a later BINDING of the name does
+not count as a use. Both evasions are in the mutation table.
+
+**Result at this commit: 84 supabase reads swept, zero findings.**
+
+### 21.4 The swallow in `services/safeReturn/` that reading had missed four times
+
+The sweep's disposition pass found exactly one read in the whole surface that
+was neither logged nor passed on:
+
+```
+// SafeReturnLiveShareService.expireShare
+if (error || !data) return null;
+```
+
+That is `if (error || !data) return null` again — the identical shape §19.2
+removed from every writer in `LayoverSessionService`, surviving one directory
+over because every previous pass swept for the `catch` KEYWORD and not for the
+shape. §13.5, §18 and §19 each re-counted the catches in that directory and
+each walked past this line.
+
+`expireShare` is called by `lib/safeReturnScheduler.ts` for every live share
+past its `expires_at`, and its `null` meant three things at once: the row was
+already closed (PostgREST answers a zero-row `.single()` UPDATE with `PGRST116`,
+which arrives as an `error`, and this is the overwhelmingly common case); the
+UPDATE did not complete; or something threw.
+
+**The second is a person's location still being shared past the moment they
+agreed to**, and the scheduler logged nothing, because it was handed the same
+`null` it gets from the first case a thousand times an hour. A privacy window
+that fails OPEN is the one failure on this surface a traveller cannot see and
+cannot undo.
+
+`expireShareSettled` and `stopShareSettled`
+(`artifacts/api-server/src/services/safeReturn/SafeReturnLiveShareService.ts:227#expireShareSettled`)
+draw the three-way distinction `SafeReturnService.settleMutation` already draws
+in the same product for the same PostgREST behaviour — these two predate it.
+`expireShare` and `stopShare` keep their exact `LiveShare | null` signatures,
+because `lib/safeReturnScheduler.ts` and the Safe Return routes bind them and
+are not this lane's files; they are one-line projections, and **the projection
+is lossy on purpose**. See the cross-lane request in 21.7.
+
+### 21.5 A transient outage baked permanently into a traveller's layover
+
+The same sweep asked what an unreadable `airport_profiles` produces, and the
+answer was the worst shape on this surface, because it does not lose
+information — it MANUFACTURES it. `resolveByIata` / `resolveByCity` /
+`resolveByGps` / `searchAirports` logged the failure and then answered from the
+STATIC dataset, whose every buffer is a generic constant (60 / 120 / 30 / 15 /
+20). That answer is byte-identical to the honest one for an airport this
+product has simply never curated — the §22 L0 tier, a DESIGNED state.
+
+`routes/airport.ts` already spelled out the harm, on the ONE branch that was
+guarded:
+
+> *"A session created while `airport_profiles` was unreadable is stored with
+> airport_id = null, and EVERY later hard-return time for it is computed from
+> the generic buffer defaults — permanently, long after the database recovers.
+> The transient failure would have been baked into the row."*
+
+That reasoning was applied to the `p.airportId` branch and to neither of the
+other two. A traveller who picked their airport by IATA code, or typed a city,
+during a five-second outage got a layover whose return deadline is computed from
+constants for the rest of its life — and `upsertAirportProfile` WROTE those
+constants into `airport_profiles` and linked the session to them.
+
+`lookupByIata` / `lookupByCity` / `lookupByGps` / `lookupAirports`
+(`artifacts/api-server/src/services/airport/AirportProfileService.ts:207#lookupByIata`)
+answer a record carrying `degraded`, `degradedReasons` and `fromStatic`.
+`GET /airport/search` publishes the degradation and still serves the static
+results — taking the picker away would cost more than a label.
+`POST /airport/sessions` REFUSES on a degraded lookup and creates the session as
+before on a clean read that matched nothing. **A clean not-found must not become
+a refusal**; that would close this row by taking the product away from every
+airport the database does not carry, which is the scope-shrink §5 of the lane
+rules forbids. A mutation pins that direction too (#55).
+
+One more site, found by the third shape: the admin profile list
+(`routes/airport.ts:2733`) refused honestly and recorded nothing. It logs now.
+
+### 21.6 WHY L294 STILL DOES NOT MOVE
+
+Three halves of this row are now swept AND guarded: every error in the surface
+is bound, read, and carried into a log or a returned reason. A fourth is not,
+and it is the half the row names second.
+
+**The sweep cannot tell a fail-closed empty from a measured empty.** A read
+that logs its error and then returns `[]` with no degraded flag passes every
+assertion in `layoverSurfaceErrorBinding` — and that is C2 exactly. Today no
+such site exists: every surface that still answers after a failed read publishes
+`degraded` with a named reason (presence, the session list, the active session,
+airport search) or refuses with 503 (session writes, session reads, buddies,
+session create). But that is proved SITE BY SITE, by the per-site suites, and a
+site added tomorrow is not covered by any of them.
+
+Closing that half is not a test, it is a design step: the surface would need one
+`DegradedAnswer<T>` type that a handler cannot construct without saying whether
+its emptiness was measured, so that "degraded confidence" becomes unskippable
+rather than remembered. That is a real change to every read on the surface and
+it is not this pass's.
+
+**So the row keeps its `W`, and the part that closed is named rather than
+rounded up** — which is the same discipline §19 applied to its own six builds.
+`WHAT EXACTLY WOULD TURN THIS RED?` has a concrete answer for three of the four
+halves and no answer for the fourth, and lane rule 3 says that is not a
+certification.
+
+### 21.7 Blocked on files this lane does not own
+
+1. **`artifacts/api-server/package.json`** — unchanged from 19.8 item 1, and now
+   larger: **ten** suites under `src/services/airport/__tests__/` and
+   `src/services/safeReturn/__tests__/` are not in the curated `test` script.
+   The exact list is in 21.9. None of them runs in CI until it is registered.
+2. **`artifacts/api-server/src/lib/safeReturnScheduler.ts`** — it calls
+   `expireShare` and discards the `null`, which is now a LOSSY projection of
+   `expireShareSettled`. One line: switch to the settled form and count
+   `outcome === "unavailable"` separately from `no_match`, so an expiry sweep
+   that is failing for every share is visible as something other than a quiet
+   night. Nothing is red today; the information simply stops at the projection.
+3. **`src/test/layoverBuddiesMasterFlag.test.ts`** and
+   **`src/test/layoverFeasibilityRecord.test.ts`** — unchanged from 19.8 items
+   2 and 3, both still open, both still one mechanical edit each.
+4. **`src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json` or this row's
+   `head_commit`** — unchanged from 19.8 item 5. This pass adds
+   `services/airport/AirportProfileService.ts` and
+   `services/safeReturn/SafeReturnLiveShareService.ts` to the counted files that
+   have moved. Whoever commits must re-declare or extend.
+
+### 21.8 The mutations
+
+Continuing §20's numbering. Every build was watched RED first; these are the
+mutations run against the implementation after it was green, restored each time.
+
+| # | file | mutation | result |
+| --- | --- | --- | --- |
+| 40 | `LayoverSessionService.ts` | `expirySweepDisclosure` never degrades | **7 red** |
+| 41 | `LayoverSessionService.ts` | …degrades on a sweep that RAN too | **4 red** — "a completed sweep of 0 is a measurement" |
+| 42 | `LayoverSessionService.ts` | terminal rows counted as stale-live | **1 red** — `3 !== 0` |
+| 43 | `LayoverSessionService.ts` | an unparseable departure counted as past | **1 red** |
+| 44 | `routes/airport.ts` | `/sessions` throws the sweep answer away again | **1 red** |
+| 45 | `routes/airport.ts` | `/sessions/active` throws it away again | **2 red** |
+| 46 | `routes/airport.ts` | `/sessions/active` measures an empty session set | **1 red** — the countdown's own session stops being checked |
+| 47 | `AirportProfileService.ts` | `lookupByIata` never degrades | **3 red** — lookup, search route, create route |
+| 48 | `AirportProfileService.ts` | a clean not-found reported as degraded | **1 red** |
+| 49 | `AirportProfileService.ts` | `fromStatic` true for a curated row | **1 red** |
+| 50 | `AirportProfileService.ts` | `lookupByCity` never degrades | **2 red** |
+| 51 | `AirportProfileService.ts` | `lookupAirports` never degrades | **2 red** |
+| 52 | `AirportProfileService.ts` | `resolveByIata`'s old shape broken | **1 red** — the projection another lane's suite binds |
+| 53 | `routes/airport.ts` | the search route stops publishing the degradation | **2 red** |
+| 54 | `routes/airport.ts` | the create route builds the session anyway | **1 red** — `201 !== 503` |
+| 55 | `routes/airport.ts` | the create route refuses on `fromStatic` instead | **1 red** — the scope-shrink guard: an uncurated airport must still work |
+| 56 | `LayoverSessionService.ts` | an unbound `error` reintroduced | **1 red** — sweep shape (1) |
+| 57 | `routes/airport.ts` | a bound `error` discarded in the buddies handler | **1 red** — sweep shape (2), **after two repairs; see 21.3** |
+| 58 | the sweep itself | narrowed so it matches nothing | **1 red** — the control that stops a vacuous sweep passing |
+| 59 | `SafeReturnNotificationService.ts` | a discarded `error` in `services/safeReturn/` | **1 red** |
+| 60 | `AirportProfileService.ts` | a discarded `error` there | **1 red** |
+| 61 | `SafeReturnLiveShareService.ts` | `expireShare` collapses an outage into `no_match` | **2 red** — "a location still being shared past its expiry is not 'nothing to do'" |
+| 62 | `SafeReturnLiveShareService.ts` | `PGRST116` treated as an outage | **3 red** — the common case must stay quiet |
+| 63 | `SafeReturnLiveShareService.ts` | `stopShare` collapses an outage | **1 red** |
+| 64 | `SafeReturnLiveShareService.ts` | the projection leaks the settled record | **1 red** — the other lane's contract |
+| 65 | `routes/airport.ts` | the admin list drops its log again | **1 red** — sweep shape (3) |
+| 66 | `routes/airport.ts` | it logs a STRING instead of the error | **1 red** — carrying something is not carrying the error |
+
+**Two mutations did not redden on their first run and both were the sweep's own
+weakness, not an implementation's** — #57 walked through an end-of-file scan and
+then through a 25-line one, for the two reasons 21.3 gives. Both are red against
+the repaired rule and both repairs are in the file.
+
+### 21.9 The evidence, by file
+
+Four new suites, 38 assertions, plus the three §20 repairs.
+
+| suite | what it is evidence for |
+| --- | --- |
+| `artifacts/api-server/src/services/airport/__tests__/layoverExpirySweepVisible.test.ts` | L294 — the failed sweep, on both endpoints, with its measurement |
+| `artifacts/api-server/src/services/airport/__tests__/layoverAirportLookupDegraded.test.ts` | L294 — the static-fallback swallow, and the refusal that stops it being written into the row |
+| `artifacts/api-server/src/services/airport/__tests__/layoverSurfaceErrorBinding.test.ts` | L294 — the SWEEP, as a re-executable assertion over 84 reads |
+| `artifacts/api-server/src/services/safeReturn/__tests__/safeReturnLiveShareExpiryHonesty.test.ts` | L294 — the live-share expiry swallow, and the three outcomes it collapsed |
+
+**THE FULL LIST FOR `package.json`, confirmed by `ls` at this commit.** All ten
+are under `src/services/`; **`src/services/safeReturn/__tests__/` exists only
+because this pass created it**, and `layoverReturnEscalation.test.ts` is NOT in
+it — it is filed beside the layover posture that consumes it, for the reason its
+own file header gives:
+
+```
+src/services/airport/__tests__/layoverAirportLookupDegraded.test.ts
+src/services/airport/__tests__/layoverBuddySafetyGate.test.ts
+src/services/airport/__tests__/layoverCompassEntryBoundary.test.ts
+src/services/airport/__tests__/layoverEnvelopeConfidence.test.ts
+src/services/airport/__tests__/layoverExpirySweepVisible.test.ts
+src/services/airport/__tests__/layoverPresenceDegraded.test.ts
+src/services/airport/__tests__/layoverReturnEscalation.test.ts
+src/services/airport/__tests__/layoverSessionWriteFailClosed.test.ts
+src/services/airport/__tests__/layoverSurfaceErrorBinding.test.ts
+src/services/safeReturn/__tests__/safeReturnLiveShareExpiryHonesty.test.ts
+```
+
+Measured at this commit: **950 assertions across 221 suites, 0 failures**, over
+`src/test/airport.test.ts`, `src/test/layover*.test.ts`,
+`src/test/safeReturn*.test.ts` and both `__tests__` directories.
+`tsc --noEmit` reports nothing in any file this lane owns.
+`check:citation-symbols` PASSED — 139 citations judged, 0 naming a symbol its
+file does not contain.
+
+### 21.10 Headline
+
+**UNCHANGED.** L294 stays `W` for the reason 21.6 gives, and no other row was
+touched.
+
+| Measure | §20 | §21 |
+| --- | ---: | ---: |
+| BUILT-AND-CORRECT | 61 | **61** |
+| BUILT-BUT-WRONG | 136 | **136** |
+| NOT-BUILT | 99 | **99** |
+| CANNOT-VERIFY | 0 | **0** |
+| CONSTRUCTED% | 66.6 % | **66.6 %** |
+| CORRECT% raw | 20.6 % | **20.6 %** |
+
+> Two passes in a row have moved nothing, and both were worth running. §19's
+> six builds were refusals; §20 found three of its own tests unable to fail;
+> this one replaced counting with a sweep and the sweep immediately found a
+> swallow that four separate readings of the same directory had walked past —
+> one that left a person's location shared after they had stopped sharing it.
+> **The lesson is not that the readers were careless. It is that `grep catch`
+> answers a question about a keyword, and C2 is a question about a shape.**

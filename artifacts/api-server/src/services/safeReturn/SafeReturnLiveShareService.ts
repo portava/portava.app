@@ -127,13 +127,62 @@ export async function startShare(
 }
 
 /**
+ * ── census L294/C2 — WHY THESE TWO MUTATIONS ANSWER AN OUTCOME ──────────────
+ *
+ * Both `stopShare` and `expireShare` answered `LiveShare | null`, computed as
+ * `if (error || !data) return null` — the identical shape §19.2 removed from
+ * every writer in `LayoverSessionService`, surviving one directory over because
+ * nobody had swept for the SHAPE rather than for the `catch` keyword. The §20
+ * sweep found it.
+ *
+ * The three cases that `null` collapsed are not interchangeable:
+ *
+ *   no_match     PostgREST answers a zero-row `.single()` UPDATE with
+ *                `PGRST116`, which arrives as an `error`. For `expireShare`
+ *                this is the overwhelmingly common case — the scheduler calls
+ *                it for rows that are usually already closed — so treating it
+ *                as a fault would bury the one that is not.
+ *   unavailable  THE STATEMENT DID NOT COMPLETE. For `expireShare` that is a
+ *                person's LOCATION STILL BEING SHARED past the moment they
+ *                agreed to; for `stopShare` it is a person told their sharing
+ *                is off when the write that would have stopped it failed. Both
+ *                fail OPEN, which is the one direction a privacy window may
+ *                never fail silently.
+ *   ok           the row moved.
+ *
+ * `SafeReturnService.settleMutation` already draws exactly this distinction, in
+ * the same product, for the same PostgREST behaviour; these two predate it.
+ *
+ * The `stopShare` / `expireShare` names keep their old `LiveShare | null`
+ * signatures because `lib/safeReturnScheduler.ts` and the Safe Return routes
+ * bind them and are not this lane's files. They are one-line projections of the
+ * settled forms, and the projection is LOSSY ON PURPOSE — see the cross-lane
+ * note in census-layover §20.
+ */
+export type LiveShareMutation =
+  | { outcome: "ok"; share: LiveShare }
+  /** The filter matched no row: wrong id, wrong owner, or already closed. */
+  | { outcome: "no_match" }
+  /** The statement did not complete. The share's state is UNKNOWN. */
+  | { outcome: "unavailable"; reason: string };
+
+/** PostgREST's "no (or multiple) rows returned" — a matched-nothing UPDATE. */
+function isNoRowsError(error: unknown): boolean {
+  return (error as any)?.code === "PGRST116";
+}
+
+function describeShareError(error: unknown): string {
+  return String((error as any)?.message ?? (error as any)?.code ?? "db_error");
+}
+
+/**
  * User explicitly stops the live share.
  */
-export async function stopShare(
+export async function stopShareSettled(
   db: SupabaseClient,
   shareId: string,
   userId: string,
-): Promise<LiveShare | null> {
+): Promise<LiveShareMutation> {
   try {
     const now = new Date().toISOString();
     const { data, error } = await db
@@ -145,7 +194,14 @@ export async function stopShare(
       .select("*")
       .single();
 
-    if (error || !data) { logger.warn({ err: error }, "stopShare: update failed"); return null; }
+    if (error && !isNoRowsError(error)) {
+      logger.error(
+        { err: error, shareId, userId },
+        "stopShare: the update did not complete — this person's location may still be shared",
+      );
+      return { outcome: "unavailable", reason: describeShareError(error) };
+    }
+    if (error || !data) return { outcome: "no_match" };
 
     {
       const { error: evtError } = await db.from("safe_return_events").insert({
@@ -157,10 +213,10 @@ export async function stopShare(
       if (evtError) logger.warn({ err: evtError, shareId }, "live_share_stopped event write failed (non-fatal)");
     }
 
-    return mapShare(data);
+    return { outcome: "ok", share: mapShare(data) };
   } catch (err) {
-    logger.warn({ err }, "stopShare: threw");
-    return null;
+    logger.error({ err, shareId }, "stopShare: threw — this person's location may still be shared");
+    return { outcome: "unavailable", reason: describeShareError(err) };
   }
 }
 
@@ -168,10 +224,10 @@ export async function stopShare(
  * Mark a share as expired (called by cron/background job).
  * Service-role only (no userId ownership check).
  */
-export async function expireShare(
+export async function expireShareSettled(
   db: SupabaseClient,
   shareId: string,
-): Promise<LiveShare | null> {
+): Promise<LiveShareMutation> {
   try {
     const { data, error } = await db
       .from("safe_return_live_shares")
@@ -182,7 +238,14 @@ export async function expireShare(
       .select("*")
       .single();
 
-    if (error || !data) return null;
+    if (error && !isNoRowsError(error)) {
+      logger.error(
+        { err: error, shareId },
+        "expireShare: the expiry update did not complete — a live share is past its cutoff and still active",
+      );
+      return { outcome: "unavailable", reason: describeShareError(error) };
+    }
+    if (error || !data) return { outcome: "no_match" };
 
     {
       const { error: evtError } = await db.from("safe_return_events").insert({
@@ -194,11 +257,30 @@ export async function expireShare(
       if (evtError) logger.warn({ err: evtError, shareId }, "live_share_expired event write failed (non-fatal)");
     }
 
-    return mapShare(data);
+    return { outcome: "ok", share: mapShare(data) };
   } catch (err) {
-    logger.warn({ err }, "expireShare: threw");
-    return null;
+    logger.error({ err, shareId }, "expireShare: threw — a live share may be past its cutoff and still active");
+    return { outcome: "unavailable", reason: describeShareError(err) };
   }
+}
+
+/** COMPATIBILITY PROJECTION — `stopShareSettled` is the honest one. */
+export async function stopShare(
+  db: SupabaseClient,
+  shareId: string,
+  userId: string,
+): Promise<LiveShare | null> {
+  const r = await stopShareSettled(db, shareId, userId);
+  return r.outcome === "ok" ? r.share : null;
+}
+
+/** COMPATIBILITY PROJECTION — `expireShareSettled` is the honest one. */
+export async function expireShare(
+  db: SupabaseClient,
+  shareId: string,
+): Promise<LiveShare | null> {
+  const r = await expireShareSettled(db, shareId);
+  return r.outcome === "ok" ? r.share : null;
 }
 
 /**

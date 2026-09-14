@@ -162,15 +162,38 @@ describe("routes/airport.ts — a write that could not be performed is 503, not 
 
 // ── The swallow itself ───────────────────────────────────────────────────────
 
+/**
+ * Strip comments before scanning source for a forbidden construct.
+ *
+ * ADDED BY THE §20 MUTATION PASS. Both source guards below used to be
+ * LINE-SHAPED regexes, and a line-shaped regex over a syntax rule is a guard
+ * with a documented way round it. Two mutations walked straight through:
+ *
+ *   - `} catch {` written as `}\n  catch {`   — the routes guard required the
+ *     closing brace on the SAME line, so a catch on its own line was invisible.
+ *   - `try { … } catch { … }` on one line       — the service guard anchored on
+ *     `catch {$`, so an inline bare catch was invisible.
+ *
+ * Both are things a person writes without meaning anything by it, which is
+ * exactly the case a guard has to survive. The rule is now shaped like the
+ * syntax it polices: `catch` followed by `{` with any whitespace (newlines
+ * included) between them, anywhere in the file, with comments removed first so
+ * that PROSE about a bare catch — this block included — is not a finding.
+ */
+function stripComments(src: string): string {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+}
+
 describe("L294/C2 — no bare catch survives in the layover surface", () => {
   it("routes/airport.ts binds every error it catches", async () => {
     const { readFileSync } = await import("node:fs");
     const src = readFileSync(new URL("../../../routes/airport.ts", import.meta.url), "utf8");
-    const bare = src
-      .split("\n")
-      .map((l, i) => [i + 1, l] as const)
-      .filter(([, l]) => /}\s*catch\s*\{/.test(l))
-      .map(([n, l]) => `${n}: ${l.trim()}`);
+    const code = stripComments(src);
+    const bare = [...code.matchAll(/\bcatch\s*\{/g)].map(
+      (m) => code.slice(Math.max(0, m.index! - 60), m.index! + 8).replace(/\s+/g, " ").trim(),
+    );
     assert.deepEqual(
       bare, [],
       `a catch that does not bind its error cannot log it — C2's "without structured logging":\n${bare.join("\n")}`,
@@ -202,7 +225,10 @@ describe("LayoverSessionService — no bare catch survives", () => {
   it("the file contains no `catch {` block at all", async () => {
     const { readFileSync } = await import("node:fs");
     const src = readFileSync(new URL("../LayoverSessionService.ts", import.meta.url), "utf8");
-    const bare = src.split("\n").filter((l) => /catch\s*\{\s*$/.test(l));
+    const code = stripComments(src);
+    const bare = [...code.matchAll(/\bcatch\s*\{/g)].map(
+      (m) => code.slice(Math.max(0, m.index! - 60), m.index! + 8).replace(/\s+/g, " ").trim(),
+    );
     assert.deepEqual(bare, [], `bare catch blocks swallow the error C2 forbids: ${bare.join(" | ")}`);
   });
 });

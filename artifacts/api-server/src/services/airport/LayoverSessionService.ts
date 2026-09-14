@@ -467,6 +467,54 @@ export async function expireOldSessions(
   return rows.length;
 }
 
+/**
+ * census L294/C2 — the expiry sweep's failure, made visible on the answer.
+ *
+ * `expireOldSessions` answers `null` when the sweep could not run, which was
+ * §19.2's fix and half the job: BOTH callers threw that value away, so at the
+ * route a failed sweep looked exactly like a sweep that found nothing to do.
+ * The difference matters because the sweep is what retires a session whose
+ * flight has already gone. When it fails, those rows stay `active`, and the two
+ * endpoints that read them serve a finished layover as a live one — including
+ * `GET /sessions/active`, which is what mounts the hard-return countdown.
+ *
+ * WHY NOT 503. The list itself is readable and mostly right, and refusing the
+ * whole endpoint over a housekeeping sweep would take the countdown away from
+ * every traveller whose layover is genuinely live. C2 asks for degraded
+ * CONFIDENCE, not for a refusal, and this is the shape of it.
+ *
+ * `possiblyExpired` is a MEASUREMENT and not a guess: it counts the rows being
+ * served as live whose own `departureTime` is already in the past — the exact
+ * rows the sweep would have retired. A departure that does not parse is not
+ * counted, because "we cannot read this timestamp" is not "this flight has
+ * gone".
+ */
+export interface ExpirySweepDisclosure {
+  degraded: boolean;
+  degradedReasons: string[];
+  /** Rows served as live whose departure has already passed. `0` unless degraded. */
+  possiblyExpired: number;
+}
+
+export function expirySweepDisclosure(
+  /** `expireOldSessions`'s answer. `null` means the sweep did not run. */
+  swept: number | null,
+  sessions: ReadonlyArray<Pick<LayoverSession, "status" | "departureTime">>,
+  nowMs: number = Date.now(),
+): ExpirySweepDisclosure {
+  // A sweep that RAN is a measurement whatever it counted — including zero.
+  // Degrading on a clean zero is how a degraded flag stops being read.
+  if (swept !== null) return { degraded: false, degradedReasons: [], possiblyExpired: 0 };
+  const live = new Set<string>(LAYOVER_LIVE_SESSION_STATUSES);
+  let possiblyExpired = 0;
+  for (const s of sessions) {
+    if (!live.has(s.status)) continue;
+    const departedAt = Date.parse(s.departureTime);
+    if (Number.isFinite(departedAt) && departedAt < nowMs) possiblyExpired += 1;
+  }
+  return { degraded: true, degradedReasons: ["session_expiry_sweep_failed"], possiblyExpired };
+}
+
 export async function emitLayoverEvent(
   db: SupabaseClient,
   sessionId: string,
