@@ -124,6 +124,25 @@ export const COVERED = [
     dir: 'docs/discovery',
   },
   {
+    // B8, 2026-09-14. The Compass corpus — the phase-1 spec, the master
+    // roadmap, the phase summaries, the nine-query eval runbook and the
+    // compliance record. census-compass grades against these five and
+    // `docs/compass/compliance-v1.md` is the same shape as the Discovery one
+    // directly above: a reconciliation built out of `file:line#symbol`
+    // evidence. Two of the five are ALSO manifest-verified owner sources
+    // (`phase1-spec.md` and `master-roadmap.md` are entries 1 and 2 of
+    // docs/specs/upgrades-v2/SOURCE-MANIFEST.json), so their citations are the
+    // ones a reader is most likely to act on.
+    //
+    // MEASURED BEFORE ADOPTING, not assumed: the corpus total moves from 253
+    // findings / 124 broken anchors to the numbers in the commit message, and
+    // every finding this brings in is PRE-EXISTING rot that nothing was
+    // looking at. Adopting it is what makes those visible; it does not create
+    // them. WHAT WOULD TURN THIS RED: a citation in any of the five pointing
+    // past the end of its file, or an anchored one whose needle has moved.
+    dir: 'docs/compass',
+  },
+  {
     // The defect list, refreshed as defects close; each entry cites its fix.
     file: 'docs/architecture/00_STATUS.md',
   },

@@ -1660,6 +1660,13 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/experienceSessionsRoute.test.ts",
   ],
   "census-compass.md": [
+    // B8, 2026-09-14: three modules census-compass grades and did not watch.
+    // `src/compass/` below covers the engines that live under that directory;
+    // these three do not live there, so the trailing-slash entry never reached
+    // them and a change to any of the three aged nothing.
+    "artifacts/api-server/src/lib/contextKernel.ts",
+    "artifacts/api-server/src/lib/opportunityEngine.ts",
+    "artifacts/api-server/src/routes/opportunities.ts",
     "artifacts/api-server/src/compass/",
     "artifacts/api-server/src/routes/compass.ts",
     "artifacts/api-server/src/routes/compassAutopilot.ts",
@@ -1873,6 +1880,55 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/2258_input_selection_history.sql",
   ],
   "census-discovery.md": [
+    // ── B8, 2026-09-14: THE ELEVEN FILES THE DC ROWS ARE EVIDENCED BY ────────
+    //
+    // census-discovery §14.7 raised this against itself as cross-lane request
+    // X2, and `docs/discovery/compliance-v1.md` §8 names the files. The lane
+    // could not add them — checkCensus*.ts is a forbidden file for it — so it
+    // did the only other honest thing available: it routed its DC-row anchors
+    // into compliance-v1.md so that `check:census-scope-coverage` would keep
+    // reporting 100 % rather than go red on citations the lane could not watch.
+    // That is a census being careful, and it is also a blind spot: ten product
+    // files carry DC verdicts and nothing ages the census when they change.
+    //
+    // TEN, NOT ELEVEN, AND THE MISSING ONE IS NAMED. X2's list ends with
+    // `src/scripts/checkMigrationLedger.ts`. That is a guard script, which this
+    // file's own convention and `checkCensusScopeCoverage.ts`'s NOT_GRADED list
+    // both hold OUT of every census's scope: a census names its guard as the
+    // thing that MEASURED it, never as a thing it grades, and watching it would
+    // age census-discovery on every unrelated lane's guard work. It is also
+    // already excluded from the coverage denominator, so leaving it out costs
+    // this census no coverage. Excluding it is the convention, not a shortcut.
+    //
+    // WHAT WOULD TURN THIS RED: a commit touching any of the ten while
+    // census-discovery still declares an older head_commit. That is the point —
+    // before this widening such a commit was silent.
+    "artifacts/api-server/src/services/ranking/rankingConfig.ts",
+    "artifacts/api-server/src/services/ranking/DiscoveryRankingService.ts",
+    "artifacts/api-server/src/services/ranking/FeedSlotAllocator.ts",
+    "artifacts/api-server/src/compass/CompassFeedBuilder.ts",
+    "artifacts/api-server/src/lib/discoveryLiveRank.ts",
+    "artifacts/api-server/src/services/tagging/tagPolicy.ts",
+    "artifacts/api-server/src/routes/wishlist.ts",
+    "artifacts/api-server/src/migrations/0089_decrement_discovery_place_saved_count.sql",
+    "artifacts/api-server/src/migrations/0168_discovery_cache_ddl.sql",
+    "artifacts/api-server/src/migrations/2092_discovery_shadow_serves.sql",
+    // B10, 2026-09-14 (§15). Two more this census now rests on.
+    //
+    // The test file pins the parse of §15.2's three rows; §15's whole arithmetic
+    // rests on what it asserts, so an edit to it must age this census.
+    "artifacts/api-server/src/test/censusDigitPrefixIds.test.ts",
+    // The provenance note is the ONE file of the duplicate Discovery install
+    // (§15.7, backlog B5) that has no byte-identical counterpart in the
+    // directory that survives. It is watched here so that retiring
+    // `docs/specs/discovery-v1/` without first moving this file fails loudly in
+    // the scope-existence check above, instead of losing the only copy of a
+    // note the owner's package carried. It is deliberately the doomed path and
+    // not a copy: an entry that cannot survive the deletion is the interlock.
+    "docs/specs/discovery-v1/00-PROVENANCE.md",
+    // §15.7's "17 / 17 manifest entries resolve by content hash" is a claim
+    // ABOUT this file. If an entry or a hash changes, that sentence ages.
+    "docs/specs/upgrades-v2/SOURCE-MANIFEST.json",
     // ADDED 2026-09-14, second widening this session as the Discovery lane works.
     // Three consumers its rows are now evidenced by: Compass's feedback and
     // outcome engines — which is where a served candidate's fate is recorded, so
@@ -2023,6 +2079,42 @@ const acks: Ack[] = existsSync(LEDGER)
   : [];
 
 const head = git(["rev-parse", "HEAD"]);
+
+// ── A SCOPE ENTRY NAMING NOTHING IS A BLIND SPOT THAT REPORTS AS FRESH ───────
+//
+// Everything below rests on `git diff -- <scope>`. A pathspec that matches no
+// file is not an error to git: the diff simply comes back empty. So a scope
+// entry with a typo, or one pointing at a file a later pass deleted or renamed,
+// reports the census as FRESH about a file nothing is watching — the exact
+// shape of vacuous green this whole script exists to refuse. Nothing checked
+// the declaration itself until now.
+//
+// MEASURED BEFORE ADDING IT, 2026-09-14: all 1,315 entries then in CENSUS_SCOPE
+// resolved, so this adds no pre-existing failure. It is a floor for what comes
+// next, not a burn-down of what is here.
+//
+// A trailing-slash entry is a directory prefix and is checked as a directory.
+// WHAT WOULD TURN THIS RED: adding a path with a typo, or deleting/renaming a
+// watched file without editing this table. Both used to be silent.
+{
+  const dead: string[] = [];
+  for (const [census, scope] of Object.entries(CENSUS_SCOPE)) {
+    for (const p of scope) {
+      if (!existsSync(join(REPO, p))) dead.push(`${census} -> ${p}`);
+    }
+  }
+  if (dead.length > 0) {
+    problems.push(
+      `::error::CENSUS_SCOPE names ${dead.length} path(s) that do not exist in this tree:\n    ` +
+        dead.join("\n    ") +
+        `\n  git treats a pathspec matching nothing as an empty diff, so each of these reports its census ` +
+        `FRESH while watching nothing at all. Fix the path, or delete the entry and say in the census what ` +
+        `stopped being watched — a scope that names a missing file is worse than one that never named it, ` +
+        `because it reads as coverage.`,
+    );
+  }
+}
+
 let checked = 0;
 let stale = 0;
 let unscoped = 0;
