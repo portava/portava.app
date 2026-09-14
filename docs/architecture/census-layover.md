@@ -397,7 +397,7 @@ Rows marked **[463]** change verdict under PR #463 — see §5.
 | L4 | Unknown critical facts reduce confidence and may fail closed for landside recommendations | N | There is no confidence concept anywhere in `services/airport/`. Unknown entry is a sentence in `unknowns[]` attached to `verdict: "yes"` (`LayoverSafetyEngine.ts:302-304, 323-327`); unknown baggage is unrepresentable (L35). **[463]** |
 | L5 | Every consequential recommendation is versioned, explainable and replayable | N | `layover_recommendations` has no version, snapshot, engine-version or input-hash column (`0127:106-138`), and rows are deleted wholesale and re-inserted on read (`LayoverRecommendationService.ts:760-765#layover_recommendations").delete()`, triggered from `routes/airport.ts:978-979#isSafetyEnabled`). Nothing can be replayed. |
 | L6 | All surfaces consume the same certified `LayoverSnapshot`/`RecommendationContract`; **no duplicate time-budget logic** | W | One shared library exists (`computeBuffer`), which is real progress — but there are three independent *uses* of it with different inputs (`LayoverSafetyEngine.ts:90` departure-based, `:247` cutoff-based, `LayoverCompassService.ts:51` departure-based) plus the client's own thresholds (`LayoverReturnPanel.tsx` line 114, **deleted at `a718beb5`**). No snapshot exists for surfaces to share. |
-| L7 | Commercial ranking only after eligibility, safety and time feasibility (≡ §9.1, ≡ App C7) | N ∅ | No commercial input reaches the recommendation path at all — a grep of `services/airport/` and `routes/airport.ts` for `sponsored`/`promoted`/`is_paid`/`boost` returns nothing. But there is no gate either: ordering is `verified`-first plus time-of-day (`LayoverRecommendationService.ts:486-488#verified places lead`), and the one safety-first comparator that exists, `rankActivities` (`LayoverSafetyEngine.ts:778-792#export function rankActivities`), is dead code. Unguarded absence. |
+| L7 | Commercial ranking only after eligibility, safety and time feasibility (≡ §9.1, ≡ App C7) | N ∅ | No commercial input reaches the recommendation path at all — a grep of `services/airport/` and `routes/airport.ts` for `sponsored`/`promoted`/`is_paid`/`boost` returns nothing. But there is no gate either: ordering is `verified`-first plus time-of-day (`LayoverRecommendationService.ts:486-488#verified places lead`), and the one safety-first comparator that exists, `rankActivities` (`LayoverSafetyEngine.ts:924-938#export function rankActivities`), is dead code. Unguarded absence. |
 | L8 | Precise social location is opt-in, temporary and automatically expires | C | Concrete artifact: layover presence structurally cannot carry a coordinate. `cityPresence` selects `user_id, manual_city, airport_profiles(city)` and nothing else (`routes/airport.ts:1925#manual_city`); `SafeRecommendation` has no lat/lng field at all (`LayoverPrivacyGuard.ts:31-52`). Opt-in: `share_city_status BOOLEAN NOT NULL DEFAULT FALSE` (`0127:82`). Temporary: presence is filtered on `status='active' AND departure_time > now()` (`routes/airport.ts:1929#departure_time`) and `expireOldSessions` flips the status (`LayoverSessionService.ts:327-345`). |
 | L9 | Missing live intelligence degrades **visibly** to historical/conservative fallback; never fabricate freshness | W | The fallback ladder is real (DB row → `STATIC_AIRPORTS` → `buildFallbackProfile`, `services/airport/AirportProfileService.ts:37-68`), but it is invisible: `publicAirport` (`routes/airport.ts:830-843`) exposes only a `verified` boolean, rendered as a badge (`components/layover/LayoverHero.tsx:48#verified`), and a generic-buffer session is indistinguishable from a curated one. Worse, freshness is *fabricated*: `estimateTravelTime(placeType)` returns 15 or 25 minutes without reading a coordinate (`LayoverRecommendationService.ts:212-216`) and that number becomes a "safe" rating. **[463]** |
 | L10 | The system optimises successful real-world action and safe completion, not screen time | N | Nothing measures completion. `layover_outcomes` does not exist, `status='completed'` is never written (`routes/airport.ts:1992#travelers = ((profiles ?? []) as any[]).map((p) => ({` is the only close and passes `"cancelled"`), and no metric of any kind is emitted (§20 below). The system cannot distinguish a safe return from an abandonment. |
@@ -527,7 +527,7 @@ Rows marked **[463]** change verdict under PR #463 — see §5.
 
 | id | Requirement | V | Evidence / divergence |
 | --- | --- | --- | --- |
-| L77 | **HARD GATE**: eligibility + entry + time + safety, before any optimisation | W | A gate exists but it is the wrong gate: landside candidates are fetched only when `wantsToLeave && layoverMinutes >= 90` (`LayoverRecommendationService.ts:244-246`), where `layoverMinutes` is the *scheduled* window, not usable time. So a 95-minute international connection with a 150-minute buffer still gets landside candidates; each is rated `not_recommended` and each is still written and returned (`:286-307`). Entry is not in the gate at all. The one safety-first ordering that exists is dead code (`LayoverSafetyEngine.ts:778-792#export function rankActivities`). |
+| L77 | **HARD GATE**: eligibility + entry + time + safety, before any optimisation | W | A gate exists but it is the wrong gate: landside candidates are fetched only when `wantsToLeave && layoverMinutes >= 90` (`LayoverRecommendationService.ts:244-246`), where `layoverMinutes` is the *scheduled* window, not usable time. So a 95-minute international connection with a 150-minute buffer still gets landside candidates; each is rated `not_recommended` and each is still written and returned (`:286-307`). Entry is not in the gate at all. The one safety-first ordering that exists is dead code (`LayoverSafetyEngine.ts:924-938#export function rankActivities`). |
 | L78 | Optimise `preference_fit + local_uniqueness + opportunity_scarcity + social_value + experience_density + memory_value − monetary_cost − energy_cost − uncertainty − stress − return_risk` | N | The entire objective is two terms: `verified` first, then a time-of-day nudge (`LayoverRecommendationService.ts:486-488#verified places lead`). None of the eleven named terms exists. |
 
 ### §10 Airport Intelligence and truth reconciliation
@@ -717,7 +717,7 @@ Three methods are merged into their §12 tool twins and not scored here (`simula
 | L181 | `AirportTruthService.reconcile(observations)` | N | No observations (L82). |
 | L182 | `LayoverExperienceService.getCandidates(sessionId)` | W | `generateRecommendations` (`LayoverRecommendationService.ts:435-441#export async function generateRecommendations`) does produce a session-scoped candidate set, and its time-of-day filter is real and careful (`timeOfDayContext` samples every 30 minutes to the boarding cutoff, `LayoverRecommendationService.ts:121-146#export function timeOfDayContext`). The candidates themselves rest on category constants (L9). |
 | L183 | `LayoverExperienceService.compile(sessionId, candidateIds)` | W | `POST /airport/sessions/:id/stops/from-recommendation` (`routes/airport.ts:1164-1211`) plus `computePlanFit` (`:886-901`) compiles chosen candidates into an ordered itinerary with a fit verdict. It compiles no route, no `departBy`, no abort threshold and no fallback (L76). |
-| L184 | `LayoverExperienceService.rank(sessionId, contracts)` | W | Ordering exists (`LayoverRecommendationService.ts:486-488#verified places lead`) but by `verified` and time-of-day only; the safety-first comparator `rankActivities` (`LayoverSafetyEngine.ts:778-792#export function rankActivities`) is dead code. |
+| L184 | `LayoverExperienceService.rank(sessionId, contracts)` | W | Ordering exists (`LayoverRecommendationService.ts:486-488#verified places lead`) but by `verified` and time-of-day only; the safety-first comparator `rankActivities` (`LayoverSafetyEngine.ts:924-938#export function rankActivities`) is dead code. |
 | L185 | `LayoverCrewService.join(sessionId, crewId)` | N | No crew. |
 | L186 | `LayoverCrewService.create(sessionId, input)` | N | " |
 | L187 | `LayoverCrewService.updatePresence(sessionId, input)` | W | `PATCH /airport/sessions/:id/share` (`routes/airport.ts:1308-1320`) → `setShareStatus` (`LayoverSessionService.ts:282-305`). It updates one boolean; the spec's presence record (window, intents, max travel minutes, precise-location flag, expiry) does not exist. |
@@ -817,7 +817,7 @@ Three methods are merged into their §12 tool twins and not scored here (`simula
 | L246 | **L3 Portava observed** — recent Portava operational observations available | N | (L82) |
 | L247 | **L4 Calibrated** — prediction errors measured, model calibrated by airport/time band | N | Nothing measures its own error (L217). |
 | L248 | **L5 Dense live intelligence** — high-confidence dynamic replanning | N | (§11.1) |
-| L249 | Enable features per airport maturity | N | The only tier-like signal is `airport_profiles.verified` (`0127:37`), and it gates nothing: it changes a badge (`LayoverHero.tsx:48`) and adds a "possible_but_risky" nudge for unverified far places (`LayoverSafetyEngine.ts:141#*                     safety route's 20 — are deleted, not relabelled. A`). No feature is enabled or withheld by maturity. |
+| L249 | Enable features per airport maturity | N | The only tier-like signal is `airport_profiles.verified` (`0127:37`), and it gates nothing: it changes a badge (`LayoverHero.tsx:48`) and adds a "possible_but_risky" nudge for unverified far places (`LayoverSafetyEngine.ts:156#*                     safety route's 20 — are deleted, not relabelled. A`). No feature is enabled or withheld by maturity. |
 | L250 | Do not imply equivalent intelligence globally; "limited intelligence" is a valid product state | W | The honesty artifact exists and is the best thing on this surface: `adviseLeaving` returns an `unknowns[]` list that always includes the visa caveat (`LayoverSafetyEngine.ts:302-304`) plus a standing disclaimer (`:291-293`), rendered in an always-visible box that is explicitly *"never buried"* (`components/layover/CanILeaveCard.tsx:85-93`). But it is uniform: the airport's own data maturity is never disclosed, so a curated airport and a generic-fallback one present identical confidence. |
 
 ### §23 Security and abuse controls
@@ -1231,7 +1231,7 @@ over the 22-table contract.
 
 No routing was built. What travels now is **provenance**:
 
-- `LayoverSafetyEngine.ts:122#* default 30) so the server state and the local reminder agree.` declares `TravelTimeSource =
+- `LayoverSafetyEngine.ts:137#* default 30) so the server state and the local reminder agree.` declares `TravelTimeSource =
   inside_airport | category_default | measured`; `:121` `travelTimeSourceFor`
   resolves an absent or unknown value to the least-trusted kind that applies
   (never `measured`); `ActivityCandidate.travelTimeSource` is optional.
@@ -1355,7 +1355,7 @@ the end of this section.
 | id | Was | Now | Evidence at `cdfff599` |
 | --- | --- | --- | --- |
 | L1 | W | W | One canonical derivation now exists and all five surfaces consult it (`LayoverFeasibility.ts:451`; `routes/airport.ts:798, 1033, 1096, 1499, 1604`; `LayoverCompassService.ts:109`; `LayoverRecommendationService.ts:318`; `LayoverNotificationService.ts:99`). It is still not *persisted*: `2700_layover_certified_feasibility.sql` is written and NOT applied, so there is no canonical row anywhere. Code built, storage unapplied (2700). |
-| L2 | W | W | `certificationHeader` (`LayoverFeasibility.ts:647#certificationHeader`) is published on five endpoints. No client consumes it, and the client's own thresholds still exist in the tree (`travel-buddy-standalone/src/components/layover/LayoverReturnPanel.tsx` lines 113-114, still unmounted — **deleted at `a718beb5`, after this line was written**). |
+| L2 | W | W | `certificationHeader` (`LayoverFeasibility.ts:671#certificationHeader`) is published on five endpoints. No client consumes it, and the client's own thresholds still exist in the tree (`travel-buddy-standalone/src/components/layover/LayoverReturnPanel.tsx` lines 113-114, still unmounted — **deleted at `a718beb5`, after this line was written**). |
 | L4 | N | **W** | Confidence now exists and is computed: `ESTIMATE_CONFIDENCES` (`LayoverFeasibility.ts:102`), `worstConfidence` (`:182`), folded onto every record (`:493`). The fail-closed half is explicitly NOT built and the file says so (`:352-362`: "This record publishes the confidence; it does NOT forbid"). Half built. |
 | L5 | W | W | `LAYOVER_FEASIBILITY_VERSION` (`:69`), `inputHash` (`:325`) and a real `replayFeasibility` (`:520`) exist. Nothing is stored to version or replay (2700 unapplied). |
 | L6 | W | W | The duplicate-time-budget half is genuinely closed (see the table above). "All surfaces consume the same certified snapshot" is not: there is no snapshot, and the per-request record is not shared between requests. |
@@ -1658,7 +1658,7 @@ no webhook and no producer of an observation or an event anywhere in the tree,
 and the migration that would store either is **written and NOT applied**. The
 arithmetic a traveller's session runs is term-for-term what it was before this
 pass — pinned, not asserted, by
-`test/layoverLiveConditions.test.ts:134#the five original terms`. CONSTRUCTED%
+`test/layoverLiveConditions.test.ts:133#the five original terms`. CONSTRUCTED%
 below moves by 12 points and **not one number on any screen changes.** A reader
 who wants only the second fact should skip to §11.3.
 
@@ -1736,17 +1736,17 @@ refuses to give it a false one: a security-queue event is not a flight
 disruption (`:905#disruptionEventFor`).
 
 **3. The seam into the safety arithmetic.** `LiveConditions`
-(`services/airport/LayoverSafetyEngine.ts:265#LiveConditions`) is the one shape
+(`services/airport/LayoverSafetyEngine.ts:280#LiveConditions`) is the one shape
 the buffer accepts live intelligence in, and
 `LayoverAirportTruth.liveConditionsFrom` (`:660#liveConditionsFrom`) is the only
 thing that builds one. It becomes a SIXTH buffer term, `liveExtra`
-(`LayoverSafetyEngine.ts:374#liveExtra:`, summed into the total at
+(`LayoverSafetyEngine.ts:389#liveExtra:`, summed into the total at
 `:380#liveExtra`), additive-only and clamped at zero (`:229#liveExtraMinutes`)
 so a live signal can make a deadline earlier and never later. It is a NAMED
-INPUT of the certified record (`LayoverFeasibility.ts:316#liveConditions:`), so
+INPUT of the certified record (`LayoverFeasibility.ts:331#liveConditions:`), so
 it is inside `inputHash` and inside a replay, and it produces the only §6.2
 estimate on this tree that can carry a real `observedAt`/`expiresAt`
-(`LayoverFeasibility.ts:528#liveExtraEstimate`). Both version constants moved:
+(`LayoverFeasibility.ts:552#liveExtraEstimate`). Both version constants moved:
 `LAYOVER_ENGINE_VERSION` to `2026.09.13-1` because the arithmetic gained a term,
 `LAYOVER_FEASIBILITY_VERSION` because the record shape did.
 
@@ -1840,7 +1840,7 @@ verdict — the defect §9.5 had to repair for L51 and L52.
 | L181 | N | W | `reconcile(observations)` matches the spec's signature exactly and implements all five §10.1 rules. Scored W rather than C for consistency with how this document has scored every other built-but-uncalled service method (L133-L135, L137, L139, L156, L157): a named service operation with no caller is W here. |
 | L212 | N | W | `HandleEventResult` carries `replanned`, `skipped` and `notifications`, so a replan rate is derivable from a call — the same rule that scored L208 and L214 W. Nothing calls it, nothing counts, nothing is emitted. |
 | L225 | N | W | The scenario now exists as a test over the certified record with a real arrival-delay event (`test/layoverEventReplanner.test.ts:464#arrival`), including that the deadline does NOT move — an arrival delay is not a departure delay. Same limit as L226: a unit test over the solver, not a session; no delay input reaches one. |
-| L227 | N | W | The scenario exists and the contraction is swept, not sampled (`test/layoverLiveConditions.test.ts:265#monotone`). **Considered `C` and rejected**: §9 scored L226 W with the words "a unit test over the solver, not a scenario of a session", and a security spike is in exactly that position — no security wait reaches a session. |
+| L227 | N | W | The scenario exists and the contraction is swept, not sampled (`test/layoverLiveConditions.test.ts:276#monotone`). **Considered `C` and rejected**: §9 scored L226 W with the words "a unit test over the solver, not a scenario of a session", and a security spike is in exactly that position — no security wait reaches a session. |
 | L228 | N | W | `traffic_extra_min` is still a static admin constant and this does not change it. What is new is a SEPARATE live term that moves the deadline earlier and leaves the static figure alone, asserted as both (`test/layoverEventReplanner.test.ts:489#traffic`). Same solver-not-session limit. |
 | L247 | N | W | `measureCalibration` measures signed error, absolute error and p90 coverage per hour band (`LayoverAirportTruth.ts:799#measureCalibration`) and returns zeros when there is nothing to compare. It MEASURES ONLY — no model is calibrated, and there are no outcomes to calibrate against. |
 | L263 | N | W | The code half is built and red-first (dedup key, first-occurrence-wins). The schema half — `UNIQUE (dedup_key)` — is written and **NOT APPLIED** (`2860_layover_airport_truth_and_events.sql:276#layover_external_events_dedup_uidx`), and its postcondition asserts the index is UNIQUE rather than merely present. |
@@ -1850,7 +1850,7 @@ verdict — the defect §9.5 had to repair for L51 and L52.
 | L287 | N | W | `TRAFFIC_DEGRADED` emitted on a degraded ground-transport reading (`LayoverAirportTruth.ts:678#TRAFFIC_DEGRADED`). Same limit. |
 | L288 | N | W | `FLIGHT_MOVED_EARLIER` emitted by the diff, and only for a flight event — a queue spike also moves the deadline earlier and must not claim the flight moved (`LayoverEventReplanner.ts:752#FLIGHT_MOVED_EARLIER`; asserted both ways at `test/layoverEventReplanner.test.ts:593#FLIGHT_MOVED_EARLIER`). Same limit. |
 | L289 | N | W | `FLIGHT_DELAY_CREATED_OPPORTUNITY` emitted only when a delay actually widened the window materially (`LayoverEventReplanner.ts:761#FLIGHT_DELAY_CREATED_OPPORTUNITY`) — not on every delay, because a delay into the night band can shrink it. Same limit. |
-| L51 | C | C | **Verdict unchanged, vacuity narrowed and NOT removed.** `test/layoverFeasibilityInvariants.test.ts`'s own header says "`security_wait` HAS NO INPUT on this tree". It has one now (`LayoverSafetyEngine.ts:265#LiveConditions`) and the invariant is swept over it directly, 0-240 minutes, in two timezones (`test/layoverLiveConditions.test.ts:177#non-increasing`) instead of over the buffer columns that stood in for it. Still `⌀`: nothing supplies the input. |
+| L51 | C | C | **Verdict unchanged, vacuity narrowed and NOT removed.** `test/layoverFeasibilityInvariants.test.ts`'s own header says "`security_wait` HAS NO INPUT on this tree". It has one now (`LayoverSafetyEngine.ts:280#LiveConditions`) and the invariant is swept over it directly, 0-240 minutes, in two timezones (`test/layoverLiveConditions.test.ts:188#non-increasing`) instead of over the buffer columns that stood in for it. Still `⌀`: nothing supplies the input. |
 
 ### 11.3 The ceiling
 
@@ -1873,7 +1873,7 @@ verdict — the defect §9.5 had to repair for L51 and L52.
 3. **The live buffer term is the one change that could move a traveller's
    number, and it cannot today.** `liveExtra` is 0 for every caller that
    supplies no conditions, which is every caller on this tree outside tests, and
-   the equality is pinned (`test/layoverLiveConditions.test.ts:134#the five original terms`).
+   the equality is pinned (`test/layoverLiveConditions.test.ts:133#the five original terms`).
    **The day an ingest route exists, that pin is what stands between a
    crowd-sourced queue report and a traveller's flight deadline.** It should be
    read as a load-bearing test, not a regression check.
@@ -2090,7 +2090,7 @@ Those 14 are mechanical. The **17** below are the ones that needed the claim rea
 | L182 | `LayoverRecommendationService.ts`, the inherited lines 23-47 | `LayoverRecommendationService.ts:121-146#export function timeOfDayContext` | import statements |
 | L5, L97, L296 | `routes/airport.ts` lines 560-566 | `routes/airport.ts:978-979#isSafetyEnabled` | not the regeneration trigger |
 | L205, L258 | `routes/airport.ts` lines 751-755 | `routes/airport.ts:1582-1589#return_deadline_set` | the regeneration call, not the audited deadline write |
-| L7, L78, L184 | `LayoverSafetyEngine.ts` lines 148-168 | `LayoverSafetyEngine.ts:778-792#export function rankActivities` | not the dead comparator |
+| L7, L78, L184 | `LayoverSafetyEngine.ts` lines 148-168 | `LayoverSafetyEngine.ts:924-938#export function rankActivities` | not the dead comparator |
 
 **No verdict moves.** Every claim above was re-read at its corrected location and every
 one is still true: the delete-and-reinsert is still wholesale, the objective is still two
@@ -2353,7 +2353,7 @@ not make.
    | `LayoverEventReplanner.handleEvent` | **YES, from a mounted control** | — |
    | `LayoverEventReplanner` steps 5-8 | **YES**, on the two flight event types | the other nine types have no producer |
    | `LayoverAirportTruth` (all of it) | no | owner decisions 9 and 10 |
-   | `liveConditionsFrom` → the sixth buffer term | no | no fact producer, so `liveExtra` is 0 for every real caller, and the pin at `test/layoverLiveConditions.test.ts:134#the five original terms` still holds |
+   | `liveConditionsFrom` → the sixth buffer term | no | no fact producer, so `liveExtra` is 0 for every real caller, and the pin at `test/layoverLiveConditions.test.ts:133#the five original terms` still holds |
    | migration 2860, both tables | no | written, NOT applied |
    | §11.1 step 4, the snapshot | no | 2700 unapplied |
    | `LayoverCrewService` (12 exports), `localReplan`, `sensingPolicy`, `runLayoverTool`'s 12 tools | no | unchanged since §10 |
@@ -2585,7 +2585,7 @@ rather than about a stored column.
 
 That threshold is not a new constant. `computeWindow` already calls a session
 with under 90 usable minutes the `airport_only` TIER
-(`services/airport/LayoverSafetyEngine.ts:1143#usableMinutes >= 90`), so before
+(`services/airport/LayoverSafetyEngine.ts:1289#usableMinutes >= 90`), so before
 this change the engine could tell a traveller "airport only" on the hero and
 hand them a city on the cards below it. **The gate and the tier now cannot
 disagree.** Measured on the test's own fixture: a three-hour international
@@ -2593,7 +2593,7 @@ connection with immigration and checked bags has 0 usable minutes and a
 600-minute `layoverMinutes`, and it used to get landside cards.
 
 **2. §9.1's safety-first comparator got a caller.** `rankActivities`
-(`services/airport/LayoverSafetyEngine.ts:778#export function rankActivities`)
+(`services/airport/LayoverSafetyEngine.ts:924#export function rankActivities`)
 is the engine's own "safe first, then shortest travel" ordering. It had **no
 caller outside `src/test/`**. It is now the primary sort for every generated
 card (`services/airport/LayoverRecommendationService.ts:633#const ranked = rankActivities`),
@@ -3428,7 +3428,7 @@ in each case saying what would otherwise have gone unpinned.
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| L293 | W | C | App C1 — *"never query a semantic substitute for a missing field and pretend it is the requested fact; unknown is preferable to fabricated certainty."* All three named substitutions are **deleted with no replacement**: `estimateTravelTime` and `estimateActivityTime` are gone from `LayoverRecommendationService.ts`, and `GET /:id/safety` builds no probe (`artifacts/api-server/src/routes/airport.ts:1046#const record = certifySessionFeasibility`). `ActivityCandidate.travelTimeMin` is `number \| null` and `assess` fails CLOSED on it — never `safe`, never `possible_but_risky` — with a warning naming the real cause (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:553#export const UNMEASURED_TRAVEL_WARNING`). Inside the terminal, 0 stays a fact. Red-first: **22 of 29 cases failed** before the fix. Mutations: reinstating each of the three numbers fails 8, 5 and 3; removing the fail-closed branch fails 8; treating a landside 0 as a fact again fails 2 (`artifacts/api-server/src/test/layoverUnmeasuredJourney.test.ts:257#a LANDSIDE 0 is an ABSENCE`). |
+| L293 | W | C | App C1 — *"never query a semantic substitute for a missing field and pretend it is the requested fact; unknown is preferable to fabricated certainty."* All three named substitutions are **deleted with no replacement**: `estimateTravelTime` and `estimateActivityTime` are gone from `LayoverRecommendationService.ts`, and `GET /:id/safety` builds no probe (`artifacts/api-server/src/routes/airport.ts:1046#const record = certifySessionFeasibility`). `ActivityCandidate.travelTimeMin` is `number \| null` and `assess` fails CLOSED on it — never `safe`, never `possible_but_risky` — with a warning naming the real cause (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:699#export const UNMEASURED_TRAVEL_WARNING`). Inside the terminal, 0 stays a fact. Red-first: **22 of 29 cases failed** before the fix. Mutations: reinstating each of the three numbers fails 8, 5 and 3; removing the fail-closed branch fails 8; treating a landside 0 as a fact again fails 2 (`artifacts/api-server/src/test/layoverUnmeasuredJourney.test.ts:257#a LANDSIDE 0 is an ABSENCE`). |
 | L9 | W | W | **Improved and still not closed, and the half that moved is L293's.** Its `W` sentence names two things: the airport's data maturity is invisible to the client, and *"freshness is fabricated: `estimateTravelTime(placeType)` returns 15 or 25 minutes without reading a coordinate … and that number becomes a `safe` rating."* **The second half is false at this commit** — there is no such function, no such number and no such rating. The first half is untouched: `publicAirport` still exposes only a `verified` boolean and a generic-buffer session is still indistinguishable from a curated one at the client. §7's T3 left this row `W` for exactly that reason and it stays `W` for exactly that reason. What this pass adds beyond §7 is that the disclosure is now TRUE rather than merely present: the `unknowns` sentence says the journey has not been measured, because it has not, instead of describing category estimates that no longer exist. |
 
 ### 16.7 Rows opened, read, and deliberately NOT moved
@@ -3613,9 +3613,9 @@ and in production it is the same boolean.
 
 So the build is a disclosure, not a measurement:
 `airportIntelligence()`
-(`artifacts/api-server/src/services/airport/LayoverFeasibility.ts:748#export function airportIntelligence`)
+(`artifacts/api-server/src/services/airport/LayoverFeasibility.ts:772#export function airportIntelligence`)
 derives four rungs
-(`artifacts/api-server/src/services/airport/LayoverFeasibility.ts:685#export const AIRPORT_INTELLIGENCE_TIERS`)
+(`artifacts/api-server/src/services/airport/LayoverFeasibility.ts:709#export const AIRPORT_INTELLIGENCE_TIERS`)
 from the record's own estimates and from `record.inputs.airport` — the named
 input set that is inside `inputHash` — and **never from a second read of the
 profile**, because a disclosure derived independently of the numbers it
@@ -3633,7 +3633,7 @@ own evidence calls *"never buried"* is where this belongs.
 
 **FOUR TERMS, AND DELIBERATELY ONLY FOUR.**
 `airportSuppliedTerms`
-(`artifacts/api-server/src/services/airport/LayoverFeasibility.ts:744#function airportSuppliedTerms`)
+(`artifacts/api-server/src/services/airport/LayoverFeasibility.ts:768#function airportSuppliedTerms`)
 folds the base buffer, the immigration extra, the bags extra and the traffic
 extra. `timeOfDayExtra` and `exitDelay` are source CONSTANTS whatever the
 airport row says — `bufferEstimates` marks them `STATIC_DEFAULT` explicitly —
@@ -4223,7 +4223,7 @@ and a mutation found it worth nothing at first — see §18.4.
 **2. The §18 service, reached rather than reached past.**
 `artifacts/api-server/src/services/airport/LayoverTemporalFreedom.ts:309#export const TemporalFreedomService`
 carries the two members the spec lists and nothing else.
-`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:984#const freedom = TemporalFreedomService.buildFreedomWindow(freedomCtx)`
+`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:1130#const freedom = TemporalFreedomService.buildFreedomWindow(freedomCtx)`
 is the production call site. The first draft imported the bare function beside
 the object, which would have left the named interface with no caller outside
 its own test — the reachability `W` this document has spent five passes on,
@@ -4231,7 +4231,7 @@ introduced by the pass closing it.
 
 **3. `computeWindow` stops deriving the window by hand.** `arrival + exitDelay`
 and `hardReturn − windowStart` were spelled out in
-`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:969#const freedomCtx: LayoverFreedomContext`'s
+`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:1115#const freedomCtx: LayoverFreedomContext`'s
 place. They are the two ends of a freedom window, and they are now the engine's.
 
 **NO NUMBER A TRAVELLER SEES MOVED, and that is swept rather than asserted.**
@@ -4251,7 +4251,7 @@ engine, not on the wire, not on a screen. It is the one fact that tells them
 whether a later flight or a lighter bag would change the answer. The generalised
 engine has always produced it as a `TEMPORAL_CONFLICT.shortfallMinutes`; the
 layover surface never asked. It does now
-(`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:884#shortfallMinutes: number | null`),
+(`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:1030#shortfallMinutes: number | null`),
 it is on the wire
 (`travel-buddy-standalone/src/services/layover.ts:134#shortfallMinutes: number | null`)
 and it is rendered
@@ -4275,11 +4275,11 @@ BOUND on travel time, and `artifacts/api-server/src/domain/trips/contracts/Trave
 already states the asymmetry that follows: *"a straight-line INFEASIBLE is a
 real verdict; a straight-line FEASIBLE is not."*
 
-`artifacts/api-server/src/services/airport/LayoverEnvelope.ts:206#export function safeEnvelope`
+`artifacts/api-server/src/services/airport/LayoverEnvelope.ts:226#export function safeEnvelope`
 computes only the envelope's OUTER edge — the disc outside which
 `2 × lowerBound(distance) > usableMinutes`, which no dwell and no route can
 rescue — and never says SAFE or TIGHT.
-`artifacts/api-server/src/services/airport/LayoverEnvelope.ts:87#export const ENVELOPE_BANDS`
+`artifacts/api-server/src/services/airport/LayoverEnvelope.ts:92#export const ENVELOPE_BANDS`
 declares the spec's three bands plus the one this tree can produce; the two
 certifications have no producer, the same arrangement `LAYOVER_REASON_CODES`
 uses for the codes whose triggering fact does not exist.
@@ -4288,7 +4288,7 @@ uses for the codes whose triggering fact does not exist.
 certified window, so it differs per session, contracts as the window shrinks and
 reaches nowhere when the window is gone. `radiusMetres` is the exact inverse of
 the provider's own `min(walk, drive)` at
-`artifacts/api-server/src/services/airport/LayoverEnvelope.ts:242#const maxOneWayMinutes = Math.floor(usableMinutes / 2)`,
+`artifacts/api-server/src/services/airport/LayoverEnvelope.ts:263#const maxOneWayMinutes = Math.floor(usableMinutes / 2)`,
 using the provider's constants rather than copies of them. **The floor is
 load-bearing and was found by the sweep, not by the algebra**: the provider
 reports whole minutes, and the un-floored half admitted a 46-minute round trip
@@ -4425,7 +4425,7 @@ than written off.
 | L61 | N | **W** | A time-based envelope exists, is cut from the certified window, contracts with it, is applied to every landside candidate and is published on both session endpoints. `W` because it is a DISC and not an isochrone: with no route data the only shape the geometry supports is the circle a straight-line bound cuts, and it is an OUTER bound only. |
 | L63 | N | **W** | The envelope's edge contracts as return risk rises — a later exit, a larger buffer, a live queue all shrink `usableMinutes` and the radius with it, swept over seven windows. It does NOT contract on confidence: `confidence` is carried on the window and no edge reads it. Half the requirement. |
 | L66 | N | **W** | `SafeEnvelope` exists as a type and as a value on the wire. `W` because it is a SUPERSET of `union(points satisfying the constraint)` rather than the union — stated in the type as `certifiedInward: false` rather than left for a reader to infer from the absence of a polygon. |
-| L219 | N | **W** | The scenario exists deterministically for the first time. `W` because the engine ANSWERS SOMETHING ELSE: §21.1 expects `airport-only` and a 2h domestic layover is `too_short` (25 usable minutes against a 45-minute rung). Those are different sentences to a traveller — "stay near your gate" against "enough time to enjoy the terminal" — so the case pins both the measured tier and the inequality with the spec's. |
+| L219 | N | **W** | The scenario exists deterministically for the first time. `W` because the engine ANSWERS SOMETHING ELSE: §21.1 expects `airport-only` and a 2h domestic layover is `too_short` (19 usable minutes against a 45-minute rung; 25 until §22's return-transport term was added — see §22.3). Those are different sentences to a traveller — "stay near your gate" against "enough time to enjoy the terminal" — so the case pins both the measured tier and the inequality with the spec's. |
 | L220 | N | **W** | The airport-model variation the census recorded as absent from every test now exists: at 5h international the SAME session is `tight` at a curated airport and `no` at a generic one. `W` because at the spec's own 4h neither model reaches landside, and the "visa allowed" half is unrepresentable — the case proves that by scanning the session's own field names and fails the day one appears. |
 
 ### 18.6 Rows opened, read, and deliberately NOT moved
@@ -4492,7 +4492,7 @@ unchanged verdict.**
 3. **L56, L58 and L177** point at three ranges in `LayoverSafetyEngine.ts` —
    lines 232 to 236, 189 to 208 and 232 to 281 — for a `computeWindow` that has
    since moved several hundred lines and no longer derives its own window. Rewritten against
-   `artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:870#freedomWindow: FreedomWindow | null`
+   `artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:1016#freedomWindow: FreedomWindow | null`
    and the call site in §18.2.
 4. **L215** says *"the fallback ladder emits nothing when it fires"*, pointing at
    lines 70 to 90 of `AirportProfileService.ts` and at line 127 of
@@ -4895,7 +4895,7 @@ the requirement."* It also left L37 with *"nothing consumes the value and no
 decision turns on it"*. An edge that moves when the band moves is a consumer.
 
 `ENVELOPE_UNCERTAINTY_BUDGET`
-(`artifacts/api-server/src/services/airport/LayoverEnvelope.ts:127#ENVELOPE_UNCERTAINTY_BUDGET`)
+(`artifacts/api-server/src/services/airport/LayoverEnvelope.ts:132#ENVELOPE_UNCERTAINTY_BUDGET`)
 holds back 0 / 10 / 25 / 100 % of the certified window at HIGH / MEDIUM / LOW /
 INSUFFICIENT, and `plannedRadiusMetres` is the edge cut from what is left. It is
 wired at the ONE construction site
