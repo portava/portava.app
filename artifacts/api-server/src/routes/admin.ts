@@ -58,6 +58,7 @@ import { revokeModerationTrustConsequences } from "../services/trust/TrustAdminS
 import { promoteLiveScope, withdrawLiveScope, liveScopeKey } from "../lib/intelLiveScopePromotion.js";
 import { isPromotedScopeActive } from "../lib/liveClaimRead.js";
 import { isFlagEnabled, getFlagRow } from "../lib/featureFlags.js";
+import { ACCEPTED_ENGINE_MODE_SPELLINGS } from "../lib/discoveryEngineMode.js";
 
 const router = Router();
 
@@ -868,7 +869,14 @@ const setFlagMetadataSchema = z.object({
  * edge turns a silent no-op into an error message.
  */
 const CONSTRAINED_FLAG_METADATA: Record<string, { key: string; allowed: readonly string[] }> = {
-  DISCOVERY_ENGINE_MODE: { key: "mode", allowed: ["legacy", "shadow", "pde"] as const },
+  // DERIVED, never re-typed. This list was the literal ["legacy","shadow","pde"]
+  // while `lib/discoveryEngineMode.ts` grew `compare` and `partial` — so two of
+  // the five states `01` §8 requires could be RESOLVED by the engine and never
+  // SELECTED by an operator through this route. It failed closed, so nothing was
+  // unsafe; it also meant a capability the shipping product could not reach,
+  // which is not a capability. Importing the resolver's own list is what stops
+  // the two drifting apart again.
+  DISCOVERY_ENGINE_MODE: { key: "mode", allowed: ACCEPTED_ENGINE_MODE_SPELLINGS },
 };
 
 router.patch("/admin/feature-flags/:flag/metadata", async (req, res) => {

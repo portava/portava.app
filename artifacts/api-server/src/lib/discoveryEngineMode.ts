@@ -133,6 +133,20 @@ const STATE_ALIASES = new Map<string, DiscoveryEngineState>([
   ["pde", "on"], ["on", "on"],
 ]);
 
+/**
+ * Every spelling `parseEngineState` accepts, as a plain array.
+ *
+ * Exported for ONE reason: `routes/admin.ts` validates the operator's
+ * `metadata.mode` against a list of its own, and until this export existed that
+ * list was the literal `["legacy", "shadow", "pde"]`. The resolver grew
+ * `compare` and `partial`; the admin route did not, so two of the five states
+ * `01` §8 requires could be resolved but never SELECTED through the product's
+ * own admin surface. A capability the shipping product cannot reach is not a
+ * capability, and a second hand-maintained copy of this list is how it happened.
+ * Deriving it here means the next state added is selectable the day it lands.
+ */
+export const ACCEPTED_ENGINE_MODE_SPELLINGS: readonly string[] = [...STATE_ALIASES.keys()];
+
 /** Which execution path each state dispatches. */
 export const ENGINE_STATE_PATH: Readonly<Record<DiscoveryEngineState, DiscoveryEngineMode>> = {
   off: "legacy", shadow: "shadow", compare: "shadow", partial: "pde", on: "pde",
