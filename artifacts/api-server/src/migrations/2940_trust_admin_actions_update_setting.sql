@@ -124,23 +124,63 @@ BEGIN
     RAISE EXCEPTION 'POSTCONDITION FAILED: the recreated CHECK lost one of the nine pre-existing action types: %', def;
   END IF;
 
-  -- NEGATIVE PROBE: the constraint must still REFUSE something. A CHECK that
-  -- admits everything is not a vocabulary, and a typo in the ARRAY above could
-  -- produce exactly that without any assertion above noticing.
+  -- BEHAVIOURAL PROBE, on a CONSTRAINT-ONLY COPY. The assertions above read the
+  -- constraint's TEXT; they cannot tell whether it still binds. A typo in the
+  -- ARRAY could leave a CHECK that admits everything, and `position(... IN def)`
+  -- would happily find all ten literals inside it.
+  --
+  -- THE FIRST VERSION OF THIS PROBE INSERTED INTO THE REAL TABLE with NULL
+  -- admin_id and target_user, and CI caught it: "the negative probe was refused
+  -- by something other than the CHECK (null value in column target_user ...
+  -- violates not-null constraint)". Postgres reached NOT NULL before the CHECK,
+  -- so the probe proved nothing and the `WHEN others` arm correctly refused the
+  -- migration rather than accept a refusal it had not asked for. Supplying real
+  -- ids is not an option either: both columns are foreign keys to
+  -- public.profiles, and a freshly built database has no profiles rows (the
+  -- 2921 probe on the same run logs exactly that).
+  --
+  -- So the probe runs against a TEMP table built `LIKE ... INCLUDING CONSTRAINTS`
+  -- — the CHECK as deployed, carried onto a copy that has no foreign keys to
+  -- satisfy. Nothing is written to the real table, on any database, ever.
+  CREATE TEMP TABLE probe_2940 (LIKE public.trust_admin_actions INCLUDING DEFAULTS INCLUDING CONSTRAINTS) ON COMMIT DROP;
+
+  -- NEGATIVE: a value outside the vocabulary must be REFUSED, and refused by
+  -- the CHECK specifically.
   BEGIN
-    INSERT INTO public.trust_admin_actions (admin_id, target_user, action_type, reason)
-    VALUES (NULL, NULL, 'not_a_real_action_type', '2940 negative probe');
+    INSERT INTO probe_2940 (admin_id, target_user, action_type, reason)
+    VALUES (gen_random_uuid(), gen_random_uuid(), 'not_a_real_action_type', '2940 negative probe');
     probe_ok := false;
   EXCEPTION WHEN check_violation THEN
     probe_ok := true;
   WHEN others THEN
-    -- A NOT NULL or FK refusal also proves nothing was inserted, but it does
-    -- NOT prove the CHECK is intact, so it is not accepted as a pass.
     RAISE EXCEPTION 'POSTCONDITION FAILED: the negative probe was refused by something other than the CHECK (%), so this migration did not establish that the vocabulary still binds.', SQLERRM;
   END;
   IF NOT probe_ok THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED: trust_admin_actions accepted an action_type outside the vocabulary — the CHECK admits everything.';
+    RAISE EXCEPTION 'POSTCONDITION FAILED: the vocabulary admits an action_type outside the ten — the CHECK admits everything.';
   END IF;
+
+  -- POSITIVE: and it must still ACCEPT the new literal. Without this half a
+  -- constraint that refused EVERYTHING would pass the negative probe, and the
+  -- first settings edit after deploy would write no audit row at all — the
+  -- precise failure this migration exists to prevent, arriving through the
+  -- migration meant to prevent it.
+  BEGIN
+    INSERT INTO probe_2940 (admin_id, target_user, action_type, reason)
+    VALUES (gen_random_uuid(), gen_random_uuid(), 'update_setting', '2940 positive probe');
+    probe_ok := true;
+  EXCEPTION WHEN others THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED: the recreated CHECK REFUSES update_setting (%) — the code that writes it would leave no audit row.', SQLERRM;
+  END;
+
+  -- ...and one of the nine, so the widening did not narrow in practice either.
+  BEGIN
+    INSERT INTO probe_2940 (admin_id, target_user, action_type, reason)
+    VALUES (gen_random_uuid(), gen_random_uuid(), 'score_override', '2940 incumbent probe');
+  EXCEPTION WHEN others THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED: the recreated CHECK REFUSES score_override (%) — an existing writer would silently stop being audited.', SQLERRM;
+  END;
+
+  DROP TABLE probe_2940;
 END $$;
 
 COMMIT;
