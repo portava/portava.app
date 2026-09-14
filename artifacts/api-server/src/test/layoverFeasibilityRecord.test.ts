@@ -406,6 +406,11 @@ describe("routes consult the certified record and nothing else", () => {
     "/airport/sessions/:id/safety",
     "/airport/sessions/:id/return-deadline",
     "/airport/sessions/:id/return-now",
+    // §15.2's disruption input (POST). It certifies ONCE, for the pre-disruption
+    // baseline it reports and for the state-only reports that move no schedule;
+    // the post-disruption record comes from `recomputeForDisruption`, which
+    // certifies inside the service, not here.
+    "/airport/sessions/:id/disruption",
     "/airport/sessions/:id/overview",
     "/airport/sessions/:id/stops",
   ];

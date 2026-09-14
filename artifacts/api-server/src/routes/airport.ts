@@ -131,7 +131,27 @@ import {
 } from "../services/airport/LayoverPrivacyGuard.js";
 // abortToAirport ships now that 2741 is APPLIED TO PRODUCTION (20260908133347),
 // which is what makes its 'safe_return_aborted' ledger insert legal.
-import { safeReturnPosture, abortToAirport } from "../services/airport/LayoverSafeReturnService.js";
+import {
+  safeReturnPosture,
+  abortToAirport,
+  nextDisruptionState,
+  recomputeForDisruption,
+  type DisruptionEvent,
+  type DisruptionState,
+} from "../services/airport/LayoverSafeReturnService.js";
+// §15.2's state machine had no memory. `handleEvent` reads the prior state from
+// `ctx.disruptionStates` (LayoverEventReplanner.ts:884) and nothing has ever
+// populated it, so every request restarted at CONNECTION and the first window
+// edit after a cancellation published `disruptionState: "DELAYED"` — the API
+// telling a traveller whose flight is cancelled that it is merely late. The
+// decision ledger is the memory; these four are the read, the write, the
+// window-edit correction and the honest recovery posture.
+import {
+  readDisruptionState,
+  recordDisruptionState,
+  disruptionAfterWindowEdit,
+  recoveryPosture,
+} from "../services/airport/layoverSafeReturnDisruption.js";
 import {
   layoverBuddyDecision,
   filterLayoverCompatible,
@@ -389,6 +409,39 @@ const compassSchema = z.object({
 const returnDeadlineSchema = z.object({
   minutesBefore: z.number().int().min(5).max(120).optional().default(30),
 });
+
+/**
+ * §15.2 disruption input.
+ *
+ * `delayMinutes` is the TOTAL delay against the original schedule, not the slip
+ * since the last report — that is what `nextDisruptionState` reads, and a
+ * client sending increments would silently escalate a 90-minute delay into a
+ * SEVERE_DELAY on its second report. When the caller sends a new departure and
+ * no `delayMinutes`, the server derives the total itself from the ledger
+ * baseline, which is the shape that cannot be got wrong from outside.
+ *
+ * The new departure is accepted as an airport-local wall time as well as a UTC
+ * instant, because everything else on this surface is (`*Local` on POST/PATCH)
+ * and a traveller reading a departure board is reading local time.
+ */
+const disruptionSchema = z
+  .object({
+    kind: z.enum(["delay", "cancellation", "rebooking_offered", "rebooking_confirmed", "on_time"]),
+    delayMinutes: z.number().int().min(0).max(72 * 60).optional(),
+    newDepartureTime: z.string().datetime().optional(),
+    newDepartureLocal: z.string().min(1).max(40).optional(),
+    newBoardingTime: z.string().datetime().nullish(),
+    newBoardingLocal: z.string().min(1).max(40).optional(),
+  })
+  .refine((v) => !(v.newDepartureTime && v.newDepartureLocal), {
+    message: "Send newDepartureTime or newDepartureLocal, not both",
+  })
+  .refine((v) => !(v.newBoardingTime && v.newBoardingLocal), {
+    message: "Send newBoardingTime or newBoardingLocal, not both",
+  })
+  .refine((v) => v.kind !== "delay" || v.delayMinutes !== undefined || v.newDepartureTime !== undefined || v.newDepartureLocal !== undefined, {
+    message: "A delay needs delayMinutes (total against the original schedule) or a new departure time",
+  });
 
 const telegraphLayoverSchema = z.object({
   message: z.string().min(1).max(600),
@@ -841,8 +894,61 @@ async function replanAfterSessionEdit(args: {
     nowMs: Date.now(),
   });
   if (!result.ran) return { ran: false, reason: result.reason, detail: result.detail };
+
+  // ── §15.2 continuity ───────────────────────────────────────────────────────
+  // `replanForWindowChange` cannot see prior state: `handleEvent` reads it from
+  // `ctx.disruptionStates` and nothing populates that map, so `publication.
+  // disruptionState` is ALWAYS a transition out of CONNECTION. For a session
+  // already in the cancellation chain that publishes "DELAYED" — the delay
+  // chain re-entered from the cancellation chain, which `nextDisruptionState`
+  // exists to forbid. Correct it here, from the ledger, or refuse to publish
+  // it at all: an unreadable history is not a CONNECTION.
+  const prior = await readDisruptionState(args.sc, args.after.id, args.userId);
+  let disruptionCorrection: Record<string, unknown>;
+  if (!prior.ok) {
+    logger.warn(
+      { sessionId: args.after.id },
+      "disruption ledger unreadable during replan — publishing no state rather than CONNECTION",
+    );
+    (result.publication as any).disruptionState = null;
+    disruptionCorrection = {
+      disruptionState: null,
+      disruptionStateUnavailableReason: "ledger_unreadable",
+    };
+  } else {
+    const carried = disruptionAfterWindowEdit({
+      prior: prior.state,
+      baselineDepartureTime: prior.baselineDepartureTime,
+      beforeDepartureTime: args.before.departureTime,
+      afterDepartureTime: args.after.departureTime,
+    });
+    (result.publication as any).disruptionState = carried.state;
+    disruptionCorrection = {
+      disruptionState: carried.state,
+      disruptionPreviousState: prior.state,
+      disruptionPreviousStateSource: prior.source,
+      disruptionTotalDelayMinutes: carried.delayMinutes,
+      disruptionBaselineDepartureTime: carried.baselineDepartureTime,
+    };
+    // ── WHAT THIS PATH DELIBERATELY DOES NOT DO ──────────────────────────────
+    // It does not RECORD the transition. A window edit is not a disruption
+    // report, and writing a second `session_updated` row here would make this
+    // route's ledger output depend on whether a replan ran —
+    // `src/test/layoverSessionEditReplan.test.ts:262` pins that row count for
+    // exactly that reason. The consequence is stated rather than hidden: with
+    // no `/disruption` report ever made there is no stored baseline, so
+    // successive edits each measure their delay from the PRE-EDIT departure and
+    // two 90-minute slips read as DELAYED twice instead of escalating to
+    // SEVERE_DELAY. Carrying a baseline across edits needs either
+    // `layover_sessions.original_departure_time TIMESTAMPTZ` or a
+    // `'disruption_recorded'` value added to the `layover_events.event_type`
+    // CHECK — both migrations, and neither is this lane's to write.
+    disruptionCorrection.disruptionStateRecorded = false;
+    disruptionCorrection.disruptionStateNotRecordedReason = "no_disruption_state_storage";
+  }
+
   await recordReplanDecision(args.sc, args.userId, result.publication, result.decision);
-  return { ran: true, ...result.publication };
+  return { ran: true, ...result.publication, ...disruptionCorrection };
 }
 
 // ── GET /api/airport/sessions/:id/recommendations ────────────────────────────
@@ -1221,6 +1327,221 @@ router.post("/airport/sessions/:id/return-now", async (req, res) => {
       ? "enabled"
       : flagOn ? "flag_on_readers_not_widened" : "flag_off",
   });
+});
+
+// ── POST /api/airport/sessions/:id/disruption ────────────────────────────────
+
+/**
+ * §15.2 — the disruption input the state machine never had.
+ *
+ * `DISRUPTION_STATES`, `nextDisruptionState` and `recomputeForDisruption` were
+ * built, swept and tested, and nothing outside `src/test/` could reach them
+ * with a real disruption. This is that caller. As with §11's replanner, the
+ * only event producer this tree has is the traveller — there is no flight feed
+ * — and saying so on the wire (`source: "traveller"`) is the difference
+ * between an honest input and a claim of detection.
+ *
+ * Three properties this handler has that the pre-existing window-edit path
+ * does not:
+ *
+ *  1. **It remembers.** The prior state comes from the ledger, and a ledger
+ *     that cannot be READ is a 503, not a CONNECTION. Defaulting on an outage
+ *     is how a cancelled flight becomes a delayed one.
+ *  2. **It recomputes, it does not append.** A moved departure goes through
+ *     `recomputeForDisruption`, a full re-certification, and the response
+ *     carries `recomputedNotAppended` — the §15.2 requirement as a fact about
+ *     THIS request rather than a property of a function nobody called.
+ *  3. **It does not record a schedule it failed to save.** The session write
+ *     happens first; if it fails, no transition is recorded, because a ledger
+ *     entry naming a departure the table never took is worse than no entry.
+ */
+router.post("/airport/sessions/:id/disruption", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+  if (!await isFlagEnabled(sc, "airport_mode_enabled")) {
+    sendError(res, "feature_disabled"); return;
+  }
+
+  const parsed = disruptionSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
+    return;
+  }
+  const body = parsed.data;
+
+  const session = await ownedSessionOr(res, sc, req.params.id, user.id);
+  if (!session) return;
+  if (session.status !== "active" && session.status !== "returning") {
+    sendError(res, "invalid_payload", `This layover is already ${session.status}.`);
+    return;
+  }
+
+  const airport = await airportOr503(sc, res, session);
+  if (!airport) return;
+
+  // (1) The memory. A failed read is refused, never defaulted.
+  const prior = await readDisruptionState(sc, session.id, user.id);
+  if (!prior.ok) {
+    sendError(
+      res, "degraded_unavailable",
+      "We could not read this layover's disruption history, so we will not guess at it. Please try again.",
+    );
+    return;
+  }
+
+  // The new departure, if one was sent. Local wall times need a real timezone;
+  // a session on a fallback profile has none, and converting against UTC would
+  // move the traveller's flight by hours without telling them.
+  let newDepartureIso: string | null = body.newDepartureTime ?? null;
+  let newBoardingIso: string | null | undefined =
+    body.newBoardingTime === undefined ? undefined : body.newBoardingTime;
+  if (body.newDepartureLocal || body.newBoardingLocal) {
+    if (airport.iataCode === "UNK") {
+      sendError(res, "invalid_payload", "This session has no resolved airport — send UTC instants, not local wall times");
+      return;
+    }
+    if (body.newDepartureLocal) {
+      const d = wallTimeToUtc(airport.timezone, body.newDepartureLocal);
+      if (!d) { sendError(res, "invalid_payload", "newDepartureLocal is not a valid local time"); return; }
+      newDepartureIso = d.toISOString();
+    }
+    if (body.newBoardingLocal) {
+      const d = wallTimeToUtc(airport.timezone, body.newBoardingLocal);
+      if (!d) { sendError(res, "invalid_payload", "newBoardingLocal is not a valid local time"); return; }
+      newBoardingIso = d.toISOString();
+    }
+  }
+
+  const nowMs = Date.now();
+  const baseline = prior.baselineDepartureTime ?? session.departureTime;
+
+  if (newDepartureIso !== null) {
+    // The same whole-window validation the PATCH edit applies. A disruption is
+    // not a licence to store a departure before arrival.
+    const arrivalMs = new Date(session.arrivalTime).getTime();
+    const departureMs = new Date(newDepartureIso).getTime();
+    if (!Number.isFinite(departureMs)) { sendError(res, "invalid_payload", "The new departure time is not a valid instant"); return; }
+    if (departureMs <= arrivalMs) { sendError(res, "invalid_payload", "Departure must be after arrival"); return; }
+    if (departureMs <= nowMs) { sendError(res, "invalid_payload", "This layover has already departed — set a departure time in the future"); return; }
+    if (departureMs - arrivalMs > 48 * 3_600_000) { sendError(res, "invalid_payload", "A layover window cannot exceed 48 hours"); return; }
+    const boardingIso = newBoardingIso === undefined ? session.boardingTime : newBoardingIso;
+    if (boardingIso) {
+      const boardingMs = new Date(boardingIso).getTime();
+      if (!Number.isFinite(boardingMs) || boardingMs <= arrivalMs || boardingMs > departureMs) {
+        sendError(res, "invalid_payload", "Boarding time must fall between arrival and departure"); return;
+      }
+    }
+  }
+
+  // The event. `delayMinutes` is a TOTAL against the baseline; when the caller
+  // sent a departure instead of a number, the server derives that total rather
+  // than trusting a client to subtract two timestamps consistently.
+  const derivedDelay =
+    newDepartureIso !== null
+      ? Math.round((new Date(newDepartureIso).getTime() - new Date(baseline).getTime()) / 60_000)
+      : null;
+  const event: DisruptionEvent =
+    body.kind === "delay"
+      ? { kind: "delay", delayMinutes: body.delayMinutes ?? derivedDelay ?? 0 }
+      : { kind: body.kind };
+
+  const state: DisruptionState = nextDisruptionState(prior.state, event);
+
+  // (2) Recompute, do not append.
+  let recompute: ReturnType<typeof recomputeForDisruption> | null = null;
+  let record = certifySessionFeasibility(airport, session, { nowMs });
+
+  if (newDepartureIso !== null) {
+    recompute = recomputeForDisruption(airport, session, {
+      state,
+      newDepartureTime: newDepartureIso,
+      newBoardingTime: newBoardingIso === undefined ? undefined : newBoardingIso,
+      nowMs,
+    });
+    record = recompute.after;
+
+    // (3) Persist the schedule BEFORE recording the transition.
+    const edited = await updateSession(sc, session.id, user.id, {
+      departureTime: newDepartureIso,
+      ...(newBoardingIso === undefined ? {} : { boardingTime: newBoardingIso }),
+    });
+    if (!edited.ok) {
+      sendError(res, "degraded_unavailable", "Your new flight time could not be saved. Please try again.");
+      return;
+    }
+    if (!edited.session) {
+      sendError(res, "not_found", "Session not found or already closed");
+      return;
+    }
+  }
+
+  const written = await recordDisruptionState(sc, {
+    sessionId: session.id,
+    userId: user.id,
+    previousState: prior.state,
+    state,
+    event,
+    baselineDepartureTime: baseline,
+    departureTime: newDepartureIso,
+    nowMs,
+    certification: certificationHeader(record),
+  });
+
+  const disruption = {
+    source: "traveller" as const,
+    previousState: prior.state,
+    previousStateSource: prior.source,
+    state,
+    event,
+    baselineDepartureTime: baseline,
+    stateRecorded: written.ok,
+  };
+
+  const payload = {
+    disruption,
+    recompute: recompute
+      ? {
+          scheduleDeltaMinutes: recompute.scheduleDeltaMinutes,
+          usableMinutesDelta: recompute.usableMinutesDelta,
+          recomputedNotAppended: recompute.recomputedNotAppended,
+          returnStateChanged: recompute.returnStateChanged,
+          before: {
+            usableMinutes: recompute.before.envelope.usableMinutes,
+            returnState: recompute.before.envelope.returnState,
+            hardReturnTime: recompute.before.deadline.hardReturnTime.toISOString(),
+          },
+          after: {
+            usableMinutes: recompute.after.envelope.usableMinutes,
+            returnState: recompute.after.envelope.returnState,
+            hardReturnTime: recompute.after.deadline.hardReturnTime.toISOString(),
+            hardReturnLocal: formatLocalTime(airport.timezone, recompute.after.deadline.hardReturnTime),
+          },
+        }
+      : null,
+    recovery: recoveryPosture(state),
+    safeReturn: safeReturnPosture(record),
+    certification: certificationHeader(record),
+  };
+
+  if (!written.ok) {
+    // The transition happened; the memory of it did not. Saying `ok: true` here
+    // would make the next request's stale read look like a server bug rather
+    // than the consequence it is.
+    req.log?.error?.({ sessionId: session.id, state }, "disruption transition not recorded");
+    res.status(500).json({
+      ok: false,
+      error: "db_error",
+      message: "We applied this change but could not record it. Check your flight status again in a moment.",
+      ...payload,
+    });
+    return;
+  }
+
+  res.json({ ok: true, ...payload });
 });
 
 // ── POST /api/airport/sessions/:id/return-deadline ───────────────────────────
