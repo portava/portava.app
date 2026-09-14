@@ -126,6 +126,21 @@ export {
   type InputTelemetryEvent,
   type TelemetrySink,
 } from './services/inputTelemetry.ts';
+// §44 TRANSPORT. The batcher is pure and node-testable; the transport is the
+// fetch/token wiring. NEITHER is installed by default — starting background
+// network traffic is an application decision, and the file that makes it
+// (app/_layout.tsx) is outside this layer. One line at bootstrap attaches it:
+//   setTelemetrySink(installInputTelemetryTransport().sink)
+// Until then the §44 events are still produced and dropped (census G263).
+export {
+  createTelemetryBatcher,
+  newTelemetrySessionId,
+  type TelemetryBatch,
+  type TelemetryBatcher,
+  type TelemetryPoster,
+  type WireTelemetryEvent,
+} from './services/telemetryBatcher.ts';
+export { installInputTelemetryTransport } from './services/telemetryTransport.ts';
 
 // ── components ───────────────────────────────────────────────────────────────
 export { SmartInput, type SmartInputProps } from './components/SmartInput.tsx';

@@ -65,6 +65,16 @@ export interface UseInputAssistanceResult {
   unavailable: boolean;
   /** The resolved policy (null when the field is unregistered + no fallback). */
   policy: InputFieldPolicy | null;
+  /**
+   * §44 — the `requestId` of the serve that produced `suggestions`, or null
+   * when nothing has been served yet (zero-character state, local tier only,
+   * or a failed request).
+   *
+   * Census G355: "`requestId` is generated per request and no event carries it
+   * back, so an impression still cannot be joined to the selection that
+   * followed it." Returning it is the hook's half of closing that.
+   */
+  requestId: string | null;
 }
 
 export function useInputAssistance(
@@ -80,6 +90,12 @@ export function useInputAssistance(
   const [suggestions, setSuggestions] = useState<InputSuggestion[]>([]);
   const [loading, setLoading] = useState(false);
   const [unavailable, setUnavailable] = useState(false);
+  // §44 ACTION/RESULT LINKAGE (census G355). The suggest response has always
+  // carried a `requestId` and this hook has always thrown it away, so an
+  // impression could never be joined to the selection that followed it. It is
+  // now state: SmartInput puts it on the field's TelemetryField and every event
+  // the field emits names the serve it belongs to.
+  const [requestId, setRequestId] = useState<string | null>(null);
 
   // Per-instance sequence guard + abort controller + debounce timer.
   const guardRef = useRef(createSequenceGuard());
@@ -198,6 +214,7 @@ export function useInputAssistance(
       abortRef.current = ctrl;
 
       emitInputEvent('suggestion_request_started', fieldId, policy.context, undefined, policy.telemetryPolicy);
+      const sentAt = Date.now();
 
       void requestSuggestions(
         {
@@ -223,7 +240,20 @@ export function useInputAssistance(
           setSuggestions(finalized);
           setUnavailable(false);
           setLoading(false);
-          emitInputEvent('suggestion_request_completed', fieldId, policy.context, { count: finalized.length }, policy.telemetryPolicy);
+          setRequestId(res.requestId || null);
+          // §57 P95 suggestion latency. `clientMs` is the round trip this
+          // device saw; `serverMs` is what the serve itself cost. Both, because
+          // the difference between them is the network, and neither side can
+          // measure that alone. `serverMs` is omitted rather than zeroed when
+          // the deployment does not send it — see services/inputAssistance.ts.
+          emitInputEvent(
+            'suggestion_request_completed',
+            fieldId,
+            policy.context,
+            { count: finalized.length, clientMs: Date.now() - sentAt, serverMs: res.serverMs },
+            policy.telemetryPolicy,
+            res.requestId || null,
+          );
         } else if (res.aborted) {
           // Newer request in flight — do nothing (never flash empty).
         } else if (res.unavailable) {
@@ -257,5 +287,5 @@ export function useInputAssistance(
   // Abort any in-flight request on unmount.
   useEffect(() => () => { abortRef.current?.abort(); }, []);
 
-  return { suggestions, loading, unavailable, policy };
+  return { suggestions, loading, unavailable, policy, requestId };
 }

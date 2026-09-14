@@ -131,7 +131,7 @@ export const SmartInput = forwardRef<TextInput, SmartInputProps>(function SmartI
   const shownRef = useRef<{ signature: string; count: number } | null>(null);
   const acceptedRef = useRef(false);
 
-  const { suggestions, loading, unavailable, policy } = useInputAssistance({
+  const { suggestions, loading, unavailable, policy, requestId } = useInputAssistance({
     fieldId,
     text: value,
     context,
@@ -139,9 +139,15 @@ export const SmartInput = forwardRef<TextInput, SmartInputProps>(function SmartI
     enabled: assist && focused,
   });
 
+  // `requestId` is part of the identity of what the user is looking at: every
+  // event this field emits names the SERVE that produced the rows in front of
+  // them (§44 action/result linkage, census G355). It is in the dependency list
+  // deliberately — a new serve must produce a new TelemetryField, or an
+  // impression and the selection that followed it would be attributed to
+  // different requests.
   const telemetryField: TelemetryField | null = useMemo(
-    () => (policy ? { fieldId, context: policy.context, policy: policy.telemetryPolicy } : null),
-    [fieldId, policy],
+    () => (policy ? { fieldId, context: policy.context, policy: policy.telemetryPolicy, requestId } : null),
+    [fieldId, policy, requestId],
   );
 
   const assistEnabled = assist && !!policy && policy.mode !== 'no_assistance';
@@ -188,6 +194,7 @@ export const SmartInput = forwardRef<TextInput, SmartInputProps>(function SmartI
           policy.context,
           { suggestionType: s.type, source: s.source },
           policy.telemetryPolicy,
+          requestId,
         );
       }
       // §44 — the per-KIND acceptance events, each declared and never emitted.
@@ -230,7 +237,7 @@ export const SmartInput = forwardRef<TextInput, SmartInputProps>(function SmartI
       recordSuggestionSelection(s, { policy, query: value });
       setActiveIndex(-1);
     },
-    [fieldId, policy, telemetryField, onSelectSuggestion, onChangeText, value],
+    [fieldId, policy, telemetryField, onSelectSuggestion, onChangeText, value, requestId],
   );
 
   const handleKeyPress = useCallback(
@@ -281,7 +288,7 @@ export const SmartInput = forwardRef<TextInput, SmartInputProps>(function SmartI
         autoCapitalize={textInputProps.autoCapitalize ?? 'none'}
         onFocus={(e) => {
           setFocused(true);
-          if (policy) emitInputEvent('input_opened', fieldId, policy.context, undefined, policy.telemetryPolicy);
+          if (policy) emitInputEvent('input_opened', fieldId, policy.context, undefined, policy.telemetryPolicy, requestId);
           onFocus?.(e);
         }}
         onBlur={(e) => {

@@ -24,6 +24,21 @@ export interface InputTelemetryEvent {
   /** Milliseconds since epoch. */
   at: number;
   /**
+   * §44 ACTION/RESULT LINKAGE — the `requestId` of the serve whose suggestions
+   * were in front of the user when this happened.
+   *
+   * Census G355 grades this half of §44 as not built: "`requestId` is generated
+   * per request and no event carries it back, so an impression still cannot be
+   * joined to the selection that followed it." The id has always travelled on
+   * the suggest RESPONSE (`SuggestResponse.requestId`) and been thrown away by
+   * the hook. It now reaches the field's `TelemetryField` and rides every event
+   * the field emits, so an impression, a dismissal and a selection that all
+   * name the same serve are joinable in the serve log.
+   *
+   * Null for an event emitted before any serve (e.g. `input_opened`).
+   */
+  requestId?: string | null;
+  /**
    * Non-sensitive metadata only. Raw text is stripped upstream when the field's
    * policy forbids it; prefer counts, lengths, suggestion types, latency.
    */
@@ -81,10 +96,18 @@ export function emitInputEvent(
   context: InputContext,
   props?: InputTelemetryEvent['props'],
   policy?: InputTelemetryPolicy,
+  requestId?: string | null,
 ): void {
   try {
     if (!isEventAllowed(name, policy)) return;
-    sink({ name, fieldId, context, at: Date.now(), props: scrubProps(props, policy) });
+    sink({
+      name,
+      fieldId,
+      context,
+      at: Date.now(),
+      requestId: requestId ?? null,
+      props: scrubProps(props, policy),
+    });
   } catch {
     // best-effort — a telemetry failure must never surface to the user
   }
@@ -107,12 +130,17 @@ export function emitInputEvent(
 // for one event is decided in ONE place and cannot drift between callers, and
 // (b) a test can assert the funnel by name instead of by string literal.
 //
-// WHAT THEY STILL DO NOT DO. The default sink is a no-op and this module ships
-// no transport. Emission is not measurement: until `setTelemetrySink` is called
-// with something that leaves the device, these events are produced and dropped.
-// That gap is deliberate and is recorded as such in the census — inventing a
-// transport here would be worse, because the only honest destination is a server
-// endpoint that does not exist yet.
+// WHAT THEY STILL DO NOT DO, RESTATED NOW THAT HALF OF IT IS FIXED. This module
+// is still PURE and still ships no transport of its own, and the default sink is
+// still a no-op — but the destination the census said did not exist now does:
+// `POST /api/input-assistance/telemetry`, with `telemetryBatcher.ts` /
+// `telemetryTransport.ts` on this side of the wire.
+//
+// What remains is ONE LINE, and it is not in this layer: nothing calls
+// `setTelemetrySink(installInputTelemetryTransport())` at app bootstrap
+// (travel-buddy-standalone/app/_layout.tsx). Until something does, these events
+// are still produced and dropped, and census G263 is still correctly W. Saying
+// so here is the difference between a narrowed gap and a closed one.
 
 import type { InputSuggestion } from '../types/inputSuggestion.ts';
 
@@ -121,6 +149,12 @@ export interface TelemetryField {
   fieldId: string;
   context: InputContext;
   policy?: InputTelemetryPolicy;
+  /**
+   * The serve that produced what is currently in front of the user (§44
+   * action/result linkage, census G355). Supplied by `SmartInput` from the
+   * hook's `requestId`; every helper below passes it through.
+   */
+  requestId?: string | null;
 }
 
 /**
@@ -140,6 +174,7 @@ export function emitSuggestionsRendered(f: TelemetryField, suggestions: readonly
     f.context,
     { count: suggestions.length, types },
     f.policy,
+    f.requestId,
   );
 }
 
@@ -150,7 +185,7 @@ export function emitSuggestionsRendered(f: TelemetryField, suggestions: readonly
  * a user who ignored a warning from one who never got it.
  */
 export function emitValidationShown(f: TelemetryField, count: number): void {
-  emitInputEvent('validation_shown', f.fieldId, f.context, { count }, f.policy);
+  emitInputEvent('validation_shown', f.fieldId, f.context, { count }, f.policy, f.requestId);
 }
 
 /**
@@ -162,7 +197,7 @@ export function emitValidationShown(f: TelemetryField, count: number): void {
  * Escape, or the field emptying. `shownCount` is what the user passed over.
  */
 export function emitSuggestionsDismissed(f: TelemetryField, shownCount: number, reason: string): void {
-  emitInputEvent('suggestion_dismissed', f.fieldId, f.context, { shownCount, reason }, f.policy);
+  emitInputEvent('suggestion_dismissed', f.fieldId, f.context, { shownCount, reason }, f.policy, f.requestId);
 }
 
 /**
@@ -174,12 +209,12 @@ export function emitSuggestionsDismissed(f: TelemetryField, shownCount: number, 
  * a caption or a private message, where the raw value may never be captured.
  */
 export function emitManualValueKept(f: TelemetryField, length: number): void {
-  emitInputEvent('manual_value_kept', f.fieldId, f.context, { length }, f.policy);
+  emitInputEvent('manual_value_kept', f.fieldId, f.context, { length }, f.policy, f.requestId);
 }
 
 /** §44 `raw_search_submitted` — the user submitted their query instead of resolving it. */
 export function emitRawSearchSubmitted(f: TelemetryField, length: number, viaSuggestion: boolean): void {
-  emitInputEvent('raw_search_submitted', f.fieldId, f.context, { length, viaSuggestion }, f.policy);
+  emitInputEvent('raw_search_submitted', f.fieldId, f.context, { length, viaSuggestion }, f.policy, f.requestId);
 }
 
 /** §44 `correction_accepted` — a §10 spelling correction row was taken. */
@@ -190,6 +225,7 @@ export function emitCorrectionAccepted(f: TelemetryField, s: InputSuggestion): v
     f.context,
     { confidence: s.confidence ?? null, source: s.source },
     f.policy,
+    f.requestId,
   );
 }
 
@@ -201,6 +237,7 @@ export function emitDisambiguationSelected(f: TelemetryField, s: InputSuggestion
     f.context,
     { entityType: s.entityType ?? null, confidence: s.confidence ?? null },
     f.policy,
+    f.requestId,
   );
 }
 
@@ -214,7 +251,7 @@ export function emitDisambiguationSelected(f: TelemetryField, s: InputSuggestion
  * abandoned picker look like a success.
  */
 export function emitActionCompleted(f: TelemetryField, actionType: string, ok: boolean): void {
-  emitInputEvent('action_completed', f.fieldId, f.context, { actionType, ok }, f.policy);
+  emitInputEvent('action_completed', f.fieldId, f.context, { actionType, ok }, f.policy, f.requestId);
 }
 
 /**
@@ -227,5 +264,5 @@ export function emitActionCompleted(f: TelemetryField, actionType: string, ok: b
  * and the census records that honestly rather than pretending a proxy for it.
  */
 export function emitDownstreamTaskCompleted(f: TelemetryField, task: string, ok: boolean): void {
-  emitInputEvent('downstream_task_completed', f.fieldId, f.context, { task, ok }, f.policy);
+  emitInputEvent('downstream_task_completed', f.fieldId, f.context, { task, ok }, f.policy, f.requestId);
 }
