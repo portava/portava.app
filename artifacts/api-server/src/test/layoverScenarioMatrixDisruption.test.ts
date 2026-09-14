@@ -291,14 +291,19 @@ describe("§21.1 L231 — a cancellation transitions to disruption", () => {
     assert.equal(next.session.arrivalTime, s.arrivalTime);
     // The DISRUPTION carries the fact instead.
     assert.deepEqual(disruptionEventFor(e), { kind: "cancellation" });
-    const state = disruptionAfter("none", e);
-    assert.notEqual(state, "none");
+    // "CONNECTION" is the real starting state — `LayoverEventReplanner.ts:884`
+    // reads `ctx.disruptionStates?.[id] ?? "CONNECTION"`. The literal "none"
+    // this used to pass is not a member of `DisruptionState`, so the compiler
+    // rejected it and the two assertions around it were comparing against a
+    // state production can never be in.
+    const state = disruptionAfter("CONNECTION", e);
+    assert.notEqual(state, "CONNECTION");
   });
 
   it("POSITIVE CONTROL: a security event is NOT a disruption", () => {
     const e = event("airport.security_wait_changed", { waitMinutes: 60 });
     assert.equal(disruptionEventFor(e), null);
-    assert.equal(disruptionAfter("none", e), "none");
+    assert.equal(disruptionAfter("CONNECTION", e), "CONNECTION");
   });
 
   it("a departure delay is a disruption of a different kind, carrying its minutes", () => {

@@ -218,7 +218,7 @@ describe("§20 L207 — rulesApplied is DERIVED from the record", () => {
     // 1. Every session has a non-zero exit delay — `estimateExitDelay` returns
     //    15 at its smallest — so "the exit delay rule fired" distinguishes
     //    nothing.
-    for (const r of [record(2), record(6, INTL), record(20, INTL, { checkedBags: true })]) {
+    for (const r of [record(2), record(6, INTL), record(20, { ...INTL, checkedBags: true })]) {
       assert.ok(r.envelope.exitDelayMin >= 15);
     }
     // 2. The certified confidence is LOW for every input this tree can build,

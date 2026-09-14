@@ -242,10 +242,16 @@ describe("§22 L243 — the gate is NOT wired, recorded as a live divergence", (
     // is census L243. The day `LayoverRecommendationService` consults the gate,
     // this assertion goes red and must be rewritten as agreement — which is the
     // point of pinning it rather than describing it.
+    // Captured BEFORE the assertion below, on purpose. `assert.equal` narrows
+    // `generic.verdict` to the literal "yes", after which `verdict !== "no"` is
+    // a comparison the COMPILER has already decided (TS2367) rather than one
+    // this test makes — and the disagreement it is pinning would stop being
+    // observable in the type. Reading it first keeps the comparison real.
+    const engineAllowsLandside: boolean = generic.verdict !== "no";
     assert.equal(generic.verdict, "yes");
     assert.notEqual(
       featureAllowedAt("landside_recommendations", level),
-      generic.verdict !== "no",
+      engineAllowsLandside,
       "the maturity gate and the engine now AGREE — L243 may be closable; re-score it",
     );
   });
