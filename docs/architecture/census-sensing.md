@@ -2599,7 +2599,7 @@ respect. Only chips that are crowd preferences become one
 (`:127#LAYOVER_INTENT_BY_CHIP`): `food`, `shopping` and `culture` say what a
 traveller wants to do, not how crowded they want it, and map to nothing.
 
-The wiring is `services/airport/LayoverRecommendationService.ts:79#readLayoverLive`
+The wiring is `services/airport/LayoverRecommendationService.ts:89#readLayoverLive`
 (flag `:42#LAYOVER_LIVE_INTERSECTION_FLAG`, gates, one read per bridged
 candidate), called before the assessment loop (`:456#readLayoverLive`), which
 filters the drops and orders the rest (`:466`) and hands `assess` the adjusted
