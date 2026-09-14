@@ -102,7 +102,7 @@ export const MAX_ABSENT_SYMBOLS = 0;
 /** Measured 2026-09-14. CEILING — may only fall. Contains a known false-positive
  *  class (collection cited, member pointed at), which is why it is a ceiling and
  *  not a gate, and why it is not called a defect count. */
-export const MAX_MISPLACED_SYMBOLS = 60;
+export const MAX_MISPLACED_SYMBOLS = 46;
 
 /** How far from the cited line the symbol may be and still count as "there". */
 const WINDOW = 2;

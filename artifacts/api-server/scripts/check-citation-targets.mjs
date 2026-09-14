@@ -134,8 +134,22 @@ import {
  *
  * 226 of the 276 sat in this lane's files and many of the rest are still
  * repairable; they were left because a pointer repair is only honest once someone
- * has read the claim, and nineteen is what this pass actually read. */
-export const MAX_DEAD_TARGETS = 257;
+ * has read the claim, and nineteen is what this pass actually read.
+ *
+ * LOWERED AGAIN 2026-09-14, 257 -> 255, by the Telegraph integration. The
+ * membership-honesty and read-marker changes shifted `routes/messaging.ts` by up
+ * to +150 lines and pushed five unanchored citations onto `}` or a blank line.
+ * All five were repaired by reading the claim, not by the offset:
+ *   T34/T164's `:615` -> `:889#router.post('/message-requests/:requestId/accept'`
+ *     — both rows assert the ACCEPT_REQUEST route, so both name the route itself.
+ *   T77's `:1213` -> `:1742#.update({ last_read_at: threshold })` — the row says
+ *     "the competing WRITER takes no lock", so it must cite the update, not a select.
+ *   §14.1's `:1213` -> `:2146#const lastReadAt` — the same old line, a DIFFERENT
+ *     claim ("read by exactly one consumer — the caller's own unread count"), so
+ *     the same repair would have been wrong here. Same trap as `:1841` above.
+ *   CTG-03's `:3918` -> `:4068#await invalidateCompassCache(..., "message_report")`.
+ * Each gained an `#anchor`, so doc-citations owns them now. */
+export const MAX_DEAD_TARGETS = 255;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);
