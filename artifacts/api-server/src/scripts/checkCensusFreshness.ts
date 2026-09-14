@@ -513,6 +513,15 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/2462_meetup_time_votes_write_boundary.sql",
   ],
   "census-highlights-memories.md": [
+    // ── ADDED 2026-09-14 by the scope-coverage finding ──────────────────────
+    // §K.4 and §L.1 grade the been-there claim across this whole chain, and
+    // every link was cited while none was watched. The client card is listed
+    // BECAUSE §L.1's correction turns on whether anything imports it.
+    "travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx",
+    "travel-buddy-standalone/src/features/passport/MyWorldScreen.tsx",
+    "artifacts/api-server/src/services/passport/PassportMapService.ts",
+    "artifacts/api-server/src/services/passport/PassportProjectionService.ts",
+    "artifacts/api-server/src/routes/passportStamps.ts",
     // WIDENED 2026-09-14. Five files this census cites as CONSUMERS of Memory
     // and Highlight data — the Compass grounding envelope and conversation
     // tools, the Trip Kernel command surface, Discovery's ranking modifiers and
@@ -751,6 +760,27 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   // not by services/trust. Listing only the service would have made this census
   // look fresh while the reads it grades moved underneath it.
   "census-trust.md": [
+    // ── ADDED 2026-09-14, rounds 2-3 of the scope-coverage repair ───────────
+    // This census's floor is 100 %, so it took three rounds to reach fixpoint.
+    // `routes/index.ts` is here because two trust rows are graded on whether a
+    // router is MOUNTED, which is a claim about that file and nothing else.
+    "artifacts/api-server/src/routes/discovery.ts",
+    "artifacts/api-server/src/services/rentBuddy/CompatibilityScoreService.ts",
+    "artifacts/api-server/src/test/verificationSessionCreatedStatus.test.ts",
+    "artifacts/api-server/src/routes/index.ts",
+    "artifacts/api-server/src/test/appealReversalAffectedRows.test.ts",
+    "artifacts/api-server/src/test/verificationAttemptMetrics.test.ts",
+    // ── ADDED 2026-09-14 by the scope-coverage finding ─────────────────────
+    // This census's floor is 100 % and it was watching 91 %. The sensing pair
+    // carries three and two citations respectively; the two suites are the
+    // evidence for retention and the age gate; and SOURCE-MANIFEST.json is
+    // listed deliberately — it is the spec side, and a requirement changing is
+    // a reason to re-read a verdict just as much as its code changing is.
+    "artifacts/api-server/src/lib/sensingCoverageAggregate.ts",
+    "artifacts/api-server/src/lib/sensingAnonStore.ts",
+    "artifacts/api-server/src/test/verificationRetention.test.ts",
+    "artifacts/api-server/src/test/ageGate.test.ts",
+    "docs/specs/upgrades-v2/SOURCE-MANIFEST.json",
     "artifacts/api-server/src/services/trust/",
     // WIDENED 2026-09-14. The Trust lane built TV-P5 — webhook signature
     // verification for both identity vendors — and this census now grades that
@@ -1359,6 +1389,8 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   // that this is "a worse lie than CANNOT BE CHECKED". That is a lane's stated
   // decision about its own document; the six above carry no such refusal.
   "census-map.md": [
+    // ── ADDED 2026-09-14 by the scope-coverage finding ──────────────────────
+    "artifacts/api-server/src/routes/discoverySearch.ts",
     // ADDED 2026-09-14 on the Map lane's request. `geoZoneSeed.test.ts` now
     // carries M256's evidence — the first assertions in this repository that a
     // cache HIT avoids the read, where eleven map suites had only ever used the
@@ -1760,6 +1792,12 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   // paths resolve) and the most client-weighted: its subject is the typing
   // surface, so the hooks ARE the measurement, not evidence about it.
   "census-input-intelligence.md": [
+    // ── ADDED 2026-09-14 by the scope-coverage finding ──────────────────────
+    // `app/_layout.tsx` is the one line §12.6 says four rows wait on, so a
+    // change to it is exactly the change that must age this census.
+    "travel-buddy-standalone/app/_layout.tsx",
+    "artifacts/api-server/src/services/passport/PassportConsumerProjections.ts",
+    "artifacts/api-server/src/services/media/MediaProjectionService.ts",
     // ADDED 2026-09-14 on the lane's request: the telemetry-funnel component test
     // now carries the §51 funnel rows' evidence. Its own measurement was that
     // coverage lands at 98.2% once its three new files are tracked — clearing a
@@ -1880,6 +1918,25 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/2258_input_selection_history.sql",
   ],
   "census-discovery.md": [
+    // ── ADDED 2026-09-14, round 2 of the scope-coverage repair ──────────────
+    // Found only because closing the first five raised the percentage and
+    // exposed the next five. A coverage floor is a ratchet, not a checklist:
+    // every batch you close makes the remainder a larger share of a smaller
+    // gap, so it has to be run to fixpoint rather than once.
+    "artifacts/api-server/src/services/telegraph/actionRegistry.ts",
+    "artifacts/api-server/src/test/discoveryFeatureFamilyReach.test.ts",
+    "artifacts/api-server/src/migrations/2850_discovery_live_rank_flag.sql",
+    "artifacts/api-server/src/migrations/2289_discovery_ranking_modifiers_flag.sql",
+    "artifacts/api-server/src/lib/discoveryTrailAffinity.ts",
+    // ── ADDED 2026-09-14 by the scope-coverage finding ──────────────────────
+    // Cited by this census and unwatched: the admin surface that carries the
+    // engine-mode gate (3 citations), the two suites that prove its reach, and
+    // the two migrations whose tables the creator-economy rows are graded on.
+    "artifacts/api-server/src/routes/admin.ts",
+    "artifacts/api-server/src/test/discoveryRouteRecommendationPropagation.test.ts",
+    "artifacts/api-server/src/test/discoveryEngineModeAdminReach.test.ts",
+    "artifacts/api-server/src/migrations/2290_intelligence_graph_node_kinds.sql",
+    "artifacts/api-server/src/migrations/2170_intel_reward_ledger.sql",
     // ── B8, 2026-09-14: THE ELEVEN FILES THE DC ROWS ARE EVIDENCED BY ────────
     //
     // census-discovery §14.7 raised this against itself as cross-lane request
