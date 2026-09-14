@@ -72,7 +72,7 @@ import { AlertTriangle, Clock, Map as MapIcon, Plane } from 'lucide-react-native
 import { DiscoveryMapView } from '../discovery/DiscoveryMapView';
 import type { DiscoveryPlace } from '../../services/discovery.ts';
 import { PlaceDetailSheet } from '../discovery/PlaceDetailSheet.tsx';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { color, space, radius, dot, type as t } from '../../theme/tokens.ts';
 import type {
   CandidateFeasibility,
   LayoverSafeEnvelope,
@@ -569,7 +569,7 @@ const styles = StyleSheet.create({
   envelopePlot: { width: ENVELOPE_PLOT_PX, height: ENVELOPE_PLOT_PX, alignItems: 'center', justifyContent: 'center' },
   ringProved:  { position: 'absolute', borderWidth: 1, borderColor: color.signalDim, borderStyle: 'dashed' },
   ringPlanned: { position: 'absolute', borderWidth: 1.5, borderColor: color.signal, backgroundColor: 'rgba(255,77,46,0.08)' },
-  ringCentre:  { width: 7, height: 7, borderRadius: 4, backgroundColor: color.ink },
+  ringCentre:  { width: dot.s7, height: dot.s7, borderRadius: 4, backgroundColor: color.ink },
   envelopeProved:  { ...t.bodyStrong, color: color.ink },
   envelopePlanned: { ...t.bodyStrong, color: color.signal },
   envelopeSub:     { ...t.small, color: color.mute },
