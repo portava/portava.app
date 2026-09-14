@@ -52,7 +52,6 @@
     "routes/events.ts::getEventRole::event_roles.maybeSingle": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",
     "routes/events.ts::checkEventEligibility::event_roles.maybeSingle": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",
     "routes/events.ts::checkEventEligibility::profiles.maybeSingle": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",
-    "routes/events.ts::checkEventEligibility::profiles.maybeSingle#2": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",
     "routes/events.ts::checkEventJoinVisibility::event_join_requests.maybeSingle": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",
     "routes/events.ts::isCircleMember::circle_memberships.maybeSingle": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",
     "routes/events.ts::isTripEventMember::trip_members.maybeSingle": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",
