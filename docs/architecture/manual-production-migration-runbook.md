@@ -627,12 +627,119 @@ database-level refusal; the provider integration, the webhook signature path and
 `docs/architecture/census-trust.md`. Applying 2870 is necessary and nowhere near
 sufficient.
 
-### D2. The remaining 31
+### D2. The rehearsal — 26 of 32 executed on portava-ci, zero failures
 
-Rehearsed against portava-ci inside a rolled-back transaction rather than
-applied — the results of that rehearsal are recorded separately. They are NOT
-ready to apply to production, for the reason in D0: the trips half depends on an
-unapplied Batch C, and nothing here has been ordered against it.
+*2026-09-14, on the owner's instruction: "apply and certify every pending
+migration on the CI project and report exactly which succeed, which fail and
+why". Executed inside `BEGIN; … ROLLBACK;` so the CI database is not left ahead
+of `main` with no commit accounting for it — the hazard `live-db.yml`'s own
+header names. No ledger row was written and production received no statement of
+any kind, not even a read.*
+
+| Migrations | Result |
+| --- | --- |
+| 2800, 2801, 2802, 2803, 2810, 2811, 2812, 2813, 2840, 2841, 2850, 2851, 2860, **2870** | **PASSED** — 14 files, one transaction, first attempt, zero removals |
+| 2778, 2779, 2780, 2781, 2782 | **PASSED** — true canonical prefix, every predecessor present |
+| 2784, 2788, 2789, 2790, 2791, 2792, 2793 | **PASSED** — canonical relative order, dependency-reduced |
+| 2783, 2785, 2786, 2787, 2794, **2795** | **NOT REACHED** |
+
+**Zero failures.** Every `DO $$ … RAISE EXCEPTION $$` postcondition inside the
+26 executed and passed. No file was removed from any list, so there are no
+"failed only because its predecessor was removed" entries to disambiguate.
+
+**Why six were not reached, and it is not a database result.** The transaction
+containing 2778–2795 is a 156 KB payload, above what one statement call can
+carry, and transaction state does not span calls — probed and confirmed, not
+assumed. So that chunk could not be split and still be one transaction. **NOT
+REACHED MEANS UNTESTED. It does not mean probably fine.**
+
+**What two transactions instead of one does not prove.** 2800–2870 references no
+object 2778–2795 creates — established by name, by grep, **not by execution**.
+That the two halves are order-independent against each other is unproven. The
+same caveat, more sharply, applies to the 2784→2793 run: it ran in canonical
+relative order but without 2783/2785/2786/2787/2794 preceding it, and that none
+of the seven depends on those was established by reading their preconditions
+rather than by running them.
+
+#### D2.1 What the runbook needs that the rehearsal surfaced
+
+**1. Thirteen of these are non-idempotent BY DESIGN.** 2779, 2780, 2782, 2783,
+2784, 2785, 2786, 2787, 2789, 2791, 2793, 2794 and 2795 each carry a guard of
+the form `RAISE EXCEPTION '…already exists; this migration is not idempotent by
+design'`. **A retry after a partial apply will not be a no-op — it will fail
+loudly.** That is deliberate and it means the plan needs a RESTORE POINT, not a
+re-run step.
+
+**2. 2795 is a tripwire and it is one of the six untested.** It hard-pins
+`branches_after <> 66` and `family assignments <> 44`, both raising. Its own
+comment records that a replica which applied 2779 before amendment `a63d5bf5b`
+reports **41** and is STALE. So it refuses a kernel that diverges even slightly
+from the canonical replay — exactly the check you want before a production
+kernel apply, and exactly the one that has not been exercised. **This is the
+highest-risk unknown in the batch.**
+
+**3. Four postconditions pass on an empty CI database and prove much less
+against production's real rows:**
+
+* **2870** re-adds a CHECK on `profiles.verification_level`, and `ADD
+  CONSTRAINT` validates every existing row. It passed here on essentially
+  nothing. Production's 58 rows were separately measured — all `'none'` — so for
+  this one the production answer is known and safe (see D1), but the general
+  point stands.
+* **2779** counts `trip_plan_items` rows with an out-of-vocabulary status and
+  refuses if any exist — trivially 0 on CI. It then runs `VALIDATE CONSTRAINT`,
+  a full scan under lock.
+* **2813** asserts no `message_requests` row is already `origin_verified` —
+  vacuous on a column it has just created, but the check is data-shaped.
+* **2789**'s postcondition `RAISE NOTICE`s a count of legacy rows with
+  coordinate keys. On CI that count is 0 and the `NOT VALID` constraint is never
+  exercised. **On production that notice IS the finding, and nobody will see it
+  unless the apply captures NOTICE output.** Capture it.
+
+**4. Three full-table writes, invisible on an empty database, long locks on a
+populated one.** `UPDATE public.trip_activity_log SET retain_until = …` (2789)
+and `UPDATE public.trip_reservations SET raw_text_retain_until = …` (2791)
+rewrite every row; 2784's `ADD COLUMN version bigint NOT NULL DEFAULT 0` plus
+its status-CHECK swap touches all of `trip_reservations`.
+
+**5. One postcondition has a side effect.** 2781 probes by calling
+`public.trip_decisions_prune()`, which executes a real `DELETE`. Harmless
+against the table it has just created; worth knowing before it runs anywhere
+else.
+
+**6. 2810 leaves an outbox nothing drains.** By design, and gated FALSE —
+turning `telegraph_message_kernel_enabled` on without a drainer grows
+`telegraph_outbox` unboundedly. Every flag in both chunks seeds FALSE and
+several refuse to certify if they find TRUE.
+
+#### D2.2 Proof that the rehearsal left no trace
+
+Asserted afterwards rather than assumed, because a rehearsal that cannot show it
+left nothing behind has not been verified:
+
+| Check | Value |
+| --- | --- |
+| `count(*) FROM schema_migration_ledger` | **500**, unchanged |
+| `max(filename)` | **`2777_trip_kernel_presence_ordering.sql`**, unchanged |
+| `trip_subgroups`, `trip_subgroup_members`, `trip_meeting_checkpoints`, `trip_decisions`, `trip_transport_segments`, `trip_transport_policies`, `trip_reservation_events` | all absent |
+| `telegraph_outbox`, `message_reactions`, `message_edits`, `telegraph_report_evidence`, `airport_fact_observations`, `layover_external_events` | all absent |
+| `trip_plan_items_status_known` constraint · `messages.sequence` · `trip_activity_log.retain_until` | 0 · 0 · 0 |
+| The six feature flags these files seed | 0 rows |
+| Sessions `idle in transaction` | 0 |
+
+Two checks were run BEFORE the rehearsal and are worth recording, because
+without them the whole safety model was an assumption: a disposable
+`BEGIN; CREATE TABLE …; ROLLBACK;` probe confirmed the connection layer honours
+an explicit rollback rather than autocommitting each statement (if it had
+autocommitted, everything above would have persisted silently), and the payload
+was md5-verified against the files on disk so that a transcription typo could
+not be reported as a migration defect.
+
+#### D2.3 Readiness
+
+The 26 that executed are **rehearsed, not ready**. D0 stands: the trips half
+depends on a Batch C that production has not received, and nothing here has been
+ordered against it. 2870 is the exception and D1 states why.
 
 ### D3. The boundary, unchanged
 
