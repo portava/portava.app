@@ -941,6 +941,348 @@ router.get("/memories/graph", async (req, res) => {
   });
 });
 
+// §8 significance, derived from the rows this schema actually holds, and the
+// gate that decides whether a score may cross a boundary. See
+// services/memory/memorySignificanceDisclosure.ts: six of §8's eleven inputs
+// have no source column and are DECLARED absent rather than defaulted, because
+// a partial score that reads as a complete one is the decorated green this
+// census exists to catch.
+import {
+  UNAVAILABLE_SIGNIFICANCE_INPUTS,
+  deriveSignificance,
+  discloseProjectionRows,
+  significanceAudienceFor,
+} from "../services/memory/memorySignificanceDisclosure.js";
+import { SIGNIFICANCE_POLICY_VERSION } from "../services/memoryProjections/significance.js";
+
+// ── §18 owner-scoped projections, reached by a caller ─────────────────────────
+//
+// H163 / H167 / H168. The §18 block's blanket reason for BBW is "defined in the
+// registry and unreachable"; section J answered it for TripMemoryProjection
+// with a NEW route rather than by changing a shipped response shape, and these
+// three follow that pattern exactly. Nothing below alters an existing response.
+//
+// THE PROJECTION IS NOT THE PERMISSION. Every builder filters to
+// `scope.owner_id`'s undeleted Memories and does not run §23's ladder. These
+// three destinations are the owner's own: the scope owner IS the authenticated
+// caller on all three, which is the authorization and is why no route here
+// accepts a `?userId=`. §10's person ladder still runs before the builder sees
+// a tag, because who may be NAMED on a Memory is a separate question from who
+// may read it.
+//
+// CEILING, on the response and not only here: the registry TABLE is 2730 and
+// unapplied (H174), so these projections are built per request and NOT
+// registered. `sourceVersion` travels on the response instead of being stored.
+const TIMELINE_LIMIT = 500;
+const PLACE_HISTORY_LIMIT = 500;
+const SHARED_HISTORY_LIMIT = 500;
+
+/**
+ * Read the approved-and-disclosed tags for a set of Memories, chunked.
+ *
+ * §J item 5: `.in()` rides in the QUERY STRING, so an unchunked list of several
+ * hundred uuids is rejected as a TRANSPORT error that `(data ?? [])` would then
+ * read as "these Memories have no participants". Every chunk's `.error` is
+ * bound; a failure is a refusal, never an empty list.
+ */
+async function readMemoryTags(
+  sc: SupabaseClient,
+  memoryIds: readonly string[],
+): Promise<{ ok: true; tags: any[] } | { ok: false; error: unknown }> {
+  const tags: any[] = [];
+  for (const batch of chunkIds(memoryIds)) {
+    const { data, error } = await sc
+      .from("memory_tags")
+      .select("memory_id, tagged_user_id, status")
+      .in("memory_id", batch);
+    if (error) return { ok: false, error };
+    tags.push(...((data ?? []) as any[]));
+  }
+  return { ok: true, tags };
+}
+
+async function readMemoryItems(
+  sc: SupabaseClient,
+  memoryIds: readonly string[],
+): Promise<{ ok: true; items: any[] } | { ok: false; error: unknown }> {
+  const items: any[] = [];
+  for (const batch of chunkIds(memoryIds)) {
+    const { data, error } = await sc
+      .from("memory_items")
+      .select("memory_id")
+      .in("memory_id", batch);
+    if (error) return { ok: false, error };
+    items.push(...((data ?? []) as any[]));
+  }
+  return { ok: true, items };
+}
+
+/**
+ * §10's person ladder over a set of the SAME owner's Memories, per row.
+ *
+ * The ladder is loaded once for the whole set — its inputs are the owner, the
+ * viewer and the participant ids — and re-decided per row on the only input
+ * that varies, the Memory's own visibility.
+ */
+async function discloseParticipants(
+  sc: SupabaseClient,
+  ownerId: string,
+  viewerId: string,
+  rows: readonly any[],
+  rawTags: readonly any[],
+): Promise<Array<{ memory_id: string; tagged_user_id: string; status: string }>> {
+  const participantIds = [...new Set(rawTags.map((t) => t.tagged_user_id as string))];
+  const baseCtx = await loadParticipantVisibility(
+    sc,
+    { owner_id: ownerId, visibility: null, trip_id: null },
+    viewerId,
+    participantIds,
+  );
+  const out: Array<{ memory_id: string; tagged_user_id: string; status: string }> = [];
+  for (const m of rows) {
+    const mine = rawTags.filter((t) => t.memory_id === m.id);
+    if (mine.length === 0) continue;
+    const projected = projectParticipants(
+      { ...baseCtx, memoryVisibility: (m.visibility as string | null) ?? null },
+      mine as any,
+    );
+    for (const p of projected.participants) {
+      out.push({ memory_id: m.id as string, tagged_user_id: p.userId, status: p.status ?? "" });
+    }
+  }
+  return out;
+}
+
+// GET /memories/timeline — §18 MemoryTimelineProjection (H163), the one
+// projection whose `emits_significance` is true because its audience is
+// OWNER_PRIVATE (H64).
+router.get("/memories/timeline", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: rows, error } = await sc
+    .from("memories")
+    .select(MEMORY_SELECT as any)
+    .eq("owner_id", user.id)
+    .neq("state", "deleted")
+    .order("starts_at", { ascending: false })
+    .limit(TIMELINE_LIMIT);
+  if (error) {
+    req.log.error({ err: error, ownerId: user.id }, "memories: timeline read failed — refusing rather than serving an empty life");
+    sendError(res, "degraded_unavailable", "We could not build your timeline. Please try again.");
+    return;
+  }
+
+  const owned = (rows ?? []) as any[];
+  const ids = owned.map((r) => r.id as string);
+
+  const tagRes = await readMemoryTags(sc, ids);
+  if (!tagRes.ok) {
+    req.log.error({ err: tagRes.error, ownerId: user.id }, "memories: timeline tag read failed — refusing rather than reporting a companion-free life");
+    sendError(res, "degraded_unavailable", "We could not build your timeline. Please try again.");
+    return;
+  }
+  const itemRes = await readMemoryItems(sc, ids);
+  if (!itemRes.ok) {
+    req.log.error({ err: itemRes.error, ownerId: user.id }, "memories: timeline item read failed — refusing rather than reporting a photograph-free life");
+    sendError(res, "degraded_unavailable", "We could not build your timeline. Please try again.");
+    return;
+  }
+
+  const disclosedTags = await discloseParticipants(sc, user.id, user.id, owned, tagRes.tags);
+
+  const definition = getProjectionDefinition("MemoryTimelineProjection");
+  if (!definition) { sendError(res, "db_error", "Projection definition missing"); return; }
+
+  const scope = { owner_id: user.id, viewer_id: user.id };
+  // §8. Derived from the owner's own rows, so a repeat visit is the owner's own
+  // return and not a coincidence with a stranger. Every Memory here is
+  // user-created, so `never_discard` is true on all of them and NOTHING below
+  // drops a row for scoring low — §8's hard rule is a property of this route,
+  // not only of the scorer.
+  const significance = deriveSignificance(user.id, owned as any, disclosedTags as any);
+
+  const sourceRows = owned as unknown as MemorySourceRow[];
+  const built = definition.build({
+    scope,
+    memories: sourceRows,
+    tags: disclosedTags as any,
+    items: itemRes.items as any,
+    significance,
+  });
+  const disclosed = discloseProjectionRows(definition, scope, built as any);
+
+  const explanations: Record<string, unknown> = {};
+  if (significanceAudienceFor(definition, scope) === "OWNER") {
+    for (const [id, e] of significance) explanations[id] = e;
+  }
+
+  res.json({
+    timeline: {
+      projectionId: definition.id,
+      builderVersion: definition.builder_version,
+      destination: definition.destination,
+      audience: definition.audience,
+      sourceVersion: sourceVersionOf(sourceRows).digest,
+      // The registry table is 2730 and unapplied (H174): built, not registered.
+      registered: false,
+      truncated: owned.length >= TIMELINE_LIMIT,
+      rows: disclosed,
+      significance: {
+        policyVersion: SIGNIFICANCE_POLICY_VERSION,
+        // §8's inputs that this schema cannot produce, each with its reason, so
+        // a partial score is never served as a complete one.
+        inputsUnavailable: UNAVAILABLE_SIGNIFICANCE_INPUTS,
+        explanations,
+      },
+    },
+  });
+});
+
+// GET /memories/places/:placeId — §18 PlaceMemoryProjection (H167).
+router.get("/memories/places/:placeId", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { placeId } = req.params;
+  if (!isUuid(placeId)) { sendError(res, "invalid_payload", "Invalid place id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  // A Memory may name its place either way round: `place_id` is the legacy
+  // reference and `canonical_location_id` the resolved one (§9). The builder
+  // accepts both, so the read must too, or a merged entity would silently lose
+  // half its history.
+  const { data: rows, error } = await sc
+    .from("memories")
+    .select(MEMORY_SELECT as any)
+    .eq("owner_id", user.id)
+    .neq("state", "deleted")
+    .or(`place_id.eq.${placeId},canonical_location_id.eq.${placeId}`)
+    .limit(PLACE_HISTORY_LIMIT);
+  if (error) {
+    req.log.error({ err: error, ownerId: user.id, placeId }, "memories: place history read failed — refusing rather than reporting no history here");
+    sendError(res, "degraded_unavailable", "We could not build your history at this place. Please try again.");
+    return;
+  }
+
+  const owned = (rows ?? []) as any[];
+  const definition = getProjectionDefinition("PlaceMemoryProjection");
+  if (!definition) { sendError(res, "db_error", "Projection definition missing"); return; }
+
+  const scope = { owner_id: user.id, viewer_id: user.id, place_id: placeId };
+  const sourceRows = owned as unknown as MemorySourceRow[];
+  const built = definition.build({ scope, memories: sourceRows, tags: [], items: [] });
+  const disclosed = discloseProjectionRows(definition, scope, built as any);
+
+  res.json({
+    history: {
+      placeId,
+      projectionId: definition.id,
+      builderVersion: definition.builder_version,
+      destination: definition.destination,
+      audience: definition.audience,
+      sourceVersion: sourceVersionOf(sourceRows).digest,
+      registered: false,
+      // visit_index counts the visits this read returned. A truncated read
+      // would number them from the wrong one, so the response says so.
+      truncated: owned.length >= PLACE_HISTORY_LIMIT,
+      rows: disclosed,
+    },
+  });
+});
+
+// GET /memories/people/:personId — §18 PeopleMemoryProjection (H168).
+router.get("/memories/people/:personId", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { personId } = req.params;
+  if (!isUuid(personId)) { sendError(res, "invalid_payload", "Invalid person id"); return; }
+  // Your shared history with yourself is your timeline, and answering it here
+  // would hand a caller the whole owner-private projection under a different
+  // audience. Refuse rather than quietly serve it.
+  if (personId === user.id) { sendError(res, "invalid_payload", "Not a shared history"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  // §11 / §21: a block ends shared history in both directions. `isBlocked`
+  // fails CLOSED on an unreadable `blocks`, so an outage refuses rather than
+  // publishing a history the two people may no longer share.
+  if (await isBlocked(sc, user.id, personId)) {
+    sendError(res, "not_found", "No shared history");
+    return;
+  }
+
+  const { data: tagRows, error: tagErr } = await sc
+    .from("memory_tags")
+    .select("memory_id, tagged_user_id, status")
+    .eq("tagged_user_id", personId)
+    .eq("status", "approved")
+    .limit(SHARED_HISTORY_LIMIT);
+  if (tagErr) {
+    req.log.error({ err: tagErr, ownerId: user.id }, "memories: shared history tag read failed — refusing rather than reporting no shared history");
+    sendError(res, "degraded_unavailable", "We could not build your shared history. Please try again.");
+    return;
+  }
+  const approved = (tagRows ?? []) as any[];
+  const memoryIds = [...new Set(approved.map((t) => t.memory_id as string))];
+
+  const owned: any[] = [];
+  for (const batch of chunkIds(memoryIds)) {
+    const { data, error } = await sc
+      .from("memories")
+      .select(MEMORY_SELECT as any)
+      .eq("owner_id", user.id)
+      .neq("state", "deleted")
+      .in("id", batch);
+    if (error) {
+      req.log.error({ err: error, ownerId: user.id }, "memories: shared history read failed — refusing rather than reporting no shared history");
+      sendError(res, "degraded_unavailable", "We could not build your shared history. Please try again.");
+      return;
+    }
+    owned.push(...((data ?? []) as any[]));
+  }
+
+  const definition = getProjectionDefinition("PeopleMemoryProjection");
+  if (!definition) { sendError(res, "db_error", "Projection definition missing"); return; }
+
+  const scope = { owner_id: user.id, viewer_id: user.id, person_id: personId };
+  const sourceRows = owned as unknown as MemorySourceRow[];
+  const built = definition.build({
+    scope,
+    memories: sourceRows,
+    // Only the person's own approved tags reach the builder. The builder
+    // re-checks `status === "approved"` itself; both are load-bearing, because
+    // this read could later be widened and the builder is the invariant.
+    tags: approved as any,
+    items: [],
+  });
+  const disclosed = discloseProjectionRows(definition, scope, built as any);
+
+  res.json({
+    sharedHistory: {
+      personId,
+      projectionId: definition.id,
+      builderVersion: definition.builder_version,
+      destination: definition.destination,
+      audience: definition.audience,
+      sourceVersion: sourceVersionOf(sourceRows).digest,
+      registered: false,
+      truncated: approved.length >= SHARED_HISTORY_LIMIT,
+      rows: disclosed,
+    },
+  });
+});
+
 router.get("/memories/:id", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
