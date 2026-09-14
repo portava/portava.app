@@ -129,7 +129,7 @@ const CENSUS_SCOPE_FLOORS: Record<string, number> = {
   "census-sensing.md": 0.90,   // widened 2026-09-11: 16% -> 92%
   "census-telegraph.md": 0.87,   // widened 2026-09-11: 21% -> 89%
   "census-trips.md": 0.86,   // widened 2026-09-11
-  "census-trust.md": 0.94,   // widened 2026-09-11: 31% -> 96%
+  "census-trust.md": 1.0,   // widened 2026-09-11: 31% -> 96%; RAISED 0.94 -> 1.00 on 2026-09-14 when the Trust lane's identityVerification code, its three suites, 0176 and the one client surface TV-2c cites were added, taking it to 112/112. A ratchet, per the rule above: every file this census names is now watched, so any new citation to an unwatched file fails immediately rather than being absorbed by six points of slack.
   "census-wall.md": 0.95,   // widened 2026-09-11
 };
 
@@ -206,8 +206,12 @@ for (const f of files) {
       (machinery.length ? ` · ${machinery.length} machinery file(s) excluded from the denominator` : ""),
   );
   if (uncovered.length > 0) {
-    for (const p of uncovered.slice(0, 5)) rows.push(`        unwatched ×${counts.get(p)}  ${p}`);
-    if (uncovered.length > 5) rows.push(`        …and ${uncovered.length - 5} more`);
+    // Five is the reading limit, not the reporting limit. CENSUS_SCOPE_LIST_ALL=1
+    // prints every uncovered path, because the person WIDENING the scope needs
+    // the whole list and "…and 12 more" makes them run the check twelve times.
+    const show = process.env.CENSUS_SCOPE_LIST_ALL ? uncovered.length : 5;
+    for (const p of uncovered.slice(0, show)) rows.push(`        unwatched ×${counts.get(p)}  ${p}`);
+    if (uncovered.length > show) rows.push(`        …and ${uncovered.length - show} more (CENSUS_SCOPE_LIST_ALL=1 for all)`);
   }
 
   if (floor != null && ratio < floor) {

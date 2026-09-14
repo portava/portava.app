@@ -503,6 +503,15 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/2462_meetup_time_votes_write_boundary.sql",
   ],
   "census-highlights-memories.md": [
+    // WIDENED 2026-09-14 for section J, which built the Memory audience-revocation
+    // resolver, the five-state deletion lifecycle and the §13/§18 read surfaces.
+    // These three are cited as that work's evidence and were watched by nothing:
+    // CompassCacheEngine is the destination PUBLIC_REVOKED writes to, mediaAccess
+    // is the module H181 measured before calling the attribution hole a leak, and
+    // memoryProjectionGraph is this census's own suite.
+    "artifacts/api-server/src/compass/CompassCacheEngine.ts",
+    "artifacts/api-server/src/lib/mediaAccess.ts",
+    "artifacts/api-server/src/test/memoryProjectionGraph.test.ts",
     // WIDENED 2026-09-13 by section B, which built §25's certification runner and
     // gave the 154 prose-counted requirements real rows. A row is only as fresh
     // as the files its evidence names, so the three surfaces those rows now cite
@@ -722,6 +731,19 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   // look fresh while the reads it grades moved underneath it.
   "census-trust.md": [
     "artifacts/api-server/src/services/trust/",
+    // WIDENED 2026-09-14. The Trust lane built TV-P5 — webhook signature
+    // verification for both identity vendors — and this census now grades that
+    // code and the suites that pin it. A verdict whose evidence names a file
+    // nothing watches is a verdict with an unmonitored floor under it.
+    "artifacts/api-server/src/services/identityVerification/",
+    "artifacts/api-server/src/test/verificationWebhookSignature.test.ts",
+    "artifacts/api-server/src/test/verificationProviderNormalization.test.ts",
+    "artifacts/api-server/src/test/rentBuddyKycGate.test.ts",
+    // Cited twice by the moderation-report rows; it is schema this census grades.
+    "artifacts/api-server/src/migrations/0176_moderation_reports.sql",
+    // TV-2c's evidence: the surface that renders a verified indicator today,
+    // sourced from the legacy `profiles.verified` boolean rather than the ID check.
+    "travel-buddy-standalone/src/components/compass/CompassBuddyRow.tsx",
     "artifacts/api-server/src/lib/trustScore.ts",
     "artifacts/api-server/src/lib/trustMaintenanceScheduler.ts",
     "artifacts/api-server/src/routes/trust-admin.ts",
@@ -882,6 +904,15 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   "census-wall.md": [
     "artifacts/api-server/src/services/wall/",
     "artifacts/api-server/src/routes/wall.ts",
+    // ADDED 2026-09-14, and it is a scope gain rather than a scope grant. The
+    // Wall lane QUALIFIED W66's writer pointer — it had been a bare basename
+    // that resolved ambiguously, so the coverage check skipped it entirely.
+    // Making it resolvable made it COUNT, which pushed census-wall from 96% to
+    // 95% and sat it on its own floor. The precise citation is the improvement;
+    // this line is what keeps it from reading as a regression. The Wall grades
+    // what posts.ts writes (three citations), so an edit to it must age this
+    // census.
+    "artifacts/api-server/src/routes/posts.ts",
     "artifacts/api-server/src/lib/wallProjection.ts",
     "artifacts/api-server/src/lib/liveClaimRead.ts",
     "artifacts/api-server/src/lib/intelContracts.ts",

@@ -13,20 +13,26 @@
 | --- | --- |
 | `head_commit` | `42aeac38` — RE-DECLARED 2026-09-10 from `9f8122ff5ed233a367fda6431589c9cb97df7979`, the working-tree commit this census was measured at. It was necessary because `9f8122ff` is PRE-SQUASH — this repository squash-merges, so it is an ancestor of nothing, is on no remote branch, and `check:census-freshness` could resolve it only on the clone that wrote it (`CENSUS_HEAD_COMMITS_UNREACHABLE_IN_CI`). Reproduced 2026-09-10 in a fresh clone of this branch: `git diff 9f8122ff..HEAD` aborts with `Invalid revision range`, and the check reported this census as unreadable rather than checking it. `42aeac38` is #476's squash, where this document's content reached `main`. **This is a RE-DECLARATION, not a re-measurement.** ONE counted file changed between `9f8122ff` and `42aeac38`: `travel-buddy-standalone/src/features/wall/components/__tests__/WallPromotionDisclosure.component.test.tsx`. The move is defensible only because it was re-verified mechanically on 2026-09-10 over `9f8122ff..42aeac38`: filtered to lines that are neither comment nor blank, that diff is EMPTY against a `--stat` of 4 insertions and 3 deletions — the edit rewords a `jest.mock` header so it begins with the literal word NOTE, which is what `check-test-mocks.mjs` requires. It is the TEST for W178; the verdict rests on the producers and render sites, none of which it touches, and a comment can neither render a disclosure nor assert one. The full argument is preserved under `retired` in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json`, where it had been written as an acknowledgement. **Changed by the Trips lane, not this one**, because CI could not run this check against this census at all until it was; nothing else in this document is touched, and reverting it costs only the check. |
 | **Denominator (testable requirements)** | **205** |
-| BUILT-AND-CORRECT | **196** |
+| BUILT-AND-CORRECT | **198** |
 | BUILT-BUT-WRONG | **1** |
 | NOT-BUILT | **0** |
-| CANNOT-VERIFY | **8** |
-| **CONSTRUCTED%** = (correct+wrong)/denominator | **197 / 205 = 96.1%** |
-| **CORRECT%** = correct/denominator | **196 / 205 = 95.6%** |
-| CANNOT-VERIFY share | **8 / 205 = 3.9%** |
+| CANNOT-VERIFY | **6** |
+| **CONSTRUCTED%** = (correct+wrong)/denominator | **199 / 205 = 97.1%** |
+| **CORRECT%** = correct/denominator | **198 / 205 = 96.6%** |
+| CANNOT-VERIFY share | **6 / 205 = 2.9%** |
+
+**These are the §9 numbers (2026-09-14), counted from the rows in §2 as they now
+stand.** They differ from the §7 headline by two rows: W170 and W173 moved ?→C
+when the client test toolchain that §7.3 could not run was run. The §6 and §7
+figures below are preserved as the dated records of those passes and are NOT
+restated — see §9 for what moved and why, and §9.1 for the one W, which did not.
 
 Those five numbers are COUNTED FROM THE ROWS in §2 at the commit named above,
 not carried forward from the previous pass and adjusted. The distinction is not
 pedantic: the layover census's headline summed to 299 against a denominator of
 296 for exactly that reason — moves were added to an old headline instead of the
 rows being recounted — and `check:census-integrity` now refuses a census whose
-`C + W + N + X` does not equal its stated denominator. 196 + 1 + 0 + 8 = 205.
+`C + W + N + X` does not equal its stated denominator. 198 + 1 + 0 + 6 = 205.
 
 The figures BEFORE the §6 recensus, for comparison: 188 / 7 / 1 / 9, i.e. 95.1%
 constructed and 91.7% correct at `ebe72b34`.
@@ -116,7 +122,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | W4 | Ranked random discovery without forcing chronological consumption | C | `services/wall/WallRankingService.ts:273#rankForYou` orders by composite score with a session-seeded tiebreak (`:257#seededKey`), never by time alone. |
 | W5 | Strict chronological Following mode | C | `services/wall/FollowingFeedService.ts:105#buildFollowing` `buildFollowing`; `:74#compareDesc` `compareDesc` sorts `publishedAt` DESC + `canonicalObjectId` DESC, no relevance term. |
 | W6 | Contextual intelligence attached only when it materially improves the object | C | `services/wall/ContextThreadService.ts:110#shouldAttachContextThread` — the eight-condition gate, default false. |
-| W7 | Social content → optional real-world actions: see place, save, add to Trip, join, message, map, ask Compass, book a Buddy | C | **All eight have a server producer.** `see_place` `services/wall/WallProjectionService.ts:267#see_place` · `save` `:256#save` — no longer a client-local toggle: the projection carries server-resolved `viewerSaved` and the client writes through the canonical `post_saves` endpoint (`routes/mediaFeed.ts:2326#post_saves`, client `components/objects/wallItemShared.tsx:225#saveItem`) · `add_to_trip` `services/wall/ContextThreadService.ts:433#add_to_trip` · `join` `services/wall/LiveForYouService.ts:792#join` — handed to the canonical event surface, where `POST /events/:id/join` runs its own eligibility/capacity gate; the Wall never joins on the viewer's behalf · `message` `WallProjectionService.ts:317#message` — offered ONLY on a Buddy opportunity, where the consolidated RAB booking gate has already established the viewer may transact with that Buddy; the Wall does not re-derive `canMessage` (13 reads/target) for ordinary posts and offers no action rather than one that fails · `open_map` `ContextThreadService.ts:777#open_map` and `LiveForYouService.ts:199#open_map` · `ask_compass` `WallProjectionService.ts:277#ask_compass` · `book_buddy` `:293#book_buddy`. **Moved W→C in the §6 recensus**: at `ebe72b34` `join` and `message` had no producer and `save` persisted nothing.
+| W7 | Social content → optional real-world actions: see place, save, add to Trip, join, message, map, ask Compass, book a Buddy | C | **All eight have a server producer.** `see_place` `services/wall/WallProjectionService.ts:267#see_place` · `save` `:256#save` — no longer a client-local toggle: the projection carries server-resolved `viewerSaved` and the client writes through the canonical `post_saves` endpoint (`routes/mediaFeed.ts:2326#post_saves`, client `components/objects/wallItemShared.tsx:225#saveItem`) · `add_to_trip` `services/wall/ContextThreadService.ts:433#add_to_trip` · `join` `services/wall/LiveForYouService.ts:792#join` — handed to the canonical event surface, where `POST /events/:id/join` runs its own eligibility/capacity gate; the Wall never joins on the viewer's behalf · `message` `WallProjectionService.ts:317#message` — offered ONLY on a Buddy opportunity, where the consolidated RAB booking gate has already established the viewer may transact with that Buddy; the Wall does not re-derive `canMessage` (13 reads/target) for ordinary posts and offers no action rather than one that fails · `open_map` `ContextThreadService.ts:777#open_map` and `LiveForYouService.ts:199#open_map` · `ask_compass` `WallProjectionService.ts:277#ask_compass` · `book_buddy` `:293#book_buddy`. **Moved W→C in the §6 recensus**: at `ebe72b34` `join` and `message` had no producer and `save` persisted nothing. |
 | W8 | Preserve distinct identities of Postcards / video / Moments / normal Posts | C | Distinct renderers `components/objects/PostcardWallItem.tsx`, `VideoWallItem.tsx`, `SharedMomentWallItem.tsx`, `SocialPostWallItem.tsx`, dispatched on the discriminant at `WallObjectRenderer.tsx:90#WallObjectRenderer`. Server precedence keeps the distinct shape: `WallProjectionService.ts:472#dedupeCandidates` (table at `:440#precedence`) ranks `shared_moment`/`postcard` above `video`/`social_post` for the same canonical id. |
 
 ### §3 Primary Screen Architecture
@@ -136,7 +142,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | W14 | Hidden Gem kind, protection + disclosure policy satisfied | C | `LiveForYouService.ts:82` `PROTECTED_GEM_SENSITIVITY` excludes `protected` / `reveal_after_acceptance` from the strip. |
 | W15 | Social presence kind, viewer authorized for the disclosed granularity | C | `LiveForYouService.ts:79-81` `SOCIAL_PRESENCE_MIN = 2` k-anonymity floor; candidates built from followed people's public posts only. |
 | W16 | Buddy availability kind: availability active, service eligible, no precise private coordinate | C | `LiveForYouService.buildBuddyLiveCandidates` behind `isRentBuddyMasterEnabled` (`:57`), `BUDDY_AVAILABILITY_MS = 30 min` horizon (`:85`), city-area subject only. |
-| W17 | Trip signal kind, trip-scoped authorization | C | `routes/wall.ts:704` `buildTripSignalLiveCandidates(sc, viewerId, viewer.viewerTripIds, placeRefs)` — the viewer's own accepted trips only. |
+| W17 | Trip signal kind, trip-scoped authorization | C | `routes/wall.ts:878#buildTripSignalLiveCandidates(sc, viewerId, viewer.viewerTripIds, placeRefs)` — the viewer's own accepted trips only, because `viewerTripIds` is filled at `routes/wall.ts:272#if (status == null`. *(Cited as line 704 until §9 — the call had moved 174 lines and the pointer landed on a blank line. Verdict unchanged; citation repaired and anchored.)* |
 | W18 | No generic city-wide firehose | C | `LiveForYouService.ts:71-77` `MAX_SUBJECT_PROBES = 16`, `MAX_PRODUCER_PLACES = 12`; candidates derive from the feed's own places (`routes/wall.ts:935-943`), never a city enumeration. |
 | W19 | No stale live labels | C | `lib/liveClaimRead.ts:23-25` drops expired snapshots; `LiveForYouService.ts:110` a `validUntil` in the past is treated as stale and dropped; client `hooks/useLiveForYou.ts` degrades on TTL. |
 | W20 | No exact private location leakage | C | `lib/wallProjection.ts:352-357` `LiveForYouItem` carries decision-exposure fields only — no coordinates, contributor ids or exact cohort counts. |
@@ -175,7 +181,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
 | W35 | A compact attachment beneath an object, rendered only when useful | C | `WallProjectionService.attachContextThreads` attaches at most one thread per object (`ContextThreadService.selectContextThread:202`); client `components/ContextThreadView.tsx` renders below the body. |
-| W36 | All eight kinds | C | All eight have readers: `ContextThreadService.ts:333` live_place, `:420` trip_relevance, `:506` social_presence, `:618` hidden_gem, `:696` buddy, `:748` map, `:803` memory, `:854` compass. (The 2026-09-04 certification credited five.) |
+| W36 | All eight kinds | C | All eight have readers: `services/wall/ContextThreadService.ts:310#async function readLivePlaceCandidate(` live_place, `services/wall/ContextThreadService.ts:382#async function readTripRelevanceCandidate(` trip_relevance, `services/wall/ContextThreadService.ts:483#async function readSocialPresenceCandidate(` social_presence, `services/wall/ContextThreadService.ts:586#async function readHiddenGemCandidate(` hidden_gem, `services/wall/ContextThreadService.ts:691#async function readBuddyCandidate(` buddy, `services/wall/ContextThreadService.ts:767#async function readMapCandidate(` map, `services/wall/ContextThreadService.ts:817#async function readMemoryCandidate(` memory, `services/wall/ContextThreadService.ts:880#async function readCompassCandidate(` compass. (The 2026-09-04 certification credited five.) *(All eight pointers were stale by §9 — the first landed on `};`. Verdict unchanged; each is now anchored on its own function, so the next move is loud.)* |
 
 ### §9 Context Thread Eligibility Gate
 
@@ -245,7 +251,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
 | W65 | Ordering uses `publishedAt` for chronological Following | C | `FollowingFeedService.ts:11-14` ("never experienceAt") and `:74-85`. |
-| W66 | `experienceAt` separately displayed when the experience time differs | C | **Now has a real producer**, contrary to the 2026-09-04 certification: `WallCandidateLoaders.loadCapturedAtByEntity:201` reads `media_attachments → media_assets.captured_at`; assigned at `:469` (postcards) and `:721` (shared moments), each *only when it differs from publishedAt*. The upstream writer is `routes/posts.ts:143` `capturedAtFromImageBytes(rawBody)` → `recordMediaAsset(… capturedAt)` (`:270`). Client shows "Happened …" only on a difference (`components/objects/wallItemShared.tsx` `ActorByline`). *Chain caveat under §4 below: `recordMediaAsset` is gated on `media_canonical_enabled` (`lib/mediaAssets.ts:119`).* |
+| W66 | `experienceAt` separately displayed when the experience time differs | C | **Now has a real producer**, contrary to the 2026-09-04 certification: `WallCandidateLoaders.loadCapturedAtByEntity:201` reads `media_attachments → media_assets.captured_at`; assigned at `:469` (postcards) and `:721` (shared moments), each *only when it differs from publishedAt*. The upstream writer is `artifacts/api-server/src/routes/posts.ts:145#sniffed.kind === "image" ? capturedAtFromImageBytes(rawBody) : null;` → `recordMediaAsset(… capturedAt)` (`artifacts/api-server/src/routes/posts.ts:257#void recordMediaAsset(sc, {`, field at `artifacts/api-server/src/routes/posts.ts:272#capturedAt,`). Client shows "Happened …" only on a difference (`components/objects/wallItemShared.tsx` `ActorByline`). *Chain caveat under §4 below: `recordMediaAsset` is gated on `media_canonical_enabled` (`artifacts/api-server/src/lib/mediaAssets.ts:321#if (!(await isFlagEnabled(sc, "media_canonical_enabled"))) return NONE;`).* *(The two `routes/posts.ts` pointers were stale by §9 and the path was ambiguous across three copies of the file in this tree; re-read and fully qualified. Verdict unchanged.)* |
 
 ### §17 Global Input Intelligence Integration
 
@@ -255,7 +261,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | W68 | Typed intent creates a temporary Wall session context | C | `routes/wall.ts:784-798` — a per-request `session_intent` is parsed fresh and never persisted; otherwise the stored intent applies. Store: `wall_session_intents` (migration 2271), written at `WallSessionIntentService.ts:203`, deleted at `:227` and on account deletion (`artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1138#delete_wall_session_intent`). *(Cited as line 1068 until §8. That line was never this step — see §8.1.)* |
 | W69 | Canonical entities become structured filters, not raw strings | C | `lib/wallProjection.ts:401-417` `StructuredIntentFilter` carries `kind` + `entityId`; residual text stays in `keywords`. |
 | W70 | Clearing the intent restores the prior Wall state | C | `routes/wall.ts:1085-1099` `DELETE /wall/session-intent` → `clearStoredIntent`; client `hooks/useWallSessionIntent.ts` re-fetches unsteered. |
-| W71 | Voice input and typo normalization use the same global engine | **?** | The Wall correctly delegates to the shared gateway, so *if* voice/typo normalization live there the Wall inherits them. Whether the shared engine actually implements voice input is a Global Input Intelligence question, out of this spec's tree and censused by the sibling agent on that spec. Not counted for or against the Wall. |
+| W71 | Voice input and typo normalization use the same global engine | **?** | **The Wall's half of this contract is now executed rather than asserted; the other half has no producer anywhere in the repository.** TYPO NORMALIZATION — proven end to end at the Wall: `artifacts/api-server/src/test/wallSessionIntent.test.ts:203#a misspelling typed into the Wall reaches the database ALREADY typo-normalized` runs the REAL shared gateway over a supabase fake that records every filter string it issues, and shows that `bankok street food` typed into the Wall arrives at the query layer as **bangkok** and never as the misspelling. The alias table is the shared engine's — `artifacts/api-server/src/routes/discoverySearchHelpers.ts:148#export function applyAliases(q: string): string {`, applied at `artifacts/api-server/src/lib/inputAssistance/gateway.ts:164#const aliased = applyAliases(sigilStripped);` — and the Wall owns no copy of it: `artifacts/api-server/src/test/wallSessionIntent.test.ts:221#the Wall itself owns no alias / typo table` scans `services/wall/**` + `routes/wall.ts` and refuses `SEARCH_ALIASES` / `applyAliases` / `normalizeLocationName`. VOICE — there is nothing to inherit: `grep -rniE 'voice\|speech\|dictation'` over `artifacts/api-server/src/lib/inputAssistance/` returns nothing, and neither `expo-speech` nor `react-native-voice` is a dependency of `travel-buddy-standalone`. The Wall cannot tell a transcript from a keystroke, and that is pinned too (`artifacts/api-server/src/test/wallSessionIntent.test.ts:248#the Wall has no source-specific text path`, two text ingresses, both `await parseIntent(`), so no Wall-side change can affect this verdict in either direction. **WHAT WOULD TURN THIS RED:** a speech-capture surface that produces text and hands it to `generateSuggestions`, built and graded by the **Global Input Intelligence** lane on `census-input-intelligence.md`. Until one exists this `?` is a SCOPE statement about another spec's tree, not a Wall gap — and it is now a scope statement with the Wall's side of the contract under test. |
 
 ### §18 Stories / Quick Media
 
@@ -289,7 +295,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
 | W84 | No permanent giant Compass panel; an action or interpretation only | C | Compass exists solely as one optional action (`WallProjectionService.ts:238-245`) and one Context Thread kind (`ContextThreadService.ts:854`). No Wall component renders a Compass panel. |
-| W85 | Ask Compass from a place-linked post | C | `WallProjectionService.ts:236-245` — added only when `c.place` exists and `compassHandoffEnabled` (flag read `routes/wall.ts:766`). |
+| W85 | Ask Compass from a place-linked post | C | `services/wall/WallProjectionService.ts:275#if (viewer.compassHandoffEnabled) {` — added only when `c.place` exists and `compassHandoffEnabled` (flag read `routes/wall.ts:940#isFlagEnabled(sc, "wall_compass_handoff_enabled")`). |
 | W86 | Interpret a cluster of social signals only when evidence and privacy rules allow | C | `services/wall/ContextThreadService.ts:980#buildCompassClusterCandidate` turns Compass's per-object prompt into an interpretation over a SET, and enforces the spec's two conditions literally. EVIDENCE: a member must pass `shouldAttachContextThread` ON ITS OWN (`:110#shouldAttachContextThread`), with `visualOverload`/`duplicatesLiveStrip` neutralised because those are presentation constraints, not evidence ones; two or more, from DISTINCT kinds, so one system talking twice is not a cluster. PRIVACY: a member carrying `sensitiveDisclosure`, or one the viewer is not authorized for, is excluded BEFORE it is counted, and the label names only the KIND of each signal, never its content — the interpretation discloses strictly less than the threads it is built from. It never asserts: truth class is `inferred` and confidence is the WEAKEST member's. Wired at `:1094#buildCompassClusterCandidate`; 19 tests in `wallCompassCluster.test.ts`. **Moved W→C in the §6 recensus.** |
 | W87 | Never present inference as verified fact | C | `services/wallCompass.ts:12,44` phrases a QUESTION and hands off ids only. |
 | W88 | Compass references canonical objects in its responses/actions | C | `services/wallCompass.ts:44-73` — ids-only handoff into the canonical Compass surface; a missing route degrades rather than crashing (`:63-73`). |
@@ -316,7 +322,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| W97 | canonical → projection → eligibility/privacy/moderation → rank or sort → diversity/dedup → API → UI | C | `routes/wall.ts`: loaders (`:804-862`) → `projectObjects` (`:881`) → mode order (`:892-925`) → `applyFeedDiversity` (`:923`) → context threads (`:968`) → `WallResponse` (`:978-987`). |
+| W97 | canonical → projection → eligibility/privacy/moderation → rank or sort → diversity/dedup → API → UI | C | `routes/wall.ts`: loaders (`routes/wall.ts:1016#const [postcardsLoaded, mediaLoaded, momentsLoaded, opportunitiesLoaded] = await Promise.all([`) → `projectObjects` (`routes/wall.ts:1076#projections = await projectObjects(sc, steered, projectViewer);`) → mode order (`routes/wall.ts:1088#const built = buildFollowing(projections, {` / `routes/wall.ts:1100#const built = await rankForYou(sc, projections, rankViewer, {`) → `applyFeedDiversity` (`routes/wall.ts:1118#const diversified = applyFeedDiversity(items, DEFAULT_FEED_DIVERSITY_POLICY);`) → context threads (`routes/wall.ts:1163#items = await attachContextThreads(sc, items, projectViewer, {`) → `WallResponse` (`routes/wall.ts:1173#const body: WallResponse = {`). *(The whole chain was stale by §9 and one pointer landed on `}),`. Re-read end to end at this tree; the order is unchanged and every step is now anchored.)* |
 
 ### §25 Service Boundaries
 
@@ -410,10 +416,10 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
 | W145 | Cached Wall first paint: immediate skeleton/content where available | C | `services/wallPrefetch.ts` first-page cache seeds the initial paint; `components/WallFeed.tsx` renders a loading state rather than a blank screen. |
-| W146 | First server page < 500 ms backend | **?** | `test/wallPerformance.test.ts:322,349` asserts a p50/p95 ceiling — but against an in-memory fake client (`:205-227`), so it bounds *read count and slope*, not wall-clock latency against Postgres. The construction obligations are met (`routes/wall.ts:124` `CANDIDATE_FETCH = 150`, `WallCandidateLoaders.ts:63` `LOADER_FETCH = 60`); the 500 ms target itself is unmeasured. |
+| W146 | First server page < 500 ms backend | **?** | **The 500 ms target is still not measured against Postgres. What was previously unmeasured and now is not: whether the page's STRUCTURE can meet it at all.** The pre-existing bound was right about its own limits — `test/wallPerformance.test.ts:365#result.p50 <= FIRST_PAGE_P50_CEILING_MS` and `artifacts/api-server/src/test/wallPerformance.test.ts:370#result.p95 <= FIRST_PAGE_P95_CEILING_MS` run against a zero-latency in-memory fake (`artifacts/api-server/src/test/wallPerformance.test.ts:234#function corpusClient()`), so they bound OUR CPU work and the read count, and cannot fail because the page got slow against a database. That bound has NOT been relabelled. What is new is a latency MODEL that can: every fake query is given a known artificial delay and the first page is timed at two non-zero delays, so the constant per-timer overhead cancels and the difference is the number of database round trips the page WAITS FOR IN SINGLE FILE (`artifacts/api-server/src/test/wallPerformance.test.ts:526#const depth = (atHigh - atLow) / (SLOPE_HIGH_MS - SLOPE_LOW_MS);`). **Measured: 92–93 serialized round trips, reproducibly — across three full 89-file suite runs and three runs of the file alone**, ratcheted at `artifacts/api-server/src/test/wallPerformance.test.ts:489#const ROUND_TRIP_DEPTH_RATCHET = 110;`, with the same run also stated in milliseconds at a 4 ms modelled round trip (`artifacts/api-server/src/test/wallPerformance.test.ts:563#modelledMs <= FIRST_PAGE_TARGET_MS` — ~380 ms against the spec's 500). The millisecond figure is DERIVED from the slope and the CPU baseline, not read off a stopwatch: an absolute timing at 4 ms/round-trip was measured to read 600 ms inside the full suite purely because a busy runner stretched each 4 ms timer to ~6.8 ms, which is a property of the runner and not of the Wall. The slope is taken at 8 ms and 16 ms so that overhead cancels. **That number is the finding.** At depth ~92 the first page clears 500 ms only if the average round trip lands inside ~5.4 ms: achievable in-region, not achievable across a region boundary or through a saturated pooler. The 343-read ratchet says the page does a lot of work; this says how much of it is serialized, which is the half that becomes milliseconds. **WHAT WOULD TURN THIS RED (or green):** the SAME harness pointed at a real Postgres — `_setTestClient` replaced by a supabase-js client against a local `supabase start` stack or the staging project, seeded with the same 150-post corpus, Wall flags on, p50/p95 of `GET /wall?mode=for_you` read off the wire. That needs a database in CI, which this tree does not have; it needs no new Wall code. Anyone who runs it should move this row and keep the depth ratchet, which is what stops the answer rotting between runs. |
 | W147 | Mode switch reuses a cached mode if fresh, else progressive load | C | Per-mode cache key (`wallPrefetch.ts:58-60`) plus `useWallFeed`'s generation-guarded refetch on mode change. |
 | W148 | Live strip refreshes independently and never blocks feed render | C | Separate hook and endpoint; `routes/wall.ts:635-651` `buildLiveStrip` defers the entire candidate assembly behind a thunk so an OFF flag costs nothing, and any failure degrades to `[]`. |
-| W149 | 60 fps scroll on supported devices | **?** | Requires a device. `components/WallFeed.tsx:145` sets explicit windowing props, and `components/__tests__/WallFeed.renderCost.component.test.tsx` bounds render cost, but neither measures frame rate. |
+| W149 | 60 fps scroll on supported devices | **?** | **Frame time needs a device and nothing here claims otherwise. One real gap in the surrounding evidence is closed.** `components/WallFeed.tsx:151` declares four windowing numbers, and until now only ONE of them was observable from a test: `initialNumToRender` decides the first mount, which `components/__tests__/WallFeed.renderCost.component.test.tsx` bounds. The other three — `maxToRenderPerBatch`, `updateCellsBatchingPeriod`, `windowSize` — only act while SCROLLING, and RN's `VirtualizedList` never scrolls under jest because no layout events arrive. **Measured: widening `windowSize` from 7 to 21 — which triples the cells retained around the viewport on a device — changed no test in this repository.** It now fails `travel-buddy-standalone/src/features/wall/components/__tests__/WallFeed.renderCost.component.test.tsx:191#the declared scroll-windowing budget has not been silently widened`. That is a budget pin, not a frame-rate measurement. **WHAT WOULD TURN THIS RED:** a frame-time capture on a named device — a Perfetto/`systrace` trace or Flipper's frame graph on a mid-tier Android (the supported floor, e.g. a Pixel 6a) scrolling a 60-item For You feed with video, reporting the share of frames over 16.7 ms. That needs hardware or an instrumented emulator and a person to drive it; it needs no Wall code. |
 | W150 | Video lazy load, only near viewport | C | `components/objects/VideoWallItem.tsx:53-58` lazy-mounts the player only once the item enters the viewport. |
 | W151 | Images: responsive variants + CDN/cache | C | `routes/posts.ts` builds a `feedUrl` feed-sized derivative; client renders through `CachedImage` → `expo-image` disk/memory cache, warmed by `prefetchWallMedia`. |
 
@@ -424,7 +430,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | W152 | Live Intelligence unavailable → hide/degrade strip, social feed normal | C | `routes/wall.ts:642-650` catches and returns `[]`. Test: `test/wallRouteDegradation.test.ts`. |
 | W153 | Ranking unavailable → fallback eligible recent/relevance-safe ordering | C | `WallRankingService.ts:322-327` — on a ranker throw every item scores 0 and the stable tiebreak preserves input order. |
 | W154 | Place resolver unavailable → render the social object without place intelligence | C | `routes/wall.ts:486-488` — a failed `places` read logs and leaves `placeRef` null; the object still projects. |
-| W155 | Compass unavailable → remove the action, do not block the post | C | The action is added only behind its flag (`WallProjectionService.ts:238`); the client tolerates a missing route (`services/wallCompass.ts:63-73`). |
+| W155 | Compass unavailable → remove the action, do not block the post | C | The action is added only behind its flag (`services/wall/WallProjectionService.ts:275#if (viewer.compassHandoffEnabled) {`); the client tolerates a missing route (`services/wallCompass.ts:63-73`). |
 | W156 | RAB unavailable → remove Buddy context only | C | `routes/wall.ts:855-860` — the opportunity loader is skipped or caught to an empty load; `ContextThreadService.readBuddyCandidate` is fail-closed on both flags. |
 | W157 | Media processing pending → placeholder without breaking the feed | C | `DisplayMedia.processing` (`lib/wallProjection.ts:111`); `VideoWallItem.tsx:69` falls back to the poster when `media?.processing`. |
 | W158 | Network offline → cached social feed, no fake live states | C | `useWallFeed.ts:168-186` serves the cached page labelled stale; nothing fabricates a live item (the strip is server-only and simply absent). |
@@ -433,26 +439,26 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| W159 | Clean social-media density, generous whitespace | **?** | A visual judgement; spacing tokens are applied consistently but "generous" is not statically decidable. |
+| W159 | Clean social-media density, generous whitespace | **?** | **"Generous" is a judgement and stays one. The half this row's evidence ASSERTED — "spacing tokens are applied consistently" — was never checked, and now is.** `travel-buddy-standalone/src/features/wall/components/__tests__/WallDesignSystem.component.test.tsx:181#no Wall style sets an in-scale-band spacing value that is not a token` scans every non-test Wall source and refuses any padding/margin/gap literal inside the token band (4–48) that is not one of `space`'s seven steps. Sub-band optical nudges (0–3) and the one list inset (`paddingBottom: 120`) sit outside the band by construction, so the rule needs no escape hatch; mutating one `space.md` to `14` turns it red. **WHAT WOULD TURN THIS RED:** a named designer's sign-off (or refusal) against a screenshot set of the five object renderers at the supported width range, recorded in this census with a date. There is no measurement that substitutes for it, and there never will be — this row needs a person, not a tool. |
 | W160 | One primary content object at a time in the vertical scroll | C | `components/WallFeed.tsx:138` `FlatList` renders one projection per row; no grid layout exists in the tree. |
 | W161 | Live For You compact and horizontally browsable | C | `components/LiveForYouStrip.tsx:81-82` horizontal `ScrollView`, ≤4 items. |
 | W162 | For You / Following switch simple and persistent near feed start | C | `components/WallScreen.tsx:127` renders `FeedModeSwitcher` unconditionally, directly above the feed. |
 | W163 | Postcards visibly break the normal feed language | C | `components/objects/PostcardWallItem.tsx` — distinct paper frame, rotation, date stamp. |
 | W164 | Video remains inline and cinematic | C | Inline is enforced (`VideoWallItem.tsx:82-88`); "cinematic" is a full-bleed wide frame (`ratio={aspect.wide}`). |
 | W165 | Context Threads visually quieter than the post | C | `components/ContextThreadView.tsx:145-156` — muted `t.small` type, `color.faint` reason line, paper background with a hairline border. |
-| W166 | Portava purple is an interaction/accent colour, not a background wash | **W** | The Wall's accent tokens are **not purple**: `src/theme/tokens.ts:12` `signal: '#FF4D2E'` (vermilion) and `:14` `deep: '#0A3D4A'` (teal-ink), and those are what the Wall components use (`ContextThreadView.tsx:103,155`, `wallItemShared.tsx`). The *structural* half of the rule holds — no card uses the accent as a background wash — but the specified colour is absent. Same family of divergence as Passport §27. |
-| W167 | Avoid dashboard grids, event-page density, giant recommendation modules, excessive badges | **?** | Structurally supported (single-column list, one thread per object, ≤4 strip items), but "excessive" is a visual judgement. |
-| W168 | The user should understand the Wall without knowing Portava's architecture | **?** | A comprehension claim; needs users. |
+| W166 | Portava purple is an interaction/accent colour, not a background wash | **W** | **The clause has two halves. The tree satisfies the STRUCTURAL half — now mechanically, not by a grep somebody ran once — and contradicts the BRAND half, which is not engineering's to resolve. See §9.1: this is one owner decision, shared with `census-passport.md`'s five §27 rows.** SPEC: `docs/specs/Portava_Wall_Engineering_Architecture_and_Design_Spec.txt:279#Portava purple is an interaction/accent color, not a background wash for every card.` — one sentence, no hex, and the only colour named anywhere in the spec. CODE: the Wall's accents are `travel-buddy-standalone/src/theme/tokens.ts:12#signal: '#FF4D2E', // vermilion — primary action + live pulse only` and `travel-buddy-standalone/src/theme/tokens.ts:14#deep: '#0A3D4A', // teal-ink — destination accents`, inside a palette that declares its own direction in its first lines (`travel-buddy-standalone/src/theme/tokens.ts:3#Editorial / passport visual direction. One bold device (the stamp),`). `grep -rniE 'purple\|violet\|indigo'` over `travel-buddy-standalone/src/theme/` returns nothing. STRUCTURAL HALF — **now enforced**: `travel-buddy-standalone/src/features/wall/components/__tests__/WallDesignSystem.component.test.tsx:123#no Wall surface paints an accent background outside the named affordances` permits an accent background at exactly three named interaction affordances (the notification badge, the selected feed-mode tab, the Buddy tag) and fails on any other, and `travel-buddy-standalone/src/features/wall/components/__tests__/WallDesignSystem.component.test.tsx:141#NO feed object card paints its own surface in the accent` admits no allowlist at all for the five object renderers. Painting `SocialPostWallItem`'s card in `color.signal` turns both red. Whatever colour the accent is, it is used as an accent and never as a card wash. BRAND HALF — unresolvable here. Moving this to `C` requires either repainting the accent purple (a user-visible change to a direction the tokens file states in its first line and every other Portava surface shares) or re-reading the requirement until it passes. Neither is an engineering call. **WHAT WOULD TURN THIS RED:** decision **D-WALL-COLOUR** (§7.1), taken by the product owner, in one of two forms — (a) amend `docs/specs/Portava_Wall_Engineering_Architecture_and_Design_Spec.txt:279#Portava purple is an interaction/accent color` to name the shipped accent, which moves this row to `C` and `census-passport.md`'s P13/P128/P129/P132/P133 with it, or (b) supply the Portava purple hex, after which engineering changes `tokens.ts` and re-runs the AA contrast suite across the whole client (some pairings will fail and need new tokens — see `docs/architecture/blocker-ledger.md:714`). Engineering cannot choose; it has now stated both sides and made the half it owns fail loudly. |
+| W167 | Avoid dashboard grids, event-page density, giant recommendation modules, excessive badges | **?** | **Three of the four clauses name a structure and are now checked; "excessive" remains a judgement, which is why the row does not move.** NO DASHBOARD GRID: `travel-buddy-standalone/src/features/wall/components/__tests__/WallDesignSystem.component.test.tsx:231#nothing in the Wall lays content out in a grid` — no `numColumns` anywhere in the Wall, and the single wrapping flex row in the tree is the action-chip row, named. NO GIANT RECOMMENDATION MODULE: the same file pins exactly one `<LiveForYouStrip` on the screen and exactly two horizontal scrollers in the whole tree (the strip and the quick-media row). BADGES: the cap the code states is the cap it applies — `components/objects/wallItemShared.tsx:430#{actions.slice(0, 3).map(` is pinned by `travel-buddy-standalone/src/features/wall/components/__tests__/WallDesignSystem.component.test.tsx:261#an object with many actions renders at most THREE chips`, together with the deliberate exclusions (`save` and `ask_compass` already have a home and are never ALSO chips), so raising the slice to 6 turns it red. **WHAT WOULD TURN THIS RED:** the same designer sign-off W159 needs, answering one question this census cannot — whether one action row + at most three chips + at most one context thread per card is already too much. The threshold is a product choice; the code now merely refuses to drift past whatever it is. |
+| W168 | The user should understand the Wall without knowing Portava's architecture | **?** | **Comprehension needs users. The one way a regression can silently break it does not, and is now checked.** `travel-buddy-standalone/src/features/wall/components/__tests__/WallDesignSystem.component.test.tsx:372#no viewer-facing string names a piece of the Wall machinery` extracts every `accessibilityLabel`, `accessibilityHint`, JSX text node and rendered string literal from the non-test Wall tree (with template interpolations stripped, since those are data) and refuses twenty terms that name the Wall's internals — `projection`, `canonical`, `candidate`, `context thread`, `truth class`, `ranking`, `eligibility`, `session intent`, `cursor`, `allowlist` and the rest. Measured: relabelling the header's `Clear feed steer` to `Clear session intent` turns it red. The copy in the tree today is plain product language throughout. **WHAT WOULD TURN THIS RED:** an unmoderated comprehension test — five to eight people who have never seen the Wall, asked what the screen is and what the Live strip is telling them, with the failure threshold agreed in advance and the result recorded here. That needs users and a researcher. No tool substitutes for it. |
 
 ### §36 Accessibility
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
 | W169 | All feed actions have accessible labels | C | `components/objects/wallItemShared.tsx` — 12 `accessibilityRole`/`accessibilityLabel` sites, including every control in `SocialActionRow:401-421`; strip, switcher, header and video controls likewise. |
-| W170 | Video controls remain keyboard/screen-reader accessible | **?** | The Wall's own open control is labelled (`VideoWallItem.tsx:99`), but the transport controls belong to `SharedVideoPlayer` and their screen-reader behaviour needs a device. |
+| W170 | Video controls remain keyboard/screen-reader accessible | C | **Moved ?→C in the §9 pass.** The `?` was correct about the residue and wrong about the reach, which is the identical argument that moved W174: a screen reader reads the accessibility TREE the app declares, and `@testing-library/react-native` renders that tree. The previous blocker was not the code — §7.3 says so — it was that `travel-buddy-standalone`'s jest toolchain could not be run in that worktree. It was run here. `travel-buddy-standalone/src/features/wall/components/objects/__tests__/VideoWallItem.transportA11y.component.test.tsx` renders the REAL `VideoWallItem` with the REAL `SharedVideoPlayer` (only expo-av's native `Video` is stubbed) and asserts over the tree the WALL produces, which the shared component's own test in `src/components/ui/__tests__/` cannot: `travel-buddy-standalone/src/features/wall/components/objects/__tests__/VideoWallItem.transportA11y.component.test.tsx:175#exposes play/pause and mute as labelled buttons the Wall does not hide` reaches `travel-buddy-standalone/src/components/ui/SharedVideoPlayer.tsx:162#accessibilityLabel={isPlaying ? 'Pause video' : 'Play video'}` and `travel-buddy-standalone/src/components/ui/SharedVideoPlayer.tsx:178#accessibilityLabel={isMuted ? 'Unmute' : 'Mute'}` through the Wall's own render; `travel-buddy-standalone/src/features/wall/components/objects/__tests__/VideoWallItem.transportA11y.component.test.tsx:205#EVERY operable control in the video card announces itself` sweeps every touchable host in the card (found by its Pressability responder signature, NOT by its role, so an unlabelled control is counted rather than skipped) and requires a role and a non-empty label on each; `travel-buddy-standalone/src/features/wall/components/objects/__tests__/VideoWallItem.transportA11y.component.test.tsx:229#the labels are STATEFUL` requires the announcement to change with playback and mute state, which is the difference between an accessible control and a labelled one. MUTATION, MEASURED: wrapping the player frame in `importantForAccessibility="no-hide-descendants"` — the Wall-side regression the shared component's test cannot see — takes the file from 5 pass to 4 fail / 1 pass; dropping `accessibilityLabel="Open video"` from `VideoWallItem.tsx` takes it to 2 fail / 3 pass. Restored: 5 pass. STILL NEEDS A DEVICE, and this row does not claim it: how VoiceOver/TalkBack traverse and pronounce this tree, and external-keyboard reachability on hardware. That is exactly the residue W174 kept while moving to `C`. |
 | W171 | Autoplay respects reduced motion and user settings | C | `services/videoAutoplayPolicy.ts:60-63`; `hooks/useReducedMotionSetting.ts`. Tests: `objects/__tests__/VideoWallItem.component.test.tsx:122,159,191,200`. |
 | W172 | Live state must not rely on colour alone | C | `components/ContextThreadView.tsx` `freshnessLabel` and `components/LiveForYouStrip.tsx` `stateLabel` render the state as TEXT. |
-| W173 | Postcard decorative typography preserves readable accessible text | **?** | Needs a rendered screen and a screen reader. |
+| W173 | Postcard decorative typography preserves readable accessible text | C | **Moved ?→C in the §9 pass.** "Needs a rendered screen and a screen reader" answers a question the clause does not ask. The predicate has two decidable halves and both are now computed over the real tokens and the real tree. READABLE: the Postcard is the ONE Wall surface not painted on `color.paper`/`paperRaised` — its card is `#FFFDF7` — so the Wall-wide AA scan at `travel-buddy-standalone/src/features/wall/components/__tests__/WallAccessibility.component.test.tsx:175#no Wall style paints text in a token that cannot reach AA` has never covered it. `travel-buddy-standalone/src/features/wall/components/objects/__tests__/PostcardWallItem.decorativeText.component.test.tsx:155#every text colour the Postcard paints clears AA on the Postcard` reads the card colour and every `color: color.X` out of `PostcardWallItem.tsx` and computes WCAG 2.x against that surface; the file also pins the decorative `stamp` role's size, weight and tracking floor. ACCESSIBLE: `travel-buddy-standalone/src/features/wall/components/objects/__tests__/PostcardWallItem.decorativeText.component.test.tsx:190#every decorated string is REAL TEXT in the accessibility tree, not artwork` finds the place name, the caption, the byline and the uppercased date stamp as `Text`, and `travel-buddy-standalone/src/features/wall/components/objects/__tests__/PostcardWallItem.decorativeText.component.test.tsx:202#the decoration does not remove the card, or anything on it, from the tree` refuses any `importantForAccessibility` / `accessibilityElementsHidden` suppression under the rotated paper frame. MUTATION, MEASURED: returning the byline to `color.faint` — the exact regression `travel-buddy-standalone/src/features/wall/components/objects/PostcardWallItem.tsx:101#byline: { ...t.stamp, color: color.mute` records in its own comment — takes the file to 1 fail / 6 pass; hiding the date stamp from assistive technology takes it to 2 fail / 5 pass. Restored: 7 pass. STILL NEEDS A HUMAN, and this row does not claim it: whether a real screen reader pronounces an uppercased monospace date sensibly, and whether the −0.6° rotation reads as charming or broken. |
 | W174 | Mode switch and horizontal Live For You list support logical focus order | C | The `?` was correct about the PROPERTY and wrong about the reach: focus order is a runtime property of the RN accessibility tree, and `@testing-library/react-native` renders that tree, so it is testable without a device. `components/__tests__/WallAccessibility.component.test.tsx:238#focus` pins the strip — each card is ONE focusable unit (its inner Texts carry `importantForAccessibility="no"`, without which the order is 3 stops per card) and announces its position, so a screen-reader user knows where in the strip they are. `:283#mode` pins the switch as a tablist whose tabs carry role, label and `selected` state, with only the tabs focusable. What still needs a device is how a REAL screen reader traverses that tree; what the spec asks for here is the order the tree declares. **Moved ?→C in the §6 recensus.** |
 
 ### §37 Security and Abuse Controls
@@ -460,7 +466,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
 | W175 | Server-side eligibility is authoritative; never rely on client hiding | C | The gate runs in `WallProjectionService.projectObjects` before anything is serialized; every route short-circuits on `wall_enabled` before any canonical read (`routes/wall.ts:748,1000,1053,1092,1110,1161,1202`), and `lib/featureFlags.isFlagEnabled` returns false on error. |
-| W176 | Rate-limit impression/action mutation endpoints | C | `routes/wall.ts:114-118` `WALL_RATE_LIMITS`, applied at `:1069`, `:1123`, `:1172`. Test: `test/wallRateLimits.test.ts`. |
+| W176 | Rate-limit impression/action mutation endpoints | C | `routes/wall.ts:115#export const WALL_RATE_LIMITS = {`, applied at `routes/wall.ts:1263#const { id, limit: rlLimit, windowMs } = WALL_RATE_LIMITS.sessionIntent;`, `routes/wall.ts:1317#const { id, limit: rlLimit, windowMs } = WALL_RATE_LIMITS.impression;`, `routes/wall.ts:1366#const { id, limit: rlLimit, windowMs } = WALL_RATE_LIMITS.action;` and `routes/wall.ts:1486#const { id, limit: rlLimit, windowMs } = WALL_RATE_LIMITS.revalidate;`. Test: `test/wallRateLimits.test.ts`. *(Four sites, not three — the revalidate endpoint acquired one after this row was written. All four pointers were stale by §9; verdict unchanged and strengthened.)* |
 | W177 | Prevent ranking manipulation through keyword stuffing or repeated self-engagement | C | No free-text term feeds the ranker (`WallRankSignals`, `WallRankingService.ts:69-88`, is tags/category/counts only), so keyword stuffing has no lever; and Wall telemetry rows are written with `outcome: "analytics"` precisely so they "never collide with the impression-finding query" (`routes/wall.ts:138-166`), so flooding your own object through `POST /wall/impression` cannot move ranking. Rate limits bound the flood regardless. |
 | W178 | Paid/promoted content, if introduced later, is explicitly labeled and separated from factual live confidence | C | The premise of the old N verdict was wrong, not just its score. `sponsored` and `imported_owned` are two of the eight members of `lib/intelContracts.ts:44#SOURCE_CLASSES`, are accepted by the live read path, and already reach the Wall's producers — so the rule was not holding vacuously, it was holding HALFWAY. **Separated, yes**: `lib/wallProjection.ts:202#deriveWallTruthClass` maps both to `inferred`, which is in `NON_OBSERVATION_TRUTH_CLASSES`, so no coverage can promote a paid claim to an observation. **Labelled, no**: nothing said the word. Now: `lib/wallProjection.ts:257#PROMOTIONAL_SOURCE_CLASSES` and `:289#promotionLabelFor` (the canonical `SOURCE_CLASS_LABELS` strings, agreement pinned by test), derived from the SAME `sourceClass` expression as the truth class at `services/wall/LiveForYouService.ts:313#promotionLabelFor` and `ContextThreadService.ts:356#promotionLabelFor`, so label and downgrade cannot disagree. Rendered by `components/LiveForYouStrip.tsx:128#cardPromotion` and `components/ContextThreadView.tsx:125#wall-context-promotion-`, in each case BEFORE the state word and inside the accessibility label. The set is deliberately narrower than `NON_INDEPENDENT_SOURCE_CLASSES`: an `official_signed` transit alert is self-asserted but is not paid, and calling it Sponsored would be false. **Moved N→C in the §6 recensus.** |
 | W179 | Moderation takedowns propagate to cached Wall projections | C | Server-side propagation was always real (`WallProjectionService.ts:202#passesEligibility` drops `removed`/`takedown`/`moderated` on every request). The client cache now propagates too: `services/wallPrefetch.ts:211#revalidateFirstPageCache` re-asks the SERVER which cached ids the viewer may still be shown (`services/wallApi.ts:328#revalidateCachedObjects`) and drops the rest from both the screen and the persisted page. Nothing client-side re-derives eligibility — there is no client moderation predicate to drift. Wired on the one path that could paint a taken-down object, the offline first open, at `hooks/useWallFeed.ts:191#revalidateFirstPageCache`; an unreachable server returns null and the cache is left intact, because offline is not a takedown. **Moved W→C in the §6 recensus.** |
@@ -532,7 +538,7 @@ anything, and they are the most consequential paragraphs in this census.
 
 1. **The whole Wall is dark.** Every route short-circuits on `wall_enabled`, and migration 2270 seeds all five flags OFF with a postcondition that fails the migration if any is ON (`2270_wall_feature_flags.sql:26-30`). 2272 seeds two more OFF. Whether any has since been flipped is a database question this census does not ask.
 2. **Live For You's `place_state` kind is structurally empty in production.** `readLiveClaimEnvelopes` returns `[]` when the promoted-scope allowlist is empty (`lib/liveClaimRead.ts:316-317`), and `intel_live_promoted_scopes` is on the writerless-reads ratchet as a deliberately-empty human allowlist whose own note says: *"This is why `wall_live_for_you_enabled` should stay off: it would serve an empty strip"* (`src/scripts/checkWriterlessReads.ts:174-181`). The other five strip kinds have their own producers and are unaffected.
-3. **§16's two clocks depend on a flag-gated writer.** `recordMediaAsset` returns early unless `media_canonical_enabled` is on (`lib/mediaAssets.ts:119`), so `media_assets.captured_at` — the only `experienceAt` source — is written only when that flag is lit. The producer chain is complete and correct in code; whether it produces anything is a deployment fact.
+3. **§16's two clocks depend on a flag-gated writer.** `recordMediaAsset` returns early unless `media_canonical_enabled` is on (`artifacts/api-server/src/lib/mediaAssets.ts:321#if (!(await isFlagEnabled(sc, "media_canonical_enabled"))) return NONE;`), so `media_assets.captured_at` — the only `experienceAt` source — is written only when that flag is lit. The producer chain is complete and correct in code; whether it produces anything is a deployment fact.
 4. **§32's server sink is not deployed.** Migration 2308 creates `wall_telemetry_events`; production contains exactly one `wall*` table, `wall_session_intents`. Thirteen of the fifteen client-emitted §32 events therefore have nowhere to land, and the transport is fire-and-forget so the 404 is silent. The client half and the route half are both built and correct.
 5. **`wall_session_intents` is the Wall's only storage, and it does have writers** — `WallSessionIntentService.ts:203` (upsert), `:227` (delete), plus the account-deletion step at `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1138#delete_wall_session_intent` (cited as line 1068 until §8; see §8.1). It is *not* on the writerless-reads ratchet (`KNOWN_WRITERLESS_READS`, `checkWriterlessReads.ts:102-213`, does not list it). The counter-signal in the brief — one `wall*` table — is real and is explained: **the Wall genuinely rides on `posts`, `post_media`, `media_assets`, `media_attachments`, `shared_moments`, `places`, `hidden_gems`, `rent_buddy_profiles`, `trips`, `trip_members`, `user_follows`, `blocks` and `rank_events`, and owns almost no state of its own by design (§30).** That is the architecture working as specified, not a gap. The one thing it *should* own and does not yet have deployed is the §32 telemetry sink.
 6. **Writer-attribution caveat.** `checkWriterlessReads.ts:39-41` states that a dynamic `.from(expr)` anywhere makes writer attribution INCOMPLETE and that the check errs toward silence. Every "nothing writes X" claim above was settled by reading the writer call sites, not by grepping `from("…")`.
@@ -553,7 +559,7 @@ called PARTIAL are now built too**, so at its own grain the honest count is
 
 | § | Certification verdict | This census | Why |
 | --- | --- | --- | --- |
-| §16 Two clocks | PARTIAL — "no producer assigns `experienceAt`" | **Built** | `WallCandidateLoaders.loadCapturedAtByEntity:201` + assignments at `:469`/`:721`, fed by the `captured_at` writer added at `routes/posts.ts:143,270`. The certification's own completion condition ("a legitimate source assigns `experienceAt` … with tests proving `publishedAt` and `experienceAt` can differ") is met — `test/mediaCapturedAtWriter.test.ts` is that test. |
+| §16 Two clocks | PARTIAL — "no producer assigns `experienceAt`" | **Built** | `WallCandidateLoaders.loadCapturedAtByEntity:201` + assignments at `:469`/`:721`, fed by the `captured_at` writer added at `artifacts/api-server/src/routes/posts.ts:145#sniffed.kind === "image" ? capturedAtFromImageBytes(rawBody) : null;` and `artifacts/api-server/src/routes/posts.ts:272#capturedAt,`. The certification's own completion condition ("a legitimate source assigns `experienceAt` … with tests proving `publishedAt` and `experienceAt` can differ") is met — `test/mediaCapturedAtWriter.test.ts` is that test. |
 | §19 / Phase 6 | PARTIAL — "`contextual_opportunity` has no candidate producer; 1 of 7 object types unreachable" | **Built** | `loadContextualOpportunityCandidates` exists and is wired at `routes/wall.ts:856`, behind `isWallRabEnabled` + `checkBookingKycGate` + the consolidated `enforceBookingCreationGates`. All 7 object types are now server-emittable. Tests: `test/wallOpportunityLoader.test.ts`, `test/wallOpportunityRoute.test.ts`. |
 | §31 Caching & prefetch | PARTIAL — "`wallPrefetch.ts` … does not exist; zero hits for `prefetch`" | **Built** | `services/wallPrefetch.ts` (264 lines) implements both halves — first-page cache with two horizons and a media prefetch with `DEFAULT_PREFETCH_COUNT = 4` — and `hooks/useWallFeed.ts:219` calls it. Test: `services/__tests__/wallPrefetch.component.test.ts` (12 cases). |
 
@@ -760,10 +766,10 @@ portfolio decision, and it is cheaper to make once than to keep re-measuring.
 
 | id | what it needs | how far away it is |
 |---|---|---|
-| W170 (video controls remain screen-reader accessible) | **ONE TEST RUN.** See §7.3 — the code and the test both already exist. | Closest. |
-| W146 (first server page < 500 ms backend) | A benchmark against real Postgres. `artifacts/api-server/src/test/wallPerformance.test.ts:208#function corpusClient()` bounds read count and slope against an in-memory fake, which is the right thing to pin in CI and cannot produce a wall-clock number. | Needs the DB harness. |
+| W170 (video controls remain screen-reader accessible) | **ONE TEST RUN.** See §7.3 — the code and the test both already exist. | Closest. **Done in §9; row is now `C`.** |
+| W146 (first server page < 500 ms backend) | A benchmark against real Postgres. `artifacts/api-server/src/test/wallPerformance.test.ts:234#function corpusClient()` bounds read count and slope against an in-memory fake, which is the right thing to pin in CI and cannot produce a wall-clock number. | Needs the DB harness. **Still true in §9 — but the page's serialized round-trip DEPTH is now measured, which says what latency the target implies.** |
 | W149 (60 fps scroll) | A device or an instrumented emulator. | Needs hardware. |
-| W173 (postcard typography stays readable) | A rendered screen and a real screen reader. | Needs hardware + a human. |
+| W173 (postcard typography stays readable) | A rendered screen and a real screen reader. | Needs hardware + a human — **for the aesthetic half only. §9 shows contrast, size and tree-presence were decidable all along; row is now `C`.** |
 
 ### 7.3 W170 is one test run from `C`, and the run is the blocker — not the code
 
@@ -829,7 +835,7 @@ broken pointer that had been broken since before this census was written.
 
 ### 8.1 W68's account-deletion citation was never right, and nothing could have caught it
 
-W68 and §4's prose both cited `AccountDeletionService.ts:1068` for the `wall_session_intents`
+W68 and §4's prose both cited `AccountDeletionService.ts` line 1068 for the `wall_session_intents`
 deletion step. It is not there and never was:
 
 | Commit | Where `delete_wall_session_intent` actually is | What `:1068` actually is |
@@ -873,3 +879,139 @@ both commits. Identity-verification erasure touches no Wall table and no Wall ro
 **What this section does NOT claim.** It does not re-derive W68 or any other row against HEAD. It
 argues that this one file's one change cannot have moved this census's one dependency on it, and it
 repairs a citation defect it found on the way. The headline is unchanged: 196 C / 1 W / 0 N / 8 CV.
+
+---
+
+## §9 — The nine-row pass, 2026-09-14: two rows moved, six sharpened, one handed to the owner
+
+*Worktree `/home/user/wt-483` at `7d1f2d498` (PR #483 head + the v2 spec install). This
+pass re-opened only the nine non-`C` rows — W71, W146, W149, W159, W166, W167, W168, W170,
+W173 — and every claim below was executed in this tree, not inherited.*
+
+**Headline: 205 · 198 C · 1 W · 0 N · 6 ? → CONSTRUCTED 199/205 = 97.1 % · CORRECT 198/205
+= 96.6 % · CANNOT-VERIFY 6/205 = 2.9 %.** Two rows moved `?→C` (W170, W173). Nothing was
+reclassified to improve a number; the seven that did not move say so, and say what would
+settle each.
+
+### 9.1 The blocker §7 named was real, and it was the toolchain, not the code
+
+§7.3 recorded W170 as *"one test run from `C`, and the run is the blocker"*: the Wall is
+outside the pnpm workspace, `travel-buddy-standalone/node_modules` was absent, and
+`jest --preset jest-expo` could not resolve. **That was still true in this worktree.** It
+was resolved by pointing the worktree's ignored `node_modules` at the already-installed
+copy in the primary checkout (identical `package.json`, byte-for-byte) — an environment
+step, not a repository change. `pnpm --filter travel-buddy-standalone` still cannot install
+here, and the next person will have to do the same thing; that is a CI/tooling item, not a
+Wall one.
+
+With the runner working, the whole Wall client suite runs: **27 suites, 154 tests, green**,
+including the three files this pass added. The backend Wall suite is **89 suites, 411
+tests, green**. Both typecheck ratchets are unmoved: api-server 864 diagnostics across 116
+files, travel-buddy-standalone 176 across 61 — the three new client test files contribute
+zero.
+
+### 9.2 What moved
+
+| id | was | now | moved by |
+| --- | --- | --- | --- |
+| W170 | ? | C | already true — the declared accessibility tree was testable without a device all along, and §7.3 had already written the argument; this pass ran it |
+| W173 | ? | C | already true — "readable" is contrast and size, "accessible" is presence in the tree, and both are computed here over the real tokens and the real render |
+
+Both are the W174 shape exactly: **the `?` was right about the residue and wrong about the
+reach.** Neither row now claims anything about how a real screen reader sounds, and both
+say so in their own evidence.
+
+### 9.3 What did NOT move, and the concrete evidence that would settle each
+
+`?` is still not one bucket. Restated against what this pass could and could not execute:
+
+| id | why it is still `?` | who or what can settle it |
+| --- | --- | --- |
+| W71 | Voice input has **no producer anywhere in this repository** — nothing in `lib/inputAssistance/` mentions voice, speech or dictation, and no speech-to-text package is a dependency. The Wall's half is now under test (it delegates verbatim and owns no normalizer), so no Wall change can move this. | The **Global Input Intelligence** lane: a speech-capture surface feeding `generateSuggestions`, graded on `census-input-intelligence.md`. |
+| W146 | The 500 ms figure is a wall-clock number against a real database and this tree has no database in CI. | **Anyone with a Postgres harness**: run the existing `wallPerformance` corpus against `supabase start` or staging with the Wall flags on, and read p50/p95 off the wire. No new Wall code is required. |
+| W149 | Frame time needs frames. | **A device**: a Perfetto / Flipper frame capture on the supported-floor Android, scrolling a 60-item For You feed with video, reporting the share of frames over 16.7 ms. |
+| W159 · W167 · W168 | The predicates are "generous", "excessive" and "understands" — judgements, not measurements. | **A named designer** (W159, W167) signing off or refusing against a screenshot set, and **users** (W168): an unmoderated comprehension test, threshold agreed in advance, result recorded here with a date. |
+
+**W166 is not in that table because it is not a measurement problem.** It is decision
+**D-WALL-COLOUR** (§7.1), unchanged and still open, and it is the same decision as
+`census-passport.md`'s D-DESIGN: across the two censuses one unmade brand call holds **six**
+requirements wrong. What changed this pass is only that the half engineering owns — the
+accent is never a background wash — stopped being a grep in a document and became a test
+that fails when a card is painted in it.
+
+### 9.4 The measurement this pass added that nobody had, and what it says
+
+W146's evidence had a gap that was invisible because the file that should have caught it
+was measuring something else. The Wall's first page issues ~343 supabase calls; issued
+concurrently that is one round trip, and issued in single file it is 343. **Nothing in the
+repository knew which.** Giving every fake query a known latency and differencing two
+non-zero points answers it: **92–93 serialized round trips**, which means the 500 ms
+target holds only if the average round trip lands inside ~5.4 ms.
+
+The same technique showed the existing guards are looser than they read. Adding ONE awaited
+read per feed item to `routes/wall.ts` moves the depth from ~92 to ~113 and the modelled
+page from ~378 ms to ~459 ms — and the 375-read ratchet (363 reads) and the 9-per-item
+slope ratchet (8.3) **both still pass**. The depth ratchet at 110 is the only line in the file that catches it,
+and it was sized against that measured regression rather than guessed.
+
+The client half has the same shape: `WallFeed`'s `windowSize` could be widened from 7 to 21
+— tripling the cells retained around the viewport on a device — **without changing any test
+in this repository**, because `VirtualizedList` never scrolls under jest. It is now pinned.
+
+### 9.5 What this pass did not do
+
+- It did not re-open the 196 rows §6 and §7 left `C`. Nine rows were read; the rest rest on
+  those passes and on `check:doc-citations`, which proves a cited line exists, not that the
+  sentence about it is still true.
+- It did not touch a brand colour, a feature flag, a migration, or any file outside the Wall
+  lane's ownership.
+- **It changed counted files, so this census is now STALE against its declared
+  `head_commit`** — `check:census-freshness` names `artifacts/api-server/src/test/wallPerformance.test.ts`
+  and `travel-buddy-standalone/src/features/wall/components/__tests__/WallFeed.renderCost.component.test.tsx`.
+  Both are TEST files this census cites as evidence and neither changes any behaviour a row
+  grades. The acknowledgement ledger belongs to the integration owner and was deliberately
+  not edited here; re-declaring `head_commit` at the commit that lands this work is the
+  correct resolution, not an acknowledgement entry.
+- **It repaired nine decayed citations and, in doing so, exposed a scope gap it may not
+  close.** `check:citation-targets` listed nine census-wall pointers that landed on a blank
+  line or a bare brace — W17's live-candidate call (174 lines adrift), all eight of W36's
+  context-thread readers, W66's two `routes/posts.ts` writer pointers, W85/W155's Compass
+  flag gate, W97's whole six-step pipeline chain, W176's rate-limit sites (which turned out
+  to be FOUR, not three) and the `media_canonical_enabled` early return. Each claim was
+  RE-READ against this tree before its pointer was moved — no verdict changed, and every
+  repaired pointer now carries an anchor. census-wall's misses went **9 → 0** and the
+  repository-wide figure fell below its ceiling. *(The one remaining `:1068` in §8.1 is
+  prose ABOUT a wrong pointer and was rewritten as "line 1068" so no checker reads it as a
+  citation; the argument is unchanged.)*
+  **The gap:** qualifying W66's writer pointer to `artifacts/api-server/src/routes/posts.ts`
+  made it resolvable, and it is **not in this census's `CENSUS_SCOPE`** — so
+  `check:census-scope-coverage` drops from 96 % to 95 % and goes red. That is a real
+  omission, not an artefact: this census grades the `experienceAt` chain and that file is
+  the only writer in it. The fix is one line in
+  `artifacts/api-server/src/scripts/checkCensusFreshness.ts`, which this lane may not edit.
+  **CROSS-LANE REQUEST to the integration owner: add `"artifacts/api-server/src/routes/posts.ts"`
+  to `census-wall.md`'s scope list.** The citation was deliberately left precise rather than
+  reverted to the ambiguous short form, because a check that reddens when a document gets
+  more accurate is a finding to act on, not one to hide.
+- **Nothing here says any of it runs.** The six deployment facts in §3 are unchanged: the
+  Wall is flag-dark, migration 2270 seeds all five flags OFF with a postcondition that fails
+  the migration if any is ON, and 2272 seeds two more OFF. 198 of 205 requirements built on a
+  branch is not 198 requirements working, and no viewer has seen any of it.
+
+### 9.6 Headline — restated from the rows, which is the only form that can be checked
+
+> **Wall, at `7d1f2d498` (worktree): 205 requirements · 198 BUILT-AND-CORRECT · 1
+> BUILT-BUT-WRONG · 0 NOT-BUILT · 6 CANNOT-VERIFY → CONSTRUCTED 199 / 205 = 97.1 % ·
+> CORRECT 198 / 205 = 96.6 %.** The CONSTRUCTED-to-CORRECT gap is **0.5 points** and it is
+> still held by a colour name that is an owner's to choose. The CANNOT-VERIFY share is
+> **2.9 %, six rows** — two of which a machine could still answer (W146 with a database,
+> W149 with a device) and four of which need a designer or users and always will.
+
+| BUILT-AND-CORRECT | **198** |
+|---|---|
+| BUILT-BUT-WRONG | **1** |
+| NOT-BUILT | **0** |
+| CANNOT-VERIFY | **6** |
+
+198 + 1 + 0 + 6 = 205. These are the §2 rows, counted; the §6 and §7 headlines above are
+the dated records of those passes and are deliberately left as written.

@@ -97,7 +97,7 @@ import {
  *
  *  The one remaining is census-highlights-memories' `routes/memories.ts:127`
  *  `canViewMemory`, which belongs to that lane's paths and is raised with it. */
-export const MAX_ABSENT_SYMBOLS = 1;
+export const MAX_ABSENT_SYMBOLS = 0;
 
 /** Measured 2026-09-14. CEILING — may only fall. Contains a known false-positive
  *  class (collection cited, member pointed at), which is why it is a ceiling and

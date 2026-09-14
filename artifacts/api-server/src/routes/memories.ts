@@ -65,6 +65,38 @@ import {
   sendMemoryCommandRejection,
 } from "../lib/memoryCommandBus.js";
 import { asHistoricalMemoryPayload } from "../services/memory/historicalTruth.js";
+// §13 compression hierarchy — see GET /memories/graph below.
+// §18 projection registry — see GET /trips/:tripId/memories/recap below. Until
+// this import existed, NOTHING outside src/test/ and the certification suite
+// read the registry, which is the blanket reason every §18 row is BBW.
+import {
+  getProjectionDefinition,
+  sourceVersionOf,
+  type MemorySourceRow,
+} from "../services/memoryProjections/projectionRegistry.js";
+import {
+  buildCompressionHierarchy,
+  deriveChapterThemes,
+  unplacedAt,
+  type CompressedNode,
+  type GraphMoment,
+} from "../services/memoryProjections/memoryGraph.js";
+// §21 / §28.8. A Memory whose audience narrows, or which is deleted, must not
+// survive inside a cached Compass projection. See
+// services/memory/memoryAudienceRevocation.ts for why this is NOT the one-line
+// `invalidateCompassCache(sc, user.id, …)` the highlights surface uses
+// (routes/highlights.ts:977): the user whose cache holds a Memory is almost
+// never the user who narrowed it, so the targets are resolved, not assumed.
+import {
+  audienceChanged,
+  mergedAudience,
+  revokeMemoryAudienceCaches,
+} from "../services/memory/memoryAudienceRevocation.js";
+import { runMemoryDeletionLifecycle } from "../services/memory/memoryDeletionLifecycle.js";
+import {
+  classifyMemoryMediaUrl,
+  FOREIGN_MEDIA_REFUSAL,
+} from "../services/memory/memoryMediaOrigin.js";
 import {
   authorizeParticipantCommand,
   commandTypeForPatch,
@@ -746,6 +778,169 @@ const MEMORY_CREATE_SELECT_WITH_PRECISION = "id, owner_id, title, caption, visib
 
 const MEMORY_SELECT_WITH_PRECISION = "id, owner_id, title, caption, visibility, allowed_user_ids, hidden_user_ids, trip_id, event_id, place_id, location_city, location_country, location_lat, location_lng, canonical_location_id, location_precision, starts_at, ends_at, state, created_at, updated_at";
 
+/* ============================================================================
+ * GET /memories/graph — §13's compression hierarchy over the caller's own
+ * Memories, and the Life Chapters projected from it.
+ *
+ * CENSUS H104 / H105. Section D.1 filed both in group (b) — "the compression
+ * hierarchy and Life Chapters are pure functions over `memories`; nothing calls
+ * them". `services/memoryProjections/memoryGraph.ts` has been complete and
+ * unreachable since it was written. This is the caller.
+ *
+ * OWNER-ONLY, AND THAT IS NOT A SIMPLIFICATION. §13's hierarchy is built over
+ * a person's whole Memory set; there is no audience ladder that makes sense for
+ * "a DAY node of somebody else's life", and a node carries `member_memory_ids`
+ * for Memories whose individual visibility differs. So the only viewer is the
+ * owner, the query is pinned to `owner_id = <caller>`, and there is no
+ * `?userId=` parameter to get that wrong with.
+ *
+ * NOTHING IS COPIED UPWARD (§28.8 / H105). The response projects exactly the
+ * `CompressedNode` shape: ids, counts, derived keys and the engine version. No
+ * title, no caption, no media url appears anywhere in it, which is what makes a
+ * Life Chapter a projection rather than a second copy of the Memory.
+ *
+ * TIME BASIS IS DECLARED, NOT ASSUMED. §3.1's `occurred_at` does not exist on
+ * this schema (H17/H22), so a moment is placed by `starts_at` when the owner
+ * gave one and by `created_at` when they did not — which is a RECORDING time,
+ * not an occurrence time. The response says how many moments fell back
+ * (`momentsOnRecordedTime`) rather than presenting a day bucket built from
+ * upload timestamps as if it were a day of someone's life. `occurred_timezone`
+ * does not exist either, so day and season buckets are UTC; that is stated in
+ * `timezoneBasis` for the same reason.
+ *
+ * FAIL CLOSED ON THE COMPANION READ. supabase-js RESOLVES on a database error,
+ * so `(data ?? [])` on an unreadable `memory_tags` yields a graph in which the
+ * owner travelled alone — a confident, wrong answer with no companion chapter
+ * in it. Both reads bind `.error` and the route refuses.
+ * ============================================================================ */
+
+/**
+ * PostgREST puts `.in()` lists in the QUERY STRING. 2 000 uuids is ~74 KB of
+ * URL and the request is rejected before it reaches the database — as a
+ * transport error, which `(data ?? [])` would then read as "this Memory has no
+ * tags". Every batched read on the two projection routes below is chunked at
+ * this width, and every chunk's `.error` is checked.
+ */
+const IN_LIST_CHUNK = 200;
+
+function chunkIds<T>(ids: readonly T[], size = IN_LIST_CHUNK): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < ids.length; i += size) out.push(ids.slice(i, i + size) as T[]);
+  return out;
+}
+
+/** One page of a life. A person with more Memories than this gets the most recent. */
+const GRAPH_MEMORY_LIMIT = 2000;
+
+router.get("/memories/graph", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: rows, error } = await sc
+    .from("memories")
+    .select("id, owner_id, trip_id, place_id, canonical_location_id, starts_at, created_at")
+    .eq("owner_id", user.id)
+    .neq("state", "deleted")
+    .order("starts_at", { ascending: false })
+    .limit(GRAPH_MEMORY_LIMIT);
+  if (error) {
+    req.log.error({ err: error, ownerId: user.id }, "memories: graph read failed — refusing rather than projecting a partial life");
+    sendError(res, "degraded_unavailable", "We could not build your memory graph. Please try again.");
+    return;
+  }
+
+  const memoryRows = (rows ?? []) as any[];
+  const ids = memoryRows.map((r) => r.id as string);
+
+  const people = new Map<string, string[]>();
+  for (const batch of chunkIds(ids)) {
+    const { data: tagRows, error: tagErr } = await sc
+      .from("memory_tags")
+      .select("memory_id, tagged_user_id, status")
+      .in("memory_id", batch)
+      .eq("status", "approved");
+    if (tagErr) {
+      req.log.error({ err: tagErr, ownerId: user.id }, "memories: graph companion read failed — refusing rather than reporting a companion-free life");
+      sendError(res, "degraded_unavailable", "We could not build your memory graph. Please try again.");
+      return;
+    }
+    for (const t of (tagRows ?? []) as any[]) {
+      const list = people.get(t.memory_id as string) ?? [];
+      list.push(t.tagged_user_id as string);
+      people.set(t.memory_id as string, list);
+    }
+  }
+
+  let onRecordedTime = 0;
+  const moments: GraphMoment[] = memoryRows.map((r) => {
+    const occurred = (r.starts_at as string | null) ?? (r.created_at as string | null) ?? "";
+    if (!r.starts_at) onRecordedTime++;
+    return {
+      memory_id: r.id as string,
+      owner_id: user.id,
+      occurred_at: occurred,
+      // §3.1's occurred_timezone does not exist on this schema (H17), so every
+      // bucket is UTC and the response says so.
+      utc_offset_minutes: 0,
+      // §3.6 memory_episodes is not deployed (H8), so no moment carries an
+      // episode id and the EPISODE level is legitimately empty rather than
+      // fabricated from proximity here.
+      episode_id: null,
+      trip_id: (r.trip_id as string | null) ?? null,
+      place_id: (r.canonical_location_id as string | null) ?? (r.place_id as string | null) ?? null,
+      people: (people.get(r.id as string) ?? []).slice().sort(),
+      // §8's score has no column to be stored in (H63), and a node never
+      // projects it anyway.
+      significance_score: null,
+    };
+  });
+
+  const themes = deriveChapterThemes(moments);
+  const hierarchy = buildCompressionHierarchy(moments, themes);
+
+  const project = (n: CompressedNode) => ({
+    level: n.level,
+    id: n.id,
+    key: n.key,
+    startedAt: n.started_at,
+    endedAt: n.ended_at,
+    memberMemoryIds: n.member_memory_ids,
+    childNodeIds: n.child_node_ids,
+    memoryCount: n.memory_count,
+  });
+
+  res.json({
+    graph: {
+      levels: {
+        EPISODE: hierarchy.levels.EPISODE.map(project),
+        DAY: hierarchy.levels.DAY.map(project),
+        TRIP: hierarchy.levels.TRIP.map(project),
+        SEASON: hierarchy.levels.SEASON.map(project),
+        LIFE_CHAPTER: hierarchy.levels.LIFE_CHAPTER.map(project),
+      },
+      chapters: hierarchy.levels.LIFE_CHAPTER.map((n) => ({
+        id: n.id,
+        key: n.key,
+        label: themes.find((t) => t.key === n.key)?.label ?? n.key,
+        memoryCount: n.memory_count,
+      })),
+      momentCount: moments.length,
+      momentsOnRecordedTime: onRecordedTime,
+      timezoneBasis: "utc",
+      truncated: memoryRows.length >= GRAPH_MEMORY_LIMIT,
+      engineVersion: hierarchy.engine_version,
+      unplaced: {
+        EPISODE: unplacedAt(moments, "EPISODE").length,
+        TRIP: unplacedAt(moments, "TRIP").length,
+      },
+    },
+  });
+});
+
 router.get("/memories/:id", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
@@ -883,6 +1078,12 @@ router.patch("/memories/:id", async (req, res) => {
   if (existing.owner_id !== user.id) { sendError(res, "forbidden", "Not your memory"); return; }
 
   const d = parsed.data;
+
+  // §21. The audience as it stands BEFORE the command, snapshotted rather than
+  // re-read from `existing` afterwards. `existing` is the row object the write
+  // path may have mutated in place, and a revocation that compares a row with
+  // itself revokes nothing — silently, and only for the field that changed.
+  const previousAudience = mergedAudience(existing as any, {});
 
   // §5. THE GUARD H50 SAYS WAS MISSING. Before this line the handler accepted
   // any of draft/published/archived as `state` and wrote it unconditionally —
@@ -1044,6 +1245,27 @@ router.patch("/memories/:id", async (req, res) => {
 
   if (!outcome.ok) { sendCommandFailure(req, res, outcome); return; }
 
+  // §21 / §28.8. The write has happened; now revoke the derived artifacts that
+  // still carry the OLD audience. This runs AFTER the command so a cache
+  // eviction can never be the reason a legitimate edit fails, and it is awaited
+  // rather than fired and forgotten so the response is not sent while a viewer
+  // who just lost access can still be served the Memory out of a cache.
+  //
+  // `audienceChanged` gates it: a caption edit must not evict every follower's
+  // Compass feed, and a Memory whose audience did not move has nothing to
+  // revoke.
+  const nextAudience = mergedAudience(previousAudience, patch);
+  if (audienceChanged(previousAudience, nextAudience)) {
+    await revokeMemoryAudienceCaches(sc, {
+      memoryId: id,
+      ownerId: user.id,
+      previous: previousAudience,
+      next: nextAudience,
+      reason: nextAudience.state === "archived" ? "memory_archived" : "memory_visibility_changed",
+      log: req.log,
+    });
+  }
+
   res.json({ memory: mapMemory(outcome.body, user.id) });
 });
 
@@ -1067,6 +1289,10 @@ router.delete("/memories/:id", async (req, res) => {
   if (!loaded.ok) { sendCommandFailure(req, res, loaded); return; }
   const existing = loaded.row;
   if (existing.owner_id !== user.id) { sendError(res, "forbidden", "Not your memory"); return; }
+
+  // §21. Snapshot the audience before the soft delete, for the same reason the
+  // PATCH handler does: the row object is mutated by the write path.
+  const audienceBeforeDelete = mergedAudience(existing as any, {});
 
   // §5. `:642` wrote state:"deleted" directly with no transition check. A
   // 'removed' (moderator) row reaching this handler now gets a refusal instead
@@ -1127,6 +1353,29 @@ router.delete("/memories/:id", async (req, res) => {
 
   if (!outcome.ok) { sendCommandFailure(req, res, outcome); return; }
 
+  // §21's five states, run and reported. Before this, per-Memory deletion was
+  // one UPDATE and a 204 — no named step, no report, no retry (census H193,
+  // group (a); H190's "§21's five-step deletion lifecycle still does not
+  // exist"). PUBLIC_REVOKED is the step that evicts the cached Compass
+  // projection: a feed assembled thirty seconds ago still contains this Memory
+  // and is served from `compass_feed_cache` for up to four hours.
+  //
+  // TWO OF THE FIVE STORES ARE NOT DEPLOYED and report `not_applicable` with
+  // their reason rather than `done` — see services/memory/
+  // memoryDeletionLifecycle.ts for why that is three outcomes and not two.
+  //
+  // The report is LOGGED, not returned: DELETE answers 204 and changing that is
+  // a client contract change. A caller is never told a deletion failed when the
+  // canonical row really is gone; an operator is.
+  const deletionReport = await runMemoryDeletionLifecycle(sc, {
+    memoryId: id,
+    ownerId: user.id,
+    actorUserId: user.id,
+    previous: audienceBeforeDelete,
+    log: req.log,
+  });
+  req.log.info({ report: deletionReport }, "memories: §21 deletion lifecycle");
+
   res.status(204).send();
 });
 
@@ -1155,6 +1404,32 @@ router.post("/memories/:id/items", async (req, res) => {
   const loaded = await loadMemoryForCommand(sc, id);
   if (!loaded.ok) { sendCommandFailure(req, res, loaded); return; }
   if (loaded.row.owner_id !== user.id) { sendError(res, "forbidden", "Not your memory"); return; }
+
+  // §20 / census H181 — a Memory item may not claim another user's storage
+  // object. `mediaUrl` was `z.string().url()` and nothing else: the same
+  // unchecked client assertion `src/test/storyMediaOwnership.test.ts` documents
+  // for POST /stories. Refused BEFORE the command so nothing is written and no
+  // audit row claims a media attachment that did not happen.
+  //
+  // Only a path inside our own storage whose owner segment is a DIFFERENT user
+  // is refused. An `external` URL is untouched — this route has always accepted
+  // those and whether it should is a product decision, not a defect. See
+  // services/memory/memoryMediaOrigin.ts.
+  const origin = classifyMemoryMediaUrl(parsed.data.mediaUrl, user.id);
+  if (origin.verdict === "foreign_storage") {
+    req.log.error(
+      { memoryId: id, actorUserId: user.id, bucket: origin.bucket, path: origin.path },
+      "memories: refused a media item whose storage path belongs to another user",
+    );
+    sendError(res, "invalid_payload", FOREIGN_MEDIA_REFUSAL, { exposeDetail: true });
+    return;
+  }
+  if (origin.verdict === "unattributable_storage") {
+    req.log.warn(
+      { memoryId: id, actorUserId: user.id, bucket: origin.bucket, path: origin.path },
+      "memories: media item points at one of our objects whose owner cannot be derived from its path — accepted, unattributed",
+    );
+  }
 
   // §17 ADD_MEDIA. §19 H176/H177 are already correct here and stay correct: the
   // Memory exists before any media and a failed item write leaves its facts
@@ -1910,6 +2185,183 @@ router.get("/trips/:tripId/memory", async (req, res) => {
         handle: (ownerProfile.data as any).handle,
         avatarUrl: (ownerProfile.data as any).avatar_url ?? null,
       } : null,
+    },
+  });
+});
+
+/* ============================================================================
+ * GET /trips/:tripId/memories/recap — §18 TripMemoryProjection, consumed.
+ *
+ * CENSUS H166. The §18 block of this census carries one blanket reason for
+ * every row in it: "No route, lib or service outside `src/test/` and
+ * `src/services/memoryCertification/` imports the registry". H.7 corrected
+ * H166's evidence and left the gap stated exactly — "`TripMemoryProjection`
+ * builds a LIST of a trip's Memories and nothing consumes it". This consumes
+ * it.
+ *
+ * A NEW ROUTE, NOT A CHANGED ONE. `GET /trips/:tripId/memory` returns a single
+ * `{ memory }` object and a shipped client reads that shape (D.1 group (b)
+ * declined to change it on this lane's authority). Nothing about that route
+ * moves here.
+ *
+ * THE PROJECTION IS NOT THE PERMISSION. `TripMemoryProjection.build` filters
+ * to the scope owner's undeleted Memories on the trip; it does NOT run §23's
+ * audience ladder, and it must not be asked to — the registry is a shaping
+ * layer, not an authorization layer. So the ladder runs FIRST, per row, through
+ * the same `canReadMemory(..., "trip")` the sibling route uses, and only the
+ * rows it admits are handed to the builder. The builder's own owner filter then
+ * runs on top, which is why another crew member's Memory cannot appear even if
+ * the ladder admitted it.
+ *
+ * WHAT THE WHITELIST BUYS. `TRIP_FIELDS` has eight members and none of them is
+ * `caption`, `location_lat` or `location_lng`. Serving the projection instead
+ * of the row is what makes that structural rather than a matter of remembering
+ * which keys to delete — the disclosure failure this census keeps finding.
+ *
+ * PARTICIPANTS GO THROUGH THE §10 LADDER BEFORE THE BUILDER SEES THEM. The
+ * projection's `people` field is built from `approvedTagsFor`, which is consent
+ * but not disclosure policy: a participant this viewer has blocked, or whose
+ * rung is ANONYMOUS_COUNT, must not be named. `projectParticipants` decides
+ * that once, and only the ids it keeps are handed in as tags.
+ *
+ * FAIL CLOSED ON EVERY INPUT. A recap assembled from an unreadable
+ * `memory_items` is a recap in which nobody took any photographs, and a recap
+ * assembled from an unreadable `memories` is an empty trip. Both refuse.
+ * ============================================================================ */
+
+/** A trip is a bounded thing; this is a guard against a pathological one. */
+const TRIP_RECAP_LIMIT = 500;
+
+router.get("/trips/:tripId/memories/recap", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { tripId } = req.params;
+  if (!isUuid(tripId)) { sendError(res, "invalid_payload", "Invalid trip id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: trip, error: tripErr } = await sc
+    .from("trips").select("id, owner_id").eq("id", tripId).maybeSingle();
+  if (tripErr) {
+    req.log.error({ err: tripErr, tripId }, "trip-recap: trips read failed — refusing rather than answering not_found");
+    sendError(res, "degraded_unavailable", "Could not read the trip. Please try again.");
+    return;
+  }
+  if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
+  const tripOwnerId = (trip as any).owner_id as string;
+
+  // AUDIENCE: §18 names this projection's audience TRIP_RECAP. Accepted crew
+  // only — the same `acceptedCrewOfTrip` rule the visibility ladder uses, which
+  // fails closed on an unreadable trip_members.
+  const crew = await acceptedCrewOfTrip(sc, tripId);
+  if (!crew.ok) {
+    req.log.error({ err: crew.error, tripId }, "trip-recap: crew read failed — withholding the recap");
+    sendError(res, "not_found", "No recap for this trip");
+    return;
+  }
+  if (!crew.ids.has(user.id)) { sendError(res, "not_found", "No recap for this trip"); return; }
+
+  if (user.id !== tripOwnerId && await isBlocked(sc, user.id, tripOwnerId)) {
+    sendError(res, "not_found", "No recap for this trip");
+    return;
+  }
+
+  const { data: rows, error } = await sc
+    .from("memories")
+    .select(MEMORY_SELECT as any)
+    .eq("trip_id", tripId)
+    .eq("owner_id", tripOwnerId)
+    .neq("state", "deleted")
+    .limit(TRIP_RECAP_LIMIT);
+  if (error) {
+    req.log.error({ err: error, tripId }, "trip-recap: memories read failed — refusing rather than serving an empty trip");
+    sendError(res, "degraded_unavailable", "Could not build the trip recap. Please try again.");
+    return;
+  }
+
+  // §23, per row, BEFORE the builder. `canReadMemory` is async, so this is a
+  // filter over resolved verdicts rather than an `Array.prototype.filter`.
+  const candidates = (rows ?? []) as any[];
+  const verdicts = await Promise.all(
+    candidates.map((m) => (m.owner_id === user.id ? Promise.resolve(true) : canReadMemory(sc, m, user.id, "trip"))),
+  );
+  const readable = candidates.filter((_m, i) => verdicts[i]);
+  const memoryIds = readable.map((m) => m.id as string);
+
+  const items: any[] = [];
+  const tags: any[] = [];
+  for (const batch of chunkIds(memoryIds)) {
+    const [itemRes, tagRes] = await Promise.all([
+      sc.from("memory_items").select("memory_id").in("memory_id", batch),
+      sc.from("memory_tags").select("memory_id, tagged_user_id, status").in("memory_id", batch),
+    ]);
+    if (itemRes.error) {
+      req.log.error({ err: itemRes.error, tripId }, "trip-recap: memory_items read failed — refusing rather than reporting a trip with no photographs");
+      sendError(res, "degraded_unavailable", "Could not build the trip recap. Please try again.");
+      return;
+    }
+    if (tagRes.error) {
+      req.log.error({ err: tagRes.error, tripId }, "trip-recap: memory_tags read failed — refusing rather than reporting a trip nobody shared");
+      sendError(res, "degraded_unavailable", "Could not build the trip recap. Please try again.");
+      return;
+    }
+    items.push(...((itemRes.data ?? []) as any[]));
+    tags.push(...((tagRes.data ?? []) as any[]));
+  }
+
+  // §10's person ladder, once for the whole recap. Every Memory here shares the
+  // trip and the owner, so the only per-row input is the Memory's own
+  // visibility — which is overridden per row below rather than re-loaded.
+  const participantIds = [...new Set(tags.map((t) => t.tagged_user_id as string))];
+  const baseCtx = await loadParticipantVisibility(
+    sc,
+    { owner_id: tripOwnerId, visibility: null, trip_id: tripId },
+    user.id,
+    participantIds,
+  );
+  const disclosedTags: Array<{ memory_id: string; tagged_user_id: string; status: string }> = [];
+  for (const m of readable) {
+    const mine = tags.filter((t) => t.memory_id === m.id);
+    if (mine.length === 0) continue;
+    const projected = projectParticipants(
+      { ...baseCtx, memoryVisibility: (m.visibility as string | null) ?? null },
+      mine as any,
+    );
+    for (const p of projected.participants) {
+      // The builder's `approvedTagsFor` keys on status === "approved", so a
+      // participant the ladder kept is passed through with the status it
+      // actually has — the ladder narrows the list, it never promotes a tag.
+      disclosedTags.push({ memory_id: m.id as string, tagged_user_id: p.userId, status: p.status ?? "" });
+    }
+  }
+
+  const definition = getProjectionDefinition("TripMemoryProjection");
+  if (!definition) { sendError(res, "db_error", "Projection definition missing"); return; }
+
+  const sourceRows = readable as unknown as MemorySourceRow[];
+  const built = definition.build({
+    scope: { owner_id: tripOwnerId, viewer_id: user.id, trip_id: tripId },
+    memories: sourceRows,
+    tags: disclosedTags as any,
+    items: items as any,
+  });
+
+  res.json({
+    recap: {
+      tripId,
+      projectionId: definition.id,
+      builderVersion: definition.builder_version,
+      destination: definition.destination,
+      audience: definition.audience,
+      // §18 "every derivative is registered with source Memory version". The
+      // registry TABLE is 2730 and unapplied (H174), so the version travels on
+      // the response instead of being stored — a caller can still tell one
+      // build of this recap from another.
+      sourceVersion: sourceVersionOf(sourceRows).digest,
+      rows: built,
     },
   });
 });
