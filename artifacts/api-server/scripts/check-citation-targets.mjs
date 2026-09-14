@@ -102,7 +102,40 @@ import {
  * It is now `:1138#delete_wall_session_intent`. The general lesson is the one at the
  * top of this file: a pointer that lands on real code can still name the wrong code,
  * and the only thing that finds THAT is a person reading the claim. */
-export const MAX_DEAD_TARGETS = 275;
+
+/** LOWERED 2026-09-14, 276 -> 257, by the citation-repair lane. The branch had
+ * drifted ONE over the 275 ceiling; nineteen citations were repointed to bring it
+ * back and then some. Measured on this tree, AFTER the repairs, by running this
+ * checker: `257 land on nothing`. That is the number below — the ceiling sits AT
+ * the measurement, with no slack, as a shrink-only ratchet requires.
+ *
+ * HOW THE NINETEEN WERE CHOSEN, because the method is the part worth keeping.
+ * Not one was moved by offset. Each was repaired by reading the sentence the
+ * citation supports, naming the symbol that sentence asserts, and grepping the
+ * cited file for it: `status_unchanged_flag_off` for the abort that reports it,
+ * `route_legs_member_select` for the RLS policy the row says exists,
+ * `INTERNAL_ONLY_REASONS` for "TRIP_AUTH_BLOCKED is internal-only". Every one of
+ * the nineteen also gained an `#anchor`, so doc-citations now owns them and this
+ * checker no longer judges them at all — which is why `judged` fell by 18 too.
+ *
+ * TWO FINDINGS FROM THE PASS THAT THE NEXT LANE SHOULD NOT HAVE TO REDISCOVER:
+ *
+ *   - `routes/messaging.ts:1841` was cited by TWO rows in census-telegraph for
+ *     TWO UNRELATED claims — T2's `reply_to_id` and T313's history-bound
+ *     application. One line number, two claims, so they needed DIFFERENT repairs
+ *     (`:2928#reply_to_id` and `:1879#visibleFromOf`). A blanket "1841 -> X" would
+ *     have been right for at most one of them.
+ *   - census-layover §L5's ledger row cites `.delete()` at `:473` / `.insert()` at
+ *     `:477` and states in the same sentence that those were the lines AT
+ *     `af1864a7` and `014a25d5`, giving `:596`/`:600` for the merged head. That row
+ *     is a HISTORICAL record of where the code was, not a live pointer. It is dead
+ *     by this checker's rule and it was deliberately LEFT dead. Repointing it would
+ *     destroy the only thing it exists to say.
+ *
+ * 226 of the 276 sat in this lane's files and many of the rest are still
+ * repairable; they were left because a pointer repair is only honest once someone
+ * has read the claim, and nineteen is what this pass actually read. */
+export const MAX_DEAD_TARGETS = 257;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);

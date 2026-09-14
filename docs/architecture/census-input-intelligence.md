@@ -354,7 +354,7 @@ a finding that the work was done for something else. See `docs/architecture/attr
 | id | Requirement | V | Evidence / divergence |
 | --- | --- | --- | --- |
 | G6 | One platform layer; feature teams must not build independent autocomplete engines | W | The layer is real and 10 screens consume it, but four independent engines are still live and unmigrated: `hooks/useSearchSuggestions.ts`, `hooks/useGooglePlacesAutocomplete.ts`, `hooks/usePlaceSearch.ts` and `components/MentionInput.tsx` (its own 200 ms debounce + abort at `:133-198`). No ratchet forbids a fifth — `src/scripts/` has no input-layer check at all. |
-| G7 | The field owns behaviour; the platform owns suggestion intelligence | C | `SmartInput.tsx:97` — `assistEnabled` is decided by `policy.mode`, and a `no_assistance` field renders a plain `TextInput`; the server mirrors it at `gateway.ts:153`. |
+| G7 | The field owns behaviour; the platform owns suggestion intelligence | C | `SmartInput.tsx:97` — `assistEnabled` is decided by `policy.mode`, and a `no_assistance` field renders a plain `TextInput`; the server mirrors it at `gateway.ts:166#policy.mode`. |
 | G8 | Canonical entities outrank AI guesses | C | `projection.ts:309-320` `TYPE_RANK` — `entity: 0` … `ai_suggestion: 9`, primary sort key at `:333-335`. |
 | G9 | AI never silently replaces user text | C | Every AI row is an editable `replace_text` (`aiWriting.ts:259`, `projection.ts:295`); `SmartInput.tsx:112-117` applies `replacementText` only inside an explicit `handleSelect`. |
 | G10 | Low-confidence interpretation preserves raw user input | C | `semanticParser.ts:600-607` `shouldProjectStructured` gates on `SEMANTIC_MIN_CONFIDENCE = 0.6` (`:133`); below it the parse adds nothing and the raw query row survives. |
@@ -869,7 +869,7 @@ narrow resolver extension rather than a new architecture).
 | id | Requirement | V | Evidence / divergence |
 | --- | --- | --- | --- |
 | G297 | Every suggestion that looks tappable resolves through the canonical action/destination contract | C | `projection.ts:385-407` — the server-side safety net that drops any row without an action, entity id or route, applied on every return path. |
-| G298 | `open_entity` | C | `projection.ts:63-67`; `socialIdentity.ts:219`; `creation.ts:207`. |
+| G298 | `open_entity` | C | `projection.ts:63-67`; `socialIdentity.ts:260#open_entity`; `creation.ts:207`. |
 | G299 | `replace_text` | C | `projection.ts:185`, `:295`; `aiWriting.ts:259`; `validationSuite.ts:336`. |
 | G300 | `set_structured_value` | C | `projection.ts:130`, `:161`, `:184`; `socialIdentity.ts:294`, `:387`, `:460`; `validationSuite.ts:210`, `:245`. |
 | G301 | `submit_search` | C | `projection.ts:224`; `semanticIntent.ts:175`, `:204`; `validationSuite.ts:323`. |
