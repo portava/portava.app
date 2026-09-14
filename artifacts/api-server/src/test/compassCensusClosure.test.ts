@@ -309,7 +309,10 @@ describe("B. CM-03 — 'quieter or cheaper' has a baseline and 'where after this
     assert.equal(q.band, "strong");
     assert.equal(q.sourceClass, "official_signed");
     assert.ok(!Object.prototype.hasOwnProperty.call(q, "value"), "a baseline must never carry the value");
-    assert.deepEqual(Object.keys(q).sort(), ["axis", "band", "claimType", "grounded", "observedAt", "sourceClass"]);
+    // `conflictState` joined the provenance set for CPV2-02 (see
+    // src/test/compassCpv2Grounding.test.ts): it is a fact ABOUT the reading,
+    // not the reading, so it belongs here and this list stays exhaustive.
+    assert.deepEqual(Object.keys(q).sort(), ["axis", "band", "claimType", "conflictState", "grounded", "observedAt", "sourceClass"]);
   });
 
   it("B5: with no anchor place the sequencing question is NOT chainable and carries no city", () => {

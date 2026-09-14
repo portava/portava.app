@@ -56,6 +56,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { readLiveClaimEnvelopes } from "../lib/liveClaimRead.js";
+import { normalizeConflictState, type ConflictState } from "../lib/intelConflict.js";
 import { wrapUgc } from "./CompassStructuredContext.js";
 import {
   loadEligibleMediaRow,
@@ -99,6 +100,15 @@ export interface CompassComparatorBaseline {
   band: string | null;
   sourceClass: string | null;
   observedAt: string | null;
+  /**
+   * CPV2-02: the `conflicting` fixture class, carried rather than flattened.
+   * `lib/liveClaimRead.ts:132` caps the band of a 'material' conflict, but a
+   * capped band reads exactly like one weak single-source report — and
+   * "reports differ" and "one thin reading" are different facts. NULL when the
+   * axis is not grounded: with no claim there is no conflict fact to state,
+   * and 'none' would be an invented one.
+   */
+  conflictState: ConflictState | null;
 }
 
 /** §32 "where should we go after this?" — the anchor a next stop is next to. */
@@ -167,6 +177,10 @@ export interface ComparatorCandidateClaim {
   observedAt?: string | null;
   /** Freshness horizon; an envelope past it is not a baseline. */
   validUntil?: string | null;
+  /** §10 conflict state as the envelope carries it. Read through
+   *  `normalizeConflictState`, so an unrecognised marker fails CLOSED to
+   *  'material' rather than being ignored. */
+  conflictState?: unknown;
 }
 
 /** True when the claim is still inside its own freshness horizon at `nowMs`. */
@@ -197,6 +211,7 @@ export function buildComparatorBaselines(
       band: hit?.band ?? null,
       sourceClass: hit?.sourceClass ?? null,
       observedAt: hit?.observedAt ?? null,
+      conflictState: hit === null ? null : normalizeConflictState(hit.conflictState),
     };
   });
 }
@@ -272,6 +287,7 @@ export async function buildCompassMediaContext(
             sourceClass: env.sourceClass ?? null,
             observedAt: env.observedAt ?? null,
             validUntil: env.validUntil ?? null,
+            conflictState: env.conflictState ?? null,
           });
         }
       }
@@ -343,14 +359,23 @@ export function formatMediaContextLines(ctx: CompassMediaContext): string[] {
   // §32 "Find a quieter or cheaper version." Both axes are always stated, so a
   // missing baseline is a printed "not grounded" rather than a silent absence
   // the model fills in.
-  const grounded = ctx.comparator.filter((c) => c.grounded).map((c) => c.axis);
+  // CPV2-02: an axis whose reports MATERIALLY disagree is reported as its own
+  // third state. Folding it into "grounded" would hand the model a settled
+  // baseline to compare against, which is the "never upgrade inference into
+  // fact" failure with a conflict instead of an inference.
+  const groundedAxes = ctx.comparator.filter((c) => c.grounded);
+  const conflicted = groundedAxes.filter((c) => c.conflictState === "material").map((c) => c.axis);
+  const grounded = groundedAxes.filter((c) => c.conflictState !== "material").map((c) => c.axis);
   const ungrounded = ctx.comparator.filter((c) => !c.grounded).map((c) => c.axis);
   lines.push(
     `Comparator (§32 "find a quieter or cheaper version") — grounded axes: ` +
-      `${grounded.length > 0 ? grounded.join(", ") : "none"}; ungrounded: ` +
+      `${grounded.length > 0 ? grounded.join(", ") : "none"}; conflicted axes (reports differ): ` +
+      `${conflicted.length > 0 ? conflicted.join(", ") : "none"}; ungrounded: ` +
       `${ungrounded.length > 0 ? ungrounded.join(", ") : "none"}. ` +
       `A grounded axis has a permitted, unexpired baseline for THIS place — read it with the ` +
-      `live/place tools and compare against it. For an ungrounded axis, say the comparison cannot ` +
+      `live/place tools and compare against it. For a conflicted axis the reports about this place ` +
+      `materially disagree: say the reports differ and never present it as a settled comparison. ` +
+      `For an ungrounded axis, say the comparison cannot ` +
       `be made from what is known; never estimate how busy or how expensive somewhere is.`,
   );
 
