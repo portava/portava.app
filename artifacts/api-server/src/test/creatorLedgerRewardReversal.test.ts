@@ -64,10 +64,14 @@ function fakeClient(opts: {
   const writes: Write[] = [];
   const flagOn = opts.flagOn !== false;
   const table = (t: string) => {
+    // Held in the closure rather than on `state`, which is `any`: reading the
+    // filters off `any` makes every destructured element implicitly `any` and
+    // the test-suite typecheck rejects it.
+    const filters: Array<[string, unknown]> = [];
     const state: any = {
-      _t: t, _filters: [] as Array<[string, any]>, _payload: null as any,
+      _t: t, _filters: filters, _payload: null as any,
       select() { return this; },
-      eq(c: string, v: any) { this._filters.push([c, v]); return this; },
+      eq(c: string, v: any) { filters.push([c, v]); return this; },
       insert(p: any) { this._payload = p; writes.push({ table: t, op: "insert", payload: p }); return this; },
       single() { return this; },
       maybeSingle() { return this; },
@@ -80,7 +84,7 @@ function fakeClient(opts: {
           return res({ data: { id: "rev-new", ...this._payload }, error: null });
         }
         // A SELECT. Distinguish the by-id read from the by-reversal-link read.
-        const byLink = this._filters.find(([c]) => c === "reverses_entry_id");
+        const byLink = filters.find(([c]) => c === "reverses_entry_id");
         if (byLink) return res({ data: opts.existingReversal ?? null, error: opts.readError ?? null });
         return res({ data: opts.row === undefined ? ORIGINAL : opts.row, error: opts.readError ?? null });
       },

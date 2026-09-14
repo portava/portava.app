@@ -213,6 +213,9 @@ const SEED = () => ({
   trail_edges: [
     { from_trail_id: T_DARK, to_trail_id: T_ROOF, edge_type: "child", strength: 0.8, updated_at: iso(0) },
   ],
+  // Present and empty so a test that seeds outcome rows assigns into a declared
+  // field instead of widening the seed with an untyped one.
+  rank_events: [] as Row[],
 });
 
 // ── The app ──────────────────────────────────────────────────────────────────
