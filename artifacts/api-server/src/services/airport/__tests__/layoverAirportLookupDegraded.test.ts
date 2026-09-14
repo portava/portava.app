@@ -196,13 +196,31 @@ describe("GET /airport/search — static results are labelled, not passed off", 
   });
 });
 
+/**
+ * RELATIVE TO NOW, not a fixed date — and that is the whole point.
+ *
+ * These four cases used to pin `2026-09-14T08:00Z` / `18:00Z`. The route refuses
+ * a layover that has already departed ("This layover has already departed — set
+ * a departure time in the future"), so on 2026-09-14 the fixture started
+ * returning `400 invalid_payload` where the case asserts `201`, and it will do
+ * so on every run from here. The two cases it broke are the POSITIVE CONTROLS —
+ * the ones that prove the 503s above are a refusal about READABILITY and not a
+ * route that refuses everything — so the failure quietly disarmed the half of
+ * this file that gives the other half meaning.
+ *
+ * A test whose correctness depends on the wall clock passing a literal is a test
+ * with an expiry date. Anchoring to `Date.now()` removes it.
+ */
+const FUTURE_ARRIVAL   = new Date(Date.now() +  2 * 60 * 60 * 1000).toISOString();
+const FUTURE_DEPARTURE = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
+
 describe("POST /airport/sessions — a transient outage is not baked into the row", () => {
   it("an IATA-picked session REFUSES while airport_profiles is unreadable", async () => {
     _setTestClient(db(UNREADABLE), true);
     const r = await req("POST", "/api/airport/sessions", {
       iata: "TPE",
-      arrivalTime:   "2026-09-14T08:00:00.000Z",
-      departureTime: "2026-09-14T18:00:00.000Z",
+      arrivalTime:   FUTURE_ARRIVAL,
+      departureTime: FUTURE_DEPARTURE,
       flightType: "international",
     });
     assert.equal(r.status, 503, JSON.stringify(r.body));
@@ -215,8 +233,8 @@ describe("POST /airport/sessions — a transient outage is not baked into the ro
     const r = await req("POST", "/api/airport/sessions", {
       manualCity: "Taoyuan",
       manualAirportName: "Taoyuan International",
-      arrivalTime:   "2026-09-14T08:00:00.000Z",
-      departureTime: "2026-09-14T18:00:00.000Z",
+      arrivalTime:   FUTURE_ARRIVAL,
+      departureTime: FUTURE_DEPARTURE,
       flightType: "international",
     });
     assert.equal(r.status, 503, JSON.stringify(r.body));
@@ -230,8 +248,8 @@ describe("POST /airport/sessions — a transient outage is not baked into the ro
     _setTestClient(db({}, []), true);
     const r = await req("POST", "/api/airport/sessions", {
       iata: "TPE",
-      arrivalTime:   "2026-09-14T08:00:00.000Z",
-      departureTime: "2026-09-14T18:00:00.000Z",
+      arrivalTime:   FUTURE_ARRIVAL,
+      departureTime: FUTURE_DEPARTURE,
       flightType: "international",
     });
     assert.equal(r.status, 201, JSON.stringify(r.body));
@@ -242,8 +260,8 @@ describe("POST /airport/sessions — a transient outage is not baked into the ro
     _setTestClient(db(), true);
     const r = await req("POST", "/api/airport/sessions", {
       iata: "TPE",
-      arrivalTime:   "2026-09-14T08:00:00.000Z",
-      departureTime: "2026-09-14T18:00:00.000Z",
+      arrivalTime:   FUTURE_ARRIVAL,
+      departureTime: FUTURE_DEPARTURE,
       flightType: "international",
     });
     assert.equal(r.status, 201, JSON.stringify(r.body));
