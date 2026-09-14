@@ -283,26 +283,38 @@ export async function loadEligibleCandidatesOrRefuse(
 
   let rows: any[] = [];
   {
-    // BOUND, not discarded. `error` here is a RESOLVED PostgREST failure; the
-    // `catch` is the transport/driver rejection. Both used to `return []`.
-    let settled: { data: unknown; error: unknown };
+    // DESTRUCTURED, and the shape matters as much as the behaviour.
+    //
+    // The first version of this block assigned the awaited result to a local and
+    // read `settled.error` off it. That is just as bound — and
+    // `check:unchecked-supabase-reads` reported it as
+    // `[discarded / gate-function]`, because the pattern it recognises is the
+    // destructuring one. A read whose care the guard cannot SEE is a read the
+    // guard cannot protect, and the next person to touch this line gets no
+    // warning if they drop the check. So it is written in the shape the guard
+    // reads, and the transport/resolved distinction is kept by re-throwing our
+    // own error type rather than by splitting the try.
+    //
+    // `error` is a RESOLVED PostgREST failure; the `catch` is the
+    // transport/driver rejection. Both used to `return []`.
     try {
-      settled = (await query) as { data: unknown; error: unknown };
+      const { data, error } = (await query) as { data: unknown; error: unknown };
+      if (error) {
+        throw new MediaCandidatesUnavailableError(
+          "posts",
+          String((error as any)?.message ?? (error as any)?.code ?? "db_error"),
+        );
+      }
+      if (!Array.isArray(data)) {
+        // A non-array payload with no error is not an empty page — it is a shape
+        // this code cannot read, which is the same unknown as a failed read.
+        throw new MediaCandidatesUnavailableError("posts", "candidate read returned a non-array payload");
+      }
+      rows = data;
     } catch (err) {
+      if (err instanceof MediaCandidatesUnavailableError) throw err;
       throw new MediaCandidatesUnavailableError("posts", String((err as any)?.message ?? err));
     }
-    if (settled.error) {
-      throw new MediaCandidatesUnavailableError(
-        "posts",
-        String((settled.error as any)?.message ?? (settled.error as any)?.code ?? "db_error"),
-      );
-    }
-    if (!Array.isArray(settled.data)) {
-      // A non-array payload with no error is not an empty page — it is a shape
-      // this code cannot read, which is the same unknown as a failed read.
-      throw new MediaCandidatesUnavailableError("posts", "candidate read returned a non-array payload");
-    }
-    rows = settled.data;
   }
   if (rows.length === 0) return [];
 
