@@ -124,9 +124,20 @@ interface CommunityDiscoveryState {
   /** All community items as DiscoveryPlace[] for DiscoveryMapView. */
   places: DiscoveryPlace[];
   loading: boolean;
+  /**
+   * The server REFUSED the community read and served nothing.
+   *
+   * Owner ruling, 2026-09-14: "A distinguishable response body alone is
+   * insufficient if consumers still treat it as successful empty data." A
+   * refusal reaches this hook as `ok: true` with `items: []` — identical, to
+   * every line below, to a city with no hidden gems in it. This flag is the
+   * only thing that keeps the two apart, and the cache decision below is the
+   * first consumer of it.
+   */
+  refused: boolean;
 }
 
-const EMPTY: CommunityDiscoveryState = { gems: [], picks: [], places: [], loading: false };
+const EMPTY: CommunityDiscoveryState = { gems: [], picks: [], places: [], loading: false, refused: false };
 
 // ── Module-level stale-while-revalidate cache ─────────────────────────────────
 // Persists across navigation so returning to the Explore tab shows content
@@ -147,7 +158,7 @@ export function useCommunityDiscovery(city: string | null, sortBy?: string | nul
   // previously-seen content without waiting for any network call.
   const [state, setState] = useState<CommunityDiscoveryState>(() => {
     if (cachedEntry) return { ...cachedEntry.state, loading: false };
-    if (city) return { gems: [], picks: [], places: [], loading: true };
+    if (city) return { gems: [], picks: [], places: [], loading: true, refused: false };
     return EMPTY;
   });
   const abortRef = useRef<AbortController | null>(null);
@@ -181,10 +192,24 @@ export function useCommunityDiscovery(city: string | null, sortBy?: string | nul
         }
       }
 
-      const fresh: CommunityDiscoveryState = { gems, picks, places, loading: false };
+      // `coverage: "nothing"` means the server did not read the table. The empty
+      // arrays above are padding, not a result.
+      const refused = result.data.refusal?.coverage === 'nothing';
+      const fresh: CommunityDiscoveryState = { gems, picks, places, loading: false, refused };
       setState(fresh);
-      // Update module cache for the next mount
-      if (cKey) _communityCache.set(cKey, { state: fresh, at: Date.now() });
+      // Update the module cache for the next mount — BUT NEVER WITH A REFUSAL.
+      //
+      // Owner ruling, 2026-09-14: "Do not cache rate limits or outages as 'this
+      // location does not exist.'" This cache is that sentence's shape on the
+      // client: it is module-level, it survives navigation, the mount effect
+      // below serves from it without a network call for five minutes, and a
+      // refused read used to enter it as an ordinary empty result. One failed
+      // request therefore emptied the city's hidden gems for five minutes from
+      // the device's own memory — and because nothing re-fetched, nothing could
+      // notice the server had recovered.
+      //
+      // A `partial` refusal IS cached: the items it carries are real.
+      if (cKey && !refused) _communityCache.set(cKey, { state: fresh, at: Date.now() });
     } catch {
       if (!ctrl.signal.aborted) {
         setState((prev) => ({ ...prev, loading: false }));

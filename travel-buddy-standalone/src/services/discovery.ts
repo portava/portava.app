@@ -16,6 +16,108 @@ async function freshToken(): Promise<string | null> {
   }
 }
 
+// ── Refusals ──────────────────────────────────────────────────────────────────
+//
+// OWNER RULING, 2026-09-14, verbatim:
+//
+//   "Add upstream_unavailable for upstream dependency failures. Do not cache
+//    rate limits or outages as 'this location does not exist.' Verify that
+//    clients recognize refusal responses, preserve existing bookmarks on read
+//    failures, and exclude failed responses from exposure accounting. A
+//    distinguishable response body alone is insufficient if consumers still
+//    treat it as successful empty data."
+//
+// The server (api-server/src/lib/discoveryRefusal.ts) answers an internal
+// failure with the SAME 200 envelope a genuinely empty city gets, plus a
+// `refusal` key naming what broke. Until this type existed, every function
+// below cast the body to a type with no `refusal` member and returned the same
+// value for both — so the server told the truth and the client discarded it.
+// That is the last sentence of the ruling, and it is the reason this block is
+// here rather than a comment saying the server handles it.
+//
+// A REFUSAL IS NOT AN ERROR FROM THE TRANSPORT'S POINT OF VIEW. The request
+// succeeded; the ANSWER is "we did not look". Callers therefore keep `ok: true`
+// where they had it and must branch on `refusal` — which is what makes the
+// distinction reach the screen instead of being swallowed by a catch.
+
+/**
+ * `11` §9's six classes plus `upstream_unavailable`, the seventh the owner
+ * added on 2026-09-14 for dependencies this product calls but does not operate
+ * (Nominatim, Overpass). Kept as a union of literals rather than `string` so a
+ * typo in a `switch` is a compile error, and widened with `(string & {})` so an
+ * unknown class the server adds later degrades to "some refusal" instead of
+ * failing to parse.
+ */
+export type DiscoveryRefusalClass =
+  | 'validation'
+  | 'authorization'
+  | 'constraint_mismatch'
+  | 'transient_db'
+  | 'feature_disabled'
+  | 'unsupported_surface'
+  | 'upstream_unavailable';
+
+export interface DiscoveryRefusal {
+  class: DiscoveryRefusalClass | (string & {});
+  code: string;
+  route: string;
+  /**
+   * "nothing" — the collection in this body is empty BECAUSE of the failure.
+   *             Nothing was served; nothing here is exposure.
+   * "partial" — part of the collection is a real result and WAS served. Those
+   *             items are genuine exposure and must not be discarded.
+   */
+  coverage: 'nothing' | 'partial';
+  /** Which of the route's sources failed, when it has more than one. */
+  failedSources?: string[];
+}
+
+/**
+ * Read `refusal` off any Discovery envelope.
+ *
+ * Deliberately tolerant: an envelope with no refusal returns `undefined` (the
+ * overwhelmingly common case and the one that must stay free), and a malformed
+ * refusal is treated as no refusal rather than crashing a screen — a parser
+ * that throws on the failure path turns a degraded surface into a blank one.
+ */
+export function parseRefusal(body: unknown): DiscoveryRefusal | undefined {
+  const r = (body as { refusal?: unknown } | null | undefined)?.refusal;
+  if (!r || typeof r !== 'object') return undefined;
+  const o = r as Record<string, unknown>;
+  if (typeof o.class !== 'string' || typeof o.code !== 'string') return undefined;
+  return {
+    class:    o.class,
+    code:     o.code,
+    route:    typeof o.route === 'string' ? o.route : '',
+    coverage: o.coverage === 'partial' ? 'partial' : 'nothing',
+    ...(Array.isArray(o.failedSources)
+      ? { failedSources: o.failedSources.filter((x): x is string => typeof x === 'string') }
+      : {}),
+  };
+}
+
+/** True when the body carries NOTHING because it failed — not an empty result. */
+export function refusedEverything(refusal?: DiscoveryRefusal): boolean {
+  return refusal !== undefined && refusal.coverage === 'nothing';
+}
+
+/**
+ * An envelope whose `refusal` is the PARSED one, or absent.
+ *
+ * The wire key is destructured away first, deliberately. Spreading the raw body
+ * and then adding the parsed refusal on top looks equivalent and is not: when
+ * the wire carries a malformed `refusal` (a string, a null, an object missing
+ * `class`), `parseRefusal` correctly declines it and the raw value survives the
+ * spread — so a consumer branching on `data.refusal` would treat garbage as a
+ * refusal and hide real results behind a failure notice. Parsing has to REPLACE
+ * the field, not sit beside it.
+ */
+function withParsedRefusal<T extends object>(body: unknown): T & { refusal?: DiscoveryRefusal } {
+  const { refusal: _wire, ...rest } = (body ?? {}) as Record<string, unknown>;
+  const refusal = parseRefusal(body);
+  return { ...(rest as T), ...(refusal ? { refusal } : {}) };
+}
+
 export type DiscoveryCategory =
   | 'for_you'
   | 'places'
@@ -125,6 +227,11 @@ export interface DiscoveryResult {
   total: number;
   destination: string;
   cached: boolean;
+  /**
+   * Present when the server refused. `places: []` beside a `coverage: "nothing"`
+   * refusal is NOT a result — see the Refusals block at the top of this file.
+   */
+  refusal?: DiscoveryRefusal;
 }
 
 // ── Live venue status (Phase 8 live intelligence) ─────────────────────────────
@@ -296,6 +403,8 @@ export interface CommunityDiscoveryResult {
   items: CommunityPlaceItem[];
   city: string;
   total: number;
+  /** Present when the server refused; `items: []` beside it is not "no gems here". */
+  refusal?: DiscoveryRefusal;
 }
 
 export async function getCommunityPlaces(
@@ -313,8 +422,7 @@ export async function getCommunityPlaces(
   try {
     const res = await fetch(`${base}/api/discovery/community?${params}`);
     if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
-    const data = (await res.json()) as CommunityDiscoveryResult;
-    return { ok: true, data };
+    return { ok: true, data: withParsedRefusal<CommunityDiscoveryResult>(await res.json()) };
   } catch {
     return { ok: false, error: 'Network error — check your connection' };
   }
@@ -395,27 +503,60 @@ export async function saveCommunityPlace(
 }
 
 /**
- * Returns the list of community place IDs saved by the current user.
- * Used to pre-populate the filled-bookmark state across app sessions.
- * Returns an empty array on any error — fail-open so a network hiccup
- * doesn't break the Discovery screen.
+ * The current user's saved community-place ids, or a REFUSAL.
+ *
+ * WHY THIS RETURNS A RESULT AND NOT `string[]`
+ * ===========================================
+ * Owner ruling, 2026-09-14: "preserve existing bookmarks on read failures".
+ *
+ * This function used to answer `[]` for all four of:
+ *   • you have saved nothing
+ *   • the save table could not be read (the server says so, in `refusal`)
+ *   • the request failed in transport
+ *   • you are signed out
+ * The caller pre-populates the filled-bookmark state from the return value, so
+ * every one of those became the same thing on screen: EVERY BOOKMARK YOU OWN,
+ * GONE. Not an error banner, not a spinner — a silent, confident claim that you
+ * had never saved anything, made at the exact moment the server had just said
+ * it did not know.
+ *
+ * `[]` was described in the old comment as "fail-open so a network hiccup
+ * doesn't break the Discovery screen", and that reasoning is the trap: the
+ * screen did not break, which is precisely why nobody noticed it was lying.
+ * Fail-open is right for a FILTER (show more than you should); it is wrong for
+ * an INVENTORY, where the open direction is "you own nothing".
+ *
+ * The caller's obligation is now in the type: it cannot reach the ids without
+ * first passing through `ok`, so "treat the refusal as successful empty data"
+ * is no longer expressible.
  */
-export async function getSavedPlaceIds(): Promise<string[]> {
+export type SavedPlaceIdsResult =
+  | { ok: true;  ids: string[] }
+  | { ok: false; reason: 'refused' | 'unavailable' | 'signed_out'; refusal?: DiscoveryRefusal };
+
+export async function getSavedPlaceIds(): Promise<SavedPlaceIdsResult> {
   const base = apiBase();
-  if (!base) return [];
+  if (!base) return { ok: false, reason: 'unavailable' };
 
   const token = await freshToken();
-  if (!token) return [];
+  // Signed out is NOT a failure and NOT an empty save set: there is no user
+  // whose bookmarks these would be. Named separately so the caller can stay
+  // silent rather than report a problem that does not exist.
+  if (!token) return { ok: false, reason: 'signed_out' };
 
   try {
     const res = await fetch(`${base}/api/discovery/community/saved-ids`, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    if (!res.ok) return [];
-    const data = (await res.json()) as { ids?: string[] };
-    return Array.isArray(data.ids) ? data.ids : [];
+    if (!res.ok) return { ok: false, reason: 'unavailable' };
+    const body = (await res.json()) as { ids?: string[] };
+    const refusal = parseRefusal(body);
+    // `coverage: "nothing"` means the server did not read the save set. The
+    // `ids: []` beside it is padding for old clients, not an answer.
+    if (refusedEverything(refusal)) return { ok: false, reason: 'refused', refusal };
+    return { ok: true, ids: Array.isArray(body.ids) ? body.ids : [] };
   } catch {
-    return [];
+    return { ok: false, reason: 'unavailable' };
   }
 }
 
@@ -472,6 +613,11 @@ const CLIENT_CACHE_TTL = 4 * 60 * 1_000; // 4 minutes
 
 function _discoveryCacheKey(dest: string, cat: string, radiusKm: number, page: number): string {
   return `${dest.toLowerCase().trim()}:${cat}:${radiusKm}:${page}`;
+}
+
+/** Test seam: drop every client-cached result. Carries no production caller. */
+export function _resetDiscoveryClientCache(): void {
+  _CLIENT_CACHE.clear();
 }
 
 /**
@@ -550,9 +696,19 @@ export async function getDiscoveryPlaces(
   try {
     const res = await fetch(`${base}/api/discovery?${params}`);
     if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
-    const data = (await res.json()) as DiscoveryResult;
-    // Populate client cache so the next mount of the same tab is instant.
-    _CLIENT_CACHE.set(_discoveryCacheKey(destination, category, filters.radiusKm, page), { data, at: Date.now() });
+    const body = (await res.json()) as unknown;
+    const data = withParsedRefusal<DiscoveryResult>(body);
+    const refusal = data.refusal;
+    // Populate client cache so the next mount of the same tab is instant —
+    // UNLESS the server refused. This cache is a 4-minute SWR store that
+    // `getCachedDiscoveryPlaces` paints straight onto the screen, so writing a
+    // refused body into it re-commits the exact defect the ruling names, one
+    // tier down: the outage would go on being served from the DEVICE for four
+    // minutes after it ended, with no network call left to notice the recovery.
+    // A `coverage: "partial"` body IS cached: the items in it are real.
+    if (!refusedEverything(refusal)) {
+      _CLIENT_CACHE.set(_discoveryCacheKey(destination, category, filters.radiusKm, page), { data, at: Date.now() });
+    }
     // Signal search intent to Compass so category_weights reflect browsing.
     // Only fires when the caller opts in (emitSignal=true) AND this is page 1
     // (explicit category selection, not pagination). Background callers such as
@@ -612,24 +768,40 @@ export async function getDiscoveryCategoryCounts(
  * Use this as the default; fall back to `getDiscoveryCategoryCounts` only when
  * age-filter or other per-request personalisation is needed.
  */
+export interface DiscoveryCountsResult {
+  counts: Partial<Record<DiscoveryCategory, number>>;
+  /**
+   * Present when the server refused. With `coverage: "nothing"` the empty
+   * `counts` is not "this city has none of anything" — it is "we could not
+   * count", and a badge row rendered from it as zeros is a fabricated number.
+   * With `coverage: "partial"` the keys that ARE present are real and
+   * `failedSources` names the ones that are absent because they failed.
+   */
+  refusal?: DiscoveryRefusal;
+}
+
 export async function getDiscoveryCategoryCountsBatch(
   destination: string,
   radiusKm = 10,
   lat?: number | null,
   lng?: number | null,
-): Promise<Partial<Record<DiscoveryCategory, number>>> {
+): Promise<DiscoveryCountsResult> {
   const base = apiBase();
-  if (!base) return {};
+  if (!base) return { counts: {} };
   const params = new URLSearchParams({ destination, radiusKm: String(radiusKm) });
   if (lat != null) params.set('lat', String(lat));
   if (lng != null) params.set('lng', String(lng));
   try {
     const res = await fetch(`${base}/api/discovery/counts?${params}`);
-    if (!res.ok) return {};
+    if (!res.ok) return { counts: {} };
     const body = (await res.json()) as { counts?: Record<string, number> };
-    return (body.counts ?? {}) as Partial<Record<DiscoveryCategory, number>>;
+    const refusal = parseRefusal(body);
+    return {
+      counts: (body.counts ?? {}) as Partial<Record<DiscoveryCategory, number>>,
+      ...(refusal ? { refusal } : {}),
+    };
   } catch {
-    return {};
+    return { counts: {} };
   }
 }
 
@@ -651,8 +823,20 @@ export interface DiscoveryFeedResult {
   total: number;
   destination: string | null;
   sourceSummary: { seededDbCount: number; osmCount: number; userCreatedCount: number };
-  /** Per-load session id from the server; thread it into rank-outcome reporting. */
+  /**
+   * Per-load session id from the server; thread it into rank-outcome reporting.
+   *
+   * NULL ON A `coverage: "nothing"` REFUSAL, deliberately. This id is the served
+   * rank context: an outcome posted against it upgrades the impression row THIS
+   * load wrote. A refused load wrote none — the server's `logServeUnlessRefused`
+   * suppressed it — so keeping the id would let the client report an outcome
+   * with no impression behind it, moving the numerator of the exposure funnel
+   * while the denominator stayed still. That is the second half of D11, on the
+   * client.
+   */
   sessionId: string | null;
+  /** Present when the server refused; see the Refusals block at the top. */
+  refusal?: DiscoveryRefusal;
 }
 
 export interface DiscoveryFeedOptions {
@@ -702,6 +886,7 @@ export async function getDiscoveryFeed(
     });
     if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
     const body = (await res.json()) as Partial<DiscoveryFeedResult>;
+    const refusal = parseRefusal(body);
     return {
       ok: true,
       data: {
@@ -711,7 +896,11 @@ export async function getDiscoveryFeed(
         total:         typeof body.total === 'number' ? body.total : 0,
         destination:   body.destination ?? destination ?? null,
         sourceSummary: body.sourceSummary ?? { seededDbCount: 0, osmCount: 0, userCreatedCount: 0 },
-        sessionId:     body.sessionId ?? null,
+        // See the field's doc comment: a refused load has no served rank context.
+        // `partial` keeps its id — those items really were served and really are
+        // exposure, and dropping them would under-count in the other direction.
+        sessionId:     refusedEverything(refusal) ? null : (body.sessionId ?? null),
+        ...(refusal ? { refusal } : {}),
       },
     };
   } catch {
@@ -809,6 +998,12 @@ export interface UnifiedSearchResponse {
   query: string;
   type: string;
   timeLabel: string | null;
+  /**
+   * Present when the server refused. `results: []` with a `coverage: "nothing"`
+   * refusal is "we could not search", not "nothing matched" — and the two must
+   * not share a "No results for …" screen.
+   */
+  refusal?: DiscoveryRefusal;
 }
 
 /**
@@ -859,8 +1054,18 @@ export async function searchUnified(
       const body = await res.json().catch(() => ({})) as Record<string, unknown>;
       return { ok: false, error: (body.message as string) ?? `HTTP ${res.status}` };
     }
-    const data = (await res.json()) as UnifiedSearchResponse;
+    const data = withParsedRefusal<UnifiedSearchResponse>(await res.json());
     // Signal search intent to Compass for For You feed personalisation.
+    //
+    // STILL SENT ON A REFUSAL, deliberately. This signal records that the USER
+    // SEARCHED — it carries the query and the city, never the results — and the
+    // user really did search, whatever the server then failed to do. Suppressing
+    // it here would throw away a real intent signal precisely during an outage,
+    // and it is not what the ruling's "exclude failed responses from exposure
+    // accounting" asks for: that sentence is about the impression denominator
+    // (rank_events → content_distribution_stats.eligible_impressions), which
+    // this endpoint does not touch. A genuinely empty search signals too, so
+    // "produced nothing" was never the criterion here.
     postSearchSignal(query, { city: opts?.city ?? null });
     return { ok: true, data };
   } catch {
@@ -886,7 +1091,10 @@ export async function getSearchSuggestions(
   query: string,
   opts?: { lat?: number; lng?: number; city?: string },
   signal?: AbortSignal,
-): Promise<{ ok: true; groups: SuggestGroup[] } | { ok: false; aborted: boolean; error: string }> {
+): Promise<
+  | { ok: true; groups: SuggestGroup[]; refusal?: DiscoveryRefusal }
+  | { ok: false; aborted: boolean; error: string }
+> {
   const base = apiBase();
   if (!base) return { ok: false, aborted: false, error: 'API not configured' };
   const token = await freshToken();
@@ -903,8 +1111,18 @@ export async function getSearchSuggestions(
       signal,
     });
     if (!res.ok) return { ok: false, aborted: false, error: `HTTP ${res.status}` };
-    const data = (await res.json()) as { groups?: SuggestGroup[] };
-    return { ok: true, groups: Array.isArray(data.groups) ? data.groups : [] };
+    const body = (await res.json()) as { groups?: SuggestGroup[] };
+    // /discovery/suggest is the route with THREE distinct empty answers (a
+    // too-short query is `validation`, an unreadable visibility state is
+    // `transient_db`, a query that matches nothing carries no refusal at all).
+    // They arrive as the same `groups: []`, so the refusal is the only thing
+    // that tells them apart.
+    const refusal = parseRefusal(body);
+    return {
+      ok: true,
+      groups: Array.isArray(body.groups) ? body.groups : [],
+      ...(refusal ? { refusal } : {}),
+    };
   } catch (e) {
     const aborted = e instanceof Error && e.name === 'AbortError';
     return { ok: false, aborted, error: 'Network error' };

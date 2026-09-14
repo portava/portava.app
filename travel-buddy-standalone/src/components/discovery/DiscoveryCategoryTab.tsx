@@ -494,6 +494,27 @@ export function DiscoveryCategoryTab({
       return;
     }
 
+    // OWNER RULING, 2026-09-14: "A distinguishable response body alone is
+    // insufficient if consumers still treat it as successful empty data."
+    //
+    // A refusal arrives as `ok: true` with an empty `places` — byte-identical,
+    // to this function, to a category that genuinely has nothing in it. Left
+    // alone it fell through to the "No places found / Try increasing the search
+    // radius or adjust the filters" state, which blames the user's filters for a
+    // look the server never took. Routing it to the failure state below is what
+    // makes the two answers two answers again — and that state already carries
+    // the Try again button, which is the only action that can actually help.
+    //
+    // `partial` is deliberately NOT routed here: some of what came back is real
+    // and is rendered. And this is page-1 only — a refused "load more" must not
+    // replace a page of genuine results already on screen with a failure card.
+    if (nextPage === 1 && res.data.refusal?.coverage === 'nothing') {
+      setError("We couldn't load places just now — this is on our side, not your filters.");
+      setPlaces([]);
+      setTotal(0);
+      return;
+    }
+
     // Record the coords at the time of this fetch so the location-change
     // effect can compare against them (not just against the previous render).
     if (nearestUserLat != null && nearestUserLng != null) {

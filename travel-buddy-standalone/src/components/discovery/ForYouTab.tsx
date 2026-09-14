@@ -95,7 +95,18 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
     return getCachedDiscoveryPlaces(destination, 'for_you', 25, 1) === null;
   });
   const [refreshing, setRefreshing] = useState(false);
-  const [source, setSource]     = useState<'compass' | 'osm' | 'none'>('none');
+  // 'refused' is a FOURTH state and not a flavour of 'none'.
+  //
+  // Owner ruling, 2026-09-14: "A distinguishable response body alone is
+  // insufficient if consumers still treat it as successful empty data." The
+  // server marks a failed GET /discovery with `refusal`; folding that into
+  // 'none' here is exactly the consumer-side collapse the sentence forbids —
+  // the user is told "there is nothing in Lisbon" when the truth is "we never
+  // managed to look".
+  const [source, setSource]     = useState<'compass' | 'osm' | 'none' | 'refused'>('none');
+  // The saved-places read is a separate surface with a separate failure: your
+  // bookmarks are not the place list, and one can fail while the other works.
+  const [savedIdsUnavailable, setSavedIdsUnavailable] = useState(false);
   const [detail, setDetail]     = useState<DiscoveryPlace | null>(null);
   const [shareItem, setShareItem] = useState<ForYouItem | null>(null);
 
@@ -138,10 +149,38 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
 
   // Pre-populate the module-level savedPlaceIds set so returning users see
   // filled bookmarks for places they saved in previous sessions.
-  // Fire-and-forget — no UI dependency; runs once when the user is signed in.
+  //
+  // OWNER RULING, 2026-09-14: "preserve existing bookmarks on read failures".
+  //
+  // This line used to be `getSavedPlaceIds().then(prefillSavedPlaceIds)`, and
+  // `getSavedPlaceIds` used to answer `[]` for a refused read as well as for a
+  // genuinely empty one. So a server that had just said "I could not read your
+  // save set" was translated, here, into a confident seeding of the bookmark
+  // state with nothing — and every bookmark the user owns rendered hollow. No
+  // spinner, no banner, nothing that looked wrong: the surface presented a
+  // failure as a fact about the user's own library.
+  //
+  // The rule now is that ONLY an `ok` read may write. A refusal writes nothing,
+  // so whatever the set already holds — including a good read from earlier in
+  // the session — stands untouched, which is what "preserve" means.
   useEffect(() => {
     if (!isAuthed) return;
-    getSavedPlaceIds().then(prefillSavedPlaceIds).catch(() => {});
+    let cancelled = false;
+    getSavedPlaceIds()
+      .then((res) => {
+        if (cancelled) return;
+        if (res.ok) {
+          setSavedIdsUnavailable(false);
+          prefillSavedPlaceIds(res.ids);
+          return;
+        }
+        // Signed-out is not a failure — there is no save set to have lost — so
+        // it stays silent. Everything else is a read we could not make, and the
+        // user is told so rather than shown an empty library.
+        setSavedIdsUnavailable(res.reason !== 'signed_out');
+      })
+      .catch(() => { if (!cancelled) setSavedIdsUnavailable(true); });
+    return () => { cancelled = true; };
   }, [isAuthed]);
 
   const handleWhyPress = (id: string) => {
@@ -227,7 +266,11 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
           setSource('osm');
           return osm.data.places.slice(0, 15).map((p) => ({ kind: 'osm' as const, place: p }));
         }
-        setSource('none');
+        // An empty list with a `coverage: "nothing"` refusal beside it is not an
+        // empty city — see the `source` declaration above. A `partial` refusal
+        // is NOT routed here: some of what it carries is real, and the branch
+        // above has already rendered it.
+        setSource(osm.ok && osm.data.refusal?.coverage === 'nothing' ? 'refused' : 'none');
         return [];
       });
     }).catch(() => {
@@ -340,6 +383,18 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
         {/* Compass traveler matches — people section */}
         <CompassTravelerRow city={destination} limit={6} />
 
+        {/* The saved-places read failed. Sits above the cards, because the
+            bookmark icons it explains are ON those cards. Small and quiet on
+            purpose: nothing was lost, one read did not come back, and whatever
+            the last good read wrote is still what the cards show. */}
+        {savedIdsUnavailable && (
+          <View style={styles.notice} testID="for-you-saved-unavailable">
+            <Text style={styles.noticeText}>
+              Couldn't check your saved places just now. Your saves are safe — pull to refresh.
+            </Text>
+          </View>
+        )}
+
         {items.filter((item) => !dismissed.has(item.place.id)).map((item) => {
           const isShowMore = showMoreIds.has(item.place.id);
           return (
@@ -416,6 +471,21 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
               {isAuthed
                 ? `Couldn't load recommendations for ${destination}. Pull to refresh.`
                 : `Sign in to get personalised picks for ${destination}.`}
+            </Text>
+          </View>
+        )}
+
+        {/* The server refused: it did not look, so it cannot say there is
+            nothing. Deliberately NOT the empty state above — a person who is
+            told "no recommendations yet" stops looking, and would be stopping
+            on the strength of an answer nobody gave. Wording stays plain: no
+            "error", no blame, and a concrete next step. */}
+        {source === 'refused' && (
+          <View style={styles.empty} testID="for-you-refused">
+            <Sparkles size={28} color={color.faint} />
+            <Text style={styles.emptyTitle}>Places aren't loading right now</Text>
+            <Text style={styles.emptyDesc}>
+              {`We couldn't load places for ${destination} just now — this is on our side, not yours. Pull to refresh.`}
             </Text>
           </View>
         )}
@@ -626,6 +696,18 @@ const styles = StyleSheet.create({
     marginHorizontal: space.lg,
     overflow: 'hidden',
     marginBottom: space.sm,
+  },
+  notice: {
+    marginHorizontal: space.lg,
+    marginBottom: space.sm,
+    paddingVertical: space.sm,
+    paddingHorizontal: space.md,
+    borderRadius: radius.sm,
+    backgroundColor: color.haze,
+  },
+  noticeText: {
+    ...t.small,
+    color: color.mute,
   },
   empty: {
     alignItems: 'center',
