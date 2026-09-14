@@ -939,4 +939,24 @@ export const GUARDS: readonly GuardEntry[] = [
       unit: "single-line unanchored citation(s) judged against the file they name",
     },
   },
+
+  // APPENDED, for the reason stated above the entry before it: two censuses
+  // cite this file by line, so a new entry goes at the end unless its position
+  // carries meaning.
+  {
+    checker: "scripts/check-citation-symbols.mjs",
+    responsibility:
+      "An UNANCHORED citation that NAMES a symbol points at a file containing that symbol — the second stale-pointer case answerable without reading the claim, where check:citation-targets closes the first.",
+    reach: { kind: "workflow", script: "check:citation-symbols" },
+    // MEASURED: "check:citation-symbols — 159 symbol-naming citation(s) judged".
+    // The JUDGED count is the inspection proof, and this checker needs one more
+    // than most: its adjacency rule is a grammar, and a grammar that stops
+    // matching reports a clean corpus rather than an error. Getting the closing
+    // backtick wrong silently cut the judged set from 178 to 60 during
+    // development, and nothing but this number showed it.
+    inspects: {
+      countPattern: "(\\d+) symbol-naming citation\\(s\\) judged",
+      unit: "symbol-naming citation(s) judged against the file they name",
+    },
+  },
 ];

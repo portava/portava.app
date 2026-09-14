@@ -265,6 +265,24 @@ jobs:
         shell: bash
         run: bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server check:citation-targets
 
+      # check:citation-symbols — the SECOND sub-case of the same hole, and it is
+      # answerable for the same reason: this corpus often writes the answer down
+      # next to the question. The convention is
+      # `lib/mapProjection.ts:1166` `rankObjects` — a pointer AND the symbol it
+      # points at — so "is this the right line?" stops needing a human.
+      #
+      # Two classes, and only the first is a gate. ABSENT means the named symbol
+      # is nowhere in the cited file: no reading of the code makes that citation
+      # correct. MISPLACED means it is in the file but not near the cited line;
+      # that one carries a KNOWN false-positive class (a citation may name a
+      # COLLECTION and point at a MEMBER of it), so it is held under a ceiling
+      # rather than gated. Gating on a number known to contain false positives
+      # would assert a defect this check cannot establish.
+      - name: 'check:citation-symbols (static; a citation that names the symbol it misses)'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server check:citation-symbols
+
       - name: 'check:async-handlers'
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         shell: bash
