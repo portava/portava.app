@@ -91,14 +91,31 @@ const BLOCKERS: Record<string, Blocker> = {
   "DV-71": "RUNTIME_EVIDENCE", "DC-27": "RUNTIME_EVIDENCE",
   "DV-75": "EXTERNAL_SETTING",
 
-  // A payment processor is not chosen, installed or funded.
-  "DV-56": "SPEND_OR_CREDENTIAL", "DV-57": "SPEND_OR_CREDENTIAL",
-  "DV-58": "SPEND_OR_CREDENTIAL", "DV-59": "SPEND_OR_CREDENTIAL",
-  "DV-60": "SPEND_OR_CREDENTIAL", "DV-61": "SPEND_OR_CREDENTIAL",
-  "DV-62": "SPEND_OR_CREDENTIAL", "DV-63": "SPEND_OR_CREDENTIAL",
-  "DV-64": "SPEND_OR_CREDENTIAL", "DV-65": "SPEND_OR_CREDENTIAL",
-  "DV-66": "SPEND_OR_CREDENTIAL", "DV-67": "SPEND_OR_CREDENTIAL",
-  "DV-68": "SPEND_OR_CREDENTIAL", "DV-69": "SPEND_OR_CREDENTIAL",
+  // CORRECTED 2026-09-14. These fourteen were classified SPEND_OR_CREDENTIAL on
+  // the assumption that creator earnings need a payment processor. THE SPECS SAY
+  // THE OPPOSITE, in their own acceptance criteria:
+  //
+  //   07 §10 — "Creator economy INFRASTRUCTURE is ready when: value can be
+  //             attributed, EARNINGS CAN BE RECORDED WITHOUT PAYING, rules are
+  //             versioned, fraud holds exist, historical recalculation is
+  //             possible."
+  //   09 §11 — "Payment architecture is ready BEFORE PAYOUTS when: every earning
+  //             can be reconstructed, no balance depends on mutable totals,
+  //             attribution is linked, reversals are possible, provider can be
+  //             swapped later."
+  //
+  // Every one of those ten is an architectural property of a ledger, not a
+  // transaction. No processor, no money, no credential. Two of them are
+  // VIOLATED by code that exists rather than absent — a mutable per-booking
+  // summary row, and a ledger whose CHECK and grants make a compensating entry
+  // impossible — which is engineering work, not a purchase.
+  "DV-56": "CODE_CROSS_SURFACE", "DV-57": "CODE_CROSS_SURFACE",
+  "DV-58": "CODE_CROSS_SURFACE", "DV-59": "CODE_CROSS_SURFACE",
+  "DV-60": "CODE_CROSS_SURFACE", "DV-61": "CODE_CROSS_SURFACE",
+  "DV-62": "CODE_CROSS_SURFACE", "DV-63": "CODE_CROSS_SURFACE",
+  "DV-64": "CODE_CROSS_SURFACE", "DV-65": "CODE_CROSS_SURFACE",
+  "DV-66": "CODE_CROSS_SURFACE", "DV-67": "CODE_CROSS_SURFACE",
+  "DV-68": "CODE_CROSS_SURFACE", "DV-69": "CODE_CROSS_SURFACE",
 };
 
 function dump(): Array<{ id: string; verdict: string; line: number }> {

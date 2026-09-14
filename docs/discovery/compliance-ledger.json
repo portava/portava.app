@@ -10,12 +10,11 @@
   },
   "openByBlocker": {
     "FLAG": 17,
-    "CODE_CROSS_SURFACE": 17,
+    "CODE_CROSS_SURFACE": 31,
     "MIGRATION": 12,
     "CODE": 46,
     "DEPLOY": 1,
     "RUNTIME_EVIDENCE": 4,
-    "SPEND_OR_CREDENTIAL": 14,
     "EXTERNAL_SETTING": 1
   },
   "rows": [
@@ -755,85 +754,85 @@
       "id": "DV-56",
       "verdict": "N",
       "line": 959,
-      "blocker": "SPEND_OR_CREDENTIAL"
+      "blocker": "CODE_CROSS_SURFACE"
     },
     {
       "id": "DV-57",
       "verdict": "N",
       "line": 960,
-      "blocker": "SPEND_OR_CREDENTIAL"
+      "blocker": "CODE_CROSS_SURFACE"
     },
     {
       "id": "DV-58",
       "verdict": "N",
       "line": 961,
-      "blocker": "SPEND_OR_CREDENTIAL"
+      "blocker": "CODE_CROSS_SURFACE"
     },
     {
       "id": "DV-59",
       "verdict": "N",
       "line": 962,
-      "blocker": "SPEND_OR_CREDENTIAL"
+      "blocker": "CODE_CROSS_SURFACE"
     },
     {
       "id": "DV-60",
       "verdict": "N",
       "line": 963,
-      "blocker": "SPEND_OR_CREDENTIAL"
+      "blocker": "CODE_CROSS_SURFACE"
     },
     {
       "id": "DV-61",
       "verdict": "N",
       "line": 964,
-      "blocker": "SPEND_OR_CREDENTIAL"
+      "blocker": "CODE_CROSS_SURFACE"
     },
     {
       "id": "DV-62",
       "verdict": "N",
       "line": 965,
-      "blocker": "SPEND_OR_CREDENTIAL"
+      "blocker": "CODE_CROSS_SURFACE"
     },
     {
       "id": "DV-63",
       "verdict": "N",
       "line": 966,
-      "blocker": "SPEND_OR_CREDENTIAL"
+      "blocker": "CODE_CROSS_SURFACE"
     },
     {
       "id": "DV-64",
       "verdict": "N",
       "line": 967,
-      "blocker": "SPEND_OR_CREDENTIAL"
+      "blocker": "CODE_CROSS_SURFACE"
     },
     {
       "id": "DV-65",
       "verdict": "N",
       "line": 968,
-      "blocker": "SPEND_OR_CREDENTIAL"
+      "blocker": "CODE_CROSS_SURFACE"
     },
     {
       "id": "DV-66",
       "verdict": "N",
       "line": 969,
-      "blocker": "SPEND_OR_CREDENTIAL"
+      "blocker": "CODE_CROSS_SURFACE"
     },
     {
       "id": "DV-67",
       "verdict": "N",
       "line": 970,
-      "blocker": "SPEND_OR_CREDENTIAL"
+      "blocker": "CODE_CROSS_SURFACE"
     },
     {
       "id": "DV-68",
       "verdict": "N",
       "line": 971,
-      "blocker": "SPEND_OR_CREDENTIAL"
+      "blocker": "CODE_CROSS_SURFACE"
     },
     {
       "id": "DV-69",
       "verdict": "N",
       "line": 972,
-      "blocker": "SPEND_OR_CREDENTIAL"
+      "blocker": "CODE_CROSS_SURFACE"
     },
     {
       "id": "DV-70",
