@@ -236,7 +236,7 @@ router.post("/verification/session", asyncHandler(async (req, res) => {
       user_id:             user.id,
       provider:            session.provider,
       provider_session_id: session.providerSessionId,
-      status:              "pending",
+      status:              "created",   // V-1 + 0161 default + first lifecycle state — see test/verificationSessionCreatedStatus.test.ts
       expires_at:          session.expiresAt,
     })
     .select("id, provider_session_id, expires_at")
