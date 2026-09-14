@@ -85,6 +85,18 @@ export interface DiscoveryPlace {
    */
   wikidataId?: string | null;
   /**
+   * Server-built DiscoveryCandidate projection (Sensing §8): truth class,
+   * confidence, freshness, the grounded why-now and `01` §11's reason labels.
+   *
+   * Typed `unknown` on purpose. It is ADDITIVE and flag-gated
+   * (`discovery_candidate_projection_enabled`, migration 2361, seeded FALSE),
+   * so on most serves it is absent; and `getDiscoveryPlaces` casts the response
+   * body rather than validating it, so a declared shape here would be a promise
+   * this layer does not keep. `features/discovery/candidateProjection.ts`
+   * parses it defensively and is the only thing that should read it.
+   */
+  candidate?: unknown;
+  /**
    * Raw OSM `image` tag value, kept only when it is an absolute http(s) URL.
    * Used as the lowest-priority header image candidate — only shown when no
    * headerImageUrl or FSQ photo is available. May be a Wikimedia page URL

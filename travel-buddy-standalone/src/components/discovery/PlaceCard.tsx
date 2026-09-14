@@ -21,6 +21,7 @@ import { color, space, radius, type as t, shadow, layout, avatar } from '../../t
 import { TripWishlistPicker } from './TripWishlistPicker.tsx';
 import { DisplayMediaImage, MediaFallback } from '../ui/DisplayMediaImage.tsx';
 import { getPlaceCategoryFallback } from '../../utils/placeCategoryFallback.ts';
+import { DiscoveryCandidateChips } from './DiscoveryCandidateChips.tsx';
 
 /** Raw OpenStreetMap node/way/relation IDs (e.g. "osm:node/123") are internal
  * data and must never be shown to users — filter them out of the tags list.
@@ -321,6 +322,12 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
           {place.description ? (
             <Text style={styles.desc} numberOfLines={2}>{place.description}</Text>
           ) : null}
+
+          {/* DiscoveryCandidate projection — DSV2-04 (observed vs predicted, and
+              stale why-now) and DC-22 (reason labels). Additive: renders nothing
+              at all unless the server attached a `candidate`, which it only does
+              with `discovery_candidate_projection_enabled` on. */}
+          <DiscoveryCandidateChips candidate={place.candidate} />
 
           {/* Tags — raw OSM node/way/relation IDs (e.g. "osm:node/123") are
               internal data and must never be shown to users. */}
