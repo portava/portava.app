@@ -238,6 +238,11 @@ const DESTINATION_PLAN: Readonly<
   },
 });
 
+import {
+  buildPrivacyRevocationSample,
+  recordPrivacyRevocationLatency,
+} from "../../lib/memoryPrivacyMetrics.js";
+
 export interface RevocationReport {
   readonly operation: HighlightLifecycleOperation;
   readonly subjectId: string;
@@ -307,8 +312,16 @@ export async function executeRevocation(
   subjectId: string,
   deps: {
     readonly invalidateCache?: () => Promise<void>;
+    /** §24's metric sample lands here. A caller without a logger is fine. */
+    readonly log?: { info?: (obj: unknown, msg: string) => void } | undefined;
+    /**
+     * `Date.now()` at the moment the lifecycle write committed. §24 measures
+     * `privacy_revocation_latency` from the privacy decision, not from here.
+     */
+    readonly requestedAt?: number | undefined;
   } = {},
 ): Promise<RevocationReport> {
+  const startedAt = Date.now();
   const outcomes: DestinationOutcome[] = planRevocation(operation, {
     cacheInvalidatorAvailable: typeof deps.invalidateCache === "function",
   });
@@ -332,5 +345,30 @@ export async function executeRevocation(
     }
   }
 
-  return summariseRevocation(operation, subjectId, outcomes);
+  const report = summariseRevocation(operation, subjectId, outcomes);
+
+  // §24 `privacy_revocation_latency`. The denominator is the APPLICABLE
+  // destinations, not all eight: a destination that does not exist is not one
+  // this revocation failed to reach. It is still not `complete` unless every
+  // applicable one was revoked, which today it never is — `cached_narrative` is
+  // the only destination this surface can reach and the other seven are
+  // `not_implemented` (H192).
+  const applicable = outcomes.filter((o) => o.status !== "not_applicable");
+  const failedOutcome = outcomes.find((o) => o.status === "failed");
+  recordPrivacyRevocationLatency(
+    deps.log,
+    buildPrivacyRevocationSample({
+      surface: "highlight_lifecycle",
+      subjectId,
+      reason: operation,
+      requestedAt: deps.requestedAt,
+      startedAt,
+      finishedAt: Date.now(),
+      destinationsTotal: applicable.length,
+      destinationsRemoved: applicable.filter((o) => o.status === "revoked").length,
+      unboundedAudience: null,
+      failureClass: failedOutcome ? "compass_cache_invalidation_failed" : null,
+    }),
+  );
+  return report;
 }
