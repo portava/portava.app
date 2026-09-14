@@ -172,7 +172,7 @@ Backend paths are relative to `artifacts/api-server/src/`, client paths to
 | CANNOT-VERIFY | **1** |
 | **CONSTRUCTED%** = (10+83)/296 | **31.4 %** |
 | **CORRECT%** (raw) = 10/296 | **3.4 %** |
-| **CORRECT% (spec-attributable)** = 0/296 | **0.0 %** |
+| **CORRECT% (spec-attributable)** = 0/296 | **0.0 %** (rows citing this spec; see §2 — the rest are attributable-elsewhere or UNKNOWN, not "not this spec's") |
 | CANNOT-VERIFY share | 1/296 = 0.3 % |
 
 Two of the ten BUILT-AND-CORRECT verdicts are **vacuous** (`⌀` — the guard is real but the path
@@ -329,6 +329,17 @@ importing files: `app/layover/[id].tsx:38-45` (no `LayoverReturnPanel` import) a
 **No. Spec-attributable CORRECT% = 0/296 = 0.0 %.** This makes three of five completed censuses
 in this corpus that return zero attributable work.
 
+> **RESTATED 2026-09-14 — the figure stands, the one-word answer does not.** *"0/296 rows rest
+> on an artifact citing this specification"* is measured by the grep below and is correct. The
+> answer **"No"** to the question in this heading is a different and larger claim, and this
+> section's grep cannot reach it: a file that cites nothing is a file we know nothing about.
+> The correct answers are per-row and three-valued — attributable to this spec (evidenced by an
+> in-file citation), attributable elsewhere (evidenced by an in-file citation of a different
+> programme, which is what the table below supplies for most of the BUILT verdicts), or
+> **UNKNOWN**. Where the table below reaches a row, that row is attributable elsewhere; where
+> it does not, the row is UNKNOWN, not "not this spec's".
+> See `docs/architecture/attribution-method.md`.
+
 The test, run over the whole tree and over PR #463:
 
 ```
@@ -357,6 +368,11 @@ PR #463 is the closest thing to spec-aligned work in the corpus — it independe
 entry gate and Appendix C1's no-substitution rule — but its commit message
 (`599155f9`) argues from the code's own defects and cites migration 0169 and this repo's own
 honesty contract, never this document. It is not attributable either.
+**[RESTATED 2026-09-14 — UNKNOWN.]** What the commit message cites is measured and kept. *"It
+is not attributable either"* does not follow: the sentence before it observes that #463
+independently reinvents two of this spec's rules, and "independently" is precisely the thing
+the evidence cannot establish. Record #463 as **attribution unknown**. What would settle it: a
+section citation in the diff or commit message, or the author.
 
 ---
 
@@ -520,7 +536,7 @@ Rows marked **[463]** change verdict under PR #463 — see §5.
 | --- | --- | --- | --- |
 | L79 | **Static topology** — terminal, gate, checkpoint, walking link; weeks/months, invalidated on authoritative change | W | A static airport record exists and is well built for what it is: `STATIC_AIRPORTS` (`services/airport/StaticAirportData.ts:23+`, ~200 hubs with real timezones and coordinates) behind a DB-first resolver (`AirportProfileService.ts:70-90`). Topology is not modelled: `terminal_info JSONB DEFAULT '{}'` has no writer, and there are no gates, checkpoints or walking links. No invalidation concept. |
 | L80 | **Operational semi-live** — security layout, lounge hours, transport schedules; hours/days | N | The only lounge datum is `lounge_access BOOLEAN` on the session (`0127:71`), which is what the *user* declared about their ticket. |
-| L81 | **Fast live** — security wait, immigration wait, taxi queue, disruption; minutes | N | Absent. `grep -rn liveClaimRead services/airport/` returns nothing (the same finding `census-sensing.md:290` records from the other side). |
+| L81 | **Fast live** — security wait, immigration wait, taxi queue, disruption; minutes | N | Absent. `grep -rn liveClaimRead services/airport/` returns nothing (the same finding `docs/architecture/census-sensing.md:319` records from the other side). |
 | L82 | **Traveler observation** — checkpoint timing, queue report, closure; confidence-weighted | N | `GET /airport/pulse` (`routes/airport.ts:1439-1519`) surfaces ordinary social posts filtered by `location_city`; it is a feed, not an observation channel, and nothing it returns is an operational fact. |
 | L83 | **Historical model** — time-of-day distributions, recalibrated | N | `timeOfDayExtra` (`LayoverSafetyEngine.ts:49-53`) is a three-band literal step function that no data informs and nothing recalibrates. |
 | L84 | `TruthValue<T> { value, confidence, conflict, sourceClass, sourceRefs[], observedAt, expiresAt, fallbackLevel }` | N | Absent. |
@@ -843,7 +859,7 @@ Three methods are merged into their §12 tool twins and not scored here (`simula
 | L273 | **Rent a Buddy** — layover-specialist services **after the safety/time gate**; strict boundaries | W | A time filter exists — availability is checked against the layover's airport-local day span (`routes/airport.ts:1388-1407`) — and blocks are filtered bidirectionally (`:1374-1385`). There is no safety gate, no layover-specialist category filter, and the master `rent_buddy_enabled` flag is not consulted (L255). |
 | L274 | **Visa Buddy** — human assistance path for complex visa/entry questions | N | No such path from the layover surface. |
 | L275 | **Passport / Memories** — convert a **completed** session into an optional stamp/postcard/memory | W | The seam is wired (`routes/airport.ts:449-470`) but fires at creation, not completion, and is not optional (L19, L162). No postcard or memory path. |
-| L276 | **Live Intelligence** — consume crowd/queue/mobility signals; publish de-identified airport observations | N | `grep -rn liveClaimRead services/airport/` returns nothing; the same absence is recorded from the Sensing side at `docs/architecture/census-sensing.md:290`. Nothing is published either. |
+| L276 | **Live Intelligence** — consume crowd/queue/mobility signals; publish de-identified airport observations | N | `grep -rn liveClaimRead services/airport/` returns nothing; the same absence is recorded from the Sensing side at `docs/architecture/census-sensing.md:319`. Nothing is published either. |
 | L277 | **Locate My Friends** — optional crew peer-proximity/offline assistance after explicit opt-in | N | No crew, no proximity. |
 
 ### Appendix A. Reason codes
@@ -919,6 +935,11 @@ None of these changes any verdict above; each would change how a reader weights 
 work in the corpus that moves this spec's numbers. It is not attributable to the spec — it cites
 migration 0169 and the code's own defects, never this document — but it independently
 reinvents §6.1's entry gate and Appendix C1's no-substitution rule.
+*(Restated 2026-09-14: what is measured is that #463 cites migration 0169 and its own defect
+list and not this document, so it is **not evidenced as this spec's**. "Not attributable" and
+"independently" both overstate that — an uncited diff that reinvents two of the spec's rules is
+exactly the case where attribution is **UNKNOWN**. See §2 and
+`docs/architecture/attribution-method.md`.)*
 
 **Verdicts it changes**
 
@@ -939,7 +960,9 @@ reinvents §6.1's entry gate and Appendix C1's no-substitution rule.
 **Net effect:** BUILT-AND-CORRECT 10 → **17** (five NOT-BUILT and two BUILT-BUT-WRONG promoted);
 NOT-BUILT 202 → **196**; BUILT-BUT-WRONG 83 → **82** (−2 promoted, +1 from L4's N→W).
 CONSTRUCTED% would rise 31.4 % → **33.4 %** (99/296) and CORRECT% 3.4 % → **5.7 %** (17/296).
-Spec-attributable would remain **0.0 %**.
+Spec-attributable would remain **0.0 %** — i.e. none of the rows #463 moves would rest on an
+artifact citing this spec. Under the 2026-09-14 restatement above, those rows would be
+attribution **UNKNOWN**, not attribution-elsewhere.
 
 **What #463 does not fix, and should:** the L53 monotonicity violation. Its own monotonicity
 property covers the *entry gate* only. `timeOfDayExtra`'s step function is untouched on that
@@ -3504,7 +3527,7 @@ with the PR-comparison rows skipped. This supersedes the §15 headline.
 
 > **THE "WAS" IN §16.6 WAS WRONG WHEN THIS SECTION WAS FIRST DRAFTED, AND
 > `check:census-integrity` IS WHAT CAUGHT IT.** The body row at
-> `docs/architecture/census-layover.md:878#C1. Never query a semantic substitute` scores L293 `N`, and this section was
+> `docs/architecture/census-layover.md:894#C1. Never query a semantic substitute` scores L293 `N`, and this section was
 > drafted from it — but §7's T-table had already moved the row `N → W` when the
 > provenance was disclosed, and §13.1 and §15.5 both restated it `W`. Under
 > last-verdict-wins the move is **`W → C`, not `N → C`**, so CONSTRUCTED% does

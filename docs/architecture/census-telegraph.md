@@ -28,7 +28,7 @@ Backend paths are relative to `artifacts/api-server/src/` unless prefixed
 | CANNOT-VERIFY | **3** |
 | **CONSTRUCTED%** = (209+176)/451 | **85.4 %** |
 | **CORRECT%** (raw) = 209/451 | **46.3 %** |
-| **CORRECT% (spec-attributable)** = 0/451 | **0.0 %** |
+| **CORRECT% (spec-attributable)** = 0/451 | **0.0 %** (rows citing this spec; the rest are attribution-UNKNOWN — §4) |
 | CANNOT-VERIFY share | 3 / 451 = 0.7 % |
 
 > **RESTATED A THIRD TIME 2026-09-12 BY THE INTEGRATOR, from the rows and not by
@@ -331,6 +331,18 @@ happens to use Telegraph as an example.
 
 **2. The code predates the spec's presence in the repository.**
 
+> **THIS PILLAR IS WITHDRAWN AS EVIDENCE, 2026-09-14 — it proves nothing about attribution.**
+> The measurement below is correct and is kept: every Telegraph-adjacent file in HEAD was
+> present at `a745ba11` on 2026-09-05, and the eleven specs were committed at `ebe72b34` on
+> 2026-09-07. What does not follow is the sentence that closes it. A specification can be
+> written, circulated and worked from for months before anyone commits it to this repository;
+> "no file in HEAD could have been written against a document that was not in the repository"
+> assumes the repository is where authors get their documents, which is an assumption about
+> process and not a fact about these files. The owner has ruled this inference out. Pillars 1
+> and 3 do not depend on it — pillar 1 is a measurement of citations and pillar 3 is positive
+> evidence of other programmes' authorship — so the section's conclusion stands on those two,
+> with the scope limits noted under pillar 3. See `docs/architecture/attribution-method.md`.
+
 The eleven architecture specs were added at `ebe72b34` — *"Put the eleven
 architecture specs in the repository"*, **2026-09-07**. Every Telegraph-adjacent
 file in HEAD was already present at `a745ba11` (**2026-09-05**), the 5,099-file
@@ -365,6 +377,29 @@ Telegraph requirements incidentally, in a shape their own spec chose.
 **Spec-attributable CORRECT% = 0/451 = 0.0 %**, agreeing with both completed
 sibling censuses.
 
+> **RESTATED 2026-09-14 — what the zero is, and what the other 209 are.** *0/451 is a count of
+> BUILT-AND-CORRECT rows resting on an artifact that cites this specification, and as such it is
+> measured and it stands* (pillar 1). It is not a count of rows built for something else. The
+> three-way split this corpus now uses reads, for this census:
+>
+> - **attributable to this spec: 0** of the 209 BUILT-AND-CORRECT rows — evidenced by pillar 1's
+>   grep, which returned one hit and that hit resolves to the Global Input Intelligence spec.
+> - **attributable elsewhere: the rows resting on the five artifact families in pillar 3's
+>   table**, each of which names its own programme in its own header — Calls/Rent-a-Buddy,
+>   Passport (×2), Global Input Intelligence, Wall. **This census does not map those families
+>   to row ids, so the count is not stated here and must not be inferred.**
+> - **attribution unknown: every remaining BUILT-AND-CORRECT row.** Not "built for something
+>   else" and not "built for this spec" — no evidence either way was gathered for them.
+>
+> **A staleness note that is not a recount.** Read at the wave-1 worktree (`7d1f2d498`), the
+> pillar-1 grep no longer returns one hit: three artifacts now name the Telegraph spec in their
+> own text — `artifacts/api-server/src/domain/telegraph/contracts/certification.ts:4#Telegraph spec (v1 and v1_1 — v1_1's shared body is a byte-exact`,
+> `artifacts/api-server/src/compass/CompassTools.ts:111#Telegraph §18.3 — the eight conversation accessors the Telegraph spec names.`
+> and `artifacts/api-server/src/migrations/2400_telegraph_history_bound.sql:5#Both Telegraph specification versions require this (v1_1 is a byte-exact`.
+> Whether any BUILT-AND-CORRECT row rests on them has NOT been re-derived, so **no figure in
+> this document is changed by this note** — it records that the "admits no exception in HEAD"
+> claim was true of the HEAD it was measured against and is not true of this one.
+
 ### The exception that is not in HEAD
 
 **PR #472 is the first and only artifact built *for* this specification**, and
@@ -381,6 +416,10 @@ not exist in production. **It is not scored in any bucket here.**
 
 PR #460 is *not* spec-attributable — it carries no section citation anywhere in
 its diff — even though it hardens behaviour this spec requires.
+**[RESTATED 2026-09-14 — UNKNOWN.]** "Carries no section citation" is measured and true; the
+conclusion that follows from it is that #460's attribution is **unknown**, not that it is not
+this spec's. A diff can implement a specification faithfully and cite nothing. What would settle
+it: a section citation in the diff, a PR description naming the spec, or the author saying so.
 
 ---
 
@@ -1138,6 +1177,13 @@ anywhere — a repo-wide grep for `§` over `git diff main...pr/460` returns
 nothing — despite hardening behaviour §7.4, §21 and §27.3 all require. It is
 good work done for the codebase, not for this document, which is the same
 pattern §4 describes for the tree as a whole.
+
+> **RESTATED 2026-09-14 — UNKNOWN.** The grep is kept: #460's diff cites no section, and that
+> is a fact. *"Good work done for the codebase, not for this document"* is not — it is a claim
+> about why the author wrote it, and an uncited diff is equally consistent with an author
+> working from the spec and not bothering to say so. Record #460 as **attribution unknown**.
+> What would settle it: a section citation in the diff, a PR body naming the spec, or the
+> author. See `docs/architecture/attribution-method.md`.
 
 ---
 

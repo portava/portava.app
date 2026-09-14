@@ -596,6 +596,19 @@ None of these cites this spec, and none of them uses its vocabulary. The closest
 a §4 command in the tree is `CompassTools.ts:178-190`'s `add_to_trip`, which is a
 proposal-only tool built for the Compass programme and predates this document.
 
+> **ATTRIBUTION METHOD NOTE, 2026-09-14 — this table's rows are of two strengths, and §36.4
+> already drew the right conclusion from the weaker ones.** The **Trips Expansion**, **Trip
+> Crew Location / Safe Return**, **Trip Readiness** and **Compass** rows name identifiable
+> programmes that describe themselves in their own migration titles and file headers: those are
+> attributable ELSEWHERE, evidenced. The **original Portava spine** row rests on *"no spec
+> citation, predates every architecture document"* — an absence plus a date, which under the
+> owner's 2026-09-14 ruling settles nothing: read that row as **attribution UNKNOWN**. Likewise
+> *"predates this document"* in the sentence above is decoration; the load-bearing half is
+> *"built for the Compass programme"*, which the cited header supplies.
+> §26 then found `2420_trip_kernel_foundation.sql` citing this spec by section number, which is
+> why the headline's 0.0 % was WITHDRAWN rather than restated — the correct move, and the one
+> `docs/architecture/attribution-method.md` now asks every census to make.
+
 ---
 
 ## 3. Requirement-by-requirement
@@ -2807,6 +2820,12 @@ The **spec-attributable 0.0 %** is withdrawn rather than restated. §26 establis
 that `2420_trip_kernel_foundation.sql` cites this spec by section number, so 0 is
 false; how many of the 89 C rows are attributable has not been measured, and
 substituting a guess for a falsified zero is the error §26 refused to make.
+
+> **CONFIRMED 2026-09-14 as the corpus's standing rule.** WITHDRAWN-and-not-restated is the
+> correct state for an attribution figure nobody has measured, and this census reached it before
+> the rule existed. In the corpus's three-way vocabulary, the unmeasured rows here are
+> **attribution UNKNOWN** — a measurement, not a failure, and not a placeholder to be filled with
+> a zero. See `docs/architecture/attribution-method.md`.
 
 ### 36.5 What this section does NOT claim
 

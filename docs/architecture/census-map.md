@@ -14,6 +14,17 @@
 > spec-attributable. Verified: **222/293 = 75.8 %**. The denominator itself
 > reproduces exactly (M1–M293, no gaps; C 235 / W 48 / N 5 / CV 5).
 >
+> > **RESTATED 2026-09-14 — the re-measurement stands; the reason given for excluding M142 and
+> > M144 does not.** Resolving each row's first cited path and testing that file for a Map-spec
+> > citation is exactly the right method, and 215-of-218 is the strongest attribution evidence in
+> > this corpus. But *"pre-date the Map spec and cite nothing"* mixes two tests. **"Cite
+> > nothing" is sufficient on its own** to keep a row out of the attributable count — that count
+> > means "carries an in-file citation of this spec", and these do not. **"Pre-date" adds
+> > nothing and must not be relied on**: a file older than the spec's upload may still have been
+> > written from it. So M142 and M144 are **attribution UNKNOWN**, not "not this spec's", and
+> > **the 222/293 figure is unchanged** — only the label on the three excluded rows moves.
+> > See `docs/architecture/attribution-method.md`.
+>
 > **2. "`map_projection_enabled` seeds FALSE (2201)" is wrong: the row does not
 > exist in production at all.** The only `map_*` flags there are
 > `map_compass_commands_enabled` and `map_search_enabled`, both TRUE. 2201, 2218
@@ -296,6 +307,17 @@ cite this specification by section number. The **11 that do not**:
 | M-§23 ×2 | Precision ladder + purpose ceilings | **Presence / Global Input Intelligence spec.** `features/map/presence/presenceLadder.ts:113,145,363` is explicitly a MIRROR of the server's ladder ("MIRROR of the server's `FEATURE_PRECISION_CEILING` (§52)"), a different spec's section numbering. |
 
 **Spec-attributable CORRECT% = 224/293 = 76.5 %.**
+
+> **ATTRIBUTION METHOD NOTE, 2026-09-14 — both halves of this section are evidenced, which is
+> rare in this corpus, and it is kept whole.** The 224 rest on artifacts whose own headers cite
+> this specification by section number (attributable to THIS spec). The 11 exceptions rest on
+> artifacts that name a DIFFERENT programme in their own text — the Intelligence Gathering
+> buildout, and a Presence/Global-Input-Intelligence ladder whose mirror says so in its own
+> comment (*"MIRROR of the server's `FEATURE_PRECISION_CEILING` (§52)"*, a different document's
+> section numbering) — so they are attributable ELSEWHERE, evidenced. **Nothing here is
+> attribution-unknown except M142 and M144** (see the correction header). The phrase *"all
+> predate the Map work"* in the first row is decoration: the load-bearing half of that row is
+> *"and cite their own programme"*, and the row would stand unchanged without the date.
 
 I looked for reasons to score this lower and did not find them. The candidate
 objection is that the Map "merely wires up" pre-existing systems — Places,

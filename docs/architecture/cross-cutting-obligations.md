@@ -26,7 +26,7 @@ Verified facts:
 | `WallMoment` has **zero occurrences** outside `docs/` | `grep -rI --exclude-dir={node_modules,.git,docs} WallMoment .` → no output |
 | `docs/architecture/census-wall.md` mentions Sensing **zero times** | `grep -ci sensing docs/architecture/census-wall.md` → 0 |
 | `census-wall.md` mentions `WallMoment` **zero times** | same grep → 0 |
-| `census-sensing.md` counts it as **S74, NOT-BUILT**, inside its own 127 denominator | `census-sensing.md:270` |
+| `census-sensing.md` counts it as **S74, NOT-BUILT**, inside its own 127 denominator | `census-sensing.md:485#S74` |
 | `census-sensing.md` references the Wall **16 times** | `grep -c Wall census-sensing.md` |
 
 So **"Wall 95.1 % constructed / 91.7 % correct"** (`census-wall.md:15-20`) is true *against the
@@ -84,7 +84,7 @@ the 108 obligations below is counted by the census of the surface that owes it.*
    that caveat and is written as *"no direct `.from()` write found"*, never *"no writer exists"*.
 2. **Absence of a NAME is not absence of a RESPONSIBILITY.** `UserNowProjection` has zero
    occurrences, yet `routes/compassHome.ts` discharges its responsibility
-   (`census-sensing.md:281`, S81 BUILT-AND-CORRECT). Every "zero occurrences" row below therefore
+   (`census-sensing.md:497#S81`, S81 BUILT-AND-CORRECT). Every "zero occurrences" row below therefore
    separately asks whether an equivalent exists under another name, and says so.
 
 ---
@@ -161,7 +161,7 @@ Every one of these is counted **by `census-sensing.md` only**, inside its 127 de
 `census-highlights-memories.md`, `census-media.md` mention Sensing **zero times**;
 `census-telegraph.md` mentions it twice and `census-map.md` four times, in both cases only about
 *census methodology*, never as an obligation (`census-telegraph.md:7,229`;
-`census-map.md:33,36,871`).
+`census-map.md:44,36,871`).
 
 #### §7 Required Tweaks: Map — 10, owed by Map
 
@@ -216,7 +216,7 @@ Every one of these is counted **by `census-sensing.md` only**, inside its 127 de
 |---|---|---|---|---|
 | SX-26 | `TripWorldContext` projection: current world state, nearby opportunities, disruptions, ExperienceSessions, crew context (`:153`) | **NO — `TripWorldContext` zero occurrences, verified by grep.** Nearest thing is `compass/CompassTripContext.ts:1-18` (223 lines), which is trip *grounding* — day N of M, today's plan items — with no world state | S83 **BW** | no (no census-trips; census-layover does not cover it) |
 | SX-27 | World Intelligence may propose Trip changes but may not mutate canonical Trip plans; consequential changes pass through Trip Kernel (`:154`) | PARTIAL — no intel module writes a `trip_*` table (subject to the `.from()` caveat) **but there is no Trip Kernel to pass through**: `TripKernel`, `TripCommand`, `expectedTripVersion`, `aggregateVersion` all zero occurrences | S84 **BC** *(for the intel half only)* | see **T-01** — the non-intel half is counted by NOBODY |
-| SX-28 | Layover Temporal Freedom Engine intersects feasibility with live Experience value, forecast, friction and safe-return (`:155`) | NO — `grep -rn liveClaimRead services/airport/` → nothing | S85 **BW** | **counted twice**: census-layover L81, L276 record the same absence *"from the other side"* (`census-layover.md:380,703`) — see §5 |
+| SX-28 | Layover Temporal Freedom Engine intersects feasibility with live Experience value, forecast, friction and safe-return (`:155`) | NO — `grep -rn liveClaimRead services/airport/` → nothing | S85 **BW** | **counted twice**: census-layover L81, L276 record the same absence *"from the other side"* (`census-layover.md:396,703`) — see §5 |
 | SX-29 | Peak interception: can the user reach the experience before its useful window decays? (`:156`) | NO — no decay-window or interception arithmetic found | S86 **NB** | no |
 
 #### §12 Required Tweaks: Telegraph — 4, owed by Telegraph
@@ -301,7 +301,7 @@ eight.** They are now counted exactly like Sensing's: **inside GII's own denomin
 of the seven surfaces that owe them.** That census's own closing verdict is worth quoting, because
 it contradicts the certification this section originally had to rely on: *"'Recommendation:
 certify for launch on the code-verifiable dimensions' — **Not supportable at this denominator.**"*
-(`census-input-intelligence.md:1203`).
+(`census-input-intelligence.md:1237`).
 
 Platform-side facts, verified this pass: the policy registry covers **26 typed contexts**
 (`lib/inputAssistance/policyRegistry.ts:97-321`, from `global_search` through `compass_prompt`,
@@ -480,8 +480,8 @@ Per originating spec:
 
 The censuses are not wrong. Each one measured its spec faithfully, and Passport's, Layover's and
 Input Intelligence's went out of their way to record cross-surface adoption honestly
-(`census-passport.md:305-315`, `census-layover.md:694-702`,
-`census-input-intelligence.md:305` G6, `census-trips.md` TR133/TR165). The failure is **filing**,
+(`census-passport.md:305-315`, `census-layover.md:710-702`,
+`census-input-intelligence.md:335` G6, `census-trips.md` TR133/TR165). The failure is **filing**,
 and it has three forms:
 
 **Form 1 — misattribution (106 obligations).** Spec A requires surface B to do something. Census A
@@ -517,7 +517,7 @@ There is additionally one **finding** counted twice, which the second census fla
 
 | Finding | Counted by | Counted by | Note |
 |---|---|---|---|
-| **SX-28** — nothing under `services/airport/` reads `liveClaimRead`; live experience value, forecast and friction never reach the Layover feasibility intersection | census-sensing **S85 `BW`** | census-layover **L81 `N`** and **L276 `N`** | `census-layover.md:380` says so explicitly: *"the same finding `census-sensing.md:290` records from the other side"*. One absence, three requirement rows, two denominators. |
+| **SX-28** — nothing under `services/airport/` reads `liveClaimRead`; live experience value, forecast and friction never reach the Layover feasibility intersection | census-sensing **S85 `BW`** | census-layover **L81 `N`** and **L276 `N`** | `census-layover.md:396` says so explicitly: *"the same finding `census-sensing.md:319 — **NOTE 2026-09-14: `SX-28` appears in NO census.** It is an id this document carries alone, so this citation cannot name the row it claims; the line it points at is that census's Attribution section header. Needs a read, not a repoint` records from the other side"*. One absence, three requirement rows, two denominators. |
 
 And one **near-miss** worth recording, because it is the shape a future double count will take:
 
@@ -799,8 +799,8 @@ Stated plainly, because a legitimate "don't know" is more useful here than a gue
    number nobody can defend.
 6. **Production liveness.** Every "exists" verdict above describes **code that is correct and
    would run**. `docs/architecture/intel-spine-liveness.md` measured every `intel_*` table in
-   production at `count(*) = 0` with the gates open; `census-sensing.md:47-63` and
-   `census-layover.md:767` both make the same point about their own numbers. Nothing here is
+   production at `count(*) = 0` with the gates open; `census-sensing.md:57-63` and
+   `census-layover.md:783` both make the same point about their own numbers. Nothing here is
    evidence that anything has run.
 
 ---

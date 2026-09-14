@@ -37,6 +37,10 @@ leading blank line and a trailing newline, so the two agree and either may be re
 >
 > **CONSTRUCTED nearly doubled. CORRECT went DOWN. Spec-attributable CORRECT is
 > still zero.** Those are not in tension; together they are the whole finding.
+> *(Attribution restated 2026-09-14: "spec-attributable CORRECT is still zero" means no
+> BUILT-AND-CORRECT row rests on an artifact that cites this spec. It does not mean those rows
+> were built for something else — that is UNKNOWN. See the Headline restatement and
+> `docs/architecture/attribution-method.md`.)*
 >
 > 1. **63 requirements moved `NB → BBW`** because a large, careful,
 >    *explicitly spec-attributable* body of code landed: a command bus with
@@ -100,7 +104,7 @@ sections, so nothing turns on this — but the figure should be corrected wherev
 | CANNOT-VERIFY | **2** |
 | **CONSTRUCTED%** (BAC + BBW ÷ 266) | **28.6%** |
 | **CORRECT%, raw** (BAC ÷ 266) | **6.4%** |
-| **CORRECT%, spec-attributable** | **0.0%** (0 of 17) |
+| **CORRECT%, spec-attributable** | **0.0%** (0 of 17 carry an in-file citation of this spec) |
 
 **The single most important number is the last one.** Every one of the 17 BUILT-AND-CORRECT
 verdicts is satisfied by code written for a *different* spec — the Memories scrapbook (migration
@@ -108,6 +112,45 @@ verdicts is satisfied by code written for a *different* spec — the Memories sc
 family (migrations 2183–2214), or account-deletion hardening. Not one file cites this spec. The
 spec entered the repository on **2026-09-07**; every file cited below predates it. **Nothing in
 this repository has been built for the Highlights/Memories spec.**
+
+> **ATTRIBUTION RESTATED 2026-09-14 — the last two sentences above are WITHDRAWN; those 17
+> rows are attribution UNKNOWN, not attribution-elsewhere.** The reasoning is kept above
+> because this repository keeps its reasoning; what is withdrawn is the conclusion drawn
+> from it. See `docs/architecture/attribution-method.md`.
+>
+> **What was claimed.** That all 17 BUILT-AND-CORRECT verdicts were earned by work done for
+> some *other* specification, and therefore that nothing in the tree had been built for this
+> one.
+>
+> **Why it does not hold.** The load-bearing step is *"the spec entered the repository on
+> 2026-09-07; every file cited below predates it."* A file date is a fact about the
+> repository, not about the author's intent: a specification can be written, circulated and
+> worked from long before anyone commits it here, so predating the upload is consistent with
+> having been built from the spec and with never having heard of it. The owner has ruled that
+> inference out. The second step — *"not one file cites this spec"* — is a true and useful
+> measurement, but it is the ABSENCE of evidence for attribution to this spec; it is not
+> evidence for attribution to a different one. Read at this tree, the artifacts this paragraph
+> names as other programmes' work carry no spec citation of any kind in their headers:
+> `artifacts/api-server/src/routes/memories.ts:2#Memory System routes` opens with a route
+> list, `artifacts/api-server/src/lib/deletionDispositions.ts:2#Account-deletion coverage manifest.`
+> with a coverage manifest, and
+> `artifacts/api-server/src/services/passport/PassportMemoryService.ts:4#Creates and manages passport memories.`
+> with a prose description — none of the three names a specification, this one or any other.
+> The one migration cited by number, `0067`, is
+> `artifacts/api-server/src/migrations/0067_reviews.sql:2#Cross-domain review system for trips and rent_buddy_bookings.`
+> — a cross-domain review system, not the Memories scrapbook.
+>
+> **What would settle it.** For attribution TO this spec: a header block in the artifact naming
+> `docs/specs/Portava_Highlights_Memories_Development_Architecture_Spec_v1.txt` and the sections
+> it implements — exactly the form section A.6 later found on 30 files. For attribution
+> ELSEWHERE: a header naming a different, identifiable specification (a path, or a
+> programme name plus its own section numbering), or a migration/PR whose own text states the
+> programme that commissioned it. Absent either, the row is UNKNOWN, which is a measurement
+> and not a failure.
+>
+> **The figure itself is unchanged and no verdict moves.** 0 of 17 is still the right count of
+> BUILT-AND-CORRECT rows carrying an in-file citation of this spec. What it may no longer be
+> read as is a count of rows that were not built for it.
 
 ---
 
@@ -242,9 +285,21 @@ own count of §3.6, table by table.
   - **Spec-attributable CORRECT is lower than claimed: 0.0%, not 1.1%.** Every one of those 17 is
     pre-existing work for another spec. If the 1.1% was meant as "built for this spec", it should
     be zero.
+    **[RESTATED 2026-09-14 — UNKNOWN.]** *"Every one of those 17 is pre-existing work for
+    another spec"* is not measured; it is the date inference of the headline repeated. What is
+    measured is that 0 of the 17 cite this spec. Their attribution is UNKNOWN. The corrected
+    sentence is: *if the 1.1% was meant as "carries an in-file citation of this spec", it should
+    be zero — and the question of what those 17 were actually built for is open.*
 - **The claim I would replace both with:** *nothing in this repository was built for the
   Highlights/Memories spec; roughly a quarter of its requirements have a namesake artifact, and
   none of those namesakes is the spec's object.*
+  **[RESTATED 2026-09-14 — the first clause is WITHDRAWN.]** The replacement claim this
+  document should make is: *no artifact in this repository cited the Highlights/Memories spec at
+  the time this section was written; roughly a quarter of its requirements have a namesake
+  artifact; none of those namesakes is the spec's object; and whether any of them was built from
+  the spec is UNKNOWN.* Section A.6 below then measured the first clause false at a later tree —
+  30 files now cite the spec by path — which is the second reason not to read the original
+  sentence as standing.
 
 ---
 
@@ -254,6 +309,14 @@ Buckets: **BAC** = built and correct · **BBW** = built but wrong · **NB** = no
 **CV** = cannot verify. Attribution column: **pre** = pre-existing work for another spec that
 happens to satisfy this one; **—** = incidentally satisfied, no artifact was built; **spec** = built
 for this spec (there are none).
+
+> **ATTRIBUTION LEGEND RESTATED 2026-09-14.** Read **pre** as **UNKNOWN**: *the artifact was
+> present before this spec was uploaded and carries no in-file citation of it.* That is what
+> the mark was actually assigned on, and it does not establish which spec — if any — the work
+> was done for. A **pre** mark becomes **elsewhere** only when the artifact's own header names
+> a different, identifiable specification; it becomes **spec** only when the header names this
+> one. Neither test was applied per row when these marks were written, so every **pre** in the
+> table below is an UNKNOWN until re-read. See `docs/architecture/attribution-method.md`.
 
 ### §1 Architectural mandate (5)
 
@@ -815,6 +878,19 @@ verdicts are.** That is the honest summary of this range: the specification
 finally has code written for it, and none of that code has yet made a single
 requirement true end-to-end, because the eight migrations it rests on have not
 been applied.
+
+> **ATTRIBUTION METHOD NOTE, 2026-09-14.** The 63 stand: each rests on an artifact whose own
+> header names `docs/specs/Portava_Highlights_Memories_Development_Architecture_Spec_v1.txt`
+> and the sections it implements — positive evidence of attribution TO this spec, which is
+> the strongest form this corpus has. That is measured at this tree:
+> `artifacts/api-server/src/lib/memoryCommandBus.ts:4#Spec: docs/specs/Portava_Highlights_Memories_Development_Architecture_Spec_v1.txt`
+> is one of 30 source files carrying that path.
+>
+> **"0 of the 16 BAC verdicts are" means 0 of them CITE this spec, and nothing more.** It is
+> not a finding that those 16 were built for something else. Their attribution is UNKNOWN —
+> see the restatement under the Headline. The distinction matters most exactly here, where
+> the same section reports both kinds of number in the same sentence: one is evidenced, the
+> other is an absence.
 
 ### A.7 Owner decisions this pass surfaces
 
@@ -3496,8 +3572,8 @@ and each was re-found by its EXACT ORIGINAL LINE TEXT rather than by offset:
 
 | document | citation | original line text at `6d4327d66` | now |
 |---|---|---|---|
-| `docs/architecture/census-telegraph.md:1851` | routes/memories.ts line 1772, anchor `state` | `    (q as any) = (q as any).eq("state", "published");` | line **1839** |
-| `docs/architecture/census-telegraph.md:1889` | the same line, anchor `state", "published` | the same line | line **1839** |
+| `docs/architecture/census-telegraph.md:1897` | routes/memories.ts line 1772, anchor `state` | `    (q as any) = (q as any).eq("state", "published");` | line **1839** |
+| `docs/architecture/census-telegraph.md:1935` | the same line, anchor `state", "published` | the same line | line **1839** |
 | `docs/architecture/migration-queue.md:53` | routes/highlights.ts line 480 | `    .from("highlights")` — the `POST /highlights` insert, which is what that row's claim is about ("lists its inserted columns explicitly and uses no `SELECT *`") | line **498** |
 
 The alternative was to hand the integration owner a gate that was green before this branch and

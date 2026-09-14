@@ -232,6 +232,36 @@ assistance layer, in a migration written for it, or in a test named for it; and
 **not attributable** (`ᵖ`) when the cited proof is entirely pre-existing code the
 platform merely calls.
 
+> **METHOD RESTATED 2026-09-14 — the attributable half stands; `ᵖ` is renamed UNKNOWN, except
+> where the table above names a specific other programme.**
+>
+> **What stands.** Every file under `lib/inputAssistance/` and `platform/input-assistance/`
+> opens with a header naming this specification and citing its section numbers, and all ten
+> §51 phases appear by name in file headers. That is positive evidence of attribution TO this
+> spec, and the 239 (earlier 207 / 214 / 220) is a count of rows carrying it. **It does not
+> move.**
+>
+> **What does not stand.** *"Entirely pre-existing code the platform merely calls"* is two
+> claims wearing one label. The part that is measured — the cited artifact lives outside the
+> input-assistance layer — supports only *"not evidenced as this spec's"*. The part that is not
+> measured is *"pre-existing"*, i.e. that the code was written for something else because it was
+> there first; the prose above says so directly (*"work that predates the programme"*), and the
+> owner has ruled that inference out. A file older than a spec's upload can still have been
+> written from it.
+>
+> **So the 23 `ᵖ` rows split two ways, and this document already has the evidence for the
+> split.** Where the table above names an identifiable other programme and that programme names
+> itself in its own files — the Intelligence Gathering gate chain, the Compass programme's
+> model client and scanner, Map spec §27's `searchSaved` — those rows are **attributable
+> ELSEWHERE, evidenced**. Where the entry is a bare pre-GII substrate with no spec citation of
+> its own — `routes/discoverySearch.ts` (whose header this document itself describes as *"an
+> OpenAPI contract note, no GII reference"*), `lib/canonicalLocations.ts`'s pre-GII half,
+> `lib/blocks.ts`, `lib/usernameRules.ts`, `lib/rateLimit.ts`, `lib/http.requireUser`,
+> `components/MentionInput.tsx` — those rows are **attribution UNKNOWN**. This pass did not
+> re-read the 23 rows one by one, so the split between the two is not counted here; what is
+> withdrawn is the claim that all 23 are somebody else's work.
+> See `docs/architecture/attribution-method.md`.
+
 **Result: 23 of the 230 correct verdicts are `ᵖ`. Spec-attributable CORRECT% =
 207 / 373 = 55.5 %,** against 61.7 % raw — a 6.2-point haircut, not a wipeout.
 The wrapper is thin where it wraps, and everything else was written for this
@@ -304,6 +334,10 @@ Verdict key: **C** BUILT-AND-CORRECT · **W** BUILT-BUT-WRONG · **N** NOT-BUILT
 **?** CANNOT-VERIFY. `ᵖ` = correct, but earned by pre-existing work (not
 spec-attributable). `⌀` = vacuously satisfied. `☠prod` = the code is right and
 inert in production.
+*(`ᵖ` restated 2026-09-14: read it as **not evidenced as this spec's** — the cited artifact
+lives outside the input-assistance layer. It is an UNKNOWN unless §2's substrate table names an
+identifiable other programme for that row, in which case it is attributable-elsewhere. It is not
+a finding that the work was done for something else. See `docs/architecture/attribution-method.md`.)*
 
 ### §1 Product Definition
 
@@ -1356,6 +1390,8 @@ sensitivity_level" now lands 224 lines short of the select it names.
 
 `ᵖ` still means "correct, but earned by pre-existing work". The spec-attributable
 CORRECT is still C minus the count of `ᵖ` rows, which is still 23.
+*(2026-09-14: the arithmetic stands — spec-attributable CORRECT is C minus the 23. What those
+23 rows ARE attributable to is unknown for most of them; see the method restatement in §2.)*
 
 ### 8.4 Row moves — seven NOT-BUILT rows built
 

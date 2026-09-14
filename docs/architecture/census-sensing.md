@@ -40,6 +40,16 @@
 > §2" and were committed at 08:15 UTC — spec-attributable work this census
 > predates.
 >
+> > **RESTATED 2026-09-14 — the two halves of this paragraph have different standing.**
+> > The SECOND half is positive evidence and stands: those files name the Sensing spec and
+> > its sections in their own text, so they are attributable to this spec. The FIRST half is
+> > the ruled-out inference — a five-hour gap between a PR landing and the spec file being
+> > committed says nothing about what the PR's author was working from, because a spec can be
+> > read long before it is uploaded. Record PR #475's store as **attribution unknown**, not
+> > as "an owner ruling rather than the document". What would settle it: a section citation in
+> > `sensingAnonStore.ts`, or the owner ruling itself naming what it was derived from.
+> > See `docs/architecture/attribution-method.md`.
+>
 > **CORRECTION TO A CLAIM MADE FROM THIS CENSUS, not to the census itself.**
 > On its strength I told the owner that Sensing cannot reach 100 % because S17
 > (TLS in transit / at rest) is a deployment fact no code can close. The
@@ -107,7 +117,26 @@ Paths are relative to `artifacts/api-server/` unless prefixed `travel-buddy-stan
 | CANNOT-VERIFY | **1** |
 | **CONSTRUCTED%** = (C+W)/127 | **124 / 127 = 97.6 %** |
 | **CORRECT%** (raw) = C/127 | **98 / 127 = 77.2 %** |
-| **CORRECT% (spec-attributable)** | **26 of the 98 — 20.5 %** |
+| **CORRECT% (spec-attributable)** | **UNSUPPORTED — see the note below; read the body's figures instead** |
+
+> **ATTRIBUTION ROW WITHDRAWN 2026-09-14 — it had no method and it was arithmetically the
+> wrong column.** This row read **"26 of the 98 — 20.5 %"**. Nothing in this document derives
+> it: 26 is the BUILT-BUT-WRONG count and 26/127 = 20.5 % is the CONSTRUCTED–CORRECT distance
+> that §8 names in its own title (*"why the 26 BUILT-BUT-WRONG rows are wrong"*, and again at
+> §9.4: *"the distance still 20.5 points and still the W column"*). It is the W figure copied
+> into the attribution row, and "26 of the 98" is not a subset any section identifies.
+> **No verdict and no other figure changes**; only this row's claim is withdrawn.
+>
+> **The figures this document actually derives, each with its method, are:**
+> · **0 / 127** in the Attribution section below — every BUILT-AND-CORRECT verdict traced to one
+> of four *other* programmes, each naming its own spec in its own file headers. That is positive
+> evidence of attribution ELSEWHERE and it stands.
+> · **12 / 127 = 9.4 %** in the completion-pass note above, and **2 / 127 = 1.6 %** for the
+> PR #475 delta — later passes, not reconciled with each other here.
+> · Rows resting on artifacts that name the Sensing spec in their own text are attributable to
+> THIS spec; rows resting on artifacts naming another are attributable elsewhere; **every other
+> row is attribution UNKNOWN**, which is the default and not a failure.
+> See `docs/architecture/attribution-method.md`.
 
 > **RECOUNTED 2026-09-12 BY THE INTEGRATOR, from the rows and not by addition.**
 > §6 and §7 were written concurrently in two worktrees, neither of which could
@@ -313,6 +342,21 @@ names its own spec in its own file headers:
 *for* this spec is PR #475 (`0597a245`), which is **not in HEAD**
 (`git merge-base --is-ancestor 0597a245 HEAD` fails; `src/lib/sensingAnonStore.ts` is absent from
 the worktree) and is inert even where it is applied. See "PR #475 delta" below.
+
+> **ATTRIBUTION METHOD NOTE, 2026-09-14 — this section is the good kind and it is kept; two of
+> its four rows are weaker than the other two.** The method here is positive evidence of
+> attribution ELSEWHERE: an artifact's own header naming a different programme. Rows 1 and 2
+> meet that fully — the Intelligence Gathering buildout doc names its own specification and
+> dates it, and the Map rows carry the document's NAME as well as a section
+> (`artifacts/api-server/src/lib/mapProducers/worldPulseProducer.ts:2#worldPulseProducer`).
+> Rows 3 and 4 rest on citations of the form *"spec §4"* and *"spec §56 Phase 0"*, which name a
+> SECTION but not a DOCUMENT — for example
+> `artifacts/api-server/src/services/wall/LiveForYouService.ts:2#LiveForYouService`.
+> The programme is being read off the directory the file sits in, which is a good inference and
+> not the same thing as a citation. Rows resting on those two families are better recorded as
+> **attribution likely-elsewhere, unconfirmed** than as settled. What would settle them: the
+> spec's path or name in the header, as rows 1 and 2 carry.
+> See `docs/architecture/attribution-method.md`.
 
 ---
 
