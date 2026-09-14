@@ -428,3 +428,62 @@ result in this section), V2-07 (nothing built).
    PARTIAL here, never SATISFIED, so rejecting them moves nothing upward.
 5. **Reject the carried verdicts** and read only the 27 requirements this pass re-executed — the 15
    gaps and the 12 mapped rows marked `†`.
+
+---
+
+## 10. B1 — the nine "ungraded" requirements, and what re-reading them changed here
+
+*Added 2026-09-14 at `7c6255de7`. §§0–9 are unchanged; this section is additive and moves no grade
+above it.*
+
+`docs/architecture/reconciled-baseline-v1.md` §2.1 names nine requirements as the corpus's only
+ungraded population and makes grading them backlog item B1. This document had already graded all
+twelve `CPV2` clauses as V2-13…V2-24 in §2, so B1's work here was narrower than in the census: check
+the premise, re-execute the nine against the tree, and record the one grade that moved.
+
+**The premise does not hold, and the census now says why.** `census-compass` §17.0 shows that the
+nine-row gap `check:census-integrity` prints for compass is the six `C1-0n` rows plus `CPV2-03`,
+`CPV2-11` and `CPV2-12` — and the last three have carried verdicts since §13.3. Six of the nine
+clauses the baseline names (`CPV2-01`, `-02`, `-04`, `-08`, `-09`, `-10`) are DUPLICATES that add no
+requirement to any denominator; their verdict is their carrier's. **UNGRADED was never nine.**
+
+**One grade moves in this document, and only one.** V2-14 (`CPV2-02`) was PARTIAL † on the reading
+that the qualification bar *"is met on the input side and turn-scoped on the output side"*. That
+reading was incomplete: of the five fixture classes the clause names, **`conflicting` was not met on
+the input side either**. The §32 comparator reduced a live-claim envelope to band, source class and
+observation time and dropped `conflictState`, so a reading whose reports materially disagree reached
+`/compass/ask`'s prompt as an ordinary grounded baseline. That is now carried and stated
+(`artifacts/api-server/src/compass/CompassMediaContext.ts:214#conflictState: hit === null ? null : normalizeConflictState(hit.conflictState),`),
+pinned by `artifacts/api-server/src/test/compassCpv2Grounding.test.ts:66#describe("CPV2-02 — a conflicting fixture keeps its qualification through the Compass boundary"`.
+**V2-14 stays PARTIAL**: the place/live tool surface's own confidence vocabulary
+(`artifacts/api-server/src/compass/CompassTools.ts:526#CONFIDENCE RULE (Phase 8): tool data carries a "confidence" object with a sourceClass`)
+is still four classes with no conflict member, and V2-29's per-claim attachment is untouched. The
+grade is unchanged; **the reason behind it is now one class narrower and materially different**, and
+recording that is the point of §6's rule about reasons that decay.
+
+**Two grades are restated with a sharper reason and do not move.**
+
+- **V2-21 (`CPV2-09`) — `SATISFIED ⌀`, and the tool surface was enumerated to say so.** At this
+  commit the surface is 25 + 8 + 8 tools and **not one is in the four named classes**: no payment,
+  no booking, no message-send, no location-share. Every write-shaped tool stops at a proposal.
+  §3 recorded this as "the same vacuity"; what is new is that the vacuity is **watched** — a tool
+  cannot be added silently, because `artifacts/api-server/src/test/compassToolCountContract.test.ts:18#`COMPASS_TOOL_COUNT_IN_HEADER` equals `COMPASS_TOOL_DEFINITIONS.length`.`
+  turns red on any addition — and **not guarded**: nothing would refuse such a tool shipped with an
+  updated count and no confirmation step. `⌀` is the honest mark and §9 item 3's arithmetic for
+  rejecting it stands.
+- **V2-23 (`CPV2-11`) — MISSING, and not closable inside this lane.** The deletion half is an hour's
+  work in `CompassOutcomeEngine`. The other half is not: no row records that a ranking-weight nudge
+  was applied (`artifacts/api-server/src/compass/CompassOutcomeEngine.ts:192#async function applyRankingNudge(`
+  read-modify-writes a whole JSON column and keeps no ledger), so a withdrawal has nothing to walk
+  back. Closing it needs a foreign key and a nudge ledger — two migrations. Building the deletion
+  half alone would turn an honest MISSING into a PARTIAL that looks closer than it is.
+
+**Everything else in §2's V2-13…V2-24 was re-executed at this commit and holds**, including the two
+whose citations had drifted: `SWITCHING_COST` is still at `artifacts/api-server/src/lib/compassDecision.ts:91#export const SWITCHING_COST = 0.25;`
+behind `artifacts/api-server/src/routes/compassDecision.ts:78#if (!(await isFlagEnabled(sc, "compass_decision_enabled"))) {`,
+and `CPV2-12`'s duplicate store is still upserted at `artifacts/api-server/src/compass/CompassGraphEngine.ts:1153#const { error } = await db.from("compass_city_confidence").upsert(`.
+
+**Headline: unchanged at 43 / 74 SATISFIED.** No bucket moves. A pass that re-executes twelve
+requirements and moves nothing has either confirmed the document or not looked; the difference is
+the paragraph above, where one PARTIAL's reason was wrong in the direction that flatters the tree
+and is now corrected.
