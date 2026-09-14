@@ -159,6 +159,14 @@ export default function LayoverDashboardScreen() {
     ? (overview.airport.city !== 'Unknown' ? overview.airport.city : overview.session.manualCity)
     : null;
 
+  // §13 L122 — recommendation id → the band its PIN renders. Built here rather
+  // than inside the card so the card stays a consumer: L115 forbids the map
+  // recalculating feasibility, and a lookup table is not a calculation.
+  const candidateFeasibility = useMemo(() => {
+    const out: Record<string, NonNullable<LayoverRecommendation['feasibility']>> = {};
+    for (const r of recs) if (r.id && r.feasibility) out[r.id] = r.feasibility;
+    return out;
+  }, [recs]);
   const addedRecIds = useMemo(
     () => new Set(overview?.stops.map((s) => s.recommendationId).filter((x): x is string => !!x) ?? []),
     [overview?.stops],
@@ -491,7 +499,29 @@ export default function LayoverDashboardScreen() {
               addingRecId={addingRecId}
               onAddToPlan={handleAddRec}
             />
-            <LayoverMapCard airport={airport} stops={stops} airportReturn={airportReturn} />
+            {/* §13 L116/L117/L119/L121/L122/L125/L126 — the map's three server
+                inputs, all of which the server was ALREADY publishing and this
+                screen was dropping on the floor:
+
+                  `overview.safeEnvelope`   the certified §8 geometry (L63)
+                  `rec.feasibility`         the per-candidate band (L122)
+                  `overview.offlineBundle`  certifiedAt / staleAfter (L126)
+
+                `candidateFeasibility` is keyed by RECOMMENDATION id because
+                that is what a plan stop carries (`stop.recommendationId`), and
+                because L122 names the recommendation contract as the source. A
+                stop a traveller typed in themselves has no key here and the
+                card renders it as unmeasured — which is the truth, and is not
+                the same as unblocked. */}
+            <LayoverMapCard
+              airport={airport}
+              stops={stops}
+              airportReturn={airportReturn}
+              envelope={overview.safeEnvelope ?? null}
+              candidateFeasibility={candidateFeasibility}
+              offline={overview.offlineBundle ?? null}
+              nowMs={nowMs}
+            />
             <LayoverPeopleSection
               city={city ?? null}
               shareEnabled={overview.share.enabled}

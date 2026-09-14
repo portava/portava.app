@@ -404,6 +404,70 @@ export type ReturnNowOutcome =
   | { kind: 'offline' }
   | { kind: 'error'; status: number | null; message: string };
 
+/**
+ * §8 / §13 — the certified safe-envelope GEOMETRY, exactly as the server cuts
+ * it (`services/airport/LayoverEnvelope.ts`). Published on `GET /overview` as
+ * `safeEnvelope` since census L63 and, until this type existed, READ BY
+ * NOTHING: the map had no geometry to consume because no client type had a
+ * field for it, which is why L116 and L121 both read `N` while the server was
+ * already sending the answer.
+ *
+ * TWO radii, and the difference is the point. `radiusMetres` is PROVED —
+ * outside it the round trip exceeds the certified window at a straight-line
+ * lower bound, so nothing fits however it is travelled to. `plannedRadiusMetres`
+ * is the CONTRACTED planning edge after the §6.2 confidence haircut; a place
+ * between the two is FLAGGED and never blocked.
+ *
+ * `certifiedInward: false` is a permanent, deliberate field: being inside the
+ * disc is not a certification that anything fits, because there is no routed
+ * provider to certify with. A surface that renders the disc as "safe" is the
+ * L293 defect in a new shape.
+ */
+export interface LayoverSafeEnvelope {
+  centre: { lat: number; lng: number };
+  /** Metres. Outside this, nothing fits at any speed. */
+  radiusMetres: number;
+  /** The certified §7 window the radius was cut from. */
+  usableMinutes: number;
+  maxOneWayMinutes: number;
+  basis: 'straight_line_lower_bound';
+  /** Always true: a point outside the disc is certainly infeasible. */
+  certifiedOutward: true;
+  /** Always false: a point inside the disc is NOT certified to fit. */
+  certifiedInward: false;
+  confidence: EstimateConfidence | null;
+  /** Minutes of the window deliberately not planned against. */
+  uncertaintyBudgetMinutes: number;
+  plannedMaxOneWayMinutes: number;
+  /** The contracted edge. <= radiusMetres, equal only at HIGH confidence. */
+  plannedRadiusMetres: number;
+}
+
+/** §13's band vocabulary. `SAFE`/`TIGHT` have no producer on this tree. */
+export type EnvelopeBand = 'SAFE' | 'TIGHT' | 'BLOCKED' | 'UNCERTIFIED';
+
+/**
+ * §13 L122 — the feasibility state a candidate PIN carries, straight off the
+ * recommendation contract (`services/airport/layoverRankingFeasibility.ts`).
+ *
+ * The map consumes this and does not recalculate: L115 forbids a second
+ * feasibility rule on the client, and the overview's `safeEnvelope` makes one
+ * tempting (a haversine against `centre` is four lines). The band is decided
+ * once, on the server, beside the certification that produced the window.
+ */
+export interface CandidateFeasibility {
+  band: EnvelopeBand;
+  /** TRUE only when an envelope actually measured this candidate. */
+  certified: boolean;
+  lowerBoundOneWayMin: number | null;
+  /** Inside the contracted planning edge. `null` when nothing measured it. */
+  withinPlannedEdge: boolean | null;
+  reason: string | null;
+  plannedEdgeReason: string | null;
+  /** Whether this band CERTIFIES a fit. False for every band this tree emits. */
+  impliesFit: boolean;
+}
+
 export interface LayoverOverview {
   session: LayoverSession;
   airport: PublicAirport;
@@ -420,6 +484,14 @@ export interface LayoverOverview {
   safeReturn: SafeReturnPosture;
   /** §16 — the bundle that lets an offline client say how old its answer is. */
   offlineBundle: LayoverOfflineBundle;
+  /**
+   * §8/§13 — the certified envelope geometry the map draws. `null` only when
+   * the airport has no usable coordinate, which is what every
+   * `buildFallbackProfile` airport carries: an envelope centred on (0,0) would
+   * block every real place on earth, so the absence of a coordinate produces
+   * the absence of an envelope and never a default one.
+   */
+  safeEnvelope: LayoverSafeEnvelope | null;
   returnReminderAt: string | null;
   localTimes: LayoverLocalTimes;
 }
@@ -502,6 +574,12 @@ export interface LayoverRecommendation {
   meetupLocationReveal: string | null;
   placeId: string | null;
   sortOrder: number;
+  /**
+   * §13 L122 — the band this card's PIN renders. Always present from a server
+   * that has the candidate-feasibility contract; optional here only so an older
+   * server degrades to "not measured" rather than to a crash.
+   */
+  feasibility?: CandidateFeasibility;
 }
 
 export interface LayoverSafetyResult {
@@ -890,6 +968,14 @@ export async function getLayoverOverview(sessionId: string): Promise<LayoverOver
     if (json[field] == null) {
       console.warn(`[layover] overview is missing "${field}" — server contract mismatch`);
     }
+  }
+  // `safeEnvelope` is checked for ABSENCE and not for null, and the difference
+  // is a real distinction on the wire: the server sends `null` on purpose for an
+  // airport with no usable coordinate (see LayoverSafeEnvelope), and warning on
+  // that would train the warning to be ignored. `undefined` is the contract
+  // mismatch — a server that does not publish the field at all.
+  if (!('safeEnvelope' in json)) {
+    console.warn('[layover] overview is missing "safeEnvelope" — server contract mismatch');
   }
   return json as LayoverOverview;
 }

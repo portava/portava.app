@@ -202,6 +202,12 @@ function overviewFixture(opts: { certifiedAt?: string; staleAfter?: string } = {
       translationPhrases: { available: false, value: null, reason: 'no_phrase_catalogue' },
       stops: [],
     },
+    // §8/§13 — this card draws no map, so the certified envelope is absent for
+    // it. Present and NULL rather than omitted: `LayoverOverview.safeEnvelope`
+    // is a required field the server always sends (null only for an airport with
+    // no usable coordinate), and a fixture that omits it describes a response
+    // shape production never emits.
+    safeEnvelope: null,
     returnReminderAt: null,
     localTimes: {
       timezone: 'Asia/Bangkok', airportNow: '17:00', airportToday: '2026-09-08',
