@@ -29,7 +29,7 @@ import { buildDiscoveryContext } from "../services/location/DiscoveryLocationCon
 import { loadPreferences } from "../services/location/LocationPermissionService";
 import { toCanonicalCategory } from "../lib/placeCategories";
 import type { DiscoveryContext, DiscoveryContextMode } from "../services/location/DiscoveryLocationContext";
-import { calculateUserAge } from "../lib/ageEligibility";
+import { resolveGateAge, type GateAge } from "../lib/gateAge.js";
 import { discoveryPlaceToCompassItem } from "../compass/CompassDiscoveryAdapter";
 import { getCompassProfile } from "../compass/CompassProfileService";
 import { buildCompassContext, defaultSignals } from "../compass/CompassContextEngine";
@@ -1493,6 +1493,21 @@ const ADULT_OSM_VENUE_TYPES = new Set([
 ]);
 
 /**
+ * The wire name for what the age seam actually answered.
+ *
+ * Three values, and the third is the whole point: `not_verified_adult` says a
+ * provider result contradicts the birthday on file, `unavailable` says the
+ * check could not run, and neither is `callerDobMissing` — which for years was
+ * the only thing this response could say and was wrong in both cases.
+ */
+function describeCallerAgeState(state: GateAge["state"] | null): string | null {
+  if (state === null) return null;
+  if (state === "verified_minor") return "not_verified_adult";
+  if (state === "unreadable") return "unavailable";
+  return "ok";
+}
+
+/**
  * Context mode labels returned to the client. Never includes exact coords.
  */
 function contextModeLabel(mode: string, city: string | null): string {
@@ -1610,20 +1625,35 @@ router.get("/discovery", async (req, res) => {
   const customMinAge = req.query.customMinAge ? parseInt(req.query.customMinAge as string) : null;
   const customMaxAge = req.query.customMaxAge ? parseInt(req.query.customMaxAge as string) : null;
 
-  // Resolve caller age when ageFilter = open_to_me
+  // Resolve caller age when ageFilter = open_to_me — THROUGH THE SEAM
+  // (lib/gateAge.ts), and only on this filter, so no other request pays for it.
+  //
+  // `open_to_me` is not a preference here: fifteen lines down it is what
+  // decides whether ADULT_OSM_VENUE_TYPES — bars, nightclubs, casinos — are
+  // filtered out of the results. A caller whose government document says they
+  // are under 18 was being served that list because the typed birthday said
+  // otherwise.
+  //
+  // `callerAdultUnconfirmed` is the fail-closed flag rather than a substituted
+  // age, because there IS no age to substitute: the product knows the person is
+  // not a confirmed adult and does not know what they are instead. Inventing 17
+  // to make the arithmetic work would be the fabrication this change exists to
+  // remove.
   let callerAge: number | null = null;
   let callerDobMissing = false;
+  let callerAdultUnconfirmed = false;
+  let callerAgeState: GateAge["state"] | null = null;
   if (ageFilter === "open_to_me" && callerUserId) {
     const sc = getServiceClient();
     if (sc) {
-      const { data: profileRow } = await sc
-        .from("profiles")
-        .select("date_of_birth")
-        .eq("id", callerUserId)
-        .maybeSingle();
-      const dob = (profileRow as any)?.date_of_birth ?? null;
-      callerAge = calculateUserAge(dob);
-      if (callerAge === null) callerDobMissing = true;
+      const gate = await resolveGateAge(sc, callerUserId);
+      callerAgeState = gate.state;
+      if (gate.state === "ok") {
+        callerAge = gate.age;
+        if (callerAge === null) callerDobMissing = true;
+      } else {
+        callerAdultUnconfirmed = true;
+      }
     }
   }
 
@@ -1700,6 +1730,15 @@ router.get("/discovery", async (req, res) => {
     // effective caller age resolves to < 18 (e.g. open_to_me for a minor, or
     // custom range capped below 18).
     const ageBounds = ageFilterBounds();
+    if (callerAdultUnconfirmed) {
+      // The caller asked for "places open to me" and the product cannot treat
+      // them as an adult — either a document contradicts the birthday they
+      // typed, or the check could not run. Either way adult-only venue types
+      // come out. This is deliberately OUTSIDE the `ageBounds !== null` branch:
+      // there are no bounds to compute when there is no trustworthy age, which
+      // is precisely when the filter matters most.
+      list = list.filter((p) => !ADULT_OSM_VENUE_TYPES.has((p.category ?? "").toLowerCase()));
+    }
     if (ageBounds !== null) {
       const effectiveMin = ageBounds.min ?? (ageBounds.max !== null && ageBounds.max < 18 ? ageBounds.max : null);
       if (effectiveMin !== null && effectiveMin < 18) {
@@ -1734,7 +1773,12 @@ router.get("/discovery", async (req, res) => {
 
   const ageFilterMeta = {
     ageFilter,
+    // `callerDobMissing` keeps its original, narrow meaning — the read
+    // succeeded and there is no date of birth on the profile. It is no longer
+    // the catch-all it became, because it was being sent to users whose date of
+    // birth IS on file and who were told to go add one.
     callerDobMissing: ageFilter === "open_to_me" ? callerDobMissing : false,
+    callerAgeState: ageFilter === "open_to_me" ? describeCallerAgeState(callerAgeState) : null,
     bounds: ageFilterBounds(),
   };
 
@@ -2747,21 +2791,19 @@ router.get("/discovery/community", async (req, res) => {
   // Optional auth — needed only for open_to_me to resolve caller DOB
   let commCallerAge: number | null = null;
   let commCallerDobMissing = false;
+  let commCallerAdultUnconfirmed = false;
+  let commCallerAgeState: GateAge["state"] | null = null;
   if (ageFilterComm === "open_to_me") {
     const ageSc    = getServiceClient();
     const viewerId = await resolveCommunityViewer();
     if (ageSc && viewerId) {
-      try {
-        const { data: profileRow } = await ageSc
-          .from("profiles")
-          .select("date_of_birth")
-          .eq("id", viewerId)
-          .maybeSingle();
-        const dob = (profileRow as any)?.date_of_birth ?? null;
-        commCallerAge = calculateUserAge(dob);
-      } catch { /* degrade gracefully */ }
+      // Through the seam, same as the OSM route above.
+      const gate = await resolveGateAge(ageSc, viewerId);
+      commCallerAgeState = gate.state;
+      if (gate.state === "ok") commCallerAge = gate.age;
+      else commCallerAdultUnconfirmed = true;
     }
-    if (commCallerAge === null) commCallerDobMissing = true;
+    if (commCallerAge === null && !commCallerAdultUnconfirmed) commCallerDobMissing = true;
   }
 
   function communityAgeBounds(): { min: number | null; max: number | null } | null {
@@ -2830,6 +2872,12 @@ router.get("/discovery/community", async (req, res) => {
     //   min_age IS NULL OR min_age <= X  (place doesn't require more than X years)
     //   max_age IS NULL OR max_age >= X  (place doesn't cap at below X years)
     const ageBoundsComm = communityAgeBounds();
+    if (commCallerAdultUnconfirmed) {
+      // Not a confirmed adult, and no age to stand in for one. The only honest
+      // answer to "places open to me" is the places that are open to everyone:
+      // those with no minimum age at all. No number is invented to get there.
+      query = query.is("min_age", null);
+    }
     if (ageBoundsComm) {
       if (ageBoundsComm.min !== null) {
         query = query.or(`min_age.is.null,min_age.lte.${ageBoundsComm.min}`);
@@ -2980,6 +3028,7 @@ router.get("/discovery/community", async (req, res) => {
       ageFilterMeta: {
         ageFilter:         ageFilterComm,
         callerDobMissing:  ageFilterComm === "open_to_me" ? commCallerDobMissing : false,
+        callerAgeState:    ageFilterComm === "open_to_me" ? describeCallerAgeState(commCallerAgeState) : null,
         bounds:            communityAgeBounds(),
       },
     });

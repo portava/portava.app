@@ -199,6 +199,12 @@ import {
   type EventState,
 } from "../lib/eventLifecycle.js";
 import { affectedRows } from "../lib/affectedRows.js";
+import {
+  resolveGateAge,
+  ageForFailClosedFilter,
+  AGE_NOT_VERIFIED_ADULT_MESSAGE,
+  AGE_CHECK_UNAVAILABLE_MESSAGE,
+} from "../lib/gateAge.js";
 import { tripKernelClient, executeTripCommand, TRIP_VERSION_RESPONSE_HEADER } from "../domain/trips/commands/tripKernel.js";
 import { readBlockExclusions, sendExclusionsUnavailable } from "../lib/exclusionSet.js";
 import { appStorageUrlInfo } from "../lib/mediaUrl.js";
@@ -729,13 +735,23 @@ export async function checkEventEligibility(
       }
     }
     if (ev.age_min != null || ev.age_max != null) {
-      const { data: profile } = await sc.from("profiles").select("date_of_birth").eq("id", userId).maybeSingle();
-      if (!(profile as any)?.date_of_birth) {
+      // THROUGH THE SEAM (lib/gateAge.ts). This block used to read
+      // `date_of_birth` and do the arithmetic itself, which meant it could not
+      // see a provider result contradicting the typed birthday — and it also
+      // discarded the read's `error`, so an unreadable `profiles` produced the
+      // missing-date-of-birth refusal, a statement about the user made from a
+      // read that failed. The seam answers all three cases distinctly.
+      const gateAge = await resolveGateAge(sc, userId);
+      if (gateAge.state === "unreadable") {
+        return { ok: false, errorCode: "forbidden", message: AGE_CHECK_UNAVAILABLE_MESSAGE };
+      }
+      if (gateAge.state === "verified_minor") {
+        return { ok: false, errorCode: "forbidden", message: AGE_NOT_VERIFIED_ADULT_MESSAGE };
+      }
+      if (gateAge.age === null) {
         return { ok: false, errorCode: "forbidden", message: "Your profile must have a date of birth to join this age-restricted event" };
       }
-      const ageYears = Math.floor(
-        (Date.now() - new Date((profile as any).date_of_birth).getTime()) / (1000 * 60 * 60 * 24 * 365.25),
-      );
+      const ageYears = gateAge.age;
       if (ev.age_min != null && ageYears < ev.age_min) {
         return { ok: false, errorCode: "forbidden", message: `This event requires attendees to be at least ${ev.age_min}` };
       }
@@ -1120,9 +1136,19 @@ router.get("/events", async (req, res) => {
   if (needsGates) {
     trustGatesEnabled = await isFlagEnabled(sc, "events_trust_gates_enabled");
     if (trustGatesEnabled) {
-      const [profileRes, tpRes] = await Promise.all([
-        sc.from("profiles").select("verified, date_of_birth").eq("id", user.id).maybeSingle(),
+      // THE EIGHTH GATE, and it was already here. The brief for this change
+      // named seven; this file carries a third age gate — the one that decides
+      // which age-restricted events a viewer SEES — and it read
+      // `date_of_birth` the same way the other two did. It is routed through
+      // the seam with them, because a fix that leaves a known sibling behind is
+      // the shape of defect being fixed.
+      const [profileRes, tpRes, gateAgeList] = await Promise.all([
+        // `date_of_birth` is no longer selected: the age comes from the seam on
+        // the next line, and leaving the column here would leave the next
+        // author a raw birthday to compute with.
+        sc.from("profiles").select("verified").eq("id", user.id).maybeSingle(),
         getTrustProfileResult(sc, user.id),
+        resolveGateAge(sc, user.id),
       ]);
       const profile = (profileRes as any).data;
       viewerVerified = !!profile?.verified;
@@ -1140,9 +1166,11 @@ router.get("/events", async (req, res) => {
         return;
       }
       viewerTrust = (tpRes.state === "ok" ? tpRes.profile.overall_score : null) ?? TRUST_SCORE_WHEN_NO_PROFILE;
-      viewerAge = profile?.date_of_birth
-        ? Math.floor((Date.now() - new Date(profile.date_of_birth).getTime()) / (1000 * 60 * 60 * 24 * 365.25))
-        : null;
+      // `null` here already means "hide every age-restricted event" (the filter
+      // below returns false on it), so collapsing a contradiction or an outage
+      // to null is the fail-closed answer and tells the viewer nothing untrue —
+      // the events simply are not listed.
+      viewerAge = ageForFailClosedFilter(gateAgeList);
     }
   }
 
@@ -3215,12 +3243,17 @@ router.post("/events/:id/waitlist", async (req, res) => {
       }
     }
     if ((ev as any).age_min != null || (ev as any).age_max != null) {
-      const { data: profileAgeWl } = await sc.from("profiles").select("date_of_birth").eq("id", user.id).maybeSingle();
-      if (!(profileAgeWl as any)?.date_of_birth) {
+      // Through the seam, same three answers as the join gate above. This is a
+      // SEPARATE gate on a separate route: a user refused the event still
+      // reaches the waitlist, and being seated on a waitlist is how you get
+      // into the event.
+      const gateAgeWl = await resolveGateAge(sc, user.id);
+      if (gateAgeWl.state === "unreadable") { sendError(res, "forbidden", AGE_CHECK_UNAVAILABLE_MESSAGE); return; }
+      if (gateAgeWl.state === "verified_minor") { sendError(res, "forbidden", AGE_NOT_VERIFIED_ADULT_MESSAGE); return; }
+      if (gateAgeWl.age === null) {
         sendError(res, "forbidden", "Your profile must have a date of birth to join this age-restricted event"); return;
       }
-      const dobWl = new Date((profileAgeWl as any).date_of_birth);
-      const ageYearsWl = Math.floor((nowMsWl - dobWl.getTime()) / (1000 * 60 * 60 * 24 * 365.25));
+      const ageYearsWl = gateAgeWl.age;
       if ((ev as any).age_min != null && ageYearsWl < (ev as any).age_min) {
         sendError(res, "forbidden", `This event requires attendees to be at least ${(ev as any).age_min}`); return;
       }

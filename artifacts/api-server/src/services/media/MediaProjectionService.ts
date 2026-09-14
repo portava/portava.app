@@ -53,6 +53,7 @@ import {
   readIntelTimeSubstrate,
   type MediaTimeBands,
 } from "../../lib/media/mediaTimeBands.js";
+import { resolveGateAge, ageForFailClosedFilter } from "../../lib/gateAge.js";
 import { logger } from "../../lib/logger.js";
 import { excludePrivateAuthorPosts } from "../../lib/privacyFilter.js";
 import {
@@ -76,15 +77,6 @@ export interface ViewerResolved {
   viewerTripIds: Set<string>;
 }
 
-/** Calculate whole-year age from an ISO date-of-birth, or null. */
-function ageFromDob(dob: string | null | undefined): number | null {
-  if (!dob) return null;
-  const t = new Date(dob).getTime();
-  if (!Number.isFinite(t)) return null;
-  const years = (Date.now() - t) / (1000 * 60 * 60 * 24 * 365.25);
-  return years >= 0 && years < 200 ? Math.floor(years) : null;
-}
-
 /**
  * Resolve the viewer's eligibility context: country + age (for geo/age gates),
  * followed set and trip membership (for the following feed). All best-effort —
@@ -106,13 +98,26 @@ export async function resolveViewer(
       try {
         const { data } = await sc
           .from("profiles")
-          .select("location_country, date_of_birth")
+          .select("location_country")
           .eq("id", viewerId)
           .maybeSingle();
         viewerCountry = (data as any)?.location_country ?? null;
-        viewerAge = ageFromDob((data as any)?.date_of_birth ?? null);
       } catch {
         /* non-fatal */
+      }
+    })(),
+    // THROUGH THE SEAM (lib/gateAge.ts). Same shape and same cost argument as
+    // routes/mediaFeed.ts: the viewer is resolved once per request, so this is
+    // one extra read per request and none per projected item. The file's own
+    // private `ageFromDob` is DELETED rather than left unused: a date-of-birth-
+    // to-age helper sitting next to the seam is an invitation for the next gate
+    // added to this file to call it and skip the contradiction rule, which is
+    // the exact shape of the defect being fixed.
+    (async () => {
+      try {
+        viewerAge = ageForFailClosedFilter(await resolveGateAge(sc, viewerId));
+      } catch {
+        /* non-fatal — null already means withhold */
       }
     })(),
     (async () => {

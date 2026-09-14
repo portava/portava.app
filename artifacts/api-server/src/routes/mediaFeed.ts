@@ -27,7 +27,7 @@ import {
   loadViewerTripIds,
   type MediaCandidate,
 } from "../lib/mediaEligibility.js";
-import { calculateUserAge } from "../lib/ageEligibility.js";
+import { resolveGateAge, ageForFailClosedFilter } from "../lib/gateAge.js";
 import { excludePrivateAuthorPosts } from "../lib/privacyFilter.js";
 import {
   hydrateMediaFeedItem,
@@ -1322,12 +1322,26 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
       try {
         const { data: viewerProfile } = await sc
           .from("profiles")
-          .select("location_country, date_of_birth")
+          // `date_of_birth` is no longer selected here: the age answer comes
+          // from the seam below, and a column selected for an age decision that
+          // is made elsewhere is the next author's trap.
+          .select("location_country")
           .eq("id", user.id)
           .maybeSingle();
         viewerCountry = (viewerProfile as any)?.location_country ?? null;
-        viewerAge = calculateUserAge((viewerProfile as any)?.date_of_birth ?? null);
       } catch { /* non-fatal */ }
+    })(),
+    // THROUGH THE SEAM (lib/gateAge.ts), and deliberately as a SIBLING of the
+    // country read inside the existing Promise.all rather than inside it: the
+    // viewer is resolved ONCE per request, so this is +1 read per REQUEST and
+    // exactly zero reads per feed item. `lib/mediaEligibility.ts:447` already
+    // treats a null age as "withhold every age-restricted item", so the
+    // contradiction and the outage both land on the answer that path is built
+    // for, and no statement is made to the viewer about either.
+    (async () => {
+      try {
+        viewerAge = ageForFailClosedFilter(await resolveGateAge(sc, user.id));
+      } catch { /* non-fatal — null already means withhold */ }
     })(),
   ]);
 

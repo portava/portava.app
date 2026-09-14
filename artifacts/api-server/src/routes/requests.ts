@@ -17,6 +17,12 @@ import { requireUser, sendError } from "../lib/http";
 import { normalizedFriendshipPair, isUuid } from "../lib/friendDecisions";
 import { getServiceClient } from "../lib/supabase";
 import { getAgeEligibilityReason } from "../lib/ageEligibility";
+import {
+  gateAgeFrom,
+  AGE_NOT_VERIFIED_ADULT_MESSAGE,
+  AGE_CHECK_UNAVAILABLE_MESSAGE,
+} from "../lib/gateAge.js";
+import { readVerifiedAgeSignal } from "../lib/travelerVerification.js";
 import { resolveInteractionPermissions } from "../services/interactionPermissions.js";
 import { nameVisibilitySet, sanitizeIdentity } from "../lib/publicIdentity";
 import {
@@ -431,7 +437,13 @@ router.post("/me/requests/circle_invite/:id/accept", async (req, res) => {
     return;
   }
   {
-    const [ageSettingsRes, profileRes] = await Promise.all([
+    // The verified-age signal joins the SAME Promise.all rather than starting a
+    // second round trip: this gate's cost goes from two parallel reads to
+    // three, not from one sequential read to two. The profiles read stays here
+    // (rather than moving inside resolveGateAge) precisely because this block
+    // already binds and reports its `.error` separately, and folding it into
+    // the seam would have thrown that distinction away.
+    const [ageSettingsRes, profileRes, ageSignal] = await Promise.all([
       serviceClient
         .from("circle_age_settings")
         .select("age_limit_enabled, min_age, max_age")
@@ -442,6 +454,7 @@ router.post("/me/requests/circle_invite/:id/accept", async (req, res) => {
         .select("date_of_birth")
         .eq("id", user.id)
         .maybeSingle(),
+      readVerifiedAgeSignal(serviceClient, user.id),
     ]);
 
     if (ageSettingsRes.error) {
@@ -470,7 +483,22 @@ router.post("/me/requests/circle_invite/:id/accept", async (req, res) => {
     const ageSettings = ageSettingsRes.data as any;
     if (ageSettings?.age_limit_enabled) {
       const dob = (profileRes.data as any)?.date_of_birth ?? null;
-      const eligibility = getAgeEligibilityReason(dob, true, ageSettings.min_age, ageSettings.max_age);
+      // THROUGH THE SEAM (lib/gateAge.ts). A circle is a trusted social graph
+      // an owner curates by age; a provider result contradicting the typed
+      // birthday has to reach this decision or the age setting means nothing
+      // for exactly the users it was set to exclude.
+      const gateAge = gateAgeFrom(dob, ageSignal);
+      if (gateAge.state === "unreadable") {
+        req.log.error(
+          { inviteId: id, userId: user.id },
+          "circle invite accept: age could not be resolved — refusing without claiming anything about the acceptor",
+        );
+        sendError(res, "degraded_unavailable", AGE_CHECK_UNAVAILABLE_MESSAGE);
+        return;
+      }
+      const eligibility = gateAge.state === "verified_minor"
+        ? { eligible: false, reason: "not_verified_adult", publicMessage: AGE_NOT_VERIFIED_ADULT_MESSAGE }
+        : getAgeEligibilityReason(gateAge.dateOfBirth, true, ageSettings.min_age, ageSettings.max_age);
       if (!eligibility.eligible) {
         // Write audit log (best-effort)
         void (async () => {
