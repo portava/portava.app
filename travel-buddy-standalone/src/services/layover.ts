@@ -468,6 +468,35 @@ export interface CandidateFeasibility {
   impliesFit: boolean;
 }
 
+/**
+ * Mirrors `services/airport/LayoverReturnEscalation.ts#ReminderDisposition`.
+ * Kept structural rather than importing: this package does not depend on the
+ * api-server sources, and a wire shape that drifts should fail at the surface
+ * that reads it, not silently typecheck against a stale copy of the server.
+ */
+export interface LayoverReminderDisposition {
+  action: 'none' | 'keep' | 'fired' | 'reschedule' | 'cancel';
+  reason:
+    | 'no_reminder_scheduled'
+    | 'reminder_unreadable'
+    | 'aligned'
+    | 'below_material_threshold'
+    | 'already_fired'
+    | 'deadline_moved'
+    | 'deadline_moved_after_fire'
+    | 'rung_already_passed'
+    | 'deadline_passed';
+  /** POSITIVE: the flight went later, so the reminder now fires too EARLY. */
+  driftMinutes: number;
+  materialChange: boolean;
+  /** The instant to schedule at, or null when there is nothing to schedule. */
+  firesAt: string | null;
+  /** The instant currently stored, so a surface can say what it replaces. */
+  staleFiresAt: string | null;
+  /** The §15 rung in force. `label` is the only field a surface should render. */
+  rung: { level: string; priority: string; label: string };
+}
+
 export interface LayoverOverview {
   session: LayoverSession;
   airport: PublicAirport;
@@ -476,6 +505,19 @@ export interface LayoverOverview {
   stops: PlanStop[];
   planFit: PlanFit;
   share: { enabled: boolean; othersInCity: number };
+  /**
+   * §24 — what the SERVER thinks of the reminder it stored, recomputed against
+   * the currently certified hard return on every overview read.
+   *
+   * `action` is the whole point: a reminder scheduled against a deadline that
+   * has since moved is not a reminder, and a footer that keeps rendering
+   * "Reminder set" over it is lying. `reason` is a stable token and never a
+   * sentence — the surface writes its own words.
+   *
+   * Optional for the same reason as `toolsConsulted`: an older server does not
+   * send it, and absent must render as nothing rather than as `none`.
+   */
+  reminder?: LayoverReminderDisposition;
   /** §2.1 — which rules and which inputs produced `advice`/`window`. */
   certification: LayoverCertification;
   /** §2.1/§22 — how much of THIS airport went into those numbers. */
@@ -646,7 +688,33 @@ export interface CompassAnswer {
   boundaryViolations: CompassBoundaryViolation[];
   /** §20 — which rules and which inputs produced the figures above. */
   certification: LayoverCertification;
+  /**
+   * §12 — the deterministic tools the model actually invoked for THIS answer,
+   * in the order they ran. Empty when it answered from the certified record
+   * alone, which is the common case and is not a degradation.
+   *
+   * Optional on the wire because a deployment running an older server does not
+   * send it. A surface must render nothing rather than "Checked: " with an
+   * empty list, and must never infer "no tools were available" from its
+   * absence — absent means UNREPORTED, not none.
+   */
+  toolsConsulted?: LayoverToolName[];
 }
+
+/** §12's twelve, in the order `06_Layover.md` §12 lists them. */
+export type LayoverToolName =
+  | 'getLayoverContext'
+  | 'getConnectionState'
+  | 'getTimeWallet'
+  | 'getSafeEnvelope'
+  | 'getReachableExperiences'
+  | 'simulatePlan'
+  | 'getReturnContract'
+  | 'getAirportState'
+  | 'getCrewCandidates'
+  | 'requestConstraintClarification'
+  | 'replan'
+  | 'explainDecision';
 
 // ── API calls ─────────────────────────────────────────────────────────────────
 
