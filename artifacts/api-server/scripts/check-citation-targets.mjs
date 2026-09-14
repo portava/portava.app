@@ -158,8 +158,28 @@ import {
  * That is the failure this ceiling exists to bound: a citation that resolves to
  * a real line and supports nothing. All six were repaired by reading the claim
  * and given an `#anchor`, which is why the count fell by two net while the same
- * pass moved thirty-one others. */
-export const MAX_DEAD_TARGETS = 253;
+ * pass moved thirty-one others.
+ *
+ * LOWERED AGAIN 2026-09-14, 253 -> 251, by the Trips and Input Intelligence
+ * lanes landing together. Input found FIVE pointers into
+ * `useInputAssistance.ts` that were already wrong at their lane base — off by
+ * 39 and 47 lines — and invisible to this checker only because they happened to
+ * land on non-blank lines. Same class as the Media lane's six: a citation that
+ * resolves is not a citation that is right, and this ceiling bounds only the
+ * half a script can see. All were repaired by reading the claim.
+ *
+ * LOWERED AGAIN 2026-09-14, 251 -> 249, closing a citation that three
+ * census-trips rows shared. `routes/tripReservations.ts:497` was the "stricter
+ * delete rule" for TR108 and `TRIP_BOOKING_NOT_CREATOR_OR_OWNER` for TR447; the
+ * line is now blank and the rule is `canManageBooking(..., "delete")` at :536,
+ * with its gate at :96 rather than :95. Both were anchored while repointing, so
+ * doc-citations owns them now and this checker no longer judges them.
+ *
+ * NOT repaired, deliberately: census-trips:2894 cites `SafeReturnService.ts:17`
+ * and its own row says the symbol is at `:18`. That row is a RECORD OF THE
+ * DRIFT, not a live pointer — the same class as census-layover §L5, and
+ * repointing it would destroy the only thing it exists to say. */
+export const MAX_DEAD_TARGETS = 249;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);

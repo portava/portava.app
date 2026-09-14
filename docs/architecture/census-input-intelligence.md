@@ -2444,3 +2444,146 @@ but with almost nothing to spare. **Adding that one client test path to
 `CENSUS_SCOPE` takes it to 108/109 = 99 %** and is the right action: a census
 must watch the file its evidence names, and that suite is the only proof seven
 §44 rows have.
+
+---
+
+## 12. Phase 12 — the serve log, and a `C` the lane asked for that it also argued against
+
+Written by the integration owner after cherry-picking `48ce32e59` and `04796e13b`.
+Every OLD verdict was read from `CENSUS_INTEGRITY_DUMP=ALL`, never from this
+document's prose — §11.6 and §9.6 both record why.
+
+### 12.1 Three moves
+
+| **ID** | **was** | **now** | why |
+|---|---|---|---|
+| **G292** | **N** | **W** | `lib/inputAssistance/telemetry.ts` + `POST /input-assistance/telemetry` + migration 2950. The row's sentence — *"no server-side telemetry service, no serve log, no impression record and no analytics write anywhere in `lib/inputAssistance/`"* — is now false in all four clauses. **`W`, not the `C` the lane proposed: see 12.2.** |
+| **G372** | **N** | **W** | *"No latency instrumentation anywhere; the response carries no server timing"* is now half false — `routes/inputAssistance.ts` times the handler and puts `serverMs` on the envelope and in a structured log line. **The P95 itself is computed nowhere**, which is the whole of what the row asks for. |
+| **G351** | **N** | **W** | a Step 0 disproof, not a build. *"Zero accessibility tests exist in the layer"* is false at this branch's base: `components/__tests__/suggestionAccessibility.component.test.tsx` is eleven passing assertions, added by `90a515a69` — **the commit this document declares as its own `head_commit`**. One of §46's five named dimensions is certified, so `W`. |
+
+### 12.2 The `C` I did not grant, and the lane's own words for why
+
+The lane proposed **G292 `N → C ☠prod`** and then wrote, in its own report:
+
+> *"`☠prod` is load-bearing: migration 2950 is applied to NO database, not
+> production and not `portava-ci`."*
+> *"a grader who reads `C` as 'works' should read it as `W`. I would not argue."*
+
+Taking it at its word. **Migration 2950 has never been executed anywhere** — its
+`DO $post$` postconditions, including the one asserting that the raw-text CHECK
+actually FIRES rather than merely existing, have never run. In production today
+the route takes its 503 refusal branch on every call, so the serve log has no
+rows and cannot acquire any.
+
+This is the same rule census-discovery §17.2 applies to DV-58/59, census-layover
+§22.2 to L110/L112, and census-highlights-memories §K.2 to H219:
+**declaring an absence honestly is better than defaulting it, and it is still not
+the capability the spec asked for.** Applying it in one census and not another
+would make the corpus percentage a function of which lane wrote the row.
+
+### 12.3 VOICE — §25/G163, answered rather than deferred again
+
+**Nothing exists, and the row is correctly `N`.** Re-verified at this branch's
+base rather than inherited:
+
+- `grep -rniE 'voice|speech|dictat|transcri|microphone'` over
+  `artifacts/api-server/src/lib/inputAssistance/` → **exit 1, no match**.
+- the same grep over `travel-buddy-standalone/src/platform/input-assistance/` →
+  **exit 1, no match**.
+- no `expo-speech`, no `@react-native-voice/voice`, no `SpeechRecognition` in the
+  client's `package.json`. `expo-av` is present and is media **playback**.
+- every `voice` hit in the client tree is WebRTC **voice calling**, which
+  produces no transcript. No `voice`/`dictation` value in `InputContext`, no
+  flag, no stub.
+
+**What class of thing would close it: a transcript PRODUCER** — a dictation
+surface, a platform speech binding, or a server STT endpoint — that hands its
+finished string to `lib/inputAssistance/queryNormalizer.ts#normalizeQuery` and
+then into the ordinary gateway, exactly as typed text goes. After Phase 11 the
+ROUTING half is one call; the PRODUCER half is an entire unbuilt feature, and
+this layer has no microphone.
+
+**A refinement to the framing, offered rather than asserted:** G163 is
+*vacuously unsatisfiable* rather than *unbuilt work in the input layer* — it
+constrains how a transcript must be routed, GIVEN a transcript. If a future pass
+wants a denominator that separates "we failed to build this" from "the
+precondition does not exist", G163 belongs with §24's paste rows (G154–G162):
+**10 of the 52 `N` rows are in that shape.**
+
+### 12.4 Four stale sentences this document has been contradicting itself with
+
+1. §46's note and **G351** both say *"no accessibility test exists anywhere in
+   the layer"* and count *"all 24 test files"*. There are **32**, and one of them
+   is named `suggestionAccessibility.component.test.tsx`.
+2. **G324** — §46's table still prints `W` and *"selection result is never
+   announced"*, while `SmartInput.tsx` calls
+   `AccessibilityInfo.announceForAccessibility(selectionAnnouncement(s, applied))`
+   — **and this document's own live verdict for G324 is already `C`**, moved at
+   §9.3. The §46 table has been contradicted by its own document for two passes.
+3. **G329** — same shape: the table prints `W` and says the active row differs
+   only by background colour; `EntitySuggestionRow.tsx` renders an `activeSlot`
+   caret and the a11y suite's *"strip every colour and the active row is STILL
+   distinguishable"* passes. Live verdict already `C`.
+4. **Five pointers into `useInputAssistance.ts` were already wrong**, off by 39
+   and 47 lines, and invisible to `check:citation-targets` only because they
+   happened to land on non-blank lines. **A citation that resolves is not a
+   citation that is right** — the same finding the Media lane made about
+   `MediaProjectionService.ts:379`, which was cited three times as
+   `readCurrentState` while carrying an unrelated `out.set(id, label)`.
+
+The table verdicts in 2 and 3 are NOT edited here: the rows' live verdicts are
+already `C` and a prose table that disagrees with its own document is §16.6's
+problem, not a verdict move.
+
+### 12.5 Five of seventeen mutations survived on first run
+
+29 % worthless-test rate on tests the lane had just written and believed in, and
+four of the five were the failure §9.6 and §11.6 already warned about: an
+assertion running over an empty set, or over a fixture too well-formed to
+distinguish the mutation. Two are worth restating:
+
+- **#5, one gate masked another.** An unknown event name is also a name no policy
+  declares, so the policy gate refused it first and the vocabulary check could be
+  deleted with no test noticing. Its real job is only visible when a policy
+  declares a name the §44 vocabulary lacks — the drift that reaches 2950's
+  `iate_event_name_known` CHECK and fails the whole batch.
+- **#16, the test asserted the mock.** The `serverMs` coercion sat in a module
+  that imports the Supabase token helper, so it could only be reached from a
+  component test — where the function is a jest mock and the coercion never ran.
+  Changing `: undefined` to `: 0` left the suite green.
+
+**A reader should assume any assertion in this repository that has not been
+mutated is worth nothing.**
+
+### 12.6 One line, outside every lane's file set, that four rows wait on
+
+`travel-buddy-standalone/app/_layout.tsx`:
+
+```ts
+setTelemetrySink(installInputTelemetryTransport().sink);
+```
+
+`setTelemetrySink` is still called from **no non-test file**. Both halves of the
+transport now exist and `requestId` rides every event, so G263, G306 and G355
+each have exactly that one line between them and their evidence — and G365–G370
+have it between them and having any data at all. Emission into a batcher nothing
+attaches is not measurement.
+
+### 12.7 Tally
+
+> | Measure | was (§11) | now (§12) |
+> | --- | --- | --- |
+> | **Denominator — testable requirements** | 373 | **373** |
+> | BUILT-AND-CORRECT | 262 | **262** |
+> | BUILT-BUT-WRONG | 55 | **58** |
+> | NOT-BUILT | 52 | **49** |
+> | CANNOT-VERIFY | 4 | **4** |
+> | **CONSTRUCTED%** = (C+W)/373 | 85.0 % | **320 / 373 = 85.8 %** |
+> | **CORRECT%** (raw) = C/373 | 70.2 % | **262 / 373 = 70.2 %** |
+> | **THE GAP** = W/373 | 14.7 % | **58 / 373 = 15.5 %** |
+
+**CORRECT does not move and the GAP widens, and both are the honest reading.**
+Three things that did not exist now do, so they left `N` — and not one of them
+reaches a database, a metric, or a screen reader's full complement, so none
+reaches `C`. A pass that built real things and moved the correct-percentage by
+zero is what this document looks like when it is not scoring.

@@ -3520,7 +3520,7 @@ reaching the client as a bare `forbidden` / `not_found`.
   `routes/trips-expansion.ts:1029`, `:1155` (approve/decline join request →
   `canManageJoinRequests`), `:3356` (`GET /trips/:tripId` → `canViewTrip`,
   with the locked sentinel now carrying the reason at `:3392`);
-  `routes/tripReservations.ts:95` (gate) and `:497` (delete →
+  `routes/tripReservations.ts:96#const booking = await canManageBooking(sc, { userId: user.id }, tripId, "read"` (gate) and `routes/tripReservations.ts:536#const del = await canManageBooking(sc, { userId }, (trip as any).id, "delete"` (delete →
   `canManageBooking`); `routes/safeReturn.ts:306` (session create →
   `canManageSafety`); `domain/trips/services/tripCrewLocation.ts:170` (`buildCrewCard` →
   `canSeePresence`).
@@ -3563,7 +3563,7 @@ mistaken for "built".
 | TR103 `canViewTrip(actor, trip)` | W | **C** | `domain/trips/policies/tripPolicy.ts:138`; called from `GET /trips/:tripId` (`routes/trips-expansion.ts:3356`); `tripPrivacy.test.ts` pins every outcome through the route and the matrix pins the rule. |
 | TR104 `canInviteParticipant(actor, trip)` | W | **C** | `:185`; called at `routes/trips.ts:1180` and `:2114`. Owner only — the kernel's INVITE_PARTICIPANT capability — with `canManageJoinRequests` (`:199`) kept apart for the host rule, because the kernel keeps them apart. |
 | TR105 `canEditTrip(actor, trip)` | W | **C** | `:215`; called at `routes/trips.ts:874`. |
-| TR108 `canManageBooking(actor, trip)` | W | **C** | `:273`; the crew gate at `routes/tripReservations.ts:95` and the stricter delete rule at `:497`, which had been a route-local comparison. |
+| TR108 `canManageBooking(actor, trip)` | W | **C** | `:273`; the crew gate at `routes/tripReservations.ts:96#const booking = await canManageBooking(sc, { userId: user.id }, tripId, "read"` and the stricter delete rule at `routes/tripReservations.ts:536#const del = await canManageBooking(sc, { userId }, (trip as any).id, "delete"`, which had been a route-local comparison. |
 | TR109 `canSeePresence(actor, subject, trip)` | W | **C** | `domain/trips/policies/tripPresencePolicy.ts:39` — a PREDICATE, not a card: ghost wins, an active (checked, unexpired, fail-closed on unparseable) live-share grant overrides a hidden default, else the default decides. `buildCrewCard` calls it for its fork (`domain/trips/services/tripCrewLocation.ts:170`), so card and predicate cannot disagree; 46 crew-card tests unchanged and green. |
 | TR111 `canManageSafety(actor, trip)` | W | **C** | `:310`; called at `routes/safeReturn.ts:306`. Its first live effect is the gap above: a session can no longer be attached to a trip its owner is not on. |
 | TR115 `negative assertions for anonymous, non-member, removed member, guest, host, service-facing` | W | **C** | All six in one matrix (`tripPolicy.test.ts`), per capability. "Guest" has no row in `member_role`; the nearest is `viewer` (crew, read-only) and it is tested as such, stated rather than assumed. Service-facing at `:353`. |
@@ -3573,7 +3573,7 @@ mistaken for "built".
 | TR444 `TRIP_SPATIAL_*` | N | **N** | **Holds.** Four codes declared; `routes/tripFeasibility.ts`'s §7.4 findings are served as `consistency` entries without a reason code. Nothing emits. |
 | TR445 `TRIP_PRIVACY_*` | N | **C** | `TRIP_PRIVACY_NOT_VISIBLE` / `TRIP_PRIVACY_BUDDIES_ONLY` on the locked sentinel (`routes/trips-expansion.ts:3392`) — the first time a privacy refusal has said which rule refused. Route-tested (`tripPrivacy.test.ts`) and matrix-tested. |
 | TR446 `TRIP_PRESENCE_*` | N | **W** | *"Presence refusals return a status label, not a reason code."* Half false already: `TRIP_PRESENCE_NOT_SELF` / `_NOT_FOUND` are emitted by 2768. `_GHOST` / `_HIDDEN` are now DECIDED by `canSeePresence` and consumed by `buildCrewCard` — but the crew card still renders a label, not the reason, so they do not reach the wire. W. |
-| TR447 `TRIP_BOOKING_*` | N | **C** | `TRIP_BOOKING_NOT_MEMBER` at `routes/tripReservations.ts:95`, `TRIP_BOOKING_NOT_CREATOR_OR_OWNER` at `:497`, through `sendTripRefusal`. `tripReservations.test.ts`'s 403 cases pass unchanged against them. |
+| TR447 `TRIP_BOOKING_*` | N | **C** | `TRIP_BOOKING_NOT_MEMBER` at `routes/tripReservations.ts:96#const booking = await canManageBooking(sc, { userId: user.id }, tripId, "read"`, `TRIP_BOOKING_NOT_CREATOR_OR_OWNER` at `routes/tripReservations.ts:536#const del = await canManageBooking(sc, { userId }, (trip as any).id, "delete"`, through `sendTripRefusal`. `tripReservations.test.ts`'s 403 cases pass unchanged against them. |
 | TR448 `TRIP_DISRUPTION_*` | N | **N** | **Holds.** Declared; no disruption model emits (§17.2 is §40's later work). |
 | TR449 `TRIP_PROJECTION_*` | N | **W** | *"No projections (§19.1)."* Falsified since 42aeac38: `TRIP_PROJECTION_UNAVAILABLE` is emitted by `domain/trips/contracts/tripDiscoveryProjection.ts:240`. One projection, one code; `_STALE` / `_SCHEMA_MISMATCH` / `_VERSION_AHEAD` declared for §40.2. W. |
 | TR450 `TRIP_IDENTITY_*` | N | **W** | *"...build-time ratchets ... rather than returning a runtime reason code."* `TRIP_IDENTITY_ALREADY_EXISTS` IS a runtime reason: emitted by 2450's CREATE_TRIP and mapped to 409. Not C: CREATE_TRIP carries the open `TRIP_KERNEL_CREATE_TRIP_UNGUARDED_INSERT` finding (§35), so the family's one emitter is not one this document calls proven. |
@@ -8422,3 +8422,128 @@ starved full run means nothing): `tripProjections` 30/30, `tripPolicy` 90/90,
 flag moved. The Compass window and the TR114 ratchet are BUILT ON A BRANCH in a
 shared worktree. §70.4's finding is about 67 of 319 C rows and says nothing
 about the other 252.
+
+---
+
+## §70 The crew map is LIVE in production, and four `C` rows say it is off
+
+Written by the integration owner after cherry-picking `2eeee1aa7` and `f65b89db5`.
+**No verdict moves in this section.** It exists because the finding below is the
+most consequential thing either pass produced, and burying it in a commit message
+would repeat exactly the failure this document keeps recording.
+
+### §70.1 The fact, verified independently of the lane that found it
+
+`artifacts/api-server/src/lib/capability/snapshots/20260908-production-schema.json`
+is a committed, read-only, md5-checksummed capture of production
+(`projectRef: ajrurzioarfkagpuxfnb`, `capturedAt: 2026-09-08`, flags digest
+`218f21960e606902f2e1fd89efb008b5`). Its `feature_flags` block reads:
+
+```
+"trip_crew_ghost_mode_enabled": true,
+"trip_crew_live_share_enabled": true,
+"trip_crew_map_enabled":        true,
+"trip_kernel_enabled":          false,
+"trip_readiness_enabled":       true,
+```
+
+The seed at `0041_trip_crew_location.sql:63` is `false` and every citation to it
+is exact. **The seed was overridden in production**, and the snapshot has said so
+in this repository since 2026-09-08.
+
+### §70.2 What that falsifies
+
+- **TR10** (`C`) — *"the whole surface is behind `trip_crew_map_enabled`, seeded
+  false"*. **False about production.**
+- **TR179** (`C`) — the same clause, same words.
+- **TR436** (`C`) — *"four distinct gates … **all seeded false**"*. True of the
+  seeds, false of production for **all four**.
+- **The deployment excuse at §29's closing block** — *"All behind
+  `trip_crew_map_enabled`, seeded false. The stale-live defect at TR165 … **may
+  never have rendered for a user**."* and *"What would settle it: **the production
+  flag value**."* The production flag value was in the tree when that sentence was
+  written. TR165 — a three-day-old location drawn as live, which §29 called *"the
+  most consequential single defect in the Trips census"* — **did render**. TR165
+  is now `C` (fixed), so nothing moves; the mitigation was never true.
+
+**§37.3 records a prior pass nearly filing a false finding here and resolving it
+by checking the seed in every candidate migration file. Nobody checked the live
+value.** A seed is a claim about a migration. A flag is a claim about a database.
+
+### §70.3 Why the four rows nonetheless stay `C`
+
+Each row rests on several supports, and I verified the others: ghost mode is
+absolute, no coordinate is served without an active grant, the hotel blur
+applies, grants expire, and enabling and disabling are both explicit. TR10's
+*"not a global location tracker"* and TR179's *"no covert persistent tracking"*
+survive on those. **One of five supports is false — and it is the one that reads
+"nobody is exposed".** A grader who weighs that support differently should move
+these rows, and the evidence to do it is above rather than in a lane report.
+
+### §70.4 Two more stale supports, disproved by reading
+
+- **TR173** — *"its four tables (`locate_friends_sessions/_members/_positions/
+  _audit`) are **absent from production**"*, cited to
+  `scripts/checkProductionDrift.ts:177-180`. All three parts are wrong:
+  `production-applied-migrations.json` records `2219_locate_friends_sessions`
+  applied to production; the 2026-09-08 snapshot lists all four tables; and the
+  cited lines are now `wall_telemetry_events`/`passport_telemetry_events` — the
+  string `locate_friends` **does not appear anywhere in that file**.
+  `check:doc-citations` could not catch it because the citation is unanchored.
+  The row stays `W` on the reason that survives (`groupScopeId` is a
+  `route_plans.id`, not a trip) plus `locate_friends_enabled: false` — but
+  **§68.2's remedy is wrong**: the tables are applied, so what remains is a code
+  re-scope and a flag, not a deployment.
+- **TR425** — *"there is **no leg (TR14)** to delegate from, and **no trip field
+  references a layover**. Two systems, no seam."* `trip_legs` exists at
+  `2761_trip_legs_and_commitments.sql:60`, and `layover_sessions.trip_id`
+  references `trips(id)` at `0127_layover_system.sql:57`. The seam exists; it is
+  an FK nothing reads.
+
+### §70.5 TR229's code half, and why the row does not move
+
+`§13.1 "+ transport"` now consults the booked segment before the straight-line
+term: `TripOpportunityProjection.ts#segmentAwareEstimator` is passed into
+`TripExperienceCompiler.ts`, and `check:trip-decision-diff`'s golden is
+**byte-identical**, which is the proof that an estimator with no booked leg gets
+exactly its old answer.
+
+It stays `W`. **2782 is in no database**, and that is the shape of this whole
+census: of 128 `W` rows, ~90 need a migration applied or a flag flipped, 26 need
+both a deployment step and a code step, and 4 need a routed travel-time provider
+nobody has written. **No `W` row in census-trips can reach `C` by code alone.**
+The right bookkeeping move for TR229 in §68.2 is `BOTH → OWNER`, not a verdict.
+
+Two survivors from eleven mutations, and one was a real defect in the lane's own
+first draft: the compiler keyed the return booking on the window's destination
+place while a redirected return leg travelled to a different point — **a match
+for a journey nobody is making.** Killed, and `M11` exists to stop the `??` chain
+coming back.
+
+### §70.6 A defect found and deliberately not fixed
+
+There are **two** `isAcceptedTripMember`s. `lib/http.ts` throws
+`TripAccessUnavailableError` — §29.6 fixed it. `domain/trips/invariants/
+tripMembership.ts` silently returns `false` on a database error. §29.6 swept the
+first and missed the second, and the same shape sits in
+`routes/tripCrewLocation.ts`'s `getMemberRole`/`getMemberRoleAny`, where a read
+failure becomes **403 "you are not a member"** where 503 belongs. All are
+documented as deliberate fail-closed, and fail-closed is right about
+*authorization*; what is missing is **deny versus unknown**. Making the second
+throw needs a catch at `services/intel/IntelCaptureService.ts`, outside the
+lane's set. Reported, not built, and open.
+
+### §70.7 Tally — unchanged
+
+| BUILT-AND-CORRECT | **320** |
+|---|---|
+| BUILT-BUT-WRONG | **128** |
+| NOT-BUILT | **3** |
+| CANNOT-VERIFY | **0** |
+| **CONSTRUCTED%** = (C+W)/451 | **448 / 451 = 99.3 %** |
+| **CORRECT%** = C/451 | **320 / 451 = 70.9 %** |
+
+Nothing moved, and the pass was worth running: one live-flag finding that
+falsifies a support in four `C` rows, two stale "absent from production" claims,
+one remedy in §68.2 that would have sent the next lane to apply tables that are
+already applied, and a mutation-killed defect in the code half of TR229.
