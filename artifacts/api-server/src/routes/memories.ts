@@ -2906,4 +2906,106 @@ async function enrichMemories(sc: any, rows: any[], viewerId: string, precisionE
   }));
 }
 
+// ── GET /users/:userId/memories/highlights ────────────────────────────────────
+//
+// §18 ProfileHighlightProjection (H165), reached by a caller. §E.5 filed this
+// row risk-blocked because "each changes a live response shape"; nothing here
+// changes one. `GET /users/:userId/memories` is byte-identical and this is a
+// LONGER path, so the shipped route cannot match it.
+//
+// WHY THE PROJECTION IS OVER `memories` AND NOT `highlights`: the definition
+// declares `source_tables: ["memories", "memory_items"]`. §12's thesis is that
+// a Highlight is a disposable projection over Memories, and the `highlights`
+// table is the 24-hour Stories product §1 names as a non-goal.
+//
+// THREE GATES, IN THIS ORDER, AND EACH DOES SOMETHING THE OTHERS CANNOT:
+//   1. the block check, on the pair, before anything is read;
+//   2. §23's ladder per row, which knows about blocks and relationship classes
+//      the builder has no notion of;
+//   3. the builder's own audience filter, which is published-only, public or
+//      explicitly allow-listed, and never a hidden viewer.
+// The builder is the invariant and the ladder is the authorization; neither is
+// asked to be the other.
+//
+// LOCATION IS COARSENED BEFORE THE BUILDER SEES IT. §H found three profile
+// reads that published more than their siblings; a fourth profile read that
+// skipped `protectMemoryRow` would be the same defect in a new place.
+// PROFILE_HIGHLIGHT_FIELDS carries `location_city` / `location_country`, and a
+// Hidden-Gem or §10 precision ceiling can empty both.
+const PROFILE_HIGHLIGHT_LIMIT = 200;
+
+router.get("/users/:userId/memories/highlights", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { userId } = req.params;
+  if (!isUuid(userId)) { sendError(res, "invalid_payload", "Invalid user id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  // Fails CLOSED on an unreadable `blocks`: an outage refuses the profile
+  // rather than publishing it to somebody who may have been blocked.
+  if (user.id !== userId && await isBlocked(sc, user.id, userId)) {
+    sendError(res, "not_found", "No profile highlights");
+    return;
+  }
+
+  const { data: rows, error } = await sc
+    .from("memories")
+    .select(MEMORY_SELECT as any)
+    .eq("owner_id", userId)
+    .neq("state", "deleted")
+    .order("starts_at", { ascending: false })
+    .limit(PROFILE_HIGHLIGHT_LIMIT);
+  if (error) {
+    req.log.error({ err: error, ownerId: userId }, "memories: profile highlights read failed — refusing rather than serving an empty profile");
+    sendError(res, "degraded_unavailable", "We could not build this profile. Please try again.");
+    return;
+  }
+
+  const owned = (rows ?? []) as any[];
+
+  // §23, per row, BEFORE the builder.
+  const verdicts = await Promise.all(
+    owned.map((m) => (m.owner_id === user.id ? Promise.resolve(true) : canReadMemory(sc, m, user.id, "profile"))),
+  );
+  const readable = owned.filter((_m, i) => verdicts[i]);
+
+  const precisionEnabled = await isFlagEnabled(sc, "memory_location_precision_enabled");
+  const gemCtx = await loadMemoryGemContext(sc, readable);
+  const safeRows = readable.map((m) => protectMemoryRow(m, gemCtx, user.id, precisionEnabled));
+
+  const itemRes = await readMemoryItems(sc, safeRows.map((m) => m.id as string));
+  if (!itemRes.ok) {
+    req.log.error({ err: itemRes.error, ownerId: userId }, "memories: profile highlight item read failed — refusing rather than reporting a photograph-free profile");
+    sendError(res, "degraded_unavailable", "We could not build this profile. Please try again.");
+    return;
+  }
+
+  const definition = getProjectionDefinition("ProfileHighlightProjection");
+  if (!definition) { sendError(res, "db_error", "Projection definition missing"); return; }
+
+  const scope = { owner_id: userId, viewer_id: user.id };
+  const sourceRows = safeRows as unknown as MemorySourceRow[];
+  const built = definition.build({ scope, memories: sourceRows, tags: [], items: itemRes.items as any });
+  const disclosed = discloseProjectionRows(definition, scope, built as any);
+
+  res.json({
+    profileHighlights: {
+      userId,
+      projectionId: definition.id,
+      builderVersion: definition.builder_version,
+      destination: definition.destination,
+      audience: definition.audience,
+      sourceVersion: sourceVersionOf(sourceRows).digest,
+      // 2730 is unapplied (H174): built per request, not registered.
+      registered: false,
+      truncated: owned.length >= PROFILE_HIGHLIGHT_LIMIT,
+      rows: disclosed,
+    },
+  });
+});
+
 export default router;
