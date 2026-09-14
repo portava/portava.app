@@ -4053,7 +4053,7 @@ either reads or is asked, on a path the app mounts.
    pass measured against `6d4fd1a06`. The integrating branch had already closed
    the same real-clock defect in `53615fd72`, by freezing the clock for that
    describe block
-   (`artifacts/api-server/src/test/tripOpportunityProjection.test.ts:189#before(() => { mock.timers.enable({ apis: ["Date"], now: NOW.getTime() }); });`).
+   (`artifacts/api-server/src/test/tripOpportunityProjection.test.ts:192#before(() => { mock.timers.enable({ apis: ["Date"], now: NOW.getTime() }); });`).
    The merged tree runs **20,216 tests, 20,216 passed, 0 failed, 0 cancelled, 0
    skipped, 0 todo**, exit 0. So item 7's figures are right for the commit they
    were taken at and are NOT the merged numbers; this pass's attribution — four

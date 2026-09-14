@@ -5766,7 +5766,7 @@ recorded as somebody else's rather than claimed as a pass.
 diagnosis above is why.** This lane measured against `6d4fd1a06`. The
 integrating branch had already closed the same defect two commits earlier, in
 `53615fd72`, by freezing the clock for that describe block
-(`artifacts/api-server/src/test/tripOpportunityProjection.test.ts:189#before(() => { mock.timers.enable({ apis: ["Date"], now: NOW.getTime() }); });`).
+(`artifacts/api-server/src/test/tripOpportunityProjection.test.ts:192#before(() => { mock.timers.enable({ apis: ["Date"], now: NOW.getTime() }); });`).
 Executed on the merged tree at 15:52 UTC — an hour at which the unfrozen file
 had previously failed 16 / 2 — the file is **18 / 18**. So this lane's suite
 result of 20,163 passed / 2 failed is correct for the commit it was taken at
