@@ -10,15 +10,23 @@
  * this.
  */
 
-/** "Today" as a YYYY-MM-DD string in the given IANA timezone (UTC fallback). */
-export function todayInTimezone(timezone: string | null | undefined): string {
+/**
+ * "Today" as a YYYY-MM-DD string in the given IANA timezone (UTC fallback).
+ *
+ * `now` is a parameter and not a hidden `new Date()` because a function whose
+ * answer depends on the wall clock cannot be tested at the boundary that
+ * matters — the few hours a day when the trip's zone and UTC disagree about
+ * which day it is. Callers that do not pass it get the clock, exactly as
+ * before, so every existing call site is byte-identical in behaviour.
+ */
+export function todayInTimezone(timezone: string | null | undefined, now: Date = new Date()): string {
   const opts = { year: "numeric", month: "2-digit", day: "2-digit" } as const;
   try {
     // en-CA formats as YYYY-MM-DD, directly comparable to date-column strings.
-    return new Intl.DateTimeFormat("en-CA", { timeZone: timezone ?? "UTC", ...opts }).format(new Date());
+    return new Intl.DateTimeFormat("en-CA", { timeZone: timezone ?? "UTC", ...opts }).format(now);
   } catch {
     // Invalid/unknown timezone string — fall back to UTC.
-    return new Intl.DateTimeFormat("en-CA", { timeZone: "UTC", ...opts }).format(new Date());
+    return new Intl.DateTimeFormat("en-CA", { timeZone: "UTC", ...opts }).format(now);
   }
 }
 

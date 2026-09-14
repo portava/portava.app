@@ -658,7 +658,7 @@ ids named in that row; each id remains individually addressable.
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
 | TR35 | Primary lifecycle IDEA → PLANNING → BOOKED → PRE_DEPARTURE → TRAVELING → IN_DESTINATION → RETURNING → COMPLETED → MEMORY, plus DISRUPTED / CANCELLED / ABANDONED / ARCHIVED | **W** | `migrations/0001_spine.sql:10` — `trip_status as enum ('planning','upcoming','active','completed','cancelled')`, extended in practice by `'draft'` and `'archived'` (`domain/trips/invariants/tripStatus.ts:38,40`). Seven states against thirteen: BOOKED, PRE_DEPARTURE, TRAVELING vs IN_DESTINATION vs RETURNING, MEMORY, DISRUPTED and ABANDONED have no representation, so the states that carry the spec's operational meaning are exactly the missing ones. |
-| TR36 | Lifecycle is computed from canonical facts plus explicit user actions | **C** | `domain/trips/invariants/tripStatus.ts:30-46#computeTripStatus` `computeTripStatus` derives the state from title/city presence and date boundaries **in the trip's own timezone**, honours terminal states, and `:1-10` records why it exists: two copies had diverged, one comparing UTC midnight, so *"the same trip could read 'upcoming' on one endpoint and 'active' on the other around the day boundary."* The header ends *"Never let clients override this."* |
+| TR36 | Lifecycle is computed from canonical facts plus explicit user actions | **C** | `domain/trips/invariants/tripStatus.ts:38-54#computeTripStatus` `computeTripStatus` derives the state from title/city presence and date boundaries **in the trip's own timezone**, honours terminal states, and `:1-10` records why it exists: two copies had diverged, one comparing UTC midnight, so *"the same trip could read 'upcoming' on one endpoint and 'active' on the other around the day boundary."* The header ends *"Never let clients override this."* |
 | TR37 | Do not store boolean soup such as isActive/isStarted/isFinished/isTraveling | **C** | `trips` has no such column (`0001_spine.sql:72-89`), and the client derives display state rather than trusting the stored one (`src/components/TripPage.tsx:58-60`, `src/domain/trips/invariants/tripStatus.ts` `deriveTripDisplayStatus`) — the prohibition is honoured on both sides. |
 | TR38–TR45 | §3.2 active operational phase: ARRIVAL_DAY · FREE_TIME · ACTIVE_PLAN · TRANSIT · NIGHTLIFE · REST · DEPARTURE_DAY · DISRUPTED, each with its own primary UI/behaviour | **N** ×8 | There is no phase concept at all: no column, no enum, no derivation, no UI switch. `grep -rli "ARRIVAL_DAY\|FREE_TIME\|ACTIVE_PLAN\|DEPARTURE_DAY"` over the whole tree returns nothing. The nearest artifact is `routes/tripReadiness.ts:344` `GET /trips/:tripId/arrival-board`, which is an arrival *list*, not an arrival-day phase, and it is behind `trip_readiness_enabled`, seeded false (`0170_trip_readiness.sql:76`). |
 | TR46 | Plan state machine DRAFT → PROPOSED → CONFIRMED → IN_PROGRESS → COMPLETED, with AT_RISK / MOVED / CANCELLED / SKIPPED | **W** | `0010_trip_plan.sql:12-13` — `'confirmed' \| 'tentative' \| 'done' \| 'cancelled'`. Four states against nine, and the three that carry operational meaning (IN_PROGRESS, AT_RISK, MOVED) are all absent, so a plan cannot be started, cannot be flagged at risk, and cannot record that it moved. |
@@ -3620,7 +3620,7 @@ carried a freshness (TR368). No metric measured read-model lag (TR394).
   (`:142#optedIn` — `share_safe_return_status` or the session's
   `notify_trip_crew_enabled`), counts the withheld rather than hiding them,
   and carries NO location field — the test asserts the key set.
-- `domain/trips/projections/TripCompassProjection.ts:75#buildTripCompassProjection` —
+- `domain/trips/projections/TripCompassProjection.ts:142#buildTripCompassProjection` —
   the trip row and its version from ONE read (`:73#TRIP_COLUMNS`),
   a three-valued `planItems` layer (`ok` / `unread`, reusing §14.1's `Layer`),
   and `planItemsTruncated` said rather than guessed (cap + 1 rows are read).
@@ -7997,3 +7997,409 @@ A suite whose result depends on the hour is not a gate — it is a coin whose bi
 measured. **Whether more of this class remains is not known**; the three files found so far were
 each found by a failure, not by a search, and no guard in this repository looks for a route-driving
 test that does not freeze `Date`.
+
+## 70. Independent validation, 2026-09-14 — the rule is stated before the sample
+
+The owner's instruction for this pass was *"don't label Trips finished until the
+requirements themselves are verified"*. 319 of these 451 rows are graded
+BUILT-AND-CORRECT and nobody can re-execute 319 claims in one pass. Pretending
+otherwise is the unearned certification this programme exists to prevent, so
+this section states its sampling rule, its denominator, and its method BEFORE
+it states a single result. A rule chosen after seeing the results is not a rule.
+
+### 70.1 The rule
+
+> **Re-derive every `C` row whose evidence cites a file that has CHANGED between
+> this census's declared `head_commit` `014a25d5` and the tree being validated
+> (`a288ab6a`), where a citation is any `*.ts` / `*.tsx` / `*.sql` / `*.mjs`
+> path or bare filename appearing in the row's cell, matched to the changed set
+> by basename.**
+
+Mechanically reproducible by a reader:
+
+```
+git diff --name-only 014a25d5 a288ab6a                 # 1,002 changed files
+node <parser identical to checkCensusIntegrity's>      # 451 rows, 319 C
+intersect by basename                                  # 67 C rows
+```
+
+**Why this rule and not a stride or a section.** `check:census-freshness`
+reports this census as `233 counted file(s) changed — ACKNOWLEDGED (all named)`.
+An acknowledgement argues that a change cannot have moved a verdict; it is not a
+re-derivation, and §69 and every section before it accepted that argument
+without re-reading the rows underneath. A C row whose cited file has moved is
+therefore the highest-density place rot can be, and it is the only population
+where a stale citation is *guaranteed* to have had the opportunity to rot. A
+fixed stride would spend most of its reads on rows whose files have not been
+touched since they were measured.
+
+**Basename matching is deliberately generous and is stated as a weakness.**
+`index.ts`, `trips.ts` and `tripCrewLocation.ts` each resolve to several real
+paths, so the 67 includes rows whose cited file may not be the one that changed.
+That inflates the denominator rather than the finding rate, which is the safe
+direction: it makes this pass read more rows than strictly required, never
+fewer.
+
+### 70.2 The denominator, fixed before the reading
+
+| | |
+| --- | --- |
+| C rows in the document | **319** |
+| C rows selected by 70.1 | **67** |
+| Coverage of the C population | **67 of 319 — 21.0 %** |
+| C rows NOT re-derived by this pass | **252** |
+
+**Nothing below is a statement about those 252.** They remain graded C on the
+evidence of the pass that graded them, and this section does not certify them.
+
+**The selected 67**, in id order, so the reader can check the rule was followed:
+TR5, TR9, TR10, TR25, TR30, TR32, TR35, TR36, TR37, TR52, TR76, TR94, TR98,
+TR103, TR104, TR105, TR106, TR107, TR108, TR109, TR110, TR111, TR113, TR115,
+TR118, TR120, TR121, TR144, TR155, TR158, TR160, TR163, TR170, TR171, TR175,
+TR179, TR214, TR215, TR216, TR217, TR219, TR222, TR282, TR289, TR296, TR313,
+TR315, TR316, TR330, TR331, TR332, TR333, TR353, TR355, TR357, TR364, TR381,
+TR404, TR411, TR414, TR417, TR429, TR431, TR441, TR442, TR445, TR447.
+
+### 70.3 The method applied to each
+
+For each row: open the cited file at this tree, locate the claimed behaviour,
+and ask **what exactly would turn this red**. A row survives only if the
+behaviour is present AND reachable AND something in the tree would fail if it
+were removed. A row whose citation has rotted — wrong file, deleted symbol,
+absent test — is moved to `W` or `X` with the reason, not left C because its
+prose still reads well.
+
+*(Results follow in 70.4 and the headline is restated in 70.5.)*
+
+### 70.4 The result: 67 re-derived, 0 verdicts falsified, 28 rows whose evidence is not
+
+**Read the two numbers together.** Every one of the 67 selected `C` verdicts
+survived re-derivation against the code at `a288ab6a` — no row in this sample was
+graded correct on a behaviour that is absent. And **28 of the 67 (42 %) carry at
+least one citation that no longer names the code it claims** — 25 of them
+materially, 3 by a few lines. A reader who opens
+a cited line lands somewhere else two times in five.
+
+That is the finding. §38 and §39 could move verdicts because only verdicts had
+ever been re-read; this pass re-read the EVIDENCE, and the evidence is where the
+decay is. Neither `check:doc-citations` nor `check:citation-targets` can catch
+most of it: 6,389 of this corpus's 10,305 citations are UNANCHORED
+(`path:line`), and an unanchored citation is checked only for the file being
+long enough.
+
+#### 70.4.1 Material — the cited line names unrelated code, or is blank
+
+Twenty-five rows, twenty-seven citations. Each verdict HOLDS; the corrected
+pointer is anchored so it cannot rot the same way. Listed so a reader tracing any of these rows does not repeat
+the work.
+
+| row | the census says | what is at that line now | where the claim actually is |
+| --- | --- | --- | --- |
+| TR25 | `trips-expansion.ts` lines 2091,2116,2169 serve saved places | 2091 and 2116 are **blank lines** | `artifacts/api-server/src/routes/trips-expansion.ts:2650#saved-places` |
+| TR30 | `trips-expansion.ts` line 2578 is `GET /trips/:tripId` | a `readUnavailable("trips", …)` throw | `artifacts/api-server/src/routes/trips-expansion.ts:3318#router.get` |
+| TR52 | `routes/trips.ts` line 1716 is a plan MUTATION gate | the read path `GET /trips/:tripId/plan`, computing `canEdit` for the client | the create gate is `artifacts/api-server/src/routes/trips.ts:1812#canEditPlan` |
+| TR98 | `tripCrewLocation.ts` line 142 consumes the session expiry | a comment about accuracy banding | `artifacts/api-server/src/domain/trips/services/tripCrewLocation.ts:225#expires_at` |
+| TR104 | `routes/trips.ts` line 1180, line 2114 call `canInviteParticipant` | a comment, and `.eq("id", itemId)` | `artifacts/api-server/src/routes/trips.ts:1191#canInviteParticipant` (and line 2162) |
+| TR106 | `routes/trips.ts` line 1716 is "called before the create" | the read path again | `artifacts/api-server/src/routes/trips.ts:1812#canEditPlan` |
+| TR108 | `tripPolicy.ts` line 273 is `canManageBooking` | `canContributeToTrip` — a different capability | `artifacts/api-server/src/domain/trips/policies/tripPolicy.ts:398#export async function canManageBooking(` |
+| TR108 | `tripReservations.ts` line 497 is the stricter delete rule | a **blank line** | `artifacts/api-server/src/routes/tripReservations.ts:539#sendTripRefusal` |
+| TR109 | `tripCrewLocation.ts` line 170 is where `buildCrewCard` calls the predicate | a comment about a legacy bucket name | `artifacts/api-server/src/domain/trips/services/tripCrewLocation.ts:210#canSeePresence` |
+| TR111 | `tripPolicy.ts` line 310 is `canManageSafety` | the body of `canSeePrivateContributions` | `artifacts/api-server/src/domain/trips/policies/tripPolicy.ts:435#export async function canManageSafety(` |
+| TR111 | `routes/safeReturn.ts` line 306 is the call | a comment about a 503 | `artifacts/api-server/src/routes/safeReturn.ts:309#canManageSafety` |
+| TR113 | `trips-expansion.ts` lines 1798-1948 gate documents separately | invite-link slot release — no document code in the range | `artifacts/api-server/src/routes/trips-expansion.ts:2275#router.get` |
+| TR118 | `routes/trips.ts` line 1531 gates private coordinates | a `planEditPermits` filter; `location_is_private` does not occur in that file until much later | `artifacts/api-server/src/routes/trips.ts:1796#location_is_private` |
+| TR120 | `tripCrewLocation.ts` lines 154-156 is the safe-return opt-in | a doc comment about `exactCoords` | `artifacts/api-server/src/domain/trips/services/tripCrewLocation.ts:286#shareSafeReturnStatus` |
+| TR121 | `routes/trips.ts` line 349 gates the members endpoint | a comment about boolean parsing | `artifacts/api-server/src/routes/trips.ts:472#router.get` |
+| TR160 | `tripCrewLocation.ts` line 142 is `liveShareExpiresAt` | the accuracy-banding comment again | `artifacts/api-server/src/domain/trips/services/tripCrewLocation.ts:225#expires_at` |
+| TR170 | `tripCrewLocation.ts` lines 155-156 is `checkInStatus` | the `exactCoords` doc comment | `artifacts/api-server/src/domain/trips/services/tripCrewLocation.ts:286#shareSafeReturnStatus` is the nearest real code; the check-in fields are at lines 59-60, which the row also cites and which IS right |
+| TR214 | `CompassTools.ts` lines 245-249 "is exactly this instruction set" | JSON-schema boilerplate (`parameters: { type: "object" …`) | `artifacts/api-server/src/compass/CompassTools.ts:523#explain` |
+| TR215 | `CompassTools.ts` lines 734-738 runs the gates, line 821 is the relationship gate | a comment about trip selection; a `discovery_places` query | `artifacts/api-server/src/compass/CompassTools.ts:1464#canEditPlan` and `artifacts/api-server/src/compass/CompassTools.ts:1571#Relationship gate` |
+| TR216 | `CompassTools.ts` lines 261-269 strips coordinate-shaped keys | JSON-schema boilerplate | `artifacts/api-server/src/compass/CompassTools.ts:543#sanitizeToolResult` |
+| TR289 | `tripReservations.ts` line 118 paste-import, line 189 manual create | neither is a route | `artifacts/api-server/src/routes/tripReservations.ts:216#router.post` (and line 145) |
+| TR296 | `tripReservations.ts` line 309, line 390, line 416 are confirm / dismiss / delete | line 309 is a **blank line**; none of the three is a route | `artifacts/api-server/src/routes/tripReservations.ts:365#confirm` (dismiss line 500, delete line 526) |
+| TR330 | `tripCrewLocation.ts` lines 154-156 is the opt-in | the `exactCoords` doc comment | `artifacts/api-server/src/domain/trips/services/tripCrewLocation.ts:286#shareSafeReturnStatus` |
+| TR355 | `routes/trips.ts` line 1520 sets `trip_plan_items.updated_at` server-side | `.from("plan_editors")` — a different table | the claim holds elsewhere in the file; **this pointer supports nothing** |
+| TR414 | `tripCrewLocation.ts` lines 170-174 refuses a non-member | the doc comment of `getAcceptedMemberIds` | `artifacts/api-server/src/routes/tripCrewLocation.ts:249#not_member` |
+| TR441 | `tripReasonCodes.ts` line 160 is where `sendTripRefusal` throws | a **blank line** | `artifacts/api-server/src/domain/trips/contracts/tripReasonCodes.ts:193#INTERNAL_ONLY_REASONS` |
+| TR447 | `TRIP_BOOKING_NOT_MEMBER` at `tripReservations.ts` line 95, `NOT_CREATOR_OR_OWNER` at line 497 | line 95 is `requireTripMember`, line 497 is blank — and **neither code string occurs in that file at all**; both are emitted by the policy | `artifacts/api-server/src/domain/trips/policies/tripPolicy.ts:398#export async function canManageBooking(`, put on the wire at `artifacts/api-server/src/routes/tripReservations.ts:97#sendTripRefusal` and line 539 |
+
+#### 70.4.2 Drift — the pointer is within a few lines and a reader still lands right
+
+Three: TR105 (874 → 878), TR115 (353 → 355), TR445 (3392 → 3397). A fourth,
+TR52, is counted under 70.4.1 instead — two of its three pointers are exact and
+the third names a read path as a mutation gate, which is the material class.
+
+25 + 3 = **28 of 67**.
+
+#### 70.4.3 The 21 anchored citations `check:doc-citations` already fails on
+
+Separately from the 67, this census carries **21 ANCHORED citations that the
+citation checker reports as broken**, and every one of them points into
+`artifacts/api-server/src/compass/CompassTools.ts` — a file this lane does not
+own and which has moved under the census. They are prose, not verdict rows, so
+no verdict rests on them; they are the same decay as 70.4.1 caught by machine
+rather than by hand, which is the argument for anchoring every pointer this
+document writes from here on.
+
+#### 70.4.4 What this section does NOT say
+
+- **Nothing about the other 252 C rows.** 21.0 % of the C population was
+  re-derived. If the 42 % citation-rot rate holds outside the sample, roughly a
+  hundred more rows carry evidence a reader cannot follow — but that is an
+  extrapolation and it is labelled as one.
+- **The verdicts held, and that is a measurement with a direction.** §38 moved
+  two C rows down; this pass moved none. The sample was chosen to maximise the
+  chance of finding rot and it found a great deal — in the evidence, not the
+  judgements.
+
+### 70.5 One verdict moves, and it is the document's only CANNOT-VERIFY
+
+TR114 is settled in §71.2. It is the only verdict this pass moves.
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| TR114 | ? | **C** | §6.2 is now MEASURED over the whole trip endpoint surface rather than sampled, and an artifact fails if it stops holding. `artifacts/api-server/src/test/tripPolicy.test.ts:613#ORDERING: no trip handler takes the service client before it knows who is calling` enumerates **141** handlers across 17 trip route files and asserts both halves: **0** take `getServiceClient()` before establishing the caller, and every one reaches an application authorization decision bar three named creation/public exemptions. This is exactly what the row said would settle it — *"a ratchet that asserts the ordering, or a full read of all 97 handlers"* — and it is both. Limits stated at §71.2.3, in the row rather than under it: the scan is lexical, so a handler that calls an authorization function and ignores its answer passes here. |
+
+### 70.6 Recounted headline
+
+```
+  census      rows     C     W     N    X   denom
+  trips        451   320   128     3    0     451
+```
+
+| Measure | Value |
+| --- | --- |
+| **Denominator** | **451** |
+| BUILT-AND-CORRECT | **320** |
+| BUILT-BUT-WRONG | **128** |
+| NOT-BUILT | **3** |
+| CANNOT-VERIFY | **0** |
+| **CONSTRUCTED%** = (C+W)/451 | **448 / 451 = 99.3 %** |
+| **CORRECT%** = C/451 | **320 / 451 = 70.9 %** |
+
+CONSTRUCTED moves by one because TR114 leaves CANNOT-VERIFY, which was outside
+both buckets. The document now has no row it cannot verify — which is a claim
+about coverage, not about quality, and §70.4.4 is the size of what remains.
+
+## 71. What this pass BUILT
+
+### 71.1 The Compass lane's cross-lane request, answered in the Trips domain
+
+**The request.** Compass asked Trips for two things on `TripCompassProjection`:
+a `timezone` field, and a day-scoped plan window — because
+`COMPASS_PLAN_ITEM_CAP` is 10 and the plan was read `order(day_date asc)` from
+the trip's FIRST row, so *on day 7 today's plan is past the cap*.
+
+**The defect, restated precisely.** A cap is not the bug; anchoring it at the
+trip's start is. On a twenty-day trip with two items a day the tenth row is on
+day five, so a traveller standing in day seven got an assistant context made
+entirely of a finished past. `planItemsTruncated` said the list was cut. Nothing
+said that what was cut was today.
+
+**What was built**, all inside `domain/trips/`:
+
+| change | where |
+| --- | --- |
+| `trip.timezone` on the projection — `trips.timezone` (0077), so a consumer never guesses a day boundary | `artifacts/api-server/src/domain/trips/projections/TripCompassProjection.ts:81#timezone` |
+| `CompassPlanWindow` — `focusDate`, `from`, and a three-valued `basis` saying WHICH slice of the plan the cap was spent on | `artifacts/api-server/src/domain/trips/projections/TripCompassProjection.ts:110#export interface CompassPlanWindow` |
+| the window itself, anchored on today **in the trip's own zone** | `artifacts/api-server/src/domain/trips/projections/TripCompassProjection.ts:165#const focusDate = opts.focusDate` |
+| undated items kept — the old ordering merely sorted them last, so a date window that excluded them would turn that into a silent drop | `artifacts/api-server/src/domain/trips/projections/TripCompassProjection.ts:212#d === null` |
+| the read bounded and the bound REPORTED, so a plan longer than the scan cannot pass as a complete window | `artifacts/api-server/src/domain/trips/projections/TripCompassProjection.ts:63#PLAN_SCAN_CAP` |
+| `todayInTimezone` takes an optional `now`, so a day boundary is testable at the hours it actually matters | `artifacts/api-server/src/domain/trips/invariants/tripStatus.ts:22#export function todayInTimezone` |
+
+`basis` is `focus_day` inside the trip, `trip_start` when the focus day is
+outside it (not begun, or over — "today" would admit nothing before the trip and
+everything after it), and `all` when the trip has no start date.
+
+**Tests**, six cases, in the registered suite
+`artifacts/api-server/src/test/tripProjections.test.ts:412#the plan window is anchored on TODAY`,
+driven through a client that honours `gte` / `is null` / `or` / `order` / `limit`
+— the file's shared fake treats `.or()` as a no-op, which would have made the
+window untestable through it.
+
+**The query is deliberately UNCHANGED** — same columns, same filters, same
+order, a wider `limit`, and the window applied in JS. It was first written as
+`.or("day_date.gte.<from>,day_date.is.null")`, which is the natural PostgREST
+form, and that **broke a Compass suite inside the hour**:
+`compass-trip-context.test.ts`'s fake client implements `eq` / `is` / `order` /
+`limit` and not `or`, so `q.or is not a function` came out of a projection that
+test is not about. A shared projection that introduces a new operator breaks
+every fake in the repository that never needed it. The read is bounded by
+`PLAN_SCAN_CAP` (400) instead, and `planWindow.scanTruncated` says when the
+READ hit its own bound — the same defect one order of magnitude further out,
+named rather than hidden.
+
+**Mutations, each run and each restored byte-identical (`md5sum` before and
+after: unchanged), against 30 cases:**
+
+| mutation | what went red |
+| --- | --- |
+| anchor the window at the trip start again | 28 / 2 — the day-seven case and the zone case |
+| `timezone` dropped from the summary | 29 / 1 |
+| decide the day in UTC instead of the trip's zone | 29 / 1 — the 16:00Z / Tokyo boundary |
+| the undated-item guard deleted | 29 / 1 |
+| `scanTruncated` hard-coded false | 29 / 1 |
+
+**One mutation did NOT go red at first, and the fix is in the code rather than
+the test.** Written as `r.day_date == null || String(r.day_date) >= from`, the
+null guard is redundant BY ACCIDENT: `String(null)` is `"null"`, which sorts
+after every `"2026-…"` date, so deleting the guard changed no behaviour and no
+case failed. A guard that cannot be shown to matter is not a guard. The
+comparison now resolves the day to a real `string | null` first, and deleting
+the guard is 29 / 1.
+
+**Two route-level `describe` blocks now freeze the clock**
+(`mock.timers.enable({ apis: ["Date"], now })`, reset in `after`). §68 found
+this class three times by failure; here it was avoided by construction, because
+a projection that windows on "today" makes every fixture with fixed dates
+hour-dependent. The route still reads the clock; the clock is a fixture like
+every other input.
+
+**What Compass still has to do, and it is one line.** The plan items the tool
+receives are day-scoped already, because they come from this projection — the
+reported defect is fixed with no change in `compass/`. But
+`projectCurrentTrip` returns its own `trip` row and surfaces neither
+`p.trip.timezone` nor `p.planWindow`, so the assistant is not yet TOLD the zone
+or which slice it is looking at. That file belongs to the Compass lane.
+
+### 71.2 TR114 — the only CANNOT-VERIFY, settled
+
+#### 71.2.1 What the row asked for
+
+> *"Honoured in every handler I opened … and no artifact enforces it …
+> universally quantified over 97 trip endpoints and I read roughly a dozen. A
+> sample cannot settle a universal … Settling it needs a ratchet that asserts
+> the ordering, or a full read of all 97 handlers."*
+
+#### 71.2.2 What was built
+
+A source-scanning ratchet in the registered §6 policy suite
+(`artifacts/api-server/src/test/tripPolicy.test.ts:433#TR114`). It enumerates
+every `router.<verb>("…")` handler in **17 trip route files** — 141 handlers,
+against a floor of 130 so a rename cannot quietly empty the population — and
+asserts both halves of §6.2:
+
+- **ORDERING.** `getServiceClient()` bypasses RLS entirely, so a handler that
+  takes it before establishing the caller has, for those statements, no
+  authorization of any kind. **Measured: 0 of 141.**
+- **DECISION.** Every handler reaches an application authorization decision: a
+  §6.1 policy call, a membership predicate, `requireAdmin`, an Appendix B
+  `TRIP_AUTH_*` refusal, or a comparison of the row's owner against the caller.
+  Resolved one level through helpers, including across files, because a gate
+  often lives in the builder a handler delegates to. **Measured: 138 of 141
+  directly; 3 named exemptions.**
+
+The three exemptions are `POST /trips` and `POST /trips/draft-from-text` (no
+trip exists yet, so there is no trip-scoped decision to make) and
+`GET /trips/:tripId` (the LockedTripPreview deep link: anonymous callers are
+the point, and `canViewTrip` takes a nullable actor). Each carries a reason
+that must be longer than a shrug, each is asserted to still BE a handler the
+scan found, and the list sizes are pinned — so growing them is a test change
+somebody has to write and defend.
+
+#### 71.2.3 What it does not claim, in the row rather than under it
+
+- It proves a decision is REACHED, not that it is the RIGHT one. Individual
+  rules are pinned by the matrix above and by `tripPrivacy.test.ts`.
+- It is LEXICAL. A handler that calls an authorization function and ignores its
+  answer passes here. That is a real failure mode and a different requirement;
+  TR114 asks whether service-role access is being used AS authorization, which
+  is a question about what a handler reaches for and in what order.
+- Trip endpoints outside the 17 listed files are outside the claim.
+
+#### 71.2.4 Mutations
+
+| mutation | what went red |
+| --- | --- |
+| `getServiceClient()` moved above `requireUser` in `GET /trips/:tripId/crew` | 89 / 1 — ORDERING |
+| the crew gate deleted from `GET /trips/:tripId/freedom-windows` | 89 / 1 — DECISION |
+| a scanned file renamed away in the list | 89 / 1 — population floor |
+| an exemption added reading "not relevant" | 89 / 1 — the ratchet and the reason-length rule |
+
+**One mutation deliberately did NOT go red, and it is recorded because it is the
+check's boundary**: deleting the crew gate from `GET /trips/:tripId/timeline`
+left 90 / 0, because that handler also calls `canEditPlan` and so still reaches
+a decision. The check asserts that a handler makes an authorization decision,
+not that every gate within it is present. Saying so is the difference between a
+ratchet and a decoration.
+
+### 71.3 Evidence corrections that move no verdict
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| TR408 | W | **W** | *"event-payload adapters, which do not exist because events do not"*. The reason is false: `trip_events` is created by 2420 and **2420 is in production** (TR89 says so in this same document). The verdict survives on the true reason — no adapter exists, one schema version has ever been written, and nothing has read another. |
+| TR435 | W | **W** | The baseline's own header says **"STILL UNGATED (2)"** and names `routes/events.ts`; its table has recorded `routes/events.ts` as kernel-gated since the sixth pass (`{ direct: 1, ungated: 0 }`). One of the two is stale. The count the check enforces says **1** ungated write, in `services/appeals/resolveAppeal.ts` — blocked on a new command, a new migration and an owner decision (`APPEAL_RESTORE_SEMANTICS`), so the verdict does not move. `src/scripts/` is not this lane's to edit; the stale header is recorded here for its owner. |
+
+### 71.4 Two anchors repaired IN PLACE, and why that is not a silent edit
+
+This document is append-only for VERDICTS, and both of these are pointers, not
+judgements. They are recorded here because "recorded rather than silently
+applied" is §37's rule and it applies to evidence too.
+
+- `TripCompassProjection.ts` line 75, anchored on `buildTripCompassProjection` (§3623), was TRUE
+  until §71.1 added the window and the zone to that file and pushed the function
+  to line 142. It is repaired to line 142. This is the same decay §70.4 measures,
+  caused by this pass, in the one case where the cause is known exactly — and
+  it is the argument for `check:doc-citations` existing: the machine noticed
+  within one commit what §70.4 needed a hand-read of 67 rows to find.
+- `tripStatus.ts` lines 30-46, anchored on `computeTripStatus` (TR36, §661), was
+  TRUE until §71.1 gave `todayInTimezone` its `now` parameter and an eight-line
+  comment explaining why. Repaired to lines 38-54. TR36 is one of the 67 rows
+  §70.4 re-derived, and its citation was CORRECT when it was read — this pass
+  broke it four hours later, which is the honest measure of how fast this decay
+  runs.
+- One anchor written earlier in this section quoted a TypeScript union with an
+  escaped pipe, which no line of the file contains. Narrowed to the field name.
+
+**`check:doc-citations` is RED on this tree independently of this pass**
+(181 findings at the start of it, and 314 by the end as five other lanes moved
+their files underneath fourteen censuses). Neither number is this lane's, and
+neither is claimed as fixed here.
+
+### 71.5 Rows examined and left where they were, with the concrete blocker
+
+Nothing else in the 128 `W` rows was closable by this lane at this tree, and the
+reasons are not opinions:
+
+| row | blocker |
+| --- | --- |
+| TR33 / TR92 / TR93 | `trip_plan_items.source_id` is `text` with no FK and no reconciliation record. Both remedies — a typed `*_id` with a constraint, or a reconciliation table — are a MIGRATION, and a new migration number is the integration owner's to hand out (lane rule 2). |
+| TR157 | The row is RIGHT: `CrewStatusLabel` is a sharing-mode vocabulary, not §10.2's presence states, and the §10.2 states need `trip_presence` (2763), which no database has. |
+| TR176 / TR178 | Genuinely NOT-BUILT and correctly graded: no BLE dependency, no peer-relay code, no relay metadata. Nothing to build here that would be more than a stub. |
+| TR290 | Policy versioning is a schema change: a re-import overwrites and there is no history column. Migration. |
+| TR427 | Recurring commitments and routine-aware context are a schema change. Migration. |
+| TR435 | The one remaining ungated write is `services/appeals/resolveAppeal.ts`'s `trip_membership` case. Closing it needs `ADMIN_RESTORE_PARTICIPANT`, which needs a new migration replacing `trip_kernel_execute`, and the owner decision `APPEAL_RESTORE_SEMANTICS` about what "restore" means when the row is gone. Both outside this lane. |
+| TR440 | Would require moving fourteen mixed read/write routers (~10,600 lines) out of `routes/` into `server/trips/readRoutes/`. Five other lanes are editing those files in this same worktree right now; the move is a merge conflict, not a contribution. |
+| the 112 flag- and migration-blocked rows | `trip_kernel_enabled` and `trip_operational_projections_enabled` are seeded FALSE on every deployment, and 2760–2795 are in portava-ci and nowhere else. Lane rule 6: do not enable a feature flag. |
+
+## 72. The checks this pass ran, and their exit codes
+
+Reported rather than summarised, because a pass that says "green" without saying
+which command produced it is asking to be believed.
+
+| command | exit | note |
+| --- | --- | --- |
+| `npx tsc --noEmit` | **0** | |
+| `pnpm run typecheck:tests` | **1** | **Not this lane's.** 863 diagnostics across 115 files against a baseline of 864/116 — *no file is above its baseline*, so nothing here added one. It fails because another lane FIXED `src/test/geofence.test.ts` (1 → 0) mid-session and the ceiling is now above reality; re-recording that baseline belongs to the commit that earned the improvement. Measured clean on the four files this lane touched, compiled as their own program: **0 diagnostics**. |
+| `checkCensusIntegrity.ts` | **1** | **Not this lane's.** The single finding is `census-media.md`, whose headline (C 287) disagrees with its own rows (C 297); that file is being edited in this worktree right now. `census-trips.md` reconciles exactly: **451 / 320 / 128 / 3 / 0**, which is §70.6's headline. |
+| `check-citation-symbols.mjs` | **0** | 139 judged, 0 absent (ceiling 0), 44 misplaced (ceiling 60) — unchanged by this pass. |
+| `check-doc-citations.mjs` | **1** | **Red before this pass and redder after, for reasons outside it**: 85 broken anchors at the start, 167 at the end as five lanes moved their files under fourteen censuses. Measured per document: this pass added **zero** new findings to `census-trips.md`, and the two it briefly introduced are repaired and recorded at §71.4. |
+| `checkCensusRowMoveLabels.ts` | **0** | |
+| `checkCensusPolicyCitations.ts` | **0** | |
+| `check-test-registration.mjs` | **1** | Red at the start of this pass and unchanged by it — 8 unregistered files, none of them this lane's. **No new test file was created**; both suites this pass extended are already in the `test` script. |
+
+Test suites run (targeted, not the full suite — six agents share four cores and a
+starved full run means nothing): `tripProjections` 30/30, `tripPolicy` 90/90,
+`tripPrivacy` 24/24, `compass-trip-context` 16/16, `compass-tools` 28/28,
+`compass-context` 51/51, `compass-hardening` 25/25, `compass-local-time` 12/12,
+`tripTodayProjection` 21/21, `tripProjectionEnvelope` 24/24, `tripLifecycle`
+19/19, `tripMembership` 3/3, `tripCompassAttention` 18/18, `tripCompassCrewState`
+5/5, `tripsExpansion` 70/70, `tripSignals` 15/15, `tripReadiness` 29/29,
+`tripKernel` 36/36, `tripCompletion` 15/15, `stateMachineWriters` 57/57,
+`opportunityEngine` 20/20, `flagPhantomReads` 15/15, `tripFeasibilityRoute`
+16/16.
+
+**What is NOT claimed.** Nothing here is merged, nothing is deployed, and no
+flag moved. The Compass window and the TR114 ratchet are BUILT ON A BRANCH in a
+shared worktree. §70.4's finding is about 67 of 319 C rows and says nothing
+about the other 252.

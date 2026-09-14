@@ -30,6 +30,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import { TripAccessUnavailableError } from "../lib/http.js";
 import {
@@ -424,5 +425,223 @@ describe("TR102 — the five decisions the inline checks became", () => {
     assert.equal(planEditPermits({ owner_id: OWNER, plan_edit_permission: "owner_only" }, ALICE, [ALICE]), false);
     assert.equal(planEditPermits({ owner_id: OWNER, plan_edit_permission: "selected_members" }, ALICE, [ALICE]), true);
     assert.equal(planEditPermits({ owner_id: OWNER, plan_edit_permission: "selected_members" }, ALICE, []), false);
+  });
+});
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ * TR114 — §6.2 "Service-role mutations still pass application authorization;
+ * service role is not business authorization."
+ *
+ * WHY THIS IS A SOURCE SCAN AND NOT A REQUEST TEST.
+ * =================================================
+ * census-trips graded TR114 `?` (CANNOT-VERIFY) — the document's only one — and
+ * said exactly why, in its own words:
+ *
+ *   "Honoured in every handler I opened … and **no artifact enforces it**:
+ *    scripts/checkSilentSupabaseWrites.ts catches unlogged writes, not
+ *    unauthorized ones … The requirement is universally quantified over 97 trip
+ *    endpoints and I read roughly a dozen. A sample cannot settle a universal…
+ *    Settling it needs a ratchet that asserts the ordering, or a full read of
+ *    all 97 handlers."
+ *
+ * This is that ratchet. A request test proves one endpoint; the requirement is
+ * universal over every trip endpoint, and the only way to answer a universal is
+ * to enumerate the population. So the population is enumerated from the source,
+ * mechanically, and BOTH halves of §6.2 are asserted over all of it:
+ *
+ *   1. ORDERING — the privileged client is never taken before the caller is
+ *      established. `getServiceClient()` bypasses RLS completely, so a handler
+ *      that takes it first has, for those statements, no authorization at all.
+ *   2. DECISION — the handler reaches an application authorization decision:
+ *      a §6.1 policy call, a membership check, a TRIP_AUTH_* refusal, or a
+ *      comparison of the row's owner against the caller. "The service client
+ *      could read it" is not a decision.
+ *
+ * WHAT IT DOES NOT CLAIM, stated rather than implied:
+ *   - It does not prove the decision is the RIGHT one for that endpoint. It
+ *     proves one was reached. `tripPrivacy.test.ts` and the matrix above are
+ *     where individual rules are pinned.
+ *   - It is a lexical scan. A handler that calls an authorization function and
+ *     ignores its answer passes here. That failure mode is real and is not
+ *     what TR114 asks about; TR114 asks whether service-role access is being
+ *     used AS authorization, and that is a question about what the handler
+ *     reaches for and in what order.
+ *   - Trip endpoints outside this file list are outside the claim. The list is
+ *     asserted to exist and the handler count is floored, so a rename cannot
+ *     quietly reduce the population to zero — the way a guard usually dies.
+ *
+ * WHAT WOULD TURN THIS RED: moving a `getServiceClient()` above its
+ * `requireUser`, adding a trip handler with no authorization decision, deleting
+ * an authorization call from an existing one, or removing a scanned file.
+ * Each was run; see census-trips §71.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+describe("§6.2 TR114: service role is not business authorization, over EVERY trip endpoint", () => {
+  const SRC = new URL("../", import.meta.url).pathname;
+
+  /**
+   * The trip endpoint surface. Listed file by file rather than globbed: a glob
+   * that stops matching is a check that silently passes, and this repository
+   * has lost guards that way before.
+   */
+  const ROUTE_FILES = [
+    "routes/trips.ts",
+    "routes/trips-expansion.ts",
+    "routes/tripBudgetIntel.ts",
+    "routes/tripCrewLocation.ts",
+    "routes/tripDecisions.ts",
+    "routes/tripDraft.ts",
+    "routes/tripFeasibility.ts",
+    "routes/tripMeetingCheckpoints.ts",
+    "routes/tripOffline.ts",
+    "routes/tripPostTrip.ts",
+    "routes/tripPresence.ts",
+    "routes/tripReadiness.ts",
+    "routes/tripReservations.ts",
+    "routes/tripStructure.ts",
+    "server/trips/commandRoute.ts",
+    "server/trips/readRoutes/tripMapProjection.ts",
+    "server/trips/readRoutes/tripProjections.ts",
+  ] as const;
+
+  /** A scan that found fewer handlers than this found the wrong thing. */
+  const MIN_HANDLERS = 130;
+
+  /**
+   * §6.1 policy functions, the membership predicates the routes share, and
+   * `requireAdmin` — the price-baseline endpoints under /admin are trip-budget
+   * reference data with no trip in the path, and `profiles.role = 'admin'` is
+   * the decision they reach. It is listed as a decision rather than exempted,
+   * because it IS one.
+   */
+  const AUTHZ_CALL =
+    /\b(requireAdmin|requireTripMember|isAcceptedTripMember|canViewTrip|canEditTrip|canEditPlan|canEditPlanItem|canManageBooking|canManageSafety|canInviteParticipant|canManageJoinRequests|canContributeToTrip|canAccessTripContent|canHostTrip|canEditOwnOrAsOwner|canSeePrivateContributions|getMemberRole|getMemberRoleAny|isTripOwner|planEditPermits|tripRoleOf)\s*\(/;
+
+  /**
+   * The other two shapes an authorization decision takes in this codebase, and
+   * both are decisions:
+   *   - a row's owner compared against the caller (`rem.user_id !== user.id`,
+   *     `.eq("user_id", user.id)`) — the self-scoped endpoints;
+   *   - an Appendix B `TRIP_AUTH_*` refusal, which is what a handler emits when
+   *     the decision was made by the builder it delegates to.
+   */
+  const AUTHZ_SELF =
+    /(?:!==|===)\s*user\.id|\.eq\(\s*"(?:user_id|owner_id|creator_id|added_by|actor_id)"\s*,\s*user\.id|TRIP_AUTH_[A-Z_]+/;
+
+  /**
+   * Handlers with no trip to authorize against, or none by design. Three, each
+   * named with its reason. This list is a RATCHET: it may shrink, never grow —
+   * a new entry is a new unauthorized endpoint wearing an exemption.
+   */
+  const NO_TRIP_TO_AUTHORIZE: ReadonlyMap<string, string> = new Map([
+    ["POST /trips",
+      "Creation. No trip exists yet, so there is no trip-scoped decision to make; the caller's own eligibility is the authorization (requireUser's ban gate, then the Trust Engine host check)."],
+    ["POST /trips/draft-from-text",
+      "Creation. Drafts a trip SHAPE from text and writes nothing about any existing trip; behind nl_trip_creation_enabled."],
+  ]);
+
+  /**
+   * Handlers that take the service client without `requireUser`. One, and it is
+   * the public deep-link preview: anonymous callers are the POINT of the
+   * endpoint, and it is authorized by canViewTrip, whose actor is nullable by
+   * signature. Same ratchet rule.
+   */
+  const ANONYMOUS_BY_DESIGN: ReadonlyMap<string, string> = new Map([
+    ["GET /trips/:tripId",
+      "The LockedTripPreview deep-link surface. canViewTrip takes a nullable actor and decides public / buddies / locked; refusing anonymous callers here would break the private-wall screen the sentinel exists for."],
+  ]);
+
+  interface Handler { key: string; file: string; line: number; body: string }
+
+  /** Bodies of `router.<verb>("path"` blocks and of top-level helpers, by brace depth. */
+  function blocks(lines: string[], head: RegExp): Array<{ line: number; m: RegExpExecArray; body: string }> {
+    const out: Array<{ line: number; m: RegExpExecArray; body: string }> = [];
+    for (let i = 0; i < lines.length; i++) {
+      const m = head.exec(lines[i]!);
+      if (!m) continue;
+      let depth = 0, started = false, end = i;
+      for (let j = i; j < lines.length; j++) {
+        for (const ch of lines[j]!) {
+          if (ch === "(" || ch === "{") depth++;
+          else if (ch === ")" || ch === "}") depth--;
+        }
+        end = j;
+        if (!started && depth > 0) started = true;
+        if (started && depth <= 0) break;
+      }
+      out.push({ line: i + 1, m, body: lines.slice(i, end + 1).join("\n") });
+    }
+    return out;
+  }
+
+  const HANDLER_HEAD = /^router\.(get|post|patch|put|delete)\(\s*"([^"]+)"/;
+  const FN_HEAD = /^(?:export\s+)?(?:async\s+)?function\s+([A-Za-z0-9_]+)\s*\(/;
+  const CONST_FN_HEAD = /^(?:export\s+)?const\s+([A-Za-z0-9_]+)\s*=\s*(?:async\s*)?\(/;
+
+  // Read once; every case below reads this same scan.
+  const handlers: Handler[] = [];
+  /** name -> body, across the whole scanned surface: a gate may live one import away. */
+  const helpers = new Map<string, string>();
+  const missing: string[] = [];
+  for (const rel of ROUTE_FILES) {
+    let src: string;
+    try { src = readFileSync(SRC + rel, "utf8"); } catch { missing.push(rel); continue; }
+    const lines = src.split("\n");
+    for (const h of blocks(lines, FN_HEAD)) helpers.set(h.m[1]!, h.body);
+    for (const h of blocks(lines, CONST_FN_HEAD)) helpers.set(h.m[1]!, h.body);
+    for (const h of blocks(lines, HANDLER_HEAD)) {
+      handlers.push({ key: `${h.m[1]!.toUpperCase()} ${h.m[2]!}`, file: rel, line: h.line, body: h.body });
+    }
+  }
+
+  function reachesAuthorization(body: string): boolean {
+    if (AUTHZ_CALL.test(body) || AUTHZ_SELF.test(body)) return true;
+    for (const [name, hb] of helpers) {
+      if (!new RegExp(`\\b${name}\\s*\\(`).test(body)) continue;
+      if (AUTHZ_CALL.test(hb) || AUTHZ_SELF.test(hb)) return true;
+    }
+    return false;
+  }
+
+  it("the scan found the population it claims to be about", () => {
+    assert.deepEqual(missing, [], "a scanned file is gone; a guard that reads nothing passes for the wrong reason");
+    assert.ok(handlers.length >= MIN_HANDLERS,
+      `scanned ${handlers.length} trip handlers, expected at least ${MIN_HANDLERS} — the scan is reading less than the surface`);
+  });
+
+  it("ORDERING: no trip handler takes the service client before it knows who is calling", () => {
+    const bad: string[] = [];
+    for (const h of handlers) {
+      const svc = h.body.search(/getServiceClient\s*\(/);
+      if (svc < 0) continue;
+      const usr = h.body.search(/requireUser\s*\(|requireUserWithClient\s*\(/);
+      if (usr >= 0 && usr < svc) continue;
+      if (usr < 0 && ANONYMOUS_BY_DESIGN.has(h.key)) continue;
+      bad.push(`${h.file}:${h.line} ${h.key}` + (usr < 0 ? " — service client, no requireUser at all" : " — service client BEFORE requireUser"));
+    }
+    assert.deepEqual(bad, [],
+      "getServiceClient() bypasses RLS entirely: taken before the caller is established, those statements run with no authorization of any kind");
+  });
+
+  it("DECISION: every trip handler reaches an application authorization decision", () => {
+    const bad: string[] = [];
+    for (const h of handlers) {
+      if (reachesAuthorization(h.body)) continue;
+      if (NO_TRIP_TO_AUTHORIZE.has(h.key)) continue;
+      bad.push(`${h.file}:${h.line} ${h.key}`);
+    }
+    assert.deepEqual(bad, [], "a trip endpoint that reaches no authorization decision is authorized by the service role, which §6.2 says is not authorization");
+  });
+
+  it("the exemptions are a ratchet, and each one carries a reason", () => {
+    // Exact sizes, so growing a list is a test change somebody has to write and
+    // defend rather than a line that slips into a diff.
+    assert.equal(NO_TRIP_TO_AUTHORIZE.size, 2);
+    assert.equal(ANONYMOUS_BY_DESIGN.size, 1);
+    for (const [k, why] of [...NO_TRIP_TO_AUTHORIZE, ...ANONYMOUS_BY_DESIGN]) {
+      assert.ok(why.length > 60, `${k}: "not relevant" is not a reason`);
+      assert.ok(handlers.some((h) => h.key === k), `${k} is exempted but is not a handler this scan found — a stale exemption hides a real one`);
+    }
   });
 });
