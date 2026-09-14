@@ -47,10 +47,12 @@
  * claim on it; it stays a booking fact (`rent_buddy_bookings.cash_balance_usd`)
  * and is not an entry.
  *
- * RUNTIME EFFECT: NONE on its own. The writer is
- * `services/ledger/CreatorLedgerWriter.ts`; the shipping caller is
+ * RUNTIME EFFECT: NONE on its own. Two shipping callers persist what it builds:
  * `lib/rentBuddyEarningsLedger.ts#createEarningsLedgerEntry`, reached from the
- * five booking-creation routes named in that module's header.
+ * five booking-creation routes named in that module's header, and — for the
+ * non-cash contributor ledger's own reversals —
+ * `services/ledger/RewardReversal.ts`, reached from the reward worker
+ * `lib/intelRewardScheduler.ts#runIntelRewardPass`.
  */
 
 /** The addressable sides. A "wallet" is a name for a party's accounts (`09` §4). */
