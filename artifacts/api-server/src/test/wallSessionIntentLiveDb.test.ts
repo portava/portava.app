@@ -98,7 +98,7 @@ import {
   parseIntent,
 } from "../services/wall/WallSessionIntentService.js";
 import type { StructuredIntent } from "../lib/wallProjection.js";
-import { fixtureEmail } from "./liveFixtureUsers.js";
+import { fixtureEmail, fixtureLabel } from "./liveFixtureUsers.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
@@ -167,7 +167,14 @@ describe(
       createdUserIds.push(userId);
       const { error: pErr } = await admin
         .from("profiles")
-        .upsert([{ id: userId, username: `wsi_live_${userId.slice(0, 8)}` }], { onConflict: "id" });
+        .upsert(
+          // `profiles_username_lower_unique` is UNIQUE and `onConflict: "id"` does
+          // not resolve it, so two concurrent runs writing the same bare literal
+          // collide with 23505 under different auth-user ids. fixtureLabel() scopes
+          // the value to THIS run — see src/test/fixtureLabelUsage.test.ts.
+          [{ id: userId, username: fixtureLabel(`wsi_live_${userId.slice(0, 8)}`) }],
+          { onConflict: "id" },
+        );
       if (pErr) throw new Error(`Setup: profile for ${userId}: ${pErr.message}`);
     });
 

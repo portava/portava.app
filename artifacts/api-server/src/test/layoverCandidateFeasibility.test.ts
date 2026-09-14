@@ -40,8 +40,12 @@ import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 
-process.env.SUPABASE_URL ||= "http://127.0.0.1:9";
-process.env.SUPABASE_SERVICE_ROLE_KEY ||= "dummy";
+// NO `process.env.SUPABASE_URL ||= …` HERE, deliberately. The curated `test`
+// script pins `SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy`
+// for every registered suite, and `check-guard-coverage.mjs` reads a file that
+// NAMES either variable as a file that can reach Supabase — it cannot tell a
+// stub assignment from a dial. Two redundant lines would have bought this file
+// an exemption entry it does not need. Run it the way CI does.
 
 /** Metres north of a point, in degrees of latitude. Longitude is untouched. */
 function northOf(centre: { lat: number; lng: number }, metres: number) {

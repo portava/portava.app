@@ -131,7 +131,7 @@ const recorded = () =>
 
 const departureInTable = () => tables.layover_sessions[0].departure_time as string;
 
-before(() => {
+before(async () => {
   const app = express();
   app.use(express.json());
   app.use((r: any, _res: any, next: any) => {
@@ -139,7 +139,13 @@ before(() => {
     next();
   });
   app.use("/api", airportRouter);
-  server = app.listen(0);
+  // listen(0) with no address binds the IPv6 wildcard, and the kernel may hand
+  // back a port a foreign process already holds on 127.0.0.1 — see
+  // `src/test/loopbackBindGuard.test.ts`. Naming the host makes the bind
+  // DEFERRED, so the "listening" callback must be awaited before reading
+  // `server.address()`.
+  server = app.listen(0, "127.0.0.1");
+  await new Promise<void>((resolve) => server.once("listening", resolve));
   base = `http://127.0.0.1:${(server.address() as any).port}`;
 });
 
