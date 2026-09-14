@@ -63,29 +63,22 @@ const NOT_A_GATE: Record<string, string> = {
 };
 
 /**
- * GATES THIS CHANGE FOUND AND DID NOT OWN.
+ * GATES FOUND AND NOT YET OWNED — NOW EMPTY.
  *
- * These are not "not a gate" and they are not fixed. They are age gates reached
- * through `src/compass/**`, which is outside the file set this change was scoped
- * to, and they have the SAME defect the seven fixed ones had: a verified minor's
- * typed adult birthday passes them.
+ * This ledger held the two `src/compass/**` files the seam round found and did
+ * not own: `CompassTools.ts#prefsFromRow` derived a member's age straight from
+ * `profiles.date_of_birth`, and `CompassSocialEngine.ts` gated an age-restricted
+ * event on the group's youngest such age while keeping its own private copy of
+ * the date-of-birth arithmetic. Both are routed through `lib/gateAge.ts` now
+ * (`src/test/ageGateGroupTravel.test.ts` drives the real tool and proves it), so
+ * both lines are DELETED rather than left standing as permanent excuses, and the
+ * count assertion below is lowered to zero in the same commit.
  *
- * They are listed here rather than left outside the scan because a gate nothing
- * is looking at is exactly how this became a seven-gate defect. The count below
- * may only SHRINK: routing one through the seam means deleting its line, and
- * adding a new unrouted gate to this ledger fails the count assertion instead of
- * being waved through.
+ * It stays here, empty, because the shape is the guard: an entry may only be
+ * REMOVED. A new unrouted gate added to this map fails the count assertion
+ * instead of being waved through, and the ceiling never goes back up.
  */
-const KNOWN_UNROUTED: Record<string, string> = {
-  "compass/CompassTools.ts":
-    "prefsFromRow() derives GroupMemberPrefs.age from profiles.date_of_birth for the " +
-    "group-travel tools. Feeds CompassSocialEngine.eventSatisfiesGroup, below.",
-  "compass/CompassSocialEngine.ts":
-    "eventSatisfiesGroup() gates an age-restricted event on the group's youngest KNOWN " +
-    "age (`agg.youngestAge < ev.age_min`), and ageFromDob() is this file's own copy of " +
-    "the un-contradicted arithmetic. A provider-verified minor in the group contributes " +
-    "their typed adult age and the group passes an 18+ event.",
-};
+const KNOWN_UNROUTED: Record<string, string> = {};
 
 /** Imports that mean "this file's age answers come from the seam". */
 const SEAM_IMPORTS = [
@@ -237,7 +230,7 @@ describe("age-gate seam coverage — a new gate cannot read a date of birth arou
     // TWO assertions, and the second is the one that keeps this honest: an entry
     // whose file no longer reads a date of birth has been fixed or moved and must
     // be DELETED, not left as a permanent excuse.
-    assert.ok(Object.keys(KNOWN_UNROUTED).length <= 2,
+    assert.ok(Object.keys(KNOWN_UNROUTED).length <= 0,
       `the unrouted-gate ledger grew to ${Object.keys(KNOWN_UNROUTED).length}. It may only shrink: ` +
       "route the new gate through lib/gateAge.ts instead of adding it here.");
     const stale = Object.keys(KNOWN_UNROUTED).filter((rel) => {
@@ -253,13 +246,17 @@ describe("age-gate seam coverage — a new gate cannot read a date of birth arou
       "age arithmetic — delete its line");
   });
 
-  it("the eight gate files this change routed are all still routed", () => {
+  it("every gate file routed through the seam so far is still routed", () => {
     // A floor, so the guard above cannot be satisfied by DELETING a gate, and so
     // a revert of any single wiring is loud here as well as in the reach suite.
+    // The last two are the group-travel gates this round closed; they were the
+    // whole content of KNOWN_UNROUTED, and a revert of either has to fail
+    // something louder than an entry quietly reappearing in a ledger.
     const WIRED = [
       "routes/meetups.ts", "routes/requests.ts", "routes/events.ts",
       "routes/mediaFeed.ts", "routes/discovery.ts", "routes/profile.ts",
       "services/media/MediaProjectionService.ts",
+      "compass/CompassTools.ts", "compass/CompassSocialEngine.ts",
     ];
     const missing = WIRED.filter((rel) => {
       const f = FILES.find((x) => x.rel === rel);

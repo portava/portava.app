@@ -86,11 +86,11 @@ import {
   aggregateGroupPreferences,
   buildGroupRankingProfile,
   eventSatisfiesGroup,
-  ageFromDob,
   getWhosAround,
   sharesSocialContext,
   type GroupMemberPrefs,
 } from "./CompassSocialEngine.js";
+import { gateAgeFrom, readVerifiedAgeSignals, type GateAge } from "../lib/gateAge.js"; // the ONE age seam — see prefsFromRow
 // §8 (Open to Plans and Intent): Compass weights EXPLICIT current intent above
 // generic interests. The explicit-intent read + bounded weight live in the ONE
 // Passport consumer-projection module so Compass and Discovery share the exact
@@ -1533,7 +1533,7 @@ async function toolWhosAround(
 
 const PREF_COLUMNS = "id, handle, name, display_name, interests, travel_styles, budget_style, travel_pace, spoken_languages, verified, date_of_birth";
 
-function prefsFromRow(row: any): GroupMemberPrefs {
+function memberFieldsFromRow(row: any): Omit<GroupMemberPrefs, "ageGate"> {
   return {
     userId:       String(row.id),
     handle:       row.handle ? String(row.handle) : null,
@@ -1542,7 +1542,7 @@ function prefsFromRow(row: any): GroupMemberPrefs {
     budgetStyle:  row.budget_style ? String(row.budget_style) : null,
     travelPace:   row.travel_pace ? String(row.travel_pace) : null,
     verified:     row.verified === true,
-    age:          ageFromDob(row.date_of_birth ?? null), // server-side only — never returned
+    // No `age` here on purpose: a row is not an age. See prefsFromRow() below.
   };
 }
 
@@ -1600,8 +1600,8 @@ async function toolTravelCompatibility(
     .maybeSingle();
   if (!me) return { compatibility: null, info: "The user's own profile is not available." };
 
-  const a = prefsFromRow(me);
-  const b = prefsFromRow(target);
+  const a = memberFieldsFromRow(me);   // no age on this path — compatibility is not an age gate
+  const b = memberFieldsFromRow(target);
   const result = computeTravelCompatibility(
     { interests: a.interests, travelStyles: a.travelStyles, budgetStyle: a.budgetStyle, travelPace: a.travelPace, languages: Array.isArray((me as any).spoken_languages) ? (me as any).spoken_languages.map(String) : [] },
     { interests: b.interests, travelStyles: b.travelStyles, budgetStyle: b.budgetStyle, travelPace: b.travelPace, languages: Array.isArray((target as any).spoken_languages) ? (target as any).spoken_languages.map(String) : [] },
@@ -1732,6 +1732,24 @@ async function groupBlockUnion(sc: SupabaseClient, memberIds: string[]): Promise
   }
 }
 
+/**
+ * One group member's preferences, INCLUDING the age a gate may act on.
+ *
+ * The `ageGate` is a parameter rather than something derived here from
+ * `row.date_of_birth`, and that is the point: this function cannot produce an
+ * age at all, so the only way to get a member's age is to have resolved one
+ * through `lib/gateAge.ts` first. The previous shape read the raw column and
+ * ran `ageFromDob()` on it, which is how a provider-verified minor's typed
+ * adult birthday reached `eventSatisfiesGroup` and let the whole group into an
+ * `age_min: 18` event.
+ */
+function prefsFromRow(row: any, ageGate: GateAge): GroupMemberPrefs {
+  return { ...memberFieldsFromRow(row), ageGate };
+}
+
+/** No signal of any kind for a user is an unreadable check, never a pass. */
+const NO_AGE_SIGNAL = { verifiedMinor: false, verificationUnreadable: true } as const;
+
 async function toolGroupRecommendation(
   sc: SupabaseClient,
   profile: CompassProfile | null,
@@ -1750,9 +1768,18 @@ async function toolGroupRecommendation(
   const memberIds = group.memberIds.filter((id) => id === userId || !hidden.has(id));
   if (memberIds.length === 0) return { candidates: [], info: "No visible group members." };
 
-  const [{ data: profRows }, blockUnion] = await Promise.all([
+  // THREE reads for the whole group, whatever its size, and none of them per
+  // member: the batched `profiles` read this tool already did, the block union,
+  // and ONE batched `identity_verifications` read (`readVerifiedAgeSignals`,
+  // two queries' worth of work folded into one `.in()` scan) that supplies the
+  // verified-minor contradiction for every member at once. The profile rows are
+  // already in hand here, so this is the cheap half of the seam —
+  // `gateAgeFrom(dob, signal)` — and NOT `resolveGateAges`, which would read
+  // `profiles` a second time.
+  const [{ data: profRows, error: profErr }, blockUnion, ageSignals] = await Promise.all([
     sc.from("profiles").select(PREF_COLUMNS).in("id", memberIds),
     groupBlockUnion(sc, memberIds),
+    readVerifiedAgeSignals(sc, memberIds),
   ]);
   // The whole point of a GROUP recommendation is that it is shared with the
   // group, so a candidate one member blocked must not appear in it. With the
@@ -1763,8 +1790,21 @@ async function toolGroupRecommendation(
     return { candidates: [], info: "Group block state could not be read, so no group recommendation was made." };
   }
   const blockUnionIds = [...blockUnion.ids];
-  const members = ((profRows ?? []) as any[]).map(prefsFromRow);
-  if (members.length === 0) return { candidates: [], info: "Group member profiles are not available." };
+  // supabase-js RESOLVES on a database error, so an unreadable `profiles` read
+  // arrives as `data: null` and used to be indistinguishable from "this group
+  // has no profiles". Both still answer the same way, but they are now asked
+  // separately rather than by accident.
+  const rowsById = new Map(((profRows ?? []) as any[]).map((r) => [String((r as any).id), r]));
+  if (profErr || rowsById.size === 0) return { candidates: [], info: "Group member profiles are not available." };
+  // Built from memberIds, not from the rows that came back. A member whose
+  // profile row is missing is NOT silently dropped from the group: dropping
+  // them would shrink the group AND remove their (unknown) age from the
+  // aggregate, which is the permissive answer. They join as an unknown-age,
+  // unverified member, and an unknown age closes the group's age gate.
+  const members = memberIds.map((id) => {
+    const row = rowsById.get(id);
+    return prefsFromRow(row ?? { id }, gateAgeFrom(row?.date_of_birth ?? null, ageSignals.get(id) ?? NO_AGE_SIGNAL));
+  });
 
   const agg = aggregateGroupPreferences(members);
   const viewerProfile: CompassProfile =
