@@ -2372,3 +2372,154 @@ Of the 107 rows still not `C`:
 ENABLED. FLAG ENABLED IS NOT PRODUCTION REALIZED.** Discovery remains dark on the
 last reading anyone took: 13 `surface='discovery'` rows ever, latest 2026-08-15.
 This pass read no production and does not refresh that figure.
+
+---
+
+## §17 — Five lanes land: twenty verdict moves, and two the lanes asked for that I refused
+
+Written by the integration owner after cherry-picking `9ff660674`, `33bd96614`,
+`a119077ea`, `8363595cb`, `a80461623` and `39b4557d1` onto the branch. Every OLD
+verdict below was read from `CENSUS_INTEGRITY_DUMP=ALL`, never from a lane's
+report — §16.6's rule, which exists because four of §16.1's first-draft moves
+were phantoms read out of stale prose.
+
+### 17.1 The twenty moves
+
+| **ID** | **was** | **now** | why |
+|---|---|---|---|
+| **DV-13** | **N** | **W** | `diversifyTrailPage` MAX_PER_CONTRIBUTOR_PER_PAGE, reached at `GET /v1/discovery/trails/:id/modules` |
+| **DV-20** | **N** | **W** | `trails` with a UNIQUE slug + `canonicaliseTrailProposal`; content references `trail_id`, never a title |
+| **DV-21** | **N** | **W** | four modules, four distinct objectives, asserted over HTTP |
+| **DV-22** | **N** | **W** | `fairExposureSlots` wired into `just_arrived`, with denominators |
+| **DV-23** | **N** | **W** | place cap + `moreFromThisPlace` remainder — suppressed is not deleted |
+| **DV-24** | **N** | **W** | `trail_edges` written by `proposeTrail`; `relatedTrails` walks both directions |
+| **DV-25** | **N** | **W** | `rank_events` → `trailMomentumFromRankEvents` → `trailAffinityMap` → served rank. Previously computed and consumed by nothing |
+| **DC-02** | **N** | **W** | `capTrailLabels` + 2910's trigger; 409 naming the full budget |
+| **DC-03** | **N** | **W** | four checks; 409 carrying the refusing check and `06` §6's suggested parent |
+| **DC-04** | **N** | **W** | the transition relation is enforced; `proposed → active` on first content; `archived` terminal |
+| **DC-05** | **N** | **W** | nine metrics + snapshots, and the §11 ranking input they feed |
+| **DC-20** | **N** | **W** | all nine `11` §3 actions reachable over HTTP |
+| **DC-21** | **N** | **W** | one of `11` §4's five — trending by Trail, serving an order and a boolean and never a momentum number |
+| **DV-56** | **N** | **W** | `creator_attributions` addresses all six `07` §2 types; two have a producer, four are structurally-refused seams |
+| **DV-57** | **N** | **W** | `creator_earning_entries` records earnings with `cash_settled_minor = 0` — `07` §10's "without paying" |
+| **DV-58** | **N** | **W** | six distinct seeded rule lineages, derived not stored, per-type mismatch refused |
+| **DV-59** | **N** | **W** | a hold is expressible on all six types; an unexplained hold is refused at the DB and in code |
+| **DV-60** | **N** | **W** | `recomputeCreatorUnderRuleVersion` — an old version still folds to its old total, rehearsed live on portava-ci |
+| **DV-64** | **N** | **W** | `public.creator_share_ledger` — one relation the share is computable from, reconciled both ways, recovery executed |
+| **C14** | **W** | **C** | the consumer half. `getSearchSuggestions` parses the refusal; the three-way split (`validation` / `transient_db` / none) is pinned, and mutation C6 kills a parser that always returns `undefined` |
+
+### 17.2 Two moves the lanes asked for and did not get
+
+The creator-types lane proposed **DV-58 → C** and **DV-59 → C**, on the grounds
+that these are the two properties with no seam in them: six lineages exist, and a
+fraud hold is expressible, explained and enforced for every type.
+
+Both were verified and both were refused, on this census's own DV-62/A05
+standard. The check is one grep:
+
+```
+grep -rn "CreatorAttributionService" src --include=*.ts | grep -v <the file itself>
+  → src/test/creatorTypeService.test.ts:38
+  → src/lib/creatorTypeAttribution.ts:43   (a COMMENT naming it)
+```
+
+**One importer, and it is the file's own test.** No route, no scheduler, no job
+reaches it. That is A05's doubly-unreachable pattern exactly, and the DV-64 lane
+applied the same rule to its own work unprompted — `CanonicalShareReader` has the
+identical single test-only importer and that lane capped itself at `W` for it.
+Grading DV-58/59 `C` while DV-64 stays `W` on identical evidence would be the
+definition-change the owner's instruction forbids.
+
+**What would turn DV-58/59 green:** a call site on a route or scheduler, 2920 and
+2921 applied to production rather than to the portava-ci rehearsal project, and a
+row that was attributed by a request rather than by a fixture. None of the three
+is true today.
+
+### 17.3 The ceiling every one of these nineteen `W`s sits under
+
+Not one of the nineteen N→W rows can reach `C` from code alone, and the reason is
+the same for all of them:
+
+- **2910, 2920, 2921 and 2930 are applied to `portava-ci` only.** Production
+  carries none of them. `10` §7 forbids editing an applied migration, so applying
+  a shape the code may still abandon is the one mistake that cannot be undone.
+- **Zero rows exist anywhere.** Every reconciliation, every fold and every metric
+  in this batch is non-vacuous only over seeded fixtures. The migrations say so
+  themselves: 2930 raises `— VACUOUS (both ledgers empty)` rather than passing
+  quietly.
+- **`discovery_ranking_modifiers_enabled` is seeded FALSE**, so the Trail
+  affinity term contributes exactly 0.0 on every deployment. It is wired, it is
+  capped, and it is off.
+- **The branch is not merged**, and production runs merged code.
+
+### 17.4 The cap, recorded as the owner's number and not as a derivation
+
+`0.10` is the Trail affinity cap. Both files the ruling points at were read and
+**neither names a number**: `02_Trails.md` §11 states the obligation in words
+(*"Trail health should influence ranking but not silently erase legitimate
+content"*), and `06_Recommendation_Engine.md` §3 lists `trail_relevance` among
+eleven feature families with no weight and no bound. So `discoveryTrailAffinity.ts`
+now says whose number it is — *"an APPROVED INITIAL SETTING, PROVISIONAL AND
+SUBJECT TO REVISION — not a value this code chose"* — and the text presenting it
+as derived was removed.
+
+Its effect is asserted in the real ranking flow, not against the clamp: a
+saturated affinity moves a place by **exactly 0.10** against an otherwise
+identical twin; with `weights.trailAffinity = 100` it still moves it by exactly
+0.10; and through `rankCandidates` a rival ahead by one interest tag (0.30) is
+**not** overtaken, while at `interestTag: 0.05` it is. Taste is the spine and the
+modifier breaks ties, as arithmetic.
+
+### 17.5 Tally
+
+| BUILT-AND-CORRECT | **76** |
+|---|---|
+| BUILT-BUT-WRONG | **85** |
+| NOT-BUILT | **23** |
+| CANNOT-VERIFY | **3** |
+
+76 + 85 + 23 + 3 = 187. One row moved to `C`; nineteen moved `N → W`; the `X`
+rows are untouched because nothing in this batch made them verifiable.
+
+### 17.6 The record itself was lying, and nothing failed
+
+Rebuilding `docs/discovery/compliance-ledger.json` after §17.1 produced **36
+requirements**. The run before it produced **177**. The run after, **36** again.
+The tree did not change between them.
+
+`buildDiscoveryLedger.ts` reads verdicts from `checkCensusIntegrity.ts`'s dump
+through `execFileSync` — which is a PIPE. On a pipe Node's `console.log` is
+**asynchronous**, and the dump block's `process.exit(0)` discarded whatever had
+not yet flushed. The count printed on stderr is computed BEFORE the write, so
+the transcript said
+
+```
+CENSUS_INTEGRITY_DUMP=ALL: 3499 row(s) from 13 census file(s).
+discovery ledger: 36 requirement(s)
+```
+
+— a true count beside a stdout that carried a fraction of it. Every human
+reading (`| grep`) runs through the same pipe.
+
+**This is the worst class of defect this document tracks**: THE ONE
+AUTHORITATIVE RECORD that five lanes coordinate against could silently lose 80 %
+of its rows, and the header of the very script that writes it promises *"the
+ledger and the census can never disagree about what a row currently is."* They
+disagreed, at random, and no check noticed, because the only field that would
+have shown it is `total` — a number nobody compares between runs.
+
+Fixed by writing the dump with one synchronous `fs.writeSync(1, …)` instead of
+3,499 asynchronous `console.log`s, and by replacing the checker's other
+`process.exit(1)` with `process.exitCode`. Pinned by
+`src/test/censusDumpCompleteness.test.ts`, which asserts the transcript agrees
+with its own declared count over five consecutive runs — an invariant that holds
+for every corpus and fails for every truncation, so it does not rot when a census
+is edited.
+
+**Mutation, run and killed:** restoring the `console.log` loop gives
+`run 1: stderr declared 3499 row(s) and stdout carried 538`. Reverted and
+`cmp`-verified byte-identical.
+
+The ledger now rebuilds to **187 requirements, C=76 W=85 N=23 X=3** — identical
+on three consecutive runs, and identical to `check:census-integrity`'s own
+count, which is the agreement the header claimed all along.

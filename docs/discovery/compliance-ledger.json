@@ -3,16 +3,16 @@
   "note": "Verdicts are READ from the census and are never authored here. `blocker` is the one hand-maintained field; see the header of src/scripts/buildDiscoveryLedger.ts for why it is not derived.",
   "total": 187,
   "byVerdict": {
-    "C": 75,
-    "W": 67,
-    "N": 42,
+    "C": 76,
+    "W": 85,
+    "N": 23,
     "X": 3
   },
   "openByBlocker": {
     "FLAG": 17,
     "CODE_CROSS_SURFACE": 31,
     "MIGRATION": 12,
-    "CODE": 46,
+    "CODE": 45,
     "DEPLOY": 1,
     "RUNTIME_EVIDENCE": 4,
     "EXTERNAL_SETTING": 1
@@ -242,8 +242,8 @@
     },
     {
       "id": "C14",
-      "verdict": "W",
-      "line": 1014,
+      "verdict": "C",
+      "line": 2409,
       "blocker": "CODE"
     },
     {
@@ -494,8 +494,8 @@
     },
     {
       "id": "DV-13",
-      "verdict": "N",
-      "line": 1385,
+      "verdict": "W",
+      "line": 2390,
       "blocker": "CODE"
     },
     {
@@ -536,38 +536,38 @@
     },
     {
       "id": "DV-20",
-      "verdict": "N",
-      "line": 881,
+      "verdict": "W",
+      "line": 2391,
       "blocker": "CODE"
     },
     {
       "id": "DV-21",
-      "verdict": "N",
-      "line": 882,
+      "verdict": "W",
+      "line": 2392,
       "blocker": "CODE"
     },
     {
       "id": "DV-22",
-      "verdict": "N",
-      "line": 883,
+      "verdict": "W",
+      "line": 2393,
       "blocker": "CODE"
     },
     {
       "id": "DV-23",
-      "verdict": "N",
-      "line": 884,
+      "verdict": "W",
+      "line": 2394,
       "blocker": "CODE"
     },
     {
       "id": "DV-24",
-      "verdict": "N",
-      "line": 885,
+      "verdict": "W",
+      "line": 2395,
       "blocker": "CODE"
     },
     {
       "id": "DV-25",
-      "verdict": "N",
-      "line": 886,
+      "verdict": "W",
+      "line": 2396,
       "blocker": "CODE"
     },
     {
@@ -752,32 +752,32 @@
     },
     {
       "id": "DV-56",
-      "verdict": "N",
-      "line": 959,
+      "verdict": "W",
+      "line": 2403,
       "blocker": "CODE_CROSS_SURFACE"
     },
     {
       "id": "DV-57",
-      "verdict": "N",
-      "line": 960,
+      "verdict": "W",
+      "line": 2404,
       "blocker": "CODE_CROSS_SURFACE"
     },
     {
       "id": "DV-58",
-      "verdict": "N",
-      "line": 961,
+      "verdict": "W",
+      "line": 2405,
       "blocker": "CODE_CROSS_SURFACE"
     },
     {
       "id": "DV-59",
-      "verdict": "N",
-      "line": 962,
+      "verdict": "W",
+      "line": 2406,
       "blocker": "CODE_CROSS_SURFACE"
     },
     {
       "id": "DV-60",
-      "verdict": "N",
-      "line": 963,
+      "verdict": "W",
+      "line": 2407,
       "blocker": "CODE_CROSS_SURFACE"
     },
     {
@@ -800,8 +800,8 @@
     },
     {
       "id": "DV-64",
-      "verdict": "N",
-      "line": 967,
+      "verdict": "W",
+      "line": 2408,
       "blocker": "CODE_CROSS_SURFACE"
     },
     {
@@ -926,26 +926,26 @@
     },
     {
       "id": "DC-02",
-      "verdict": "N",
-      "line": 1895,
+      "verdict": "W",
+      "line": 2397,
       "blocker": "CODE"
     },
     {
       "id": "DC-03",
-      "verdict": "N",
-      "line": 1896,
+      "verdict": "W",
+      "line": 2398,
       "blocker": "CODE"
     },
     {
       "id": "DC-04",
-      "verdict": "N",
-      "line": 1897,
+      "verdict": "W",
+      "line": 2399,
       "blocker": "CODE"
     },
     {
       "id": "DC-05",
-      "verdict": "N",
-      "line": 1898,
+      "verdict": "W",
+      "line": 2400,
       "blocker": "CODE"
     },
     {
@@ -1034,14 +1034,14 @@
     },
     {
       "id": "DC-20",
-      "verdict": "N",
-      "line": 1913,
+      "verdict": "W",
+      "line": 2401,
       "blocker": "CODE"
     },
     {
       "id": "DC-21",
-      "verdict": "N",
-      "line": 1914,
+      "verdict": "W",
+      "line": 2402,
       "blocker": "CODE"
     },
     {

@@ -89,7 +89,7 @@
  *
  * Run: node --import tsx/esm src/scripts/checkCensusIntegrity.ts
  */
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 
 /**
@@ -600,15 +600,38 @@ for (const p of problems) console.error(p);
 const DUMP = process.env.CENSUS_INTEGRITY_DUMP?.trim().toUpperCase();
 if (DUMP) {
   const want = DUMP === "ALL" ? null : DUMP.split(/[,\s]+/).filter(Boolean);
-  let dumped = 0;
+  const lines: string[] = [];
   for (const r of results) {
     const name = r.file.replace(/^census-|\.md$/g, "");
     for (const row of r.rows) {
       if (want && !want.includes(row.verdict)) continue;
-      console.log(`${name}|${row.id}|${row.verdict}|${row.line}`);
-      dumped++;
+      lines.push(`${name}|${row.id}|${row.verdict}|${row.line}`);
     }
   }
+  const dumped = lines.length;
+
+  /**
+   * writeSync, NOT console.log, and the reason is a defect this file caused.
+   *
+   * When stdout is a PIPE — which is how EVERY consumer runs this: `| grep`,
+   * and `execFileSync` in buildDiscoveryLedger.ts — Node's console.log is
+   * ASYNCHRONOUS. `process.exit()` below then discards whatever is still
+   * buffered. The stderr count is computed before the write and stayed
+   * truthful, so the transcript read
+   *
+   *     CENSUS_INTEGRITY_DUMP=ALL: 3499 row(s) from 13 census file(s).
+   *
+   * while the consumer received 36 of Discovery's 187 rows. THE ONE
+   * AUTHORITATIVE RECORD for Discovery compliance was rebuilt from that: three
+   * consecutive runs on an unchanged tree produced 177, 36 and 36 requirements.
+   * Nothing failed. The ledger simply lost 80 % of its rows and said so in a
+   * field nobody compares.
+   *
+   * fs.writeSync(1, …) blocks until the bytes are handed to the OS whatever
+   * stdout is, so the exit below cannot truncate it. One write, not 3499, so
+   * there is also no partial-line boundary to land on.
+   */
+  if (dumped > 0) writeSync(1, `${lines.join("\n")}\n`);
   console.error(`CENSUS_INTEGRITY_DUMP=${DUMP}: ${dumped} row(s) from ${results.length} census file(s).`);
   // A filter that matches nothing looks exactly like a clean corpus. Say so.
   if (dumped === 0) {
@@ -653,8 +676,12 @@ console.log(
     `the failure mode this file exists to make harder, not one it can claim to have closed.`,
 );
 
+// process.exitCode rather than process.exit(), for the same reason the dump
+// block uses writeSync: exiting here would discard the NOTE lines above when
+// stdout is a pipe.
 if (problems.length > 0) {
   console.error(`\n${problems.length} problem(s) found.`);
-  process.exit(1);
+  process.exitCode = 1;
+} else {
+  console.log("\ncheck:census-integrity PASSED");
 }
-console.log("\ncheck:census-integrity PASSED");

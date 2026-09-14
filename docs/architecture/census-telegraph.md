@@ -484,7 +484,7 @@ Backend paths relative to `artifacts/api-server/src/`; client paths to
 | T31 | Privacy zones can suppress discovery around home, lodging or user-defined sensitive places | W | The capability exists and is well built — `lib/protectedLocations.ts:13-27`, a server-side last gate, fail-closed on unparseable geometry — but it belongs to the Map programme, its policy table ships empty by design, and **nothing in Telegraph consults it**. |
 | T32 | Who's Around: focused surface for people, open plans and events actionable right now | W | `get_whos_around` is real and privacy-correct (`compass/CompassTools.ts:187`, impl `:767-782`; approximate-only, opt-in-only, `contextsChecked === 0` answers honestly). But it is a **Compass LLM tool, not a surface**, it returns people only — no open plans, no events — and it is scoped to the caller's circles and trips. |
 | T33 | Existing social graph separated from discoverable strangers | W | The separation exists in one direction: `toolWhosAround` gates on `sharesSocialContext` (`CompassTools.ts:831`) so only the graph is returned, and stranger contact runs entirely through `message_requests`. The *discoverable strangers* half has no implementation, so there is nothing to separate from. |
-| T34 | Stranger flow: safe profile preview → Wave/Request → accepted thread; no automatic unrestricted messaging | C | `lib/messagingPermissions.ts:29-45` resolves `allowed` / `requires_request` / `denied`; `routes/messaging.ts:276-303` refuses `open-thread` fail-closed and names the request route; `:430` files the request and `:889#router.post('/message-requests/:requestId/accept', async (req, res) => {` accepts it into a thread. No path opens an unrestricted stranger thread. There is no separate "Wave" primitive — the request is it. |
+| T34 | Stranger flow: safe profile preview → Wave/Request → accepted thread; no automatic unrestricted messaging | C | `lib/messagingPermissions.ts:29-45` resolves `allowed` / `requires_request` / `denied`; `routes/messaging.ts:276-303` refuses `open-thread` fail-closed and names the request route; `:430` files the request and `routes/messaging.ts:889#router.post('/message-requests/:requestId/accept', async (req, res) => {` accepts it into a thread. No path opens an unrestricted stranger thread. There is no separate "Wave" primitive — the request is it. |
 
 ### §5 Universal Portava Sharing
 
@@ -6828,3 +6828,78 @@ violation, not a missing feature).
     451 rows, unchanged by this section, against §1's stated 209 / 176 / 51 / 3. That gap is §21.8's
     and is still not this lane's to close.
   - The 155 W rows this section does not name were not re-read.
+
+---
+
+## §23 — T70 closes, and §21.5's reason for keeping it open was stale in both halves
+
+Written by the integration owner after cherry-picking `2c6f2eb0a` and `6bd65fb07`.
+The OLD verdict was read from `CENSUS_INTEGRITY_DUMP=ALL` (`telegraph|T70|W`),
+not from the lane's report.
+
+### 23.1 The move
+
+| **ID** | **was** | **now** | why |
+|---|---|---|---|
+| **T70** | **W** | **C** | `§7.2`'s *"Seen = crossed the approved visibility threshold"*. The legacy `POST /api/threads/:threadId/read` now stamps the **newest non-deleted message's own `created_at`** inside the caller's §14.3 window — `routes/messaging.ts:1742#.update({ last_read_at: threshold })`, threshold derived at `:1710`–`:1737`, membership gate at `:1685`–`:1695`, and the realtime receipt carries the same threshold at `:1757`. Reached from the shipping product: `travel-buddy-standalone/src/services/messaging.ts:428` is `markThreadRead`, the call the conversation screen makes. |
+
+### 23.2 The sentence that was keeping it open, and why it was wrong twice
+
+§21.5 read: *"It stays W because the legacy path in `routes/messaging.ts` still
+stamps `now()` on any authenticated call **and this lane does not own that
+file**."* Both halves are now false — the file was in scope, and the path stamps
+a message threshold.
+
+It was also **understating the defect**. It named `now()` and did not name the
+larger thing beside it: the handler performed **no membership check at all**, so
+it answered `{ ok: true }` to a stranger and broadcast `read.updated` into a
+thread they are not in. That is fixed in the same commit and is what
+`telegraphLegacyReadMarkerThreshold.test.ts` mutation T-M3 kills.
+
+### 23.3 WHAT WOULD TURN THIS RED
+
+Four things, and all four are mutations that went red:
+
+1. the marker exceeding the newest message (T-M1, `now()` restored → 5 of 10 fail);
+2. a marker rewound by a later call (T-M2 / T-M2b, the monotonicity guard);
+3. a non-member receiving `ok: true` (T-M3, the membership gate);
+4. an unreadable `messages` collapsing to "nothing to mark" (T-M4, `newestErr`).
+
+Two more kill a deleted message used as the threshold (T-M5) and a broadcast
+carrying the wall clock instead of the threshold (T-M6).
+
+### 23.4 What T70 does NOT claim
+
+`§7.2`'s **"active foreground conversation"** clause is **T71**, scored `X` by
+this census, and the server still cannot observe foreground. Nothing in the suite
+asserts it, and T71 does not move.
+
+The **§14.3 window clause is untested in the live direction.**
+`telegraph_history_bound_enabled` is seeded FALSE and is on no database, so
+`visibleFrom` is `null` on every deployment and that branch cannot be exercised.
+It is written to match `routes/telegraphLifecycle.ts` exactly, and no flag-on
+case was fabricated and then called evidence. **T70's move does not rest on
+it** — the threshold and monotonicity rules hold with the flag off, which is
+every deployment there is.
+
+### 23.5 Fourteen gates that moved no verdict, recorded because §17.9 set the precedent
+
+The same commit converts fourteen membership and precondition gates in
+`routes/messaging.ts` and `routes/groupChat.ts` from a settled `403` to a
+retryable `503 degraded_unavailable` when the read behind them never happened.
+By §20.6's rule (*"a refusal is not a plausible empty state"*) these move
+nothing — T344 and T363 never counted them and are already `C`. The allowlist
+shrank **158 → 156**.
+
+They are recorded because the wire changed on live routes: these calls will now
+**retry** where today they give up, and a genuine non-member still receives the
+same `403` with the same words, asserted by control in all sixteen call sites.
+The cruellest of the fourteen was `isActiveThreadMember`'s *"You no longer have
+access to this thread"* — an access **removal** asserted from a read that never
+ran.
+
+### 23.6 Tally
+
+`check:census-integrity` now reads **C=230 W=157 N=49 X=3** across 451 rows. One
+row moved. §1's stated 209 / 176 / 51 / 3 is still §21.8's gap and still not
+closed here.
