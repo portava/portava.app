@@ -38,7 +38,7 @@ import { logAdminAccess, accessReason } from "../lib/adminAudit.js";
 import { resolveStoragePath } from "../lib/storagePath.js";
 import { logModerationAction, auditReportAction } from "../lib/moderationAudit.js";
 
-import { requireAdmin } from "../lib/requireAdmin.js";
+import { requireAdmin } from "../lib/requireAdmin.js"; import { computeAttemptsPerVerifiedUser } from "../services/identityVerification/attemptMetrics.js"; // same line on purpose: a new import line shifts every anchored citation into this file
 import { listRestrictionsForAudit } from "../services/trust/TrustRestrictionService.js";
 import {
   GEO_ZONE_DB_TYPES,
@@ -3530,6 +3530,58 @@ router.post("/admin/intel/live-scopes/withdraw", async (req, res) => {
     "intel live scope withdrawn via admin surface",
   );
   res.json({ scopeKey: r.scopeKey, action: r.action, withdrawnBy: { userId, displayName } });
+});
+
+/**
+ * GET /admin/verification/attempt-metrics — TV-6c.
+ *
+ * verified-foundation-plan.md V-6 asks for two things and only the first was
+ * built: rate limiting is the cost CONTROL (routes/verification.ts, 3 sessions
+ * per 24 h) and "monitor attempts per verified user (>2.0 average means UX
+ * friction worth fixing)" is the MEASUREMENT. This is the measurement's
+ * reachable caller — without one the module would be the defect TV-7a was, a
+ * capability declared, mapped, and called from nowhere.
+ *
+ * Admin-only: it is a platform-wide figure over every user's verification
+ * history, not a per-user fact.
+ *
+ * Answers 503 rather than a zero when the table cannot be read. A monitoring
+ * endpoint that reports "0 attempts" out of a failed read is worse than one
+ * that reports nothing, because it is believed. "No verified users yet" —
+ * production's actual state today, 0 rows in identity_verifications — is
+ * likewise returned as its own state with a null average, not as 0.0.
+ *
+ * Placed at the end of the file deliberately: every anchored citation into
+ * routes/admin.ts names a line below 2400, and inserting a route mid-file
+ * would move all of them.
+ *
+ * Optional `?days=N` bounds the scan to rows created in the last N days.
+ */
+router.get("/admin/verification/attempt-metrics", async (req, res) => {
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
+  if (!admin) return;
+  const { sc } = admin;
+
+  const daysRaw = Number(req.query.days);
+  const days = Number.isFinite(daysRaw) && daysRaw > 0 ? Math.min(3650, Math.floor(daysRaw)) : null;
+  const since = days ? new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString() : null;
+
+  let metrics;
+  try {
+    metrics = await computeAttemptsPerVerifiedUser(sc, { since });
+  } catch (err: any) {
+    req.log.error({ err }, "admin: verification attempt metrics unreadable");
+    sendError(
+      res,
+      "degraded_unavailable",
+      "Verification attempt metrics are unavailable — identity_verifications could not be read",
+      { exposeDetail: true },
+    );
+    return;
+  }
+
+  void logAdminAccess(sc, admin.userId, "profile", "list", "view", accessReason(req));
+  res.json(metrics);
 });
 
 export default router;
