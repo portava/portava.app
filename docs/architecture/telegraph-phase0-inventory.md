@@ -32,7 +32,7 @@ are files, tables, routes, event types and literals, each re-derived on every ru
 
 ### 2. Migrations that touch a messaging table
 
-30 of 529 migration files reference at least one messaging table.
+30 of 530 migration files reference at least one messaging table.
 
 - `src/migrations/0011_message_type.sql`
 - `src/migrations/0016_thread_reads.sql`
@@ -69,7 +69,7 @@ are files, tables, routes, event types and literals, each re-derived on every ru
 
 | route file | route declarations in file | messaging tables touched |
 | --- | --- | --- |
-| `src/routes/airport.ts` | 36 | message_threads |
+| `src/routes/airport.ts` | 37 | message_threads |
 | `src/routes/blocks.ts` | 5 | message_requests |
 | `src/routes/circle.ts` | 24 | message_threads, messages |
 | `src/routes/compass.ts` | 42 | message_thread_members, message_threads |
