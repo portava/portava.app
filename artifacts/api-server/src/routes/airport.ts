@@ -87,6 +87,11 @@ import { safetyLabel, type TravelTimeSource } from "../services/airport/LayoverS
 // `generateRecommendations` blocks landside cards on — a traveller who loses a
 // card to it should be able to read the bound that removed it.
 import { safeEnvelope } from "../services/airport/LayoverEnvelope.js";
+// §24 L265 / §11.1 L99 — whether the reminder a traveller already asked for is
+// still pointing at the deadline it was scheduled against. Decided in the §15
+// ladder's own module, never here: "how loud" and "is this still worth saying"
+// are one decision at a rung.
+import { reminderDisposition } from "../services/airport/LayoverReturnEscalation.js";
 import { airportPoint } from "../services/airport/LayoverTravelTime.js";
 // Every feasibility number this file publishes comes from ONE call to
 // `certifySessionFeasibility` per request. `assess`, `computeWindow` and
@@ -2223,6 +2228,22 @@ router.get("/airport/sessions/:id/overview", async (req, res) => {
       stops,
     }),
     returnReminderAt: session.returnReminderAt,
+    // §24 L265 — the material-change threshold, published on the read the
+    // dashboard performs on every mount and every pull-to-refresh.
+    //
+    // A reminder is scheduled 30 minutes before the certified hard return and
+    // then never re-examined, so a traveller who moves their flight 15 minutes
+    // EARLIER keeps a notification that fires fifteen minutes into the window
+    // it was meant to open — while the footer still reads "Reminder set". The
+    // server stores the fire time, so the server is where the drift is visible.
+    // Below the threshold this answers `keep`, which is the suppression half of
+    // the same requirement.
+    reminder: reminderDisposition({
+      reminderAt: session.returnReminderAt,
+      hardReturnTime: record.deadline.hardReturnTime,
+      returnState: record.envelope.returnState,
+      nowMs,
+    }),
     localTimes: {
       timezone:       tz,
       airportNow:     formatLocalTime(tz, now),

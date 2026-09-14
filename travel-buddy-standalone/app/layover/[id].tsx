@@ -155,6 +155,30 @@ export default function LayoverDashboardScreen() {
   const returnAbort = useSafeReturnAbort(id, reloadAfterAbort);
 
   const canEdit = overview?.session.status === 'active';
+
+  /**
+   * §24 L265 / §11.1 L99 — is the reminder this screen claims is set still
+   * pointing at the deadline it was set against?
+   *
+   * The server decides (`services/airport/LayoverReturnEscalation.ts`,
+   * `reminderDisposition`) and publishes it on the overview; this screen only
+   * forwards the answer. It is read with a local narrowing rather than through
+   * `LayoverOverview`, because that type lives in `services/layover.ts`, which
+   * this lane does not own — an older server that does not publish the member
+   * renders exactly what it rendered before.
+   *
+   * WHY THIS IS A BANNER AND NOT A SILENT RESCHEDULE. The local notification
+   * was scheduled by whichever app session pressed the button, and its
+   * identifier lives in a `useRef` that does not survive a remount, so this
+   * screen cannot cancel a notification it did not schedule. What it CAN stop
+   * doing is asserting "Reminder set" for a warning that has drifted — which is
+   * the half of the defect a traveller actually acts on.
+   */
+  const reminderDrift = (overview as { reminder?: {
+    action: string; reason: string; driftMinutes: number; materialChange: boolean;
+    firesAt: string | null; staleFiresAt: string | null;
+  } } | null)?.reminder ?? null;
+  const reminderStale = reminderDrift?.action === 'reschedule' || reminderDrift?.action === 'cancel';
   const city = overview
     ? (overview.airport.city !== 'Unknown' ? overview.airport.city : overview.session.manualCity)
     : null;
@@ -430,6 +454,31 @@ export default function LayoverDashboardScreen() {
         {returnCardFirst && returnCard}
 
         <LayoverHero airport={airport} session={session} window={win} localTimes={localTimes} nowMs={nowMs} />
+        {/* §24 L265 — a reminder that no longer matches the certified deadline,
+            said out loud. Below the material threshold the server answers
+            `keep` and nothing renders, which is the suppression half of the
+            same requirement: a two-minute drift must not produce a banner any
+            more than it should produce a notification. */}
+        {reminderDrift && reminderStale ? (
+          <Pressable
+            style={styles.driftCard}
+            testID="reminder-drift"
+            accessibilityRole="button"
+            onPress={reminderDrift.action === 'reschedule' ? handleReminder : undefined}
+            disabled={reminderDrift.action !== 'reschedule' || reminderBusy}
+          >
+            <Text style={styles.driftTitle} testID="reminder-drift-title">
+              {reminderDrift.action === 'cancel'
+                ? 'Your reminder can no longer warn you'
+                : 'Your reminder is out of date'}
+            </Text>
+            <Text style={styles.driftBody} testID="reminder-drift-body">
+              {reminderDrift.action === 'cancel'
+                ? 'Your flight moved and the moment it was set for has passed. Watch the countdown above.'
+                : `Your flight moved by ${Math.abs(reminderDrift.driftMinutes)} min. Tap to set it for ${fmtClock(reminderDrift.firesAt, airport.timezone)} instead.`}
+            </Text>
+          </Pressable>
+        ) : null}
         {/* §2.1/§22 (census L9, L250): the card says which rung of the fallback
             ladder these minutes came off. The server derives it from the
             certified record; this screen only forwards it. */}
@@ -574,10 +623,18 @@ export default function LayoverDashboardScreen() {
               disabled={reminderBusy}
               testID="layover-remind-me"
             >
-              {overview.returnReminderAt
+              {/* A stale reminder is NOT a set reminder. The green bell and the
+                  words "Reminder set" were the screen's assertion that a
+                  warning was in place, and it kept making it after the flight
+                  moved out from under it (census L265). */}
+              {overview.returnReminderAt && !reminderStale
                 ? <BellRing size={17} color={color.success} />
-                : <Bell size={17} color={color.ink} />}
-              <Text style={styles.footerBtnText}>{overview.returnReminderAt ? 'Reminder set' : 'Remind me'}</Text>
+                : <Bell size={17} color={reminderStale ? color.signal : color.ink} />}
+              <Text style={[styles.footerBtnText, reminderStale && { color: color.signal }]}>
+                {reminderStale
+                  ? 'Reminder out of date'
+                  : overview.returnReminderAt ? 'Reminder set' : 'Remind me'}
+              </Text>
             </Pressable>
           )}
           <Pressable style={styles.footerBtn} onPress={handleTelegraph}>
@@ -668,6 +725,9 @@ const styles = StyleSheet.create({
   footerBtnDim: { opacity: 0.55 },
   footerBtnText: { ...t.small, fontWeight: '700', color: color.ink },
 
+  driftCard:  { backgroundColor: '#FFF4E5', borderRadius: radius.md, padding: space.md, marginHorizontal: space.xl, marginBottom: space.md, gap: 4 },
+  driftTitle: { ...t.small, fontWeight: '700', color: color.ink },
+  driftBody:  { ...t.small, color: color.mute },
   toast:     { position: 'absolute', left: space.xl, right: space.xl, backgroundColor: color.ink, borderRadius: radius.md, padding: space.md, alignItems: 'center' },
   toastText: { ...t.small, color: color.onInk, fontWeight: '600' },
 });

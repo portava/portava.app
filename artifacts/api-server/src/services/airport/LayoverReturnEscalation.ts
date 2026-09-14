@@ -56,7 +56,7 @@ import type {
   NotificationChannel,
   NotificationPriority,
 } from "../notifications/NotificationTemplateService.js";
-import type { LayoverReturnState } from "./LayoverSafetyEngine.js";
+import { RETURN_SOON_LEAD_MIN, type LayoverReturnState } from "./LayoverSafetyEngine.js";
 
 /** The four rung levels, in order. Exported so a caller can bound-check one. */
 export const ESCALATION_LEVELS = [0, 1, 2, 3] as const;
@@ -196,5 +196,153 @@ export function returnNotificationPosture(state: LayoverReturnState): ReturnNoti
     deEmphasiseDiscovery: rung.deEmphasiseDiscovery,
     label: rung.label,
     delivery: "not_sent_here",
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §24 L265 / §11.1 L99 — the material-change threshold for a reminder already
+// scheduled
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * How far the certified deadline must move before an already-scheduled reminder
+ * is worth replacing, in minutes.
+ *
+ * ── WHY A THRESHOLD AT ALL, AND WHY FIVE ────────────────────────────────────
+ * census L265 asks for "material-change threshold + suppression/debounce". The
+ * debounce half was already real — the client cancels the previous local
+ * notification before scheduling a new one and never stacks them — and the
+ * threshold half did not exist, because nothing compared a scheduled reminder
+ * against the deadline it was scheduled for.
+ *
+ * Without a threshold, the correct-on-every-change rule is a storm: every
+ * `+15m` press, every re-certification that shifts a buffer by a minute, would
+ * cancel and re-raise a notification. With too large a threshold the reminder
+ * is quietly wrong. Five minutes is the smallest movement that changes what a
+ * traveller DOES — it is under the smallest shift the flight-change card offers
+ * (15 minutes), so every real edit crosses it, and above the sub-minute jitter
+ * that a re-certification at a different instant produces on its own.
+ */
+export const REMINDER_MATERIAL_DRIFT_MIN = 5;
+
+/**
+ * What should happen to a reminder the traveller already asked for.
+ *
+ * `none`       nothing is scheduled, or what is stored cannot be read
+ * `keep`       scheduled, still aligned — or drifted below the threshold
+ * `fired`      its moment has passed and the deadline has not materially moved
+ * `reschedule` the deadline moved materially; this is the instant to move it to
+ * `cancel`     it can no longer warn anybody, and moving it would be a lie
+ */
+export type ReminderAction = "none" | "keep" | "fired" | "reschedule" | "cancel";
+
+export interface ReminderDisposition {
+  action: ReminderAction;
+  /** A stable token, never a sentence — clients render their own words. */
+  reason:
+    | "no_reminder_scheduled"
+    | "reminder_unreadable"
+    | "aligned"
+    | "below_material_threshold"
+    | "already_fired"
+    | "deadline_moved"
+    | "deadline_moved_after_fire"
+    | "rung_already_passed"
+    | "deadline_passed";
+  /**
+   * Minutes the certified deadline has moved relative to the moment this
+   * reminder was scheduled against. POSITIVE means the flight went later, so
+   * the reminder now fires too early; NEGATIVE means it was brought forward and
+   * the reminder fires too late — the direction that costs a traveller warning
+   * time rather than giving them extra.
+   */
+  driftMinutes: number;
+  /** Whether that drift crossed `REMINDER_MATERIAL_DRIFT_MIN`. */
+  materialChange: boolean;
+  /** The instant to schedule at, or null when there is nothing to schedule. */
+  firesAt: string | null;
+  /** The instant currently stored, so a surface can say what it is replacing. */
+  staleFiresAt: string | null;
+  /** The §15 rung now in force. Read from the ladder; never derived here. */
+  rung: ReturnNotificationPosture;
+}
+
+/**
+ * Decide, without sending anything.
+ *
+ * THE LEAD IS NOT A PARAMETER, AND THAT IS THE POINT. The one reminder this
+ * product schedules is set 30 minutes before the certified hard return, which
+ * is `RETURN_SOON_LEAD_MIN` — the same constant that puts the §15 ladder onto
+ * its RETURN_SOON rung. The reminder IS the RETURN_SOON warning, delivered by
+ * the only path this tree has, so the drift below is measured against the rung
+ * rather than against a number the caller passes in and could disagree about.
+ *
+ * `reminderAt` is what the SERVER stored (`layover_sessions.return_reminder_at`),
+ * not what the device holds. Those can disagree — a device that was offline
+ * when the schedule failed is a separate gap, named in this lane's report — and
+ * this function answers about the stored one, which is what every surface
+ * reads when it renders "Reminder set".
+ */
+export function reminderDisposition(input: {
+  reminderAt: string | null;
+  hardReturnTime: Date;
+  returnState: LayoverReturnState;
+  nowMs: number;
+}): ReminderDisposition {
+  const { reminderAt, hardReturnTime, returnState, nowMs } = input;
+  const rung = returnNotificationPosture(returnState);
+  const base = { driftMinutes: 0, materialChange: false, firesAt: null, staleFiresAt: null, rung };
+
+  if (!reminderAt) return { ...base, action: "none", reason: "no_reminder_scheduled" };
+  const storedMs = Date.parse(reminderAt);
+  if (!Number.isFinite(storedMs)) {
+    // A stored value nobody can read is not a reminder at a default time. It is
+    // an unknown, and guessing one here would put a notification on a
+    // traveller's phone at an instant no certified record produced.
+    return { ...base, action: "none", reason: "reminder_unreadable" };
+  }
+
+  const deadlineMs = hardReturnTime.getTime();
+  const correctMs = deadlineMs - RETURN_SOON_LEAD_MIN * 60_000;
+  const driftMinutes = Math.round((correctMs - storedMs) / 60_000);
+  const materialChange = Math.abs(driftMinutes) >= REMINDER_MATERIAL_DRIFT_MIN;
+  const staleFiresAt = new Date(storedMs).toISOString();
+
+  // A deadline that has already passed cannot be warned about. This is checked
+  // before the threshold: a reminder for a flight that has gone is wrong by
+  // more than a number of minutes.
+  if (deadlineMs <= nowMs) {
+    return { ...base, action: "cancel", reason: "deadline_passed", driftMinutes, materialChange, staleFiresAt };
+  }
+
+  if (!materialChange) {
+    if (storedMs <= nowMs) {
+      return { ...base, action: "fired", reason: "already_fired", driftMinutes, staleFiresAt };
+    }
+    return {
+      ...base,
+      action: "keep",
+      reason: driftMinutes === 0 ? "aligned" : "below_material_threshold",
+      driftMinutes,
+      staleFiresAt,
+    };
+  }
+
+  // Material, but the warning it would carry is already spent: "start heading
+  // back in thirty minutes" is not something to say to somebody who should have
+  // left. The ladder's own rung is what speaks at that point, and it is on the
+  // answer above.
+  if (correctMs <= nowMs) {
+    return { ...base, action: "cancel", reason: "rung_already_passed", driftMinutes, materialChange: true, staleFiresAt };
+  }
+
+  return {
+    ...base,
+    action: "reschedule",
+    reason: storedMs <= nowMs ? "deadline_moved_after_fire" : "deadline_moved",
+    driftMinutes,
+    materialChange: true,
+    firesAt: new Date(correctMs).toISOString(),
+    staleFiresAt,
   };
 }

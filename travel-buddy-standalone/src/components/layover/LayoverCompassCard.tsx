@@ -89,8 +89,9 @@ export function LayoverCompassCard({ sessionId, timezone }: Props) {
   // local narrowing rather than through `CompassAnswer`, because that type
   // lives in `services/layover.ts`, which this lane does not own; an older
   // server that does not publish the member renders no line at all.
-  const toolsConsulted = Array.isArray((answer as { toolsConsulted?: unknown } | null)?.toolsConsulted)
-    ? ((answer as { toolsConsulted: unknown[] }).toolsConsulted.filter((x) => typeof x === 'string') as string[])
+  const consultedRaw = (answer as unknown as { toolsConsulted?: unknown } | null)?.toolsConsulted;
+  const toolsConsulted = Array.isArray(consultedRaw)
+    ? consultedRaw.filter((x): x is string => typeof x === 'string')
     : [];
 
   return (
