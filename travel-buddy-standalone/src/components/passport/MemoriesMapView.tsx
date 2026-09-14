@@ -21,7 +21,7 @@ const _ml: any = (() => { try { return require('@maplibre/maplibre-react-native'
 const { Map, Camera, Marker } = _ml as typeof import('@maplibre/maplibre-react-native');
 import { MapPin } from 'lucide-react-native';
 import { color, space, radius, type as t, avatar } from '../../theme/tokens.ts';
-import { MAP_STYLE_URL as MAP_STYLE } from '../../constants/mapStyle.ts';
+import { MAP_STYLE_URL, FALLBACK_MAP_STYLE_URL } from '../../constants/mapStyle.ts';
 import type { PassportMemory } from '../../services/passportStamps.ts';
 import type { TripRow } from '../../services/trips.ts';
 import { buildMemoryMap } from './memoryViews.ts';
@@ -34,6 +34,10 @@ export interface MemoriesMapViewProps {
 export function MemoriesMapView({ memories, trips = [] }: MemoriesMapViewProps) {
   const { pins, unplotted } = useMemo(() => buildMemoryMap(memories, trips), [memories, trips]);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  // Style is STATE, not a constant, so onDidFailLoadingMap can swap to the
+  // fallback provider — the safety net src/constants/mapStyle.ts documents and
+  // src/constants/mapStyleUsage.test.ts requires of every map surface.
+  const [mapStyle, setMapStyle] = useState<string>(MAP_STYLE_URL);
   const selected = pins.find((p) => p.key === selectedKey) ?? null;
 
   if (pins.length === 0) {
@@ -55,7 +59,11 @@ export function MemoriesMapView({ memories, trips = [] }: MemoriesMapViewProps) 
   return (
     <View style={s.root} testID="memories-map-view">
       <View style={s.mapWrap}>
-        <Map mapStyle={MAP_STYLE} style={{ flex: 1 }}>
+        <Map
+          mapStyle={mapStyle}
+          style={{ flex: 1 }}
+          onDidFailLoadingMap={() => { if (mapStyle !== FALLBACK_MAP_STYLE_URL) setMapStyle(FALLBACK_MAP_STYLE_URL); }}
+        >
           <Camera />
           {pins.map((pin) => (
             <Marker key={pin.key} lngLat={[pin.lng, pin.lat]}>

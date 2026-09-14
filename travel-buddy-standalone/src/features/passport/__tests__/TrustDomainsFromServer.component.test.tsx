@@ -33,7 +33,7 @@ import React from 'react';
 import { render, screen } from '@testing-library/react-native';
 import TrustScreen from '../TrustScreen.tsx';
 import { deriveTrustView, type TrustProjectionEnvelope } from '../useTrustProjection.ts';
-
+// NOTE: intentionally exhaustive — TrustScreen uses only router.push/back; the real module pulls navigation state this suite does not mount.
 jest.mock('expo-router', () => ({
   router: { push: jest.fn(), back: jest.fn() },
 }));
@@ -42,11 +42,11 @@ jest.mock('react-native-safe-area-context', () => ({
   ...jest.requireActual('react-native-safe-area-context'),
   useSafeAreaInsets: () => ({ top: 44, bottom: 34, left: 0, right: 0 }),
 }));
-
+// NOTE: intentionally exhaustive — the real SessionContext provider starts auth + storage work on mount; TrustScreen reads only useSession().
 jest.mock('../../../context/SessionContext', () => ({
   useSession: () => ({ userId: 'me', isAuthed: true }),
 }));
-
+// NOTE: intentionally exhaustive — apiToken reaches Supabase for a live token; null keeps the screen on the fetch path this suite exercises.
 jest.mock('../../../services/apiToken', () => ({
   freshToken: jest.fn(async () => null),
 }));
