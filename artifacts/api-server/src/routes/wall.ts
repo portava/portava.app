@@ -1271,7 +1271,7 @@ router.post(
     const viewer = await loadViewerContext(sc, user.id);
     const intent = await parseIntent(sc, user.id, parsed.data.text, { city: viewer.currentCity });
     await setStoredIntent(sc, user.id, intent, parsed.data.text);
-    res.status(200).json({ sessionIntent: intent });
+    res.status(200).json({ sessionIntent: intent, intentResolution: intent.resolution }); // W71: see IntentResolution
   }),
 );
 

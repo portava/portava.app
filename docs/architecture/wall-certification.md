@@ -242,7 +242,7 @@ projectObjects" (`:443`) proves the merged set still passes §23.
 account deletion keeps an anonymised tombstone profile rather than deleting the
 `profiles` row, so the cascade never fires. Rows — including the `raw_text` echo
 of what the user typed (`2271_wall_session_intents.sql:40-42`,
-`WallSessionIntentService.ts:207`) — survived deletion as orphaned personal data.
+`WallSessionIntentService.ts:345`) — survived deletion as orphaned personal data.
 Fix: an explicit, audited, user-scoped delete step `delete_wall_session_intent`
 (`services/accountDeletion/AccountDeletionService.ts:1068`), classified in
 `lib/deletionDispositions.ts:127,443`. Test:
@@ -464,7 +464,7 @@ piece absent. **MISSING** = absent. *No section is MISSING.*
    `services/wallAnalytics.ts` events carry only `objectId`/`objectType`/enums/
    counts; server mutation payloads are ids + verb only
    (`services/wallApi.ts:248-263`); session intent stores the *structured* intent
-   plus a bounded echo, never a transcript (`WallSessionIntentService.ts:35,102,207`;
+   plus a bounded echo, never a transcript (`WallSessionIntentService.ts:36,199,345`;
    `2271_wall_session_intents.sql:15,40-42`). **Strengthened by `#342`:** that
    echo is now deleted with the account (§5.3). Test:
    `WallFeedAnalytics.component.test.tsx:138` ("signals the server (ids only)").

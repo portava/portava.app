@@ -68,7 +68,7 @@ export type FetchQuickMediaResult =
   | { ok: false; error: string };
 
 export type SessionIntentResult =
-  | { ok: true; sessionIntent: StructuredIntent }
+  | { ok: true; sessionIntent: StructuredIntent; resolution: IntentResolution | null } // W71
   | { ok: false; error: string; disabled?: boolean };
 
 /** A safe, empty response — used for "not configured", "disabled", parse fail. */
@@ -241,9 +241,9 @@ export async function setSessionIntent(text: string): Promise<SessionIntentResul
       const code = await readErrorCode(res);
       return { ok: false, error: code, disabled: code === 'feature_disabled' };
     }
-    const body = (await res.json()) as { sessionIntent?: StructuredIntent };
+    const body = (await res.json()) as { sessionIntent?: StructuredIntent; intentResolution?: string };
     if (!body.sessionIntent) return { ok: false, error: 'malformed_response' };
-    return { ok: true, sessionIntent: body.sessionIntent };
+    return { ok: true, sessionIntent: body.sessionIntent, resolution: readIntentResolution(body.intentResolution) }; // W71
   } catch (err: any) {
     return { ok: false, error: err?.message ?? 'Network error' };
   }
@@ -365,4 +365,43 @@ export async function sendAction(
     action,
     ...(target.session ? { session: target.session } : {}),
   });
+}
+
+// ── W71: the four outcomes of a session-intent parse ─────────────────────────
+//
+// APPENDED AT THE END OF THIS FILE ON PURPOSE. `docs/architecture/census-wall.md`
+// cites this file by LINE NUMBER, and inserting these declarations next to the
+// code that uses them silently moved four of those pointers. Everything new
+// goes below the last pre-existing export so no existing citation shifts. That
+// is not tidiness: a census pointer that has quietly slid a few lines is
+// indistinguishable from one that was always wrong.
+
+/**
+ * Which of the four outcomes produced the server's interpretation (Wall §17 /
+ * census W71). `engine_unavailable` is an OUTAGE of the shared Global Input
+ * Intelligence engine: the request succeeded, the steer still applies, and
+ * NOTHING was established about what the user said. It must never be rendered
+ * as "nothing matched" — that reports an outage as a fact about the user.
+ */
+export type IntentResolution =
+  | 'resolved'
+  | 'resolved_no_entities'
+  | 'no_text'
+  | 'engine_unavailable';
+
+const KNOWN_INTENT_RESOLUTIONS: readonly string[] = [
+  'resolved',
+  'resolved_no_entities',
+  'no_text',
+  'engine_unavailable',
+];
+
+/**
+ * An unrecognised or absent value becomes null — "the server did not say" —
+ * never a verdict. A server older than this field says nothing, and inventing
+ * `resolved_no_entities` on its behalf would put words in its mouth about the
+ * user's words.
+ */
+function readIntentResolution(raw: string | undefined): IntentResolution | null {
+  return KNOWN_INTENT_RESOLUTIONS.includes(raw ?? '') ? (raw as IntentResolution) : null;
 }
