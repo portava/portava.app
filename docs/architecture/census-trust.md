@@ -1152,11 +1152,19 @@ would make the next reader believe a policy exists.
 
 ### 14.4 D-OVERRIDE — what the code does, the two candidate semantics, and what differs observably
 
+> **SUPERSEDED IN PART BY §15 (LAST-STATEMENT-WINS).** The owner has since RULED — **CAP now,
+> PIN later behind a flag** — and the defect this section describes in its third bullet
+> ("never lands at all — there is no window in which it was true") is CORRECTED there: it is
+> true only while `recalculateTrustScore` succeeds. The five observable differences, the two
+> candidate semantics and the four characterization mutations below all still stand and none
+> of their assertions moved. Read §15 for the ruling, the corrected defect and what is
+> deliberately left as later work.
+
 C22 stays **W**. This section does not choose; it makes the choice cheap to make by stating the
 before-state precisely and pinning it in tests, so that converting one semantics into the other
 cannot happen by accident.
 
-**What the code does today.** `services/trust/TrustAdminService.ts:303#const cap = await createCap(db, {` writes a
+**What the code does today.** `services/trust/TrustAdminService.ts:362#const cap = await createCap(db, {` writes a
 `trust_caps` row with `ceiling_score = newScore` and `reason_code = 'admin_override'`. It then
 upserts `trust_profiles` directly "for immediate effect" — and on its own next line awaits
 `recalculateTrustScore`, which recomputes from events and overwrites that upsert before the
@@ -1314,3 +1322,160 @@ a production measurement by its own wording), and **eight rows in files owned by
 Two were code, and both are now written. The honest reading of 77.4 % is not that the surface is
 three-quarters finished; it is that the buildable part is nearly exhausted and the rest is
 waiting on people, not on engineering.
+
+---
+
+## 15. D-OVERRIDE RULED — **CAP now, PIN later behind a flag** — and the one defect that ruling exposed
+
+This section supersedes §14.4's third bullet under LAST-STATEMENT-WINS. Nothing else in §14.4
+moves: the five observable differences, the two candidate semantics and the four characterization
+mutations O1–O4 all still hold, and not one of their assertions was rewritten — which is what the
+ruling ratifying today's semantics is supposed to look like.
+
+### 15.1 The ruling
+
+> **CAP now, PIN later behind a flag.** Fix the lost upsert so the ceiling actually persists, ship
+> that, and keep the relief case as separate later work rather than widening this change.
+
+So, settled, for D-OVERRIDE's first clause: **an admin score override is a CEILING.** The admin
+sets a maximum; events move the category below it; nothing lifts it above. An admin can
+**withhold** standing and cannot **grant** it. Of the three follow-on clauses, exactly one is
+answered and two are explicitly deferred — see §15.5, which names each, says what it would take,
+and is written so the follow-up is a read-and-build rather than a rediscovery.
+
+### 15.2 The defect, RE-VERIFIED — and §14.4's description of it was wrong in the direction that mattered
+
+§14.4 asserted that an upward override "never lands at all — not 'does not persist': there is no
+window in which it was true." **That is true only while `recalculateTrustScore` succeeds**, and it
+is the statement that hid the real defect. Re-executed at this tree, against a client whose
+`trust_events` read returns a database error:
+
+| | before the fix | after |
+|---|---|---|
+| `adminOverrideScore(admin, u, respect_safety, 90)` returns | `{ ok: true }` | **rejects** — `recalculateTrustScore: trust_events read failed` |
+| `trust_profiles.respect_safety` (a `behavior_confirmed` ceiling of 40 stands) | **90** | **40** |
+| `trust_profiles.overall_score` on the same row | 48.5 — describing the OLD score | 48.5, still agreeing with the category |
+| `trust_admin_actions` rows with `action_type='score_override'` | **1**, recording an override the engine never applied | **0** |
+
+`recalculateTrustScore` is deliberately FAIL-CLOSED (`services/trust/TrustScoreService.ts:159#recalculateTrustScore: trust_events read failed for`),
+and `adminOverrideScore` swallowed that throw with `.catch(() => {})` — **after** writing the
+admin's raw number straight into `trust_profiles` "for immediate effect". So:
+
+* On the **success** path the raw write is dead. The recalculation overwrites it, which is what
+  §14.4 measured and correctly described.
+* On the **failure** path the raw write **stood, permanently**. An upward 90 against a
+  `behavior_confirmed` ceiling of 40 therefore granted exactly the relief the ruling says an admin
+  does not have — bypassing `loadCaps`' `Math.min` entirely rather than losing to it
+  (`services/trust/TrustScoreService.ts:186#caps[row.category] = cur !== undefined ? Math.min(cur, row.ceiling_score) : row.ceiling_score;`).
+  The row was left internally inconsistent (a category value no `overall_score` or `public_level`
+  on it corresponds to), the admin was told `{ ok: true }`, and the audit log — the one record
+  whose whole purpose is to be trustworthy — recorded it as applied.
+* And in the case the ruling actually cares about, a **downward** ceiling on that same path never
+  reached `trust_profiles.overall_score` at all — the weighted number that gates event RSVPs and
+  ranks the buddy marketplace and Pulse. Nothing retries it.
+
+**So "an override does not land" was the wrong diagnosis and would have produced the wrong fix.**
+A downward ceiling always landed and always survived recalculation; that half was never broken and
+`test/trust-integration.test.ts`'s "an override BELOW the natural score survives recalculation" has
+been green throughout. What was broken is that whether the ceiling reached the score was never
+checked, and a failure was reported and audited as a success.
+
+### 15.3 What was changed — one function, and nothing else
+
+`services/trust/TrustAdminService.ts:362#const cap = await createCap(db, {` still writes the
+`trust_caps` ceiling exactly as before; the cap row IS the durable ceiling and it is unchanged.
+What changed, in `adminOverrideScore` alone:
+
+1. **The raw `trust_profiles` upsert is gone.** `recalculateTrustScore` is now the only writer of a
+   scored column, so no number reaches a category without passing through `loadCaps`' `Math.min`.
+2. **The recalculation's failure is no longer swallowed** —
+   `services/trust/TrustAdminService.ts:371#const recalculated = await recalculateTrustScore(db, targetUserId);`
+   — the same rule `confirmEvent`, `dismissEvent` and `adminResolveReview` already apply to their
+   own transitions. No `score_override` audit row is written for an override the engine did not
+   apply. The cap row is deliberately NOT rolled back: it is the ceiling, and the next successful
+   recalculation applies it.
+3. **The persisted value is READ BACK, not computed** —
+   `services/trust/TrustAdminService.ts:374#const read = await getTrustProfileResult(db, targetUserId);`
+   and `services/trust/TrustAdminService.ts:381#const persistedScore = Number((read.profile.categories as Record<string, unknown>)[category]);`
+   — because `recalculateTrustScore` persists non-fatally: it logs and returns the computed result
+   even when its own upsert failed. Returning the computed number would be this function asserting
+   a persist it had not observed. A persisted value above the ceiling now throws.
+4. **The result and the audit row say what HAPPENED.** `adminOverrideScore` returns
+   `{ ok, category, persistedScore, ceilingBinding }` and logs the same, where `ceilingBinding`
+   (`services/trust/TrustAdminService.ts:391#const ceilingBinding =`) is true only when the admin's
+   number is what is holding the score down — false when the natural score already sits below it,
+   and false when a LOWER ceiling (a moderation cap, another admin's override) is the binding one.
+   **An upward override reads `false`.** That is CAP semantics reported out loud instead of applied
+   silently, and it is the whole of what this change gives an admin that they did not have.
+
+**No scoring parameter was touched.** The nine weights, six level thresholds, 90-day half-life,
+365-day window, earn/lose asymmetry and fifty per-event deltas are untouched and unratified, and
+`services/trust/TrustScoreService.ts` is byte-identical to its state before this pass. **No
+observable score arising from them changes**: on every path where the recalculation succeeds, the
+number persisted before and after this change is the same number.
+
+### 15.4 The test, and the mutations that turn it red
+
+`src/test/trust-integration.test.ts:1446#describe("D-OVERRIDE: the ceiling the owner ruled for must PERSIST"` —
+three cases, appended to an already-registered suite. **GREEN 67/67 → 70/70**, and all three were
+**RED before the fix** (the third with `Missing expected rejection`, i.e. the false success itself).
+
+| # | case | what it asserts |
+|---|---|---|
+| 1 | `src/test/trust-integration.test.ts:1472#it("a downward ceiling reaches trust_profiles, and the call REPORTS that it bound"` | the ceiling is on the row, `overall_score` fell with it, and `ceilingBinding` is true |
+| 2 | `src/test/trust-integration.test.ts:1500#it("an UPWARD override reports that it bound NOTHING — CAP semantics, said out loud"` | `persistedScore` is the natural score and `ceilingBinding` is **false**, in the result AND in the audit metadata |
+| 3 | `src/test/trust-integration.test.ts:1522#it("a failed recalculation leaves NO raw admin number on the row, and is never audited as applied"` | **the defect.** With `trust_events` unreadable: rejects, no raw number on the row, the row stays internally consistent, zero `score_override` audit rows, and the cap row stands |
+
+Four mutations, each run and each **RED**:
+
+| id | mutation | goes red |
+|---|---|---|
+| P1 | restore the raw `trust_profiles` upsert before the recalculation | case 3 |
+| P2 | swallow the recalculation failure again (`.catch(() => {})`) | case 3 |
+| P3 | report `ceilingBinding` unconditionally `true` | case 2 |
+| P4 | invert the ceiling comparison in `recalculateTrustScore` (`services/trust/TrustScoreService.ts:318#if (caps[cat] !== undefined && score > caps[cat]) {` → `<`) — reverted immediately; the file is unchanged | cases 1 and 2 |
+
+P4 exists because P1–P3 leave case 1 green whatever they do to the implementation, and a case that
+cannot fail is worse than no case (§LANE-RULES 4). It also demonstrates that case 1 measures the
+ceiling actually binding, not merely a field being returned.
+
+### 15.5 DELIBERATELY NOT BUILT — later work, behind a flag that does not exist yet
+
+Each of these was in scope for the question and is out of scope for this change by the owner's
+words. **None of them is built and the flag is NOT created.** Named here with what each would take
+so the follow-up is a read-and-build:
+
+| name | what it is | what it would take |
+|---|---|---|
+| **PIN semantics** | the admin's number IS the score until lifted; events stop moving that category; an admin can GRANT standing, not only withhold it | a `floor_score` column on `trust_caps` (a migration the integration owner must number), a second fold in `TrustScoreService.loadCaps` beside the `Math.min` at `services/trust/TrustScoreService.ts:186#caps[row.category] = cur !== undefined ? Math.min(cur, row.ceiling_score) : row.ceiling_score;`, and a `Math.max` applied AFTER the ceiling in `recalculateTrustScore`. §14.4's five-row table is the rewrite list: each row names the assertion that must change by name |
+| **Relief from a moderation ceiling** | an admin override taking precedence over a `behavior_confirmed` cap in the same category | the `Math.min` fold above becoming reason-code aware. **NOT a `Math.max` swap** — that is mutation O2 and it would let ANY cap lift a score. Needs the authority question answered first: today an admin cannot grant relief and §14.4 records that as intended, not accidental |
+| **Expiry** | a review date on an override | `adminOverrideScore` passing an `expiresAt` to `createCap`. The sweeper already handles it (`expireOldCaps` filters `expires_at < now`) and cannot sweep the null this function writes. Mutation O1 pins today's permanence |
+| **Two admins overriding each other** | whose override wins, and whose removal clears whose | today: ceilings fold with `Math.min` so the LOWER wins regardless of who set it or when, and `adminRemoveOverride` lifts every active `admin_override` in the category, so one admin's removal clears another's. Mutation O4 pins the removal half. Needs a rule before it needs code |
+
+A fifth item, not a semantics question but the reason none of this is urgent: **`adminOverrideScore`
+and `adminRemoveOverride` are still unwired to any route.** Re-confirmed at this tree by grep over
+the whole package — their only callers are `services/trust/` and the test suite. The
+`score_override` string in `routes/trust-admin.ts` belongs to the trust-settings audit write, not to
+an override endpoint.
+
+### 15.6 Rows examined, and what moved
+
+| id | before | after | why |
+|---|---|---|---|
+| C22 | W | **W** | **Part closed, and it is the part the owner settled.** The semantics question is ANSWERED (CAP), the defect it hid is fixed, and three cases plus four red mutations pin it. What keeps the row `W` is unchanged by any of that: **the behaviour is not wired to a reachable caller** — no route calls `adminOverrideScore`, so no admin can perform an override at all, and §LANE-RULES 5 requires a reachable caller before a `W → C`. **What would settle it:** a `POST /admin/trust/users/:userId/score-override` on `routes/trust-admin.ts` behind `requireAdmin`, plus a route test asserting the ceiling on the row. Deliberately not built here — the ruling scoped this change to one defect. Turns red if any of cases 1–3 or the four §14.4 characterization assertions starts failing |
+| TRV2-10 | CV | **CV** | Untouched. D-REVERSAL is a different decision and this change reverses nothing |
+| A6, TV-*, TRV2-08 | — | unchanged | Not examined; nothing in this change reaches them |
+
+**No headline moves.** §14.8's 93 · 72 · 14 · 6 · 1 stands exactly as written: no row changed
+verdict, because a decision plus a defect fix on an unwired function is not a constructed
+requirement. Improving the percentage here would mean grading a route that does not exist.
+
+### 15.7 What would turn THIS section's claims red
+
+* Case 3 passing against the pre-fix `adminOverrideScore` — it does not; it fails with
+  `Missing expected rejection`.
+* A `trust_profiles` write appearing anywhere in `adminOverrideScore` again — P1.
+* `adminOverrideScore` resolving when its recalculation threw — P2.
+* A route calling `adminOverrideScore` appearing without C22 being re-graded.
+* Any of the nine weights, six thresholds, the half-life or the window differing from §14.3's
+  inventory — they do not; `TrustScoreService.ts` carries no diff from this pass.

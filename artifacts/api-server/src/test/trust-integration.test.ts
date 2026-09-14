@@ -1415,6 +1415,160 @@ describe("D-OVERRIDE precedence, expiry and removal — characterization, not a 
   });
 });
 
+// ── D-OVERRIDE, part 3: THE OWNER RULED — CAP NOW, and the ceiling must PERSIST ──
+//
+// census-trust §14.4 asked one question and the owner answered it: **CAP now,
+// PIN later behind a flag.** An admin override is a MAXIMUM. It withholds
+// standing and cannot grant it; it does not take precedence over a moderation
+// ceiling; it does not expire; and PIN semantics (a floor column, an upward
+// override, a relief path) is named as later work and is NOT built.
+//
+// The parts 1 and 2 blocks above pin the semantics and stay exactly as they
+// were — the ruling ratified them, so not one of those assertions moves. What
+// the ruling DID change is one defect, and it is not the one the census cell
+// described. The cell said an upward override "never lands at all — there is no
+// window in which it was true". That is right only while `recalculateTrustScore`
+// SUCCEEDS. It is fail-closed by design (an unreadable trust_settings,
+// trust_events or trust_caps makes it THROW and write nothing), the throw was
+// swallowed by `.catch(() => {})`, and `adminOverrideScore` wrote the admin's
+// raw number into `trust_profiles` BEFORE it. So on that path the raw number did
+// not merely land — it STAYED, uncapped by anything, on a row whose
+// `overall_score` and `public_level` still described the old score, while the
+// admin was told `{ ok: true }` and a `score_override` audit row recorded an
+// override the engine had never applied.
+//
+// That is the reverse of a cap: an upward 90 against a `behavior_confirmed`
+// ceiling of 40 granted, permanently, exactly the relief the ruling says an
+// admin does not have today. The fix is the narrow one the ruling asked for:
+// the raw write is gone, `recalculateTrustScore` is the only writer of a scored
+// column, its failure is no longer swallowed, and the persisted value is READ
+// BACK so "the ceiling is in force" is a measurement rather than a claim.
+describe("D-OVERRIDE: the ceiling the owner ruled for must PERSIST", () => {
+  // A client that answers one table with a database error, everything else
+  // normally. supabase-js RESOLVES on a database error, which is the shape the
+  // fail-closed loaders in TrustScoreService are written against.
+  function unreadable(table: string): any {
+    const error = { message: `${table} unreadable (injected)`, code: "57014" };
+    const b: any = {};
+    for (const m of ["select", "insert", "upsert", "update", "delete", "eq", "in",
+                     "is", "gt", "lt", "not", "or", "order", "limit", "range"]) {
+      b[m] = () => b;
+    }
+    b.maybeSingle = async () => ({ data: null, error });
+    b.single      = async () => ({ data: null, error });
+    b.then = (onF: any, onR: any) =>
+      Promise.resolve({ data: null, error, count: null }).then(onF, onR);
+    return b;
+  }
+
+  function makeClientWithUnreadableTable(tables: FakeTables, table: string): any {
+    const real = makeTrustClient(tables);
+    return {
+      ...real,
+      from: (t: string) => (t === table ? unreadable(table) : real.from(t as any)),
+    };
+  }
+
+  it("a downward ceiling reaches trust_profiles, and the call REPORTS that it bound", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+    for (let i = 0; i < 5; i++) {
+      await db.from("trust_events").insert({
+        user_id: USER_A, event_type: "PLAN_ATTENDED", category: "plan_attendance",
+        delta: 10, severity: "minor", status: "applied", source_type: "user_action",
+      });
+    }
+    const before = await recalculateTrustScore(db, USER_A);
+    assert.ok(before.categories.plan_attendance > 20,
+      `fixture must earn a natural score well above the ceiling; got ${before.categories.plan_attendance}`);
+
+    const result = await adminOverrideScore(db, ADMIN, USER_A, "plan_attendance", 20, "Watchlist");
+
+    // The measurement, not the computation: read the row.
+    const persisted = tables.trust_profiles.find((r: any) => r.user_id === USER_A) as any;
+    assert.equal(persisted.plan_attendance, 20,
+      "the ceiling survives adminOverrideScore's own recalculation");
+    assert.ok(Number(persisted.overall_score) < Number(before.overall_score),
+      `the ceiling reached the weighted number the product gates on; ${persisted.overall_score} vs ${before.overall_score}`);
+
+    // And the caller is TOLD what happened, rather than told `{ ok: true }` and
+    // left to read the table to find out.
+    assert.equal(result.persistedScore, 20, "persistedScore is read back from trust_profiles");
+    assert.equal(result.ceilingBinding, true, "the admin's number is what is holding the score down");
+  });
+
+  it("an UPWARD override reports that it bound NOTHING — CAP semantics, said out loud", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+    await db.from("trust_events").insert({
+      user_id: USER_B, event_type: "PLAN_NO_SHOW", category: "plan_attendance",
+      delta: -20, severity: "minor", status: "applied", source_type: "user_action",
+    });
+    const natural = (await recalculateTrustScore(db, USER_B)).categories.plan_attendance;
+
+    const result = await adminOverrideScore(db, ADMIN, USER_B, "plan_attendance", 90, "Upward");
+
+    // Unchanged from the characterization block above: a cap is not a pin, and
+    // the ruling ratified that. What is new is that the admin is no longer told
+    // "ok" about a number that did nothing.
+    assert.equal(result.persistedScore, natural, "the natural score stands");
+    assert.equal(result.ceilingBinding, false, "an upward override withholds nothing, and says so");
+    const audit = tables.trust_admin_actions.find((a: any) => a.action_type === "score_override") as any;
+    assert.equal(audit?.metadata?.ceilingBinding, false,
+      "the audit records what HAPPENED, not what was asked for");
+  });
+
+  // ── THE DEFECT ────────────────────────────────────────────────────────────
+  it("a failed recalculation leaves NO raw admin number on the row, and is never audited as applied", async () => {
+    const tables = makeTables();
+    const seed = makeTrustClient(tables);
+
+    // A confirmed serious finding has capped respect_safety at 40, and the
+    // persisted profile reflects that ceiling.
+    await createCap(seed, {
+      userId: USER_A, category: "respect_safety", ceilingScore: 40,
+      reasonCode: "behavior_confirmed", sourceEventId: "evt-serious-2",
+    });
+    tables.trust_profiles.push({
+      user_id: USER_A, overall_score: 48.5, public_level: "reliable_traveler",
+      plan_attendance: 50, host_quality: 50, communication: 50, respect_safety: 40,
+      location_honesty: 50, content_quality: 50, community_value: 50,
+      guide_accuracy: 50, passport_authenticity: 50,
+      on_probation: false, probation_ends_at: null,
+      last_recalculated_at: new Date().toISOString(),
+    });
+
+    // trust_events cannot be read, so recalculateTrustScore is fail-closed and
+    // throws — the exact state its own header says must write nothing.
+    const db = makeClientWithUnreadableTable(tables, "trust_events");
+
+    await assert.rejects(
+      () => adminOverrideScore(db, ADMIN, USER_A, "respect_safety", 90, "Restoring standing"),
+      /trust_events read failed|did not take effect|NOT confirmed/,
+      "an override whose recalculation did not happen must not be reported as applied",
+    );
+
+    const persisted = tables.trust_profiles.find((r: any) => r.user_id === USER_A) as any;
+    // THE ASSERTION THAT WAS RED. The raw upsert used to write 90 here and the
+    // swallowed throw used to leave it standing: an admin granting themselves
+    // relief from a moderation ceiling, permanently, by accident.
+    assert.equal(persisted.respect_safety, 40,
+      "no raw admin number is written to a scored column — only a recalculation writes one");
+    assert.equal(persisted.overall_score, 48.5,
+      "and the row stays internally consistent: the category and the weighted number still agree");
+
+    assert.equal(
+      tables.trust_admin_actions.filter((a: any) => a.action_type === "score_override").length, 0,
+      "no audit row may claim an override the engine never applied",
+    );
+
+    // The ceiling itself is durable and is NOT rolled back: trust_caps is where
+    // it lives, and the next successful recalculation applies it.
+    const capRow = tables.trust_caps.find((c: any) => c.user_id === USER_A && c.reason_code === "admin_override") as any;
+    assert.equal(capRow?.ceiling_score, 90, "the cap row stands; only the claim of effect is withheld");
+  });
+});
+
 // ── D-REVERSAL (census-trust TRV2-10): what reversal does NOT reach today ─────
 //
 // TRV2-10 is this census's one CANNOT-VERIFY: its correctness is defined by

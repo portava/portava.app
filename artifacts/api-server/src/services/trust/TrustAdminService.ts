@@ -9,7 +9,7 @@ import { logger as rootLogger } from "../../lib/logger.js";
 import { affectedRows } from "../../lib/affectedRows.js";
 
 const logger = rootLogger.child({ service: "TrustAdminService" });
-import { recalculateTrustScore } from "./TrustScoreService.js";
+import { recalculateTrustScore, getTrustProfileResult } from "./TrustScoreService.js";
 import { createCap, liftCap } from "./TrustCapService.js";
 import { applyRestriction, liftRestriction, type RestrictionType } from "./TrustRestrictionService.js";
 import { setProbation } from "./TrustRecoveryService.js";
@@ -279,7 +279,76 @@ export async function adminLiftRestriction(
   return { ok: true };
 }
 
-/** Direct score override for a specific category */
+/**
+ * Direct score override for a specific category.
+ *
+ * ── THE OWNER'S RULING: CAP NOW, PIN LATER BEHIND A FLAG (census-trust §14.4) ──
+ *
+ * An admin override sets a CEILING. Events may move the category below it;
+ * nothing lifts it above. An admin can WITHHOLD standing and cannot GRANT it.
+ * `trust_caps` has only `ceiling_score` and `TrustScoreService.loadCaps` folds
+ * caps with `Math.min`, so an override BELOW the natural score binds and an
+ * override ABOVE it is inert — including against another cap: an admin cannot
+ * grant relief from a `behavior_confirmed` ceiling today, and that is the
+ * intended behaviour, not an accident. PIN semantics (a floor, an upward
+ * override, a relief path), an expiry and a two-admin precedence rule are named
+ * as LATER WORK in census-trust §14.4; none of them is built here.
+ *
+ * ── WHAT WAS WRONG, AND IT WAS NOT "the override does not land" ───────────────
+ *
+ * This function used to write the admin's raw number straight into
+ * `trust_profiles` "for immediate effect" and then recalculate. Both halves of
+ * that were defects, in opposite directions:
+ *
+ *   - On the SUCCESS path the raw write is dead. `recalculateTrustScore`
+ *     recomputes from events, applies the cap, and overwrites it before this
+ *     function returns. So the write bought nothing and made the reader believe
+ *     the persist came from here rather than from the ceiling.
+ *
+ *   - On the FAILURE path it is worse than dead, and this is the defect that
+ *     mattered. `recalculateTrustScore` is deliberately FAIL-CLOSED: an
+ *     unreadable `trust_settings`, `trust_events` or `trust_caps` makes it THROW
+ *     and write nothing. That throw was swallowed by `.catch(() => {})`. The raw
+ *     write then STOOD — a category value that no `overall_score` or
+ *     `public_level` on the same row corresponds to, and that no cap produced.
+ *     An upward override of 90 against a moderation ceiling of 40 therefore
+ *     granted exactly the relief the ruling says an admin does not have, wrote
+ *     it permanently, reported `{ ok: true }`, and filed a `score_override`
+ *     audit row saying the engine had applied it. Nothing retries: the score the
+ *     product actually gates on — `trust_profiles.overall_score` — never
+ *     received the ceiling at all.
+ *
+ * So the raw write is gone. The ceiling lives in `trust_caps`, which is durable,
+ * and the ONLY writer of a scored column is `recalculateTrustScore`. If the
+ * recalculation does not happen, this function says so instead of reporting a
+ * success — the same rule `confirmEvent`, `dismissEvent` and `adminResolveReview`
+ * already apply to their own transitions — and no audit row claims an override
+ * that the engine never applied.
+ *
+ * The cap row survives such a throw on purpose: it is the ceiling, and the next
+ * successful recalculation (a later admin action, the maintenance sweep) applies
+ * it. A retry writes a second `admin_override` row with the same ceiling, which
+ * folds to the same `Math.min` and is lifted by the same `adminRemoveOverride`.
+ *
+ * ── AND THE RESULT IS A MEASUREMENT, NOT A CLAIM ─────────────────────────────
+ *
+ * `persistedScore` is READ BACK from `trust_profiles` after the recalculation,
+ * because `recalculateTrustScore` persists non-fatally: it logs and returns the
+ * computed result even when its own upsert failed. Returning the computed number
+ * would be this function asserting a persist it had not observed.
+ *
+ *   persistedScore  — the category value now on the row.
+ *   ceilingBinding  — true only when the admin's number is what is holding the
+ *                     score down. False when the natural score already sits
+ *                     below it (nothing was withheld) and false when a LOWER
+ *                     ceiling — a moderation cap, or another admin's override —
+ *                     is the one binding. An upward override reads false, which
+ *                     is CAP semantics reported rather than silently applied.
+ *
+ * Pinned by `src/test/trust-integration.test.ts` — "D-OVERRIDE: adminOverrideScore
+ * caps, and a cap only binds downward" and "D-OVERRIDE: the ceiling the owner
+ * ruled for must PERSIST". Changing the answer must change those assertions.
+ */
 export async function adminOverrideScore(
   db: SupabaseClient,
   adminId: string,
@@ -287,19 +356,9 @@ export async function adminOverrideScore(
   category: TrustCategory,
   newScore: number,
   reason: string,
-): Promise<{ ok: boolean }> {
+): Promise<{ ok: boolean; category: TrustCategory; persistedScore: number; ceilingBinding: boolean }> {
   if (newScore < 0 || newScore > 100) throw new Error("Score must be 0–100");
 
-  // A CEILING, NOT A PIN — and the difference is a product decision nobody has
-  // taken yet (census-trust D-OVERRIDE). `trust_caps` has only `ceiling_score`
-  // and TrustScoreService applies it as `if (score > cap) score = cap`, so an
-  // override BELOW the natural score binds and an override ABOVE it does
-  // nothing. The `trust_profiles` upsert below does not rescue that: the
-  // `recalculateTrustScore` on this function's own last line overwrites it
-  // before the call returns, so an upward override never lands at all.
-  // Pinned by `src/test/trust-integration.test.ts` — "D-OVERRIDE:
-  // adminOverrideScore caps, and a cap only binds downward". Changing the
-  // answer must change those assertions.
   const cap = await createCap(db, {
     userId: targetUserId,
     category,
@@ -307,19 +366,36 @@ export async function adminOverrideScore(
     reasonCode: "admin_override",
   });
 
-  // Also upsert the trust_profiles row directly for immediate effect (non-fatal)
-  {
-    const { error } = await db.from("trust_profiles").upsert(
-      { user_id: targetUserId, [category]: newScore, updated_at: new Date().toISOString() },
-      { onConflict: "user_id" },
+  // Fail-closed, and NOT swallowed: an override whose recalculation did not run
+  // has not been applied, and must not be reported or audited as if it had.
+  const recalculated = await recalculateTrustScore(db, targetUserId);
+
+  // Read back rather than trust the computed result — see the docblock.
+  const read = await getTrustProfileResult(db, targetUserId);
+  if (read.state !== "ok") {
+    throw new Error(
+      `adminOverrideScore: ceiling written to trust_caps but NOT confirmed on trust_profiles — read is '${read.state}'` +
+      (read.state === "unavailable" ? ` (${read.reason})` : ""),
     );
-    if (error) logger.warn({ err: error, targetUserId, category }, "score override upsert failed (non-fatal)");
+  }
+  const persistedScore = Number((read.profile.categories as Record<string, unknown>)[category]);
+  // numeric(5,2) round-trips exactly at two decimals; the epsilon absorbs that,
+  // not a disagreement. A persisted value ABOVE the ceiling means the ceiling is
+  // not in force, which is the one thing this function exists to guarantee.
+  if (!Number.isFinite(persistedScore) || persistedScore > newScore + 0.005) {
+    throw new Error(
+      `adminOverrideScore: ceiling ${newScore} did not take effect on ${category} — trust_profiles still reads ${String(persistedScore)}`,
+    );
   }
 
-  await recalculateTrustScore(db, targetUserId).catch(() => {});
+  const ceilingBinding =
+    recalculated.capsApplied.includes(category) && Math.abs(persistedScore - newScore) < 0.005;
+
+  // The audit records what HAPPENED, not what was asked for: an override that
+  // withheld nothing is a different fact from one that pulled a score down.
   await logAdminAction(db, adminId, targetUserId, "score_override", reason,
-    { category, newScore }, cap.id);
-  return { ok: true };
+    { category, newScore, persistedScore, ceilingBinding }, cap.id);
+  return { ok: true, category, persistedScore, ceilingBinding };
 }
 
 /**
