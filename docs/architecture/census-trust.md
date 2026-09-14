@@ -1220,7 +1220,7 @@ drifted, corrected here rather than left to rot.
 |---|---|
 | TV-0e / TV-2c | The cell says a case-insensitive search for `VerifiedBadge` "returns four hits, all of them inside the two plan documents themselves". At this tree it also matches **four client style keys** — `travel-buddy-standalone/src/components/BuddyCard.tsx:256#verifiedBadge: {`, `travel-buddy-standalone/src/components/compass/CompassTravelerRow.tsx:316#verifiedBadge: {`, `travel-buddy-standalone/src/components/compass/CompassBuddyRow.tsx`, `travel-buddy-standalone/app/(rent-a-buddy)/offers.tsx:245#verifiedBadge: { backgroundColor:`. The component still does not exist and neither verdict moves — **but TV-2c's "zero criteria met" understates the problem in the direction that matters.** Buddy cards and Compass traveler rows DO render a verified indicator today, and it is driven by `profiles.verified`, a legacy boolean, not by `verification_level` — `artifacts/api-server/src/compass/CompassTools.ts:1544#verified:     row.verified === true,` and `artifacts/api-server/src/routes/profile.ts:117#verified: r.verified ?? false,`. So the placement surfaces are not merely unaware of verification (which is what the cell says); **they already show a badge sourced from something that is not the ID check.** That is TRV2-12's clause "verified badge reflects actual verification state" failing on a surface that looks finished, which is worse than one that looks empty. Recorded here; the fix is client- and Compass-lane work (§14.7). |
 | TV-0a | The cell says `migrations/` "holds 528 files and not one mentions `identity_verifications`". It now holds **529**, and one mentions the identity vocabulary — `migrations/2870_profiles_verification_level_identity_vocabulary.sql`, added by §12 and applied nowhere. The substantive claim is unchanged: no migration in the applied set creates `identity_verifications`; the table still reached production through the baseline. |
-| TV-7a / TV-P3 | New, and not previously recorded on either row: `routes/verification.ts:172#patch.provider_verification_ref = result.providerVerificationRef ?? null;` sits inside `if (result.status === "verified") {`, so `provider_verification_ref` is written **only on success**. A FAILED or EXPIRED attempt left a government ID with the vendor and no handle stored, so `requestProviderDeletionForUser` — which reads exactly that column — can never offer it for redaction. Both new adapters therefore set the redaction handle for **every** state (mutation N5 pins it), which is the half this lane owns; the persist-side condition is in `routes/verification.ts`, which it does not own. Cross-lane request in §14.7. Neither row's verdict moves: TV-7a's two criteria are about the ordered call, which holds. |
+| TV-7a / TV-P3 | New, and not previously recorded on either row: `routes/verification.ts`, which then read `patch.provider_verification_ref = result.providerVerificationRef ?? null;`, sits inside `if (result.status === "verified") {`, so `provider_verification_ref` is written **only on success**. A FAILED or EXPIRED attempt left a government ID with the vendor and no handle stored, so `requestProviderDeletionForUser` — which reads exactly that column — can never offer it for redaction. Both new adapters therefore set the redaction handle for **every** state (mutation N5 pins it), which is the half this lane owns; the persist-side condition is in `routes/verification.ts`, which it does not own. Cross-lane request in §14.7. Neither row's verdict moves: TV-7a's two criteria are about the ordered call, which holds. |
 | TRV2-10 | The cell's third mechanism is sharpened by a schema read at this tree. `trust_events.user_id` and `trust_profiles.user_id` are **`ON DELETE CASCADE` on `profiles`** (`artifacts/api-server/baseline/20260819_baseline_structure.sql:25389#ADD CONSTRAINT trust_events_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(id) ON DELETE CASCADE;`), so an erased subject's derived trust evidence *is* destroyed — by cascade, not by any step `AccountDeletionService` takes (it names no trust table at all). And the same file shows the mirror of D-MODACTION-FK inside Trust's own tables: `trust_events.reviewed_by` and `trust_caps.lifted_by` are plain NO ACTION references to `profiles`, so **erasing a moderator is blocked by the trust rows they adjudicated**. Still `CV`; the retention policy is what is missing, and now the three mechanisms it must reconcile are each measured rather than described. |
 
 **Anchored citations repointed.** Rewriting `providers.ts` invalidated eleven anchored
@@ -1276,7 +1276,7 @@ Each names the file, the change, and why this lane cannot make it.
    `status: "created"` on insert instead of `"pending"`. Closes TV-1a's fourth criterion. No
    behavioural effect: both are legal under the live CHECK and the client treats
    `created`/`pending`/`processing` identically.
-3. **`artifacts/api-server/src/routes/verification.ts:172#patch.provider_verification_ref = result.providerVerificationRef ?? null;`** (verification-route lane) —
+3. **`artifacts/api-server/src/routes/verification.ts`, then reading `patch.provider_verification_ref = result.providerVerificationRef ?? null;`** (verification-route lane) —
    `provider_verification_ref` is written only on `status === "verified"`. A failed or expired
    attempt still left a government ID with the vendor, and `requestProviderDeletionForUser`
    reads that column and nothing else, so those copies can never be offered for redaction.
@@ -1977,3 +1977,131 @@ NOT MERGED.** `main` is `014a25d56`; the 32 migrations `2778–2870` exist in no
 `IMPLEMENTED_PROVIDERS` admits only `"mock"` and both real adapters throw. `C22`'s `C` is a
 statement about this tree, not about a running system, and no user has ever been ID-verified in
 production.
+
+---
+
+## §19 — The redaction handle, graded. ONE ROW MOVES; five sentences in this document are now stale
+
+Written by the INTEGRATION OWNER against `fe776c998`, integrating the Sensing/Trust lane.
+Old verdicts below are read from `CENSUS_INTEGRITY_DUMP=ALL`, never from the lane's prose —
+§16.6's rule, and it mattered here: the lane's report and the dump agreed on both rows, which is
+a fact I could only state after checking.
+
+### §19.1 The verdict move
+
+| **ID** | **was** | **now** | why |
+|---|---|---|---|
+| **TV-5b** | **N** | **W** | The row names two conjuncts: the 18+ gates *"reading `is_over_18` from the latest verified row"* **and** *"showing a 'verify to access' gate rather than hiding silently"*. The first is BUILT and I re-measured it rather than accepting it: `artifacts/api-server/src/lib/gateAge.ts:80#export type GateAge` is a three-state union — `ok` \| `verified_minor` \| `unreadable` — with no common `age` member, and NINE modules cross it (`routes/events.ts`, `meetups.ts`, `requests.ts`, `profile.ts`, `mediaFeed.ts`, `discovery.ts`, `services/media/MediaProjectionService.ts`, `compass/CompassTools.ts`, `compass/CompassSocialEngine.ts`). The second is ABSENT: `grep -rn "age_requirement\|age_verification_unavailable\|verified_minor" travel-buddy-standalone/src travel-buddy-standalone/app` returns **nothing** — not one client file names the refusal the server produces, so a refused verified minor sees whatever a generic error path shows. `travel-buddy-standalone/src/components/AgeGate.tsx:273#Age verification required` is the app's entry DOB wall, collecting a birthdate and calling `onVerified()`; it is not the gate this row asks for and links to no verification flow. Half built is not N and it is not C. |
+
+**Not moved, and the refusal is the point.** The lane raised **TV-7a** as *"C over a half-delivered
+column until `fe776c998`"*. Dump says `C`, and `C` it stays: TV-7a grades the ERASURE ORDERING, and
+that ordering was correct the whole time. What was broken was the column feeding it — which is
+TV-P3's object, and TV-P3 is `W` and remains `W`, because the client half of provider erasure is
+still unbuilt. Regrading TV-7a would move a row on evidence belonging to a different row.
+
+### §19.2 What was built, and what it is NOT
+
+`fe776c998` persists `provider_verification_ref` for every session status rather than only
+`verified`. `artifacts/api-server/src/services/identityVerification/providerErasure.ts` reads that
+column **and nothing else**, so a failed, expired or canceled attempt — which uploaded exactly the
+same government ID as a successful one — left a copy at Stripe or Persona that
+`requestProviderDeletionForUser` reported as *"nothing to redact"*, permanently, for us and for the
+user. Seven tests, written first: RED 7/2 pass/4 fail, GREEN 7/7, five mutations all killed.
+
+The `?? null` was NOT restored under the new condition, and the reason is the distinction this
+corpus keeps making: the persist path is webhook-driven, a later event may omit a field an earlier
+one carried, and an unconditional `?? null` would let the second event **erase** the handle the
+first supplied. ABSENT IS UNKNOWN, NOT "NO REF".
+
+**And this closes nothing in production.** `IMPLEMENTED_PROVIDERS` still admits only `"mock"`;
+both real adapters exist but are uncertified; no user has been ID-verified in production, so no
+vendor holds a document this column could redact. What changed is that the code would now be
+correct if one ever did. BUILT ON BRANCH IS NOT MERGED, and MERGED IS NOT DEPLOYED.
+
+### §19.3 Five sentences in this document are now false, named rather than edited
+
+This document is append-only and last-statement-wins, so the sentences stay where they are and this
+section is the later statement. Each was re-measured here, not inherited from the lane.
+
+1. **§14.6, TV-P2** — *"`is_over_18` is read by **no** gate"*. It is read by
+   `artifacts/api-server/src/lib/travelerVerification.ts:188#export function verifiedAgeSignalFromRows(`, composed
+   at `artifacts/api-server/src/lib/gateAge.ts:112#if (signal.verifiedMinor) return { state: "verified_minor" };`,
+   and consumed as a refusal in `routes/rentABuddy.ts` and `routes/profile.ts`. TV-P2 is `W` and
+   stays `W` — its client half is the same absent surface TV-5b names — but its stated
+   red-condition has half fired.
+2. **§14.6, TV-P2** — *"none owned here"* of `lib/travelerVerification.ts`. That file is in the
+   Trust lane's owned set.
+3. **§14.6, TRV2-08** — *"`getRestrictionState` still has exactly **five** non-Trust callers"*.
+   I counted them: **seven** modules — `services/interactionPermissions.ts:354`,
+   `services/passport/PassportProjectionService.ts:2003`, `lib/calls/callGatewayAdapter.ts:265`,
+   `domain/telegraph/policies/conversationCapabilityPolicy.ts:181`, `routes/tripCrewLocation.ts:439`,
+   `routes/messaging.ts:691`, and `routes/trips.ts:288` and `:1335`. **TRV2-08 does not move**, and
+   I checked the half that decides it rather than the half that is wrong: `grep -rn
+   getRestrictionState src/compass src/routes/discovery*.ts` returns **nothing**, so *"`src/compass/`
+   and `routes/discovery*.ts` contain no call"* still holds and the row is still `N`.
+4. **§14.6, C22** — *"what keeps C22 `W` is only that no route calls `adminOverrideScore`"*. Dump
+   says C22 is **`C`**; the route exists in `routes/trust-admin.ts` behind `requireAdmin`. The
+   sentence is a superseded row's text, and §16.6 already governs it.
+5. **§14.5 and §14.7 item 3** — both argue that `provider_verification_ref` *"is written **only on
+   success**"*. `fe776c998` closed that. Both quote the old source line VERBATIM, and a number can
+   be repointed where a quotation cannot: the quotations are kept exactly as written and only their
+   parseable `file:NNN#` form was removed, so `check:doc-citations` no longer reads a record of a
+   past tree as a live pointer. Same treatment as the census-trips reference that records where `SafeReturnService`'s symbol used to sit — a pointer whose whole content is a past line number, which repointing would destroy.
+
+### §19.4 §14.7's cross-lane requests, discharged
+
+| request | state |
+|---|---|
+| 1 — register the two verification suites | **done before this pass**; `check:test-registration` 1243 registered + 30 allowlisted |
+| 2 — `status: "created"` on insert | **done**; `artifacts/api-server/src/routes/verification.ts:257#status:` |
+| 3 — persist `provider_verification_ref` on every status | **done by `fe776c998`**, graded above |
+
+`src/test/verificationProviderRefPersisted.test.ts` is now registered in `package.json`'s `test`
+script by the integration owner; the lane correctly declined to register its own file and left the
+gate red rather than papering it.
+
+### §19.5 What would turn §19 red
+
+TV-5b returns to `N` if `lib/gateAge.ts` stops being crossed by any route; it reaches `C` only when
+a client surface renders the `verified_minor` refusal — today the grep for that vocabulary across
+`travel-buddy-standalone/` returns zero, and that single number is the whole of the row's
+remaining gap. §19.2's claim fails if any write to `provider_verification_ref` reappears that is
+conditioned on `status === "verified"`, or if an unconditional `?? null` returns; both are pinned
+by mutations M1 and M2. §19.3's item 3 fails the moment `src/compass/` or `routes/discovery*.ts`
+gains a `getRestrictionState` call, at which point TRV2-08 must be re-derived rather than left N.
+
+**Declaring an absence honestly is better than defaulting it, and it is still not the capability the
+spec asked for.** TV-5b is a `W` for exactly that reason: the server now refuses a verified minor
+precisely and says why, and no screen in the product says it back.
+
+### §19.6 Headline, restated from the rows
+
+§18's headline (`108 · 85 / 15 / 6 / 2`) described the table before §19.1. TV-5b's `N → W` moves one
+requirement between two non-correct classes, so CONSTRUCTED rises and CORRECT does not move at all —
+which is the honest shape of this pass: nothing became correct, one thing stopped being absent.
+
+> **Trust, at this tree: 108 requirements · 85 BUILT-AND-CORRECT · 16 BUILT-BUT-WRONG ·
+> 5 NOT-BUILT · 2 CANNOT-VERIFY → CONSTRUCTED 101 / 108 = 93.5 % · CORRECT 85 / 108 = 78.7 %.**
+>
+> Against §18's 108 · 85 / 15 / 6 / 2 → CONSTRUCTED 92.6 % · CORRECT 78.7 %:
+> **CONSTRUCTED +0.9 points, CORRECT UNCHANGED.** A row that moves from NOT-BUILT to
+> BUILT-BUT-WRONG has not been fixed; it has been found. The `+0.9` is the honest measure of
+> a half-built gate and must not be read as progress toward correctness.
+
+`head_commit` is NOT re-declared here. This section grades one row and names five stale sentences;
+it is not a re-measurement of 108 requirements against HEAD, and declaring one would claim a pass
+nobody made.
+
+The headline table, restated from the rows under LAST-STATEMENT-WINS:
+
+| BUILT-AND-CORRECT | **85** |
+|---|---|
+| BUILT-BUT-WRONG | **16** |
+| NOT-BUILT | **5** |
+| CANNOT-VERIFY | **2** |
+
+*This supersedes §18's table and supersedes nothing else. The denominator is unchanged at 108, and
+`BUILT-AND-CORRECT` is unchanged at 85 — the single move is TV-5b out of NOT-BUILT and into
+BUILT-BUT-WRONG. §18's own note records the integration lead being caught by this same guard for
+leaving a headline behind a row move; leaving it behind again would be worse for having been
+warned.*

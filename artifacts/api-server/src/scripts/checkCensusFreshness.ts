@@ -760,6 +760,17 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   // not by services/trust. Listing only the service would have made this census
   // look fresh while the reads it grades moved underneath it.
   "census-trust.md": [
+    // ── ADDED 2026-09-14 round 4, by the INTEGRATION OWNER after §19 ───────
+    // `lib/gateAge.ts` is the one that matters, and the Sensing/Trust lane
+    // flagged its absence as a scope gap before I found it here: it is the
+    // SINGLE seam every 18+ gate now crosses, it is the file TV-P2 and TV-5b
+    // both turn on, and until this line a change to it aged no census at all.
+    // A census whose two open age rows rest on a file it does not watch cannot
+    // notice the day one of them stops being true.
+    "artifacts/api-server/src/lib/gateAge.ts",
+    "artifacts/api-server/src/test/verificationProviderRefPersisted.test.ts",
+    "artifacts/api-server/src/compass/CompassSocialEngine.ts",
+    "artifacts/api-server/src/domain/telegraph/policies/conversationCapabilityPolicy.ts",
     // ── ADDED 2026-09-14, rounds 2-3 of the scope-coverage repair ───────────
     // This census's floor is 100 %, so it took three rounds to reach fixpoint.
     // `routes/index.ts` is here because two trust rows are graded on whether a
