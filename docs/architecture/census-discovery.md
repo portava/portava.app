@@ -1799,3 +1799,201 @@ everywhere today.
   is a live suite whose in-process guard refuses a target it cannot verify, which is the guard
   working, not a red test — confirmed by running it with the guard's environment satisfied and no
   credentials, where it SKIPs cleanly).
+
+---
+
+## 14. The compliance re-derivation, 2026-09-14 — the 67 audited for provenance, and 34 obligations nothing was counting
+
+*Worktree `/home/user/wt-483` (detached at `7d1f2d498`), 2026-09-14, DISCOVERY COMPLIANCE lane, with
+sibling lanes editing the same tree. APPEND-ONLY and LAST-STATEMENT-WINS, as §11 established. This
+pass wrote **no source file, no test, no migration and no flag**; every verdict below is a
+measurement. The full audit — the enumeration rule, the exclusion accounting, the clause-by-clause
+mapping, the per-row re-derivation and attribution — is `docs/discovery/compliance-v1.md`; this
+section carries only what the repository must be able to count.*
+
+### 14.1 The question, answered mechanically before it was answered by argument
+
+The owner asked for a recheck of rows *"previously graded against repository-derived descriptions
+rather than against the spec"*. Measured over this document:
+
+- **Zero of the 67** cite a `docs/architecture/0N_*.md` / `1N_*.md` current-state file as a
+  requirement. A grep for those paths across the whole document returns **six lines, all inside
+  §11.1's evidence table**, where they are cited as evidence *about* the collision — quoting their
+  own headers admitting they are derived. Restricted to the 67 rows themselves (§2, lines 55–133),
+  the same grep returns nothing.
+- **A01–A25 (25)** come from other surfaces' owner-supplied specs. Every quoted sentence was re-read
+  at its cited line this pass. 23 of 25 pointers resolve exactly; **2 do not** and are repaired in
+  §14.3.
+- **B01–B09 (9)** come from `census-input-intelligence.md`'s G-rows, which derive from the Global
+  Input Intelligence spec. Not a derived Discovery document.
+- **C01–C33 (33)** come from **Discovery's own module headers, guards and named tests** — which is
+  not a `docs/architecture/` file but is the same failure class, as §1 of this census says in its own
+  words. **All 33 were re-derived against the owner's spec text**, one at a time
+  (`docs/discovery/compliance-v1.md` §2.3).
+
+**Result of the re-derivation: 31 unchanged · 1 confirmed already-moved (C14) · 1 mis-stated reason
+with a surviving verdict (C32) · 0 new verdict moves.**
+
+### 14.2 Two findings that are not verdict moves
+
+**C14 — re-executed, and §11.6's move is confirmed rather than inherited.** The row's contract came
+from the module's own header; `docs/specs/discovery-v1/11_API_Specification.md:103#A failure must not masquerade as success.`
+says the opposite and names six failure classes to distinguish. All three exits of
+`GET /discovery/suggest` still collapse to one empty success at
+`artifacts/api-server/src/routes/discoverySearch.ts:2443#res.status(200).json({ query: q, groups: [`,
+`artifacts/api-server/src/routes/discoverySearch.ts:2480#res.status(200).json({ query: q, groups: [` and
+`artifacts/api-server/src/routes/discoverySearch.ts:2535#res.status(200).json({ query: q, groups: [`.
+The failure is observable in the server log and not to the caller, which is what §9 asks for.
+**W stands. D11 stands.**
+
+**C32's verdict survives and its contract SENTENCE does not.** The row is titled *"One ranking
+pipeline in the tree — the route no longer imports the ranker directly"*. The second clause is what
+its evidence proves and it still holds: `routes/discovery.ts` imports `portavaRank` type-only. The
+first clause is false at this tree — `artifacts/api-server/src/routes/discovery.ts:36#import { rankItemsForDiscovery } from "../`
+is a **value** import of Compass's ranker, called on the same route, and a Discovery page is ordered
+by one ranker or the other depending on `category`. **No verdict move**: a row is graded on its
+evidence, and its evidence is true. The obligation the sentence claims —
+`docs/specs/discovery-v1/12_Claude_Code_Implementation.md:5#Do not implement PDE as a greenfield subsy`
+and `10` §1's *"Avoid parallel systems"* — was graded by no row and is now **DC-24**, `W`.
+
+### 14.3 Pointer repairs — two A-row citations land on another surface's row
+
+Both quote the right sentence and name the wrong line, and both land inside the same table as the
+Discovery row they mean. The class is the in-range-but-wrong one §8, §9.8 and §10.4 each recorded.
+**No verdict moves; the repaired pointers are recorded here rather than edited into §2a, because a
+row's evidence sentence is not a thing a later section should silently rewrite.**
+
+| Row | Cited | Actually at that line | Correct pointer |
+|---|---|---|---|
+| A14 | Layover §25 `docs/specs/Portava_Layover_Development_Architecture_Spec_v3.txt:754#Map` | the `Map` row | `docs/specs/Portava_Layover_Development_Architecture_Spec_v3.txt:753#Only show experiences from certified actio`, under `:752#Discovery` |
+| A16 | Passport §21 `docs/specs/Portava_Passport_Engineering_Architecture_and_Design_Spec.txt:213#Identity, relevant trust eligibility, lang` | the **Trips** projection | `docs/specs/Portava_Passport_Engineering_Architecture_and_Design_Spec.txt:211#Identity, verification, availability, Open`, under `:210#Discovery` |
+
+### 14.4 The DSV2 disposition at §11.4, verified against the specification
+
+*"Eight DUPLICATE, four SPLIT, none a pure ADDITION"* — **the count is correct**, re-derived from
+`docs/specs/upgrades-v2/02-DISCOVERY-v2.md` rather than trusted. DUPLICATE = DSV2-01, -02, -03, -07,
+-08, -09, -10, -11. SPLIT = DSV2-04, -05, -06, -12. Three sub-clauses were unaccounted when it was
+written: DSV2-07's *"actual outcomes stay distinct from predictions"* (DUPLICATE of **A03**),
+DSV2-01's *"real search and recommendation routes are both exercised"* (DUPLICATE of **DC-33**), and
+DSV2-12's *"no synthetic production visits, conversions or Trust awards"* — the one genuine
+addition, **DC-34**.
+
+### 14.5 The 34 coverage-gap rows
+
+Enumerated by the rule in `docs/discovery/compliance-v1.md` §1, which also reports the **32 prose
+passages excluded as stating no testable obligation** and why. Each row was checked against all 153
+existing rows for overlap of **subject** before being added; the 17 obligations that overlapped are
+folded and named there, not added here. Every `C` and `W` below cites a line opened at this tree —
+where the file is outside this census's `CENSUS_SCOPE` the anchored citation lives in
+`docs/discovery/compliance-v1.md` §4 and the file is named in prose here, so
+`check:census-scope-coverage` is not driven below its floor by a documentation pass
+(cross-lane request X2).
+
+| id | Obligation | Verdict | Evidence |
+|---|---|---|---|
+| DC-01 | `docs/specs/discovery-v1/01_Portava_Discovery_Engine.md:96#PDE should rank or recommend:` — ten output kinds | **W** | 7 of 10. Present: posts, places, events, trips, travelers, circles, itineraries-as-plans — eighteen types at `artifacts/api-server/src/routes/discoverySearch.ts:117#const SEARCH_TYPES = [`, nine ranked kinds at `artifacts/api-server/src/lib/portavaRank.ts:29#export type CandidateKind =`. **Trails FAIL** (DV-20). **Shared Moments FAIL** — absent from both lists and from every Discovery file. **Emerging discoveries FAIL** — trend states exist (DV-28) and are not an output kind. |
+| DC-02 | `docs/specs/discovery-v1/02_Trails.md:58#Do not let creators attach unlimited disco` | **N** | No Trail or Signal label exists to attach. The analogue on the label system that does exist — a 20-tag cap in the tagging policy module — is named in `docs/discovery/compliance-v1.md` §4.2 and **not** counted as satisfying a Trail-scoped clause, on DV-13's precedent. |
+| DC-03 | `docs/specs/discovery-v1/02_Trails.md:68#Creation should require canonicalization c` — four checks | **N** | No Trail creation path. |
+| DC-04 | `02` §7 — Trail lifecycle (5 states) and in-Trail content lifecycle (6 states) | **N** | Neither exists. Distinct from DV-28, which is `03` §9's **place** momentum; `03` §4's **content** lifecycle is separately recorded absent inside DV-28's `W`. |
+| DC-05 | `docs/specs/discovery-v1/02_Trails.md:163#Trail health should influence ranking but ` — nine metrics | **N** | No Trail, no health snapshot, no ranking input. |
+| DC-06 | `docs/specs/discovery-v1/03_Trending.md:106#Trend velocity must be normalized by:` — exposure · creator baseline · Trail baseline · location baseline · time-of-day · content age | **W** | 2 of 6. **exposure PASS** (DV-30's denominator). **content age PASS** — recency weighting against the place's own 30-day baseline, `artifacts/api-server/src/lib/discoveryLocalMomentum.ts:66#export const MOMENTUM_RECENT_WINDOW_MS   =`. **creator · Trail · location · time-of-day FAIL** — momentum divides a place by itself and by nothing else. DV-30's `C` is against `03` §14's one-word criterion and stands; §7's six-way requirement had no row. |
+| DC-07 | `docs/specs/discovery-v1/03_Trending.md:182#Do not store one opaque “trend score” ` + §13's five preferred stores | **W** | 1 of 5 durable. **raw events PASS** (`rank_events`). **aggregated windows · state snapshots · explanation features · model/version FAIL** — the three windows at `artifacts/api-server/src/lib/discoveryTrendState.ts:88#export const TREND_RECENT_MS = 48 * HOUR;` are recomputed per request into a ten-minute process cache and never persisted; no `place_momentum` table exists (§11.3a). The prohibition is satisfied **vacuously** — nothing durable is stored at all — and that is said rather than scored. |
+| DC-08 | `04` §2 *"Do not create a new parallel behavior store"* + `docs/specs/discovery-v1/04_Behavior_Engine.md:134#If the current table cannot represent this` + `10` §1 | **C** | One behaviour store: `artifacts/api-server/src/lib/discoveryServeLog.ts:296#const { error } = await sc.from("rank_even`. §13.3's three missing `04` §5 fields went into the `features` jsonb that row already writes rather than into a new table, and the vocabulary was extended by migration (0197/0199/0202/2297/2298). `artifacts/api-server/src/lib/discoveryShadow.ts:371#const { error } = await sc.from("discovery` is `12` Phase 9's comparison record, which the spec asks for, and C22 pins that it never changes what was served. **Red if:** any Discovery impression or outcome row is inserted into a table other than `rank_events`. |
+| DC-09 | `docs/specs/discovery-v1/04_Behavior_Engine.md:153#Sequence features should be derived downst` | **W** | 1 of 2. **The prohibition PASSES** — no client computes a chain; the funnel logic is server-side at `artifacts/api-server/src/routes/rankEvents.ts:139#export function upgradableOutcomesFor(outc`, applied at `artifacts/api-server/src/routes/rankEvents.ts:208#.in("outcome", upgradableOutcomesFor(outco`. **The obligation FAILS** — none of §8's four named chains exists as a derived feature anywhere. Nothing is hard-coded in the client because nothing is computed at all. |
+| DC-10 | `docs/specs/discovery-v1/05_Graph_Engine.md:110#Do not introduce a graph database until qu` | **C** | No graph-database dependency in the api-server manifest (`neo4j`, `gremlin`, `neptune`, `arango`, `janus`, `dgraph`, `tigergraph` — none present). The graph that ships is two Postgres tables (`artifacts/api-server/src/migrations/20260730_compass_intelligence_graph.sql`). §8's materialized-projection half is DV-72's `W` and is not re-counted. |
+| DC-11 | `06` §1 — the ten-stage pipeline | **W** | 7 of 10 reachable. PASS: context assembly, candidate generation, eligibility (on the Cache-B hit path too since §11.8), feature computation and scoring (`artifacts/api-server/src/lib/discoveryRankProvenance.ts:73#export const DISCOVERY_MODEL_VERSION = "co`), diversity (`artifacts/api-server/src/lib/portavaRank.ts:367#// ── Diversity (greedy MMR-style re-r`, ungated), serve, log recommendation (`artifacts/api-server/src/lib/discoveryServeLog.ts:296#const { error } = await sc.from("rank_even`). **exploration FAIL** — `artifacts/api-server/src/lib/discoveryPde.ts:754#governor = allocateExplorationBudget(gc, {` sits inside the modifiers flag (DV-53). **integrity checks FAIL** — one author-trust down-weight (DV-12). **learn from outcomes FAIL** — outcomes are ingested and nothing learns. |
+| DC-12 | `06` §2 — eleven candidate sources | **W** | 2 of 11, and the tree says so about itself: `artifacts/api-server/src/lib/discoveryRankProvenance.ts:84#* Discovery's serve path today has exactly` — *"exactly two retrievals plus the case where neither claimed the row, and inventing the other nine would be describing a pipeline that does not run."* |
+| DC-13 | `docs/specs/discovery-v1/06_Recommendation_Engine.md:45#Do not collapse everything into one perman` + §3's eleven feature families | **W** | **The prohibition PASSES** — per-request scoring, raw and derived split into two fields (DV-48). **The families FAIL as families** — the ranker Discovery runs is a flat seventeen-weight bag; `trail_relevance` has no term and `negative_feedback` has none. A named-family configuration with a `negativeFeedback` penalty and a declared `discovery` surface **does** exist in the shared ranking-services module, and **no Discovery route imports it** — anchored citations in `docs/discovery/compliance-v1.md` §4.6, cross-lane request X3. |
+| DC-14 | `06` §10 — compute old · compute PDE · compare overlap · compare offline utility · `docs/specs/discovery-v1/06_Recommendation_Engine.md:119#- store counterfactual recommendation sets` | **W** | All six mechanisms are in code and **none has run**. Both orders and the counterfactual set land on one row (`artifacts/api-server/src/lib/discoveryShadow.ts:371#const { error } = await sc.from("discovery`); overlap plus three further dimensions are computed (DV-79). `W` because `discovery_shadow_serves` holds **0 rows in production** (§5) and the mode is `legacy`. |
+| DC-15 | `docs/specs/discovery-v1/10_Database_Architecture.md:70#- EXPLAIN verification where meaningful.` + expected cardinality + index rationale | **W** | 1 of 3. **rationale PARTIAL** — present on some Discovery indexes, absent on others. **expected cardinality FAIL** — stated in no Discovery migration. **EXPLAIN FAIL** — `grep -l EXPLAIN src/migrations/*discovery*` returns nothing. Per-migration anchors in `docs/discovery/compliance-v1.md` §4.7. |
+| DC-16 | `docs/specs/discovery-v1/10_Database_Architecture.md:89#Pin `search_path`.` + SECURITY DEFINER only when necessary + explicit schema qualification | **C** | Discovery owns exactly one SECURITY DEFINER function; it argues its necessity in-file, pins `SET search_path = public`, revokes PUBLIC's implicit grant and restores EXECUTE only to `service_role`, and it is referenced by a live route rather than being an unreferenced oracle. Anchors in `docs/discovery/compliance-v1.md` §4.7; the class is guarded by `src/scripts/checkSecurityDefinerOracles.ts`. **Red if:** a Discovery migration adds a SECURITY DEFINER function without `SET search_path`, or one with no reference. |
+| DC-17 | `docs/specs/discovery-v1/10_Database_Architecture.md:115#Derived features must retain:` — source event window · feature version · model version · computation time | **W** | Split, and the split is the finding. **Rank provenance: 3 of 4** — `artifacts/api-server/src/lib/discoveryRankProvenance.ts:73#export const DISCOVERY_MODEL_VERSION = "co`, `artifacts/api-server/src/lib/discoveryRankProvenance.ts:80#export const DISCOVERY_FEATURE_VERSION = "`, and a timestamp read when the ranker returned; **source event window FAIL**. **The two stores that actually compute over an event window: 0 of 4** — the momentum map is `place id → number` and the trend reading is a state plus three rates; neither carries its window, a version, or a computation time on the output. |
+| DC-18 | `docs/specs/discovery-v1/10_Database_Architecture.md:94#- never edit an applied migration unless r` + new migration per behaviour + CI rehearsal + rollout order (§7's fifth rule is DV-70's) | **W** | **new-migration-per-behaviour PASSES** and is checkable from the repository alone — 2289, 2360, 2361, 2550, 2850. **never-edit-an-applied-migration:** the machinery reports exactly this as its own finding, and it compares against a live database; **this pass made no database connection**, so its current state is not certified here. **CI rehearsal / rollout order:** runbooks exist, terminal state does not — §5 records 2420, 2220 and 2760–2785 unapplied to production. |
+| DC-19 | `docs/specs/discovery-v1/11_API_Specification.md:14#Prefer server-generated recommendation/exp` + four conceptual actions | **W** | 3 of 4. **server-generated PASS** — the exposure record and its id are minted server-side after the response (`artifacts/api-server/src/lib/discoveryServeLog.ts:296#const { error } = await sc.from("rank_even`) and never accepted from a client. **validate schema PASS** (DV-35). **diagnostics PASS** (`artifacts/api-server/src/lib/discoveryServePointReport.ts`). **batch FAIL** — `artifacts/api-server/src/routes/rankEvents.ts:44#router.post("/rank-events", asyncHandler(a` takes one event; there is no array form and no batch endpoint. |
+| DC-20 | `11` §3 — Trails API, nine actions | **N** | 0 of 9. No Trail route exists. |
+| DC-21 | `11` §4 — Trending API, five actions | **N** | 0 of 5. Trend states and explanations are computed (DV-28, DV-33) and reach no route. §4's *"Never return internal raw scores"* is DV-27's `C` and is not re-counted. |
+| DC-22 | `11` §5 — Recommendation API outputs: recommendation_id · items · reason labels · cursor · model/version internally | **W** | 2 of 5 delivered. **items PASS. model/version internally PASS** (DV-04, flag-independent). **recommendation_id FAIL** — §13.3 states it: server-side only, no client receives one. **reason labels FAIL** — produced (DV-18) and gated by 2361, seeded FALSE. **cursor FAIL for this surface** — `GET /discovery` paginates by `page`. |
+| DC-23 | `11` §6 — creator-economy API reads, and *"No client-side earning calculation"* | **N** | 0 of 4 reads. The prohibition is satisfied by absence and is **not** scored as a pass, on DV-62's reasoning. |
+| DC-24 | `docs/specs/discovery-v1/12_Claude_Code_Implementation.md:5#Do not implement PDE as a greenfield subsy` + `10` §1 *"Avoid parallel systems"* | **W** | **The positive half PASSES:** the ranker was MOVED not copied, the serve log extends `rank_events`, the recommendation id went into an existing jsonb, Phase 2's work edits the existing caches. **The parallel half FAILS:** three ranking implementations can order a Discovery item — `artifacts/api-server/src/lib/portavaRank.ts:29#export type CandidateKind =` via `rankForViewer`; Compass's, value-imported into the same route at `artifacts/api-server/src/routes/discovery.ts:36#import { rankItemsForDiscovery } from "../` and selected by `category`; and the shared ranking service that declares a `discovery` surface and has no Discovery caller (X3). This is the obligation C32's contract sentence claims and its evidence does not prove — §14.2. |
+| DC-25 | `12` Phase 2 — a design note documenting candidate cache key · ranking cache key · invalidation · model/version handling · personalization boundary | **W** | All five are documented in code rather than in a note, and one is documented **and violated**: `artifacts/api-server/src/lib/discoveryCacheEligibility.ts:2#* discoveryCacheEligibility — the authoriz` carries both cache keys and the asymmetry between them; invalidation is DSV2-06's four-reason rule; model/version is `artifacts/api-server/src/lib/discoveryRankProvenance.ts:80#export const DISCOVERY_FEATURE_VERSION = "`. **Personalization boundary: documented and crossed** — DV-03 `W`, serve points 1/2/3 hand the cached order to the user unranked on every deployment. The deliverable §2 names — one design note — does not exist. |
+| DC-26 | `12` Required test classes — 5 unit · 5 integration · 3 database · 3 shadow diagnostics | **W** | ~9 of 16. PASS: scoring transforms, trend lifecycle, event write path, flag-OFF inertness, schema drift, CI rehearsal, old-vs-new comparison, cache-path correctness, recommendation coverage. FAIL: Trail lifecycle, Trail visibility, ledger math, attribution rule versioning, recommendation→behavior→attribution. **RLS is named separately** because `12` asks for it by name: `artifacts/api-server/src/test/discoveryPlaceWriteBoundary.test.ts` skips without live credentials and the `test` script pins an unreachable `SUPABASE_URL`, so a green run proves nothing — C28's recorded limitation. |
+| DC-27 | `12` Deployment rules — rehearse → verdict checks → shadow → cohort → observe → expand | **?** | **CANNOT-VERIFY, recorded rather than guessed.** Discovery has never been rolled out: `DISCOVERY_ENGINE_MODE` is `legacy` (§5), shadow has written 0 rows in production, no cohort was activated. Nothing in the repository can say whether a sequence that has not begun is followed. **Evidence that would settle it:** a rollout record showing rehearsal, verdict-check results, a shadow window and a cohort activation in that order. **Who supplies it:** the integration owner and the operator. |
+| DC-28 | `docs/specs/upgrades-v2/02-DISCOVERY-v2.md:13#DiscoveryCandidate is a logical extension ` — *"Do not persist transient crowd or vibe as durable place identity attributes"* | **C** | No Discovery migration adds a crowd or vibe column to any place table, and the live layer states the rule about itself and is read-only: `artifacts/api-server/src/lib/discoveryLiveRankRead.ts:28#* NEVER PERSISTED. The grades are properti`. **Red if:** any crowd or vibe value is written onto `discovery_places` / `places`, or into the user-independent L2 cache. |
+| DC-29 | `docs/specs/upgrades-v2/02-DISCOVERY-v2.md:11#Search answers which entities match. Recom` — *"Chronological Wall stays chronological; Discovery does not take ownership of it"* | **C** | No Discovery route or lib writes to or orders the Wall; `grep -nE "\bWall\b|wall_|\"wall\"" routes/discovery.ts routes/discoverySearch.ts lib/discovery*.ts` returns **one** line in the whole surface — a prose comment at `artifacts/api-server/src/lib/discoveryCandidate.ts:9#* state consumed by Map / Discovery / Wall /` naming Wall as a fellow consumer of truth-class state. No table read, no write, no ordering. The Wall's Discovery **insertion** is `services/wall/`, excluded by §1 and owned by census-wall — named so this `C` is not read as covering it. |
+| DC-30 | `docs/specs/upgrades-v2/02-DISCOVERY-v2.md:34#Never use private message contents or infe` — *"Anonymous contributors cannot become discoverable people"* | **C** | Four independently pinned paths: `submitted_by` never serialised (C16); the byline withheld unless self or opted-in, from one `nameAllowed` decision (C18, C19); `allow_profile_discovery` required and fail-closed (C02); and the live read set carries no contributor identity — `artifacts/api-server/src/lib/discoveryLiveRankRead.ts:51#export const RANK_CLAIM_TYPES = [`, *"Nothing else is read, so nothing else can leak."* |
+| DC-31 | `docs/specs/upgrades-v2/02-DISCOVERY-v2.md:36#When live state is unavailable, retain per` — *"Temporary world objects retain their own valid identity instead of borrowing an arbitrary venue ID"* | **C** | Discovery has no temporary world object type, and the one identity join it makes runs the safe way: the live layer reads claims **for** an existing `canonicalPlaceId` rather than minting a place **from** a claim (`artifacts/api-server/src/lib/discoveryLiveRankRead.ts:51#export const RANK_CLAIM_TYPES = [`). **Red if:** any Discovery code assigns an existing place id to a transient observation. |
+| DC-32 | `docs/specs/upgrades-v2/02-DISCOVERY-v2.md:42#Existing Ranker and Event Truth holds are ` — reuse approved weights, exploration budgets, sensitive-location policy, freshness and thresholds; ask rather than choose silent production defaults | **W** | 2 of 5. **exploration budget PASSES** — ROADMAP step 8's *"budget ~15–25 %"* is the ruling and the allocator implements it. **momentum cap PASSES** — `LOCAL_MOMENTUM_MAX_CONTRIBUTION` is ROADMAP step 7 made numeric and may change only with a ruling. **sensitive-location policy FAILS** — `artifacts/api-server/src/lib/protectedLocations.ts` is consulted by nothing in Discovery (B04). **thresholds FAIL, and this is a live instance rather than a legacy gap** — `artifacts/api-server/src/lib/discoveryStopConditions.ts:121#export const EVENT_REJECTION_RATE_THRESHOL` and the 10 % gap beside it are disclosed by §12.5 as *"this lane's proposals, not a ruling"*, which is exactly what this clause tells an implementer not to do. **freshness thresholds FAIL** — `TREND_MIN_RATE`, the momentum evidence floor and `TRAVEL_HORIZON_MINUTES` are in-code constants with no ruling cited. |
+| DC-33 | `docs/specs/upgrades-v2/02-DISCOVERY-v2.md:38#Test real route→service→projection→c` — cache hits · expiry · permission changes · sparse coverage · empty candidates · dependency failure · retry | **W** | 5 of 7, and the wiring is tested in two disconnected halves. PASS: cache hits, expiry, permission change, dependency failure, empty candidates (`artifacts/api-server/src/test/discoveryCacheBEligibility.test.ts`). **retry FAIL** — no retry path exists to test (DV-37). **The client leg FAILS as a leg** — server tests stop at the response and the client component tests mock the service they would have to cross; the anchored citation is in `docs/discovery/compliance-v1.md` §4.10. Nothing exercises route→service→projection→client end to end. |
+| DC-34 | `docs/specs/upgrades-v2/02-DISCOVERY-v2.md:30#| DSV2-12 | Measure real utility and calib` — *"no synthetic production visits, conversions or Trust awards"* | **C** | No conversion, visit-confirmation or Trust-award writer exists on this surface (§11.3a: eighteen names NULL in production), so nothing can synthesise one. `C` rather than vacuous because the opportunity was taken twice and declined in writing: `whyNow` stays null rather than being manufactured from static popularity (A03), and three `01` §11 codes with no producer are declared producerless rather than emitted, with a test that fails if one is (`artifacts/api-server/src/lib/discoveryReasonCodes.ts:105#export const REASON_CODES_WITHOUT_PRODUCER`). **Red if:** any Discovery write records a visit, conversion or award the user did not perform. |
+
+### 14.6 Restated headline
+
+> **Discovery, at worktree `/home/user/wt-483` (`7d1f2d498` + §12/§13 + this pass): 187 requirements ·
+> 74 BUILT-AND-CORRECT · 67 BUILT-BUT-WRONG · 43 NOT-BUILT · 3 CANNOT-VERIFY →
+> CONSTRUCTED 141 / 187 = 75.4 % · CORRECT 74 / 187 = 39.6 %.**
+> Previous statement (§13.6, 153 rows): 66 / 49 / 36 / 2 → 75.2 % · 43.1 %.
+
+| | rows | C | W | N | X | CONSTRUCTED | CORRECT |
+|---|---|---|---|---|---|---|---|
+| Before — §13.6 | 153 | 66 | 49 | 36 | 2 | 75.2 % | 43.1 % |
+| The 34 added here | 34 | 8 | 18 | 7 | 1 | 76.5 % | 23.5 % |
+| **After** | **187** | **74** | **67** | **43** | **3** | **75.4 %** | **39.6 %** |
+
+**No code changed between the two measurements and no existing verdict moved.** The whole of the
+−3.5 points of CORRECT is denominator — obligations the specification states that no row was
+counting. CONSTRUCTED barely moves because **26 of the 34 new rows are built** (8 `C`, 18 `W`) and
+only 7 are absences; **18 of the 26 do part of what their clause asks and stop.** That is the shape
+of this finding, and it is a different shape from §11's, which added thirty-five absences.
+
+Reconciled against what the repository can check, as §12.3 and §13.6 established:
+`check:census-integrity` PASSES and reports `discovery 184 · 73 · 67 · 41 · 3 → 187, 3 counted where
+this tool cannot read`. The three it still cannot read are unchanged — **DSV2-04 `N` · DSV2-05 `C` ·
+DSV2-12 `N`** — and 184 + 3 = 187, with the buckets reconciling exactly: 73 + 1 = 74 `C`, 67 `W`,
+41 + 2 = 43 `N`, 3 `?`. The difference between what this document says and what the repository can
+check about it is those three rows and nothing else. `check:census-scope-coverage` is unchanged at
+**100 %** (73 cited · 73 watched, floor 96 %) because this section routed its out-of-scope anchors to
+`docs/discovery/compliance-v1.md` rather than go red to make a point (X2), and `check:doc-citations`
+reports **zero** findings in either file this pass wrote.
+
+**The five new rows a reader should push back on first**, because each is code that exists and was
+graded against a clause nobody had read it against: DC-12 (2 of 11 candidate sources), DC-13
+(eleven feature families, built in a module Discovery does not call), DC-17 (derived features carry
+no source event window), DC-19 (no telemetry batch intake) and DC-32 (two of five policy inputs are
+this programme's own unruled constants).
+
+| BUILT-AND-CORRECT | **74** |
+|---|---|
+| BUILT-BUT-WRONG | **67** |
+| NOT-BUILT | **43** |
+| CANNOT-VERIFY | **3** |
+| **total** | **187** |
+
+### 14.7 Ceiling, and what this pass did not do
+
+- **Nothing was built.** No source file, no test, no migration, no flag. Every `C` above rests on
+  code another lane wrote and a test another lane ran; where no test pins a claim the row says so,
+  and the eight new `C` rows each name what would turn them red rather than resting on the absence
+  of a counter-example. Adding a test file needs `artifacts/api-server/package.json`, which this lane
+  does not own.
+- **No production read.** Every production figure relied on is inherited from §5 (2026-09-07) and
+  §11.3a (2026-09-13) and is dated there. C28's grants and B01's `search_key` remain 2026-09-07
+  measurements and should not be quoted as current.
+- **Attribution was measured separately and is deliberately thin.** Over the 26 source files this
+  census treats as Discovery's own: **13 attributable to this specification · 5 attributable
+  elsewhere · 8 UNKNOWN** (`docs/discovery/compliance-v1.md` §7). The qualification matters more than
+  the count — twelve of the thirteen carry their reference because §11–§13 *wrote it while grading
+  against the specification*, and four of them did not exist before 2026-09-14. So the thirteen means
+  *"written against this specification"*, which is a claim about two days, and not *"originally built
+  from it"*, which nothing in this repository can establish for any Discovery file: `git log
+  --diff-filter=A` reports `routes/discovery.ts`, `lib/portavaRank.ts`, `lib/discoveryPde.ts` and
+  `lib/discoveryServeLog.ts` as created by the same commit on the same day. The 8 UNKNOWNs are left
+  UNKNOWN on purpose — several of them read as though they were built from this package, and a
+  resemblance is not evidence.
+- **Four cross-lane requests, none taken**: X1 the specification is installed twice (byte-identical,
+  two paths); X2 widen `CENSUS_SCOPE["census-discovery.md"]` with the eleven files the DC rows are
+  evidenced by, which is why those anchors sit in `compliance-v1.md`; X3 the shared ranking service
+  declares a `discovery` surface nothing calls; X4 `parseIdCell`'s digit-suffix range defect is
+  unfixed and `DC-nn` was chosen to avoid it. All four in `docs/discovery/compliance-v1.md` §8.
+- **BUILT ON A BRANCH IS NOT MERGED. MERGED IS NOT DEPLOYED. DEPLOYED IS NOT FLAG ENABLED.**
+  Discovery is dark on the last reading anyone took: 13 `surface='discovery'` rows ever, the most
+  recent 2026-08-15.

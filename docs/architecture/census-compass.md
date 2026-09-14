@@ -2143,3 +2143,148 @@ Precise enough to act on, and none of them is this lane's to do.
    forbids, and `services/airport/*` is being edited by another lane in this same
    worktree right now.
 4. **To the integration owner — `head_commit` re-declaration**, per §15.7.
+
+---
+
+## §16 — Measured against the owner's three specifications, clause by clause. FIFTEEN REQUIREMENTS HAD NO ROW, and two of them are the ones this census was proudest of not having.
+
+*Measured 2026-09-14 at `7d1f2d498` (PR #483 head plus the v2 spec install). **This section changes
+no counted source file** — it adds rows, two reason corrections and a headline; `check:census-freshness`
+is unaffected by it. Sections are APPEND-ONLY and LAST-STATEMENT-WINS.*
+
+The full working is `docs/compass/compliance-v1.md`: the enumeration rule, the thirteen excluded
+prose statements with their reasons, all 96 enumerated clauses with the 22 internal duplicates named,
+and the attribution count kept in its own section. This section carries only what belongs in a
+census — the rows, their verdicts, and the arithmetic.
+
+### 16.0 What §13 counted, and the one thing its method could not reach
+
+§13.2 asked, of every roadmap and CPV2 obligation, *"is it semantically covered by one of the
+existing 90 rows?"* — and answered it one obligation at a time, correctly. **This pass re-derived
+the requirement list from the three documents instead of from their tables, and that is where the
+difference is: thirteen of the fifteen requirements below come from PROSE** — twelve from S1's prose
+and one from the roadmap's preamble, the other two being sub-clauses buried inside S2's bullets. S1 states twenty-four
+obligations outside its acceptance table — the processing chain, the decision result's field
+inventory, the five fabrication classes, per-claim evidence attachment, revalidation at action time,
+the configurable-contract rule — and a denominator built from a specification's *tables* will
+reproduce this gap against the next specification too.
+
+**The CPV2-01..12 dispositions §13.2 recorded were re-checked against the spec text rather than
+trusted, and all twelve hold** — including the two that looked most like a stretch: CPV2-05 is
+deliberately `CX-06` (the projection) and not `CPH-10` (the surface), and CPV2-08's execution-time
+re-check is `CC-18`, re-executed here at `artifacts/api-server/src/compass/CompassAutopilotEngine.ts:651#Re-verify at confirm time: permissions may`.
+What the dispositions do **not** do is cover the prose those table rows sit inside, and three of them
+carry a clause their mapped row's falsifier does not reach: CPV2-02's *"attach evidence to the
+particular claim"* (`CCL-12`), CPV2-05's *"Compass consumes it"* half (`CCL-06`), and CPV2-09's
+sibling prose on revalidation (`CCL-13`).
+
+### 16.1 The fifteen rows
+
+`C` BUILT-AND-CORRECT · `W` BUILT-BUT-WRONG · `N` NOT-BUILT · `?` CANNOT-VERIFY. `⌀` marks a vacuous
+satisfaction. Gating is written out in the evidence column, never in the verdict cell.
+
+| id | Requirement (source clause) | V | Evidence |
+|---|---|---|---|
+| CCL-01 | `docs/compass/master-roadmap.md:5-6#> the previous phase's "Done when"` a phase may not start until the previous phase's *Done-when* is fully met and its tests pass | **W** | Phase 1 was never put through this programme's own gate: `docs/compass/phase-summaries.md:8#Phase 1 — Conversational Foundatio` records it *"(as found, July 2026)"* — inherited from the pre-brief tree — and the first end-to-end measurement of it is dated after Phase 15 shipped (`docs/compass/phase-summaries.md:741#Live answer-quality eval — 2026-07`), where it failed. Phases 3–15 were therefore built over an ungated Phase 1, and `CPH-01` still grades it `W`. The rule was honoured exactly once and visibly: the Phase-3 pre-flight note at `docs/compass/phase-summaries.md:30#guard GPS stripping), plus feed/ca`. `W` and not `N` because that one instance is the rule being followed, not an absence of it. |
+| CCL-02 | `docs/compass/phase1-spec.md:24#Keep the two existing pipelines as` keep the two existing pipelines as-is downstream; only the router changes | **C** | Both pipelines survive and the classifier is the only thing choosing between them: the itinerary branch is entered on `isItineraryIntent` alone (`artifacts/api-server/src/routes/compass.ts:1448#const isItineraryIntent =`) and everything else — including a null, an error or a low-confidence classification — falls through to the conversation/tool loop, which the block comment states in those terms at `artifacts/api-server/src/routes/compass.ts:1431#// Promoted out of shadow mode: "itinerary"`. Pinned by `artifacts/api-server/src/test/compass-ask.test.ts:2#Compass ask endpoint tests — POST /api` block G (*"low classifier confidence does not break routing"*). |
+| CCL-03 | `docs/compass/phase1-spec.md:25#Delete the keyword matching code o` delete the keyword router **once the classifier is verified against it** — shadow run, disagreements logged | **?** | The deletion happened (`C1-02`). Whether the verification preceded it cannot be read off this tree: no disagreement log, no shadow comparator and no keyword router survive, and the only artefact that speaks to it contradicts the shipped code — `artifacts/api-server/src/services/compass/CompassIntentClassifier.ts:8#Phase-1 shadow mode: runs alongsid` still claims shadow mode and *"Disagreements are logged by the caller"* while its caller records the promotion out of it. **What would settle it:** the shadow-period disagreement logs, or the pull request that removed the router. **Who can supply it:** the owner, or whoever holds this service's log retention. Not a lane reading the tree — which is why this is the first `?` in this census and not a `W`. |
+| CCL-04 | `docs/specs/upgrades-v2/01-COMPASS-v2.md:7#Preserve all fifteen roadmap phase` do not reinstall the system prompt or rebuild conversation storage to add sensing | **C** | One conversation store with one writer: `compass_conversations` / `compass_conversation_messages` are written only through `artifacts/api-server/src/services/compass/CompassConversationService.ts:96#.from("compass_conversation_messages")`, and no second conversation table exists anywhere in the tree. The prompt is one versioned module (`artifacts/api-server/src/lib/prompts/compass-v1.ts:21#export const COMPASS_ASK_PROMPT_VERSION`) whose bumps are Compass-identity changes; no sensing work reinstalled it. |
+| CCL-05 | `docs/specs/upgrades-v2/01-COMPASS-v2.md:13#Authorized request/session → exist` the processing chain — authorized request → **existing** context assembly → shared world/experience/forecast/opportunity projections → **existing** decision/ranking owner → grounded explanation → **existing** UI/action contract | **W** | Every stage exists as an object and the chain does not. `POST /compass/ask` assembles its own context from thirteen local producers (`artifacts/api-server/src/routes/compass.ts:1530#ctxLines.push(`) and ranks through `CompassPipeline`; it reaches neither the platform context kernel nor the opportunity engine, which are real modules outside this census's watched scope and are cited in `docs/compass/compliance-v1.md` §5 rather than here. This is the same finding `CX-10` and `CX-11` carry one object at a time; the new ground is the **topology** — that no shared projection layer sits between Compass's context assembly and its ranking on any deployment. SPLIT from `CX-10`/`CX-11`, which stay as they are. |
+| CCL-06 | `docs/specs/upgrades-v2/01-COMPASS-v2.md:15#Home consumes a server-built UserN` **Compass consumes** the current-context projection and other authorized context to explain what to do | **N** | `/compass/ask` imports exactly one symbol from Home and it is a time-of-day helper: `artifacts/api-server/src/routes/compass.ts:57#import { timeOfDayForHour } from "./co`. The projection Home builds is read by no answer path; Compass rebuilds equivalent context locally. Home's half of the same sentence is `CX-06` and is `C`. SPLIT from `CX-06`: the projection exists, and its consumer does not. |
+| CCL-07 | `docs/specs/upgrades-v2/01-COMPASS-v2.md:15#Home consumes a server-built UserN`, `:46` neither Sense nor Live becomes a second sensing ingest route; the World Sensing authentication posture stays Sensing's | **C** | Executed rather than reasoned about. No Compass route ingests anything: every write in `artifacts/api-server/src/compass/` lands in a `compass_*` or `trip_*` table, and no module in `compass/` or `routes/compass*.ts` touches a claim, observation or snapshot table. Live intelligence enters through the one read seam, in three places and no others — `artifacts/api-server/src/compass/CompassMediaContext.ts:58#import { readLiveClaimEnvelopes } from`, `artifacts/api-server/src/compass/CompassLiveConstraints.ts:67#} from "../lib/liveClaimRead` and `artifacts/api-server/src/routes/compassDecision.ts:31#import { liveLabelsServable, readLiveCl`. **What would turn this red:** an insert into an intel table from Compass, or a fourth importer that is not the envelope seam. |
+| CCL-08 | `docs/specs/upgrades-v2/01-COMPASS-v2.md:17#The logical decision result carrie` the logical decision result carries subject references · action class · evidence references · truth metadata · validity · reasons · relevant constraints · **any confirmation requirement** | **W** | Seven of eight. `artifacts/api-server/src/lib/compassDecision.ts:182#export interface CompassDecisionResult {` carries the action class, the reasons, the truth metadata (`grounding`), the evidence references (`claimRefs`), the validity (`horizonAt`) and the constraints (`switchingCost`, `interception`); the subject reference is echoed by the route rather than the engine (`artifacts/api-server/src/routes/compassDecision.ts:132#subjectId: q.subjectId,`). **The confirmation requirement has no field at all**, so a decision whose action needed confirmation could not say so. Harmless today — nothing this vocabulary emits executes anything — and wrong the first time a decision is wired to an action. Inert besides: `artifacts/api-server/src/routes/compassDecision.ts:78#if (!(await isFlagEnabled(sc, "compass_d` gates the only route on a flag seeded FALSE. |
+| CCL-09 | `docs/specs/upgrades-v2/01-COMPASS-v2.md:17#The logical decision result carrie` map the decision vocabulary to the existing action model with compatibility handling; **do not blindly add enum values** | **W** | The prohibition is honoured: the conversational action model is untouched at twelve types (`artifacts/api-server/src/routes/compass.ts:1048#const ALLOWED_QUICK_ACTION_TYPES = new Se`) and the seven decisions are a separate vocabulary (`artifacts/api-server/src/lib/compassDecision.ts:80#export const COMPASS_DECISIONS`). A compatibility mapping exists — four of the seven onto opportunity kinds, the other three becoming refusals that carry the decision and its reasons — but onto the opportunity vocabulary, not Compass's action contract; it is cited in `docs/compass/compliance-v1.md` §5 because its module is outside this census's watched scope. **No decision reaches `/compass/ask`'s action contract on any deployment**, which is the "existing action model" the clause names. |
+| CCL-10 | `docs/specs/upgrades-v2/01-COMPASS-v2.md:38#Preserve useful basic Compass with` distinguish authorized empty results from dependency failure internally, and give an honest user-facing limitation | **C** | Both halves built, one of them pinned with a control. Home reports availability per section and refuses to cache a degraded payload (`artifacts/api-server/src/routes/compassHome.ts:172#export type SectionAvailability = "ok"`, `artifacts/api-server/src/routes/compassHome.ts:439#bestNextMove:   bestNextMove.ok   ? "ok"`), asserted at `artifacts/api-server/src/test/compassRevocationAndAvailability.test.ts:419#describe("C. CX-06 / CPV2-05 — Home repo` — whose control asserts that a genuinely empty source reports `ok` and **not** `unavailable`, so the flag cannot pass by always saying "unavailable". The tool surface carries the same three-way distinction into the model's context as a per-tool `info` string — outage, flag-off, empty — at `artifacts/api-server/src/compass/CompassTools.ts:827#if (error) return { candidates: [], inf`. |
+| CCL-11 | `docs/specs/upgrades-v2/01-COMPASS-v2.md:38#Preserve useful basic Compass with` do not fabricate a fallback candidate, open status, travel duration, safety verdict, or current crowd | **W** | Five named classes, graded one at a time. **Fallback candidate** ✓ the degraded feed is the user's own rows (`artifacts/api-server/src/compass/CompassFallbackFeedBuilder.ts:2#CompassFallbackFeedBuilder — Phase 6 gr`). **Open status** ✓ and **current crowd** ✓ — policed at the output boundary, though only for a sentence carrying an explicit now-marker (`artifacts/api-server/src/compass/CompassGroundingEnvelope.ts:233#if (!evidence.hasVerifiedLive && NOW_MAR`). **Safety verdict** ✓⌀ — no tool produces one. **Travel duration ✗ — there is no trigger for it**: the only numeric claim the boundary reads is a wait/queue figure (`artifacts/api-server/src/compass/CompassGroundingEnvelope.ts:181#const WAIT_CLAIM =`), so an unhedged *"it's a ten-minute walk"* with no route datum in the turn publishes unqualified. One of the five classes, with no owner. |
+| CCL-12 | `docs/specs/upgrades-v2/01-COMPASS-v2.md:40#Attach evidence to the particular` **attach evidence to the particular claim it supports**; do not attach a general valid citation to unsupported generated prose | **W** | The module that exists is shaped like the requirement and stops one level short, which is why no reader has caught it: the evidence band is computed over the **whole turn** (`artifacts/api-server/src/routes/compass.ts:1357#readGroundingEvidence(toolLog.map((t) =`) and reduced to four turn-level booleans (`artifacts/api-server/src/compass/CompassGroundingEnvelope.ts:78#export interface GroundingEvidence {`). A `verified_live` datum about place A therefore licenses an unhedged live sentence about place B in the same answer — a general valid citation covering unsupported prose, which is this clause in its own words. Nothing is bound to a subject. **What closes it:** carry the subject id beside each datum and match it against the subject the sentence names. SPLIT from `CX-04`, which stays `W` on its own residual. |
+| CCL-13 | `docs/specs/upgrades-v2/01-COMPASS-v2.md:40#Attach evidence to the particular` revalidate expiring evidence when an action is taken, rather than treating conversational history as current authority | **W** | The trip-state half is the tree's best instance of the pattern: at confirm the engine re-reads settings and plan items and re-checks the lock type before executing (`artifacts/api-server/src/compass/CompassAutopilotEngine.ts:651#Re-verify at confirm time: permissions may`), idempotently (`artifacts/api-server/src/compass/CompassAutopilotEngine.ts:696#autopilot:${proposal.id}:${c.itemId}`). The expiring-evidence half is absent: the live datum that motivated a proposal — hours, weather, conditions — is not re-read at confirm, so a proposal confirmed hours later executes against evidence nobody revalidated. `CC-18` grades the first half and stays `C`; no row states the second. |
+| CCL-14 | `docs/specs/upgrades-v2/01-COMPASS-v2.md:46#Preserve the owner's finalized-pro` reuse **approved** attention budgets, switching policy, confidence/freshness rules and permission scopes | **?** | The tree carries values and each is documented as engineering's tunable rather than an owner ruling — `artifacts/api-server/src/compass/CompassSenseEngine.ts:71#export const AWARE_DAILY_CAP = 3;`, `artifacts/api-server/src/lib/compassDecision.ts:91#export const SWITCHING_COST = 0.25;`. Whether an **approved** set exists that these should have reused is not a fact about this repository: §7's D3 and D4 record the question being put to the owner and no answer arriving. **What would settle it:** the owner naming the approved budgets and policy, or confirming none were approved — in which case this requirement collapses into `CCL-15`. |
+| CCL-15 | `docs/specs/upgrades-v2/01-COMPASS-v2.md:46#Preserve the owner's finalized-pro` if absent: ask for the values or policy approval · implement **configurable** contracts and tests with explicitly synthetic fixtures · leave activation/certification unresolved | **W** | Three of four. **Ask** ✓ §7's D3 and D4 report the decisions without making them. **Activation unresolved** ✓ every affected surface is behind a FALSE-seeded flag (`artifacts/api-server/src/routes/compassDecision.ts:78#if (!(await isFlagEnabled(sc, "compass_d`). **Explicitly synthetic fixtures** ✓ the eval criteria are unit-tested against synthetic transcripts with no provider present (`scripts/src/compass-answer-quality-eval.mjs:9#when it was only a transcript. The accept`). **Configurable ✗** the policy values are compile-time constants read from no environment variable, flag or settings row: `artifacts/api-server/src/compass/CompassSenseEngine.ts:72#export const ACTIVE_DAILY_CAP = 6;` and the two above. An owner who approves a different number today needs a deploy, which is the outcome this clause exists to prevent. |
+
+### 16.2 Two reasons that have drifted, on rows that do NOT move
+
+A verdict that is right for an expired reason decays silently, so both are recorded rather than left.
+
+| row | the reason as written | what the tree says now |
+|---|---|---|
+| CX-13 | §13.2's CPV2-10 argument rests on the live seam being *"imported by two modules and no others"* | **Three.** `artifacts/api-server/src/compass/CompassMediaContext.ts:58#import { readLiveClaimEnvelopes } from`, `artifacts/api-server/src/compass/CompassLiveConstraints.ts:67#} from "../lib/liveClaimRead` and `artifacts/api-server/src/routes/compassDecision.ts:31#import { liveLabelsServable, readLiveCl`. The verdict is unaffected — the third is the same fail-closed seam through the same envelope, and `CCL-07` re-executes the claim the count was standing in for — but the number in the reason is wrong. |
+| C1-02 | the row rests on the caller deciding, which it does | The classifier's **own header still says the opposite**: `artifacts/api-server/src/services/compass/CompassIntentClassifier.ts:8#Phase-1 shadow mode: runs alongsid` describes shadow mode and a legacy keyword router that no longer exists, and `artifacts/api-server/src/services/compass/CompassIntentClassifier.ts:9#Disagreements are logged by the caller; ` claims a disagreement log that nothing writes. This is a source-(c)-class defect — a contract a module states about itself that is false — and it is the sole reason `CCL-03` is `?` rather than answerable. `C1-02` does not move: its verdict rests on the caller's behaviour, which is correct. |
+
+### 16.3 Headline — the denominator moves, and CANNOT-VERIFY stops being zero
+
+> **Compass, after §16: 141 requirements · 98 BUILT-AND-CORRECT · 35 BUILT-BUT-WRONG · 6 NOT-BUILT ·
+> 2 CANNOT-VERIFY → CONSTRUCTED 94.3 % · CORRECT 69.5 %.**
+
+| | §15 (126 rows) | §16 (141 rows) | move |
+|---|---|---|---|
+| Denominator | 126 | **141** | **+15** |
+| BUILT-AND-CORRECT | 94 | **98** | +4 |
+| BUILT-BUT-WRONG | 27 | **35** | +8 |
+| NOT-BUILT | 5 | **6** | +1 |
+| CANNOT-VERIFY | 0 | **2** | **+2** |
+| CONSTRUCTED | 96.0 % | 133 / 141 = **94.3 %** | −1.7 pts |
+| CORRECT | 74.6 % | 98 / 141 = **69.5 %** | −5.1 pts |
+
+98 + 35 + 6 + 2 = 141. **No existing row moved in either direction**, which is the other half of this
+measurement: every point of the drop is a requirement that was never counted, not a verdict that was
+wrong.
+
+**§0 said *"Zero CANNOT-VERIFY, and I looked hard for one."*** That was true of the population it
+searched — inbound obligations, sideways rows and self-stated contracts are all answerable from code,
+because they are all *about* code. It stopped being true the moment the denominator included a clause
+about **process**: whether a shadow comparison happened before a deletion (`CCL-03`), and whether an
+owner ever approved a policy value (`CCL-14`), are not properties of any tree. Both name the evidence
+that would settle them and the person who holds it. A census with no `?` column is not necessarily
+thorough; it may only be measuring the kind of requirement that code can answer.
+
+**Programme population, restated, and the arithmetic shown because it has moved twice since §13.5.**
+§13.5 measured Compass's own commissioned programme at 23 / 36 = 63.9 %. Three of the four rows
+§13.7 and §13.8 then closed belong to that population — `CPH-11`, `CPH-12`, `C1-02`; the fourth,
+`CX-06`, is source (a) — so it stood at 26 / 36 = 72.2 % before this section. With these fifteen it
+is **30 / 51 = 58.8 %**, against source (a)'s 48 / 70 = 68.6 % and source (c)'s 20 / 20. 26 + 48 + 20
+= 94, and 30 + 48 + 20 = 98, which is the headline above. **The population Compass was built to
+satisfy is still the one it scores worst against**, and the gap to the rules it wrote for itself is
+now 41.2 points.
+
+**Reconciliation with the tool, in §13.6's shape.** `check:census-integrity` reads 132 of these 141
+rows — all fifteen new ids parse, which is why they were written `CCL-nn` rather than reusing a
+prefix `parseIdCell` mishandles — and prints the nine it cannot read. It reports 93 C · 32 W · 5 N ·
+2 `?`; the nine unreadable rows carry C 5 · W 3 · N 1 · `?` 0. 93 + 5 = 98, 32 + 3 = 35, 5 + 1 = 6,
+2 + 0 = 2, 132 + 9 = 141. Every line subtracts exactly, and the tool prints the gap on every run
+rather than this document asserting it.
+
+### 16.4 Attribution, and why it is not in the headline
+
+`docs/compass/compliance-v1.md` §7 counts attribution as its own three-way split over the same 74
+requirements — **55 attributable to these three specifications · 11 attributable elsewhere · 8
+unknown** — under the owner's rule that **code is not treated as unattributed merely because it
+predates a specification's upload to this repository**. None of it moved a verdict here, and none of
+it should: a requirement can be satisfied by code that cites nothing, and a module can cite a
+specification and still fail it. Two details belong in this census because they would otherwise be
+rediscovered: three Compass modules carry a **different** programme's phase numbering
+(`artifacts/api-server/src/compass/CompassSafetyFilter.ts:2#CompassSafetyFilter — Phase 2 hard-blo`,
+`artifacts/api-server/src/compass/CompassPipeline.ts:2#CompassPipeline — Phase 2 single-entry`,
+`artifacts/api-server/src/compass/CompassNotificationEngine.ts:2#CompassNotificationEngine — Phase 5 not`),
+and reading their "Phase N" as a roadmap reference would manufacture attribution that is not there;
+and the tree's only conversation store
+(`artifacts/api-server/src/services/compass/CompassConversationService.ts:2#CompassConversationService`)
+names no specification at all.
+
+### 16.5 Cross-lane requests
+
+1. **To the integration owner — three modules this census cites nothing from, because it may not.**
+   `CCL-05` and `CCL-09` rest on the platform context kernel and the opportunity engine, and neither
+   is in `CENSUS_SCOPE["census-compass.md"]`. Their full anchored citations live in
+   `docs/compass/compliance-v1.md` §5 instead, because putting them here would take this census's
+   scope coverage from 98 % to 95 % — under its 96 % floor — while making it no fresher: a census
+   that cites a file nobody watches reports FRESH about the wrong half. **The three are named below
+   without their `.ts` extensions on purpose, and the purpose is not the one census-map was
+   criticised for.** `check:census-scope-coverage` reads any backticked repo path ending in a source extension as a citation and
+   cannot tell a piece of evidence from a request to widen a scope; these three are the second, and
+   spelling them in citation form would fail the check on a line that grades nothing. They are
+   `lib/contextKernel`, `lib/opportunityEngine` and `routes/opportunities`, all under
+   `artifacts/api-server/src/`. Add them to that scope and both rows can be cited and watched here.
+   This lane does not edit `checkCensus*.ts`.
+2. **To whoever owns the intent classifier's header** — two false sentences at
+   `artifacts/api-server/src/services/compass/CompassIntentClassifier.ts:8#Phase-1 shadow mode: runs alongsid`.
+   The fix is a comment edit, and this lane's ownership is this document, not that module.
