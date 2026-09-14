@@ -37,7 +37,7 @@ import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEng
 import { checkRentBuddyAccess, invalidateSuggestedCityCache } from "./rentABuddyRollout.js";
 import { requireBookingKyc } from "../lib/rentBuddyKycGate.js";
 import { notifyBookingParty } from "../lib/bookingNotify.js";
-import { loadTravelerIdentity } from "../lib/travelerVerification.js";
+import { loadTravelerIdentity, readVerifiedAgeSignal } from "../lib/travelerVerification.js";
 import {
   AWAITING_BUDDY_STATUSES, ACCEPTED_STATUSES, UPCOMING_STATUSES,
   CANCELLABLE_STATUSES, CHANGE_ALLOWED_STATUSES, THREAD_ALLOWED_STATUSES,
@@ -1674,6 +1674,51 @@ export async function enforceCityRestrictions(opts: {
 }
 
 /**
+ * Refuse a booking when a provider result on file says the traveller is a minor.
+ *
+ * ── WHAT THIS IS FOR (IDF-25 / IDF-27) ──────────────────────────────────────
+ * `profiles.date_of_birth` is typed by the user. `identity_verifications.
+ * is_over_18` is a government document's answer to the same question, written
+ * on every provider result state by `routes/verification.ts`. Until this check
+ * existed nothing in the product read the second one as a gate, so a traveller
+ * whose document proved they were a minor kept the adult birthday they had
+ * typed and booked a stranger for an in-person meeting.
+ *
+ * ── THREE ANSWERS, NOT TWO ─────────────────────────────────────────────────
+ *   verified minor      → 403 `age_requirement`. An AGE refusal, not a
+ *                         "verify your ID" nudge the user could go satisfy, and
+ *                         deliberately not the missing-DOB message either: the
+ *                         date of birth is on file and is contradicted.
+ *   check unreadable    → 503 `age_verification_unavailable`. An unknown answer
+ *                         is an outage, not a verdict about this person, and it
+ *                         refuses THIS booking exactly as the unreadable
+ *                         launch-control and city-restriction reads already do.
+ *   no contradiction    → true, and the gate stack continues unchanged.
+ *
+ * Nothing beyond the refusal happens here — no suspension, no age restriction,
+ * no rewrite of the contradicted date of birth. Those are a separate owner
+ * decision; this function is the refusal only.
+ */
+async function refuseKnownMinorTraveler(serviceClient: any, res: any, userId: string): Promise<boolean> {
+  const signal = await readVerifiedAgeSignal(serviceClient, userId);
+  if (signal.verificationUnreadable) {
+    res.status(503).json({
+      error: "age_verification_unavailable",
+      message: "Your age could not be verified right now. Please try again shortly.",
+    });
+    return false;
+  }
+  if (signal.verifiedMinor) {
+    res.status(403).json({
+      error: "age_requirement",
+      message: "Rent a Buddy bookings are only available to users aged 18 and over.",
+    });
+    return false;
+  }
+  return true;
+}
+
+/**
  * The SINGLE implementation of the gate stack that POST /rent-a-buddy/bookings
  * runs once the buddy, city and category are known. Extracted (audit RAB-1 /
  * RAB-2) so every other creation path — rebook, package-book, offer-accept —
@@ -1750,6 +1795,16 @@ export async function enforceBookingCreationGates(opts: {
       return false;
     }
   }
+
+  // ── Verified-minor refusal (IDF-25 / IDF-27) ───────────────────────────────
+  // BEFORE the launch-control branch, deliberately. Every age check in this
+  // function lives inside `if (launchCtrl)`, so a rule placed there would fire
+  // only where an admin has configured a control for this location, and could
+  // additionally be sidestepped by turning `requireIdVerification` off — that
+  // flag is the only other identity condition in the block. A government
+  // document stating the traveller is a minor is not a location policy, and
+  // this is the booking path that pairs strangers in person.
+  if (!await refuseKnownMinorTraveler(serviceClient, res, userId)) return false;
 
   // ── Launch control gating (age / DOB / ID / phone) ──────────────────────────
   // countryCode must be provided whenever launch controls are configured —
