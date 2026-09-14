@@ -1847,3 +1847,112 @@ other moderation routes.
 * `IMPLEMENTED_PROVIDERS` gaining a member without TV-6b being re-graded — §17.3's "nothing can
   produce an `is_over_18` today" would no longer hold, and D-DOB would become actionable.
 * Either new suite being registered and then failing in the curated run.
+
+---
+
+## §18 — Independent verification of the identity-foundation build. ONE ROW MOVES, and two claims are REFUSED
+
+`head_commit: 608c5aa09`. Written by the integration lead, who is the only author of verdicts
+here, and **only after** an independent Verification role re-derived every claim against the code.
+Implementation's own report was deliberately withheld from that role.
+
+### 18.1 `C22` moves **W → C** — its own settlement condition, quoted and met
+
+§15 wrote the condition into the row itself:
+
+> *"**What would settle it:** a `POST /admin/trust/users/:userId/score-override` on
+> `routes/trust-admin.ts` behind `requireAdmin`, plus a route test asserting the ceiling on the row."*
+
+Both halves are now true, and neither is taken on the builder's word:
+
+- The route is `artifacts/api-server/src/routes/trust-admin.ts:390#router.post(` — behind
+  `requireAdmin`, mounted at `artifacts/api-server/src/routes/index.ts:220#trustAdminRouter`,
+  **awaiting** `adminOverrideScore` and returning the read-back `persistedScore` and
+  `ceilingBinding` rather than a bare `ok`.
+- Verification re-ran all four of §15.4's named mutations. **All four go red**, including P4
+  (inverting the ceiling comparison in `TrustScoreService`), which reddens 16 cases across six
+  describe blocks — so the CAP semantics the owner ruled are pinned by behaviour, not by a
+  comment.
+
+**One honest discrepancy:** the built path is `/score/override`, the row wrote `/score-override`.
+A slash where the row wrote a hyphen. The criterion is the capability and its test, both of which
+hold; the spelling difference is recorded rather than smoothed over.
+
+`C22` therefore satisfies §LANE-RULES 5 — a reachable caller now exists. **W → C.**
+
+| id | was | now | evidence |
+|---|---|---|---|
+| C22 | W | **C** | **The row's own settlement condition, met and independently re-derived.** §15 wrote it in: *"a `POST /admin/trust/users/:userId/score-override` on `routes/trust-admin.ts` behind `requireAdmin`, plus a route test asserting the ceiling on the row."* The route is `artifacts/api-server/src/routes/trust-admin.ts:390#router.post(`, behind `requireAdmin`, mounted at `artifacts/api-server/src/routes/index.ts:220#trustAdminRouter`; it **awaits** `adminOverrideScore` and returns the read-back `persistedScore` and `ceilingBinding` instead of a bare `ok`, so a ceiling that did not persist cannot be reported as one that did. An independent Verification role — given the checklist and the code but **not** the builder's report — re-ran all four of §15.4's named mutations and **all four go red**; P4, inverting the ceiling comparison at `artifacts/api-server/src/services/trust/TrustScoreService.ts:186#Math.min`, reddens 16 cases across six describe blocks, so CAP semantics are pinned by behaviour rather than by a comment. The built path spells `/score/override` where the row wrote `/score-override`; the capability and its test are what the criterion names, and the spelling difference is recorded rather than smoothed over. **Turns red if** any of §14.4's four characterization assertions starts failing, if the route loses `requireAdmin`, if `adminOverrideScore` stops being awaited, or if `ceilingBinding` is reported unconditionally. |
+
+**census-trust after §18: 108 · C 85 · W 15 · N 6 · X 2 → CONSTRUCTED 92.6 %, CORRECT 78.7 %.**
+
+### 18.2 Two claims REFUSED, and `TV-5b` stays **NB** because of it
+
+Verification declined to confirm that the verified-minor contradiction rule closes age gating, and
+the integration lead re-checked both findings personally before accepting them.
+
+**The rule reaches one route family, not the product.** Round 1 placed it in
+`lib/travelerVerification.ts#loadTravelerIdentity` on the stated reasoning that the helper had six
+consumers. **That premise is false.** `grep -rln loadTravelerIdentity --include=*.ts` returns four
+non-test files and all four are Rent-a-Buddy. Seven further age gates read
+`profiles.date_of_birth` directly and call the helper **zero** times — measured, per file:
+
+| file | `date_of_birth` reads | `loadTravelerIdentity` calls |
+|---|---:|---:|
+| `routes/meetups.ts` | 4 | **0** |
+| `routes/requests.ts` | 2 | **0** |
+| `routes/events.ts` | 9 | **0** |
+| `routes/mediaFeed.ts` | 2 | **0** |
+| `routes/discovery.ts` | 4 | **0** |
+| `routes/profile.ts` | 4 | **0** |
+| `services/media/MediaProjectionService.ts` | — | **0** |
+
+So a traveller whose government-ID check returned `is_over_18: false` still keeps the adult
+birthday they typed and can RSVP to an 18+ meetup, accept an 18+ circle invite, join an
+age-restricted event and its waitlist, be served adult media, and appear in age-restricted
+discovery. **`TV-5b` stays `NB`.**
+
+**A sibling booking route bypasses the gate that was fixed.**
+`artifacts/api-server/src/routes/rentABuddySpec.ts:397#router.post(` inserts a
+`rent_buddy_bookings` row and never calls `enforceBookingCreationGates`, so it never reaches the
+new refusal; every age check it has sits inside its `if (launchCtrl)` branch. Verification proved
+a booking is seated for a verified minor when no launch control matches. The file states the
+invariant it breaks at `artifacts/api-server/src/routes/rentABuddy.ts:1728#no`.
+**Exposure is latent, not live:** the bypass branch requires `rent_buddy_launch_controls` to be
+empty and production holds 13 rows — and `identity_verifications` holds 0 rows with no configured
+provider, so the rule has never fired against real data at all.
+
+### 18.3 A test that did not notice its own mutation
+
+`artifacts/api-server/src/test/trust-integration.test.ts:653#DEFECT` — *"DEFECT 4 — a failed
+recalculation is NOT reported as a successful lift"* — **stayed green** when Verification restored
+the fire-and-forget call, which is the mutation its own comment names. It passes because the
+`trust_profiles` read-back throws on that fixture for an unrelated reason. The property is still
+covered — three other cases caught the mutation — but **this case's stated red-condition is a
+lie and must not be relied on as the pin.** Queued for repair.
+
+This is the finding that most justifies the three-role split: a builder who writes both the fix
+and its pin cannot discover that the pin passes for the wrong reason.
+
+### 18.4 `IDF-53` was mis-classified as blocked by nothing
+
+The Requirements checklist recorded `IDF-53` — the polluted audit vocabulary — as
+`Blocked by: NOTHING`. It is blocked on a migration. Implementation declined to build it and was
+right to: `trust_admin_actions_action_type_check` admits exactly nine values and `update_setting`
+is not among them, **confirmed read-only on production**. Verification added the part that makes
+the refusal clearly correct rather than merely cautious: that insert is fire-and-forget with a
+swallowed `catch`, and supabase-js **resolves** on a database error rather than throwing — so the
+`23514` would not even reach the `.catch`, and the rename would have silently produced *no audit
+row at all*.
+
+Nothing anywhere pins the nine-value vocabulary today, so any future edit to an `action_type`
+string ships green and drops audit rows in production. A value-level assertion needs no migration
+and is queued.
+
+### 18.5 What §18 does NOT claim
+
+Everything above is read against `608c5aa09` on `claude/sweet-fermat-fmx7up`. **BUILT ON BRANCH IS
+NOT MERGED.** `main` is `014a25d56`; the 32 migrations `2778–2870` exist in no database;
+`IMPLEMENTED_PROVIDERS` admits only `"mock"` and both real adapters throw. `C22`'s `C` is a
+statement about this tree, not about a running system, and no user has ever been ID-verified in
+production.

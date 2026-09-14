@@ -157,8 +157,13 @@ at this tree, not by quoting.
 **Confirmed true.** `grep -rn 'adminOverrideScore' artifacts/api-server/src --include=*.ts`
 returns the definition, its own error strings, and test files — **no route**. The only
 admin-initiated ceiling writer is `artifacts/api-server/src/services/trust/TrustAdminService.ts:362#createCap`
-inside that unreachable function. So today **no admin can set a ceiling at all**, and the
-owner's ruling governs a capability nobody has.
+inside that unreachable function. So **at the time this was written** no admin could set a
+ceiling at all, and the owner's ruling governed a capability nobody had.
+
+> **⚠ SUPERSEDED BY §10.** This paragraph and §4's item 2 describe the BEFORE state. The route was
+> built and independently verified; `C22` moved `W → C` in census-trust §18.1. The before-state
+> sentences are kept because they are the argument for why the work was needed — read them as
+> history, not as a statement about the tree.
 
 **Confirmed fixed, and worth stating so nobody re-fixes it.** The *apply* path now persists
 correctly and says so: the raw `trust_profiles` write is gone, the recalculation's failure is no
@@ -362,3 +367,36 @@ node artifacts/api-server/scripts/check-citation-targets.mjs   # must stay under
   same commit.
 * Either specification file changing. The clause citations are against the tree recorded in
   `docs/specs/upgrades-v2/SOURCE-MANIFEST.json`; a drift shows there first.
+
+
+---
+
+## 10. Verification outcome — 2026-09-14, at `608c5aa09`
+
+An independent **Verification** role re-derived every Part A claim from this checklist and the
+code. It was **not** given Implementation's report. The integration lead re-checked its two
+refusals personally before accepting them, and owns every verdict below.
+
+| row | verification verdict | outcome |
+|---|---|---|
+| **IDF-50** | **CONFIRMED** | Route exists, mounted, awaited, reads the ceiling back. All four census §15.4 mutations go red. |
+| **IDF-51** | **CONFIRMED** | Every step awaited, lifts counted, `trust_caps` and `trust_profiles` both re-read before anything is audited. Both named mutations go red. |
+| **IDF-52** | **CONFIRMED — all four defects** | Including the user-scoping one. Verification built a live attack probe: cap belongs to user B, request through user A's URL. **Before:** 200, B's ceiling lifted, audit filed against A, A's cache wrongly cleared, B's never invalidated. **After:** 404, nothing written, no audit row, both caches intact. |
+| **IDF-25** | **NOT CONFIRMED** | The rule reaches four Rent-a-Buddy files. **Seven further age gates call the helper zero times.** census-trust §18.2. |
+| **IDF-27** | **CONFIRMED on the canonical gate; NOT CONFIRMED as an invariant** | A sibling booking route inserts a booking without passing through it. census-trust §18.2. |
+| **IDF-53** | **Refusal CORRECT** | And worse than stated: supabase-js *resolves* on a DB error, so the `23514` would not even reach the swallowed `catch`. The rename would have produced **no audit row at all**. |
+
+### 10.1 Two corrections to THIS document
+
+1. **`IDF-53`'s "Blocked by" column said `NOTHING`. It is blocked on a migration.** That is a
+   defect in the checklist, not in the implementation — recorded rather than quietly edited.
+2. **The ownership note for `IDF-25` rested on a false premise.** It said putting the rule in
+   `loadTravelerIdentity` made it *"one change with six consumers"*. The helper has four non-test
+   consumers and all four are Rent-a-Buddy. The seven gates that needed it never call it.
+
+### 10.2 The finding that justifies the three-role split
+
+`trust-integration.test.ts:653#DEFECT` claims in its own comment that restoring the
+fire-and-forget call turns it red. **It does not** — it passes for an unrelated reason. A builder
+who writes both the fix and its pin cannot discover that the pin passes for the wrong reason;
+only a reader who runs the mutation can. Queued for repair.
