@@ -135,7 +135,13 @@ describe("buildPassportProjection — self view", () => {
     // Trust — numeric score exposed only on the self view.
     assert.equal(p.trust?.score, 78);
     assert.equal(p.trust?.publicLevel, "trusted_traveler");
-    assert.ok(["low", "medium", "high"].includes(p.trust!.confidence));
+    // P50, 2026-09-14 — CHANGED DELIBERATELY. This fixture's trust_profiles row
+    // carries no `evidence_weight` (pre-migration-2371 shape), so there is no
+    // trust evidence to band. The old assertion passed because `confidence` was
+    // a sum of this fixture's STAMPS and TRIPS; that formula is gone, so the
+    // honest answer is the absent band plus the reason for it.
+    assert.equal(p.trust!.confidence, null);
+    assert.equal(p.trust!.confidenceBasis, "travel_proxy");
 
     // Stats.
     assert.equal(p.stats.countries, 2);

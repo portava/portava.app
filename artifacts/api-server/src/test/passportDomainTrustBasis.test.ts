@@ -223,8 +223,21 @@ describe("P45 — what was deliberately NOT changed (D-WORD stays the owner's)",
     }
   });
 
-  it("`confidence` is untouched by the new field", async () => {
+  it("`confidence` no longer bands a profile that carries NO evidence measure (P50)", async () => {
+    // CHANGED DELIBERATELY, 2026-09-14, census-passport P50. This assertion
+    // used to read `["low","medium","high"].includes(...)` and it was written
+    // to make exactly this diff visible rather than silent — see the census's
+    // *"this census's own tests are written to catch"* note.
+    //
+    // `fullyScored` is a pre-2371 row: nine measured CATEGORIES and no
+    // `evidence_weight`. The old band still produced "high" for it, out of
+    // stamps and trips. There is no evidence measurement to band, so the band
+    // is now `null`, and `confidenceBasis` says which absence it was. No WORD
+    // was chosen here: a word was withheld.
     const p = (await buildPassportProjection(db(fullyScored), OWNER, OWNER, { resolveViewerContext: resolver(SELF) }))!;
-    assert.ok(["low", "medium", "high"].includes(String(p.trust?.confidence)));
+    assert.equal(p.trust?.confidence, null);
+    assert.equal(p.trust?.confidenceBasis, "travel_proxy");
+    // The measured domain words are UNTOUCHED — D-WORD is still the owner's.
+    assert.equal(domainMap(p.trust!.domains as any).get("overall")!.basis, "measured");
   });
 });

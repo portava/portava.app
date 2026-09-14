@@ -201,7 +201,7 @@ export interface DiscoveryCardIntent {
 export interface DiscoveryCardTrust {
   label: string;
   publicLevel: string;
-  confidence: "low" | "medium" | "high";
+  confidence: "low" | "medium" | "high" | null;  // null = NOT measured (P50)
   strengths: string[];
 }
 
