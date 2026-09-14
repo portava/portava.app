@@ -498,6 +498,30 @@ describe("DC-02 — §4's label cap refuses at the API boundary", () => {
     assert.equal(db._writes.filter((w) => w.table === "content_trails").length, 0);
   });
 
+  // A PARTIALLY refused batch is where the accepted labels and the request's
+  // labels stop lining up by index. If the writer pairs them positionally, the
+  // surviving label is written against the REFUSED label's content — a row that
+  // is well formed, passes every constraint, and is about the wrong place.
+  it("a partially refused batch writes each surviving label against its OWN content", async () => {
+    const db = withDb();
+    const r = await call("POST", `/v1/discovery/trails/${T_ROOF}/content`, USER, {
+      labels: [
+        // refused: not one of §4's eight
+        { sourceType: "place", sourceId: PLACE_A, relationship: "signal", signal: "vibes" },
+        // accepted, and it is about PLACE_B
+        { sourceType: "place", sourceId: PLACE_B, relationship: "supporting" },
+      ],
+    });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.equal(r.body.attached, 1);
+    const written = db._writes.find((w) => w.table === "content_trails")!.rows;
+    assert.equal(written.length, 1);
+    assert.equal(written[0].source_id, PLACE_B,
+      "the surviving label must carry its own source, not the refused label's");
+    assert.equal(written[0].relationship, "supporting");
+    assert.equal(written[0].signal, null);
+  });
+
   it("the sixth Signal is refused while the first five are kept", async () => {
     const seed = SEED();
     seed.content_trails = [

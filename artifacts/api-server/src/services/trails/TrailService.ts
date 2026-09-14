@@ -726,17 +726,29 @@ export async function attachContentToTrail(
   }
 
   const confidence = actor.mode === "attach" ? 0.8 : 0.4;
-  const rows = capped.accepted.map((l, i) => ({
-    trail_id: trailId,
-    source_type: labels[i]?.sourceType ?? labels[0].sourceType,
-    source_id: labels[i]?.sourceId ?? labels[0].sourceId,
-    relationship: l.relationship,
-    signal: l.signal,
-    source: actor.userId ? "user" : "system",
-    confidence,
-    contributor_id: actor.userId,
-    content_state: "just_arrived",
-  }));
+
+  // PAIRED BY IDENTITY, NOT BY POSITION. `capped.accepted` is a FILTERED subset
+  // of `proposed`, so its index n is not the request's label n as soon as one
+  // label is refused — and pairing positionally wrote the surviving label
+  // against the REFUSED label's content: a row that satisfies every constraint,
+  // passes every check, and is about the wrong place. Caught by
+  // "a partially refused batch writes each surviving label against its OWN
+  // content" in test/discoveryTrailRoutes.test.ts; do not reintroduce an index.
+  const acceptedSet = new Set(capped.accepted);
+  const rows = proposed
+    .map((label, i) => ({ label, source: labels[i] }))
+    .filter(({ label }) => acceptedSet.has(label))
+    .map(({ label, source }) => ({
+      trail_id: trailId,
+      source_type: source.sourceType,
+      source_id: source.sourceId,
+      relationship: label.relationship,
+      signal: label.signal,
+      source: actor.userId ? "user" : "system",
+      confidence,
+      contributor_id: actor.userId,
+      content_state: "just_arrived",
+    }));
 
   const { error } = await sc.from("content_trails").insert(rows);
   if (error) {
