@@ -53,6 +53,8 @@
  * reward worker, `lib/intelRewardScheduler.ts#runIntelRewardPass`.
  */
 import { isFlagEnabled } from "../../lib/featureFlags.js";
+import { resolveCapability } from "../../lib/capability/schemaCapability.js";
+import { INTEL_REWARD_REVERSAL } from "../../lib/capability/registry.js";
 
 const REWARDS_FLAG = "intel_rewards";
 // The table name is spelled as a literal at every `.from()` below rather than
@@ -74,7 +76,7 @@ export type ReverseRewardResult =
   | { ok: true; ledgerEntry: any; reversedUnits: number; replayed?: true }
   | {
       ok: false;
-      reason: "disabled" | "not_found" | "not_reversible" | "db_error";
+      reason: "disabled" | "not_found" | "not_reversible" | "db_error" | "schema_absent";
       detail?: string;
     };
 
@@ -95,7 +97,41 @@ export async function reverseEarnedReward(
   sc: any,
   input: ReverseRewardInput,
 ): Promise<ReverseRewardResult> {
-  if (!(await isFlagEnabled(sc, REWARDS_FLAG))) return { ok: false, reason: "disabled" };
+  // THE FLAG IS HALF THE QUESTION. `lib/capability/registry.ts` states the
+  // contract this now obeys: enabled iff the flag is ON **and** the schema is
+  // READY. Gating on `isFlagEnabled` alone was not a correctness hole — the
+  // `readErr` branch below already refused, wrote nothing and moved no money
+  // when `reverses_entry_id` was absent — it was a DIAGNOSIS hole. `db_error`
+  // says "the database broke", and an operator reading it looks at
+  // connectivity, at grants, at the ledger's health, at everything except the
+  // one true cause: a migration that was never applied to the database this
+  // flag is on in. `checkFlagSchemaPrerequisites` found exactly that state
+  // against the committed production snapshot.
+  //
+  // resolveCapability probes the schema ONLY when the flag is on, so a dark
+  // feature still makes no database contact beyond the flag read.
+  const cap = await resolveCapability(sc, INTEL_REWARD_REVERSAL);
+  if (cap.flag !== "on") return { ok: false, reason: "disabled" };
+  if (!cap.enabled) {
+    // `schema_unknown` is deliberately NOT collapsed into this: a probe that
+    // could not answer is an outage, and calling it an unapplied migration
+    // would send the operator to run DDL against a database that already has
+    // it. Deny and unknown stay apart, here as everywhere else in this tree.
+    if (cap.reason === "schema_missing") {
+      return {
+        ok: false,
+        reason: "schema_absent",
+        detail:
+          `intel_reward_ledger is missing ${(cap.schema?.missing ?? INTEL_REWARD_REVERSAL.requires.tables.intel_reward_ledger!.columns.join(", "))} ` +
+          `on this database — apply ${INTEL_REWARD_REVERSAL.providedBy.join(", ")}, or turn ${REWARDS_FLAG} off`,
+      };
+    }
+    return {
+      ok: false,
+      reason: "db_error",
+      detail: `capability ${REWARDS_FLAG} could not be established: ${cap.reason ?? "unknown"}`,
+    };
+  }
 
   const id = typeof input.originalEntryId === "string" ? input.originalEntryId.trim() : "";
   if (id.length === 0) {

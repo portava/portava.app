@@ -3826,7 +3826,7 @@ their own FIRST: `trip_operational_projections_enabled`
 (`domain/trips/policies/tripOperationalProjections.ts:29#TRIP_OPERATIONAL_PROJECTIONS_FLAG`,
 definition `:31#TRIP_OPERATIONAL_PROJECTIONS`, gate
 `:72#tripOperationalProjectionsGate`, registered at
-`lib/capability/registry.ts:160#TRIP_OPERATIONAL_PROJECTIONS`), seeded
+`lib/capability/registry.ts:215#[TRIP_OPERATIONAL_PROJECTIONS.flag]: TRIP_OPERATIONAL_PROJECTIONS,`), seeded
 FALSE by `2778_trip_operational_projections_flag.sql`. The gate is a pure
 helper in the ratchet's sense, so the builders that call it first
 (`domain/trips/projections/TripFreedomProjection.ts:127#tripOperationalProjectionsGate`)
