@@ -116,7 +116,7 @@ const NOW = Date.parse("2030-06-14T21:00:00.000Z");
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe("no live conditions supplied — the arithmetic is what it was", () => {
-  it("liveExtra is 0 and totalBuffer is the sum of the five original terms", () => {
+  it("liveExtra is 0 and totalBuffer is the sum of EVERY term the breakdown publishes", () => {
     for (const tz of ["Asia/Taipei", "America/New_York", "Europe/Berlin"]) {
       for (const intl of [true, false]) {
         for (const bags of [true, false]) {
@@ -128,10 +128,21 @@ describe("no live conditions supplied — the arithmetic is what it was", () => 
           });
           const b = computeBuffer(a, s, new Date(Date.parse(s.departureTime)), tz);
           assert.equal(b.liveExtra, 0, `${tz} intl=${intl} bags=${bags}`);
+          // Summed by ENUMERATING the breakdown rather than by naming the terms
+          // this case was written against. It used to assert that
+          // "the five original terms must still sum to the total when nothing
+          // is live", and that spelling went red the day a seventh term
+          // (`returnTransportExtra`, census L72) arrived — reporting a term
+          // that IS accounted for as one that is not. What the case is actually
+          // for is that NO term escapes the total, and that claim gets
+          // stronger, not weaker, when a term is added without this file being
+          // edited at all.
+          const named = Object.entries(b)
+            .filter(([k]) => k !== "totalBuffer")
+            .reduce((sum, [, v]) => sum + (v as number), 0);
           assert.equal(
-            b.totalBuffer,
-            b.baseBuffer + b.immigrationExtra + b.bagsExtra + b.trafficExtra + b.timeOfDayExtra,
-            "the five original terms must still sum to the total when nothing is live",
+            b.totalBuffer, named,
+            `every term in the breakdown must sum to the total when nothing is live (${tz} intl=${intl} bags=${bags})`,
           );
         }
       }

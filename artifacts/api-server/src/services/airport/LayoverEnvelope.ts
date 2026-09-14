@@ -1,6 +1,6 @@
 /**
  * LayoverEnvelope — spec §8, the half of a safe envelope this tree can honestly
- * certify: the OUTER bound.
+ * certify: the OUTER bound, cut from a BIDIRECTIONAL journey.
  *
  * ── WHAT §8 ASKS FOR, AND WHAT COULD ACTUALLY BE BUILT ──────────────────────
  * §8 asks for bidirectional reachability under future return conditions, a
@@ -48,10 +48,15 @@
  * ── WHAT THIS DOES NOT CLOSE ────────────────────────────────────────────────
  *  - There is no INNER edge. Nothing here can say a candidate fits, so `SAFE`
  *    and `TIGHT` have no producer and the band vocabulary says so.
- *  - The bound is symmetric (`back >= out`), so §8.1's "return traffic forecast
- *    — use a future-time estimate, not outbound time" is NOT satisfied by it:
- *    a symmetric lower bound is still a lower bound, which is all that is
- *    claimed, but it is not the asymmetric return model L60/L72 ask for.
+ *  - The two legs are asked separately and the return one is asked at the
+ *    return instant (census L60), but THE CONFIGURED PROVIDER IS SYMMETRIC AND
+ *    TIME-INDEPENDENT, so all three queries come back with the same number and
+ *    nothing a traveller sees moves. What changed is that the asymmetry is now
+ *    a provider's answer to give rather than an assumption this file makes. A
+ *    forecast that is WORSE at the return hour may flag a candidate and may
+ *    never block one: a statement about one later instant is not a bound over
+ *    every instant in the window, and `returnLowerBoundMin` takes the smaller
+ *    of the two answers for exactly that reason.
  *  - Transport reliability, route alternatives, queue friction, weather and
  *    re-entry cost (L62) are not inputs. The bound is geometry and two speeds.
  */
@@ -148,6 +153,13 @@ export interface SafeEnvelope {
   certifiedOutward: true;
   /** FALSE: a point inside the disc is NOT certified to fit. Always false. */
   certifiedInward: false;
+  /**
+   * TRUE: the RADIUS above splits the window in half between the two legs.
+   * That is exact under the straight-line provider and an approximation under
+   * any provider that answers by direction. `bandCandidate` compares the two
+   * legs it actually measured and is the authority where they differ.
+   */
+  discAssumesSymmetricReturn: true;
 
   // ── census L63: the edge that reads confidence ──────────────────────────────
 
@@ -177,6 +189,14 @@ export interface SafeEnvelope {
 
 /**
  * The exact inverse of `min(walk, drive)` at `maxOneWaySeconds`.
+ *
+ * THE DISC ASSUMES A SYMMETRIC RETURN AND THE PER-CANDIDATE RULE DOES NOT.
+ * `maxOneWayMinutes` is half the window, which is the right split only when the
+ * ride back costs what the ride out did: true of the straight-line bound and of
+ * nothing else. `bandCandidate` asks the port for BOTH legs and compares their
+ * SUM, so under an asymmetric provider it is the authority and this disc is a
+ * drawing. `discAssumesSymmetricReturn` on the envelope says so out loud rather
+ * than leaving a map to infer it.
  *
  * Walking is the faster mode below roughly 265 m (driving pays
  * `DRIVE_WAIT_SECONDS` before it moves at all), so the bound is the LARGER of
@@ -225,6 +245,7 @@ export function safeEnvelope(
       basis: "straight_line_lower_bound",
       certifiedOutward: true,
       certifiedInward: false,
+      discAssumesSymmetricReturn: true,
       confidence: band,
       uncertaintyBudgetMinutes: 0,
       plannedMaxOneWayMinutes: 0,
@@ -255,6 +276,7 @@ export function safeEnvelope(
     basis: "straight_line_lower_bound",
     certifiedOutward: true,
     certifiedInward: false,
+    discAssumesSymmetricReturn: true,
     confidence: band,
     uncertaintyBudgetMinutes,
     plannedMaxOneWayMinutes,
@@ -286,6 +308,47 @@ export interface EnvelopeVerdict {
   withinPlannedEdge: boolean | null;
   /** Why the planning edge excluded it, naming the band. `null` when inside. */
   plannedEdgeReason: string | null;
+
+  // ── census L60: the two legs, asked separately ──────────────────────────────
+
+  /**
+   * The AIRPORT → CANDIDATE lower bound, asked at `departAt`. `null` when the
+   * port could not answer. `lowerBoundOneWayMin` above is this same number,
+   * kept because consumers read it; it is no longer the whole journey.
+   */
+  outboundLowerBoundMin: number | null;
+  /**
+   * The CANDIDATE → AIRPORT lower bound the REFUSAL rests on: the SMALLER of
+   * the port's two answers, at `departAt` and at `returnDepartsAt`.
+   *
+   * The smaller, deliberately. A forecast that says the way back is worse at
+   * 18:40 is a statement about one instant, not a bound over every instant the
+   * traveller might leave, so it may inform PLANNING and may not produce a
+   * proof. Taking the larger would let an assumption block a card, which is the
+   * one thing this module does not do.
+   */
+  returnLowerBoundMin: number | null;
+  /**
+   * The same leg asked at `returnDepartsAt` — the FORECAST answer. Equal to
+   * `returnLowerBoundMin` under a time-independent provider, which is the only
+   * kind configured on this tree. The planning edge reads this one.
+   */
+  returnForecastLowerBoundMin: number | null;
+  /**
+   * `outboundLowerBoundMin + returnLowerBoundMin`, the quantity the block
+   * compares against the window. `null` when either leg is unanswered.
+   */
+  roundTripLowerBoundMin: number | null;
+  /**
+   * The instant the return leg was forecast FOR, ISO: the LATEST departure the
+   * window allows, `departAt + (usableMinutes − outbound)`.
+   *
+   * It is exact for the candidate ON the edge — there, `usable = out + back`,
+   * so `usable − out` is precisely when they must start back — and conservative
+   * for anything nearer, which is a traveller who spends their whole window.
+   * `null` when there is no outbound bound to subtract.
+   */
+  returnDepartsAt: string | null;
 }
 
 const NO_VERDICT: EnvelopeVerdict = {
@@ -295,6 +358,11 @@ const NO_VERDICT: EnvelopeVerdict = {
   reason: null,
   withinPlannedEdge: null,
   plannedEdgeReason: null,
+  outboundLowerBoundMin: null,
+  returnLowerBoundMin: null,
+  returnForecastLowerBoundMin: null,
+  roundTripLowerBoundMin: null,
+  returnDepartsAt: null,
 };
 
 /**
@@ -326,28 +394,71 @@ export async function bandCandidate(
   // branch was found. `haversineMeters` cannot throw either: both points come
   // from `airportPoint` / `placePoint`, which admit only finite coordinates.
   const metres = haversineMeters(envelope.centre, point);
-  const r = await estimateTravel(provider, { from: envelope.centre, to: point, departAt }, departAt);
-  if (r.kind !== "estimate") return NO_VERDICT;
-  const oneWay = Number(r.estimate.minutes);
-  if (!Number.isFinite(oneWay) || oneWay < 0) return NO_VERDICT;
-  // census L63 — the contracted edge, evaluated on the same bound. A point can
-  // be outside it and still not blocked; that is the whole distinction.
-  const withinPlannedEdge = oneWay <= envelope.plannedMaxOneWayMinutes;
+  const legMinutes = async (from: GeoPoint, to: GeoPoint, at: Date): Promise<number | null> => {
+    const r = await estimateTravel(provider, { from, to, departAt: at }, departAt);
+    if (r.kind !== "estimate") return null;
+    const m = Number(r.estimate.minutes);
+    return Number.isFinite(m) && m >= 0 ? m : null;
+  };
+
+  // ── census L60, leg 1: AIRPORT → CANDIDATE, at the moment they leave ───────
+  const oneWay = await legMinutes(envelope.centre, point, departAt);
+  if (oneWay === null) return NO_VERDICT;
+
+  // The latest instant the window allows the traveller to start back. Derived
+  // rather than assumed: see `returnDepartsAt` for why it is exact on the edge.
+  const returnDepartAt = new Date(
+    departAt.getTime() + Math.max(0, envelope.usableMinutes - oneWay) * 60_000,
+  );
+
+  // ── leg 2: CANDIDATE → AIRPORT, asked twice ───────────────────────────────
+  // Once at the same instant and once at the return instant. A symmetric,
+  // time-independent provider — the only kind configured here — answers the
+  // same number to all three queries, so nothing a traveller sees moves today.
+  // The shape is the point: the day a routed, time-aware provider is wired,
+  // the ride back stops being the ride out without another line changing.
+  const backNow = await legMinutes(point, envelope.centre, departAt);
+  const backLater = await legMinutes(point, envelope.centre, returnDepartAt);
+  if (backNow === null || backLater === null) return NO_VERDICT;
+
+  // The PROOF takes the smaller answer and the PLAN takes the larger. See
+  // `returnLowerBoundMin` for why a forecast may flag and may not block.
+  const backProved = Math.min(backNow, backLater);
+  const backPlanned = Math.max(backNow, backLater);
+  const roundTrip = oneWay + backProved;
+
+  // census L63 — the contracted edge. Now evaluated on the ROUND TRIP against
+  // the planned window rather than on one leg against half of it: with a
+  // symmetric provider `out + back <= planned` and `out <= floor(planned / 2)`
+  // are the same statement for integer minutes, so this is the same edge it
+  // was, widened to say something under an asymmetric one.
+  const plannedUsable = Math.max(0, envelope.usableMinutes - envelope.uncertaintyBudgetMinutes);
+  const withinPlannedEdge = oneWay + backPlanned <= plannedUsable;
   const plannedEdgeReason = withinPlannedEdge
     ? null
     : `beyond what we would plan on ${envelope.confidence ?? "unknown"} confidence — ` +
-      `${envelope.uncertaintyBudgetMinutes} of the ${envelope.usableMinutes} usable minutes are held back`;
+      `${envelope.uncertaintyBudgetMinutes} of the ${envelope.usableMinutes} usable minutes are held back, ` +
+      `and the return leg is forecast at ${oneWay + backPlanned} min there and back`;
 
-  if (oneWay * 2 > envelope.usableMinutes) {
+  const twoLegs = {
+    outboundLowerBoundMin: oneWay,
+    returnLowerBoundMin: backProved,
+    returnForecastLowerBoundMin: backLater,
+    roundTripLowerBoundMin: roundTrip,
+    returnDepartsAt: returnDepartAt.toISOString(),
+  };
+
+  if (roundTrip > envelope.usableMinutes) {
     return {
       band: "BLOCKED",
       distanceMetres: Math.round(metres),
       lowerBoundOneWayMin: oneWay,
       reason:
-        `${Math.round(metres / 100) / 10} km from the airport — at least ${oneWay * 2} min there and back, ` +
+        `${Math.round(metres / 100) / 10} km from the airport — at least ${roundTrip} min there and back, ` +
         `against ${envelope.usableMinutes} min of usable time`,
       withinPlannedEdge,
       plannedEdgeReason,
+      ...twoLegs,
     };
   }
   return {
@@ -357,6 +468,7 @@ export async function bandCandidate(
     reason: null,
     withinPlannedEdge,
     plannedEdgeReason,
+    ...twoLegs,
   };
 }
 

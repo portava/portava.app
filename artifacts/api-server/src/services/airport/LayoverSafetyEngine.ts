@@ -10,7 +10,13 @@
  */
 import type { AirportProfile } from "./AirportProfileService.js";
 import type { LayoverSession } from "./LayoverSessionService.js";
-import { localHour, localDayString } from "./AirportTime.js";
+import { localHour, localHourMinute, localDayString } from "./AirportTime.js";
+// §8.1 L72 — the return leg's own conditions. See `returnTransportExtra` below
+// for why the band table lives in its own module and why the ramp does not.
+import {
+  maxReturnTransportExtraMinutes,
+  rawReturnTransportExtraMinutes,
+} from "./layoverRouting.js";
 // census L293 is L47's defect on the other surface, so it is closed with L47's
 // module rather than a second copy of its rule. `statedTravelMin` is where
 // "airside 0 is a FACT, landside 0 is an ABSENCE" is decided, once, for both
@@ -59,8 +65,17 @@ export type SafetyRating =
  *                 traveller sees moves — but the ARITHMETIC gained a term and
  *                 the rule for this constant is that a new term bumps it, not
  *                 that a new term which happens to be zero does not.
+ *   2026.09.14-1  §8.1 L72: `returnTransportExtra` becomes a SEVENTH buffer
+ *                 term — the airport's own ground-transport figure, forecast at
+ *                 the LOCAL HOUR OF THE RETURN instead of charged flat. Unlike
+ *                 the sixth, this one is NON-ZERO for every airport that states
+ *                 a `traffic_extra_min` and whose flight leaves outside the
+ *                 night band, so deadlines, usable windows, tiers and the §8
+ *                 envelope radius all move. Bumped for that reason: a stored
+ *                 `hardReturnTime` computed under the old rules is not
+ *                 reproducible under these.
  */
-export const LAYOVER_ENGINE_VERSION = "2026.09.13-1";
+export const LAYOVER_ENGINE_VERSION = "2026.09.14-1";
 
 /**
  * Spec Appendix A reason codes — the whole vocabulary, declared once so it can
@@ -372,6 +387,22 @@ export interface SafetyAssessment {
      * answer is an observed queue and not the airport's static traffic figure.
      */
     liveExtra:        number;
+    /**
+     * §8.1 L72 — the ride back, forecast at the hour it actually happens.
+     *
+     * `trafficExtra` above is the airport's stated ground-transport term and
+     * has always been charged as a CONSTANT, identical at 03:00 and at 18:00.
+     * This is what the assumption model (`layoverRouting`) adds on top of it
+     * for the LOCAL HOUR OF THE RETURN — 0 at night, where free-flow is what
+     * the bound already assumes, and largest in the evening commute.
+     *
+     * It is a SEPARATE term for the same reason `liveExtra` is: a traveller
+     * asking why their deadline is earlier than yesterday's must be able to see
+     * that the answer is the hour their flight leaves, not the airport's static
+     * traffic figure. See `computeBuffer` for why it is ramped JOINTLY with
+     * `timeOfDayExtra` rather than on its own.
+     */
+    returnTransportExtra: number;
     totalBuffer:      number;
   };
 }
@@ -420,16 +451,120 @@ const TOD_RAMP_MIN = 20;
  * DST transitions, where local minutes-of-day do not advance uniformly.
  */
 function timeOfDayExtra(at: Date, timezone?: string): number {
-  const bandAt = (offsetMin: number): number => {
-    const t = offsetMin === 0 ? at : new Date(at.getTime() + offsetMin * 60_000);
-    return timeOfDayBand(timezone ? localHour(timezone, t) : t.getUTCHours());
-  };
-  let extra = bandAt(0);
-  for (let d = 1; d <= TOD_RAMP_MIN; d++) {
-    const ramped = bandAt(d) - d;
-    if (ramped > extra) extra = ramped;
+  return rampedBandMax(at, timezone, TOD_RAMP_MIN, timeOfDayBand);
+}
+
+/**
+ * `max over d in [0, ramp] of f(localHour(at + d)) − d`, evaluated at the only
+ * offsets where it can be attained.
+ *
+ * ── WHY THIS IS THE SAME NUMBER AS SAMPLING EVERY MINUTE ────────────────────
+ * `f` reads nothing but the LOCAL HOUR, so it is constant on each run of
+ * minutes sharing one. Within a run beginning at offset `s`, `f(h) − d` is
+ * largest at `d = s`; every later minute of the same run subtracts more from
+ * the same value. So the maximum over the whole window is attained at `d = 0`
+ * or at a run boundary, and evaluating those is not an approximation of the
+ * per-minute sweep — it IS the per-minute sweep, with the minutes that cannot
+ * win left out.
+ *
+ * Run boundaries are the instants where the local minute is 0. `localHourMinute`
+ * reports the LOCAL minute rather than the UTC one, which is what makes this
+ * correct at Asia/Kolkata (+05:30) and Asia/Kathmandu (+05:45); assuming the
+ * two agree would put every boundary in those zones half an hour out. A DST
+ * shift also lands on a local hour boundary, so the offsets below still cover
+ * every run start — the hour is re-read from the clock at each one rather than
+ * counted forward, so a repeated or skipped hour cannot desynchronise it.
+ *
+ * ── WHY IT IS WORTH THE PARAGRAPH ABOVE ─────────────────────────────────────
+ * The previous form built one `Intl` lookup per minute of look-ahead. With two
+ * ramped terms and a window that grows with the airport's traffic figure, the
+ * layover suites went from 60s to 217s on this tree. This evaluates two or
+ * three instants instead of fifty, and `layoverDeadlineMonotonicity`'s
+ * 1.5-million-case sweep is what checks the equality claim above rather than
+ * the argument alone.
+ */
+function rampedBandMax(
+  at: Date,
+  timezone: string | undefined,
+  ramp: number,
+  f: (hour: number) => number,
+): number {
+  const hm = timezone
+    ? localHourMinute(timezone, at)
+    : { hour: at.getUTCHours(), minute: at.getUTCMinutes() };
+  let best = f(hm.hour);
+  for (let d = 60 - hm.minute; d <= ramp; d += 60) {
+    const t = new Date(at.getTime() + d * 60_000);
+    const hour = timezone ? localHour(timezone, t) : t.getUTCHours();
+    const v = f(hour) - d;
+    if (v > best) best = v;
   }
-  return extra;
+  return best;
+}
+
+/**
+ * Whether the airport's local calendar day at `at` is a weekend.
+ *
+ * Read ONCE per buffer, deliberately, and then held constant across the ramp's
+ * look-ahead window below. That is sound rather than a shortcut: the window is
+ * at most a couple of hours wide, and the only way it can cross a local
+ * midnight is inside the NIGHT band, which `departureBand` gives the same
+ * factor on a weekday and at the weekend. Sampling `localDayString` once per
+ * minute instead would build a fresh `Intl.DateTimeFormat` per sample — the
+ * cost `AirportTime`'s hour-formatter cache exists to avoid.
+ */
+function isWeekendLocal(at: Date, timezone?: string): boolean {
+  const day = timezone ? localDayString(timezone, at) : at.toISOString().slice(0, 10);
+  const dow = new Date(`${day}T00:00:00Z`).getUTCDay();
+  return dow === 0 || dow === 6;
+}
+
+/**
+ * §8.1 L72 — the return leg's ground-transport forecast, RAMPED JOINTLY with
+ * the time-of-day term.
+ *
+ * ── WHY THE TWO TERMS ARE RAMPED TOGETHER AND NOT SEPARATELY ────────────────
+ * The L53 guarantee is about the WHOLE buffer: `cutoff − buffer(cutoff)` must
+ * be non-decreasing in the cutoff, which needs `buffer(t + d) − buffer(t) <= d`.
+ * Until now exactly one term varied with the cutoff, so ramping that one term
+ * to be 1-Lipschitz was the whole proof. TWO 1-Lipschitz terms add to a
+ * 2-Lipschitz one, and the deadline would have started moving backwards again
+ * — the same defect, reintroduced by addition rather than by a step.
+ *
+ * So the running maximum is taken over the SUM of the two raw bands, and this
+ * function returns what is left after `timeOfDayExtra`'s own ramped value:
+ *
+ *     timeOfDayExtra + returnTransportExtra === jointRamp(t)
+ *
+ * which is 1-Lipschitz, while `timeOfDayExtra` keeps EXACTLY the value it had
+ * before this term existed. The split is presentational; the sum is the thing
+ * the proof is about.
+ *
+ * The result is never negative: the joint maximum ranges over a superset of the
+ * terms `timeOfDayExtra`'s own maximum ranges over, with a non-negative term
+ * added to each, so it is always at least as large.
+ *
+ * ── THE WINDOW ─────────────────────────────────────────────────────────────
+ * A running maximum of `f(t + d) − d` is 1-Lipschitz only if the window is wide
+ * enough for the largest rise `f` can make. `f` here is at most
+ * `TOD_RAMP_MIN + maxReturnTransportExtraMinutes(traffic)`, and the window is
+ * exactly that — derived from the band table rather than written as a literal,
+ * so a change to the table cannot silently leave the window too short.
+ */
+function returnTransportExtra(
+  trafficExtraMin: number,
+  at: Date,
+  timezone: string | undefined,
+  timeOfDayExtraMin: number,
+): number {
+  const maxExtra = maxReturnTransportExtraMinutes(trafficExtraMin);
+  if (maxExtra === 0) return 0;
+  const weekend = isWeekendLocal(at, timezone);
+  const joint = rampedBandMax(
+    at, timezone, TOD_RAMP_MIN + maxExtra,
+    (hour) => timeOfDayBand(hour) + rawReturnTransportExtraMinutes(trafficExtraMin, hour, weekend),
+  );
+  return Math.max(0, joint - timeOfDayExtraMin);
 }
 
 /**
@@ -490,9 +625,20 @@ export function computeBuffer(
   const bagsExtra        = session.checkedBags         ? airport.checkedBagsExtraMin  : 0;
   const trafficExtra     = airport.trafficExtraMin;
   const timeOfDayExtraMin = timeOfDayExtra(at, timezone);
+  // §8.1 L72. `at` IS the return instant — every caller anchors the buffer to
+  // the flight cutoff (`computeReturnDeadline`), which is the moment the
+  // traveller must already be back. So the forecast is taken at the hour the
+  // ride home happens, not at the hour they left.
+  const returnTransportExtraMin = returnTransportExtra(trafficExtra, at, timezone, timeOfDayExtraMin);
   const liveExtra         = liveExtraMinutes(live);
-  const totalBuffer       = baseBuffer + immigrationExtra + bagsExtra + trafficExtra + timeOfDayExtraMin + liveExtra;
-  return { baseBuffer, immigrationExtra, bagsExtra, trafficExtra, timeOfDayExtra: timeOfDayExtraMin, liveExtra, totalBuffer };
+  const totalBuffer       = baseBuffer + immigrationExtra + bagsExtra + trafficExtra
+    + timeOfDayExtraMin + returnTransportExtraMin + liveExtra;
+  return {
+    baseBuffer, immigrationExtra, bagsExtra, trafficExtra,
+    timeOfDayExtra: timeOfDayExtraMin,
+    returnTransportExtra: returnTransportExtraMin,
+    liveExtra, totalBuffer,
+  };
 }
 
 /**

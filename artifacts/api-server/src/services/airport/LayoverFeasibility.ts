@@ -74,8 +74,12 @@ import { statedTravelMin } from "./LayoverPlanFit.js";
  *                 the hash and inside a replay) and a sixth `liveExtra`
  *                 estimate. `null` for every caller on this tree outside
  *                 tests; the shape changed, so the shape's version moved.
+ *   2026.09.14-1  §8.1 L72: a seventh `returnTransport` estimate beside a
+ *                 seventh breakdown term. The shape gained a field, so the
+ *                 shape's version moved; the arithmetic gained a term, so
+ *                 `LAYOVER_ENGINE_VERSION` moved too and for its own reason.
  */
-export const LAYOVER_FEASIBILITY_VERSION = "2026.09.13-1";
+export const LAYOVER_FEASIBILITY_VERSION = "2026.09.14-1";
 
 // ── §6.2 Estimate representation ─────────────────────────────────────────────
 
@@ -222,6 +226,16 @@ export interface BufferEstimates {
    * production request produces, because nothing supplies conditions.
    */
   liveExtra: Estimate;
+  /**
+   * §8.1 L72 — the return leg's ground-transport forecast, as the seventh term.
+   *
+   * It is a STATIC_DEFAULT at fallback level 3 and never claims better: the
+   * band table behind it (`layoverRouting`, over `TripDepartureAssumptions`) is
+   * an assumption about an hour, not a reading of a road. What makes it
+   * different from the six above is that it is the only term whose value moves
+   * with WHEN the traveller must be back, which is what census L72 asks for.
+   */
+  returnTransport: Estimate;
 }
 
 export interface FeasibilityEstimates extends BufferEstimates {
@@ -246,6 +260,7 @@ export function conservativeBufferMinutes(
     estimateMinutesAt(b.bagsExtra, percentile) +
     estimateMinutesAt(b.trafficExtra, percentile) +
     estimateMinutesAt(b.timeOfDayExtra, percentile) +
+    estimateMinutesAt(b.returnTransport, percentile) +
     estimateMinutesAt(b.liveExtra, percentile)
   );
 }
@@ -511,6 +526,15 @@ function bufferEstimates(inputs: FeasibilityInputs, breakdown: SafetyAssessment[
     timeOfDayExtra: pointEstimate(
       breakdown.timeOfDayExtra, "STATIC_DEFAULT", "LOW", 3,
       ["LayoverSafetyEngine.timeOfDayBand"],
+    ),
+    // §8.1 L72. The band table is a source constant like the ramp above it, so
+    // it never inherits the airport row's class even though the MINUTES it
+    // multiplies come from `traffic_extra_min` — that term is published as its
+    // own estimate directly above, with the row's provenance, and claiming the
+    // row's provenance twice would launder an assumption into an airport fact.
+    returnTransport: pointEstimate(
+      breakdown.returnTransportExtra, "STATIC_DEFAULT", "LOW", 3,
+      ["layoverRouting.returnTransportForecast", "TripDepartureAssumptions.DEPARTURE_FACTORS"],
     ),
     liveExtra: liveExtraEstimate(inputs.liveConditions, breakdown.liveExtra),
   };

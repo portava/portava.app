@@ -92,8 +92,10 @@ describe("§21.1 L219 — 2h domestic layover", () => {
    * THE SPEC EXPECTS `airport-only`. THE ENGINE ANSWERS `too_short`, and this
    * case exists to say so rather than to bless it.
    *
-   * 120 minutes nose to nose: 15 min to get off and out, an 80-minute return
-   * buffer (60 domestic + 20 traffic + 0 time-of-day at midday) leaves 25
+   * 120 minutes nose to nose: 15 min to get off and out, an 86-minute return
+   * buffer (60 domestic + 20 traffic + 0 time-of-day at midday + 6 for the
+   * return-transport forecast, census L72 — 12:00 Sunday is the weekend
+   * SHOULDER band and its factor is ×1.3 over the airport's 20) leaves 19
    * usable minutes, and `computeWindow`'s ladder puts anything under 45 in
    * `too_short`. The two tiers are not the same claim — `airport_only` says
    * "enough time to enjoy the terminal, not enough to leave safely" and
@@ -102,8 +104,9 @@ describe("§21.1 L219 — 2h domestic layover", () => {
    */
   it("is refused a city, at the STRICTER tier than the spec names", () => {
     const { window, advice } = run(curatedAirport(), layover(2));
-    assert.equal(window.usableMinutes, 25);
-    assert.equal(window.breakdown.totalBuffer, 80);
+    assert.equal(window.usableMinutes, 19);
+    assert.equal(window.breakdown.totalBuffer, 86);
+    assert.equal(window.breakdown.returnTransportExtra, 6);
     assert.equal(window.exitDelayMin, 15);
     assert.equal(advice.verdict, "no");
     // The measured answer. `airport_only` is what §21.1 asks for.
@@ -115,15 +118,15 @@ describe("§21.1 L219 — 2h domestic layover", () => {
     const { window } = run(curatedAirport(), layover(2, { checkedBags: true }));
     assert.equal(window.usableMinutes, 0);
     assert.equal(window.freedomWindow, null);
-    // 35 min to get out (15 + 20 for bags) against a 25-minute gap between the
-    // deadline and the door: 10 minutes short, and the traveller is told so.
-    assert.equal(window.shortfallMinutes, 10);
+    // 35 min to get out (15 + 20 for bags) against a 19-minute gap between the
+    // deadline and the door: 16 minutes short, and the traveller is told so.
+    assert.equal(window.shortfallMinutes, 16);
   });
 
   it("a 3h domestic layover IS the airport-only rung — the ladder is not stuck", () => {
     const { window, advice } = run(curatedAirport(), layover(3));
     assert.equal(window.tier, "airport_only");
-    assert.equal(window.usableMinutes, 85);
+    assert.equal(window.usableMinutes, 79);
     assert.equal(advice.verdict, "tight");
   });
 });
@@ -145,9 +148,12 @@ describe("§21.1 L220 — 4h international, landside 'depending on airport model
     assert.equal(curated.advice.verdict, "no");
     assert.equal(generic.advice.verdict, "no");
     // The numbers DO vary, which is what makes the next case possible.
-    assert.equal(curated.window.usableMinutes, 25);
+    assert.equal(curated.window.usableMinutes, 19);
     assert.equal(generic.window.usableMinutes, 0);
-    assert.equal(generic.window.shortfallMinutes, 20);
+    // The generic airport states a LARGER ground-transport term (35 vs 20), so
+    // the same ×1.3 forecast costs it 11 minutes where the curated one loses 6
+    // — the model variation L220 asks for, now visible in a second term.
+    assert.equal(generic.window.shortfallMinutes, 31);
     assert.equal(curated.window.shortfallMinutes, null);
   });
 
@@ -200,7 +206,7 @@ describe("§21.1 L221 / L223 — the two rungs that do reach landside", () => {
     );
     assert.equal(window.tier, "quick_city");
     assert.equal(advice.verdict, "yes");
-    assert.equal(window.usableMinutes, 145);
+    assert.equal(window.usableMinutes, 139);
     // L221 asks for "landside + RETURN CONTRACT". The deadline exists and is
     // certified; the contract (`layover_return_plans`, census L24) does not, so
     // this asserts the half that is built and claims nothing about the other.
