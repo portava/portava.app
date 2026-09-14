@@ -360,3 +360,313 @@ describe("MD147 — GET /media/places/:id carries a real independent-source coun
     );
   });
 });
+
+// ═════════════════════════════════════════════════════════════════════════════
+// §18 CORROBORATION → CONTRADICTION → VISUAL CONSENSUS
+// census-media MD149 / MD150 / MD151 / MD152
+// ═════════════════════════════════════════════════════════════════════════════
+/**
+ * The three stages after Independent Sources in §18's pipeline, and the copy
+ * §18 names in its own sentence:
+ *
+ *   MD149 Corroboration    W — "nothing corroborates one perspective against
+ *                              another; a place's mosaic carries no agreement
+ *                              measure."
+ *   MD150 Contradiction    N — "`lib/intelConflict.ts` exists for intel claims
+ *                              and is not reached from any media path."
+ *   MD151 Visual Consensus N — "No consensus object exists."
+ *   MD152 Mixed reports    N — "No mixed-reports copy, no uncertainty state on
+ *                              `PlaceProjection` or `WorldZone`."
+ *
+ * WHAT IS BEING PROVED, AND WHAT IS DELIBERATELY NOT INVENTED.
+ * A photograph asserts NO VALUE (the MD147 header above says so and the sync
+ * detector is inert for exactly that reason), so media perspectives cannot
+ * contradict each other directly — inventing a value axis for them would be
+ * fabrication, which is the failure mode this whole service tree refuses.
+ * Therefore:
+ *
+ *   • CORROBORATION is the agreement measure media CAN carry honestly: how many
+ *     INDEPENDENT sources (not accounts) independently witnessed this place
+ *     inside the fresh window. One account posting eight photos, or eight
+ *     accounts posting one file, corroborates nothing.
+ *   • CONTRADICTION is READ from the canonical `lib/intelConflict` state that
+ *     already rides on every gated live-claim envelope Media ALREADY fetches
+ *     (`readCurrentState` → `readLiveClaimEnvelopes`) and then drops on the
+ *     floor. No second conflict engine is built. This is the media path
+ *     REACHING `lib/intelConflict`, which MD150 says nothing does.
+ *   • The mixed-reports copy fires ONLY on a MATERIAL conflict — the same
+ *     threshold `lib/intelConflict` itself uses to suppress a Live label. A
+ *     'minor' disagreement is recorded and does NOT get the banner, because
+ *     intelConflict's own contract says minor means "no suppression".
+ */
+import {
+  buildVisualConsensus,
+  MIXED_REPORTS_LABEL,
+  type VisualConsensus,
+} from "../services/media/MediaConsensusService.js";
+import type { LiveClaimEnvelope } from "../lib/liveClaimRead.js";
+import type { ConflictState } from "../lib/intelConflict.js";
+import { _clearPromotedScopeCache } from "../lib/liveClaimRead.js";
+
+function envelope(o: { claimType?: string; conflictState: ConflictState }): LiveClaimEnvelope {
+  const state = o.conflictState;
+  return {
+    id: `claim-${o.claimType ?? "crowd.level"}`,
+    claimType: o.claimType ?? "crowd.level",
+    value: "busy",
+    confidence: 0.6,
+    band: "likely_current",
+    sourceClass: "firsthand_unverified",
+    sourceCountBucket: "several",
+    observedAt: new Date(NOW - 10 * 60_000).toISOString(),
+    validUntil: new Date(NOW + 30 * 60_000).toISOString(),
+    state: "emerging",
+    conflictState: state,
+    conflict: state === "none" ? null : { state, sidesCount: 2, lastUpdated: new Date(NOW - 9 * 60_000).toISOString() },
+  };
+}
+
+const FRESH = new Date(NOW - 5 * 60_000).toISOString();
+const STALE = new Date(NOW - 5 * 60 * 60_000).toISOString();
+
+describe("MD151 — a Visual Consensus Projection object exists and is well-formed", () => {
+  it("empty input yields the honest 'insufficient' consensus, never agreement", () => {
+    const c: VisualConsensus = buildVisualConsensus([], [], NOW);
+    assert.equal(c.state, "insufficient");
+    assert.equal(c.corroboration.level, "none");
+    assert.equal(c.corroboration.freshPerspectiveCount, 0);
+    assert.equal(c.corroboration.independentSourceCount, 0);
+    assert.equal(c.contradiction, null);
+    assert.equal(c.uncertaintyLabel, null);
+    assert.equal(c.requestAnotherObservation, false);
+  });
+});
+
+describe("MD149 — corroboration counts INDEPENDENT sources inside the fresh window", () => {
+  it("three unrelated fresh contributors corroborate the current picture", () => {
+    const c = buildVisualConsensus(
+      [
+        proj({ id: "p1", contributorId: "A", capturedAt: FRESH }),
+        proj({ id: "p2", contributorId: "B", capturedAt: FRESH }),
+        proj({ id: "p3", contributorId: "C", capturedAt: FRESH }),
+      ],
+      [],
+      NOW,
+    );
+    assert.equal(c.corroboration.independentSourceCount, 3);
+    assert.equal(c.corroboration.level, "well_corroborated");
+    assert.equal(c.state, "corroborated");
+  });
+
+  it("ONE contributor posting three perspectives corroborates NOTHING", () => {
+    const c = buildVisualConsensus(
+      [
+        proj({ id: "p1", contributorId: "A", capturedAt: FRESH }),
+        proj({ id: "p2", contributorId: "A", capturedAt: FRESH }),
+        proj({ id: "p3", contributorId: "A", capturedAt: FRESH }),
+      ],
+      [],
+      NOW,
+    );
+    assert.equal(c.corroboration.freshPerspectiveCount, 3, "three perspectives really are there");
+    assert.equal(c.corroboration.independentSourceCount, 1);
+    assert.equal(c.corroboration.level, "single_source");
+    assert.equal(c.state, "insufficient", "one witness is not a consensus");
+  });
+
+  it("two accounts posting the SAME FILE are one source and do not corroborate", () => {
+    const same = "https://cdn.example/one-file.jpg";
+    const c = buildVisualConsensus(
+      [
+        proj({ id: "p1", contributorId: "A", url: same, capturedAt: FRESH }),
+        proj({ id: "p2", contributorId: "B", url: same, capturedAt: FRESH }),
+      ],
+      [],
+      NOW,
+    );
+    assert.equal(c.corroboration.independentSourceCount, 1);
+    assert.equal(c.corroboration.level, "single_source");
+  });
+
+  it("a trip crew is one party, so a crew cannot self-corroborate", () => {
+    const c = buildVisualConsensus(
+      [
+        proj({ id: "p1", contributorId: "A", capturedAt: FRESH }),
+        proj({ id: "p2", contributorId: "B", capturedAt: FRESH }),
+      ],
+      [],
+      NOW,
+      { groupKeyById: new Map([["p1", "trip-9"], ["p2", "trip-9"]]) },
+    );
+    assert.equal(c.corroboration.independentSourceCount, 1);
+    assert.equal(c.corroboration.level, "single_source");
+  });
+
+  it("STALE perspectives do not corroborate the CURRENT picture", () => {
+    const c = buildVisualConsensus(
+      [
+        proj({ id: "p1", contributorId: "A", capturedAt: STALE }),
+        proj({ id: "p2", contributorId: "B", capturedAt: STALE }),
+        proj({ id: "p3", contributorId: "C", capturedAt: STALE }),
+      ],
+      [],
+      NOW,
+    );
+    assert.equal(c.corroboration.freshPerspectiveCount, 0);
+    assert.equal(c.corroboration.independentSourceCount, 0);
+    assert.equal(c.corroboration.level, "none");
+    assert.equal(c.state, "insufficient");
+  });
+});
+
+describe("MD150 — the contradiction stage reaches lib/intelConflict from a media path", () => {
+  it("a MATERIAL conflict on a gated live claim becomes a contradiction on the consensus", () => {
+    const c = buildVisualConsensus(
+      [proj({ id: "p1", contributorId: "A", capturedAt: FRESH }), proj({ id: "p2", contributorId: "B", capturedAt: FRESH })],
+      [envelope({ conflictState: "material" })],
+      NOW,
+    );
+    assert.ok(c.contradiction, "a materially conflicted claim must produce a contradiction block");
+    assert.equal(c.contradiction!.state, "material");
+    assert.deepEqual(c.contradiction!.claimTypes, ["crowd.level"]);
+    assert.equal(c.contradiction!.block?.sidesCount, 2);
+  });
+
+  it("an AGREEING claim produces no contradiction at all — uncertainty is never fabricated", () => {
+    const c = buildVisualConsensus(
+      [proj({ id: "p1", contributorId: "A", capturedAt: FRESH }), proj({ id: "p2", contributorId: "B", capturedAt: FRESH })],
+      [envelope({ conflictState: "none" })],
+      NOW,
+    );
+    assert.equal(c.contradiction, null);
+    assert.equal(c.uncertaintyLabel, null);
+    assert.equal(c.state, "corroborated");
+  });
+
+  it("the WORST conflict across claim types wins, and every conflicting type is named", () => {
+    const c = buildVisualConsensus(
+      [proj({ id: "p1", contributorId: "A", capturedAt: FRESH })],
+      [
+        envelope({ claimType: "queue.band", conflictState: "minor" }),
+        envelope({ claimType: "crowd.level", conflictState: "material" }),
+        envelope({ claimType: "access.state", conflictState: "none" }),
+      ],
+      NOW,
+    );
+    assert.equal(c.contradiction!.state, "material");
+    assert.deepEqual(
+      [...c.contradiction!.claimTypes].sort(),
+      ["crowd.level", "queue.band"],
+      "an agreeing claim type is not listed as disagreeing",
+    );
+  });
+
+  it("an UNRECOGNISED stored conflict value reads as MATERIAL — the stricter direction", () => {
+    const bad = envelope({ conflictState: "none" });
+    (bad as any).conflictState = "wobbly";
+    const c = buildVisualConsensus([proj({ id: "p1", contributorId: "A", capturedAt: FRESH })], [bad], NOW);
+    assert.equal(c.contradiction!.state, "material", "ambiguity resolves toward showing uncertainty");
+  });
+});
+
+describe("MD152 — when reports disagree, the uncertainty is SURFACED", () => {
+  it("a material conflict surfaces the §18 copy and flips the consensus to mixed", () => {
+    const c = buildVisualConsensus(
+      [proj({ id: "p1", contributorId: "A", capturedAt: FRESH }), proj({ id: "p2", contributorId: "B", capturedAt: FRESH })],
+      [envelope({ conflictState: "material" })],
+      NOW,
+    );
+    assert.equal(c.state, "mixed");
+    assert.equal(c.uncertaintyLabel, MIXED_REPORTS_LABEL);
+    assert.match(c.uncertaintyLabel!, /Mixed reports/);
+    assert.match(c.uncertaintyLabel!, /conditions may be changing/);
+    assert.equal(c.requestAnotherObservation, true, "§18 'optionally request another observation'");
+  });
+
+  it("a MINOR disagreement is recorded but does NOT get the banner", () => {
+    const c = buildVisualConsensus(
+      [proj({ id: "p1", contributorId: "A", capturedAt: FRESH }), proj({ id: "p2", contributorId: "B", capturedAt: FRESH })],
+      [envelope({ conflictState: "minor" })],
+      NOW,
+    );
+    assert.equal(c.contradiction!.state, "minor", "the disagreement is still visible in the block");
+    assert.equal(c.uncertaintyLabel, null, "intelConflict's own contract: minor means no suppression");
+    assert.notEqual(c.state, "mixed");
+  });
+
+  it("a disagreement outranks a strong corroboration — mixed is not overwritten by agreement", () => {
+    const c = buildVisualConsensus(
+      [
+        proj({ id: "p1", contributorId: "A", capturedAt: FRESH }),
+        proj({ id: "p2", contributorId: "B", capturedAt: FRESH }),
+        proj({ id: "p3", contributorId: "C", capturedAt: FRESH }),
+        proj({ id: "p4", contributorId: "D", capturedAt: FRESH }),
+      ],
+      [envelope({ conflictState: "material" })],
+      NOW,
+    );
+    assert.equal(c.corroboration.level, "well_corroborated");
+    assert.equal(c.state, "mixed", "four agreeing photographs do not settle a disputed live claim");
+  });
+});
+
+describe("MD151/MD152 — the consensus object is SERVED on the place projection", () => {
+  it("GET /media/places/:id carries a well-formed consensus block", async () => {
+    const sc = makeSc(
+      base({
+        posts: [
+          postRow("p1", "aaaa", null, "https://cdn.example/1.jpg"),
+          postRow("p2", "bbbb", null, "https://cdn.example/2.jpg"),
+        ],
+      }),
+    );
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: false });
+    const p = await buildPlaceProjection(sc, viewer, PLACE, NOW);
+    assert.ok((p as any).consensus, "PlaceProjection must carry the §18 consensus object");
+    assert.equal((p as any).consensus.corroboration.independentSourceCount, 2);
+    assert.equal((p as any).consensus.state, "corroborated");
+    assert.equal((p as any).consensus.uncertaintyLabel, null, "no live claim ⇒ no fabricated uncertainty");
+  });
+
+  it("a MATERIALLY CONFLICTED promoted live claim reaches the served projection as mixed reports", async () => {
+    _clearPromotedScopeCache();
+    const sc = makeSc(
+      base({
+        posts: [postRow("p1", "aaaa", null, "https://cdn.example/1.jpg")],
+        feature_flags: [
+          { flag: "intel_live_label_crowd", enabled: true },
+          { flag: "intel_claim_projection_crowd", enabled: true },
+          { flag: "intel_capture_quick_signal", enabled: true },
+          { flag: "intel_limited_live", enabled: true },
+          { flag: "disable_intel_live_labels", enabled: false },
+        ],
+        intel_live_promoted_scopes: [
+          { scope_key: `${PLACE}|crowd.level`, expires_at: null, withdrawn_at: null },
+        ],
+        intel_state_snapshots: [
+          {
+            id: "snap-1",
+            subject_id: PLACE,
+            zone_id: PLACE,
+            claim_type: "crowd.level",
+            value: "busy",
+            confidence: 0.8,
+            source_count: 6,
+            observed_at: new Date(NOW - 10 * 60_000).toISOString(),
+            expires_at: new Date(NOW + 30 * 60_000).toISOString(),
+            privacy_eligible: true,
+            conflict_state: "material",
+            source_class: "community",
+            computed_at: new Date(NOW - 9 * 60_000).toISOString(),
+          },
+        ],
+      }),
+    );
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: false });
+    const p = await buildPlaceProjection(sc, viewer, PLACE, NOW);
+    _clearPromotedScopeCache();
+    assert.equal(p.currentState.claims.length, 1, "the fixture must actually serve a live claim");
+    assert.equal((p as any).consensus.state, "mixed");
+    assert.equal((p as any).consensus.uncertaintyLabel, MIXED_REPORTS_LABEL);
+  });
+});

@@ -117,7 +117,7 @@ export interface PerspectiveSummaryOptions {
  * skips observations with an empty `actorId`, so this matches `contributorCount`
  * at the bottom end too.
  */
-function countIndependentSources(
+export function countIndependentSources(
   media: MediaProjection[],
   groupKeyById?: ReadonlyMap<string, string | null>,
 ): number {

@@ -62,6 +62,7 @@ import {
   type PerspectiveSummary,
 } from "./MediaPerspectiveService.js";
 import { buildMyWorldMemory, type MyWorldMemory } from "./MyWorldMemoryService.js";
+import { buildVisualConsensus, type VisualConsensus } from "./MediaConsensusService.js";
 
 const DEFAULT_CANDIDATE_LIMIT = 200;
 
@@ -153,6 +154,14 @@ export interface CandidateFilter {
   authorIds?: string[] | null;
   tripId?: string | null;
   postIds?: string[] | null;
+  /**
+   * NARROWING ONLY, like `authorIds`. `posts.category` is the same coarse enum
+   * the perspective buckets and the §4.1 "for you now" list already group on
+   * (MediaPerspectiveService.bucketKey), so this filter adds no new vocabulary
+   * and no new disclosure — it selects a subset of what the feedType branch
+   * already admits.
+   */
+  category?: string | null;
   limit?: number;
 }
 
@@ -201,6 +210,7 @@ export async function loadEligibleCandidates(
     query = query.in("author_id", filter.authorIds.slice(0, DEFAULT_CANDIDATE_LIMIT));
   }
 
+  if (filter.category) query = query.eq("category", filter.category);
   if (filter.placeId) query = query.eq("canonical_place_id", filter.placeId);
   if (filter.tripId) query = query.eq("trip_id", filter.tripId);
   if (filter.city) query = query.ilike("location_city", `%${filter.city}%`);
@@ -516,6 +526,13 @@ export interface WorldZone {
   liveClaims: LiveClaimEnvelope[];
   /** Coarse crowd label ONLY from a gated live claim; null otherwise. */
   liveCrowdLabel: string | null;
+  /**
+   * §18 Visual Consensus for this zone — witness corroboration over the zone's
+   * FRESH perspectives plus the canonical lib/intelConflict contradiction state
+   * carried on `liveClaims`. `uncertaintyLabel` is the §18 "Mixed reports"
+   * banner and is non-null ONLY on a material conflict.
+   */
+  consensus: VisualConsensus;
 }
 
 export interface WorldProjection {
@@ -566,6 +583,10 @@ export async function buildWorldProjection(
   // Read the gated live state for each zone that has a canonical place id. The
   // read is fail-closed; when live is off (the prod default) every zone gets an
   // empty live state and NO state badge — exactly the anti-fabrication rule.
+  // §18 actor-relationship side channel, built ONCE for the whole page and
+  // sliced per zone below. Never written onto a projection (see partyTokensByPostId).
+  const partyTokens = partyTokensByPostId(candidates);
+
   const cityVisualState: WorldZone[] = await Promise.all(
     zoneList.map(async (z) => {
       const current = await readCurrentState(sc, z.placeId, nowMs);
@@ -576,6 +597,13 @@ export async function buildWorldProjection(
         freshness: aggregateFreshness(z.items.map((m) => m.capturedAt), nowMs),
         liveClaims: current.claims,
         liveCrowdLabel: current.crowdLabel,
+        // §18: the zone's own witness corroboration and the canonical conflict
+        // state already riding on `current.claims`. Media used to drop the
+        // latter on the floor — a zone whose reports materially disagreed
+        // rendered exactly like one they agreed about.
+        consensus: buildVisualConsensus(z.items, current.claims, nowMs, {
+          groupKeyById: partyTokens,
+        }),
       };
     }),
   );
@@ -602,6 +630,8 @@ export interface PlaceProjection {
   place: { id: string; name: string | null; city: string | null; country: string | null; neighborhood: string | null };
   currentState: CurrentState;
   perspectives: PerspectiveSummary;
+  /** §18 Corroboration → Contradiction → Visual Consensus for this place. */
+  consensus: VisualConsensus;
   freshness: FreshnessState;
 }
 
@@ -692,6 +722,11 @@ export async function buildPlaceProjection(
     place: { id: placeId, name: placeName, city: placeCity, country: placeCountry, neighborhood: placeNeighborhood },
     currentState,
     perspectives,
+    // §18 Visual Consensus. The SAME party-token side channel the independence
+    // clustering uses, so a trip crew cannot self-corroborate a place either.
+    consensus: buildVisualConsensus(media, currentState.claims, nowMs, {
+      groupKeyById: partyTokensByPostId(candidates),
+    }),
     freshness: aggregateFreshness(media.map((m) => m.capturedAt), nowMs),
   };
 }

@@ -407,10 +407,10 @@ testable structure by §3 and §4.1. Narrative.
 | MD45 | MediaAsset → Person | **C** | `lib/media/mediaProjection.ts:176` `projectContributor` (handle-first, presentation-name opt-in applied by the caller). |
 | MD46 | → Place | **C** | `MediaActionResolver.ts:201` `refs.push({ kind:"place", … })`, through the location choke point. |
 | MD47 | → Neighborhood | **C** | `mediaProjection.ts:89-91` carries `neighborhood`/`city`/`country` as coarse labels. |
-| MD48 | → Event | **C** | `MediaExperienceResolver.ts:33#kind` `kind: "event" | "trip"`, emitted at `:152#event`, gated by `checkEventEligibility` (imported at `:17#checkEventEligibility` from `routes/events.ts`). |
+| MD48 | → Event | **C** | `MediaExperienceResolver.ts:111#kind` `kind: "event" | "trip"`, emitted at `:232#event`, gated by `checkEventEligibility` (imported at `:17#checkEventEligibility` from `routes/events.ts`). |
 | MD49 | → Trip | **C** | `MediaActionResolver.ts:255` `kind:"trip"`, emitted only when the viewer may see the trip. |
 | MD50 | → Hidden Gem | **C** | `MediaActionResolver.ts:222`, and only for a gem the viewer may be told about (`HiddenGemPrivacyGuard.mayDiscloseGemIdentity`, cited at `:31-33`). |
-| MD51 | → Shared Moment | **N** | `MediaActionResolver.ts:53` — `MediaEntityKind = "media" \| "place" \| "trip" \| "gem"`. No shared-moment edge anywhere in the context graph, though the product has shared moments. |
+| MD51 | → Shared Moment | **C** | *(CLOSED 2026-09-14 by the Media lane.)* The edge was in the schema and nothing read it: `shared_moment_contributions.post_id` references `posts(id)` (`artifacts/api-server/src/migrations/2064_shared_moments_foundation.sql:38#post_id UUID REFERENCES posts(id) ON DELETE SET NULL`). It is now resolved on the media context graph at `artifacts/api-server/src/services/media/MediaActionResolver.ts:357#kind: "shared_moment"`, behind three gates that are the Shared Moments surface's OWN, not new policy: the capability chain (`:337#if (await areSharedMomentsEnabled(sc)) {`), an APPROVED contribution, and accepted membership via `lib/places/sharedMoments.momentRole` — the same predicate `GET /shared-moments/:id` answers `not_member` on. A non-member is told nothing: not the id, not the title. Proof: `artifacts/api-server/src/test/mediaActionsCompass.test.ts` "MD51 — a media item resolves to the Shared Moment it was contributed to" (5 cases). Mutations that turned it red: dropping the membership gate; accepting a pending contribution; dropping the capability chain; treating an archived Moment as active. **One implementation note that is a cross-lane request, not a caveat:** the kind rides on `MediaGraphKind` (`:82#export type MediaGraphKind = MediaEntityKind \| "shared_moment"`) rather than on `MediaEntityKind`, because `compass/CompassMediaContext.ts:305` builds `Record<MediaEntityRef["kind"], string>` and widening that union is a compile-breaking edit to a file this lane does not own. §14.3. |
 | MD52 | → Time | **C** | `mediaProjection.ts:84` `capturedAt`; the writer is `lib/mediaAssets.ts:69-84`. |
 | MD53 | → Observation | **W** | The only media→observation path is `lib/media/mediaEvidenceLink.ts`, which is a *link* table behind `media_evidence_enabled` (`:130`), and no projection carries an observation ref. The edge is drawn in code and severed at runtime. |
 | MD54 | Context resolution is server-side | **C** | `routes/mediaWorld.ts:18-33`; `resolveMediaEntities` runs in `services/media/`, and the client's `services/mediaProjection.ts` only fetches. |
@@ -489,10 +489,10 @@ testable structure by §3 and §4.1. Narrative.
 | MD97 | Add to Trip | **C** | `MediaActionResolver.ts:16-18` — offered only when `canEditPlan` passes, which is the exact gate the trip-plan-item endpoint enforces, so the rail can never grant access the endpoint would deny. |
 | MD98 | Create Plan | **C** | Same resolver, Compass-gated (`:19-20`). |
 | MD99 | Meet Here | **C** | `MediaActionResolver.ts:18-19` — respects the new-event kill switch. |
-| MD100 | Invite People | **N** | No invite member in the resolver's action vocabulary; nothing in `routes/mediaActions.ts` emits one. |
+| MD100 | Invite People | **C** | *(CLOSED 2026-09-14 by the Media lane.)* `artifacts/api-server/src/services/media/MediaActionResolver.ts:569#id: "invite_people",` → `POST /api/shared-moments/:id/invites`, an EXISTING endpoint, offered only to an owner/manager of the Shared Moment the media belongs to — the exact `ownerOrManager` gate that endpoint enforces (`artifacts/api-server/src/routes/sharedMoments.ts:119#if (!(await ownerOrManager(ctx.sc, params.data.id, ctx.userId))) { sendError(res, "forbidden"); return; }`), so §47 holds: the rail asks the same question the endpoint asks. A plain member sees the Moment and is NOT offered the invite; media with no Moment gets no action (no dead actions). Proof: `artifacts/api-server/src/test/mediaActionsCompass.test.ts` "MD100 — Invite People, gated by the endpoint's own ownerOrManager check" (6 cases). Mutations red: offering it to any member; removing the action. |
 | MD101 | Find Similar / Cheaper / Quieter / Busier | **W** | "Find somewhere like this" reaches Compass as a structured ask (`CompassMediaContext.ts:9-12`). There is no cheaper / quieter / busier comparator anywhere — no comparative modifier in the resolver, the Compass media context, or the projection. One of four. *(EVIDENCE CORRECTED 2026-09-13 by the integrating lane; **the verdict does NOT move**. One third of the sentence above is no longer true: `fa5d7c25d` — census-compass §12's CM-03 build — put a comparator INTO the Compass media context, `artifacts/api-server/src/compass/CompassMediaContext.ts:80#export const COMPARATOR_AXIS_CLAIM` mapping *quieter* to `crowd.level` and *cheaper* to `price.cover`, with `artifacts/api-server/src/compass/CompassMediaContext.ts:185#export function buildComparatorBaselines` reporting per axis whether a permitted, unexpired claim exists — provenance only, never a value. The other two thirds were re-measured rather than assumed and still hold: `grep -rn "quieter|cheaper|busier"` over `artifacts/api-server/src/services/media/` returns NOTHING, so neither the resolver nor the projection has a comparative modifier, and **busier has one nowhere on this path**. `W` therefore stands on what this row actually grades — the §23.1 media ACTION set, which still offers `find_similar` and no comparative action, one of four.)* |
 | MD102 | See Nearby | **C** | `MediaActionResolver.ts:385-392` — emitted only when a place resolves, targeting `GET /api/media/map` scoped to the media's coarse city. No coordinate leaves the server; the client positions the clusters through the Map gateway it already holds. |
-| MD103 | View Event / Passport | **W** | Event refs resolve (`MediaExperienceResolver.ts:152#event`). Passport does not: `MediaActionResolver.ts:53` `MediaEntityKind = "media" \| "place" \| "trip" \| "gem"` has no passport member, and §29 keeps Passport on Postcards. Half built. |
+| MD103 | View Event / Passport | **W** | Event refs resolve (`MediaExperienceResolver.ts:232#event`). Passport does not: `MediaActionResolver.ts:53` `MediaEntityKind = "media" \| "place" \| "trip" \| "gem"` has no passport member, and §29 keeps Passport on Postcards. Half built. |
 | MD104 | Share through Telegraph | **W** | The action is emitted (`MediaActionResolver.ts:340-344`) and the endpoint accepts the target (`routes/mediaFeed.ts:2281` `z.enum(["native","copy_link","telegraph"])`) — but the handler **ignores it**: `:2297-2299` records a share event and returns a `shareUrl`, and no Telegraph thread, message or intent is created on any branch. The action resolves to a URL, not to Telegraph. |
 | MD105 | Report / Not Relevant | **C** | `routes/mediaFeed.ts:1070` `POST /media/:id/report`; not-interested/hide are consumed as ranking penalties at `MediaFeedRankingService.ts:65-70`. |
 | MD106 | §15.1 "I Want This" — an intent signal, explicitly not a Like | **C** | `2256_media_intent_signals.sql:1-21` gives it its own table and its own grant posture and states the rule — *"a want is never conflated with an engagement count"*; written only through the service-role endpoint at `routes/mediaActions.ts:161`, read at `MediaActionResolver.ts:612`. **Table absent from production** (§3). |
@@ -540,10 +540,10 @@ testable structure by §3 and §4.1. Narrative.
 | MD146 | Media Perspective Resolver stage | **C** | `MediaPerspectiveService.ts:1-15`. |
 | MD147 | Independent Sources stage | **W** | The *count* is displayed nowhere and computed nowhere in the media path: `MediaPerspectiveService` counts `contributorCount`, which is distinct contributors, not independent sources. The independence machinery exists (`lib/intelIndependence.ts` merges crews/shared-media/synchronised units) but nothing in Media calls it. |
 | MD148 | Coverage Analysis stage | **C** | `routes/mediaViewRequest.ts:111` `GET /v1/media/places/:placeId/visual-coverage` over `lib/missionGeneration` / `intel_mission_candidates`. |
-| MD149 | Corroboration stage | **W** | `MediaContributorReputationService.ts:1-12` reads `intel_state_snapshots` for *contributor* corroboration. Nothing corroborates one perspective against another; a place's mosaic carries no agreement measure. |
-| MD150 | Contradiction stage | **N** | `lib/intelConflict.ts` exists for intel claims and is not reached from any media path; no media projection carries a contradiction signal. |
-| MD151 | Visual Consensus Projection | **N** | No consensus object exists. `grep -rniE "consensus" artifacts/api-server/src/services/media artifacts/api-server/src/lib/media` → nothing. |
-| MD152 | When reports disagree, surface uncertainty ("Mixed reports — conditions may be changing") | **N** | *Unguarded absence.* No mixed-reports copy, no uncertainty state on `PlaceProjection` or `WorldZone` (`MediaProjectionService.ts:405-423`). A disagreeing set of perspectives renders as an agreeing one. |
+| MD149 | Corroboration stage | **C** | *(CLOSED 2026-09-14 by the Media lane.)* A place's mosaic now carries an agreement measure: `artifacts/api-server/src/services/media/MediaConsensusService.ts:186#export function buildVisualConsensus` counts INDEPENDENT SOURCES (MD147's `lib/intelIndependence` clusters, exported for reuse at `artifacts/api-server/src/services/media/MediaPerspectiveService.ts:120#export function countIndependentSources`) among the perspectives inside the FRESH window, and grades them `none \| single_source \| corroborated \| well_corroborated`. It inherits the anti-manipulation posture rather than restating it: one account posting three photos, two accounts posting one file, and a trip crew each corroborate NOTHING. Stale perspectives corroborate nothing about the current picture. Served on `PlaceProjection` (`artifacts/api-server/src/services/media/MediaProjectionService.ts:727#consensus: buildVisualConsensus(media, currentState.claims, nowMs, {`) and on every `WorldZone` (`:604#consensus: buildVisualConsensus(z.items, current.claims, nowMs, {`). Proof: `artifacts/api-server/src/test/mediaIndependentSources.test.ts` "MD149 — corroboration counts INDEPENDENT sources inside the fresh window" (5 cases). Mutations red: counting contributors instead of clusters; ignoring the fresh window; dropping the field from the projection. |
+| MD150 | Contradiction stage | **C** | *(CLOSED 2026-09-14 by the Media lane.)* The media path now REACHES `lib/intelConflict` — it does not fork it. The conflict state was already riding on every gated live-claim envelope Media fetches (`artifacts/api-server/src/lib/liveClaimRead.ts:136#conflictState: ConflictState;`) and Media was dropping it on the floor; `artifacts/api-server/src/services/media/MediaConsensusService.ts:156#function worstContradiction(` folds it into a place/zone-level `contradiction` block through the canonical `normalizeConflictState`, so an unrecognised stored value still reads as `material` — the stricter direction. A photograph asserts no value, so perspectives are NOT scored against each other; inventing a value axis for them would be fabrication and is refused explicitly in the module header. Proof: `artifacts/api-server/src/test/mediaIndependentSources.test.ts` "MD150 — the contradiction stage reaches lib/intelConflict from a media path" (4 cases), including an end-to-end fixture that promotes a scope and serves a `conflict_state = material` snapshot. Mutations red: returning no contradiction; reading the state leniently instead of through `normalizeConflictState`. |
+| MD151 | Visual Consensus Projection | **C** | *(CLOSED 2026-09-14 by the Media lane.)* The consensus object exists and is served: `artifacts/api-server/src/services/media/MediaConsensusService.ts:119#export interface VisualConsensus {` — `state` (`insufficient \| corroborated \| mixed`), the corroboration measure (MD149), the contradiction block (MD150), the §18 uncertainty label and a `requestAnotherObservation` flag that routes to the EXISTING §19 Request-a-View surface. It is on `PlaceProjection` (`artifacts/api-server/src/services/media/MediaProjectionService.ts:634#consensus: VisualConsensus;`) and on `WorldZone` (`:535#consensus: VisualConsensus;`). Empty input yields `insufficient`, never agreement. Proof: `artifacts/api-server/src/test/mediaIndependentSources.test.ts` "MD151 — a Visual Consensus Projection object exists and is well-formed" + "the consensus object is SERVED on the place projection". |
+| MD152 | When reports disagree, surface uncertainty ("Mixed reports — conditions may be changing") | **C** | *(CLOSED 2026-09-14 by the Media lane.)* The copy is `artifacts/api-server/src/services/media/MediaConsensusService.ts:77#export const MIXED_REPORTS_LABEL = "Mixed reports — conditions may be changing";`, emitted as `consensus.uncertaintyLabel` on the place projection and on every world zone, and the consensus `state` flips to `mixed`. THRESHOLD, stated because it is the whole judgement: the banner fires only on a **material** conflict, the same threshold `lib/intelConflict` itself uses to suppress a Live label; a `minor` disagreement is recorded in the block and gets no banner, because escalating it would put "Mixed reports" on every venue where two honest people said 'busy' and 'packed'. A material dispute OUTRANKS corroboration — four agreeing photographs do not settle a disputed live claim. CAVEAT, the same one MD159 carries: with the intel spine holding zero rows in production (`docs/architecture/intel-spine-liveness.md`) no live claim can conflict there yet, so the banner is correct and currently unreachable in prod. Proof: `artifacts/api-server/src/test/mediaIndependentSources.test.ts` "MD152 — when reports disagree, the uncertainty is SURFACED" (3 cases) plus the end-to-end promoted-scope fixture. Mutations red: nulling the label; giving `minor` the banner; letting corroboration outrank the dispute. |
 | MD153 | §19 "Last visual update Nm ago" / "Show what's happening?" mission prompt | **C** | `components/RequestAViewPrompt.tsx`; freshness copy from `state/freshness.ts`. |
 | MD154 | §19 Request a View — a user requests a specific current perspective | **C** | `services/media/MediaViewRequestService.ts:1-27` + `routes/mediaViewRequest.ts:61`; it **consumes** the existing `intel_mission_candidates` machinery rather than forking a parallel mission system. |
 | MD155 | §19 control: opt-in contributor eligibility | **C** | `MediaViewRequestService.ts:20-24` — *"only opted-in + eligible + un-blocked contributors are selected as recipients; block state that cannot be read ⇒ ask nobody"*; opt-in written at `routes/mediaViewRequest.ts:94`. |
@@ -561,15 +561,15 @@ testable structure by §3 and §4.1. Narrative.
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
 | MD164 | `MediaExperienceProjection` contract | **C** | `services/media/MediaExperienceResolver.ts:31` onward; served at `routes/mediaWorld.ts:149`. |
-| MD165 | An experience resolves from a canonical Event **or** a Trip (`placeIds`, `eventId`, `tripId`) | **C** | `MediaExperienceResolver.ts:33#kind` `kind: "event" | "trip"`, with event eligibility reusing `routes/events.checkEventEligibility` (imported at `:17#checkEventEligibility`) rather than re-implementing it. |
+| MD165 | An experience resolves from a canonical Event **or** a Trip (`placeIds`, `eventId`, `tripId`) | **C** | `MediaExperienceResolver.ts:111#kind` `kind: "event" | "trip"`, with event eligibility reusing `routes/events.checkEventEligibility` (imported at `:17#checkEventEligibility`) rather than re-implementing it. |
 | MD166 | `currentState` on an experience | **C** | `MediaExperienceResolver.ts:24-27` reads current state only through the gated live-claim read. |
 | MD167 | `perspectiveCount` + `contributorCount` | **C** | Assembled from `MediaPerspectiveService` group counts. |
 | MD168 | `freshness` | **C** | `lib/media/mediaFreshness.aggregateFreshness`, imported at `MediaExperienceResolver.ts:29`. |
 | MD169 | `confidence` | **W** | The field exists on the shape but no experience-level confidence is computed — the only confidence in the media path is the per-forecast band in `mediaTimeBands`. A declared-but-unfilled field. |
 | MD170 | `heroMedia` drawn through the eligibility gate and coarse projector | **C** | `MediaExperienceResolver.ts:10-13` + `projectCandidatesProtected`. |
-| MD171 | §23.1 Experience chains (Dinner → Rooftop → Nightclub) | **N** | No chain type, no ordered multi-place experience anywhere in `services/media/`. `MediaExperienceProjection` carries `placeIds: string[]` with no ordering semantics and no traversal. |
-| MD172 | §23.1 action: Follow This Night | **N** | No such action in `MediaActionResolver`. |
-| MD173 | §23.1 action: Save Route | **N** | Route plans exist (`route_plans`, `routes/routePlan.ts`) and no media action reaches them. |
+| MD171 | §23.1 Experience chains (Dinner → Rooftop → Nightclub) | **C** | *(CLOSED 2026-09-14 by the Media lane.)* `artifacts/api-server/src/services/media/MediaExperienceResolver.ts:75#export function buildExperienceChain(media: readonly MediaProjection[]): ExperienceChain {` derives an ORDERED multi-place chain and `MediaExperienceProjection` now carries it (`:59#export interface ExperienceChain {`), on both the event and the trip branch (`:244#chain: buildExperienceChain(media),`, `:308#chain: buildExperienceChain(media),`). THE ORDER IS OBSERVED, NOT ASSERTED: a stop's position is the FIRST observed perspective at that place, and the object says so in a `derivedFrom: "observed_capture_times"` field so the claim travels with the data. Nothing infers a route, a traveller's path or an intention: a place with no perspective is not a stop, a place the lib/mediaLocationVisibility choke point withheld is not a stop, one place is not a chain, and an empty experience gets an empty chain. Proof: `artifacts/api-server/src/test/mediaWorldProjection.test.ts` "MD171 — an experience carries an ORDERED chain derived from observed capture times" (6 cases). Mutations red: keeping page order; keying on the last perspective instead of the first; admitting a withheld place; calling one place a chain. |
+| MD172 | §23.1 action: Follow This Night | **C** | *(CLOSED 2026-09-14 by the Media lane.)* `artifacts/api-server/src/services/media/MediaActionResolver.ts:645#id: "follow_this_night",` → `GET /api/media/experiences/:experienceId`, the projection that carries the chain, offered ONLY when the media's experience actually has one (`chain.isChain`, i.e. two or more distinct DISCLOSABLE places with observed perspectives) and only when `resolveExperience` re-passes the viewer gate. A trip the viewer may not see yields no action. Proof: `artifacts/api-server/src/test/mediaActionsCompass.test.ts` "MD172/MD173 — the §23.1 chain actions" (5 cases). Mutations red: offering it without a chain. |
+| MD173 | §23.1 action: Save Route | **W** | *(PARTLY CLOSED 2026-09-14 by the Media lane — the verdict moves N → W, not to C.)* WHAT CLOSED: a media action now reaches the canonical route-plan system, which is the whole of what the row said was missing. `artifacts/api-server/src/services/media/MediaActionResolver.ts:665#id: "save_route",` → `POST /api/route-plans`, with the chain's stops as canonical place ids, capped at the endpoint's own `max(20)` and offered only when the chain clears its own `min(2)` (`artifacts/api-server/src/routes/routePlan.ts:62#  stops: z.array(CandidateStopSchema).min(2).max(20),`) — so the rail never offers a route the endpoint would reject. WHAT IS STILL OPEN: `CandidateStopSchema` requires `lat`/`lng` (`:48#  lat: z.number(),`) and this rail is coordinate-free by construction, so the emitted stops are not directly submittable — the client must complete each stop through the Map gateway it already holds, exactly as it does for `show_on_map`. **WHAT WOULD TURN THIS RED:** a client call site that takes this action's `stops`, resolves their geometry through the Map gateway and posts a route plan that comes back with an id — or, alternatively, a `sourceType`/`sourceId` branch in `POST /route-plans` that resolves a canonical place id server-side, which would close it without a client. Neither exists today. |
 | MD174 | §23.1 action: Add to Trip (on an experience) | **C** | `MediaActionResolver.ts:16-18` — the same `canEditPlan`-gated trip-plan-item action, offered on experience-bound media. |
 | MD175 | §23.1 action: Remix | **N** | No remix concept anywhere in the tree. |
 | MD176 | §23.1 action: Ask Compass (on an experience) | **C** | `CompassMediaContext.ts:232` carries the experience's entity refs into the Compass ask. |
@@ -655,7 +655,7 @@ and can never inflate one.
 | MD225 | Passport continues to use Postcards as its primary media expression | **C** | `services/passport/` reads `passport_postcards`; no media-world projection is mounted inside Passport. |
 | MD226 | Do not duplicate the full Media product inside Passport | **C** | `MyWorldMemoryService.ts:1-33` — the My-World memory reader *consumes* the §12 derived-memory core and reuses `PassportRemembersService`'s suppression filter rather than forking it; `:14-23` is explicit that the allow/deny boundary is shared, not copied. |
 | MD227 | My World filters: All · Posts · Postcards · Memories · Trips · Tagged · Hidden Gems | **C** | `MyWorldMediaScreen.tsx:5-7`; server counts at `MediaProjectionService.ts:742-746`. |
-| MD228 | Search my world | **N** | No search input on `MyWorldMediaScreen.tsx`, no `q`/`query` parameter on `GET /media/me` (`routes/mediaWorld.ts:221-243`), and no media search service at all (MD324). |
+| MD228 | Search my world | **W** | *(PARTLY CLOSED 2026-09-14 by the Media lane — N → W.)* WHAT CLOSED: the owner-scoped search exists server-side. `artifacts/api-server/src/services/media/MediaSearchService.ts:291#export async function searchMedia` takes `scope: "me"` and narrows through the shared loader's single-author path, so "Show my Bangkok rooftop photos" is answerable as `q` + `city` + `scope=me` (proved by `mediaWorldProjection.test.ts` "scope=me returns only the viewer's own media"). WHAT IS STILL OPEN, unchanged: `MyWorldMediaScreen.tsx` has no search input, and `GET /media/me` still takes no `q` — the owner library and the search are two endpoints, not one. **WHAT WOULD TURN THIS RED:** a search field on the My World surface that issues `GET /media/search?scope=me`, or a `q` parameter on `GET /media/me`. The first is client work this lane does not own; the second is a ten-line change to `routes/mediaWorld.ts` that was deliberately NOT made, because duplicating the matcher in a second endpoint is how the two drift apart. |
 | MD229 | Owner-only buckets: Drafts · Archived · Uploads · Processing | **C** | `MediaProjectionService.ts:681-712` builds `drafts`/`archived`/`processing` from the owner's own rows and `:742` counts uploads; the route resolves identity from the session only (`routes/mediaWorld.ts:225-231`). |
 
 ### §31 Memory Integration · §31.1 Hidden Gem Memory
@@ -769,8 +769,8 @@ over `travel-buddy-standalone/src`, `travel-buddy-standalone/app` and
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| MD287–MD293 | The seven example queries: "What does An Thuong look like right now?" · "Show hidden beaches near Da Nang." · "Nightlife that looks social tonight." · "Show my Bangkok rooftop photos." · "Where was this photo taken?" · "Show festival media from my Vietnam Trip." · "Find places that look like this." | **N** ×7 | There is no media search at all: no `MediaSearchScreen` (MD27), no `mediaSearch` client service (MD324), no `/media/search` route (MD367), and `routes/discoverySearch.ts` / `routes/mapSearch.ts` are place-and-post searches that carry no perspective, freshness or visual-similarity concept. Two of the seven ("Where was this photo taken?", "Find places that look like this") would additionally require capabilities the tree does not have (reverse-geo on stripped media; visual similarity — `lib/media/pHashUtils.ts` exists but serves dedup, not search). |
-| MD294 | Result types: Media · Places · Hidden Gems · Events · Trips · Experiences · People | **N** | No media search result union exists to type. |
+| MD287–MD293 | The seven example queries: "What does An Thuong look like right now?" · "Show hidden beaches near Da Nang." · "Nightlife that looks social tonight." · "Show my Bangkok rooftop photos." · "Where was this photo taken?" · "Show festival media from my Vietnam Trip." · "Find places that look like this." | **W** ×7 | *(RE-GRADED 2026-09-14 by the Media lane — N ×7 → W ×7.)* The stated basis of the N was three clauses and one of them is now false: `GET /media/search` exists (MD367) over `MediaSearchService` (MD349). Per query, so the ×7 is not a wave of the hand: **answerable today, server-side** — "Show my Bangkok rooftop photos" (`scope=me` + `city` + `q`), "Where was this photo taken?" (`mediaId` → the coarse place, proved by `mediaWorldProjection.test.ts` "MD291 — 'Where was this photo taken?' resolves a media id to its coarse place"), "Show festival media from my Vietnam Trip." (`tripId` + `q`), "What does An Thuong look like right now?" (`q` + `freshOnly`). **Partly answerable** — "Show hidden beaches near Da Nang." (`city` + `q` + gem results, but "near" is city-coarse, never a radius) and "Nightlife that looks social tonight." (`category` + `freshOnly`, but nothing models "looks social"). **Not answerable at all** — "Find places that look like this.": there is no cross-place visual index; `lib/media/pHashUtils` + `mediaDedupWorker` are a near-duplicate collapser over one place's own uploads and are NOT a similarity search, and the service says so in `MEDIA_SEARCH_UNSUPPORTED` rather than implying otherwise. And NO USER CAN ASK ANY OF THE SEVEN: MD27 and MD324 are still N. **WHAT WOULD TURN THIS RED:** a client search surface issuing these queries (MD27/MD324), a radius parameter resolved through the canonical Map rather than a city string, a modelled "social"/"busy-looking" signal on the perspective, and a cross-place visual-similarity index. Each is a separate, named build; none is a wording change. |
+| MD294 | Result types: Media · Places · Hidden Gems · Events · Trips · Experiences · People | **W** | *(PARTLY CLOSED 2026-09-14 by the Media lane — N → W.)* A result union now exists and is served: `artifacts/api-server/src/services/media/MediaSearchService.ts:126#export interface MediaSearchResults {` carries `media`, `places`, `people`, `hiddenGems` and `experiences`. FIVE KINDS COVERING FIVE OF THE SEVEN NAMED TYPES. Events and Trips are NOT separate result kinds: both reach results only as an `experience` item (the existing `MediaExperienceProjection`, which carries `kind: "event" \| "trip"`), so a search cannot return an event that no media is attached to, or a trip with no perspectives. **WHAT WOULD TURN THIS RED:** an `events` and a `trips` array on `MediaSearchResults`, each populated from the canonical event/trip surfaces through their own eligibility gates (`checkEventEligibility`, trip visibility) rather than through media attachment — i.e. a search that finds the Beach Festival because it is called Beach Festival, not because somebody photographed it. |
 
 ### §39 Offline / Degraded Mode
 
@@ -815,7 +815,7 @@ noted; a responsibility with no implementation anywhere is **N**.
 | MD321 | `services/mediaPrivacy.ts` | **W** | Privacy is resolved server-side and correctly (`lib/mediaLocationVisibility`); the client carries no privacy module and therefore no client-side privacy state for a composer to consult. |
 | MD322 | `services/mediaContext.ts` | **N** | Only `types/mediaContext.ts` exists — the type, not the service. No client context resolver. |
 | MD323 | `services/mediaIntelligence.ts` | **N** | Absent. |
-| MD324 | `services/mediaSearch.ts` | **N** | Absent (see §38). |
+| MD324 | `services/mediaSearch.ts` | **N** | Absent. The SERVER half now exists (`artifacts/api-server/src/services/media/MediaSearchService.ts:291#export async function searchMedia` + `GET /media/search`, MD349/MD367), so this row is no longer blocked on "there is nothing to call" — it is blocked only on the client module. **WHAT WOULD TURN THIS RED:** `travel-buddy-standalone/src/features/media/services/mediaSearch.ts` calling `GET /api/media/search` and typed against `MediaSearchResults`, with a registered test. Client paths are outside the Media backend lane's ownership; this needs the client lane or an explicit hand-off. |
 | MD325 | `services/mediaCache.ts` | **N** | Absent (see §39). |
 | MD326 | `services/mediaActions.ts` | **C** | `src/features/media/services/mediaActions.ts` |
 | MD327 | `state/mediaWorldStore.ts` | **C** | `src/features/media/state/worldState.ts` + `hooks/useMediaWorld.ts` — renamed, same responsibility. |
@@ -847,7 +847,7 @@ Judged by responsibility, not by name — the divergence is recorded in each row
 | MD346 | MediaExperienceResolver | **C** | `services/media/MediaExperienceResolver.ts`. |
 | MD347 | HiddenGemMediaService | **C** | `services/hiddenGems/HiddenGemService.ts` + `HiddenGemContributionService.ts` + `lib/hiddenGemState.ts`. |
 | MD348 | MediaRankingService | **W** | `services/ranking/MediaFeedRankingService.ts` exists and ranks the **legacy** feed on engagement multipliers (§24); the World shell has no ranking stage at all (`MediaProjectionService.ts:846-848` sorts by capture time). Neither is §24's ranker. |
-| MD349 | MediaSearchService | **N** | Absent (§38). |
+| MD349 | MediaSearchService | **C** | *(CLOSED 2026-09-14 by the Media lane.)* `artifacts/api-server/src/services/media/MediaSearchService.ts:291#export async function searchMedia` — free text plus city / category / place / trip / scope / freshness / media-id criteria over the SHARED candidate loader and coarse projector, not a second read path. That is the load-bearing property and it is what the tests mostly assert: a blocked author, a private account, a coordinate and an undisclosable hidden gem are each absent from results because `loadEligibleCandidates` + `projectCandidatesProtected` are the only way in. Free text is matched AFTER projection, against the caption plus the DISCLOSURE-APPLIED labels, so a viewer cannot confirm "there is media at a place called X" for a venue the choke point just declined to name them. A criteria-free search returns nothing — it never degrades into the feed. Proof: `artifacts/api-server/src/test/mediaWorldProjection.test.ts` "MD349 — MediaSearchService: text recall" (5 cases) + "search is NOT a second read path: every gate still binds" (3) + "MD294 — the result kinds this search actually produces" (5). Mutations red: querying `posts` directly instead of the shared loader; ignoring the text term; dropping the empty-means-empty guard; dropping `mayDiscloseGemIdentity`; ignoring `freshOnly`; un-narrowing `scope=me`; emitting a place whose id was withheld. Known bounds, stated in the module header not hidden: no visual similarity, no radius, and free-text recall is capped by the shared loader's page. |
 | MD350 | MediaActionResolver | **C** | `services/media/MediaActionResolver.ts`. |
 | MD351 | MediaModerationService | **C** | `routes/adminMedia.ts` + `lib/moderationAudit.ts` + `post_media_moderation_ledger` + `lib/mediaEligibility` as the distribution gate. |
 | MD352 | MediaProcessingService | **C** | `lib/mediaProcessing.ts` + `lib/mediaPipeline.ts` (one policy for both transports) + `lib/videoMetadata.ts`. |
@@ -875,7 +875,7 @@ Judged by responsibility, not by name — the divergence is recorded in each row
 | MD364 | `GET /media/:mediaId/actions` | **C** | `routes/mediaActions.ts:43` |
 | MD365 | `GET /media/map` | **C** | `routes/mediaWorld.ts:271` |
 | MD366 | `GET /media/timeline` | **C** | `routes/mediaWorld.ts:245` |
-| MD367 | `GET /media/search` | **N** | Absent (§38). |
+| MD367 | `GET /media/search` | **C** | *(CLOSED 2026-09-14 by the Media lane.)* Registered as the eighth endpoint of the §43 router at `artifacts/api-server/src/routes/mediaWorld.ts:277#  "/media/search",`, `requireUser` + a tighter rate limit than the browse lenses (30/min — a search box is the cheapest enumeration primitive on any surface that has one), and it answers through `sendProjection`, so the fail-closed precise-location boundary scrub applies to it like every other route. Reachability is proved, not assumed: `artifacts/api-server/src/test/mediaWorldProjection.test.ts` "MD367 — GET /media/search is a reachable, auth-gated endpoint" starts the router on a loopback port and asserts 401/403 rather than 404, with an unregistered sibling path as the 404 control, and separately asserts `routes/index.ts` mounts `mediaWorldRouter` BEFORE `mediaFeedRouter` — the one line that keeps `/media/search` from being swallowed by `mediaFeed`'s `/media/:id`. `mediaWorldBoundaryScrub.test.ts`'s per-route segment count was raised 7 → 8 in the same pass, so the new endpoint is inside the boundary guard rather than beside it. |
 | MD368 | `POST /media` | **C** | `POST /api/media/upload` (`src/services/media.ts:197` is its client), plus the signed-URL transport documented at `lib/mediaPipeline.ts:8-17`. |
 | MD369 | `POST /media/:id/attachments` | **N** | No attachment endpoint. Attachments are written only from inside two services (`PassportMemoryService.ts:133`, `HiddenGemService.ts:150`); no route creates one. |
 | MD370 | `POST /media/:id/contribution` | **W** | The nearest thing is `POST /api/media/:id/intent` (`routes/mediaActions.ts:82,145`) — a want-signal, not a contribution. Gem contributions go to `routes/hiddenGems.ts`, not to a media contribution endpoint. |
@@ -1713,12 +1713,12 @@ and which this section does not pre-empt.
 Three changes, all server-side, none behind a new flag, none needing a migration.
 
 1. **The §7 neighborhood label has a producer.**
-   `artifacts/api-server/src/services/media/MediaProjectionService.ts:338#export async function loadPlaceNeighborhoods(`
+   `artifacts/api-server/src/services/media/MediaProjectionService.ts:348#export async function loadPlaceNeighborhoods(`
    batches one `places` read over the page's distinct `canonical_place_id`s —
    the same column `buildPlaceProjection` already reads for a place header, so
    Media does not open a second neighborhood source (§48: Places owns place
    identity) — and
-   `artifacts/api-server/src/services/media/MediaProjectionService.ts:448#const [ctx, neighborhoods] = await Promise.all([`
+   `artifacts/api-server/src/services/media/MediaProjectionService.ts:458#const [ctx, neighborhoods] = await Promise.all([`
    runs it alongside the gem context. The label is handed to the choke point as
    an **input**, never written onto the projection, so `coarsenMediaLocation`
    still decides: a gem-ceilinged or privacy-coarsened item names no
@@ -1727,9 +1727,9 @@ Three changes, all server-side, none behind a new flag, none needing a migration
    than left to look like an oversight — losing the gem context would WIDEN
    disclosure, losing this one only removes a label.
 2. **The §30 Tagged bucket reads the table that was there all along.**
-   `artifacts/api-server/src/services/media/MediaProjectionService.ts:1132#export async function loadTaggedPostIds(`
+   `artifacts/api-server/src/services/media/MediaProjectionService.ts:1167#export async function loadTaggedPostIds(`
    reads `tags` for `status='approved'`, `source_type='post'`, and
-   `artifacts/api-server/src/services/media/MediaProjectionService.ts:1185#export async function loadTaggedMedia(`
+   `artifacts/api-server/src/services/media/MediaProjectionService.ts:1220#export async function loadTaggedMedia(`
    puts those ids through `loadEligibleCandidates` and
    `projectCandidatesProtected` — **being tagged is not consent to see the
    post**, so the blocks / mutes / suspension / visibility / moderation gate,
@@ -1876,7 +1876,7 @@ wrong sentence:
   `MediaActionResolver.ts` line 612."* The two are **the wrong way round**:
   `artifacts/api-server/src/routes/mediaActions.ts:161#.from("media_intent_signals")`
   is the DELETE, and
-  `artifacts/api-server/src/services/media/MediaActionResolver.ts:612#.from("media_intent_signals")`
+  `artifacts/api-server/src/services/media/MediaActionResolver.ts:795#.from("media_intent_signals")`
   is the upsert — the writer. Enumerated exhaustively, `media_intent_signals`
   has **no reader anywhere in either tree**, so the asserted read does not exist.
   MD106 **stays C**, re-derived: its requirement is that a want is an intent
@@ -2029,7 +2029,7 @@ together, with no migration, no flag and no new table: `trip_members` and
 `shared_moment_memberships` are both in the committed production baseline
 (`artifacts/api-server/baseline/20260907_production_tables.txt`), and both
 already have readers inside the Media lane itself
-(`` `artifacts/api-server/src/services/media/MediaExperienceResolver.ts:190#.from("trip_members")` ``).
+(`` `artifacts/api-server/src/services/media/MediaExperienceResolver.ts:273#.from("trip_members")` ``).
 
 **Why the two populations were not merely missing but unreachable.** The lens
 loaded `feedType: "following"` alone, and that feed type's per-item visibility
@@ -2042,15 +2042,15 @@ will appear here"*
 (`` `travel-buddy-standalone/src/features/media/screens/MediaPeopleScreen.tsx:45#message="Perspectives from people you follow, your Trip Crew, and Shared Moments will appear here."` ``)
 — so the lens was advertising two populations the server could not supply.
 
-**Built.** `` `artifacts/api-server/src/services/media/MediaProjectionService.ts:742#export async function loadPeopleAffinities(` ``
+**Built.** `` `artifacts/api-server/src/services/media/MediaProjectionService.ts:777#export async function loadPeopleAffinities(` ``
 resolves both populations in two hops each, where the FIRST hop is the viewer's
 own accepted membership — an invitation the viewer never accepted yields nobody,
 and an invitation somebody else never accepted does not make them crew. The lens
 then runs TWO lanes
-(`` `artifacts/api-server/src/services/media/MediaProjectionService.ts:863#export async function buildPeopleProjection(` ``):
+(`` `artifacts/api-server/src/services/media/MediaProjectionService.ts:898#export async function buildPeopleProjection(` ``):
 the follow lane unchanged, and an affinity lane that is `feedType: "for_you"`
 NARROWED to the crew and Shared Moment ids by a new composing filter
-(`` `artifacts/api-server/src/services/media/MediaProjectionService.ts:200#if (filter.authorIds && filter.authorIds.length > 0) {` ``).
+(`` `artifacts/api-server/src/services/media/MediaProjectionService.ts:209#if (filter.authorIds && filter.authorIds.length > 0) {` ``).
 
 **The bound is stated rather than hidden**, on the precedent §11.4 set for the
 Tagged bucket: the affinity lane is PUBLIC-ONLY, so a crew member's `trip_only`
@@ -2106,7 +2106,7 @@ false:
 `` `artifacts/api-server/src/services/media/MediaPerspectiveService.ts:120#function countIndependentSources(` ``
 clusters the perspectives; the party token reaches it as a side channel built
 from the candidate rows
-(`` `artifacts/api-server/src/services/media/MediaProjectionService.ts:613#function partyTokensByPostId(` ``)
+(`` `artifacts/api-server/src/services/media/MediaProjectionService.ts:643#function partyTokensByPostId(` ``)
 and is asserted never to leave the server on the projection.
 
 **The sync detector is made INERT on purpose, and that is the decision worth
@@ -2327,7 +2327,7 @@ neither is consulted by any check.
 §11.3.2 moved **MD227** W → C on the sentence *"The Tagged bucket reads `tags`"*, and
 §12 restated it as *"the §30 Tagged bucket reads the table that was there all
 along."* Both sentences are true about the TABLE and false about the read.
-`artifacts/api-server/src/services/media/MediaProjectionService.ts:1132#export async function loadTaggedPostIds(`
+`artifacts/api-server/src/services/media/MediaProjectionService.ts:1167#export async function loadTaggedPostIds(`
 selected and ordered by `tags.tagged_at`. **There is no such column.** The
 canonical `0043_tags_hashtags.sql` declares it and it was never applied —
 `migrations/README.md` line 12 says so in as many words, and `docs/migrations.md`
@@ -2386,3 +2386,343 @@ the file was authored. `check:missing-live-columns` reads migrations against the
 live schema from the other direction and passed on this same run, because
 `tags.tagged_at` is in ITS allowlist — the allowlist entry recorded the drift and
 then silenced the only other check that could have named it.
+
+---
+
+## 14. The Media lane pass — ten rows closed, and a falsifier for every row left open
+
+This section is the record of the 2026-09-14 Media lane pass. It did three
+things: it built and certified ten requirements, it re-graded eight more in the
+direction the evidence pointed, and it attached a concrete falsifier — *what
+would turn this red* — to every one of the 153 requirements still not C. The
+third is the part that makes the other two auditable: a census whose open rows
+have no stated falsifier is a list of complaints.
+
+### 14.1 What was built, and the mutation that proved each test
+
+Every test below was written FIRST, run, and seen to fail for the right reason
+before any implementation existed. Every implementation was then mutated and the
+test seen to go red. The mutations are listed per row above; the summary:
+
+| Rows | What was built | Files |
+| --- | --- | --- |
+| MD149 · MD150 · MD151 · MD152 | §18 Corroboration → Contradiction → Visual Consensus, served on `PlaceProjection` and every `WorldZone`, with the §18 "Mixed reports" copy | `artifacts/api-server/src/services/media/MediaConsensusService.ts` (new), `MediaProjectionService.ts`, `MediaPerspectiveService.ts` |
+| MD349 · MD367 | §38 media search + `GET /media/search`, over the SHARED candidate loader and coarse projector | `artifacts/api-server/src/services/media/MediaSearchService.ts` (new), `routes/mediaWorld.ts` |
+| MD51 · MD100 | §28 Shared Moment in the media context graph, and §15 Invite People behind the invite endpoint's own gate | `artifacts/api-server/src/services/media/MediaActionResolver.ts` |
+| MD171 · MD172 | §23.1 experience chains ordered by observed capture time, and Follow This Night | `artifacts/api-server/src/services/media/MediaExperienceResolver.ts`, `MediaActionResolver.ts` |
+
+Twenty-nine mutations were run across the four clusters. **Two of them did not
+redden the suite on the first attempt, and that is reported rather than quietly
+fixed**, because a mutation that fails to redden is the census's own warning
+that a test is weaker than its name:
+
+1. **Dropping `mayDiscloseGemIdentity` from the search left every test green.**
+   The "a PROTECTED hidden gem yields no gem result" case was passing for a
+   different reason than its name claimed: a protected gem makes the LOCATION
+   choke point withhold the place id upstream, so the gem lookup was never
+   handed a place to look under and the predicate was unreached. A second case
+   was added — an `archived` but `public` gem, which is not restrictive (so the
+   place stays disclosable) and is not identity-disclosable (so the predicate
+   must refuse it). The mutation now reddens. The original case was kept, and
+   relabelled to say what it actually proves.
+2. **Two chain mutations did not redden**: keying a stop on its LAST perspective
+   instead of its first, and admitting a place the disclosure choke point had
+   withheld. The first fixture happened to have no stop that was revisited, so
+   first and last ordered identically; the second produced an ANONYMOUS stop
+   (`placeId: null`) rather than a named one, which the assertion did not look
+   for. Both fixtures were rewritten — a Dinner → Rooftop → Dinner night where
+   the two keys give opposite orders, and an assertion that every stop carries a
+   real canonical place id. Both mutations now redden.
+
+A third mutation (`sendProjection` → `res.json` on the new search route) did not
+redden the search suite and DID redden `mediaWorldBoundaryScrub.test.ts`, which
+is the file that owns that guarantee. That one was a mis-aimed mutation, not a
+weak test.
+
+### 14.2 Rows found mis-graded or mis-cited
+
+| Row | Finding |
+| --- | --- |
+| MD162 | **Mis-cited.** It cites `lib/mapProducers/crowdFlowProducer.ts`; no such file exists. The producer is `artifacts/api-server/src/lib/crowdFlowProducer.ts:264#export const CROWD_FLOW_FLAG = "map_crowd_flow_enabled";`, which is where MD163 correctly points. The verdict is unaffected — Media still does not consume it — but the row is one of the 18 citations §0 says name no file in the tree, and this is which file it should have named. |
+| MD152 | **Partly overstated, in the direction that flatters the gap.** "No uncertainty state on `PlaceProjection` or `WorldZone`" was true at the OBJECT level and false at the field level: the per-claim `conflictState` was already riding inside `currentState.claims[]` / `liveClaims[]`, so a client that knew to look could already find it. What was genuinely absent was any place-level or zone-level state and any copy. The row is now C on both. |
+| MD287–MD293 | **Re-graded N ×7 → W ×7.** See the row. |
+| MD228 · MD294 · MD173 | **Re-graded N → W.** Each says in its own cell which part closed and which did not. |
+| MD149 | **Re-graded W → C**, and the W was correct when written — `MediaContributorReputationService` really is contributor corroboration, not perspective corroboration. |
+| Headline | **Already drifted before this pass.** The `## Headline` table at the top of the document still reads C 291 / W 69 / N 88 / X 2, which has not described the rows since §11.10; `check:census-integrity` reads the LAST restated headline (§12.10, C 287 / W 74 / N 87 / X 2) and that one did reconcile. The top table is left as the historical record it is, and §14.5 restates from the rows. |
+
+### 14.3 Cross-lane requests
+
+1. **`artifacts/api-server/src/compass/CompassMediaContext.ts`** — add
+   `shared_moment: "shared moment"` to `REF_KIND_LABEL` (`:305`). MD51's edge is
+   currently carried on a second union, `MediaGraphKind`, purely because that
+   file builds `Record<MediaEntityRef["kind"], string>` and widening
+   `MediaEntityKind` would not compile. With the label added, `MediaGraphKind`
+   collapses back into `MediaEntityKind` and `ResolvedMediaEntities.graphRefs`
+   back into `.refs`. This is a one-line change and a strictly better shape; it
+   was not made because the file is not this lane's.
+2. **`artifacts/api-server/package.json`** — no new test file was created, so no
+   registration is needed. Stated because it was checked, not assumed: all new
+   cases were added to four ALREADY-REGISTERED suites
+   (`mediaIndependentSources.test.ts`, `mediaWorldProjection.test.ts`,
+   `mediaActionsCompass.test.ts`, `mediaWorldBoundaryScrub.test.ts`).
+3. **`services/ranking/**`** — sixteen of the open rows (§14.4 family F9) are
+   about the ranker, and `services/ranking/MediaFeedRankingService.ts` is outside
+   the Media lane's paths. Whichever lane owns it needs the family F9 falsifiers.
+4. **Four ANCHORED citations in three other censuses were displaced by this
+   pass's code and must be repointed by the lanes that own those documents.**
+   This is the anchored-citation mechanism working exactly as §12.9 describes —
+   the anchors caught their own decay, loudly, on the run that broke them — and
+   the repoints are not made here because "any census other than your own" is off
+   limits. Each has been re-located by exact original line text, not by offset,
+   so the new number is verified rather than arithmetic:
+   - `docs/architecture/census-highlights-memories.md:406` cites the My World
+     "gems" bucket at line 1091 of MediaProjectionService; it is now at
+     `artifacts/api-server/src/services/media/MediaProjectionService.ts:1126#key: "gems"`.
+   - `docs/architecture/census-telegraph.md:301` and `docs/architecture/census-telegraph.md:1080`
+     both cite the owner-scoped table read at line 1214; it is now at
+     `artifacts/api-server/src/services/media/MediaProjectionService.ts:1249#.from(table)`.
+   - `docs/architecture/census-trust.md:738` cites the viewer profile select at
+     lines 108-112; it is now at
+     `artifacts/api-server/src/services/media/MediaProjectionService.ts:109#.select("location_country, date_of_birth")`.
+   (The stale line numbers are given as plain numbers above, deliberately: written
+   in citation shape they would be re-parsed as citations of THIS document and
+   would fail `check:doc-citations` here instead of there.)
+   The fifteen displaced anchors inside THIS census were repointed in the same
+   pass, the same way. `check:doc-citations` was ALREADY failing before this pass,
+   across many documents and for unrelated reasons — the largest cluster is
+   `docs/discovery/ROADMAP.md` — so this pass did not break that check and cannot
+   fix it. What it can account for is its own share: **twenty** anchored
+   citations were displaced by this pass's code, **sixteen** of them live in this
+   census and are repointed, and the four above do not and are not.
+
+### 14.4 WHAT WOULD TURN THIS RED — the falsifier register
+
+One entry per requirement still not C, grouped ONLY where the falsifier is
+literally the same artifact. The rule for an entry: it names a thing that could
+be built or measured, and says who can supply it. "More work" is not an entry.
+
+**F1 — The compliant surface is built and dark.** `MEDIA_WORLD_SHELL_ENABLED` is
+seeded `false` (`artifacts/api-server/src/migrations/2300_phantom_feature_flag_rows.sql:36-42`)
+and the Media tab's default mode is `'watch'`. Every row here is "the §46-shaped
+thing exists; the thing users reach is the other one".
+*Settled by:* a migration seeding that flag `true` **and** a `mediaStore` default
+that is not `'watch'` **and** a `docs/architecture/mobile-reachability-ledger.md`
+entry showing the World shell reachable. *Who:* the integration owner — lanes may
+not enable a feature flag (LANE-RULES §6) — plus the client lane for the default.
+Rows: MD1, MD2, MD3, MD11, MD15, MD29, MD33, MD87, MD286, MD402, MD408, MD412, MD428.
+
+**F2 — The forbidden thing is built and shipping.** These four are §46.2
+prohibitions the tree VIOLATES, so nothing is missing; something is present.
+*Settled by:* the full-screen paging autoplay feed no longer the seeded default
+mode, and the Stamp/comment/save count rail no longer the primary overlay —
+evidenced by the seed row and by `WatchItemOverlay`'s rail. *Who:* client lane +
+integration owner. Rows: MD419, MD424, MD425, MD427.
+
+**F3 — A named client module simply does not exist.** Each row names a file.
+*Settled by:* that file existing under `travel-buddy-standalone/src/features/media/`,
+reachable from a route, with a registered test. *Who:* the client lane; the Media
+backend lane cannot supply any of them and says so rather than leaving them to
+look like backend debt. Rows: MD21 (`HiddenGemsMediaScreen`), MD25 (`MediaMapScreen`),
+MD26 (`MediaTimelineScreen`), MD27 (`MediaSearchScreen`), MD28 (`MediaContributionScreen`),
+MD313 (`HiddenGemCard.tsx`), MD314 (`MediaContextSheet.tsx`), MD316 (`MediaContributionSheet.tsx`),
+MD320 (`services/mediaProcessing.ts`), MD321 (`services/mediaPrivacy.ts`),
+MD322 (`services/mediaContext.ts`), MD323 (`services/mediaIntelligence.ts`),
+MD324 (`services/mediaSearch.ts` — now unblocked server-side, see its row),
+MD325 (`services/mediaCache.ts`), MD329 (`state/mediaMapStore.ts`),
+MD331 (`state/mediaFilterStore.ts`), MD332 (`state/myMediaStore.ts`),
+MD35 and MD405 and MD449 (all three are the My World **Map** mode placeholder at
+`MyWorldMediaScreen.tsx:95-99`, and all three fall together the moment that mode
+renders the canonical Map projection the server already produces at
+`MediaProjectionService.ts:916`), MD415 and MD416 (gem glow / map contour — the
+DATA exists at `mediaLocationVisibility.ts:98`; no client draws it).
+
+**F4 — Offline / degraded mode (§39) has no store.** Nothing in the media tree
+persists CONTENT; `AsyncStorage` holds mode and toggles only.
+*Settled by:* a client cache module that persists a scoped, curated set, with an
+eviction policy, a trip/place scope, and a visible last-updated stamp that is
+never rendered as live (§39's own closing sentence). *Who:* client lane.
+Rows: MD295, MD296, MD297, MD298, MD299, MD300 (currently an HTTP image cache,
+which is caching but not §39), MD301.
+
+**F5 — The canonical asset store is dark and unread.** `lib/mediaAssets.ts:118`
+returns `null` before writing whenever `media_canonical_enabled` is off, and it
+is off; `attachCanonicalMedia` has no caller; `media_attachments` is empty in
+both databases.
+*Settled by:* (a) the flag enabled in a real environment, (b) a backfill so
+`media_assets` covers live media rather than 8 rows, and (c) at least one READ
+path calling `attachCanonicalMedia` — after which `canonical_media` stops being
+absent on every row and `firstCanonicalMedia` stops returning null on every row.
+*Who:* integration owner (flag + backfill); the read-path caller is Media lane
+work that is pointless before (a) and (b). Rows: MD36, MD38, MD43, MD44, MD57,
+MD60, MD338, MD339, MD343, MD429.
+Three of the family need a MIGRATION as well, which LANE-RULES §2 forbids a lane
+to author unasked: MD37 (drop the legacy `'user'` default from `0191:31` so every
+write lands inside the §6 eight-value set), MD41 (a CHECK on
+`media_attachments.entity_type` over the nine §5 values, plus writers for
+`shared_moment` and `observation`), MD255 (a `visibility` CHECK admitting the six
+§33 audiences — today the column is bare `TEXT DEFAULT 'inherit'` and the post
+enum has three values), MD274 (flip the DEFAULT to a §36 value and migrate the
+legacy rows, which `2250` deliberately did not do).
+
+**F6 — The media → intelligence boundary is a refusal, not a gap.** These rows
+are W/N because a seam was built and deliberately left unwired.
+| Row | What would settle it |
+| --- | --- |
+| MD53 | `media_evidence_enabled` on **and** an observation ref carried on a media projection. Today the link table exists behind the flag (`lib/media/mediaEvidenceLink.ts:130`) and no projection carries the ref. |
+| MD63 | Any pixel/frame/scene analysis at all. `mediaEvidenceEligibility` classifies from DECLARED source and edit list; there is no decode step anywhere, and for video there is no decoder (F11). A stage that does not exist cannot be partly built. |
+| MD65 · MD66 | A media path that writes `intel_observations` / `intel_claims`. `mediaEvidenceLink.ts:1-13` states it never does. Settling this is a SAFETY decision before it is a code change, and should be recorded as one. |
+| MD58 | Corroboration, observation refs and expiration on a media projection. Corroboration is now half-answered — §18's consensus (MD149) puts an agreement measure on the place, but `MediaProjection` itself still carries none, and observation refs and expiry are still absent. |
+| MD71 | Either `freshnessClass` gaining `'live'` (which `mediaFreshness.ts:21` types out on purpose and which this census judges SAFER than the spec), or the spec conceding the cap. This row cannot be closed by code alone; it needs a spec decision. |
+| MD73 | A `locationConfidence` scalar distinguishing a GPS-verified capture from a hand-typed venue. The inputs exist (`mediaAssets.ts:105` has a boolean `hasLocation`; EXIF is stripped server-side) — what is missing is a captured provenance bit saying WHICH, recorded at upload. |
+| MD75 · MD78 | An `expiresAt` on an asset's intelligence eligibility. `mediaEvidenceEligibility.ts:29-31` declines it by design, with a reason. Settled by the spec conceding, or by a migration adding the column and a writer. |
+| MD76 · MD77 | A `MediaTemporalState` contract and a `socialExpiresAt` column. Neither exists under any name; a grep for the type returns nothing in either tree. |
+| MD79 | A path from "shown" back to "hidden". `delayedPostPublisher` only ever begins disclosure. Settled by a scheduled re-hide, or by the spec accepting one-way disclosure. |
+| MD445 | MD65 closing. Its first half (qualification) is delivered. |
+
+**F7 — Perspective vantages (§12).** `MediaPerspectiveService.ts:8-12` declines
+to invent a vantage the data does not support, and buckets from `category`.
+*Settled by:* a perspective/vantage value CAPTURED at contribution time (a
+column, or a composer affordance that asks), not a classifier guessing from a
+photo — the service's refusal is correct until the data exists. *Who:* schema +
+client capture. Rows: MD82, MD83, MD84, MD85, and MD444 (three of its four parts
+are delivered; the vantages are the fourth).
+
+**F8 — Entry contexts (§14).** `setPerspectiveViewerContext` has exactly one
+caller passing exactly one kind. *Settled by:* a second producer for each kind —
+an Event surface, a People surface, a Trip surface, and a Media Map (MD25) —
+each passing its own entry-context kind. Rows: MD89, MD90, MD91, MD92.
+
+**F9 — Ranking (§24).** `services/ranking/**` is outside this lane's paths; see
+§14.3.
+| Row | What would settle it |
+| --- | --- |
+| MD8 | A provenance term in the ordering: `source_type` reaching the ranker/projection and `generated`/`derivative` ordering below `camera`/`official`. Today no ordering reads provenance, and the World-shell sort is `capturedAt` only. This is an UNGUARDED ABSENCE, so it can also be settled by a guard + test proving generated media cannot outrank authentic — which is cheaper than the feature and is the honest minimum. |
+| MD177 | A viewer-intent input on `RankCandidate`/`ViewerContext`. `media_intent_signals` is written (§15.1) and read only by the action rail for its own button state (`artifacts/api-server/src/services/media/MediaActionResolver.ts:795#.from("media_intent_signals")`); the store exists and is not a ranking input. |
+| MD179 | A viewer-trip affinity term in `DEFAULT_WEIGHTS`. `kindPrior` has a `trip` CANDIDATE kind, which is a different thing. |
+| MD184 · MD201 | A live-claim term in either ranker, and a penalty on low-confidence ones. MD201 is unguarded: a live term could be added tomorrow with no penalty and nothing would object. |
+| MD187 | A quality term that is not an engagement proxy — resolution, sharpness, duration fit, composition. Today quality IS `watchCompletionRate` / `qualifiedViewCount` / `rewatchRate`, which is the thing §45 forbids optimising for. |
+| MD188 | A `source_type`/provenance term (with MD8). Author trust is not asset provenance. |
+| MD194 | A predicted real-world action, not a per-candidate-kind constant. `actionability 0.9` is a genuine partial and is a property of the kind. |
+| MD195 · MD196 · MD198 | An experience-fit term, a connection-usefulness term, a narrative-value term. None exists under any name. |
+| MD197 | A call site for `MediaContributorReputationService` inside `services/ranking/`. The scorer exists and nothing reads it. |
+| MD207 | A fourth reputation dimension reading journey history. `computeContributorReputation` computes three. |
+| MD348 · MD356 | A ranking stage between projection and client in the World-shell pipeline. `buildWorldProjection` sorts zones by item count and `buildTimelineProjection` by capture time; neither is a ranker. |
+| MD435 | Media ceasing to own a second ranker, or §48 conceding it. The ownership line is crossed in the direction §48 forbids, and that is a design decision, not a bug. |
+
+**F10 — Telemetry names with no emitter (§44/§45).** `mediaTelemetry.ts` declares
+several transitions "reserved: no rail trigger yet"; `mediaAnalyticsBatch.ts:41`
+allow-lists some names that nothing sends.
+*Settled by,* per row: a PRODUCER that emits the event, plus a test that fails
+without it. The allow-list is this lane's file; the emitters are the client's.
+| Row | Producer that would settle it |
+| --- | --- |
+| MD213 · MD378 · MD396 | A directions tap on a §15 surface emitting `media_route`. `directions_tap` exists on the legacy gems surface only, and there is no Directions action to tap (MD94). |
+| MD214 · MD399 | An arrival detector on a media path. None exists; the geofence machinery is trip-scoped. |
+| MD374 | An event name for a Visual Opportunity open, plus the World shell's opportunity cards emitting it. |
+| MD376 | A gem-open event name in the batch allow-list, plus an emitter. `gems_filter_change` is allow-listed; an open is not. |
+| MD381 | An invite event. **The action now exists (MD100)**, so this row's stated blocker — "no invite action" — is gone; what remains is the event name and the emitter. |
+| MD382 | An experience-completion detector. `completion` in the allow-list is VIDEO completion, the opposite signal. |
+| MD383 · MD400 | A contribution surface (MD28) emitting `media_contribution`. |
+| MD385 | A creation event on the Memory/Postcard path. `MyWorldMemoryService` is read-only by design, so this needs the writer side. |
+| MD387 · MD393 | A server touchpoint for comment-create and profile-open on a media surface. Both are client navigations today. |
+| MD209 | Producers for `save` and `place_open`. Neither exists in either tree. |
+| MD215 | The counts ceasing to dominate — see F2. |
+
+**F11 — The video tier has no decoder.** `lib/mediaProcessing.ts:18-19` states
+that videos are sniffed and size-capped, never transcoded, because there is no
+ffmpeg in this tier.
+*Settled by:* a processing tier that can decode — which is an infrastructure
+decision with a cost, not a code change, and should be recorded as such.
+| Row | What would settle it |
+| --- | --- |
+| MD275 | A writer filling `media_assets.thumbnail_path` for video. The column exists. |
+| MD276 | A server-side probe of the container. Duration is whatever the uploader declared. |
+| MD277 | An HLS/DASH manifest. `WatchVideoCell.tsx:158` plays one progressive URL. |
+| MD280 | A caption/subtitle track on the asset and a `textTrack` on the player. |
+| MD281 · MD284 | A chunked/resumable upload with a resume token, and a background task registration. `uploadMedia` is a single foreground `fetch`. |
+| MD282 | Transcoding. Images are already re-encoded and capped; video is not. |
+| MD283 | MD282 plus F12 — video is never decoded, so no classifier could run on it even if one existed. |
+
+**F12 — Moderation decides nothing.** Rows MD269, MD351.
+*Settled by:* a classifier with a hold state and a queue that a decision can come
+out of — today the postcard transport promotes to approved unconditionally and
+what exists is an admin route, an audit writer, an inert table and the
+distribution gate. *Who:* needs a moderation-provider decision first.
+
+**F13 — Actions and Compass, the parts still open.**
+| Row | What would settle it |
+| --- | --- |
+| MD94 | A `directions` action. It needs a canonical directions endpoint to target; there is none, and the rail's rule is that every action resolves to an EXISTING endpoint, so inventing one here would be the wrong fix. "Go There"/"Show on Map" are built. |
+| MD101 · MD253 | The third comparator. `CompassMediaContext.ts:80#export const COMPARATOR_AXIS_CLAIM` now maps *quieter* and *cheaper*; *busier* and *find similar to this specific thing* are not mapped. Compass lane. |
+| MD103 | A `passport` member in the entity graph. §29 keeps Passport on Postcards, so this is a SPEC boundary question before it is a build: settled either by §29 conceding, or by a passport ref with its own eligibility gate. |
+| MD104 | A Telegraph thread/message/intent actually created when `target = "telegraph"`. `routes/mediaFeed.ts:2297-2299` records a share event and returns a URL on every branch. This is Media-lane code and a Telegraph-lane contract; it was not built here because inventing the thread shape unilaterally is how two lanes end up with two share paths. |
+| MD107 | A compilation into a **Compass** plan from a Trail / recap / itinerary source. Today "Do This Experience" adds items to a TRIP, which is a smaller, different thing that works. |
+| MD173 | See its row — a client call site, or a server-side place-id resolution in `POST /route-plans`. |
+| MD175 | A remix concept anywhere. There is none, and building one from nothing is a product decision, not a census repair. |
+| MD252 | The re-read this census still owes. `CompassMediaContext.ts:210#export function buildSequencingAnchor` exists and the row's stated absence is false; the verdict was deliberately left at N by the correcting lane and **is still owed a re-read**. This pass did not perform it either, because the file is the Compass lane's and the row turns on that lane's build. Recorded again rather than silently inherited. |
+
+**F14 — Hidden Gems (§16).**
+| Row | What would settle it |
+| --- | --- |
+| MD112 | Duplicate detection running at SUBMISSION, not only in the admin queue. The scorer is real and the placement is the gap. |
+| MD120 | A gem outcome record — a table or a claim linking a visit back to the gem. `compass_outcome_events` is Compass's and carries no gem semantics. |
+| MD360 | `GET /media/gems` serving a §16 gem-STATE projection. The lens falls back to `GET /media/gems-feed`, a ranked social feed. This is squarely in this lane's paths and was NOT built this pass — the four clusters above were chosen instead, and that is a prioritisation, not a blocker. It is the cheapest remaining row in the census for this lane. |
+
+**F15 — Everything else, one at a time.**
+| Row | What would settle it |
+| --- | --- |
+| MD162 | Media consuming the canonical crowd flow. The producer is `lib/crowdFlowProducer.ts` (NOT the path this row cites — see §14.2), and `deriveCrowdFlow` has no production caller anywhere, so Media would be its first consumer. Note the producer currently reports two wired signal families and refuses to publish below `MIN_SIGNAL_FAMILIES` for most buckets, so a Media consumer would correctly render nothing today — settled by the consumer PLUS evidence that a flow can actually be produced. Media perspectives cannot themselves become a family: a photograph declares no ORIGIN zone, which is `UNFED_FAMILY_BLOCKERS`' `no_declared_origin`, the blocker no amount of wiring removes. |
+| MD169 | An experience-level `confidence` computation. The field is declared and unfilled; the only confidence on the media path is the per-forecast band in `mediaTimeBands`. |
+| MD222 | **Partly closed by MD51** — the Shared Moment is now IN the media context graph and addressable from the rail. Still open: the People lens (MD216) does not carry shared-moment participants as a population. Settled by `buildPeopleProjection` emitting the `shared_moment` relation it already types. |
+| MD228 · MD294 · MD287–MD293 | See their rows. |
+| MD369 | A `POST /media/:id/attachments` route. Attachments are written only from inside `PassportMemoryService` and `HiddenGemService`. This lane's path; not built this pass, and pointless before F5 (the write is a no-op under the seeded-off flag). |
+| MD370 | A contribution endpoint distinct from the §15.1 intent signal. Gem contributions go to `routes/hiddenGems.ts`. Blocked with MD28 on there being a contribution surface to serve. |
+| MD403 (X) | A measured contrast ratio and a dynamic-type pass on a device. This census agrees it is genuine runtime QA — it is the ONE §46 item where it agrees. Settled by a QA artifact, not by reading the tree. |
+| MD441 (X) | The Phase 0/1 media audit DOCUMENT. The WORK landed (`0191`, `2250` name their phase); `docs/media/` holds no audit. Settled by the audit artifact being committed, or by the programme recording that it was never written. |
+| MD446 | "Show Me Now" existing under some name. Four of its six parts are delivered; "Go There" is MD94. |
+
+### 14.5 Restated headline
+
+> | Measure | Was, §12.10 | Now |
+> | --- | --- | --- |
+> | Denominator (testable requirements) | 450 | **450** |
+> | BUILT-AND-CORRECT | 287 | **297** |
+> | BUILT-BUT-WRONG | 74 | **83** |
+> | NOT-BUILT | 87 | **68** |
+> | CANNOT-VERIFY | 2 | **2** |
+> | **CONSTRUCTED%** = (C+W)/450 | 80.2 % | **380 / 450 = 84.4 %** |
+> | **CORRECT%** (raw) = C/450 | 63.8 % | **297 / 450 = 66.0 %** |
+>
+> Restated from `pnpm -s check:census-integrity`, not by hand. The moves are ten
+> N/W → C (§14.1) and ten N → W (MD173, MD228, MD294, MD287–MD293). Construction
+> moves this time, by 4.2 points, and it moves for the ordinary reason: nineteen
+> requirements that had NOTHING now have something. The gap between the two
+> figures is **18.4** points, up from 16.2 — which is the honest shape of a pass
+> that opened more than it finished, and the register in §14.4 is where that
+> extra distance is itemised rather than averaged away.
+
+The **spec-attributable** figure (§0: 216 / 450) is restated ONCE and only
+because the addition is checkable rather than estimated: all ten newly-C rows
+were built in this pass against a named section of this spec (§15, §18, §23.1,
+§28, §38), so attribution rises by exactly ten to **226 / 450 = 50.2 %**. No
+pre-existing row's attribution was re-judged, and if that re-judgement ever
+happens this number must be re-derived, not adjusted.
+
+### 14.6 The least flattering true thing about this pass
+
+**It closed the rows it could reach, and the rows it could reach are not the
+rows that matter most.** The single largest fact about Media is unchanged and
+untouched by anything above: the §46-compliant surface is behind a flag seeded
+`false`, and the surface users reach is the full-screen autoplaying stranger-video
+feed §46.2 forbids twice. Thirteen rows sit in family F1 and four more in F2, and
+this pass moved none of them, because a lane may not enable a feature flag and
+may not edit the client. Everything built here — the consensus object, the search,
+the Shared Moment edge, the chains — is served by endpoints inside that same dark
+shell. **They are correct, they are tested, and today nobody can see any of them.**
+
+A second, smaller one: **MD360 was the cheapest row in this census for this lane
+and it was not built.** `GET /media/gems` is one route in a file this lane owns,
+over a projection service this lane owns, and it would have closed a row and
+un-blocked two more (MD15, MD33). It lost to four clusters that each closed more.
+That is a defensible prioritisation and it is still a row that should have been
+easier to finish than to explain.

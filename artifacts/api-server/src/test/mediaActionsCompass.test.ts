@@ -472,3 +472,267 @@ describe("buildDoThisExperiencePlan — converts an eligible experience into a p
     assert.equal(plan, null, "no plan for a private experience the viewer cannot see");
   });
 });
+
+// ═════════════════════════════════════════════════════════════════════════════
+// §28 SHARED MOMENT in the media context graph (MD51) · §15 INVITE PEOPLE (MD100)
+// ═════════════════════════════════════════════════════════════════════════════
+/**
+ * MD51 read **N**: *"`MediaActionResolver.ts:53` — `MediaEntityKind = "media" |
+ * "place" | "trip" | "gem"`. No shared-moment edge anywhere in the context graph,
+ * though the product has shared moments."* MD100 read **N**: *"No invite member
+ * in the resolver's action vocabulary."* MD222 read **W** on the first of those.
+ *
+ * The edge exists in the schema and nothing was reading it:
+ * `shared_moment_contributions.post_id` references `posts(id)` (migration
+ * 2064:38), so a media item that was contributed to a Shared Moment already
+ * knows which one. The three gates below are the endpoint's own, not new policy:
+ *
+ *   FLAG     `areSharedMomentsEnabled` — the same capability chain
+ *            routes/sharedMoments.ts::guard applies. Off ⇒ no ref, no action.
+ *   MEMBER   `momentRole(...) !== null` (accepted membership) — the same
+ *            predicate GET /shared-moments/:id uses to answer `not_member`. A
+ *            non-member is not told the Moment exists.
+ *   MANAGER  role owner|manager for the INVITE action — the exact
+ *            `ownerOrManager` gate POST /shared-moments/:id/invites enforces, so
+ *            the rail can never offer an invite the endpoint would refuse (§47).
+ *
+ * And one gate that is this rail's own: only an APPROVED contribution creates
+ * the edge. A pending or removed contribution is not a Shared Moment membership
+ * of the media.
+ */
+const MOMENT_1 = "abcdabcd-abcd-abcd-abcd-abcdabcdabcd";
+
+/** All flags the shared-moments capability chain requires, enabled. */
+function sharedMomentFlags(): any[] {
+  return [
+    { flag: "external_places_enabled", enabled: true },
+    { flag: "live_places_enabled", enabled: true },
+    { flag: "place_days_enabled", enabled: true },
+    { flag: "shared_moments_enabled", enabled: true },
+  ];
+}
+
+function momentFixture(o: { role?: string; status?: string; contributionStatus?: string; flags?: boolean } = {}): Dataset {
+  return {
+    feature_flags: o.flags === false ? [] : sharedMomentFlags(),
+    shared_moments: [
+      {
+        id: MOMENT_1,
+        owner_id: AUTHOR_A,
+        title: "Friday night at An Thuong",
+        status: o.status ?? "active",
+        place_id: PLACE_1,
+        trip_id: null,
+        place_day_id: null,
+      },
+    ],
+    shared_moment_contributions: [
+      {
+        id: "contrib-1",
+        moment_id: MOMENT_1,
+        contributor_id: AUTHOR_A,
+        post_id: MEDIA_1,
+        status: o.contributionStatus ?? "approved",
+      },
+    ],
+    shared_moment_memberships:
+      o.role === undefined
+        ? []
+        : [{ moment_id: MOMENT_1, user_id: VIEWER, role: o.role, status: "accepted" }],
+  };
+}
+
+describe("MD51 — a media item resolves to the Shared Moment it was contributed to", () => {
+  it("an accepted member gets a shared_moment entity ref", async () => {
+    const sc = makeSc(baseData({ posts: [makePost()], ...momentFixture({ role: "member" }) }));
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: true });
+    const result = await resolveMediaActions(sc, viewer, MEDIA_1, Date.now());
+    const ref = result!.entityRefs.find((r) => r.kind === "shared_moment");
+    assert.ok(ref, "the §28 Shared Moment edge must be in the media context graph");
+    assert.equal(ref!.id, MOMENT_1);
+    assert.equal(ref!.label, "Friday night at An Thuong");
+  });
+
+  it("a NON-member is not told the Moment exists — no ref, no id, no title", async () => {
+    const sc = makeSc(baseData({ posts: [makePost()], ...momentFixture({}) }));
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: true });
+    const result = await resolveMediaActions(sc, viewer, MEDIA_1, Date.now());
+    assert.equal(result!.entityRefs.some((r) => r.kind === "shared_moment"), false);
+    assert.equal(JSON.stringify(result).includes(MOMENT_1), false);
+    assert.equal(JSON.stringify(result).includes("Friday night at An Thuong"), false);
+  });
+
+  it("a PENDING contribution is not a Shared Moment edge", async () => {
+    const sc = makeSc(
+      baseData({ posts: [makePost()], ...momentFixture({ role: "owner", contributionStatus: "pending" }) }),
+    );
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: true });
+    const result = await resolveMediaActions(sc, viewer, MEDIA_1, Date.now());
+    assert.equal(result!.entityRefs.some((r) => r.kind === "shared_moment"), false);
+  });
+
+  it("with the Shared Moments capability OFF there is no ref at all", async () => {
+    const sc = makeSc(baseData({ posts: [makePost()], ...momentFixture({ role: "owner", flags: false }) }));
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: true });
+    const result = await resolveMediaActions(sc, viewer, MEDIA_1, Date.now());
+    assert.equal(result!.entityRefs.some((r) => r.kind === "shared_moment"), false);
+    assert.equal(result!.actions.some((a) => a.id === "invite_people"), false);
+  });
+
+  it("an ARCHIVED Moment yields no ref", async () => {
+    const sc = makeSc(baseData({ posts: [makePost()], ...momentFixture({ role: "owner", status: "archived" }) }));
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: true });
+    const result = await resolveMediaActions(sc, viewer, MEDIA_1, Date.now());
+    assert.equal(result!.entityRefs.some((r) => r.kind === "shared_moment"), false);
+  });
+});
+
+describe("MD100 — Invite People, gated by the endpoint's own ownerOrManager check", () => {
+  it("an OWNER is offered invite_people, targeting the existing invites endpoint", async () => {
+    const sc = makeSc(baseData({ posts: [makePost()], ...momentFixture({ role: "owner" }) }));
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: true });
+    const result = await resolveMediaActions(sc, viewer, MEDIA_1, Date.now());
+    const invite = result!.actions.find((a) => a.id === "invite_people");
+    assert.ok(invite, "an owner may invite");
+    assert.equal(invite!.target.method, "POST");
+    assert.equal(invite!.target.endpoint, "/api/shared-moments/:id/invites");
+    assert.equal((invite!.target.params as any).id, MOMENT_1);
+    assert.equal(invite!.outcome, "meet");
+  });
+
+  it("a MANAGER is offered it too", async () => {
+    const sc = makeSc(baseData({ posts: [makePost()], ...momentFixture({ role: "manager" }) }));
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: true });
+    const result = await resolveMediaActions(sc, viewer, MEDIA_1, Date.now());
+    assert.ok(result!.actions.some((a) => a.id === "invite_people"));
+  });
+
+  it("a plain MEMBER sees the Moment but is NOT offered the invite the endpoint would refuse", async () => {
+    const sc = makeSc(baseData({ posts: [makePost()], ...momentFixture({ role: "member" }) }));
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: true });
+    const result = await resolveMediaActions(sc, viewer, MEDIA_1, Date.now());
+    assert.ok(result!.entityRefs.some((r) => r.kind === "shared_moment"), "the ref is a read, and a member may read");
+    assert.equal(
+      result!.actions.some((a) => a.id === "invite_people"),
+      false,
+      "§47: the rail asks the same question POST /shared-moments/:id/invites asks",
+    );
+  });
+
+  it("no Shared Moment at all ⇒ no invite action (no dead actions)", async () => {
+    const sc = makeSc(baseData({ posts: [makePost()] }));
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: true });
+    const result = await resolveMediaActions(sc, viewer, MEDIA_1, Date.now());
+    assert.equal(result!.actions.some((a) => a.id === "invite_people"), false);
+  });
+
+  it("the action set still carries no precise location once the Moment edge is added", async () => {
+    const sc = makeSc(baseData({ posts: [makePost()], ...momentFixture({ role: "owner" }) }));
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: true });
+    const result = await resolveMediaActions(sc, viewer, MEDIA_1, Date.now());
+    assert.equal(isLocationSafe(result), true);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// §23.1 CHAIN ACTIONS — census-media MD172 (Follow This Night) / MD173 (Save Route)
+// ═════════════════════════════════════════════════════════════════════════════
+/**
+ * MD172 read **N**: *"No such action in `MediaActionResolver`."* MD173 read
+ * **N**: *"Route plans exist (`route_plans`, `routes/routePlan.ts`) and no media
+ * action reaches them."*
+ *
+ * Both are offered ONLY when the media's experience actually HAS a chain — two
+ * or more distinct disclosable places with observed perspectives (MD171). That
+ * is not decoration: `POST /route-plans`'s own schema is
+ * `stops: z.array(...).min(2).max(20)`, so offering Save Route on a one-place
+ * experience would be offering an action the endpoint would reject, which is the
+ * "no dead actions" rule this rail is built on.
+ *
+ * WHAT SAVE ROUTE DOES NOT CARRY: coordinates. The rail is coordinate-free by
+ * construction, and `CandidateStopSchema` requires `lat`/`lng`, so the emitted
+ * stops carry the canonical place id + coarse title and the client resolves
+ * geometry through the Map gateway it already holds — the same division of
+ * labour as `show_on_map`. The census row records that this leaves MD173 partly
+ * open, rather than the test pretending the submission is complete.
+ */
+const PLACE_2 = "bbbbbbbb-0000-0000-0000-bbbbbbbbbbbb";
+
+function chainTripFixture(): Dataset {
+  return {
+    trips: [{ id: TRIP_1, owner_id: VIEWER, plan_edit_permission: "all_members", visibility: "public", title: "Friday night" }],
+    trip_members: [{ trip_id: TRIP_1, user_id: VIEWER, role: "member", status: "accepted" }],
+    posts: [
+      makePost({ trip_id: TRIP_1 }),
+      makePost({ id: "cccccccc-1111-1111-1111-cccccccccccc", trip_id: TRIP_1, canonical_place_id: PLACE_2, location_name: "Rooftop", created_at: isoAgo(60 * 60 * 1000) }),
+    ],
+  };
+}
+
+describe("MD172/MD173 — the §23.1 chain actions", () => {
+  it("a two-place experience offers Follow This Night and Save Route", async () => {
+    const sc = makeSc(baseData(chainTripFixture()));
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: true });
+    const result = await resolveMediaActions(sc, viewer, MEDIA_1, Date.now());
+    const follow = result!.actions.find((a) => a.id === "follow_this_night");
+    const save = result!.actions.find((a) => a.id === "save_route");
+    assert.ok(follow, "Follow This Night must be offered for a real chain");
+    assert.equal(follow!.target.endpoint, "/api/media/experiences/:experienceId");
+    assert.ok(save, "Save Route must reach the canonical route-plan endpoint");
+    assert.equal(save!.target.method, "POST");
+    assert.equal(save!.target.endpoint, "/api/route-plans");
+    const stops = (save!.target.params as any).stops as any[];
+    assert.ok(stops.length >= 2, "POST /route-plans requires at least two stops");
+    assert.ok(stops.length <= 20, "and at most twenty");
+    assert.deepEqual(
+      stops.map((s) => s.sourceId).sort(),
+      [PLACE_1, PLACE_2].sort(),
+      "the stops are canonical place ids",
+    );
+  });
+
+  it("a ONE-place experience offers neither — the endpoint would reject a 1-stop route", async () => {
+    const sc = makeSc(
+      baseData({
+        trips: [{ id: TRIP_1, owner_id: VIEWER, plan_edit_permission: "all_members", visibility: "public", title: "One stop" }],
+        trip_members: [{ trip_id: TRIP_1, user_id: VIEWER, role: "member", status: "accepted" }],
+        posts: [makePost({ trip_id: TRIP_1 })],
+      }),
+    );
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: true });
+    const result = await resolveMediaActions(sc, viewer, MEDIA_1, Date.now());
+    assert.equal(result!.actions.some((a) => a.id === "follow_this_night"), false);
+    assert.equal(result!.actions.some((a) => a.id === "save_route"), false);
+  });
+
+  it("media with no trip at all offers neither", async () => {
+    const sc = makeSc(baseData({ posts: [makePost()] }));
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: true });
+    const result = await resolveMediaActions(sc, viewer, MEDIA_1, Date.now());
+    assert.equal(result!.actions.some((a) => a.id === "save_route"), false);
+  });
+
+  it("a trip the viewer may NOT see yields no chain actions", async () => {
+    const sc = makeSc(
+      baseData({
+        trips: [{ id: TRIP_1, owner_id: AUTHOR_A, visibility: "members", title: "Private night" }],
+        trip_members: [],
+        posts: [
+          makePost({ trip_id: TRIP_1 }),
+          makePost({ id: "cccccccc-1111-1111-1111-cccccccccccc", trip_id: TRIP_1, canonical_place_id: PLACE_2 }),
+        ],
+      }),
+    );
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: true });
+    const result = await resolveMediaActions(sc, viewer, MEDIA_1, Date.now());
+    assert.equal(result!.actions.some((a) => a.id === "follow_this_night"), false);
+    assert.equal(result!.actions.some((a) => a.id === "save_route"), false);
+  });
+
+  it("the chain actions carry no coordinate", async () => {
+    const sc = makeSc(baseData(chainTripFixture()));
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: true });
+    const result = await resolveMediaActions(sc, viewer, MEDIA_1, Date.now());
+    assert.equal(isLocationSafe(result), true);
+  });
+});
