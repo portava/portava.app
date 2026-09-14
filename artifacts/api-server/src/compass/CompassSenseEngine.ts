@@ -46,6 +46,7 @@ import { getWeatherContext } from "../lib/weatherCache.js";
 import { NotificationService } from "../services/notifications/NotificationService.js";
 import { NotificationRouter } from "../services/notifications/NotificationRouter.js";
 import { fetchUserTimezone, localHourFor, nowUtcInstant } from "../lib/localTime.js";
+import { resolveCurrentTrip } from "./CompassCurrentTrip.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -319,33 +320,18 @@ async function fetchActiveTrip(
   sc: SupabaseClient,
   userId: string,
 ): Promise<{ id: string; city: string | null } | null> {
-  try {
-    const [{ data: memberRows }, { data: ownedRows }] = await Promise.all([
-      sc.from("trip_members").select("trip_id").eq("user_id", userId).in("role", ["owner", "member"]),
-      sc.from("trips").select("id").eq("owner_id", userId),
-    ]);
-    const tripIds = Array.from(new Set([
-      ...((memberRows ?? []) as any[]).map((r) => String(r.trip_id)),
-      ...((ownedRows ?? []) as any[]).map((r) => String(r.id)),
-    ]));
-    if (tripIds.length === 0) return null;
-    const { data: trips } = await sc
-      .from("trips")
-      .select("id, destination_city, status")
-      .in("id", tripIds)
-      // `in_progress` is not a label of the `trip_status` enum (draft |
-      // planning | upcoming | active | completed | cancelled | archived), so
-      // PostgREST rejected the literal 22P02 and this read failed whole — the
-      // two trip-grounded Sense nudges could never fire. `active` is the label
-      // every other current-trip reader uses.
-      .eq("status", "active")
-      .limit(1);
-    const t = ((trips ?? []) as any[])[0];
-    if (!t) return null;
-    return { id: String(t.id), city: (t.destination_city as string | null) ?? null };
-  } catch {
-    return null;
-  }
+  // ONE current-trip rule for every Compass surface (CT-02). This was a
+  // verbatim third/fourth copy of the owner ∪ accepted-member union, and it
+  // ended in `.limit(1)` — whichever active trip the database returned first —
+  // so Sense could ground its context on a different trip from the one
+  // `get_current_trip` calls current, from the same rows. The seam orders by
+  // earliest start, which is what the tool has always done.
+  //
+  // `unread` returns null, preserving this function's existing contract: no
+  // trip grounding rather than grounding on a union we know is incomplete.
+  const resolved = await resolveCurrentTrip(sc, userId, ["active"]);
+  if (resolved.status !== "ok") return null;
+  return { id: resolved.trip.id, city: resolved.trip.destinationCity };
 }
 
 /** Today's plan items for a trip (non-cancelled, not removed). */

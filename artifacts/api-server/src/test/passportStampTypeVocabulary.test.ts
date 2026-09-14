@@ -175,3 +175,87 @@ describe("passport_stamps.stamp_type vocabulary", () => {
     assert.match(sql, /DROP CONSTRAINT IF EXISTS/, "must be re-runnable");
   });
 });
+
+/**
+ * §12's eleven stamp types, PRODUCER side — what exists, and the one that does
+ * not (census-passport P61).
+ *
+ * P61 scored the vocabulary "nine of eleven", missing Place AND Contributor.
+ * Re-executed 2026-09-14, the Contributor half is wrong: `place_contributor`
+ * is a seeded catalog type with a live award path. These cases pin the two
+ * halves of that producer so the claim cannot rot back:
+ *
+ *   1. the definitions exist, in a migration, with that stamp_type;
+ *   2. a shipped worker awards them by slug.
+ *
+ * The remaining gap is PLACE, and it is not a plumbing gap: `createStamp`
+ * already writes `place_id`, so what is missing is a label in the CHECK
+ * vocabulary and a caller that passes one — a migration plus a product
+ * decision, both recorded as D-STAMP. Case 3 pins the plumbing so the next
+ * pass does not rebuild it.
+ *
+ * MUTATION PROOF (each run): delete a `place_contributor` row from migration
+ * 0198 → case 1 RED; change `definitionSlug: "place_contributor"` in
+ * placeCollectionsWorker → case 2 RED; delete `place_id: placeId ?? null` from
+ * createStamp's insert → case 3 RED.
+ */
+describe("§12 stamp types — Contributor exists, Place does not (census-passport P61)", () => {
+  it("migration 0198 seeds three place_contributor definitions", () => {
+    const sql = fs.readFileSync(
+      path.join(MIGRATIONS, "0198_place_contributor_stamps.sql"),
+      "utf8",
+    );
+    for (const slug of [
+      "place_contributor_bronze",
+      "place_contributor_silver",
+      "place_contributor_gold",
+    ]) {
+      assert.ok(sql.includes(`'${slug}'`), `0198 must seed the ${slug} definition`);
+    }
+    const typeRows = [...sql.matchAll(/'place_contributor'/g)];
+    assert.equal(
+      typeRows.length,
+      3,
+      "all three tiers must carry stamp_type 'place_contributor' — the label §12 calls Contributor",
+    );
+  });
+
+  it("a shipped worker awards them, so the type has a producer and not only a seed", () => {
+    const worker = fs.readFileSync(
+      path.join(API_SERVER, "src/lib/places/placeCollectionsWorker.ts"),
+      "utf8",
+    );
+    assert.match(
+      worker,
+      /definitionSlug:\s*"place_contributor"/,
+      "placeCollectionsWorker must still award the Contributor stamp — a seeded definition " +
+        "with no producer is the unproduced-vocabulary defect this repo already tracks",
+    );
+    assert.match(
+      worker,
+      /STAMP_THRESHOLDS/,
+      "the award must stay threshold-driven (10/50/100 posts), not unconditional",
+    );
+  });
+
+  it("the Place gap is a label and a caller, not missing plumbing — createStamp writes place_id", () => {
+    const svc = fs.readFileSync(
+      path.join(API_SERVER, "src/services/passport/PassportStampService.ts"),
+      "utf8",
+    );
+    assert.match(
+      svc,
+      /place_id:\s*placeId\s*\?\?\s*null/,
+      "createStamp's INSERT must still carry place_id: the Place stamp needs a vocabulary " +
+        "label and a caller that supplies one, not a new column",
+    );
+    // And the vocabulary genuinely does not admit it yet — stated here so the
+    // migration that adds it has to come past this assertion deliberately.
+    const { labels } = liveVocabulary();
+    assert.ok(
+      !labels.includes("place"),
+      "a 'place' label now exists in the CHECK vocabulary: census-passport P61 and the " +
+        "D-STAMP blocker must be re-read, because the reason they are open has changed",
+    );
+  });
+});

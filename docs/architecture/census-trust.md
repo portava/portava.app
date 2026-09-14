@@ -699,8 +699,8 @@ held by the schema; three are not.
 | TV-P1 | Portava never stores raw government-ID images, document numbers, or selfies — opaque provider references only | **C** | `identity_verifications` carries exactly `id, user_id, provider, provider_session_id, provider_verification_ref, status, failure_reason, is_over_18, selfie_match, document_country, verified_at, expires_at, created_at, updated_at` — read from production 2026-09-13 and identical to `db/migrations/0161_identity_verification.sql:15-46#create table if not exists identity_verifications (`. No image, document-number or selfie column exists. `VerificationResult` declares no such field (`services/identityVerification/types.ts:58-69#export interface VerificationResult {`) and `persistResult` writes only that patch (`routes/verification.ts:147-164#const patch: Record<string, unknown> = {`). **Caveat, recorded rather than waived: nothing ENFORCES this.** No guard rejects a future adapter that adds a column; the invariant is held by the current shape, not by a mechanism. |
 | TV-P2 | Portava never stores date of birth — age gating stores a derived `is_over_18` boolean only | **W** | Inverted in practice. `profiles.date_of_birth` and `rent_buddy_profiles.date_of_birth` both exist in production, and **7 of 58 profiles hold a DOB** (read-only count, 2026-09-13). `lib/travelerVerification.ts:17-22#profiles.date_of_birth` states the age signal IS `profiles.date_of_birth` "with NO `dob_verified` gate", reads it at `lib/travelerVerification.ts:66#const dateOfBirth = (row["date_of_birth"] as string`, and names five other gates that read it alone (`profile.ts`, `events.ts`, `meetups.ts`, `requests.ts`, `discovery.ts`). `routes/profile.ts:584#row.date_of_birth = p.dateOfBirth;` writes it. `travel-buddy-standalone/src/components/AgeGate.tsx:39-47#function computeAge(dob: string` computes age from the DOB string client-side. Meanwhile `is_over_18` is written once (`routes/verification.ts:150#is_over_18:     result.isOver18   ?? null,`) and read by **no gate anywhere** — the only other references are the status route's SELECT list and tests. The stored value is the DOB and the dead column is the derived boolean, which is the exact reverse of the invariant. Owner decision **D-DOB** (§12.7). |
 | TV-P3 | Verification rows deletable per-user for GDPR erasure without destroying moderation audit history (reports/actions use SET NULL) | **W** | Three of four criteria hold. Verification rows delete per user: `services/accountDeletion/AccountDeletionService.ts:1006-1011#const verOk = await step(steps, "delete_identity_verifications", async () => {`. **Reports** use SET NULL on all three user columns — `moderation_reports_reporter_id_fkey`, `_resolver_id_fkey`, `_subject_user_id_fkey`, each `ON DELETE SET NULL` (production, 2026-09-13; staged by `migrations/2135_deletion_blocking_fks.sql:129-140#-- ── 2. moderation_reports.reporter_id — nullable so its SET NULL can fire ──`). **ACTIONS do not.** `moderation_actions_target_user_id_fkey` is `ON DELETE CASCADE`, so erasing the subject destroys every enforcement record about them — the opposite of "without destroying moderation audit history" — and `moderation_actions_performed_by_fkey` is plain NO ACTION, which BLOCKS erasing a moderator rather than nulling them. `migrations/2138_profiles_fk_convergence_prep.sql:103#('moderation_actions','performed_by','SETNULL'),` lists `('moderation_actions','performed_by','SETNULL')` as intended; production has not converged. Owner decision **D-MODACTION-FK**. |
-| TV-P4 | The mock provider is refused in production by the factory | **C** | `services/identityVerification/providers.ts:105-111#if (name === 'mock') {` throws `IDENTITY_PROVIDER=mock is not allowed in production` when `NODE_ENV === 'production'`, before returning the adapter. `services/identityVerification/readiness.ts:70-78#if (provider === "mock") {` reports the same fact without throwing, for callers that need to ask rather than act. Re-executed as an assertion at this commit: `test/verificationWebhookProviderUnavailable.test.ts` test 1 is a premise test that the factory really does throw, so the three tests below it cannot pass vacuously. |
-| TV-P5 | Webhooks are signature-verified in every real adapter; an unverified webhook throws, never silently accepts | **W** | Two criteria; one now passes, one is not written. **Signature verification: absent.** There is no real adapter — `providers.ts:45-61#const stripeProvider: IdentityVerificationProvider = {` (Stripe) and `providers.ts:80-96#const personaProvider: IdentityVerificationProvider = {` (Persona) throw "not configured" from every method including `handleWebhook`, so no signature is ever checked. The contract is declared (`services/identityVerification/types.ts:88-92#* Verify + normalize an incoming webhook. Returns null for events we`, "MUST throw on signature failure") and the route honours a throw with 400 (`routes/verification.ts:354#res.status(400).json({ error: "invalid_signature", message: "Webhook signature verificatio`), but the verifying code does not exist. Grading this vacuously true because "every real adapter" quantifies over an empty set would be weakening the requirement; V-6 lists "webhook signature verification" as outstanding agent work and TV-6b carries it. **"Never silently accepts": BUILT THIS PASS.** `webhookHandler` answered **200** when the factory threw, under the comment "provider not configured; treat as irrelevant" — and that throw is the NORMAL production behaviour of the default `IDENTITY_PROVIDER=mock`, i.e. TV-P4's own mechanism. So the rule keeping the mock out of production was also making the public webhook endpoint accept every real event, write nothing, log nothing and tell the provider it was handled. Now 503 with the error bound and logged (`routes/verification.ts:339#res.sendStatus(503);`), matching the persist branch below it; 400 deliberately not reused, because that means "your signature failed" and would send an operator to the wrong system. RED 2 pass/3 fail → GREEN 5/5 (`test/verificationWebhookProviderUnavailable.test.ts`), with a control proving an event the adapter deliberately ignores is still answered 200. |
+| TV-P4 | The mock provider is refused in production by the factory | **C** | `services/identityVerification/providers.ts:151#if (name === 'mock') {` throws `IDENTITY_PROVIDER=mock is not allowed in production` when `NODE_ENV === 'production'`, before returning the adapter. `services/identityVerification/readiness.ts:96#if (provider === "mock") {` reports the same fact without throwing, for callers that need to ask rather than act. Re-executed as an assertion at this commit: `test/verificationWebhookProviderUnavailable.test.ts` test 1 is a premise test that the factory really does throw, so the three tests below it cannot pass vacuously. |
+| TV-P5 | Webhooks are signature-verified in every real adapter; an unverified webhook throws, never silently accepts | **W** | Two criteria; one now passes, one is not written. **Signature verification: absent.** There is no real adapter — `providers.ts:87#const stripeProvider: IdentityVerificationProvider = {` (Stripe) and `providers.ts:119#const personaProvider: IdentityVerificationProvider = {` (Persona) throw "not configured" from every method including `handleWebhook`, so no signature is ever checked. The contract is declared (`services/identityVerification/types.ts:88-92#* Verify + normalize an incoming webhook. Returns null for events we`, "MUST throw on signature failure") and the route honours a throw with 400 (`routes/verification.ts:354#res.status(400).json({ error: "invalid_signature", message: "Webhook signature verificatio`), but the verifying code does not exist. Grading this vacuously true because "every real adapter" quantifies over an empty set would be weakening the requirement; V-6 lists "webhook signature verification" as outstanding agent work and TV-6b carries it. **"Never silently accepts": BUILT THIS PASS.** `webhookHandler` answered **200** when the factory threw, under the comment "provider not configured; treat as irrelevant" — and that throw is the NORMAL production behaviour of the default `IDENTITY_PROVIDER=mock`, i.e. TV-P4's own mechanism. So the rule keeping the mock out of production was also making the public webhook endpoint accept every real event, write nothing, log nothing and tell the provider it was handled. Now 503 with the error bound and logged (`routes/verification.ts:339#res.sendStatus(503);`), matching the persist branch below it; 400 deliberately not reused, because that means "your signature failed" and would send an operator to the wrong system. RED 2 pass/3 fail → GREEN 5/5 (`test/verificationWebhookProviderUnavailable.test.ts`), with a control proving an event the adapter deliberately ignores is still answered 200. |
 
 ### 12.4 Phases V-0 … V-7 — `TV-0a`…`TV-7c`
 
@@ -714,7 +714,7 @@ not exist anywhere in this repository.
 | TV-0a | `[x]` Schema: `identity_verifications`, `moderation_reports`, `moderation_actions`, profile `verification_level` + `verified_at` (`0161_identity_verification.sql`) | **W** | All four objects exist in production — but not from that file, and one of them has the wrong shape. `db/migrations/0161_identity_verification.sql` is a drop-in that was **never added to the applied migration set**: `migrations/` holds 528 files and not one mentions `identity_verifications`. The table reached production through `baseline/20260819_baseline_structure.sql:6788#CREATE TABLE public.identity_verifications (`; `moderation_reports` through `artifacts/api-server/src/migrations/0176_moderation_reports.sql:15-28`, whose own header records that the UI wave shipped the route with no migration; `moderation_actions` from a pre-baseline root. **And `moderation_actions` is not the table 0161 describes.** Production columns are `id, target_user_id, action_type, reason, performed_by, created_at, metadata` — **no `report_id`** and **no `expires_at`** (read 2026-09-13). 0161 declares both. So V-4's "suspend with expiry" and the report→action link are not expressible in the live columns; `lib/moderationAudit.ts:35-37#// metadata jsonb (0164) — the only place the content item and the` records the workaround in its own comment ("the only place the content item and the originating report can be recorded; there are no columns for either"). Owner decision **D-MODACTION-SHAPE**. The profile field also landed with a CHECK constraint that rejects the values the service writes — TV-1c. |
 | TV-0b | `[x]` Provider adapter interface + normalized status model (`types.ts`) | **C** | `services/identityVerification/types.ts:17-102#export type VerificationProviderName = 'mock'`: `VerificationProviderName`, `NormalizedVerificationStatus` (7 values, matching the live CHECK on `identity_verifications.status`), `NormalizedFailureReason` (6), `IdentityVerificationProvider` with all four methods, `toVerificationLevel` at `services/identityVerification/types.ts:105-110#export function toVerificationLevel(`. Re-exported for in-package use at `services/identityVerification/index.ts:6-17#export { getIdentityProvider } from './providers.js';`. |
 | TV-0c | `[x]` Working mock provider with forced-failure test hints (`mockProvider.ts`) | **C** | `services/identityVerification/mockProvider.ts:90-142#export const mockProvider: IdentityVerificationProvider = {` implements all four methods; the four hints (`approve`, `fail_document`, `fail_selfie`, `fail_underage`) resolve to the correct normalized failure reasons at `services/identityVerification/mockProvider.ts:52-87#switch (s.hint) {`. Exercised end to end, not merely present: `test/verification.test.ts` drives create → webhook → status against it. |
-| TV-0d | `[x]` Stripe/Persona stubs + env-driven factory (the prod-guard criterion is counted once, at TV-P4) | **C** | `providers.ts:45-61#const stripeProvider: IdentityVerificationProvider = {` and `providers.ts:80-96#const personaProvider: IdentityVerificationProvider = {` are stubs with the full integration mapped in comments (`providers.ts:28-44#// Env needed later: STRIPE_IDENTITY_SECRET_KEY, IDENTITY_WEBHOOK_SECRET`, `providers.ts:66-79#// Env needed later: PERSONA_API_KEY, PERSONA_TEMPLATE_ID, IDENTITY_WEBHOOK_SECRET`); `getIdentityProvider:102-117` selects on `IDENTITY_PROVIDER` and rejects an unknown name. "Stub" here means every method throws, which is what TV-P5 and TV-6b grade; as a *stub + factory* the box is true. |
+| TV-0d | `[x]` Stripe/Persona stubs + env-driven factory (the prod-guard criterion is counted once, at TV-P4) | **C** | `providers.ts:87#const stripeProvider: IdentityVerificationProvider = {` and `providers.ts:119#const personaProvider: IdentityVerificationProvider = {` are stubs with the full integration mapped in comments (`services/identityVerification/stripeIdentity.ts:28# *   createSession            -> POST /v1/identity/verification_sessions`, `services/identityVerification/persona.ts:14# *   createSession            -> POST /api/v1/inquiries   (+ one-time link)`); `getIdentityProvider:102-117` selects on `IDENTITY_PROVIDER` and rejects an unknown name. "Stub" here means every method throws, which is what TV-P5 and TV-6b grade; as a *stub + factory* the box is true. |
 | TV-0e | `[x]` `VerifiedBadge` component (teal = ID verified, gold = ID + selfie) | **NB** | **No such file exists anywhere in the repository.** A case-insensitive search for `VerifiedBadge` returns four hits, all of them inside the two plan documents themselves (`docs/trust/verified-foundation-README.md:15#travel-buddy-standalone/src/components/VerifiedBadge.tsx`, `docs/trust/verified-foundation-README.md:27#VerifiedBadge`, `docs/trust/verified-foundation-plan.md:31#component (teal = ID verified, gold = ID + selfie)` and `docs/trust/verified-foundation-plan.md:58#beside names in: profile header, traveler cards,`). `travel-buddy-standalone/src/components/` holds `FeaturedBadge.tsx`, `OfficialBadge.tsx`, `PassportVerificationStamp.tsx`, `StampOverlayBadge.tsx` and `VerificationLevelsRail.tsx`; none of them reads `profiles.verification_level`. A `[x]` DONE box that was never true in this tree. |
 | TV-1a | `POST /api/verification/session` — auth required; creates the provider session for the caller; upserts the row in `created` status; returns `redirectUrl` | **W** | Four criteria, three pass. Auth required ✓ `routes/verification.ts:175-178#router.post("/verification/session", asyncHandler(async (req, res) => {` (`requireUser` first). Creates the caller's session ✓ `routes/verification.ts:220-225#session = await provider.createSession({` (`userId: user.id`). Returns `redirectUrl` ✓ `routes/verification.ts:285-289#res.status(201).json({`, and the 23505 branch returns the existing active session rather than a raw DB error `routes/verification.ts:247-268#if ((insertError as any).code === "23505") {`. **Status ✗:** the insert writes `status: "pending"` (`routes/verification.ts:239#status:              "pending",`), not `created`. Both are legal values of the live CHECK and no consumer behaves differently (`travel-buddy-standalone/app/profile/verification.tsx:44#const POLL_INTERVAL_MS = 4_000;` treats `created`/`pending`/`processing` alike), so the effect is nil — but the stated criterion is `created` and it is not met, and a parent row cannot be `C` on three of four. |
 | TV-1b | `POST /api/verification/webhook` — raw-body route; passes to `provider.handleWebhook`; on a normalized result, updates the row | **C** | Raw body ✓ — mounted in `app.ts:129#app.post("/api/verification/webhook", verificationWebhookRawParser, verificationWebhookHan` with `express.raw` BEFORE the global JSON parser (`routes/verification.ts:296#export const webhookRawParser = express.raw({ type: () => true, limit: "512kb" });`), and deliberately not re-registered on the router (`routes/verification.ts:378-380#// NOTE: /verification/webhook is mounted in app.ts BEFORE the global JSON parser`). Passes the headers and raw body to the adapter ✓ `routes/verification.ts:345-348#result = await provider.handleWebhook({`. Updates the row on a normalized result ✓ `persistResult:128-132`, with the lookup-by-session error bound and rethrown at `routes/verification.ts:105#eventType: "identity_verified",` so an unreadable table cannot masquerade as an unknown session. Irrelevant events are acknowledged, not persisted ✓ `routes/verification.ts:358-361#if (!result) {`. |
@@ -736,9 +736,9 @@ not exist anywhere in this repository.
 | TV-4c | `verification_revoked` action clears `profiles.verification_level` | **C** | **Built this pass.** `POST /admin/users/:userId/unverify` is the platform's revoke action and cleared `verified`, `verification_status` and `verified_at` — the exact inverse of what `/verify` sets, which is why it looked complete. A fourth column carries the same claim and is written by a different path: `profiles.verification_level` has exactly ONE writer in the server (`routes/verification.ts:71#verification_level: level,`), and `lib/travelerVerification.ts:85-88#(typeof row["verification_level"] === "string" && row["verification_level"] !== "none")` reads it as a **sufficient** id-verified signal, ORed with the other two rather than ANDed. Clearing two of three disjuncts revoked nothing: an admin unverifying a user after a disputed document left them passing every gate that calls `loadTravelerIdentity`, including the Rent-a-Buddy MVP booking gate. And nothing else could clear it — the single writer only ever sets a verified level — so no code path in the product could take ID-verified standing away. Now cleared at `routes/admin.ts:1638#verification_level: "none",`. RED 5 tests/3 pass/2 fail → GREEN 5/5 (`test/adminUnverifyRevokesIdLevel.test.ts`); reverting the single added field returns it to 3/2. The test asserts the OUTCOME — it applies the patch the route actually sent and asks `travelerIdentityFromProfile` — plus a premise test, an audit assertion and a control. Reversing derived TRUST effects is deliberately not done here: that is **D-REVERSAL** and is `TRV2-10`'s CANNOT-VERIFY. |
 | TV-5a | Safety Center screen: links to Safe Return, SOS, verification status, blocked-users list, community guidelines, report history | **W** | Four of six. The hub exists at `travel-buddy-standalone/app/profile/edit/safety.tsx` ("Safety & Verification"): verification status ✓ `travel-buddy-standalone/app/profile/edit/safety.tsx:72-80#<SettingsSection title="Identity Verification">` (read-only cards from `getMyProfile`), blocked-users ✓ `travel-buddy-standalone/app/profile/edit/safety.tsx:102-104#title="Blocked Users"`, report history ✓ `travel-buddy-standalone/app/profile/edit/safety.tsx:126-128#title="Your Reports"` → `/profile/edit/reports`, Safe Return ✓ `travel-buddy-standalone/app/profile/edit/safety.tsx:143-145#title="Safe Return"` (linked to Location & Availability rather than duplicated). **SOS ✗** and **community guidelines ✗** — neither appears on the screen, and a repository-wide search for a community-guidelines surface returns none. |
 | TV-5b | Age gating: 18+ features (nightlife-tagged events, Rent a Buddy) check `is_over_18` from the latest verified row; unverified users see a "verify to access" gate, not silent hiding | **NB** | `is_over_18` is written at `routes/verification.ts:150#is_over_18:     result.isOver18   ?? null,` and read by **no gate**. Every age gate in the product reads `profiles.date_of_birth` instead — `lib/travelerVerification.ts:66#const dateOfBirth = (row["date_of_birth"] as string`, `routes/meetups.ts:648#.select("id, date_of_birth")` and `routes/meetups.ts:721#.select("date_of_birth")`, `routes/requests.ts:442#.select("date_of_birth")` and `routes/requests.ts:472#const dob = (profileRes.data as any)?.date_of_birth ?? null;`, `routes/profile.ts:430#const dob = (data as any).date_of_birth as string`, `services/media/MediaProjectionService.ts:108-112#.select("location_country, date_of_birth")`, `routes/mediaFeed.ts:1325-1329#.select("location_country, date_of_birth")` — which is TV-P2's violation seen from the consumer side. No nightlife-tagged-event gate exists at all, and there is no "verify to access" surface: `AgeGate.tsx` asks for a birthdate, which is the opposite mechanism. |
-| TV-6a | **OWNER:** choose Stripe Identity or Persona; create the account; obtain API keys; configure the webhook endpoint + signing secret; set Replit Secrets (`IDENTITY_PROVIDER`, provider keys, `IDENTITY_WEBHOOK_SECRET`) | **NB** (OWNER-BLOCKED) | Not started and not startable by a lane. `services/identityVerification/readiness.ts:30#const IMPLEMENTED_PROVIDERS = new Set<string>(["mock"]);` declares `IMPLEMENTED_PROVIDERS = new Set(["mock"])`; `services/identityVerification/readiness.ts:33-36#const REQUIRED_ENV: Record<string, string> = {` names the env vars that would have to exist (`STRIPE_IDENTITY_SECRET_KEY`, `PERSONA_API_KEY`). **Exactly what is needed, so the owner can act without reading code:** (1) a decision between Stripe Identity and Persona; (2) an account with that vendor; (3) the API key(s) — `STRIPE_IDENTITY_SECRET_KEY`, or `PERSONA_API_KEY` + `PERSONA_TEMPLATE_ID`; (4) a webhook endpoint registered at `POST https://<api-host>/api/verification/webhook`; (5) the signing secret from that registration, as `IDENTITY_WEBHOOK_SECRET`; (6) all of it in Replit Secrets, plus `IDENTITY_PROVIDER` set to the chosen name **in staging first**. Costs ~$1.50–3.00 per attempt at both vendors (plan, "Cost checkpoints"). Owner decision **D-PROVIDER**. |
-| TV-6b | **AGENT:** implement the chosen adapter per the mapped TODOs; sandbox-mode end-to-end test; then flip `IDENTITY_PROVIDER` staging → production *(the signature-verification criterion is counted once, at TV-P5)* | **NB** | Nothing implemented: both adapters throw from every method (`providers.ts:45-61#const stripeProvider: IdentityVerificationProvider = {`, `providers.ts:80-96#const personaProvider: IdentityVerificationProvider = {`). Genuinely blocked on TV-6a for the account-dependent half, and **that is not a reason this row is untouched** — the integration is mapped line by line in the file (`providers.ts:28-44#// Env needed later: STRIPE_IDENTITY_SECRET_KEY, IDENTITY_WEBHOOK_SECRET` Stripe, `providers.ts:66-79#// Env needed later: PERSONA_API_KEY, PERSONA_TEMPLATE_ID, IDENTITY_WEBHOOK_SECRET` Persona) and the normalization notes are written, so the remaining agent work is real and specified. It was not done here because implementing an adapter that cannot be sandbox-tested would produce exactly the mock-counted-as-complete this census forbids: `services/identityVerification/readiness.ts:23#* ── ADD YOUR PROVIDER HERE WHEN YOU IMPLEMENT IT ────────────────────────────` states the rule in the file itself — a provider joins `IMPLEMENTED_PROVIDERS` when its adapter stops throwing, and *"leaving a stub out of this set is what keeps the Rent-a-Buddy booking gate closed."* |
-| TV-7a | Account-deletion flow calls `provider.requestProviderDeletion()` **then** deletes the user's `identity_verifications` rows | **W** | Two criteria; the second passes and the first does not. Deletion ✓ `services/accountDeletion/AccountDeletionService.ts:1006-1011#const verOk = await step(steps, "delete_identity_verifications", async () => {` (`delete().eq("user_id", userId)`, as a named, checked step). **`requestProviderDeletion` ✗** — declared at `services/identityVerification/types.ts:101#requestProviderDeletion(providerVerificationRef: string): Promise<void>;`, implemented as a no-op by the mock (`mockProvider.ts:139-141#async requestProviderDeletion(): Promise<void> {`), mapped for both real vendors in comments (`providers.ts:39#//   requestProviderDeletion -> verificationSessions.redact` `verificationSessions.redact`, `providers.ts:76#//   requestProviderDeletion -> POST /api/v1/inquiries/:id/redact` `POST /inquiries/:id/redact`), and **called from nowhere**: a repository-wide search returns only the declaration, the two stubs, the mock and the comments. So erasure deletes Portava's opaque reference and leaves the provider's copy of the government ID in place — the one direction of GDPR erasure that is not Portava's to keep. The ordering the plan specifies ("then") is also lost: once the row is deleted, `provider_verification_ref` is gone and the deletion can no longer be requested. |
+| TV-6a | **OWNER:** choose Stripe Identity or Persona; create the account; obtain API keys; configure the webhook endpoint + signing secret; set Replit Secrets (`IDENTITY_PROVIDER`, provider keys, `IDENTITY_WEBHOOK_SECRET`) | **NB** (OWNER-BLOCKED) | Not started and not startable by a lane. `services/identityVerification/readiness.ts:53#const IMPLEMENTED_PROVIDERS = new Set<string>(["mock"]);` declares `IMPLEMENTED_PROVIDERS = new Set(["mock"])`; `services/identityVerification/readiness.ts:56#const REQUIRED_ENV: Record<string, string> = {` names the env vars that would have to exist (`STRIPE_IDENTITY_SECRET_KEY`, `PERSONA_API_KEY`). **Exactly what is needed, so the owner can act without reading code:** (1) a decision between Stripe Identity and Persona; (2) an account with that vendor; (3) the API key(s) — `STRIPE_IDENTITY_SECRET_KEY`, or `PERSONA_API_KEY` + `PERSONA_TEMPLATE_ID`; (4) a webhook endpoint registered at `POST https://<api-host>/api/verification/webhook`; (5) the signing secret from that registration, as `IDENTITY_WEBHOOK_SECRET`; (6) all of it in Replit Secrets, plus `IDENTITY_PROVIDER` set to the chosen name **in staging first**. Costs ~$1.50–3.00 per attempt at both vendors (plan, "Cost checkpoints"). Owner decision **D-PROVIDER**. |
+| TV-6b | **AGENT:** implement the chosen adapter per the mapped TODOs; sandbox-mode end-to-end test; then flip `IDENTITY_PROVIDER` staging → production *(the signature-verification criterion is counted once, at TV-P5)* | **NB** | Nothing implemented: both adapters throw from every method (`providers.ts:87#const stripeProvider: IdentityVerificationProvider = {`, `providers.ts:119#const personaProvider: IdentityVerificationProvider = {`). Genuinely blocked on TV-6a for the account-dependent half, and **that is not a reason this row is untouched** — the integration is mapped line by line in the file (`services/identityVerification/stripeIdentity.ts:28# *   createSession            -> POST /v1/identity/verification_sessions` Stripe, `services/identityVerification/persona.ts:14# *   createSession            -> POST /api/v1/inquiries   (+ one-time link)` Persona) and the normalization notes are written, so the remaining agent work is real and specified. It was not done here because implementing an adapter that cannot be sandbox-tested would produce exactly the mock-counted-as-complete this census forbids: `services/identityVerification/readiness.ts:41#* ── ADD YOUR PROVIDER HERE WHEN A SANDBOX RUN HAS CERTIFIED IT ──────────────` states the rule in the file itself — a provider joins `IMPLEMENTED_PROVIDERS` when its adapter stops throwing, and *"leaving a stub out of this set is what keeps the Rent-a-Buddy booking gate closed."* |
+| TV-7a | Account-deletion flow calls `provider.requestProviderDeletion()` **then** deletes the user's `identity_verifications` rows | **W** | Two criteria; the second passes and the first does not. Deletion ✓ `services/accountDeletion/AccountDeletionService.ts:1006-1011#const verOk = await step(steps, "delete_identity_verifications", async () => {` (`delete().eq("user_id", userId)`, as a named, checked step). **`requestProviderDeletion` ✗** — declared at `services/identityVerification/types.ts:101#requestProviderDeletion(providerVerificationRef: string): Promise<void>;`, implemented as a no-op by the mock (`mockProvider.ts:139-141#async requestProviderDeletion(): Promise<void> {`), mapped for both real vendors in comments (`services/identityVerification/stripeIdentity.ts:33# *   requestProviderDeletion  -> POST /v1/identity/verification_sessions/:id/redact` `verificationSessions.redact`, `services/identityVerification/persona.ts:19# *   requestProviderDeletion  -> POST /api/v1/inquiries/:id/redact` `POST /inquiries/:id/redact`), and **called from nowhere**: a repository-wide search returns only the declaration, the two stubs, the mock and the comments. So erasure deletes Portava's opaque reference and leaves the provider's copy of the government ID in place — the one direction of GDPR erasure that is not Portava's to keep. The ordering the plan specifies ("then") is also lost: once the row is deleted, `provider_verification_ref` is gone and the deletion can no longer be requested. |
 | TV-7b | Retention job: purge failed/expired verification rows older than 90 days | **NB** | No such job exists. `lib/trustMaintenanceScheduler.ts` runs four steps (decay refresh, cap expiry, probation, gaming scan) and names no verification table; no scheduler, cron or script anywhere reads `identity_verifications` with a date bound. `expires_at` is written (`routes/verification.ts:232#// Persist to DB — catch the unique-index conflict (one active session per user).`) and never acted on. Nothing is over-retained today only because the table holds 0 rows in production. |
 | TV-7c | Document the data flow in the privacy policy surface | **NB** | There is no privacy policy surface in the client to document it in: a search of `travel-buddy-standalone/app` and `src` for a privacy-policy screen, route or link returns nothing, and `app/settings/index.tsx` mentions neither identity verification nor a government-ID check. The disclosure is absent from the verification screen too (TV-2b). |
 
@@ -954,3 +954,363 @@ on a staged file is the "merged is not deployed" error this census is named for.
 
 *This supersedes §12.10 under LAST-STATEMENT-WINS. §12.10 is the state before V-7 was built and
 is left in place because this file is append-only.*
+
+---
+
+## 14. The webhook signature, the two adapters, and the two decisions — 2026-09-14
+
+*Same **93-row** denominator, same counting rule, same verdict grammar. Measured in the
+worktree `/home/user/wt-483` (detached at `7d1f2d498`, PR #483 head plus the v2 spec install),
+with six sibling lanes editing other surfaces in the same tree. **No production read this pass**
+— every claim below is against files at this tree. No migration applied to any database, no flag
+added or flipped, no provider enabled, no backfill run, no entry added to
+`IMPLEMENTED_PROVIDERS`.*
+
+### 14.0 Which population every number on this page is against
+
+This census has had two denominators and it is worth being blunt about which one is live,
+because the retired one flatters the surface by twenty points.
+
+* **52** — the population before §12. It excluded `docs/trust/verified-foundation-plan.md`,
+  which is Trust's own specification, and `Portava_Trust_Architecture_Upgrade_v2.md`. Its final
+  headline read **CORRECT 96.2 %**. That number is **retired**. It is preserved in the Summary
+  table, in §4, §5.3 and as the BEFORE column of §12.2 only because this file is append-only.
+  It is not a current measurement of anything and must not be quoted as one.
+* **93** — the population since §12: the original 52, plus 35 rows from the verified-foundation
+  plan (5 privacy invariants and 30 over its 29 phase bullets) and 6 from the v2 upgrade
+  document. §12.6 records, one line each, why the other six TRV2 requirements add nothing.
+
+**Every figure in §14 is against the 93.** Where a percentage appears it is written with its
+denominator beside it.
+
+### 14.1 Verdict changes
+
+Two rows move. Both are in `services/identityVerification/`, which this pass owns end to end.
+
+| id | Was | Now | Evidence at this tree |
+|---|---|---|---|
+| TV-P5 | W | **C** | Both criteria now hold, and the one that did not is the whole of this row. **Signature verification exists, in every real adapter.** `services/identityVerification/webhookSignature.ts:168#export function verifyTimestampedHmacSignature(input: VerifyWebhookSignatureInput): {` implements the construction both vendors use — header `t=<unix>,v1=<hex>`, signed payload `` `${t}.${rawBody}` ``, HMAC-SHA256, hex — and is bound to each adapter by header name at `services/identityVerification/providers.ts:97#headerName: 'stripe-signature',` and `services/identityVerification/providers.ts:127#headerName: 'persona-signature',`. It **throws** on every failure path and has no boolean return, `services/identityVerification/webhookSignature.ts:75#export class WebhookSignatureError extends Error {`, because a caller that forgets to test a boolean silently accepts and forgetting must fail closed. Five distinct refusals are distinguished so an operator is not sent to the wrong system: `secret_not_configured`, `signature_header_missing`, `signature_header_malformed`, `signature_mismatch`, `signature_timestamp_out_of_tolerance`. **Four things this gets right that are usually got wrong**, each pinned by a test: the raw delivered bytes are signed, never a re-serialized body (verification happens BEFORE `JSON.parse`, so no attacker-chosen field is read first); an unset `IDENTITY_WEBHOOK_SECRET` is a refusal, not a bypass; the digest comparison is `services/identityVerification/webhookSignature.ts:157#return crypto.timingSafeEqual(a, b);` with an explicit byte-length recheck after hex decoding, because `Buffer.from(hex)` truncates silently at the first non-hex character; and a 300 s replay window stops a captured delivery being replayable forever. The invariant is quantified over `services/identityVerification/webhookSignature.ts:60#export const REAL_PROVIDER_NAMES = ["stripe", "persona"] as const;` rather than over a hand-written list, so a third adapter added without signature verification turns the suite red without anyone remembering to extend it. The second criterion, "never silently accepts", was built in §12 (`routes/verification.ts:339#res.sendStatus(503);`) and is unchanged. Proof, mutations and the route-level wiring are §14.2. |
+| TV-6b | NB | **W** | Off NOT-BUILT, and **not to C** — the row has three criteria and only the first is now met. **Implemented ✓** — both adapters stopped being stubs. Stripe: `services/identityVerification/stripeIdentity.ts:146#export function normalizeStripeSession(` plus the four REST calls the previously-written TODOs mapped, session create, status poll and `redact`. Persona: `services/identityVerification/persona.ts:174#export function normalizePersonaWebhook(` plus inquiry create, status poll and `redact`. Both were implemented rather than one, which removes this row's dependency on D-PROVIDER for the code half — whichever vendor the owner picks, the adapter is there. **Sandbox-mode end-to-end test ✗** — nothing here has exchanged a byte with either vendor. The signature half needs no account and is proven; the PAYLOAD half (which JSON field carries the session id, the status, the failure code, the country) is written off each vendor's documented shapes and is **unverified against reality**. **Flip staging → production ✗** — and deliberately more than unfinished: `services/identityVerification/readiness.ts:53#const IMPLEMENTED_PROVIDERS = new Set<string>(["mock"]);` is **unchanged**. That set is the single switch that re-opens the Rent-a-Buddy booking gate, and moving it on an adapter that has never spoken to its vendor is precisely the "mocked provider counted as complete" this census exists to catch. What IS closed is that the remaining work is no longer code. See §14.6 for what would turn this row `C`. |
+
+### 14.2 What was built, and the proof
+
+All in `services/identityVerification/` and `src/test/`. Every mutation below was applied to a
+copy-backed file, the suite run under `timeout`, the file restored, and the restore verified
+with `diff -q`; all reported restored.
+
+| Row | Repair | Files | Test | RED → GREEN |
+|---|---|---|---|---|
+| TV-P5 | Webhook signature verification, shared by both vendors, bound per-adapter by header name | `services/identityVerification/webhookSignature.ts` (new), `services/identityVerification/providers.ts` | `test/verificationWebhookSignature.test.ts` | **RED 3 pass / 16 fail** → **GREEN 28/28** (23 adapter + 3 route + 2 anti-drift). |
+| TV-6b | Stripe and Persona adapters implemented: normalization, REST calls, privacy-preserving age derivation | `services/identityVerification/stripeIdentity.ts` (new), `services/identityVerification/persona.ts` (new), `services/identityVerification/providers.ts` | `test/verificationProviderNormalization.test.ts` | **GREEN 23/23**, with eleven mutations logged below. New module, so there is no meaningful pre-implementation red for the normalization itself; the mutations are the evidence, and they are reported as such rather than dressed as a red-before. |
+| C22 · TRV2-10 | Characterization only — no behaviour changed. Nine assertions pinning the D-OVERRIDE precedence/expiry/removal answers (§14.4) and the D-REVERSAL scope (§14.6), so neither owner decision can be taken by accident | `test/trust-integration.test.ts` (appended) | `test/trust-integration.test.ts` | **GREEN 65/65 → 67/67.** Six mutations, all RED: O1–O4 (§14.4) and V1–V2 (§14.6). Both rows stay where they were; a characterization test is not a verdict. |
+| TV-6b | The readiness probe described the adapters falsely, and a test pinned the false description | `services/identityVerification/readiness.ts` | `test/rentBuddyKycGate.test.ts` | **RED 11/1** → **GREEN 12/12**. Mutations: R1 (add `stripe` to `IMPLEMENTED_PROVIDERS` — the gate-opening change) **11/1 RED**; R2 (restore any wording containing "stub") **11/1 RED**. |
+
+**Why the red was for the right reason, and why the obvious test would have been worthless.**
+The naive TV-P5 test — "send a bad signature, assert it throws" — **passes against the stub**,
+because the stub threw `Error('Stripe Identity adapter not configured.')` from every method.
+That is §4's trap in its purest form. Every negative case therefore asserts the *reason*
+(`WebhookSignatureError` plus a specific `code`), and the observed red was
+`expected WebhookSignatureError, got Error: Stripe Identity adapter not configured.` on each —
+not a bare failure count.
+
+**The readiness probe was telling operators to do work that was already done.**
+`identityProviderStatus()` is the non-throwing probe an operator reads when they ask why KYC is
+off, and its answer for stripe/persona was *"that adapter in providers.ts is still a stub (every
+method throws). Implement it and add it to IMPLEMENTED_PROVIDERS."* The moment the adapters were
+written that sentence became false in the direction that wastes a person's day — and
+`test/rentBuddyKycGate.test.ts` asserted `/stub/i` against it, so the stale description was
+*pinned by a test*, which is this census's own §4 failure mode committed against a diagnostic
+rather than against a behaviour. The message now names the evidence that is actually missing (a
+sandbox end-to-end run) and the switch that would then open the gate. **`IMPLEMENTED_PROVIDERS`
+is unchanged at `["mock"]`** and the header comment above it no longer says a provider joins the
+set "when its adapter stops throwing" — which, after this pass, would have been an invitation to
+open the Rent-a-Buddy booking gate on unverified code. The test now asserts both halves:
+still not operational, AND the reason names the sandbox requirement.
+
+**Mutations, TV-P5** (`test/verificationWebhookSignature.test.ts`, GREEN 23/23 before the route
+block was added, 26/26 after):
+
+| # | Mutation | Result |
+|---|---|---|
+| M1 | unset secret becomes an early `return` instead of a throw | **21/2 RED** |
+| M2 | HMAC taken over the timestamp alone, so the signature no longer covers the body | **14/5 RED** |
+| M3 | replay-window check disabled | **17/2 RED** |
+| M4 | header lookup made case-SENSITIVE | **18/1 RED** |
+| M5 | the verify call removed from the Stripe adapter only | **12/7 RED** |
+| M6 | digest comparison accepts a PREFIX of the correct digest | **GREEN 19/19 — SURVIVED** |
+| M7 | post-decode byte-length recheck removed | **21/2 RED** (after the M6 fix) |
+
+**M6 survived and it was a real hole, reported rather than buried.** Replacing the length check
+with `expected.startsWith(offered)` passed all nineteen assertions, because every negative case
+offered a *wrong* digest and none offered a *short but correct* one. A prefix-accepting
+comparator is forgeable in about sixteen guesses per byte, so the mutation that survived was the
+actual bug: the test, not the code, was wrong. Two cases were added — a prefix of the correct
+digest at lengths 2, 8, 32 and n−1, and a 64-character non-hex digest — and **M6 re-run against
+the strengthened test: 21/2 RED**, M7 likewise. Both directions of the comparison are covered
+now.
+
+**A hole in this pass's own guard, found and closed before it shipped.** The "every real
+adapter" suite iterates `REAL_PROVIDER_NAMES`, a hand-maintained list. A third adapter added to
+the factory and not to that list would leave the suite passing while claiming to quantify over a
+set it no longer matched — the same shape as the migration parser §12.9 reports agreeing with the
+thing it was checking. Two cases now check the list against both of its sources of truth: the
+declared `VerificationProviderName` union in `types.ts`, and the factory's own dispatch branches
+read out of `providers.ts`. Mutations: **D1** add an `onfido` branch to the factory only —
+**27/1 RED**; **D2** declare `'onfido'` in the type union only — **27/1 RED**; **D3** shrink
+`REAL_PROVIDER_NAMES` to `["stripe"]` — **26/2 RED**.
+
+**Mutations, TV-6b** (`test/verificationProviderNormalization.test.ts`, GREEN 23/23; every one
+turned it red):
+
+| # | Mutation | Result |
+|---|---|---|
+| N1 | `deriveIsOver18` uses the naive elapsed-ms ÷ 365.25 days instead of the exact 18th birthday | 21/2 |
+| N2 | an unknown date of birth collapses to `false` instead of `undefined` | 22/1 |
+| N3 | the Stripe date of birth is copied into the normalized result | 22/1 |
+| N4 | Stripe `requires_input` with no `last_error` read as `failed` | 22/1 |
+| N5 | the redaction handle becomes the verification-REPORT id instead of the session id | 21/2 |
+| N6 | `document_` tested before `selfie_` in the failure-code map | 22/1 |
+| N7 | an unknown Persona status defaults to `verified` | 22/1 |
+| N8 | Persona `needs_review` read as `verified` | 22/1 |
+| N9 | the Persona `birthdate` is copied into the normalized result | 21/2 |
+| N10 | `inquiry.failed` no longer overrides an ambiguous inquiry status | 22/1 |
+| N11 | Persona lifecycle events (`inquiry.created` / `.started`) no longer ignored | 22/1 |
+
+**Three of those deserve naming, because they are the ones that would hand out a badge.**
+N3 and N9 are the privacy invariants: both vendors return a date of birth on the success path,
+the adapters are the only place it is ever in scope, and the test scans the whole serialized
+result for the DOB rather than checking named fields — a named-field assertion is exactly the one
+§4 records passing while a serializer leaked. N7 and N8 are the dangerous default: a status
+mapping has one direction that costs a poll and one that grants a stranger a government-ID badge,
+and `services/identityVerification/persona.ts:64#export function mapPersonaStatus(status: unknown): NormalizedVerificationStatus {`
+falls to `pending` for anything it does not recognise, including statuses Persona has not
+invented yet. N5 is erasure: `requestProviderDeletionForUser` redacts by
+`provider_verification_ref`, and both vendors' redact endpoints take the SESSION/inquiry id — a
+report id there would have been an unredactable pointer at the document images themselves.
+
+**The refusal is wired to a reachable caller, not merely exported.** Three route-level cases in
+the same file drive `webhookHandler` — what `app.ts` mounts at `POST /api/verification/webhook`
+behind `express.raw()` — and assert 400 `invalid_signature` for a forged Stripe delivery and for
+an unset endpoint secret, with a **control** proving a correctly signed delivery gets *past*
+signature verification. Without that control the two refusals would be satisfied by an adapter
+that rejects everything.
+
+**Gates.** `tsc -p tsconfig.json --noEmit` exit 0. `typecheck:tests` **864 diagnostics across
+116 files, exactly at baseline (864/116)** — this pass adds none. Trust, verification and
+moderation suites **204/204** across twelve files. `check:census-integrity`,
+`check:census-policy-citations`, `check:census-scope-coverage`, `check:census-row-move-labels`
+all exit 0. `check:doc-citations` is red repo-wide for other surfaces' citations and
+**census-trust contributes zero failures to it** — see §14.5.
+
+**`check:test-registration` is RED by construction and that is not a finding.** `package.json`
+is reserved to the integration owner. Two files must be appended to the END of its `test`
+script:
+
+```
+src/test/verificationWebhookSignature.test.ts src/test/verificationProviderNormalization.test.ts
+```
+
+(The other seven files it names belong to the Layover and Memory lanes, not to this one.)
+
+### 14.3 D-SCORING — the missing scoring policy, as one answerable question
+
+The v2 document says the scoring policy is missing and forbids inventing it. It does not say
+what, precisely, is undecided. **It is decidable, and until it is decided none of the following
+is approved specification — every one is an implementation detail that has been running in
+production since `trust_engine_enabled` went TRUE on 2026-07-17.** Nothing here was changed this
+pass; this is an inventory, and the reason the inventory is the deliverable is that a policy
+cannot be requested against "the scoring model is missing".
+
+| What is undecided | What the code does today, and where |
+|---|---|
+| **Category weights** — nine categories summing to 1.00 | `services/trust/TrustScoreService.ts:76#const DEFAULT_SETTINGS: Settings = {`: plan_attendance .180, respect_safety .150, location_honesty .130, host_quality .120, communication .100, and .080 each for content_quality, community_value, guide_accuracy, passport_authenticity. Overridable per-deployment from `trust_settings`; production holds one row at **all defaults**. |
+| **Level thresholds** — six public levels | Same constant: building_trust 35, reliable 50, trusted 65, highly_trusted 78, city_trusted 90, below which `new_traveler`. `services/trust/TrustScoreService.ts:257#function scoreToLevel(score: number, s: Settings): PublicTrustLevel {`. These are the numbers a user sees a word for. |
+| **Decay** | Exponential, half-life **90 days**, same constant. |
+| **Scoring window** | **365 days**, hard-coded, not a setting: `services/trust/TrustScoreService.ts:144#const since = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString();`. Evidence older than a year is invisible to the score — including a confirmed serious finding, whose survival then depends entirely on its cap. |
+| **The earn/lose asymmetry** | `services/trust/TrustScoreService.ts:200#const EARN_CONFIDENCE_WEIGHT = 5;`: positive movement is scaled by a confidence ramp so a single good event cannot max a category; negative movement applies at full strength immediately, with no ramp. Slow to earn, instant to lose. That is a **product posture**, not a tuning constant, and no document states it. |
+| **Per-event deltas — 50 declared event types** | `services/trust/TrustEventService.ts` `TRUST_EVENT_TYPES`, e.g. `services/trust/TrustEventService.ts:815#IDENTITY_VERIFIED:        { category: "respect_safety" as TrustCategory,  delta: 10, severity: "minor" as TrustSeverity },`. Range +10 (identity_verified, first_event_joined, first_event_hosted) to −20 (behavior_report_confirmed, fake_gps_confirmed). One delta point ≈ 5 score points. |
+| **Severity routing** | minor/moderate apply immediately; serious/severe route to `pending_review` and are excluded from the score until an admin adjudicates. Severity does **not** change the delta — it selects the route and the ceiling. |
+| **Caps (ceilings) per finding** | `TrustCapService.applyEventCaps`: no_show → 60 for 30 d, behavior_confirmed → 40 **permanent**, fake_gps → 35 permanent, impossible_speed → 55 for 14 d, coordinate_jump → 55 for 7 d, content_removed → 50 for 30 d, message_report → 45 for 60 d. The expiries are where "how long does a finding bite" actually lives, and they were chosen, not ratified. |
+| **Earning caps (anti-farming)** | `services/trust/TrustEventService.ts:190#const DEFAULT_EARNING_CAP: EarningCaps = { daily: 10, weekly: 40 };` for every positive type with no explicit bucket; three named buckets at 3/10, 5/20 and 10/40. |
+| **Idempotency window** | 24 h for most emitters; `services/trust/TrustEventService.ts:590#dedupWindowHours: 24 * 365,` — a 365-day "pay once, ever" window for the one-shot awards. |
+| **Recovery** | `TrustRecoveryService` generates ordered steps toward the neutral 50 from the lowest categories and active caps. What "recovered" means, and whether reaching it should lift anything, is unstated. |
+| **Reversals and appeals** | Three mechanisms, no policy — this is D-REVERSAL, kept separate below because it is TRV2-10's blocker and not the scoring model's. |
+
+> **D-SCORING, as one question the owner can answer in one sitting:**
+> *Of the twelve parameter families above — weights, thresholds, decay, window, the earn/lose
+> asymmetry, the 50 per-event deltas, severity routing, per-finding ceilings and their expiries,
+> earning caps, dedup windows, recovery and reversal — **which are hereby RATIFIED as they
+> stand, and which require a different value?*** A blanket "ratify current behaviour as v1" is a
+> complete and legitimate answer and costs nothing to implement; what is not available is
+> leaving it unasked, because today every one of these numbers is a decision that was taken by
+> whoever typed it and is being applied to real users.
+
+**Why this is stated and not taken.** The v2 document is explicit: *"Inventory existing
+behavior as implementation evidence; do not promote it to approved specification
+automatically."* The table above is the inventory. Promoting it would close nothing honestly and
+would make the next reader believe a policy exists.
+
+### 14.4 D-OVERRIDE — what the code does, the two candidate semantics, and what differs observably
+
+C22 stays **W**. This section does not choose; it makes the choice cheap to make by stating the
+before-state precisely and pinning it in tests, so that converting one semantics into the other
+cannot happen by accident.
+
+**What the code does today.** `services/trust/TrustAdminService.ts:303#const cap = await createCap(db, {` writes a
+`trust_caps` row with `ceiling_score = newScore` and `reason_code = 'admin_override'`. It then
+upserts `trust_profiles` directly "for immediate effect" — and on its own next line awaits
+`recalculateTrustScore`, which recomputes from events and overwrites that upsert before the
+function returns. `TrustScoreService.loadCaps` folds caps with `Math.min` and `trust_caps` has
+**no floor column at all**. Consequences, measured:
+
+* An override **below** the natural score binds and survives every recalculation.
+* An override **above** the natural score never lands at all — not "does not persist": there is
+  no window in which it was true.
+* It is therefore a **ceiling**, structurally, not because one branch is buggy.
+* It is **unwired to any route**: `adminOverrideScore` and `adminRemoveOverride` have no caller
+  outside `services/trust/` and the test suite (re-checked this pass by grep over the whole
+  package). Nothing live turns on the answer today, which is exactly why it is cheap to decide
+  now and expensive later.
+
+**The two candidate semantics.**
+
+* **CAP** — the admin sets a *maximum*. Events may move the score below it; nothing can lift it
+  above. An admin can **withhold** standing and cannot **grant** it. This is what is built.
+* **PIN** — the admin's number *is* the score until an admin lifts it. Events stop moving that
+  category. An admin can both grant and withhold standing.
+
+Both are defensible and they are different products. A pin is a tool for saying "this person is
+trustworthy, I vouch"; a cap is a tool for saying "this person may not rise above this while we
+watch them". Building either without the decision would be taking it.
+
+**What differs observably — five things, four of them newly pinned this pass** in
+`test/trust-integration.test.ts`, under `D-OVERRIDE precedence, expiry and removal —
+characterization, not a verdict`. Each assertion records today's answer; each would have to be
+rewritten *by name* for the semantics to change, which is the point.
+
+| Observable | Under CAP (today) | Under PIN | Pinned by |
+|---|---|---|---|
+| Upward override | Discarded; the admin's number appears nowhere | Becomes the score | §11's existing block, re-run this pass |
+| Override vs a moderation ceiling in the same category | `Math.min` wins, so an override of 90 against a `behavior_confirmed` ceiling of 40 yields ≤ 40 — **an admin cannot grant relief from another cap** | The pin would override the moderation ceiling, which is a different and much larger authority | new — mutation O2 (fold with `Math.max`) turns it RED |
+| Expiry | Never. `adminOverrideScore` passes no `expiresAt`, so the row is permanent until lifted, and `expireOldCaps` cannot sweep a null expiry | A pin plausibly wants a review date | new — mutation O1 (give it an expiry) turns it RED |
+| Precedence with restrictions | None. Overriding a user's `respect_safety` to **0** creates no `trust_restrictions` row and changes no eligibility — "override to 0" is **not** a way to withhold access | Same question, and it needs an explicit answer either way | new — mutation O3 (also write a restriction) turns it RED |
+| Removal | `adminRemoveOverride` lifts **every** active `admin_override` cap for that user+category, so one admin's removal clears another admin's override; the moderation cap in the same category is correctly untouched | Under a pin, "whose pin was lifted" is a real question | new — mutation O4 (stop filtering on `reason_code`) turns it RED |
+
+> **D-OVERRIDE, as one question:** *Does an admin score override PIN the score (the admin's
+> number wins until lifted) or CAP it (the admin sets a maximum and events move it below)? And
+> for the chosen answer: does it take precedence over a moderation ceiling in the same category;
+> does it expire; and does removal by one admin clear another admin's override?* The first
+> clause is the product decision; the other three follow from it and are each a line of code.
+
+### 14.5 Rows found MIS-GRADED, and evidence corrected
+
+Every one of the twenty-two open rows was re-executed against this tree before anything was
+built. **No verdict was found wrong in either direction.** Four cells carry evidence that has
+drifted, corrected here rather than left to rot.
+
+| Row | Correction |
+|---|---|
+| TV-0e / TV-2c | The cell says a case-insensitive search for `VerifiedBadge` "returns four hits, all of them inside the two plan documents themselves". At this tree it also matches **four client style keys** — `travel-buddy-standalone/src/components/BuddyCard.tsx:256#verifiedBadge: {`, `travel-buddy-standalone/src/components/compass/CompassTravelerRow.tsx:316#verifiedBadge: {`, `travel-buddy-standalone/src/components/compass/CompassBuddyRow.tsx`, `travel-buddy-standalone/app/(rent-a-buddy)/offers.tsx:245#verifiedBadge: { backgroundColor:`. The component still does not exist and neither verdict moves — **but TV-2c's "zero criteria met" understates the problem in the direction that matters.** Buddy cards and Compass traveler rows DO render a verified indicator today, and it is driven by `profiles.verified`, a legacy boolean, not by `verification_level` — `artifacts/api-server/src/compass/CompassTools.ts:1544#verified:     row.verified === true,` and `artifacts/api-server/src/routes/profile.ts:115#verified: r.verified ?? false,`. So the placement surfaces are not merely unaware of verification (which is what the cell says); **they already show a badge sourced from something that is not the ID check.** That is TRV2-12's clause "verified badge reflects actual verification state" failing on a surface that looks finished, which is worse than one that looks empty. Recorded here; the fix is client- and Compass-lane work (§14.7). |
+| TV-0a | The cell says `migrations/` "holds 528 files and not one mentions `identity_verifications`". It now holds **529**, and one mentions the identity vocabulary — `migrations/2870_profiles_verification_level_identity_vocabulary.sql`, added by §12 and applied nowhere. The substantive claim is unchanged: no migration in the applied set creates `identity_verifications`; the table still reached production through the baseline. |
+| TV-7a / TV-P3 | New, and not previously recorded on either row: `routes/verification.ts:157#patch.provider_verification_ref = result.providerVerificationRef ?? null;` sits inside `if (result.status === "verified") {`, so `provider_verification_ref` is written **only on success**. A FAILED or EXPIRED attempt left a government ID with the vendor and no handle stored, so `requestProviderDeletionForUser` — which reads exactly that column — can never offer it for redaction. Both new adapters therefore set the redaction handle for **every** state (mutation N5 pins it), which is the half this lane owns; the persist-side condition is in `routes/verification.ts`, which it does not own. Cross-lane request in §14.7. Neither row's verdict moves: TV-7a's two criteria are about the ordered call, which holds. |
+| TRV2-10 | The cell's third mechanism is sharpened by a schema read at this tree. `trust_events.user_id` and `trust_profiles.user_id` are **`ON DELETE CASCADE` on `profiles`** (`artifacts/api-server/baseline/20260819_baseline_structure.sql:25389#ADD CONSTRAINT trust_events_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(id) ON DELETE CASCADE;`), so an erased subject's derived trust evidence *is* destroyed — by cascade, not by any step `AccountDeletionService` takes (it names no trust table at all). And the same file shows the mirror of D-MODACTION-FK inside Trust's own tables: `trust_events.reviewed_by` and `trust_caps.lifted_by` are plain NO ACTION references to `profiles`, so **erasing a moderator is blocked by the trust rows they adjudicated**. Still `CV`; the retention policy is what is missing, and now the three mechanisms it must reconcile are each measured rather than described. |
+
+**Anchored citations repointed.** Rewriting `providers.ts` invalidated eleven anchored
+citations in §12.3, §12.4 and §12.6 that named line ranges inside the old stubs. Each was
+re-derived by **searching for the anchor**, never by adding this diff's offset — the failure mode
+§2's note records twice. They now resolve line-exact, and `check:doc-citations` reports **zero**
+census-trust failures (repo-wide it is red for `census-compass`, `census-passport`,
+`census-highlights-memories` and `docs/discovery/ROADMAP.md`, none of which this lane touched).
+Two anchors had no successor in `providers.ts` at all — the vendor mapping comments moved into
+the new adapter files — and are repointed to
+`services/identityVerification/stripeIdentity.ts:28# *   createSession            -> POST /v1/identity/verification_sessions`
+and `services/identityVerification/persona.ts:14# *   createSession            -> POST /api/v1/inquiries   (+ one-time link)`.
+
+### 14.6 The twenty rows that did not move, and WHAT WOULD TURN EACH ONE RED
+
+A row left `W`, `NB` or `CV` without saying what evidence would settle it is an excuse. Each
+line below names the evidence and **who can supply it** — one of: OWNER (a decision or an
+account), DEPLOY (a release or a migration application), or a NAMED LANE (a file this lane does
+not own; see §14.7).
+
+| id | V | What would settle it, and who supplies it |
+|---|---|---|
+| A6 | W | **DEPLOY.** The row is defined as a production measurement, so no code closes it. Settled by: deploying the emitters that merged to `main` on 2026-09-09, then one real stamp award, then a read showing `trust_events` carrying a `stamp_verified` row. Turns red the moment a post-deploy read still shows the count at zero. Second, weaker blocker: production traffic is test accounts, so even a non-zero count measures wiring, not live evidence. |
+| C22 | W | **OWNER — D-OVERRIDE**, stated as one question in §14.4. Settled by picking PIN or CAP plus the three follow-ons (precedence over a moderation ceiling, expiry, removal). Implementation after that is a day. Turns red if any of the four characterization assertions in `test/trust-integration.test.ts` starts failing — which is what a silent conversion would do. |
+| TV-P2 | W | **OWNER — D-DOB.** A privacy commitment is not a lane's to amend. Settled by: either (a) honour the invariant — migrate the six gates off `profiles.date_of_birth` onto `is_over_18` and drop the column, or (b) amend invariant 2 in writing. Evidence that would turn it red today: production still holds a DOB for 7 of 58 profiles and `is_over_18` is read by **no** gate. Implementation lane: the gates are in `lib/travelerVerification.ts`, `routes/{profile,events,meetups,requests,discovery}.ts` — none owned here. |
+| TV-P3 | W | **OWNER — D-MODACTION-FK**, then a MIGRATION the integration owner must number. Settled by converging `moderation_actions.target_user_id` from CASCADE to SET NULL and `performed_by` from NO ACTION to SET NULL, as `migrations/2138_profiles_fk_convergence_prep.sql:103#('moderation_actions','performed_by','SETNULL'),` already intends — or by amending invariant 3. §14.5 adds `trust_events.reviewed_by` and `trust_caps.lifted_by` to the same list. Red today: erasing a subject destroys every enforcement record about them, and erasing a moderator is blocked outright. |
+| TV-0a | W | **OWNER — D-MODACTION-SHAPE**, then a MIGRATION. Settled by either adding `report_id` and `expires_at` to `moderation_actions`, or ratifying the `metadata` jsonb convention `lib/moderationAudit.ts` already documents as a workaround. Until then "suspend with expiry" and the report→action link are not expressible in the live columns, which is also half of TV-4a. |
+| TV-0e | NB | **OWNER — D-BADGE** (wording and colours are listed as unresolved brand decisions), then the CLIENT LANE. Settled by a `VerifiedBadge` component existing and reading `verificationLevel`. §14.5 sharpens what "not built" means here: a badge already renders from the wrong source. |
+| TV-1a | W | **VERIFICATION-ROUTE LANE.** One word. `routes/verification.ts:239#status:              "pending",` writes `pending` where the plan says `created`; both are legal under the live CHECK and no consumer distinguishes them, so the effect is nil and the criterion is still unmet. Settled by changing that literal to `"created"` and asserting it in `test/verification.test.ts`. Not this lane's file (§14.7). |
+| TV-1c | W | **OWNER — D-2870-APPLY**, i.e. DEPLOY. `migrations/2870_profiles_verification_level_identity_vocabulary.sql` is written, reversible, additive, and applied to **no database**. Until it is applied no user can become ID-verified at all: the write is a 23514 and the provider retries the same rejected value forever. Grading `C` on a staged file is the error this census is named for. |
+| TV-2a | W | **CLIENT LANE.** Passport entry point exists; the Rent-a-Buddy gate does not route anywhere. Settled by a screen under `app/(rent-a-buddy)/` linking to `/profile/verification`, so a user the server-side gate refuses is given a way to satisfy it. |
+| TV-2b | W | **CLIENT LANE** (+ the TV-7c copy). Three of four screens exist. Settled by a "what we never store" section on `app/profile/verification.tsx` — the plan's own bolded clause, and the user-facing half of TV-P1/TV-P2. The server-side facts it would state are now enumerable from `services/identityVerification/types.ts` and the two adapter headers. |
+| TV-2c | NB | **OWNER — D-BADGE**, then the CLIENT LANE. Settled by rendering the badge inside `UserIdentityLink` on the six named surfaces, sourced from `verificationLevel` and **not** from `profiles.verified` (§14.5). Also needs TV-1c applied, or every badge is correctly absent. |
+| TV-2d | W | **CLIENT LANE.** Settled by human failure copy replacing `failureReason.replace(/_/g,' ')`, and by `underage` taking a distinct branch that does not re-offer the retry CTA. The normalized reasons the client must switch on are fixed and now generated by both real adapters as well as the mock. |
+| TV-4a | W | **ADMIN-ROUTE LANE**, gated on D-MODACTION-SHAPE for two of five criteria. Settled by: a category filter on `GET /admin/moderation/reports`; subject snapshots for post/comment/message/event/review/listing, not just `place`; and a route that ACTS on a `moderation_reports` row — today nothing updates `moderation_reports.status`, so the queue can only grow (re-confirmed at this tree by grep). |
+| TV-4b | W | **OWNER — D-SUSPENSION-UX**, then the auth and client lanes. Settled by deciding whether a suspended user gets the specified read-only state with an appeal contact or whether the blanket 403 at `artifacts/api-server/src/lib/http.ts:374#if (accountStatus === "suspended") {` is ratified, and whether a banned user is signed out rather than 403'd. `routes/appeals.ts` and `app/appeals.tsx` both exist and nothing points at them from the refusal. |
+| TV-5a | W | **CLIENT LANE.** Four of six links present. Settled by adding SOS and community guidelines to `app/profile/edit/safety.tsx`. A repository-wide search still returns no community-guidelines surface at all, so one has to be written before it can be linked. |
+| TV-5b | NB | **OWNER — D-DOB** (same decision as TV-P2), then the gate lanes. Settled by the 18+ gates reading `is_over_18` from the latest verified row and showing a "verify to access" gate rather than hiding silently. Cannot be built first: writing the gate decides D-DOB. |
+| TV-6a | NB | **OWNER — D-PROVIDER.** Six steps, no code reading needed: (1) choose Stripe Identity or Persona; (2) open the account; (3) obtain `STRIPE_IDENTITY_SECRET_KEY`, or `PERSONA_API_KEY` + `PERSONA_TEMPLATE_ID`; (4) register `POST https://<api-host>/api/verification/webhook`; (5) take the signing secret from that registration as `IDENTITY_WEBHOOK_SECRET` — **the adapters now consume exactly this variable, for both vendors**; (6) set all of it in Replit Secrets with `IDENTITY_PROVIDER` set to the chosen name **in staging first**. ~$1.50–3.00 per attempt at either vendor. |
+| TV-6b | W | **OWNER (TV-6a) → then this lane, one session.** The code is written for both vendors, so the choice no longer gates the code. Settled by: a sandbox transcript showing session→hosted flow→signed webhook→`verified` row→`profiles.verification_level` set, which also proves the payload mapping this pass could not; then adding the chosen name to `services/identityVerification/readiness.ts:53#const IMPLEMENTED_PROVIDERS = new Set<string>(["mock"]);`; then the staging flip. **What would turn it red:** a sandbox run in which any documented field this lane guessed — Stripe `verified_outputs.address.country` or `last_error.code`, Persona `attributes.status`, `birthdate`, `country-code`, or the `included[]` check names — is not where it was assumed. That is a likely outcome and is the honest reason this is `W`. |
+| TV-7c | NB | **CLIENT LANE.** Settled by a privacy-policy surface existing at all — re-searched at this tree, `travel-buddy-standalone/app` and `src` contain no privacy-policy screen, route or link, and `app/settings/index.tsx` mentions neither identity verification nor a government-ID check. The four matches a search returns are prose inside Passport QR comments. Content is available: invariants 1–5 plus §14.3's inventory. |
+| TRV2-08 | NB | **OWNER — D-RESTRICTION-REACH**, then four lanes. A product scope decision, not a wiring task: *which* Compass, Discovery, social and booking actions must refuse a restricted user? Re-confirmed at this tree — `getRestrictionState` still has exactly five non-Trust callers (messaging, calls, hosting, crew live-share, and a Passport PROJECTION that is display, not a gate); `src/compass/` and `routes/discovery*.ts` contain no call. A restricted user is still recommended, discovered and bookable. |
+| TRV2-10 | CV | **OWNER — D-REVERSAL.** Not verifiable, because correctness is defined by "the **defined** policy" and none is defined. The three mechanisms, each measured at this tree: (a) admin revocation clears `verification_level` and explicitly does NOT reverse the `identity_verified` +10, with `routes/admin.ts` naming D-REVERSAL as the reason; (b) an upheld appeal emits `appeal_approved` (+2 community_value) at `services/appeals/resolveAppeal.ts:288#eventType:  "appeal_approved",` — it ADDS a small positive and reverses nothing, which is a different mechanism from `revokeModerationTrustConsequences`; (c) account deletion destroys trust evidence by FK cascade while `AccountDeletionService` names no trust table. Settled by answering, for each of revocation / upheld appeal / deletion: does the derived effect reverse, decay, or persist — and if it reverses, by a counter-event or by deleting the original? Plus: how long does derived evidence about an erased subject survive, and is the plan's 90-day verification-record value the answer for Trust evidence too, or not? **The load-bearing half of (a) is now a MEASUREMENT, not a reading**: `test/trust-integration.test.ts`, `D-REVERSAL: revocation reverses moderation consequences and nothing else`, asserts that `revokeModerationTrustConsequences` dismisses the moderation-sourced finding and leaves an `identity_verified` award at `applied`, because it selects on `source_type = 'moderation'` and the award's source type is `identity_verification`. So the two halves of "verified" — the displayed level and the trust award — come apart on revocation, by construction rather than by oversight, and the assertion goes red if that scope silently changes. Mutations: V1 (drop the `source_type` filter) **65/2 RED**; V2 (lift caps by user instead of by source event) **66/1 RED**. |
+
+### 14.7 Cross-lane requests
+
+Each names the file, the change, and why this lane cannot make it.
+
+1. **`artifacts/api-server/package.json`** (integration owner) — append
+   `src/test/verificationWebhookSignature.test.ts src/test/verificationProviderNormalization.test.ts`
+   to the `test` script. Without it both files exist and never run.
+2. **`artifacts/api-server/src/routes/verification.ts:239#status:              "pending",`** (verification-route lane) — write
+   `status: "created"` on insert instead of `"pending"`. Closes TV-1a's fourth criterion. No
+   behavioural effect: both are legal under the live CHECK and the client treats
+   `created`/`pending`/`processing` identically.
+3. **`artifacts/api-server/src/routes/verification.ts:157#patch.provider_verification_ref = result.providerVerificationRef ?? null;`** (verification-route lane) —
+   `provider_verification_ref` is written only on `status === "verified"`. A failed or expired
+   attempt still left a government ID with the vendor, and `requestProviderDeletionForUser`
+   reads that column and nothing else, so those copies can never be offered for redaction.
+   Persist the handle for every status. Both adapters already supply it for every status
+   (§14.2, mutation N5). Affects TV-7a and TV-P3.
+4. **`artifacts/api-server/src/compass/CompassTools.ts:1561`** and
+   `travel-buddy-standalone/src/components/{BuddyCard,compass/CompassTravelerRow,compass/CompassBuddyRow}.tsx`
+   (Compass and client lanes) — the rendered "verified" indicator is sourced from
+   `profiles.verified`, a legacy boolean unrelated to the ID check. Under TRV2-12 ("verified
+   badge reflects actual verification state") this is a badge asserting something Portava has
+   not measured. Needs D-BADGE before it is re-sourced, so this is a flag, not a patch request.
+5. **Migration numbering** (integration owner) — TV-P3 and TV-0a both need a migration this lane
+   is not permitted to number. No file was written for either.
+
+### 14.8 Restated headline
+
+> **Trust, at this tree: 93 requirements · 72 BUILT-AND-CORRECT · 14 BUILT-BUT-WRONG ·
+> 6 NOT-BUILT · 1 CANNOT-VERIFY → CONSTRUCTED 86 / 93 = 92.5 % · CORRECT 72 / 93 = 77.4 %.**
+>
+> Against §13.3's 93-row figure of 71 / 14 / 7 / 1 → CONSTRUCTED 91.4 %, CORRECT 76.3 %:
+> **CONSTRUCTED +1.1 points, CORRECT +1.1 points.** One row built and certified, one row moved
+> off NOT-BUILT and honestly left BUILT-BUT-WRONG.
+>
+> The retired 52-row headline of CORRECT 96.2 % is **not** comparable to any number on this page
+> and is not restated here as a comparison, because comparing a 93-row measurement to a 52-row
+> one describes the denominator, not the surface.
+
+| BUILT-AND-CORRECT | **72** |
+|---|---|
+| BUILT-BUT-WRONG | **14** |
+| NOT-BUILT | **6** |
+| CANNOT-VERIFY | **1** |
+
+*This supersedes §13.3 under LAST-STATEMENT-WINS. §13.3 is left in place because this file is
+append-only.*
+
+**What the remaining gap is, in one paragraph.** Twenty of the twenty-two open rows are blocked
+on something no lane can produce: **eight owner decisions** (D-SCORING and D-OVERRIDE, stated as
+single answerable questions above; D-DOB, D-MODACTION-SHAPE, D-MODACTION-FK, D-SUSPENSION-UX,
+D-BADGE, D-RESTRICTION-REACH, D-PROVIDER, D-REVERSAL), **one migration application**
+(D-2870-APPLY, without which no user can ever become ID-verified), **one deploy** (A6, which is
+a production measurement by its own wording), and **eight rows in files owned by other lanes**.
+Two were code, and both are now written. The honest reading of 77.4 % is not that the surface is
+three-quarters finished; it is that the buildable part is nearly exhausted and the rest is
+waiting on people, not on engineering.

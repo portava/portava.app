@@ -41,6 +41,7 @@ import { NotificationService } from "../services/notifications/NotificationServi
 import { NotificationRouter } from "../services/notifications/NotificationRouter.js";
 import { RealtimeActivityService } from "../services/notifications/RealtimeActivityService.js";
 import { fetchUserTimezone, localHourFor, nowUtcInstant } from "../lib/localTime.js";
+import { resolveCurrentTrip } from "./CompassCurrentTrip.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -219,37 +220,18 @@ async function fetchInProgressTrip(
   sc: SupabaseClient,
   userId: string,
 ): Promise<{ id: string; city: string | null } | null> {
-  try {
-    const [{ data: memberRows }, { data: ownedRows }] = await Promise.all([
-      sc.from("trip_members").select("trip_id").eq("user_id", userId).in("role", ["owner", "member"]),
-      sc.from("trips").select("id").eq("owner_id", userId),
-    ]);
-    const tripIds = Array.from(new Set([
-      ...((memberRows ?? []) as any[]).map((r) => String(r.trip_id)),
-      ...((ownedRows ?? []) as any[]).map((r) => String(r.id)),
-    ]));
-    if (tripIds.length === 0) return null;
-    const { data: trips } = await sc
-      .from("trips")
-      .select("id, destination_city, status")
-      .in("id", tripIds)
-      // `trip_status` is an ENUM: draft | planning | upcoming | active |
-      // completed | cancelled | archived. `in_progress` is NOT a label, and
-      // Postgres rejects an unknown enum literal outright (22P02) rather than
-      // matching nothing — so this read failed WHOLE and `{ data }` was
-      // undefined on every request. Compass Live therefore had no trip
-      // grounding at all: tripId / currentStop / nextItem were permanently
-      // null and no reached_stop or next_item_changed event could ever fire.
-      // `active` is the label every other current-trip reader uses
-      // (CompassTools:415, CompassSocialEngine:296, wall.ts:273, compass.ts:3414).
-      .eq("status", "active")
-      .limit(1);
-    const t = ((trips ?? []) as any[])[0];
-    if (!t) return null;
-    return { id: String(t.id), city: (t.destination_city as string | null) ?? null };
-  } catch {
-    return null;
-  }
+  // ONE current-trip rule for every Compass surface (CT-02). This was a
+  // verbatim third/fourth copy of the owner ∪ accepted-member union, and it
+  // ended in `.limit(1)` — whichever active trip the database returned first —
+  // so Live could ground its context on a different trip from the one
+  // `get_current_trip` calls current, from the same rows. The seam orders by
+  // earliest start, which is what the tool has always done.
+  //
+  // `unread` returns null, preserving this function's existing contract: no
+  // trip grounding rather than grounding on a union we know is incomplete.
+  const resolved = await resolveCurrentTrip(sc, userId, ["active"]);
+  if (resolved.status !== "ok") return null;
+  return { id: resolved.trip.id, city: resolved.trip.destinationCity };
 }
 
 async function fetchTodayPlan(

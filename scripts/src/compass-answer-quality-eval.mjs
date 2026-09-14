@@ -11,10 +11,17 @@
  * with no provider present, and decide this process's exit code.
  *
  * EXIT CODES, following the convention the rest of this repository's checkers use:
- *   0  PASS        every machine criterion green AND all twelve measures judged pass
+ *   0  PASS        every machine criterion green AND every adjudicated verdict
+ *                  supplied and passing — the roadmap's eight measures on each of
+ *                  the nine questions ("measure each time"), plus the four v2
+ *                  requires recorded separately for the run: 76 verdicts.
  *   1  FAIL        a machine criterion is red, or a measure was judged fail
  *   2  INCOMPLETE  machine criteria green, at least one measure unjudged.
  *                  NOT a pass. A run cannot certify its own semantic quality.
+ *
+ * The adjudication file (--adjudication) is:
+ *   { "perQuestion": { "1": { "safety": "pass", "safety_note": "…" }, … },
+ *     "run":         { "factual_grounding": "pass", … } }
  *
  * Requires: a WRITABLE Supabase project (this script creates and deletes an
  * ephemeral auth user), an API server on API_BASE_URL, COMPASS_ENABLED true on
@@ -22,11 +29,14 @@
  * names all five and where each is read. NEVER point this at production.
  *
  * Usage: node scripts/src/compass-answer-quality-eval.mjs [--adjudication <file.json>]
+ *        [--emit-adjudication <file.json>]   write the 76-slot skeleton, all null
  */
 import {
-  evaluateTierA, evaluateTierB, verdictOf, formatReport, EXIT_CODE,
+  evaluateTierA, evaluateTierB, verdictOf, formatReport, EXIT_CODE, EVAL_QUESTIONS,
+  collectReferencedIds, blockItemCount,
+  ROADMAP_MEASURES, RUN_LEVEL_MEASURES, ADJUDICATION_SIZE,
 } from "./compass-eval-criteria.mjs";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -36,17 +46,10 @@ const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 // unchanged.
 const API = process.env.COMPASS_EVAL_API_BASE_URL ?? "http://localhost:80/api"; // compass routes are single-prefix: /api/compass/ask
 
-const QUESTIONS = [
-  "What should I do in Cebu?",
-  "What did you mean?",
-  "Which one is closer?",
-  "Add the second one.",
-  "Find something romantic but not a date.",
-  "I'm traveling alone tonight.",
-  "Find my circle.",
-  "I'm tired.",
-  "My event was canceled.",
-];
+// The nine live in ./compass-eval-criteria.mjs and are imported, not copied.
+// `shape` checks the asked text against that same array, and a criterion that
+// checked a list this file also owned would be checking nothing.
+const QUESTIONS = EVAL_QUESTIONS;
 
 async function sb(path, opts = {}) {
   const res = await fetch(`${SUPABASE_URL}${path}`, {
@@ -129,10 +132,14 @@ async function main() {
       // The assistant text reply
       const message = body.message ?? body.reply ?? body.text ?? "";
 
-      // Quick summary of non-empty uiBlocks
+      // Quick summary of non-empty uiBlocks.
+      // This used to count `b.items` / `b.item`. NO BLOCK THE SERVER EMITS HAS
+      // EITHER FIELD — place_cards carries `places`, event_cards `events`,
+      // person_cards `people`, comparison `rows` — so every block was summarised
+      // as a bare type and the count in the transcript was always absent.
       const blockSummary = uiBlocks.map(b => {
         const type = b.type ?? b.kind ?? "?";
-        const itemCount = Array.isArray(b.items) ? b.items.length : (b.item ? 1 : 0);
+        const itemCount = blockItemCount(b);
         return itemCount ? `${type}(${itemCount})` : type;
       });
 
@@ -150,6 +157,22 @@ async function main() {
         blockTypes,
         blockSummary,
         droppedInventedIds,
+        // The grounding envelope's own finding on this answer: claims it caught
+        // the model making with no datum behind them. An ABSENT array and an
+        // EMPTY one are different facts and the criteria treat them differently,
+        // so `null` is preserved rather than defaulted to [].
+        groundingViolations: Array.isArray(body.meta?.groundingViolations)
+          ? body.meta.groundingViolations
+          : null,
+        // Every entity the answer put in front of the traveller.
+        referencedIds: [...collectReferencedIds(uiBlocks)],
+        // "propose, never auto-execute": the only legal status out of /ask is
+        // pending_confirmation. Anything else is a write that already happened.
+        proposalStatuses: (body.pendingProposals ?? []).map(p => p?.status ?? "status_not_reported"),
+        // payload.type is the card pipeline the turn took — "recommendation" or
+        // "itinerary" — and null for plain conversation. phase1-spec.md:23 ties
+        // that to the classifier's confidence.
+        payloadType: typeof body.payload?.type === "string" ? body.payload.type : null,
         quickActions: (body.quickActions ?? []).slice(0, 4),
         intent: body.intent ?? null,
         promptVersion: body.promptVersion ?? null,
@@ -168,7 +191,9 @@ async function main() {
       console.log(`  status=${r.status} ms=${r.ms}${fallLabel}`);
       console.log(`  blocks: [${r.blockSummary.join(", ")}]  droppedIds=${r.droppedInventedIds}`);
       console.log(`  reply: ${msgPreview || "(empty)"}`);
-      console.log(`  intent: ${JSON.stringify(r.intent)}`);
+      console.log(`  intent: ${JSON.stringify(r.intent)}  payload=${r.payloadType ?? "null"}`);
+      console.log(`  grounding: ${r.groundingViolations === null ? "NOT REPORTED" : (r.groundingViolations.join(", ") || "none")}`);
+      if (r.proposalStatuses.length > 0) console.log(`  proposals: ${r.proposalStatuses.join(", ")}`);
       console.log();
     }
 
@@ -183,6 +208,33 @@ async function main() {
     const verdict = verdictOf(tierA, tierB);
     console.log(formatReport(tierA, tierB, verdict));
     exitCode = EXIT_CODE[verdict];
+
+    // The adjudication is 76 verdicts and nobody is going to hand-write that
+    // skeleton from the README. `--emit-adjudication <file>` writes it — every
+    // slot `null`, the question text beside it so the reader knows which answer
+    // they are judging, and the transcript's own record inlined. A template
+    // whose slots default to "pass" would be a template that certifies itself,
+    // so they default to null and `verdictOf` reads null as UNJUDGED.
+    const emitIdx = process.argv.indexOf("--emit-adjudication");
+    if (emitIdx !== -1 && process.argv[emitIdx + 1]) {
+      const perQuestion = {};
+      results.forEach((r, i) => {
+        perQuestion[String(i + 1)] = {
+          _question: r.q,
+          _reply: r.message,
+          _intent: r.intent,
+          _blocks: r.blockSummary,
+          ...Object.fromEntries(ROADMAP_MEASURES.flatMap((m) => [[m, null], [`${m}_note`, ""]])),
+        };
+      });
+      const run = Object.fromEntries(
+        RUN_LEVEL_MEASURES.flatMap((m) => [[m, null], [`${m}_note`, ""]]),
+      );
+      writeFileSync(process.argv[emitIdx + 1], JSON.stringify({ perQuestion, run }, null, 2));
+      console.log(`\nAdjudication skeleton written to ${process.argv[emitIdx + 1]} — ` +
+        `${ADJUDICATION_SIZE} verdicts, all null. Fill each with "pass" or "fail" and re-run ` +
+        `with --adjudication <file>.`);
+    }
   } finally {
     console.log("Deleting ephemeral user", userId);
     await sb(`/auth/v1/admin/users/${userId}`, { method: "DELETE" }).catch(e =>

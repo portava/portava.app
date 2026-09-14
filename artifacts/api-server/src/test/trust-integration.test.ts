@@ -19,7 +19,7 @@ import trustAdminRouter from "../routes/trust-admin.js";
 
 import { recordTrustEvent, recordAdjudicatedTrustEvent } from "../services/trust/TrustEventService.js";
 import { recalculateTrustScore, getTrustProfile } from "../services/trust/TrustScoreService.js";
-import { getActiveCaps } from "../services/trust/TrustCapService.js";
+import { getActiveCaps, createCap, expireOldCaps } from "../services/trust/TrustCapService.js";
 import { getRestrictionState } from "../services/trust/TrustRestrictionService.js";
 import {
   confirmEvent, dismissEvent,
@@ -1311,5 +1311,189 @@ describe("Moderation → trust: reversing the sanction reverses the consequence"
 
     const prof = tables.trust_profiles.find((p) => p.user_id === USER_A);
     if (prof) assert.notEqual(prof.on_probation, true, "a reversed finding must not leave probation running");
+  });
+});
+
+// ── D-OVERRIDE, part 2: the three questions the v2 spec asks and no row answers ──
+//
+// `Portava_Trust_Architecture_Upgrade_v2.md` does not only ask "pin or cap?".
+// It asks for "the selected semantics, PRECEDENCE WITH RESTRICTIONS, EXPIRY and
+// REMOVAL behavior". Those three are separately observable and none of them was
+// pinned anywhere, so any of them could have drifted without a test noticing.
+//
+// Nothing below chooses an answer. Each assertion records what the code does
+// TODAY so that the owner's decision (census-trust D-OVERRIDE) has a concrete
+// before-state, and so that converting ceiling into pin cannot happen quietly:
+// it would have to rewrite these assertions by name.
+describe("D-OVERRIDE precedence, expiry and removal — characterization, not a verdict", () => {
+  it("EXPIRY: an admin override never expires on its own", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+    await adminOverrideScore(db, ADMIN, USER_A, "communication", 30, "No expiry");
+
+    const cap = tables.trust_caps.find((c: any) => c.user_id === USER_A && c.category === "communication");
+    assert.ok(cap, "an override must leave a cap row");
+    assert.equal(
+      (cap as any).expires_at, null,
+      "adminOverrideScore passes no expiresAt, so the ceiling is permanent until an admin lifts it",
+    );
+
+    // expireOldCaps only touches rows whose expires_at has PASSED, so a null
+    // one is never swept. A 'pin' product would probably want a review date;
+    // a 'cap' product may well want permanence. Today it is permanence, by
+    // omission rather than by decision.
+    const lifted = await expireOldCaps(db);
+    assert.equal(lifted, 0, "the sweeper cannot expire a null-expiry override");
+    const stillActive = await getActiveCaps(db, USER_A);
+    assert.equal(stillActive.length, 1, "the override is still in force after an expiry sweep");
+  });
+
+  it("PRECEDENCE vs other caps: an upward override cannot loosen a moderation ceiling", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+
+    // A confirmed serious finding capped respect_safety at 40.
+    await createCap(db, {
+      userId: USER_A, category: "respect_safety", ceilingScore: 40,
+      reasonCode: "behavior_confirmed", sourceEventId: "evt-serious-1",
+    });
+
+    // An admin tries to restore standing by overriding to 90.
+    await adminOverrideScore(db, ADMIN, USER_A, "respect_safety", 90, "Restoring standing");
+
+    // TrustScoreService.loadCaps folds caps with Math.min, so the two ceilings
+    // combine as 40 — the admin's 90 is inert. Under PIN semantics this is the
+    // single most visible behavioural change: the admin would win.
+    const after = (await recalculateTrustScore(db, USER_A)).categories.respect_safety;
+    assert.ok(after <= 40, `the moderation ceiling still binds; got ${after}`);
+    assert.notEqual(after, 90, "an override cannot grant relief from another cap today");
+  });
+
+  it("PRECEDENCE vs restrictions: an override is a SCORE ceiling and touches no restriction", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+
+    const before = await getRestrictionState(db, USER_A);
+    await adminOverrideScore(db, ADMIN, USER_A, "respect_safety", 0, "Zero the score");
+    const after = await getRestrictionState(db, USER_A);
+
+    // Zeroing every point of a user's safety score does not stop them doing
+    // anything: restrictions live in trust_restrictions and nothing reads caps
+    // to derive one. Whichever semantics is chosen, this stays a separate
+    // decision — and it is worth the owner knowing that "override to 0" is NOT
+    // a way to withhold access.
+    assert.equal(tables.trust_restrictions.length, 0, "no restriction row was created");
+    assert.deepEqual(
+      { canMessage: after.canMessage, canHost: after.canHost },
+      { canMessage: before.canMessage, canHost: before.canHost },
+      "an override changes no eligibility",
+    );
+  });
+
+  it("REMOVAL: adminRemoveOverride lifts every admin_override in the category and nothing else", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+
+    // Two admins each set an override on the same category…
+    await adminOverrideScore(db, ADMIN, USER_A, "communication", 30, "First admin");
+    await adminOverrideScore(db, "admin-two", USER_A, "communication", 20, "Second admin");
+    // …and an unrelated moderation cap stands in the same category.
+    await createCap(db, {
+      userId: USER_A, category: "communication", ceilingScore: 45,
+      reasonCode: "message_report", sourceEventId: "evt-msg-1",
+    });
+
+    await adminRemoveOverride(db, ADMIN, USER_A, "communication", "Undo");
+
+    const active = await getActiveCaps(db, USER_A);
+    const reasons = active.map((c) => c.reasonCode).sort();
+    // One admin's removal clears BOTH admins' overrides — the lift is keyed on
+    // (user, category, reason_code), not on which admin set it. The moderation
+    // cap is untouched, which is the half that must not change under either
+    // semantics.
+    assert.deepEqual(reasons, ["message_report"], `expected only the moderation cap to survive; got ${reasons.join(",")}`);
+  });
+});
+
+// ── D-REVERSAL (census-trust TRV2-10): what reversal does NOT reach today ─────
+//
+// TRV2-10 is this census's one CANNOT-VERIFY: its correctness is defined by
+// "the DEFINED reversal/retention policy" and no approved document defines one.
+// Three mechanisms exist and they disagree about scope. The cell describing
+// them was prose; this block makes the load-bearing half of it a MEASUREMENT,
+// so the owner's decision has a tested before-state and so a future change to
+// the scope cannot happen without an assertion going red.
+//
+// Nothing here says what SHOULD happen. It says what does.
+describe("D-REVERSAL: revocation reverses moderation consequences and nothing else", () => {
+  it("dismisses moderation-sourced events and leaves an identity_verified award standing", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+
+    // Two events on the same user from two different provenances.
+    //   - a confirmed behaviour report, source_type 'moderation'
+    //   - the +10 identity_verified award, source_type 'identity_verification'
+    //     (routes/verification.ts writes exactly that source_type)
+    await db.from("trust_events").insert({
+      user_id: USER_A, event_type: "behavior_report_confirmed", category: "respect_safety",
+      delta: -20, severity: "severe", status: "applied", source_type: "moderation",
+    });
+    await db.from("trust_events").insert({
+      user_id: USER_A, event_type: "identity_verified", category: "respect_safety",
+      delta: 10, severity: "minor", status: "applied", source_type: "identity_verification",
+    });
+
+    await revokeModerationTrustConsequences(db, ADMIN, USER_A, "Ban lifted on appeal");
+
+    const byType = (t: string) =>
+      tables.trust_events.find((e: any) => e.user_id === USER_A && e.event_type === t);
+
+    assert.equal(
+      (byType("behavior_report_confirmed") as any)?.status, "dismissed",
+      "the moderation finding's trust consequence is reversed — this half is C14 and works",
+    );
+    // THE MEASUREMENT. `revokeModerationTrustConsequences` selects on
+    // source_type = 'moderation', so an award that came from the identity
+    // provider is outside its reach by construction. Revoking a user's
+    // verification therefore clears profiles.verification_level (TV-4c) and
+    // leaves the +10 it earned in the ledger, scoring, indefinitely.
+    //
+    // Whether that is right is D-REVERSAL and is NOT decided here. What is
+    // recorded is that the two halves of "verified" — the displayed level and
+    // the trust award — currently come apart on revocation, and that nothing in
+    // the code expresses an intention either way.
+    assert.equal(
+      (byType("identity_verified") as any)?.status, "applied",
+      "the identity award is untouched by moderation reversal — the D-REVERSAL gap, measured",
+    );
+  });
+
+  it("keys the reversal on the source EVENT, so one reversed finding cannot clear another", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+
+    // Two independent moderation findings, each with its own cap.
+    const e1 = await db.from("trust_events").insert({
+      user_id: USER_B, event_type: "behavior_report_confirmed", category: "respect_safety",
+      delta: -20, severity: "severe", status: "applied", source_type: "moderation",
+    }).select("id").single();
+    await createCap(db, {
+      userId: USER_B, category: "respect_safety", ceilingScore: 40,
+      reasonCode: "behavior_confirmed", sourceEventId: (e1 as any).data.id,
+    });
+    // A cap from an event that is NOT being reversed (a different provenance).
+    await createCap(db, {
+      userId: USER_B, category: "content_quality", ceilingScore: 50,
+      reasonCode: "content_removed", sourceEventId: "some-other-event-id",
+    });
+
+    await revokeModerationTrustConsequences(db, ADMIN, USER_B, "Restored");
+
+    const active = await getActiveCaps(db, USER_B);
+    assert.deepEqual(
+      active.map((c) => c.reasonCode),
+      ["content_removed"],
+      "only the cap whose SOURCE EVENT was reversed is lifted; an unrelated standing finding survives",
+    );
   });
 });

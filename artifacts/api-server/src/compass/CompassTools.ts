@@ -44,6 +44,7 @@ import type { CompassItem, CompassProfile } from "./types.js";
 import { stripCoordinateFields, wrapUgc, buildStructuredCompassContext } from "./CompassStructuredContext.js";
 import { isAcceptedTripMember, canEditPlan } from "../lib/http.js";
 import { buildTripCompassProjection } from "../domain/trips/projections/TripCompassProjection.js";
+import { resolveCurrentTrip, TOOL_TRIP_STATUSES } from "./CompassCurrentTrip.js";
 import { buildTripFreedomProjection } from "../domain/trips/projections/TripFreedomProjection.js";
 import { buildTripRouteChainProjection } from "../domain/trips/projections/TripRouteChainProjection.js";
 import { buildTripPulseProjection } from "../domain/trips/projections/TripPulseProjection.js";
@@ -730,45 +731,27 @@ export async function toolGetCurrentTrip(sc: SupabaseClient, userId: string, tri
     return projectCurrentTrip(sc, named);
   }
   // Trips the user owns or is an accepted member of, active or upcoming.
-  const { data: memberRows } = await sc
-    .from("trip_members")
-    .select("trip_id, role")
-    .eq("user_id", userId)
-    .in("role", ["owner", "member"]);
-  const memberTripIds = ((memberRows ?? []) as any[]).map((r) => r.trip_id as string);
-
-  const { data: owned } = await sc
-    .from("trips")
-    .select("id, title, destination_city, destination_country, start_date, end_date, status")
-    .eq("owner_id", userId)
-    .in("status", ["active", "upcoming", "planning"]);
-
-  let memberTrips: any[] = [];
-  if (memberTripIds.length > 0) {
-    const { data } = await sc
-      .from("trips")
-      .select("id, title, destination_city, destination_country, start_date, end_date, status")
-      .in("id", memberTripIds)
-      .in("status", ["active", "upcoming", "planning"]);
-    memberTrips = (data ?? []) as any[];
+  //
+  // SELECTION IS NOT DONE HERE ANY MORE. It was one of five copies of the same
+  // owner ∪ accepted-member union across compass/, with three different status
+  // rules between them; `compass/CompassCurrentTrip.ts` is now the one place it
+  // is decided (CT-02: consume typed Trip semantics rather than duplicating
+  // them). The copy that lived here ALSO bound no `error` on any of its three
+  // reads, so an unreadable trip_members fell through to "No active or upcoming
+  // trip." and told a traveller on a trip that they had none.
+  const resolved = await resolveCurrentTrip(sc, userId, TOOL_TRIP_STATUSES);
+  if (resolved.status === "unread") {
+    // Distinguished from "none" deliberately: this is a dependency failure, and
+    // an honest limitation is the only correct answer to it.
+    return { trip: null, info: `Trip context unavailable: ${resolved.reason}.` };
   }
-
-  const seen = new Set<string>();
-  const all = [...((owned ?? []) as any[]), ...memberTrips].filter((t) => {
-    if (seen.has(t.id)) return false;
-    seen.add(t.id);
-    return true;
+  if (resolved.status === "none") return { trip: null, info: "No active or upcoming trip." };
+  const t = resolved.trip;
+  return projectCurrentTrip(sc, {
+    id: t.id, title: t.title, destination_city: t.destinationCity,
+    destination_country: t.destinationCountry, start_date: t.startDate,
+    end_date: t.endDate, status: t.status,
   });
-  if (all.length === 0) return { trip: null, info: "No active or upcoming trip." };
-
-  // Prefer active, then earliest start date.
-  all.sort((a, b) => {
-    const aActive = a.status === "active" ? 0 : 1;
-    const bActive = b.status === "active" ? 0 : 1;
-    if (aActive !== bActive) return aActive - bActive;
-    return String(a.start_date ?? "9999").localeCompare(String(b.start_date ?? "9999"));
-  });
-  return projectCurrentTrip(sc, all[0]);
 }
 
 /** The trip's CONTENT, from the projection — one path for a resolved trip and a named one. */

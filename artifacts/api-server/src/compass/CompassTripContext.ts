@@ -23,15 +23,16 @@
  */
 
 import { wrapUgc } from "./CompassStructuredContext.js";
+import { resolveCurrentTrip, CONTEXT_TRIP_STATUSES } from "./CompassCurrentTrip.js";
 
 const MAX_BLOCK_CHARS      = 1200;
 const UPCOMING_WINDOW_DAYS = 60;
 const MAX_TODAY_ITEMS      = 5;
 const DAY_MS               = 86_400_000;
 
-const TRIP_COLUMNS =
-  "id, title, destination_city, destination_country, start_date, end_date, status, timezone";
-const TRIP_STATUSES = ["active", "upcoming", "planning", "draft"];
+// Trip COLUMNS and STATUSES moved to compass/CompassCurrentTrip.ts with the
+// selection they belonged to; this module now names only what it reads itself
+// (the day-scoped plan items below, which no Trip projection serves yet).
 
 /** Parse a YYYY-MM-DD(-prefixed) string to a UTC-midnight timestamp. */
 function ymdToUtcMs(ymd: unknown): number | null {
@@ -108,66 +109,33 @@ function hhmm(startsAt: unknown, timezone: unknown): string | null {
  */
 export async function buildTripContextLines(sc: any, userId: string): Promise<string[]> {
   try {
-    // ── Trip selection (mirrors toolGetCurrentTrip) ───────────────────────
-    // Trip SELECTION reads: a failure here returns no context at all, which is
-    // the safe outcome. It is not silent-by-omission — an incomplete union
-    // would silently drop trips the user is a member of, and the assistant
-    // would then reason about the wrong trip rather than about none.
-    const { data: memberRows, error: memberErr } = await sc
-      .from("trip_members")
-      .select("trip_id, role")
-      .eq("user_id", userId)
-      .in("role", ["owner", "member"]);
-    if (memberErr) return [];
-    const memberTripIds = ((memberRows ?? []) as any[]).map((r) => r.trip_id as string);
-
-    const { data: owned, error: ownedErr } = await sc
-      .from("trips")
-      .select(TRIP_COLUMNS)
-      .eq("owner_id", userId)
-      .in("status", TRIP_STATUSES);
-    if (ownedErr) return [];
-
-    let memberTrips: any[] = [];
-    if (memberTripIds.length > 0) {
-      const { data, error: mtErr } = await sc
-        .from("trips")
-        .select(TRIP_COLUMNS)
-        .in("id", memberTripIds)
-        .in("status", TRIP_STATUSES);
-      if (mtErr) return [];
-      memberTrips = (data ?? []) as any[];
-    }
-
-    const seen = new Set<string>();
-    const all = [...((owned ?? []) as any[]), ...memberTrips].filter((t) => {
-      if (seen.has(t.id)) return false;
-      seen.add(t.id);
-      return true;
-    });
-    if (all.length === 0) return [];
-
-    // Prefer active, then earliest start date.
-    all.sort((a, b) => {
-      const aActive = a.status === "active" ? 0 : 1;
-      const bActive = b.status === "active" ? 0 : 1;
-      if (aActive !== bActive) return aActive - bActive;
-      return String(a.start_date ?? "9999").localeCompare(String(b.start_date ?? "9999"));
-    });
-    const trip = all[0] as any;
+    // ── Trip selection ────────────────────────────────────────────────────
+    // This used to be a second copy of toolGetCurrentTrip's union, differing
+    // from it by one status (`draft`). One seam now decides it for every
+    // Compass surface — compass/CompassCurrentTrip.ts — and the status set is
+    // passed explicitly so THIS surface's long-standing rule is preserved
+    // rather than quietly unified with the tool's (CT-02; the divergence is an
+    // owner decision, named in that module's header).
+    //
+    // `unread` keeps this function's existing contract: it returns no lines, so
+    // the assistant answers without trip knowledge rather than asserting a trip
+    // state it did not observe.
+    const resolved = await resolveCurrentTrip(sc, userId, CONTEXT_TRIP_STATUSES);
+    if (resolved.status !== "ok") return [];
+    const trip = resolved.trip;
 
     // Trip title is UGC (user-entered, and a trip is shared with members), so wrap
     // it in <portava:ugc> — matching the plan-item titles below — before it lands
     // in the /ask prompt. A co-member could otherwise inject via the trip title.
     const title    = wrapUgc(String(trip.title ?? "Untitled trip"));
-    const city     = String(trip.destination_city ?? "unknown city");
-    const country  = String(trip.destination_country ?? "unknown country");
+    const city     = String(trip.destinationCity ?? "unknown city");
+    const country  = String(trip.destinationCountry ?? "unknown country");
     const tz       = trip.timezone;
 
     const today    = todayYmd(tz, new Date());
     const todayMs  = ymdToUtcMs(today);
-    const startYmd = typeof trip.start_date === "string" ? trip.start_date.slice(0, 10) : null;
-    const endYmd   = typeof trip.end_date   === "string" ? trip.end_date.slice(0, 10)   : null;
+    const startYmd = trip.startDate;
+    const endYmd   = trip.endDate;
     const startMs  = startYmd ? ymdToUtcMs(startYmd) : null;
     const endMs    = endYmd   ? ymdToUtcMs(endYmd)   : null;
     if (todayMs == null) return [];

@@ -17,12 +17,18 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   buildPassportProjection,
+  buildOwnerCapabilities,
   type ViewerResolution,
   type ViewerPermissions,
 } from "../services/passport/PassportProjectionService.js";
 import { makePassportDb } from "./helpers/fakePassportDb.js";
+
+const TEST_API_SRC = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 const OWNER = "owner-1";
 const VIEWER = "viewer-1";
@@ -538,5 +544,86 @@ describe("buildAvailability/buildIntent — §8 explicit windows in the aggregat
     });
     const p = (await buildPassportProjection(db, OWNER, OWNER, { resolveViewerContext: resolver(selfRes) }))!;
     assert.equal(p.availability?.explicitWindow, null, "stale window not rendered as current");
+  });
+});
+
+/**
+ * §11's capability list — the six the tree can gate, and the seventh it argues
+ * against (census-passport P59).
+ *
+ * §11 names SEVEN capabilities. Six are derived in `buildOwnerCapabilities`.
+ * The seventh, `canProvideVisaBuddyService`, does not exist anywhere in the
+ * repository, and P59 records it as NOT-BUILT with an owner classification
+ * (`VISA_BUDDY_CAPABILITY`). P59's stated reason — "the tree's only current
+ * posture on visas is Layover disclaimers" — was measured wrong on 2026-09-14;
+ * the real posture is stronger and lives in two shipped policy artefacts, both
+ * pinned below. That is what makes the seventh capability a policy decision
+ * rather than a missing boolean.
+ *
+ * This suite exists so that adding the seventh is a DELIBERATE act that has to
+ * change an assertion which says why. It does not argue for or against adding
+ * it; it refuses to let it appear by accident, and it refuses to let the two
+ * artefacts that frame the decision be deleted quietly.
+ *
+ * MUTATION PROOF (each run): add any seventh key to the object
+ * `buildOwnerCapabilities` returns → case 1 RED naming it; remove the
+ * `VISA_HELP` family from travelScamSignals → case 2 RED; delete the curated
+ * -source sentence from lib/entryRequirements DISCLAIMER → case 3 RED.
+ */
+describe("§11 capabilities — six built, the seventh is a policy decision (census-passport P59)", () => {
+  const SPEC_SIX = [
+    "canJoinPublicTrip",
+    "canHostTrip",
+    "canCreateLargePlan",
+    "canUseCrewLocation",
+    "canContributeLiveIntel",
+    "canBecomeBuddy",
+  ];
+
+  it("buildOwnerCapabilities derives exactly the six §11 capabilities that gate something", () => {
+    const caps = buildOwnerCapabilities({
+      publicLevel: "trusted",
+      verified: true,
+      buddyVerified: false,
+      restrictions: { hosting: false, privatePlan: false, messaging: false, locationPlan: false },
+    });
+    const keys = Object.keys(caps).sort();
+    assert.deepEqual(
+      keys,
+      [...SPEC_SIX].sort(),
+      "the §11 capability set changed. A seventh capability must not appear here until " +
+        "VISA_BUDDY_CAPABILITY is ruled: an owner flag that gates nothing is the " +
+        "unproduced-vocabulary defect, and this one would gate an activity the abuse " +
+        "policy below classifies as a scam signal.",
+    );
+  });
+
+  it("a peer offering visa assistance is a live travel-SCAM family, not a capability", () => {
+    const src = fs.readFileSync(
+      path.join(TEST_API_SRC, "domain/telegraph/policies/travelScamSignals.ts"),
+      "utf8",
+    );
+    assert.match(
+      src,
+      /family:\s*"VISA_HELP"/,
+      "VISA_HELP must remain a scam family: `canProvideVisaBuddyService` would authorise " +
+        "the peer-to-peer behaviour this policy flags, which is why P59 is an owner call",
+    );
+    assert.ok(
+      // The literal pattern SOURCE, not a match against it.
+      src.includes("embassy\\s+(contact|insider|friend)"),
+      "the embassy-insider pattern is the concrete overlap with a 'visa buddy' offer",
+    );
+  });
+
+  it("the tree's built visa posture is curated official sources with a disclaimer", () => {
+    const src = fs.readFileSync(path.join(TEST_API_SRC, "lib/entryRequirements.ts"), "utf8");
+    assert.match(src, /HONESTY CONTRACT/, "entryRequirements must keep its stated contract");
+    assert.match(
+      src,
+      /always confirm with the official government source/,
+      "the shipped answer to a visa question is a curated corridor row plus this disclaimer — " +
+        "not another traveller",
+    );
   });
 });

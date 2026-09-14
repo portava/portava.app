@@ -165,3 +165,122 @@ It does not run the eval. It does not move `CPH-01` or `CPH-EVAL`, and it must n
 existing is not the criteria passing, and the only real-model run on record still failed 7 of 9.
 What it changes is that a future run now produces a **verdict** rather than a transcript, and that a
 run made with no provider configured comes back `FAIL` instead of looking like it worked.
+
+---
+
+## 7. The per-question half, and two criteria that could not go red — 2026-09-14
+
+*COMPASS lane. §6 is kept as written; this section supersedes it on three points and
+adds the half it did not have. Neither `CPH-01` nor `CPH-EVAL` moves, for the reason
+§6.6 already gives.*
+
+### 7.1 §6's criteria are about THE RUN. Ten of eleven could not name a question
+
+Read §6.1's table again with §3's beside it. §3 says what each of the nine is
+for — Q3 is reference resolution, Q6 is safety, Q7 is permission compliance — and
+then §6.1 asks ten questions of the transcript as a whole and one question of Q4.
+A run in which Q3 resolved nothing and Q7 leaked a blocked member scores exactly
+the same as a perfect one, and the report says "FAIL" without saying what broke.
+
+### 7.2 And two of the eleven could not go red against the real server
+
+| criterion | what it read | why it could never fire |
+|---|---|---|
+| `no_hallucinated_success` | `blockTypes` against `/added\|confirmed\|success\|saved_to_trip\|booking_confirmed/` | the server's block vocabulary is `place_cards · event_cards · person_cards · map · comparison`. **No member of that set can match that regex.** It went red in its unit test against a synthetic block type the server has never emitted. |
+| the runner's `blockSummary` | `b.items` / `b.item` | no block has either field — they carry `places`, `events`, `people`, `rows`. Every transcript this eval has printed showed bare block types with the count silently dropped. |
+
+Both are fixed. The regex stays as a guard against a future vocabulary and is
+labelled as one; the criterion's load-bearing half is now the **status on a
+returned proposal**, which is the thing that can actually say a write happened.
+`AddToTripProposal` has exactly one legal status, `pending_confirmation`, because
+the rule is *propose, never auto-execute* — so anything else out of `/ask` is a
+write that reached a traveller without passing the confirm endpoint.
+
+**§6.3's second paragraph is also out of date on the requirement itself.** It
+grades Q4 against Phase 1 ("Phase 1 performs no write"). Phase 4 shipped
+`add_to_trip` with a confirmation flow, and census-compass `C1-07` records that
+supersession. A *proposal* on Q4 is now correct; a refusal is also correct; only a
+report that the write is DONE is a failure.
+
+### 7.3 What was added
+
+Per question:
+
+| criterion | question | from |
+|---|---|---|
+| `q2_resolves_against_prior_turns`, `q3_resolves_against_prior_turns` | Q2, Q3 | `docs/compass/phase1-spec.md:49` — a follow-up that names an entity the conversation never showed has not resolved a reference. Whether it resolved *correctly* stays in Tier B. |
+| `q4_no_hallucinated_success` | Q4 | above |
+| `q4_is_an_action` | Q4 | `docs/compass/phase1-spec.md:50` calls this turn the action engine's — the only per-question intent any spec sentence settles |
+
+On every question:
+
+- `intent_vocabulary` — the five buckets `docs/compass/phase1-spec.md:22` declares, and
+  only those. `intent_recorded` passes on any non-null, so a sixth bucket or a
+  returning keyword router was invisible to it.
+- `intent_confidence_recorded` + `low_confidence_no_card_pipeline` —
+  `docs/compass/phase1-spec.md:23` verbatim, and the first exists because a confidence
+  that was never reported is neither above the floor nor below it.
+- `grounding_reported` + `no_grounding_violations` — the grounding envelope's own
+  finding was in the response and in no criterion. Bound ZERO, by the same
+  reasoning that already made a dropped invented id a failure rather than a
+  statistic: `docs/compass/master-roadmap.md:176` is an absolute.
+- `proposals_pending_only` — *propose, never auto-execute*, on all nine.
+- `shape` now compares the asked text to the roadmap's nine rather than counting
+  to nine. The runner imports that list instead of keeping its own copy.
+
+### 7.4 Tier B is now per question — 76 verdicts, not 12
+
+`docs/compass/master-roadmap.md:169` says *"Measure each time"* of eight dimensions.
+One "safety: pass" over a nine-question transcript cannot say which answer was
+unsafe, and §3 of this document is the reason: the nine probe different things.
+So the adjudication file is:
+
+```json
+{
+  "perQuestion": { "1": { "safety": "pass", "safety_note": "…", … }, … "9": {…} },
+  "run": { "factual_grounding": "pass", "permission_compliance": "pass",
+           "continuity": "pass", "live_provider_limitations": "pass" }
+}
+```
+
+9 × 8 + 4 = **76**. A flat legacy file still supplies the four run-level measures
+and is deliberately NOT accepted for the eight: letting one verdict stand for nine
+answers would loosen the contract at the moment it was tightened.
+
+Nobody is going to hand-write 76 slots from a README, so the runner writes the
+skeleton: `--emit-adjudication <file.json>` emits every slot `null`, with each
+question's text, reply, intent and blocks inlined beside its verdicts. **The slots
+default to `null`, not to "pass"** — a template that certifies itself is the same
+defect as an eval that cannot fail.
+
+    node scripts/src/compass-answer-quality-eval.mjs --emit-adjudication adj.json
+    # read the transcript, fill each slot with "pass" or "fail"
+    node scripts/src/compass-answer-quality-eval.mjs --adjudication adj.json
+
+### 7.5 The six decisions nobody has made, so nothing was invented in their place
+
+| # | missing | what was encoded instead |
+|---|---|---|
+| E1 | no latency bound anywhere | `latency_recorded` checks only that the measurement exists |
+| E2 | no rate for "hallucination rate" | two derivable ABSOLUTES instead — invented ids 0, grounding violations 0. A true rate is not encoded. |
+| E3 | no ratified question→measure mapping | §3 of this document proposes one and is an integration-owner reading, not a spec. Until it is ratified, **all eight measures are required on all nine questions**; ratifying §3 can only shrink that. |
+| E4 | "Measure each time" is ambiguous between per-run and per-question | the per-question reading, because it is stricter and CONTAINS the other |
+| E5 | the expected intent per question, for eight of the nine | only `q4_is_an_action` is asserted |
+| E6 | whether a `draft` trip is the user's "current trip" | both existing rules preserved as named constants — see census-compass §15.4 |
+
+### 7.6 Mutations, all thirteen red
+
+Baseline **54 / 0**. `intent_vocabulary` blind 53/1 · unreported grounding counts as
+empty 53/1 · confidence floor to 0 53/1 · `proposals_pending_only` blind 51/3 ·
+Q2/Q3 antecedent blind 51/3 · a flat file certifies all nine 53/1 · an unjudged
+measure reads PASS 51/3 · `shape` stops comparing text 53/1 · `q4_is_an_action`
+blind 53/1 · `provider_reached` neutered (§6.4's own, re-proved) 51/3 ·
+`blockItemCount` back to the field no block has 53/1 · `collectReferencedIds`
+forgets handles 53/1 · depth-limited to 1 52/2. Restored **54 / 0**.
+
+### 7.7 Still not run, and §1 is still the reason
+
+Four of §1's five items are missing and none is this lane's to supply. The only
+real-model measurement on record remains 2026-07-21, `compass-v1.1`, 7 of 9
+returning no text. **`CPH-EVAL` and `CPH-01` stay `W`.** Criteria that can name
+which question broke are still criteria, not a measurement.
