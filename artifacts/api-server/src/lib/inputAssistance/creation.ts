@@ -149,16 +149,36 @@ export function filterInfeasibleCandidates<T>(
   candidates: ConstraintCandidate<T>[],
   constraint: FeasibilityConstraint = {},
 ): ConstraintCandidate<T>[] {
+  const { feasible, demoted } = partitionByFeasibility(candidates, constraint);
+  return [...feasible, ...demoted];
+}
+
+/**
+ * The §18 classification itself, as a three-way PARTITION.
+ *
+ * `filterInfeasibleCandidates` above is this function plus a concatenation, and
+ * is kept verbatim for its existing caller. The partition exists because the
+ * MAIN suggestion pipeline needs the verdict, not the order: it demotes by
+ * lowering a row's confidence (the secondary sort key) rather than by moving it,
+ * since the gateway re-ranks everything by §9 type order afterwards and a mere
+ * reordering would not survive that. Both callers therefore run the SAME rule —
+ * §18 is one rule, and two implementations of it would drift.
+ */
+export function partitionByFeasibility<T>(
+  candidates: ConstraintCandidate<T>[],
+  constraint: FeasibilityConstraint = {},
+): { feasible: ConstraintCandidate<T>[]; demoted: ConstraintCandidate<T>[]; removed: ConstraintCandidate<T>[] } {
   const cityKey = foldCity(constraint.city);
   const wStart = parseMs(constraint.windowStart);
   const wEnd = parseMs(constraint.windowEnd);
 
   const feasible: ConstraintCandidate<T>[] = [];
   const demoted: ConstraintCandidate<T>[] = [];
+  const removed: ConstraintCandidate<T>[] = [];
 
   for (const c of candidates) {
     // HARD infeasible → removed entirely.
-    if (c.blocked === true || c.sensitiveExact === true) continue;
+    if (c.blocked === true || c.sensitiveExact === true) { removed.push(c); continue; }
 
     let soft = false;
     // Outside the constrained city.
@@ -176,7 +196,7 @@ export function filterInfeasibleCandidates<T>(
     }
     (soft ? demoted : feasible).push(c);
   }
-  return [...feasible, ...demoted];
+  return { feasible, demoted, removed };
 }
 
 // ── Duplicate → disambiguation projection ──────────────────────────────────────

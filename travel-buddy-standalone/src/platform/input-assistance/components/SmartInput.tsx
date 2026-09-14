@@ -21,7 +21,7 @@
  * the component, decides how much help a field gets (§2 "the field owns
  * behavior").
  */
-import React, { forwardRef, useCallback, useMemo, useState } from 'react';
+import React, { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AccessibilityInfo,
   View,
@@ -36,7 +36,17 @@ import type { InputContext } from '../types/inputContext.ts';
 import type { InputSuggestion, InputSessionContext } from '../types/inputSuggestion.ts';
 import { useInputAssistance } from '../hooks/useInputAssistance.ts';
 import { SuggestionOverlay } from './SuggestionOverlay.tsx';
-import { emitInputEvent } from '../services/inputTelemetry.ts';
+import {
+  emitInputEvent,
+  emitSuggestionsRendered,
+  emitValidationShown,
+  emitSuggestionsDismissed,
+  emitManualValueKept,
+  emitRawSearchSubmitted,
+  emitCorrectionAccepted,
+  emitDisambiguationSelected,
+  type TelemetryField,
+} from '../services/inputTelemetry.ts';
 import { recordSuggestionSelection } from '../services/selectionRecorder.ts';
 import { color, space, radius, type as t } from '../../../theme/tokens.ts';
 
@@ -113,6 +123,14 @@ export const SmartInput = forwardRef<TextInput, SmartInputProps>(function SmartI
   const [focused, setFocused] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
 
+  // ── §44/§45 funnel state ────────────────────────────────────────────────────
+  // `shownRef` is what is currently in front of the user; `acceptedRef` says
+  // whether they took any of it. Together they are what separates the IGNORED
+  // arm from the ACCEPTED one — §45 requires both, and only acceptance was ever
+  // recorded. Refs, not state: an analytics fact must not cause a re-render.
+  const shownRef = useRef<{ signature: string; count: number } | null>(null);
+  const acceptedRef = useRef(false);
+
   const { suggestions, loading, unavailable, policy } = useInputAssistance({
     fieldId,
     text: value,
@@ -121,9 +139,45 @@ export const SmartInput = forwardRef<TextInput, SmartInputProps>(function SmartI
     enabled: assist && focused,
   });
 
+  const telemetryField: TelemetryField | null = useMemo(
+    () => (policy ? { fieldId, context: policy.context, policy: policy.telemetryPolicy } : null),
+    [fieldId, policy],
+  );
+
   const assistEnabled = assist && !!policy && policy.mode !== 'no_assistance';
   const overlayVisible = assistEnabled && focused && (loading || suggestions.length > 0 || unavailable);
   const activeId = activeIndex >= 0 && activeIndex < suggestions.length ? suggestions[activeIndex].id : null;
+
+  // ── §44 `suggestion_rendered` / `validation_shown` ──────────────────────────
+  // Both were declared and never emitted. This is the funnel's denominator: an
+  // impression, keyed by the id-signature of the list, so a re-render of the
+  // SAME rows does not inflate the count and a genuinely new list does.
+  const renderSignature =
+    overlayVisible && suggestions.length > 0 ? suggestions.map((x) => x.id).join('|') : '';
+  useEffect(() => {
+    if (!telemetryField) return;
+    if (renderSignature === '') {
+      // A list that WAS shown has gone away. If nothing in it was taken, that is
+      // §45's IGNORED arm — the signal the learning loop has never had.
+      const prev = shownRef.current;
+      if (prev && !acceptedRef.current) {
+        emitSuggestionsDismissed(telemetryField, prev.count, focused ? 'no_results' : 'blur');
+      }
+      shownRef.current = null;
+      acceptedRef.current = false;
+      return;
+    }
+    if (shownRef.current?.signature === renderSignature) return;
+    shownRef.current = { signature: renderSignature, count: suggestions.length };
+    acceptedRef.current = false;
+    emitSuggestionsRendered(telemetryField, suggestions);
+    const validations = suggestions.filter((x) => x.type === 'validation').length;
+    if (validations > 0) emitValidationShown(telemetryField, validations);
+    // `suggestions` is addressed through renderSignature, which is its identity
+    // for this purpose; depending on the array itself would re-fire on every
+    // re-render that produced an equal list.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [renderSignature, telemetryField]);
 
   const handleSelect = useCallback(
     (s: InputSuggestion) => {
@@ -135,6 +189,20 @@ export const SmartInput = forwardRef<TextInput, SmartInputProps>(function SmartI
           { suggestionType: s.type, source: s.source },
           policy.telemetryPolicy,
         );
+      }
+      // §44 — the per-KIND acceptance events, each declared and never emitted.
+      // They are not redundant with `suggestion_selected`: §57 asks for a
+      // wrong-selection reversal rate and a duplicate-prevention count, and both
+      // need to know WHICH kind of row resolved the field, not merely that one
+      // did. `acceptedRef` closes the impression so the dismissal branch above
+      // cannot also count this list as ignored.
+      acceptedRef.current = true;
+      if (telemetryField) {
+        if (s.type === 'correction') emitCorrectionAccepted(telemetryField, s);
+        if (s.type === 'disambiguation') emitDisambiguationSelected(telemetryField, s);
+        if (s.action?.type === 'submit_search') {
+          emitRawSearchSubmitted(telemetryField, (s.replacementText ?? value ?? '').length, true);
+        }
       }
       const result = onSelectSuggestion?.(s);
       // Default: apply replacementText to the field (never touches text outside
@@ -162,7 +230,7 @@ export const SmartInput = forwardRef<TextInput, SmartInputProps>(function SmartI
       recordSuggestionSelection(s, { policy, query: value });
       setActiveIndex(-1);
     },
-    [fieldId, policy, onSelectSuggestion, onChangeText, value],
+    [fieldId, policy, telemetryField, onSelectSuggestion, onChangeText, value],
   );
 
   const handleKeyPress = useCallback(
@@ -179,11 +247,15 @@ export const SmartInput = forwardRef<TextInput, SmartInputProps>(function SmartI
           handleSelect(suggestions[activeIndex]);
         }
       } else if (key === 'Escape') {
+        if (telemetryField && shownRef.current && !acceptedRef.current) {
+          emitSuggestionsDismissed(telemetryField, shownRef.current.count, 'escape');
+          shownRef.current = null;
+        }
         setActiveIndex(-1);
         setFocused(false);
       }
     },
-    [onKeyPress, overlayVisible, suggestions, activeIndex, handleSelect],
+    [onKeyPress, overlayVisible, suggestions, activeIndex, handleSelect, telemetryField],
   );
 
   const a11yLabel = label ?? textInputProps.placeholder ?? fieldId;
@@ -213,9 +285,23 @@ export const SmartInput = forwardRef<TextInput, SmartInputProps>(function SmartI
           onFocus?.(e);
         }}
         onBlur={(e) => {
+          // §44 `manual_value_kept` — the EDITED arm of §45's loop: the field
+          // had assistance in front of it and the user kept their own text. It
+          // carries a LENGTH, never the text, so it is emittable on a caption or
+          // a private message whose policy forbids raw capture.
+          if (telemetryField && shownRef.current && !acceptedRef.current && value.trim().length > 0) {
+            emitManualValueKept(telemetryField, value.trim().length);
+          }
           setFocused(false);
           setActiveIndex(-1);
           onBlur?.(e);
+        }}
+        onSubmitEditing={(e) => {
+          // §44 `raw_search_submitted` — submitted as typed, resolving nothing.
+          if (telemetryField && value.trim().length > 0 && !acceptedRef.current) {
+            emitRawSearchSubmitted(telemetryField, value.trim().length, false);
+          }
+          textInputProps.onSubmitEditing?.(e);
         }}
         onKeyPress={handleKeyPress}
         {...textInputProps}

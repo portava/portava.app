@@ -8,7 +8,7 @@ with aggregate queries only; portava-ci (`hwokxgbmezheskbzskfr`) received migrat
 | | |
 |---|---|
 | **Surface** | `services/trust/` (8 services), `lib/trustScore.ts`, `lib/trustMaintenanceScheduler.ts`, `routes/trust-admin.ts`, 9 test files |
-| **Spec** | **None.** Trust is one of the eleven surfaces `cross-cutting-obligations.md` names as having neither a spec nor a census. |
+| **Spec** | **STALE SENTENCE CORRECTED 2026-09-14 — THIS CENSUS HAS A SPEC AND HAS BEEN GRADED AGAINST IT.** The owner supplied `docs/specs/upgrades-v2/03-TRUST-v2.md` (TRV2-01..12) and `docs/trust/verified-foundation-plan.md` (five privacy invariants, phases V-0..V-7); both are in the tree at `7d1f2d498` with sha256 recorded in `docs/specs/upgrades-v2/SOURCE-MANIFEST.json`. **The denominator already reflects them: 52 -> 93.** The sentence this replaces read *"None. Trust is one of the eleven surfaces `cross-cutting-obligations.md` names as having neither a spec nor a census"* — true when written, and false from the moment the specs landed. It was quoted back as current fact after that, which is the whole cost of leaving a header behind its own rows. |
 | **Denominator** | **52** requirements from three sources (§1): 20 inbound obligations from other specs, 32 contracts Trust's own code asserts. 0 CANNOT-VERIFY. |
 | **Measured (before this pass)** | BUILT-AND-CORRECT **38** · BUILT-BUT-WRONG **13** · NOT-BUILT **1** · CANNOT-VERIFY **0** → CONSTRUCTED **98.1 %** · CORRECT **73.1 %** |
 | **After this pass** | BUILT-AND-CORRECT **44** · BUILT-BUT-WRONG **8** · NOT-BUILT **0** → CONSTRUCTED **100 %** · CORRECT **84.6 %** |

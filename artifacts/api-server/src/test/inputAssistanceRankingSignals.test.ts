@@ -38,7 +38,24 @@ import {
   trustConfidence,
   gemLocationPrecision,
   SIGNAL_CEILING,
+  spamRisk,
+  applySpamRisk,
+  SPAM_MAX_PENALTY,
+  applyDiversity,
+  diversitySignature,
+  DIVERSITY_STEP,
+  DIVERSITY_MAX_PENALTY,
+  applyFeasibility,
+  applyTripFit,
+  INFEASIBLE_DEMOTION,
+  TRIP_FIT_BOOST,
 } from "../lib/inputAssistance/rankingSignals.js";
+import {
+  resolveTaskConstraint,
+  classifyFeasibility,
+  isEmptyConstraint,
+  EMPTY_TASK_CONSTRAINT,
+} from "../lib/inputAssistance/taskContext.js";
 import { extractTemporal } from "../lib/inputAssistance/semanticParser.js";
 import { POLICY_VERSION } from "../lib/inputAssistance/policyRegistry.js";
 import type { SearchResult } from "../routes/discoverySearch.js";
@@ -429,6 +446,271 @@ describe("§15 TemporalFit end-to-end through POST /input-assistance/suggest", (
     assert.equal(
       events[0].confidence, events[1].confidence,
       "with no time operator the two events must be indistinguishable — otherwise the test above proves nothing",
+    );
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 5. §15 SpamRisk (G106) + §36 keyword-stuffing resistance (G231)
+//
+// Both rows read "no signal anywhere in the layer" — no term-frequency,
+// repetition or stuffing heuristic existed in `lib/inputAssistance/` or in the
+// searchers it calls, so a listing that repeated its keywords ranked exactly
+// like one that did not.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("§15 SpamRisk (G106) / §36 keyword stuffing (G231) — the term itself", () => {
+  it("scores a stuffed string above a clean one of the same length", () => {
+    // MUTATION-PROOF: make spamRisk() return 0 unconditionally → RED.
+    const stuffed = spamRisk("bangkok tour bangkok tour bangkok tour bangkok");
+    const clean = spamRisk("Bangkok street food walking tour with a local guide");
+    assert.ok(stuffed > 0.2, `expected a repetition signal, got ${stuffed}`);
+    assert.equal(clean, 0, `ordinary prose must score zero, got ${clean}`);
+    assert.ok(stuffed > clean);
+  });
+
+  it("catches keyword banners and separator chains, not ordinary names", () => {
+    assert.ok(spamRisk("BEST CHEAP TOURS BANGKOK NOW") > 0, "an all-caps keyword banner");
+    assert.ok(spamRisk("tours | bangkok | cheap | best | guide") > 0, "a separator chain");
+    assert.equal(spamRisk("BBQ"), 0, "a short name is never spam");
+    assert.equal(spamRisk("Sky36 Rooftop Bar"), 0);
+    assert.equal(spamRisk("Bún Chả Hương Liên"), 0);
+  });
+
+  it("demotes, never removes, and is the identity on a clean row", () => {
+    const base = 0.85;
+    assert.equal(applySpamRisk(base, "Sky36 Rooftop Bar"), base, "clean rows are byte-identical");
+    const demoted = applySpamRisk(base, "bangkok tour bangkok tour bangkok tour bangkok");
+    assert.ok(demoted < base);
+    assert.ok(demoted >= base - SPAM_MAX_PENALTY, "the penalty is bounded");
+    assert.ok(demoted > 0, "a demotion is never a deletion");
+  });
+});
+
+describe("§36 keyword stuffing end-to-end (G231) — a stuffed place loses to a clean one", () => {
+  it("the clean listing outranks the stuffed listing on the same query", async () => {
+    // RED BEFORE THE FIX: with no SpamRisk term both rows scored the same match
+    // tier and input order decided — and the stuffed row is seeded FIRST here
+    // for exactly that reason.
+    setup({
+      discovery_places: [
+        { id: "p-stuffed", name: "Bangkok Tour Bangkok Tour Bangkok Tour Bangkok", city: "Bangkok",
+          blurb: null, image_url: null, header_image_source: null, image_source_type: null,
+          image_accuracy_status: null, category: "tour", primary_category: "tour",
+          lat: 13.7, lng: 100.5, canonical_location_id: null, created_at: "2026-01-01T00:00:00Z",
+          submitted_by: null, status: "active", saved_count: 0 },
+        { id: "p-clean", name: "Bangkok Tour Collective", city: "Bangkok",
+          blurb: null, image_url: null, header_image_source: null, image_source_type: null,
+          image_accuracy_status: null, category: "tour", primary_category: "tour",
+          lat: 13.7, lng: 100.5, canonical_location_id: null, created_at: "2026-01-01T00:00:00Z",
+          submitted_by: null, status: "active", saved_count: 0 },
+      ],
+      blocks: [], user_privacy_settings: [], canonical_locations: [],
+    });
+    const r = await suggest({ context: "place_picker", text: "bangkok tour" });
+    const body = await r.json() as any;
+    const places = body.suggestions.filter((s: any) => s.entityType === "place");
+    assert.equal(places.length, 2, "both rows are still RETURNED — this is a ranking term, not a filter");
+    assert.equal(places[0].entityId, "p-clean", "the clean listing must lead");
+    assert.ok((places[0].confidence ?? 0) > (places[1].confidence ?? 0));
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 6. §15 Diversity (G102) — a score term, not a side effect of slot allocation
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("§15 Diversity (G102) — repeats within one type are spread", () => {
+  it("demotes each repeat of a display signature, progressively and with a cap", () => {
+    // MUTATION-PROOF: return `rows` unchanged from applyDiversity → RED.
+    const rows = [
+      { type: "entity", label: "Street Food Tour", subtitle: "Bangkok", confidence: 0.9 },
+      { type: "entity", label: "street food tour", subtitle: "Bangkok", confidence: 0.9 },
+      { type: "entity", label: "The Street Food Tour", subtitle: "Bangkok", confidence: 0.9 },
+      { type: "entity", label: "Rooftop Bar", subtitle: "Bangkok", confidence: 0.9 },
+    ];
+    const out = applyDiversity(rows);
+    assert.equal(out[0]!.confidence, 0.9, "the first of a run keeps its score");
+    assert.ok(Math.abs(out[1]!.confidence! - (0.9 - DIVERSITY_STEP)) < 1e-9);
+    assert.ok(Math.abs(out[2]!.confidence! - (0.9 - 2 * DIVERSITY_STEP)) < 1e-9);
+    assert.equal(out[3]!.confidence, 0.9, "a different signature is untouched");
+    assert.ok(2 * DIVERSITY_STEP <= DIVERSITY_MAX_PENALTY);
+  });
+
+  it("never lets one assistance type suppress another (§9 order is untouched)", () => {
+    const rows = [
+      { type: "entity", label: "Bangkok", confidence: 0.9 },
+      { type: "recent", label: "Bangkok", confidence: 0.7 },
+    ];
+    const out = applyDiversity(rows);
+    assert.equal(out[1]!.confidence, 0.7, "a recent row is not a repeat of an entity row");
+  });
+
+  it("is byte-identical on a list with no repeats", () => {
+    const rows = [{ type: "entity", label: "A", confidence: 0.5 }, { type: "entity", label: "B", confidence: 0.5 }];
+    assert.equal(applyDiversity(rows), rows, "the identity case returns the SAME array");
+    assert.equal(diversitySignature("The Rooftop", "Bangkok"), diversitySignature("rooftop", "bangkok"));
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 7. §18 task feasibility (G122/G124/G125) + §15 TripFit (G96) + §16 carryover (G107)
+//
+// `filterInfeasibleCandidates` had exactly ONE caller — duplicate candidates in
+// creation contexts. The main pipeline never called it, so "remove or demote
+// infeasible options", "outside Trip date/time window" and "outside selected
+// city/area" had no effect on an ordinary suggestion list, and the whole of
+// carryover was an exact-cityId reorder.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const TRIP_ID = "ee000000-0000-4000-a000-000000000009";
+const BKK_ID = "canon-bangkok";
+
+function bkkTripState(extra: FakeState = {}): FakeState {
+  return {
+    trips: [{
+      id: TRIP_ID, destination_city: "Bangkok", destination_country: "Thailand",
+      start_date: "2026-12-01", end_date: "2026-12-10", status: "upcoming",
+      destination_lat: 13.7563, destination_lng: 100.5018,
+    }],
+    canonical_locations: [{
+      id: BKK_ID, kind: "city", name: "Bangkok", normalized_name: "bangkok", search_key: "bangkok",
+      display_name: "Bangkok, Thailand", city: null, region: null, country: "Thailand",
+      country_code: "TH", postal_code: null, lat: 13.7563, lng: 100.5018, provider_ids: {}, aliases: [],
+    }],
+    blocks: [], user_privacy_settings: [], profiles: [{ id: HOST, account_status: "active" }],
+    event_rsvps: [],
+    ...extra,
+  };
+}
+
+describe("§16/§18 task constraint (G107/G122/G125) — the pure resolver", () => {
+  it("reads the Trip's city and date window from the session context", async () => {
+    const sc = makeFakeClient(bkkTripState()) as any;
+    const c = await resolveTaskConstraint(sc, { tripId: TRIP_ID });
+    assert.equal(c.city, "Bangkok");
+    assert.equal(c.windowStart, "2026-12-01");
+    assert.equal(c.windowEnd, "2026-12-10T23:59:59.999Z", "the Trip's LAST evening is inside the window");
+    assert.ok(!isEmptyConstraint(c));
+  });
+
+  it("a session with no task issues no query and constrains nothing", async () => {
+    const sc = makeFakeClient(bkkTripState()) as any;
+    const c = await resolveTaskConstraint(sc, undefined);
+    assert.deepEqual(c, EMPTY_TASK_CONSTRAINT);
+    assert.ok(isEmptyConstraint(c));
+    assert.equal(classifyFeasibility([result({ id: "x", type: "places", title: "X" })], c).demotedIds.size, 0);
+  });
+
+  it("classifies out-of-city and out-of-window rows, and never a city row", () => {
+    const c = {
+      cityId: null, city: "Bangkok", country: "Thailand", tripId: TRIP_ID,
+      windowStart: "2026-12-01", windowEnd: "2026-12-10T23:59:59.999Z",
+    };
+    const rows = [
+      result({ id: "in-city", type: "places", title: "Rooftop", locationPreview: "Bangkok" }),
+      result({ id: "out-city", type: "places", title: "Rooftop", locationPreview: "Da Nang" }),
+      result({ id: "in-window", type: "events", title: "Party", locationPreview: "Bangkok, Thailand", startsAt: "2026-12-05T19:00:00Z" }),
+      result({ id: "out-window", type: "events", title: "Party", locationPreview: "Bangkok, Thailand", startsAt: "2027-06-05T19:00:00Z" }),
+      result({ id: "a-city", type: "cities", title: "Da Nang", locationPreview: "Vietnam" }),
+    ];
+    const v = classifyFeasibility(rows, c);
+    assert.ok(!v.demotedIds.has("in-city"));
+    assert.ok(v.demotedIds.has("out-city"), "§18: outside the selected city → demoted");
+    assert.ok(!v.demotedIds.has("in-window"));
+    assert.ok(v.demotedIds.has("out-window"), "§18: outside the Trip date window → demoted");
+    assert.ok(!v.demotedIds.has("a-city"), "a CITY row is never demoted for being another city");
+    assert.ok(v.tripFitIds.has("in-city"), "§15 TripFit: a candidate in the Trip city");
+    assert.ok(!v.tripFitIds.has("out-city"));
+  });
+
+  it("the terms themselves demote and boost within bounds", () => {
+    assert.equal(applyFeasibility(0.9, false), 0.9);
+    assert.ok(Math.abs(applyFeasibility(0.9, true) - (0.9 - INFEASIBLE_DEMOTION)) < 1e-9);
+    assert.equal(applyFeasibility(0.1, true), 0, "never negative");
+    assert.equal(applyTripFit(0.5, false), 0.5);
+    assert.ok(Math.abs(applyTripFit(0.5, true) - (0.5 + TRIP_FIT_BOOST)) < 1e-9);
+    assert.ok(applyTripFit(0.99, true) <= 0.99, "TripFit cannot pull an exact match DOWN");
+  });
+});
+
+describe("§18 task feasibility end-to-end (G122/G124/G125/G96/G107)", () => {
+  it("a place outside the Trip's city is DEMOTED, not removed", async () => {
+    // RED BEFORE THE FIX: the main pipeline never called filterInfeasibleCandidates,
+    // so both rows scored identically and the out-of-city row — seeded FIRST —
+    // led the list.
+    setup(bkkTripState({
+      discovery_places: [
+        { id: "p-far", name: "Rooftop Bar One", city: "Da Nang", blurb: null, image_url: null,
+          header_image_source: null, image_source_type: null, image_accuracy_status: null,
+          category: "bar", primary_category: "bar", lat: 16.0, lng: 108.2,
+          canonical_location_id: null, created_at: "2026-01-01T00:00:00Z", submitted_by: null,
+          status: "active", saved_count: 0 },
+        { id: "p-near", name: "Rooftop Bar Two", city: "Bangkok", blurb: null, image_url: null,
+          header_image_source: null, image_source_type: null, image_accuracy_status: null,
+          category: "bar", primary_category: "bar", lat: 13.7, lng: 100.5,
+          canonical_location_id: null, created_at: "2026-01-01T00:00:00Z", submitted_by: null,
+          status: "active", saved_count: 0 },
+      ],
+    }));
+    const r = await suggest({
+      context: "place_picker", text: "rooftop bar",
+      sessionContext: { tripId: TRIP_ID },
+    });
+    const body = await r.json() as any;
+    const places = body.suggestions.filter((s: any) => s.entityType === "place");
+    assert.equal(places.length, 2, "§18 says demote — the far row must still be reachable");
+    assert.equal(places[0].entityId, "p-near", "the Trip-city row must lead");
+    assert.ok((places[0].confidence ?? 0) > (places[1].confidence ?? 0));
+  });
+
+  it("the SAME request without a Trip leaves the two rows indistinguishable (the control)", async () => {
+    setup(bkkTripState({
+      discovery_places: [
+        { id: "p-far", name: "Rooftop Bar One", city: "Da Nang", blurb: null, image_url: null,
+          header_image_source: null, image_source_type: null, image_accuracy_status: null,
+          category: "bar", primary_category: "bar", lat: 16.0, lng: 108.2,
+          canonical_location_id: null, created_at: "2026-01-01T00:00:00Z", submitted_by: null,
+          status: "active", saved_count: 0 },
+        { id: "p-near", name: "Rooftop Bar Two", city: "Bangkok", blurb: null, image_url: null,
+          header_image_source: null, image_source_type: null, image_accuracy_status: null,
+          category: "bar", primary_category: "bar", lat: 13.7, lng: 100.5,
+          canonical_location_id: null, created_at: "2026-01-01T00:00:00Z", submitted_by: null,
+          status: "active", saved_count: 0 },
+      ],
+    }));
+    const r = await suggest({ context: "place_picker", text: "rooftop bar" });
+    const body = await r.json() as any;
+    const places = body.suggestions.filter((s: any) => s.entityType === "place");
+    assert.equal(places.length, 2);
+    assert.equal(
+      places[0].confidence, places[1].confidence,
+      "with no task context the two rows must be identical — otherwise the test above proves nothing",
+    );
+  });
+
+  it("an event outside the Trip's date window is demoted (§18 G124)", async () => {
+    setup(bkkTripState({
+      events: [
+        // Seeded first AND earliest, so the underlying event search (which orders
+        // by starts_at ascending) puts the OUT-OF-WINDOW row first on its own.
+        { id: "evt-outside", title: "Riverside Bazaar Autumn", host_id: HOST, city: "Bangkok", country: "Thailand",
+          starts_at: "2026-10-01T12:00:00.000Z", visibility: "public", state: "published", created_at: "2026-01-01T00:00:00Z" },
+        { id: "evt-inside", title: "Riverside Bazaar Winter", host_id: HOST, city: "Bangkok", country: "Thailand",
+          starts_at: "2026-12-05T12:00:00.000Z", visibility: "public", state: "published", created_at: "2026-01-01T00:00:00Z" },
+      ],
+    }));
+    const r = await suggest({
+      context: "global_search", text: "riverside bazaar",
+      sessionContext: { tripId: TRIP_ID },
+    });
+    const body = await r.json() as any;
+    const events = body.suggestions.filter((s: any) => s.entityType === "event");
+    assert.equal(events.length, 2, "demoted, not filtered");
+    assert.equal(events[0].entityId, "evt-inside", "the in-window event must lead");
+    assert.ok(
+      (events[0].confidence ?? 0) > (events[1].confidence ?? 0),
+      "and it must lead BECAUSE of the window demotion, not by input order",
     );
   });
 });

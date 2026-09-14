@@ -21,20 +21,35 @@ Backend paths are relative to `artifacts/api-server/src/`, client paths to
 | Measure | Value |
 | --- | --- |
 | **Denominator — testable requirements** | **373** |
-| BUILT-AND-CORRECT | **230** |
-| BUILT-BUT-WRONG | **69** |
-| NOT-BUILT | **70** |
+| BUILT-AND-CORRECT | **262** |
+| BUILT-BUT-WRONG | **55** |
+| NOT-BUILT | **52** |
 | CANNOT-VERIFY | **4** |
-| **CONSTRUCTED%** = (C+W)/373 | **299 / 373 = 80.2 %** |
-| **CORRECT%** (raw) = C/373 | **230 / 373 = 61.7 %** |
-| **CORRECT% (spec-attributable)** | **207 / 373 = 55.5 %** |
+| **CONSTRUCTED%** = (C+W)/373 | **317 / 373 = 85.0 %** |
+| **CORRECT%** (raw) = C/373 | **262 / 373 = 70.2 %** |
+| **CORRECT% (spec-attributable)** = (C−23ᵖ)/373 | **239 / 373 = 64.1 %** |
+| **THE GAP** = W/373 | **55 / 373 = 14.7 %** |
 | CANNOT-VERIFY share | **4 / 373 = 1.1 %** |
 
+> **THIS TABLE WAS STALE AND IS NOW RESTATED FROM THE ROWS (§11).** It read
+> `230 / 69 / 70 / 4` — the original count — through two later passes that moved
+> rows without touching it (§8 to `237 / 69 / 63 / 4`, §9 to `243 / 63 / 63 / 4`),
+> each of which restated the headline only inside its own section. A reader who
+> read the top of this document got a number the body had already contradicted
+> twice. `check:census-integrity` reads the LAST stated headline, so it never saw
+> this one and never complained: the drift was invisible to the guard by
+> construction. §11 restates it here as well as in §11.10, and every later pass
+> should do the same. **Two derived tables in §5 are NOT restated and are marked
+> superseded in place** — recomputing them needs a full re-derivation of all 373
+> row→section attributions, which this pass did not do, and a partially-patched
+> table would be wrong in a newer and less obvious way.
+
 The headline hides the finding. Split by whether §51 ever scoped a phase for the
-section (§5 below): **sections a phase scoped score 90.7 % constructed / 71.4 %
-correct over 280 requirements; sections no phase scoped score 48.4 % / 32.3 %
-over 93.** The programme executed its plan well; the plan omitted a quarter of
-the spec.
+section (§5 below): the sections a phase scoped score far better than the ones no
+phase ever did. That gap narrowed this pass only because §11 deliberately spent
+its effort on UNSCOPED sections — §10's three normalization clauses, §36's
+stuffing control, and seven of §44's telemetry arms. The programme executed its
+plan well; the plan omitted a quarter of the spec.
 
 ### The three things that matter most
 
@@ -298,7 +313,7 @@ inert in production.
 | G2 | Assist — return entities, completions, actions, corrections, validations or AI suggestions per field | C | `gateway.ts:146-593` runs every lane: entities `:343-404`, completion `:423`, validation `:411-418`, creation correction/validation `:299-313`, semantic actions `:457-468`, AI `:480-498`. |
 | G3 | Structure — convert selected text into canonical ids, time windows, categories, actions, constraints | C | canonical id + timezone binding `geoResolver.ts:70-81`; temporal windows `semanticParser.ts:264-362`; categories `:141-169`; actions `:611-631`. |
 | G4 | Protect — apply privacy/block/eligibility/trust/location rules **before** suggestions reach the client | C | `gateway.ts:373-402` fetches the block + age sets and returns nothing when either is null, before any projection; the picker branch repeats it at `:614-619`. |
-| G5 | Learn — improve ranking from accepted **and ignored** suggestions and successful **downstream outcomes**, without optimising for typing volume | W | Only the *accepted* arm exists (`personalization.ts:243-268`, driven by `selection_count`). Nothing records an ignore (`suggestion_dismissed` never fires) and no downstream-outcome signal exists anywhere. ☠prod. |
+| G5 | Learn — improve ranking from accepted **and ignored** suggestions and successful **downstream outcomes**, without optimising for typing volume | W | The IGNORED arm now has a producer — `suggestion_dismissed` fires from `components/SmartInput.tsx:164#emitSuggestionsDismissed(telemetryField, prev.count, focused ? 'no_results' : 'blur')` and is mutation-proven (G313). It still moves NO rank: `personalization.ts:243-268` is unchanged and reads only `selection_count`, and the downstream-outcome signal still has no caller (G320). So the verdict is unchanged and one of the row's two named gaps has moved from "no signal" to "signal with no consumer". WHAT WOULD TURN THIS RED: a ranking term that reads a shown/ignored ratio, plus a downstream-outcome write — both of which need a place for the events to LAND first (G263). ☠prod. |
 
 ### §2 Non-Negotiable Principles
 
@@ -312,7 +327,7 @@ inert in production.
 | G11 | Privacy and eligibility filtering occur before projection | C | `gateway.ts:373-402` — the gate runs, then `projectSearchResult`. Fail-closed comment at `:402`. |
 | G12 | Live suggestions carry freshness and are never fabricated when live state is unavailable | C | `liveSuggestions.ts:177-223` `buildFreshnessState` returns `null` for an empty envelope list and every label maps from a real claim value; unknown values return `null` (`:120`, `:138`) rather than a default. |
 | G13 | Offline mode degrades gracefully and must not present stale data as live | W | The "never stale-as-live" half is exact (`components/freshnessDisplay.ts:53-58` drops the label and keeps only the age). The "degrades gracefully" half has no substrate: `offlinePolicy` is declared per context and **read by nothing** (see G30), and no local dictionary or city index ships. |
-| G14 | Suggestions should accelerate real-world outcomes, not increase keystrokes or engagement for its own sake | W | The only learning signal that moves rank *is* acceptance count: `personalization.ts:220-228` scales the boost by `selection_count`. That is optimising for acceptance, which §45 explicitly forbids. No outcome or task-completion signal exists to balance it. |
+| G14 | Suggestions should accelerate real-world outcomes, not increase keystrokes or engagement for its own sake | W | Unchanged where it matters: `personalization.ts:220-228` still scales the boost by `selection_count` and it is still the only signal that moves rank. What changed is that the COUNTER-signals now exist as events (`suggestion_dismissed`, `manual_value_kept`, `raw_search_submitted` — G313/G315/G314), so the imbalance is now measurable rather than invisible. WHAT WOULD TURN THIS RED: an outcome or task-completion term weighed against the acceptance boost. Who can supply it: whoever owns the screens that COMPLETE the task (Trips / Events / Telegraph), by calling `services/inputTelemetry.ts:229#export function emitDownstreamTaskCompleted`. |
 | G15 | Every accepted suggestion resolves to a valid canonical destination, structured value, or explicit user-approved action | C | `projection.ts:391-407` `isResolvable`/`dropDeadRows` — a row without an action, entity id or routable destination is dropped at the boundary, on every return path in `gateway.ts` (`:212`, `:241`, `:264`, `:291`, `:320`, `:593`). |
 
 ### §3 System Placement
@@ -402,9 +417,9 @@ of the field→mode table.
 | G58 | Alias resolution and known abbreviations | C | `canonicalLocations.ts:177-192` `CITY_GEO_ALIASES` — `hcmc`/`saigon`/`sai gon`/`hochiminh` → `ho chi minh`, `danang` → `da nang`, `krung thep` → `bangkok`; applied in application code at `:199-202`, so it works with or without 2220. |
 | G59 | Common misspelling tolerance | C ᵖ | `discoverySearchHelpers.ts:63-95` `SEARCH_ALIASES` (~30 curated travel-domain misspellings) plus `canonicalLocations.ts:161-164` (`siargoa`, `nyc`) and `:186` (`phu qouc`, the spec's own example). The bulk is pre-existing Discovery work. |
 | G60 | Local-language and English-name variants | C | `canonicalLocations.ts:180-191` — `saigon`, `sai gon`, `krung thep` resolve to the English canonical row. |
-| G61 | Transliteration where supported | W | What exists is closed-up **Latin** variants (`danang`, `hochiminh`, `phuquoc`) and one romanised name (`krung thep`). There is no script transliteration anywhere — no Cyrillic, CJK, Thai or Arabic → Latin mapping — so a traveller typing `กรุงเทพ` or `胡志明市` resolves nothing, in a product whose launch cities are in Vietnam, Thailand and the Philippines. |
-| G62 | Punctuation and emoji handling **appropriate to field context** | W | Field-appropriate punctuation handling does exist for two contexts: the `@`/`#` sigil strip (`gateway.ts:159-161`) and `canonicalizeHashtag` (`socialIdentity.ts:46-50`, `[A-Za-z0-9]{2,64}`). Everything else gets one global strip (`normalizeLocationName:95-99`) plus `sanitizeQuery`, which removes only `(),` (`discoverySearch.ts:142-144#sanitizeQuery`). **Emoji are not handled at all**: they survive `sanitizeQuery` into the `ilike` pattern and match nothing, and `canonicalizeHashtag('#🔥')` returns `null`, so an emoji hashtag silently produces no reference. |
-| G63 | Phone/keyboard typo tolerance **where confidence is sufficient** | **N** | No edit-distance, keyboard-adjacency model, trigram index or confidence measure exists (`2220…sql:16-17` notes "`unaccent` is installed but unused, and there is no `pg_trgm`"). The only tolerance is the fixed alias table already counted at G59; a typo not in that table is simply a miss, and no confidence is computed to decide whether to apply one. |
+| G61 | Transliteration where supported | C | `lib/inputAssistance/queryNormalizer.ts:167#export function transliterate` is the producer. Two mechanisms, because one cannot do both jobs: a curated native-script EXONYM dictionary (`lib/inputAssistance/queryNormalizer.ts:69#NATIVE_CITY_NAMES` — Thai `กรุงเทพ`, Han `胡志明市`, Korean, Japanese, Arabic, Cyrillic) for scripts that carry no phonetic value to romanise from, and a per-character map for Cyrillic / Greek / Thai that generalises past the dictionary. Wired at `lib/inputAssistance/gateway.ts:175#const norm: NormalizedQuery`, so the transliterated form is what candidate generation queries. Proven end-to-end, not just as a unit: `src/test/inputAssistanceGeoCore.test.ts` asserts that `กรุงเทพ` and `胡志明市` resolve to the stored Bangkok / Ho Chi Minh City rows, with the DISPLAY spelling preserved. MUTATION: dropping the Thai rows from `NATIVE_CITY_NAMES` turns both end-to-end tests RED. Latin input is returned byte-identical, so nothing that worked before can change shape. |
+| G62 | Punctuation and emoji handling **appropriate to field context** | C | The three pre-existing behaviours stand (the `@`/`#` sigil strip, `canonicalizeHashtag`, `sanitizeQuery`), and the two gaps this row named are closed. **Emoji**: `lib/inputAssistance/queryNormalizer.ts:225#export function stripEmoji` removes pictographs, flags, skin-tone modifiers and joiners from the search key, and `lib/inputAssistance/queryNormalizer.ts:246#export function stripsEmoji` makes it FIELD-CONTEXT-AWARE — a picker strips, a caption / comment / private message does not, because there the characters are the user's prose and not a lookup key. `src/test/inputAssistanceGeoCore.test.ts` proves the behavioural consequence end-to-end: `"Sky Bar 🔥"` now finds the Sky Bar place, where before the emoji rode into `name.ilike.%Sky Bar 🔥%` and matched nothing. **The silent hashtag**: `canonicalizeHashtag('#🔥')` still correctly returns null (the tagging write path is `[A-Za-z0-9]{2,64}`), but the field no longer says nothing about it — `lib/inputAssistance/socialIdentity.ts:67#export function buildHashtagValidation` emits a non-blocking `validation` row naming the unsupported characters, gated by the policy's new `validation` allowance (`lib/inputAssistance/policyRegistry.ts:238#hashtag`, mirrored client-side). MUTATION: forcing `stripsEmoji` false reddens the emoji tests; forcing `buildHashtagValidation` to return null reddens the hashtag test. |
+| G63 | Phone/keyboard typo tolerance **where confidence is sufficient** | C | `lib/inputAssistance/queryNormalizer.ts:305#export function weightedDistance` is a Damerau-Levenshtein distance whose substitution cost is KEYBOARD-WEIGHTED: `lib/inputAssistance/queryNormalizer.ts:288#export function keyboardAdjacent` makes a neighbouring-key slip cost `0.5` (`lib/inputAssistance/queryNormalizer.ts:293#ADJACENT_SUBSTITUTION_COST = 0.5`) against `1` for any other swap, and an adjacent transposition `0.6`. `lib/inputAssistance/queryNormalizer.ts:339#export function typoConfidence` turns that into the confidence §10 asks for, and `lib/inputAssistance/queryNormalizer.ts:350#APPLY_CONFIDENCE = 0.8` is the bar. Three properties make it safe to ship: (1) the user's OWN spelling always gets the first query and the corrected key is only a SECOND attempt after that returned nothing (`lib/inputAssistance/gateway.ts:400#let correctionHelped = false`), so nothing that resolves today can be rerouted; (2) an AMBIGUOUS input — two vocabulary entries tied at the best distance — is refused in both bands (`lib/inputAssistance/queryNormalizer.ts:411#export function bestCorrection`), because §19 says a tie is offered, never guessed; (3) an `@handle` is never corrected, since a typo there is a different person. The user-visible half is `lib/inputAssistance/queryNormalizer.ts:607#export function buildTypoCorrectionRow`, a `replace_text` row that shows the raw input back (§2). Proven end-to-end in `src/test/inputAssistanceGeoCore.test.ts`: `"bangkkok"` — which is NOT in `SEARCH_ALIASES` — now resolves to the canonical Bangkok row, and a query that already resolves emits no correction at all. MUTATIONS: `ADJACENT_SUBSTITUTION_COST → 1` reddens the keyboard-model test; deleting the tie guard reddens the ambiguity test; disabling the gateway retry reddens the end-to-end test. |
 | G64 | Never normalize stored canonical display names destructively | C | `projectCanonicalCity` labels from `row.name`/`row.display_name` (`projection.ts:114`) while folding only the lookup key; `2220…sql:19-22` states the constraint explicitly and adds a generated column rather than rewriting `normalized_name`. |
 
 ### §11 Entity Resolution
@@ -462,23 +477,23 @@ of the field→mode table.
 | G93 | `PrefixMatch` | C ᵖ | `tierConfidence(2) = 0.85`; `discoverySearchHelpers.ts:168`. |
 | G94 | `ContextFit` | C | The policy gate is the context-fit term: only the field's declared entity types are ever queried (`gateway.ts:327-330`). |
 | G95 | `GeographicFit` | C ᵖ | `gateway.ts:380` passes `{lat, lng, userCity}` into `SearchQueryContext`; `discoverySearchHelpers.ts:257-262#userCity` applies the city boost inside `discoverySearchHelpers.ts:227#rankCombined` — the old pointer named `discoverySearch.ts`, which only imports and calls it. Pre-existing. |
-| G96 | `TripFit` | W | Trip context influences only the **zero-character** defaults (`geoResolver.ts:214-250`) and an exact `cityId` match in `applySessionBias` (`gateway.ts:646-659`). A typed query in a Trip gets no Trip-derived rank term. |
+| G96 | `TripFit` | C | `lib/inputAssistance/rankingSignals.ts:337#export function applyTripFit` is the term, fed by `lib/inputAssistance/taskContext.ts:176#export function classifyFeasibility`, which marks every candidate sitting inside the ACTIVE Trip's city. It is applied inside `projection.ts`'s signal stack on every dispatched row, so a TYPED query in a Trip now carries a Trip-derived rank term — the exact thing this row said did not exist. Clamped by `SIGNAL_CEILING` and never below base, so an unrelated row is byte-identical. Proven in `src/test/inputAssistanceRankingSignals.test.ts` both as a unit and end-to-end (a Bangkok place outranks an identically-matching Da Nang place when `sessionContext.tripId` names a Bangkok Trip, and the SAME request without the Trip leaves the two indistinguishable — the control that makes the first assertion mean something). MUTATION: `applyTripFit → identity` reddens the unit test; short-circuiting `classifyFeasibility` reddens the end-to-end one. |
 | G97 | `TemporalFit` | **N** | The parser computes a real window (`semanticParser.ts:264-362`, ISO bounds), but nothing consumes it as a ranking or filtering input: `gateway.ts:380` constructs `SearchQueryContext` with `{lat, lng, userCity, nearbyIntent}` only — `startsAfter`/`startsBefore`, which `discoverySearch` supports, are never set. The window is projected into a search *string* and thrown away. |
 | G98 | `RelationshipFit` | W | Real and load-bearing for recipient search, where the candidate pool **is** the viewer's graph (`socialIdentity.ts:63-116`). Absent everywhere else: `with_crew` / `followed` parse (`semanticParser.ts:418-425`) and then constrain nothing. |
 | G99 | `Freshness` | C | `liveSuggestions.ts:75-78` (+0.06 / +0.03), applied before the final rank at `gateway.ts:576-580`. |
 | G100 | `PriorSelection` | C | `personalization.ts:243-268`, clamped to `BOOST_CEILING` and restricted to `BOOSTABLE_TYPES` (`:70`), both mutation-proven. ☠prod. |
 | G101 | `TrustConfidence` | **N** | No trust term exists. `verified` and `is_official` are selected by `searchTravelers` (`discoverySearch.ts:568#is_official,`) and then dropped by the projection whitelist (`projection.ts:82-88`); nothing reads them into `confidence`. |
-| G102 | `Diversity` | W | There is a per-type fan-out quota (`gateway.ts:379`, `perType = ceil(max/types)`) and a §13 reserved slot for completions (`projection.ts:360-383`), which produce diversity as a side effect of slot allocation. There is no diversity **term** in the score, so within a type a run of near-identical rows is never spread. |
+| G102 | `Diversity` | C | `lib/inputAssistance/rankingSignals.ts:291#export function applyDiversity` is the within-type term. Each successive row repeating an already-seen display signature (`lib/inputAssistance/rankingSignals.ts:276#export function diversitySignature` — label + subtitle, article-stripped, alphanumeric-folded) loses `lib/inputAssistance/rankingSignals.ts:266#DIVERSITY_STEP = 0.04`, capped. Applied before the final rank at `lib/inputAssistance/gateway.ts:718#const diversified = applyDiversity`. It compares only against EARLIER rows of the same assistance type, so §9's type order is untouched, and it demotes rather than removes, because two real venues can share a name. The pre-existing per-type fan-out and the §13 reserved slot still do what they did; what is new is that a run of near-identical rows within one type is now spread. Proven in `src/test/inputAssistanceRankingSignals.test.ts` (progressive penalty, cap, cross-type non-interference, and byte-identity on a list with no repeats). MUTATION: returning `rows` unchanged from `applyDiversity` turns it RED. |
 | G103 | `PrivacyRisk` | **N** | Privacy is strictly binary in this system — included or excluded, fail-closed (`gateway.ts:373-378`). Nothing computes a risk weight, so nothing can be *demoted* for privacy risk rather than dropped. |
 | G104 | `Staleness` | W | Stale live claims are removed upstream by `readLiveClaimEnvelopes` and simply never appear, and `freshnessDisplay.ts:53-58` drops a stale label. Correct behaviour, but there is no staleness **penalty** in the score: a stale row is not demoted, it is invisible. |
 | G105 | `Ambiguity` | C | `projection.ts:117-124` caps an ambiguous city at 0.55 (the MEDIUM band) and `:163` caps an airport disambiguation at 0.5, so ambiguity actively lowers rank confidence. |
-| G106 | `SpamRisk` | **N** | No spam signal anywhere in the layer (see §36: five of seven anti-spam controls are missing). |
+| G106 | `SpamRisk` | C | `lib/inputAssistance/rankingSignals.ts:207#export function spamRisk` computes the signal from a row's own user-authored display text, as the strongest of three bounded stuffing measures — token REPETITION above a prose floor, SHOUTING (upper-case ratio over a minimum length), and SEPARATOR CHAINS (`tours \| bangkok \| cheap \| best`) — and `lib/inputAssistance/rankingSignals.ts:243#export function applySpamRisk` subtracts it, capped, inside `projection.ts`'s signal stack. Demotion-only by design: stuffing is a ranking problem, not a moderation verdict, and this layer has neither the evidence nor the mandate to delete a listing. A clean row scores exactly 0 and is byte-identical to its pre-signal confidence. Proven in `src/test/inputAssistanceRankingSignals.test.ts` as a unit AND end-to-end — a stuffed `discovery_places` row seeded FIRST loses to a clean one on the same query, and both are still returned. MUTATION: `spamRisk → 0` turns four assertions RED. |
 
 ### §16 Context Carryover and Session State
 
 | id | Requirement | V | Evidence / divergence |
 | --- | --- | --- | --- |
-| G107 | Inputs within the same task share permitted context; a field must not behave as though it exists in isolation | W | The whole of carryover is `applySessionBias` (`gateway.ts:642-659`): a suggestion whose `entityId` **exactly equals** `sessionContext.cityId` is moved to the front. It is not a constraint, it is a reorder, and it only fires when the candidate was already returned. The spec's four carryover examples — Trip stop picker showing Bangkok places first, Event location scoped to the Trip city, Compass carrying Trip context, Gem lookup prioritising Bangkok gems — none is implemented as a candidate constraint. The gateway's own comment concedes it: *"Fuller §16/§17 carryover is deferred"* (`:552-553`). |
+| G107 | Inputs within the same task share permitted context; a field must not behave as though it exists in isolation | C | Carryover is now a CANDIDATE CONSTRAINT, not only a reorder. `lib/inputAssistance/taskContext.ts:90#export async function resolveTaskConstraint` reads the active task ONCE per request — the session's canonical city and the Trip's destination + date window — and `lib/inputAssistance/taskContext.ts:176#export function classifyFeasibility` classifies every candidate against it, delegating the rule WHOLE to `lib/inputAssistance/creation.ts:167#export function partitionByFeasibility` so §18 has one implementation and not two. The verdict reaches ranking as a confidence demotion (`lib/inputAssistance/rankingSignals.ts:326#export function applyFeasibility`) plus the §15 TripFit lift, wired at `lib/inputAssistance/gateway.ts:221#const taskConstraint: TaskConstraint =` and applied in both dispatch branches. Three of the spec's four carryover examples are now mechanical: a Trip stop picker shows the Trip city's places first, an Event location is scoped toward the Trip city, and a Gem lookup prioritises the Trip city's gems. `applySessionBias` remains on top as the exact-`cityId` pin. Proven end-to-end in `src/test/inputAssistanceRankingSignals.test.ts`, with a no-Trip control asserting the two rows are otherwise indistinguishable. MUTATION: short-circuiting `classifyFeasibility` reddens three tests. A session carrying no task issues no query and is the identity transform. |
 | G108 | Carryover bounded to the active task/session; must not silently change unrelated persistent preferences | C | `applySessionBias` is a pure, request-scoped function over an in-memory array; `parseSessionContext` (`routes/inputAssistance.ts:52-59`) bounds and drops everything else. The only persistent write in the whole layer is the explicit `POST /select` (`:216-284`), which writes selection memory and nothing else. |
 
 ### §17 Cross-Field Dependency Graph
@@ -513,10 +528,10 @@ of the field→mode table.
 
 | id | Requirement | V | Evidence / divergence |
 | --- | --- | --- | --- |
-| G122 | Before ranking, remove or demote infeasible/inappropriate options | W | `filterInfeasibleCandidates` (`creation.ts:148-180`) is a real, correct, mutation-proven implementation — and has **exactly one caller**, `creation.ts:289-292`, applied to duplicate candidates in creation contexts only. The main suggestion pipeline (`gateway.ts:343-404`) never calls it. |
+| G122 | Before ranking, remove or demote infeasible/inappropriate options | C | The rule now has its second caller. `lib/inputAssistance/creation.ts:167#export function partitionByFeasibility` is `filterInfeasibleCandidates`' own body, refactored into a three-way partition so a caller can read the VERDICT rather than the order — the main pipeline re-ranks by §9 type order afterwards, so a reordering would not have survived. `lib/inputAssistance/taskContext.ts:176#export function classifyFeasibility` is that caller, and `lib/inputAssistance/gateway.ts:486#const verdict = classifyFeasibility(allCandidates, taskConstraint)` runs it over the whole request's candidates before projection. The action is a bounded confidence DEMOTION (`lib/inputAssistance/rankingSignals.ts:320#INFEASIBLE_DEMOTION = 0.22`), not removal: this pipeline's evidence is a city string on a projected row, weaker than the creation flow's, and the privacy gate has already decided what the viewer may see. §18 permits either; the weaker evidence chooses the weaker action, and that choice is stated rather than hidden. Proven end-to-end in `src/test/inputAssistanceRankingSignals.test.ts`. MUTATION: short-circuiting `classifyFeasibility` turns three tests RED. |
 | G123 | Closed or unavailable where current operating status is relevant | **N** | No operating-status field on `InputSuggestion` (`types.ts:206-244`), no producer, no filter. |
-| G124 | Outside Trip date/time window | W | `filterInfeasibleCandidates` supports a window (`creation.ts:170-178`) and **no caller passes one** — the single call site passes `{ city }` only (`:291`). The §18 parser that computes windows never reaches it (G97). |
-| G125 | Outside selected city/area where the field is constrained | W | Same function, same single call site: it demotes out-of-city **duplicate** candidates in a creation flow (`creation.ts:287-292`). A city-constrained picker's ordinary candidates are not filtered by city. |
+| G124 | Outside Trip date/time window | C | The window now has a producer AND a caller. `lib/inputAssistance/taskContext.ts:90#export async function resolveTaskConstraint` reads `trips.start_date` / `end_date` for `sessionContext.tripId` and pushes the end date to the END of that day — a Trip ending on the 5th includes an event at 19:00 on the 5th, and comparing against midnight would have called the last evening of the Trip infeasible. That window is passed to the shared §18 rule and demotes out-of-window events in the ordinary suggestion list. Proven end-to-end in `src/test/inputAssistanceRankingSignals.test.ts` with the harder fixture: the out-of-window event is seeded first AND sorts first under the event search's own `starts_at` ordering, so the in-window row can only lead because of this term — an earlier draft of the test passed without the term at all and is recorded here because that is exactly the weak-test failure mode this census exists to catch. Both rows are still returned (§18 says demote). MUTATION: short-circuiting `classifyFeasibility` turns it RED. |
+| G125 | Outside selected city/area where the field is constrained | C | Same rule, same single implementation, now reached from the ordinary pipeline as well as the creation flow. The constraining city comes from the active task (`lib/inputAssistance/taskContext.ts:90#export async function resolveTaskConstraint`), and `lib/inputAssistance/taskContext.ts:148#function candidateCity` reads each candidate's own city from its display projection. A GEOGRAPHIC row is exempt by construction (`lib/inputAssistance/taskContext.ts:145#const GEOGRAPHIC_TYPES`): a city row IS another city, and a city picker inside a Bangkok Trip must still be able to offer Da Nang. Proven end-to-end in `src/test/inputAssistanceRankingSignals.test.ts` — the out-of-city place is demoted, still returned, and the no-task control leaves the two rows identical. MUTATION: short-circuiting `classifyFeasibility` turns it RED. |
 | G126 | Age, trust, membership, role or invite restrictions | C ᵖ | Age: `fetchAgeRestrictedSet` fail-closed (`gateway.ts:374-378`). Membership/role: `discoverySearch.ts:1035-1038#admitted:` (plans via parent-trip ownership), `:890#visibility` + `:891#show_in_discovery` (trips). Trust/invite have no separate gate but no path exposes an invite-scoped object either. Pre-existing. |
 | G127 | Unavailable Buddy category or required safety/payment gate | **N** | See G71 — only `buddy_verified_at IS NOT NULL`; there is no category, availability, safety or payment gate in the suggestion path. |
 | G128 | Blocked / private / ineligible people or content | C ᵖ | `gateway.ts:373-378` and `:614-619`, both fail-closed on a null set. Pre-existing `fetchBlockedSet`. |
@@ -585,7 +600,7 @@ uses are share/copy affordances (`components/ShareSheet.tsx`,
 
 | id | Requirement | V | Evidence / divergence |
 | --- | --- | --- | --- |
-| G163 | Transcribed speech runs through the same normalization/resolution/intent/privacy/suggestion pipeline | **N** | There is no dictation transport in the app: `travel-buddy-standalone/package.json` declares no speech dependency (`expo-speech`, `@react-native-voice/voice`, `SpeechRecognition` all absent) and no source file references one. The requirement is conditional on dictation existing, and nothing routes it. |
+| G163 | Transcribed speech runs through the same normalization/resolution/intent/privacy/suggestion pipeline | **N** | **Re-verified by this lane at this tree, for cross-census W71 (`census-wall.md`), not inherited.** There is no speech-to-text producer anywhere: `grep -rniE 'voice\|speech\|dictat\|transcri\|microphone'` over `artifacts/api-server/src/lib/inputAssistance/` and `travel-buddy-standalone/src/platform/input-assistance/` returns NOTHING (exit 1 on both), the client package declares no `expo-speech`, no `@react-native-voice/voice` and no `SpeechRecognition`, and every `voice` match in the client tree is WebRTC **voice calling** (`src/components/calls/`, and the events voice-room card)  — a different feature that produces no transcript. `expo-av` is present for media playback and is not a dictation transport. So **voice input does not exist and is not planned in any artifact in this tree**: no flag, no stub, no `InputContext` in `lib/inputAssistance/types.ts:32-61`, and no §51 phase for §25. The requirement is conditional on dictation existing and nothing routes it. WHAT WOULD TURN THIS RED: a dictation surface that hands its transcript to `lib/inputAssistance/queryNormalizer.ts:553#export function normalizeQuery` like any other typed text. Until one exists this row is correctly N and cannot be closed by this layer. |
 
 ### §26 Mention, Hashtag and Entity Insertion
 
@@ -711,7 +726,7 @@ declared and read by nothing (G30). What follows is what actually exists.
 
 | id | Requirement | V | Evidence / divergence |
 | --- | --- | --- | --- |
-| G231 | Keyword-stuffing resistance in business / Buddy / user descriptions | **N** | No term-frequency, repetition or stuffing heuristic anywhere in the layer or in the searchers it calls. |
+| G231 | Keyword-stuffing resistance in business / Buddy / user descriptions | C | `lib/inputAssistance/rankingSignals.ts:207#export function spamRisk` is the heuristic: token repetition above a prose floor, upper-case ratio over a minimum length, and separator-chained keyword lists, combined by taking the STRONGEST rather than summing so a listing is not punished twice for one habit. It runs over every dispatched row's `title + subtitle` — the fields a business / Buddy / user listing authors — inside `projection.ts`'s signal stack, and demotes by at most `SPAM_MAX_PENALTY`. A clean listing scores 0 and is unchanged. Proven end-to-end in `src/test/inputAssistanceRankingSignals.test.ts`: `"Bangkok Tour Bangkok Tour Bangkok Tour Bangkok"` loses to `"Bangkok Tour Collective"` on the query both match exactly, and both are still returned. MUTATION: `spamRisk → 0` reddens four assertions. **What this is NOT**: it is not moderation, not a block, and not a Buddy-specific rule — §36's other six controls are unaffected and G232 (alias abuse) still has no detector. |
 | G232 | Alias abuse detection | **N** | The alias tables (`canonicalLocations.ts:161-192`, `discoverySearchHelpers.ts:63-95`) are curated, static and one-directional; nothing detects a user-supplied alias being abused. |
 | G233 | Impersonation protections for people and businesses | W | `account_status` filtering on recipients is real and mutation-proven (`socialIdentity.ts`, `test/inputAssistanceInvariants.test.ts` item 1), and `verified`/`is_official` exist on the profile row. But nothing in the suggestion path **detects or demotes** an impersonating handle, and the verification flags are dropped before projection (G180), so a viewer cannot even tell the real account from the copy. |
 | G234 | Duplicate entity suppression | C | `duplicateDetection.ts:241-370`; `gateway.ts:389-400` (per-id dedup across types) and `:534-546` (collapse a duplicate's redundant entity row). |
@@ -762,7 +777,7 @@ marked *(unused)*.
 | G260 | `services/entityResolution.ts` | W | A declared **stub**: `:44-58` passes through a suggestion that is already resolved and returns `null` otherwise, with "Phase 2 replaces the null branch" in the body. It resolves nothing the server did not already resolve. *(unused)* |
 | G261 | `services/suggestionHistory.ts` | W | In-memory `Map` (`:31-32`), documented as not the persistent store. *(unused)* |
 | G262 | `services/suggestionCache.ts` | C | `:18-33`. |
-| G263 | `services/inputTelemetry.ts` | W | The scrub and allowlist are real (`:48-72`), but the sink is `() => {}` (`:35-36`) and `setTelemetrySink` is called from **no non-test file**. The module emits into a void. |
+| G263 | `services/inputTelemetry.ts` | W | The scrub and allowlist are real (`:48-72`) and the module now has REAL CALL SITES for nine previously-dead event names (G311–G318, plus the exported emitters for G319/G320) — `services/inputTelemetry.ts:135#export function emitSuggestionsRendered` and its siblings, all driven from `SmartInput` and proven in `components/__tests__/inputTelemetryFunnel.component.test.tsx`. **The sink is still `() => {}` (`:35-36`) and `setTelemetrySink` is still called from no non-test file.** Emission is not measurement: in production these events are now produced and dropped. Inventing a transport here would have been worse than leaving the gap, because the only honest destination is a server endpoint that does not exist. WHAT WOULD TURN THIS RED: a telemetry POST target (route owner) plus one `setTelemetrySink` call at app bootstrap — travel-buddy-standalone/app/_layout.tsx, outside this lane's paths. |
 | G264 | `contexts/inputContexts.ts` | C | 476 lines, all 29 contexts. |
 | G265 | `contexts/inputPolicies.ts` | C | 79 lines, `buildDefaultPolicy`. |
 | G266 | `contexts/fieldRegistry.ts` | C | `:26-79`. |
@@ -781,7 +796,7 @@ narrow resolver extension rather than a new architecture).
 | G271 | InputAssistanceGateway | C | `gateway.ts:146-593`. |
 | G272 | InputContextResolver | C | `policyRegistry.ts:334-347` server side; `contexts/fieldRegistry.ts:57-79` client side. |
 | G273 | InputPolicyEngine | C | `policyRegistry.ts:72-329`. |
-| G274 | QueryNormalizer | W | There is no normalizer service: three unrelated helpers are called inline at `gateway.ts:158-167` (`applyAliases` from Discovery, `sanitizeQuery` from Discovery, `normalizeLocationName` from the location service), with the geographic fold living in `canonicalLocations`. The client's own module names the gap: *"Real alias resolution belongs to the server's QueryNormalizer (§40)"* (`services/queryNormalization.ts:12-15`) — which does not exist. |
+| G274 | QueryNormalizer | C | The service now exists: `lib/inputAssistance/queryNormalizer.ts:553#export function normalizeQuery` is the single entry point, and `lib/inputAssistance/gateway.ts:175#const norm: NormalizedQuery` is its only caller in the suggest path. It COMPOSES rather than replaces — `applyAliases` and `sanitizeQuery` are still Discovery's, and the canonical fold is still `canonicalLocations` — and adds the three §10 clauses that had no implementation anywhere (transliteration G61, context-appropriate emoji handling G62, keyboard-weighted typo tolerance with a confidence measure G63). The pipeline order is fixed and documented in the file header: trim → sigil → transliterate → emoji → alias → typo → sanitize → clamp. It returns `aliased` unchanged for the §18 temporal extractor and the semantic parser, so those two consumers see byte-identical input to what they saw before this file existed. The client comment this row quoted — *"Real alias resolution belongs to the server's QueryNormalizer (§40)"* — now names something real; the client mirror itself is still local-only, which is G340/G344's problem, not this row's. |
 | G275 | EntitySuggestionService | C | `gateway.ts:601-640` `dispatchAndProject`. |
 | G276 | CityResolver | C | `geoResolver.ts:120-145`. |
 | G277 | CountryResolver | W | No canonical country resolver: `entityMap.ts:37` maps `country → 'countries'`, and `discoverySearch.ts:1884#searchCountries` **aggregates `profiles.home_country`** (`:1895-1896#home_country")`) (`.from("profiles").select("id, home_country").ilike("home_country", pat)`). A country picker therefore resolves against the user table, not a canonical country registry, so a country with no users in it does not exist. |
@@ -833,21 +848,21 @@ narrow resolver extension rather than a new architecture).
 
 | id | Requirement | V | Evidence / divergence |
 | --- | --- | --- | --- |
-| G306 | Measure usefulness without unnecessarily capturing raw private text | W | The privacy half is real and mutation-proven (`services/inputTelemetry.ts:48-62` drops `text`/`query`/`rawText`/`message` for a non-capturing field; `services/__tests__/inputTelemetry.test.ts`). The **measurement** half does not exist: the sink is `() => {}` (`:35-36`) and is never attached outside tests, so nothing is measured at all. |
+| G306 | Measure usefulness without unnecessarily capturing raw private text | W | The privacy half is real and mutation-proven (`services/inputTelemetry.ts:48-62` drops `text`/`query`/`rawText`/`message` for a non-capturing field; `services/__tests__/inputTelemetry.test.ts`), and the new funnel arms were built to the same rule — every one carries a COUNT or a LENGTH and never the text, asserted directly rather than assumed (`components/__tests__/inputTelemetryFunnel.component.test.tsx`). The **measurement** half still does not exist: the sink is `() => {}` (`:35-36`) and is attached nowhere outside tests. What moved is that there is now something worth transporting — nine event names with call sites instead of nine strings in a union. WHAT WOULD TURN THIS RED: see G263. |
 | G307 | `input_opened` | C | `SmartInput.tsx:170`. |
 | G308 | `query_length_changed` | C | `useInputAssistance.ts:154`. |
 | G309 | `suggestion_request_started` | C | `useInputAssistance.ts:161`. |
 | G310 | `suggestion_request_completed` | C | `useInputAssistance.ts:187`. |
-| G311 | `suggestion_rendered` | **N** | Named in the taxonomy (`types/fieldPolicy.ts:75`) and in `STANDARD_TELEMETRY` (`policyRegistry.ts:44`); **never emitted** — no call site. |
+| G311 | `suggestion_rendered` | C | Emitted from `components/SmartInput.tsx:173#emitSuggestionsRendered(telemetryField, suggestions)`, in an effect keyed by the id-SIGNATURE of the rendered list so a re-render of the same rows does not inflate the count and a genuinely new list does. Shaped by `services/inputTelemetry.ts:135#export function emitSuggestionsRendered`, which carries `count` and sorted TYPE names and deliberately no labels — a rendered recipient list is a list of people. This is §57's missing denominator. Proven by driving the REAL `SmartInput` in `components/__tests__/inputTelemetryFunnel.component.test.tsx` (NEW FILE — a `*.component.test.tsx`, which the standalone package's jest run discovers by `testPathPattern`, so no curated registration list had to be edited): one impression per list, none for an empty result set, and no label in the payload. MUTATION: deleting the call turns three assertions RED. |
 | G312 | `suggestion_selected` | C | `SmartInput.tsx:104-110`. |
-| G313 | `suggestion_dismissed` | **N** | Declared, never emitted. This is the "ignored" arm §45's loop needs. |
-| G314 | `raw_search_submitted` | **N** | Declared in the taxonomy and in `STANDARD_TELEMETRY`; never emitted. |
-| G315 | `manual_value_kept` | **N** | Declared, never emitted. |
-| G316 | `validation_shown` | **N** | Declared, never emitted — even though validation rows are produced and rendered. |
-| G317 | `correction_accepted` | **N** | Declared, never emitted. |
-| G318 | `disambiguation_selected` | **N** | Declared, never emitted. |
-| G319 | `action_completed` | **N** | Declared and listed in `METADATA_ONLY_TELEMETRY` (`policyRegistry.ts:53`); never emitted. |
-| G320 | `downstream_task_completed` | **N** | Declared, never emitted. The outcome signal §45 is built on. |
+| G313 | `suggestion_dismissed` | C | §45's IGNORED arm now has a call site. `components/SmartInput.tsx:131#const shownRef` holds what is currently in front of the user and a companion `acceptedRef` holds whether they took any of it; when a shown list goes away untaken — blur, Escape (`components/SmartInput.tsx:251#emitSuggestionsDismissed(telemetryField, shownRef.current.count, 'escape')`) or an emptied field — `components/SmartInput.tsx:164#emitSuggestionsDismissed(telemetryField, prev.count, focused ? 'no_results' : 'blur')` records it with the size of what was passed over. The complement matters as much as the event: a list whose suggestion WAS taken is never also counted as ignored, or the loop would learn nothing from either arm. Proven in `components/__tests__/inputTelemetryFunnel.component.test.tsx`. MUTATION: setting `acceptedRef.current = true` in the render effect turns it RED. |
+| G314 | `raw_search_submitted` | C | Both paths emit. Tapping a `submit_search` row: `components/SmartInput.tsx:204#emitRawSearchSubmitted(telemetryField, (s.replacementText ?? value ?? '').length, true)`. Pressing return on the typed text without resolving anything: `components/SmartInput.tsx:302#emitRawSearchSubmitted(telemetryField, value.trim().length, false)`, on a new `onSubmitEditing` that still forwards the caller's own handler. `viaSuggestion` distinguishes them, and only a LENGTH travels. Proven in `components/__tests__/inputTelemetryFunnel.component.test.tsx` for both paths. |
+| G315 | `manual_value_kept` | C | §45's EDITED arm. `components/SmartInput.tsx:293#emitManualValueKept(telemetryField, value.trim().length)` fires on blur when assistance WAS shown, nothing was accepted, and the field still holds the user's own text. It carries a LENGTH and never the text, so it is emittable on a caption or a private message whose policy forbids raw capture — asserted directly, not assumed. This is §57's manual-fallback numerator. Proven in `components/__tests__/inputTelemetryFunnel.component.test.tsx`, including the negative: accepting a suggestion is not a manual keep. MUTATION: dropping the `!acceptedRef.current` guard turns it RED. |
+| G316 | `validation_shown` | C | Emitted alongside the impression whenever the rendered list contains a `validation` row: `components/SmartInput.tsx:175#if (validations > 0) emitValidationShown(telemetryField, validations)`, shaped by `services/inputTelemetry.ts:152#export function emitValidationShown`. §23's validations have been produced and rendered since Phase 5; nothing recorded that they were ever SEEN, so a user who ignored a warning was indistinguishable from one who never got it. Proven in `components/__tests__/inputTelemetryFunnel.component.test.tsx`, with the negative case (an empty list emits neither event). |
+| G317 | `correction_accepted` | C | `components/SmartInput.tsx:201#if (s.type === 'correction') emitCorrectionAccepted(telemetryField, s)`, carrying the correction's CONFIDENCE (`services/inputTelemetry.ts:186#export function emitCorrectionAccepted`) — which is now a real measured quantity rather than a nominal one, because §10 typo tolerance computes it (G63). Proven in `components/__tests__/inputTelemetryFunnel.component.test.tsx` by pressing a real correction row through `SmartInput`. |
+| G318 | `disambiguation_selected` | C | `components/SmartInput.tsx:202#if (s.type === 'disambiguation') emitDisambiguationSelected(telemetryField, s)`, carrying `entityType` and confidence (`services/inputTelemetry.ts:197#export function emitDisambiguationSelected`). It is not redundant with `suggestion_selected`: §57 asks for a wrong-selection reversal rate and a duplicate-prevention count, and both need to know WHICH KIND of row resolved the field. Proven in `components/__tests__/inputTelemetryFunnel.component.test.tsx`. |
+| G319 | `action_completed` | **N** | The emitter now exists — `services/inputTelemetry.ts:216#export function emitActionCompleted` — and is deliberately NOT called from `SmartInput`: selecting an action row OPENS a propose-only picker, and calling the event "completed" at that moment would make every abandoned picker look like a success. The only place that knows is the screen that dispatches the action, and `search/smartActions.ts:35-43`'s single dispatchable type (`add_to_trip`) is dispatched by a screen outside this lane's paths. WHAT WOULD TURN THIS RED: the global-search screen calling `emitActionCompleted` after the trip picker CONFIRMS. Who can supply it: the owner of the global-search tab screen. |
+| G320 | `downstream_task_completed` | **N** | The emitter now exists — `services/inputTelemetry.ts:229#export function emitDownstreamTaskCompleted` — and has no caller, because this layer cannot observe the thing: the input field is long gone by the time a trip is saved, an event is created or a message is sent. This is the outcome signal §45's whole loop is built on (G5/G14/G322/G323 all depend on it). WHAT WOULD TURN THIS RED: one call per completed task from the screens that complete them — `app/trip/new.tsx`, `app/events/create/index.tsx`, `app/telegraph/new.tsx` — none of which is this lane's file. |
 | G321 | For private-message fields, prefer metadata events over raw message text | C | `policyRegistry.ts:51-54` `METADATA_ONLY_TELEMETRY` on `telegraph_message`; `logRawText: false` on every policy (`:40`); `services/inputTelemetry.ts:48-62` enforces the scrub client-side. Certified at `test/inputAssistanceCertification.test.ts:443-476`. |
 
 **Five of fourteen named events fire.** The nine that do not are the entire
@@ -857,8 +872,8 @@ outcome half of the taxonomy.
 
 | id | Requirement | V | Evidence / divergence |
 | --- | --- | --- | --- |
-| G322 | Suggestion shown → selected/ignored/edited → did the downstream task succeed → rank calibration | **N** | Only the "selected" arm exists. "Shown" (`suggestion_rendered`), "ignored" (`suggestion_dismissed`), "edited" (`manual_value_kept`) and "downstream success" (`downstream_task_completed`) are all declared-and-never-emitted (G311/G313/G315/G320), and there is no calibration step anywhere — `applyPriorSelectionBoost` is a fixed formula over a raw count, not a calibrated model. |
-| G323 | Optimize for successful resolution / task completion / appropriate action / real-world outcome; **do not optimize merely for suggestion acceptance rate** | W | The single signal that moves rank is acceptance count: `personalization.ts:220-228` scales `MAX_BOOST` by `selection_count`. That is the named anti-pattern, and there is no outcome signal to weigh against it. |
+| G322 | Suggestion shown → selected/ignored/edited → did the downstream task succeed → rank calibration | W | **Three of the four arms now exist.** "Shown" is `suggestion_rendered` (G311), "ignored" is `suggestion_dismissed` (G313) and "edited" is `manual_value_kept` (G315), all three emitted from real `SmartInput` call sites and mutation-proven. What is still missing is the half the loop is actually FOR: **"downstream success"** (`downstream_task_completed`, G320) has an exported emitter and no caller, because this layer cannot observe it — the input field is long gone by the time a trip is saved — and **there is still no calibration step**: `applyPriorSelectionBoost` remains a fixed formula over a raw count, not a model fitted to outcomes. WHAT WOULD TURN THIS RED: a feature screen calling `services/inputTelemetry.ts:229#export function emitDownstreamTaskCompleted` on a completed save/create/send, plus a ranking term that reads the resulting shown/ignored/completed ratios. The first needs the Trips / Events / Telegraph screen owners; the second needs somewhere for the events to LAND, which is G263. |
+| G323 | Optimize for successful resolution / task completion / appropriate action / real-world outcome; **do not optimize merely for suggestion acceptance rate** | W | Unchanged: `personalization.ts:220-228` scales `MAX_BOOST` by `selection_count` and nothing else moves rank, so the named anti-pattern is still the whole learning signal. The ignored/edited arms are now emitted (G313/G315) but no ranking term reads them. WHAT WOULD TURN THIS RED: a rank term whose input is an OUTCOME rather than an acceptance — and, before that, a telemetry destination (G263) plus a `downstream_task_completed` caller (G320). |
 
 ### §46 Accessibility
 
@@ -866,7 +881,7 @@ outcome half of the taxonomy.
 | --- | --- | --- | --- |
 | G324 | Screen readers announce field purpose, suggestion count, active suggestion **and selection result** | W | Purpose: `SmartInput.tsx:165` `accessibilityLabel`. Count: `SuggestionOverlay.tsx:78-90`, a polite live region carrying "N suggestions"/"Loading suggestions". Active row: `EntitySuggestionRow.tsx:51` `accessibilityState={{selected}}`. **Selection result is never announced** — `handleSelect` (`SmartInput.tsx:101-127`) emits telemetry, applies the text and closes the overlay with no announcement, so a screen-reader user hears the list disappear and nothing else. |
 | G325 | Arrow-key and keyboard navigation on web/desktop | C | `SmartInput.tsx:129-148` — ArrowDown/ArrowUp wrap the active index, Enter selects, Escape clears and blurs. |
-| G326 | VoiceOver/TalkBack focus management on mobile | **N** | No `AccessibilityInfo`, `setAccessibilityFocus` or `accessibilityElementsHidden` anywhere under `platform/input-assistance/` (`DisambiguationSheet.tsx:57` `accessibilityViewIsModal` is the only related prop, and it is on an unconsumed sheet). Focus is never moved into the overlay when it opens or back to the field when it closes. |
+| G326 | VoiceOver/TalkBack focus management on mobile | **N** | Verdict stands; **the stated evidence is now partly false and is corrected here.** The row read *"No `AccessibilityInfo`, `setAccessibilityFocus` or `accessibilityElementsHidden` anywhere under `platform/input-assistance/`"*. Both DO now appear: `components/SmartInput.tsx:26#AccessibilityInfo` (imported, and `announceForAccessibility` called on selection — §9's G324 build) and `components/EntitySuggestionRow.tsx:82#accessibilityElementsHidden` on the non-colour active marker. What remains exactly true is the verdict's own sentence: **`setAccessibilityFocus` appears nowhere**, so focus is still never MOVED into the overlay when it opens or back to the field when it closes. WHAT WOULD TURN THIS RED: `AccessibilityInfo.setAccessibilityFocus(findNodeHandle(...))` on overlay open/close plus a component test asserting the handle it was given — both inside this lane's paths, and not built this pass. |
 | G327 | No suggestion overlay trapped behind the software keyboard | **?** | Code-side there is no mechanism: no `KeyboardAvoidingView`, no `Keyboard` height listener, no safe-area inset, and the overlay renders *below* the field (`SmartInput.tsx:184-197`) — the position a keyboard occupies. `keyboardShouldPersistTaps="handled"` (`SuggestionOverlay.tsx:100`) solves tap-through, not occlusion. Whether any real screen actually occludes it depends on where the field sits on that screen at runtime; that cannot be settled from the tree. |
 | G328 | Dynamic type and large text support | **?** | Nothing sets `allowFontScaling={false}`, so React Native's default scaling applies and text does grow. Whether the layout survives it is a device question: the overlay's height cap is a fixed `maxHeight = 320` (`SuggestionOverlay.tsx:61`) that does not scale, and rows use `numberOfLines={1}` (`EntitySuggestionRow.tsx:60`), so at large type a label truncates rather than wraps. Needs a device to settle. |
 | G329 | High contrast and non-color-only state indicators | W | The keyboard-active row's only visual difference is a background colour: `EntitySuggestionRow.tsx:97-99` `rowActive: { backgroundColor: color.haze }` — no border, weight, icon or marker change. `accessibilityState.selected` serves assistive tech but not a sighted low-vision or colour-blind user, which is exactly the case this bullet names. |
@@ -918,7 +933,7 @@ this area? (The underlying behaviours are scored in their own sections.)
 | G352 | Failure — provider timeout / API error / empty result / partial degradation | C | `test/inputAssistanceCertification.test.ts:369-436`: partial degradation `:370-388`, total data-layer failure → empty 200 `:390-409`, empty result `:427-434`. Provider timeout is untestable because there is no provider (G222). **Note the documented exception**: `:411-425` asserts that an unreadable `profiles` returns **503 `degraded_unavailable`, not a 200** — the ban gate outranks the never-error rule. The certification's flat claim "(never a 500 mid-keystroke)" is now qualified by a deliberate non-200. |
 | G353 | AI — no silent insertion / no canonical-fact invention / correct opt-in and provenance | C | `test/inputAssistanceCompassAI.test.ts` (15) — opt-in mutation-proofed OFF, `source:'ai'` provenance, `replace_text` only, last-place ordering, coarse context, `sanitizeSuggestedText`. |
 | G354 | Performance — P50/P95 latency / cold start / render cost / large index behaviour | **?** | No latency, cold-start, render-cost or large-index test or harness exists. The required certification is a measurement against a running server and device; it cannot be satisfied or refuted from this tree. |
-| G355 | Telemetry — no prohibited raw private-text capture; **action/result linkage works** | W | The prohibition half is certified and mutation-proven (`test/inputAssistanceCertification.test.ts:443-476`; client `services/__tests__/inputTelemetry.test.ts`). The **linkage** half is not: `requestId` is generated per request (`routes/inputAssistance.ts:160`) and `/select` records an entity, but no event carries the `requestId` back, nothing joins an impression to a selection, and `action_completed`/`downstream_task_completed` never fire (G319/G320). Nothing links an action to a result. |
+| G355 | Telemetry — no prohibited raw private-text capture; **action/result linkage works** | W | The prohibition half is certified and mutation-proven (`test/inputAssistanceCertification.test.ts:443-476`; client `services/__tests__/inputTelemetry.test.ts`), and now also for the seven new arms. The **linkage** half is still not built: `requestId` is generated per request (`routes/inputAssistance.ts:160`) and no event carries it back, so an impression still cannot be joined to the selection that followed it, and `action_completed` / `downstream_task_completed` still have no callers (G319/G320). WHAT WOULD TURN THIS RED: putting the response's `requestId` into the client's telemetry field and emitting it on every event — which needs `routes/inputAssistance.ts` (not this lane's file) to keep returning it, the client hook to thread it, and a sink to join them in (G263). |
 
 ### §50 Required Audit Before Adoption
 
@@ -951,12 +966,12 @@ transport (G306), and no store any of these could be computed from.
 
 | id | Requirement | V | Evidence / divergence |
 | --- | --- | --- | --- |
-| G365 | Time to valid selection | **N** | No timing instrumentation; `input_opened` and `suggestion_selected` both fire, but into a no-op sink with no session correlation. |
-| G366 | Valid entity resolution rate | **N** | No denominator is recorded (`suggestion_rendered` never fires). |
-| G367 | Manual fallback rate | **N** | `manual_value_kept` and `raw_search_submitted` never fire. |
+| G365 | Time to valid selection | **N** | `input_opened`, `suggestion_rendered` and `suggestion_selected` now all fire from real call sites, so the two ENDPOINTS of this measurement exist as events. It is still not a metric: nothing correlates them into a session (each event carries only `at`), and the sink is a no-op so no pair ever meets (G263). WHAT WOULD TURN THIS RED: a session id on the event envelope plus a sink that retains it. |
+| G366 | Valid entity resolution rate | **N** | The denominator's EVENT now exists — `suggestion_rendered` has a call site (G311) — which is a correction to this row's stated evidence, not to its verdict. The rate is still not computed and still not recorded anywhere: the sink is `() => {}`, so neither numerator nor denominator survives the function call. WHAT WOULD TURN THIS RED: a telemetry destination (G263) plus a query over impressions vs entity selections. |
+| G367 | Manual fallback rate | **N** | Both events now fire — `manual_value_kept` from `components/SmartInput.tsx:293#emitManualValueKept(telemetryField, value.trim().length)` and `raw_search_submitted` from two call sites (G314/G315) — which corrects this row's stated evidence. The RATE is still not computed and the events reach a no-op sink. WHAT WOULD TURN THIS RED: see G263. |
 | G368 | Wrong-selection reversal rate | **N** | No reversal signal exists in the taxonomy or the code. |
 | G369 | Duplicate creation prevented | **N** | The duplicate rows are produced (G148, G234) and their acceptance is never recorded — `/select` is the only write and it records no duplicate-resolution outcome. |
-| G370 | Downstream task completion | **N** | `downstream_task_completed` never fires (G320). |
+| G370 | Downstream task completion | **N** | `downstream_task_completed` still never fires; the emitter exists and no screen calls it (G320). WHAT WOULD TURN THIS RED: one call per completed task from the Trips / Events / Telegraph screens, plus a destination for it. |
 | G371 | Privacy incident count must remain zero (explicit certification metric) | **?** | The construction-side guarantees are strong and tested (G183–G191). Whether zero privacy incidents have occurred in production is a fact about production traffic, and there is no incident counter, alert or log in this layer to answer it from. |
 | G372 | P95 suggestion latency | **N** | No latency instrumentation anywhere; the response carries no server timing. |
 | G373 | Offline completion rate | **N** | No offline instrumentation, and (G197–G201) little offline behaviour to measure. |
@@ -967,6 +982,14 @@ transport (G306), and no store any of these could be computed from.
 
 Split the denominator by whether a section was inside the ten migration phases
 §51 names, or outside them:
+
+> **SUPERSEDED — both tables in this section were computed against the ORIGINAL
+> `230 / 69 / 70 / 4` headline and have not been recomputed since.** Three passes
+> (§8, §9, §11) have moved 32 rows between buckets. The SHAPE this section
+> describes still holds — it is the reason §11 chose the sections it did — but no
+> individual cell below should be quoted as current. WHAT WOULD TURN THIS RED:
+> re-deriving all 373 row→section attributions and recounting. That is a
+> mechanical job; this pass did not do it rather than half-do it.
 
 | Slice | Denominator | C | W | N | ? | CONSTRUCTED | CORRECT |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -1312,18 +1335,18 @@ sensitivity_level" now lands 224 lines short of the select it names.
 | G68 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearch.ts:1434#sensitivity_level,` selects the approximate pair and never the exact one; `:277#gemSearchPosition` fails closed to `hidden`. **The old pointer, lines 960–962, is stale by 224.** |
 | G70 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearch.ts:718#visibility` (events), `:890#visibility` + `:891#show_in_discovery` (trips). Proven through the gateway by `src/test/inputAssistanceCertification.test.ts:330#PUBLIC`. |
 | G73 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearch.ts:2055#COMMON_LANGUAGES` — server-side static lists behind `searchStatic`. **The old pointer, lines 1577–1578, is stale by 225.** |
-| G92 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/projection.ts:39#tierConfidence` — `tierConfidence(3) = 0.99` over `matchTier`. |
-| G93 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/projection.ts:39#tierConfidence` — `tierConfidence(2) = 0.85`, over `routes/discoverySearchHelpers.ts:170#matchTier`. |
-| G95 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/gateway.ts:396#SearchQueryContext` passes `{lat, lng, userCity}` into the city boost. **The old pointer, line 380, is stale by 16 — this pass moved it.** |
-| G126 | `C ᵖ` (unreadable) | **C** | ᵖ | Age: `lib/inputAssistance/gateway.ts:389#ageRestrictedSet`, fail-closed at `:394#blockedSet`. Membership/role: `routes/discoverySearch.ts:891#show_in_discovery`. Trust/invite have no separate gate and no path exposes an invite-scoped object. |
-| G128 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/gateway.ts:389#ageRestrictedSet` and `:394#blockedSet` — a null set from either suppresses every entity row; the picker branch repeats it at `:633#fetchBlockedSet`. |
+| G92 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/projection.ts:42#tierConfidence` — `tierConfidence(3) = 0.99` over `matchTier`. |
+| G93 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/projection.ts:42#tierConfidence` — `tierConfidence(2) = 0.85`, over `routes/discoverySearchHelpers.ts:170#matchTier`. |
+| G95 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/gateway.ts:463#SearchQueryContext` passes `{lat, lng, userCity}` into the city boost. **The old pointer, line 380, is stale by 16 — this pass moved it.** |
+| G126 | `C ᵖ` (unreadable) | **C** | ᵖ | Age: `lib/inputAssistance/gateway.ts:456#ageRestrictedSet`, fail-closed at `:461#blockedSet`. Membership/role: `routes/discoverySearch.ts:891#show_in_discovery`. Trust/invite have no separate gate and no path exposes an invite-scoped object. |
+| G128 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/gateway.ts:456#ageRestrictedSet` and `:461#blockedSet` — a null set from either suppresses every entity row; the picker branch repeats it at `:757#fetchBlockedSet`. |
 | G129 | `C ᵖ` (unreadable) | **C** | ᵖ | Structural: `lib/inputAssistance/types.ts:230#InputSuggestion` has no coordinate field, and `routes/discoverySearch.ts:1434#sensitivity_level,` never selects a gem's exact pair. Deep-scanned by `src/test/inputAssistanceCertification.test.ts:269#findCoordLeaks`. **Phase 9 widened the projection by three fields and this deep scan still passes** (§8.4). |
 | G152 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/validationSuite.ts:172#normalization` for hashtag validity, `:264#correction` for the row it produces; handles reuse the pre-existing `lib/usernameRules.ts`. |
 | G165 | `C ᵖ` (unreadable) | **C** | ᵖ | Realised in production by the pre-existing `travel-buddy-standalone/src/components/MentionInput.tsx:145#insertTag`, which keeps display text while recording structured tag spans. The platform's own version is still unconsumed. |
-| G184 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/gateway.ts:389#ageRestrictedSet` and `:633#fetchBlockedSet`; the null-set refusal is the mutation-proven case in `src/test/inputAssistanceGateway.test.ts:384#suppresses`. |
+| G184 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/gateway.ts:456#ageRestrictedSet` and `:757#fetchBlockedSet`; the null-set refusal is the mutation-proven case in `src/test/inputAssistanceGateway.test.ts:384#suppresses`. |
 | G185 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearch.ts:718#visibility`, `:890#visibility`, `:891#show_in_discovery`; proven through the gateway by `src/test/inputAssistanceCertification.test.ts:330#PUBLIC`. |
-| G186 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/projection.ts:108#display-safe` — a fixed whitelist that still drops `metadata`, `privacyState`, `accessState`, owner/host ids and counts. **Phase 9 added three fields to that whitelist; none is private (§8.4).** |
-| G218 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/gateway.ts:359#dispatchTypes` → `routes/discoverySearch.ts:1999#dispatchSearch`. |
+| G186 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/projection.ts:135#display-safe` — a fixed whitelist that still drops `metadata`, `privacyState`, `accessState`, owner/host ids and counts. **Phase 9 added three fields to that whitelist; none is private (§8.4).** |
+| G218 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/gateway.ts:420#dispatchTypes` → `routes/discoverySearch.ts:1999#dispatchSearch`. |
 | G220 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/entityMap.ts:35#ENTITY_TO_SEARCH` → `routes/discoverySearch.ts:1999#dispatchSearch`. |
 | G235 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/inputAssistance.ts:147#input_assist_suggest` (90/min) and `:252#input_assist_select` (60/min). Both still resolve exactly. |
 | G278 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearch.ts:2043#searchPlaces`. **The old pointer, line 1568, is stale by 225.** |
@@ -1338,10 +1361,10 @@ CORRECT is still C minus the count of `ᵖ` rows, which is still 23.
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| G97 | N | **C** | §15 **TemporalFit** now has a producer. `extractTemporal` was already normalising "tonight" / "tomorrow morning" / "Friday after dinner" into an ISO window; the window went into a search STRING and was discarded. It is now resolved once per request at `lib/inputAssistance/gateway.ts:179#TemporalWindow` and handed to the projection at `:414#temporalWindow`, where `lib/inputAssistance/rankingSignals.ts:104#applyTemporalFit` boosts a row that starts inside it and demotes one that starts outside. Deliberately a RANKING term, not a filter — see the ceiling note in §8.7. |
+| G97 | N | **C** | §15 **TemporalFit** now has a producer. `extractTemporal` was already normalising "tonight" / "tomorrow morning" / "Friday after dinner" into an ISO window; the window went into a search STRING and was discarded. It is now resolved once per request at `lib/inputAssistance/gateway.ts:194#TemporalWindow` and handed to the projection at `:441#temporalWindow`, where `lib/inputAssistance/rankingSignals.ts:104#applyTemporalFit` boosts a row that starts inside it and demotes one that starts outside. Deliberately a RANKING term, not a filter — see the ceiling note in §8.7. |
 | G101 | N | **C** | §15 **TrustConfidence** now has a producer. `verified` and `is_official` were selected by `searchTravelers` (`routes/discoverySearch.ts:168#verified?:`) and dropped by the §42 whitelist. `lib/inputAssistance/rankingSignals.ts:130#applyTrustConfidence` reads them into `confidence`, clamped by `:59#SIGNAL_CEILING` strictly below the exact-match band so §9's trust order holds. |
-| G180 | N | **C** | §20 **verification / trust context** is displayable. `lib/inputAssistance/types.ts:261#verified` and `:262#official` are projected at `lib/inputAssistance/projection.ts:114#verified` — only when TRUE, so an absent key is "not applicable" and never a negative claim about a person — and rendered as badges by `travel-buddy-standalone/src/platform/input-assistance/components/suggestionBadges.ts:40#suggestionBadges`, which the row both renders and announces from one call (`components/EntitySuggestionRow.tsx:41#suggestionBadges`, `:46#badges.map`). |
-| G181 | N | **C** | §20 **Hidden Gem protection label**. `gemSearchPosition` already decided whether a gem may carry a centroid and wrote it to `metadata.coordsPrecision`; the projection dropped the whole bag, so a protected gem rendered identically to an unprotected one. `lib/inputAssistance/rankingSignals.ts:151#gemLocationPrecision` reads that word into `lib/inputAssistance/types.ts:271#locationPrecision` at `lib/inputAssistance/projection.ts:117#gemLocationPrecision`. A precision WORD, never a position: `'exact'` is not in the union because the gem path cannot produce one, and a test serialises the row and greps for the centroid. |
+| G180 | N | **C** | §20 **verification / trust context** is displayable. `lib/inputAssistance/types.ts:261#verified` and `:262#official` are projected at `lib/inputAssistance/projection.ts:141#verified` — only when TRUE, so an absent key is "not applicable" and never a negative claim about a person — and rendered as badges by `travel-buddy-standalone/src/platform/input-assistance/components/suggestionBadges.ts:40#suggestionBadges`, which the row both renders and announces from one call (`components/EntitySuggestionRow.tsx:41#suggestionBadges`, `:46#badges.map`). |
+| G181 | N | **C** | §20 **Hidden Gem protection label**. `gemSearchPosition` already decided whether a gem may carry a centroid and wrote it to `metadata.coordsPrecision`; the projection dropped the whole bag, so a protected gem rendered identically to an unprotected one. `lib/inputAssistance/rankingSignals.ts:151#gemLocationPrecision` reads that word into `lib/inputAssistance/types.ts:271#locationPrecision` at `lib/inputAssistance/projection.ts:144#gemLocationPrecision`. A precision WORD, never a position: `'exact'` is not in the union because the gem path cannot produce one, and a test serialises the row and greps for the centroid. |
 | G356 | N | **C** | §50 **the field inventory exists.** Three source files cited "the client audit's §50 field table" as an existing artifact and a repo-wide search returned only those three references to it. `travel-buddy-standalone/src/platform/input-assistance/contexts/fieldInventory.ts:102#FIELD_INVENTORY` is that table — 24 records, one per registered fieldId — and `src/test/inputAssistanceFieldInventory.test.ts:201#registrars` refuses a registered field that is not inventoried. The three dangling citations now point at it. |
 | G357 | N | **C** | §50 **the per-field record.** `fieldInventory.ts:415#fieldInventoryRow` merges the recorded half (screen/route, component file, current implementation, provider, zero-state, validation, known issues, migration status) with the four attributes `INPUT_CONTEXT_REGISTRY` already owns (desired mode, entity types, offline policy, privacy class) rather than copying them, so the row cannot disagree with the registry. Every `componentFile` is asserted to exist on disk, and `migrationStatus` is MEASURED, not claimed: `src/test/inputAssistanceFieldInventory.test.ts:296#mounted` scans `src/` and `app/` for each fieldId. |
 | G31 | N | **C** | §29 **`privacyClass` has a reader.** It was declared on all 29 contexts and read by nothing — deleting it would have changed no behaviour. `travel-buddy-standalone/src/platform/input-assistance/services/suggestionCache.ts:41#UNCACHEABLE_PRIVACY_CLASSES` and `:55#isCacheablePrivacyClass` now gate the process-global suggestion cache, wired at `hooks/useInputAssistance.ts:148#isCacheablePrivacyClass` (read) and `:222#sharedSuggestionCache.set` (write). Not hypothetical: `telegraph.recipient` is `personal` AND mounted, so a global map was holding a list of PEOPLE under the raw prefix the viewer typed and serving it back without a round trip that could re-check eligibility. |
@@ -1608,9 +1631,9 @@ on the write guard to make the read guard look correct.
 telemetry, applied the replacement text and closed the overlay: three state
 changes, none of them perceivable. A screen-reader user heard the list vanish
 and nothing else.
-`travel-buddy-standalone/src/platform/input-assistance/components/SmartInput.tsx:87#selectionAnnouncement`
+`travel-buddy-standalone/src/platform/input-assistance/components/SmartInput.tsx:97#selectionAnnouncement`
 is the sentence and
-`travel-buddy-standalone/src/platform/input-assistance/components/SmartInput.tsx:153#announceForAccessibility`
+`travel-buddy-standalone/src/platform/input-assistance/components/SmartInput.tsx:221#announceForAccessibility`
 is the call. The `applied` argument is load-bearing, not decorative: a row
 carrying `replacementText` rewrites the field under the cursor and a row that
 does not (an action, a validation, a caller that handled insertion itself)
@@ -1659,7 +1682,7 @@ stage with raw `coffee`.
 | G204 | W | **C** | §33's tier ladder has its middle rung. `suggestionCache.ts:154#longestPrefix` + `suggestionRanking.ts:94#narrowToQuery` are consulted at `useInputAssistance.ts:175#localTier` BEFORE the network answers, so a keystroke past a cached prefix renders locally instead of showing nothing until a round trip completes. The revalidation request still goes out — that is SWR, and the hook's own header has always said "still server-assisted if minChars ≤ 1". Proven at `travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.localTier.component.test.tsx:98#renders local rows before the server answers`. |
 | G214 | W | **C** | §34 "prefer local: cached city prefix matching" has a prefix index. The row's exact complaint — *"the SWR cache is keyed by the whole query string … There is no prefix index"* — is answered by `suggestionCache.ts:154#longestPrefix`, which is O(len(query)) O(1) lookups, longest prefix first, TTL- and coordinate-respecting. The fold that makes "danang" match "Đà Nẵng" and "hcmc" match "Ho Chi Minh City" is the pre-existing `queryNormalization`, now reached for the first time. |
 | G210 | W | **C** | §33 "network loss: retain local/cached suggestions **and** explicit degraded behaviour" — both halves. The degraded half was already exact; the retention half was inverted (`setSuggestions([])`). `useInputAssistance.ts:240#setSuggestions` now retains the narrowed local list while still setting `unavailable`. Proven at `travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.localTier.component.test.tsx:110#RETAINS`. |
-| G324 | W | **C** | §46's fourth announcement exists. Purpose, count and active row were already wired; the selection result was not. `SmartInput.tsx:153#announceForAccessibility` speaks it, and `SmartInput.tsx:87#selectionAnnouncement` says "Field updated" only when the field really was rewritten. Proven at `travel-buddy-standalone/src/platform/input-assistance/components/__tests__/suggestionAccessibility.component.test.tsx:204#never claims it did`. |
+| G324 | W | **C** | §46's fourth announcement exists. Purpose, count and active row were already wired; the selection result was not. `SmartInput.tsx:221#announceForAccessibility` speaks it, and `SmartInput.tsx:97#selectionAnnouncement` says "Field updated" only when the field really was rewritten. Proven at `travel-buddy-standalone/src/platform/input-assistance/components/__tests__/suggestionAccessibility.component.test.tsx:204#never claims it did`. |
 | G329 | W | **C** | §46 "non-color-only state indicators". The active row now carries a caret glyph as well as its background tint (`EntitySuggestionRow.tsx:78#activeSlot`), so the state survives greyscale. The caret is hidden from assistive tech on purpose — `accessibilityState.selected` already carries it. |
 | G115 | W | **C** | §18's sixth sequence operator fires. `semanticParser.ts:431#ALONG_RE` records the relationship without consuming the phrase, and `semanticParser.ts:513#ALONG_RE` splits on it, so *"food on the way to the club"* is two stages and still `along`. Proven at `artifacts/api-server/src/test/inputAssistanceSemanticIntent.test.ts:324#on the way`. |
 
@@ -1717,7 +1740,7 @@ coding gap.**
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| G233 | W | **W** | Verdict stands; **half the stated evidence is now false.** The row reads *"the verification flags are dropped before projection (G180), so a viewer cannot even tell the real account from the copy."* They are not dropped. §8's G180 build added `artifacts/api-server/src/lib/inputAssistance/projection.ts:114#verified` and `:115#official`, and `travel-buddy-standalone/src/platform/input-assistance/components/suggestionBadges.ts:42#Official` renders both as badges — so a viewer CAN now tell them apart, and §8's `applyTrustConfidence` additionally ranks the verified account above the copy. What is still true is the row's first clause, and it is the whole reason the verdict does not move: **nothing in the suggestion path detects or demotes an impersonating handle.** No confusable/homoglyph comparison exists anywhere in the layer. The row is W for one reason now, not two. |
+| G233 | W | **W** | Verdict stands; **half the stated evidence is now false.** The row reads *"the verification flags are dropped before projection (G180), so a viewer cannot even tell the real account from the copy."* They are not dropped. §8's G180 build added `artifacts/api-server/src/lib/inputAssistance/projection.ts:141#verified` and `:142#official`, and `travel-buddy-standalone/src/platform/input-assistance/components/suggestionBadges.ts:42#Official` renders both as badges — so a viewer CAN now tell them apart, and §8's `applyTrustConfidence` additionally ranks the verified account above the copy. What is still true is the row's first clause, and it is the whole reason the verdict does not move: **nothing in the suggestion path detects or demotes an impersonating handle.** No confusable/homoglyph comparison exists anywhere in the layer. The row is W for one reason now, not two. |
 
 **A second falsity, and it is larger than one row.** §4's citations into the
 files this pass edited do not resolve, and — checked rather than assumed —
@@ -1732,7 +1755,7 @@ files this pass edited do not resolve, and — checked rather than assumed —
   three lines held closing JSX.
 
 All three verdicts are right — the emitters and the style rule do exist, at
-`SmartInput.tsx:212#input_opened`, `useInputAssistance.ts:200#suggestion_request_started`
+`SmartInput.tsx:284#input_opened`, `useInputAssistance.ts:200#suggestion_request_started`
 and `EntitySuggestionRow.tsx:145#rowActive`. What is wrong is every pointer.
 **This is what the UNANCHORED ceiling is for and it is why that ceiling must
 keep falling:** `check:doc-citations` caught all three of the *anchored*
@@ -1967,7 +1990,7 @@ That also disposes of G129 and G186 without needing the whitelist argument:
 and `discoverySearch.ts:1400#lat:`), but no `saved` row can arrive at
 `projectSearchResult`. And
 had one arrived, it would change nothing: `metadata` is not in the §42 whitelist
-(`lib/inputAssistance/projection.ts:108#display-safe`), which is G186's entire
+(`lib/inputAssistance/projection.ts:135#display-safe`), which is G186's entire
 content, and `searchPlaces` (`discoverySearch.ts:1143#lat:`), `searchEvents`
 (`discoverySearch.ts:792#metadata:`) and `searchCities`
 (`discoverySearch.ts:1848#metadata:`) already carried the same keys before this
@@ -2072,3 +2095,316 @@ the header row both refuse. The ledger entry for this census instead names
 `579694d6` entry, which §9 superseded when it re-declared `head_commit`, is moved
 to the ledger's `retired` array rather than deleted, so the two arguments it
 carried survive their acknowledgement.
+
+---
+
+## 11. Phase 11 — the Input Intelligence lane
+
+Worked at `7d1f2d498` (PR #483 head + the v2 spec install) in `wt-483`, alongside
+six other architecture lanes in the same working tree. **19 rows move W→C or
+N→C and one moves N→W**, every one of them by code and a mutation-proven test —
+no row in this section moves by re-reading, re-labelling or re-scoping. Where a
+row stayed W, N or `?`, this section says what would settle it and who can
+supply it, because a gap with no named owner is a gap nobody will close.
+
+### 11.0 What this pass chose, and why
+
+§5 says the programme is good where §51 drew a phase and largely absent where it
+did not. §9 worked the phase-scoped `W` column. **This pass deliberately went the
+other way**: 11 of its 19 moved rows sit in sections §51 never scoped — §10's
+three normalization clauses (§51 scoped §10 only as "the diacritic/trigram DB
+work", which is G57's migration and not these), §36's stuffing control, and
+seven of §44's declared-never-emitted telemetry arms. That is the half of the
+spec §5 says nobody planned for, and it is where the cheap rows were.
+
+Four clusters were built. Every one is ADDITIVE by construction: each new signal
+is the identity transform on input that does not trigger it, so no query that
+resolves today can change shape because of this pass. That property is asserted,
+not assumed — three of the four end-to-end suites carry an explicit CONTROL case
+whose only job is to show that two rows are indistinguishable when the new
+signal is absent.
+
+### 11.1 Cluster A — the §40 QueryNormalizer, and three §10 clauses (G274, G61, G62, G63)
+
+`lib/inputAssistance/queryNormalizer.ts` is new and is the service §40 names.
+Before it, normalization was three unrelated helpers called inline in
+`gateway.ts` — Discovery's alias table, Discovery's PostgREST guard, and the
+location service's fold — and the client module that wanted the service said so
+in a comment. It COMPOSES those three unchanged and adds what was missing:
+
+| clause | producer | proved by |
+| --- | --- | --- |
+| Transliteration (G61) | `lib/inputAssistance/queryNormalizer.ts:167#export function transliterate` — a curated native-script exonym dictionary (`lib/inputAssistance/queryNormalizer.ts:69#NATIVE_CITY_NAMES`) for Han / Thai / Korean / Japanese / Arabic, plus a per-character Cyrillic / Greek / Thai romanizer that generalises past it | `กรุงเทพ` and `胡志明市` resolve to the stored Bangkok / HCMC rows, display spelling preserved |
+| Emoji, per field context (G62) | `lib/inputAssistance/queryNormalizer.ts:225#export function stripEmoji` + `lib/inputAssistance/queryNormalizer.ts:246#export function stripsEmoji` — a picker strips, a caption does not | `"Sky Bar 🔥"` now finds the Sky Bar place; `"#🔥"` now answers with a `validation` row instead of silence |
+| Keyboard typo tolerance with a confidence (G63) | `lib/inputAssistance/queryNormalizer.ts:305#export function weightedDistance` (Damerau-Levenshtein, adjacency-weighted through `lib/inputAssistance/queryNormalizer.ts:288#export function keyboardAdjacent`), `lib/inputAssistance/queryNormalizer.ts:339#export function typoConfidence`, `lib/inputAssistance/queryNormalizer.ts:350#APPLY_CONFIDENCE = 0.8` | `"bangkkok"` — not in `SEARCH_ALIASES` — resolves to canonical Bangkok |
+
+**Why the correction is a SECOND attempt and not a rewrite.** The user's own
+spelling always gets the first query; `lib/inputAssistance/gateway.ts:400#let correctionHelped = false`
+only retries with the corrected key when that returned nothing, and only records
+a correction ROW when the retry actually changed the result set. So a query that
+resolves today cannot be rerouted, and the row never claims something the
+results do not support. Two further refusals are load-bearing: an AMBIGUOUS
+input — two vocabulary entries tied at the best distance — produces no
+correction in either band (§19 says a tie is offered, never guessed), and an
+`@handle` is never corrected at all, because a typo in a handle is a different
+person.
+
+### 11.2 Cluster B — §18 feasibility and §16 carryover as a CONSTRAINT (G122, G124, G125, G107, G96)
+
+`filterInfeasibleCandidates` was a real, correct, already-mutation-proven
+implementation with exactly one caller. This pass gave §18 its second caller
+without giving it a second implementation:
+`lib/inputAssistance/creation.ts:167#export function partitionByFeasibility` is
+that function's own body, refactored into a three-way partition so a caller can
+read the VERDICT rather than the order — which the main pipeline needs, because
+it re-ranks by §9 type order afterwards and a reordering would not have
+survived. `lib/inputAssistance/taskContext.ts` is new: one bounded, fail-soft
+read of the active task
+(`lib/inputAssistance/taskContext.ts:90#export async function resolveTaskConstraint`)
+and the classification over the request's candidates
+(`lib/inputAssistance/taskContext.ts:176#export function classifyFeasibility`).
+
+The verdict reaches ranking as a bounded confidence demotion
+(`lib/inputAssistance/rankingSignals.ts:326#export function applyFeasibility`,
+`lib/inputAssistance/rankingSignals.ts:320#INFEASIBLE_DEMOTION = 0.22`) plus the
+§15 TripFit lift
+(`lib/inputAssistance/rankingSignals.ts:337#export function applyTripFit`).
+**Demotion, not removal, and the reason is stated rather than hidden**: this
+pipeline's evidence is a city string on a projected row, weaker than the
+creation flow's, and the privacy gate has already decided what the viewer may
+see. §18 permits either action; the weaker evidence chooses the weaker one.
+
+A GEOGRAPHIC row is exempt by construction
+(`lib/inputAssistance/taskContext.ts:145#const GEOGRAPHIC_TYPES`) — a city row IS
+another city, and a city picker inside a Bangkok Trip must still be able to offer
+Da Nang.
+
+### 11.3 Cluster C — two §15 signals that had no producer (G102, G106, G231)
+
+`Diversity` (`lib/inputAssistance/rankingSignals.ts:291#export function applyDiversity`)
+is the WITHIN-type term §15 names; the pre-existing per-type fan-out and §13's
+reserved slot produce diversity ACROSS types as a side effect of slot
+allocation, which is a different thing. `SpamRisk`
+(`lib/inputAssistance/rankingSignals.ts:207#export function spamRisk`) is the §15
+signal and, on the same code, §36's keyword-stuffing control (G231): repetition
+above a prose floor, upper-case ratio, and separator-chained keyword lists,
+combined by taking the strongest so a listing is not punished twice for one
+habit. Both demote only. Neither can delete a row, and that is deliberate — a
+false positive that removes a real venue is far worse than one that costs it two
+slots, and this layer has neither the evidence nor the mandate to remove a
+listing.
+
+### 11.4 Cluster D — seven §44 events that were declared and never emitted (G311, G313, G314, G315, G316, G317, G318)
+
+Of the fourteen names in `InputTelemetryEventName`, five had a call site. Seven
+of the nine that did not now do, all from the REAL `SmartInput`:
+
+| event | call site |
+| --- | --- |
+| `suggestion_rendered` | `components/SmartInput.tsx:173#emitSuggestionsRendered(telemetryField, suggestions)` |
+| `validation_shown` | `components/SmartInput.tsx:175#if (validations > 0) emitValidationShown(telemetryField, validations)` |
+| `suggestion_dismissed` | `components/SmartInput.tsx:164#emitSuggestionsDismissed(telemetryField, prev.count, focused ? 'no_results' : 'blur')` and `components/SmartInput.tsx:251#emitSuggestionsDismissed(telemetryField, shownRef.current.count, 'escape')` |
+| `manual_value_kept` | `components/SmartInput.tsx:293#emitManualValueKept(telemetryField, value.trim().length)` |
+| `raw_search_submitted` | `components/SmartInput.tsx:204#emitRawSearchSubmitted(telemetryField, (s.replacementText ?? value ?? '').length, true)` and `components/SmartInput.tsx:302#emitRawSearchSubmitted(telemetryField, value.trim().length, false)` |
+| `correction_accepted` | `components/SmartInput.tsx:201#if (s.type === 'correction') emitCorrectionAccepted(telemetryField, s)` |
+| `disambiguation_selected` | `components/SmartInput.tsx:202#if (s.type === 'disambiguation') emitDisambiguationSelected(telemetryField, s)` |
+
+The impression is keyed by the id-SIGNATURE of the rendered list, so a re-render
+of the same rows does not inflate the count;
+`components/SmartInput.tsx:131#const shownRef` and its companion `acceptedRef`
+close an impression so the same list can never land in both the accepted and the
+ignored arm, which is the distinction §45's loop is built on. Every payload
+carries a COUNT, a TYPE name or a LENGTH and never the text — asserted directly,
+because these arms fire on captions and private messages too.
+
+**EMISSION IS NOT MEASUREMENT, and this section does not pretend otherwise.**
+The sink is still `() => {}`. In production these seven events are now produced
+and dropped. G263, G306 and G355 stay `W` for exactly that reason, and inventing
+a transport inside this layer would have been the worse answer, because the only
+honest destination is a server endpoint that does not exist yet.
+
+### 11.5 The W71 answer — does voice input exist?
+
+`census-wall.md` W71 asks whether voice input and typo normalization use the same
+global engine. The Wall lane proved its half and left this one open. **This lane
+re-verified it at this tree rather than inheriting it, and the answer is: voice
+input does NOT exist, and nothing in this tree plans it.**
+
+Evidence, re-run here:
+
+- `grep -rniE 'voice|speech|dictat|transcri|microphone'` over
+  `artifacts/api-server/src/lib/inputAssistance/` — **exit 1, no match.**
+- The same grep over `travel-buddy-standalone/src/platform/input-assistance/` —
+  **exit 1, no match.**
+- The client package declares no `expo-speech`, no `@react-native-voice/voice`
+  and no `SpeechRecognition`. `expo-av` IS present and is a media-playback
+  dependency, not a dictation transport.
+- Every `voice` match in the client tree is WebRTC **voice calling**
+  (`src/components/calls/`, and the events voice-room card)  — a
+  different feature, which produces no transcript.
+- There is no `voice` / `dictation` `InputContext`
+  (`lib/inputAssistance/types.ts:32-61`), no feature flag, no stub, and §51
+  scoped no phase for §25.
+
+So the correct reading of W71 is: **the shared engine's typo normalization is
+real and proven at the Wall, and there is no voice PRODUCER anywhere to route
+through it.** The requirement (G163) is conditional on dictation existing and is
+therefore correctly NOT-BUILT — not "wrong", not "partial", and not closable
+from this layer. WHAT WOULD TURN IT RED: a dictation surface that hands its
+transcript to
+`lib/inputAssistance/queryNormalizer.ts:553#export function normalizeQuery` like
+any other typed text — which, after §11.1, is a single call rather than a
+re-implementation. Nothing else about G163 changes until somebody ships that,
+and the Wall's own half needs no revision.
+
+### 11.6 Mutation log — every one applied, watched go red, reverted
+
+A test whose mutation leaves it green is recorded as worthless rather than kept.
+Fourteen mutations were run; **all fourteen turned their named suite RED**, and
+one weak test was found and rewritten before it was kept.
+
+| # | mutation | suite | result |
+| --- | --- | --- | --- |
+| 1 | `ADJACENT_SUBSTITUTION_COST` 0.5 → 1 | `src/test/inputAssistanceGeoCore.test.ts` | RED (1) — the keyboard model stops distinguishing an adjacent slip |
+| 2 | delete the Thai rows from `NATIVE_CITY_NAMES` | same | RED (2) |
+| 3 | delete the `tied` guard in `bestCorrection` | same | RED (1) — an ambiguous input starts being guessed |
+| 4 | `stripsEmoji` → always false | same | RED (2) |
+| 5 | disable the gateway's typo retry | same | RED (2) |
+| 6 | `buildHashtagValidation` → always null | same | RED (1) |
+| 7 | `spamRisk` → 0 | `src/test/inputAssistanceRankingSignals.test.ts` | RED (4) |
+| 8 | `applyDiversity` → identity | same | RED (1) |
+| 9 | `classifyFeasibility` → empty verdict (the pre-change pipeline) | same | RED (3) |
+| 10 | `applyTripFit` → identity | same | RED (1) |
+| 11 | delete the `emitSuggestionsRendered` call | `components/__tests__/inputTelemetryFunnel.component.test.tsx` | RED (3) |
+| 12 | `acceptedRef.current = true` in the render effect | same | RED (1) — accepted and ignored stop being distinguishable |
+| 13 | drop the `!acceptedRef.current` guard on blur | same | RED (1) |
+| 14 | `scrubProps` returns props unchanged | same | RED (1) |
+
+**The weak test this found, and it is the same failure mode §9.6 warned about.**
+The first draft of the §18 Trip-window assertion (G124) passed with mutation 9
+applied. The reason was the fixture, not the code: the event search orders by
+`starts_at` ascending, so the in-window event led on its own and the assertion
+proved nothing. The fixture now seeds the out-of-window event EARLIER than the
+in-window one, so the underlying search puts the wrong answer first, and the test
+additionally asserts that the winner leads BY CONFIDENCE rather than by input
+order. It then reddened under mutation 9. Recorded because §9.6 asked the next
+pass to look for exactly this, and it was there.
+
+### 11.7 Rows this lane examined and deliberately did NOT move
+
+Each was opened at this tree and left where it is. The verdict column is
+unchanged; what is new is a named blocker and a named owner.
+
+| row | left at | what would turn it red, and who can supply it |
+| --- | --- | --- |
+| G263, G306, G355 | W | A telemetry POST target (the `routes/` owner — `routes/inputAssistance.ts` is not this lane's file) plus one `setTelemetrySink` call at app bootstrap. Until then nine event names have call sites and no destination. |
+| G319 | N | `services/inputTelemetry.ts:216#export function emitActionCompleted` exists and is deliberately uncalled: selecting an action row OPENS a propose-only picker, and calling it "completed" there would make every abandoned picker a success. The global-search screen owner must call it on CONFIRM. |
+| G320, G370 | N | `services/inputTelemetry.ts:229#export function emitDownstreamTaskCompleted` exists and has no caller. This layer cannot observe the outcome — the field is long gone when a trip is saved. One call each from `app/trip/new.tsx`, `app/events/create/index.tsx`, `app/telegraph/new.tsx`. |
+| G5, G14, G322, G323 | W | All four need an OUTCOME signal to weigh against the acceptance boost. G322 moved N→W this pass because three of its four arms now exist; the fourth is G320 and the calibration step is still absent. |
+| G365, G366, G367 | N | Their EVENTS now fire, which corrects the stated evidence on all three. The metrics are still not computed and cannot be until the events land somewhere (G263). Left N rather than moved, because "recorded into a no-op" is not recorded. |
+| G163 | N | See §11.5. Voice does not exist. |
+| G326 | N | Evidence corrected in the row; verdict stands, because `setAccessibilityFocus` still appears nowhere. Buildable inside this lane's paths and not built this pass. |
+| G211 | W | Re-read and confirmed unchanged: `components/SuggestionOverlay.tsx` still renders a plain `ScrollView` with a fixed `maxHeight = 320`. Harmless while `maxSuggestions ≤ 8`, and still not the mechanism §33 asks for. |
+| G305 | W | `search/smartActions.ts:35-43` excludes `open_compass` from `DISPATCHABLE_ACTION_TYPES` because the search bar has no dispatch target. Widening that set without also widening the SCREEN's dispatcher switch would create a dead chip, and the screen is not this lane's file — a two-file change needing the search-screen owner. |
+| G6, G16, G359 | W | The four unmigrated engines live in `travel-buddy-standalone/src/hooks/` and `src/components/MentionInput.tsx`, outside this lane's paths. A ratchet forbidding a fifth would live in `src/scripts/`, the integration owner's directory. |
+| G46, G109, G133, G303, G362 | N / W | Not attempted this pass. Each needs a producer, and for the Telegraph rows a registered field the composer actually mounts. Named here so the next pass need not re-derive the dependency: `share_entity` (G303) is the single missing producer that G133 and G362 both hang off. |
+
+### 11.8 Mis-graded rows found, in both directions
+
+| row | finding |
+| --- | --- |
+| G326 | **Evidence false, verdict right.** The row asserted that `AccessibilityInfo` and `accessibilityElementsHidden` appear NOWHERE under `platform/input-assistance/`. Both appear: `components/SmartInput.tsx:26#AccessibilityInfo` and `components/EntitySuggestionRow.tsx:82#accessibilityElementsHidden`, both added by §9's own G324/G329 build — so the row was contradicted by a pass that shares this document. The verdict survives on its other sentence (`setAccessibilityFocus` really is absent). Corrected in place. |
+| G366, G367 | **Evidence now false, verdict right.** Both said their events "never fire". After §11.4 they do. Both stay `N` because the metric is still not computed, and saying so is the difference between a corrected row and a weakened one. |
+| The top-of-document Headline | **Stale by two passes.** It read `230 / 69 / 70 / 4` while §8.7 said `237 / 69 / 63 / 4` and §9.7 said `243 / 63 / 63 / 4`. `check:census-integrity` reads the LAST stated headline, so the guard could not see it. Restated, with a note saying why the guard was blind to it. |
+| §5's two tables | **Stale by three passes, now marked so in place.** Not silently patched — see the note there. |
+
+### 11.9 CEILING — what this pass could not do, and the one check that is red around it
+
+**Nothing built here is behind a flag or a migration.** All 19 moved rows are
+true on every deployment that runs this code — which is not the same as saying
+they are deployed. BUILT ON BRANCH IS NOT MERGED; MERGED IS NOT DEPLOYED;
+DEPLOYED IS NOT FLAG-ENABLED. The 16 `☠prod` rows are untouched and none moved.
+
+**A check that was red mid-pass, and is not any more — recorded because the
+reason matters.** For part of this pass `pnpm run typecheck:tests` in
+`artifacts/api-server` exited 2, and not because of any file in this lane. A
+guard added to the shared test-typecheck ratchet script during this wave
+correctly refuses to record a baseline when the program contains a TS1xxx
+SYNTACTIC error — TypeScript stops before semantic checking for the WHOLE
+program when one file will not parse, so every other file would read as
+"improved" and `--update` would have written 864 real ceilings down to nothing.
+One non-input test file (src/test/geofence.test.ts) carried a duplicate object
+key (TS1117). Its owner fixed it and re-recorded the baseline while this lane was
+working; the check now passes at **863 diagnostics across 115 files**, and
+**every file this lane wrote contributes 0 of them** — measured directly, and
+also separately against a scratch project while the parse error was still live.
+The standalone package's own ratchet is unchanged at 176 across 61.
+
+**Citation hygiene, because this pass moved lines in three heavily-cited files.**
+Editing `gateway.ts`, `projection.ts` and `SmartInput.tsx` shifted 18 distinct
+anchored citations elsewhere in this document, which `check:doc-citations`
+reported as 42 broken anchors. All 42 were relocated by matching the ORIGINAL
+line's content in the new file, and this census now reports **0** broken
+anchors. That is the rot an un-anchored `file.ts:NNN` hides: the anchors are
+what made the damage visible and fixable at all.
+
+**P25 — what would turn THIS section red?** Any of: `check:census-integrity`
+reporting a headline that no longer matches the rows; any of the fourteen
+mutations in §11.6 being applied and its named suite staying green; a reader
+opening `lib/inputAssistance/gateway.ts:400#let correctionHelped = false` and
+finding the corrected key used on the FIRST attempt rather than the second
+(which would make G63 destructive and the row wrong); or a reader opening
+`components/__tests__/inputTelemetryFunnel.component.test.tsx` and finding it
+asserts against the telemetry helpers rather than against the real `SmartInput`
+— the exact weakness §9.6 caught in the §46 suite, and the reason every test in
+it drives the component.
+
+### 11.10 Restated headline
+
+> | Measure | was (§9.7) | now (§11) |
+> | --- | --- | --- |
+> | **Denominator — testable requirements** | 373 | **373** |
+> | BUILT-AND-CORRECT | 243 | **262** |
+> | BUILT-BUT-WRONG | 63 | **55** |
+> | NOT-BUILT | 63 | **52** |
+> | CANNOT-VERIFY | 4 | **4** |
+> | **CONSTRUCTED%** = (C+W)/373 | 82.0 % | **317 / 373 = 85.0 %** |
+> | **CORRECT%** (raw) = C/373 | 65.1 % | **262 / 373 = 70.2 %** |
+> | **CORRECT% (spec-attributable)** = (C−23ᵖ)/373 | 59.0 % | **239 / 373 = 64.1 %** |
+> | **THE GAP** = W/373 | 16.9 % | **55 / 373 = 14.7 %** |
+> | CANNOT-VERIFY share | 1.1 % | **4 / 373 = 1.1 %** |
+
+262 + 55 + 52 + 4 = 373, so the four buckets still sum to the denominator.
+
+**Unlike §9, CONSTRUCTED% DOES move here, and by exactly the right amount.**
+§9's note — "a pass that closes the correctness gap cannot move it" — is true of
+a pass that only fixes `W` rows. This one moved 10 rows out of `N`, which is
+construction, so CONSTRUCTED% rises by 10/373 = 2.7 points while CORRECT% rises
+by 19/373 = 5.1 points. The 9-point difference is the `W→C` half. Nothing is
+counted twice.
+
+None of the 19 carries `ᵖ`: every one rests on a file this lane wrote or a call
+site it added, so the spec-attributable count rises by the full 19 and the `ᵖ`
+population is still the same 23 §8.3 lists.
+
+### 11.11 Freshness
+
+`head_commit` is **not** re-declared. This pass changed eight counted files, so
+this census is correctly STALE against `90a515a6` until somebody re-reads the
+rows those files carry. Declaring HEAD here would report FRESH about 350 rows
+nobody reopened, which is what §8.9, §9.7 and §10.5 each refused in turn.
+`CENSUS_SCOPE` is the integration owner's file and this lane did not edit it.
+
+**A measured note for whoever commits this, because the number moves when they
+do.** `check:census-scope-coverage` resolves citations against `git ls-files`, so
+this pass's three NEW files are currently UNRESOLVABLE and are skipped from both
+sides of the ratio — the check reads 105/106 = 99 % today. Once they are tracked,
+two of them (`lib/inputAssistance/queryNormalizer.ts` and
+`lib/inputAssistance/taskContext.ts`) resolve INSIDE the
+`artifacts/api-server/src/lib/inputAssistance/` directory entry and are watched
+automatically, and the third — the new client suite named in §11.6 — resolves to
+an unwatched path. That lands at 107/109 = 98.2 %, which clears the 98 % floor
+but with almost nothing to spare. **Adding that one client test path to
+`CENSUS_SCOPE` takes it to 108/109 = 99 %** and is the right action: a census
+must watch the file its evidence names, and that suite is the only proof seven
+§44 rows have.

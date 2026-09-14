@@ -378,6 +378,16 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/tripCloseout.test.ts",
   ],
   "census-layover.md": [
+    // WIDENED 2026-09-14. The Layover lane's §21 work: the safe-return live-share
+    // service whose `expireShare` swallow it closed, its expiry-honesty suite, the
+    // notification service beside it, and the SCHEDULER — which is the caller that
+    // was discarding the result, so a census row about whether an expiry failure
+    // is visible is graded on that file as much as on the service.
+    "artifacts/api-server/src/services/safeReturn/SafeReturnLiveShareService.ts",
+    "artifacts/api-server/src/services/safeReturn/SafeReturnNotificationService.ts",
+    "artifacts/api-server/src/services/safeReturn/__tests__/safeReturnLiveShareExpiryHonesty.test.ts",
+    "artifacts/api-server/src/lib/safeReturnScheduler.ts",
+    "artifacts/api-server/src/test/layoverBuddiesMasterFlag.test.ts",
     // WIDENED 2026-09-13 at integration of the Layover lane's §11. Every path
     // below is an artifact §11 GRADES, not machinery: migration 2860 and its
     // rollback are the two tables L14/L86/L194/L263 are scored against, and the
@@ -1743,6 +1753,11 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   // paths resolve) and the most client-weighted: its subject is the typing
   // surface, so the hooks ARE the measurement, not evidence about it.
   "census-input-intelligence.md": [
+    // ADDED 2026-09-14 on the lane's request: the telemetry-funnel component test
+    // now carries the §51 funnel rows' evidence. Its own measurement was that
+    // coverage lands at 98.2% once its three new files are tracked — clearing a
+    // 98% floor with almost nothing to spare — and this line takes it to 99%.
+    "travel-buddy-standalone/src/platform/input-assistance/components/__tests__/inputTelemetryFunnel.component.test.tsx",
     "artifacts/api-server/src/lib/inputAssistance/",
     "artifacts/api-server/src/lib/canonicalLocations.ts",
     "artifacts/api-server/src/lib/usernameRules.ts",

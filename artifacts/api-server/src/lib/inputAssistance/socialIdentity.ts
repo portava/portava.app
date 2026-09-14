@@ -49,6 +49,47 @@ export function canonicalizeHashtag(raw: string): string | null {
   return m ? m[0].toLowerCase() : null;
 }
 
+/**
+ * §10 emoji/punctuation handling for a HASHTAG field.
+ *
+ * `HASHTAG_RE` in the TaggingService write path is `[A-Za-z0-9]{2,64}` — an
+ * emoji tag is not a thing this system can store, and
+ * `canonicalizeHashtag('#\u{1F525}')` correctly returns null. What was wrong was
+ * that it did so SILENTLY: the field produced no reference, no row and no
+ * reason, so the user saw an empty list and could not tell an unsupported
+ * character from a network failure.
+ *
+ * This turns that silence into the §10 "appropriate to field context" answer: a
+ * non-blocking `validation` row that names what happened. Returns null when the
+ * input DOES canonicalize (the normal case) or when it is simply too short —
+ * an empty field is not an error.
+ */
+export function buildHashtagValidation(
+  context: InputContext,
+  policyVersion: string,
+  raw: string,
+): InputSuggestion | null {
+  const body = (raw ?? '').replace(/^#+/, '').trim();
+  if (body.length === 0) return null;
+  if (canonicalizeHashtag(body) !== null) return null;
+  const message = 'Hashtags use letters and numbers only — emoji and symbols cannot be tagged.';
+  return {
+    id: `${context}:validation:hashtag`,
+    type: 'validation',
+    context,
+    label: message,
+    action: {
+      type: 'set_structured_value',
+      value: { kind: 'hashtag_validation', valid: false, reason: 'unsupported_characters' },
+    },
+    structuredValue: { kind: 'hashtag_validation', valid: false, reason: 'unsupported_characters' },
+    confidence: 0.2,
+    source: 'local',
+    reason: 'Unsupported characters',
+    policyVersion,
+  };
+}
+
 // ── Recipient candidate pool (§47/§54) ────────────────────────────────────────
 
 /**

@@ -237,20 +237,22 @@ const REGISTRY: Record<InputContext, InputFieldPolicy> = {
   }),
   hashtag: policy('hashtag', {
     mode: 'search',
-    allowedSuggestionTypes: ['entity', 'completion'],
+    // §10: `validation` carries the "emoji/symbols cannot be tagged" answer so
+    // an unsupported tag body is stated rather than silently producing nothing.
+    allowedSuggestionTypes: ['entity', 'completion', 'validation'],
     entityTypes: ['hashtag'],
     minChars: 1,
   }),
   caption: policy('caption', {
     mode: 'free_text_assisted',
-    allowedSuggestionTypes: ['entity', 'ai_suggestion'],
+    allowedSuggestionTypes: ['entity', 'ai_suggestion', 'validation'],
     entityTypes: ['hashtag', 'user', 'place'],
     allowAI: true,
     minChars: 1,
   }),
   comment: policy('comment', {
     mode: 'free_text_assisted',
-    allowedSuggestionTypes: ['entity'],
+    allowedSuggestionTypes: ['entity', 'validation'],
     entityTypes: ['user', 'hashtag'],
     minChars: 1,
     privacyClass: 'viewer_scoped',

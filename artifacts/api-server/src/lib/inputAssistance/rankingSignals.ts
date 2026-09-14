@@ -154,3 +154,187 @@ export function gemLocationPrecision(
   const p = metadata?.coordsPrecision;
   return p === 'approximate' || p === 'hidden' ? p : undefined;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §15 SpamRisk — the third signal that had no producer
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// §15 names SpamRisk and §36 asks for keyword-stuffing resistance in business /
+// Buddy / user descriptions. Neither had any implementation: no term-frequency,
+// repetition or stuffing heuristic existed anywhere in the layer or in the
+// searchers it calls, so a listing that repeated "bangkok tour bangkok tour
+// bangkok tour" ranked exactly like one that said it once.
+//
+// This is a DEMOTION-ONLY term, deliberately. Stuffing is a ranking problem, not
+// a moderation verdict: a row is never deleted here, because a false positive
+// that deletes a real venue is far worse than one that costs it two slots, and
+// this layer has neither the evidence nor the mandate to remove a listing.
+
+/** Maximum confidence a maximally-stuffed row can lose. */
+export const SPAM_MAX_PENALTY = 0.3;
+/** Below this repetition ratio a row is treated as clean (ordinary prose repeats). */
+export const SPAM_REPETITION_FLOOR = 0.34;
+
+function spamTokens(s: string): string[] {
+  return (s ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter((t) => t.length >= 3);
+}
+
+/**
+ * SpamRisk in [0,1] over a row's user-authored display text.
+ *
+ * Three independent stuffing signals, each bounded, combined by taking the
+ * strongest rather than summing (so a row is not punished twice for one habit):
+ *
+ *   REPETITION — the share of tokens that are repeats of an earlier token.
+ *     "bangkok tour bangkok tour bangkok tour" is 4/6 repeats. Ordinary prose
+ *     sits well under {@link SPAM_REPETITION_FLOOR}; everything below the floor
+ *     scores zero so a normal listing is untouched.
+ *   SHOUTING   — the share of alphabetic characters that are upper case, once
+ *     the text is long enough for that to mean anything. "BEST CHEAP TOURS
+ *     BANGKOK" is a keyword banner, "BBQ" is not, which is why it is a ratio
+ *     over a minimum length rather than a flag.
+ *   SEPARATORS — runs of `|`, `-`, `•`, `/` or `,` used to chain keywords
+ *     ("tours | bangkok | cheap | best | guide"). Three or more separators in a
+ *     short display string is a list, not a sentence.
+ *
+ * Returns 0 for empty or short text: this must never fire on a two-word venue
+ * name, which has no room to stuff anything.
+ */
+export function spamRisk(text: string | null | undefined): number {
+  const s = (text ?? '').trim();
+  if (s.length < 12) return 0;
+
+  const tokens = spamTokens(s);
+  let repetition = 0;
+  if (tokens.length >= 4) {
+    const seen = new Set<string>();
+    let repeats = 0;
+    for (const t of tokens) {
+      if (seen.has(t)) repeats++;
+      else seen.add(t);
+    }
+    const ratio = repeats / tokens.length;
+    repetition = ratio <= SPAM_REPETITION_FLOOR ? 0 : Math.min(1, (ratio - SPAM_REPETITION_FLOOR) / (1 - SPAM_REPETITION_FLOOR));
+  }
+
+  let shouting = 0;
+  const letters = s.replace(/[^A-Za-z]/g, '');
+  if (letters.length >= 12) {
+    const upper = (s.match(/[A-Z]/g) ?? []).length;
+    const ratio = upper / letters.length;
+    shouting = ratio <= 0.7 ? 0 : Math.min(1, (ratio - 0.7) / 0.3);
+  }
+
+  const separators = (s.match(/[|•/]|\s-\s|,/g) ?? []).length;
+  const chained = separators >= 3 ? Math.min(1, (separators - 2) / 4) : 0;
+
+  return Math.max(repetition, shouting, chained);
+}
+
+/**
+ * Apply SpamRisk to a base confidence. Monotone: a clean row (risk 0) is
+ * byte-identical to its pre-signal confidence, so nothing that ranks correctly
+ * today can move because of this term.
+ */
+export function applySpamRisk(base: number, text: string | null | undefined): number {
+  const risk = spamRisk(text);
+  if (risk <= 0) return base;
+  return Math.max(0, base - risk * SPAM_MAX_PENALTY);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §15 Diversity — a score term, not a side effect of slot allocation
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The gateway already produces diversity ACROSS types: `perType = ceil(max /
+// types)` fans the dispatch out, and §13 reserves a slot for the completion
+// row. Neither is a diversity TERM, and neither does anything WITHIN a type —
+// eight near-identical "Bangkok Street Food Tour" rows from one operator came
+// back as eight rows, in a list capped at eight, and pushed every other kind of
+// answer off the surface.
+//
+// This is the within-type term: each successive row that repeats an already-seen
+// display signature is demoted a little further. Demotion, again, not removal:
+// two genuinely different venues can share a name, and the user asking for the
+// second one must still be able to reach it.
+
+/** Confidence removed per repeat of an already-seen signature, before the cap. */
+export const DIVERSITY_STEP = 0.04;
+/** The most any one row can lose to repetition. */
+export const DIVERSITY_MAX_PENALTY = 0.16;
+
+/**
+ * The comparison signature for diversity: the display text folded to
+ * lower-case alphanumerics with the leading article dropped. Two rows with the
+ * same signature are "the same answer again" as far as the surface is
+ * concerned.
+ */
+export function diversitySignature(label: string, subtitle?: string | null): string {
+  const fold = (s: string) =>
+    (s ?? '').toLowerCase().replace(/^(the|a|an)\s+/, '').replace(/[^a-z0-9]+/g, ' ').trim();
+  return `${fold(label)}|${fold(subtitle ?? '')}`;
+}
+
+/**
+ * Apply the Diversity term to an already-projected list, IN PLACE of the caller
+ * re-sorting: it returns new rows with adjusted confidence and leaves the order
+ * to the ranker. Rows are compared only against EARLIER rows of the SAME
+ * assistance type, so a `recent` row never suppresses an `entity` row and the §9
+ * type order is untouched.
+ *
+ * Pure; a list with no repeated signature is returned byte-identical.
+ */
+export function applyDiversity<T extends { type: string; label: string; subtitle?: string; confidence?: number }>(
+  rows: readonly T[],
+): T[] {
+  const seen = new Map<string, number>();
+  let changed = false;
+  const out = rows.map((r) => {
+    const key = `${r.type}::${diversitySignature(r.label, r.subtitle)}`;
+    const n = seen.get(key) ?? 0;
+    seen.set(key, n + 1);
+    if (n === 0) return r;
+    const penalty = Math.min(n * DIVERSITY_STEP, DIVERSITY_MAX_PENALTY);
+    changed = true;
+    return { ...r, confidence: Math.max(0, (r.confidence ?? 0) - penalty) };
+  });
+  return changed ? out : (rows as T[]);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §16/§17/§18 Task feasibility — the demotion the main pipeline never applied
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Confidence removed from a candidate the active task makes less appropriate —
+ * a venue outside the Trip's city, or an event outside the Trip's dates.
+ *
+ * Large enough to reorder within a type, small enough that a demoted row can
+ * still be reached: §18 says "remove or DEMOTE", and a user who types the name
+ * of a place in another city must still be shown it.
+ */
+export const INFEASIBLE_DEMOTION = 0.22;
+
+/** TripFit (§15): a candidate that IS inside the active Trip's city. */
+export const TRIP_FIT_BOOST = 0.05;
+
+/** Apply the task-feasibility demotion. Identity when the row is feasible. */
+export function applyFeasibility(base: number, demoted: boolean): number {
+  return demoted ? Math.max(0, base - INFEASIBLE_DEMOTION) : base;
+}
+
+/**
+ * TripFit (§15). A typed query inside an active Trip previously got NO
+ * Trip-derived rank term at all — Trip context reached only the zero-character
+ * defaults and an exact `cityId` equality check. This is the term for the typed
+ * case: a candidate in the Trip's city is lifted, clamped by
+ * {@link SIGNAL_CEILING} and never below its base.
+ */
+export function applyTripFit(base: number, inTripCity: boolean): number {
+  if (!inTripCity) return base;
+  return Math.max(base, Math.min(base + TRIP_FIT_BOOST, SIGNAL_CEILING));
+}

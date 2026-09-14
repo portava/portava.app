@@ -93,6 +93,14 @@ construction that is inert in production; it counts as built, consistent with ev
 
 ## 2. The denominator — source (a), 70 inbound obligations
 
+> **THE HEADLINE OF THIS SECTION DESCRIBES SOURCE (a) ONLY, AND THAT IS NOW A MINORITY OF THE DENOMINATOR.**
+> Corrected 2026-09-14. When this section was written Compass had no spec of its own and was graded on what
+> other surfaces demanded of it. The owner has since supplied `docs/specs/upgrades-v2/01-COMPASS-v2.md`
+> (CPV2-01..12) and `docs/compass/phase1-spec.md`, and `docs/compass/master-roadmap.md` was already in the
+> tree; all three are graded here and **the denominator moved 90 -> 126** because of them. A reader who takes
+> "70 inbound obligations" as this census's whole basis — as one did, and said so out loud — is reading a
+> heading that stopped describing the document underneath it.
+
 ### 2.1 Sensing spec — 15 rows
 
 | id | Obligation (spec line, verified) | V | Evidence |

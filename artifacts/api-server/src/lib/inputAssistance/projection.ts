@@ -23,6 +23,9 @@ import { searchTypeToEntity, type DispatchSearchType } from './entityMap';
 import {
   applyTemporalFit,
   applyTrustConfidence,
+  applyFeasibility,
+  applyTripFit,
+  applySpamRisk,
   gemLocationPrecision,
   type TemporalWindow,
 } from './rankingSignals';
@@ -52,6 +55,13 @@ export interface ProjectionSignals {
    * when the text carries no time operator. Feeds TemporalFit (§15).
    */
   temporalWindow?: TemporalWindow | null;
+  /**
+   * §18 task feasibility: the ACTIVE TASK (session city / Trip window) makes
+   * this row less appropriate. A demotion, never a removal — see taskContext.ts.
+   */
+  demoted?: boolean;
+  /** §15 TripFit: this row sits inside the active Trip's city. */
+  tripFit?: boolean;
 }
 
 /**
@@ -76,10 +86,27 @@ export function projectSearchResult(
   signals: ProjectionSignals = {},
 ): InputSuggestion {
   const entityType = searchTypeToEntity(r.type as DispatchSearchType);
-  const confidence = applyTemporalFit(
-    applyTrustConfidence(tierConfidence(matchTier(r.title, q, r.subtitle)), r.verified, r.isOfficial),
-    r.startsAt,
-    signals.temporalWindow ?? null,
+  // §15 signal stack. Order is deliberate: the boosts (Trust, Temporal, TripFit)
+  // are applied first and each is clamped by SIGNAL_CEILING, then the penalties
+  // (SpamRisk, task infeasibility) subtract from the result — so a stuffed or
+  // out-of-task row cannot boost its way back above a clean one.
+  const confidence = applyFeasibility(
+    applySpamRisk(
+      applyTripFit(
+        applyTemporalFit(
+          applyTrustConfidence(
+            tierConfidence(matchTier(r.title, q, r.subtitle)),
+            r.verified,
+            r.isOfficial,
+          ),
+          r.startsAt,
+          signals.temporalWindow ?? null,
+        ),
+        signals.tripFit === true,
+      ),
+      `${r.title} ${r.subtitle ?? ''}`,
+    ),
+    signals.demoted === true,
   );
 
   // Canonical registry rows carry source:"canonical" in metadata; every other
