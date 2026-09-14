@@ -62,6 +62,31 @@ const NOT_A_GATE: Record<string, string> = {
     "lib/travelerVerification.ts#loadTravelerIdentity, which applies the same rule.",
 };
 
+/**
+ * GATES THIS CHANGE FOUND AND DID NOT OWN.
+ *
+ * These are not "not a gate" and they are not fixed. They are age gates reached
+ * through `src/compass/**`, which is outside the file set this change was scoped
+ * to, and they have the SAME defect the seven fixed ones had: a verified minor's
+ * typed adult birthday passes them.
+ *
+ * They are listed here rather than left outside the scan because a gate nothing
+ * is looking at is exactly how this became a seven-gate defect. The count below
+ * may only SHRINK: routing one through the seam means deleting its line, and
+ * adding a new unrouted gate to this ledger fails the count assertion instead of
+ * being waved through.
+ */
+const KNOWN_UNROUTED: Record<string, string> = {
+  "compass/CompassTools.ts":
+    "prefsFromRow() derives GroupMemberPrefs.age from profiles.date_of_birth for the " +
+    "group-travel tools. Feeds CompassSocialEngine.eventSatisfiesGroup, below.",
+  "compass/CompassSocialEngine.ts":
+    "eventSatisfiesGroup() gates an age-restricted event on the group's youngest KNOWN " +
+    "age (`agg.youngestAge < ev.age_min`), and ageFromDob() is this file's own copy of " +
+    "the un-contradicted arithmetic. A provider-verified minor in the group contributes " +
+    "their typed adult age and the group passes an 18+ event.",
+};
+
 /** Imports that mean "this file's age answers come from the seam". */
 const SEAM_IMPORTS = [
   "../lib/gateAge.js", "../../lib/gateAge.js", "./gateAge.js",
@@ -75,6 +100,21 @@ function walk(dir: string, out: string[] = []): string[] {
     else if (full.endsWith(".ts") && !full.endsWith(".test.ts")) out.push(full);
   }
   return out;
+}
+
+/**
+ * Files allowed to DEFINE date-of-birth-to-age arithmetic.
+ *
+ * `lib/ageEligibility.ts` owns the primitive and the seam is built on it.
+ * Everywhere else a private copy is how a gate gets an age without the
+ * contradiction rule — `services/media/MediaProjectionService.ts` had exactly
+ * such a copy and it is deleted in this change rather than left unused.
+ */
+const AGE_ARITHMETIC_OWNERS = new Set(["lib/ageEligibility.ts", "lib/gateAge.ts"]);
+
+/** A private DOB→age helper: `function ageFromDob(` / `const ageFromDob = ` / a calculate*Age. */
+function definesOwnAgeArithmetic(code: string): boolean {
+  return /\b(?:function|const|let)\s+(?:age\w*FromDob|calculate\w*Age)\b/.test(code);
 }
 
 /** Comments stripped — a line of PROSE about `date_of_birth` is not a read of it. */
@@ -130,7 +170,9 @@ export function gateAgeUnionArms(src: string): string[] {
  * it declares every column in the database, so listing it as "not a gate" would
  * be listing the schema itself.
  */
-const GATE_DIRS = [join(SRC, "routes"), join(SRC, "services"), join(SRC, "lib")];
+const GATE_DIRS = [
+  join(SRC, "routes"), join(SRC, "services"), join(SRC, "lib"), join(SRC, "compass"), join(SRC, "domain"),
+];
 const GENERATED = new Set(["lib/database.types.ts"]);
 const FILES = GATE_DIRS.flatMap((d) => walk(d))
   .map((f) => ({ rel: relative(SRC, f).split(sep).join("/"), src: readFileSync(f, "utf8") }))
@@ -139,7 +181,7 @@ const FILES = GATE_DIRS.flatMap((d) => walk(d))
 describe("age-gate seam coverage — a new gate cannot read a date of birth around the rule", () => {
   it("the scan is actually looking at the tree", () => {
     assert.ok(FILES.length > 100, `expected the route/service/lib tree, found ${FILES.length} files`);
-    for (const dir of ["routes/", "services/", "lib/"]) {
+    for (const dir of ["routes/", "services/", "lib/", "compass/", "domain/"]) {
       assert.ok(FILES.some((f) => f.rel.startsWith(dir)), `the scan reached no file under ${dir}`);
     }
     assert.ok(
@@ -154,6 +196,7 @@ describe("age-gate seam coverage — a new gate cannot read a date of birth arou
       const code = stripComments(f.src);
       if (!code.includes("date_of_birth")) continue;
       if (NOT_A_GATE[f.rel]) continue;
+      if (KNOWN_UNROUTED[f.rel]) continue;
       if (SEAM_IMPORTS.some((imp) => code.includes(imp))) continue;
       offenders.push(f.rel);
     }
@@ -170,12 +213,44 @@ describe("age-gate seam coverage — a new gate cannot read a date of birth arou
     // consulted. It is the correct primitive INSIDE the seam and the wrong one
     // at a gate, so the gate layer does not import it at all.
     const offenders = FILES
-      .filter((f) => !NOT_A_GATE[f.rel])
+      .filter((f) => !NOT_A_GATE[f.rel] && !KNOWN_UNROUTED[f.rel])
       .filter((f) => /import[^;]*\bcalculateUserAge\b/.test(stripComments(f.src)))
       .map((f) => f.rel);
     assert.deepEqual(offenders, [],
       "calculateUserAge is imported in the route/service layer — it answers from the " +
       "typed date of birth alone. Use lib/gateAge.ts.");
+  });
+
+  it("no scanned file carries its OWN date-of-birth-to-age arithmetic", () => {
+    // The other way past the seam: not reading the column, but keeping a private
+    // copy of the maths so an age arrives from somewhere the rule never saw.
+    const offenders = FILES
+      .filter((f) => !AGE_ARITHMETIC_OWNERS.has(f.rel) && !KNOWN_UNROUTED[f.rel])
+      .filter((f) => definesOwnAgeArithmetic(stripComments(f.src)))
+      .map((f) => f.rel);
+    assert.deepEqual(offenders, [],
+      "a gate-layer file defines its own DOB->age helper. That is how an age reaches a " +
+      "gate without the verified-minor rule ever being consulted. Use lib/gateAge.ts.");
+  });
+
+  it("the found-but-unrouted gate ledger may only shrink, and every entry is real", () => {
+    // TWO assertions, and the second is the one that keeps this honest: an entry
+    // whose file no longer reads a date of birth has been fixed or moved and must
+    // be DELETED, not left as a permanent excuse.
+    assert.ok(Object.keys(KNOWN_UNROUTED).length <= 2,
+      `the unrouted-gate ledger grew to ${Object.keys(KNOWN_UNROUTED).length}. It may only shrink: ` +
+      "route the new gate through lib/gateAge.ts instead of adding it here.");
+    const stale = Object.keys(KNOWN_UNROUTED).filter((rel) => {
+      const f = FILES.find((x) => x.rel === rel);
+      if (!f) return true;
+      const code = stripComments(f.src);
+      // Either half of the defect makes the entry real: reading the raw column,
+      // or carrying a private copy of the date-of-birth-to-age arithmetic.
+      return !code.includes("date_of_birth") && !definesOwnAgeArithmetic(code);
+    });
+    assert.deepEqual(stale, [],
+      "a ledgered gate no longer reads a date of birth and no longer carries its own " +
+      "age arithmetic — delete its line");
   });
 
   it("the eight gate files this change routed are all still routed", () => {
