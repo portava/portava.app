@@ -152,9 +152,27 @@ export async function persistResult(
     document_country: result.documentCountry ?? null,
     updated_at:     new Date().toISOString(),
   };
+  // THE REDACTION HANDLE IS NOT A SUCCESS FIELD. `provider_verification_ref` is
+  // the only handle anyone holds on the VENDOR's copy of the government ID, and
+  // services/identityVerification/providerErasure.ts reads that column and
+  // nothing else — a null one is reported as "nothing to redact". A failed,
+  // expired or canceled attempt uploaded the same document as a verified one,
+  // so persisting the handle only on success left those copies unredactable
+  // permanently, by us and by the user. Both adapters set it for every state
+  // deliberately (persona.ts "Set for every state, because a DECLINED inquiry
+  // still left a government ID at Persona"; stripeIdentity.ts the same) — this
+  // was the one place that threw it away.
+  //
+  // ABSENT IS UNKNOWN, NOT "NO REF". Webhooks arrive more than once and a later
+  // event may omit a field an earlier one carried, so an unconditional
+  // `?? null` would let the second event ERASE the handle the first supplied —
+  // silently, and with exactly the effect of never having stored it. Write the
+  // column only when the adapter produced a handle; leave it alone otherwise.
+  if (typeof result.providerVerificationRef === "string" && result.providerVerificationRef.length > 0) {
+    patch.provider_verification_ref = result.providerVerificationRef;
+  }
   if (result.status === "verified") {
-    patch.verified_at               = result.verifiedAt ?? new Date().toISOString();
-    patch.provider_verification_ref = result.providerVerificationRef ?? null;
+    patch.verified_at = result.verifiedAt ?? new Date().toISOString();
   }
 
   const { error: updErr } = await client

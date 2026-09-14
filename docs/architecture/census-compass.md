@@ -2591,7 +2591,7 @@ re-grade cell says so: *"checks three claim shapes against three booleans —
 the count was wrong in one cell and right in another.
 
 Also disproved, in a census this lane does not own and therefore only reports:
-**census-trust §14.6's TV-1a** — *"One word. `routes/verification.ts:239#status:`
+**census-trust §14.6's TV-1a** — *"One word. `routes/verification.ts:257#status:`
 writes `pending` where the plan says `created`"* — and §14.7's cross-lane request
 to change it. Both are false at HEAD: that line reads `status: "created"`, landed
 in `bed5f395f` with a registered test, and **the dump already grades TV-1a `C`**.
