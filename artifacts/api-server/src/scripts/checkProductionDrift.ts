@@ -479,6 +479,47 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
       "decision, and a job running on a number this migration invented would be worse than " +
       "no job.",
   },
+  // ── Added 2026-09-15 by the INTEGRATION OWNER. Twelve tables from this
+  // branch's 289x-295x band, absent from production for one reason: the branch
+  // is not merged, and live-db.yml applies ONLY from main. They are classified
+  // `unmerged-pr` — "it is not drift until that PR lands" — rather than
+  // `unapplied`, and the distinction matters: `unapplied` says a decision was
+  // taken and not carried out, and no such decision exists for any of these.
+  //
+  // NOT hand-applied to portava-ci either, which is the same ruling recorded on
+  // stamp_definitions.evidences_presence in checkMissingLiveColumns.ts. Applying
+  // migrations to the CI project from unmerged branches is the RECORDED root
+  // cause of `CI (live DB)` being red on main's own sha across five consecutive
+  // scheduled runs — portava-ci carries 2900/2901/2910/2930 under `rehearsal_*`
+  // names and certification cannot reconcile that with the ledger. Turning a
+  // check green by repeating the thing that broke another one trades a visible
+  // red for an invisible one.
+  //
+  // Each note names its migration and says whether a WRITER exists, because the
+  // Trips §5.1 block above establishes that a table nothing writes satisfies
+  // nothing — a gap entry that omits that is hiding the more important half.
+
+  // Discovery Trails, migration 2910 — six tables, one migration, one block.
+  trails:                 { classification: "unmerged-pr", note: "Discovery Trails (2910). Created and written by the trail service; behind the trails flag. Absent from production only because this branch is unmerged." },
+  trail_edges:            { classification: "unmerged-pr", note: "Discovery Trails (2910). Same block as trails; one writer. The edge set is what makes a trail a path rather than a list." },
+  trail_follows:          { classification: "unmerged-pr", note: "Discovery Trails (2910). Same block; two writers (follow and unfollow). Viewer-scoped." },
+  trail_health_snapshots: { classification: "unmerged-pr", note: "Discovery Trails (2910). Same block; one writer. A snapshot table — absent means no history, not a broken read." },
+  trail_reports:          { classification: "unmerged-pr", note: "Discovery Trails (2910). Same block; one writer. Moderation intake for a surface that is not live in production." },
+  content_trails:         { classification: "unmerged-pr", note: "Discovery Trails (2910). Same block; two writers. The join from a trail to the content it threads." },
+
+  // Creator economy, migrations 2920/2921 — gated by a flag 2922 seeds FALSE.
+  creator_attributions:    { classification: "unmerged-pr", note: "Creator economy (2920). Written by services/creators/CreatorAttributionService.ts, every path gated on creator_attribution_enabled — which migration 2922 seeds FALSE. So it would be created empty and STAY empty after the merge: enabling it is a separate owner decision, and census-discovery 17.2 records that four of the six creator types have no value-event producer at all." },
+  creator_rule_versions:   { classification: "unmerged-pr", note: "Creator economy (2920). NO WRITER, deliberately — the percentages live here as DATA, seeded by the migration itself, which is what 09 section 8's 'actual percentages must remain configurable' requires. Nothing in src/ writes it and nothing should." },
+  creator_earning_entries: { classification: "unmerged-pr", note: "Creator economy (2921). Written by CreatorAttributionService's balanced-pair upsert, same flag, same FALSE seed. Its columns are pinned against this migration by src/test/creatorLedgerRowSchemaDrift.test.ts, which is the cover for the three write-path sites allowlisted as unresolvable." },
+
+  // Rent-a-Buddy earnings, migration 2901.
+  rent_buddy_earnings_entries: { classification: "unmerged-pr", note: "Rent-a-Buddy earnings (2901). Read through a module constant in services/ledger/CanonicalShareReader.ts and joined by the 2930 canonical-share view, so 2930 cannot be applied before it. Absent from production because the branch is unmerged." },
+
+  // Place momentum, migration 2892.
+  place_momentum: { classification: "unmerged-pr", note: "Place momentum (2892). NO CONSUMER IN src/ AT ALL outside its own tests: grepping the tree for the name, excluding src/migrations, finds only test/placeMomentumSqlParity.test.ts and one table-name list. The classification function it ships is exercised by that parity test against the SQL, so it is not dead — but NOTHING READS THE TABLE, and by the Trips 5.1 rule above it satisfies nothing until something does. Stated here rather than discovered at deploy time." },
+
+  // Input-assistance telemetry, migration 2950.
+  input_assistance_telemetry_events: { classification: "unmerged-pr", note: "Input-assistance telemetry (2950). lib/inputAssistance/telemetry.ts names it as TELEMETRY_TABLE and routes/inputAssistance.ts is its door; the payload is REBUILT server-side rather than accepted from the client, which is the property that makes the table safe to have. Absent from production because the branch is unmerged." },
 };
 
 /**
