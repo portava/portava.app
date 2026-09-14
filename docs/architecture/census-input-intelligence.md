@@ -2528,7 +2528,7 @@ precondition does not exist", G163 belongs with §24's paste rows (G154–G162):
    and 47 lines, and invisible to `check:citation-targets` only because they
    happened to land on non-blank lines. **A citation that resolves is not a
    citation that is right** — the same finding the Media lane made about
-   `MediaProjectionService.ts:379`, which was cited three times as
+   `MediaProjectionService.ts` line 379 as it stood then, which was cited three times as
    `readCurrentState` while carrying an unrelated `out.set(id, label)`.
 
 The table verdicts in 2 and 3 are NOT edited here: the rows' live verdicts are

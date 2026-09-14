@@ -466,7 +466,7 @@ column but ships no detector.
 ### §13 Memory graph and compression (3)
 H104 compression hierarchy (SIGNAL→MOMENT→EPISODE→DAY→TRIP→SEASON→LIFE CHAPTER) ·
 H105 Life Chapters as projections, not duplicated Memories · H106 relationship edge types —
-**all NOT-BUILT.** The nearest artifact is `services/media/MediaProjectionService.ts:1264#{ key: "gems", label: "Hidden Gems", ownerOnly: false, count: gemsCount, media: [] },`, a
+**all NOT-BUILT.** The nearest artifact is `services/media/MediaProjectionService.ts:1276#{ key: "gems", label: "Hidden Gems", ownerOnly: false, count: gemsCount, media: [] },`, a
 category strip ("Hidden Gems") over media, which is neither a chapter nor a projection over a
 Memory graph.
 

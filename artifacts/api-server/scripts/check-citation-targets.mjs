@@ -175,11 +175,32 @@ import {
  * with its gate at :96 rather than :95. Both were anchored while repointing, so
  * doc-citations owns them now and this checker no longer judges them.
  *
+ * LOWERED AGAIN 2026-09-14, 249 -> 248, by the integration owner. Four
+ * citations into `MediaProjectionService.ts` came loose when the candidate read
+ * was rewritten into the destructuring shape the unchecked-reads guard can
+ * read (+12 lines). THREE OF THE FOUR WERE ALREADY WRONG and this checker could
+ * not see it: MD9 and MD354 cited `:344` for `projectCandidatesProtected`, which
+ * was true at census-media's own `head_commit` 42aeac38 and has since moved to
+ * `:575`; MD220 cited `:748` for the Postcards My-World bucket, which was 13
+ * lines off even at that baseline (`:761` then, `:1271` now). The +12 only
+ * pushed them onto blank lines, where the script could finally count them. All
+ * three were repaired by reading the claim and anchored while repointing, so
+ * doc-citations owns them now and this checker no longer judges them — which is
+ * where the fourth of the gain comes from, and why the ceiling drops by one
+ * rather than by four.
+ *
+ * The fourth was NOT a live pointer: census-input-intelligence:2531 references
+ * `MediaProjectionService.ts` line 379 inside a sentence ABOUT citation rot —
+ * an anecdote whose whole content is where a line used to be. Repointing it
+ * would have falsified the record, so the parseable `file:NNN` was removed and
+ * the prose left saying exactly what it said. Same treatment as the
+ * SafeReturnService case below.
+ *
  * NOT repaired, deliberately: census-trips:2894 cites `SafeReturnService.ts:17`
  * and its own row says the symbol is at `:18`. That row is a RECORD OF THE
  * DRIFT, not a live pointer — the same class as census-layover §L5, and
  * repointing it would destroy the only thing it exists to say. */
-export const MAX_DEAD_TARGETS = 249;
+export const MAX_DEAD_TARGETS = 248;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);
