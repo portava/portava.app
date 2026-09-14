@@ -24,7 +24,7 @@ import express from "express";
 import { _setTestClient, _clearTestClient } from "../lib/http.js";
 import trailsRouter from "../routes/trails.js";
 import { _resetLocalMomentumCacheForTest } from "../lib/discoveryLocalMomentum.js";
-import { recordTrailHealthSnapshot } from "../services/trails/TrailService.js";
+import { recordTrailHealthSnapshot, moveTrailLifecycle } from "../services/trails/TrailService.js";
 import {
   computeTrailHealth, TRAIL_HEALTH_METRICS, TRAIL_HEALTH_MODEL_VERSION,
 } from "../lib/discoveryTrailHealth.js";
@@ -629,6 +629,93 @@ describe("Refusals — the paths that matter most, because they are the state of
     const r = await call("PUT", `/v1/discovery/trails/${T_DARK}/follow`, USER);
     assert.equal(r.status, 503);
     assert.equal(db._writes.length, 0);
+  });
+});
+
+// ── DC-04: §7's lifecycle has to be REACHABLE, not just declared ───────────
+
+describe("DC-04 — §5 'community growth' is what moves a Trail out of `proposed`", () => {
+  // Without a reachable promotion every Trail is stuck at `proposed` for ever:
+  // the column exists, the CHECK admits five values and four of them are
+  // unreachable. §5 lists "community growth" as an origin and §7 makes
+  // proposed → active legal, so the first piece of content is the promotion.
+  // It needs no admin, which is why it is the one this lane can honestly build.
+  it("attaching the first content promotes a proposed Trail to active", async () => {
+    const seed = SEED();
+    seed.trails = [trail(T_ROOF, { slug: "bangkok-rooftops", lifecycle_status: "proposed" })];
+    seed.content_trails = [];
+    const db = withDb(seed);
+    const r = await call("POST", `/v1/discovery/trails/${T_ROOF}/content`, USER, {
+      labels: [{ sourceType: "place", sourceId: PLACE_B, relationship: "supporting" }],
+    });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.equal(db._tables.trails[0].lifecycle_status, "active");
+  });
+
+  it("a Trail that is already active is NOT re-written — a no-op is not a state change", async () => {
+    const db = withDb();
+    await call("POST", `/v1/discovery/trails/${T_ROOF}/content`, USER, {
+      labels: [{ sourceType: "place", sourceId: PLACE_B, relationship: "supporting" }],
+    });
+    assert.equal(db._writes.filter((w) => w.table === "trails").length, 0,
+      "active → active is refused by the transition relation, so nothing is written");
+  });
+
+  it("an ARCHIVED Trail is never revived by someone attaching content to it", async () => {
+    const seed = SEED();
+    seed.trails = [trail(T_ROOF, { slug: "bangkok-rooftops", lifecycle_status: "archived" })];
+    seed.content_trails = [];
+    const db = withDb(seed);
+    await call("POST", `/v1/discovery/trails/${T_ROOF}/content`, USER, {
+      labels: [{ sourceType: "place", sourceId: PLACE_B, relationship: "supporting" }],
+    });
+    assert.equal(db._tables.trails[0].lifecycle_status, "archived",
+      "§7: archived is terminal — a merge revives a Trail, an attachment does not");
+  });
+});
+
+describe("DC-04 — the §7 transition relation is what refuses, on its own", () => {
+  // Exercised DIRECTLY, because the promotion above ALSO guards on
+  // `lifecycle_status === "proposed"` and the two guards otherwise mask each
+  // other: a mutation could delete the relation check and every route test
+  // would stay green. The relation is the one that has to hold, because it is
+  // the only guard a future caller inherits.
+  const at = (lifecycle: string) => {
+    const seed = SEED();
+    seed.trails = [trail(T_ROOF, { slug: "bangkok-rooftops", lifecycle_status: lifecycle })];
+    return withDb(seed);
+  };
+
+  it("proposed → active is allowed and written", async () => {
+    const db = at("proposed");
+    const r = await moveTrailLifecycle(db as any, T_ROOF, "active");
+    assert.equal(r.refusal, null);
+    assert.equal(r.moved, true);
+    assert.equal(db._tables.trails[0].lifecycle_status, "active");
+  });
+
+  it("active → active is refused and writes NOTHING — a no-op is not a state change", async () => {
+    const db = at("active");
+    const r = await moveTrailLifecycle(db as any, T_ROOF, "active");
+    assert.equal(r.refusal, "invalid_request");
+    assert.equal(r.moved, false);
+    assert.equal(db._writes.filter((w) => w.table === "trails").length, 0);
+  });
+
+  it("archived → anything is refused — §7 makes archived terminal", async () => {
+    for (const to of ["active", "proposed", "needs_update", "stale"]) {
+      const db = at("archived");
+      const r = await moveTrailLifecycle(db as any, T_ROOF, to);
+      assert.equal(r.refusal, "invalid_request", `archived → ${to}`);
+      assert.equal(db._tables.trails[0].lifecycle_status, "archived");
+    }
+  });
+
+  it("a target outside §7's five is refused before any read", async () => {
+    const db = at("proposed");
+    const r = await moveTrailLifecycle(db as any, T_ROOF, "featured");
+    assert.equal(r.refusal, "invalid_request");
+    assert.equal(db._tables.trails[0].lifecycle_status, "proposed");
   });
 });
 

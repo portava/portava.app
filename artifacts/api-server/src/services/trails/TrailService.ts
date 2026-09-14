@@ -764,6 +764,27 @@ export async function attachContentToTrail(
     }
     return { refusal: refusalFor(error, "attach.insert"), attached: 0, capRefusals: capped.refusals };
   }
+  // §5 "community growth" → §7 `proposed → active`.
+  //
+  // Without this, no code path anywhere could move a Trail out of `proposed`:
+  // the column would admit five values and four of them would be unreachable,
+  // which is a vocabulary pretending to be a lifecycle. The first piece of
+  // content is the promotion §5 already names, and it is the only one that
+  // needs no admin — §15's other four moves are moderation actions and stay
+  // with moderation.
+  //
+  // `moveTrailLifecycle` decides, not this function: `active → active` is a
+  // no-op and is refused, and `archived` is terminal, so attaching content to
+  // an archived Trail can never revive it. A failure here is logged and
+  // swallowed — the content IS attached, and undoing that to report a lifecycle
+  // write would lose the thing the caller asked for.
+  if (t.trail.lifecycle_status === "proposed") {
+    const moved = await moveTrailLifecycle(sc, trailId, "active");
+    if (moved.refusal) {
+      logger.warn({ trailId, refusal: moved.refusal }, "trail not promoted to active after first content");
+    }
+  }
+
   return { refusal: null, attached: rows.length, capRefusals: capped.refusals };
 }
 
