@@ -69,11 +69,25 @@ const BLOCKERS: Record<string, Blocker> = {
   "DV-09": "CODE", "DV-12": "CODE", "DC-06": "CODE", "DC-12": "CODE",
   "DC-26": "CODE", "DC-18": "CODE", "DV-45": "CODE",
 
-  // Trails — an absent subsystem, now authorised.
-  "DV-13": "CODE", "DV-20": "CODE", "DV-21": "CODE", "DV-22": "CODE",
-  "DV-23": "CODE", "DV-24": "CODE", "DV-25": "CODE", "DV-26": "CODE",
-  "DC-02": "CODE", "DC-03": "CODE", "DC-04": "CODE", "DC-05": "CODE",
-  "DC-20": "CODE", "DC-21": "CODE", "DC-23": "CODE",
+  // Trails — built and wired as of census-discovery §17, so the blocker moved.
+  // It is no longer CODE ("engineering, this repo, no schema change"): the code
+  // exists, `loadViewerTrailModifier` is called from the live modifier
+  // assembler, and the affinity term is scored. What stands between these rows
+  // and `C` is 2910, which is applied to the portava-ci REHEARSAL project and to
+  // no deployment. DV-26 and DC-23 keep CODE: neither was built by that pass.
+  "DV-13": "MIGRATION", "DV-20": "MIGRATION", "DV-21": "MIGRATION",
+  "DV-22": "MIGRATION", "DV-23": "MIGRATION", "DV-24": "MIGRATION",
+  "DV-25": "MIGRATION", "DV-26": "CODE",
+  "DC-02": "MIGRATION", "DC-03": "MIGRATION", "DC-04": "MIGRATION",
+  "DC-05": "MIGRATION", "DC-20": "MIGRATION", "DC-21": "MIGRATION",
+  "DC-23": "CODE",
+
+  // Creator economy — same shape, same reason. 2920/2921/2922 and 2930 reach
+  // portava-ci only. DV-58 and DV-59 also need a CALL SITE (census-discovery
+  // §17.2: CreatorAttributionService's only importer is its own test), but the
+  // migration is the blocker that outlives the call site, so it is the one named.
+  "DV-56": "MIGRATION", "DV-57": "MIGRATION", "DV-58": "MIGRATION",
+  "DV-59": "MIGRATION", "DV-60": "MIGRATION", "DV-64": "MIGRATION",
 
   // Another surface owns the producer.
   A13: "CODE_CROSS_SURFACE", A14: "CODE_CROSS_SURFACE",
@@ -109,11 +123,11 @@ const BLOCKERS: Record<string, Blocker> = {
   // VIOLATED by code that exists rather than absent — a mutable per-booking
   // summary row, and a ledger whose CHECK and grants make a compensating entry
   // impossible — which is engineering work, not a purchase.
-  "DV-56": "CODE_CROSS_SURFACE", "DV-57": "CODE_CROSS_SURFACE",
-  "DV-58": "CODE_CROSS_SURFACE", "DV-59": "CODE_CROSS_SURFACE",
-  "DV-60": "CODE_CROSS_SURFACE", "DV-61": "CODE_CROSS_SURFACE",
+  // DV-56..DV-60 and DV-64 moved to MIGRATION above — their infrastructure was
+  // built by census-discovery §17 and the migrations reach portava-ci only.
+  "DV-61": "CODE_CROSS_SURFACE",
   "DV-62": "CODE_CROSS_SURFACE", "DV-63": "CODE_CROSS_SURFACE",
-  "DV-64": "CODE_CROSS_SURFACE", "DV-65": "CODE_CROSS_SURFACE",
+  "DV-65": "CODE_CROSS_SURFACE",
   "DV-66": "CODE_CROSS_SURFACE", "DV-67": "CODE_CROSS_SURFACE",
   "DV-68": "CODE_CROSS_SURFACE", "DV-69": "CODE_CROSS_SURFACE",
 };

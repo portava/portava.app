@@ -10,9 +10,9 @@
   },
   "openByBlocker": {
     "FLAG": 17,
-    "CODE_CROSS_SURFACE": 31,
-    "MIGRATION": 12,
-    "CODE": 45,
+    "CODE_CROSS_SURFACE": 25,
+    "MIGRATION": 31,
+    "CODE": 32,
     "DEPLOY": 1,
     "RUNTIME_EVIDENCE": 4,
     "EXTERNAL_SETTING": 1
@@ -496,7 +496,7 @@
       "id": "DV-13",
       "verdict": "W",
       "line": 2390,
-      "blocker": "CODE"
+      "blocker": "MIGRATION"
     },
     {
       "id": "DV-14",
@@ -538,37 +538,37 @@
       "id": "DV-20",
       "verdict": "W",
       "line": 2391,
-      "blocker": "CODE"
+      "blocker": "MIGRATION"
     },
     {
       "id": "DV-21",
       "verdict": "W",
       "line": 2392,
-      "blocker": "CODE"
+      "blocker": "MIGRATION"
     },
     {
       "id": "DV-22",
       "verdict": "W",
       "line": 2393,
-      "blocker": "CODE"
+      "blocker": "MIGRATION"
     },
     {
       "id": "DV-23",
       "verdict": "W",
       "line": 2394,
-      "blocker": "CODE"
+      "blocker": "MIGRATION"
     },
     {
       "id": "DV-24",
       "verdict": "W",
       "line": 2395,
-      "blocker": "CODE"
+      "blocker": "MIGRATION"
     },
     {
       "id": "DV-25",
       "verdict": "W",
       "line": 2396,
-      "blocker": "CODE"
+      "blocker": "MIGRATION"
     },
     {
       "id": "DV-26",
@@ -754,31 +754,31 @@
       "id": "DV-56",
       "verdict": "W",
       "line": 2403,
-      "blocker": "CODE_CROSS_SURFACE"
+      "blocker": "MIGRATION"
     },
     {
       "id": "DV-57",
       "verdict": "W",
       "line": 2404,
-      "blocker": "CODE_CROSS_SURFACE"
+      "blocker": "MIGRATION"
     },
     {
       "id": "DV-58",
       "verdict": "W",
       "line": 2405,
-      "blocker": "CODE_CROSS_SURFACE"
+      "blocker": "MIGRATION"
     },
     {
       "id": "DV-59",
       "verdict": "W",
       "line": 2406,
-      "blocker": "CODE_CROSS_SURFACE"
+      "blocker": "MIGRATION"
     },
     {
       "id": "DV-60",
       "verdict": "W",
       "line": 2407,
-      "blocker": "CODE_CROSS_SURFACE"
+      "blocker": "MIGRATION"
     },
     {
       "id": "DV-61",
@@ -802,7 +802,7 @@
       "id": "DV-64",
       "verdict": "W",
       "line": 2408,
-      "blocker": "CODE_CROSS_SURFACE"
+      "blocker": "MIGRATION"
     },
     {
       "id": "DV-65",
@@ -928,25 +928,25 @@
       "id": "DC-02",
       "verdict": "W",
       "line": 2397,
-      "blocker": "CODE"
+      "blocker": "MIGRATION"
     },
     {
       "id": "DC-03",
       "verdict": "W",
       "line": 2398,
-      "blocker": "CODE"
+      "blocker": "MIGRATION"
     },
     {
       "id": "DC-04",
       "verdict": "W",
       "line": 2399,
-      "blocker": "CODE"
+      "blocker": "MIGRATION"
     },
     {
       "id": "DC-05",
       "verdict": "W",
       "line": 2400,
-      "blocker": "CODE"
+      "blocker": "MIGRATION"
     },
     {
       "id": "DC-06",
@@ -1036,13 +1036,13 @@
       "id": "DC-20",
       "verdict": "W",
       "line": 2401,
-      "blocker": "CODE"
+      "blocker": "MIGRATION"
     },
     {
       "id": "DC-21",
       "verdict": "W",
       "line": 2402,
-      "blocker": "CODE"
+      "blocker": "MIGRATION"
     },
     {
       "id": "DC-22",
