@@ -567,9 +567,9 @@ testable structure by §3 and §4.1. Narrative.
 | MD146 | Media Perspective Resolver stage | **C** | `MediaPerspectiveService.ts:1-15`. |
 | MD147 | Independent Sources stage | **W** | The *count* is displayed nowhere and computed nowhere in the media path: `MediaPerspectiveService` counts `contributorCount`, which is distinct contributors, not independent sources. The independence machinery exists (`lib/intelIndependence.ts` merges crews/shared-media/synchronised units) but nothing in Media calls it. |
 | MD148 | Coverage Analysis stage | **C** | `routes/mediaViewRequest.ts:111` `GET /v1/media/places/:placeId/visual-coverage` over `lib/missionGeneration` / `intel_mission_candidates`. |
-| MD149 | Corroboration stage | **C** | *(CLOSED 2026-09-14 by the Media lane.)* A place's mosaic now carries an agreement measure: `artifacts/api-server/src/services/media/MediaConsensusService.ts:186#export function buildVisualConsensus` counts INDEPENDENT SOURCES (MD147's `lib/intelIndependence` clusters, exported for reuse at `artifacts/api-server/src/services/media/MediaPerspectiveService.ts:120#export function countIndependentSources`) among the perspectives inside the FRESH window, and grades them `none \| single_source \| corroborated \| well_corroborated`. It inherits the anti-manipulation posture rather than restating it: one account posting three photos, two accounts posting one file, and a trip crew each corroborate NOTHING. Stale perspectives corroborate nothing about the current picture. Served on `PlaceProjection` (`artifacts/api-server/src/services/media/MediaProjectionService.ts:727#consensus: buildVisualConsensus(media, currentState.claims, nowMs, {`) and on every `WorldZone` (`:604#buildVisualConsensus`). Proof: `artifacts/api-server/src/test/mediaIndependentSources.test.ts` "MD149 — corroboration counts INDEPENDENT sources inside the fresh window" (5 cases). Mutations red: counting contributors instead of clusters; ignoring the fresh window; dropping the field from the projection. |
+| MD149 | Corroboration stage | **C** | *(CLOSED 2026-09-14 by the Media lane.)* A place's mosaic now carries an agreement measure: `artifacts/api-server/src/services/media/MediaConsensusService.ts:186#export function buildVisualConsensus` counts INDEPENDENT SOURCES (MD147's `lib/intelIndependence` clusters, exported for reuse at `artifacts/api-server/src/services/media/MediaPerspectiveService.ts:120#export function countIndependentSources`) among the perspectives inside the FRESH window, and grades them `none \| single_source \| corroborated \| well_corroborated`. It inherits the anti-manipulation posture rather than restating it: one account posting three photos, two accounts posting one file, and a trip crew each corroborate NOTHING. Stale perspectives corroborate nothing about the current picture. Served on `PlaceProjection` (`artifacts/api-server/src/services/media/MediaProjectionService.ts:732#consensus: buildVisualConsensus(media, currentState.claims, nowMs, {`) and on every `WorldZone` (`:609#buildVisualConsensus`). Proof: `artifacts/api-server/src/test/mediaIndependentSources.test.ts` "MD149 — corroboration counts INDEPENDENT sources inside the fresh window" (5 cases). Mutations red: counting contributors instead of clusters; ignoring the fresh window; dropping the field from the projection. |
 | MD150 | Contradiction stage | **C** | *(CLOSED 2026-09-14 by the Media lane.)* The media path now REACHES `lib/intelConflict` — it does not fork it. The conflict state was already riding on every gated live-claim envelope Media fetches (`artifacts/api-server/src/lib/liveClaimRead.ts:136#conflictState: ConflictState;`) and Media was dropping it on the floor; `artifacts/api-server/src/services/media/MediaConsensusService.ts:156#function worstContradiction(` folds it into a place/zone-level `contradiction` block through the canonical `normalizeConflictState`, so an unrecognised stored value still reads as `material` — the stricter direction. A photograph asserts no value, so perspectives are NOT scored against each other; inventing a value axis for them would be fabrication and is refused explicitly in the module header. Proof: `artifacts/api-server/src/test/mediaIndependentSources.test.ts` "MD150 — the contradiction stage reaches lib/intelConflict from a media path" (4 cases), including an end-to-end fixture that promotes a scope and serves a `conflict_state = material` snapshot. Mutations red: returning no contradiction; reading the state leniently instead of through `normalizeConflictState`. |
-| MD151 | Visual Consensus Projection | **C** | *(CLOSED 2026-09-14 by the Media lane.)* The consensus object exists and is served: `artifacts/api-server/src/services/media/MediaConsensusService.ts:119#export interface VisualConsensus {` — `state` (`insufficient \| corroborated \| mixed`), the corroboration measure (MD149), the contradiction block (MD150), the §18 uncertainty label and a `requestAnotherObservation` flag that routes to the EXISTING §19 Request-a-View surface. It is on `PlaceProjection` (`artifacts/api-server/src/services/media/MediaProjectionService.ts:634#consensus: VisualConsensus;`) and on `WorldZone` (`:535#VisualConsensus`). Empty input yields `insufficient`, never agreement. Proof: `artifacts/api-server/src/test/mediaIndependentSources.test.ts` "MD151 — a Visual Consensus Projection object exists and is well-formed" + "the consensus object is SERVED on the place projection". |
+| MD151 | Visual Consensus Projection | **C** | *(CLOSED 2026-09-14 by the Media lane.)* The consensus object exists and is served: `artifacts/api-server/src/services/media/MediaConsensusService.ts:119#export interface VisualConsensus {` — `state` (`insufficient \| corroborated \| mixed`), the corroboration measure (MD149), the contradiction block (MD150), the §18 uncertainty label and a `requestAnotherObservation` flag that routes to the EXISTING §19 Request-a-View surface. It is on `PlaceProjection` (`artifacts/api-server/src/services/media/MediaProjectionService.ts:639#consensus: VisualConsensus;`) and on `WorldZone` (`:540#VisualConsensus`). Empty input yields `insufficient`, never agreement. Proof: `artifacts/api-server/src/test/mediaIndependentSources.test.ts` "MD151 — a Visual Consensus Projection object exists and is well-formed" + "the consensus object is SERVED on the place projection". |
 | MD152 | When reports disagree, surface uncertainty ("Mixed reports — conditions may be changing") | **C** | *(CLOSED 2026-09-14 by the Media lane.)* The copy is `artifacts/api-server/src/services/media/MediaConsensusService.ts:77#export const MIXED_REPORTS_LABEL = "Mixed reports — conditions may be changing";`, emitted as `consensus.uncertaintyLabel` on the place projection and on every world zone, and the consensus `state` flips to `mixed`. THRESHOLD, stated because it is the whole judgement: the banner fires only on a **material** conflict, the same threshold `lib/intelConflict` itself uses to suppress a Live label; a `minor` disagreement is recorded in the block and gets no banner, because escalating it would put "Mixed reports" on every venue where two honest people said 'busy' and 'packed'. A material dispute OUTRANKS corroboration — four agreeing photographs do not settle a disputed live claim. CAVEAT, the same one MD159 carries: with the intel spine holding zero rows in production (`docs/architecture/intel-spine-liveness.md`) no live claim can conflict there yet, so the banner is correct and currently unreachable in prod. Proof: `artifacts/api-server/src/test/mediaIndependentSources.test.ts` "MD152 — when reports disagree, the uncertainty is SURFACED" (3 cases) plus the end-to-end promoted-scope fixture. Mutations red: nulling the label; giving `minor` the banner; letting corroboration outrank the dispute. |
 | MD153 | §19 "Last visual update Nm ago" / "Show what's happening?" mission prompt | **C** | `components/RequestAViewPrompt.tsx`; freshness copy from `state/freshness.ts`. |
 | MD154 | §19 Request a View — a user requests a specific current perspective | **C** | `services/media/MediaViewRequestService.ts:1-27` + `routes/mediaViewRequest.ts:61`; it **consumes** the existing `intel_mission_candidates` machinery rather than forking a parallel mission system. |
@@ -1721,7 +1721,7 @@ So `like`, `comment`, `save`, `profile_open`, `place_open`, `mode_switch`,
 producer on either side of the wire**. The §44 Stamp / Comment / Save /
 Profile-open funnels read zero by construction — the same shape §9.1 found for
 `hideRate` and `notInterestedCount` — and the reason the like handler
-(`artifacts/api-server/src/routes/mediaFeed.ts:2212#router.post("/media/:id/like", asyncHandler(async (req, res) => {`)
+(`artifacts/api-server/src/routes/mediaFeed.ts:2226#router.post("/media/:id/like", asyncHandler(async (req, res) => {`)
 and the save handler recorded nothing is simply that nobody ever added the line.
 
 **MD386, MD387, MD389, MD393 C → W.** MD209 (§26 *"People saved this place"*)
@@ -1740,12 +1740,12 @@ and which this section does not pre-empt.
 Three changes, all server-side, none behind a new flag, none needing a migration.
 
 1. **The §7 neighborhood label has a producer.**
-   `artifacts/api-server/src/services/media/MediaProjectionService.ts:348#export async function loadPlaceNeighborhoods(`
+   `artifacts/api-server/src/services/media/MediaProjectionService.ts:353#export async function loadPlaceNeighborhoods(`
    batches one `places` read over the page's distinct `canonical_place_id`s —
    the same column `buildPlaceProjection` already reads for a place header, so
    Media does not open a second neighborhood source (§48: Places owns place
    identity) — and
-   `artifacts/api-server/src/services/media/MediaProjectionService.ts:458#const [ctx, neighborhoods] = await Promise.all([`
+   `artifacts/api-server/src/services/media/MediaProjectionService.ts:463#const [ctx, neighborhoods] = await Promise.all([`
    runs it alongside the gem context. The label is handed to the choke point as
    an **input**, never written onto the projection, so `coarsenMediaLocation`
    still decides: a gem-ceilinged or privacy-coarsened item names no
@@ -1754,9 +1754,9 @@ Three changes, all server-side, none behind a new flag, none needing a migration
    than left to look like an oversight — losing the gem context would WIDEN
    disclosure, losing this one only removes a label.
 2. **The §30 Tagged bucket reads the table that was there all along.**
-   `artifacts/api-server/src/services/media/MediaProjectionService.ts:1167#export async function loadTaggedPostIds(`
+   `artifacts/api-server/src/services/media/MediaProjectionService.ts:1172#export async function loadTaggedPostIds(`
    reads `tags` for `status='approved'`, `source_type='post'`, and
-   `artifacts/api-server/src/services/media/MediaProjectionService.ts:1220#export async function loadTaggedMedia(`
+   `artifacts/api-server/src/services/media/MediaProjectionService.ts:1225#export async function loadTaggedMedia(`
    puts those ids through `loadEligibleCandidates` and
    `projectCandidatesProtected` — **being tagged is not consent to see the
    post**, so the blocks / mutes / suspension / visibility / moderation gate,
@@ -1765,8 +1765,8 @@ Three changes, all server-side, none behind a new flag, none needing a migration
    or `private` post is withheld rather than guessed at, because admitting it
    would need a membership proof this bucket does not hold.
 3. **§44 Stamp and Save emit.**
-   `artifacts/api-server/src/routes/mediaFeed.ts:2240#recordMediaEvent("like", {`
-   and `artifacts/api-server/src/routes/mediaFeed.ts:2346#recordMediaEvent("save", {`
+   `artifacts/api-server/src/routes/mediaFeed.ts:2254#recordMediaEvent("like", {`
+   and `artifacts/api-server/src/routes/mediaFeed.ts:2360#recordMediaEvent("save", {`
    — server-side, beside the `share` event that already did this, because the
    server is the only witness to whether the write succeeded. Save emits only
    AFTER the upsert, so the number counts saves that happened rather than taps
@@ -1848,7 +1848,7 @@ would read:
 
 **MD387 (Comment), MD393 (Profile open), and MD209's `place_open` half.** Media
 has no comment-CREATE endpoint —
-`artifacts/api-server/src/routes/mediaFeed.ts:2448#router.get("/media/:id/comments", asyncHandler(async (req, res) => {`
+`artifacts/api-server/src/routes/mediaFeed.ts:2462#router.get("/media/:id/comments", asyncHandler(async (req, res) => {`
 is a read, and comments are created on the posts spine. Emitting a *media*
 `comment` signal from the generic post-comment handler would attribute every
 Wall and Pulse comment to Media, which is worse than a zero. `profile_open` and
@@ -1991,7 +1991,7 @@ the demoted rows would be arithmetic dressed as measurement.
    changed `routes/mediaFeed.ts` once more, so `census-wall.md` ages again and is
    acknowledged again with a per-file argument. W7's `post_saves` anchor moved a
    THIRD time — the `save` emitter added eighteen lines above it — and was
-   repointed at `routes/mediaFeed.ts:2326#.from("post_saves")`. `check:doc-citations` found it,
+   repointed at `routes/mediaFeed.ts:2340#.from("post_saves")`. `check:doc-citations` found it,
    which is the fourth time in three sections that an anchored citation has
    earned its keep, and the only reason this section can say the repoint is
    right rather than hope so.
@@ -2069,15 +2069,15 @@ will appear here"*
 (`` `travel-buddy-standalone/src/features/media/screens/MediaPeopleScreen.tsx:45#message="Perspectives from people you follow, your Trip Crew, and Shared Moments will appear here."` ``)
 — so the lens was advertising two populations the server could not supply.
 
-**Built.** `` `artifacts/api-server/src/services/media/MediaProjectionService.ts:777#export async function loadPeopleAffinities(` ``
+**Built.** `` `artifacts/api-server/src/services/media/MediaProjectionService.ts:782#export async function loadPeopleAffinities(` ``
 resolves both populations in two hops each, where the FIRST hop is the viewer's
 own accepted membership — an invitation the viewer never accepted yields nobody,
 and an invitation somebody else never accepted does not make them crew. The lens
 then runs TWO lanes
-(`` `artifacts/api-server/src/services/media/MediaProjectionService.ts:898#export async function buildPeopleProjection(` ``):
+(`` `artifacts/api-server/src/services/media/MediaProjectionService.ts:903#export async function buildPeopleProjection(` ``):
 the follow lane unchanged, and an affinity lane that is `feedType: "for_you"`
 NARROWED to the crew and Shared Moment ids by a new composing filter
-(`` `artifacts/api-server/src/services/media/MediaProjectionService.ts:209#if (filter.authorIds && filter.authorIds.length > 0) {` ``).
+(`` `artifacts/api-server/src/services/media/MediaProjectionService.ts:214#if (filter.authorIds && filter.authorIds.length > 0) {` ``).
 
 **The bound is stated rather than hidden**, on the precedent §11.4 set for the
 Tagged bucket: the affinity lane is PUBLIC-ONLY, so a crew member's `trip_only`
@@ -2133,7 +2133,7 @@ false:
 `` `artifacts/api-server/src/services/media/MediaPerspectiveService.ts:120#function countIndependentSources(` ``
 clusters the perspectives; the party token reaches it as a side channel built
 from the candidate rows
-(`` `artifacts/api-server/src/services/media/MediaProjectionService.ts:643#function partyTokensByPostId(` ``)
+(`` `artifacts/api-server/src/services/media/MediaProjectionService.ts:648#function partyTokensByPostId(` ``)
 and is asserted never to leave the server on the projection.
 
 **The sync detector is made INERT on purpose, and that is the decision worth
@@ -2354,7 +2354,7 @@ neither is consulted by any check.
 §11.3.2 moved **MD227** W → C on the sentence *"The Tagged bucket reads `tags`"*, and
 §12 restated it as *"the §30 Tagged bucket reads the table that was there all
 along."* Both sentences are true about the TABLE and false about the read.
-`artifacts/api-server/src/services/media/MediaProjectionService.ts:1167#export async function loadTaggedPostIds(`
+`artifacts/api-server/src/services/media/MediaProjectionService.ts:1172#export async function loadTaggedPostIds(`
 selected and ordered by `tags.tagged_at`. **There is no such column.** The
 canonical `0043_tags_hashtags.sql` declares it and it was never applied —
 `migrations/README.md` line 12 says so in as many words, and `docs/migrations.md`
@@ -2504,13 +2504,13 @@ weak test.
    so the new number is verified rather than arithmetic:
    - `docs/architecture/census-highlights-memories.md:469` cites the My World
      "gems" bucket at line 1091 of MediaProjectionService; it is now at
-     `artifacts/api-server/src/services/media/MediaProjectionService.ts:1126#key: "gems"`.
+     `artifacts/api-server/src/services/media/MediaProjectionService.ts:1131#key: "gems"`.
    - `docs/architecture/census-telegraph.md:301` and `docs/architecture/census-telegraph.md:1119`
      both cite the owner-scoped table read at line 1214; it is now at
-     `artifacts/api-server/src/services/media/MediaProjectionService.ts:1249#.from(table)`.
+     `artifacts/api-server/src/services/media/MediaProjectionService.ts:1254#.from(table)`.
    - `docs/architecture/census-trust.md:738` cites the viewer profile select at
      lines 108-112; it is now at
-     `artifacts/api-server/src/services/media/MediaProjectionService.ts:109#.select("location_country, date_of_birth")`.
+     `artifacts/api-server/src/services/media/MediaProjectionService.ts:101#.select("location_country")`.
    (The stale line numbers are given as plain numbers above, deliberately: written
    in citation shape they would be re-parsed as citations of THIS document and
    would fail `check:doc-citations` here instead of there.)
