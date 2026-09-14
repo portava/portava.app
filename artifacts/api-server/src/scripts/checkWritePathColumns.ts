@@ -275,6 +275,33 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   ["src/routes/telegraphMemory.ts|select|select list not statically resolvable", 2],
   ["src/server/telegraph/readReceiptsRoute.ts|select|select list not statically resolvable", 1],
   ["src/services/telegraphSearch.ts|select|select list not statically resolvable", 1],
+  // ── Creator ledger: the row MAPPERS (07 §2 / 09 §7.2) ────────────────────
+  // `services/creators/CreatorAttributionService.ts` hands supabase a NAME at
+  // three sites, because both payloads come from mappers in
+  // `lib/creatorLedgerRows.ts`:
+  //
+  //     const row  = toCreatorAttributionRow(model.attribution);
+  //     const rows = built.entries.map((e) => toCreatorEarningEntryRow(e, id));
+  //     const row  = { ...toCreatorAttributionRow(held.attribution), supersedes_id };
+  //
+  // Inlining the literal at each site duplicates an eighteen-column schema
+  // three times instead of naming it once, and the third site would have to
+  // restate all eighteen to add one key. The mapper stays.
+  //
+  // WHAT THIS COSTS, and what covers it — unlike the entries above, this blind
+  // spot is not merely stated, it is COVERED, and the cover shipped in the same
+  // change: `src/test/creatorLedgerRowSchemaDrift.test.ts` reads both mappers'
+  // returned keys statically and requires each to be a column 2920 / 2921
+  // declares, plus `supersedes_id`, which the mapper does not produce and no
+  // mapper-reading check would ever see. Three mutations (a phantom key in
+  // either mapper, and 2920 renaming supersedes_id) all go red.
+  //
+  // That test is a MIGRATION check, not a live-schema one — strictly weaker
+  // than what this script does. `check:missing-live-columns` reads the live
+  // schema from the other direction and is what closes the remaining half.
+  ["src/services/creators/CreatorAttributionService.ts|insert|payload not statically resolvable", 1],
+  ["src/services/creators/CreatorAttributionService.ts|insert|payload partially resolvable", 1],
+  ["src/services/creators/CreatorAttributionService.ts|upsert|payload not statically resolvable", 1],
   // ── Dynamic table names (adminGeocode — runtime table dispatch) ───────────
   ["src/routes/adminGeocode.ts|select|dynamic table name", 2],
   ["src/routes/adminGeocode.ts|update|dynamic table name", 2],

@@ -121,6 +121,23 @@ const ALLOWLIST = new Set<string>([
   "tags.tagged_at",                     // does not exist live
   "hashtags.normalized_name",           // live: slug
 
+  // ── Pending live apply: 2970_stamp_definitions_evidences_presence.sql ─────
+  // One column on a table portava-ci already carries. This branch is not on
+  // main and live-db.yml applies ONLY from main, so the column is absent from
+  // both databases until the merge.
+  //
+  // NOT hand-applied to portava-ci, deliberately. Hand-applying migrations to
+  // the CI project from unmerged branches is the exact root cause recorded for
+  // `CI (live DB)` being red on main's own sha across five consecutive
+  // scheduled runs — portava-ci carries 2900/2901/2910/2930 under `rehearsal_*`
+  // names, and the certification stage cannot reconcile that with the ledger.
+  // Turning this check green by repeating the thing that broke the other one
+  // would be trading a visible red for an invisible one.
+  //
+  // Remove this entry once the merge-to-main apply is certified in
+  // docs/migrations.md.
+  "stamp_definitions.evidences_presence",   // 2970 — §11 presence-evidence stamps
+
   // ── Pending live apply: 2273_intel_replayable_projection.sql (IG unit I1) ──
   // Table-17 lineage columns on the current-state snapshot. Applied to the CI
   // project by live-db.yml's apply step on merge to main; remove these four
