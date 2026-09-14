@@ -2154,3 +2154,221 @@ of this pass so that its disappearance is loud.
 | NOT-BUILT | **43** |
 | CANNOT-VERIFY | **3** |
 | **total** | **187** |
+
+---
+
+## 16. The five-lane pass, 2026-09-14 — six rows moved, and the census's own account of WHY Discovery is stuck was wrong
+
+Five bounded lanes ran in parallel worktrees off `7455e31c1`, with disjoint file
+ownership and no authority to edit a census. **113 rows were open. Two moved.**
+The larger result is not the six: it is that a significant fraction of the
+*reasons* recorded against the other 107 were measurably false, and a false
+reason is how the next sweep spends a week discovering nothing.
+
+Every claim below was re-verified by the integration owner against the source
+before it was written here. Two lane claims did not survive that check and are
+recorded in §16.6.
+
+### 16.1 The verdict moves — TWO, not the six first written here
+
+**This section's first draft claimed six moves. It was wrong, and the error is
+recorded rather than quietly fixed, because it is the same error §16.6 catches
+the lanes making and it deserves no softer treatment when I make it.**
+
+Four of the six — A05, A07, DV-40, DV-46 — were **already `W`** before this pass.
+Each lane reported its row's old verdict as `N`, read in good faith from the row
+in an older section; a LATER section had already re-graded it, and
+last-statement-wins means the later one is the verdict. I caught exactly this for
+DV-18 (§16.6), wrote it up as a lane error, and then booked four more of the same
+kind myself. It was caught by `check:census-integrity` disagreeing with my own
+table, not by me re-reading.
+
+| id | was | now | what changed, and why it is not better than it says |
+|---|---|---|---|
+| **DV-08** | **W** | **C** | `01` §8's five engine states are declared, dispatched, AND selectable. The last clause is the whole story — see §16.2. |
+| **DV-38** | **N** | **W** | `features.schemaVersion` is now written by the only Discovery serve-log writer (`artifacts/api-server/src/lib/discoveryServeLog.ts:430#schemaVersion: DISCOVERY_EVENT_SCHEMA_`), placed after the caller's context spread so a caller cannot overwrite it. **Not `C`**: `rank_events` has no `schema_version` COLUMN, which is a migration. |
+
+**The four that did not move, and what is true about them anyway.** Their
+verdicts are unchanged; their EVIDENCE was false and is corrected here, which is
+worth more than a move would have been:
+
+| id | verdict | the sentence that was false, and what is there |
+|---|---|---|
+| A05 | `W` (unchanged) | *"Nothing in routes/discovery\*.ts or lib/discovery\*.ts models an intent mode."* `artifacts/api-server/src/lib/discoveryLiveRank.ts:99#export const DISCOVERY_INTENT_MODES` is exactly the spec's eight, and `artifacts/api-server/src/routes/discovery.ts:1843#mode: parseIntentMode(req.query.intentMode` parses one off the request — twice, the second at `:2251`. Held at `W` by `discovery_live_rank_enabled` (2850), not by absence. |
+| A07 | `W` (unchanged) | *"No safety term reaches the ranker."* `artifacts/api-server/src/lib/discoveryLiveRank.ts:411#const unsafe = state.unsafe;` forces influence and opportunity value to zero, and `artifacts/api-server/src/lib/discoveryLiveRank.ts:462#if (a.grade.safety.demoted !== b.grade.saf` sorts every demoted row behind every non-demoted one. Same flag. |
+| DV-40 | `W` (unchanged) | *"zero occurrences in Discovery."* `artifacts/api-server/src/lib/discoveryRecommendationId.ts:149#export function recommendationIdFor` mints it and `artifacts/api-server/src/lib/discoveryServeLog.ts:421#recommendationId: recommendationIdFor({` calls it on the serve path. What keeps it at `W` is coverage: 2 of 6 `GET /discovery` serve points write through `logImpression` and mint nothing. |
+| DV-46 | `W` (unchanged) | `04` §10.6's propagation test now exists at ROUTE level — `artifacts/api-server/src/test/discoveryRouteRecommendationPropagation.test.ts`, 8/8, registered — and its own result is that propagation is incomplete. A test that passes by reporting a gap does not close a clause about the gap. |
+
+### 16.2 DV-08 — a capability the shipping product could not reach
+
+Lane D1 built the five states and then declined to close the row, which is the
+part worth recording. `routes/admin.ts` validated the operator's `metadata.mode`
+against a SECOND, hand-maintained copy of the list — `["legacy","shadow","pde"]`
+— so `PATCH /admin/feature-flags/DISCOVERY_ENGINE_MODE/metadata {"mode":"partial"}`
+was refused at the edge. **`compare` and `partial` could be resolved by the
+engine and never selected through the product's own admin surface.**
+
+It survived because **it fails closed**. A refusal to SET a new state is
+indistinguishable from a state nobody has asked for yet. Nothing was unsafe,
+nothing went red, and two of five requirements were unreachable.
+
+The fix is not the two missing entries — that would restore the cause.
+`lib/discoveryEngineMode.ts:148#ACCEPTED_ENGINE_MODE_SPELLINGS` is derived from
+the resolver's own alias map and `routes/admin.ts:871` consumes it.
+`src/test/discoveryEngineModeAdminReach.test.ts` pins the property in both
+directions and was mutated to prove it bites: re-typing the literal → RED;
+deleting `["partial","partial"]` from the alias map → RED with *"state
+`partial` is resolvable but NO admin-accepted spelling selects it — it is
+unreachable from the shipping product."*
+
+**WHAT WOULD TURN DV-08 RED:** a sixth state added to `DISCOVERY_ENGINE_STATES`
+without a spelling; a literal list re-typed in `admin.ts`; `ENGINE_STATE_PATH`
+losing a member. All three are executable and all three are red today under
+mutation.
+
+### 16.3 The N-block was misdescribed, and the correction is larger than the moves
+
+§11.9 and §12.8 record a block of `N` rows as *"four absent subsystems the owner
+has ruled STALE or has not scheduled."* Thirty of those rows were re-partitioned
+against source. The grouping does not hold:
+
+| disposition | rows | |
+|---|---:|---|
+| OWNER-FROZEN | 8 | Trails (DV-20…DV-26) + A18. Real, and enforced in SQL: `artifacts/api-server/src/migrations/2290_intelligence_graph_node_kinds.sql:88` raises *"POSTCONDITION FAILED: trail must NOT be admitted (ROADMAP: Trails as a peer system is STALE)"*. |
+| **CROSS-CENSUS** | **15** | another census's paths. Three (A14, DV-52, DV-77) are the SAME requirement another census already grades. |
+| ABSENT-BUT-UNSCHEDULED | 6 | nothing forbids it, nothing implements it, building it would invent product. |
+| ACTUALLY BUILDABLE | 1 | DV-76 — already built; needs a verdict, not code. |
+
+**`docs/discovery/ROADMAP.md:147` — *"Phases E and F: FROZEN"* — covers NONE of
+these thirty rows.** E and F are Discovery's measurement-readiness and owner-gate
+phases. The ruling that actually binds Trails is `:148` (peer scoring systems
+STALE); the one that binds A18 is `:222` (ranker hold). Citing the wrong clause
+is how a hold outlives its own scope.
+
+### 16.4 Three shared evidence sentences that are false
+
+1. **The fourteen creator-ledger rows (DV-56…DV-69)** share *"None of the objects
+   these documents specify exists."* True of the seven table NAMES it lists;
+   **false as a capability claim.** `artifacts/api-server/src/migrations/2170_intel_reward_ledger.sql:40`
+   is `cash_amount numeric NOT NULL DEFAULT 0 CHECK (cash_amount = 0)` — a
+   versioned, append-only, non-cash earnings ledger, with `ledger_version` NOT
+   NULL at `:41`, and its flag TRUE in production. What is absent is a
+   *Discovery-surface* creator→value link, which is a different sentence. The
+   disposition is `docs/architecture/09_Payment_Architecture.md:529` —
+   *"Payments are not a discovery workstream."*
+2. **A21** — *"no registration mechanism exists to register into."* **False.**
+   `artifacts/api-server/src/services/telegraph/actionRegistry.ts:55` declares
+   all four hooks. The true reason is that no Discovery-sourced action exists to
+   register.
+3. **DC-13 and DC-24** — *"no Discovery route imports it"* about
+   `services/ranking/DiscoveryRankingService`. **False, and false in the failing
+   direction.** `lib/discoveryPde.ts:105` imports it, `:695` calls it with
+   surface `"discovery"`, and `routes/discovery.ts:47` imports `rankForViewer`
+   from `discoveryPde`, calling it at `:1825`, `:1932` and `:2239`. So
+   `portavaRank` and the named-family ranker run **in sequence on the same
+   authenticated request**: *"avoid parallel ranking systems"* is violated at
+   RUNTIME, not merely in the file tree. **DC-24 is worse than its row says.**
+   Pinned by `src/test/discoveryFeatureFamilyReach.test.ts` (5/5, registered).
+
+### 16.5 The `recommendation_id` migration is NOT required, per row
+
+§12.8 calls `recommendation_id` *"the highest-value single item in the
+denominator, and a migration decision."* Re-derived against the module rather
+than against the census's absence claim, **the migration is not required for any
+of the four rows it was said to block**, and each row's own words say so:
+
+- **DV-40** — `04` §6 instructs the opposite of a new table: *"extend it by
+  migration rather than introducing a competing event store."* `rank_events`
+  already represents it.
+- **DV-06** — the unit is the EXPOSURE, and the derived id binds the serve
+  (`userId, sessionId, servedAt, surface, position, itemId`), deliberately not
+  the item. An id keyed on the item would under-count the very quantity `04` §5
+  exists to measure.
+- **DV-46** — a test requirement. A derived id is exactly as testable.
+- **DSV2-12** — the trace is already within ONE `rank_events` row; the outcome
+  update writes to that same row. No join table is named by the clause. It is
+  blocked because `routes/rankEvents.ts:203-216` resolves the row by
+  `ORDER BY served_at DESC LIMIT 1` and never reads `features.recommendationId`.
+
+`10` §3's `recommendations` / `recommendation_items` remain genuinely absent, so
+any row grading *those tables specifically* is unaffected. **No migration file
+was written and none was applied.**
+
+### 16.6 Claims that did NOT survive verification — including four of my own
+
+Recorded because the point of an integration owner is to be the place claims
+stop, not a relay — and because I was not that place on the first pass.
+
+**THE PATTERN, stated once because it happened five times.** A lane reads a row
+in an older section, sees `N`, builds against it, and reports `N → W`. But this
+census is append-only and last-statement-wins: a later section had already
+re-graded that row `W`. The move is real work described against a verdict that
+had already moved. Four such rows (A05, A07, DV-40, DV-46) reached §16.1's first
+draft and are corrected there; the fifth is DV-18 below. **`check:census-integrity`
+caught all four by disagreeing with my own table.** The lesson is not that the
+lanes were careless — the stale `N` rows are genuinely there to be read — but
+that no lane's stated OLD verdict may be taken as the verdict; only the tally is.
+
+1. **DV-18 was proposed N→W. It is already `W`.** The census contradicts itself —
+   `:865` grades it `N`, `:1378` grades it `W` — and last-statement-wins already
+   resolves it to `W`, which is what `check:census-integrity` reads. Booking the
+   move would have recorded a verdict change that did not happen. `:865`'s
+   *"Zero of nine exist"* is stale prose, not a live verdict.
+2. **DV-75 was proposed W→C. It stays `W`.** All three verdict jobs exist and
+   gate — `ci-verdict`, `live-db-verdict`, `unwired-verdict`, each an
+   `if: always()` aggregator that fails on any non-`success` need. But Phase
+   0.2's word is *"Require"*, and whether they are REQUIRED CHECKS in branch
+   protection is a GitHub setting, not a repository fact. **A requirement that
+   needs evidence outside the tree is not closed from inside it.**
+   **WHAT WOULD CLOSE IT:** a reading of `main`'s required status checks showing
+   all three listed by name.
+
+### 16.7 Headline
+
+> **Discovery, at this commit: 187 requirements · 75 BUILT-AND-CORRECT · 67
+> BUILT-BUT-WRONG · 42 NOT-BUILT · 3 CANNOT-VERIFY → CONSTRUCTED 142 / 187 =
+> 75.9 % · CORRECT 75 / 187 = 40.1 %.** Up from 74 / 67 / 43 / 3 — 75.4 % and
+> 39.6 %. **Two rows moved: DV-08 on new code, DV-38 on a new row property.
+> Half a point of CORRECT, from five lanes.**
+>
+> Measured by `check:census-integrity`, not by adding up this section's own
+> table — which is how the four phantom moves in §16.1's first draft were caught.
+
+| BUILT-AND-CORRECT | **75** |
+|---|---|
+| BUILT-BUT-WRONG | **67** |
+| NOT-BUILT | **42** |
+| CANNOT-VERIFY | **3** |
+
+75 + 67 + 42 + 3 = 187.
+
+### 16.8 Ceiling — why 100 % is not reachable by engineering, stated as a count
+
+Of the 107 rows still not `C`:
+
+- **Flag-gated, owner decision.** `2850_discovery_live_rank_flag.sql:51` and
+  `2289_discovery_ranking_modifiers_flag.sql:73` are seeded FALSE with
+  postconditions that RAISE if they read TRUE. 2850's own seed text: *"Enabling
+  is an owner decision."* No amount of code moves these.
+- **Owner-frozen subsystems.** Trails, enforced in SQL. Building one to move a
+  verdict would be inventing a denominator.
+- **Migration-blocked.** `rank_events` lacks `schema_version`, `dwell_ms`, a
+  privacy-class column, and a unique key for DV-37's retry. Migrations are not
+  this lane's to write and are not to be applied to production.
+- **Owner decision D11, and it is WIDER than recorded.** `11` §9 — *"A failure
+  must not masquerade as success"* — governs at least THREE live routes, not
+  `/discovery/suggest` alone: `routes/discovery.ts:2663-2670` returns
+  `200 {places: [], posts: [], total: 0}` from `GET /discovery/feed`'s catch, and
+  `:2455-2457` returns `200 {counts: {}}` from `GET /discovery/counts`. The cost
+  was demonstrated by mutation: downgrading a genuine `400 invalid_payload` to
+  `200 {places: []}` turned a test red, because an empty-success arm is
+  indistinguishable from a served-nothing arm to every consumer — **including the
+  exposure denominator.** Not taken here.
+- **Human/production evidence.** DV-02, DV-47, DV-71, DC-14, DC-18, DC-27 and
+  DV-75 each need a deployment, a production read, or a settings page. None is
+  closable from code, and none was guessed.
+
+**BUILT ON A BRANCH IS NOT MERGED. MERGED IS NOT DEPLOYED. DEPLOYED IS NOT FLAG
+ENABLED. FLAG ENABLED IS NOT PRODUCTION REALIZED.** Discovery remains dark on the
+last reading anyone took: 13 `surface='discovery'` rows ever, latest 2026-08-15.
+This pass read no production and does not refresh that figure.
