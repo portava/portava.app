@@ -928,9 +928,16 @@ router.delete("/highlights/:id", async (req, res) => {
   // that no longer admits the row matches zero rows, errors nothing, and this
   // handler answered 204 for a highlight still live on the owner's profile.
   // Taking your own content down is exactly the operation that must not lie.
+  // ONE clock read for the stamp. `deleteCommittedAt` below is a SECOND,
+  // DELIBERATE read taken AFTER the write returns — it starts the §24
+  // revocation stopwatch, so folding it into this one would charge the write's
+  // own duration to the revocation. Two Date.now() reads with different jobs
+  // are fine; mixing one with a no-arg `new Date()` is what split-clock
+  // forbids, because those two silently disagree about the same instant.
+  const deletedAtMs = Date.now();
   const { data: deleted, error } = await client
     .from("highlights")
-    .update({ deleted_at: new Date().toISOString() })
+    .update({ deleted_at: new Date(deletedAtMs).toISOString() })
     .eq("id", id)
     .eq("owner_id", user.id)
     .select("id");

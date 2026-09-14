@@ -55,7 +55,10 @@
 import { isFlagEnabled } from "../../lib/featureFlags.js";
 
 const REWARDS_FLAG = "intel_rewards";
-const LEDGER = "intel_reward_ledger";
+// The table name is spelled as a literal at every `.from()` below rather than
+// held in a constant: check:write-path-columns cannot follow a module constant
+// and reports `dynamic table name`, which is a blind spot it would then have to
+// allowlist. Nothing here needs the name as a value, so no constant remains.
 
 /** `reversal:<entry-id>` — derived from the EVENT, not the attempt (`09` §7.1). */
 export const reversalKeyFor = (originalEntryId: string): string => `reversal:${originalEntryId}`;
@@ -100,7 +103,7 @@ export async function reverseEarnedReward(
   }
 
   const { data: original, error: readErr } = await sc
-    .from(LEDGER)
+    .from("intel_reward_ledger")
     .select("id, actor_id, qiu, earned_units, cash_amount, ledger_version, commercial_use_permission, reverses_entry_id")
     .eq("id", id)
     .maybeSingle();
@@ -137,7 +140,7 @@ export async function reverseEarnedReward(
     idempotency_key: key,
   };
 
-  const { data, error } = await sc.from(LEDGER).insert(row).select().single();
+  const { data, error } = await sc.from("intel_reward_ledger").insert(row).select().single();
   if (!error) {
     return { ok: true, ledgerEntry: data, reversedUnits: row.earned_units };
   }
@@ -147,7 +150,7 @@ export async function reverseEarnedReward(
   // PostgREST on_conflict inference here; the index is partial.)
   if (String((error as any).code) === "23505") {
     const { data: existing, error: replayErr } = await sc
-      .from(LEDGER)
+      .from("intel_reward_ledger")
       .select()
       .eq("reverses_entry_id", id)
       .maybeSingle();

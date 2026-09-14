@@ -239,7 +239,7 @@ export async function runMemoryDeletionLifecycle(
   //    remembering that it should.
   steps.push(await runStep("RAW_EVIDENCE_PURGED", async () => {
     const { data, error } = await sc
-      .from(RAW_EVIDENCE_TABLE)
+      .from("memory_evidence")
       .delete()
       .eq("memory_id", opts.memoryId)
       .select("id");

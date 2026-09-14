@@ -66,8 +66,23 @@ import {
 
 export const CREATOR_ATTRIBUTION_FLAG = "creator_attribution_enabled";
 
+/**
+ * The three table names, and why every `.from()` below spells its LITERAL
+ * instead of using one of these.
+ *
+ * `check:write-path-columns` extracts write and read sites statically and
+ * verifies their columns against the live schema. It cannot follow a module
+ * constant, so `.from(ATTRIBUTIONS)` is reported as a `dynamic table name` —
+ * a BLIND SPOT, not an error, and one that would have to be allowlisted. An
+ * allowlisted site is a site the column check does not check, and these are
+ * brand-new tables whose columns nothing else verifies.
+ *
+ * So the literals are spelled at the call sites. The two constants that remain
+ * are the ones still needed as VALUES — they appear in the degraded-read
+ * message, not in a query — and `creator_rule_versions` has no such use, so it
+ * is gone rather than kept as a second spelling nothing reads.
+ */
 const ATTRIBUTIONS = "creator_attributions";
-const RULE_VERSIONS = "creator_rule_versions";
 const EARNING_ENTRIES = "creator_earning_entries";
 
 export type CreatorServiceRefusal =
@@ -124,7 +139,7 @@ export async function resolveActiveRuleVersion(
   if (!isCreatorType(creatorType)) return fail("unknown_creator_type", String(creatorType));
 
   const { data, error } = await sc
-    .from(RULE_VERSIONS)
+    .from("creator_rule_versions")
     .select("creator_type, rule_version, params, effective_from")
     .eq("creator_type", creatorType)
     .lte("effective_from", new Date().toISOString())
@@ -162,7 +177,7 @@ export async function resolveAllActiveRuleVersions(
   if (!(await isFlagEnabled(sc, CREATOR_ATTRIBUTION_FLAG))) return fail("disabled");
 
   const { data, error } = await sc
-    .from(RULE_VERSIONS)
+    .from("creator_rule_versions")
     .select("creator_type, rule_version, effective_from")
     .lte("effective_from", new Date().toISOString())
     .order("effective_from", { ascending: false });
@@ -213,12 +228,12 @@ export async function recordCreatorAttribution(
   if (model.status !== "built") return fail("refused_by_model", `${model.reason}: ${model.detail}`);
 
   const row = toCreatorAttributionRow(model.attribution);
-  const { data, error } = await sc.from(ATTRIBUTIONS).insert(row).select().single();
+  const { data, error } = await sc.from("creator_attributions").insert(row).select().single();
   if (!error) return { ok: true, value: { id: String(data.id), attribution: model.attribution, row: data } };
 
   if (String((error as any).code) === "23505") {
     const { data: existing, error: replayErr } = await sc
-      .from(ATTRIBUTIONS).select().eq("idempotency_key", row.idempotency_key).maybeSingle();
+      .from("creator_attributions").select().eq("idempotency_key", row.idempotency_key).maybeSingle();
     if (replayErr) return classifyDbError(replayErr);
     if (existing) {
       return { ok: true, value: { id: String(existing.id), attribution: model.attribution, row: existing }, replayed: true };
@@ -257,7 +272,7 @@ export async function recordCreatorEarning(
   // ON CONFLICT DO NOTHING on the TOTAL idempotency index: a redelivery is a
   // genuine no-op replay rather than an overwrite (`09` §7.2).
   const { data, error } = await sc
-    .from(EARNING_ENTRIES)
+    .from("creator_earning_entries")
     .upsert(rows, { onConflict: "idempotency_key", ignoreDuplicates: true })
     .select();
   if (error) return classifyDbError(error);
@@ -291,7 +306,7 @@ export async function holdCreatorAttribution(
   if (held.status !== "built") return fail("refused_by_model", `${held.reason}: ${held.detail}`);
 
   const row = { ...toCreatorAttributionRow(held.attribution), supersedes_id: originalRowId };
-  const { data, error } = await sc.from(ATTRIBUTIONS).insert(row).select().single();
+  const { data, error } = await sc.from("creator_attributions").insert(row).select().single();
   if (error) return classifyDbError(error);
   return { ok: true, value: { id: String(data.id), attribution: held.attribution } };
 }
@@ -329,10 +344,10 @@ export async function readCreatorTypeCoverage(
   if (!versions.ok) return versions;
 
   const { data: attrs, error: attrErr } = await sc
-    .from(ATTRIBUTIONS).select("creator_type, attribution_basis");
+    .from("creator_attributions").select("creator_type, attribution_basis");
   if (attrErr) return classifyDbError(attrErr);
   const { data: entries, error: entryErr } = await sc
-    .from(EARNING_ENTRIES).select("creator_type");
+    .from("creator_earning_entries").select("creator_type");
   if (entryErr) return classifyDbError(entryErr);
 
   return {

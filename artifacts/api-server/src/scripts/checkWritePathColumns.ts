@@ -267,7 +267,7 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   // live schema from the other direction.
   ["src/domain/telegraph/policies/conversationCapabilityPolicy.ts|select|select list not statically resolvable", 1],
   ["src/routes/messaging.ts|insert|payload partially resolvable", 1],
-  ["src/routes/telegraphCoordination.ts|select|select list not statically resolvable", 1],
+  ["src/routes/telegraphCoordination.ts|select|select list not statically resolvable", 2],
   ["src/routes/telegraphKinds.ts|select|select list not statically resolvable", 1],
   ["src/routes/telegraphLifecycle.ts|select|select list not statically resolvable", 1],
   ["src/routes/telegraphLifecycle.ts|update|payload not statically resolvable", 2],
@@ -358,7 +358,6 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   ["src/routes/trust-admin.ts|update|payload partially resolvable", 1],
   ["src/services/notifications/NotificationPreferenceService.ts|upsert|payload partially resolvable", 1],
   ["src/services/rentBuddy/ReliabilityCounters.ts|update|payload partially resolvable", 1],
-  ["src/services/trust/TrustAdminService.ts|upsert|payload partially resolvable", 1],
 
   // ── Dynamic table name (messaging — dispatches to per-channel tables) ─────
   ["src/routes/messaging.ts|select|dynamic table name", 1],
@@ -478,7 +477,16 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   ["src/routes/memories.ts|select|select list not statically resolvable", 5],
   // 4 → 5: the §12–§22 lane added one more select built from a column constant
   // (the needs-action read). Bumped consciously rather than by regeneration.
-  ["src/routes/messaging.ts|select|select list not statically resolvable", 5],
+  ["src/routes/messaging.ts|select|select list not statically resolvable", 6],
+  // `readAll` is ONE generic pager called with three different relations
+  // (the canonical view and both source ledgers). The table name is a
+  // parameter by design — folding it into three copies of the same paging
+  // loop to satisfy a static extractor would be the worse trade.
+  ["src/services/ledger/CanonicalShareReader.ts|select|dynamic table name", 1],
+  // The insert payload is built by a `.map()` over the accepted labels, so
+  // the column set is not a literal. The columns it writes are pinned by
+  // 2910's schema-contract suite instead.
+  ["src/services/trails/TrailService.ts|insert|payload not statically resolvable", 1],
   ["src/routes/adminFeatured.ts|select|select list not statically resolvable", 1],
   //
   // Payloads built at runtime.

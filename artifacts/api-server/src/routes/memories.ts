@@ -1481,7 +1481,14 @@ router.patch("/memories/:id", async (req, res) => {
   if (d.startsAt !== undefined) patch.starts_at = d.startsAt;
   if (d.endsAt !== undefined) patch.ends_at = d.endsAt;
   if (d.state !== undefined) patch.state = d.state;
-  patch.updated_at = new Date().toISOString();
+  // ONE captured instant, derived rather than re-read. `audienceWriteCommittedAt`
+  // below is a second, DELIBERATE read taken after the write returns — it starts
+  // the §24 revocation stopwatch, so folding it into this one would charge the
+  // write's own duration to the revocation. Two reads with different jobs are
+  // fine; a no-arg `new Date()` beside a `Date.now()` is not, because those two
+  // silently disagree about what is supposed to be the same instant.
+  const updatedAtMs = Date.now();
+  patch.updated_at = new Date(updatedAtMs).toISOString();
 
   // §17. Which command this PATCH is — a lifecycle transition, an audience
   // change, a place correction, or a plain field edit. The name reaches the
@@ -1670,6 +1677,10 @@ router.delete("/memories/:id", async (req, res) => {
     sourceVersion: existing.updated_at ?? null,
     payload: { from_state: lifecycle.fromState, to_state: lifecycle.toState },
     legacy: async () => {
+      // ONE clock read for the stamp, derived rather than re-read below.
+      // `deleteCommittedAt` further down is a second, DELIBERATE read taken
+      // after the write returns — it starts the §24 revocation stopwatch.
+      const deletedAtMs = Date.now();
       // THE WRITE THAT MAKES THE DELETION REAL, AND ITS RESULT WAS THROWN AWAY.
       //
       // No `error` binding and no `.select()`: supabase-js RESOLVES on a
@@ -1681,7 +1692,7 @@ router.delete("/memories/:id", async (req, res) => {
       // content is the operation that must not lie.
       const { data: deleted, error: delErr } = await sc
         .from("memories")
-        .update({ state: "deleted", updated_at: new Date().toISOString() })
+        .update({ state: "deleted", updated_at: new Date(deletedAtMs).toISOString() })
         .eq("id", id)
         .eq("owner_id", user.id)
         .select("id");
