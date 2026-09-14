@@ -215,11 +215,21 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
 
   // ── Applied to CI this session, deliberately not to production ─────────────
   sensing_anon_contributions: {
-    classification: "unmerged-pr",
+    // RECLASSIFIED 2026-09-14, unmerged-pr -> unapplied. This note used to read
+    // "PR #475 (UNMERGED) ... Not drift until that PR lands". It landed:
+    // 2315_sensing_anon_contributions.sql is on `main` and in portava-ci's
+    // ledger. It reached main inside #476 rather than under its own number, so
+    // no commit subject ever named #475 and the excuse stayed plausible while
+    // being false. Nothing caught it because the "declared by NO migration"
+    // check in main() exempted unmerged-pr in one direction only; the assertion
+    // that closes that is STALE UNMERGED-PR, below.
+    classification: "unapplied",
     note:
-      "Migration 2315, PR #475 (UNMERGED). Applied to portava-ci on 2026-09-07 to " +
-      "unblock the schema-drift audit. Not drift until that PR lands, and applying it " +
-      "to production needs an owner decision — the store is inert by construction.",
+      "Migration 2315, ON MAIN (it reached main inside #476) and applied to portava-ci " +
+      "2026-09-07. Absent from production, so it counts toward the must-reach-zero total " +
+      "like any other unapplied migration. Applying it to production remains an owner " +
+      "decision — the store is inert by construction — but that is a reason to leave it " +
+      "unapplied, not a reason to leave it unaccounted.",
   },
   intel_claim_reviews: {
     classification: "unmerged-pr",
@@ -746,6 +756,43 @@ function main(): void {
         "  real unmerged PR declares it.",
     );
   }
+  // ── STALE UNMERGED-PR: the exemption above, asked in the other direction ────
+  //
+  // `unmerged-pr` means "a PR declares this table; it is not drift until that PR
+  // lands". That is correct the day the entry is written and wrong the day the
+  // PR lands, and until 2026-09-14 nothing watched for the second day.
+  //
+  // It had already happened once. `sensing_anon_contributions` carried
+  // "PR #475 (UNMERGED) ... Not drift until that PR lands" while
+  // 2315_sensing_anon_contributions.sql sat on main — it reached main inside
+  // #476, so no commit subject ever named #475 and the sentence stayed
+  // plausible. The effect was not cosmetic: an `unmerged-pr` entry is excused
+  // from the MUST-REACH-ZERO total, so a landed migration was being counted as
+  // somebody else's problem.
+  //
+  // The question is mechanical and asks the TREE, never the note: if a migration
+  // file in this tree declares the table, the PR has landed by definition.
+  const staleUnmerged = Object.entries(KNOWN_PRODUCTION_GAPS)
+    .filter(([t, g]) => g.classification === "unmerged-pr" && declared.has(t))
+    .map(([t]) => t)
+    .sort();
+
+  if (staleUnmerged.length > 0) {
+    failed = true;
+    const declaring = declaringMigrations();
+    console.error(
+      `\n✖ ${staleUnmerged.length} table(s) are classified 'unmerged-pr' but a migration in THIS TREE declares them:`,
+    );
+    for (const t of staleUnmerged) {
+      console.error(`    ${t} — declared by ${(declaring.get(t) ?? ["(unknown)"]).join(", ")}`);
+    }
+    console.error(
+      "\n  The PR has landed, so the classification is false and the table is being\n" +
+        "  excused from the must-reach-zero total by a sentence that stopped being\n" +
+        "  true. Reclassify each as 'unapplied', or strike it off if production has it.",
+    );
+  }
+
 
   const unapplied = Object.entries(KNOWN_PRODUCTION_GAPS).filter(
     ([t, g]) => g.classification === "unapplied" && !production.has(t),

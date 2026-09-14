@@ -34,7 +34,12 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { stripSqlNoise, appliedAfterSnapshot, declaredTables } from "../scripts/checkProductionDrift.js";
+import {
+  stripSqlNoise,
+  appliedAfterSnapshot,
+  declaredTables,
+  KNOWN_PRODUCTION_GAPS,
+} from "../scripts/checkProductionDrift.js";
 
 const TABLE_RE = /create\s+table\s+(?:if\s+not\s+exists\s+)?(?:"?public"?\.)?"?([a-z0-9_]+)"?/gi;
 const namesIn = (sql: string) => [...stripSqlNoise(sql).matchAll(TABLE_RE)].map((m) => m[1].toLowerCase());
@@ -125,5 +130,56 @@ describe("appliedAfterSnapshot excuses a recorded apply and nothing else", () =>
     ]) {
       assert.ok(!excused.has(t), `${t} has no recorded production apply and must not be excused`);
     }
+  });
+});
+
+/**
+ * THE EXEMPTION THAT ONLY POINTED ONE WAY.
+ *
+ * checkProductionDrift's "declared by NO migration in the tree" check exempts
+ * `unmerged-pr` entries, and says why in its own comment: *"those tables are
+ * declared in a PR's migration, which is precisely why they are not declared
+ * here."* That is true on the day the entry is written and false the day the PR
+ * lands, and nothing was watching for the day it lands.
+ *
+ * It had already happened. `sensing_anon_contributions` carried
+ * *"Migration 2315, PR #475 (UNMERGED) ... Not drift until that PR lands"* while
+ * `2315_sensing_anon_contributions.sql` was sitting on `main` — it reached main
+ * inside #476, so no commit subject ever named #475 and the note stayed
+ * plausible. The table was therefore excused from the MUST-REACH-ZERO count by a
+ * sentence that had stopped being true, which is exactly the rot the
+ * ratchet-not-allowlist header is written against.
+ *
+ * WHAT WOULD TURN THIS RED: reclassify any table declared by a migration in this
+ * tree as `unmerged-pr`. The assertion is mechanical — it asks the tree, not the
+ * note — so a stale note cannot satisfy it and a correct one cannot fail it.
+ */
+describe("an unmerged-pr classification expires when the PR lands", () => {
+  const declared = declaredTables();
+
+  it("no unmerged-pr entry is declared by a migration in this tree", () => {
+    const landed = Object.entries(KNOWN_PRODUCTION_GAPS)
+      .filter(([t, g]) => g.classification === "unmerged-pr" && declared.has(t))
+      .map(([t]) => t)
+      .sort();
+    assert.deepEqual(
+      landed,
+      [],
+      `these tables are classified unmerged-pr but a migration in this tree declares them, ` +
+        `so the PR has landed and the classification is false: ${landed.join(", ")}`,
+    );
+  });
+
+  it("the entries that ARE still unmerged are still unmerged — the positive control", () => {
+    // If this list ever empties, the assertion above becomes vacuous: a rule
+    // with nothing to exempt passes whether or not it works.
+    const stillUnmerged = Object.entries(KNOWN_PRODUCTION_GAPS)
+      .filter(([t, g]) => g.classification === "unmerged-pr" && !declared.has(t))
+      .map(([t]) => t);
+    assert.ok(
+      stillUnmerged.length > 0,
+      "no unmerged-pr entry remains — if that is genuinely true, delete the classification " +
+        "rather than leaving a rule that exempts nothing",
+    );
   });
 });

@@ -581,6 +581,43 @@ if (files.length < MIN_CENSUS_FILES) {
 
 for (const p of problems) console.error(p);
 
+/**
+ * DUMP MODE — `CENSUS_INTEGRITY_DUMP=W` (or `C`, `N`, `X`, or `ALL`).
+ *
+ * Prints one `census|id|verdict|line` record per parsed row and exits 0 without
+ * running any assertion. It exists so that a lane aiming at the BUILT-BUT-WRONG
+ * rows reads THIS parser's answer rather than writing a second regex over the
+ * same tables — the mistake that produced "3 CPV2 / 0 DSV2 / 6 TRV2" from a
+ * pattern that required the id cell to be exactly an id. A second parser that
+ * disagrees with the guard is worse than no parser, because it disagrees
+ * silently.
+ *
+ * It reports the SAME rows the counts above are computed from: revisions
+ * already collapsed to their last statement, PR-comparison rows already
+ * skipped. If this dump and the count table ever disagree, the count table is
+ * the one to trust and this block is the bug.
+ */
+const DUMP = process.env.CENSUS_INTEGRITY_DUMP?.trim().toUpperCase();
+if (DUMP) {
+  const want = DUMP === "ALL" ? null : DUMP.split(/[,\s]+/).filter(Boolean);
+  let dumped = 0;
+  for (const r of results) {
+    const name = r.file.replace(/^census-|\.md$/g, "");
+    for (const row of r.rows) {
+      if (want && !want.includes(row.verdict)) continue;
+      console.log(`${name}|${row.id}|${row.verdict}|${row.line}`);
+      dumped++;
+    }
+  }
+  console.error(`CENSUS_INTEGRITY_DUMP=${DUMP}: ${dumped} row(s) from ${results.length} census file(s).`);
+  // A filter that matches nothing looks exactly like a clean corpus. Say so.
+  if (dumped === 0) {
+    console.error(`::error::CENSUS_INTEGRITY_DUMP=${DUMP} matched no rows — the filter is wrong, the corpus is not empty.`);
+    process.exit(1);
+  }
+  process.exit(0);
+}
+
 console.log("\nPer-census verdict counts, recomputed from the tables:\n");
 console.log(`  ${"census".padEnd(28)} ${"rows".padStart(5)} ${"C".padStart(5)} ${"W".padStart(5)} ${"N".padStart(5)} ${"X".padStart(4)}  ${"denom".padStart(6)}  unreconciled`);
 let totalRows = 0;
