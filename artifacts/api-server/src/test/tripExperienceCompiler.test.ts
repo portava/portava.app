@@ -50,7 +50,7 @@ function window(o: Partial<FreedomWindow> = {}): FreedomWindow {
 }
 const cand = (id: string, o: Partial<ExperienceCandidate> = {}): ExperienceCandidate => ({ id, placeId: `p-${id}`, name: id, placeType: "museum", point: NEAR, source: "saved_idea", ...o });
 function inputs(o: Partial<CompileInputs> = {}): CompileInputs {
-  return { now: NOW, window: window(), origin: HOTEL, participants: [{ userId: "me" }, { userId: "ana" }], candidates: [], liveSignals: [], travel, goals: [], preferences: {}, nextCommitment: { id: "B", arriveBy: T("16:00"), point: HOTEL }, prepMinutes: 15, ...o };
+  return { now: NOW, window: window(), origin: HOTEL, participants: [{ userId: "me" }, { userId: "ana" }], candidates: [], liveSignals: [], travel, goals: [], preferences: {}, nextCommitment: { id: "B", arriveBy: T("16:00"), point: HOTEL, placeId: "dinner" }, prepMinutes: 15, ...o };
 }
 const signal = (kind: PulseInterpretation["kind"], effects: PulseInterpretation["effects"]): PulseInterpretation => ({
   kind, subjectId: "x", interpretation: "", effects, relevance: ["stage"],
@@ -215,5 +215,115 @@ describe("§13.3 diffOpportunities — significance is a function of the diff", 
     assert.equal(first.significance, "medium"); assert.ok(first.reasonCodes.includes("OPPORTUNITY_WINDOW_OPENED")); assert.equal(first.previousFreedomWindow, null);
     const allGone = diffOpportunities(before, portfolio([cand("cafe", { placeType: "cafe", openingWindows: hours, liveConditions: { closure: "permanently_closed" } })], {}, { goals: g }), "signal");
     assert.equal(allGone.significance, "critical"); assert.ok(allGone.reasonCodes.includes("OPPORTUNITY_ALL_REMOVED")); assert.equal(attentionKindFor(allGone), "opportunity_removed");
+  });
+});
+
+/**
+ * §13.1 "+ transport" — census-trips TR229. The compiler's travel term was a
+ * straight-line estimate and nothing else: a trip that had ALREADY BOOKED the
+ * leg (2782's `trip_transport_segments`) had its own booking ignored and a
+ * guess used in its place. These tests are the booked leg being consulted.
+ */
+describe("§13.1 + transport — a committed transport segment is consulted before the straight-line estimate (TR229)", () => {
+  /** A booked-leg estimator over an explicit table, keyed by place id. */
+  const booked = (table: Record<string, { minutes: number; mode: string; segmentId: string }>): TravelEstimator => ({
+    minutes: travel.minutes,
+    booked: (from, to) => (from && to ? table[`${from}>${to}`] ?? null : null),
+  });
+
+  it("a booked segment's duration and mode replace the straight-line estimate on the outbound leg", () => {
+    const t = booked({ "hotel>p-far": { minutes: 12, mode: "metro", segmentId: "seg-1" } });
+    const r = compileExperiences(inputs({
+      travel: t,
+      candidates: [cand("far", { point: FAR, openingWindows: [{ opensAt: T("09:00"), closesAt: T("18:00") }] })],
+    }));
+    const e = r.experiences[0];
+    assert.equal(e.travel.toMinutes, 12, "the booked 12-minute metro leg, not the ~20-minute drive guess");
+    assert.equal(e.travel.mode, "metro");
+    assert.ok(
+      e.explanation.some((x) => x.includes("booked") && x.includes("seg-1")),
+      `the booked segment must be named in the explanation; got ${JSON.stringify(e.explanation)}`,
+    );
+  });
+
+  it("the return leg consults the next commitment's place too", () => {
+    const t = booked({ "p-far>dinner": { minutes: 9, mode: "rail", segmentId: "seg-2" } });
+    const r = compileExperiences(inputs({
+      travel: t,
+      nextCommitment: { id: "B", arriveBy: T("16:00"), point: HOTEL, placeId: "dinner" },
+      candidates: [cand("far", { point: FAR, openingWindows: [{ opensAt: T("09:00"), closesAt: T("18:00") }] })],
+    }));
+    assert.equal(r.experiences[0].travel.backMinutes, 9);
+  });
+
+  it("a REDIRECTED return leg is not keyed on the window's destination place — the booking for the old destination is not matched", () => {
+    // The caller redirects the return to a different commitment. A booking to
+    // the WINDOW's destination ("dinner") exists; the traveller is no longer
+    // going there, so it must not be used.
+    const t = booked({ "p-far>dinner": { minutes: 5, mode: "rail", segmentId: "seg-old" } });
+    const r = compileExperiences(inputs({
+      travel: t,
+      nextCommitment: { id: "C", arriveBy: T("16:00"), point: HOTEL, placeId: "airport" },
+      candidates: [cand("far", { point: FAR, openingWindows: [{ opensAt: T("09:00"), closesAt: T("18:00") }] })],
+    }));
+    const e = r.experiences[0];
+    assert.notEqual(e.travel.backMinutes, 5, "the booking to the window's old destination must not be used");
+    assert.ok(!e.explanation.some((x) => x.includes("seg-old")), JSON.stringify(e.explanation));
+  });
+
+  it("a redirected return with NO place of its own is keyed on nothing — not on the window's destination", () => {
+    // The distinguishing case for the return key: a caller supplies a return
+    // commitment that carries no place. The window still names "dinner", and a
+    // booking to "dinner" exists. Keyed on the window it would match; keyed on
+    // the commitment actually being travelled to it cannot, and must not.
+    const t = booked({ "p-far>dinner": { minutes: 5, mode: "rail", segmentId: "seg-old" } });
+    const r = compileExperiences(inputs({
+      travel: t,
+      nextCommitment: { id: "C", arriveBy: T("16:00"), point: HOTEL },
+      candidates: [cand("far", { point: FAR, openingWindows: [{ opensAt: T("09:00"), closesAt: T("18:00") }] })],
+    }));
+    const e = r.experiences[0];
+    assert.notEqual(e.travel.backMinutes, 5);
+    assert.ok(!e.explanation.some((x) => x.includes("seg-old")), JSON.stringify(e.explanation));
+  });
+
+  it("a redirected return WITH a booking of its own uses that one", () => {
+    const t = booked({ "p-far>dinner": { minutes: 5, mode: "rail", segmentId: "seg-old" }, "p-far>airport": { minutes: 31, mode: "coach", segmentId: "seg-new" } });
+    const r = compileExperiences(inputs({
+      travel: t,
+      nextCommitment: { id: "C", arriveBy: T("16:00"), point: HOTEL, placeId: "airport" },
+      candidates: [cand("far", { point: FAR, openingWindows: [{ opensAt: T("09:00"), closesAt: T("18:00") }] })],
+    }));
+    assert.equal(r.experiences[0].travel.backMinutes, 31);
+  });
+
+  it("CONTROL — an estimator with no booked legs is byte-identical to the straight-line one", () => {
+    const withNone = compileExperiences(inputs({ travel: booked({}), candidates: [cand("far", { point: FAR, openingWindows: [{ opensAt: T("09:00"), closesAt: T("18:00") }] })] }));
+    const plain = compileExperiences(inputs({ candidates: [cand("far", { point: FAR, openingWindows: [{ opensAt: T("09:00"), closesAt: T("18:00") }] })] }));
+    assert.deepEqual(withNone.experiences[0].travel, plain.experiences[0].travel);
+  });
+
+  it("booked legs are known travel even where the straight-line estimate cannot be made at all", () => {
+    // `noTravel` answers null for every pair; only the bookings are known. Both
+    // legs are booked, because ONE booked leg beside one unestimable one is
+    // still an unknown journey — and the compiler says so, which test 5 pins.
+    const t: TravelEstimator = {
+      minutes: () => null,
+      booked: (from, to) => (from === "hotel" && to === "p-far" ? { minutes: 20, mode: "ferry", segmentId: "seg-3" }
+        : from === "p-far" && to === "dinner" ? { minutes: 25, mode: "ferry", segmentId: "seg-4" } : null),
+    };
+    const r = compileExperiences(inputs({ travel: t, candidates: [cand("far", { point: FAR, openingWindows: [{ opensAt: T("09:00"), closesAt: T("18:00") }] })] }));
+    const e = r.experiences[0];
+    assert.equal(e.travel.toMinutes, 20); assert.equal(e.travel.backMinutes, 25);
+    assert.ok(!e.reasonCodes.includes("TRIP_TEMPORAL_UNKNOWN"), "a booked leg is known travel; it must not be reported as unknown");
+  });
+
+  it("one booked leg does not make the other one known — the unestimable half is still UNCERTAIN", () => {
+    const t: TravelEstimator = { minutes: () => null, booked: (from, to) => (from === "hotel" && to === "p-far" ? { minutes: 20, mode: "ferry", segmentId: "seg-3" } : null) };
+    const r = compileExperiences(inputs({ travel: t, candidates: [cand("far", { point: FAR, openingWindows: [{ opensAt: T("09:00"), closesAt: T("18:00") }] })] }));
+    const e = r.experiences[0];
+    assert.equal(e.travel.toMinutes, 20); assert.equal(e.travel.backMinutes, null);
+    assert.ok(e.reasonCodes.includes("TRIP_TEMPORAL_UNKNOWN"));
+    assert.equal(e.verdict, "UNCERTAIN");
   });
 });

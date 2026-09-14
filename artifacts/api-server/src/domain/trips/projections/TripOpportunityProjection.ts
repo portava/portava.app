@@ -108,6 +108,71 @@ export const straightLineEstimator: TravelEstimator = {
   },
 };
 
+/**
+ * §13.1 "+ transport" (census-trips TR229) — a `trip_transport_segments` row
+ * (2782) as the compiler consults it.
+ */
+export interface ConsultableSegment {
+  id: string;
+  mode: string;
+  state: string;
+  fromPlaceId: string | null;
+  toPlaceId: string | null;
+  plannedDepartureAt: string | null;
+  plannedArrivalAt: string | null;
+}
+
+/**
+ * The 2782 states that mean THIS LEG WILL BE TRAVELLED, so its planned duration
+ * is a fact about the journey rather than a sketch of one.
+ *
+ * `planned` is deliberately OUT: 2782's default state, written by
+ * ADD_TRANSPORT_SEGMENT before anything is held, is an intention — no better
+ * evidence than the estimate it would displace, and letting it win would
+ * silently replace a provider's answer with a guess somebody typed.
+ * `cancelled` and `disrupted` are out for the opposite reason: their planned
+ * times are known to be WRONG, and a disrupted leg's old duration is the most
+ * confidently wrong number available.
+ */
+export const CONSULTABLE_SEGMENT_STATES = ["booked", "waiting", "in_progress", "completed"] as const;
+
+/**
+ * A `TravelEstimator` that asks the trip's committed transport segments first
+ * and falls back to `straightLine` for every leg nobody has booked.
+ *
+ * Keyed by place id pair in the direction travelled: a segment is a leg FROM
+ * one place TO another and is not assumed to be reversible (a one-way ticket,
+ * a flight). Where two committed segments name the same pair, the SHORTEST
+ * planned duration wins — deterministically, so two compilations of the same
+ * trip give the same portfolio, which §22.4's determinism guarantee needs.
+ */
+export function segmentAwareEstimator(
+  segments: readonly ConsultableSegment[],
+  straightLine: TravelEstimator = straightLineEstimator,
+): TravelEstimator {
+  const best = new Map<string, { minutes: number; mode: string; segmentId: string }>();
+  for (const s of segments) {
+    if (!CONSULTABLE_SEGMENT_STATES.includes(s.state as any)) continue;
+    if (!s.fromPlaceId || !s.toPlaceId) continue;
+    const dep = Date.parse(String(s.plannedDepartureAt ?? ""));
+    const arr = Date.parse(String(s.plannedArrivalAt ?? ""));
+    if (!Number.isFinite(dep) || !Number.isFinite(arr) || arr <= dep) continue;
+    const minutes = Math.ceil((arr - dep) / 60_000);
+    const key = `${s.fromPlaceId}>${s.toPlaceId}`;
+    const held = best.get(key);
+    // Shortest first; ties broken by segment id so the map order of the read
+    // cannot change the answer.
+    if (!held || minutes < held.minutes || (minutes === held.minutes && s.id < held.segmentId)) {
+      best.set(key, { minutes, mode: String(s.mode), segmentId: String(s.id) });
+    }
+  }
+  return {
+    minutes: (from, to) => straightLine.minutes(from, to),
+    booked: (fromPlaceId, toPlaceId) =>
+      fromPlaceId && toPlaceId ? best.get(`${fromPlaceId}>${toPlaceId}`) ?? null : null,
+  };
+}
+
 const OPPORTUNITY_CLAIM_TYPES = ["closure.state", "queue.wait", "crowd.level", "access.reservation"] as const;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -266,6 +331,31 @@ export async function buildTripOpportunityProjection(
   if (mErr) return { ok: false, reason: "TRIP_PROJECTION_UNAVAILABLE", message: "trip_members could not be read" };
   const participantIds = ((members ?? []) as any[]).filter((m) => m.status == null || m.status === "accepted").map((m) => String(m.user_id));
 
+  // §13.1 "+ transport" (TR229). The crew's committed legs, so a booked journey
+  // is not replaced by a guess about it. REFUSES on a read error rather than
+  // compiling as though nothing were booked: an unreadable segment table and a
+  // trip with no bookings are the same empty array, and the second is a claim
+  // this projection is not entitled to make. (2782 is in no database today, so
+  // on every deployment this read either refuses or returns nothing — which is
+  // exactly why TR229 stays W.)
+  const { data: segRows, error: segErr } = await sc
+    .from("trip_transport_segments")
+    .select("id, mode, state, from_place_id, to_place_id, planned_departure_at, planned_arrival_at")
+    .eq("trip_id", tripId);
+  if (segErr) {
+    log.warn({ err: segErr.message, tripId }, "opportunity: trip_transport_segments unreadable — refusing");
+    return { ok: false, reason: "TRIP_PROJECTION_UNAVAILABLE", message: "The transport segments could not be read" };
+  }
+  const segments: ConsultableSegment[] = ((segRows ?? []) as any[]).map((s) => ({
+    id: String(s.id), mode: String(s.mode ?? ""), state: String(s.state ?? ""),
+    fromPlaceId: s.from_place_id ? String(s.from_place_id) : null,
+    toPlaceId: s.to_place_id ? String(s.to_place_id) : null,
+    plannedDepartureAt: s.planned_departure_at ? String(s.planned_departure_at) : null,
+    plannedArrivalAt: s.planned_arrival_at ? String(s.planned_arrival_at) : null,
+  }));
+  const travelEstimator = segmentAwareEstimator(segments);
+  const bookedLegs = segments.filter((s) => CONSULTABLE_SEGMENT_STATES.includes(s.state as any)).length;
+
   // The viewer's position is the pulse's: it read the crew map under every
   // §10 rule and reports where its location band came from. One presence
   // read per request, and this file names no presence flag of its own.
@@ -280,8 +370,8 @@ export async function buildTripOpportunityProjection(
     if (origin) originKind = w.origin?.point ? "window" : "viewer_presence";
     const dest = w.requiredDestination;
     const r = compileExperiences({
-      now: nowMs, window: w, origin, participants: participantIds.map((userId) => ({ userId })), candidates, liveSignals: pulse.signals, travel: straightLineEstimator,
-      goals, preferences: {}, nextCommitment: dest ? { id: dest.commitmentId, arriveBy: dest.arriveBy, point: dest.point } : null, prepMinutes: w.reservedMinutes ?? 0,
+      now: nowMs, window: w, origin, participants: participantIds.map((userId) => ({ userId })), candidates, liveSignals: pulse.signals, travel: travelEstimator,
+      goals, preferences: {}, nextCommitment: dest ? { id: dest.commitmentId, arriveBy: dest.arriveBy, point: dest.point, placeId: dest.placeId ?? null } : null, prepMinutes: w.reservedMinutes ?? 0,
     });
     views.push({
       windowId: w.id, window: { id: w.id, beginsAt: w.beginsAt, endsAt: w.endsAt, durationMinutes: w.durationMinutes, certified: w.certified, participants: [...w.participants] },
@@ -318,8 +408,13 @@ export async function buildTripOpportunityProjection(
     const pd: TripDecision = recordTripDecision({
       tripId, type: "opportunity_portfolio",
       inputs: { canonicalVersion, windowId: first.windowId, candidates: candidates.length, goals: goals.length, participants: participantIds.length, liveSignals: pulse.signals.length, intel: intelStatus },
-      sources: ["trip_saved_places", "trip_goals", "trip_members", "TripFreedomProjection", "TripPulseProjection", ...(intelStatus === "ok" ? ["intel_state_snapshots"] : [])],
-      assumptions: ["straight-line travel with the provider's constants; hours unknown → venue-bound primitives UNCERTAIN"],
+      sources: ["trip_saved_places", "trip_goals", "trip_members", "trip_transport_segments", "TripFreedomProjection", "TripPulseProjection", ...(intelStatus === "ok" ? ["intel_state_snapshots"] : [])],
+      assumptions: [
+        bookedLegs > 0
+          ? `${bookedLegs} committed transport segment(s) consulted for the leg; every other leg is straight-line travel with the provider's constants`
+          : "no committed transport segment on this trip; every leg is straight-line travel with the provider's constants",
+        "hours unknown → venue-bound primitives UNCERTAIN",
+      ],
       constraints: [], result: { windowId: first.windowId, portfolio: ledgered, executable: first.executable.length },
       confidence: "N/A", engineVersions: { TripExperienceCompiler: TRIP_ENGINE_VERSIONS.TripExperienceCompiler }, calculatedAt: nowIso, sourceTripVersion: canonicalVersion,
     });

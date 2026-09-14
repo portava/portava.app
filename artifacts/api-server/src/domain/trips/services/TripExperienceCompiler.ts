@@ -155,11 +155,38 @@ export interface CompileParticipant {
 
 export interface CompileGoal { id: string; type: string; scope: string; status: string; priority?: string | null; weight?: number | null }
 
-export interface CompileNextCommitment { id: string; arriveBy: string; point: GeoPoint | null }
+export interface CompileNextCommitment {
+  id: string;
+  arriveBy: string;
+  point: GeoPoint | null;
+  /** The commitment's place, when it has one: the key the booked return leg is looked up by. */
+  placeId?: string | null;
+}
 
 export interface TravelEstimator {
   /** Minutes, or null when it cannot be estimated. */
   minutes(from: GeoPoint, to: GeoPoint): { minutes: number; mode: string } | null;
+  /**
+   * §13.1 "+ transport" (census-trips TR229). A leg the trip has ALREADY
+   * COMMITTED TO — a `trip_transport_segments` row (2782) in a state that means
+   * it will be travelled — between two KNOWN PLACES, keyed by place id rather
+   * than by coordinates because that is the identity a segment carries
+   * (`from_place_id` / `to_place_id`; it has no lat/lng of its own).
+   *
+   * Consulted BEFORE `minutes`, and it wins: a straight-line guess cannot
+   * improve on a booking the crew already made, and the mode it invents
+   * ("walk" under 2 km, else "drive") is not the mode they are travelling.
+   *
+   * OPTIONAL on purpose. An estimator with nothing to consult — every caller
+   * on a tree where 2782 is applied nowhere — omits it, and the compiler's
+   * answer is then byte-identical to what it was. `null` means "no committed
+   * leg between these two places", which is NOT "this estimator cannot
+   * answer": the straight-line term is still asked.
+   */
+  booked?(
+    fromPlaceId: string | null | undefined,
+    toPlaceId: string | null | undefined,
+  ): { minutes: number; mode: string; segmentId: string } | null;
 }
 
 export interface CompileInputs {
@@ -290,6 +317,21 @@ export function compileExperiences(inputs: CompileInputs): CompileResult {
   const prep = inputs.prepMinutes ?? 0;
   const returnTo = inputs.nextCommitment?.point ?? w.requiredDestination ?? null;
   const returnPoint: GeoPoint | null = returnTo && "lat" in (returnTo as any) ? { lat: (returnTo as any).lat, lng: (returnTo as any).lng } : null;
+  // §13.1 "+ transport": the two ENDS of the two legs, as place ids, which is
+  // the identity a committed transport segment is keyed by. The origin's place
+  // is the window's (§7.3 gives every window an origin place); the return end
+  // is the next commitment's place, else the window's required destination.
+  const originPlaceId: string | null = w.origin?.placeId ?? null;
+  // The return PLACE must come from whichever source gave the return POINT
+  // above, not from whichever source happens to have one. A caller that
+  // supplies its own `nextCommitment` is redirecting the return leg; falling
+  // back to the window's destination place there would key the lookup on a
+  // place the traveller is no longer going to, and match a booking for a
+  // journey nobody is making. A supplied commitment with no place means "this
+  // return has no place identity", which is `null`, not the window's.
+  const returnPlaceId: string | null = inputs.nextCommitment
+    ? inputs.nextCommitment.placeId ?? null
+    : w.requiredDestination?.placeId ?? null;
   const openGoals = inputs.goals.filter((g) => OPEN_GOAL_STATES.has(g.status));
   const invalidatedIds = new Set<string>();
   const favouredIds = new Set<string>();
@@ -318,11 +360,23 @@ export function compileExperiences(inputs: CompileInputs): CompileResult {
     if (!c.point) {
       unsure("TRIP_SPATIAL_NO_COORDINATES", `${c.name} has no coordinates; travel cannot be estimated`);
     } else {
-      if (inputs.origin) {
+      // A COMMITTED segment (2782) between the two places beats the
+      // straight-line term, and is asked first. It does not depend on the
+      // origin COORDINATES — a booking is known travel whether or not the
+      // provider could have guessed it.
+      const bookedOut = inputs.travel.booked?.(originPlaceId, c.placeId) ?? null;
+      const bookedBack = inputs.travel.booked?.(c.placeId, returnPlaceId) ?? null;
+      if (bookedOut) {
+        toMinutes = bookedOut.minutes; mode = bookedOut.mode;
+        explanation.push(`travel to ${c.name} is a booked ${bookedOut.mode} segment (${bookedOut.segmentId}, ${bookedOut.minutes} min), not an estimate`);
+      } else if (inputs.origin) {
         const t = inputs.travel.minutes(inputs.origin, c.point);
         if (t) { toMinutes = t.minutes; mode = t.mode; } else unsure("TRIP_TEMPORAL_UNKNOWN", `travel to ${c.name} could not be estimated`);
       } else { toMinutes = 0; explanation.push("no origin is known; travel to the candidate is taken as zero, optimistically"); unsure("TRIP_TEMPORAL_UNKNOWN", "the window has no origin"); }
-      if (returnPoint) {
+      if (bookedBack) {
+        backMinutes = bookedBack.minutes; mode = mode ?? bookedBack.mode;
+        explanation.push(`travel back from ${c.name} is a booked ${bookedBack.mode} segment (${bookedBack.segmentId}, ${bookedBack.minutes} min), not an estimate`);
+      } else if (returnPoint) {
         const b = inputs.travel.minutes(c.point, returnPoint);
         if (b) { backMinutes = b.minutes; mode = mode ?? b.mode; } else unsure("TRIP_TEMPORAL_UNKNOWN", `travel back from ${c.name} could not be estimated`);
       } else { backMinutes = 0; }

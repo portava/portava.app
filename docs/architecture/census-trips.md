@@ -4657,15 +4657,15 @@ production baseline through the chain: 39 database tests, 0 skipped.
   (duration, compressibility, energy, reservation, queue, accessibility);
   the other four are carried on every experience for the consumer that
   needs them.
-- **§13.1 the compiler** — `domain/trips/services/TripExperienceCompiler.ts:286#export function compileExperiences`:
-  the eight inputs as one typed record (`domain/trips/services/TripExperienceCompiler.ts:165#export interface CompileInputs`)
+- **§13.1 the compiler** — `domain/trips/services/TripExperienceCompiler.ts:313#export function compileExperiences`:
+  the eight inputs as one typed record (`domain/trips/services/TripExperienceCompiler.ts:192#export interface CompileInputs`)
   — candidates from content, the freedom window, participants, live signals
   (the pulse's), a travel estimator, goals and preferences, the next
   commitment — and one `ExecutableTripExperience` per candidate
-  (`domain/trips/services/TripExperienceCompiler.ts:209#export interface ExecutableTripExperience`)
+  (`domain/trips/services/TripExperienceCompiler.ts:236#export interface ExecutableTripExperience`)
   with three verdicts: EXECUTABLE, NOT_EXECUTABLE with the reason, and
   UNCERTAIN when something needed is unknown, which is never promoted
-  (`domain/trips/services/TripExperienceCompiler.ts:184#export const EXPERIENCE_VERDICTS`). §22.4's
+  (`domain/trips/services/TripExperienceCompiler.ts:211#export const EXPERIENCE_VERDICTS`). §22.4's
   "closed-before-arrival activity cannot remain executable" is
   `EXPERIENCE_CLOSED_BEFORE_ARRIVAL` (`domain/trips/services/TripExperienceCompiler.ts:19#§22.4`)
   and a property test over 300 generated windows and hours
@@ -4684,19 +4684,19 @@ production baseline through the chain: 39 database tests, 0 skipped.
   `shouldNotify` is significance ≥ high (`domain/trips/services/TripOpportunityEngine.ts:145#export function shouldNotify`);
   "weather changed" with no viable change is none, and the test says so in
   those words (`src/test/tripExperienceCompiler.test.ts:199#raw data`).
-- **The projection** — `domain/trips/projections/TripOpportunityProjection.ts:182#export async function buildTripOpportunityProjection`:
+- **The projection** — `domain/trips/projections/TripOpportunityProjection.ts:247#export async function buildTripOpportunityProjection`:
   version first; health, freedom and pulse accepted against it; candidates
   from the crew's saved ideas with `closure.state` / `queue.wait` /
   `crowd.level` / `access.reservation` from `intel_state_snapshots` for the
   ones that name a canonical place; goals, accepted members, the viewer's
   position as origin when the window has none. Opening hours: this system
   stores none for a place, so a venue-bound candidate is UNCERTAIN, stated
-  (`domain/trips/projections/TripOpportunityProjection.ts:255#no hours source in this system`). Compiled per
+  (`domain/trips/projections/TripOpportunityProjection.ts:320#no hours source in this system`). Compiled per
   open window, current-or-next first; the first window's portfolio is
   ledgered as `opportunity_portfolio` and diffed against the last one
-  (`domain/trips/projections/TripOpportunityProjection.ts:139#async function readPreviousPortfolio`). Under
+  (`domain/trips/projections/TripOpportunityProjection.ts:204#async function readPreviousPortfolio`). Under
   AT_RISK / SAFETY_EVENT the executable list is served empty with the
-  suppression named (`domain/trips/projections/TripOpportunityProjection.ts:294#suppressed`).
+  suppression named (`domain/trips/projections/TripOpportunityProjection.ts:384#suppressed`).
   Served at `GET /trips/:id/opportunities`
   (`server/trips/readRoutes/tripProjections.ts:400#/trips/:tripId/opportunities"`), to Compass as
   `get_opportunities` — §11.3's "Where next?"
@@ -4711,7 +4711,7 @@ production baseline through the chain: 39 database tests, 0 skipped.
   malformed without a window, a trigger or a known significance, or with a
   non-array list. The projection issues it with actor_role `system` and an
   idempotency key made of the window and the diff
-  (`domain/trips/projections/TripOpportunityProjection.ts:176#function diffKey`), so the same change
+  (`domain/trips/projections/TripOpportunityProjection.ts:241#function diffKey`), so the same change
   found twice is one event (§22.4). Executed on the replica: the event row,
   the receipt, the malformed refusals, the stranger refused
   (`src/test/db/tripOpportunityEvents.db.test.ts:32#the engine (actor_role system`). A
@@ -6548,7 +6548,7 @@ code changes in this section.
   (`compass/CompassTools.ts:1963#case "get_freedom_windows":`) consumes the
   engine, and so do Saved Ideas: the opportunity projection compiles the
   crew's saved places against each window rather than computing free time
-  of its own (`domain/trips/projections/TripOpportunityProjection.ts:227#from("trip_saved_places")`).
+  of its own (`domain/trips/projections/TripOpportunityProjection.ts:292#from("trip_saved_places")`).
   Discovery and Buddy matching still compute nothing from the windows.
 - **TR440 holds W, with the pieces named.** The command route exists
   (`server/trips/commandRoute.ts:140#router.post("/trips/:tripId/commands"`); the

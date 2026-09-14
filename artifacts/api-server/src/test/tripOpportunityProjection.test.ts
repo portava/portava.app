@@ -21,8 +21,11 @@ import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import { buildTripOpportunityProjection, _resetOpportunityPortfolios } from "../domain/trips/projections/TripOpportunityProjection.js";
 import { buildTripTodayProjection } from "../domain/trips/projections/TripTodayProjection.js";
+import { buildTripHealthProjection } from "../domain/trips/projections/TripHealthProjection.js";
+import { buildTripFreedomProjection } from "../domain/trips/projections/TripFreedomProjection.js";
+import { buildTripPulseProjection } from "../domain/trips/projections/TripPulseProjection.js";
 import { toolGetOpportunities } from "../compass/CompassTools.js";
-import { readTripDecision, _resetTripDecisionLedger } from "../domain/trips/services/TripDecisionLedger.js";
+import { readTripDecision, listTripDecisions, _resetTripDecisionLedger } from "../domain/trips/services/TripDecisionLedger.js";
 import { readTripMetric, _resetTripMetrics } from "../domain/trips/services/tripMetrics.js";
 import { makeClient, base } from "./tripHealthProjection.test.js";
 import { recordOpportunityCompletion } from "../domain/trips/services/tripOpportunityMetrics.js";
@@ -248,5 +251,132 @@ describe("routes, Compass, Today and the map", () => {
     assert.equal(map.status, 200, JSON.stringify(map.body));
     assert.equal(map.body.liveOpportunities.status, "ok");
     assert.deepEqual(map.body.liveOpportunities.items.map((p: any) => [p.kind, p.label, p.lat]), [["opportunity", "park", NEAR_A.lat]]);
+  });
+});
+
+/**
+ * §13.1 "+ transport" — census-trips TR229. Until now the projection handed
+ * the compiler `straightLineEstimator` and nothing else, so a crew that had
+ * BOOKED the leg had its own booking ignored. 2782's `trip_transport_segments`
+ * is in no database, which is why the row stays W; what these tests pin is the
+ * half that is code — that the segments are READ, that a committed one is
+ * consulted, that an uncommitted or cancelled one is not, and that a read that
+ * FAILS is a refusal rather than "no bookings".
+ */
+describe("§13 opportunity — committed transport segments are consulted for the leg (TR229)", () => {
+  const seg = (o: Row = {}): Row => ({
+    id: "seg-1", trip_id: TRIP_ID, mode: "metro", state: "booked",
+    from_place_id: null, to_place_id: null,
+    planned_departure_at: T("12:00"), planned_arrival_at: T("12:12"), ...o,
+  });
+
+  it("a booked segment between the window's origin place and a saved idea replaces the straight-line walk", async () => {
+    const tables = base();
+    const { a } = ORIGIN_COORDS();
+    tables.trip_saved_places = [saved("park", { place_id: VENUE_ID })];
+    tables.trip_transport_segments = [seg({ from_place_id: a.id, to_place_id: VENUE_ID })];
+    const r = await buildTripOpportunityProjection(makeClient(withStages(tables)) as any, TRIP_ID, OWNER_ID, { now: NOW });
+    assert.ok(r.ok, JSON.stringify(r));
+    const e = r.projection.windows[0].executable.find((x) => x.candidateId === "park");
+    assert.ok(e, "the park is still executable");
+    assert.equal(e.travel.mode, "metro", "the booked mode, not the estimator's invented 'walk'");
+    assert.equal(e.travel.toMinutes, 12, "planned_arrival_at - planned_departure_at");
+  });
+
+  it("the RETURN leg is consulted too: a booked segment from the idea to the next commitment's place", async () => {
+    const tables = base();
+    const { b } = ORIGIN_COORDS();
+    tables.trip_saved_places = [saved("park", { place_id: VENUE_ID })];
+    tables.trip_transport_segments = [seg({ id: "seg-back", from_place_id: VENUE_ID, to_place_id: b.id, mode: "tram", planned_departure_at: T("15:00"), planned_arrival_at: T("15:07") })];
+    const r = await buildTripOpportunityProjection(makeClient(withStages(tables)) as any, TRIP_ID, OWNER_ID, { now: NOW });
+    assert.ok(r.ok, JSON.stringify(r));
+    const e = r.projection.windows[0].executable.find((x) => x.candidateId === "park");
+    assert.ok(e, "the park is still executable");
+    assert.equal(e.travel.backMinutes, 7, "the booked 7-minute tram back, not the straight-line walk");
+  });
+
+  it("a CANCELLED segment is not a booking and is not consulted", async () => {
+    const tables = base();
+    const { a } = ORIGIN_COORDS();
+    tables.trip_saved_places = [saved("park", { place_id: VENUE_ID })];
+    tables.trip_transport_segments = [seg({ from_place_id: a.id, to_place_id: VENUE_ID, state: "cancelled" })];
+    const r = await buildTripOpportunityProjection(makeClient(withStages(tables)) as any, TRIP_ID, OWNER_ID, { now: NOW });
+    assert.ok(r.ok, JSON.stringify(r));
+    const e = r.projection.windows[0].executable.find((x) => x.candidateId === "park");
+    assert.equal(e?.travel.mode, "walk", "a cancelled leg must not displace the estimate");
+  });
+
+  it("two committed segments over the same pair: the SHORTEST wins, and the order of the read cannot change the answer", async () => {
+    const { a } = ORIGIN_COORDS();
+    const rows = [
+      seg({ id: "seg-slow", from_place_id: a.id, to_place_id: VENUE_ID, mode: "bus", planned_departure_at: T("12:00"), planned_arrival_at: T("12:40") }),
+      seg({ id: "seg-fast", from_place_id: a.id, to_place_id: VENUE_ID, mode: "metro", planned_departure_at: T("12:00"), planned_arrival_at: T("12:12") }),
+    ];
+    for (const order of [rows, [...rows].reverse()]) {
+      const tables = base();
+      tables.trip_saved_places = [saved("park", { place_id: VENUE_ID })];
+      tables.trip_transport_segments = order;
+      _resetOpportunityPortfolios(); _resetTripDecisionLedger();
+      const r = await buildTripOpportunityProjection(makeClient(withStages(tables)) as any, TRIP_ID, OWNER_ID, { now: NOW });
+      assert.ok(r.ok, JSON.stringify(r));
+      const e = r.projection.windows[0].executable.find((x) => x.candidateId === "park");
+      assert.equal(e?.travel.toMinutes, 12, "the 12-minute metro, not the 40-minute bus");
+      assert.equal(e?.travel.mode, "metro");
+    }
+  });
+
+  it("a PLANNED segment is an intention, not a booking, and is not consulted", async () => {
+    const tables = base();
+    const { a } = ORIGIN_COORDS();
+    tables.trip_saved_places = [saved("park", { place_id: VENUE_ID })];
+    tables.trip_transport_segments = [seg({ from_place_id: a.id, to_place_id: VENUE_ID, state: "planned" })];
+    const r = await buildTripOpportunityProjection(makeClient(withStages(tables)) as any, TRIP_ID, OWNER_ID, { now: NOW });
+    assert.ok(r.ok, JSON.stringify(r));
+    assert.equal(r.projection.windows[0].executable.find((x) => x.candidateId === "park")?.travel.mode, "walk");
+  });
+
+  it("the portfolio decision states whether a booking was used, so an answer that leaned on one says so", async () => {
+    const { a } = ORIGIN_COORDS();
+    const run = async (segments: Row[]) => {
+      const tables = base();
+      tables.trip_saved_places = [saved("park", { place_id: VENUE_ID })];
+      tables.trip_transport_segments = segments;
+      _resetOpportunityPortfolios(); _resetTripDecisionLedger();
+      const r = await buildTripOpportunityProjection(makeClient(withStages(tables)) as any, TRIP_ID, OWNER_ID, { now: NOW });
+      assert.ok(r.ok, JSON.stringify(r));
+      const pd = listTripDecisions(TRIP_ID).find((d) => d.type === "opportunity_portfolio");
+      assert.ok(pd, "the portfolio decision is ledgered");
+      return pd.assumptions.join(" | ");
+    };
+    assert.match(await run([seg({ from_place_id: a.id, to_place_id: VENUE_ID })]), /1 committed transport segment\(s\) consulted/);
+    assert.match(await run([]), /no committed transport segment on this trip/);
+  });
+
+  it("an UNREADABLE trip_transport_segments is THIS projection's own refusal, never a portfolio computed as if nothing were booked", async () => {
+    // The upstream pulse projection reads the same table and refuses too, so a
+    // plain erroring client would pass this test against a projection that
+    // swallowed the error itself. The three upstream projections are therefore
+    // supplied pre-built, from a client that CAN read: the only read left that
+    // touches trip_transport_segments is the one under test. A mutation that
+    // drops the refusal below turns this test red and nothing else.
+    const tables = base();
+    tables.trip_saved_places = [saved("park", { place_id: VENUE_ID })];
+    const good = makeClient(withStages(tables)) as any;
+    const h = await buildTripHealthProjection(good, TRIP_ID, OWNER_ID, { now: NOW });
+    assert.ok(h.ok, JSON.stringify(h));
+    const f = await buildTripFreedomProjection(good, TRIP_ID, { now: NOW });
+    assert.ok(f.ok, JSON.stringify(f));
+    const pl = await buildTripPulseProjection(good, TRIP_ID, OWNER_ID, { now: NOW, health: h.projection });
+    assert.ok(pl.ok, JSON.stringify(pl));
+
+    _resetOpportunityPortfolios(); _resetTripDecisionLedger();
+    const r = await buildTripOpportunityProjection(
+      makeClient(withStages(tables), ["trip_transport_segments"]) as any,
+      TRIP_ID, OWNER_ID,
+      { now: NOW, health: h.projection, freedom: f.projection, pulse: pl.projection },
+    );
+    assert.equal(r.ok, false, "an unreadable segment table must not read as 'nothing is booked'");
+    assert.equal((r as any).reason, "TRIP_PROJECTION_UNAVAILABLE");
+    assert.match((r as any).message, /transport segments/i);
   });
 });
