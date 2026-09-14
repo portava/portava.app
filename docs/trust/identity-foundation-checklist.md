@@ -106,8 +106,8 @@ as *no-regression* obligations: Verification runs the named check and it must st
 | **IDF-44** | `TV-6c` | **Monitor attempts per verified user** — ">2.0 average means UX friction worth fixing" (`docs/trust/verified-foundation-plan.md:108#friction`) | **C** | NOTHING | `node --import tsx/esm --test src/test/verificationAttemptMetrics.test.ts`. Computation `artifacts/api-server/src/services/identityVerification/attemptMetrics.ts:145#computeAttemptsPerVerifiedUser`, threshold exported not retyped (`artifacts/api-server/src/services/identityVerification/attemptMetrics.ts:57#ATTEMPT_FRICTION_THRESHOLD`), reachable at `artifacts/api-server/src/routes/admin.ts:3568#admin/verification/attempt-metrics` behind `requireAdmin`. |
 | **IDF-50** | `C22` | An admin score override is a **CEILING** that must actually persist, and the persist must be **observed, not asserted** (`docs/specs/upgrades-v2/03-TRUST-v2.md:36#ceiling,`; owner ruling **CAP now, PIN later behind a flag**) | **W** | NOTHING — the decision is made; see §4 | `node --import tsx/esm --test src/test/trust-integration.test.ts` — the `D-OVERRIDE: the ceiling the owner ruled for must PERSIST` describe block, 3 cases. The four characterization mutations in census-trust §15.4 (P1–P4) must each turn it red. |
 | **IDF-51** | `C22`, **NEW** | **The apply path is guarded and the removal path is not.** `adminRemoveOverride` swallows the lift failure and the recalculation, then audits and returns success regardless — see §4. | **W** (part of `C22`) | NOTHING | New cases in `src/test/trust-integration.test.ts`: with `liftCap` failing, `adminRemoveOverride` must reject, write **zero** `score_override` audit rows, and leave the cap active; with the recalculation failing, likewise. Today both resolve `{ ok: true }` — `artifacts/api-server/src/services/trust/TrustAdminService.ts:468#liftCap`, `artifacts/api-server/src/services/trust/TrustAdminService.ts:480#recalculateTrustScore`, `artifacts/api-server/src/services/trust/TrustAdminService.ts:484#logAdminAction`. |
-| **IDF-52** | `C22`, **NEW** | **The one override-adjacent route bypasses the service.** `POST /admin/trust/users/:userId/cap/override` lifts **any** cap by id — a moderation ceiling included — with a fire-and-forget recalculation, and never calls `adminRemoveOverride`. | **W** (part of `C22`) | NOTHING | `grep -n 'adminRemoveOverride' artifacts/api-server/src/routes/*.ts` returns nothing today. A route test must assert: the handler refuses a cap whose `reason_code` is not `admin_override` (or the owner ratifies that an admin may lift a moderation ceiling — an authority question, flagged in §6), and responds only after the recalculation is **observed**, not at `artifacts/api-server/src/services/trust/TrustAdminService.ts:480#recalculateTrustScore`. Route under test: `artifacts/api-server/src/routes/trust-admin.ts:462#admin/trust/users/:userId/cap/override`, lift at `artifacts/api-server/src/routes/trust-admin.ts:501#adminRemoveOverride`. |
-| **IDF-53** | `C22`, **NEW** | **The `score_override` audit vocabulary is polluted.** The trust-**settings** route files its audit row under `action_type: "score_override"`, so a query for "who overrode a user's score" returns settings edits. | **W** (part of `C22`) | NOTHING | `grep -n 'action_type' artifacts/api-server/src/routes/trust-admin.ts` — the settings write at `artifacts/api-server/src/routes/trust-admin.ts:606#action_type:` must use its own action type (e.g. `update_setting`), and `trust_admin_actions` rows of type `score_override` must then be exactly the rows written by `artifacts/api-server/src/services/trust/TrustAdminService.ts:396#logAdminAction`. Pin with an assertion in `src/test/trustAdminAuditInsertSchemaDrift.test.ts`. |
+| **IDF-52** | `C22`, **NEW** | **The one override-adjacent route bypasses the service.** `POST /admin/trust/users/:userId/cap/override` lifts **any** cap by id — a moderation ceiling included — with a fire-and-forget recalculation, and never calls `adminRemoveOverride`. | **W** (part of `C22`) | NOTHING | `grep -n 'adminRemoveOverride' artifacts/api-server/src/routes/*.ts` returns nothing today. A route test must assert: the handler refuses a cap whose `reason_code` is not `admin_override` (or the owner ratifies that an admin may lift a moderation ceiling — an authority question, flagged in §6), and responds only after the recalculation is **observed**, not at `artifacts/api-server/src/services/trust/TrustAdminService.ts:480#recalculateTrustScore`. Route under test: `artifacts/api-server/src/routes/trust-admin.ts:463#admin/trust/users/:userId/cap/override`, lift at `artifacts/api-server/src/routes/trust-admin.ts:502#adminRemoveOverride`. |
+| **IDF-53** | `C22`, **NEW** | **The `score_override` audit vocabulary is polluted.** The trust-**settings** route files its audit row under `action_type: "score_override"`, so a query for "who overrode a user's score" returns settings edits. | **W** (part of `C22`) | NOTHING | `grep -n 'action_type' artifacts/api-server/src/routes/trust-admin.ts` — the settings write at `artifacts/api-server/src/routes/trust-admin.ts:626#action_type:` must use its own action type (e.g. `update_setting`), and `trust_admin_actions` rows of type `score_override` must then be exactly the rows written by `artifacts/api-server/src/services/trust/TrustAdminService.ts:396#logAdminAction`. Pin with an assertion in `src/test/trustAdminAuditInsertSchemaDrift.test.ts`. |
 | **IDF-47** | `TV-U7` | Isolated fixtures spanning the named classes — **invalid signatures** and **revoked verification** are the two that bind this checklist (`docs/specs/upgrades-v2/03-TRUST-v2.md:44#signatures,`) | **C** | NOTHING for these two classes; the other six are scoring-side and out of scope (§0) | `node --import tsx/esm --test src/test/verificationWebhookSignature.test.ts src/test/adminUnverifyRevokesIdLevel.test.ts`. |
 | **IDF-48** | `TV-U11` | Do not enable providers, run backfills, alter scoring policy or activate production flags **merely to close a requirement** (`docs/specs/upgrades-v2/03-TRUST-v2.md:46#badges,`) | **C** | NOTHING — a standing guard rail on every row above | `IMPLEMENTED_PROVIDERS` gaining a non-mock member **without** IDF-45's sandbox transcript turns this row and `TV-U9` red in the same commit. Check by diffing `artifacts/api-server/src/services/identityVerification/readiness.ts:53#IMPLEMENTED_PROVIDERS` against the transcript's existence. |
 | **IDF-49** | `TV-U10` | Preserve report/block journeys, **badges, age gates**, Safety Center and existing authorized consumers (`docs/specs/upgrades-v2/03-TRUST-v2.md:46#badges,`) | **C** | NOTHING — a no-regression obligation over IDF-23…IDF-27 and IDF-35…IDF-36 | `node --import tsx/esm --test src/test/ageGate.test.ts src/test/meetupAgeRsvp.test.ts src/test/circleInviteAge.test.ts` must stay green through the IDF-25 work. An age gate that *stops* refusing is the regression this row exists to catch. |
@@ -191,9 +191,9 @@ not a bug report.
    confirmed on apply and unconfirmed on remove**, which is half a guarantee.
 
 2. **There *is* an override-adjacent route, and it bypasses the service** (IDF-52).
-   `artifacts/api-server/src/routes/trust-admin.ts:462#admin/trust/users/:userId/cap/override`
+   `artifacts/api-server/src/routes/trust-admin.ts:463#admin/trust/users/:userId/cap/override`
    exists behind `requireAdmin`. Despite the name it **lifts** a cap: it calls
-   `artifacts/api-server/src/routes/trust-admin.ts:501#adminRemoveOverride` directly by cap id — any cap,
+   `artifacts/api-server/src/routes/trust-admin.ts:502#adminRemoveOverride` directly by cap id — any cap,
    including a `behavior_confirmed` moderation ceiling — never calls `adminRemoveOverride`, and
    fires the recalculation as fire-and-forget at
    `artifacts/api-server/src/services/trust/TrustAdminService.ts:480#recalculateTrustScore` before answering
@@ -203,7 +203,7 @@ not a bug report.
    lists as deliberately not built.
 
 3. **The `score_override` audit vocabulary is polluted** (IDF-53). The trust-**settings** route
-   files its audit row as `artifacts/api-server/src/routes/trust-admin.ts:606#action_type:`.
+   files its audit row as `artifacts/api-server/src/routes/trust-admin.ts:626#action_type:`.
    An auditor asking "which admin overrode a user's score" gets settings edits back. Since
    IDF-50's whole point is that the audit row must say what happened, this is part of the same
    obligation.
@@ -400,3 +400,66 @@ refusals personally before accepting them, and owns every verdict below.
 fire-and-forget call turns it red. **It does not** — it passes for an unrelated reason. A builder
 who writes both the fix and its pin cannot discover that the pin passes for the wrong reason;
 only a reader who runs the mutation can. Queued for repair.
+
+---
+
+## 11. IDF-53 — DISCHARGED at `2940` + the route, and one thing §10 got wrong is now proven
+
+Written by the integration owner. §10 recorded IDF-53's refusal as CORRECT and §10.1 recorded the
+reason the row's own **Blocked by** column was wrong — *"It said `NOTHING`. It is blocked on a
+migration."* Both stand, and the second is now demonstrated rather than argued: the rename was
+applied together with `migrations/2940_trust_admin_actions_update_setting.sql`, and the guard that
+would have caught the rename alone went red first.
+
+### 11.1 What shipped
+
+| piece | file |
+|---|---|
+| the CHECK widened, nine literals kept, `update_setting` added | `artifacts/api-server/src/migrations/2940_trust_admin_actions_update_setting.sql` |
+| the settings handler files `update_setting` and BINDS its insert's error | `artifacts/api-server/src/routes/trust-admin.ts:626#action_type:` |
+| the vocabulary allowlist, and a second set for what `logAdminAction` may write | `artifacts/api-server/src/test/trustAdminActionVocabulary.test.ts` |
+| the row-specific pins (which writer uses which action type, and the error binding) | `artifacts/api-server/src/test/trustAdminAuditInsertSchemaDrift.test.ts` |
+
+RED 4 of the 5 new cases, GREEN all of them; three mutations on the route all killed —
+`score_override` restored (kills 1, 2, 4), an action type the CHECK rejects (kills 2, 3, 5), the
+error binding discarded again (kills 5 alone).
+
+### 11.2 Two things found on the way that were NOT in the row
+
+1. **`update_setting` must NOT enter the `AdminActionType` union.** That union types
+   `logAdminAction`, whose third positional parameter is `targetUser` — and a settings edit has no
+   subject. So the guard now carries TWO sets: what the CHECK admits, and the narrower set
+   `logAdminAction` may be passed. A new case pins the gap, because `update_setting` is now the
+   interesting value: legal in the column, illegal as an argument.
+
+2. **The guard's own positive controls had been using `update_setting` as their example of an
+   unadmitted value.** `2940` made three of them pass for a reason unrelated to what they test — a
+   positive control whose bad value stops being bad proves nothing. They now use a literal no
+   migration has ever admitted. This was found only because the guard went red first, which is the
+   argument for writing the source before the allowlist.
+
+### 11.3 Reported, not folded in
+
+- **`target_user: adminId` is still a contradiction.** The settings audit row asserts the admin
+  acted upon themselves, because the column is `NOT NULL` and a settings edit has no target. IDF-53
+  is about the action-type vocabulary; making that column nullable is a different migration and a
+  different row.
+- **Historical rows are NOT rewritten.** Settings edits already stored as `score_override` stay as
+  they are — they are the record of how long the defect ran, and reclassifying them is an owner
+  decision. `2940`'s header says the same.
+- **The trust-score RECALCULATION SWEEP in the same handler still discards its own failure**
+  (`.catch(() => {})` at the `setImmediate` sweep). A settings change whose recalculation never ran
+  looks identical to one that did. Real, out of this row's scope, and named here rather than
+  silently widened into. `check:silent-supabase-writes` does not see it because it is not a write.
+
+### 11.4 What would turn §11 red
+
+The row reopens if `routes/trust-admin.ts` writes `score_override` again, if `update_setting`
+enters `AdminActionType`, if the audit insert stops binding its error, or if `2940` is reverted
+while the code still writes `update_setting` — which the migration's own reversal note refuses,
+because any stored `update_setting` row would fail the narrowed CHECK and the `ALTER` would abort.
+
+**AND IT IS NOT DEPLOYED.** `2940` exists in the tree and in no database. Until it is applied, a
+settings edit on any deployment writes `update_setting` into a column whose CHECK rejects it, and
+because supabase-js RESOLVES a 23514 the row simply will not exist — the failure mode this whole
+row is about, in the opposite direction. The migration must land before or with the code.

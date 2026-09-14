@@ -53,16 +53,44 @@ import { dirname, join } from "node:path";
 const __dir = dirname(fileURLToPath(import.meta.url));
 
 /**
- * The CHECK constraint's vocabulary, verified read-only against production on
- * 2026-09-14. Changing this list without the migration that changes the
- * constraint is the failure this file exists to make loud.
+ * The CHECK constraint's vocabulary. Changing this list without the migration
+ * that changes the constraint is the failure this file exists to make loud —
+ * and it worked: adding `update_setting` to the SOURCE first turned this guard
+ * red before anything reached a database, which is exactly the order intended.
+ *
+ * `update_setting` was added by
+ * `migrations/2940_trust_admin_actions_update_setting.sql` (IDF-53). The other
+ * nine are the baseline's, at
+ * `baseline/20260819_baseline_structure.sql:10887#CONSTRAINT trust_admin_actions_action_type_check`.
  */
 const ALLOWED_ACTION_TYPES = new Set([
   "confirm_event", "dismiss_event",
   "apply_restriction", "lift_restriction",
   "apply_cap", "lift_cap",
   "score_override", "resolve_review", "flag_gaming",
+  "update_setting",
 ]);
+
+/**
+ * The subset `AdminActionType` may contain — every admitted value EXCEPT the
+ * ones no `logAdminAction` caller is allowed to pass.
+ *
+ * `update_setting` is deliberately NOT in the union. It is written by the
+ * trust-SETTINGS handler in `routes/trust-admin.ts` directly, and that row is a
+ * different shape from every other audit row: it has no target user, so the
+ * insert sets `target_user` to the admin's own id. `logAdminAction`'s third
+ * positional parameter IS `targetUser`, so typing `update_setting` into the
+ * union would declare that a caller may route a settings edit through a
+ * function whose signature demands a subject the act does not have.
+ *
+ * REPORTED, NOT FIXED HERE: `target_user: adminId` remains a contradiction —
+ * an audit row asserting the admin acted upon themselves. IDF-53 is about the
+ * action-type vocabulary; making `target_user` nullable is a separate migration
+ * and a separate row, and is named rather than folded in.
+ */
+const LOG_ADMIN_ACTION_TYPES = new Set(
+  [...ALLOWED_ACTION_TYPES].filter((t) => t !== "update_setting"),
+);
 
 const ROUTE_FILE   = join(__dir, "..", "routes", "trust-admin.ts");
 const SERVICE_FILE = join(__dir, "..", "services", "trust", "TrustAdminService.ts");
@@ -205,12 +233,27 @@ describe("trust_admin_actions.action_type — every value this codebase inserts 
       "silently not exist. Changing this string needs a migration first.");
   });
 
-  it("the AdminActionType union is exactly the nine admitted values", () => {
+  it("the AdminActionType union is exactly the values logAdminAction may write", () => {
     const members = unionMembers(serviceSrc);
     assert.deepEqual(
       [...new Set(members)].sort(),
-      [...ALLOWED_ACTION_TYPES].sort(),
-      "the union that types every logAdminAction call has drifted from the CHECK constraint",
+      [...LOG_ADMIN_ACTION_TYPES].sort(),
+      "the union that types every logAdminAction call has drifted from the CHECK constraint " +
+        "(minus update_setting, which the settings handler writes directly — see the constant)",
+    );
+  });
+
+  it("the union never GROWS past the CHECK, whichever way it drifts", () => {
+    // The assertion above is an equality and would catch this too, but it
+    // would report it as "the union drifted", which is the wrong diagnosis for
+    // the dangerous direction. A union that gained a value the constraint does
+    // not admit types a call that 23514s — and supabase-js RESOLVES a 23514,
+    // so the audit row would silently not exist. That deserves its own name.
+    const outside = [...new Set(unionMembers(serviceSrc))].filter((m) => !ALLOWED_ACTION_TYPES.has(m));
+    assert.deepEqual(
+      outside, [],
+      "AdminActionType admits a value trust_admin_actions_action_type_check rejects — " +
+        "every call site passing it would write nothing, silently",
     );
   });
 
@@ -222,7 +265,7 @@ describe("trust_admin_actions.action_type — every value this codebase inserts 
       if (parts.length < 5) continue;           // the declaration, not a call
       const lit = asStringLiteral(parts[3]!);
       if (lit === null) continue;               // a variable — covered by the union check
-      if (!ALLOWED_ACTION_TYPES.has(lit)) bad.push(lit);
+      if (!LOG_ADMIN_ACTION_TYPES.has(lit)) bad.push(lit);
     }
     assert.deepEqual(bad, [],
       "a logAdminAction call passes an action_type the CHECK constraint rejects");
@@ -248,31 +291,54 @@ describe("trust_admin_actions.action_type — every value this codebase inserts 
 // nobody should trust. These run the same extractors over synthetic sources
 // carrying exactly the drift this file exists to catch.
 describe("the vocabulary guard catches a bad value", () => {
+  // These three used `update_setting` as their example of an unadmitted value.
+  // Migration 2940 admitted it, which turned all three green for a reason that
+  // had nothing to do with the extractors they exist to exercise — a positive
+  // control whose "bad value" stopped being bad proves nothing at all. They now
+  // use a literal no migration has ever admitted, and `update_setting` gets a
+  // case of its own below, where it is now the INTERESTING value: admitted by
+  // the CHECK, forbidden to logAdminAction.
+  const NEVER_ADMITTED = "obliterate_user";
+
   it("rejects an unadmitted literal in an insert payload", () => {
     const src = `
       sc.from("trust_admin_actions").insert({
         admin_id: adminId,
-        action_type: "update_setting",
+        action_type: "${NEVER_ADMITTED}",
         reason: "x",
       });
     `;
     const vals = actionTypeValues(src);
-    assert.deepEqual(vals, [{ value: "update_setting", literal: true }]);
+    assert.deepEqual(vals, [{ value: NEVER_ADMITTED, literal: true }]);
     assert.ok(!ALLOWED_ACTION_TYPES.has(vals[0]!.value),
-      "the rename that is blocked on a migration must NOT be in the admitted set");
+      "a literal no migration admits must NOT be in the admitted set");
   });
 
   it("rejects an unadmitted literal at a logAdminAction call site", () => {
-    const src = `await logAdminAction(db, adminId, userId, "update_setting", reason, { a: 1 }, id);`;
+    const src = `await logAdminAction(db, adminId, userId, "${NEVER_ADMITTED}", reason, { a: 1 }, id);`;
     const parts = splitTopLevelArgs(callArgTexts(src, "logAdminAction")[0]!);
-    assert.equal(asStringLiteral(parts[3]!), "update_setting");
-    assert.ok(!ALLOWED_ACTION_TYPES.has("update_setting"));
+    assert.equal(asStringLiteral(parts[3]!), NEVER_ADMITTED);
+    assert.ok(!ALLOWED_ACTION_TYPES.has(NEVER_ADMITTED));
   });
 
   it("rejects a WIDENED union", () => {
-    const src = `type AdminActionType =\n  | "confirm_event" | "update_setting";\n`;
-    assert.deepEqual(unionMembers(src), ["confirm_event", "update_setting"]);
+    const src = `type AdminActionType =\n  | "confirm_event" | "${NEVER_ADMITTED}";\n`;
+    assert.deepEqual(unionMembers(src), ["confirm_event", NEVER_ADMITTED]);
     assert.ok(unionMembers(src).some((m) => !ALLOWED_ACTION_TYPES.has(m)));
+  });
+
+  it("rejects update_setting at a logAdminAction call site, though the CHECK admits it", () => {
+    // The case 2940 created. `update_setting` is a legal audit action_type and
+    // an ILLEGAL logAdminAction argument, because that function's third
+    // positional parameter is `targetUser` and a settings edit has no subject.
+    // Two different sets, and conflating them is how a settings edit would end
+    // up asserting an admin acted upon a user.
+    const src = `await logAdminAction(db, adminId, userId, "update_setting", reason, { a: 1 }, id);`;
+    const parts = splitTopLevelArgs(callArgTexts(src, "logAdminAction")[0]!);
+    assert.equal(asStringLiteral(parts[3]!), "update_setting");
+    assert.ok(ALLOWED_ACTION_TYPES.has("update_setting"), "2940 admits it as a column value");
+    assert.ok(!LOG_ADMIN_ACTION_TYPES.has("update_setting"),
+      "...and logAdminAction must still refuse it: the union is the narrower set");
   });
 
   it("is not fooled by an action_type named only in a comment", () => {

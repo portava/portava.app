@@ -23,6 +23,7 @@ import { Router } from "express";
 import { logAdminAccess, accessReason } from "../lib/adminAudit.js";
 import { z } from "zod";
 import { sendError } from "../lib/http.js";
+import { logger } from "../lib/logger.js";
 import {
   confirmEvent,
   dismissEvent,
@@ -598,16 +599,41 @@ router.put("/admin/trust/settings/:key", async (req, res) => {
 
   if (error) { sendError(res, "db_error", error.message); return; }
 
-  // Audit log (fire-and-forget — wrap in real Promise so .catch() is available)
-  Promise.resolve().then(() =>
-    sc.from("trust_admin_actions").insert({
+  // AUDIT — `update_setting`, not `score_override`. IDF-53.
+  //
+  // This filed a SETTINGS edit under the score-override action type, so a query
+  // for "who overrode a user's score" answered with settings edits. It was
+  // visible in the row's own data: `target_user` is `adminId`, the admin
+  // auditing themselves, because a settings edit has no target user — a
+  // `score_override` row whose target is its own author is a contradiction the
+  // schema stored without complaint. `update_setting` is admitted by
+  // `trust_admin_actions_action_type_check` as of migration 2940; renaming the
+  // literal without that migration would have produced a 23514 and, because
+  // supabase-js RESOLVES on a DB error, NO AUDIT ROW AT ALL — silently.
+  //
+  // AND THE FAILURE IS NO LONGER DISCARDED. `.catch(() => {})` over a supabase
+  // call is worse than it looks: the rejection path is not the failure path
+  // here, so that catch never even ran, and a refused insert was
+  // indistinguishable from a written one. That is exactly how the wrong
+  // action_type survived long enough to become a checklist row. The insert is
+  // still fire-and-forget — a settings edit must not fail because its audit row
+  // did — but a failure is now READ and logged at error, so the next one is
+  // visible instead of silent.
+  await (async () => {
+    const { error: auditError } = await sc.from("trust_admin_actions").insert({
       admin_id:    adminId,
       target_user: adminId,
-      action_type: "score_override",
+      action_type: "update_setting",
       reason:      `Updated trust setting ${key} to ${parsed.data.value}`,
       metadata:    { key, value: parsed.data.value },
-    }),
-  ).catch(() => {});
+    });
+    if (auditError) {
+      logger.error(
+        { key, adminId, code: (auditError as any)?.code, message: (auditError as any)?.message },
+        "trust setting updated but its audit row was REFUSED — the change is live and unrecorded",
+      );
+    }
+  })();
 
   // Fire-and-forget: recalculate all users' scores so the new weights/decay take effect.
   // Read all user_ids from trust_profiles in one query, then recalc each sequentially.
