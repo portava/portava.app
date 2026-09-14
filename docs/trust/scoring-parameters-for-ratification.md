@@ -158,7 +158,7 @@ and the code comments say the distinction has been confused before.
 
 ## 8. Seven per-finding ceilings, and their expiries — *hard-coded*
 
-`services/trust/TrustCapService.ts:243#capMap`
+`services/trust/TrustCapService.ts:311#capMap`
 
 | Finding | Category capped | Ceiling | Expires after |
 |---|---|---|---|
