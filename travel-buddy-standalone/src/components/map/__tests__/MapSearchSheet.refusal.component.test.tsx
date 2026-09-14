@@ -223,4 +223,62 @@ describe('MapSearchSheet — refusals', () => {
     expect(screen.queryByText('Saved Kopitiam Bugis')).toBeNull();
     expect(screen.getByText(/saved items/i)).toBeTruthy();
   });
+
+  /**
+   * (7) and (8) EXIST BECAUSE OF A SURVIVING MUTATION I FOUND AFTER the six
+   * above were green, and they are written down rather than quietly added.
+   *
+   * `run` calls `searchUnified(...).catch(() => null)` on BOTH lanes. So there
+   * are two ways a lane can fail, not one: it can answer 200 with a refusal
+   * envelope (cases 1-6), or it can REJECT — a dropped connection, a JSON parse
+   * failure, a thrown adapter — and arrive as `null`. The refusal envelope is
+   * the path the endpoint was built for; the rejection is the path that existed
+   * before it and still does.
+   *
+   * Rewriting the saved-lane guard from
+   *     !savedRes || !savedRes.ok || savedRes.data.refusal?.coverage === 'nothing'
+   * to
+   *     savedRes ? (!savedRes.ok || ...) : false
+   * left cases (1)-(6) ALL GREEN. Every fixture above resolves; none of them
+   * rejects. Under that mutation a saved search that THREW produced no notice
+   * at all, and the person read an answer missing its ninth heading as a
+   * complete one — which is the same lie this file was opened to stop, reached
+   * by the other door.
+   */
+  it('(7) a saved lane that THREW is reported, not silently dropped', async () => {
+    mockSearchUnified.mockImplementation((_q: string, type: string) =>
+      type === 'saved'
+        ? Promise.reject(new Error('network'))
+        : Promise.resolve(envelope([placeHit('p5', 'Kopitiam Clementi')])),
+    );
+
+    await search();
+
+    // The eight public headings still answer, exactly as in (3).
+    await waitFor(() => {
+      expect(screen.getByText('Kopitiam Clementi')).toBeTruthy();
+    });
+    // And the ninth is named as unread, exactly as in (3). A rejection and a
+    // `coverage: "nothing"` body are different transports for one fact.
+    expect(screen.getByText(/saved items/i)).toBeTruthy();
+    expect(screen.queryByText(/Nothing matched/i)).toBeNull();
+  });
+
+  it('(8) an `all` lane that THREW is an error, not "Nothing matched"', async () => {
+    mockSearchUnified.mockImplementation((_q: string, type: string) =>
+      type === 'saved'
+        ? Promise.resolve(envelope([]))
+        : Promise.reject(new Error('network')),
+    );
+
+    await search();
+
+    // `run` takes the error arm here and clears the notice. What must NOT
+    // happen is the empty state: the search did not come back, so nothing is
+    // known about whether anything matched.
+    await waitFor(() => {
+      expect(screen.queryByText(/Nothing matched/i)).toBeNull();
+    });
+    expect(screen.getByText(/Search failed/i)).toBeTruthy();
+  });
 });
