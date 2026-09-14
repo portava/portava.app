@@ -48,6 +48,7 @@
     "check:test-registration": "node scripts/check-test-registration.mjs",
     "check:security": "bash scripts/run-security-checks.sh",
     "check:security-definer-oracles": "node --import tsx/esm src/scripts/checkSecurityDefinerOracles.ts",
+    "build:discovery-ledger": "node --import tsx/esm src/scripts/buildDiscoveryLedger.ts",
     "check:census-integrity": "node --import tsx/esm src/scripts/checkCensusIntegrity.ts",
     "check:memory-certification": "node --import tsx/esm src/scripts/checkMemoryCertification.ts",
     "check:census-policy-citations": "node --import tsx/esm src/scripts/checkCensusPolicyCitations.ts",

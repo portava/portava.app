@@ -1,0 +1,1145 @@
+{
+  "generatedFrom": "checkCensusIntegrity CENSUS_INTEGRITY_DUMP=ALL",
+  "note": "Verdicts are READ from the census and are never authored here. `blocker` is the one hand-maintained field; see the header of src/scripts/buildDiscoveryLedger.ts for why it is not derived.",
+  "total": 187,
+  "byVerdict": {
+    "C": 75,
+    "W": 67,
+    "N": 42,
+    "X": 3
+  },
+  "openByBlocker": {
+    "FLAG": 17,
+    "CODE_CROSS_SURFACE": 17,
+    "MIGRATION": 12,
+    "CODE": 46,
+    "DEPLOY": 1,
+    "RUNTIME_EVIDENCE": 4,
+    "SPEND_OR_CREDENTIAL": 14,
+    "EXTERNAL_SETTING": 1
+  },
+  "rows": [
+    {
+      "id": "A02",
+      "verdict": "C",
+      "line": 58,
+      "blocker": "NONE"
+    },
+    {
+      "id": "A04",
+      "verdict": "C",
+      "line": 60,
+      "blocker": "NONE"
+    },
+    {
+      "id": "A06",
+      "verdict": "C",
+      "line": 62,
+      "blocker": "NONE"
+    },
+    {
+      "id": "A07",
+      "verdict": "W",
+      "line": 1013,
+      "blocker": "FLAG"
+    },
+    {
+      "id": "A08",
+      "verdict": "W",
+      "line": 64,
+      "blocker": "CODE_CROSS_SURFACE"
+    },
+    {
+      "id": "A09",
+      "verdict": "C",
+      "line": 65,
+      "blocker": "NONE"
+    },
+    {
+      "id": "A10",
+      "verdict": "W",
+      "line": 66,
+      "blocker": "MIGRATION"
+    },
+    {
+      "id": "A11",
+      "verdict": "W",
+      "line": 461,
+      "blocker": "MIGRATION"
+    },
+    {
+      "id": "A12",
+      "verdict": "C",
+      "line": 68,
+      "blocker": "NONE"
+    },
+    {
+      "id": "A13",
+      "verdict": "N",
+      "line": 69,
+      "blocker": "CODE_CROSS_SURFACE"
+    },
+    {
+      "id": "A14",
+      "verdict": "N",
+      "line": 70,
+      "blocker": "CODE_CROSS_SURFACE"
+    },
+    {
+      "id": "A15",
+      "verdict": "C",
+      "line": 586,
+      "blocker": "NONE"
+    },
+    {
+      "id": "A16",
+      "verdict": "C",
+      "line": 72,
+      "blocker": "NONE"
+    },
+    {
+      "id": "A19",
+      "verdict": "C",
+      "line": 75,
+      "blocker": "NONE"
+    },
+    {
+      "id": "A21",
+      "verdict": "N",
+      "line": 77,
+      "blocker": "CODE_CROSS_SURFACE"
+    },
+    {
+      "id": "A22",
+      "verdict": "C",
+      "line": 78,
+      "blocker": "NONE"
+    },
+    {
+      "id": "A23",
+      "verdict": "C",
+      "line": 79,
+      "blocker": "NONE"
+    },
+    {
+      "id": "A24",
+      "verdict": "N",
+      "line": 80,
+      "blocker": "CODE_CROSS_SURFACE"
+    },
+    {
+      "id": "B02",
+      "verdict": "W",
+      "line": 88,
+      "blocker": "CODE"
+    },
+    {
+      "id": "B04",
+      "verdict": "W",
+      "line": 90,
+      "blocker": "MIGRATION"
+    },
+    {
+      "id": "B05",
+      "verdict": "W",
+      "line": 91,
+      "blocker": "CODE_CROSS_SURFACE"
+    },
+    {
+      "id": "B06",
+      "verdict": "C",
+      "line": 406,
+      "blocker": "NONE"
+    },
+    {
+      "id": "B07",
+      "verdict": "C",
+      "line": 407,
+      "blocker": "NONE"
+    },
+    {
+      "id": "B08",
+      "verdict": "C",
+      "line": 408,
+      "blocker": "NONE"
+    },
+    {
+      "id": "B09",
+      "verdict": "C",
+      "line": 409,
+      "blocker": "NONE"
+    },
+    {
+      "id": "C01",
+      "verdict": "C",
+      "line": 101,
+      "blocker": "NONE"
+    },
+    {
+      "id": "C02",
+      "verdict": "C",
+      "line": 102,
+      "blocker": "NONE"
+    },
+    {
+      "id": "C03",
+      "verdict": "C",
+      "line": 103,
+      "blocker": "NONE"
+    },
+    {
+      "id": "C04",
+      "verdict": "C",
+      "line": 104,
+      "blocker": "NONE"
+    },
+    {
+      "id": "C05",
+      "verdict": "C",
+      "line": 105,
+      "blocker": "NONE"
+    },
+    {
+      "id": "C06",
+      "verdict": "C",
+      "line": 106,
+      "blocker": "NONE"
+    },
+    {
+      "id": "C07",
+      "verdict": "C",
+      "line": 107,
+      "blocker": "NONE"
+    },
+    {
+      "id": "C08",
+      "verdict": "C",
+      "line": 108,
+      "blocker": "NONE"
+    },
+    {
+      "id": "C09",
+      "verdict": "C",
+      "line": 109,
+      "blocker": "NONE"
+    },
+    {
+      "id": "C10",
+      "verdict": "C",
+      "line": 110,
+      "blocker": "NONE"
+    },
+    {
+      "id": "C12",
+      "verdict": "C",
+      "line": 112,
+      "blocker": "NONE"
+    },
+    {
+      "id": "C13",
+      "verdict": "C",
+      "line": 113,
+      "blocker": "NONE"
+    },
+    {
+      "id": "C14",
+      "verdict": "W",
+      "line": 1014,
+      "blocker": "CODE"
+    },
+    {
+      "id": "C15",
+      "verdict": "C",
+      "line": 115,
+      "blocker": "NONE"
+    },
+    {
+      "id": "C16",
+      "verdict": "C",
+      "line": 116,
+      "blocker": "NONE"
+    },
+    {
+      "id": "C17",
+      "verdict": "C",
+      "line": 117,
+      "blocker": "NONE"
+    },
+    {
+      "id": "C18",
+      "verdict": "C",
+      "line": 118,
+      "blocker": "NONE"
+    },
+    {
+      "id": "C20",
+      "verdict": "C",
+      "line": 120,
+      "blocker": "NONE"
+    },
+    {
+      "id": "C21",
+      "verdict": "C",
+      "line": 121,
+      "blocker": "NONE"
+    },
+    {
+      "id": "C22",
+      "verdict": "C",
+      "line": 122,
+      "blocker": "NONE"
+    },
+    {
+      "id": "C23",
+      "verdict": "C",
+      "line": 123,
+      "blocker": "NONE"
+    },
+    {
+      "id": "C24",
+      "verdict": "C",
+      "line": 124,
+      "blocker": "NONE"
+    },
+    {
+      "id": "C25",
+      "verdict": "C",
+      "line": 125,
+      "blocker": "NONE"
+    },
+    {
+      "id": "C26",
+      "verdict": "C",
+      "line": 126,
+      "blocker": "NONE"
+    },
+    {
+      "id": "C27",
+      "verdict": "C",
+      "line": 127,
+      "blocker": "NONE"
+    },
+    {
+      "id": "C29",
+      "verdict": "C",
+      "line": 129,
+      "blocker": "NONE"
+    },
+    {
+      "id": "C30",
+      "verdict": "C",
+      "line": 130,
+      "blocker": "NONE"
+    },
+    {
+      "id": "C31",
+      "verdict": "C",
+      "line": 131,
+      "blocker": "NONE"
+    },
+    {
+      "id": "C32",
+      "verdict": "C",
+      "line": 132,
+      "blocker": "NONE"
+    },
+    {
+      "id": "C33",
+      "verdict": "C",
+      "line": 133,
+      "blocker": "NONE"
+    },
+    {
+      "id": "A01",
+      "verdict": "W",
+      "line": 462,
+      "blocker": "FLAG"
+    },
+    {
+      "id": "A03",
+      "verdict": "W",
+      "line": 398,
+      "blocker": "FLAG"
+    },
+    {
+      "id": "A05",
+      "verdict": "W",
+      "line": 1012,
+      "blocker": "FLAG"
+    },
+    {
+      "id": "A17",
+      "verdict": "C",
+      "line": 400,
+      "blocker": "NONE"
+    },
+    {
+      "id": "A18",
+      "verdict": "N",
+      "line": 401,
+      "blocker": "CODE_CROSS_SURFACE"
+    },
+    {
+      "id": "A20",
+      "verdict": "C",
+      "line": 463,
+      "blocker": "NONE"
+    },
+    {
+      "id": "A25",
+      "verdict": "W",
+      "line": 403,
+      "blocker": "CODE_CROSS_SURFACE"
+    },
+    {
+      "id": "B01",
+      "verdict": "W",
+      "line": 404,
+      "blocker": "DEPLOY"
+    },
+    {
+      "id": "B03",
+      "verdict": "W",
+      "line": 405,
+      "blocker": "CODE_CROSS_SURFACE"
+    },
+    {
+      "id": "C11",
+      "verdict": "C",
+      "line": 410,
+      "blocker": "NONE"
+    },
+    {
+      "id": "C19",
+      "verdict": "W",
+      "line": 411,
+      "blocker": "CODE_CROSS_SURFACE"
+    },
+    {
+      "id": "C28",
+      "verdict": "C",
+      "line": 412,
+      "blocker": "NONE"
+    },
+    {
+      "id": "DV-01",
+      "verdict": "W",
+      "line": 843,
+      "blocker": "CODE_CROSS_SURFACE"
+    },
+    {
+      "id": "DV-02",
+      "verdict": "W",
+      "line": 844,
+      "blocker": "RUNTIME_EVIDENCE"
+    },
+    {
+      "id": "DV-03",
+      "verdict": "W",
+      "line": 845,
+      "blocker": "FLAG"
+    },
+    {
+      "id": "DV-04",
+      "verdict": "C",
+      "line": 1305,
+      "blocker": "NONE"
+    },
+    {
+      "id": "DV-05",
+      "verdict": "C",
+      "line": 852,
+      "blocker": "NONE"
+    },
+    {
+      "id": "DV-06",
+      "verdict": "W",
+      "line": 853,
+      "blocker": "CODE"
+    },
+    {
+      "id": "DV-07",
+      "verdict": "W",
+      "line": 854,
+      "blocker": "CODE_CROSS_SURFACE"
+    },
+    {
+      "id": "DV-08",
+      "verdict": "C",
+      "line": 2188,
+      "blocker": "NONE"
+    },
+    {
+      "id": "DV-09",
+      "verdict": "W",
+      "line": 856,
+      "blocker": "CODE"
+    },
+    {
+      "id": "DV-10",
+      "verdict": "C",
+      "line": 857,
+      "blocker": "NONE"
+    },
+    {
+      "id": "DV-11",
+      "verdict": "C",
+      "line": 858,
+      "blocker": "NONE"
+    },
+    {
+      "id": "DV-12",
+      "verdict": "W",
+      "line": 859,
+      "blocker": "CODE"
+    },
+    {
+      "id": "DV-13",
+      "verdict": "N",
+      "line": 1385,
+      "blocker": "CODE"
+    },
+    {
+      "id": "DV-14",
+      "verdict": "C",
+      "line": 861,
+      "blocker": "NONE"
+    },
+    {
+      "id": "DV-15",
+      "verdict": "C",
+      "line": 862,
+      "blocker": "NONE"
+    },
+    {
+      "id": "DV-16",
+      "verdict": "C",
+      "line": 863,
+      "blocker": "NONE"
+    },
+    {
+      "id": "DV-17",
+      "verdict": "C",
+      "line": 864,
+      "blocker": "NONE"
+    },
+    {
+      "id": "DV-18",
+      "verdict": "W",
+      "line": 1378,
+      "blocker": "CODE"
+    },
+    {
+      "id": "DV-19",
+      "verdict": "N",
+      "line": 866,
+      "blocker": "CODE_CROSS_SURFACE"
+    },
+    {
+      "id": "DV-20",
+      "verdict": "N",
+      "line": 881,
+      "blocker": "CODE"
+    },
+    {
+      "id": "DV-21",
+      "verdict": "N",
+      "line": 882,
+      "blocker": "CODE"
+    },
+    {
+      "id": "DV-22",
+      "verdict": "N",
+      "line": 883,
+      "blocker": "CODE"
+    },
+    {
+      "id": "DV-23",
+      "verdict": "N",
+      "line": 884,
+      "blocker": "CODE"
+    },
+    {
+      "id": "DV-24",
+      "verdict": "N",
+      "line": 885,
+      "blocker": "CODE"
+    },
+    {
+      "id": "DV-25",
+      "verdict": "N",
+      "line": 886,
+      "blocker": "CODE"
+    },
+    {
+      "id": "DV-26",
+      "verdict": "N",
+      "line": 887,
+      "blocker": "CODE"
+    },
+    {
+      "id": "DV-27",
+      "verdict": "C",
+      "line": 888,
+      "blocker": "NONE"
+    },
+    {
+      "id": "DV-28",
+      "verdict": "W",
+      "line": 1381,
+      "blocker": "FLAG"
+    },
+    {
+      "id": "DV-29",
+      "verdict": "W",
+      "line": 1382,
+      "blocker": "FLAG"
+    },
+    {
+      "id": "DV-30",
+      "verdict": "C",
+      "line": 900,
+      "blocker": "NONE"
+    },
+    {
+      "id": "DV-31",
+      "verdict": "W",
+      "line": 901,
+      "blocker": "FLAG"
+    },
+    {
+      "id": "DV-32",
+      "verdict": "W",
+      "line": 902,
+      "blocker": "FLAG"
+    },
+    {
+      "id": "DV-33",
+      "verdict": "W",
+      "line": 1310,
+      "blocker": "FLAG"
+    },
+    {
+      "id": "DV-34",
+      "verdict": "N",
+      "line": 904,
+      "blocker": "CODE"
+    },
+    {
+      "id": "DV-35",
+      "verdict": "C",
+      "line": 910,
+      "blocker": "NONE"
+    },
+    {
+      "id": "DV-36",
+      "verdict": "C",
+      "line": 911,
+      "blocker": "NONE"
+    },
+    {
+      "id": "DV-37",
+      "verdict": "N",
+      "line": 1383,
+      "blocker": "MIGRATION"
+    },
+    {
+      "id": "DV-38",
+      "verdict": "W",
+      "line": 2189,
+      "blocker": "MIGRATION"
+    },
+    {
+      "id": "DV-39",
+      "verdict": "W",
+      "line": 914,
+      "blocker": "MIGRATION"
+    },
+    {
+      "id": "DV-40",
+      "verdict": "W",
+      "line": 1680,
+      "blocker": "CODE"
+    },
+    {
+      "id": "DV-41",
+      "verdict": "N",
+      "line": 916,
+      "blocker": "MIGRATION"
+    },
+    {
+      "id": "DV-42",
+      "verdict": "W",
+      "line": 917,
+      "blocker": "FLAG"
+    },
+    {
+      "id": "DV-43",
+      "verdict": "C",
+      "line": 918,
+      "blocker": "NONE"
+    },
+    {
+      "id": "DV-44",
+      "verdict": "W",
+      "line": 919,
+      "blocker": "MIGRATION"
+    },
+    {
+      "id": "DV-45",
+      "verdict": "W",
+      "line": 920,
+      "blocker": "CODE"
+    },
+    {
+      "id": "DV-46",
+      "verdict": "W",
+      "line": 1681,
+      "blocker": "CODE"
+    },
+    {
+      "id": "DV-47",
+      "verdict": "W",
+      "line": 922,
+      "blocker": "RUNTIME_EVIDENCE"
+    },
+    {
+      "id": "DV-48",
+      "verdict": "C",
+      "line": 1306,
+      "blocker": "NONE"
+    },
+    {
+      "id": "DV-49",
+      "verdict": "W",
+      "line": 934,
+      "blocker": "FLAG"
+    },
+    {
+      "id": "DV-50",
+      "verdict": "C",
+      "line": 935,
+      "blocker": "NONE"
+    },
+    {
+      "id": "DV-51",
+      "verdict": "W",
+      "line": 936,
+      "blocker": "CODE"
+    },
+    {
+      "id": "DV-52",
+      "verdict": "X",
+      "line": 1386,
+      "blocker": "CODE_CROSS_SURFACE"
+    },
+    {
+      "id": "DV-53",
+      "verdict": "W",
+      "line": 943,
+      "blocker": "FLAG"
+    },
+    {
+      "id": "DV-54",
+      "verdict": "W",
+      "line": 944,
+      "blocker": "FLAG"
+    },
+    {
+      "id": "DV-55",
+      "verdict": "W",
+      "line": 945,
+      "blocker": "CODE"
+    },
+    {
+      "id": "DV-56",
+      "verdict": "N",
+      "line": 959,
+      "blocker": "SPEND_OR_CREDENTIAL"
+    },
+    {
+      "id": "DV-57",
+      "verdict": "N",
+      "line": 960,
+      "blocker": "SPEND_OR_CREDENTIAL"
+    },
+    {
+      "id": "DV-58",
+      "verdict": "N",
+      "line": 961,
+      "blocker": "SPEND_OR_CREDENTIAL"
+    },
+    {
+      "id": "DV-59",
+      "verdict": "N",
+      "line": 962,
+      "blocker": "SPEND_OR_CREDENTIAL"
+    },
+    {
+      "id": "DV-60",
+      "verdict": "N",
+      "line": 963,
+      "blocker": "SPEND_OR_CREDENTIAL"
+    },
+    {
+      "id": "DV-61",
+      "verdict": "N",
+      "line": 964,
+      "blocker": "SPEND_OR_CREDENTIAL"
+    },
+    {
+      "id": "DV-62",
+      "verdict": "N",
+      "line": 965,
+      "blocker": "SPEND_OR_CREDENTIAL"
+    },
+    {
+      "id": "DV-63",
+      "verdict": "N",
+      "line": 966,
+      "blocker": "SPEND_OR_CREDENTIAL"
+    },
+    {
+      "id": "DV-64",
+      "verdict": "N",
+      "line": 967,
+      "blocker": "SPEND_OR_CREDENTIAL"
+    },
+    {
+      "id": "DV-65",
+      "verdict": "N",
+      "line": 968,
+      "blocker": "SPEND_OR_CREDENTIAL"
+    },
+    {
+      "id": "DV-66",
+      "verdict": "N",
+      "line": 969,
+      "blocker": "SPEND_OR_CREDENTIAL"
+    },
+    {
+      "id": "DV-67",
+      "verdict": "N",
+      "line": 970,
+      "blocker": "SPEND_OR_CREDENTIAL"
+    },
+    {
+      "id": "DV-68",
+      "verdict": "N",
+      "line": 971,
+      "blocker": "SPEND_OR_CREDENTIAL"
+    },
+    {
+      "id": "DV-69",
+      "verdict": "N",
+      "line": 972,
+      "blocker": "SPEND_OR_CREDENTIAL"
+    },
+    {
+      "id": "DV-70",
+      "verdict": "W",
+      "line": 984,
+      "blocker": "CODE"
+    },
+    {
+      "id": "DV-71",
+      "verdict": "W",
+      "line": 985,
+      "blocker": "RUNTIME_EVIDENCE"
+    },
+    {
+      "id": "DV-72",
+      "verdict": "W",
+      "line": 986,
+      "blocker": "MIGRATION"
+    },
+    {
+      "id": "DV-73",
+      "verdict": "C",
+      "line": 987,
+      "blocker": "NONE"
+    },
+    {
+      "id": "DV-74",
+      "verdict": "W",
+      "line": 988,
+      "blocker": "CODE"
+    },
+    {
+      "id": "DV-75",
+      "verdict": "W",
+      "line": 994,
+      "blocker": "EXTERNAL_SETTING"
+    },
+    {
+      "id": "DV-76",
+      "verdict": "X",
+      "line": 995,
+      "blocker": "CODE_CROSS_SURFACE"
+    },
+    {
+      "id": "DV-77",
+      "verdict": "N",
+      "line": 996,
+      "blocker": "CODE_CROSS_SURFACE"
+    },
+    {
+      "id": "DV-78",
+      "verdict": "W",
+      "line": 997,
+      "blocker": "CODE"
+    },
+    {
+      "id": "DV-79",
+      "verdict": "W",
+      "line": 1379,
+      "blocker": "CODE"
+    },
+    {
+      "id": "DV-80",
+      "verdict": "N",
+      "line": 999,
+      "blocker": "CODE"
+    },
+    {
+      "id": "DV-81",
+      "verdict": "C",
+      "line": 1000,
+      "blocker": "NONE"
+    },
+    {
+      "id": "DV-82",
+      "verdict": "W",
+      "line": 1380,
+      "blocker": "CODE"
+    },
+    {
+      "id": "DSV2-06",
+      "verdict": "C",
+      "line": 1307,
+      "blocker": "NONE"
+    },
+    {
+      "id": "DC-01",
+      "verdict": "W",
+      "line": 1894,
+      "blocker": "CODE"
+    },
+    {
+      "id": "DC-02",
+      "verdict": "N",
+      "line": 1895,
+      "blocker": "CODE"
+    },
+    {
+      "id": "DC-03",
+      "verdict": "N",
+      "line": 1896,
+      "blocker": "CODE"
+    },
+    {
+      "id": "DC-04",
+      "verdict": "N",
+      "line": 1897,
+      "blocker": "CODE"
+    },
+    {
+      "id": "DC-05",
+      "verdict": "N",
+      "line": 1898,
+      "blocker": "CODE"
+    },
+    {
+      "id": "DC-06",
+      "verdict": "W",
+      "line": 1899,
+      "blocker": "CODE"
+    },
+    {
+      "id": "DC-07",
+      "verdict": "W",
+      "line": 1900,
+      "blocker": "MIGRATION"
+    },
+    {
+      "id": "DC-08",
+      "verdict": "C",
+      "line": 1901,
+      "blocker": "NONE"
+    },
+    {
+      "id": "DC-09",
+      "verdict": "W",
+      "line": 1902,
+      "blocker": "CODE"
+    },
+    {
+      "id": "DC-10",
+      "verdict": "C",
+      "line": 1903,
+      "blocker": "NONE"
+    },
+    {
+      "id": "DC-11",
+      "verdict": "W",
+      "line": 1904,
+      "blocker": "FLAG"
+    },
+    {
+      "id": "DC-12",
+      "verdict": "W",
+      "line": 1905,
+      "blocker": "CODE"
+    },
+    {
+      "id": "DC-13",
+      "verdict": "W",
+      "line": 1906,
+      "blocker": "CODE"
+    },
+    {
+      "id": "DC-14",
+      "verdict": "W",
+      "line": 1907,
+      "blocker": "FLAG"
+    },
+    {
+      "id": "DC-15",
+      "verdict": "W",
+      "line": 1908,
+      "blocker": "MIGRATION"
+    },
+    {
+      "id": "DC-16",
+      "verdict": "C",
+      "line": 1909,
+      "blocker": "NONE"
+    },
+    {
+      "id": "DC-17",
+      "verdict": "W",
+      "line": 1910,
+      "blocker": "CODE"
+    },
+    {
+      "id": "DC-18",
+      "verdict": "W",
+      "line": 1911,
+      "blocker": "CODE"
+    },
+    {
+      "id": "DC-19",
+      "verdict": "W",
+      "line": 1912,
+      "blocker": "CODE"
+    },
+    {
+      "id": "DC-20",
+      "verdict": "N",
+      "line": 1913,
+      "blocker": "CODE"
+    },
+    {
+      "id": "DC-21",
+      "verdict": "N",
+      "line": 1914,
+      "blocker": "CODE"
+    },
+    {
+      "id": "DC-22",
+      "verdict": "W",
+      "line": 1915,
+      "blocker": "CODE"
+    },
+    {
+      "id": "DC-23",
+      "verdict": "N",
+      "line": 1916,
+      "blocker": "CODE"
+    },
+    {
+      "id": "DC-24",
+      "verdict": "W",
+      "line": 1917,
+      "blocker": "CODE"
+    },
+    {
+      "id": "DC-25",
+      "verdict": "W",
+      "line": 1918,
+      "blocker": "FLAG"
+    },
+    {
+      "id": "DC-26",
+      "verdict": "W",
+      "line": 1919,
+      "blocker": "CODE"
+    },
+    {
+      "id": "DC-27",
+      "verdict": "X",
+      "line": 1920,
+      "blocker": "RUNTIME_EVIDENCE"
+    },
+    {
+      "id": "DC-28",
+      "verdict": "C",
+      "line": 1921,
+      "blocker": "NONE"
+    },
+    {
+      "id": "DC-29",
+      "verdict": "C",
+      "line": 1922,
+      "blocker": "NONE"
+    },
+    {
+      "id": "DC-30",
+      "verdict": "C",
+      "line": 1923,
+      "blocker": "NONE"
+    },
+    {
+      "id": "DC-31",
+      "verdict": "C",
+      "line": 1924,
+      "blocker": "NONE"
+    },
+    {
+      "id": "DC-32",
+      "verdict": "W",
+      "line": 1925,
+      "blocker": "CODE"
+    },
+    {
+      "id": "DC-33",
+      "verdict": "W",
+      "line": 1926,
+      "blocker": "MIGRATION"
+    },
+    {
+      "id": "DC-34",
+      "verdict": "C",
+      "line": 1927,
+      "blocker": "NONE"
+    },
+    {
+      "id": "DSV2-04",
+      "verdict": "N",
+      "line": 2056,
+      "blocker": "CODE_CROSS_SURFACE"
+    },
+    {
+      "id": "DSV2-05",
+      "verdict": "C",
+      "line": 2057,
+      "blocker": "NONE"
+    },
+    {
+      "id": "DSV2-12",
+      "verdict": "N",
+      "line": 2058,
+      "blocker": "CODE"
+    }
+  ]
+}
