@@ -531,3 +531,162 @@ Production was read read-only and its four preconditions re-confirmed.
 by offset.** Three citations were found already correct with corrupted anchor
 *text*, the signature of an earlier bad automated repair; a naive "fix" would
 have moved the line and broken them.
+
+---
+
+# 10. Reporting corrections — 2026-09-14, at `f8e82d97b`
+
+The owner caught two arithmetic errors in a verbal summary and asked for the
+3,429 → 3,517 bridge and a production separation backed by evidence. All four
+are answered here. **No verdict moves in this section; it is accounting and
+evidence only.**
+
+## 10.1 Two corrected figures
+
+| claim I made | correct | error |
+|---|---|---|
+| *"telegraph + layover + highlights hold **59 %** of all W"* | 158 + 136 + 131 = 425; **425 / 889 = 47.8 %** | overstated by 11.2 points |
+| *"layover + highlights are **604** of 1,343 unresolved (**45 %**)"* | layover 136+99+0 = **235**; highlights 131+77+2 = **210**; together **445 / 1,343 = 33.1 %** | 604 does not correspond to any sum in the corpus; overstated by 159 requirements and 11.9 points |
+
+**Unresolved by census, correctly ranked** (W + N + X, of 1,343):
+
+| census | unresolved | W | N | X | cumulative |
+|---|---:|---:|---:|---:|---:|
+| layover | 235 | 136 | 99 | 0 | 17.5 % |
+| telegraph | 222 | 158 | 61 | 3 | 34.0 % |
+| highlights-memories | 210 | 131 | 77 | 2 | 49.7 % |
+| media | 153 | 83 | 68 | 2 | 61.1 % |
+| trips | 131 | 128 | 3 | 0 | 70.8 % |
+| discovery | 113 | 67 | 43 | 3 | 79.2 % |
+| input-intelligence | 111 | 55 | 52 | 4 | 87.5 % |
+| map | 56 | 46 | 5 | 5 | 91.7 % |
+| compass | 43 | 35 | 6 | 2 | 94.9 % |
+| sensing | 29 | 26 | 2 | 1 | 97.0 % |
+| trust | 23 | 15 | 6 | 2 | 98.7 % |
+| passport | 11 | 9 | 1 | 1 | 99.6 % |
+| wall | 6 | 0 | 0 | 6 | 100 % |
+
+**It takes three censuses to pass 47.8 % of W and four to pass half of all
+unresolved requirements.** There is no two-census shortcut.
+
+## 10.2 The 88 requirements between 3,429 and 3,517 — every one accounted for
+
+The two numbers are different measures, which is how the gap got loose in the
+first place: **3,429 was the PARSED row count** at `dd8ec0afe`; **3,517 is the
+DENOMINATOR** now. The bridge:
+
+```
+3,429   parsed rows at dd8ec0afe
+  + 24  requirements already IN that denominator, unreadable by the parser
+────────
+3,453   stated denominator at dd8ec0afe
+  + 64  NEW requirements enumerated from the owner's specs
+────────
+3,517   denominator now
+```
+
+**88 = 24 + 64, and only the 64 are additions.** The 24 were counted the whole
+time; they were prose the parser could not read.
+
+**The 64 new requirements**, all from the three compliance passes, all still
+present, none retired:
+
+| census | count | ids |
+|---|---:|---|
+| trust | 15 | `TV-U1`…`TV-U12`, `TV-G1`, `TV-P0`, `TV-6c` |
+| compass | 15 | `CCL-01`…`CCL-15` |
+| discovery | 34 | `DC-01`…`DC-34` |
+
+**The 24, and where they went.** Six became machine-readable this session
+(rewritten as table rows, no verdict changed); 18 remain prose-counted and all
+18 carry verdicts:
+
+| census | at `dd8ec0afe` | became parseable | still prose |
+|---|---:|---|---:|
+| compass | 9 | `CPV2-03`, `CPV2-11`, `CPV2-12` | 6 — `C1-01`…`C1-05`, `C1-07` (5 C + 1 W) |
+| discovery | 3 | `DSV2-04`, `DSV2-05`, `DSV2-12` | 0 |
+| telegraph | 12 | — | 12 — all N, marked `∅` *unguarded absence* |
+
+Cross-check, both directions: parsed `3,429 + 64 + 6 = 3,499` ✓ and
+`3,499 + 18 = 3,517` ✓.
+
+**Measured, not reasoned**: dumping every verdict at both commits and comparing
+under last-statement-wins gives **70 ids added, 0 removed, and exactly 3 verdict
+moves among ids present in both** — `passport/P45`, `trust/C22`, `trust/TV-1a`
+(all W → C). `trust/TV-6c` is not in that list because it did not exist at
+`dd8ec0afe`; it is one of the 64, added as N and closed to C in the same session.
+
+## 10.3 Production, branch, and migration-blocked — separated, with evidence
+
+An earlier summary said *"none of the 61.8 % is production-realized."* **That
+was asserted, not measured, and it is wrong.** Production is a live system with
+a large working surface. Corrected below, read-only from
+`ajrurzioarfkagpuxfnb` on 2026-09-14.
+
+### What IS live in production
+
+| fact | value |
+|---|---|
+| public base tables | **430** |
+| feature flags defined / **ENABLED** | 185 / **106** |
+| profiles | 58 |
+| `rent_buddy_launch_controls` | 13 rows |
+| `trust_events` / `trust_profiles` | 5 / 2 |
+
+A 430-table schema with 106 enabled flags is not an unrealized system.
+
+### What is NOT in production — measured object by object
+
+The branch adds **32 migrations** (`2778`–`2870`). Every object they create was
+checked against the live schema:
+
+| kind | result |
+|---|---|
+| the 17 tables they create | **17 of 17 ABSENT** |
+| the 14 feature flags they seed | **14 of 14 ABSENT** |
+
+Named, so the claim is falsifiable: `airport_fact_observations`,
+`conversation_action_refs`, `layover_external_events`, `message_attachments`,
+`message_edits`, `message_reactions`, `telegraph_outbox`,
+`telegraph_report_evidence`, `trip_decisions`, `trip_disruptions`,
+`trip_meeting_checkpoint_participants`, `trip_meeting_checkpoints`,
+`trip_reservation_events`, `trip_subgroup_members`, `trip_subgroups`,
+`trip_transport_policies`, `trip_transport_segments` — and the flags
+`compass_decision_enabled`, `discovery_live_rank_enabled`,
+`experience_session_enabled`, `intel_safety_candidates_enabled`,
+`layover_live_intersection_enabled`, `opportunity_engine_enabled`,
+`telegraph_live_references_enabled`, `telegraph_message_kernel_enabled`,
+`telegraph_report_evidence_enabled`, `telegraph_request_origin_enabled`,
+`trip_absence_guard_enabled`, `trip_operational_projections_enabled`,
+`trip_retention_sweep_enabled`, `wall_moments_enabled`.
+
+**Any requirement whose behaviour needs one of those 31 objects cannot work in
+production today.** That is evidence, not inference.
+
+### The C rows, split by how far their evidence is from `main`
+
+2,169 parsed C rows, classified by what their verdict line cites. 660 files are
+**new** on this branch and 365 are **modified**:
+
+| class | C rows | what it means |
+|---|---:|---|
+| cites a file **untouched** by this branch | **733** | evidence is in `main` verbatim |
+| cites a file this branch **modified** | **570** | the file is in `main`; whether the cited behaviour is needs re-reading |
+| cites a file this branch **created** | **219** | **not in `main` at all** |
+| **no file citation on the verdict line** | **647** | cannot be classified from the row — this is defect **B7**, not a category |
+
+`733 + 570 + 219 + 647 = 2,169` ✓
+
+**So the honest statement is neither extreme.** At least **733** C rows rest on
+code this branch never touched, which is in `main`. **219** demonstrably are
+not. The middle 570 and the uncited 647 need per-row reading, and **1,217 of
+2,169 C rows (56 %) therefore cannot be assigned to production or to branch from
+the record as it stands.** Reducing that number is what backlog **B7** is for.
+
+### Migration-dependence cannot be measured from citations
+
+Attempting it returned **0 rows** for every census — not because nothing depends
+on the 32 migrations, but because census verdict lines almost never cite a
+migration file. The measurement above (17 + 14 objects, absent) is the evidence
+that stands; a per-row migration attribution does not exist yet and is not
+claimed.
