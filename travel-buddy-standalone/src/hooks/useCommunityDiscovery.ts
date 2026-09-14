@@ -10,6 +10,7 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import type { DiscoveryItem, TravelerPick } from '../data/discovery.ts';
 import { getCommunityPlaces } from '../services/discovery.ts';
 import type { CommunityPlaceItem, DiscoveryPlace } from '../services/discovery.ts';
+import { communityBylineText } from '../features/discovery/communityByline.ts';
 
 function timeAgo(isoString: string): string {
   const diff = Date.now() - new Date(isoString).getTime();
@@ -22,6 +23,36 @@ function timeAgo(isoString: string): string {
   return `${Math.floor(days / 7)}w ago`;
 }
 
+/**
+ * The served submitter, mapped to the byline shape the wall cards take.
+ * census-discovery C19 / §6 D2 — this is `useCommunityDiscovery.ts:37` and
+ * `:59`, the two lines D2 names.
+ *
+ * `name` is now DERIVED, not copied: it is resolved from the canonical
+ * (`displayName`, `handle`) pair, so the legacy wire field — which bakes
+ * `@username` in when the server withheld the name — is never read and can be
+ * retired server-side without blanking a byline. `displayName` is carried
+ * through unchanged so the card can re-resolve the same decision rather than
+ * trust a string it was handed.
+ *
+ * Returned as a standalone value rather than an inline literal because the
+ * legacy fixture type (`src/__fixtures__/discovery.ts`, another lane's file)
+ * has no `displayName` member yet; a fresh literal would trip the
+ * excess-property check while the wire genuinely carries the field.
+ */
+function toByline(
+  by: CommunityPlaceItem['submittedBy'],
+): { id: string; name: string; displayName: string | null; avatarUrl: string; handle: string | null } | null {
+  if (!by) return null;
+  return {
+    id:          by.id,
+    name:        communityBylineText(by),
+    displayName: by.displayName ?? null,
+    avatarUrl:   by.avatarUrl ?? `https://i.pravatar.cc/120?u=${by.id}`,
+    handle:      by.handle ?? null,
+  };
+}
+
 function toDiscoveryItem(item: CommunityPlaceItem): DiscoveryItem {
   return {
     id:           item.id,
@@ -31,14 +62,7 @@ function toDiscoveryItem(item: CommunityPlaceItem): DiscoveryItem {
     city:         item.city,
     blurb:        item.blurb ?? '',
     imageUrl:     item.imageUrl ?? undefined,
-    submittedBy:  item.submittedBy
-      ? {
-          id:        item.submittedBy.id,
-          name:      item.submittedBy.name,
-          avatarUrl: item.submittedBy.avatarUrl ?? `https://i.pravatar.cc/120?u=${item.submittedBy.id}`,
-          handle:    item.submittedBy.handle ?? null,
-        }
-      : undefined,
+    submittedBy:  toByline(item.submittedBy) ?? undefined,
     savedCount:   item.savedCount,
     rating:       item.rating ?? null,
     source:       (item.source ?? 'traveler') as DiscoveryItem['source'],
@@ -53,14 +77,8 @@ function toDiscoveryItem(item: CommunityPlaceItem): DiscoveryItem {
 function toTravelerPick(item: CommunityPlaceItem): TravelerPick {
   return {
     id:     item.id,
-    user:   item.submittedBy
-      ? {
-          id:        item.submittedBy.id,
-          name:      item.submittedBy.name,
-          avatarUrl: item.submittedBy.avatarUrl ?? `https://i.pravatar.cc/120?u=${item.submittedBy.id}`,
-          handle:    item.submittedBy.handle ?? null,
-        }
-      : { name: 'Traveler', avatarUrl: 'https://i.pravatar.cc/120' },
+    user:   toByline(item.submittedBy)
+      ?? { name: 'Traveler', avatarUrl: 'https://i.pravatar.cc/120' },
     place:  item.name,
     note:   item.note ?? '',
     city:   item.city,

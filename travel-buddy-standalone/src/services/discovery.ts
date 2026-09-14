@@ -243,7 +243,25 @@ export interface CommunityPlaceItem {
   neighborhood: string | null;
   blurb: string | null;
   imageUrl: string | null;
-  submittedBy: { id: string; name: string; avatarUrl: string | null; handle: string | null } | null;
+  /**
+   * The submitter's byline, as `routes/discovery.ts` emits it from ONE
+   * `nameAllowed` decision (self-exemption first, then the opt-in).
+   *
+   *   displayName  CANONICAL (C19). The real name iff the server authorised
+   *                it, else null. Never a handle. Optional on this type only
+   *                because a pre-rollout server may omit it; absent is read as
+   *                "withheld" by `features/discovery/communityByline.ts`.
+   *   name         LEGACY, kept additively. Carries the literal `"@username"`
+   *                when the name is withheld — which is exactly why no client
+   *                surface may render it as an identity. §6 D2 retires it.
+   */
+  submittedBy: {
+    id: string;
+    name: string;
+    displayName?: string | null;
+    avatarUrl: string | null;
+    handle: string | null;
+  } | null;
   savedCount: number;
   tag: string | null;
   note: string | null;
