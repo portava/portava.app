@@ -746,3 +746,145 @@ ordered against it. 2870 is the exception and D1 states why.
 C8 applies verbatim. Applying anything to `ajrurzioarfkagpuxfnb` is the owner's
 action; no workflow targets it, the in-process guard refuses it, and the
 standing instruction is that production is not hand-mutated from a session.
+
+---
+
+### D4. Independent re-verification and a STANDALONE rehearsal of 2870 — 2026-09-14
+
+D1 and D2 were written by the lane that authored 2870, and D2's rehearsal ran
+2870 as one of fourteen files in a single transaction. This section re-measures
+D1's four preconditions from scratch and rehearses 2870 **alone**, because a
+file the owner may apply by itself should be rehearsed by itself. Everything
+below is executed output, not restatement.
+
+#### D4.1 Production preconditions, re-measured read-only
+
+`ajrurzioarfkagpuxfnb`, 2026-09-14, a single read-only query. **All four of
+D1's preconditions confirmed unchanged:**
+
+| D1 precondition | measured today |
+|---|---|
+| 1. `profiles.verification_level` exists | **yes** — `text`. (`date_of_birth` also present, `date`.) |
+| 2. The constraint the `DO` block searches for exists and matches both predicates | **yes** — `profiles_verification_level_check`, definition byte-for-byte the five-value form quoted in D1 |
+| 3. `trg_profiles_verification_privileged` exists and is ENABLED | **yes** — enabled, alongside `trg_profiles_role_privileged`, `trg_profiles_updated`, `enforce_is_official_trigger` |
+| 4. Every existing row validates against the new constraint | **yes** — 58 profiles, **all `'none'`**, no other value present; `identity_verifications` still **0 rows** |
+
+Production was read and not written. **The hold stands.**
+
+#### D4.2 portava-ci is a faithful rehearsal surface — proved, not assumed
+
+A rehearsal only means something if the rehearsal database resembles the target
+in the ways the migration depends on. Measured on `hwokxgbmezheskbzskfr` the
+same day:
+
+| fact | production | portava-ci |
+|---|---|---|
+| `profiles_verification_level_check` definition | five-value form | **identical five-value form** |
+| `trg_profiles_verification_privileged` | enabled | **enabled** |
+| rows holding a non-`'none'` level | 0 of 58 | **0 of 7** |
+| ledger newest | — | `2777_trip_kernel_presence_ordering.sql`, 500 rows, **no 2870** |
+
+The two databases agree on every object 2870 touches.
+
+#### D4.3 The connection honours ROLLBACK — proved before anything real was sent
+
+A disposable probe created a table inside `BEGIN … ROLLBACK` and then asked
+whether it existed. Answer: **absent — ROLLBACK IS HONOURED.** Only then was the
+migration body sent.
+
+#### D4.4 The rehearsal, and what it proves that D2's did not
+
+2870's body ran alone inside `BEGIN … ROLLBACK` on portava-ci, with a
+before-test and an after-test in the same transaction:
+
+| step | result |
+|---|---|
+| 1. **BEFORE** — `UPDATE profiles SET verification_level='id_verified'` | **`23514` check constraint violation** |
+| 2. 2870 precondition block | **PASSED** |
+| 3. Locate old constraint by DEFINITION and drop it | **found and dropped** — `profiles_verification_level_check` |
+| 4. 2870 postcondition block | **PASSED — all 7 values permitted** |
+| 5. **AFTER** — write each of the seven values in turn | **7 accepted, 0 rejected** |
+
+**Step 1 is the part D2 could not show.** The batch rehearsal proved 2870
+*applies*; this proves the premise it exists to fix — that on a database in
+production's exact shape, the value the code writes on every successful
+government-ID check is **rejected by the database**. The claim in the migration
+header is no longer an argument; it is an observed error code.
+
+**Step 5 is the part that matters for safety.** It confirms the five pre-existing
+values are still storable after the swap, so the widening removed nothing. A
+migration that accepted the two new values while dropping one of the five would
+have passed the postcondition block, which only checks the constraint *text* —
+step 5 checks the *behaviour*.
+
+#### D4.5 Nothing persisted
+
+Re-queried after the ROLLBACK:
+
+| probe | value |
+|---|---|
+| `profiles_verification_level_check` | back to the **five-value** form |
+| ledger rows / newest | **500** / `2777_trip_kernel_presence_ordering.sql` |
+| profiles by level | **7 × `'none'`** |
+| probe table left behind | **none** |
+| sessions `idle in transaction` | **0** |
+
+portava-ci is in the state it started in. No migration was applied to any
+database by this section.
+
+#### D4.6 What applying 2870 does and does not buy
+
+**Does:** makes the success path of identity verification *storable*. Without it
+a completed, billed government-ID check is rejected with `23514`, the webhook
+handler returns 5xx on purpose so the provider retries, and the retry writes the
+same rejected value — a loop ending in the provider's dead-letter queue with the
+user still at `'none'`.
+
+**Does not:** produce a single verified user. `IMPLEMENTED_PROVIDERS` admits only
+`"mock"`; both real adapters throw from every method. Applying 2870 changes
+nothing any user sees, which is exactly what makes it safe to apply ahead of the
+rest — and exactly why it must not be reported as "identity verification works".
+
+Still open after 2870, each with a census row: **TV-6a** (owner — provider
+account, D-PROVIDER), **TV-6b** (the adapter), **TV-0e** (no `VerifiedBadge`
+component exists), **TRV2-12** (the settings screen renders the *other* five
+labels, so an `id_verified` user shows blank).
+
+#### D4.7 The decision this does not take
+
+Whether the two vocabularies sharing `profiles.verification_level` — admin-granted
+PLATFORM standing versus provider-attested ID outcome — should be merged, ranked,
+or split into separate columns is **D-LEVEL-VOCAB** and remains the owner's.
+Widening the constraint takes no position on it: it makes the value the code
+already writes storable and leaves every existing value exactly as it is.
+
+#### D4.8 Apply procedure, if and when the owner lifts the hold
+
+```
+PRE   SELECT pg_get_constraintdef(c.oid) FROM pg_constraint c
+      JOIN pg_class t ON t.oid=c.conrelid JOIN pg_namespace n ON n.oid=t.relnamespace
+      WHERE n.nspname='public' AND t.relname='profiles'
+        AND c.conname='profiles_verification_level_check';
+      -- expect the FIVE-value form; if it already lists id_verified, 2870 is applied, STOP
+
+PRE   SELECT verification_level, count(*) FROM public.profiles GROUP BY 1;
+      -- expect every row 'none'; ANY other value is fine, but a value outside the
+      -- seven aborts ADD CONSTRAINT — check before, not after
+
+APPLY the file as written, whole, in its own transaction. It is idempotent.
+
+POST  repeat the PRE constraint query -- expect the SEVEN-value form
+POST  SELECT verification_level, count(*) FROM public.profiles GROUP BY 1;
+      -- expect the SAME distribution as PRE. 2870 moves no row.
+```
+
+**Rollback** is `db/rollback/2026-09-13-2870-profiles-verification-level-identity-vocabulary.sql`.
+Its `UPDATE` must run before the constraint is narrowed, and it **erases evidence
+of completed ID checks** — so it is only safe while no such check has completed.
+That is true today (0 rows) and stops being true the moment a real provider is
+wired. **After TV-6b lands, this rollback is no longer safe and the file should
+be re-read before use.**
+
+**THE PRODUCTION HOLD REMAINS IN PLACE.** Nothing in D4 applies anything to
+production, and D4 is not permission to. It is the evidence an owner would want
+before deciding.
