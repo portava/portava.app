@@ -39,6 +39,14 @@ import { isEnabled } from "../compass/flags";
 import type { RankCandidate, ScoredCandidate } from "../lib/portavaRank";
 import { logImpression } from "../lib/rankLog";
 import { logDiscoveryServe, DiscoveryServePoint } from "../lib/discoveryServeLog.js";
+// D11 / `11` §9 — "A failure must not masquerade as success." One vocabulary for
+// every Discovery refusal; lib/discoveryRefusal.ts documents why the status stays
+// 200 and the named refusal rides inside the existing envelope instead.
+import {
+  discoveryRefusal,
+  sendDiscoveryRefusal,
+  logServeUnlessRefused,
+} from "../lib/discoveryRefusal.js";
 import { resolveDiscoveryEngineMode } from "../lib/discoveryEngineMode.js";
 // The PDE ranking pipeline (D5=B, ranking half). portavaRank, the
 // DiscoveryRankingService re-rank and the assembly analytics all moved behind
@@ -979,13 +987,28 @@ export { submitterIsVisible };
  * and community rows are re-queried per request, so one viewer's block list can
  * never be cached into another viewer's feed.
  */
+/**
+ * D11 — the RETURN TYPE is the fix, not the logging.
+ *
+ * `null` means "discovery_places could not be read". `[]` means "there are no
+ * community places here". Before D11 both were `[]`, so every caller — the feed,
+ * the counts fan-out, the category surface — received the same value for "the
+ * table is down" as for "this city is new", and every one of them then answered
+ * a user with an empty collection and a 200. That is the masquerade the owner
+ * ruled on, at its source: the two answers were made identical HERE, and no
+ * amount of care at the serve point could tell them apart again.
+ *
+ * Same discipline as `loadProtectedZones` / `loadFlowZones`
+ * (routes/mapProjection.ts:193-217, :262-271): null for unreadable, [] for
+ * empty, and the caller decides what to do about it.
+ */
 async function queryDbPlaces(
   destination: string,
   category: string,
   centerLat: number | null,
   centerLng: number | null,
   blockedIds: Set<string> | null,
-): Promise<DiscoveryPlace[]> {
+): Promise<DiscoveryPlace[] | null> {
   if (_testDbOverride) return _testDbOverride(destination, category, centerLat, centerLng);
 
   const sc = getServiceClient();
@@ -1022,22 +1045,24 @@ async function queryDbPlaces(
       // size. Cap to 60 AFTER filtering (discovery_places is small, so 200 is cheap).
       .limit(200);
 
-    // "no community places in this city" and "discovery_places could not be
-    // read" are the same empty array to every caller of this funnel. The
-    // DIRECTION is left alone and is defensible: the discovery feed merges this
-    // half with OSM/Foursquare results, so an unreadable community table costs
-    // the feed its community rows and never renders the page as "there is
-    // nothing here" — and failing the whole request over it would be worse.
+    // This comment used to end "The refusal stands; it now says so" — and it said
+    // so only to the SERVER LOG. The direction it defends is still right: the
+    // discovery feed merges this half with OSM/Foursquare results, so an
+    // unreadable community table must not fail the whole request. But the caller
+    // was told nothing, and `[]` here is what made "the table is down"
+    // indistinguishable from "this city has no community places" at every serve
+    // point downstream.
     //
-    // What was not defensible is that it was SILENT. A city whose community rows
-    // stopped appearing looks exactly like a city that has none, from the
-    // outside and from the inside alike. The refusal stands; it now says so.
+    // D11 keeps the non-fatal direction and removes the silence: `null` travels
+    // to the caller, which serves what it has and NAMES the half it could not
+    // read. The log line stays — an operator should still see it without having
+    // to read a response body.
     if (error) {
       logger.warn(
         { err: error, code: "discovery_places_read_failed", city: cityBase, category },
         "discovery: discovery_places read failed — this request serves external results only",
       );
-      return [];
+      return null;
     }
     if (!data) return [];
 
@@ -1115,7 +1140,9 @@ async function queryDbPlaces(
       return a ? { ...p, worthItCount: a.worthItCount, avgRating: a.avgRating, reviewCount: a.reviewCount } : p;
     });
   } catch {
-    return [];
+    // Same reasoning as the `error` branch above: a throw is a failed read, and
+    // a failed read is not an empty city.
+    return null;
   }
 }
 
@@ -1263,9 +1290,19 @@ async function loadCuratedAndCanonicalPlaces(
     queryDbPlaces(destination, category, centerLat, centerLng, blockedIds),
     queryCanonicalPlaces(destination, category, centerLat, centerLng),
   ]);
-  const curatedNames = new Set(curated.map((p) => p.name.toLowerCase().trim()));
+  // D11, DELIBERATELY BEHAVIOUR-PRESERVING HERE. `queryDbPlaces` now distinguishes
+  // "unreadable" (null) from "empty" ([]), and this function absorbs the
+  // distinction rather than propagating it. That is a scope decision, not an
+  // oversight: the two callers of this function are `GET /discovery`'s four serve
+  // paths, and surfacing a partial refusal through all four is a separate change
+  // to a separate contract. The conflation therefore SURVIVES on GET /discovery
+  // and is reported as the outstanding residual of D11; it is fixed on
+  // GET /discovery/feed and GET /discovery/counts, which call queryDbPlaces
+  // directly.
+  const curatedRows = curated ?? [];
+  const curatedNames = new Set(curatedRows.map((p) => p.name.toLowerCase().trim()));
   return [
-    ...curated,
+    ...curatedRows,
     ...canonical.filter((p) => !curatedNames.has(p.name.toLowerCase().trim())),
   ];
 }
@@ -2298,10 +2335,22 @@ router.get("/discovery", async (req, res) => {
     });
   } catch (err) {
     req.log.error({ err }, "discovery route failed");
-    res.json({ places: [], total: 0, destination, context: ctxLabel ?? null, cached: false, ageFilterMeta: null,
-      sourceSummary: { seededDbCount: 0, osmCount: 0, userCreatedCount: 0 },
-      meta: { cacheLevel: "error", timings: { totalMs: Date.now() - t0 } },
-    });
+    // D11 / `11` §9. `meta.cacheLevel: "error"` was already here and was ALMOST
+    // the fix — but it is a cache annotation, not a failure class, and no
+    // consumer reads it as one. The named refusal is additive on top of it and
+    // says the thing the envelope never said: `places: []` below is not a
+    // result. Reachable on the shipping route by a Nominatim timeout or DNS
+    // failure inside `geocodeCached` (routes/discovery.ts:378-421 — fetch
+    // rejects, it does not return null), and by any throw out of the Compass
+    // ranking or cache paths.
+    sendDiscoveryRefusal(
+      res,
+      { places: [], total: 0, destination, context: ctxLabel ?? null, cached: false, ageFilterMeta: null,
+        sourceSummary: { seededDbCount: 0, osmCount: 0, userCreatedCount: 0 },
+        meta: { cacheLevel: "error", timings: { totalMs: Date.now() - t0 } },
+      },
+      discoveryRefusal("transient_db", "discovery_assembly_failed", "GET /discovery"),
+    );
   }
 });
 
@@ -2438,22 +2487,67 @@ router.get("/discovery/counts", async (req, res) => {
           // never place content.
           queryDbPlaces(destination, cat, coords.lat, coords.lng, new Set<string>()),
         ]);
+        // D11: `null` is "discovery_places could not be read", not "no rows". A
+        // count taken over the OSM half alone is not a smaller number, it is a
+        // DIFFERENT number — and a category badge reading 12 when the real
+        // answer is unknown is exactly the corrupt accounting the ruling names.
+        // Rejecting routes it into the failed-category set below.
+        if (dbPlaces === null) throw new Error(`discovery_places unreadable for ${cat}`);
         const enriched = osmPlaces.length > 0 ? await enrichOsmSavedCounts(osmPlaces) : osmPlaces;
         if (enriched.length > 0) setCacheA(k, { places: enriched, cachedAt: Date.now() });
         return { cat, total: mergeAndDedup(enriched, dbPlaces).length };
       }),
     );
 
+    // WHY THE FAILED CATEGORIES ARE TRACKED AND NOT JUST SKIPPED.
+    // `Promise.allSettled` never rejects, so the `catch` below is all but dead
+    // and the real masquerade was HERE: every category could reject and this
+    // route would still answer `200 { counts: {}, cached: true }` — the exact
+    // body a city with nothing in it gets, plus a five-minute cache header
+    // pinning the lie in every CDN between here and the user.
     const counts: Partial<Record<string, number>> = {};
-    for (const r of results) {
+    const failedCats: string[] = [];
+    results.forEach((r, i) => {
       if (r.status === "fulfilled") counts[r.value.cat] = r.value.total;
+      else failedCats.push(COUNTABLE_CATS[i]);
+    });
+
+    if (failedCats.length === COUNTABLE_CATS.length) {
+      // Nothing was counted. No Cache-Control: a failure must not be cached.
+      sendDiscoveryRefusal(
+        res,
+        { counts: {}, destination, cached: false },
+        discoveryRefusal("transient_db", "category_counts_failed", "GET /discovery/counts", "nothing", failedCats),
+      );
+      return;
+    }
+
+    if (failedCats.length > 0) {
+      // Some counts are real and are served. The absent keys are NOT zeros, and
+      // `failedSources` says which ones so a client can render them as unknown
+      // instead of as none. Again no Cache-Control — half a count set is not
+      // something to keep for five minutes.
+      sendDiscoveryRefusal(
+        res,
+        { counts, destination, cached: true },
+        discoveryRefusal("transient_db", "category_counts_partial", "GET /discovery/counts", "partial", failedCats),
+      );
+      return;
     }
 
     res.set("Cache-Control", "public, max-age=300"); // 5-minute browser/CDN cache
     res.json({ counts, destination, cached: true });
   } catch (err) {
     req.log.error({ err }, "discovery/counts failed");
-    res.json({ counts: {}, destination, cached: false });
+    // Kept for the synchronous throw that `allSettled` cannot absorb (a throw
+    // from COUNTABLE_CATS.map itself, or from res.set). Same class and code as
+    // the all-categories-failed arm above: from the caller's side they are the
+    // same event — no count could be produced.
+    sendDiscoveryRefusal(
+      res,
+      { counts: {}, destination, cached: false },
+      discoveryRefusal("transient_db", "category_counts_failed", "GET /discovery/counts"),
+    );
   }
 });
 
@@ -2581,7 +2675,13 @@ router.get("/discovery/feed", async (req, res) => {
               ])
             : [[], [] as DiscoveryPlace[]];
           const osmPlaces = await enrichOsmSavedCounts(rawOsmPlaces);
-          return { osmPlaces, dbPlaces, merged: mergeAndDedup(osmPlaces, dbPlaces) };
+          // D11: null is "discovery_places could not be read". The feed still
+          // serves its OSM half — that half is a real result and withholding it
+          // would be its own lie — but the category is recorded so the envelope
+          // can say the community rows are missing rather than absent.
+          const dbReadFailed = dbPlaces === null;
+          const dbRows = dbPlaces ?? [];
+          return { cat, osmPlaces, dbPlaces: dbRows, dbReadFailed, merged: mergeAndDedup(osmPlaces, dbRows) };
         }),
       ),
       // Event-post pipeline — only runs when we have a viewer identity for block-checking;
@@ -2608,9 +2708,11 @@ router.get("/discovery/feed", async (req, res) => {
     const allPlaces: DiscoveryPlace[] = [];
     let totalOsm = 0;
     let totalDb  = 0;
-    for (const { osmPlaces, dbPlaces, merged } of categoryResults) {
+    const failedCats: string[] = [];
+    for (const { cat, osmPlaces, dbPlaces, dbReadFailed, merged } of categoryResults) {
       totalOsm += osmPlaces.length;
       totalDb  += dbPlaces.length;
+      if (dbReadFailed) failedCats.push(cat);
       for (const p of merged) {
         if (!seen.has(p.id)) { seen.add(p.id); allPlaces.push(p); }
       }
@@ -2623,7 +2725,7 @@ router.get("/discovery/feed", async (req, res) => {
 
     // §7 New-to-Me annotation — additive, order-preserving, flag-gated, fail-safe.
     const feedAnnotated = await annotateNewToMe(getServiceClient(), viewerId, slice);
-    res.json({
+    const feedEnvelope = {
       places: feedAnnotated,
       events:   [],
       posts:    eventPosts,
@@ -2639,7 +2741,21 @@ router.get("/discovery/feed", async (req, res) => {
         userCreatedCount: eventPosts.length,
       },
       sessionId: feedSessionId,
-    });
+    };
+    if (failedCats.length > 0) {
+      // "nothing" only when the failure is the whole answer. If OSM or the event
+      // posts produced anything, those items really were served and really are
+      // exposure, so the refusal is "partial" and the serve below still logs
+      // them — under-counting a real serve corrupts the denominator in the other
+      // direction just as surely.
+      const coverage = feedAnnotated.length === 0 && eventPosts.length === 0 ? "nothing" : "partial";
+      sendDiscoveryRefusal(
+        res, feedEnvelope,
+        discoveryRefusal("transient_db", "feed_places_read_failed", "GET /discovery/feed", coverage, failedCats),
+      );
+    } else {
+      res.json(feedEnvelope);
+    }
     // Stage 0b — serve point 7. This route ranks nothing and caches nothing;
     // it is instrumented because the baseline must describe everything users
     // receive (D4=C), not only what the flag governs (D4=A). Both the places
@@ -2647,7 +2763,10 @@ router.get("/discovery/feed", async (req, res) => {
     // the same one returned in the envelope above, so an outcome the client
     // reports against it upgrades exactly these rows.
     if (viewerId) {
-      void logDiscoveryServe(getServiceClient(), {
+      // D11, second half of the ruling: a REFUSED response must not enter the
+      // exposure denominator. `logServeUnlessRefused` is the guard that is about
+      // that invariant — see lib/discoveryRefusal.ts.
+      logServeUnlessRefused(res, getServiceClient(), {
         userId: viewerId,
         servePoint: DiscoveryServePoint.FEED,
         route: "GET /discovery/feed",
@@ -2661,12 +2780,16 @@ router.get("/discovery/feed", async (req, res) => {
     }
   } catch (err) {
     req.log.error({ err }, "discovery/feed failed");
-    res.json({
-      places: [], events: [], posts: [], memories: [], sections: [],
-      nextCursor: null, total: 0, destination: destination ?? null, context: null,
-      sourceSummary: { seededDbCount: 0, osmCount: 0, userCreatedCount: 0 },
-      sessionId: feedSessionId,
-    });
+    sendDiscoveryRefusal(
+      res,
+      {
+        places: [], events: [], posts: [], memories: [], sections: [],
+        nextCursor: null, total: 0, destination: destination ?? null, context: null,
+        sourceSummary: { seededDbCount: 0, osmCount: 0, userCreatedCount: 0 },
+        sessionId: feedSessionId,
+      },
+      discoveryRefusal("transient_db", "feed_assembly_failed", "GET /discovery/feed"),
+    );
   }
 });
 
@@ -2891,7 +3014,14 @@ router.get("/discovery/community", async (req, res) => {
 
     if (error) {
       req.log.error({ err: error }, "discovery/community query failed");
-      res.json({ items: [], city, total: 0 });
+      // D11 / `11` §9. This is serve point 10's single read: if it fails there is
+      // no community half at all, so the empty body below is the failure and not
+      // a city without curated places.
+      sendDiscoveryRefusal(
+        res,
+        { items: [], city, total: 0 },
+        discoveryRefusal("transient_db", "community_places_read_failed", "GET /discovery/community"),
+      );
       return;
     }
 
@@ -3042,7 +3172,7 @@ router.get("/discovery/community", async (req, res) => {
     // discovery_serve_log_enabled, so this adds no latency and cannot fail the
     // request. It no-ops for anonymous callers, because rank_events.user_id is
     // NOT NULL — a limit of the table, not of this call site.
-    void logDiscoveryServe(getServiceClient(), {
+    logServeUnlessRefused(res, getServiceClient(), {
       userId:     communityViewerId ?? "",
       servePoint: DiscoveryServePoint.COMMUNITY,
       items:      items.map((i) => ({ id: i.id })),
@@ -3051,7 +3181,11 @@ router.get("/discovery/community", async (req, res) => {
     });
   } catch (err) {
     req.log.error({ err }, "discovery/community route failed");
-    res.json({ items: [], city, total: 0 });
+    sendDiscoveryRefusal(
+      res,
+      { items: [], city, total: 0 },
+      discoveryRefusal("transient_db", "community_assembly_failed", "GET /discovery/community"),
+    );
   }
 });
 
@@ -3301,10 +3435,25 @@ router.get("/discovery/community/saved-ids", async (req, res) => {
       .from("discovery_place_saves")
       .select("place_id")
       .eq("user_id", user.id);
-    if (error) { res.json({ ids: [] }); return; }
+    // D11 / `11` §9. `{ ids: [] }` is what a user who has saved nothing gets, and
+    // it was also what a user got when the save table could not be read. The
+    // mobile client uses this list to pre-fill the bookmark state, so the two
+    // answers differ by exactly "every bookmark you own silently disappears".
+    if (error) {
+      sendDiscoveryRefusal(
+        res,
+        { ids: [] },
+        discoveryRefusal("transient_db", "saved_ids_read_failed", "GET /discovery/community/saved-ids"),
+      );
+      return;
+    }
     res.json({ ids: (data ?? []).map((r: { place_id: string }) => r.place_id) });
   } catch {
-    res.json({ ids: [] });
+    sendDiscoveryRefusal(
+      res,
+      { ids: [] },
+      discoveryRefusal("transient_db", "saved_ids_read_failed", "GET /discovery/community/saved-ids"),
+    );
   }
 });
 

@@ -104,10 +104,19 @@ import {
   type DiscoveryPlanParentTrip,
 } from "../lib/discoveryTripProjectionConsumer.js";
 import {
-  logDiscoveryServe,
   DiscoveryServePoint,
   searchTypeToItemKind,
 } from "../lib/discoveryServeLog.js";
+// D11 / `11` §9 — "A failure must not masquerade as success." One vocabulary for
+// every Discovery refusal; see lib/discoveryRefusal.ts for why the status stays
+// 200 and the refusal rides in the envelope. `logServeUnlessRefused` is
+// deliberately used INSTEAD of logDiscoveryServe at the two serve points below:
+// a refused response must not reach the exposure denominator.
+import {
+  discoveryRefusal,
+  sendDiscoveryRefusal,
+  logServeUnlessRefused,
+} from "../lib/discoveryRefusal.js";
 
 const router = Router();
 const logger = rootLogger.child({ route: "discoverySearch" });
@@ -2282,17 +2291,34 @@ router.get("/discovery/search", async (req, res) => {
   }
 
   try {
-    // Fail-closed: unknown block or age-restriction state → return empty results, never leak content
+    // Fail-closed: unknown block or age-restriction state → serve NOTHING, never
+    // leak content. `fetchBlockedSet` returns null for "could not be read", not
+    // for "there are none", and the two must not be confused.
+    //
+    // D11: the fail-closed DIRECTION was always right and is unchanged. What was
+    // wrong is that it was SILENT — the per-type search functions collapse a null
+    // set to [], so a transient blocks-table failure left this route answering
+    // `200 { results: [] }`, the same body it gives a query that genuinely
+    // matches nothing. The read is refused explicitly now, so the caller is told
+    // the difference instead of being handed a search result that is not one.
     const [blockedSet, ageRestrictedSet] = await Promise.all([
       fetchBlockedSet(sc, user.id),
       fetchAgeRestrictedSet(sc),
     ]);
+    if (!blockedSet || !ageRestrictedSet) {
+      sendDiscoveryRefusal(
+        res,
+        { results: [], nextCursor: null, hasMore: false, query: effectiveQ, type, timeLabel: ctx.timeLabel },
+        discoveryRefusal("transient_db", "visibility_state_unreadable", "GET /discovery/search"),
+      );
+      return;
+    }
 
     // Stage 0b — serve point 8. Search ranks nothing and logs nothing today; a
     // grep of this file for rankCandidates / rankItemsForDiscovery /
     // drsRankItems / logImpression returns nothing at all.
     const logSearchServe = (results: SearchResult[]) => {
-      void logDiscoveryServe(sc, {
+      logServeUnlessRefused(res, sc, {
         userId: user.id,
         servePoint: DiscoveryServePoint.SEARCH,
         route: "GET /discovery/search",
@@ -2317,7 +2343,13 @@ router.get("/discovery/search", async (req, res) => {
     }
   } catch (err) {
     logger.warn({ err, q: effectiveQ, type }, "discovery/search failed");
-    res.status(200).json({ results: [], nextCursor: null, hasMore: false, query: effectiveQ, type, timeLabel: null });
+    // D11 / `11` §9. Same body as before plus the one key that tells the caller
+    // this is a failure and not a search that found nothing.
+    sendDiscoveryRefusal(
+      res,
+      { results: [], nextCursor: null, hasMore: false, query: effectiveQ, type, timeLabel: null },
+      discoveryRefusal("transient_db", "search_failed", "GET /discovery/search"),
+    );
   }
 });
 
@@ -2440,7 +2472,18 @@ router.get("/discovery/suggest", async (req, res) => {
   const isHandleQuery = rawInput.startsWith("@");
   const q = sanitizeQuery(applyAliases(isHandleQuery ? rawInput.slice(1) : rawInput)).slice(0, 80);
   if (q.length < 2) {
-    res.status(200).json({ query: q, groups: [] });
+    // `11` §9 class 1, VALIDATION — and the one place in this lane where a
+    // validation refusal is NOT a 4xx. This fires on every keystroke of a
+    // typeahead; a 400 here would turn normal typing into a stream of client
+    // errors, and the input is not invalid, it is merely not yet enough. So the
+    // 200 stays and the refusal names why the groups are empty. Contrast
+    // /discovery/search, whose `q` is a required parameter and whose
+    // `invalid_payload` 400 is left exactly as it is.
+    sendDiscoveryRefusal(
+      res,
+      { query: q, groups: [] },
+      discoveryRefusal("validation", "query_too_short", "GET /discovery/suggest"),
+    );
     return;
   }
 
@@ -2477,7 +2520,16 @@ router.get("/discovery/suggest", async (req, res) => {
       fetchAgeRestrictedSet(sc),
     ]);
     if (!blockedSet || !ageRestrictedSet) {
-      res.status(200).json({ query: q, groups: [] });
+      // D11: the early return and its fail-closed direction are unchanged; only
+      // the silence is fixed. This body used to be byte-identical to the two
+      // others this route can send (too-short query, and the catch below), which
+      // is the row C14 certified as correct and the owner's D11 ruling
+      // supersedes.
+      sendDiscoveryRefusal(
+        res,
+        { query: q, groups: [] },
+        discoveryRefusal("transient_db", "visibility_state_unreadable", "GET /discovery/suggest"),
+      );
       return;
     }
 
@@ -2521,7 +2573,7 @@ router.get("/discovery/suggest", async (req, res) => {
     });
     // Stage 0b — serve point 9. Flattened in the order the groups are served,
     // so `position` reflects what the user actually saw top to bottom.
-    void logDiscoveryServe(sc, {
+    logServeUnlessRefused(res, sc, {
       userId: user.id,
       servePoint: DiscoveryServePoint.SUGGEST,
       route: "GET /discovery/suggest",
@@ -2532,7 +2584,11 @@ router.get("/discovery/suggest", async (req, res) => {
     });
   } catch (err) {
     logger.warn({ err, q }, "discovery/suggest failed");
-    res.status(200).json({ query: q, groups: [] });
+    sendDiscoveryRefusal(
+      res,
+      { query: q, groups: [] },
+      discoveryRefusal("transient_db", "suggest_failed", "GET /discovery/suggest"),
+    );
   }
 });
 
