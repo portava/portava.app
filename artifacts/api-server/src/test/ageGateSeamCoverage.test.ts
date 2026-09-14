@@ -17,7 +17,8 @@
  *      a shape assertion on the declaration, because a future "convenience"
  *      widening of the union would silently disarm the compiler half.
  *
- *   2. THIS SCAN. A file under `src/routes/**` or `src/services/**` that reads
+ *   2. THIS SCAN. A file under `src/routes/**`, `src/services/**` or `src/lib/**`
+ *      that reads
  *      `profiles.date_of_birth` must be routed through the seam — or be listed
  *      here with a reason someone wrote down. An eighth gate written the old way
  *      goes red on the commit that introduces it.
@@ -43,6 +44,16 @@ const SRC = join(__dir, "..");
  * rather than left to launder it.
  */
 const NOT_A_GATE: Record<string, string> = {
+  "lib/gateAge.ts": "THE SEAM. It is the one place allowed to read the column.",
+  "lib/travelerVerification.ts":
+    "The Rent-a-Buddy identity helper, which applies the same contradiction rule " +
+    "(verifiedAgeSignalFromRows) that the seam composes.",
+  "lib/deletion/signalRules.ts":
+    "A REGEX of PII field NAMES for the deletion-signal classifier. It matches the " +
+    "string 'date_of_birth'; it does not read the column.",
+  "lib/visuals/sanitize.ts":
+    "A list of field NAMES stripped from visual-generation prompts. Same shape as " +
+    "signalRules.ts — a redaction list, not a read.",
   "routes/profile.ts":
     "WRITE side (PATCH /me/profile sets the column) plus the PROFILE_COLUMNS select list. " +
     "The READ side — the ageGateRequired flag — is routed through the seam in the same file.",
@@ -53,8 +64,8 @@ const NOT_A_GATE: Record<string, string> = {
 
 /** Imports that mean "this file's age answers come from the seam". */
 const SEAM_IMPORTS = [
-  "../lib/gateAge.js", "../../lib/gateAge.js",
-  "../lib/travelerVerification.js", "../../lib/travelerVerification.js",
+  "../lib/gateAge.js", "../../lib/gateAge.js", "./gateAge.js",
+  "../lib/travelerVerification.js", "../../lib/travelerVerification.js", "./travelerVerification.js",
 ];
 
 function walk(dir: string, out: string[] = []): string[] {
@@ -109,22 +120,35 @@ export function gateAgeUnionArms(src: string): string[] {
   return arms;
 }
 
-const GATE_DIRS = [join(SRC, "routes"), join(SRC, "services")];
-const FILES = GATE_DIRS.flatMap((d) => walk(d)).map((f) => ({
-  rel: relative(SRC, f).split(sep).join("/"),
-  src: readFileSync(f, "utf8"),
-}));
+/**
+ * `lib` is scanned too, and that is not decoration: a gate does not have to live
+ * in a route file. `lib/mediaEligibility.ts` IS a gate and it lives there, so the
+ * next one could read `date_of_birth` from that directory and escape a scan that
+ * covered only routes and services.
+ *
+ * `lib/database.types.ts` is generated and is EXCLUDED rather than allowlisted —
+ * it declares every column in the database, so listing it as "not a gate" would
+ * be listing the schema itself.
+ */
+const GATE_DIRS = [join(SRC, "routes"), join(SRC, "services"), join(SRC, "lib")];
+const GENERATED = new Set(["lib/database.types.ts"]);
+const FILES = GATE_DIRS.flatMap((d) => walk(d))
+  .map((f) => ({ rel: relative(SRC, f).split(sep).join("/"), src: readFileSync(f, "utf8") }))
+  .filter((f) => !GENERATED.has(f.rel));
 
 describe("age-gate seam coverage — a new gate cannot read a date of birth around the rule", () => {
   it("the scan is actually looking at the tree", () => {
-    assert.ok(FILES.length > 100, `expected the route/service tree, found ${FILES.length} files`);
+    assert.ok(FILES.length > 100, `expected the route/service/lib tree, found ${FILES.length} files`);
+    for (const dir of ["routes/", "services/", "lib/"]) {
+      assert.ok(FILES.some((f) => f.rel.startsWith(dir)), `the scan reached no file under ${dir}`);
+    }
     assert.ok(
       FILES.some((f) => stripComments(f.src).includes("date_of_birth")),
       "found no date_of_birth reference at all — the scan has stopped covering anything",
     );
   });
 
-  it("every route/service that reads date_of_birth is routed through the seam", () => {
+  it("every route/service/lib file that reads date_of_birth is routed through the seam", () => {
     const offenders: string[] = [];
     for (const f of FILES) {
       const code = stripComments(f.src);
@@ -141,11 +165,12 @@ describe("age-gate seam coverage — a new gate cannot read a date of birth arou
       "or add the file to NOT_A_GATE with the reason it is not one.");
   });
 
-  it("no route or service imports the un-contradicted age arithmetic", () => {
+  it("no route, service or lib gate imports the un-contradicted age arithmetic", () => {
     // `calculateUserAge` turns a typed birthday into a number with nothing
     // consulted. It is the correct primitive INSIDE the seam and the wrong one
     // at a gate, so the gate layer does not import it at all.
     const offenders = FILES
+      .filter((f) => !NOT_A_GATE[f.rel])
       .filter((f) => /import[^;]*\bcalculateUserAge\b/.test(stripComments(f.src)))
       .map((f) => f.rel);
     assert.deepEqual(offenders, [],
