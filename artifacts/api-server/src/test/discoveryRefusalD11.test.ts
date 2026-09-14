@@ -44,12 +44,36 @@ import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import discoveryRouter, { _setTestDbPlacesOverride } from "../routes/discovery.js";
 import discoverySearchRouter from "../routes/discoverySearch.js";
-import { DISCOVERY_REFUSAL_CLASSES } from "../lib/discoveryRefusal.js";
+import {
+  DISCOVERY_REFUSAL_CLASSES, discoveryRefusal, sendDiscoveryRefusal, logServeUnlessRefused,
+} from "../lib/discoveryRefusal.js";
+import { invalidateServeLogFlagCache, DiscoveryServePoint } from "../lib/discoveryServeLog.js";
 
 // ── No network. Overpass/Nominatim throw immediately rather than hanging 25s.
+//
+// `nominatimHandler` is the one seam the upstream_unavailable block below needs:
+// the difference between "Nominatim is down" and "Nominatim answered, and knows
+// no such city" is a property OF THE UPSTREAM RESPONSE, so it cannot be probed
+// through a database fixture. Left null, the original blanket throw applies and
+// every pre-existing test in this file keeps the behaviour it was written for.
+type NominatimReply = { status: number; body: unknown };
+let nominatimHandler: ((query: string) => NominatimReply) | null = null;
+/** Every Nominatim URL the route actually reached out on. */
+let nominatimCalls: string[] = [];
+
 const _originalFetch = globalThis.fetch;
 globalThis.fetch = (async (url: any, init?: any) => {
   const s = String(typeof url === "string" ? url : (url as URL).href ?? "");
+  if (s.includes("nominatim.openstreetmap.org")) {
+    nominatimCalls.push(s);
+    if (nominatimHandler) {
+      const { status, body } = nominatimHandler(s);
+      return new Response(JSON.stringify(body), {
+        status,
+        headers: { "content-type": "application/json" },
+      });
+    }
+  }
   if (s.includes("overpass-api.de") || s.includes("nominatim.openstreetmap.org")) {
     throw new Error("Network blocked in test environment");
   }
@@ -73,7 +97,19 @@ let inserts: Array<{ table: string; rows: unknown }> = [];
  */
 function buildFakeClient(opts: { errorTables?: string[]; rows?: Record<string, any[]> } = {}) {
   const errorTables = new Set(opts.errorTables ?? []);
-  const rowsFor = opts.rows ?? {};
+  // THE SERVE LOG FLAG IS ON IN EVERY FIXTURE, DELIBERATELY.
+  //
+  // `logDiscoveryServe` returns before its insert unless
+  // `feature_flags.discovery_serve_log_enabled` is true. With the flag absent —
+  // which is what an unseeded fake client reports — NO request in this file
+  // could write a rank_events row, refused or not, and every `assertNoExposure`
+  // below was passing VACUOUSLY: it was measuring a disabled flag, not a guard.
+  // Seeding the flag on is what makes the negative assertions mean something,
+  // and it is what lets the positive controls exist at all.
+  const rowsFor: Record<string, any[]> = {
+    feature_flags: [{ flag: "discovery_serve_log_enabled", enabled: true }],
+    ...(opts.rows ?? {}),
+  };
 
   function from(table: string) {
     fromCalls.push(table);
@@ -216,8 +252,13 @@ after(() => {
   _setTestDbPlacesOverride(null);
 });
 
-beforeEach(() => { fromCalls = []; inserts = []; });
-afterEach(() => { _setTestDbPlacesOverride(null); });
+beforeEach(() => {
+  fromCalls = []; inserts = []; nominatimCalls = [];
+  // The flag read is memoised for 30s; without this the first fixture to be
+  // asked would decide the answer for the whole file.
+  invalidateServeLogFlagCache();
+});
+afterEach(() => { _setTestDbPlacesOverride(null); nominatimHandler = null; });
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/discovery/feed — serve point 7
@@ -516,5 +557,356 @@ describe("GET /discovery/suggest", () => {
     assert.notDeepEqual(short.body, failed.body, "validation and transient-DB still collapse to one body");
     assert.notDeepEqual(failed.body, empty.body, "a DB failure still looks exactly like a genuine empty");
     assert.equal(empty.body.refusal, undefined, "the genuine empty must remain unmarked");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// upstream_unavailable — the SEVENTH class.
+//
+// OWNER RULING of 2026-09-14, verbatim and binding:
+//
+//   "Add upstream_unavailable for upstream dependency failures. Do not cache
+//    rate limits or outages as 'this location does not exist.' Verify that
+//    clients recognize refusal responses, preserve existing bookmarks on read
+//    failures, and exclude failed responses from exposure accounting. A
+//    distinguishable response body alone is insufficient if consumers still
+//    treat it as successful empty data."
+//
+// `11` §9 names SIX classes. The owner added the seventh, and the reason is the
+// defect these tests pin: Discovery's geocoder is Nominatim, an upstream nobody
+// here operates. When Nominatim answers 429 or 503 the route knows nothing
+// about the city — and the six §9 classes have no honest home for that.
+// `transient_db` is the nearest, and it is false: no database was involved.
+// Filing an upstream outage under `transient_db` is a lie about the failure,
+// which is the thing lib/discoveryRefusal.ts exists to stop.
+//
+// THE CACHE IS THE REAL DAMAGE, AND IT OUTLIVES THE OUTAGE.
+// `geocode()` returned `null` on `!res.ok`, and `geocodeCached` cached that
+// null for 24 HOURS in L1 (in-process) and would have persisted it to L2
+// (`discovery_geocode_cache`) had the null been truthy. So one Nominatim 429
+// did not merely fail one request: it wrote down "this city does not exist" and
+// served that answer to every user for the rest of the day, long after
+// Nominatim recovered. A wrong answer cached is a wrong answer multiplied.
+//
+// The tests below therefore assert TWO things that are easy to confuse:
+//   (a) the outage is NAMED (upstream_unavailable), and
+//   (b) NOTHING about it is written down — the very next request re-asks.
+// And the control that keeps (b) honest: a genuine "no such city" is a FACT,
+// and it must still cache and must still be a plain empty result with no
+// refusal on it. Conflating the two in EITHER direction is the defect.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Nominatim is down: every lookup 429s. */
+const NOMINATIM_RATE_LIMITED = () => ({ status: 429, body: { error: "Too Many Requests" } });
+/** Nominatim is up and knows the place. */
+const NOMINATIM_KNOWS_MIAMI = () => ({
+  status: 200,
+  body: [{ lat: "25.7743", lon: "-80.1937", display_name: "Miami, Florida, United States" }],
+});
+/** Nominatim is up and has never heard of it — a FACT, not a failure. */
+const NOMINATIM_KNOWS_NOTHING = () => ({ status: 200, body: [] });
+
+/** No row may be written to the geocode L2 cache for an outage. */
+function assertNoGeocodePersisted(what: string) {
+  const writes = inserts.filter((i) => i.table === "discovery_geocode_cache");
+  assert.equal(
+    writes.length, 0,
+    `${what}: ${writes.length} write(s) to discovery_geocode_cache for an OUTAGE — ` +
+    `the L2 cache now holds a failure dressed as a fact: ${JSON.stringify(writes)}`,
+  );
+}
+
+describe("upstream_unavailable — `11` §9's six plus the owner's seventh", () => {
+  it("is declared, and is NOT one of the six the spec named", () => {
+    assert.ok(
+      (DISCOVERY_REFUSAL_CLASSES as readonly string[]).includes("upstream_unavailable"),
+      "the seventh class does not exist — an upstream outage has no honest class to be filed under",
+    );
+    assert.equal(
+      DISCOVERY_REFUSAL_CLASSES.length, 7,
+      "the vocabulary must be exactly `11` §9's six plus the owner's one addition",
+    );
+  });
+});
+
+describe("GET /discovery/counts — a geocoder outage", () => {
+  it("is named upstream_unavailable, not `counts: {}` and not transient_db", async () => {
+    setClient();
+    nominatimHandler = NOMINATIM_RATE_LIMITED;
+    const r = await get("/api/discovery/counts?destination=Outagetown-Counts");
+    assert.equal(r.status, 200, "additive shape: the status stays 200");
+    assert.deepEqual(r.body.counts, {}, "the empty collection still ships for old clients");
+    assertRefusal(r.body, {
+      class: "upstream_unavailable", code: "nominatim_http_429", route: "GET /discovery/counts",
+    }, "/discovery/counts geocoder outage");
+    assertNoExposure("/discovery/counts geocoder outage");
+    assertNoGeocodePersisted("/discovery/counts geocoder outage");
+  });
+
+  it("does not hand the outage a five-minute cache header", async () => {
+    setClient();
+    nominatimHandler = NOMINATIM_RATE_LIMITED;
+    const r = await get("/api/discovery/counts?destination=Outagetown-Header");
+    assert.ok(r.body.refusal, "precondition: this request must have refused");
+    assert.equal(
+      r.headers["cache-control"], undefined,
+      `an outage was served with Cache-Control: ${r.headers["cache-control"]}`,
+    );
+  });
+
+  it("CACHES NOTHING: the request after the outage re-asks Nominatim and succeeds", async () => {
+    // The whole point. Under the old code the 429 wrote `null` into the 24-hour
+    // L1 geocode cache, so THIS second request never touched the network and
+    // answered "Miami does not exist" until tomorrow.
+    setClient();
+    nominatimHandler = NOMINATIM_RATE_LIMITED;
+    const outage = await get("/api/discovery/counts?destination=Cachetown");
+    assert.ok(outage.body.refusal, "precondition: the first request must have refused");
+    const callsAfterOutage = nominatimCalls.length;
+
+    _setTestDbPlacesOverride(async () => []);
+    nominatimHandler = NOMINATIM_KNOWS_MIAMI;
+    const recovered = await get("/api/discovery/counts?destination=Cachetown");
+    assert.ok(
+      nominatimCalls.length > callsAfterOutage,
+      "the second request never re-asked Nominatim — the outage was cached as a fact",
+    );
+    assert.equal(
+      recovered.body.refusal, undefined,
+      "the recovered request still refused — a cached outage is still being served",
+    );
+    assert.ok(
+      Object.keys(recovered.body.counts).length > 0,
+      "the recovered request answered empty counts — the cached null survived the outage",
+    );
+  });
+
+  it("a genuine `no such city` still caches and is still a plain empty result — the control", async () => {
+    // The other direction of the same conflation. Nominatim ANSWERED; it simply
+    // has no such place. That is a fact about the world, it is cacheable, and it
+    // must NOT be dressed up as a refusal — a refusal on every empty answer
+    // distinguishes nothing.
+    setClient();
+    _setTestDbPlacesOverride(async () => []);
+    nominatimHandler = NOMINATIM_KNOWS_NOTHING;
+    const first = await get("/api/discovery/counts?destination=Nowheresville-XYZ");
+    assert.equal(first.status, 200);
+    assert.deepEqual(first.body.counts, {});
+    assert.equal(
+      first.body.refusal, undefined,
+      "a genuine miss was marked as a refusal — that is the same lie inverted",
+    );
+    const callsAfterMiss = nominatimCalls.length;
+
+    const second = await get("/api/discovery/counts?destination=Nowheresville-XYZ");
+    assert.equal(second.body.refusal, undefined);
+    assert.equal(
+      nominatimCalls.length, callsAfterMiss,
+      "a genuine `no such city` was NOT cached — the 1 req/s fair-use budget is now spent re-asking a settled question",
+    );
+  });
+});
+
+describe("GET /discovery/feed — a geocoder outage", () => {
+  it("is named upstream_unavailable, not an empty feed", async () => {
+    setClient();
+    nominatimHandler = NOMINATIM_RATE_LIMITED;
+    const r = await get("/api/discovery/feed?city=Outagetown-Feed", true);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.places, []);
+    assertRefusal(r.body, {
+      class: "upstream_unavailable", code: "nominatim_http_429", route: "GET /discovery/feed",
+    }, "/discovery/feed geocoder outage");
+    assertNoExposure("/discovery/feed geocoder outage");
+    assertNoGeocodePersisted("/discovery/feed geocoder outage");
+  });
+
+  it("a genuine `no such city` carries NO refusal — the control", async () => {
+    setClient();
+    nominatimHandler = NOMINATIM_KNOWS_NOTHING;
+    const r = await get("/api/discovery/feed?city=Nowheresville-ABC", true);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.places, []);
+    assert.equal(r.body.refusal, undefined);
+  });
+});
+
+describe("GET /discovery — a geocoder outage", () => {
+  it("is named upstream_unavailable, not transient_db", async () => {
+    // This route already refused — but as `transient_db`, because a Nominatim
+    // throw landed in a catch that assumed every failure was a database one.
+    // The body was distinguishable from an empty city and STILL said the wrong
+    // thing about what broke.
+    setClient();
+    _setTestDbPlacesOverride(async () => []);
+    nominatimHandler = NOMINATIM_RATE_LIMITED;
+    const r = await get("/api/discovery?destination=Outagetown-Discovery&category=food");
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.places, []);
+    assertRefusal(r.body, {
+      class: "upstream_unavailable", code: "nominatim_http_429", route: "GET /discovery",
+    }, "/discovery geocoder outage");
+    assertNoExposure("/discovery geocoder outage");
+    assertNoGeocodePersisted("/discovery geocoder outage");
+  });
+
+  it("a DATABASE failure on the same route is still transient_db — the control that keeps the seventh class honest", async () => {
+    // If every failure became `upstream_unavailable` the new class would be as
+    // uninformative as the old one. The two must stay distinguishable.
+    setClient();
+    nominatimHandler = NOMINATIM_KNOWS_MIAMI;
+    _setTestDbPlacesOverride(async () => { throw new Error("discovery_places read exploded"); });
+    const r = await get("/api/discovery?destination=Healthytown-Discovery&category=food");
+    assertRefusal(r.body, {
+      class: "transient_db", code: "discovery_assembly_failed", route: "GET /discovery",
+    }, "/discovery database failure");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Exposure accounting, with the POSITIVE CONTROL beside every "no insert".
+//
+// "No rank_events row was written" is a weak assertion on its own: it also
+// holds when the fixture never reaches the serve log at all, when the table
+// name changed, or when the probe is watching the wrong client. Each arm below
+// therefore pairs the refusal with A REAL SERVE ON THE SAME FIXTURE and asserts
+// that the real serve writes EXACTLY ONE impression batch. If the positive
+// control goes quiet, the negative one has stopped proving anything.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("exposure accounting — refused responses vs. real serves", () => {
+  /** rank_events insert calls recorded so far. */
+  const rankInserts = () => inserts.filter((i) => i.table === "rank_events");
+
+  it("GET /discovery/feed: an upstream outage writes NO impression, a real serve writes exactly one", async () => {
+    // NEGATIVE — the refusal.
+    setClient({ rows: { discovery_places: [] } });
+    nominatimHandler = NOMINATIM_RATE_LIMITED;
+    const refused = await get("/api/discovery/feed?city=Outagetown-Exposure", true);
+    assert.ok(refused.body.refusal, "precondition: this request must have refused");
+    assert.equal(refused.body.refusal.coverage, "nothing");
+    assert.equal(
+      rankInserts().length, 0,
+      "a refused feed entered the exposure denominator",
+    );
+
+    // POSITIVE CONTROL — same fixture, same viewer, same route, a real serve.
+    // Without this the assertion above would also pass if nothing on this route
+    // could ever write an impression.
+    fromCalls = []; inserts = [];
+    setClient({ rows: { discovery_places: [] } });
+    _setTestDbPlacesOverride(async () => [{
+      id: "db/11111111-1111-1111-1111-111111111111",
+      name: "A real served place", category: "for_you", type: null, description: null,
+      distanceKm: null, lat: 25.77, lng: -80.19, tags: [], address: null,
+      website: null, phone: null, openingHours: null, rating: null, isOpenNow: null,
+    } as any]);
+    nominatimHandler = NOMINATIM_KNOWS_MIAMI;
+    const served = await get("/api/discovery/feed?city=Healthytown-Exposure", true);
+    assert.equal(served.body.refusal, undefined, "the positive control must not itself be a refusal");
+    assert.ok(served.body.places.length > 0, "the positive control served nothing — it proves nothing");
+    await new Promise((r) => setTimeout(r, 60)); // the serve log is fire-and-forget
+    assert.equal(
+      rankInserts().length, 1,
+      `POSITIVE CONTROL FAILED: a genuine serve wrote ${rankInserts().length} rank_events batches, ` +
+      `not 1 — the "no insert" assertion above is not proving anything`,
+    );
+  });
+
+  it("GET /discovery/counts: an upstream outage writes NO impression, and counts never log one at all", async () => {
+    setClient();
+    nominatimHandler = NOMINATIM_RATE_LIMITED;
+    const refused = await get("/api/discovery/counts?destination=Outagetown-CountsExp");
+    assert.ok(refused.body.refusal);
+    assert.equal(rankInserts().length, 0);
+
+    // The honest positive control for THIS route is that it has no serve point:
+    // a successful /counts writes no impression either, because it serves totals
+    // and never content. Stating that here stops the negative assertion above
+    // from being read as evidence the guard fired.
+    fromCalls = []; inserts = [];
+    setClient();
+    _setTestDbPlacesOverride(async () => []);
+    nominatimHandler = NOMINATIM_KNOWS_MIAMI;
+    const ok = await get("/api/discovery/counts?destination=Healthytown-CountsExp");
+    assert.equal(ok.body.refusal, undefined);
+    await new Promise((r) => setTimeout(r, 60));
+    assert.equal(
+      rankInserts().length, 0,
+      "/discovery/counts wrote an impression — it serves totals, not content, and has no serve point",
+    );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The exposure guard ITSELF, not the route that happens to satisfy it.
+//
+// WHY THIS BLOCK EXISTS (a surviving mutant, recorded rather than hidden).
+// Deleting the `wasRefused` early-return from `logServeUnlessRefused` did NOT
+// turn any route test above red. That is not a gap in the routes; it is the
+// point lib/discoveryRefusal.ts already makes in prose: a `coverage: "nothing"`
+// refusal carries an EMPTY collection, and `logDiscoveryServe` returns before
+// its insert whenever `items.length === 0`. So on today's routes the invariant
+// is held by a guard written for a different reason, in a file this lane does
+// not own — "REAL but INCIDENTAL", in the module's own words.
+//
+// A test that only ever exercises the incidental path cannot tell the guard
+// from its absence. These two call the guard DIRECTLY, with a non-empty item
+// list — the shape a future partial-refusal call site would produce, and the
+// one the incidental `length === 0` check does not cover.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("logServeUnlessRefused — the guard, exercised directly", () => {
+  /** Minimal express-Response stand-in: enough for sendDiscoveryRefusal. */
+  function fakeRes() {
+    const r: any = {
+      headersSent: false,
+      status() { return r; },
+      json() { r.headersSent = true; return r; },
+    };
+    return r;
+  }
+
+  const ITEMS = [{ id: "db/aaaaaaaa-0000-0000-0000-000000000001" }, { id: "node/99" }];
+  const PARAMS = {
+    userId: VIEWER_ID,
+    servePoint: DiscoveryServePoint.FEED,
+    route: "GET /discovery/feed",
+    sessionId: "11111111-2222-3333-4444-555555555555",
+    items: ITEMS,
+    context: { destination: "Miami" },
+  };
+
+  it("suppresses the serve log for a refused response even when HANDED items", async () => {
+    setClient();
+    const res = fakeRes();
+    sendDiscoveryRefusal(res, { places: [] },
+      discoveryRefusal("upstream_unavailable", "nominatim_http_429", "GET /discovery/feed"));
+    logServeUnlessRefused(res, buildFakeClient({
+      rows: { feature_flags: [{ flag: "discovery_serve_log_enabled", enabled: true }] },
+    }) as any, PARAMS);
+    await new Promise((r) => setTimeout(r, 60));
+    assert.equal(
+      inserts.filter((i) => i.table === "rank_events").length, 0,
+      "a REFUSED response wrote impressions — the guard is not doing anything",
+    );
+  });
+
+  it("POSITIVE CONTROL: the same items on a NOT-refused response write exactly one batch", async () => {
+    // This is what makes the assertion above about the guard rather than about
+    // a fixture that can never insert. Same items, same params, same client —
+    // the only difference is that this response was never marked refused.
+    setClient();
+    const res = fakeRes();
+    logServeUnlessRefused(res, buildFakeClient({
+      rows: { feature_flags: [{ flag: "discovery_serve_log_enabled", enabled: true }] },
+    }) as any, PARAMS);
+    await new Promise((r) => setTimeout(r, 60));
+    const rank = inserts.filter((i) => i.table === "rank_events");
+    assert.equal(
+      rank.length, 1,
+      `POSITIVE CONTROL FAILED: an unrefused serve wrote ${rank.length} batches, not 1`,
+    );
+    assert.equal((rank[0]!.rows as unknown[]).length, ITEMS.length, "one impression row per served item");
   });
 });

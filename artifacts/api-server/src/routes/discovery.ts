@@ -45,7 +45,7 @@ import { logDiscoveryServe, DiscoveryServePoint } from "../lib/discoveryServeLog
 import {
   discoveryRefusal,
   sendDiscoveryRefusal,
-  logServeUnlessRefused,
+  logServeUnlessRefused, classifyRefusal, upstreamCall, UpstreamUnavailableError,
 } from "../lib/discoveryRefusal.js";
 import { resolveDiscoveryEngineMode } from "../lib/discoveryEngineMode.js";
 // The PDE ranking pipeline (D5=B, ranking half). portavaRank, the
@@ -366,13 +366,13 @@ async function fetchWithTimeout(url: string, init?: RequestInit): Promise<Respon
 
 async function geocode(location: string): Promise<{ lat: number; lng: number; display: string } | null> {
   const url = `${NOMINATIM_URL}?q=${encodeURIComponent(location)}&format=json&limit=1`;
-  const res = await fetchWithTimeout(url, {
+  const res = await upstreamCall("nominatim", () => fetchWithTimeout(url, {
     headers: { "User-Agent": "TravelBuddy/1.0 (travel-buddy-app; discovery)" },
-  });
-  if (!res.ok) return null;
-  const data = (await res.json()) as Array<{ lat: string; lon: string; display_name: string }>;
+  }));
+  if (!res.ok) throw new UpstreamUnavailableError("nominatim", `nominatim_http_${res.status}`);
+  const data = await upstreamCall("nominatim", async () => (await res.json()) as Array<{ lat: string; lon: string; display_name: string }>);
   const r = data?.[0];
-  if (!r) return null;
+  if (!r) return null; // THE ONLY null: Nominatim answered and knows no such place — a fact, and cacheable. See GEOCODE OUTAGES at the foot of this file.
   return { lat: parseFloat(r.lat), lng: parseFloat(r.lon), display: r.display_name };
 }
 
@@ -2349,7 +2349,7 @@ router.get("/discovery", async (req, res) => {
         sourceSummary: { seededDbCount: 0, osmCount: 0, userCreatedCount: 0 },
         meta: { cacheLevel: "error", timings: { totalMs: Date.now() - t0 } },
       },
-      discoveryRefusal("transient_db", "discovery_assembly_failed", "GET /discovery"),
+      classifyRefusal(err, "GET /discovery", "discovery_assembly_failed"),
     );
   }
 });
@@ -2461,11 +2461,11 @@ router.get("/discovery/counts", async (req, res) => {
       : null;
 
   // Resolve coords — one geocode call with full dedup, or skip if supplied.
-  const coords = clientCoords ?? await geocodeCached(destination);
-  if (!coords) {
-    res.json({ counts: {}, destination, cached: false });
-    return;
-  }
+  const geo: GeocodeOutcome = clientCoords ? { ok: true, coords: { ...clientCoords, display: destination } } : await geocodeOutcome(destination);
+  if (!geo.ok) { sendGeocodeRefusal(res, geo.err, "GET /discovery/counts", { counts: {}, destination, cached: false }); return; }
+  const coords = geo.coords;
+  // `null` here is a GENUINE "no such city" — plain empty answer, no refusal. See GEOCODE OUTAGES at the foot of this file.
+  if (!coords) { res.json({ counts: {}, destination, cached: false }); return; }
 
   const radiusM = Math.round(radiusKm * 1_000);
 
@@ -2546,7 +2546,7 @@ router.get("/discovery/counts", async (req, res) => {
     sendDiscoveryRefusal(
       res,
       { counts: {}, destination, cached: false },
-      discoveryRefusal("transient_db", "category_counts_failed", "GET /discovery/counts"),
+      classifyRefusal(err, "GET /discovery/counts", "category_counts_failed"),
     );
   }
 });
@@ -2594,18 +2594,18 @@ router.get("/discovery/feed", async (req, res) => {
   let coords = clientCoords;
 
   if (!coords) {
-    const geo = await geocodeCached(destination!);
-    if (!geo) {
-      res.json({
-        places: [], events: [], posts: [], memories: [], sections: [],
-        nextCursor: null, total: 0, destination: destination ?? null, context: null,
-        sourceSummary: { seededDbCount: 0, osmCount: 0, userCreatedCount: 0 },
-        sessionId: feedSessionId,
-      });
+    const geo = await geocodeOutcome(destination!);
+    // An outage is refused and cached nowhere; a genuine miss keeps its plain empty answer. See GEOCODE OUTAGES at the foot of this file.
+    if (!geo.ok) {
+      sendGeocodeRefusal(res, geo.err, "GET /discovery/feed", emptyFeedEnvelope(destination ?? null, feedSessionId));
       return;
     }
-    coords = { lat: geo.lat, lng: geo.lng };
-    if (!destination) destination = geo.display.split(",")[0]?.trim();
+    if (!geo.coords) {
+      res.json(emptyFeedEnvelope(destination ?? null, feedSessionId));
+      return;
+    }
+    coords = { lat: geo.coords.lat, lng: geo.coords.lng };
+    if (!destination) destination = geo.coords.display.split(",")[0]?.trim();
   }
 
   // ── Viewer identity for event-post pipeline ───────────────────────────────
@@ -2788,7 +2788,7 @@ router.get("/discovery/feed", async (req, res) => {
         sourceSummary: { seededDbCount: 0, osmCount: 0, userCreatedCount: 0 },
         sessionId: feedSessionId,
       },
-      discoveryRefusal("transient_db", "feed_assembly_failed", "GET /discovery/feed"),
+      classifyRefusal(err, "GET /discovery/feed", "feed_assembly_failed"),
     );
   }
 });
@@ -3650,5 +3650,135 @@ router.get("/discovery/wikidata/:wikidataId", async (req, res) => {
   _wikidataCache.set(wikidataId, { data: enrichment, cachedAt: Date.now() });
   res.json(enrichment);
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GEOCODE OUTAGES — the seventh refusal class at its call sites.
+//
+// OWNER RULING, 2026-09-14, verbatim:
+//   "Add upstream_unavailable for upstream dependency failures. Do not cache
+//    rate limits or outages as 'this location does not exist.'"
+//
+// WHAT WAS WRONG
+// ==============
+// `geocode()` answered a Nominatim 429/503 with `return null`, which is also
+// what it answers when Nominatim is healthy and simply has no such place. Two
+// different facts, one value. `geocodeCached` then stored that null for TWENTY-
+// FOUR HOURS in L1 (`_geocodeMemory`) and, for a truthy result, in L2
+// (`discovery_geocode_cache`). Downstream, three routes read the null and
+// answered `200 { counts: {} }` / `200 { places: [] }` — the body a genuinely
+// empty city gets, with `/discovery/counts` adding `Cache-Control: max-age=300`
+// so every CDN in the path kept a copy.
+//
+// Net effect of one rate-limit response: the city stopped existing, for
+// everyone, for a day, from cache, with nothing in the response saying so.
+//
+// THE FIX IS A TYPE DISTINCTION, NOT A FLAG
+// =========================================
+// `geocode()` now THROWS `UpstreamUnavailableError` for an outage and still
+// returns `null` — and ONLY null — for a genuine miss.
+//
+// The throw does the caching half by itself and that is the point of choosing a
+// throw over a sentinel: in `geocodeCached` the two `_geocodeMemory.set` calls
+// and the `writeGeocodeToDb` call all sit AFTER the `await geocode(...)`, so a
+// rejection skips every one of them structurally. There is no "do not cache
+// this" flag anyone can forget to pass, and `_geocodePending.delete` still runs
+// in the `.finally`, so the next caller retries instead of joining a dead
+// promise. `geocodeCached` therefore needed no edit at all — which is the
+// strongest form this fix could take: the invariant holds because of the shape
+// of the code rather than because of a rule written next to it.
+//
+// A genuine miss is UNCHANGED and still caches. It is a fact about the world,
+// it is what the 24-hour cache is for, and Nominatim's 1 req/s fair-use policy
+// is the reason not to re-ask a settled question. Marking it as a refusal would
+// be the same lie inverted, and it has its own control in the test file.
+//
+// WHERE THE CLASS IS EMITTED
+// ==========================
+//   GET /discovery/counts  — `sendGeocodeRefusal` below, reached from the
+//                            coords resolution (the `geo.ok` branch).
+//   GET /discovery/feed    — same, from the destination resolution.
+//   GET /discovery         — its existing catch, via `classifyRefusal`: the
+//                            geocode call is inside that try, so the route
+//                            already refused; it refused with the WRONG CLASS.
+//
+// The fourth `geocodeCached` caller is the background L2 revalidation inside
+// GET /discovery, whose own `catch` already swallows failures by design — it
+// serves nothing and holds no response, so there is nobody to refuse to. The
+// fifth is `geocode()` direct in POST /discovery/community, which races a 4s
+// timeout and inserts the place without coordinates on failure; that is a write
+// path, it already degrades honestly, and no empty collection is served.
+//
+// RESIDUAL, STATED RATHER THAN HIDDEN
+// ===================================
+// Overpass is the OTHER upstream on these routes and it has the SAME defect:
+// `queryOverpass` returns `[]` on a non-ok response (see the comment on
+// `queryOverpassDeduped`, which records that a real egress-IP throttle "silently
+// served {places: [], total: 0}"). It is NOT fixed here. Making it throw changes
+// the contract of four call sites including the per-category `allSettled` fan-out
+// in `/discovery/counts`, where an Overpass outage would currently surface as
+// `transient_db` on every category — i.e. the same wrong-class defect, one
+// dependency over. It is a separate change with a separate blast radius and is
+// reported as this lane's outstanding residual rather than half-done here.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The result of asking the geocoder, with the two failure modes kept apart.
+ *
+ * `ok: true, coords: null` is "the geocoder answered: no such place".
+ * `ok: false`              is "we could not ask".
+ * Collapsing those two back into one nullable is the whole defect, so the type
+ * is written so that a caller must name which one it is handling.
+ */
+type GeocodeOutcome =
+  | { readonly ok: true;  readonly coords: { lat: number; lng: number; display: string } | null }
+  | { readonly ok: false; readonly err: unknown };
+
+/** `geocodeCached`, with an outage turned into a value the caller must branch on. */
+async function geocodeOutcome(location: string): Promise<GeocodeOutcome> {
+  try {
+    return { ok: true, coords: await geocodeCached(location) };
+  } catch (err) {
+    return { ok: false, err };
+  }
+}
+
+/**
+ * Send the empty envelope WITH the refusal that says why it is empty.
+ *
+ * Deliberately routed through `classifyRefusal` rather than hard-coding
+ * `upstream_unavailable`: an error that reaches here without being an
+ * `UpstreamUnavailableError` is a genuine internal fault, and it must keep
+ * saying `transient_db` rather than borrow a class that would send an operator
+ * to look at somebody else's service.
+ */
+function sendGeocodeRefusal<T extends object>(
+  // `Response` is the fetch Response in this module (see fetchWithTimeout), so
+  // the express one is taken from the function this forwards to rather than by
+  // adding a second, shadowing import of the same name.
+  res: Parameters<typeof sendDiscoveryRefusal>[0],
+  err: unknown,
+  route: string,
+  envelope: T,
+): void {
+  logger.warn({ route, err }, "discovery: geocoder unavailable — refusing rather than answering 'no such city'");
+  sendDiscoveryRefusal(res, envelope, classifyRefusal(err, route, "geocode_failed"));
+}
+
+/**
+ * The GET /discovery/feed empty body, in one place.
+ *
+ * Extracted because the refusal arm and the genuine-miss arm must ship the SAME
+ * envelope — identical but for the `refusal` key. Two hand-written copies is how
+ * they drift, and a drift here would hand the client a second way to tell the
+ * two apart that nobody designed.
+ */
+function emptyFeedEnvelope(destination: string | null, sessionId: string) {
+  return {
+    places: [], events: [], posts: [], memories: [], sections: [],
+    nextCursor: null, total: 0, destination, context: null,
+    sourceSummary: { seededDbCount: 0, osmCount: 0, userCreatedCount: 0 },
+    sessionId,
+  };
+}
 
 export default router;

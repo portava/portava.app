@@ -56,11 +56,47 @@
  * THE SIX CLASSES ARE `11` §9's LIST, NOT AN INVENTED ONE
  * ======================================================
  * All six are declared because §9 names all six. Only the ones that actually
- * occur on a Discovery route are emitted today — `transient_db` and
- * `validation`. `feature_disabled` and `unsupported_surface` have no reachable
- * site on these routes at the time of writing, and a site was NOT invented to
- * populate them: a class emitted where nothing of that kind happens is a lie
- * about the failure, which is the thing this module exists to stop.
+ * occur on a Discovery route are emitted today — `transient_db`, `validation`
+ * and (see below) `upstream_unavailable`. `feature_disabled` and
+ * `unsupported_surface` have no reachable site on these routes at the time of
+ * writing, and a site was NOT invented to populate them: a class emitted where
+ * nothing of that kind happens is a lie about the failure, which is the thing
+ * this module exists to stop.
+ *
+ * THE SEVENTH CLASS — AN OWNER RULING OF 2026-09-14, NOT A SPEC CLAUSE
+ * ===================================================================
+ * `11` §9 NAMES SIX CLASSES. `upstream_unavailable` IS NOT ONE OF THEM. It was
+ * added by the owner on 2026-09-14, verbatim:
+ *
+ *   "Add upstream_unavailable for upstream dependency failures. Do not cache
+ *    rate limits or outages as 'this location does not exist.' Verify that
+ *    clients recognize refusal responses, preserve existing bookmarks on read
+ *    failures, and exclude failed responses from exposure accounting. A
+ *    distinguishable response body alone is insufficient if consumers still
+ *    treat it as successful empty data."
+ *
+ * That provenance is recorded here rather than smoothed over, because a reader
+ * who goes looking for this class in `11` §9 will not find it, and a class that
+ * quietly claims spec authority it does not have is the same kind of untruth as
+ * a failure claiming to be a result.
+ *
+ * WHY IT HAD TO EXIST RATHER THAN REUSE ONE OF THE SIX.
+ * Discovery's geocoder is Nominatim and its place source is Overpass — services
+ * this deployment CALLS and does not OPERATE. When one of them answers 429 or
+ * 503, the route has learned nothing about the city. None of §9's six says
+ * that:
+ *   - `transient_db` is the nearest fit and it is FALSE. No database was
+ *     involved, no database is degraded, and an operator paged by a
+ *     `transient_db` alert would go and look at Postgres — which is healthy.
+ *     Filing an upstream outage there is a lie about the failure, told in the
+ *     one field whose whole job is to say what broke.
+ *   - `validation` and `constraint_mismatch` blame the CALLER for a fault that
+ *     is not theirs.
+ *   - `feature_disabled` and `unsupported_surface` describe deliberate states.
+ *     An outage is not a decision.
+ * The distinction is operationally load-bearing in both directions: it routes
+ * the page to the right team, and it tells the client that RETRYING LATER is
+ * meaningful — which is true of a rate limit and not of a constraint mismatch.
  */
 import type { Response } from "express";
 import { logger } from "./logger.js";
@@ -68,15 +104,21 @@ import { logDiscoveryServe, type DiscoveryServeLogParams } from "./discoveryServ
 
 /**
  * `11` §9's six failure classes, verbatim and in the order the spec lists them
- * (docs/specs/discovery-v1/11_API_Specification.md:96-101).
+ * (docs/specs/discovery-v1/11_API_Specification.md:96-101) — PLUS the seventh
+ * the owner added on 2026-09-14. The comment marking the boundary is not
+ * decoration: it is the only thing in the tree that keeps "what the spec says"
+ * separable from "what the owner ruled", and the two must not blur.
  */
 export const DISCOVERY_REFUSAL_CLASSES = [
+  // ── `11` §9's six, verbatim ────────────────────────────────────────────────
   "validation",
   "authorization",
   "constraint_mismatch",
   "transient_db",
   "feature_disabled",
   "unsupported_surface",
+  // ── The owner's seventh (2026-09-14). See "THE SEVENTH CLASS" above. ───────
+  "upstream_unavailable",
 ] as const;
 
 export type DiscoveryRefusalClass = (typeof DISCOVERY_REFUSAL_CLASSES)[number];
@@ -218,4 +260,97 @@ export function logServeUnlessRefused(
     return;
   }
   void logDiscoveryServe(sc, params);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The seventh class, in code.
+//
+// Owner ruling of 2026-09-14: "Do not cache rate limits or outages as 'this
+// location does not exist.'"
+//
+// THE DEFECT THIS EXISTS TO MAKE UNREPRESENTABLE.
+// `routes/discovery.ts` `geocode()` used to answer a Nominatim 429 or 503 with
+// `return null` — the SAME value it returns when Nominatim answers normally and
+// has never heard of the place. `geocodeCached` then wrote that null into a
+// 24-hour two-level cache. So one rate-limit response did not fail one request:
+// it recorded "this city does not exist" and served that to every user for the
+// rest of the day, from memory, without asking again. The outage was over in
+// ninety seconds; the answer it produced lasted until tomorrow.
+//
+// The two answers had to become different VALUES, not different comments,
+// because a caller cannot branch on a comment. A thrown
+// `UpstreamUnavailableError` is that difference, and it is a throw rather than a
+// sentinel for one specific reason: the cache write is on the line AFTER the
+// call, so a throw skips it structurally. Nothing has to remember not to cache.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * An upstream dependency this deployment calls but does not operate refused,
+ * timed out, or answered with a status that carries no information about the
+ * question asked.
+ *
+ * NOT thrown for "the upstream answered, and the answer is nothing". That is a
+ * FACT about the world, it is cacheable, and it must keep travelling as a plain
+ * empty result with no refusal on it. Conflating the two in that direction is
+ * the same defect inverted, and it is guarded by its own control in
+ * src/test/discoveryRefusalD11.test.ts.
+ */
+export class UpstreamUnavailableError extends Error {
+  /** Which upstream — "nominatim", "overpass", … Used in logs and alerts. */
+  readonly dependency: string;
+  /** The refusal `code` this becomes on the wire, e.g. `nominatim_http_429`. */
+  readonly code: string;
+
+  constructor(dependency: string, code: string, options?: { cause?: unknown }) {
+    super(`upstream unavailable: ${dependency} (${code})`, options);
+    this.name = "UpstreamUnavailableError";
+    this.dependency = dependency;
+    this.code = code;
+  }
+}
+
+/** Narrowing predicate — the only sanctioned way to ask "was this an outage?". */
+export function isUpstreamUnavailable(err: unknown): err is UpstreamUnavailableError {
+  return err instanceof UpstreamUnavailableError;
+}
+
+/**
+ * Run an upstream call so that EVERY way it can fail arrives as one type.
+ *
+ * A `fetch` to Nominatim can reject for a DNS failure, a TCP reset, or the
+ * `AbortController` timeout, and can resolve with a 429. Those are one event to
+ * everyone downstream — "we could not ask" — but only the last one was ever
+ * handled, and the first three surfaced as anonymous `Error`s that a route-level
+ * catch filed under `transient_db`. Funnelling them here is what makes the class
+ * on the wire true for all four rather than for one.
+ *
+ * `cause` is preserved so the original stack survives into the log.
+ */
+export async function upstreamCall<T>(dependency: string, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    if (isUpstreamUnavailable(err)) throw err;
+    throw new UpstreamUnavailableError(dependency, `${dependency}_unreachable`, { cause: err });
+  }
+}
+
+/**
+ * Classify a caught error into a refusal.
+ *
+ * An outage becomes `upstream_unavailable` carrying the upstream's own code;
+ * anything else keeps the route's existing `transient_db` code, unchanged. The
+ * fallback matters as much as the new arm: if every failure became
+ * `upstream_unavailable`, the seventh class would be exactly as uninformative as
+ * the `transient_db` it was added to stop being wrong about.
+ */
+export function classifyRefusal(
+  err: unknown,
+  route: string,
+  fallbackCode: string,
+  coverage: DiscoveryRefusalCoverage = "nothing",
+): DiscoveryRefusal {
+  return isUpstreamUnavailable(err)
+    ? discoveryRefusal("upstream_unavailable", err.code, route, coverage)
+    : discoveryRefusal("transient_db", fallbackCode, route, coverage);
 }
