@@ -888,3 +888,657 @@ be re-read before use.**
 **THE PRODUCTION HOLD REMAINS IN PLACE.** Nothing in D4 applies anything to
 production, and D4 is not permission to. It is the evidence an owner would want
 before deciding.
+
+---
+
+# Batch E — Discovery MIGRATIONS lane, `2890 → 2893`, plus the Discovery files already in tree but unapplied
+
+Authored and rehearsed 2026-09-14 by the Discovery MIGRATIONS lane. **Nothing in
+Batch E was applied to production by the lane that wrote it.** Every statement
+below was executed against **portava-ci `hwokxgbmezheskbzskfr`** and nowhere
+else. Batch E is the evidence and the procedure; applying is the integration
+owner's step.
+
+## E0. Where production is — taken from the integration owner's reading, not re-read here
+
+This lane did not query `ajrurzioarfkagpuxfnb`. The facts Batch E is built on
+were measured by the integration owner on 2026-09-14 and are treated as given:
+
+| Fact | Consequence for Batch E |
+|---|---|
+| `public.schema_migration_ledger` **does not exist**; 2254 never applied | **There is no ledger to roll back against, and no ledger will record Batch E either.** See E5. |
+| 442 public tables; production has never been driven by this repo's runner | Every PRE check below reads the live object rather than trusting a filename. |
+| `rank_events` exists with exactly 13 columns, **with live rows** | 2890/2891 must be correct on a populated table. The rehearsal DB had to be seeded to test that; see E4. |
+| `protected_zones` and `place_momentum` **do not exist** | 2217 and 2892 are creates, not alters. |
+| `canonical_locations` has **no** `search_key` | 2220 is unapplied. |
+| `feature_flags` key column is **`flag`**, not `key`; 185 rows | Every flag seed below uses `ON CONFLICT (flag)`. |
+| `discovery_live_rank_enabled`, `discovery_ranking_modifiers_enabled`, `discovery_candidate_projection_enabled`, `discovery_buddy_launch_gate_enabled` have **no row at all** | These are E1 step 4. **No new migration was written for them** — see E1. |
+
+**What this lane could NOT determine about production, and what the files do
+about it.** Three things matter and none was readable:
+
+1. **Whether `2298_dead_check_vocabularies.sql` is applied** — i.e. whether
+   `rank_events_surface_check` is the post-2298 FIFTEEN or the pre-2298
+   FOURTEEN. `2893` refuses to run unless it finds all fifteen, and names the
+   missing label.
+2. **The live `surface` distribution on production.** portava-ci's
+   `rank_events` held **zero** rows before this lane seeded it, so the CI
+   distribution is an artefact of the rehearsal and says nothing about
+   production. `2893` therefore counts the rows itself, at apply time, on
+   whatever database it is run against, and aborts with per-surface counts if it
+   finds any. **The narrowing does not depend on my reading of production, and
+   it must not depend on anyone's.**
+3. **How large `rank_events` is.** This decides whether `2891`'s index build is
+   a blink or a stall. See E2/2891 and the CONCURRENTLY variant.
+
+## E1. The ordered plan
+
+Steps 1–2 are **prerequisites already in tree**. Step 3 is this lane's new work.
+Step 4 is seed rows from files that already exist. Step 5 is optional and
+separable.
+
+```
+STEP 0  BACKUP. A point-in-time restore target, taken and CONFIRMED before
+        step 1. See E5 — with no ledger, this is the only real undo.
+
+STEP 1  2254_schema_migration_ledger.sql          ← STRONGLY RECOMMENDED FIRST
+        Not required by any file below, and deliberately not a precondition of
+        any of them. But production has no record of what has been applied, and
+        every step after this one would otherwise be unrecorded too. Applying
+        it first is what makes Batch E auditable afterwards.
+
+STEP 2  2298_dead_check_vocabularies.sql          ← REQUIRED ONLY IF STEP 5 IS WANTED
+        Widens rank_events.surface by 'wall' and circle_presence.status by
+        'paused'. 2893 refuses to run without it. Independently valuable: until
+        it lands, every Wall impression is rejected 23514 and every Circle
+        pause silently fails.
+
+STEP 3  2890_rank_events_behavior_engine_columns.sql   ← DV-38, DV-39, DV-41
+        2891_rank_events_recommendation_id.sql         ← DV-37 (and DC-33's retry leg)
+        2892_place_momentum.sql                        ← DC-07, DV-72
+        Order among these three is IMMATERIAL — they touch disjoint objects and
+        each states its own preconditions. Listed in band order for tidiness.
+
+STEP 4  The four absent Discovery flag rows. NO NEW MIGRATION WAS WRITTEN:
+        all four seed files already exist in tree and are simply unapplied.
+          2289_discovery_ranking_modifiers_flag.sql
+          2360_discovery_buddy_launch_gate_flag.sql
+          2361_discovery_candidate_projection_flag.sql
+          2850_discovery_live_rank_flag.sql
+        Each is one INSERT ... ON CONFLICT (flag) DO NOTHING seeding FALSE, and
+        each REFUSES TO COMMIT if it finds its row already reading TRUE.
+        Writing a fifth file to seed rows these four already seed would have
+        created four duplicate sources of truth for one flag each.
+
+STEP 5  2893_rank_events_retire_writerless_surfaces.sql   ← DV-44, OPTIONAL, LAST
+        The ONLY narrowing in the batch and the only file whose reversal is not
+        free. Nothing depends on it. Read E2/2893 and E6 before deciding.
+
+SEPARATE, not part of this lane's new work but in the same census scope:
+        2220_canonical_locations_search_key.sql   ← B01 (DEPLOY)
+        2217_protected_locations.sql              ← B04 (partial — see E7)
+```
+
+## E2. Per-file PRE checks, POST checks and RECOVERY
+
+Every PRE check below is **in addition to** the file's own `PRECONDITION`
+blocks, which raise and abort. Run them anyway: a PRE check you ran yourself is
+how you know what state you started from, and with no ledger that is the only
+record of it.
+
+---
+
+### 2890 — `rank_events` behaviour-engine columns (DV-38, DV-39, DV-41)
+
+Adds `schema_version smallint NOT NULL DEFAULT 1`, `privacy_class text NOT NULL
+DEFAULT 'raw_behavioral_event'`, `retention_tier text NOT NULL DEFAULT
+'raw_recent'`, `dwell_ms integer NULL`, `dwell_kind text NULL`, plus three
+value CHECKs and one pairing CHECK. Writes no row, drops nothing, indexes
+nothing.
+
+```
+PRE   SELECT column_name, data_type, is_nullable
+        FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='rank_events'
+       ORDER BY ordinal_position;
+      -- expect exactly the 13 columns. If any of the five new names is already
+      -- present, 2890 (or something else) has run — STOP and read E5.
+
+PRE   SELECT count(*) FROM public.rank_events;
+      -- RECORD THIS NUMBER. It is the POST comparison and, with no ledger, the
+      -- only evidence that nothing was deleted.
+
+APPLY the file whole, in its own transaction, as written. Idempotent.
+
+POST  SELECT count(*) FROM public.rank_events;
+      -- MUST equal the PRE number exactly. 2890 writes and deletes no row.
+
+POST  SELECT count(*) FILTER (WHERE schema_version = 1)               AS v1,
+             count(*) FILTER (WHERE privacy_class = 'raw_behavioral_event') AS pc,
+             count(*) FILTER (WHERE retention_tier = 'raw_recent')    AS rt,
+             count(*) FILTER (WHERE dwell_ms IS NOT NULL
+                                 OR dwell_kind IS NOT NULL)           AS dwell,
+             count(*)                                                 AS total
+        FROM public.rank_events;
+      -- expect v1 = pc = rt = total, and dwell = 0.
+      -- dwell = 0 is the important one: a non-zero value would mean the
+      -- migration invented attention data. The file asserts this itself.
+
+POST  SELECT column_name, is_nullable, column_default
+        FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='rank_events'
+         AND column_name = 'dwell_ms';
+      -- expect is_nullable='YES' and column_default IS NULL. NULL means NOT
+      -- MEASURED; a default would turn "not measured" into a measurement.
+```
+
+**WHY DEFAULT AND NOT BACKFILL.** Both NOT NULL columns take a DEFAULT because
+the default is *true of every existing row*, not a placeholder:
+`DISCOVERY_EVENT_SCHEMA_VERSION` is 1 and is the only value the tree has ever
+produced; every `rank_events` row is by definition one raw behavioural event;
+and `rank_events` *is* `04` §11's raw-recent layer. A backfill `UPDATE` would
+touch every row for a constant. PostgreSQL 11+ stores a non-volatile ADD
+COLUMN DEFAULT in the catalogue and does **not** rewrite the heap, so on a
+populated production table this is a catalogue update under a brief ACCESS
+EXCLUSIVE lock.
+
+**RECOVERY — free, no data loss.**
+```sql
+BEGIN;
+ALTER TABLE public.rank_events DROP CONSTRAINT IF EXISTS rank_events_dwell_pairing_check;
+ALTER TABLE public.rank_events DROP COLUMN IF EXISTS dwell_kind;
+ALTER TABLE public.rank_events DROP COLUMN IF EXISTS dwell_ms;
+ALTER TABLE public.rank_events DROP COLUMN IF EXISTS retention_tier;
+ALTER TABLE public.rank_events DROP COLUMN IF EXISTS privacy_class;
+ALTER TABLE public.rank_events DROP COLUMN IF EXISTS schema_version;
+COMMIT;
+```
+Executed against a **populated** portava-ci (239 rows) and verified: five
+columns gone, 239 rows intact. **EXPIRY:** once a writer populates `dwell_ms`
+or `dwell_kind`, this DROP destroys measurements that exist nowhere else.
+Reverse before the dwell writer ships, or not at all.
+
+---
+
+### 2891 — `rank_events.recommendation_id` + the idempotency arbiter (DV-37)
+
+Adds `recommendation_id text NULL`, a shape CHECK, and
+`UNIQUE (recommendation_id, outcome)`.
+
+```
+PRE   SELECT count(*) FROM public.rank_events;                 -- record it
+PRE   SELECT relname, pg_size_pretty(pg_relation_size(oid)) AS heap
+        FROM pg_class WHERE relname = 'rank_events';
+      -- THE LOCK DECISION. CREATE INDEX (non-concurrent) takes a SHARE lock:
+      -- reads proceed, INSERTS BLOCK for the build. The index is NOT partial,
+      -- so the build scans EVERY row. If this table is large enough that a
+      -- blocking build is unwelcome, use the CONCURRENTLY variant below.
+
+PRE   SELECT ic.relname, i.indisunique, i.indpred IS NOT NULL AS is_partial
+        FROM pg_index i JOIN pg_class ic ON ic.oid = i.indexrelid
+       WHERE i.indrelid = 'public.rank_events'::regclass AND i.indisunique;
+      -- expect ONLY rank_events_pkey. A second unique index means another lane
+      -- defined an arbiter; the file refuses to add a competing one.
+
+APPLY the file whole, in its own transaction, as written. Idempotent.
+
+POST  SELECT count(*) FROM public.rank_events;   -- MUST equal PRE
+POST  SELECT count(*) FROM public.rank_events WHERE recommendation_id IS NOT NULL;
+      -- MUST be 0. The file writes no token and must not have back-derived one
+      -- for history: two historical rows are not "the same exposure" on the
+      -- strength of a hash nobody witnessed being computed at serve time.
+POST  SELECT pg_get_indexdef(i.indexrelid)
+        FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+       WHERE c.relname = 'rank_events_recommendation_idempotency_idx';
+      -- expect exactly:
+      --   CREATE UNIQUE INDEX rank_events_recommendation_idempotency_idx
+      --     ON public.rank_events USING btree (recommendation_id, outcome)
+      -- with NO WHERE clause. A WHERE clause here is a DEFECT — see below.
+```
+
+**THE TWO DESIGN POINTS, AND WHY THE OBVIOUS SHAPES ARE BOTH WRONG.**
+
+* **Not `UNIQUE (user_id, item_id, session_id, served_at)`**, which is the other
+  settlement DV-37 names. That index is built over existing rows and fails if
+  production holds one duplicate tuple — and production could not be read, while
+  portava-ci held zero rows, so the rehearsal could have proved nothing about
+  it. Worse, `session_id` is NULLABLE and NULLs are DISTINCT in a unique index,
+  so every row written without a session would be unique against every other
+  such row: the key would guarantee nothing for exactly the rows most likely to
+  be replayed, while looking like a guarantee.
+* **Not `UNIQUE (recommendation_id)` alone.** `rank_events` stores an exposure
+  and each of its outcomes as separate rows, and they share one recommendation
+  id. A single-column key rejects the tap and save rows — fire-and-forget, so
+  the rejection is a `logger.warn` and the data is gone.
+* **NOT PARTIAL, and this was found by rehearsing rather than by reasoning.**
+  The first draft used `WHERE recommendation_id IS NOT NULL`. PostgreSQL only
+  infers a partial index as an `ON CONFLICT` arbiter if the statement repeats
+  the predicate, and **supabase-js's `onConflict` takes a bare column list** —
+  PostgREST renders it as `ON CONFLICT (cols)` with no predicate. The rehearsal
+  returned `ERROR: 42P10: there is no unique or exclusion constraint matching
+  the ON CONFLICT specification`. A partial index would have been an idempotency
+  guarantee **the only writer in this codebase cannot invoke**. The cost of the
+  full index — one entry per `rank_events` row — is accepted for that reason.
+
+**THE CODE HALF, WHICH THIS FILE DOES NOT SUPPLY.**
+`lib/discoveryServeLog.ts:444` is still a bare `.insert(rows)`. DV-37 closes
+only when the writer also does:
+```ts
+recommendation_id: recommendationIdFor({ ... }),         // in the row literal
+.upsert(rows, { onConflict: "recommendation_id,outcome", ignoreDuplicates: true })
+```
+`onConflict` must name **both** columns in that order; `"recommendation_id"`
+alone raises 42P10.
+
+**CONCURRENTLY variant — for a large production `rank_events`.** Cannot be used
+from inside the file (`CREATE INDEX CONCURRENTLY` may not run in a transaction
+block, and the file must be transactional so a failed index cannot leave a
+committed column with no arbiter). Run the file with the `CREATE UNIQUE INDEX`
+line removed, then, outside any transaction:
+```sql
+CREATE UNIQUE INDEX CONCURRENTLY rank_events_recommendation_idempotency_idx
+  ON public.rank_events (recommendation_id, outcome);
+-- then VERIFY it is valid — a failed concurrent build leaves an INVALID index
+-- that silently arbitrates nothing:
+SELECT i.indisvalid, i.indisready
+  FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+ WHERE c.relname = 'rank_events_recommendation_idempotency_idx';
+-- indisvalid MUST be true. If false: DROP INDEX and retry.
+```
+Then re-run the file's POST checks.
+
+**RECOVERY — free, no data loss.**
+```sql
+BEGIN;
+DROP INDEX IF EXISTS public.rank_events_recommendation_idempotency_idx;
+ALTER TABLE public.rank_events DROP CONSTRAINT IF EXISTS rank_events_recommendation_id_shape_check;
+ALTER TABLE public.rank_events DROP COLUMN IF EXISTS recommendation_id;
+COMMIT;
+```
+**Executed for real on portava-ci and verified**, then the corrected file was
+re-applied over a populated table. **EXPIRY:** once the writer above ships, this
+DROP destroys the only durable copy of the exposure token and removes the
+idempotency guarantee — it stops being a rollback and becomes a behaviour
+change.
+
+---
+
+### 2892 — `place_momentum` (DC-07, DV-72)
+
+Creates `public.place_momentum`, two functions
+(`place_momentum_classify`, `rebuild_place_momentum`), three indexes, RLS with
+no policies, service_role-only grants. **Touches no existing table.**
+
+```
+PRE   SELECT to_regclass('public.place_momentum');           -- expect NULL
+PRE   SELECT to_regclass('public.rank_events');              -- must NOT be NULL
+PRE   SELECT proname FROM pg_proc
+       WHERE proname IN ('place_momentum_classify','rebuild_place_momentum');
+      -- expect no rows
+
+APPLY the file whole, in its own transaction, as written. Idempotent.
+
+POST  SELECT count(*) FROM public.place_momentum;
+      -- The file's last postcondition CALLS rebuild_place_momentum(now()), so on
+      -- production this will be NON-ZERO: one row per place appearing in
+      -- rank_events within the last 30 days. That is intended — it exercises the
+      -- rebuild rather than merely describing it. Those rows are derived and
+      -- rederivable; see RECOVERY.
+
+POST  SELECT count(*) FROM public.place_momentum
+       WHERE trend_state <> public.place_momentum_classify(
+               recent_rate, mid_rate, prior_rate, total_weight);
+      -- MUST be 0: no row may carry a verdict its own stored evidence does not
+      -- produce.
+
+POST  SELECT relrowsecurity FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+       WHERE n.nspname='public' AND c.relname='place_momentum';           -- true
+POST  SELECT grantee, privilege_type FROM information_schema.role_table_grants
+       WHERE table_schema='public' AND table_name='place_momentum';
+      -- expect service_role (and the table owner) ONLY. NO anon, NO
+      -- authenticated, NO PUBLIC. This is a per-place behavioural aggregate;
+      -- exposed through PostgREST it is an activity feed for the whole product.
+
+POST  SELECT count(*) FROM public.rank_events;   -- MUST equal the 2890 PRE number
+```
+
+**THE DRIFT HAZARD, NAMED.** `rebuild_place_momentum` and
+`place_momentum_classify` are a **second implementation** of
+`lib/discoveryTrendState.computeTrendStates` / `classifyTrendState`, in SQL.
+That is the main risk in the file and it is contained three ways: constants
+declared once with their TypeScript symbol named beside them; constants stored
+on **every row** (`event_weights`, `window_ms`, `thresholds`) so a row written
+by a drifted function is self-identifying; and six behavioural assertions in the
+file's own postconditions, one per `03` §9 stage.
+**The parity test that must still be written and registered:**
+`artifacts/api-server/src/test/placeMomentumSqlParity.test.ts` — run
+`classifyTrendState` and `public.place_momentum_classify()` over the same
+evidence tuples and assert agreement. This lane may not edit
+`artifacts/api-server/package.json` to register it.
+
+**RECOVERY — free, and uniquely so.**
+```sql
+BEGIN;
+DROP FUNCTION IF EXISTS public.rebuild_place_momentum(timestamptz);
+DROP FUNCTION IF EXISTS public.place_momentum_classify(double precision, double precision, double precision, double precision);
+DROP TABLE IF EXISTS public.place_momentum;
+COMMIT;
+```
+This is the only object in Batch E that can be dropped **with rows in it** and
+lose nothing, because every row is a pure function of `rank_events` and
+`rebuild_place_momentum()` recomputes it. **Proved, not asserted:** on
+portava-ci the table was dropped with six rows in it and rebuilt from scratch to
+byte-identical values (E4 step 16). **EXPIRY:** if a retention sweep on
+`rank_events` ever ships, a snapshot whose source rows have aged out stops being
+rederivable and this reversal acquires a real loss.
+
+---
+
+### 2893 — retire seven writerless `rank_events.surface` labels (DV-44) — **OPTIONAL, LAST**
+
+Narrows `rank_events_surface_check` from the post-2298 **fifteen** to **eight**.
+Retires `search`, `nearby`, `story`, `event`, `trip`, `profile`, `explore`.
+
+```
+PRE   SELECT pg_get_constraintdef(c.oid) FROM pg_constraint c
+        JOIN pg_class t ON t.oid=c.conrelid JOIN pg_namespace n ON n.oid=t.relnamespace
+       WHERE n.nspname='public' AND t.relname='rank_events'
+         AND c.conname='rank_events_surface_check';
+      -- MUST list all FIFTEEN post-2298 labels, 'wall' included. If 'wall' is
+      -- missing, 2298 is unapplied: apply it first. The file refuses otherwise,
+      -- so that a retirement migration cannot smuggle in 2298's widening.
+
+PRE   SELECT surface, count(*) FROM public.rank_events GROUP BY 1 ORDER BY 2 DESC;
+      -- THE DECIDING MEASUREMENT, AND IT MUST BE TAKEN HERE.
+      -- Any count against search / nearby / story / event / trip / profile /
+      -- explore means a writer exists that this lane's audit did not find.
+      -- The file's own precondition counts the same thing and ABORTS with the
+      -- per-surface counts, changing nothing — verified on portava-ci by
+      -- planting two such rows (E4 step 18).
+      -- IF IT ABORTS: investigate the writer. Do NOT delete the rows to make
+      -- the constraint fit, and do NOT relabel them onto a permitted surface —
+      -- surface is the partition key every exposure denominator groups on, and
+      -- relabelling corrupts the surface it borrows.
+
+APPLY the file whole, in its own transaction, as written.
+
+POST  repeat the PRE constraint query -- expect exactly EIGHT labels:
+      pulse, discovery, events, compass, live_pulse, living_page, watch_feed, wall
+POST  SELECT count(*) FROM public.rank_events;   -- MUST equal the PRE number
+POST  SELECT count(*) FROM public.rank_events
+       WHERE surface <> ALL (ARRAY['pulse','discovery','events','compass',
+             'live_pulse','living_page','watch_feed','wall']::text[]);   -- 0
+```
+
+**THE CENSUS SAYS NINE; IT IS SEVEN.** DV-44 lists nine zero-row surfaces and
+this file retires only seven. `living_page` and `watch_feed` have **intentional
+writers** — `routes/rankEvents.ts:68` and `routes/mediaFeed.ts:1759` — and their
+zero production counts are the scar of the pre-0202 CHECK blackout that
+`lib/discoveryServeLog.ts:14-35` already documents, not the absence of a
+producer. Retiring them would re-open exactly the blackout 0202 closed. **"Zero
+rows" and "no writer" are different claims**, and this file retires on writer
+evidence with the row count used only as a safety veto.
+
+The seven that *are* retired appear only as members of the `SurfaceName` type
+union (`services/ranking/DiscoveryRankingService.ts:29-39`). Its three analytics
+writers take `surface: SurfaceName` as a *parameter*, so the union makes the
+labels expressible; no production call site passes any of them. The only
+occurrences outside the type declaration are a doc comment and
+`services/ranking/__tests__/feedSlotAllocator.test.ts:204`, which reaches
+`allocateFeedSlots` and never `rank_events`. **A type union is not a writer.**
+
+Independently corroborated: after 2893, `check:enum-literals` derives
+`rank_events.surface => ["pulse","discovery","events","compass","live_pulse",
+"living_page","watch_feed","wall"]` from baseline + 605 migrations and still
+passes — so no filter or write literal anywhere in `src/` names a retired
+surface.
+
+**RECOVERY — structurally total, but see E6.**
+```sql
+BEGIN;
+ALTER TABLE public.rank_events DROP CONSTRAINT IF EXISTS rank_events_surface_check;
+ALTER TABLE public.rank_events ADD CONSTRAINT rank_events_surface_check
+  CHECK (surface = ANY (ARRAY['pulse','discovery','events','compass','search',
+    'nearby','story','event','trip','profile','explore','live_pulse',
+    'living_page','watch_feed','wall']::text[]));
+COMMIT;
+```
+Executed for real on portava-ci and verified, then 2893 re-applied. The widened
+list is a strict superset, so the reversal can never fail on a row. **What it
+cannot restore is any row rejected while the narrowing was in force** — E6.
+
+---
+
+### 2220 / 2217 — the two Discovery files already in tree and unapplied
+
+```
+2220_canonical_locations_search_key.sql  (B01)
+PRE   SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='canonical_locations'
+         AND column_name='search_key';                    -- expect NO ROW
+PRE   SELECT count(*) FROM public.canonical_locations;     -- record it
+POST  SELECT public.input_normalize_city_key('Đà Nẵng');   -- 'da nang'
+POST  SELECT count(*) FROM public.canonical_locations WHERE search_key IS NULL;
+      -- expect 0 for every row with a non-NULL name: the column is GENERATED
+      -- ALWAYS ... STORED, so the ALTER backfills every existing row itself.
+POST  SELECT count(*) FROM public.canonical_locations;     -- MUST equal PRE
+RECOVERY  DROP INDEX IF EXISTS public.canonical_locations_search_key_trgm_idx;
+          ALTER TABLE public.canonical_locations DROP COLUMN IF EXISTS search_key;
+          DROP FUNCTION IF EXISTS public.input_normalize_city_key(text);
+          -- Free: the column is generated, so nothing user-authored is lost.
+          -- It REOPENS the §10 diacritic gap — "da nang" stops matching "Đà Nẵng".
+
+2217_protected_locations.sql             (B04 — see E7, this does NOT close it)
+PRE   SELECT to_regclass('public.protected_zones');        -- expect NULL
+POST  SELECT count(*) FROM public.protected_zones;         -- expect 0. SHIPS EMPTY.
+POST  SELECT relrowsecurity FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+       WHERE n.nspname='public' AND c.relname='protected_zones';         -- true
+POST  SELECT grantee FROM information_schema.role_table_grants
+       WHERE table_schema='public' AND table_name='protected_zones';
+      -- service_role (and owner) ONLY. The row list is a map of what it protects.
+RECOVERY  DROP TABLE IF EXISTS public.protected_zones;
+          -- Free while the table is empty, which it is by design. It stops being
+          -- free the moment a policy owner writes the first zone.
+```
+
+### The four flag seeds (step 4)
+
+```
+PRE   SELECT flag, enabled FROM public.feature_flags
+       WHERE flag IN ('discovery_ranking_modifiers_enabled',
+                      'discovery_buddy_launch_gate_enabled',
+                      'discovery_candidate_projection_enabled',
+                      'discovery_live_rank_enabled');
+      -- expect ZERO ROWS. Each file refuses to commit if its row reads TRUE.
+
+APPLY 2289, 2360, 2361, 2850 — each is one INSERT ... ON CONFLICT (flag) DO NOTHING.
+
+POST  repeat the PRE query -- expect FOUR rows, every `enabled` FALSE.
+
+RECOVERY  DELETE FROM public.feature_flags WHERE flag IN (...the four...);
+          -- Free and total: a fail-closed reader treats an absent row exactly as
+          -- it treats FALSE, so deleting the seed restores the current behaviour
+          -- byte for byte.
+```
+
+**DO NOT ENABLE ANY OF THESE.** All four seed FALSE and the readers fail closed
+on absent / false / unreadable. Flipping one is a separate owner decision about
+a live user-facing surface; seeding the row makes the decision *possible*, and
+is not the decision.
+
+## E3. What each file is worth, and what it is not
+
+| File | Unblocks | Does it CLOSE the row? |
+|---|---|---|
+| 2890 | DV-38, DV-39, DV-41 | **No.** Columns exist; nothing writes them. `lib/discoveryServeLog.ts` writes the same values into the `features` JSONB. No client emits dwell at all. |
+| 2891 | DV-37, and DC-33's retry leg | **No.** The arbiter exists; the writer still has no `onConflict` and no column write — and DV-37 itself notes no retry path exists to be idempotent about yet. |
+| 2892 | DC-07, DV-72 | **No.** The durable store and its rebuild exist; nothing schedules the rebuild and no reader consults the table. DV-72 stays 1 of 5 — four projections are not this lane's. |
+| 2893 | DV-44 | **Arguably yes for the migration half**, and it also corrects the row: seven, not nine. |
+| 2220 | B01 | Yes for the DEPLOY blocker. |
+| 2217 | B04 | **No** — see E7. |
+| 2289/2360/2361/2850 | four FLAG rows | Makes the flags *settable*. Enabling remains an owner decision. |
+| — | A10, A11 | **Not this lane's files.** A10 needs `2420_trip_kernel_foundation.sql` (for `trips.version`) plus flag 2550; A11 needs the 2760–2785 Trip schema plus flag 2778. Both are Trips-lane migrations already in tree and unapplied; Batch C and Batch D of this runbook cover them. |
+| — | DC-15 | **Partially, and only forward.** 2890/2891/2892/2893 each carry expected cardinality, index rationale and EXPLAIN verification. `10` §7 forbids editing an applied migration, so the Discovery migrations that lack them cannot be fixed in place. |
+
+## E4. The portava-ci rehearsal — transcript
+
+Target: **`hwokxgbmezheskbzskfr` only**. Production was never contacted.
+
+**BEFORE (read before any write).** `rank_events` = **0 rows**, 13 columns
+(`user_id` NOT NULL, `session_id` NULLABLE); `rank_events_surface_check` = the
+post-2298 FIFTEEN; `rank_events_outcome_check` = the post-2297 eight;
+`place_momentum` **absent**; `protected_zones` **present**;
+`schema_migration_ledger` **present**; `canonical_locations.search_key`
+**present**; `feature_flags` columns `flag,enabled,description,updated_at,metadata`.
+**So portava-ci already carries 2217, 2220, 2254, 2297 and 2298, and production
+carries none of them — the two databases differ, and every claim below is
+scoped to the one that was tested.**
+
+| # | Step | Result |
+|---|---|---|
+| 1 | Apply **2890** | committed; all preconditions and postconditions passed |
+| 2 | Apply **2891** *(first draft, PARTIAL index)* | committed |
+| 3 | Rehearse the DV-37 retry: `ON CONFLICT (recommendation_id, outcome) DO NOTHING` | **`ERROR 42P10: there is no unique or exclusion constraint matching the ON CONFLICT specification`** — the partial index cannot be named. **Design changed.** |
+| 4 | Execute 2891's RECOVERY block for real | `recommendation_id absent — clean`; 0 rows lost |
+| 5 | Seed 236 `rank_events` rows, all with `recommendation_id` absent | 236 rows / 134 impressions / 99 analytics / 5 distinct items |
+| 6 | Apply **corrected 2891** over the POPULATED table | committed; index built over 236 NULL-token rows; `CREATE UNIQUE INDEX … (recommendation_id, outcome)`, no WHERE |
+| 7 | first impression insert with a token | 1 row |
+| 8 | **retry with `ON CONFLICT (recommendation_id, outcome) DO NOTHING`** | **0 rows — deduped. DV-37's guarantee, demonstrated.** |
+| 9 | same retry with NO `ON CONFLICT` | **rejected 23505 by the arbiter** |
+| 10 | `'tap'` row carrying the SAME token | **1 row — accepted.** The case a single-column key would have destroyed. |
+| 11 | 2890 defaults on the 236 PRE-EXISTING rows | **238 of 238 read `schema_version = 1`** (catalogue default, no heap rewrite) |
+| 12 | `dwell_kind='idle'` with NULL `dwell_ms` | rejected by `rank_events_dwell_pairing_check` |
+| 13 | `dwell_ms = -5` | rejected by `rank_events_dwell_ms_check` |
+| 14 | `dwell_ms = 0` with `dwell_kind='idle'` | **stored.** 1 measured-zero row vs 238 NULL rows — `04` §7's distinction holds |
+| 15 | malformed token; unknown `privacy_class` | both rejected by their CHECKs |
+| 16 | Apply **2892**, run `rebuild_place_momentum(now())` | **6 place rows**; rerun for the same instant → 6 rows touched, **6 total — idempotent**; the 99-row analytics-only place → **0 rows, correctly excluded** |
+| 17 | Verify the classifier against hand-computed TypeScript | `node/EMERGING` emerging (recent 10 / 0 / 0) · `node/COOLING` cooling (4 / **20.000** / 0) · `node/REDISC` rediscovered (10 / 0 / **5.217**) · `node/SAVED` emerging (**12.000**) · `node/REHEARSAL2` unknown (1.000). `20.000 = 50/2.5` and `5.217 = 60/11.5` are the window normalisers; `12 = 3×(1+3)` is a save counted at its own time. **Every value matches.** |
+| 18 | Plant `surface='search'` and `surface='trip'` rows, then run **2893** | **`PRECONDITION FAILED (2893): 2 row(s) carry a surface this file retires — search=1 trip=1. Nothing has been changed.`** Constraint verified intact afterwards — **the veto fires and the abort rolls back.** |
+| 19 | Delete the planted rows, apply **2893** | committed; fifteen → eight; **239 rows preserved**; a post-apply `surface='search'` probe rejected |
+| 20 | **RECOVERY REHEARSAL A** — 2890's reversal on the populated table | 5 columns gone, **239 rows preserved**; rolled back, columns restored |
+| 21 | **RECOVERY REHEARSAL B** — 2893's reversal, executed for real | fifteen-label vocabulary restored, 239 rows preserved |
+| 22 | **RECOVERY REHEARSAL C** — 2892's reversal, executed for real **with 6 rows in the table** | `place_momentum dropped`, 239 source rows preserved |
+| 23 | Re-apply 2892 and re-run the rebuild from scratch | **the same 6 rows, byte-identical values** — `10` §10 rebuildability demonstrated end to end, not asserted |
+| 24 | Re-apply 2893 | **FINAL CI STATE:** 239 `rank_events` rows, 6 `place_momentum` rows, eight-label surface vocabulary |
+
+**EXPLAIN verification** (`enable_seqscan = off`, so the claim is that the index
+is *usable* for the path; portava-ci's row counts make the cost estimates
+meaningless and no claim is made from them):
+
+```
+Index Scan using rank_events_recommendation_idempotency_idx on rank_events
+  (cost=0.27..2.49 rows=1 width=304)
+  Index Cond: ((recommendation_id = 'AAAAAAAAAAAAAAAAAAAAAA') AND (outcome = 'impression'))
+
+Limit  ->  Index Scan using place_momentum_place_computed_idx on place_momentum
+             Index Cond: (place_id = 'node/EMERGING')            -- no Sort node
+
+Limit  ->  Index Scan using place_momentum_live_state_idx on place_momentum
+             Index Cond: (trend_state = 'emerging')              -- partial index chosen
+```
+
+**Static checks, whole repo, after all four files:** `npx tsc --noEmit` → 0 ·
+`check:migration-prefixes` → PASSED (534 files, band clean) ·
+`check:schema-references` → no new undeclared references ·
+`check:enum-literals` → no undeclared literals off the ratchets ·
+`check:not-null-writes` → no write payload nulls a NOT NULL column.
+`check:write-path-columns` **could not run**: it fails closed without
+`KNOWN_PROD_PROJECT_REF` / `CI_SUPABASE_PROJECT_REF` (exit 2). That is its
+production denylist refusing an unasserted target, not a finding about these
+files, and it was deliberately not worked around.
+
+**portava-ci was left in the forward state with rehearsal data in it** (239
+`rank_events` rows, 6 `place_momentum` rows, all seeded by this lane on
+`surface='discovery'`). It was not restored to empty, because the seeded rows
+are what make a future re-rehearsal meaningful. They are synthetic and belong to
+one auth user.
+
+## E5. Backup and recovery posture — production has no ledger
+
+**This is the section to read before step 1.**
+
+`public.schema_migration_ledger` does not exist on production, so **recovery
+cannot rely on it**, and neither can the question "was this applied?". Three
+consequences, stated rather than implied:
+
+1. **A point-in-time restore is the only true undo.** Take one before step 1 and
+   **confirm it is restorable** — an unconfirmed backup is not a backup. Every
+   per-file RECOVERY block below is a *forward* correction that returns the
+   schema to its prior shape; none of them is a restore, and none of them
+   recovers a row that a different process deleted in the meantime.
+2. **Record what you ran, by hand, as you run it.** File name, timestamp,
+   operator, and the PRE/POST numbers each file asks you to record. With no
+   ledger, that note *is* the record. This is why step 1 recommends applying
+   2254 first: after it, the record is the database's job rather than a person's.
+3. **"Is it applied?" must be answered by object inspection, per file, using the
+   PRE checks above** — never by the filename and never by the ledger, which
+   will not exist. Each PRE check in E2 is written to be that inspection.
+
+**Reversibility, ranked.**
+
+| Class | Files | Cost of reversing |
+|---|---|---|
+| **Free, no loss** | 2890, 2891, the four flag seeds, 2220 | Additive columns / generated column / seed rows. DROP or DELETE restores the prior shape exactly. Each has an EXPIRY CONDITION naming the moment it stops being free. |
+| **Free, and free even with rows in it** | 2892 | Every row is rederivable from `rank_events`. Proven by dropping a populated table and rebuilding it identically. |
+| **Free while empty** | 2217 | Ships empty by design; free until a policy owner writes the first zone. |
+| **Structurally free, but with a loss window** | **2893** | See E6. |
+
+## E6. NOT CLEANLY REVERSIBLE — `2893`, named
+
+**2893 is the only file in Batch E that is not cleanly reversible, and it is
+optional for exactly that reason.**
+
+The DDL reversal is one `ALTER` and restores the pre-2893 vocabulary exactly.
+What it cannot restore is **any `rank_events` row rejected while the narrowed
+constraint was in force**. Every `rank_events` writer in this codebase is
+fire-and-forget: the insert's error goes to a `logger.warn` and the row is gone.
+So if a writer for one of the seven retired surfaces appears between the apply
+and the reversal — a new feature, a merged branch, a call site that starts
+passing `surface: "search"` — its rows are lost silently for the whole window,
+and no rollback brings them back.
+
+**The loss set is empty by construction at the moment of apply**, because no
+such writer exists today and the file's own precondition proves no such row
+exists on the target. It stops being empty the moment one is written. **This is
+the only file in the batch whose risk grows with time rather than staying
+fixed.**
+
+**The argument for applying it anyway:** a developer who adds
+`surface: "search"` *after* this file gets a 23514 that the existing
+`logger.warn` reports, in CI, against a constraint that names exactly which
+labels are live — instead of writing silently into a vocabulary nobody has
+proved anybody reads. `04` §10 is "prove a writer **or retire it**", and a label
+kept alive with no writer is the state §10.3-4 exists to end.
+
+**If that trade is not wanted, skip 2893.** Nothing depends on it; 2890, 2891
+and 2892 are unaffected.
+
+**A residual asymmetry worth naming:** `SurfaceName`
+(`services/ranking/DiscoveryRankingService.ts:29-39`) still lists all seven
+retired labels as type members. After 2893, the type permits what the database
+refuses. The smallest correct follow-up is to narrow that union to the eight —
+but it is application source outside the migrations lane, it is used for
+slot-allocation config as well as for `rank_events` writes, and narrowing it was
+**deliberately not done here**. Until it is, the type is a standing invitation to
+write a surface the database will reject.
+
+## E7. What Batch E does NOT do
+
+* **It does not close B04.** Applying 2217 creates `protected_zones`, but
+  `lib/protectedLocations.ts` is still consulted by nothing in
+  `routes/discovery*.ts` or `lib/discovery*.ts`. A protected zone that is not a
+  hidden gem still has no effect on a Discovery result. B04 needs the consumer
+  wiring, which is CODE.
+* **It does not close DC-33.** The failing leg is `retry`, and DV-37 records
+  that no retry path exists to test. 2891 supplies the arbiter a retry would
+  need; the retry itself, and the end-to-end route→service→projection→client
+  test, are CODE.
+* **It does not touch A10 or A11.** Both are gated on Trips-lane migrations
+  already in tree and unapplied (2420, and 2760–2785), covered by Batches C
+  and D.
+* **It enables no flag**, on any database.
+* **It applied nothing to production.**
+
+**THE PRODUCTION HOLD ON EVERYTHING OUTSIDE THIS SCOPE REMAINS IN PLACE.**
+Batch E is the evidence and the procedure for the scope the owner released; it
+is not permission for anything beyond it.
