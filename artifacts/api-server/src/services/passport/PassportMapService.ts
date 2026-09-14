@@ -441,7 +441,7 @@ export async function buildStats(
   // breakdown that passport_stamps.stamp_type used to provide.
   const { data, error } = await db
     .from("user_stamps")
-    .select("country, city, visibility, is_revoked, stamp_definitions(category, slug)")
+    .select("country, city, visibility, is_revoked, stamp_definitions(category, slug, evidences_presence)")
     .eq("user_id", userId)
     .eq("is_revoked", false);
 
@@ -465,13 +465,53 @@ export async function buildStats(
   let planStamps = 0, hostStamps = 0, hiddenGemStamps = 0, safeReturnStamps = 0;
 
   for (const r of rows) {
-    if (r.country) countries.add(r.country);
-    if (r.city) cities.add(r.city);
     // PostgREST returns an embedded to-one either as an object or, on some
     // shapes, as a single-element array. Handle both — a wrong guess here would
     // reintroduce the all-zero bug in a new disguise.
     const def = Array.isArray(r.stamp_definitions) ? r.stamp_definitions[0] : r.stamp_definitions;
     const slug: string = typeof def?.slug === "string" ? def.slug : "";
+
+    // ── The been-there claim ─────────────────────────────────────────────────
+    // `countries` and `cities` are served by GET /me/passport/stats as the
+    // Passport's "Countries"/"Cities" numbers. They are a STATEMENT ABOUT WHERE
+    // A PERSON HAS BEEN, so only a stamp that evidences PRESENCE may contribute
+    // to them.
+    //
+    // ON THE CLIENT REACH, measured rather than assumed: the renderer of these
+    // two numbers is `PassportIdentityCard.tsx:294`, which at the time of this
+    // change is imported by NO production file (only a stale jest.mock in
+    // PassportContent.focusTTL.component.test.tsx), and its "World Traveler —
+    // 5 or more countries visited" watermark reads a `countriesVisited` PROP
+    // THAT NOTHING PASSES. So the over-claim is in the API RESPONSE and in
+    // SharedContextService's "N shared cities" (which IS reachable, via
+    // routes/passport.ts) — NOT, today, in a pixel on that card.
+    // census-highlights-memories §K.4 states the watermark as live; it is not,
+    // and the response is wrong on its own account.
+    //
+    // Without this, `POST /api/trips` awarding `first_trip_created` and
+    // `trip_planner` AT CREATION with `city: destinationCity,
+    // country: destinationCountry` meant five trips planned and none taken read
+    // as five countries visited — census-highlights-memories §K.4, H4's
+    // prohibition and H239's invariant on a shipping screen.
+    //
+    // The property lives on `stamp_definitions.evidences_presence` (migration
+    // 2970), not in a list here: §K.4 counts 26 non-test read sites of
+    // `user_stamps` across 20 files, and a list private to this service would
+    // have been the first of twenty copies to disagree.
+    //
+    // `=== true` and not truthiness: the column is NOT NULL in the database,
+    // but an embed that came back without it, or a row read through a path that
+    // did not select it, arrives `undefined`. Absent MUST read as "not
+    // presence" — over-claiming is the defect, under-claiming is not.
+    const evidencesPresence = def?.evidences_presence === true;
+    if (evidencesPresence) {
+      if (r.country) countries.add(r.country);
+      if (r.city) cities.add(r.city);
+    }
+
+    // The four counters below are NOT a been-there claim — they answer "how
+    // many of this kind of stamp do you have" — so they see every row, exactly
+    // as before. `totalStamps` likewise.
     if (STATS_SLUG_BUCKETS.plan.has(slug as never)) planStamps++;
     if (STATS_SLUG_BUCKETS.host.has(slug as never)) hostStamps++;
     if (STATS_SLUG_BUCKETS.hidden_gem.has(slug as never)) hiddenGemStamps++;
