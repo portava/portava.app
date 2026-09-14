@@ -30,6 +30,33 @@ interface Props {
   timezone: string | null;
 }
 
+/**
+ * The §12 tool names, in the words a traveller uses.
+ *
+ * An unmapped name falls through to the raw identifier rather than being
+ * dropped: a tool the server gained and this file has not heard of is still
+ * something the answer rested on, and hiding it would make the line a
+ * half-truth about what was consulted.
+ */
+const TOOL_LABELS: Record<string, string> = {
+  getLayoverContext: 'your layover',
+  getConnectionState: 'your connection',
+  getTimeWallet: 'your time',
+  getSafeEnvelope: 'your safe window',
+  getReachableExperiences: 'what is reachable',
+  simulatePlan: 'your plan',
+  getReturnContract: 'your return deadline',
+  getAirportState: 'this airport',
+  getCrewCandidates: 'people nearby',
+  requestConstraintClarification: 'what is still unknown',
+  replan: 'a replan',
+  explainDecision: 'how this was decided',
+};
+
+function toolLabel(name: string): string {
+  return TOOL_LABELS[name] ?? name;
+}
+
 export function LayoverCompassCard({ sessionId, timezone }: Props) {
   const [open, setOpen] = useState(false);
   const [question, setQuestion] = useState('');
@@ -58,6 +85,13 @@ export function LayoverCompassCard({ sessionId, timezone }: Props) {
   }, [question, sessionId]);
 
   const cert = summarizeCertification(answer?.certification);
+  // §12 — the deterministic tools the server ran for THIS answer. Read with a
+  // local narrowing rather than through `CompassAnswer`, because that type
+  // lives in `services/layover.ts`, which this lane does not own; an older
+  // server that does not publish the member renders no line at all.
+  const toolsConsulted = Array.isArray((answer as { toolsConsulted?: unknown } | null)?.toolsConsulted)
+    ? ((answer as { toolsConsulted: unknown[] }).toolsConsulted.filter((x) => typeof x === 'string') as string[])
+    : [];
 
   return (
     <View style={styles.card} testID="layover-compass-card">
@@ -83,6 +117,11 @@ export function LayoverCompassCard({ sessionId, timezone }: Props) {
               {answer.clarifyingQuestion ? (
                 <Text style={styles.clarify} testID="compass-clarifying">
                   {answer.clarifyingQuestion.question}
+                </Text>
+              ) : null}
+              {toolsConsulted.length > 0 ? (
+                <Text style={styles.tools} testID="compass-tools-consulted">
+                  Checked: {toolsConsulted.map(toolLabel).join(' · ')}
                 </Text>
               ) : null}
               {answer.boundaryViolations.length > 0 ? (
@@ -143,6 +182,7 @@ const styles = StyleSheet.create({
   answerSafety: { ...t.small, color: color.warn, fontWeight: '600' },
   clarify:    { ...t.small, color: color.deep, fontWeight: '600' },
   violation:  { ...t.small, color: color.signalDim, fontWeight: '600' },
+  tools:          { marginTop: space.xs, fontSize: 11, color: color.mute },
   cert:       { ...t.stamp, color: color.faint, marginTop: 4 },
   unavailable:{ ...t.small, color: color.mute },
   inputRow:   { flexDirection: 'row', gap: space.sm },

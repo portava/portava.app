@@ -1124,7 +1124,27 @@ router.post("/airport/sessions/:id/compass", async (req, res) => {
   const airport = await airportOr503(sc, res, session);
   if (!airport) return;
 
-  const answer = await answerLayoverQuestion(sc, { question: parsed.data.question, session, airport });
+  // ── §12 — the tool context, assembled HERE and nowhere else ───────────────
+  //
+  // `LayoverCompassService` reads no database, so the two list-shaped tools
+  // (`getReachableExperiences`, `simulatePlan`) can only see what this handler
+  // hands them. Both reads are NON-FATAL: a compass answer about the return
+  // deadline is still worth giving when the shortlist is unreadable, so the
+  // failure travels as a REASON rather than as a 503 or as an empty array.
+  // Passing `[]` on a failed read is what would make the model say "there is
+  // nothing to do here" and "your plan fits" out of a connection reset
+  // (census L294, census L47).
+  const recsRead = await getRecommendations(sc, session.id);
+  const stopsRead = await loadStops(sc, session.id);
+  const answer = await answerLayoverQuestion(sc, {
+    question: parsed.data.question,
+    session,
+    airport,
+    recommendations: recsRead.ok ? (recsRead.recommendations as unknown as Array<Record<string, unknown>>) : undefined,
+    recommendationsUnavailableReason: recsRead.ok ? null : "layover_recommendations_unreadable",
+    stops: stopsRead.ok ? stopsRead.stops : undefined,
+    stopsUnavailableReason: stopsRead.ok ? null : "layover_plan_stops_unreadable",
+  });
 
   await emitLayoverEvent(sc, session.id, user.id, "compass_question_asked", {
     involvesLeaving: answer.involvesLeaving,

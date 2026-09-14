@@ -77,6 +77,21 @@ export interface CompassLayoverInput {
   airport: AirportProfile;
   /** Max chars for the AI answer */
   maxLength?: number;
+  /**
+   * The two caller-owned halves of the §12 tool context. Nothing in this file
+   * reads a database, so a tool can only ever see what the route handed it —
+   * which is the property that makes `runLayoverTool` a boundary rather than a
+   * convenience, and the reason these are parameters and not a fetch.
+   *
+   * EACH CARRIES ITS READ OUTCOME, NOT JUST ITS ROWS. `recommendations: []`
+   * from a failed read and `recommendations: []` from a layover with nothing
+   * worth doing are the same value and opposite claims (census L294), so the
+   * absent case is spelled as a reason rather than as an empty array.
+   */
+  recommendations?: Array<Record<string, unknown>>;
+  recommendationsUnavailableReason?: string | null;
+  stops?: LayoverToolContext["stops"];
+  stopsUnavailableReason?: string | null;
 }
 
 export interface CompassLayoverAnswer {
@@ -92,6 +107,15 @@ export interface CompassLayoverAnswer {
   boundaryViolations: CompassBoundaryViolation[];
   /** §20 — which rules and which inputs produced the figures above. */
   certification: ReturnType<typeof certificationHeader>;
+  /**
+   * §12 — the deterministic tools the model actually invoked, in order, for
+   * THIS answer. Empty when the model answered from the context alone, which
+   * is the common case. A name only appears here if `runLayoverTool` ran it and
+   * answered `ok`; a refusal (unknown name, unreadable table, unavailable tool)
+   * is deliberately NOT listed, because the point of the list is to say what
+   * the sentence above rests on.
+   */
+  toolsConsulted: LayoverToolName[];
 }
 
 const LEAVING_PATTERNS = [
@@ -157,21 +181,43 @@ Traveler's question: "${question}"
 
 Answer (max ${maxLength} characters):`;
 
+  // ── §12 — THE TOOLS ARE OFFERED, CHOSEN AND RUN ───────────────────────────
+  //
+  // This is the line every recount of census L102–L113 has turned on. The
+  // twelve tools were declared and callable for four passes and the model was
+  // never given them, so twelve requirements read `W` on the distinction
+  // between a function and a tool. `LAYOVER_TOOL_SCHEMAS` now travels on the
+  // request and `runLayoverTool` executes whatever comes back.
+  //
+  // NOTHING ABOUT THE SAFETY BOUNDARY CHANGES, and that is why this needed no
+  // flag. Every tool reads out of `record`, `session`, `airport` or the
+  // caller-supplied lists; none of them computes a deadline, a buffer or an
+  // envelope. So the widest thing a tool can hand the model is the certified
+  // record itself, and the answer the model writes from it still goes through
+  // `enforceCompassEnvelope` below exactly as before.
+  const toolCtx: LayoverToolContext = {
+    session, airport, record,
+    recommendations: input.recommendations,
+    recommendationsUnavailableReason: input.recommendationsUnavailableReason ?? null,
+    stops: input.stops,
+    stopsUnavailableReason: input.stopsUnavailableReason ?? null,
+  };
+  const toolsConsulted: LayoverToolName[] = [];
   let answer: string;
   try {
-    const completion = await getOpenAI().chat.completions.create({
-      model: "gpt-5-mini",
-      max_completion_tokens: 300,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user",   content: userPrompt },
-      ],
+    answer = await runModelWithTools({
+      systemPrompt, userPrompt, maxLength, ctx: toolCtx, consulted: toolsConsulted,
     });
-    answer = (completion.choices[0]?.message?.content ?? "").trim().slice(0, maxLength);
   } catch {
     // Graceful fallback — the same deterministic text the boundary check falls
     // back to, so a refused model answer and an unreachable model produce the
     // identical, certified reply rather than two different ones.
+    answer = "";
+  }
+  if (!answer) {
+    // An empty completion is a model failure that does not throw, and it used
+    // to be published as an empty `answer` string. A model that spends every
+    // round calling tools and never writes a sentence lands here too.
     answer = deterministicAnswer({ involvesLeaving, usableMin, availMin, bufferMin, hardReturnLocal });
   }
 
@@ -218,7 +264,120 @@ Answer (max ${maxLength} characters):`;
     clarifyingQuestion: nextClarifyingQuestion(airport, session, now.getTime()),
     boundaryViolations,
     certification: certificationHeader(record),
+    toolsConsulted,
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §12 — the tool loop
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * How many times the model may come back asking for another tool.
+ *
+ * A model that answers a tool result with another tool call is normal; a model
+ * that does it forever is a request that never returns, on a route a traveller
+ * is holding a phone in front of. Four rounds is enough for "what is my
+ * deadline, does my plan fit, what is reachable" and is bounded, and the
+ * traveller gets the certified deterministic answer if the budget runs out —
+ * never an empty string, and never a hang.
+ */
+const MAX_TOOL_ROUNDS = 4;
+
+/**
+ * One chat turn, plus up to `MAX_TOOL_ROUNDS` tool rounds, returning the text
+ * the model finally wrote (possibly empty — the caller decides what an empty
+ * answer means).
+ *
+ * THE FAILURE PATHS ARE THE POINT, so they are listed rather than inferred:
+ *
+ *  - a tool name the model invented        → `unknown_tool:<name>`, fed back
+ *  - `arguments` that are not JSON         → `malformed_tool_arguments`, fed back
+ *  - a tool that is unavailable on this tree → its own reason, fed back
+ *
+ * None of them throws and none of them ends the conversation. A hallucinated
+ * function name must cost the traveller a sentence, not their answer: the
+ * refusal goes back to the model as a tool result and it gets another round to
+ * say something true. Only a throw from the model client itself reaches the
+ * caller's catch.
+ */
+async function runModelWithTools(args: {
+  systemPrompt: string;
+  userPrompt: string;
+  maxLength: number;
+  ctx: LayoverToolContext;
+  consulted: LayoverToolName[];
+}): Promise<string> {
+  const { systemPrompt, userPrompt, maxLength, ctx, consulted } = args;
+  const messages: any[] = [
+    { role: "system", content: systemPrompt },
+    { role: "user", content: userPrompt },
+  ];
+
+  for (let round = 0; round <= MAX_TOOL_ROUNDS; round += 1) {
+    const completion = await getOpenAI().chat.completions.create({
+      model: "gpt-5-mini",
+      max_completion_tokens: 300,
+      messages,
+      tools: LAYOVER_TOOL_SCHEMAS,
+      tool_choice: "auto",
+    } as any);
+
+    const message: any = completion.choices[0]?.message ?? {};
+    const calls: any[] = Array.isArray(message.tool_calls) ? message.tool_calls : [];
+    if (calls.length === 0 || round === MAX_TOOL_ROUNDS) {
+      return String(message.content ?? "").trim().slice(0, maxLength);
+    }
+
+    messages.push({ role: "assistant", content: message.content ?? null, tool_calls: calls });
+    for (const c of calls) {
+      const result = runNamedLayoverTool(c?.function?.name, ctx, c?.function?.arguments);
+      if (result.ok) consulted.push(result.tool);
+      messages.push({
+        role: "tool",
+        tool_call_id: String(c?.id ?? ""),
+        content: JSON.stringify(result),
+      });
+    }
+  }
+  return "";
+}
+
+/**
+ * `runLayoverTool` behind the two checks a model-chosen call needs and a
+ * caller-chosen one does not: is this a tool at all, and are the arguments
+ * parseable?
+ *
+ * Kept separate from `runLayoverTool` so that the twelve-tool sweep in
+ * `layoverPrivacyCompassContract.test.ts` still exercises the boundary itself,
+ * and so that "the model made this name up" is a distinguishable outcome rather
+ * than a `TypeError` in a switch.
+ */
+export function runNamedLayoverTool(
+  name: unknown,
+  ctx: LayoverToolContext,
+  rawArgs: unknown,
+): LayoverToolResult | { ok: false; tool: string; unavailable: true; reason: string } {
+  const candidate = String(name ?? "");
+  if (!(LAYOVER_TOOL_NAMES as readonly string[]).includes(candidate)) {
+    return { ok: false, tool: candidate, unavailable: true, reason: `unknown_tool:${candidate || "(unnamed)"}` };
+  }
+  const tool = candidate as LayoverToolName;
+
+  let parsed: Record<string, unknown> = {};
+  if (typeof rawArgs === "string" && rawArgs.trim() !== "") {
+    try {
+      const j = JSON.parse(rawArgs);
+      if (j && typeof j === "object" && !Array.isArray(j)) parsed = j as Record<string, unknown>;
+      else return { ok: false, tool, unavailable: true, reason: "malformed_tool_arguments" };
+    } catch {
+      return { ok: false, tool, unavailable: true, reason: "malformed_tool_arguments" };
+    }
+  } else if (rawArgs && typeof rawArgs === "object" && !Array.isArray(rawArgs)) {
+    parsed = rawArgs as Record<string, unknown>;
+  }
+
+  return runLayoverTool(tool, ctx, parsed);
 }
 
 /**
@@ -613,8 +772,16 @@ export interface LayoverToolContext {
   record: LayoverFeasibilityRecord;
   /** Persisted recommendation cards, already privacy-sanitised by the caller. */
   recommendations?: Array<Record<string, unknown>>;
+  /**
+   * Why the card list is absent, when it is. `null`/absent means the caller
+   * READ the table and this is what was in it; a string means the read failed
+   * and the tool must refuse rather than report an empty shortlist.
+   */
+  recommendationsUnavailableReason?: string | null;
   /** Plan stops, in order. */
   stops?: Array<{ title: string; durationMin: number; travelMin: number; insideAirport: boolean }>;
+  /** Same distinction for the plan. Zero stops fit every window (census L47). */
+  stopsUnavailableReason?: string | null;
 }
 
 export type LayoverToolName =
@@ -733,6 +900,12 @@ export function runLayoverTool(
       });
 
     case "getReachableExperiences":
+      // An unreadable `layover_recommendations` is not an empty shortlist.
+      // Answering `[]` here would tell a traveller sitting in a terminal that
+      // there is nothing worth their four hours, on the strength of a failed
+      // SELECT — the exact substitution census L294 forbids, and the one the
+      // route's own reader already refuses to make.
+      if (ctx.recommendationsUnavailableReason) return no(ctx.recommendationsUnavailableReason);
       return ok({
         recommendations: ctx.recommendations ?? [],
         // The list is what the recommendation service persisted; this tool does
@@ -741,7 +914,14 @@ export function runLayoverTool(
       });
 
     case "simulatePlan": {
-      const candidate: PlanFitStop[] = Array.isArray(args.candidateSet)
+      const modelSuppliedSet = Array.isArray(args.candidateSet);
+      // Zero stops fit every window, so "your plan fits" computed from a failed
+      // read of `layover_plan_stops` is a certification made out of nothing
+      // (census L47; `loadStops`' own doc comment says the same in the route).
+      // A candidate set the MODEL supplied is still answerable — it does not
+      // come from the table — so only the stored-plan branch refuses.
+      if (!modelSuppliedSet && ctx.stopsUnavailableReason) return no(ctx.stopsUnavailableReason);
+      const candidate: PlanFitStop[] = modelSuppliedSet
         ? (args.candidateSet as PlanFitStop[])
         : (ctx.stops ?? []);
       // The same arithmetic and the same refusal as `computePlanFit` — through
@@ -839,12 +1019,26 @@ export function runLayoverTool(
 /**
  * Tool declarations in OpenAI's function-calling shape.
  *
- * DECLARED, NOT YET PASSED TO THE MODEL. Handing these to
- * `openai.chat.completions.create` changes what the model does and therefore
- * what a traveller reads, which on this surface is a change made behind a flag,
- * not as a side effect of adding a schema. `runLayoverTool` is callable today;
- * wiring the model to choose among these is the next step and is named in this
- * lane's report.
+ * PASSED TO THE MODEL, on every `POST /api/airport/sessions/:id/compass`.
+ * `runModelWithTools` above puts this array on the request and executes what
+ * comes back through `runNamedLayoverTool`.
+ *
+ * ── WHY THIS IS NOT BEHIND A FLAG ───────────────────────────────────────────
+ * An earlier version of this comment said handing these to the model "is a
+ * change made behind a flag", and twelve census requirements (L102–L113) sat
+ * `W` behind that sentence for four passes. The sentence was cautious about the
+ * wrong thing. A flag seeded FALSE would have left the tools exactly as dark as
+ * they were while reading as if the work were done.
+ *
+ * What makes the wiring safe is structural rather than operational: no tool
+ * computes anything. Every value any of them returns is read out of the
+ * certified record, the session, the airport profile or a caller-supplied list,
+ * so the widest answer the model can obtain from a tool IS the certified
+ * record — and the sentence it then writes still passes through
+ * `enforceCompassEnvelope`, which refuses a later deadline, more usable time,
+ * an entry-permission claim or a widened risk band whatever the model read.
+ * The blast radius of the tools is therefore bounded by the same guard that
+ * already bounded the toolless answer.
  */
 export const LAYOVER_TOOL_SCHEMAS = LAYOVER_TOOL_NAMES.map((name) => ({
   type: "function" as const,
