@@ -405,3 +405,418 @@ export function recomputeUnderRuleVersion(
   out.push(...built.entries);
   return { status: "recomputed", entries: out, reversed };
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// THE CREATOR-TYPE LEDGER — `07` §10 for all SIX of §2's creator value types
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// ── WHY THIS SECTION EXISTS ────────────────────────────────────────────────
+// Everything above is CORRECT and is about ONE creator type. `buildBookingEntries`
+// takes a `bookingId`, stamps `attributionKind: "booking"`, and maps onto
+// `rent_buddy_earnings_entries` (2901) — a table whose `booking_id` is
+// `NOT NULL REFERENCES rent_buddy_bookings(id)` and whose `attribution_kind`
+// CHECK admits the single value `'booking'`. That is `07` §2's **Travel
+// Partner**, and it cannot be widened: a Trail Builder's earning is not a
+// Rent-a-Buddy booking and must not FK to one.
+//
+// The other five types had no earning path at all. `intel_reward_ledger` (2170)
+// covers **Local Expert** and is equally per-subsystem — no object, no creator
+// type, no double entry. So `07` §10's "earnings can be recorded without
+// paying" held for two of six.
+//
+// This section is the type-generic half, mapping onto `creator_earning_entries`
+// (2921). Same shape, same invariants, same refusals — and one rule the booking
+// half does not need:
+//
+// ── NO PRODUCER, NO EARNING ────────────────────────────────────────────────
+// Four of the six types have no code that records their value event
+// (`lib/creatorTypes.ts`). `buildCreatorEarningEntries` REFUSES such an
+// attribution (`not_earnable`), and refuses one under a fraud hold
+// (`fraud_hold`). Both refusals are structural at the database too — 2921's
+// `cee_requires_recorded_value_event` trigger — so they hold for any writer,
+// not only for callers of this module. A silent zero instead of a refusal is
+// how a seam becomes indistinguishable from coverage.
+//
+// PRE-MONEY THROUGHOUT. There is no `collection`, `capture`, `payout` or
+// `settlement` entry reason, no wallet account, no balance field, and
+// `buildCreatorEarningEntries` refuses a non-zero `settledMinor` outright
+// (`09` §1). A balance is a fold over signed entries and nothing else.
+
+import type { CreatorAttribution } from "./creatorTypeAttribution.js";
+import type { CreatorType } from "./creatorTypes.js";
+
+/**
+ * 2921's account vocabulary. `creator_payable`, not `buddy_payable`: the party
+ * is a creator of one of six types, and only one of those is a buddy.
+ */
+export type CreatorLedgerAccount =
+  | "creator_payable"
+  | "platform_revenue"
+  | "traveler_receivable"
+  | "cash_external";
+
+export const CREATOR_LEDGER_ACCOUNTS: readonly CreatorLedgerAccount[] = [
+  "creator_payable", "platform_revenue", "traveler_receivable", "cash_external",
+] as const;
+
+/** 2921's reasons. NOTHING here asserts money arrived, left or settled. */
+export type CreatorEntryReason = "value_attribution" | "revenue_share" | "platform_fee" | "reversal";
+
+/** `07` §6's five revenue share sources, verbatim as slugs. */
+export type RevenueSource =
+  | "booking_commission"
+  | "marketplace_fee"
+  | "affiliate_commission"
+  | "paid_trail_or_guide_product"
+  | "sponsored_collaboration";
+
+export const REVENUE_SOURCES: readonly RevenueSource[] = [
+  "booking_commission", "marketplace_fee", "affiliate_commission",
+  "paid_trail_or_guide_product", "sponsored_collaboration",
+] as const;
+
+export interface CreatorLedgerEntry {
+  entryId: string;
+  transactionKey: string;
+  /** `07` §2's dimension, ON THE ENTRY — so a per-type read needs no join. */
+  creatorType: CreatorType;
+  /** The `creator_attributions` row this earning came from (`07` §7). */
+  attributionId: string;
+  account: CreatorLedgerAccount;
+  amountMinor: number;
+  currency: string;
+  entryReason: CreatorEntryReason;
+  revenueSource: RevenueSource | null;
+  /** Always 0. Present so a reader can assert the boundary rather than assume it. */
+  cashSettledMinor: 0;
+  ruleVersion: string;
+  beneficiaryUserId: string | null;
+  reversesEntryId: string | null;
+  /** Recorded, never read by any derived quantity (`09` §11). */
+  provider: string;
+  externalRef: string | null;
+  idempotencyKey: string;
+}
+
+export type CreatorBalances = Record<CreatorLedgerAccount, number>;
+
+/**
+ * The ONE fold, shared by both account vocabularies. Extracted rather than
+ * copied: `reconstructBalances` above and `reconstructCreatorBalances` below
+ * differ only in which keys start at zero, and a second hand-written loop is a
+ * second place for the two to drift.
+ *
+ * Addition is commutative over integers, so the result cannot depend on the
+ * order entries arrive in — the property both test files quantify over.
+ */
+function foldBalances<A extends string>(
+  entries: readonly { account: A; amountMinor: number }[],
+  accounts: readonly A[],
+): Record<A, number> {
+  const out = Object.fromEntries(accounts.map((a) => [a, 0])) as Record<A, number>;
+  for (const e of entries) out[e.account] += e.amountMinor;
+  return out;
+}
+
+export function reconstructCreatorBalances(entries: readonly CreatorLedgerEntry[]): CreatorBalances {
+  return foldBalances(entries, CREATOR_LEDGER_ACCOUNTS);
+}
+
+/** `09` §5.3 I1 — the residual of every (transaction, currency) group must be 0. */
+export function unbalancedCreatorTransactions(
+  entries: readonly CreatorLedgerEntry[],
+): UnbalancedTransaction[] {
+  const sums = new Map<string, UnbalancedTransaction>();
+  for (const e of entries) {
+    const k = `${e.transactionKey}|${e.currency}`;
+    const cur = sums.get(k) ?? { transactionKey: e.transactionKey, currency: e.currency, residualMinor: 0 };
+    cur.residualMinor += e.amountMinor;
+    sums.set(k, cur);
+  }
+  return [...sums.values()].filter((s) => s.residualMinor !== 0);
+}
+
+export function creatorEntriesAtRuleVersion(
+  entries: readonly CreatorLedgerEntry[],
+  ruleVersion: string,
+): CreatorLedgerEntry[] {
+  return entries.filter((e) => e.ruleVersion === ruleVersion);
+}
+
+/**
+ * What the ledger SAID under one rule version — `07` §10's "historical
+ * recalculation is possible", read backwards. Corrections are excluded for the
+ * reason `historicalBalanceAt` gives above: a reversal carries the rule version
+ * of the entry it reverses, so folding a version's rows wholesale nets a
+ * recomputed earning to zero and answers a different, useless question.
+ */
+export function historicalCreatorBalanceAt(
+  entries: readonly CreatorLedgerEntry[],
+  ruleVersion: string,
+): CreatorBalances {
+  return reconstructCreatorBalances(
+    creatorEntriesAtRuleVersion(entries, ruleVersion).filter((e) => e.entryReason !== "reversal"),
+  );
+}
+
+// ── Building one attribution's earning ──────────────────────────────────────
+
+export interface CreatorEarningInput {
+  /** `07` §8 "gross revenue" — what the conversion produced, as observed. */
+  grossRevenueMinor: number;
+  /** `07` §8 "provisional share" — what the RULE VERSION says the creator gets. */
+  creatorShareMinor: number;
+  /** The platform's take under the same rule version. */
+  platformFeeMinor: number;
+  revenueSource?: RevenueSource | null;
+  currency?: string;
+  /**
+   * How much money actually settled. The ONLY accepted value is 0 (or absent).
+   * `09` §1: Portava moves no money, and no funding source exists for any of the
+   * six creator types.
+   */
+  settledMinor?: number;
+}
+
+export type CreatorEarningRefusal =
+  | "not_earnable"
+  | "fraud_hold"
+  | "settlement_not_recordable"
+  | "negative_input"
+  | "share_exceeds_gross"
+  | "unknown_revenue_source";
+
+export type CreatorEarningResult =
+  | { status: "built"; entries: CreatorLedgerEntry[] }
+  | { status: "refused"; reason: CreatorEarningRefusal; detail: string };
+
+interface CreatorLeg { account: CreatorLedgerAccount; amountMinor: number; beneficiary: boolean }
+
+/**
+ * Turn ONE attribution into a balanced, versioned, type-stamped entry set.
+ *
+ * Computes no percentage of its own: `creatorShareMinor` and `platformFeeMinor`
+ * were decided by the rule version named on the attribution, whose parameters
+ * live in `creator_rule_versions.params` (2920). `07` §8's "Actual percentages
+ * must remain configurable" is the reason the arithmetic is not here.
+ */
+export function buildCreatorEarningEntries(
+  attribution: CreatorAttribution,
+  input: CreatorEarningInput,
+): CreatorEarningResult {
+  // `09` §1, checked FIRST: a caller asserting a settlement is wrong about the
+  // platform, and nothing else it says should be interpreted.
+  if (typeof input.settledMinor === "number" && input.settledMinor !== 0) {
+    return {
+      status: "refused",
+      reason: "settlement_not_recordable",
+      detail:
+        `settledMinor=${input.settledMinor}: Portava moves no money (09 §1) and no payout, wallet ` +
+        "or disbursement path exists for any of 07 §2's six creator types",
+    };
+  }
+  // The two independent reasons an attribution can exist and produce nothing.
+  // Ordered so the more fundamental one is reported: a seam has nothing to hold.
+  if (attribution.basis !== "recorded_value_event") {
+    return {
+      status: "refused",
+      reason: "not_earnable",
+      detail:
+        `${attribution.creatorType}: attribution basis is ${attribution.basis} — no value event was ` +
+        "recorded, so there is nothing to earn against (07 §10)",
+    };
+  }
+  if (attribution.fraudHold) {
+    return {
+      status: "refused",
+      reason: "fraud_hold",
+      detail: `${attribution.creatorType}: held for ${attribution.fraudHoldReason ?? "an unstated reason"} (07 §9)`,
+    };
+  }
+
+  for (const [name, v] of Object.entries({
+    grossRevenueMinor: input.grossRevenueMinor,
+    creatorShareMinor: input.creatorShareMinor,
+    platformFeeMinor: input.platformFeeMinor,
+  })) {
+    if (!Number.isFinite(v) || v < 0 || !Number.isInteger(v)) {
+      return { status: "refused", reason: "negative_input", detail: `${name}=${v}` };
+    }
+  }
+  if (input.creatorShareMinor + input.platformFeeMinor > input.grossRevenueMinor) {
+    return {
+      status: "refused",
+      reason: "share_exceeds_gross",
+      detail:
+        `${input.creatorShareMinor} + ${input.platformFeeMinor} > ${input.grossRevenueMinor}: ` +
+        "distributing more than the conversion produced is how a ledger invents money",
+    };
+  }
+  const revenueSource = input.revenueSource ?? null;
+  if (revenueSource !== null && !REVENUE_SOURCES.includes(revenueSource)) {
+    return { status: "refused", reason: "unknown_revenue_source", detail: String(revenueSource) };
+  }
+
+  const currency = input.currency ?? DEFAULT_CURRENCY;
+  const entries: CreatorLedgerEntry[] = [];
+
+  const push = (reason: CreatorEntryReason, minor: number, legs: (m: number) => CreatorLeg[]) => {
+    if (minor === 0) return; // a zero entry states nothing; omit it rather than book noise
+    const transactionKey = `creator:${attribution.id}:${reason}:${attribution.ruleVersion}`;
+    entries.push(...legs(minor).map((leg, i) => ({
+      entryId: `${transactionKey}#${i}`,
+      transactionKey,
+      creatorType: attribution.creatorType,
+      attributionId: attribution.id,
+      account: leg.account,
+      amountMinor: leg.amountMinor,
+      currency,
+      entryReason: reason,
+      revenueSource,
+      cashSettledMinor: 0 as const,
+      ruleVersion: attribution.ruleVersion,
+      beneficiaryUserId: leg.beneficiary ? attribution.beneficiaryUserId : null,
+      reversesEntryId: null,
+      provider: NO_PROVIDER,
+      externalRef: null,
+      idempotencyKey: `${transactionKey}#${i}`,
+    })));
+  };
+
+  push("revenue_share", input.creatorShareMinor, (m) => [
+    { account: "traveler_receivable", amountMinor: -m, beneficiary: false },
+    { account: "creator_payable", amountMinor: m, beneficiary: true },
+  ]);
+  push("platform_fee", input.platformFeeMinor, (m) => [
+    { account: "traveler_receivable", amountMinor: -m, beneficiary: false },
+    { account: "platform_revenue", amountMinor: m, beneficiary: false },
+  ]);
+
+  return { status: "built", entries };
+}
+
+// ── Reversal ────────────────────────────────────────────────────────────────
+
+export type CreatorReversalResult =
+  | { status: "reversed"; entries: CreatorLedgerEntry[] }
+  | { status: "refused"; reason: ReversalRefusal; detail: string };
+
+/**
+ * The platform's own correction of its own error (`09` §9.2). A NEW transaction
+ * whose entries are the negation of the original, each linked by
+ * `reversesEntryId`. Never a DELETE and never an edit.
+ *
+ * At most one reversal per transaction: reversing twice re-credits an earning
+ * that was only ever earned once. 2921 enforces the same rule with a partial
+ * unique index on the link column, so the guarantee survives a concurrent
+ * second caller this pure check cannot see.
+ */
+export function buildCreatorReversal(
+  entries: readonly CreatorLedgerEntry[],
+  opts: { transactionKey: string },
+): CreatorReversalResult {
+  const originals = entries.filter((e) => e.transactionKey === opts.transactionKey);
+  if (originals.length === 0) {
+    return { status: "refused", reason: "unknown_transaction", detail: opts.transactionKey };
+  }
+  const originalIds = new Set(originals.map((e) => e.entryId));
+  if (entries.some((e) => e.reversesEntryId !== null && originalIds.has(e.reversesEntryId))) {
+    return { status: "refused", reason: "already_reversed", detail: opts.transactionKey };
+  }
+
+  const transactionKey = `reversal:${opts.transactionKey}`;
+  return {
+    status: "reversed",
+    entries: originals.map((e, i) => ({
+      ...e,
+      entryId: `${transactionKey}#${i}`,
+      transactionKey,
+      amountMinor: -e.amountMinor,
+      entryReason: "reversal" as const,
+      // The rule version of the entry being reversed, NOT today's: the reversal
+      // is a fact about the old computation and must read back under it.
+      ruleVersion: e.ruleVersion,
+      reversesEntryId: e.entryId,
+      idempotencyKey: `${transactionKey}#${i}`,
+    })),
+  };
+}
+
+// ── Historical recalculation ────────────────────────────────────────────────
+
+export type CreatorRecomputeResult =
+  | { status: "recomputed"; entries: CreatorLedgerEntry[]; reversed: string[] }
+  | { status: "refused"; reason: RecomputeRefusal | CreatorEarningRefusal; detail: string };
+
+/**
+ * `07` §10 "historical recalculation is possible", per creator type. Recomputing
+ * one attribution under a new rule version reverses every transaction booked
+ * under the old one and appends the new ones. The old entries are never touched,
+ * so the historical answer stays readable via `creatorEntriesAtRuleVersion`.
+ */
+export function recomputeCreatorUnderRuleVersion(
+  entries: readonly CreatorLedgerEntry[],
+  opts: { attributionId: string; ruleVersion: string; next: CreatorEarningInput },
+): CreatorRecomputeResult {
+  const live = entries.filter(
+    (e) => e.attributionId === opts.attributionId && e.entryReason !== "reversal",
+  );
+  if (live.length === 0) {
+    return { status: "refused", reason: "nothing_to_recompute", detail: opts.attributionId };
+  }
+  if (live.some((e) => e.ruleVersion === opts.ruleVersion)) {
+    return {
+      status: "refused",
+      reason: "same_rule_version",
+      detail: `${opts.attributionId} already has entries at ${opts.ruleVersion}`,
+    };
+  }
+
+  // The attribution is reconstructed from the entries rather than re-supplied:
+  // a caller that hands in a DIFFERENT attribution would silently re-file the
+  // earning under another party or another type.
+  const seed = live[0];
+  const rebuiltAgainst: CreatorAttribution = {
+    id: opts.attributionId,
+    creatorType: seed.creatorType,
+    // These four are not read by buildCreatorEarningEntries; they are carried so
+    // the value passed is a whole attribution rather than a partial cast.
+    subjectKind: "booking",
+    subjectId: opts.attributionId,
+    valueEvent: "verified_booking",
+    valueEventId: opts.attributionId,
+    basis: "recorded_value_event",
+    beneficiaryUserId: live.find((e) => e.beneficiaryUserId !== null)?.beneficiaryUserId ?? "",
+    weight: 0,
+    confidence: 0,
+    grossRevenueMinor: 0,
+    provisionalShareMinor: 0,
+    currency: seed.currency,
+    settledMinor: 0,
+    ruleVersion: opts.ruleVersion,
+    fraudHold: false,
+    fraudHoldReason: null,
+    supersedesId: null,
+    earnable: true,
+    idempotencyKey: opts.attributionId,
+  };
+
+  const built = buildCreatorEarningEntries(rebuiltAgainst, { ...opts.next, currency: seed.currency });
+  if (built.status !== "built") {
+    return { status: "refused", reason: built.reason, detail: built.detail };
+  }
+
+  const out: CreatorLedgerEntry[] = [];
+  const reversed: string[] = [];
+  const seen = new Set<string>();
+  for (const e of live) {
+    if (seen.has(e.transactionKey)) continue;
+    seen.add(e.transactionKey);
+    const r = buildCreatorReversal(entries, { transactionKey: e.transactionKey });
+    if (r.status !== "reversed") return { status: "refused", reason: r.reason, detail: r.detail };
+    out.push(...r.entries);
+    reversed.push(e.transactionKey);
+  }
+  out.push(...built.entries);
+  return { status: "recomputed", entries: out, reversed };
+}
