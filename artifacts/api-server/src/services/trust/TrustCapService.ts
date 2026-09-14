@@ -64,6 +64,51 @@ export async function createCap(
 }
 
 /**
+ * Read one cap, SCOPED TO THE USER it is claimed to belong to.
+ *
+ * The seam exists so an admin surface does not have to reach into `trust_caps`
+ * itself — `services/trust/` owns that table — and so the three answers stay
+ * three. supabase-js RESOLVES on a database error, so a caller writing
+ * `const { data } = await …` cannot tell "no such cap for this user" from
+ * "the table could not be read", and reads the outage as a clean not-found.
+ * That is the shape that turns a transient failure into a confident 404 at a
+ * gate, so the states are returned rather than collapsed.
+ */
+export type CapLookup =
+  | { state: "ok"; cap: TrustCap & { liftedAt: string | null } }
+  | { state: "not_found" }
+  | { state: "unavailable"; reason: string };
+
+export async function getCapForUser(
+  db: SupabaseClient,
+  input: { capId: string; userId: string },
+): Promise<CapLookup> {
+  const { data, error } = await db
+    .from("trust_caps")
+    .select("id, user_id, category, ceiling_score, reason_code, source_event_id, expires_at, lifted_at, created_at")
+    .eq("id", input.capId)
+    .eq("user_id", input.userId)
+    .maybeSingle();
+  if (error) return { state: "unavailable", reason: error.message ?? (error as any).code ?? "db_error" };
+  if (!data) return { state: "not_found" };
+  const d = data as any;
+  return {
+    state: "ok",
+    cap: {
+      id:            d.id,
+      userId:        d.user_id,
+      category:      d.category,
+      ceilingScore:  d.ceiling_score,
+      reasonCode:    d.reason_code,
+      sourceEventId: d.source_event_id,
+      expiresAt:     d.expires_at,
+      liftedAt:      d.lifted_at ?? null,
+      createdAt:     d.created_at,
+    },
+  };
+}
+
+/**
  * Lift one specific cap (admin or expiry).
  *
  * ── THE CAP MUST BELONG TO THE USER IT IS BEING LIFTED FOR ──────────────────

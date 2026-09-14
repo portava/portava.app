@@ -37,7 +37,7 @@ import { ALL_CATEGORIES, getTrustProfileResult, recalculateTrustScore } from "..
 import type { TrustCategory } from "../services/trust/TrustEventService.js";
 import { listRestrictionsForAudit } from "../services/trust/TrustRestrictionService.js";
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
-import { getActiveCaps } from "../services/trust/TrustCapService.js";
+import { getActiveCaps, getCapForUser } from "../services/trust/TrustCapService.js";
 import type { RestrictionType } from "../services/trust/TrustRestrictionService.js";
 
 import { requireAdmin } from "../lib/requireAdmin.js";
@@ -470,26 +470,25 @@ router.post("/admin/trust/users/:userId/cap/override", async (req, res) => {
   const parsed = CapOverrideSchema.safeParse(req.body);
   if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
 
-  // Scoped read FIRST. supabase-js resolves on a database error, so the `error`
-  // is load-bearing: an unreadable trust_caps must not be answered as "no such
-  // cap for this user", which is the shape that would let a transient outage
-  // read as a clean 404.
-  const { data: cap, error: capErr } = await sc
-    .from("trust_caps")
-    .select("id, user_id, category, reason_code, lifted_at")
-    .eq("id", parsed.data.capId)
-    .eq("user_id", userId)
-    .maybeSingle();
-  if (capErr) { sendError(res, "db_error", capErr.message ?? "Could not read cap"); return; }
-  if (!cap) {
+  // Scoped read FIRST, through the Trust seam — `services/trust/` owns
+  // `trust_caps`, and `getCapForUser` keeps the three answers three: an
+  // unreadable table must not be answered as "no such cap for this user",
+  // which is the shape that turns a transient outage into a confident 404.
+  const lookup = await getCapForUser(sc, { capId: parsed.data.capId, userId });
+  if (lookup.state === "unavailable") {
+    sendError(res, "db_error", `Could not read cap: ${lookup.reason}`);
+    return;
+  }
+  if (lookup.state === "not_found") {
     sendError(res, "not_found", "No cap with that id belongs to this user.");
     return;
   }
-  if ((cap as any).lifted_at) {
+  const cap = lookup.cap;
+  if (cap.liftedAt) {
     sendError(res, "conflict", "That cap has already been lifted.");
     return;
   }
-  const reasonCode = String((cap as any).reason_code ?? "");
+  const reasonCode = String(cap.reasonCode ?? "");
   if (reasonCode !== "admin_override") {
     sendError(res, "forbidden",
       `Cap ${parsed.data.capId} is a '${reasonCode}' ceiling, not an admin override. ` +
@@ -500,7 +499,7 @@ router.post("/admin/trust/users/:userId/cap/override", async (req, res) => {
 
   try {
     const result = await adminRemoveOverride(
-      sc, adminId, userId, (cap as any).category as TrustCategory, parsed.data.reason, parsed.data.capId,
+      sc, adminId, userId, cap.category as TrustCategory, parsed.data.reason, parsed.data.capId,
     );
     // Await so the affected user's compass cache is cleared before we respond —
     // and for the user whose cap was actually lifted, which is now the same user
