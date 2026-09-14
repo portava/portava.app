@@ -249,13 +249,29 @@ describe("§12 stamp types — Contributor exists, Place does not (census-passpo
       "createStamp's INSERT must still carry place_id: the Place stamp needs a vocabulary " +
         "label and a caller that supplies one, not a new column",
     );
-    // And the vocabulary genuinely does not admit it yet — stated here so the
-    // migration that adds it has to come past this assertion deliberately.
+    // THE TRIPWIRE THIS CASE CARRIED HAS BEEN COME PAST, DELIBERATELY.
+    //
+    // It asserted `!labels.includes("place")` so the migration adding the label
+    // could not arrive by accident. `2880_passport_stamps_place_vocabulary.sql`
+    // now adds it, and that file was written having re-read P61 and the D-STAMP
+    // blocker exactly as the old message demanded. What the re-read established
+    // is recorded in 2880's header and pinned by
+    // src/test/passportStampPlaceVocabulary.test.ts:
+    //
+    //   * `place` and `place_contributor` are NOT one concept under two names,
+    //     so the row could not be closed by aliasing them;
+    //   * the label is STAGED and applied to nothing;
+    //   * it still has NO PRODUCER, because what earns a Place stamp exists in
+    //     no spec and is an owner decision.
+    //
+    // The assertion is inverted rather than deleted: the tree must now carry the
+    // label, and the NEW tripwire — that nothing may start writing it before the
+    // owner rules — lives in passportStampPlaceVocabulary.test.ts.
     const { labels } = liveVocabulary();
     assert.ok(
-      !labels.includes("place"),
-      "a 'place' label now exists in the CHECK vocabulary: census-passport P61 and the " +
-        "D-STAMP blocker must be re-read, because the reason they are open has changed",
+      labels.includes("place"),
+      "migration 2880 is gone: the 'place' label has left the vocabulary. Either the file " +
+        "was reverted or its ARRAY edited — P61's engineering half is no longer staged.",
     );
   });
 });
