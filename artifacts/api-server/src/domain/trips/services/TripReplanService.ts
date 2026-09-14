@@ -43,7 +43,7 @@ export async function computeReplan(sc: any, tripId: string, userId: string, opt
 }
 
 export type MeetingPointComputation =
-  | { ok: true; result: MeetingPointResult; candidatesConsidered: number; candidates: MeetingCandidate[]; sourceTripVersion: number | null }
+  | { ok: true; result: MeetingPointResult; candidatesConsidered: number; candidates: MeetingCandidate[]; sourceTripVersion: number | null; unread: string[] }
   | { ok: false; reason: string; message: string };
 
 export async function computeMeetingPoint(sc: any, tripId: string, userId: string, opts: { participantIds?: string[]; candidateIds?: string[]; now?: Date } = {}): Promise<MeetingPointComputation> {
@@ -64,8 +64,16 @@ export async function computeMeetingPoint(sc: any, tripId: string, userId: strin
     const soon = loaded.state.commitments.filter((c) => c.participantIds.includes(id)).map((c) => ({ c, at: Date.parse(c.requiredArrivalAt ?? c.startsAt ?? "") })).filter((x) => Number.isFinite(x.at) && x.at > now.getTime()).sort((a, b) => a.at - b.at)[0];
     return soon ? { id: soon.c.id, arriveBy: new Date(soon.at).toISOString(), point: null } : null;
   };
-  const { data: savedRows } = await sc.from("trip_saved_places").select("id, place_name, place_type, lat, lng").eq("trip_id", tripId);
-  const { data: planRows } = await sc.from("trip_plan_items").select("id, title, category, lat, lng, location_is_private").eq("trip_id", tripId).is("removed_at", null);
+  // §29.6 / §54.1: a candidate source that could not be READ is named, not
+  // served as "there are no candidates there". Both reads are optional — the
+  // meeting point is still computable from the other one — so the failure is a
+  // named unread rather than a refusal, and it joins the list loadImpactState
+  // already started.
+  const unread = [...loaded.unread];
+  const { data: savedRows, error: savedErr } = await sc.from("trip_saved_places").select("id, place_name, place_type, lat, lng").eq("trip_id", tripId);
+  if (savedErr) unread.push("trip_saved_places");
+  const { data: planRows, error: planErr } = await sc.from("trip_plan_items").select("id, title, category, lat, lng, location_is_private").eq("trip_id", tripId).is("removed_at", null);
+  if (planErr) unread.push("trip_plan_items");
   const candidates: MeetingCandidate[] = [
     ...((savedRows ?? []) as any[]).filter((s) => typeof s.lat === "number" && typeof s.lng === "number").map((s) => ({ id: `saved:${s.id}`, name: String(s.place_name ?? ""), point: { lat: s.lat, lng: s.lng }, placeType: s.place_type ?? null })),
     ...((planRows ?? []) as any[]).filter((p) => typeof p.lat === "number" && typeof p.lng === "number").map((p) => ({ id: `plan:${p.id}`, name: String(p.title ?? ""), point: { lat: p.lat, lng: p.lng }, placeType: p.category === "meeting_point" ? "meeting_point" : p.category ?? null, privateAnchor: p.location_is_private === true })),
@@ -76,5 +84,5 @@ export async function computeMeetingPoint(sc: any, tripId: string, userId: strin
     participants: wanted.map((id) => ({ userId: id, point: positions.get(id) ?? null, positionReason: positions.get(id) ? null : positionReason, nextCommitment: nextFor(id) })),
     candidates: chosen, partySize: wanted.length, travel: (a, b) => straightLineEstimator.minutes(a, b),
   });
-  return { ok: true, result, candidatesConsidered: chosen.length, candidates: chosen, sourceTripVersion: loaded.sourceTripVersion };
+  return { ok: true, result, candidatesConsidered: chosen.length, candidates: chosen, sourceTripVersion: loaded.sourceTripVersion, unread };
 }

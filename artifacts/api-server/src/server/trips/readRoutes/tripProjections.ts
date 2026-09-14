@@ -506,7 +506,7 @@ router.post("/trips/:tripId/simulate", asyncHandler(async (req, res) => {
   const freedom = await buildTripFreedomProjection(ctx.sc, ctx.tripId);
   if (!freedom.ok) { refuseBuild(res, freedom as any); return; }
   const verdict = simulateChange({ ...change, proposedBy: ctx.userId }, loaded.state, freedom.projection.windows, Date.now());
-  res.json({ tripId: ctx.tripId, sourceTripVersion: loaded.sourceTripVersion, simulation: verdict });
+  res.json({ tripId: ctx.tripId, sourceTripVersion: loaded.sourceTripVersion, unread: loaded.unread, simulation: verdict });
 }));
 
 // §11.3 "Replan today": a candidate diff; shared mutations become proposals
@@ -558,7 +558,7 @@ router.post("/trips/:tripId/meeting-point", asyncHandler(async (req, res) => {
     candidateIds: Array.isArray(body.candidateIds) ? body.candidateIds.filter((x: unknown) => typeof x === "string") : undefined,
   });
   if (!r.ok) { refuseBuild(res, r as any); return; }
-  res.json({ tripId: ctx.tripId, sourceTripVersion: r.sourceTripVersion, meetingPoint: r.result, candidatesConsidered: r.candidatesConsidered });
+  res.json({ tripId: ctx.tripId, sourceTripVersion: r.sourceTripVersion, unread: r.unread, meetingPoint: r.result, candidatesConsidered: r.candidatesConsidered });
 }));
 
 // §17.3: the rescue entry point. Declares the disruption through the kernel (§17.2's switch) when the kernel is on; returns the plan either way.
@@ -593,7 +593,7 @@ router.post("/trips/:tripId/rescue", asyncHandler(async (req, res) => {
     });
     declared = r.ok ? { ok: true, disruptionId: String((r.result as any)?.id ?? ""), duplicate: r.duplicate, reason: null, skipped: null } : { ok: false, disruptionId: null, duplicate: false, reason: r.reason, skipped: null };
   }
-  res.status(201).json({ tripId: ctx.tripId, plan, declared });
+  res.status(201).json({ tripId: ctx.tripId, unread: loaded.unread, plan, declared });
 }));
 
 // ── POST /trips/:tripId/notifications/acted — §21.1 notification_actionability_rate
