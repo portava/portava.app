@@ -184,11 +184,18 @@ function makeClient(state: FakeState, failTables: Set<string> = new Set()) {
   };
 }
 
-async function startApp(state: FakeState) {
+async function startApp(state: FakeState, logged: Array<{ obj: any; msg: string }> = []) {
   _setTestClient(makeClient(state) as any, true);
   const app = express();
   app.use(express.json());
-  app.use((req: any, _r: any, next: any) => { req.log = { error: () => {}, info: () => {}, warn: () => {} }; next(); });
+  app.use((req: any, _r: any, next: any) => {
+    req.log = {
+      error: (obj: any, msg: string) => logged.push({ obj, msg }),
+      info: (obj: any, msg: string) => logged.push({ obj, msg }),
+      warn: (obj: any, msg: string) => logged.push({ obj, msg }),
+    };
+    next();
+  });
   app.use("/api", memoriesRouter);
   return new Promise<{ baseUrl: string; close: () => Promise<void> }>((resolve, reject) => {
     const srv = http.createServer(app);
@@ -416,6 +423,59 @@ describe("PATCH /api/memories/:id revokes cached Compass projections", () => {
         reasons.has("memory_visibility_changed"),
         `expected a memory_visibility_changed audit row, saw ${[...reasons].join(", ") || "none"}`,
       );
+    } finally { await app.close(); }
+  });
+});
+
+// ── §24 privacy_revocation_latency, on the shipping routes ────────────────────
+//
+// CENSUS H219. The metric is only worth anything if it is emitted by the route
+// a person actually reaches, so these assert on the HTTP surface rather than on
+// the module. `lib/memoryPrivacyMetrics.test.ts` covers the arithmetic.
+
+const latencySamples = (lines: Array<{ obj: any }>) =>
+  lines.map((l) => l.obj).filter((o) => o && o.metric === "privacy_revocation_latency");
+
+describe("§24 privacy_revocation_latency is emitted by the routes (H219)", () => {
+  it("PATCH /api/memories/:id emits exactly one sample when the audience changes", async () => {
+    const lines: Array<{ obj: any; msg: string }> = [];
+    const app = await startApp(baseState(), lines);
+    try {
+      const { status } = await patch(app.baseUrl, `/api/memories/${MEM_ID}`, "owner-tok", { visibility: "only_me" });
+      assert.equal(status, 200);
+      const s = latencySamples(lines);
+      assert.equal(s.length, 1);
+      assert.equal(s[0].surface, "memory_audience");
+      assert.equal(s[0].subjectId, MEM_ID);
+      assert.equal(s[0].reason, "memory_visibility_changed");
+      assert.ok(Number.isInteger(s[0].latencyMs) && s[0].latencyMs >= 0);
+      assert.ok(s[0].latencyMs >= s[0].revocationMs, "the owner's clock cannot run behind the loop's");
+      // The Memory was `public`, so the losing audience is not enumerable and
+      // this duration is NOT "time until all derivatives were removed" (H189).
+      assert.equal(s[0].complete, false);
+      assert.equal(s[0].unboundedAudience, "public");
+    } finally { await app.close(); }
+  });
+
+  it("a caption edit revokes nothing and therefore measures nothing", async () => {
+    const lines: Array<{ obj: any; msg: string }> = [];
+    const app = await startApp(baseState(), lines);
+    try {
+      await patch(app.baseUrl, `/api/memories/${MEM_ID}`, "owner-tok", { caption: "a new caption" });
+      assert.equal(latencySamples(lines).length, 0, "a metric for a revocation that did not happen is noise");
+    } finally { await app.close(); }
+  });
+
+  it("DELETE /api/memories/:id emits the sample through the §21 lifecycle", async () => {
+    const lines: Array<{ obj: any; msg: string }> = [];
+    const app = await startApp(baseState({ visibility: "trip_crew" }), lines);
+    try {
+      assert.equal((await del(app.baseUrl, `/api/memories/${MEM_ID}`, "owner-tok")).status, 204);
+      const s = latencySamples(lines);
+      assert.equal(s.length, 1);
+      assert.equal(s[0].reason, "memory_deleted");
+      // A trip_crew audience IS enumerable, so this one can be complete.
+      assert.equal(s[0].unboundedAudience, null);
     } finally { await app.close(); }
   });
 });

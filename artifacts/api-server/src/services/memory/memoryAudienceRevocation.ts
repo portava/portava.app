@@ -270,13 +270,30 @@ export async function resolveRevocationTargets(
   };
 }
 
+import {
+  buildPrivacyRevocationSample,
+  recordPrivacyRevocationLatency,
+} from "../../lib/memoryPrivacyMetrics.js";
+
 export interface RevokeOptions {
   memoryId: string;
   ownerId: string;
   previous: MemoryAudienceState;
   next: MemoryAudienceState;
   reason: RevocationReason;
-  log?: { error: (obj: unknown, msg: string) => void; warn?: (obj: unknown, msg: string) => void } | undefined;
+  log?: {
+    error: (obj: unknown, msg: string) => void;
+    warn?: (obj: unknown, msg: string) => void;
+    /** §24's metric sample lands here. Optional: a caller without one is fine. */
+    info?: (obj: unknown, msg: string) => void;
+  } | undefined;
+  /**
+   * §24 `privacy_revocation_latency` measures from the privacy DECISION, not
+   * from this function. Callers pass `Date.now()` taken at the moment the
+   * audience-changing write committed; omitted, the clock starts here and the
+   * sample says so by reporting the same figure twice.
+   */
+  requestedAt?: number | undefined;
   /** Injected for tests; defaults to the real Compass cache invalidator. */
   invalidate?: (db: any, userId: string, reason: string) => Promise<void>;
 }
@@ -290,6 +307,7 @@ export async function revokeMemoryAudienceCaches(
   opts: RevokeOptions,
 ): Promise<RevocationReport> {
   const invalidateFn = opts.invalidate ?? compassInvalidate;
+  const startedAt = Date.now();
   const resolved = await resolveRevocationTargets(sc, {
     memoryId: opts.memoryId,
     ownerId: opts.ownerId,
@@ -321,6 +339,38 @@ export async function revokeMemoryAudienceCaches(
   };
   await Promise.all(
     Array.from({ length: Math.min(REVOCATION_CONCURRENCY, queue.length) }, () => worker()),
+  );
+
+  // §24 `privacy_revocation_latency`. The clock stops here, before the
+  // reporting below: every destination this surface has has reached a terminal
+  // state by now, and a log line is not part of the removal.
+  //
+  // `unbounded_audience` makes the sample INCOMPLETE however many caches were
+  // evicted — a Memory that was public has a losing audience nobody can
+  // enumerate, so "all derivatives" is not a set this code can close over
+  // (H189). A degraded lookup does the same: a crew we could not read is a crew
+  // we did not revoke.
+  recordPrivacyRevocationLatency(
+    opts.log,
+    buildPrivacyRevocationSample({
+      surface: "memory_audience",
+      subjectId: opts.memoryId,
+      reason: opts.reason,
+      requestedAt: opts.requestedAt,
+      startedAt,
+      finishedAt: Date.now(),
+      destinationsTotal: resolved.targets.length,
+      destinationsRemoved: invalidated,
+      unboundedAudience: resolved.unbounded_audience,
+      failureClass:
+        failed.length > 0
+          ? "compass_cache_invalidation_failed"
+          : resolved.degraded.length > 0
+            ? "audience_lookup_degraded"
+            : resolved.truncated
+              ? "revocation_target_cap_reached"
+              : null,
+    }),
   );
 
   const report: RevocationReport = {

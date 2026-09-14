@@ -151,6 +151,11 @@ async function runStep(step: MemoryDeletionStep, fn: () => Promise<Attempt>): Pr
 }
 
 export interface DeletionLifecycleOptions {
+  /**
+   * `Date.now()` at the moment the soft delete committed. Feeds §24's
+   * `privacy_revocation_latency`; omitted, the clock starts at the revocation.
+   */
+  requestedAt?: number | undefined;
   memoryId: string;
   ownerId: string;
   actorUserId: string;
@@ -191,6 +196,9 @@ export async function runMemoryDeletionLifecycle(
       next: { ...opts.previous, state: "deleted" },
       reason: "memory_deleted",
       log: opts.log,
+      // §24: the latency a person cares about starts when their delete
+      // committed, not when this step got its turn.
+      requestedAt: opts.requestedAt,
     });
     const facts = {
       invalidated: report.invalidated,

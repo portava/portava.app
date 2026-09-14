@@ -1586,6 +1586,7 @@ router.patch("/memories/:id", async (req, res) => {
   });
 
   if (!outcome.ok) { sendCommandFailure(req, res, outcome); return; }
+  const audienceWriteCommittedAt = Date.now();
 
   // §21 / §28.8. The write has happened; now revoke the derived artifacts that
   // still carry the OLD audience. This runs AFTER the command so a cache
@@ -1605,6 +1606,9 @@ router.patch("/memories/:id", async (req, res) => {
       next: nextAudience,
       reason: nextAudience.state === "archived" ? "memory_archived" : "memory_visibility_changed",
       log: req.log,
+      // §24 `privacy_revocation_latency` is measured from the moment the
+      // audience change COMMITTED — the owner's clock, not the eviction loop's.
+      requestedAt: audienceWriteCommittedAt,
     });
   }
 
@@ -1694,6 +1698,7 @@ router.delete("/memories/:id", async (req, res) => {
   });
 
   if (!outcome.ok) { sendCommandFailure(req, res, outcome); return; }
+  const deleteCommittedAt = Date.now();
 
   // §21's five states, run and reported. Before this, per-Memory deletion was
   // one UPDATE and a 204 — no named step, no report, no retry (census H193,
@@ -1715,6 +1720,7 @@ router.delete("/memories/:id", async (req, res) => {
     actorUserId: user.id,
     previous: audienceBeforeDelete,
     log: req.log,
+    requestedAt: deleteCommittedAt,
   });
   req.log.info({ report: deletionReport }, "memories: §21 deletion lifecycle");
 

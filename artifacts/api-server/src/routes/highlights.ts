@@ -945,6 +945,7 @@ router.delete("/highlights/:id", async (req, res) => {
     sendError(res, "db_error", "The highlight could not be deleted. Please try again.", { exposeDetail: true });
     return;
   }
+  const deleteCommittedAt = Date.now();
 
   /* §21 — revocation propagation.
    *
@@ -977,6 +978,11 @@ router.delete("/highlights/:id", async (req, res) => {
           await invalidateCompassCache(sc, user.id, "highlight_deleted");
         }
       : undefined,
+    // §24 `privacy_revocation_latency` — census H219. The soft delete above has
+    // already committed, so this is the moment the owner's decision took
+    // effect and the metric's clock starts there rather than inside the call.
+    log: req.log,
+    requestedAt: deleteCommittedAt,
   });
   if (!report.complete) {
     req.log.error(
