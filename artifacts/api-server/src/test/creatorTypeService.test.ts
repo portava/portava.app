@@ -5,7 +5,7 @@
  * Two of these properties are the ones that a report can claim and a tree can
  * fail to have:
  *
- *   FAIL-CLOSED. Nothing is read or written before the `creator_attribution`
+ *   FAIL-CLOSED. Nothing is read or written before the `creator_attribution_enabled`
  *   flag is checked, and no migration in this lane creates that flag row. An
  *   absent row reads false through isFlagEnabled, so the surface is OFF in every
  *   deployment. The test asserts the WRITE LOG IS EMPTY on a refusal, not merely
@@ -159,7 +159,7 @@ describe("fail-closed: the flag gates every entry point, and nothing is written"
         .split("\n").filter((l) => !l.trimStart().startsWith("--")).join("\n");
       assert.ok(!/feature_flags/.test(sql), `${f} touches feature_flags; the surface would not be off by default`);
     }
-    assert.equal(CREATOR_ATTRIBUTION_FLAG, "creator_attribution");
+    assert.equal(CREATOR_ATTRIBUTION_FLAG, "creator_attribution_enabled");
   });
 });
 

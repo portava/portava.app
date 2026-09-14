@@ -22,7 +22,7 @@
  * would be the defect.
  *
  * ── FAIL-CLOSED, TWICE ─────────────────────────────────────────────────────
- * 1. The feature flag `creator_attribution` is read through
+ * 1. The feature flag `creator_attribution_enabled` is read through
  *    `lib/featureFlags.ts#isFlagEnabled`, which returns false on ANY error. No
  *    migration in this lane creates that flag row, and an absent row reads
  *    false — so this surface is OFF in every deployment until an owner turns it
@@ -64,7 +64,7 @@ import {
   toCreatorEarningEntryRow,
 } from "../../lib/creatorLedgerRows.js";
 
-export const CREATOR_ATTRIBUTION_FLAG = "creator_attribution";
+export const CREATOR_ATTRIBUTION_FLAG = "creator_attribution_enabled";
 
 const ATTRIBUTIONS = "creator_attributions";
 const RULE_VERSIONS = "creator_rule_versions";

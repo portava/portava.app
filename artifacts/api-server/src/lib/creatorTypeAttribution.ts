@@ -41,7 +41,7 @@
  *
  * RUNTIME EFFECT: NONE on its own. Its persisting caller is
  * `services/creators/CreatorAttributionService.ts`, gated fail-closed on the
- * `creator_attribution` flag.
+ * `creator_attribution_enabled` flag.
  */
 import {
   creatorTypeFacts,
