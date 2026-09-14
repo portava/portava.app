@@ -690,3 +690,109 @@ on the 32 migrations, but because census verdict lines almost never cite a
 migration file. The measurement above (17 + 14 objects, absent) is the evidence
 that stands; a per-row migration attribution does not exist yet and is not
 claimed.
+
+---
+
+# 11. Two findings the Layover/Trips round produced before it finished
+
+## 11.1 CENSUS-SCHEMA DEFECT — there is no terminal state for a superseded requirement
+
+The owner ruled that a census row conflicting with a **later ratified** decision must not be left
+looking like unfinished implementation, and that if the census has no truthful terminal
+classification for "intentionally removed from scope", **that is to be reported as a schema defect
+rather than papered over by abusing `C`/`W`/`N`/`X`.**
+
+**It has none.** Measured:
+
+- `artifacts/api-server/src/scripts/checkCensusIntegrity.ts:119#type Verdict` is
+  `type Verdict = "C" | "W" | "N" | "X"` — four buckets and no fifth.
+- `artifacts/api-server/src/scripts/checkCensusIntegrity.ts:157#const VERDICT_ALIASES` admits only
+  `C/BAC/BC`, `W/BBW/BW`, `N/NB`, `X/CV`. A cell reading `SUPERSEDED` parses to **nothing**, so the
+  row silently leaves the denominator — which is worse than mis-classifying it.
+- Across all thirteen censuses the words *superseded*, *retired* and *withdrawn* appear **four
+  times in total**, all as prose inside an evidence cell. None is a verdict.
+
+**Consequence, stated so it cannot be mistaken for an opinion:** `P13`, `P128` and `P133` are
+**correctly `W` and permanently so** under the present schema. `W` means built-but-wrong; these are
+*not to be built*. The schema cannot say that, so the row says the wrong thing and the evidence cell
+is the only place the truth can live.
+
+**The chronology and authority, proved rather than asserted:**
+
+| | |
+|---|---|
+| `docs/architecture/census-passport.md` first committed | **2026-09-09**, `42aeac38e` |
+| `docs/architecture/brand-palette-decision.md` ratified | **2026-09-14 09:28:13 UTC**, `5b60439b1` |
+| The ruling | *"The mockup approves the palette only — not a new layout. Build upon existing components and shared tokens; do not rebuild working screens."* |
+| P13 specifically | already ruled by name in that document: **"stays W"**, change **"none"** |
+
+The decision is **five days later** than the requirement text and was recorded at the owner's own
+instruction as an explicit owner decision. It supersedes.
+
+**What this costs if left:** a future architecture sweep reads three `W` rows in the
+closest-to-finished census and builds Passport dark mode and a new Passport layout — both of which
+the owner declined. The guard against that is a decision test, not a verdict letter.
+
+**The fix, when someone takes it:** add a fifth terminal verdict to `Verdict`, `VERDICT_ALIASES`
+and the denominator arithmetic — something like `S` (SUPERSEDED) — counted in the denominator,
+excluded from CONSTRUCTED and from CORRECT, and required to cite the superseding artifact. Until
+then no census may use it, because the parser would drop the row.
+
+## 11.2 CORRECTION — Trips is DEPLOY-blocked, not code-blocked
+
+§10 of this document ranked the architectures by "code-shaped remainder" and placed **trips fifth
+with 111 corrections**. For the half now measured, that is **wrong**, and the error is the one §10
+warned about in the abstract: a row counts as unblocked when its verdict line does not *name* a
+blocker, which is not the same as somebody having checked.
+
+The `TR1`–`TR199` lane checked. It re-derived the verdict set independently, then measured the
+blocking facts **directly against production, read-only**:
+
+| measured in production | result |
+|---|---|
+| `trips.version`, `trip_events`, `trip_outbox`, `trip_command_receipts` | **present** — 2420's chain is deployed |
+| `trip_kernel_enabled` | **`false`** |
+| `trip_operational_projections_enabled` | **the flag row does not exist** — 2778 never applied |
+| `trip_stages`, `trip_legs`, `trip_commitments`, `trip_goals`, `trip_decision_tasks`, `trip_risks`, `trip_presence`, `trip_proposals`, `trip_snapshots`, `trip_outcomes`, `trip_subgroups`, `trip_plan_participants`, `trip_transport_segments`, `trip_decisions`, `trip_disruptions`, `trip_meeting_checkpoints` | **all absent** |
+
+**Of 86 open rows in that range, ZERO can reach `C` from this branch.**
+
+| blocker | rows |
+|---|---:|
+| flag-only (storage and code deployed, flag off) | **16** |
+| a migration that exists in the tree but in **no** database | **56** |
+| **DDL nobody has written yet** | **10** |
+| needs a routed travel-time provider / a tile provider's terms | 2 |
+| an open owner decision (`APPEAL_RESTORE_SEMANTICS`) | 1 |
+
+The ten with **no migration written** are the ones worth naming, because they are not "apply 27xx":
+`TR33`/`TR92`/`TR93` (`trip_plan_items.source_id` is `text NULL` with no FK, and 2770's `place_id`
+adds no `REFERENCES` — needs typed FK columns or a reconciliation table **plus** the writers),
+`TR77` (`trips.current_stage_id`, `trips.home_timezone` — **0 occurrences in the entire tree**),
+`TR116` (a client writer), `TR150` (three further schema objects the census under-records),
+`TR152`, `TR153` (three columns remain after 2774, not five), `TR173`, `TR1`.
+
+**So the honest statement is that Trips' 99.3 % constructed / 71 % correct is not waiting on
+engineering — it is waiting on the production deploy the owner holds.** That makes it a poor target
+for implementation agents and an excellent argument for Batch C/D. The `TR200`–`TR499` half is still
+being measured; this correction covers `TR1`–`TR199` only and will be extended when that lane lands.
+
+### Three evidence corrections — verdict unchanged, the stated reason false
+
+| id | the cell says | measured |
+|---|---|---|
+| `TR12` | `trips` "carries **no `version` column**" | production **has** `trips.version bigint`. Real blocker: `trip_kernel_enabled = false`, so nothing increments it. |
+| `TR77` | "no `current_stage_id`, no `home_timezone`, no `version` — **three** of seven" | **two** of seven. `version` is deployed. |
+| `TR153` | five proposal fields "are **not columns**" | `2774_trip_proposal_governance.sql:75#ALTER TABLE` adds `decision_rule` and `proposed_by`. **Three** remain. |
+
+### One real defect found and fixed in passing
+
+`loadImpactState` records every table it could not read in `unread` — the census's own standard,
+*"a named unread, never a failed completion"*. **Two of its five consumers carried that list to the
+caller and three dropped it.** `/trips/:id/simulate`, `/trips/:id/meeting-point` and
+`/trips/:id/rescue` answered over a silently degraded state and said nothing, while
+`/proposals/preview` and `/replan` — in the same file — disclosed it. Since
+`trip_plan_participants`, `trip_commitments` and `trip_transport_segments` are **absent on every
+deployment today**, those reads do fail, and the fallback (*"the whole crew is going"*, *"there is
+no next commitment"*) was served as a complete answer. RED 5/2 → GREEN 7/7, reverted → the same 5
+fail. It moves no verdict and none was claimed.
