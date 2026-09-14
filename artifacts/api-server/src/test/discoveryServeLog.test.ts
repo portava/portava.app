@@ -565,3 +565,265 @@ describe("discoveryServeLog — 04 §5 the recommendation denominator (DV-40)", 
     assert.deepEqual(first.features.reasonCodes, [], "an item the ranker gave no codes for claims none");
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// `04` §3's two remaining required properties — VERSIONED and PRIVACY-CLASSIFIED
+// (census-discovery DV-38 `N`, DV-39 `W`), and §10.5's constraint tests (DV-45).
+//
+// DV-38 reads: *"`rank_events` has no `schema_version` column — production
+// schema is exactly 13 columns … `04` §6 names `schema_version` explicitly."*
+// The column half is true and is a migration this lane may not write. The
+// PROPERTY half — that a reader can tell which record shape produced a row — is
+// not a column requirement: §13.3 already put three of `04` §5's nine fields
+// into the `features` jsonb the row already writes, with the owner's reasoning
+// recorded, and the shape version belongs beside them. Without it, the three
+// fields that pass added become indistinguishable from their own absence: a row
+// with no `reasonCodes` key is either pre-§13.3 or a serve that grounded
+// nothing, and nothing on the row says which.
+//
+// DV-39 reads: *"The privacy RULE is enforced — lib/rankLog.ts:9-12 states it
+// and the writer strips raw-coordinate keys from `features` before insert — but
+// there is no privacy CLASSIFICATION on the row."* Re-executed at this tree the
+// first half is FALSE FOR THIS WRITER: rankLog strips, and discoveryServeLog —
+// which now writes the majority of Discovery's rows, across ten call sites in
+// four route files — spreads the caller's `context` into `features` unfiltered
+// and states the rule only as a JSDoc sentence ("Never coordinates"). A rule
+// that lives in a comment at the call site is enforced by whoever remembers it.
+// ─────────────────────────────────────────────────────────────────────────────
+import {
+  DISCOVERY_EVENT_SCHEMA_VERSION,
+  DISCOVERY_EVENT_PRIVACY_CLASS,
+  classifyServeContext,
+  RANK_ITEM_KINDS,
+} from "../lib/discoveryServeLog.js";
+import { readFileSync, readdirSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+
+describe("discoveryServeLog — 04 §3 versioned (DV-38)", () => {
+  beforeEach(() => invalidateServeLogFlagCache());
+
+  it("T1. every written row says which record SHAPE produced it", async () => {
+    const { client, captured } = makeClient({ flagRow: { enabled: true } });
+    await logDiscoveryServe(client as any, {
+      userId: USER_ID, servePoint: DiscoveryServePoint.COLD_FETCH_LEGACY_RANK, items: ITEMS,
+    });
+    const rows = captured[0]?.rows ?? [];
+    assert.equal(rows.length, ITEMS.length, "precondition: rows were written");
+    assert.ok(
+      Number.isInteger(DISCOVERY_EVENT_SCHEMA_VERSION) && DISCOVERY_EVENT_SCHEMA_VERSION > 0,
+      "04 §6 schema_version is a version, not a label",
+    );
+    for (const r of rows) {
+      assert.equal(
+        r.features.schemaVersion, DISCOVERY_EVENT_SCHEMA_VERSION,
+        "04 §3 'versioned': a row that does not say which shape wrote it cannot be migrated or compared across a deploy",
+      );
+    }
+  });
+
+  it("T2. a caller cannot restate the schema version", async () => {
+    const { client, captured } = makeClient({ flagRow: { enabled: true } });
+    await logDiscoveryServe(client as any, {
+      userId: USER_ID, servePoint: DiscoveryServePoint.FEED, items: ITEMS,
+      context: { schemaVersion: 999 } as any,
+    });
+    const row = (captured[0]?.rows ?? [])[0];
+    assert.equal(
+      row.features.schemaVersion, DISCOVERY_EVENT_SCHEMA_VERSION,
+      "the version describes the WRITER's shape; a caller that could set it could forge provenance",
+    );
+  });
+});
+
+describe("discoveryServeLog — 04 §3 privacy-classified, 04 §12 (DV-39)", () => {
+  beforeEach(() => invalidateServeLogFlagCache());
+
+  it("U1. every written row carries its 04 §11 privacy class", async () => {
+    const { client, captured } = makeClient({ flagRow: { enabled: true } });
+    await logDiscoveryServe(client as any, {
+      userId: USER_ID, servePoint: DiscoveryServePoint.COMMUNITY, items: ITEMS,
+    });
+    const rows = captured[0]?.rows ?? [];
+    assert.equal(rows.length, ITEMS.length, "precondition: rows were written");
+    for (const r of rows) {
+      assert.equal(
+        r.features.privacyClass, DISCOVERY_EVENT_PRIVACY_CLASS,
+        "04 §3 'privacy-classified': an unlabelled row cannot be given a retention rule by anyone who did not write it",
+      );
+    }
+    assert.equal(
+      DISCOVERY_EVENT_PRIVACY_CLASS, "raw_behavioral_event",
+      "04 §11's FIRST layer, named in the spec's own words — not a retention DECISION, which §11 reserves for privacy/legal review",
+    );
+  });
+
+  it("U2. precise location handed in by a caller never reaches the row", async () => {
+    const { client, captured } = makeClient({ flagRow: { enabled: true } });
+    await logDiscoveryServe(client as any, {
+      userId: USER_ID, servePoint: DiscoveryServePoint.SEARCH, items: ITEMS,
+      context: {
+        destination: "lisbon", radiusKm: 5,
+        lat: 38.7223, lng: -9.1393, userLat: 38.70, userLng: -9.14, distanceKm: 1.2,
+      } as any,
+    });
+    const f = (captured[0]?.rows ?? [])[0].features;
+    for (const k of ["lat", "lng", "userLat", "userLng", "distanceKm"]) {
+      assert.equal(
+        k in f, false,
+        `04 §12 'precise historical location beyond product need': ${k} must never be stored on a behaviour row`,
+      );
+    }
+    assert.equal(f.destination, "lisbon", "a diagnostic that is not a coordinate is kept — the strip is a filter, not a ban");
+    assert.equal(f.radiusKm, 5, "a RADIUS is not a position; stripping it would cost the baseline its one spatial diagnostic");
+  });
+
+  it("U3. the refusal is OBSERVABLE on the row, not silent", async () => {
+    const { client, captured } = makeClient({ flagRow: { enabled: true } });
+    await logDiscoveryServe(client as any, {
+      userId: USER_ID, servePoint: DiscoveryServePoint.SEARCH, items: ITEMS,
+      context: { destination: "lisbon", lat: 38.7223 } as any,
+    });
+    const f = (captured[0]?.rows ?? [])[0].features;
+    assert.deepEqual(
+      f.privacyDropped, ["lat"],
+      "the 0202 lesson: a value dropped with nothing saying so is indistinguishable from a caller that never sent it",
+    );
+  });
+
+  it("U3b. a clean context adds NO dropped-key noise to the row", async () => {
+    const { client, captured } = makeClient({ flagRow: { enabled: true } });
+    await logDiscoveryServe(client as any, {
+      userId: USER_ID, servePoint: DiscoveryServePoint.SEARCH, items: ITEMS,
+      context: { destination: "lisbon" },
+    });
+    const f = (captured[0]?.rows ?? [])[0].features;
+    assert.equal("privacyDropped" in f, false, "an empty dropped list is an absent key, so a present one always means something happened");
+  });
+
+  it("U4. a caller cannot restate the privacy class", async () => {
+    const { client, captured } = makeClient({ flagRow: { enabled: true } });
+    await logDiscoveryServe(client as any, {
+      userId: USER_ID, servePoint: DiscoveryServePoint.SEARCH, items: ITEMS,
+      context: { privacyClass: "anonymous_aggregate" } as any,
+    });
+    const row = (captured[0]?.rows ?? [])[0];
+    assert.equal(
+      row.features.privacyClass, DISCOVERY_EVENT_PRIVACY_CLASS,
+      "a class a caller can set is a class nobody can rely on",
+    );
+  });
+
+  it("U5. classifyServeContext is pure, total, and names what it dropped", () => {
+    assert.deepEqual(classifyServeContext(undefined), { kept: {}, dropped: [] });
+    assert.deepEqual(classifyServeContext(null as any), { kept: {}, dropped: [] });
+    const r = classifyServeContext({ Lat: 1, LONGITUDE: 2, city: "lisbon", venueLatitude: 3 });
+    assert.deepEqual(r.kept, { city: "lisbon" }, "matching is case-insensitive and catches a suffixed coordinate name");
+    assert.deepEqual(
+      [...r.dropped].sort(), ["LONGITUDE", "Lat", "venueLatitude"].sort(),
+      "dropped keys are reported under the caller's OWN spelling, so the offending call site is findable",
+    );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// `04` §10.5 — "test all CHECK/enum constraints" (DV-45).
+//
+// DV-45's stated limitation stands and is NOT what these tests claim to fix:
+// the suite runs against an unreachable SUPABASE_URL, so nothing here exercises
+// a real CHECK rejection, and a green run does not prove a live constraint.
+//
+// What they DO test is the half that is checkable from the repository and was
+// not being checked at all: that the vocabulary this writer can emit is a
+// SUBSET of the vocabulary the migrations declare. That is the drift a green
+// unit suite hides — a kind added in TypeScript with no migration behind it
+// looks correct in every test and is refused by the database on the first
+// production serve, exactly the 0202 failure the module header was written
+// about.
+// ─────────────────────────────────────────────────────────────────────────────
+const MIGRATIONS_DIR = path.join(
+  path.dirname(fileURLToPath(import.meta.url)), "..", "migrations",
+);
+
+/**
+ * The vocabulary a `rank_events` CHECK declares for one column, as the LAST
+ * migration to declare it left it. Comment lines are stripped first: 2297 and
+ * 2298 both carry the previous vocabulary inside their rollback blocks, and a
+ * parser that read those would certify a constraint nobody applied.
+ */
+function checkVocabulary(column: string): string[] {
+  const files = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith(".sql")).sort();
+  let latest: string[] | null = null;
+  const re = new RegExp(`CHECK\\s*\\(\\s*${column}\\s*(?:IN|=\\s*ANY)\\s*\\(([^)]*)\\)`, "gi");
+  for (const f of files) {
+    const sql = readFileSync(path.join(MIGRATIONS_DIR, f), "utf8")
+      .split("\n").filter((l) => !l.trimStart().startsWith("--")).join("\n");
+    // Statement-scoped, and that is not tidiness. Written table-blind, this
+    // helper reported `rank_events.outcome` as ('accepted','duplicate',
+    // 'rejected') — the memory command kernel's outcome CHECK in migration
+    // 2710, which is a different table with the same column name and a later
+    // filename. A vocabulary check that reads the wrong table's constraint
+    // certifies nothing and does it confidently. Found by the first red run.
+    for (const stmt of sql.split(";")) {
+      if (!/\brank_events\b/i.test(stmt)) continue;
+      for (const m of stmt.matchAll(re)) {
+        const vals = [...m[1]!.matchAll(/'([^']*)'/g)].map((x) => x[1]!);
+        if (vals.length > 0) latest = vals;
+      }
+    }
+  }
+  if (!latest) throw new Error(`no CHECK vocabulary found for rank_events.${column}`);
+  return latest;
+}
+
+describe("discoveryServeLog — 04 §10.5 the writer's vocabulary vs the migrations (DV-45)", () => {
+  it("V1. the parser finds a real vocabulary for each constrained column", () => {
+    assert.ok(checkVocabulary("surface").includes("discovery"), "surface vocabulary resolved");
+    assert.ok(checkVocabulary("item_kind").includes("place"), "item_kind vocabulary resolved");
+    assert.ok(checkVocabulary("outcome").includes("impression"), "outcome vocabulary resolved");
+    assert.ok(
+      checkVocabulary("outcome").includes("dismiss"),
+      "the LAST declaration wins — 2297 widened the outcome vocabulary and 2298's rollback comment must not win over it",
+    );
+  });
+
+  it("V2. every item_kind this writer can emit is admitted by the CHECK", () => {
+    const allowed = new Set(checkVocabulary("item_kind"));
+    assert.ok(RANK_ITEM_KINDS.length > 0, "the writer's kinds are enumerable at runtime, not only as a type");
+    for (const k of RANK_ITEM_KINDS) {
+      assert.ok(allowed.has(k), `item_kind '${k}' is emittable in TypeScript and refused by the database`);
+    }
+  });
+
+  it("V3. every kind searchTypeToItemKind can return is one of those, or NULL", () => {
+    const types = [
+      "travelers", "buddies", "events", "trips", "plans", "places", "hidden_gems", "posts",
+      "traveler", "gem", "event", "place", "plan", "trip", "post",
+      "cities", "countries", "languages", "hashtags", "circles", "", "nonsense",
+    ];
+    const kinds = new Set(RANK_ITEM_KINDS as readonly string[]);
+    for (const t of types) {
+      const k = searchTypeToItemKind(t);
+      assert.ok(
+        k === null || kinds.has(k),
+        `searchTypeToItemKind('${t}') returned '${k}', which is outside the declared kind vocabulary`,
+      );
+    }
+  });
+
+  it("V4. the surface and outcome this writer hard-codes are admitted", async () => {
+    invalidateServeLogFlagCache();
+    const { client, captured } = makeClient({ flagRow: { enabled: true } });
+    await logDiscoveryServe(client as any, {
+      userId: USER_ID, servePoint: DiscoveryServePoint.MAP_SEARCH, items: ITEMS,
+    });
+    const surfaces = new Set(checkVocabulary("surface"));
+    const outcomes = new Set(checkVocabulary("outcome"));
+    for (const r of captured[0]?.rows ?? []) {
+      assert.ok(surfaces.has(r.surface), `surface '${r.surface}' is not in the CHECK vocabulary`);
+      assert.ok(outcomes.has(r.outcome), `outcome '${r.outcome}' is not in the CHECK vocabulary`);
+      assert.ok(r.item_kind === null || new Set(checkVocabulary("item_kind")).has(r.item_kind),
+        `item_kind '${r.item_kind}' is not in the CHECK vocabulary`);
+    }
+  });
+});
