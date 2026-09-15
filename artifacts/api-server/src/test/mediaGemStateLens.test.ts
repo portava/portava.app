@@ -211,7 +211,7 @@ describe("MD360 — GET /media/gems serves a §16 gem-STATE projection", () => {
     // …and a stranger does not.
     const theirs = await buildGemStateProjection(
       clientWith([mine]),
-      viewer(STRANGER === VIEWER ? "x" : "44444444-4444-4444-4444-444444444444"),
+      viewer(STRANGER),
       { city: "Da Nang" },
       NOW,
     );

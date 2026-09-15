@@ -1272,7 +1272,7 @@ POST  SELECT count(*) FROM public.rank_events
 
 **THE CENSUS SAYS NINE; IT IS SEVEN.** DV-44 lists nine zero-row surfaces and
 this file retires only seven. `living_page` and `watch_feed` have **intentional
-writers** — `routes/rankEvents.ts:68` and `routes/mediaFeed.ts:1759` — and their
+writers** — `routes/rankEvents.ts:75#surface: "living_page"` and `routes/mediaFeed.ts:1759` — and their
 zero production counts are the scar of the pre-0202 CHECK blackout that
 `lib/discoveryServeLog.ts:14-35` already documents, not the absence of a
 producer. Retiring them would re-open exactly the blackout 0202 closed. **"Zero
