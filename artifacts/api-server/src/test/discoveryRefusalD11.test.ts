@@ -615,11 +615,133 @@ describe("GET /discovery/search", () => {
       class: "transient_db", code: "search_sources_unreadable", route: "GET /discovery/search",
       coverage: "partial",
     }, "/discovery/search?type=all with an unreadable `trips`");
-    assert.ok(
-      Array.isArray(r.body.refusal.failedSources) && r.body.refusal.failedSources.includes("plans"),
-      `failedSources must name the buckets that failed, got ${JSON.stringify(r.body.refusal?.failedSources)}`,
+    // EXACT, not `includes`. FAN_SOURCES maps to the settled array BY INDEX and
+    // nothing else checks that the names still line up: insert a source in the
+    // middle of the fan-out without inserting its name and every refusal after
+    // it names the wrong table — a wrong answer shaped exactly like a right one.
+    // `trips` is index 3 and `plans` index 4, and an unreadable `trips` table
+    // fails both, so this pins the mapping at two adjacent positions and pins
+    // the order they are reported in.
+    assert.deepEqual(
+      r.body.refusal.failedSources, ["trips", "plans"],
+      `failedSources must name the buckets that failed, in fan-out order, got ${JSON.stringify(r.body.refusal?.failedSources)}`,
     );
   });
+
+  // ── P5/P6 — the same defect P1 fixed for `plans`, still open on `trips`.
+  //
+  // Found by P3 rather than by reading: P3 expected `failedSources` to be
+  // ["trips", "plans"] — an unreadable `trips` table fails the plans bucket
+  // through its parent-trip read AND the trips bucket through its own — and got
+  // ["plans"]. `searchTrips` ends its legacy read with `if (error || !data)
+  // return []`, the exact line P1 removed from the plans path, so `type=trips`
+  // answered `200 { results: [] }` for an outage with no refusal on it.
+  //
+  // It also means §21.4's first hazard was real on the day it was written: a
+  // bucket that FAILS WITHOUT REJECTING is invisible to the fan-out, which can
+  // only see a rejection. This is that bucket.
+  const TRIP_ROW = {
+    id: "d11trip0-0000-0000-0000-000000000001",
+    title: "Kopitiam crawl",
+    destination_city: "Singapore",
+    destination_country: "SG",
+    owner_id: "d11user0-0000-0000-0000-000000000002",
+    cover_url: null,
+    start_date: "2026-10-01",
+    status: "upcoming",
+    visibility: "public",
+    show_in_discovery: true,
+    created_at: "2026-09-01T00:00:00.000Z",
+  };
+
+  it("P5 — refuses when the trips read fails, instead of `results: []`", async () => {
+    setClient({ errorTables: ["trips"] });
+    const r = await get("/api/discovery/search?q=kopitiam&type=trips", true);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.results, []);
+    assertRefusal(r.body, {
+      class: "transient_db", code: "search_failed", route: "GET /discovery/search",
+    }, "/discovery/search?type=trips with an unreadable `trips`");
+    assertNoExposure("/discovery/search?type=trips with an unreadable `trips`");
+  });
+
+  it("P6 — a readable `trips` that matches nothing carries NO refusal (control)", async () => {
+    setClient({ rows: { trips: [] } });
+    const r = await get("/api/discovery/search?q=kopitiam&type=trips", true);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.results, []);
+    assert.equal(
+      r.body.refusal, undefined,
+      "a trips search that genuinely matches nothing must NOT be stamped with a refusal",
+    );
+  });
+
+  it("P7 — a readable `trips` that MATCHES still returns its row (control)", async () => {
+    // Without this, "throw on error" is satisfied by throwing on everything.
+    setClient({ rows: { trips: [TRIP_ROW] } });
+    const r = await get("/api/discovery/search?q=kopitiam&type=trips", true);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.refusal, undefined);
+  });
+
+  // ── P8 — the other TEN swallowed reads, one per searchable type.
+  //
+  // P1 fixed `searchPlans`' parent-trip read and P5 fixed `searchTrips`, and
+  // both were found one at a time. A grep for the line they both removed —
+  // `if (error || !data) return [];` — found TEN more, one in each remaining
+  // per-type searcher, every one of them the same masquerade: supabase-js
+  // RESOLVES on a read failure, so `error` is an outage and `[]` is what a
+  // query that matched nothing returns.
+  //
+  // Each type gets a FAILURE and a CONTROL. The control is what makes the pair
+  // mean anything: an empty-but-READABLE table must still answer with no
+  // refusal, so "throw on error" cannot be satisfied by throwing on everything.
+  //
+  // NINE of the ten are exercised below. `travelers` is NOT, and the reason is
+  // recorded rather than worked around: its read is `profiles`, and so is
+  // `requireUser`'s, so `errorTables: ["profiles"]` answers 503 from the auth
+  // middleware before the route is entered. This harness errors a table for the
+  // whole request and cannot fail one read of `profiles` and not the other. Its
+  // CONTROL still runs. So `searchTravelers`' re-raise is fixed by the same
+  // edit as the other nine and is verified by NOTHING — that is a gap, not a
+  // pass, and it is named here so a reader does not count ten where there are
+  // nine.
+  const SWALLOWED: Array<{ type: string; table: string; reachable: boolean }> = [
+    { type: "travelers",   table: "profiles", reachable: false },
+    { type: "events",      table: "events", reachable: true },
+    { type: "plans",       table: "trip_plan_items" , reachable: true },
+    { type: "places",      table: "discovery_places" , reachable: true },
+    { type: "hidden_gems", table: "hidden_gems" , reachable: true },
+    { type: "hashtags",    table: "hashtags" , reachable: true },
+    { type: "posts",       table: "posts" , reachable: true },
+    { type: "circles",     table: "circles" , reachable: true },
+    { type: "stamps",      table: "stamp_definitions" , reachable: true },
+    { type: "activities",  table: "discovery_places" , reachable: true },
+  ];
+
+  for (const { type, table, reachable } of SWALLOWED) {
+    (reachable ? it : it.skip)(`P8 — type=${type} refuses when \`${table}\` cannot be read`, async () => {
+      setClient({ errorTables: [table] });
+      const r = await get(`/api/discovery/search?q=kopitiam&type=${type}`, true);
+      assert.equal(r.status, 200);
+      assert.deepEqual(r.body.results, []);
+      assertRefusal(r.body, {
+        class: "transient_db", code: "search_failed", route: "GET /discovery/search",
+      }, `/discovery/search?type=${type} with an unreadable \`${table}\``);
+      assertNoExposure(`/discovery/search?type=${type} with an unreadable \`${table}\``);
+    });
+
+    it(`P8 CONTROL — type=${type} over a readable empty \`${table}\` carries NO refusal`, async () => {
+      setClient({ rows: { [table]: [] } });
+      const r = await get(`/api/discovery/search?q=kopitiam&type=${type}`, true);
+      assert.equal(r.status, 200);
+      assert.deepEqual(r.body.results, []);
+      assert.equal(
+        r.body.refusal, undefined,
+        `a ${type} search that genuinely matches nothing must NOT be stamped with a refusal`,
+      );
+    });
+  }
 
   it("P4 — type=all over readable tables carries NO refusal (control)", async () => {
     setClient({ rows: { trip_plan_items: [PLAN_ROW], trips: [], hashtags: [HASHTAG_ROW] } });
@@ -667,6 +789,50 @@ describe("GET /discovery/suggest", () => {
     assertRefusal(r.body, {
       class: "validation", code: "query_too_short", route: "GET /discovery/suggest",
     }, "/discovery/suggest short query");
+  });
+
+  // ── S1/S2 — the suggest fan-out has the same back door `searchAll` had.
+  //
+  // `dispatchSearch(...).catch(() => [] as SearchResult[])`. Fourteen types run
+  // in parallel and a REJECTED one becomes an empty group, indistinguishable
+  // from a type that was read and matched nothing. So a typeahead could lose an
+  // entire category to an outage and answer `200 { groups: [...] }` with no
+  // refusal on it — the same masquerade, on the surface that fires on every
+  // keystroke.
+  //
+  // `partial`, not `nothing`: thirteen types answered and their groups are real.
+  // `useSearchSuggestions` already renders and caches a partial for exactly that
+  // reason, and refuses to cache a `nothing`.
+  it("S1 — a failed type in the fan-out is a PARTIAL refusal, not a missing group", async () => {
+    setClient({
+      rows: { hashtags: [{ id: "d11h-1", slug: "kopitiam", name: "Kopitiam", usage_count: 5, is_blocked: false, created_at: "2026-09-01T00:00:00.000Z" }] },
+      errorTables: ["trips"],
+    });
+    const r = await get("/api/discovery/suggest?q=kopitiam", true);
+    assert.equal(r.status, 200);
+
+    assert.ok(
+      r.body.groups.some((g: any) => g.type === "hashtags"),
+      "the types that answered must still be served on a partial refusal",
+    );
+    assertRefusal(r.body, {
+      class: "transient_db", code: "suggest_sources_unreadable", route: "GET /discovery/suggest",
+      coverage: "partial",
+    }, "/discovery/suggest with an unreadable `trips`");
+    assert.ok(
+      (r.body.refusal.failedSources ?? []).includes("trips"),
+      `failedSources must name the types that failed, got ${JSON.stringify(r.body.refusal?.failedSources)}`,
+    );
+  });
+
+  it("S2 — a fan-out where every type answered carries NO refusal (control)", async () => {
+    setClient({ rows: { discovery_places: [] } });
+    const r = await get("/api/discovery/suggest?q=kopitiam", true);
+    assert.equal(r.status, 200);
+    assert.equal(
+      r.body.refusal, undefined,
+      "a suggest whose every type answered must NOT be stamped with a refusal",
+    );
   });
 
   it("the three suggest exits are three DIFFERENT answers — C14's whole complaint", async () => {

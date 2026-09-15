@@ -584,7 +584,13 @@ async function searchTravelers(
     if (isBuddy) query = query.not("buddy_verified_at", "is", null);
 
     const { data, error } = await query;
-    if (error || !data) return [];
+    // supabase-js RESOLVES on a read failure, so `error` here is an outage and
+    // `return []` makes it byte-identical to a query that matched nothing —
+    // `11` §9's masquerade, through the back door of a destructure. `!data`
+    // without an error is a shape anomaly, not a failed read, and keeps the
+    // empty answer it always had.
+    if (error) throw new DiscoverySearchReadError("profiles", error);
+    if (!data) return [];
 
     const rows = (data as any[]).filter(
       (p: any) => !blockedSet.has(p.id as string) && !ageRestrictedSet.has(p.id as string),
@@ -700,7 +706,10 @@ async function searchTravelers(
     });
 
     return mapped;
-  } catch {
+  } catch (err) {
+    // Everything this function already swallowed, it keeps swallowing. Only
+    // the named read error re-enters the route's catch arm and refuses.
+    if (err instanceof DiscoverySearchReadError) throw err;
     return [];
   }
 }
@@ -750,7 +759,13 @@ async function searchEvents(
 
     const { data, error } = await evQ.range(offset, offset + fetchLimit - 1);
 
-    if (error || !data) return [];
+    // supabase-js RESOLVES on a read failure, so `error` here is an outage and
+    // `return []` makes it byte-identical to a query that matched nothing —
+    // `11` §9's masquerade, through the back door of a destructure. `!data`
+    // without an error is a shape anomaly, not a failed read, and keeps the
+    // empty answer it always had.
+    if (error) throw new DiscoverySearchReadError("events", error);
+    if (!data) return [];
 
     const rows = (data as any[]).filter(
       (e: any) => !blockedSet.has(e.host_id as string) && !ageRestrictedSet.has(e.host_id as string),
@@ -822,7 +837,10 @@ async function searchEvents(
     }
 
     return mapped;
-  } catch {
+  } catch (err) {
+    // Everything this function already swallowed, it keeps swallowing. Only
+    // the named read error re-enters the route's catch arm and refuses.
+    if (err instanceof DiscoverySearchReadError) throw err;
     return [];
   }
 }
@@ -913,7 +931,14 @@ async function searchTrips(
       if (ctx?.startsBefore) trQ = trQ.lt("start_date",  ctx.startsBefore.slice(0, 10));
       const { data, error } = await trQ.range(offset, offset + fetchLimit - 1);
 
-      if (error || !data) return [];
+      // The same line P1 removed from the plans path, and for the same reason:
+      // supabase-js RESOLVES on a read failure, so `error` here is a real outage
+      // and `return []` makes it byte-identical to a query that matched nothing.
+      // This is the branch production takes (§6 D3: 2420 unapplied, 2550 seeded
+      // FALSE). `!data` without an error is a shape anomaly, not a failed read,
+      // and keeps the empty answer it always had.
+      if (error) throw new DiscoverySearchReadError("trips", error);
+      if (!data) return [];
 
       cards = (data as any[]).map((t: any): DiscoveryTripCardSource => ({
         id: t.id as string,
@@ -956,7 +981,10 @@ async function searchTrips(
         createdAt: t.createdAt ?? null,
         startsAt: t.startDate ?? null,
       }));
-  } catch {
+  } catch (err) {
+    // Everything this function already swallowed, it keeps swallowing. Only the
+    // named read error re-enters the route's catch arm and becomes a refusal.
+    if (err instanceof DiscoverySearchReadError) throw err;
     return [];
   }
 }
@@ -982,7 +1010,13 @@ async function searchPlans(
       .order("created_at", { ascending: false })
       .range(offset, offset + fetchLimit - 1);
 
-    if (error || !data) return [];
+    // supabase-js RESOLVES on a read failure, so `error` here is an outage and
+    // `return []` makes it byte-identical to a query that matched nothing —
+    // `11` §9's masquerade, through the back door of a destructure. `!data`
+    // without an error is a shape anomaly, not a failed read, and keeps the
+    // empty answer it always had.
+    if (error) throw new DiscoverySearchReadError("trip_plan_items", error);
+    if (!data) return [];
 
     const items = (data as any[]).filter(
       (p: any) => !blockedSet.has(p.creator_id as string) && !ageRestrictedSet.has(p.creator_id as string),
@@ -1129,7 +1163,13 @@ async function searchPlaces(
       .order("saved_count", { ascending: false })
       .range(offset, offset + fetchLimit - 1);
 
-    if (error || !data) return [];
+    // supabase-js RESOLVES on a read failure, so `error` here is an outage and
+    // `return []` makes it byte-identical to a query that matched nothing —
+    // `11` §9's masquerade, through the back door of a destructure. `!data`
+    // without an error is a shape anomaly, not a failed read, and keeps the
+    // empty answer it always had.
+    if (error) throw new DiscoverySearchReadError("discovery_places", error);
+    if (!data) return [];
 
     const mapped = (data as any[])
       .filter((p: any) => submitterIsVisible(p.submitted_by, blockedSet))
@@ -1188,7 +1228,10 @@ async function searchPlaces(
       });
     }
     return rankByMatchTier(mapped, q);
-  } catch {
+  } catch (err) {
+    // Everything this function already swallowed, it keeps swallowing. Only
+    // the named read error re-enters the route's catch arm and refuses.
+    if (err instanceof DiscoverySearchReadError) throw err;
     return [];
   }
 }
@@ -1452,7 +1495,13 @@ async function searchHiddenGems(
       .order("created_at", { ascending: false })
       .range(offset, offset + fetchLimit - 1);
 
-    if (error || !data) return [];
+    // supabase-js RESOLVES on a read failure, so `error` here is an outage and
+    // `return []` makes it byte-identical to a query that matched nothing —
+    // `11` §9's masquerade, through the back door of a destructure. `!data`
+    // without an error is a shape anomaly, not a failed read, and keeps the
+    // empty answer it always had.
+    if (error) throw new DiscoverySearchReadError("hidden_gems", error);
+    if (!data) return [];
 
     const rows = (data as any[]).filter(
       (g: any) => !blockedSet.has(g.submitted_by as string) && !ageRestrictedSet.has(g.submitted_by as string),
@@ -1494,7 +1543,10 @@ async function searchHiddenGems(
         startsAt: null,
         };
       });
-  } catch {
+  } catch (err) {
+    // Everything this function already swallowed, it keeps swallowing. Only
+    // the named read error re-enters the route's catch arm and refuses.
+    if (err instanceof DiscoverySearchReadError) throw err;
     return [];
   }
 }
@@ -1515,7 +1567,13 @@ async function searchHashtags(
       .order("usage_count", { ascending: false })
       .range(offset, offset + fetchLimit - 1);
 
-    if (error || !data) return [];
+    // supabase-js RESOLVES on a read failure, so `error` here is an outage and
+    // `return []` makes it byte-identical to a query that matched nothing —
+    // `11` §9's masquerade, through the back door of a destructure. `!data`
+    // without an error is a shape anomaly, not a failed read, and keeps the
+    // empty answer it always had.
+    if (error) throw new DiscoverySearchReadError("hashtags", error);
+    if (!data) return [];
 
     return (data as any[]).map((h: any): SearchResult => ({
       id: h.id,
@@ -1535,7 +1593,10 @@ async function searchHashtags(
       createdAt: (h.created_at as string | null) ?? null,
       startsAt: null,
     }));
-  } catch {
+  } catch (err) {
+    // Everything this function already swallowed, it keeps swallowing. Only
+    // the named read error re-enters the route's catch arm and refuses.
+    if (err instanceof DiscoverySearchReadError) throw err;
     return [];
   }
 }
@@ -1577,7 +1638,13 @@ async function searchPosts(
       .order("created_at", { ascending: false })
       .range(offset, offset + fetchLimit - 1);
 
-    if (error || !data) return [];
+    // supabase-js RESOLVES on a read failure, so `error` here is an outage and
+    // `return []` makes it byte-identical to a query that matched nothing —
+    // `11` §9's masquerade, through the back door of a destructure. `!data`
+    // without an error is a shape anomaly, not a failed read, and keeps the
+    // empty answer it always had.
+    if (error) throw new DiscoverySearchReadError("posts", error);
+    if (!data) return [];
 
     const rows = (data as any[]).filter(
       (p: any) =>
@@ -1617,7 +1684,10 @@ async function searchPosts(
           startsAt: null,
         };
       });
-  } catch {
+  } catch (err) {
+    // Everything this function already swallowed, it keeps swallowing. Only
+    // the named read error re-enters the route's catch arm and refuses.
+    if (err instanceof DiscoverySearchReadError) throw err;
     return [];
   }
 }
@@ -1641,7 +1711,13 @@ async function searchCircles(
       .order("created_at", { ascending: false })
       .range(offset, offset + fetchLimit - 1);
 
-    if (error || !data) return [];
+    // supabase-js RESOLVES on a read failure, so `error` here is an outage and
+    // `return []` makes it byte-identical to a query that matched nothing —
+    // `11` §9's masquerade, through the back door of a destructure. `!data`
+    // without an error is a shape anomaly, not a failed read, and keeps the
+    // empty answer it always had.
+    if (error) throw new DiscoverySearchReadError("circles", error);
+    if (!data) return [];
 
     const rows = (data as any[]).filter(
       (c: any) => !blockedSet.has(c.owner_id as string) && !ageRestrictedSet.has(c.owner_id as string),
@@ -1671,7 +1747,10 @@ async function searchCircles(
         createdAt: (c.created_at as string | null) ?? null,
         startsAt: null,
       }));
-  } catch {
+  } catch (err) {
+    // Everything this function already swallowed, it keeps swallowing. Only
+    // the named read error re-enters the route's catch arm and refuses.
+    if (err instanceof DiscoverySearchReadError) throw err;
     return [];
   }
 }
@@ -1692,7 +1771,13 @@ async function searchStamps(
       .order("name", { ascending: true })
       .range(offset, offset + fetchLimit - 1);
 
-    if (error || !data) return [];
+    // supabase-js RESOLVES on a read failure, so `error` here is an outage and
+    // `return []` makes it byte-identical to a query that matched nothing —
+    // `11` §9's masquerade, through the back door of a destructure. `!data`
+    // without an error is a shape anomaly, not a failed read, and keeps the
+    // empty answer it always had.
+    if (error) throw new DiscoverySearchReadError("stamp_definitions", error);
+    if (!data) return [];
 
     return (data as any[]).map((s: any): SearchResult => ({
       id: s.id,
@@ -1712,7 +1797,10 @@ async function searchStamps(
       createdAt: (s.created_at as string | null) ?? null,
       startsAt: null,
     }));
-  } catch {
+  } catch (err) {
+    // Everything this function already swallowed, it keeps swallowing. Only
+    // the named read error re-enters the route's catch arm and refuses.
+    if (err instanceof DiscoverySearchReadError) throw err;
     return [];
   }
 }
@@ -1747,7 +1835,13 @@ async function searchActivities(
       .order("saved_count", { ascending: false })
       .range(offset, offset + fetchLimit - 1);
 
-    if (error || !data) return [];
+    // supabase-js RESOLVES on a read failure, so `error` here is an outage and
+    // `return []` makes it byte-identical to a query that matched nothing —
+    // `11` §9's masquerade, through the back door of a destructure. `!data`
+    // without an error is a shape anomaly, not a failed read, and keeps the
+    // empty answer it always had.
+    if (error) throw new DiscoverySearchReadError("discovery_places", error);
+    if (!data) return [];
 
     return (data as any[])
       .filter((p: any) => submitterIsVisible(p.submitted_by, blockedSet))
@@ -1782,7 +1876,10 @@ async function searchActivities(
       createdAt: (p.created_at as string | null) ?? null,
       startsAt: null,
     }));
-  } catch {
+  } catch (err) {
+    // Everything this function already swallowed, it keeps swallowing. Only
+    // the named read error re-enters the route's catch arm and refuses.
+    if (err instanceof DiscoverySearchReadError) throw err;
     return [];
   }
 }
@@ -2592,10 +2689,20 @@ router.get("/discovery/suggest", async (req, res) => {
       ? SUGGEST_PLAN.filter((p) => p.type === "travelers" || p.type === "buddies")
       : SUGGEST_PLAN;
 
+    // The same back door `searchAll` had: a REJECTED type became an empty group,
+    // indistinguishable from a type that was read and matched nothing, so a
+    // typeahead could lose a whole category to an outage and say nothing about
+    // it. Collected by PLAN INDEX rather than pushed, so the names come out in
+    // plan order however the parallel reads finish.
+    const unreadableAt = new Array<string | null>(plan.length).fill(null);
     const [typedResults, canonicalRows] = await Promise.all([
-      Promise.all(plan.map((p) =>
+      Promise.all(plan.map((p, i) =>
         dispatchSearch(sc, q, user.id, blockedSet, ageRestrictedSet, p.type, 0, p.limit, ctx)
-          .catch(() => [] as SearchResult[]),
+          .catch((err: unknown) => {
+            logger.warn({ err, type: p.type, q }, "discovery/suggest: type unreadable");
+            unreadableAt[i] = p.type;
+            return [] as SearchResult[];
+          }),
       )),
       isHandleQuery
         ? Promise.resolve([] as CanonicalRow[])
@@ -2621,10 +2728,25 @@ router.get("/discovery/suggest", async (req, res) => {
     });
 
     const servedGroups = orderSuggestGroups(groups, q).slice(0, MAX_SUGGEST_GROUPS);
-    res.status(200).json({
-      query: q,
-      groups: servedGroups,
-    });
+    const unreadableTypes = unreadableAt.filter((t): t is string => t !== null);
+    const body = { query: q, groups: servedGroups };
+    if (unreadableTypes.length > 0) {
+      // "partial" while ANY type answered: those groups are real, and
+      // `useSearchSuggestions` renders and caches a partial for exactly that
+      // reason while refusing to cache a "nothing". Only a fan-out where every
+      // type failed carries "nothing".
+      sendDiscoveryRefusal(
+        res,
+        body,
+        discoveryRefusal(
+          "transient_db", "suggest_sources_unreadable", "GET /discovery/suggest",
+          unreadableTypes.length === plan.length ? "nothing" : "partial",
+          unreadableTypes,
+        ),
+      );
+    } else {
+      res.status(200).json(body);
+    }
     // Stage 0b — serve point 9. Flattened in the order the groups are served,
     // so `position` reflects what the user actually saw top to bottom.
     logServeUnlessRefused(res, sc, {
