@@ -1275,7 +1275,7 @@ async function queryCanonicalPlaces(
  * images/ratings/save counts the canonical table lacks). Used by BOTH the
  * cache-miss path and the warm-cache serve path — previously only the miss path
  * merged canonical rows, so every cache HIT silently dropped them and a warm
- * Da Nang feed fell back to OSM-only.
+ * Da Nang feed fell back to OSM-only. Returns what it read AND what it could not.
  */
 async function loadCuratedAndCanonicalPlaces(
   destination: string,
@@ -1283,28 +1283,28 @@ async function loadCuratedAndCanonicalPlaces(
   centerLat: number | null,
   centerLng: number | null,
   blockedIds: Set<string> | null,
-): Promise<DiscoveryPlace[]> {
+): Promise<CuratedAndCanonicalPlaces> {
   const [curated, canonical] = await Promise.all([
     // Only the curated half takes the block set: canonical `places` rows carry
     // no author column, so there is nobody to have blocked.
     queryDbPlaces(destination, category, centerLat, centerLng, blockedIds),
     queryCanonicalPlaces(destination, category, centerLat, centerLng),
   ]);
-  // D11, DELIBERATELY BEHAVIOUR-PRESERVING HERE. `queryDbPlaces` now distinguishes
-  // "unreadable" (null) from "empty" ([]), and this function absorbs the
-  // distinction rather than propagating it. That is a scope decision, not an
-  // oversight: the two callers of this function are `GET /discovery`'s four serve
-  // paths, and surfacing a partial refusal through all four is a separate change
-  // to a separate contract. The conflation therefore SURVIVES on GET /discovery
-  // and is reported as the outstanding residual of D11; it is fixed on
-  // GET /discovery/feed and GET /discovery/counts, which call queryDbPlaces
-  // directly.
+  // D11 — THE RESIDUAL, CLOSED. `queryDbPlaces` distinguishes "unreadable" (null)
+  // from "empty" ([]). This function used to absorb that distinction in a
+  // `curated ?? []` and return a bare array, so `GET /discovery`'s four serve
+  // paths each shipped a SHORT LIST with nothing on the envelope saying a source
+  // was missing — one funnel above every one of them. The merge below is
+  // untouched: same rows, same order, same dedup rule. What is new is the report
+  // travelling beside it; `sendDiscoveryPlacesEnvelope` (foot of file) serves it.
   const curatedRows = curated ?? [];
   const curatedNames = new Set(curatedRows.map((p) => p.name.toLowerCase().trim()));
-  return [
-    ...curatedRows,
-    ...canonical.filter((p) => !curatedNames.has(p.name.toLowerCase().trim())),
-  ];
+  return {
+    places: [...curatedRows, ...canonical.filter((p) => !curatedNames.has(p.name.toLowerCase().trim()))],
+    // `=== null`, never falsiness: `[]` is a real and trustworthy answer, and an
+    // empty city must never acquire a refusal. Pinned by its own control test.
+    failedSources: curated === null ? [DISCOVERY_CURATED_SOURCE] : [],
+  };
 }
 
 // ── OSM saved-count enrichment ────────────────────────────────────────────────
@@ -1826,7 +1826,7 @@ router.get("/discovery", async (req, res) => {
   async function serveCachedPlaces(osmPlaces: DiscoveryPlace[], cacheLevel: string, cachedAt: number | null): Promise<void> {
     const distRef = userCoords ?? clientCoords;
     // destination! — narrowed by the guard above; TypeScript can't see it through the closure.
-    const dbPlaces = await loadCuratedAndCanonicalPlaces(destination!, category, distRef?.lat ?? null, distRef?.lng ?? null, viewerBlockedIds);
+    const { places: dbPlaces, failedSources: dbFailedSources } = await loadCuratedAndCanonicalPlaces(destination!, category, distRef?.lat ?? null, distRef?.lng ?? null, viewerBlockedIds);
     const osmWithDist = sortBy === "nearest" && distRef
       ? osmPlaces.map((p) =>
           p.lat != null && p.lng != null
@@ -1888,7 +1888,7 @@ router.get("/discovery", async (req, res) => {
       cacheLevel, cachedAt, scoredById: pdeScoredById, rankedBy: pdeScoredById ? "pde" : "none",
       liveRankById: liveRanked.applied ? liveRanked.byId : null,
     });
-    res.json({
+    sendDiscoveryPlacesEnvelope(res, {
       places: candidateSlice, total: liveRanked.places.length, destination, context: ctxLabel, cached: true, ageFilterMeta,
       sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 },
       meta: {
@@ -1899,7 +1899,7 @@ router.get("/discovery", async (req, res) => {
           ? { liveRank: { mode: liveRanked.mode, readable: liveRanked.readable, windowSize: liveRanked.windowSize, demoted: liveRanked.demoted } }
           : {}),
       },
-    });
+    }, dbFailedSources);   // D11 serve path 1 of 4 — the cache-A serve
     // Stage 0 instrumentation — serve points 1/2/3. Fire-and-forget, after the
     // response. These three paths ran no ranker; before this they wrote nothing
     // at all, which is why the 'discovery' surface had no rows.
@@ -2062,7 +2062,7 @@ router.get("/discovery", async (req, res) => {
     // the destination centre — this is what gets cached and must not use user coords.
     const distRef = userCoords ?? coords;
     const osmT0 = Date.now();
-    const [osmPlaces, dbPlaces] = await Promise.all([
+    const [osmPlaces, { places: dbPlaces, failedSources: dbFailedSources }] = await Promise.all([
       queryOverpassDeduped(coords.lat, coords.lng, radiusM, category),
       loadCuratedAndCanonicalPlaces(destination, category, distRef.lat, distRef.lng, viewerBlockedIds),
     ]);
@@ -2141,8 +2141,8 @@ router.get("/discovery", async (req, res) => {
                 // re-stamping it here would report a rank that never happened.
                 provenanceById: cCacheHit.provenanceById,
               });
-              res.json({ places: cCandidates, total: cFiltered.length, destination, context: ctxLabel, cached: true, ageFilterMeta,
-                sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 } });
+              sendDiscoveryPlacesEnvelope(res, { places: cCandidates, total: cFiltered.length, destination, context: ctxLabel, cached: true, ageFilterMeta,
+                sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 } }, dbFailedSources);  // D11 serve path 2 of 4 — the Compass cache-B hit
               // Stage 0 — serve point 4. Replays a stored Compass order; no
               // ranker ran in this request, so rankedInRequest is false.
               void logDiscoveryServe(compassSc, {
@@ -2230,8 +2230,8 @@ router.get("/discovery", async (req, res) => {
               cacheLevel: "compass_fresh_rank", cachedAt: Date.now(), scoredById: null, rankedBy: "compass",
               provenanceById: cProvenanceById,
             });
-            res.json({ places: cFreshCandidates, total: cFiltered.length, destination, context: ctxLabel, cached: false, ageFilterMeta,
-              sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 } });
+            sendDiscoveryPlacesEnvelope(res, { places: cFreshCandidates, total: cFiltered.length, destination, context: ctxLabel, cached: false, ageFilterMeta,
+              sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 } }, dbFailedSources);  // D11 serve path 3 of 4 — the Compass fresh rank
             // Stage 0 — serve point 5. The Compass ranker DID run here, but
             // this path has never written a rank_events row: it returns before
             // the logImpression call on the cold path below.
@@ -2324,7 +2324,7 @@ router.get("/discovery", async (req, res) => {
       rankedBy:   scoredByPlaceId.size > 0 ? "pde" : "none",
       liveRankById: coldLiveRanked.applied ? coldLiveRanked.byId : null,
     });
-    res.json({ places: coldCandidates, total: coldLiveRanked.places.length, destination, context: ctxLabel, cached: false, ageFilterMeta,
+    sendDiscoveryPlacesEnvelope(res, { places: coldCandidates, total: coldLiveRanked.places.length, destination, context: ctxLabel, cached: false, ageFilterMeta,
       sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 },
       meta: {
         cacheLevel: "miss", timings: { geocodeMs, osmMs, totalMs },
@@ -2332,7 +2332,7 @@ router.get("/discovery", async (req, res) => {
           ? { liveRank: { mode: coldLiveRanked.mode, readable: coldLiveRanked.readable, windowSize: coldLiveRanked.windowSize, demoted: coldLiveRanked.demoted } }
           : {}),
       },
-    });
+    }, dbFailedSources);   // D11 serve path 4 of 4 — the cold fetch's legacy/PDE tail
   } catch (err) {
     req.log.error({ err }, "discovery route failed");
     // D11 / `11` §9. `meta.cacheLevel: "error"` was already here and was ALMOST
@@ -3762,6 +3762,108 @@ function sendGeocodeRefusal<T extends object>(
 ): void {
   logger.warn({ route, err }, "discovery: geocoder unavailable — refusing rather than answering 'no such city'");
   sendDiscoveryRefusal(res, envelope, classifyRefusal(err, route, "geocode_failed"));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /discovery's curated half — the last D11 residual, and its emitter.
+//
+// WHY THIS BLOCK IS HERE AND NOT BESIDE `loadCuratedAndCanonicalPlaces`, WHICH
+// IS WHERE A READER WILL LOOK FOR IT FIRST.
+// This file is cited 78 times by ANCHORED census citations of the form
+// `routes/discovery.ts:<line>#<symbol>`, which `npm run check:doc-citations`
+// re-reads and fails the moment the named symbol is no longer on the named
+// line. The highest such citation is at :3477. Inserting this block at its
+// natural home — around :1290 — would have moved 61 of those anchors, 48 of
+// them in `docs/architecture/`, which this lane does not own. So the CHANGE at
+// :1272-1310 is exactly line-neutral and the new declarations live below the
+// last anchor. It is also, as it happens, the right neighbourhood: this is
+// where the file already keeps `sendGeocodeRefusal`, the other helper whose
+// whole job is sending a refusal in a 200 envelope.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The name `GET /discovery` gives the curated retrieval on `refusal.failedSources`.
+ *
+ * A SOURCE, not a category. `GET /discovery/search` names the buckets of its
+ * fan-out (routes/discoverySearch.ts `FAN_SOURCES` — "places", "hidden_gems", …)
+ * because the reader of a refusal has to know WHICH PART of the answer is not
+ * usable, and on this route the unusable part is one retrieval, not one tab.
+ * It is the same string `queryDbPlaces` already logs as its failure `code`, so
+ * the server log and the wire agree about what broke.
+ */
+const DISCOVERY_CURATED_SOURCE = "discovery_places";
+
+/**
+ * What `loadCuratedAndCanonicalPlaces` produced, and what it could not read.
+ *
+ * The second field is the reason the type exists. A bare `DiscoveryPlace[]`
+ * cannot express "these rows, and one source that never answered", so returning
+ * one made a half-failed read arithmetically identical to a small city — at the
+ * single funnel every `GET /discovery` serve path draws from.
+ */
+interface CuratedAndCanonicalPlaces {
+  /** The merged, deduped rows. Exactly what the previous return value was. */
+  places: DiscoveryPlace[];
+  /**
+   * Retrievals whose read FAILED, in `refusal.failedSources` spelling. EMPTY on
+   * the healthy path AND on a genuinely empty city — an empty result is not a
+   * refused one, and a `failedSources` that is always populated names nothing.
+   *
+   * The curated half is the only half that can appear here: `queryCanonicalPlaces`
+   * answers `[]` for an unreadable table and an empty one alike, so a canonical
+   * failure is not representable and is deliberately NOT guessed at. Naming a
+   * source that may be perfectly healthy is the same untruth in the other
+   * direction.
+   */
+  failedSources: string[];
+}
+
+/**
+ * Send one of `GET /discovery`'s four serve-path envelopes, naming the curated
+ * source when this request could not read it.
+ *
+ * THE FOUR PATHS: the cache-A serve (`serveCachedPlaces`, L1/L2_fresh/L2_stale),
+ * the Compass cache-B hit, the Compass fresh rank, and the cold fetch's
+ * legacy/PDE tail. Each is marked at its call site. There is no fifth, so the
+ * choice here is one helper or four copies of the same decision — and four
+ * copies is how three of them stay right and the fourth quietly stops refusing.
+ *
+ * WHY THE COVERAGE IS "partial" AND NEVER "nothing". This route reads three
+ * retrievals: Overpass, the canonical `places` registry, and curated
+ * `discovery_places`. Only the last can report that it failed; the other two
+ * ANSWERED, so their emptiness is trustworthy and whatever they produced really
+ * was served. That is `GET /discovery/search`'s rule verbatim — "partial as long
+ * as ANY source answered, even when this page happens to be empty". It is also
+ * what keeps the second half of D11 intact: `sendDiscoveryRefusal` marks a
+ * response refused, suppressing its serve log, only at coverage "nothing", and
+ * these four paths really did serve their items. Calling a served page "nothing"
+ * would UNDER-count the exposure denominator, which is the corruption the ruling
+ * names, inverted.
+ *
+ * ADDITIVE. With `failedSources` empty — which includes a genuinely empty city —
+ * this is `res.json(envelope)` and nothing else. Not one key of a successful
+ * response moves, and the `refusal` key an existing client has never seen is
+ * simply ignored by it.
+ */
+function sendDiscoveryPlacesEnvelope<T extends object>(
+  // `Response` is the fetch Response in this module (see fetchWithTimeout), so
+  // the express one is taken from the function this forwards to — the same
+  // spelling `sendGeocodeRefusal` above uses, for the same reason.
+  res: Parameters<typeof sendDiscoveryRefusal>[0],
+  envelope: T,
+  failedSources: readonly string[],
+): void {
+  if (failedSources.length === 0) {
+    res.json(envelope);
+    return;
+  }
+  sendDiscoveryRefusal(
+    res,
+    envelope,
+    discoveryRefusal(
+      "transient_db", "discovery_places_read_failed", "GET /discovery", "partial", failedSources,
+    ),
+  );
 }
 
 /**

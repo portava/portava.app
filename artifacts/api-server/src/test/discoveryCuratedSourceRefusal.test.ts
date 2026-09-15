@@ -1,0 +1,461 @@
+/**
+ * D11's LAST RESIDUAL — `GET /discovery` and the curated half of its merge.
+ *
+ * OWNER RULING (verbatim, binding):
+ *   "internal failures must not masquerade as successful empty results or
+ *    corrupt exposure accounting"
+ *
+ * SPEC CLAUSE: `11` §9 — "A failure must not masquerade as success."
+ *
+ * WHAT THIS FILE PINS, AND WHY IT IS SEPARATE FROM discoveryRefusalD11.test.ts
+ * ===========================================================================
+ * `queryDbPlaces` distinguishes "discovery_places could not be read" (`null`)
+ * from "this city has no community places" (`[]`). GET /discovery/feed and
+ * GET /discovery/counts propagate that distinction because they call it
+ * directly. GET /discovery did NOT: the merge helper
+ * `loadCuratedAndCanonicalPlaces` collapsed it in a `curated ?? []` and handed
+ * its FOUR serve paths a SHORT LIST with nothing on the envelope to say a
+ * source was missing — on the single largest Discovery surface, one funnel above
+ * every serve point. No client can branch on a field that was never sent.
+ *
+ * THE FOUR SERVE PATHS, how each is reached here, and how each is RECOGNISED:
+ *
+ *   1. cache-A serve       `serveCachedPlaces` (L1 / L2_fresh / L2_stale).
+ *                          Reached by seeding the L1 cache. Recognised by
+ *                          `cached: true` WITH `meta.cacheLevel`.
+ *   2. Compass cache-B hit the stored per-user ranked page. Reached by ranking
+ *                          once and asking again. `cached: true`, NO `meta`.
+ *   3. Compass fresh rank  Compass flag on, cache B empty. `cached: false`,
+ *                          NO `meta`.
+ *   4. cold fetch          the legacy/PDE tail. `meta.cacheLevel: "miss"`.
+ *
+ * Recognising them is not decoration. Every Compass branch in the route swallows
+ * its own errors and falls through to the cold path, so a fixture that cannot
+ * carry the ranking pipeline does not fail — it silently answers from a
+ * DIFFERENT path. Without the discriminator a "Compass" case here would be a
+ * cold-path case wearing its name, and would keep passing after the Compass
+ * serve paths stopped refusing.
+ *
+ * WHY "partial" AND NOT "nothing", ON ALL FOUR.
+ * The route has three retrievals — Overpass, the canonical `places` registry and
+ * curated `discovery_places` — and only the last can report that it failed. The
+ * other two ANSWERED, so their emptiness is trustworthy and the rows they
+ * produced really were served. That is GET /discovery/search's rule verbatim
+ * (routes/discoverySearch.ts): "partial as long as ANY source answered, even
+ * when this page happens to be empty". It is also the only coverage that leaves
+ * exposure accounting alone — `sendDiscoveryRefusal` marks a response refused
+ * (suppressing its serve log) only at coverage "nothing" — which the last test
+ * in this file pins from the other side.
+ *
+ * WHY A SEPARATE FILE. `docs/architecture/census-*.md` carries ANCHORED
+ * citations into `src/test/discoveryRefusalD11.test.ts` (`:296`, `:629`, `:738`,
+ * `:801`, `:837`), and `npm run check:doc-citations` fails the moment the named
+ * symbol leaves the named line. Inserting these cases into that file moved five
+ * of those anchors, all in a directory this lane does not own.
+ *
+ * Run: SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy \
+ *      node --import tsx --test src/test/discoveryCuratedSourceRefusal.test.ts
+ */
+import { describe, it, before, after, beforeEach, afterEach } from "node:test";
+import assert from "node:assert/strict";
+import http from "node:http";
+import express from "express";
+import pino from "pino";
+import { _setTestClient } from "../lib/http.js";
+import { _setTestServiceClient } from "../lib/supabase.js";
+import discoveryRouter, {
+  _setTestDbPlacesOverride, _injectTestCacheEntry, _clearTestCacheEntry,
+  _clearTestCompassCache, type DiscoveryPlace,
+} from "../routes/discovery.js";
+import { DISCOVERY_REFUSAL_CLASSES } from "../lib/discoveryRefusal.js";
+import { invalidateServeLogFlagCache } from "../lib/discoveryServeLog.js";
+import { invalidateFlagsCache } from "../compass/flags.js";
+import { invalidateDiscoveryEngineModeCache } from "../lib/discoveryEngineMode.js";
+
+// ── No network. Overpass and Nominatim throw immediately rather than hanging.
+// Every case supplies lat/lng, so the route never needs to geocode; Overpass
+// failing is what makes the OSM half empty except where a case seeds cache A.
+const _originalFetch = globalThis.fetch;
+globalThis.fetch = (async (url: any, init?: any) => {
+  const s = String(typeof url === "string" ? url : (url as URL).href ?? "");
+  if (s.includes("overpass-api.de") || s.includes("nominatim.openstreetmap.org")) {
+    throw new Error("Network blocked in test environment");
+  }
+  return _originalFetch(url, init);
+}) as typeof globalThis.fetch;
+
+const VIEWER_TOKEN = "curated-viewer";
+const VIEWER_ID    = "cccc0000-0000-0000-0000-000000000001";
+
+/** Every row batch handed to `.insert()`, keyed by table. The exposure probe. */
+let inserts: Array<{ table: string; rows: unknown }> = [];
+
+/**
+ * A supabase-js stand-in.
+ *
+ * `errorTables` RESOLVE with `{ data: null, error }` — which is what supabase-js
+ * actually does on a failed read. It does not reject, and a fixture built the
+ * other way is how a fail-open bug gets written and then tested green. It is
+ * also the ONLY way to reach this defect: `_setTestDbPlacesOverride` returns
+ * rows, so it cannot express "the table could not be read" at all.
+ */
+function buildFakeClient(opts: { errorTables?: string[]; rows?: Record<string, any[]> } = {}) {
+  const errorTables = new Set(opts.errorTables ?? []);
+  // The serve-log flag is ON in every fixture: with it absent no request could
+  // write a rank_events row, refused or not, and the exposure control at the
+  // foot of this file would pass vacuously against a disabled flag.
+  const rowsFor: Record<string, any[]> = {
+    feature_flags: [{ flag: "discovery_serve_log_enabled", enabled: true }],
+    ...(opts.rows ?? {}),
+  };
+
+  function from(table: string) {
+    const preds: Array<(r: any) => boolean> = [];
+    const rows: any[] = rowsFor[table] ?? [];
+
+    const b: any = {
+      select() { return b; },
+      insert(payload: unknown) { inserts.push({ table, rows: payload }); return b; },
+      update() { return b; },
+      upsert(payload: unknown) { inserts.push({ table, rows: payload }); return b; },
+      delete() { return b; },
+      eq(col: string, val: any) { preds.push((r) => r[col] === val); return b; },
+      neq() { return b; }, is() { return b; }, not() { return b; },
+      gt() { return b; }, gte() { return b; }, lt() { return b; }, lte() { return b; },
+      in() { return b; }, or() { return b; }, ilike() { return b; },
+      contains() { return b; }, overlaps() { return b; },
+      order() { return b; }, limit() { return b; }, range() { return b; },
+      // `fetchCompassFlags` selects the COMPASS_% family with `.like()`. The
+      // pattern is honoured rather than stubbed true, so a case cannot switch on
+      // a flag it did not seed.
+      like(col: string, pattern: string) {
+        const rx = new RegExp(`^${pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/%/g, ".*")}$`);
+        preds.push((r) => typeof r[col] === "string" && rx.test(r[col]));
+        return b;
+      },
+      maybeSingle() { return resolveOne(); },
+      single() { return resolveOne(); },
+      then(onF: any, onR: any) { return resolveList().then(onF, onR); },
+    };
+
+    function filtered() { return rows.filter((r) => preds.every((p) => p(r))); }
+    async function resolveList() {
+      if (errorTables.has(table)) return { data: null, error: { message: `${table} unavailable` }, count: null };
+      return { data: filtered(), error: null, count: filtered().length };
+    }
+    async function resolveOne() {
+      if (errorTables.has(table)) return { data: null, error: { message: `${table} unavailable` } };
+      return { data: filtered()[0] ?? null, error: null };
+    }
+    return b;
+  }
+
+  return {
+    auth: {
+      getUser: async (token: string) =>
+        token === VIEWER_TOKEN
+          ? { data: { user: { id: VIEWER_ID } }, error: null }
+          : { data: { user: null }, error: { message: "invalid token" } },
+    },
+    from,
+    // The Compass ranking pipeline calls `.rpc()`. A missing method is a THROW
+    // the route's own catch absorbs, which would move every Compass case onto
+    // the cold path without saying so.
+    rpc: async () => ({ data: null, error: null }),
+  };
+}
+
+function setClient(opts: Parameters<typeof buildFakeClient>[0] = {}) {
+  const fc = buildFakeClient(opts);
+  _setTestClient(fc as any, true);
+  _setTestServiceClient(fc as any);
+}
+
+let server: http.Server;
+let base = "";
+
+function get(path: string, auth = false): Promise<{ status: number; body: any }> {
+  return new Promise((resolve, reject) => {
+    const url = new URL(path, base);
+    const r = http.request(
+      {
+        hostname: url.hostname, port: Number(url.port),
+        path: url.pathname + url.search, method: "GET",
+        headers: auth ? { authorization: `Bearer ${VIEWER_TOKEN}` } : {},
+      },
+      (res) => {
+        let raw = "";
+        res.on("data", (c) => (raw += c));
+        res.on("end", () => {
+          let parsed: any;
+          try { parsed = JSON.parse(raw); } catch { parsed = raw; }
+          resolve({ status: res.statusCode ?? 0, body: parsed });
+        });
+      },
+    );
+    r.on("error", reject);
+    r.end();
+  });
+}
+
+/** The refusal every one of the four paths must carry when the curated read fails. */
+const CURATED_REFUSAL = {
+  class: "transient_db",
+  code: "discovery_places_read_failed",
+  route: "GET /discovery",
+  coverage: "partial",
+} as const;
+
+/** Compass ON alongside the serve log, so serve paths 2 and 3 are reachable at all. */
+const COMPASS_ON_FLAGS = [
+  { flag: "discovery_serve_log_enabled", enabled: true },
+  { flag: "COMPASS_V1_RULE_BASED_ENABLED", enabled: true },
+];
+
+function curatedPlace(id: string, savedCount: number): DiscoveryPlace {
+  return {
+    id: `db/${id}`, name: id, category: "for_you", type: "traveler_pick",
+    description: null, distanceKm: 1, lat: 25.77, lng: -80.19, tags: [],
+    address: "Miami, FL", website: null, phone: null, openingHours: null,
+    rating: null, isOpenNow: null, savedCount,
+  } as DiscoveryPlace;
+}
+
+function osmPlace(id: string): DiscoveryPlace {
+  return {
+    id, name: `osm ${id}`, category: "food", type: "cafe",
+    description: null, distanceKm: 2, lat: 25.78, lng: -80.2, tags: [],
+    address: null, website: null, phone: null, openingHours: null,
+    rating: null, isOpenNow: null, savedCount: 0,
+  } as DiscoveryPlace;
+}
+
+/** Which of the four serve paths answered — read off the envelope, never assumed. */
+function servePathOf(body: any): string {
+  const level = body?.meta?.cacheLevel;
+  if (level === "error") return "assembly_error";
+  if (body?.cached === true) return typeof level === "string" ? "cache_a" : "compass_hit";
+  if (level === "miss") return "cold";
+  if (body?.cached === false && level === undefined) return "compass_fresh";
+  return `unrecognised(${JSON.stringify(body?.cached)}/${JSON.stringify(level)})`;
+}
+
+function assertServePath(body: any, expected: string): void {
+  assert.equal(
+    servePathOf(body), expected,
+    `this case did not reach the serve path it is about (it reached ` +
+    `${servePathOf(body)}), so whatever it asserts is about a different path. ` +
+    `Body keys: ${JSON.stringify(Object.keys(body ?? {}))}`,
+  );
+}
+
+/** The residual assertion: a named, partial refusal that says WHICH source failed. */
+function assertCuratedPartial(body: any, what: string): void {
+  assert.ok(
+    body && typeof body === "object" && body.refusal,
+    `${what}: no \`refusal\` on the body — a half-failed read is still ` +
+    `indistinguishable from a small city. Body: ${JSON.stringify(body)}`,
+  );
+  const r = body.refusal;
+  assert.ok(
+    (DISCOVERY_REFUSAL_CLASSES as readonly string[]).includes(r.class),
+    `${what}: refusal.class ${JSON.stringify(r.class)} is not one of \`11\` §9's classes`,
+  );
+  assert.equal(r.class, CURATED_REFUSAL.class, `${what}: wrong §9 class`);
+  assert.equal(r.code, CURATED_REFUSAL.code, `${what}: wrong refusal code`);
+  assert.equal(r.route, CURATED_REFUSAL.route, `${what}: wrong route on the refusal`);
+  assert.equal(
+    r.coverage, CURATED_REFUSAL.coverage,
+    `${what}: coverage must be "partial" — the OSM and canonical reads answered, ` +
+    `so their emptiness is trustworthy and their rows really were served`,
+  );
+  assert.deepEqual(
+    [...(r.failedSources ?? [])], ["discovery_places"],
+    `${what}: the refusal must NAME the source whose rows are missing — ` +
+    `"some of this is missing" without saying which part is not a usable answer either`,
+  );
+}
+
+const MIAMI = "destination=Miami&lat=25.77&lng=-80.19&radiusKm=10";
+/** `cacheKey(dest, cat, radius)` — the route's own L1 key shape. */
+const CACHE_A_FOOD = "miami:food:10";
+
+before(async () => {
+  const app = express();
+  app.use(express.json());
+  app.use((req, _res, next) => { (req as any).log = pino({ level: "silent" }); next(); });
+  app.use("/api", discoveryRouter);
+  server = app.listen(0, "127.0.0.1");
+  await new Promise<void>((r) => server.once("listening", r));
+  base = `http://127.0.0.1:${(server.address() as any).port}`;
+});
+
+after(() => {
+  server.close();
+  globalThis.fetch = _originalFetch;
+  _setTestClient(null as any, false);
+  _setTestServiceClient(null as any);
+  _setTestDbPlacesOverride(null);
+});
+
+beforeEach(() => {
+  inserts = [];
+  // All three are module-level memoisations with their own TTLs. Without these,
+  // the first fixture to be asked decides the answer for every case that runs
+  // inside the window — including whether Compass is on at all.
+  invalidateServeLogFlagCache();
+  invalidateFlagsCache();
+  invalidateDiscoveryEngineModeCache();
+  _clearTestCompassCache();
+  _clearTestCacheEntry(CACHE_A_FOOD);
+});
+afterEach(() => {
+  _setTestDbPlacesOverride(null);
+  _clearTestCacheEntry(CACHE_A_FOOD);
+  _clearTestCompassCache();
+});
+
+describe("GET /discovery — the curated half of the merge (D11's last residual)", () => {
+  // ── Serve path 1 of 4 — the cache-A serve ─────────────────────────────────
+  it("1/4 cache-A serve: names the unreadable curated half instead of shipping a short list", async () => {
+    setClient({ errorTables: ["discovery_places"] });
+    _injectTestCacheEntry(CACHE_A_FOOD, [osmPlace("node/4242")]);
+    const r = await get(`/api/discovery?${MIAMI}&category=food`);
+    assert.equal(r.status, 200, "additive shape: the status stays 200");
+    assertServePath(r.body, "cache_a");
+    assert.equal(r.body.places.length, 1, "the OSM half is a real result and is still served");
+    assertCuratedPartial(r.body, "cache-A serve with an unreadable discovery_places");
+  });
+
+  // ── Serve path 2 of 4 — the Compass cache-B hit ───────────────────────────
+  it("2/4 Compass cache-B hit: names the unreadable curated half of THIS request", async () => {
+    // The ranked PAGE is replayed from cache B, but the curated read still runs
+    // in this request — it feeds sourceSummary.seededDbCount — and it is THIS
+    // request's read that failed. A replayed page over a source that never
+    // answered is still a half-answer.
+    setClient({ rows: { feature_flags: COMPASS_ON_FLAGS } });
+    _setTestDbPlacesOverride(async () => [curatedPlace("p1", 10), curatedPlace("p2", 5)]);
+    const first = await get(`/api/discovery?${MIAMI}&category=for_you`, true);
+    assertServePath(first.body, "compass_fresh");
+    assert.equal(first.body.refusal, undefined, "precondition: the seeding request is healthy");
+
+    _setTestDbPlacesOverride(null);
+    setClient({ rows: { feature_flags: COMPASS_ON_FLAGS }, errorTables: ["discovery_places"] });
+    const r = await get(`/api/discovery?${MIAMI}&category=for_you`, true);
+    assert.equal(r.status, 200);
+    assertServePath(r.body, "compass_hit");
+    assert.ok(r.body.places.length > 0, "precondition: the replayed page carries real rows");
+    assertCuratedPartial(r.body, "Compass cache-B hit with an unreadable discovery_places");
+  });
+
+  // ── Serve path 3 of 4 — the Compass fresh rank ────────────────────────────
+  it("3/4 Compass fresh rank: names the unreadable curated half", async () => {
+    // Compass is authoritative on this path — only pipeline-passed items appear
+    // — so an unreadable curated half is invisible in the output by
+    // construction, which is exactly why it has to be stated on the envelope.
+    setClient({ rows: { feature_flags: COMPASS_ON_FLAGS }, errorTables: ["discovery_places"] });
+    const r = await get(`/api/discovery?${MIAMI}&category=for_you`, true);
+    assert.equal(r.status, 200);
+    assertServePath(r.body, "compass_fresh");
+    assertCuratedPartial(r.body, "Compass fresh rank with an unreadable discovery_places");
+  });
+
+  // ── Serve path 4 of 4 — the cold fetch ────────────────────────────────────
+  it("4/4 cold fetch: names the unreadable curated half", async () => {
+    setClient({ errorTables: ["discovery_places"] });
+    const r = await get(`/api/discovery?${MIAMI}&category=food`);
+    assert.equal(r.status, 200);
+    assertServePath(r.body, "cold");
+    assertCuratedPartial(r.body, "cold fetch with an unreadable discovery_places");
+  });
+
+  // ── CONTROL 1 — empty is not refused ──────────────────────────────────────
+  //
+  // As load-bearing as the four above. A refusal stamped on every empty body
+  // distinguishes nothing, and it is the same lie inverted: "we could not look"
+  // told about a city that was looked at and found empty.
+  it("CONTROL: a GENUINELY empty curated read carries NO refusal on any of the four paths", async () => {
+    setClient({ rows: { feature_flags: COMPASS_ON_FLAGS } });
+    _setTestDbPlacesOverride(async () => []);
+
+    _injectTestCacheEntry(CACHE_A_FOOD, [osmPlace("node/4242")]);
+    const cacheA = await get(`/api/discovery?${MIAMI}&category=food`);
+    assertServePath(cacheA.body, "cache_a");
+    assert.equal(cacheA.body.refusal, undefined, "cache-A serve: empty is not refused");
+    _clearTestCacheEntry(CACHE_A_FOOD);
+
+    const cold = await get(`/api/discovery?${MIAMI}&category=food`);
+    assertServePath(cold.body, "cold");
+    assert.equal(cold.body.refusal, undefined, "cold fetch: empty is not refused");
+
+    const fresh = await get(`/api/discovery?${MIAMI}&category=for_you`, true);
+    assertServePath(fresh.body, "compass_fresh");
+    assert.equal(fresh.body.refusal, undefined, "Compass fresh rank: empty is not refused");
+
+    const hit = await get(`/api/discovery?${MIAMI}&category=for_you`, true);
+    assertServePath(hit.body, "compass_hit");
+    assert.equal(hit.body.refusal, undefined, "Compass cache-B hit: empty is not refused");
+  });
+
+  // ── CONTROL 2 — the success envelope does not move ────────────────────────
+  //
+  // The refusal key is ADDITIVE. A healthy read must answer with exactly the
+  // keys, in exactly the order, it answered with before: every existing client
+  // reads this body, and `11` §9 asks for a distinguishable FAILURE, not a
+  // different success.
+  it("CONTROL: a fully successful read is byte-identical — same keys, same order, no refusal", async () => {
+    setClient({ rows: { feature_flags: COMPASS_ON_FLAGS } });
+    _setTestDbPlacesOverride(async () => [curatedPlace("p1", 10)]);
+
+    const WITH_META = ["places", "total", "destination", "context", "cached", "ageFilterMeta", "sourceSummary", "meta"];
+    const NO_META   = ["places", "total", "destination", "context", "cached", "ageFilterMeta", "sourceSummary"];
+
+    _injectTestCacheEntry(CACHE_A_FOOD, [osmPlace("node/4242")]);
+    const cacheA = await get(`/api/discovery?${MIAMI}&category=food`);
+    assertServePath(cacheA.body, "cache_a");
+    assert.deepEqual(Object.keys(cacheA.body), WITH_META, "cache-A success envelope changed shape");
+    assert.equal(cacheA.body.refusal, undefined);
+    assert.deepEqual(cacheA.body.sourceSummary, { seededDbCount: 1, osmCount: 1, userCreatedCount: 0 });
+    assert.equal(cacheA.body.meta.cacheLevel, "L1");
+    _clearTestCacheEntry(CACHE_A_FOOD);
+
+    const cold = await get(`/api/discovery?${MIAMI}&category=food`);
+    assertServePath(cold.body, "cold");
+    assert.deepEqual(Object.keys(cold.body), WITH_META, "cold-fetch success envelope changed shape");
+    assert.equal(cold.body.refusal, undefined);
+
+    const fresh = await get(`/api/discovery?${MIAMI}&category=for_you`, true);
+    assertServePath(fresh.body, "compass_fresh");
+    assert.deepEqual(Object.keys(fresh.body), NO_META, "Compass fresh-rank success envelope changed shape");
+    assert.equal(fresh.body.refusal, undefined);
+
+    const hit = await get(`/api/discovery?${MIAMI}&category=for_you`, true);
+    assertServePath(hit.body, "compass_hit");
+    assert.deepEqual(Object.keys(hit.body), NO_META, "Compass cache-B hit success envelope changed shape");
+    assert.equal(hit.body.refusal, undefined);
+  });
+
+  // ── CONTROL 3 — the other half of the ruling ──────────────────────────────
+  //
+  // "…or corrupt exposure accounting". A PARTIAL refusal must NOT suppress the
+  // serve log: those items really were served and really are exposure, and
+  // dropping them under-counts the denominator — the same corruption in the
+  // other direction. This is what pins the coverage at "partial" rather than
+  // "nothing", which would mark the response refused in the WeakSet while its
+  // items went out on the wire.
+  it("CONTROL: a partial refusal still counts the items it really served", async () => {
+    setClient({ errorTables: ["discovery_places"] });
+    _injectTestCacheEntry(CACHE_A_FOOD, [osmPlace("node/4242")]);
+    const r = await get(`/api/discovery?${MIAMI}&category=food`, true);
+    assertServePath(r.body, "cache_a");
+    assertCuratedPartial(r.body, "cache-A partial and its exposure");
+    await new Promise((done) => setTimeout(done, 80));
+    const rank = inserts.filter((i) => i.table === "rank_events");
+    assert.equal(
+      rank.length, 1,
+      `a PARTIAL serve wrote ${rank.length} rank_events batches, not 1 — the items ` +
+      `on this page WERE served, and dropping them under-counts the exposure ` +
+      `denominator just as surely as counting a failure over-counts it`,
+    );
+  });
+});

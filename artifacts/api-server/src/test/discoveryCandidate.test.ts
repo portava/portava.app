@@ -261,7 +261,13 @@ describe("H. source guards", () => {
     const end   = src.indexOf('router.post("/discovery/already-known"');
     assert.ok(start > 0 && end > start);
     const handler = src.slice(start, end);
-    const jsonSites = handler.match(/res\.json\(\{\s*\n?\s*places: [A-Za-z]+/g) ?? [];
+    // D11: the four serve sites now serialise through
+    // `sendDiscoveryPlacesEnvelope(res, { places: … }, failedSources)` — res.json
+    // plus the curated-read refusal — so both spellings are matched. Matching
+    // only `res.json(` would have let this guard read ZERO sites and then assert
+    // nothing about any of them, which is the failure mode a source guard has.
+    const jsonSites =
+      handler.match(/(?:res\.json\(|sendDiscoveryPlacesEnvelope\(res,\s*)\{\s*\n?\s*places: [A-Za-z]+/g) ?? [];
     const populated = jsonSites.filter((m) => !/places: \[\]/.test(m));
     assert.equal(populated.length, 4, `expected the four populated serve sites, saw ${populated.length}: ${JSON.stringify(jsonSites)}`);
     for (const m of populated) {
