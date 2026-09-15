@@ -1129,6 +1129,22 @@ const UNRESOLVABLE = [
       'resolves consts only within a single file and does not follow imports. Verified by hand at c89f09a77.',
   },
   {
+    file: 'lib/discoveryLayoverMode.ts',
+    expr: 'LAYOVER_DISCOVERY_MODE_FLAG',
+    covers: ['layover_discovery_mode_enabled'],
+    reason:
+      'Imported const from services/airport/LayoverSnapshot.ts:147 ' +
+      '(layover_discovery_mode_enabled), CAPABILITY by the *_enabled convention and read through ' +
+      'isFlagEnabled, which returns false for a missing row AND for an unreadable feature_flags -- so ' +
+      'the flag is FALSE BY ABSENCE and fail-closed, not a stop. The check resolves consts only within a ' +
+      'single file and does not follow imports. Declared rather than inlined AS A LITERAL ON PURPOSE: the ' +
+      'constant is published from the LAYOVER side precisely so the producing lane and the consuming lane ' +
+      'cannot spell the flag differently, and copying the string into Discovery to satisfy this check ' +
+      'would re-create the divergence the export exists to prevent. Verified by hand at db0f61636 -- ' +
+      'grep for the identifier across src/ (excluding tests) returns exactly three non-test sites: the ' +
+      'declaration, the import, and the single isFlagEnabled call.',
+  },
+  {
     file: 'routes/entryRequirements.ts',
     expr: 'ENTRY_FLAG',
     covers: ['passport_entry_intelligence_enabled'],
