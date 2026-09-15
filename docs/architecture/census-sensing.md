@@ -984,7 +984,7 @@ object at or within 100 m of a notice loses its promotion
 (`lib/mapDisplayResolver.ts:226#applySafetyPrecedence(`), and Compass now
 EXCLUDES a Live `unsafe_density` subject before ranking behind an env gate
 (`compass/CompassLiveConstraints.ts`;
-`test/compassCensusGates.test.ts:236#unsafe_density`); Discovery's ranker
+`test/compassCensusGates.test.ts:263#unsafe_density`); Discovery's ranker
 still reads no safety state, so a noticed place can still rank there. **S40**
 and **S45** stay W: crowd momentum is still a human trajectory tap, not a
 computed arrival/departure balance, and a forecast now has a horizon and a
