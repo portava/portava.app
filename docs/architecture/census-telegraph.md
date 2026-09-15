@@ -6083,7 +6083,19 @@ could have caught it at any point, and nothing was reading it.
 
 ### 19.6 Read against the code and deliberately NOT changed, with the reason for each
 
-1. **`artifacts/api-server/src/routes/messaging.ts:411#const { data: before } = await client` — the prior-preference read.** §17.8 classified it "neither" and
+> **CLOSED 2026-09-15 BY THE SWALLOWED-READS LANE — items 1, 2, 3 and the first half of
+> item 4.** §19's stated reason for leaving all four was a COST, not a judgement about the
+> code: *"Changing it would shift every line below it in a 3,900-line file, and this
+> section is not spending that on a log."* That cost is real — this file carries ~45
+> anchored citations from this census and four more from census-compass and census-trust —
+> and it turned out to be avoidable rather than payable: all four were repaired IN PLACE,
+> replacing lines one-for-one, so `routes/messaging.ts` is the same length at the same
+> lines and not one citation in any census moved. The three anchors below are repointed to
+> the text that is now at those lines. **Item 2 was not the small one §19 took it for** —
+> see §27. Each item keeps §19's original reasoning verbatim; the closure note follows it.
+
+
+1. **`artifacts/api-server/src/routes/messaging.ts:411#const { data: before, error: beforeErr } = await client` — the prior-preference read.** §17.8 classified it "neither" and
    the classification holds for a reason worth writing down, because it is not obvious: the gate
    it feeds already distinguishes three worlds (`lib/retranslateGate.ts:35#if (i.oldLanguage === undefined) return true;`
    — *"oldLanguage undefined means the caller cannot tell; treat as a change"*), and the call
@@ -6091,12 +6103,38 @@ could have caught it at any point, and nothing was reading it.
    `newLanguage`, so `null` and `undefined` produce the IDENTICAL decision at this call site. The
    only thing lost is a log line. Changing it would shift every line below it in a 3,900-line
    file, and this section is not spending that on a log.
-2. **`artifacts/api-server/src/routes/messaging.ts:943#const { data: current } = await sc` — the status re-read inside a lost CAS race.** The claim's
+   **CLOSED 2026-09-15, and the reasoning above is correct about the gate and wrong about
+   what it costs.** `null` and `undefined` really do produce the identical decision here —
+   which is exactly the problem, because that identical decision is *sweep*. The call site
+   now refuses on `beforeErr` (`artifacts/api-server/src/routes/messaging.ts:436#if (newLang && !beforeErr && shouldRetranslateOnLanguageChange({`),
+   so an unreadable prior language fires nothing. What was lost was never only a log line:
+   `retranslateForUser` sweeps up to `RETRANSLATE_BATCH_LIMIT` messages through the PAID
+   translation provider, so EVERY FAILING SAVE billed a ~200-message sweep for a change
+   nobody had made. The warn is there too
+   (`artifacts/api-server/src/routes/messaging.ts:415#if (beforeErr) req.log.warn`).
+2. **`artifacts/api-server/src/routes/messaging.ts:943#const { data: current, error: currentErr } = await sc` — the status re-read inside a lost CAS race.** The claim's
    substance is true: the update matched no row, so the request really is no longer pending. What
    is guessed is WHICH state (`?? 'accepted'`), so an outage can name the wrong one. Real, small,
    and the same line-shift cost. Named rather than fixed.
-3. **`artifacts/api-server/src/routes/messaging.ts:1112#const { data: previewMsg } = await sc` — the preview-message insert.** A write chain, not a read;
+   **CLOSED 2026-09-15, and "small" was the one word to argue with.** A request leaves
+   `pending` in exactly two ways, and one of them is `declined`; so the guess was wrong
+   about a REFUSAL roughly as often as it was right, and what it told the recipient was
+   that the other party had ACCEPTED them. That is not a degraded answer, it is a false
+   one, and it is a false claim about another person's decision. The error is bound; a
+   readable status is still named and still answers the same 400; an unreadable one
+   answers `degraded_unavailable` — the only code `lib/http.ts` marks retryable — because
+   the true sentence is *"this was already answered and we cannot tell you how"*, and the
+   retry re-runs the guard at the top of the handler, which names the real status once the
+   table is back. Pinned by
+   `artifacts/api-server/src/test/messagingSwallowedReadHonesty.test.ts:336#!/accepted/i.test(body),`.
+3. **`artifacts/api-server/src/routes/messaging.ts:1112#const { data: previewMsg, error: previewErr } = await sc` — the preview-message insert.** A write chain, not a read;
    `check:silent-supabase-writes` territory and out of this class by that checker's own scope.
+   **CLOSED 2026-09-15 anyway, because being outside a checker's scope is not the same as
+   being handled.** The 200 has already been sent when this insert runs, so the log is the
+   ONLY record the write can leave; with the error discarded, a preview that never landed
+   left the thread created, the accept reported, the first message missing and nothing
+   anywhere saying why. It stays best-effort — the accept is not undone — and it is now
+   logged (`artifacts/api-server/src/routes/messaging.ts:1116#if (previewErr) req.log.error`).
 4. **`GET /me/unread-counts` reports `newHighlights` and `meetups` as `0` when their inputs are
    unreadable.** The same file states the opposite rule for the inbox projection — *"undefined
    (omitted from JSON) means 'not known', which is a different statement from 0 and must stay
@@ -6111,6 +6149,15 @@ could have caught it at any point, and nothing was reading it.
    cheap: the only client consumer already reads `res.data.newHighlights ?? 0`
    (`travel-buddy-standalone/src/hooks/useMessaging.ts:638#setNewHighlights(res.data.newHighlights ?? 0);`),
    so omission would change the wire and not the badge.
+   **HALF-CLOSED 2026-09-15, on the half that was never the owner decision.** The `0` on
+   the wire is untouched and the test that pins it is untouched: this lane did not take the
+   decision §19 surfaced. What it closed is a different defect inside the same block — the
+   highlights COUNT query was the last read in there whose error was not bound at all,
+   while its two neighbours (the block set and the circle read) each already log. So the
+   badge under-reported from an unreadable `highlights` with nothing anywhere saying it
+   had (`artifacts/api-server/src/routes/messaging.ts:1564#if (hCountErr) req.log.warn`).
+   Zero-by-failure and zero-by-fact are still the same number on the wire, and are no
+   longer the same in the log. **The owner decision in the rest of this item is still open.**
 5. **`services/telegraphChatSuggestions.ts` — both sites are fail-closed and stay as they are.**
    An unreadable `message_threads` denies every context flag; an unreadable `circle_memberships`
    denies circle context. One label is imprecise — the verdict's `reason` is `"thread_not_found"`
@@ -7438,3 +7485,99 @@ about production. A migration file sitting in a tree applies itself to nothing.
   cover it: that check reports tables read with no writer, and this is a function.
 - **`messages.unsent_at` appearing in production.** That is the fact 26.3 rests
   on, and the snapshot it is read from is refreshed, not continuous.
+
+---
+
+## §27 — The four reads §19.6 priced and declined, closed at zero line-shift; and the one that was telling people the wrong thing
+
+**Measured at** `76698a377` (the squash of PR #484, and an ancestor of `main`). **`head_commit`
+is NOT moved and NO verdict moves.** This section re-reads four lines and their tests; it
+re-opens no row, and §1's reading rule applies to every row it does not name.
+
+### 27.1 Why this is a section and not a footnote
+
+§19.6 listed these four as *read against the code and deliberately NOT changed*, and the reason
+it gave for three of them was identical and was a COST: *"Changing it would shift every line
+below it in a 3,900-line file, and this section is not spending that on a log."* That sentence
+is the reason a real defect sat named-but-open through §20, §21, §22, §23, §24, §25 and §26, and
+it deserves to be answered rather than quietly overtaken, because **the cost was real and the
+conclusion was still wrong twice over**:
+
+1. **The cost was avoidable.** All four sites were repaired by replacing lines ONE FOR ONE —
+   `git diff --stat` on `routes/messaging.ts` reads `23 insertions(+), 23 deletions(-)` and the
+   file is the same 4,082 lines it was. Not one of the ~45 anchored citations this census holds
+   into that file moved, nor census-compass's two, nor census-trust's two. A long chained builder
+   collapsed onto one line frees the lines beneath it for the branch that was missing.
+2. **One of them was not "a log".** See 27.2.
+
+### 27.2 The accept path was telling recipients their request had been ACCEPTED when it may have been DECLINED
+
+§19.6 item 2 graded the post-CAS status re-read as *"Real, small"*. The substance of the claim it
+makes is indeed true — the swap matched no row, so the request really has left `pending`. What
+§19 did not price is **which** wrong state the fallback picks:
+
+```
+sendError(res, 'invalid_payload', `Request is already ${(current as any)?.status ?? 'accepted'}`);
+```
+
+A request leaves `pending` in exactly two ways, `accepted` and `declined`, and on a failed read
+this line asserts the first of them **by name, to the person who was refused**. supabase-js
+RESOLVES on a database failure, so there is no throw and no 500 to notice: the outage is
+delivered as a confident sentence about somebody else's decision. That is not a degraded answer
+and not a missing log; it is a false statement about another person, produced by a read that
+never happened.
+
+The repair keeps the existing contract for the case the contract was written for — a status that
+WAS read is still named and still answers `invalid_payload`'s 400 — and refuses to name one that
+was not. An unreadable status answers `degraded_unavailable`, which is 503 and the only code
+`lib/http.ts` marks retryable, because *"this was already answered and we cannot tell you how"*
+is the true sentence available, and because a retry re-runs the guard at the top of the same
+handler, which reports the real status the moment the table is back. A 500 was rejected
+deliberately: `db_error` is not retryable, so a client acts on it by giving up, which is the one
+outcome this path must not produce. A row that has VANISHED between the swap and the re-read is
+absent rather than accepted, and gets the same 404 the pre-read gives.
+
+### 27.3 The other three
+
+- **`artifacts/api-server/src/routes/messaging.ts:411#const { data: before, error: beforeErr } = await client` — the prior-language read.** §19.6's analysis of the gate is
+  correct and its conclusion does not follow from it: `null` and `undefined` do decide
+  identically here, and the decision both reach is *sweep*. `retranslateForUser` pushes up to
+  `RETRANSLATE_BATCH_LIMIT` messages through the PAID translation provider, so every save whose
+  prior-language read failed billed a ~200-message sweep for a change nobody had made. The gate
+  call now carries `!beforeErr`, and the failure is warned.
+- **`artifacts/api-server/src/routes/messaging.ts:1112#const { data: previewMsg, error: previewErr } = await sc` — the preview-message insert.** §19.6 placed it outside this class
+  as write-chain territory. Being outside a checker's scope is not being handled: the 200 is
+  already sent when this runs, so the log is the only record the write can leave, and without it
+  a preview that never landed left the thread created, the accept reported, the first message
+  missing and nothing saying why. Still best-effort; now logged.
+- **`artifacts/api-server/src/routes/messaging.ts:1563#const { count: hCount, error: hCountErr } = await q;` — the highlights count in the unread badge.** The last read in
+  that block whose error was not bound at all, while its two neighbours — the block set and the
+  circle-membership read — each already log and each already say the badge under-reports. The
+  `0` on the wire and the test that pins it are untouched: **the owner decision §19.6 item 4
+  surfaced is still open and is not taken here.** Only the silence is closed.
+
+### 27.4 Why T344 and T363 do not move
+
+Both are `W`, both stay `W`, and the reason is each row's own stated ceiling rather than an
+arithmetic convenience. T344's blocker as §19 recorded it is the FOURTEEN sites of this class in
+`routes/telegraph.ts`, `routes/telegraphChat.ts` and `routes/telegraphStream.ts` — *"those three
+files are not this lane's, and a row is closed by whoever can close all of it"* — and none of
+them is in `routes/messaging.ts`. T363's is stated even more directly: *"the open remainder is
+outside `routes/messaging.ts` entirely."* Four more closures inside that file therefore move
+neither row, and nothing here moves a row in the other direction either: every change is a
+read-path refusal or a log where there was silence, so no `C` becomes `W`.
+
+### 27.5 What would turn this red
+
+- **A line inserted into `routes/messaging.ts`.** The zero-shift property is what keeps ~49
+  citations across three censuses pointing at the right lines, and it is a property of this
+  change, not of the file. The next edit there has to choose it again or repoint.
+- **`shouldRetranslateOnLanguageChange` learning to distinguish "unreadable" itself.** The
+  `!beforeErr` term is at the CALL SITE, because the gate module lib/retranslateGate.ts is
+  shared with a second caller, routes/profile.ts, which makes the same prior-language read and
+  was NOT touched here. **That second call site is not closed and is not this section's to
+  close.** Both files are named here in plain text rather than cited: neither is a Telegraph
+  behaviour this census grades, and `check:census-scope-coverage` is right to expect a cited
+  file to be watched for staleness. Naming a neighbour is not grading it.
+- **A client switching on the exact message text of the CAS-loss refusal.** The 400's wording is
+  unchanged; the new 503 is a code that path never produced before.

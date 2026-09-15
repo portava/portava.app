@@ -1385,6 +1385,11 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/telegraphCoordination.test.ts",
     "artifacts/api-server/src/test/telegraphMemory.test.ts",
     "artifacts/api-server/src/test/telegraphLifecycle.test.ts",
+    // WIDENED 2026-09-15 by the swallowed-reads lane (census-telegraph §27): the
+    // suite that pins the four `routes/messaging.ts` reads §19.6 priced and declined.
+    // It is cited as evidence by §19.6 item 2, so it is graded here rather than only
+    // quoted — a test a census rests a closure on is a file that census counts.
+    "artifacts/api-server/src/test/messagingSwallowedReadHonesty.test.ts",
     "travel-buddy-standalone/app/messages/",
     // STILL NOT WATCHED, deliberately: src/scripts/check*.ts, guardRegistry.ts,
     // generateTelegraphInventory.ts, rlsDispositions.ts, the two workflow YAMLs,
