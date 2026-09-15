@@ -123,6 +123,7 @@
 import { readFlagState } from "./capability/schemaCapability.js";
 import { discoveryRefusal, type DiscoveryRefusal } from "./discoveryRefusal.js";
 import { statedLayoverTimings, type StatedTerm, type TimeableCandidate } from "./discoveryLayoverTiming.js";
+import type { TravelTimeProvider } from "../domain/trips/contracts/TravelTimeProvider.js";
 import {
   LAYOVER_DISCOVERY_MODE_FLAG,
   certifiedActionUniverse,
@@ -165,7 +166,7 @@ export interface WithheldAction {
    * as evidence of absence, and two different absences must not read alike.
    * `lib/discoveryLayoverTiming.ts` keeps them apart; this carries them out.
    */
-  terms: { travel: StatedTerm; activity: StatedTerm };
+  terms: { travel: StatedTerm; returnTravel: StatedTerm; activity: StatedTerm };
 }
 
 /**
@@ -226,6 +227,16 @@ export async function discoveryLayoverGate(
   userId: string | null,
   candidates: ReadonlyArray<TimeableCandidate>,
   route: string,
+  /**
+   * OPTIONAL, and it exists for ONE reason: the travel-time port is the only
+   * thing on this tree that can tell the two legs of a journey apart, and
+   * nothing here produces a routed one. Omitted — which is every call site in
+   * `routes/discovery.ts` — the resolver uses
+   * `LAYOVER_TRAVEL_TIME_PROVIDER`, exactly as before this parameter existed.
+   * It is NOT a seam for changing the gate's answer: it changes who is asked,
+   * and the contract still refuses on absence.
+   */
+  opts: { provider?: TravelTimeProvider } = {},
 ): Promise<DiscoveryLayoverGate> {
   if (!sc || !userId) return OFF;
   const flag = await readFlagState(sc, LAYOVER_DISCOVERY_MODE_FLAG);
@@ -286,6 +297,7 @@ export async function discoveryLayoverGate(
     // is measured against.
     centre: snapshot.envelope ? snapshot.envelope.centre : null,
     departAt: new Date(snapshot.certifiedRecord.inputs.nowMs),
+    provider: opts.provider,
   });
   if (!timing.ok) {
     return {
@@ -309,6 +321,10 @@ export async function discoveryLayoverGate(
         lng: c.lng ?? null,
         insideAirport: t ? t.insideAirport : false,
         travelTimeMin: t ? t.travelTimeMin : null,
+        // §12.1's *"return (future conditions, not symmetric)"*. `null` here is
+        // the common answer and leaves `candidateFits` charging the outbound
+        // twice — the number this surface served before the term existed.
+        returnTravelTimeMin: t ? t.returnTravelTimeMin : null,
         activityTimeMin: t ? t.activityTimeMin : null,
       };
     }),
@@ -354,12 +370,13 @@ export async function discoveryLayoverGate(
  * reason. An `??`-ed empty object would be a shape a client could not read, and
  * a fabricated reason here would be the exact defect this key exists to close.
  */
-function termsFor(t: { travel: StatedTerm; activity: StatedTerm } | undefined): {
-  travel: StatedTerm;
-  activity: StatedTerm;
-} {
+function termsFor(
+  t: { travel: StatedTerm; returnTravel: StatedTerm; activity: StatedTerm } | undefined,
+): { travel: StatedTerm; returnTravel: StatedTerm; activity: StatedTerm } {
   const unknown: StatedTerm = { value: null, source: "unmeasured", absence: null, portReason: null };
-  return t ? { travel: t.travel, activity: t.activity } : { travel: unknown, activity: unknown };
+  return t
+    ? { travel: t.travel, returnTravel: t.returnTravel, activity: t.activity }
+    : { travel: unknown, returnTravel: unknown, activity: unknown };
 }
 
 /**

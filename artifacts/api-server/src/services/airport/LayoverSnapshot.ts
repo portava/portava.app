@@ -411,6 +411,14 @@ export interface ActionUniverseCandidate {
   insideAirport?: boolean;
   /** One-way landside minutes, if the caller measured them. */
   travelTimeMin?: number | null;
+  /**
+   * The ride BACK, if the caller measured it SEPARATELY — §12.1's *"return
+   * (future conditions, not symmetric)"*. Absent or `null` charges the outbound
+   * twice, which is what this contract did for every caller before the field
+   * existed. See `ReplanCandidate.returnTravelTimeMin` for why its absence is
+   * not an unmeasured term.
+   */
+  returnTravelTimeMin?: number | null;
   /** Minutes the action itself takes, if the caller measured them. */
   activityTimeMin?: number | null;
 }
@@ -462,6 +470,9 @@ function replanCandidate(c: ActionUniverseCandidate): ReplanCandidate {
     id: c.id,
     // Inside the terminal a 0 is a FACT; outside it, an absent leg is `null`.
     travelTimeMin: insideAirport ? (c.travelTimeMin ?? 0) : (c.travelTimeMin ?? null),
+    // Carried rather than defaulted: `candidateFits` owns the symmetric
+    // fallback, and a `?? c.travelTimeMin` here would be a second copy of it.
+    returnTravelTimeMin: c.returnTravelTimeMin ?? null,
     activityTimeMin: c.activityTimeMin ?? null,
     insideAirport,
   };
