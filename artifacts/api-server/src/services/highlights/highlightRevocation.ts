@@ -130,14 +130,14 @@ export const OPERATION_SEMANTICS: Readonly<
     reversible: true,
     removesFromBrowsing: false,
     effect: "Retain and search privately; suppress proactive resurfacing. Explicit retrieval still works.",
-    storedIn: "highlight_resurfacing_preferences (migration 2720, NOT applied)",
+    storedIn: "highlight_resurfacing_preferences (migration 2720, applied to production 2026-09-15)",
   },
   DO_NOT_PERSONALIZE: {
     retainsRecord: true,
     reversible: true,
     removesFromBrowsing: false,
     effect: "Retain the Highlight but exclude it from preference/recommendation inference. It stays visible.",
-    storedIn: "highlight_resurfacing_preferences, control RETAIN_BUT_DO_NOT_PERSONALIZE (migration 2720, NOT applied)",
+    storedIn: "highlight_resurfacing_preferences, control RETAIN_BUT_DO_NOT_PERSONALIZE (migration 2720, applied to production 2026-09-15)",
   },
   MAKE_PRIVATE: {
     retainsRecord: true,

@@ -32,7 +32,7 @@
  *
  * ── THE RUNG IS DERIVED, NOT STORED, AND THAT IS DELIBERATE ─────────────────
  * The Highlights surface reads its rung out of `highlight_projection_policies`
- * (migration 2721, NOT applied), which is why every §10 row that depends on a
+ * (migration 2721, applied to production 2026-09-15), which is why every §10 row that depends on a
  * STORED rung is capped by storage nobody has deployed. This surface takes
  * nothing from 2721. Every input below is on the deployed schema today:
  *

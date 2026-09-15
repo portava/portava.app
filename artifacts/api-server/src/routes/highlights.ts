@@ -14,6 +14,9 @@ import {
 import {
   readResurfacingSuppressionsForOwners,
   isSuppressed,
+  unenforceableControls,
+  FEED_ENFORCEABLE_CONTROLS,
+  feedSubjectScope,
   type ResurfacingSuppressions,
 } from "../services/highlights/highlightResurfacing.js";
 import {
@@ -76,9 +79,11 @@ const HIGHLIGHT_COLUMNS =
  * `location_name` to a viewer exactly as a feed does, and the owner's selected
  * rung binds either way. So `applyResurfacingControls` still runs on the feeds
  * only, and `applyLocationPrecision` now runs on all three reads that publish a
- * location. It changes nothing on today's database — 2721 is unapplied, the
- * policy read answers `absent`, and `absent` is a documented no-op — which is
- * why this is closed BEFORE the migration lands rather than after.
+ * location. It changed nothing on the database of the day it was written —
+ * 2721 was unapplied, the policy read answered `absent`, and `absent` is a
+ * documented no-op — which is why it was closed BEFORE the migration landed
+ * rather than after. 2721 landed on 2026-09-15 and this call site has been
+ * enforcing since, with no edit.
  *
  * NO OWNER BYPASS is introduced by that third call site, because neither
  * existing one has it: GET /highlights/active clamps the viewer's own
@@ -88,14 +93,19 @@ const HIGHLIGHT_COLUMNS =
  * cannot widen disclosure.
  *
  * THREE STATES, NOT TWO. See services/highlights/highlightSchemaAvailability.ts.
- * `absent` (the tables are not deployed — migrations 2720/2721 are written and
- * NOT applied) is reported and NOT enforced; `unreadable` fails CLOSED. The
- * difference is decided by PostgREST's own missing-object codes, never by a
- * heuristic.
+ * `absent` (the table does not exist in THIS database) is reported and NOT
+ * enforced; `unreadable` fails CLOSED. The difference is decided by PostgREST's
+ * own missing-object codes, never by a heuristic.
+ *
+ * WHICH STATE PRODUCTION IS IN CHANGED ON 2026-09-15. Both passes above were
+ * built while 2720 and 2721 were applied to no database, so both ran and
+ * enforced nothing on every request. `production-applied-migrations.json`
+ * records both applied on 2026-09-15 and the committed production snapshot
+ * holds both tables, so every §10 rung and §11 control a user stores is now
+ * enforced here. Nothing in this file changed to make that true, and
+ * src/test/highlightsMemoriesDeployedStorage.test.ts asserts the fact so the
+ * next reader is not left deducing it from a census sentence.
  * ============================================================================ */
-
-/** Controls that suppress a Highlight from a proactively-assembled feed. */
-const FEED_SUPPRESSING_CONTROLS = ["DO_NOT_RESURFACE", "KEEP_PRIVATE_FOREVER"] as const;
 
 /**
  * Drop the Highlights whose owner has asked that they not be resurfaced.
@@ -105,6 +115,35 @@ const FEED_SUPPRESSING_CONTROLS = ["DO_NOT_RESURFACE", "KEEP_PRIVATE_FOREVER"] a
  * construction — which on a feed means an empty page rather than a page that
  * silently ignores a user's "never show me this again". An `absent` table
  * suppresses nothing and is logged.
+ *
+ * ── THE CONTROL LIST IS DERIVED, AND IT USED NOT TO BE ──────────────────────
+ * This function held `["DO_NOT_RESURFACE", "KEEP_PRIVATE_FOREVER"]` as a local
+ * constant. `CONTROL_EFFECTS` names a FOURTH control that suppresses
+ * `proactive_resurfacing` — `HIDE_TRIP` — and the loop never asked about it, so
+ * a stored HIDE_TRIP row loaded into a `ready` set and was dropped on the
+ * floor: the owner's trip came back at them with a 200 and nothing anywhere
+ * said a control had been skipped. Deriving the list from CONTROL_EFFECTS makes
+ * that particular mistake unrepeatable — a seventh control cannot be added to
+ * the vocabulary and left unenforced here by omission.
+ *
+ * ── AND ONE OF THEM CANNOT BE RESOLVED ON THIS SURFACE ──────────────────────
+ * HIDE_TRIP is keyed on a TRIP id. `public.highlights` carries no trip column
+ * (production holds 22 columns and none of them is a trip reference — asserted
+ * in src/test/highlightsMemoriesDeployedStorage.test.ts), so no join, no
+ * projection and no query here can say which trip a Highlight belongs to.
+ * `unenforceableControls` names such a control instead of letting it be
+ * skipped, and this function WITHHOLDS rather than resurfacing.
+ *
+ * That is over-suppression and it is deliberate: it is the same direction this
+ * module already takes twice — an unreadable set suppresses everything, and a
+ * set carrying an unrecognised control is downgraded whole "rather than
+ * enforcing a partial policy that looks complete". It is not §11's HIDE_TRIP,
+ * which asks for ONE trip to be hidden; census H90 stays BUILT-BUT-WRONG on
+ * exactly that, and the remedy is a trip reference on `highlights`, which is a
+ * migration and not this function's to write.
+ *
+ * Until 2026-09-15 none of this was reachable: migration 2720 was applied to no
+ * database, every probe answered `absent`, and no control was enforced at all.
  */
 function applyResurfacingControls<T extends { id: string; owner_id: string }>(
   rows: T[],
@@ -126,9 +165,22 @@ function applyResurfacingControls<T extends { id: string; owner_id: string }>(
     );
     return [];
   }
+
+  const unenforceable = unenforceableControls(set);
+  if (unenforceable.length > 0) {
+    log?.error(
+      { unenforceable: [...unenforceable], where },
+      "highlights: §11 control(s) set on a subject this surface cannot resolve (public.highlights carries no trip reference) — " +
+        "withholding the proactive feed rather than resurfacing something a user asked to hide",
+    );
+    return [];
+  }
+
   return rows.filter((h) => {
-    for (const c of FEED_SUPPRESSING_CONTROLS) if (isSuppressed(set, c, h.id)) return false;
-    if (isSuppressed(set, "HIDE_PERSON_FROM_RESURFACING", h.owner_id)) return false;
+    for (const c of FEED_ENFORCEABLE_CONTROLS) {
+      const subject = feedSubjectScope(c) === "highlight" ? h.id : h.owner_id;
+      if (isSuppressed(set, c, subject)) return false;
+    }
     return true;
   });
 }

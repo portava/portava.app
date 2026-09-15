@@ -7,11 +7,29 @@
  *    history without structured error state."
  *
  * ── WHY THREE STATES AND NOT TWO ────────────────────────────────────────────
- * The §10 consent tables and the §11 resurfacing-control table do not exist on
- * production today (measured against the committed snapshot
- * src/lib/capability/snapshots/20260908-production-schema.json: `public` holds
- * no highlight_projection_policies and no highlight_resurfacing_preferences).
- * The migrations that create them are written but NOT applied — 2720 and 2721.
+ * THIS PARAGRAPH RECORDED A FACT THAT HAS SINCE CHANGED, and the change is
+ * kept visible rather than overwritten because it is the whole reason the
+ * three-state design was worth building.
+ *
+ * WHEN THIS MODULE WAS WRITTEN, neither `highlight_projection_policies` nor
+ * `highlight_resurfacing_preferences` existed on production — measured against
+ * src/lib/capability/snapshots/20260908-production-schema.json — and migrations
+ * 2720 and 2721 were written and applied to no database.
+ *
+ * AT THIS COMMIT BOTH ARE DEPLOYED. src/lib/capability/production-applied-
+ * migrations.json records 2720 and 2721 applied to production on 2026-09-15,
+ * and src/lib/capability/snapshots/20260915-production-schema.json holds both
+ * tables with every column these modules probe for. Asserted, not narrated, by
+ * src/test/highlightsMemoriesDeployedStorage.test.ts.
+ *
+ * SO `absent` IS NO LONGER THE STATE PRODUCTION IS IN, and the code did not
+ * have to change for that to be true: the probe is per-client and memoised for
+ * 30 seconds on a negative, so applying the migration was picked up without a
+ * restart, exactly as designed. What the three states still buy is the other
+ * direction — a deployment that has NOT applied them (a fresh branch database,
+ * a self-hosted install) still gets `absent` rather than a dark surface, and a
+ * real outage on the now-deployed table still gets `unreadable` and fails
+ * closed instead of reading as "nobody set a control".
  *
  * A two-state read (`ok` / `not ok`) forces one of two wrong answers:
  *   - treat "table absent" as an unreadable control and FAIL CLOSED → the entire

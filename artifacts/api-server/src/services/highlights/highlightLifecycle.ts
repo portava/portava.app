@@ -30,28 +30,45 @@
  * class badge gets nothing to render, which is the truth.
  *
  * ── WHAT IS MEASURED, NOT ASSUMED ───────────────────────────────────────────
- * Against the committed production schema snapshot
- * `src/lib/capability/snapshots/20260908-production-schema.json`:
+ * THE MEASUREMENT BELOW WAS RE-TAKEN ON 2026-09-15 AND HALF OF IT CHANGED. The
+ * superseded reading is kept because the paragraph it supports — "the class is
+ * unavailable, not inferred" — is still the contract, and a reader comparing
+ * the two learns which half of it moved.
+ *
+ * AS AT `src/lib/capability/snapshots/20260908-production-schema.json`:
  *
  *   public.highlights columns = id, owner_id, media_url, media_type,
  *   video_duration_seconds, caption, location_name, location_city,
  *   location_country, visibility, expires_at, created_at, deleted_at,
  *   archived_at, filter_id, filter_intensity, updated_at
  *
- * Of the eleven §3.5 fields, this table holds THREE (id, expires_at as the
- * §3.5 expires_at, and owner_id, which §3.5 also names). It holds no
- * highlight_type, no lifetime_class, no lifecycle_state, no source_memory_ids,
- * no ranking_score, no reason_codes, no audience_policy_id, no
- * presentation_json and no renderer_version.
+ * — three of the eleven §3.5 fields, and no lifetime_class of any kind.
  *
- * `expires_at` is NOT NULL (baseline/20260819_baseline_structure.sql:6774 and
- * migrations/0026_highlights.sql:19). PERMANENT is therefore NOT REPRESENTABLE
- * on production today — not "unimplemented", structurally impossible, because a
- * PERMANENT Highlight is one with no expiry. Making it nullable is exactly what
- * unmerged PR #461 / migration 2313 does, and that migration must not be
- * adopted here (it reintroduces a `trip_members` self-join that applied
- * migration 2530 removed). `representableLifetimeClasses` states this rather
- * than leaving a reader to discover it.
+ * AS AT `src/lib/capability/snapshots/20260915-production-schema.json`, after
+ * migration 2723 was applied to production on 2026-09-15, the same table adds:
+ *
+ *   lifetime_class, lifecycle_state, highlight_type, pinned_at, renderer_version
+ *
+ * So `lifetime_class` EXISTS in production and the capability this module's
+ * `representableLifetimeClasses` asks about is now satisfiable. What has NOT
+ * happened is any code writing or projecting it: `routes/highlights.ts`'s
+ * `HIGHLIGHT_COLUMNS` does not select it, `POST /highlights` does not set it,
+ * and `describeHighlightLifetime` therefore still answers `unavailable` on
+ * every live read — now for the "not projected" reason rather than the "does
+ * not exist" one. Those are different sentences and the function already
+ * distinguishes them.
+ *
+ * `expires_at` is STILL NOT NULL (baseline/20260819_baseline_structure.sql:6774
+ * and migrations/0026_highlights.sql:19), and 2723 deliberately did not change
+ * that — its own header says so at
+ * `migrations/2723_highlight_class_lifecycle_and_pin.sql:33`. PERMANENT is
+ * therefore STILL NOT REPRESENTABLE on production — not "unimplemented",
+ * structurally impossible, because a PERMANENT Highlight is one with no expiry.
+ * Making it nullable is exactly what unmerged PR #461 / migration 2313 does,
+ * and that migration must not be adopted here (it reintroduces a `trip_members`
+ * self-join that applied migration 2530 removed).
+ * `representableLifetimeClasses` states this rather than leaving a reader to
+ * discover it.
  *
  * PURE. No I/O, no clock except the one you pass.
  */
