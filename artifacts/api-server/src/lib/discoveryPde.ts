@@ -847,3 +847,51 @@ export interface PdeViewer {
    */
   sequences?: DiscoverySequenceFeatures;
 }
+
+// ── DV-54, the geography axis: why this module still carries no geography key ─
+//
+// Appended below the last line of this file rather than edited into the
+// candidate map above, for the reason the note on `PdeViewer.sequences` gives:
+// this file is in the COVERED registry of scripts/check-doc-citations.mjs
+// precisely so that shifting a cited line is loud, and adding at the end moves
+// nothing.
+//
+// WHAT THE RE-RANK NOW HAS, AND WHAT IT STILL LACKS. `portavaRank.diversify`
+// compares four keys across its window as of this change — creator, content
+// type, place and geography (see `repetitionPenalty`). Three of the four have a
+// key on this surface already: `kind` is required, `authorId` is absent here by
+// construction, and `placeId` is set on every candidate below for the ×1.15
+// engagement boost, so the place axis is live the moment a magnitude is ruled.
+// The GEOGRAPHY axis has no key here. `city: viewer.city` is the same string for
+// every candidate in a request and so separates no two of them.
+//
+// THE OBVIOUS FIX IS DELIBERATELY NOT TAKEN, AND THAT IS AN OWNER DECISION.
+// `RankCandidate.neighborhood` has been declared since the engine shipped, and
+// `routes/discovery.ts` already produces one per OSM place via
+// `osmNeighborhood(tags)`, so threading it is a one-line change. It is not made
+// here because it is not only a diversity change. `scoreCandidate` computes
+//
+//     f.neighborhoodMatch = cityHit && c.neighborhood ? w.neighborhoodMatch : 0
+//
+// at weight 0.2, and NO call site anywhere in the tree sets `neighborhood`, so
+// that feature is a constant 0 on every surface today. Because this module sets
+// `city` on every candidate, `cityHit` is true for all of them here, and the
+// feature would reduce to "does this candidate carry a neighbourhood label at
+// all" — a data-completeness bonus, not the geo-relevance match its name
+// claims. Worse, it is not evenly available: `routes/discovery.ts` maps a
+// DB-backed place's `neighborhood` column onto `address`, so a curated place
+// reaches this engine with the field absent while an OSM place carrying an
+// `addr:suburb` tag does not. Threading the key would therefore hand a silent
+// +0.2 to labelled OSM places over curated ones — a scoring change nobody
+// asked for, arriving under the heading of a diversity change.
+//
+// So the key is withheld, the score feature stays exactly as dead as it was,
+// and this surface's ordering is byte-identical to before DV-54.
+// src/test/discoveryDiversityAxes.test.ts pins both halves of that (tests G1
+// and G2), so the day someone threads `neighborhood` they fail a test that
+// explains what else they just turned on.
+//
+// WHAT WOULD UNBLOCK IT: a ruling on whether `neighborhoodMatch` should require
+// a match against a viewer neighbourhood (there is no viewer neighbourhood on
+// `ViewerContext` today) or be retired, and a ruling on `geoPenalty`'s
+// magnitude. Both are ranking questions, not lanes.

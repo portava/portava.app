@@ -430,14 +430,15 @@ export interface DiversityOptions {
 /**
  * Greedy re-rank: repeatedly pick the best remaining candidate after applying
  * repetition penalties against the last `window` picks. Keeps feeds from
- * collapsing into one loud author or one content type — table stakes for a
- * feed that must mix posts, events, plans, and people.
+ * collapsing into one loud author, one content type, one place or one
+ * neighbourhood — see repetitionPenalty and DiversityOptions at the file end.
  */
 export function diversify<T extends RankCandidate>(
   scored: ScoredCandidate<T>[], opts: DiversityOptions = {},
 ): ScoredCandidate<T>[] {
-  const authorPenalty = opts.authorPenalty ?? 0.35;
-  const kindPenalty = opts.kindPenalty ?? 0.15;
+  // Resolved once; the derivation of each magnitude — and the reason two of
+  // the four have no default — is on DiversityOptions, merged at the file end.
+  const pen = resolveDiversityPenalties(opts);
   const window = Math.max(1, opts.window ?? 3);
 
   const pool = [...scored].sort((a, b) => b.score - a.score);
@@ -450,8 +451,7 @@ export function diversify<T extends RankCandidate>(
       const c = pool[i];
       let penalty = 0;
       for (const r of recent) {
-        if (c.candidate.authorId && r.candidate.authorId === c.candidate.authorId) penalty += authorPenalty;
-        if (r.candidate.kind === c.candidate.kind) penalty += kindPenalty;
+        penalty += repetitionPenalty(c.candidate, r.candidate, pen);
       }
       const val = c.score - penalty;
       if (val > bestVal) { bestVal = val; bestIdx = i; }
@@ -541,4 +541,91 @@ export function rankCandidates<T extends RankCandidate>(
     : diversify(scored, opts.diversity ?? {});
   return opts.exploration === false ? diversified
     : injectExploration(diversified, ctx, opts.exploration ?? {});
+}
+
+// ── Diversity, continued: the axes and their magnitudes ──────────────────────
+//
+// MERGED RATHER THAN INSERTED, for the reason lib/discoveryPde.ts states at its
+// own merged block: the lines above are the target of anchored citations in
+// docs/architecture and docs/discovery, this file is in the COVERED registry of
+// scripts/check-doc-citations.mjs, and shifting one silently repoints somebody
+// else's evidence. Adding below the last cited line moves nothing.
+
+export interface DiversityOptions {
+  /**
+   * Same canonical place (`candidate.placeId`) and same geography
+   * (`candidate.neighborhood`) as a prior pick inside the window.
+   *
+   * DELIBERATELY UNDEFAULTED, and that absence is the substance of this pair
+   * rather than an oversight in it.
+   *
+   * `authorPenalty` 0.35 and `kindPenalty` 0.15 are v1 hand-tuned constants:
+   * they arrived with the engine (commit b542f4456, "Portava ranking engine
+   * v1") carrying no recorded derivation, and this file's own header still
+   * describes v1 as hand-tuned. There is therefore no METHOD here to derive a
+   * third and fourth magnitude from, and choosing one by resemblance to 0.35 or
+   * 0.15 would be inventing a ranking constant and presenting it as an
+   * inference — which is worse than leaving the number open, because it reads
+   * as settled.
+   *
+   * The two constants in this file that DO carry a derivation
+   * (LOCAL_MOMENTUM_MAX_CONTRIBUTION, TRAIL_AFFINITY_MAX_CONTRIBUTION) each say
+   * in their own comment that an owner ruling set them and only another may
+   * change them. These two need exactly that and nothing else.
+   *
+   * So: absent means zero, which is byte-identical ordering for every caller in
+   * the tree today, and the axis turns on the moment a ruled value is passed —
+   * either at a `diversity: { ... }` call site (the Discovery one is the
+   * `rankCandidates` call in lib/discoveryPde.ts) or as a named constant here
+   * beside the two above.
+   *
+   * THE TWO AXES ARE NOT EQUALLY READY. `placePenalty` needs only a magnitude:
+   * `placeId` is already set on every Discovery candidate. `geoPenalty` needs a
+   * magnitude AND a key — no call site in the tree sets `candidate.neighborhood`,
+   * and lib/discoveryPde.ts deliberately still does not, because threading it
+   * would also switch on the `neighborhoodMatch` weight above, which rewards
+   * label PRESENCE rather than geo relevance and which DB-backed places cannot
+   * earn. That module's closing note states the decision and names what would
+   * unblock it; it is an owner call, not an oversight here.
+   */
+  placePenalty?: number;
+  geoPenalty?: number;
+}
+
+/** The four repetition magnitudes, resolved once per `diversify` call. */
+export interface ResolvedDiversityPenalties {
+  author: number;
+  kind: number;
+  place: number;
+  geo: number;
+}
+
+function resolveDiversityPenalties(opts: DiversityOptions): ResolvedDiversityPenalties {
+  return {
+    author: opts.authorPenalty ?? 0.35,
+    kind:   opts.kindPenalty ?? 0.15,
+    // No default — see the note on DiversityOptions above.
+    place:  opts.placePenalty ?? 0,
+    geo:    opts.geoPenalty ?? 0,
+  };
+}
+
+/**
+ * How much `c` is penalised for following `r` inside the re-rank window.
+ *
+ * The place and geography clauses are guarded on the CANDIDATE's own key, like
+ * `authorId` and unlike `kind` (which is required and so always comparable).
+ * Without that guard every candidate lacking a place id would count as a repeat
+ * of every other one through `null === null`, and a penalty every candidate
+ * incurs equally cannot reorder anything — it is a constant, not diversity.
+ */
+export function repetitionPenalty(
+  c: RankCandidate, r: RankCandidate, pen: ResolvedDiversityPenalties,
+): number {
+  let penalty = 0;
+  if (c.authorId && r.authorId === c.authorId) penalty += pen.author;      // creator
+  if (r.kind === c.kind) penalty += pen.kind;                              // content type
+  if (c.placeId && r.placeId === c.placeId) penalty += pen.place;          // place
+  if (c.neighborhood && r.neighborhood === c.neighborhood) penalty += pen.geo; // geography
+  return penalty;
 }
