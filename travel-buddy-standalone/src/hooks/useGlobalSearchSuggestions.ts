@@ -82,6 +82,17 @@ export interface GlobalSearchSuggestionsResult {
    *  'legacy' when the proven typeahead is (the default + fallback). */
   source: 'gateway' | 'legacy';
   /**
+   * The SHOWN source answered with a REFUSAL, not a result: it did not read its
+   * sources, and `groups` therefore holds whatever was on screen before rather
+   * than an answer. A panel that renders "no matches" must consult this first,
+   * or it states on the server's behalf that there is nothing to find.
+   *
+   * Always `false` on the gateway path: the gateway reports its own outage
+   * through `unavailable`, which is what makes this hook fall back at all, so a
+   * legacy refusal is never what the gateway is showing.
+   */
+  refused: boolean;
+  /**
    * §35 — record an EXPLICIT pick of a shown row as selection memory. Call it
    * from the screen's suggestion-pick handler. Fire-and-forget, fail-soft, and a
    * no-op for a legacy-typeahead row or a non-recordable one, so a caller may
@@ -172,6 +183,7 @@ export function useGlobalSearchSuggestions(
     actionSuggestions: preferGateway ? gatewayActions : [],
     loading: preferGateway ? gateway.loading : legacy.loading,
     source: preferGateway ? 'gateway' : 'legacy',
+    refused: preferGateway ? false : legacy.refused,
     recordPick,
   };
 }
