@@ -5843,7 +5843,10 @@ rather than waved at**: four call sites outside Discovery
 `artifacts/api-server/src/test/discoveryCountryRegistry.test.ts` — 20 cases,
 registered in the `test` script (`check-test-registration` green: 1285 of 1315
 registered). **Failing first, measured rather than asserted**: with the resolver
-present and the route untouched, 7 of 19 were RED — R1, R2, R3, R5, R6, R7, R11.
+present and the route untouched, **7 of the 18 cases the suite carried at that
+moment were RED** — R1, R2, R3, R5, R6, R7, R11. (U8 and R12 are the two cases
+§43.3 and §43.4 say were written later, each because something went red or,
+worse, did not.)
 
 Seven mutants, each applied, run, watched red, then restored and compared
 byte-for-byte by `cmp`:
@@ -5881,6 +5884,13 @@ lane's; it is the third time, and each time only the mutation said so.
 **87.2 %** and CORRECT rises to 82 / 188 = **43.6 %**, from 81 / 188 = 43.1 % at
 §39.7. The four buckets sum to 188 exactly. §18.3's bucket (a) — *"closable from
 code this lane owns"* — falls from two rows to one, and the one left is `B04`.
+
+**The residue reconciles, and it does not move.** §41.3's cross-check was *"66
+named rows still non-correct + 41 residue = 107"*. `B05` is a NAMED row — §18.3
+names it in bucket (a) — so the named count falls to **65** and the residue is
+untouched at **41**: 65 + 41 = **106**, which is 107 − 1. §41.7 warned the
+residue would decay through ordinary progress; this move is the other kind, and
+the arithmetic distinguishes them.
 
 ### 43.6 A cross-lane request this lane did NOT take itself
 
