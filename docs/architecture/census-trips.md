@@ -7484,7 +7484,7 @@ that is 99.1 % constructed has run out of work it can do by itself.
    `trip_events`, `trip_outbox` and `trip_command_receipts` ARE deployed, and the
    thirteen rows that rest only on them are gated by a FLAG, not by a migration.
 2. **2760–2795 are in portava-ci or in no database at all**, per
-   `artifacts/api-server/src/scripts/checkProductionDrift.ts:140#trip_stages:` and
+   `artifacts/api-server/src/scripts/checkProductionDrift.ts:147#trip_stages:` and
    the block that follows it. Ninety rows rest on one of these.
 3. **The §24 ratchet has exactly one ungated writer left**
    (`artifacts/api-server/src/scripts/tripKernelWriterBaseline.ts:257#ungated: 1`)

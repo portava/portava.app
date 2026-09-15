@@ -67,8 +67,15 @@ const API_SERVER_ROOT = join(HERE, "..", "..");
 const MIGRATIONS_DIR = join(API_SERVER_ROOT, "src", "migrations");
 const BASELINE_DIR = join(API_SERVER_ROOT, "baseline");
 
-/** The snapshot filename. Bump this when an operator captures a fresher one. */
-const PRODUCTION_SNAPSHOT = "20260915b_production_tables.txt";
+/**
+ * The snapshot filename. Bump this when an operator captures a fresher one.
+ *
+ * EXPORTED so tests measure the rule against the snapshot actually in use
+ * rather than restating its date. A test that hard-codes the capture date goes
+ * stale silently on the next refresh, which is how two cases in
+ * productionDriftExtraction.test.ts came to assert the opposite of the truth.
+ */
+export const PRODUCTION_SNAPSHOT = "20260915b_production_tables.txt";
 
 type Classification =
   /** Declared in the tree, never applied to production. MUST reach zero. */

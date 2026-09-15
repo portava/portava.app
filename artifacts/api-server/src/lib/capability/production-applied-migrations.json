@@ -141,6 +141,70 @@
     {
       "version": "20260908133347",
       "name": "2741_layover_session_returning_status"
+    },
+    {
+      "version": "20260914192957",
+      "name": "2204_intel_reward_ledger_erasure_grant"
+    },
+    {
+      "version": "20260914193020",
+      "name": "2900_intel_reward_ledger_reversals"
+    },
+    {
+      "version": "20260914193139",
+      "name": "2890_rank_events_behavior_engine_columns"
+    },
+    {
+      "version": "20260914193256",
+      "name": "2891_rank_events_recommendation_id"
+    },
+    {
+      "version": "20260915045246",
+      "name": "2254_schema_migration_ledger"
+    },
+    {
+      "version": "20260915054107",
+      "name": "2724_highlight_revocation_log"
+    },
+    {
+      "version": "20260915054221",
+      "name": "2720_highlight_resurfacing_preferences"
+    },
+    {
+      "version": "20260915055812",
+      "name": "2721_highlight_projection_policies"
+    },
+    {
+      "version": "20260915055904",
+      "name": "2722_highlight_sources"
+    },
+    {
+      "version": "20260915060104",
+      "name": "2710_memory_command_kernel_tables"
+    },
+    {
+      "version": "20260915080116",
+      "name": "2730_memory_derivative_registry"
+    },
+    {
+      "version": "20260915080240",
+      "name": "2338_memory_location_precision"
+    },
+    {
+      "version": "20260915080308",
+      "name": "2339_highlights_feed_bound"
+    },
+    {
+      "version": "20260915080401",
+      "name": "2723_highlight_class_lifecycle_and_pin"
+    },
+    {
+      "version": "20260915082108",
+      "name": "2361_discovery_candidate_projection_flag"
+    },
+    {
+      "version": "20260915083533",
+      "name": "2711_memory_kernel_execute"
     }
   ]
 }

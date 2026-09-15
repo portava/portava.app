@@ -39,6 +39,7 @@ import {
   appliedAfterSnapshot,
   declaredTables,
   KNOWN_PRODUCTION_GAPS,
+  PRODUCTION_SNAPSHOT,
 } from "../scripts/checkProductionDrift.js";
 
 const TABLE_RE = /create\s+table\s+(?:if\s+not\s+exists\s+)?(?:"?public"?\.)?"?([a-z0-9_]+)"?/gi;
@@ -100,33 +101,84 @@ describe("appliedAfterSnapshot excuses a recorded apply and nothing else", () =>
   ) as { migrations: Array<{ version: string; name: string }> };
   const byName = new Map(ledger.migrations.map((m) => [m.name, m.version]));
 
-  it("every excuse names a migration that the ledger really records", () => {
-    assert.ok(excused.size > 0, "with a 09-07 snapshot and 09-08 applies there must be some");
+  // The capture date the rule is measured against, read from the module rather
+  // than restated here — a test that hard-codes the snapshot's date goes stale
+  // silently the next time the snapshot is refreshed, which is exactly what
+  // happened to the two cases below on 2026-09-15.
+  const captureDate = PRODUCTION_SNAPSHOT.slice(0, 8);
+
+  it("every excuse names a migration that the ledger really records, applied after the capture", () => {
+    // NOT `excused.size > 0`. That was the old assertion, and its stated reason
+    // was "with a 09-07 snapshot and 09-08 applies there must be some". It was
+    // true then and is false now, for the reason appliedAfterSnapshot's own
+    // header predicts: "it self-heals — refresh the snapshot and the excuse
+    // evaporates, because the table is then simply present." The snapshot is
+    // now 09-15 and every recorded apply is at or before it, so the honest
+    // answer is an EMPTY excuse set. Asserting a non-empty one would have
+    // forced a false excuse to be manufactured to keep a test green.
+    //
+    // What is asserted instead is the INVARIANT, which holds at any size: an
+    // excuse exists exactly when the ledger records the declaring migration
+    // with a version after the capture date. Both directions are checked, so
+    // this is not weaker than the old form — it is the old form plus the
+    // completeness half the old form never had.
     for (const [table, why] of excused) {
       const file = why.split(" ")[0];
       const name = file.replace(/\.sql$/, "");
       assert.ok(byName.has(name), `${table} is excused by ${name}, which is not in the applied ledger`);
       assert.ok(
-        byName.get(name)!.slice(0, 8) > "20260907",
+        byName.get(name)!.slice(0, 8) > captureDate,
         `${table} is excused by ${name}, whose recorded apply is not after the snapshot`,
       );
     }
+    const postCapture = ledger.migrations.filter((m) => m.version.slice(0, 8) > captureDate);
+    assert.equal(
+      postCapture.length === 0,
+      excused.size === 0,
+      `the excuse set is ${excused.size} but ${postCapture.length} recorded applies postdate the ${captureDate} capture — ` +
+        `an empty excuse set is only honest when nothing was applied after the snapshot`,
+    );
   });
 
-  it("2520's two tables are excused — the false finding that started this", () => {
-    assert.ok(excused.has("trip_map_projections"));
-    assert.ok(excused.has("trip_map_projection_applied"));
+  it("2520's two tables are no longer excused BECAUSE the snapshot now contains them", () => {
+    // This case used to assert the opposite, and both readings are correct at
+    // their own tree. The false finding that started all of this was reporting
+    // trip_map_projections and trip_map_projection_applied as production drift
+    // when 2520 had been applied on 09-08 and the committed snapshot was from
+    // 09-07. The excuse was the stopgap; the CURE was always refreshing the
+    // snapshot, and on 2026-09-15 it was refreshed.
+    //
+    // So the assertion is inverted and its ground is stated: they need no
+    // excuse because they are PRESENT. Checking presence rather than merely
+    // asserting absence-of-excuse is what keeps this case honest — a bug that
+    // dropped both tables from the snapshot would otherwise pass it silently.
+    const snapshotTables = new Set(
+      readFileSync(new URL(`../../baseline/${PRODUCTION_SNAPSHOT}`, import.meta.url), "utf8")
+        .split("\n")
+        .map((l) => l.trim())
+        .filter(Boolean),
+    );
+    for (const t of ["trip_map_projections", "trip_map_projection_applied"]) {
+      assert.ok(snapshotTables.has(t), `${t} must be in the snapshot — that is why it needs no excuse`);
+      assert.ok(!excused.has(t), `${t} is in the snapshot and must not also carry an excuse`);
+    }
   });
 
   it("a genuinely unapplied migration's tables are NOT excused", () => {
-    // 2710 and 2720-2724 are on the branch and in no database but portava-ci.
-    // If any of these ever becomes excused, the rule has stopped requiring a
-    // recorded apply and the check has quietly become an allowlist.
+    // SUPERSEDED LIST, 2026-09-15. This case used to name the memory kernel and
+    // highlight tables on the grounds that they were "on the branch and in no
+    // database but portava-ci". That is no longer true — 2710, 2711, 2720-2724
+    // and 2730 were applied to production on 2026-09-15 — so keeping them here
+    // would have made the case pass for the wrong reason: they are not excused
+    // because they are PRESENT, not because the rule refused them.
+    //
+    // The tables below are the ones that genuinely still have no production
+    // apply at this tree. If any of them ever becomes excused, the rule has
+    // stopped requiring a recorded apply and the check has quietly become an
+    // allowlist — which is the whole point of this case.
     for (const t of [
-      "memory_domain_events", "memory_event_outbox", "memory_command_receipts",
-      "memory_command_audit", "memory_derivative_registry",
-      "highlight_sources", "highlight_revocation_log",
       "layover_certified_computations", "sensing_contribution_sessions",
+      "airport_fact_observations",
     ]) {
       assert.ok(!excused.has(t), `${t} has no recorded production apply and must not be excused`);
     }
