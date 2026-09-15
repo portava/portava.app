@@ -5744,7 +5744,7 @@ is stated here and not left for a reader to discover in a JSON file.*
 
 | id | was | now | evidence |
 |---|---|---|---|
-| B05 | W | **C** | `GET /discovery/search?type=countries` resolves against ISO-3166-1, not against who signed up. **The row's stated blocker was FALSE at this tree.** It read *"Fix needs a canonical country registry Discovery does not own"*, and §10.1 sharpened that to *"`country_essentials` exists in production and is keyed by ISO code with **no name column**, so it is not the registry this needs"*. `country_essentials` is not — but `artifacts/api-server/src/lib/countryCodes.ts:187#export function toCountryCode(` is: ~195 ISO-3166-1 alpha-2 codes with canonical English names, an alias index carrying `holland`/`uk`/`bali`, and a diacritic-insensitive fold. It is PURE data with no I/O, it is in this package, and `lib/stamps/countryLookup.ts` already consumes it. Discovery now consumes the SAME module: `artifacts/api-server/src/lib/countryCodes.ts:286#export function searchCountryRegistry(` is the resolver a PICKER needs beside the parser that was already there, and `artifacts/api-server/src/routes/discoverySearch.ts:2111#const registry = searchCountryRegistry(q, offset + fetchLimit);` is where the country bucket reads it. Iceland is a country on this surface with no Icelander in the database. |
+| B05 | W | **C** | `GET /discovery/search?type=countries` resolves against ISO-3166-1, not against who signed up. **The row's stated blocker was FALSE at this tree.** It read *"Fix needs a canonical country registry Discovery does not own"*, and §10.1 sharpened that to *"`country_essentials` exists in production and is keyed by ISO code with **no name column**, so it is not the registry this needs"*. `country_essentials` is not — but `artifacts/api-server/src/lib/countryCodes.ts:187#export function toCountryCode(` is: **216** ISO-3166-1 alpha-2 codes with canonical English names, a **169-entry** alias index carrying `holland`/`uk`/`bali`, and a diacritic-insensitive fold. It is PURE data with no I/O, it is in this package, and `lib/stamps/countryLookup.ts` already consumes it. Discovery now consumes the SAME module: `artifacts/api-server/src/lib/countryCodes.ts:286#export function searchCountryRegistry(` is the resolver a PICKER needs beside the parser that was already there, and `artifacts/api-server/src/routes/discoverySearch.ts:2111#const registry = searchCountryRegistry(q, offset + fetchLimit);` is where the country bucket reads it. Iceland is a country on this surface with no Icelander in the database. |
 
 **WHY THIS ONE AND NOT ANOTHER.** §18.3 named `B04` and `B05` as *"the only two
 of 111 that no other owner, migration or decision stands in front of"*, and
@@ -5830,13 +5830,25 @@ still runs first and wins, so no input that resolves today can change code and
 the only possible transition is `null` → a real code, never `A` → `B`. That is
 the argument `lib/stamps/countryLookup.ts`'s own header already makes for its
 fallback, and `lib/stamps/xxCatalogRepair.ts` is the machinery that exists to
-carry an `XX` row to a real code when one appears. **The blast radius is stated
-rather than waved at**: four call sites outside Discovery
-(`entryRequirements.ts`, `StampCatalogService.ts`, `stampHelper.ts`,
-`inputAssistance/validationSuite.ts`), and the four country suites
-(`stampCountryCodeCoverage`, `stampCountryLookup`, `stampCatalogCountryCodeType`,
-`stampCountryCodeTruncation`) plus `rentBuddyCountryParity` and
-`countryEssentials` were run — 76 tests, 0 failures.
+carry an `XX` row to a real code when one appears. **THE BLAST RADIUS IS NINE MODULES, NOT FOUR, AND
+THIS SENTENCE IS A CORRECTION OF ITS OWN FIRST DRAFT.** The count was written
+off a `grep` read through `head -20`, which cut the list mid-output — the same
+shape of error as reading a census and stopping at §11. Enumerated in full:
+`lib/entryRequirements.ts:87`, `routes/entryRequirements.ts` (five sites — :128,
+:330, :331, :347, :348), `routes/countryEssentials.ts` (:101, :130),
+`lib/stamps/countryLookup.ts:185`, `lib/stamps/StampCatalogService.ts:33`,
+`lib/stampHelper.ts:43`, `lib/inputAssistance/validationSuite.ts:72`, and two
+LAZY consumers that resolve the function through a dynamic import and fall back
+to `null` when it is absent — `domain/trips/services/tripReadiness.ts` and
+`domain/trips/services/tripBudgetIntel.ts`. **One of the nine is already immune
+by construction**: `routes/countryEssentials.ts` handles a two-letter input
+itself before it ever calls, so `uk` never reaches the branch that changed.
+
+**The safety argument is MEASURED, not asserted.** Parsing the two tables out of
+the module: `ALIASES` has exactly ONE key that normalises to two letters — `uk`
+— and it collides with no entry in `CODES`, so the ISO branch cannot shadow it;
+and zero aliases point at a code `CODES` does not carry. The behaviour change is
+therefore a single input, `uk`/`UK`, and it goes `null` -> `GB`.
 
 ### 43.4 The tests, and the mutants each one killed
 

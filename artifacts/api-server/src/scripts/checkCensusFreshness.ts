@@ -1998,11 +1998,23 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // stop naming the files, which would have made the blast-radius claim
     // unfalsifiable while keeping the percentage green — the one trade this
     // floor exists to refuse.
+    // NINE, NOT FIVE, AND THE CORRECTION IS THE POINT. §43.3's first draft said
+    // "four call sites outside Discovery", counted off a `grep` read through
+    // `head -20` — a list cut mid-output, which is the same mistake as reading a
+    // census and stopping at §11. Enumerating it properly found nine modules,
+    // including three the first count never reached: the entry-requirements
+    // ROUTE (five call sites of its own) and the two trips services that resolve
+    // the function through a DYNAMIC import, which no ordinary grep for an
+    // `import` statement would have surfaced. All nine are watched, because the
+    // corrected sentence is a claim about all nine.
     "artifacts/api-server/src/lib/entryRequirements.ts",
+    "artifacts/api-server/src/routes/entryRequirements.ts",
     "artifacts/api-server/src/lib/stampHelper.ts",
     "artifacts/api-server/src/lib/stamps/countryLookup.ts",
     "artifacts/api-server/src/lib/stamps/StampCatalogService.ts",
     "artifacts/api-server/src/lib/stamps/xxCatalogRepair.ts",
+    "artifacts/api-server/src/domain/trips/services/tripReadiness.ts",
+    "artifacts/api-server/src/domain/trips/services/tripBudgetIntel.ts",
     //
     // Pre-existing gap, closed in the same pass because the floor exposed it:
     // §42.1 and §42.2 rest on what `discoveryDiversityAxes.test.ts` asserts —
