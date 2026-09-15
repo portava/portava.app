@@ -150,7 +150,6 @@
     "lib/privacyResolver.ts::resolveCircleMembership::trip_members.maybeSingle": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",
     "lib/privacyResolver.ts::resolveCircleMembership::circle_memberships.maybeSingle": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",
       "lib/profileVisibility.ts::resolveProfileVisibility::user_friendships.maybeSingle": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",
-    "lib/rankLog.ts::isFatigueEnabled::feature_flags.maybeSingle": "FAIL-CLOSED: a *_enabled capability flag reads as off and the feature is skipped; the DB error is reported as a disabled feature (polarity per check-flag-polarity)",
       "domain/trips/invariants/tripMembership.ts::isAcceptedTripMember::trips.maybeSingle": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",
     "domain/trips/invariants/tripMembership.ts::isAcceptedTripMember::trip_members.maybeSingle": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",
     "domain/trips/invariants/tripMembership.ts::acceptedCrewSize::trips.maybeSingle": "UNCLASSIFIED: returns 0 on an unreadable trips row; consumers gate on crew size thresholds in both directions and were not traced",
