@@ -32,7 +32,7 @@ are files, tables, routes, event types and literals, each re-derived on every ru
 
 ### 2. Migrations that touch a messaging table
 
-30 of 546 migration files reference at least one messaging table.
+31 of 549 migration files reference at least one messaging table.
 
 - `src/migrations/0011_message_type.sql`
 - `src/migrations/0016_thread_reads.sql`
@@ -54,6 +54,7 @@ are files, tables, routes, event types and literals, each re-derived on every ru
 - `src/migrations/2140_deletion_receipt.sql`
 - `src/migrations/2182_close_authz_rpc_oracle.sql`
 - `src/migrations/2199_call_participants_rls_recursion.sql`
+- `src/migrations/2325_telegraph_unsend_before_seen.sql`
 - `src/migrations/2338_memory_location_precision.sql`
 - `src/migrations/2400_telegraph_history_bound.sql`
 - `src/migrations/2401_telegraph_messages_rls_latent_disclosure.sql`
