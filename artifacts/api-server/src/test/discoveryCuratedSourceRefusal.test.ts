@@ -99,8 +99,15 @@ let inserts: Array<{ table: string; rows: unknown }> = [];
  * also the ONLY way to reach this defect: `_setTestDbPlacesOverride` returns
  * rows, so it cannot express "the table could not be read" at all.
  */
-function buildFakeClient(opts: { errorTables?: string[]; rows?: Record<string, any[]> } = {}) {
+function buildFakeClient(
+  opts: { errorTables?: string[]; throwTables?: string[]; rows?: Record<string, any[]> } = {},
+) {
   const errorTables = new Set(opts.errorTables ?? []);
+  // `throwTables` is the OTHER failure supabase-js can produce — a driver or
+  // socket error that rejects rather than resolving with `{ error }`. Both are
+  // failed reads and both must reach the caller as `null`; a reader that handles
+  // only the resolved one leaves its `catch` free to reinstate the masquerade.
+  const throwTables = new Set(opts.throwTables ?? []);
   // The serve-log flag is ON in every fixture: with it absent no request could
   // write a rank_events row, refused or not, and the exposure control at the
   // foot of this file would pass vacuously against a disabled flag.
@@ -140,10 +147,12 @@ function buildFakeClient(opts: { errorTables?: string[]; rows?: Record<string, a
 
     function filtered() { return rows.filter((r) => preds.every((p) => p(r))); }
     async function resolveList() {
+      if (throwTables.has(table)) throw new Error(`${table} connection reset`);
       if (errorTables.has(table)) return { data: null, error: { message: `${table} unavailable` }, count: null };
       return { data: filtered(), error: null, count: filtered().length };
     }
     async function resolveOne() {
+      if (throwTables.has(table)) throw new Error(`${table} connection reset`);
       if (errorTables.has(table)) return { data: null, error: { message: `${table} unavailable` } };
       return { data: filtered()[0] ?? null, error: null };
     }
@@ -641,5 +650,174 @@ describe("GET /discovery — the curated half of the merge (D11's last residual)
       ["places", "total", "destination", "context", "cached", "ageFilterMeta", "sourceSummary", "meta", "cursor", "refusal"],
       "a refused body is the successful body plus `refusal`, and nothing else moved",
     );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE CANONICAL HALF — §30.5's third open item, which named itself as the next
+// instance of the class the curated cases above closed:
+//
+//   "`queryCanonicalPlaces` cannot report failure at all — it returns `[]` for
+//    unreadable and empty alike, so `failedSources` can only ever name the
+//    curated half. The canonical half's silence was deliberately not guessed
+//    at, and it is the next instance of exactly the class this section closed."
+//
+// `GET /discovery` merges THREE retrievals: Overpass, curated `discovery_places`
+// and the canonical `places` registry. Two of the three could report a failed
+// read. The third answered `[]` for "the table is down" and for "this city has
+// no canonical rows" alike — which is the D11 masquerade, in the one source that
+// carries the most rows in every city outside the demo eight (`queryCanonicalPlaces`
+// exists precisely because Da Nang has ~2.6k canonical rows and 0 curated ones).
+//
+// The cases below are the curated ones' exact mirror, plus the case neither file
+// could express before: BOTH halves unreadable at once.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The canonical registry's name on `refusal.failedSources` — the table, as with the curated half. */
+const CANONICAL_SOURCE = "places";
+
+/**
+ * A partial refusal that names exactly `expected`, in merge order.
+ *
+ * Deliberately a deepEqual over the WHOLE array rather than a `.includes()`:
+ * "some of this is missing" without saying which part is not a usable answer,
+ * and a `failedSources` that quietly grows a source that did not fail is the
+ * same untruth in the other direction.
+ */
+function assertPartialNaming(body: any, expected: string[], code: string, what: string): void {
+  assert.ok(
+    body && typeof body === "object" && body.refusal,
+    `${what}: no \`refusal\` on the body — a half-failed read is still ` +
+    `indistinguishable from a small city. Body: ${JSON.stringify(body)}`,
+  );
+  const r = body.refusal;
+  assert.ok(
+    (DISCOVERY_REFUSAL_CLASSES as readonly string[]).includes(r.class),
+    `${what}: refusal.class ${JSON.stringify(r.class)} is not one of \`11\` §9's classes`,
+  );
+  assert.equal(r.class, "transient_db", `${what}: wrong §9 class`);
+  assert.equal(r.route, "GET /discovery", `${what}: wrong route on the refusal`);
+  assert.equal(
+    r.coverage, "partial",
+    `${what}: coverage must be "partial" — at least one retrieval ANSWERED, so ` +
+    `its emptiness is trustworthy and whatever rows went out really were served`,
+  );
+  assert.deepEqual(
+    [...(r.failedSources ?? [])], expected,
+    `${what}: the refusal must name EXACTLY the sources whose rows are missing`,
+  );
+  assert.equal(
+    r.code, code,
+    `${what}: the code must say WHICH halves failed. A single frozen code makes a ` +
+    `canonical-only failure indistinguishable on the wire from a curated-only one, ` +
+    `which is the same collapse one level up from the one this row is about`,
+  );
+}
+
+describe("GET /discovery — the canonical half of the merge (§30.5's third open item)", () => {
+  // ── The canonical half alone, on the cold fetch ───────────────────────────
+  it("cold fetch: an unreadable canonical `places` registry is NAMED, not absorbed", async () => {
+    // The curated half succeeds and carries rows, so the body is a plausible,
+    // non-empty answer. That is the whole danger: nothing in `places` or `total`
+    // hints that the largest of the three retrievals never answered.
+    setClient({ errorTables: ["places"] });
+    _setTestDbPlacesOverride(async () => [curatedPlace("p1", 10)]);
+    const r = await get(`/api/discovery?${MIAMI}&category=food`);
+    assert.equal(r.status, 200, "additive shape: the status stays 200");
+    assertServePath(r.body, "cold");
+    assert.equal(r.body.places.length, 1, "the curated half is a real result and is still served");
+    assertPartialNaming(r.body, [CANONICAL_SOURCE], "canonical_places_read_failed",
+      "cold fetch with an unreadable canonical registry");
+  });
+
+  // ── The canonical half alone, on the cache-A serve ────────────────────────
+  it("cache-A serve: the canonical read still runs for THIS request, and its failure is named", async () => {
+    setClient({ errorTables: ["places"] });
+    _setTestDbPlacesOverride(async () => [curatedPlace("p1", 10)]);
+    _injectTestCacheEntry(CACHE_A_FOOD, [osmPlace("node/4242")]);
+    const r = await get(`/api/discovery?${MIAMI}&category=food`);
+    assert.equal(r.status, 200);
+    assertServePath(r.body, "cache_a");
+    assertPartialNaming(r.body, [CANONICAL_SOURCE], "canonical_places_read_failed",
+      "cache-A serve with an unreadable canonical registry");
+  });
+
+  // ── BOTH halves — the case neither half could express before ──────────────
+  it("BOTH DB halves unreadable: the refusal names both, in merge order", async () => {
+    // Overpass throws in this file, so this body genuinely has nothing in it —
+    // and it is STILL `partial`, not `nothing`. `coverage: "nothing"` suppresses
+    // the serve log, and an OSM retrieval that failed at the network is not the
+    // same claim as "we did not look at all"; the route's three-retrieval rule
+    // is that ANY answering source keeps it partial. The control at the foot of
+    // the curated block pins the exposure consequence from the other side.
+    setClient({ errorTables: ["discovery_places", "places"] });
+    const r = await get(`/api/discovery?${MIAMI}&category=food`);
+    assert.equal(r.status, 200);
+    assertServePath(r.body, "cold");
+    assertPartialNaming(r.body, ["discovery_places", CANONICAL_SOURCE],
+      "discovery_place_sources_read_failed", "both DB halves unreadable");
+  });
+
+  // ── The throw path — the other shape a failed read takes ─────────────────
+  it("a canonical read that THROWS is named too, not just one that resolves with an error", async () => {
+    // `queryCanonicalPlaces` has two exits for a failed read: the resolved
+    // `{ error }` supabase-js returns for a query error, and the `catch` that
+    // takes a driver/socket rejection. Both are "the registry could not be
+    // read". A fix that only changed the first would leave the `catch` returning
+    // `[]` — the same masquerade, reachable by the failure mode that happens
+    // when a database goes away rather than when a query is wrong.
+    setClient({ throwTables: ["places"] });
+    _setTestDbPlacesOverride(async () => [curatedPlace("p1", 10)]);
+    const r = await get(`/api/discovery?${MIAMI}&category=food`);
+    assert.equal(r.status, 200);
+    assertServePath(r.body, "cold");
+    assertPartialNaming(r.body, [CANONICAL_SOURCE], "canonical_places_read_failed",
+      "cold fetch where the canonical read threw");
+  });
+
+  // ── CONTROL 1 — a genuinely empty canonical registry is not a refusal ─────
+  it("CONTROL: a canonical registry that ANSWERS with no rows carries NO refusal", async () => {
+    // `places` is readable and simply has nothing for Miami. Stamping a refusal
+    // here is the same lie inverted: "we could not look", told about a table
+    // that was looked at.
+    setClient();
+    _setTestDbPlacesOverride(async () => [curatedPlace("p1", 10)]);
+    const r = await get(`/api/discovery?${MIAMI}&category=food`);
+    assertServePath(r.body, "cold");
+    assert.equal(
+      r.body.refusal, undefined,
+      "an empty canonical registry is a real, trustworthy answer and must not acquire a refusal",
+    );
+  });
+
+  // ── CONTROL 2 — a tab the canonical vocabulary cannot serve is not a failure
+  it("CONTROL: a category with no canonical vocabulary is NOT reported as a failed source", async () => {
+    // `primaryCategoriesFor("beaches")` is empty — `public.places`'s coarse
+    // `primary_category` vocabulary maps nothing to that tab — so
+    // `queryCanonicalPlaces` returns before touching the table. The table being
+    // unreadable in this fixture is therefore IRRELEVANT to this request, and
+    // naming `places` here would accuse a source this request never consulted.
+    setClient({ errorTables: ["places"] });
+    _setTestDbPlacesOverride(async () => [curatedPlace("p1", 10)]);
+    const r = await get(`/api/discovery?${MIAMI}&category=beaches`);
+    assertServePath(r.body, "cold");
+    assert.equal(
+      r.body.refusal, undefined,
+      "`beaches` maps to no canonical primary_category, so the registry was never " +
+      "read for this request and cannot be among the sources that failed it",
+    );
+  });
+
+  // ── CONTROL 3 — the curated-only contract is unchanged ────────────────────
+  it("CONTROL: a curated-only failure still names only the curated half, with its original code", async () => {
+    // The four curated cases above assert `failedSources: ["discovery_places"]`.
+    // This restates the CODE half of that contract inside the new helper, so a
+    // future change that broadened the code to cover both halves at once would
+    // fail here rather than silently re-labelling every curated refusal.
+    setClient({ errorTables: ["discovery_places"] });
+    const r = await get(`/api/discovery?${MIAMI}&category=food`);
+    assertServePath(r.body, "cold");
+    assertPartialNaming(r.body, ["discovery_places"], "discovery_places_read_failed",
+      "curated-only failure");
   });
 });
