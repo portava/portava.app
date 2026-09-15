@@ -69,7 +69,7 @@
 > | Field | Value |
 > | --- | --- |
 > | `generated_at` | 2026-09-08 |
-> | `head_commit` | `1fe72289b` — RE-DECLARED 2026-09-15 at the squash merge of PR #482. The previous value was `80a8d655a`, a commit on the pre-merge branch. **The squash made it an orphan**: it still exists in a clone that fetched the branch, but it is on no line of history leading to `main`, and `check:census-freshness` refuses an orphan because the check would pass locally and fail in a fresh clone. Nothing about this census was re-measured and NO verdict moves — `1fe72289b` is the commit its previous declaration's tree became, so zero counted files have changed since it. The prior declaration and its reasoning follow. — RE-DECLARED 2026-09-14 by §22, replacing `060027b0b`. §22 re-derived the rows this branch's Layover changes bear on — twelve moved `W → C`, and L110 and L112 deliberately did not (§22.2), on the same rule three other censuses now state. §22.5 reports three `N` rows that look wrong at HEAD and explicitly does NOT grade them. The 49 counted files that changed are the §12 tool-loop and §24 reminder builds plus the shared files sibling lanes touched. It does **NOT** certify the other 61 `C` rows, and §1's reading rule applies unchanged. The previous declaration read: `060027b0b` — RE-DECLARED 2026-09-13 by the §18 build pass, which is the commit §18's verdicts were derived at and the commit that carries every counted file this pass changed: the two new modules `services/airport/LayoverTemporalFreedom.ts` and `services/airport/LayoverEnvelope.ts`, plus `services/airport/LayoverSafetyEngine.ts`, `services/airport/LayoverRecommendationService.ts`, `routes/airport.ts`, `travel-buddy-standalone/src/services/layover.ts`, `travel-buddy-standalone/src/components/layover/CanILeaveCard.tsx`, its new component suite, and three new server suites. **This is a RE-MEASUREMENT, not a re-declaration** — §18 opened every one of those files, moved twelve rows against tests watched RED first, ran thirty-four mutations against production code and restated the headline from `check:census-integrity` rather than by hand. **ZERO counted files move between `060027b0b` and this document's own commit**, so no acknowledgement is needed in its place. **IT IS ON THE LANE BRANCH `lane-layover-arch` AND CARRIES THE SAME PRE-SQUASH HAZARD EVERY VALUE IN THIS ROW HAS CARRIED**: after a squash-merge it becomes an ancestor of nothing and `check:census-freshness` will report this census unreadable until whoever merges re-declares the squash sha. PREVIOUS VALUE, verbatim: `a5c223a37` — RE-DECLARED 2026-09-13 by the §17 build pass, which is the commit §17's verdicts were derived at and the commit that carries every counted file this pass changed: `routes/airport.ts`, `services/airport/LayoverFeasibility.ts`, `services/airport/LayoverEventReplanner.ts`, `services/airport/LayoverReplanService.ts`, `src/test/layoverEventReplanner.test.ts`, the three new server suites, `travel-buddy-standalone/src/services/layover.ts`, `CanILeaveCard.tsx`, `layoverReturnFacts.ts`, the new `LayoverEndSheet.tsx`, `app/layover/[id].tsx` and its two component suites. **This is a RE-MEASUREMENT, not a re-declaration** — §17 opened every one of those files, moved four rows against tests watched RED first, ran twenty-three mutations and restated the headline from `check:census-integrity` rather than by hand. The acknowledgement written against `eb70ab3b2` is RETIRED, not deleted, in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json`, which is what that entry's own last paragraph instructs; **ZERO counted files have moved between `a5c223a37` and HEAD**, so the re-declaration needs no acknowledgement in its place. **IT IS ON A LANE BRANCH AND CARRIES THE SAME PRE-SQUASH HAZARD EVERY VALUE IN THIS ROW HAS CARRIED**: after a squash-merge it becomes an ancestor of nothing and `check:census-freshness` will report this census unreadable until whoever merges re-declares the squash sha. PREVIOUS VALUE, verbatim: `eb70ab3b2` — RE-DECLARED 2026-09-13 by the integrating lane, which is what §15.9 says must happen and names as the pairing this checker enforces: *"It is spent the moment this pass is committed: whoever commits it must re-declare `head_commit` at the resulting hash and retire the acknowledgement."* `eb70ab3b2` IS that commit — it carries §15, the three rows §15.4 moves (L47, L123, L42), and every one of the eleven counted files §15.9 lists as this pass's own, together with `services/airport/LayoverPlanFit.ts`, `src/test/layoverPlanFitUnknownLegs.test.ts` and `travel-buddy-standalone/src/components/layover/useSafeReturnAbort.ts`. The acknowledgement written against `7cac6e2b4` — the one that did **not** claim its eleven files were harmless and pointed at §15 instead — is RETIRED, not deleted, in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json`, so its per-file argument survives the entry. **ZERO counted files have moved between `eb70ab3b2` and HEAD**, which is why this re-declaration needs no acknowledgement of its own. **IT IS ON THE INTEGRATION BRANCH `claude/sweet-fermat-fmx7up` and carries the same pre-squash hazard every value in this row has carried**: after a squash-merge it becomes an ancestor of nothing and `check:census-freshness` will report this census unreadable until whoever merges re-declares the squash sha. **This is a RE-MEASUREMENT, not a re-declaration** — §15 opened all twelve files, moved three rows against tests watched RED first, and restated the headline from `check:census-integrity` rather than by hand. PREVIOUS VALUE, verbatim: `7cac6e2b4` — RE-DECLARED 2026-09-13 by the §14 build pass, which is the commit §14's verdict was derived at and the commit that changed `artifacts/api-server/src/routes/airport.ts`, `travel-buddy-standalone/app/layover/[id].tsx` and `travel-buddy-standalone/src/services/layover.ts` under this census. **IT IS ON THE INTEGRATION BRANCH `claude/sweet-fermat-fmx7up` and carries the same pre-squash hazard every value in this row has carried**: after a squash-merge it becomes an ancestor of nothing and `check:census-freshness` will report this census unreadable until whoever merges re-declares the squash sha. **This is a RE-MEASUREMENT, not a re-declaration** — §14 opened all three files, moved L271 and restated the headline from the rows. PREVIOUS VALUE, verbatim: `b9bdcfc3c` — RE-DECLARED 2026-09-13 by the §13 build pass, which is the commit §13's verdicts were derived at and the second of the two commits that changed `services/airport/LayoverRecommendationService.ts`, `services/airport/LayoverSafetyEngine.ts`, `src/test/airport.test.ts`, `travel-buddy-standalone/app/layover/[id].tsx`, its component test and `travel-buddy-standalone/src/lib/safeNotifications.ts` under this census. **IT CARRIES THE SAME PRE-SQUASH HAZARD every value in this row has carried**: it is on `worktree-agent-a96f1481d064c0de6` and on no remote branch, so after a squash-merge it becomes an ancestor of nothing and `check:census-freshness` will report this census unreadable until whoever merges re-declares the squash sha. PREVIOUS VALUE, verbatim: `fa14590e5` — RE-DECLARED 2026-09-13 by the §12 build pass, which is the commit §12's verdicts were derived at and the commit that changed `routes/airport.ts`, `travel-buddy-standalone/src/services/layover.ts` and `travel-buddy-standalone/app/layover/[id].tsx` under this census. **IT CARRIES THE SAME PRE-SQUASH HAZARD every value in this row has carried**: it is on `worktree-agent-a4a1855c806a24d03` and on no remote branch, so after a squash-merge it becomes an ancestor of nothing and `check:census-freshness` will report this census unreadable until whoever merges re-declares the squash sha. PREVIOUS VALUE, verbatim: `af1864a7` — RE-DECLARED 2026-09-13 by the §11 build pass, which re-measured 37 rows and therefore owns this row; the previous value and its whole argument follow unchanged. `af1864a7` is the second of §11's two commits and is the commit its verdicts were derived at. **IT CARRIES THE SAME PRE-SQUASH HAZARD the paragraph below documents**: it is on `worktree-agent-a1965b10a690c9e97` and on no remote branch, so after a squash-merge it becomes an ancestor of nothing and this check will report the census as unreadable until whoever merges re-declares the squash sha. That is a known cost of declaring a branch commit, taken deliberately rather than leaving the row naming a commit four files older than the tree. PREVIOUS VALUE, verbatim: `42aeac38` — RE-DECLARED 2026-09-10 from `743ae78f305ea657ab508a34bdbc574488f4aae7` (§9 measured `cdfff5995c92f7adfb3ae7880496bc94002717e9`; §10 re-measured, at `743ae78f`, the rows a client lane could move). It was necessary because `743ae78f` is PRE-SQUASH — this repository squash-merges, so it is an ancestor of nothing, is on no remote branch, and `check:census-freshness` could resolve it only on the clone that wrote it (`CENSUS_HEAD_COMMITS_UNREACHABLE_IN_CI`). Reproduced 2026-09-10 in a fresh clone of this branch: `git diff 743ae78f..HEAD` aborts with `Invalid revision range`, and the check reported this census as unreadable rather than checking it. `42aeac38` is #476's squash, where this document's content reached `main`. **This is a RE-DECLARATION, not a re-measurement.** ONE counted file changed between `743ae78f` and `42aeac38`: `artifacts/api-server/src/services/airport/LayoverPrivacyGuard.ts`. The move is defensible only because each was re-verified mechanically on 2026-09-10 over `743ae78f..42aeac38`: filtered to lines that are neither comment nor blank, that diff is EMPTY against a `--stat` of 7 insertions and 4 deletions — the edit updates the file's header note to record that the `TripCrewLocationService` read it had flagged is now fail-closed. No statement, signature, condition or constant moved, so no layover verdict can have. The full per-file argument is preserved under `retired` in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json`, where it had been written as an acknowledgement. **Changed by the Trips lane, not this one**, because CI could not run this check against this census at all until it was; nothing else in this document is touched, and reverting it costs only the check. |
+> | `head_commit` | `47634baf527a9aae4aeea17f73e4df8b5eef3691` — RE-DECLARED 2026-09-15 by **§24**, replacing `1fe72289b`. §24 moves NO verdict and changes no figure in §1. It records ONE defect found, watched RED and closed — the certified action universe charged `travelTimeMin * 2` for the ride back, in the one list §25 L269 permits a Discovery surface to show — and it re-derives THREE rows whose evidence is false at HEAD: L46 (its stated symmetry divergence is now half closed), and L269 / L260, whose last statements in §17.6 predate the certified action universe that now gates all six Discovery serve paths. **Read §24.6 before touching L269**: the row is blocked on a feature flag, `layover_discovery_mode_enabled`, that NO migration in this tree seeds — it is false by absence on every production request, so the gate is off and the requirement is in force for nobody. This sha is the commit that carries the five counted files §24.9 lists; `docs/architecture/census-layover.md` is not counted by this census, so the section itself does not age it. **IT IS PRE-SQUASH** and carries the hazard every value in this row has carried: after a squash-merge it is an ancestor of nothing and whoever merges must re-declare the squash sha. It does **NOT** certify any other row, and §1's reading rule applies unchanged to the other 293. The previous declaration read: `1fe72289b` — RE-DECLARED 2026-09-15 at the squash merge of PR #482. The previous value was `80a8d655a`, a commit on the pre-merge branch. **The squash made it an orphan**: it still exists in a clone that fetched the branch, but it is on no line of history leading to `main`, and `check:census-freshness` refuses an orphan because the check would pass locally and fail in a fresh clone. Nothing about this census was re-measured and NO verdict moves — `1fe72289b` is the commit its previous declaration's tree became, so zero counted files have changed since it. The prior declaration and its reasoning follow. — RE-DECLARED 2026-09-14 by §22, replacing `060027b0b`. §22 re-derived the rows this branch's Layover changes bear on — twelve moved `W → C`, and L110 and L112 deliberately did not (§22.2), on the same rule three other censuses now state. §22.5 reports three `N` rows that look wrong at HEAD and explicitly does NOT grade them. The 49 counted files that changed are the §12 tool-loop and §24 reminder builds plus the shared files sibling lanes touched. It does **NOT** certify the other 61 `C` rows, and §1's reading rule applies unchanged. The previous declaration read: `060027b0b` — RE-DECLARED 2026-09-13 by the §18 build pass, which is the commit §18's verdicts were derived at and the commit that carries every counted file this pass changed: the two new modules `services/airport/LayoverTemporalFreedom.ts` and `services/airport/LayoverEnvelope.ts`, plus `services/airport/LayoverSafetyEngine.ts`, `services/airport/LayoverRecommendationService.ts`, `routes/airport.ts`, `travel-buddy-standalone/src/services/layover.ts`, `travel-buddy-standalone/src/components/layover/CanILeaveCard.tsx`, its new component suite, and three new server suites. **This is a RE-MEASUREMENT, not a re-declaration** — §18 opened every one of those files, moved twelve rows against tests watched RED first, ran thirty-four mutations against production code and restated the headline from `check:census-integrity` rather than by hand. **ZERO counted files move between `060027b0b` and this document's own commit**, so no acknowledgement is needed in its place. **IT IS ON THE LANE BRANCH `lane-layover-arch` AND CARRIES THE SAME PRE-SQUASH HAZARD EVERY VALUE IN THIS ROW HAS CARRIED**: after a squash-merge it becomes an ancestor of nothing and `check:census-freshness` will report this census unreadable until whoever merges re-declares the squash sha. PREVIOUS VALUE, verbatim: `a5c223a37` — RE-DECLARED 2026-09-13 by the §17 build pass, which is the commit §17's verdicts were derived at and the commit that carries every counted file this pass changed: `routes/airport.ts`, `services/airport/LayoverFeasibility.ts`, `services/airport/LayoverEventReplanner.ts`, `services/airport/LayoverReplanService.ts`, `src/test/layoverEventReplanner.test.ts`, the three new server suites, `travel-buddy-standalone/src/services/layover.ts`, `CanILeaveCard.tsx`, `layoverReturnFacts.ts`, the new `LayoverEndSheet.tsx`, `app/layover/[id].tsx` and its two component suites. **This is a RE-MEASUREMENT, not a re-declaration** — §17 opened every one of those files, moved four rows against tests watched RED first, ran twenty-three mutations and restated the headline from `check:census-integrity` rather than by hand. The acknowledgement written against `eb70ab3b2` is RETIRED, not deleted, in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json`, which is what that entry's own last paragraph instructs; **ZERO counted files have moved between `a5c223a37` and HEAD**, so the re-declaration needs no acknowledgement in its place. **IT IS ON A LANE BRANCH AND CARRIES THE SAME PRE-SQUASH HAZARD EVERY VALUE IN THIS ROW HAS CARRIED**: after a squash-merge it becomes an ancestor of nothing and `check:census-freshness` will report this census unreadable until whoever merges re-declares the squash sha. PREVIOUS VALUE, verbatim: `eb70ab3b2` — RE-DECLARED 2026-09-13 by the integrating lane, which is what §15.9 says must happen and names as the pairing this checker enforces: *"It is spent the moment this pass is committed: whoever commits it must re-declare `head_commit` at the resulting hash and retire the acknowledgement."* `eb70ab3b2` IS that commit — it carries §15, the three rows §15.4 moves (L47, L123, L42), and every one of the eleven counted files §15.9 lists as this pass's own, together with `services/airport/LayoverPlanFit.ts`, `src/test/layoverPlanFitUnknownLegs.test.ts` and `travel-buddy-standalone/src/components/layover/useSafeReturnAbort.ts`. The acknowledgement written against `7cac6e2b4` — the one that did **not** claim its eleven files were harmless and pointed at §15 instead — is RETIRED, not deleted, in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json`, so its per-file argument survives the entry. **ZERO counted files have moved between `eb70ab3b2` and HEAD**, which is why this re-declaration needs no acknowledgement of its own. **IT IS ON THE INTEGRATION BRANCH `claude/sweet-fermat-fmx7up` and carries the same pre-squash hazard every value in this row has carried**: after a squash-merge it becomes an ancestor of nothing and `check:census-freshness` will report this census unreadable until whoever merges re-declares the squash sha. **This is a RE-MEASUREMENT, not a re-declaration** — §15 opened all twelve files, moved three rows against tests watched RED first, and restated the headline from `check:census-integrity` rather than by hand. PREVIOUS VALUE, verbatim: `7cac6e2b4` — RE-DECLARED 2026-09-13 by the §14 build pass, which is the commit §14's verdict was derived at and the commit that changed `artifacts/api-server/src/routes/airport.ts`, `travel-buddy-standalone/app/layover/[id].tsx` and `travel-buddy-standalone/src/services/layover.ts` under this census. **IT IS ON THE INTEGRATION BRANCH `claude/sweet-fermat-fmx7up` and carries the same pre-squash hazard every value in this row has carried**: after a squash-merge it becomes an ancestor of nothing and `check:census-freshness` will report this census unreadable until whoever merges re-declares the squash sha. **This is a RE-MEASUREMENT, not a re-declaration** — §14 opened all three files, moved L271 and restated the headline from the rows. PREVIOUS VALUE, verbatim: `b9bdcfc3c` — RE-DECLARED 2026-09-13 by the §13 build pass, which is the commit §13's verdicts were derived at and the second of the two commits that changed `services/airport/LayoverRecommendationService.ts`, `services/airport/LayoverSafetyEngine.ts`, `src/test/airport.test.ts`, `travel-buddy-standalone/app/layover/[id].tsx`, its component test and `travel-buddy-standalone/src/lib/safeNotifications.ts` under this census. **IT CARRIES THE SAME PRE-SQUASH HAZARD every value in this row has carried**: it is on `worktree-agent-a96f1481d064c0de6` and on no remote branch, so after a squash-merge it becomes an ancestor of nothing and `check:census-freshness` will report this census unreadable until whoever merges re-declares the squash sha. PREVIOUS VALUE, verbatim: `fa14590e5` — RE-DECLARED 2026-09-13 by the §12 build pass, which is the commit §12's verdicts were derived at and the commit that changed `routes/airport.ts`, `travel-buddy-standalone/src/services/layover.ts` and `travel-buddy-standalone/app/layover/[id].tsx` under this census. **IT CARRIES THE SAME PRE-SQUASH HAZARD every value in this row has carried**: it is on `worktree-agent-a4a1855c806a24d03` and on no remote branch, so after a squash-merge it becomes an ancestor of nothing and `check:census-freshness` will report this census unreadable until whoever merges re-declares the squash sha. PREVIOUS VALUE, verbatim: `af1864a7` — RE-DECLARED 2026-09-13 by the §11 build pass, which re-measured 37 rows and therefore owns this row; the previous value and its whole argument follow unchanged. `af1864a7` is the second of §11's two commits and is the commit its verdicts were derived at. **IT CARRIES THE SAME PRE-SQUASH HAZARD the paragraph below documents**: it is on `worktree-agent-a1965b10a690c9e97` and on no remote branch, so after a squash-merge it becomes an ancestor of nothing and this check will report the census as unreadable until whoever merges re-declares the squash sha. That is a known cost of declaring a branch commit, taken deliberately rather than leaving the row naming a commit four files older than the tree. PREVIOUS VALUE, verbatim: `42aeac38` — RE-DECLARED 2026-09-10 from `743ae78f305ea657ab508a34bdbc574488f4aae7` (§9 measured `cdfff5995c92f7adfb3ae7880496bc94002717e9`; §10 re-measured, at `743ae78f`, the rows a client lane could move). It was necessary because `743ae78f` is PRE-SQUASH — this repository squash-merges, so it is an ancestor of nothing, is on no remote branch, and `check:census-freshness` could resolve it only on the clone that wrote it (`CENSUS_HEAD_COMMITS_UNREACHABLE_IN_CI`). Reproduced 2026-09-10 in a fresh clone of this branch: `git diff 743ae78f..HEAD` aborts with `Invalid revision range`, and the check reported this census as unreadable rather than checking it. `42aeac38` is #476's squash, where this document's content reached `main`. **This is a RE-DECLARATION, not a re-measurement.** ONE counted file changed between `743ae78f` and `42aeac38`: `artifacts/api-server/src/services/airport/LayoverPrivacyGuard.ts`. The move is defensible only because each was re-verified mechanically on 2026-09-10 over `743ae78f..42aeac38`: filtered to lines that are neither comment nor blank, that diff is EMPTY against a `--stat` of 7 insertions and 4 deletions — the edit updates the file's header note to record that the `TripCrewLocationService` read it had flagged is now fail-closed. No statement, signature, condition or constant moved, so no layover verdict can have. The full per-file argument is preserved under `retired` in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json`, where it had been written as an acknowledgement. **Changed by the Trips lane, not this one**, because CI could not run this check against this census at all until it was; nothing else in this document is touched, and reverting it costs only the check. |
 > | `methodology_version` | 2 — **the §1 denominator rule is unchanged and the denominator is still 296.** Bucket meanings unchanged (`C` / `W` / `N` / `?`, `⌀` vacuous, `∅` unguarded absence). Only the verdicts moved, and every verdict that moved cites a `file:line` opened at this commit. |
 > | Scanned | `artifacts/api-server/src/services/airport/` (14 files, 5,896 lines), `artifacts/api-server/src/routes/airport.ts` (2,452 lines), `artifacts/api-server/src/migrations/2700`, `2740`, `2741`, `artifacts/api-server/src/test/layover*.test.ts` (21 files), `travel-buddy-standalone/src/services/layover.ts`, `travel-buddy-standalone/app/layover/[id].tsx`, `travel-buddy-standalone/src/components/layover/`, `artifacts/api-server/src/lib/deletionDispositions.ts` |
 > | Production state | Read from the repository's own committed artifacts, not from a live query: `src/lib/capability/snapshots/20260908-production-schema.json` (watermark `20260908133347`) for tables and flags, `src/lib/capability/production-applied-migrations.json` for applied migrations, `src/lib/capability/layover-cutover-measurement.json` for row counts. 5 sessions (2 cancelled, 3 expired, 0 active), 42 events, 30 recommendations, **0 plan stops**, 3,206 `airport_profiles` — 0 verified, 0 with `terminal_info`. |
@@ -1725,12 +1725,12 @@ each a separately exported function carrying its step number:
 | 2 impacted sessions | `:362#impactedSessions` | direct subject, or airport fanout bounded by the session's own window |
 | 3 affected nodes | `:416#EVENT_AFFECTS`, `:442#applyEventToInputs` | maps each event type to the named `FeasibilityInputs` fields it can move; **five of the eleven move nothing** and are skipped |
 | 4 immutable snapshot | — | **NOT BUILT.** `ReplanOutcome.snapshotPersisted` is typed literally `false` (`:796#snapshotPersisted:`) with reason `no_snapshot_storage` (`:797#no_snapshot_storage`) |
-| 5 diff the action universe | `:552#actionUniverseOf`, `:630#diffActionUniverse` | verdict, return state, tier, usable minutes, deadline, feasible candidate ids, reason codes |
-| 6 invalidate | `:673#invalidateRecommendations` | decides; writes nothing |
-| 7 OpportunityEvent | `:683#opportunityEventFor` | `null` unless materially changed (`:698#MATERIALITY`) |
+| 5 diff the action universe | `:552#actionUniverseOf`, `:669#diffActionUniverse` | verdict, return state, tier, usable minutes, deadline, feasible candidate ids, reason codes |
+| 6 invalidate | `:712#invalidateRecommendations` | decides; writes nothing |
+| 7 OpportunityEvent | `:683#opportunityEventFor` | `null` unless materially changed (`:737#MATERIALITY`) |
 | 8 notify | `:752#shouldNotify` | strictly narrower than step 7 |
 
-`handleEvent` (`:861#handleEvent`) runs 2 through 8 in order. `disruptionAfter`
+`handleEvent` (`:900#handleEvent`) runs 2 through 8 in order. `disruptionAfter`
 (`:919#disruptionAfter`) finally gives §15.2's state machine an input — and
 refuses to give it a false one: a security-queue event is not a flight
 disruption (`:905#disruptionEventFor`).
@@ -1822,20 +1822,20 @@ verdict — the defect §9.5 had to repair for L51 and L52.
 | L90 | W | C | Was 3 of 10 members on `layover_events`. All ten now exist as one non-optional shape (`LayoverEventReplanner.ts:106#LayoverEventEnvelope`), produced by `normalizeEvent` and asserted member by member (`test/layoverEventReplanner.test.ts:196#ten`); `receivedAt` is pinned apart from `occurredAt` by mutation. The table that would store it is unapplied. |
 | L91 | N | C | Exactly the spec's eleven, in its order, as a closed set (`LayoverEventReplanner.ts:71#LAYOVER_EVENT_TYPES`), compared against a hand transcription rather than against itself (`test/layoverEventReplanner.test.ts:170#eleven`). Dropping one fails 3 of 50; a twelfth cannot be introduced by writing one. |
 | L92 | N | C | §11.1 step 1. Normalisation with a per-type payload validator (`LayoverEventReplanner.ts:203#normalizeEvent`) and dedup by a stable source key, never by eventId (`:319#dedupeEvents`). Red-first: keying on eventId fails 2, skipping validation fails 4. |
-| L96 | N | C | §11.1 step 5. `actionUniverseOf` + `diffActionUniverse` (`LayoverEventReplanner.ts:587#actionUniverseOf`, `:630#diffActionUniverse`), exercised in both directions — a spike that loses options (`test/layoverEventReplanner.test.ts:423#drops`) and a delay that gains them. Red-first: emptying `candidatesLost` fails 2. |
-| L98 | N | C | §11.1 step 7. `null` unless the options materially changed (`LayoverEventReplanner.ts:726#opportunityEventFor`, thresholds `:698#MATERIALITY`); the two flight reason codes are emitted here because only a diff can know them. Red-first: emitting unconditionally fails 1. |
+| L96 | N | C | §11.1 step 5. `actionUniverseOf` + `diffActionUniverse` (`LayoverEventReplanner.ts:626#actionUniverseOf`, `:669#diffActionUniverse`), exercised in both directions — a spike that loses options (`test/layoverEventReplanner.test.ts:423#drops`) and a delay that gains them. Red-first: emptying `candidatesLost` fails 2. |
+| L98 | N | C | §11.1 step 7. `null` unless the options materially changed (`LayoverEventReplanner.ts:765#opportunityEventFor`, thresholds `:737#MATERIALITY`); the two flight reason codes are emitted here because only a diff can know them. Red-first: emitting unconditionally fails 1. |
 | L251 | N | C | Was `N ∅`. Both halves exist over the same channel: a rate limit that applies to official feeds too (`LayoverAirportTruth.ts:224#OBSERVATION_RATE_LIMIT`, mutation → 1 failure) and trust weighting by kind × standing × decay (`:192#OBSERVER_KINDS`, mutation setting community trust to 1.0 → 2 failures). |
 | L252 | N | C | Outlier rejection against each fact's declared physical range rather than a dispersion nobody has the population for (`LayoverAirportTruth.ts:368#isImplausible`, `:135#PLAUSIBLE_RANGE`); a 900-minute queue from an official feed is refused (`test/layoverAirportTruth.test.ts:188#implausible`). Red-first: always-false fails 1. |
 | L257 | N | C | Both halves. Every payload is validated per event type (`LayoverEventReplanner.ts:203#normalizeEvent`) and dedup is by `source:sourceEventId` or a content digest (`:319#dedupeEvents`), with `eventId` deliberately excluded. |
-| L44 | N | W | A material disruption now has an input: `disruptionAfter` walks §15.2's machine from a flight event (`LayoverEventReplanner.ts:962#disruptionAfter`), `invalidateRecommendations` names the stale set (`:673#invalidateRecommendations`) and `handleEvent` replans (`:861#handleEvent`). The audit-trail half is not built — nothing writes — and nothing produces the event. |
+| L44 | N | W | A material disruption now has an input: `disruptionAfter` walks §15.2's machine from a flight event (`LayoverEventReplanner.ts:1001#disruptionAfter`), `invalidateRecommendations` names the stale set (`:712#invalidateRecommendations`) and `handleEvent` replans (`:900#handleEvent`). The audit-trail half is not built — nothing writes — and nothing produces the event. |
 | L80 | N | W | The class exists with the spec's freshness and its three fact types (`LayoverAirportTruth.ts:95#AIRPORT_FACT_TYPES` — `security_layout`, `lounge_hours`, `transport_schedule`). No producer of any of the three, and no applied storage. A channel is not a fact. |
 | L81 | N | W | Four fact types at a 20-minute TTL, and two of them REACH THE SAFETY BUFFER through `liveConditionsFrom` (`LayoverAirportTruth.ts:660#liveConditionsFrom`) — more than any other class has. Still no producer: every production session runs `liveConditions = null`. |
 | L82 | N | W | The class exists and is confidence-weighted the way the spec asks (trust × decay), with a corroboration floor above it. There is NO SUBMISSION SURFACE — no route, no screen, nothing a traveller can report from. |
 | L83 | N | W | `buildHistoricalModel` folds observations into per-local-hour p50/p75/p90 bands and withholds a band below five samples (`LayoverAirportTruth.ts:739#buildHistoricalModel`). "Recalibrated" is NOT built: `measureCalibration` measures error and adjusts nothing. |
 | L93 | N | W | §11.1 step 2 built as a function over a session list handed in (`LayoverEventReplanner.ts:362#impactedSessions`), with the window bound that stops an airport event reaching a departed flight. It is not a fanout: there is no query and no index on an airport, route or flight subject (L259 unchanged). |
 | L94 | N | W | §11.1 step 3. The node map is real and the skip is real — five event types move nothing and are skipped rather than re-certified (`LayoverEventReplanner.ts:416#EVENT_AFFECTS`; `test/layoverEventReplanner.test.ts:685#SKIPPED`). The recompute itself re-certifies the whole record, because there is one atomic derivation and no node subgraph to recompute. |
-| L99 | N | W | §11.1 step 8 exists and is strictly narrower than step 7 — there is a material change that produces no notification (`LayoverEventReplanner.ts:795#shouldNotify`; `test/layoverEventReplanner.test.ts:621#STRICTLY`). It governs nothing: the ONE notification this product sends is still the client's fixed 30-minute reminder (`travel-buddy-standalone/app/layover/[id].tsx:167`), which this rule does not gate. |
-| L179 | N | W | `handleEvent` exists with the spec's name and runs steps 2-8 in order (`LayoverEventReplanner.ts:861#handleEvent`). It takes a context bag instead of reading sessions, writes nothing, and has no caller outside its test. |
+| L99 | N | W | §11.1 step 8 exists and is strictly narrower than step 7 — there is a material change that produces no notification (`LayoverEventReplanner.ts:834#shouldNotify`; `test/layoverEventReplanner.test.ts:621#STRICTLY`). It governs nothing: the ONE notification this product sends is still the client's fixed 30-minute reminder (`travel-buddy-standalone/app/layover/[id].tsx:167`), which this rule does not gate. |
+| L179 | N | W | `handleEvent` exists with the spec's name and runs steps 2-8 in order (`LayoverEventReplanner.ts:900#handleEvent`). It takes a context bag instead of reading sessions, writes nothing, and has no caller outside its test. |
 | L180 | N | W | `getTruth(subject, factType, atTime, corpus)` (`LayoverAirportTruth.ts:608#getTruth`). Signature divergence stated in the code: the spec's version reads a store, there is no store, so the corpus is an argument. |
 | L181 | N | W | `reconcile(observations)` matches the spec's signature exactly and implements all five §10.1 rules. Scored W rather than C for consistency with how this document has scored every other built-but-uncalled service method (L133-L135, L137, L139, L156, L157): a named service operation with no caller is W here. |
 | L212 | N | W | `HandleEventResult` carries `replanned`, `skipped` and `notifications`, so a replan rate is derivable from a call — the same rule that scored L208 and L214 W. Nothing calls it, nothing counts, nothing is emitted. |
@@ -1848,8 +1848,8 @@ verdict — the defect §9.5 had to repair for L51 and L52.
 | L285 | N | W | `DATA_STALE` emitted when a contributing truth is past its own expiry (`LayoverAirportTruth.ts:681#DATA_STALE`). Same limit. |
 | L286 | N | W | `SOURCE_CONFLICT` emitted when a contributing truth was contradicted (`LayoverAirportTruth.ts:679#SOURCE_CONFLICT`). Same limit. |
 | L287 | N | W | `TRAFFIC_DEGRADED` emitted on a degraded ground-transport reading (`LayoverAirportTruth.ts:678#TRAFFIC_DEGRADED`). Same limit. |
-| L288 | N | W | `FLIGHT_MOVED_EARLIER` emitted by the diff, and only for a flight event — a queue spike also moves the deadline earlier and must not claim the flight moved (`LayoverEventReplanner.ts:752#FLIGHT_MOVED_EARLIER`; asserted both ways at `test/layoverEventReplanner.test.ts:593#FLIGHT_MOVED_EARLIER`). Same limit. |
-| L289 | N | W | `FLIGHT_DELAY_CREATED_OPPORTUNITY` emitted only when a delay actually widened the window materially (`LayoverEventReplanner.ts:761#FLIGHT_DELAY_CREATED_OPPORTUNITY`) — not on every delay, because a delay into the night band can shrink it. Same limit. |
+| L288 | N | W | `FLIGHT_MOVED_EARLIER` emitted by the diff, and only for a flight event — a queue spike also moves the deadline earlier and must not claim the flight moved (`LayoverEventReplanner.ts:791#FLIGHT_MOVED_EARLIER`; asserted both ways at `test/layoverEventReplanner.test.ts:593#FLIGHT_MOVED_EARLIER`). Same limit. |
+| L289 | N | W | `FLIGHT_DELAY_CREATED_OPPORTUNITY` emitted only when a delay actually widened the window materially (`LayoverEventReplanner.ts:800#FLIGHT_DELAY_CREATED_OPPORTUNITY`) — not on every delay, because a delay into the night band can shrink it. Same limit. |
 | L51 | C | C | **Verdict unchanged, vacuity narrowed and NOT removed.** `test/layoverFeasibilityInvariants.test.ts`'s own header says "`security_wait` HAS NO INPUT on this tree". It has one now (`LayoverSafetyEngine.ts:280#LiveConditions`) and the invariant is swept over it directly, 0-240 minutes, in two timezones (`test/layoverLiveConditions.test.ts:188#non-increasing`) instead of over the buffer columns that stood in for it. Still `⌀`: nothing supplies the input. |
 
 ### 11.3 The ceiling
@@ -3773,9 +3773,9 @@ from, and `LayoverFlightChangeCard` renders those after a flight-time edit.
 It now goes through L47's own classifier rather than a fourth copy of the rule
 (`artifacts/api-server/src/services/airport/LayoverReplanService.ts:530#export function candidatesFromStops`),
 `candidateFits` refuses to certify an unstated term
-(`artifacts/api-server/src/services/airport/LayoverEventReplanner.ts:582#export function candidateIsUnmeasured`),
+(`artifacts/api-server/src/services/airport/LayoverEventReplanner.ts:621#export function candidateIsUnmeasured`),
 and the exclusion is **named** rather than folded into "does not fit"
-(`artifacts/api-server/src/services/airport/LayoverEventReplanner.ts:599#unmeasuredCandidateIds: candidates.filter`)
+(`artifacts/api-server/src/services/airport/LayoverEventReplanner.ts:638#unmeasuredCandidateIds: candidates.filter`)
 — a plan nobody measured and a plan that overflows are different answers, which
 is L47's own three-valued rule.
 
@@ -5958,3 +5958,185 @@ that draft did not ship green and meaningless.
 
 **`head_commit` is NOT re-declared.** This pass re-derived six rows, not 296, and
 §1's reading rule applies unchanged to the other 290.
+
+## §24 — the ride back was the ride out, in the one list Discovery is allowed to show
+
+Written 2026-09-15 by the LAYOVER TIMING/COVERAGE lane, briefed to close the
+timing and coverage rows the owner named as blocking Discovery. **No verdict
+moves to `C`.** One defect was found, watched RED, closed and mutated; two rows
+carry corrected evidence; and the rest of the timing and coverage family is
+reported here with its exact blocker rather than moved.
+
+### 24.1 THE FINDING — a card certified against half a journey
+
+`certifiedActionUniverse` is, by §25 L269, the only list a Discovery surface may
+show a traveller in Layover mode. Its admission arithmetic is `candidateFits`,
+and for every landside candidate it charged:
+
+```
+travelTimeMin * 2 + activityTimeMin <= usableMinutes
+```
+
+§12.1's subtraction ladder names that term **"return (future conditions, not
+symmetric)"**, and L46's own `W` sentence already quoted the divergence
+verbatim: *"they are per-candidate and symmetric (`travelTimeMin * 2`), which is
+the exact opposite of 'not symmetric'."* What the census had NOT recorded is
+where that doubling is now reached from. It is no longer only the safety
+engine's per-card rating: since the Layover snapshot contract was published,
+it is the gate another architecture calls on six serve paths
+(`artifacts/api-server/src/routes/discovery.ts:3934#layoverGatedPlaces`).
+
+**The geometry half of this tree had already stopped assuming symmetry.**
+`bandCandidate` asks the port for the ride back TWICE — once at the departure
+instant and once at the instant the window says the traveller must start back —
+and publishes `returnLowerBoundMin`, `returnForecastLowerBoundMin` and
+`returnDepartsAt`
+(`artifacts/api-server/src/services/airport/LayoverEnvelope.ts:415#Once at the same instant and once at the return instant`).
+That is a LOWER BOUND: it can refuse a journey and can never certify one. The
+admission arithmetic, which CAN certify one, was the half still doubling.
+
+In minutes: a traveller states a 20-minute ride out and a 60-minute visit
+against a window with room for 100. `20*2 + 60 = 100` fits, so the card is
+ADMITTED. If the ride back at the hour they would actually start back costs 45,
+the true cost is `20 + 60 + 45 = 125` and they are 25 minutes past their own
+certified deadline holding a card this contract certified.
+
+### 24.2 What was built
+
+| where | what |
+| --- | --- |
+| `artifacts/api-server/src/services/airport/LayoverEventReplanner.ts:614#function returnLegMin` | `ReplanCandidate` gains an OPTIONAL `returnTravelTimeMin`, and `candidateFits` charges `outbound + returnLegMin(c)`. |
+| same file | The symmetric doubling is the FALLBACK, not the rule: absent, `null`, negative and non-finite all charge the outbound again. A `Math.max(0, …)` would have read a bad figure as a free ride home. |
+| `artifacts/api-server/src/services/airport/LayoverSnapshot.ts:475#returnTravelTimeMin: c.returnTravelTimeMin` | `ActionUniverseCandidate` carries the term through to the replanner, without re-spelling the fallback. |
+| `artifacts/api-server/src/lib/discoveryLayoverTiming.ts:419#const backLegs = await Promise.all` | The producer: a SECOND port call, at `departAt + outbound + dwell` and in the place-to-airport direction. |
+| same file, `:181#no_routed_return_leg` | Three new absences, because one missing number was four different situations again: no landside leg exists, the start-back instant is not derivable, the port was asked about it and had nothing. |
+| `artifacts/api-server/src/lib/discoveryLayoverMode.ts:327#returnTravelTimeMin: t ? t.returnTravelTimeMin` | The gate carries the figure into the universe and publishes it on every withheld card, so a refused place can say which leg refused it. |
+
+**IT IS NOT A SECOND COPY OF `bandCandidate`'s RETURN INSTANT.** That one is the
+LATEST instant the window allows a start-back — a bound for a proof. This one is
+the traveller's own itinerary for this place. Two different questions with two
+different answers; census L6 forbids the copy, not the second question.
+
+### 24.3 What no traveller sees
+
+`LAYOVER_TRAVEL_TIME_PROVIDER` is `noRoutedProvider`, so the port answers
+`NO_ROUTED_PROVIDER` to both legs on this deployment and the return term is an
+ABSENCE that falls back to the symmetric charge — the same number this surface
+served before. Production has 5 layover sessions ever, 0 active, **0 plan
+stops**, so there is not one row anywhere that could state either leg. What is
+closed is that the contract can now be TOLD the ride back is longer and refuses
+when it is; the day a routed provider is configured, this changes by zero lines.
+
+### 24.4 Red first, then fifteen mutations
+
+The defect was watched RED before anything was written: the first case
+(`artifacts/api-server/src/services/airport/__tests__/layoverReturnLegAsymmetry.test.ts:97#REFUSES a card whose stated return leg overflows`)
+failed with *"a card whose stated ride back overflows the certified window was
+ADMITTED"*, and `npx tsc --noEmit` failed on five lines because the field did
+not exist. 15 tests, 15 passing.
+
+| # | mutation | killed |
+| --- | --- | ---: |
+| 1 | `candidateFits` back to `travelTimeMin * 2` | 2 |
+| 2 | drop the negative / non-finite guard in `returnLegMin` | 1 |
+| 3 | an unstated return leg is free (`return 0`) | 2 |
+| 4 | charge airside a landside return | 1 |
+| 5 | `candidateIsUnmeasured` also requires a return leg | 3 |
+| 6 | ask the port for the ride back at DEPARTURE, not start-back | 1 |
+| 7 | ask for the ride back in the OUTBOUND direction | 1 |
+| 8 | never resolve the return term | 3 |
+| 9 | ask for a landside ride back inside the terminal | 1 |
+| 10 | collapse all four return absences to one word | 3 |
+| 11 | the gate drops the figure on the way to the universe | 1 |
+| 12 | the gate ignores the injected port | 1 |
+| 13 | the withheld card hides the term it was refused for | 1 |
+| 14 | the snapshot contract drops the field before the replanner | 2 |
+| 15 | the snapshot contract defaults the return to the outbound | **0** |
+
+**MUTATION 15 SURVIVED, and it is reported rather than papered over.** Defaulting
+`returnTravelTimeMin` to the outbound inside `replanCandidate` is behaviourally
+equivalent TODAY, because `candidateFits` already falls back to exactly that. It
+is still wrong, and it is a second copy of the fallback rule in a file that does
+not own it: the moment any other consumer of `ReplanCandidate` reads the field
+directly, a STATED symmetric return and an ABSENT one stop being the same fact
+and nothing here would notice. No test was written to kill it, because a test
+that pins an equivalent mutant pins the implementation rather than the
+behaviour.
+
+### 24.5 Rows re-derived — evidence corrected, NO verdict moved
+
+| id | stays | why |
+| --- | --- | --- |
+| L46 | `W` | Its stated divergence is now half closed: the return term can be stated and is charged as stated. The other half is untouched — six of §12.1's eleven terms are still one lumped `estimateExitDelay` constant, and outbound/return are still per-candidate rather than in the ladder. By this document's own rule (§13.4's L77, *"three terms of four is not four"*), half a divergence closed is still `W`. |
+| L269 | `W` | §17.6's last statement — *"Untouched. A disclosed provenance is not … a certified action universe"* — is **FALSE at this commit** and was false before this pass. A certified action universe exists, is published, and gates all six Discovery serve paths. It stays `W` for a DIFFERENT and larger reason, stated in 24.6. |
+| L260 | `W` | Same correction: the pre-filter is on the certified envelope, not the scheduled window. Its own `W` sentence's other half stands. |
+
+### 24.6 WHY L269 STILL DOES NOT MOVE — the flag has no seeding migration
+
+`LAYOVER_DISCOVERY_MODE_FLAG` is `layover_discovery_mode_enabled`
+(`artifacts/api-server/src/services/airport/LayoverSnapshot.ts:147#LAYOVER_DISCOVERY_MODE_FLAG`),
+and it is FALSE BY ABSENCE. **There is no migration anywhere in this tree that
+seeds that row** — `grep -rn 'layover_discovery_mode' src/migrations/` returns
+nothing, and the only three hits in the whole repository are the constant, a
+test asserting its spelling, and a comment in `checkCensusFreshness.ts`. The
+gate therefore reads `absent` on every production request and returns `OFF`, so
+Discovery serves the ungated list and L269's requirement is not in force for any
+traveller.
+
+That is a blocker this lane will not work around. Seeding a flag is a migration,
+migrations belong to the coordinator, and 2893–2970 are unapplied to
+portava-ci already. **Stated, not fixed.**
+
+### 24.7 The timing and coverage family, with the blocker each one has
+
+Read against HEAD, not carried forward. None of these was moved.
+
+| id | verdict | requirement, in short | blocker, exactly |
+| --- | --- | --- | --- |
+| L23 | `N` | `layover_time_budgets` per-snapshot ladder | The breakdown is computed per request and returned in a response body. The table is in migration 2700, which is **applied to no database**. |
+| L46 | `W` | the eleven-term subtraction ladder | Six terms lumped into one constant; the two transport terms need a routed provider to be anything but the traveller's own self-report. |
+| L79 / L80 / L81 | `W` | airport-fact TTL and freshness | The classes and TTLs exist. **No producer of any fact type**, and `terminal_info` is null on all 3,206 production airports. |
+| L161 | `N` | aggregate airport timing may persist after de-identification | `measureCalibration` computes per-hour-band error and p90 coverage, and there are **no outcomes to calibrate against** and nowhere to persist them. |
+| L196 | `N` | presence/crew tables with expiration JOBS | Neither table exists (2700/2740/2860 unapplied), and `expireOldSessions` is called inline from two GET handlers rather than scheduled. |
+| L215 | `N` | metric `stale_fallback_rate` | The metric IS defined and computed (`artifacts/api-server/src/services/airport/layoverObservability.ts:102#LAYOVER_METRICS`), over `DecisionRecord`s from `layover_certified_computations` — a table **with no writer**. And there is no metrics exporter in this repository to emit it to. |
+| L247 | `W` | calibration / p90 coverage | Measures only. No model is calibrated and there are no outcomes. |
+| L264 | `W` | CAS the active snapshot, reject stale writes | The `.eq("status","active")` guard is applied consistently. There is **no snapshot to version** — `layover_snapshots` does not exist. |
+| L199 | `W` | migration postconditions + authorization-contract coverage | Closing it means editing `0127_layover_system.sql`. Migrations are the coordinator's. |
+| L236 / L295 | `W` | database tests against a real CI schema | **No CI database carries a layover schema.** Migrations 2893–2970 are unapplied to portava-ci. |
+| L239 | `N` | E2E detection → … → completion | Four of the six stages have no implementation to test. |
+
+### 24.8 WHAT WOULD TURN THIS RED
+
+* **The fallback is load-bearing and invisible.** Every candidate on this tree
+  today takes the symmetric path, so the new arithmetic's *stated* branch is
+  exercised only by the injected port in one suite. If `returnLegMin` stopped
+  falling back correctly, production would not notice and neither would any
+  other suite; mutations 3 and 15 are both about that branch and one of them
+  survived.
+* **`discoveryLayoverGate` gained a fifth parameter.** It is optional and no
+  call site in `routes/discovery.ts` passes it, so the production answer is
+  unchanged — but it is a seam into the gate that did not exist before, and a
+  caller that passed a lenient provider would widen what a traveller is shown.
+  Nothing structural stops one.
+* **The `terms` key on a withheld card grew a member.** No client in
+  `travel-buddy-standalone/` was changed. A client that renders `terms` by
+  enumerating its keys will show a member it has no label for.
+* **24.7 is derived from this lane's reading plus the census's own stated
+  blockers**, not from a measurement of each blocker. A row whose blocker has
+  since been removed somewhere in this monorepo would be misfiled here and
+  nothing would catch it.
+
+### 24.9 The counted files this pass changed
+
+| file | why |
+| --- | --- |
+| `artifacts/api-server/src/services/airport/LayoverEventReplanner.ts` | 24.2 — the return term and the charge |
+| `artifacts/api-server/src/services/airport/LayoverSnapshot.ts` | 24.2 — carried through the published contract |
+| `artifacts/api-server/src/services/airport/__tests__/layoverReturnLegAsymmetry.test.ts` | 24.4 — 15 cases, the first watched RED |
+| `artifacts/api-server/src/lib/discoveryLayoverTiming.ts` | 24.2 — the producer and its three absences |
+| `artifacts/api-server/src/lib/discoveryLayoverMode.ts` | 24.2 — the gate carries and publishes it |
+| `docs/architecture/census-layover.md` | this section |
+
+`head_commit` IS re-declared, at the commit that carries the five files above.
+**This is a re-declaration with three rows re-derived, not a re-measurement**:
+§1's reading rule applies unchanged to the other 293.
