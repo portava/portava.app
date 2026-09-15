@@ -1929,6 +1929,28 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/2258_input_selection_history.sql",
   ],
   "census-discovery.md": [
+    // ── ADDED 2026-09-15 by §33: the Layover door A13 is graded on ──────────
+    //
+    // §33 moves A13 N -> W on `services/airport/LayoverSnapshot.ts`, and §32
+    // moves DV-01 W -> C on `lib/rankLog.ts`. A census that grades a file and
+    // does not watch it has a verdict that rots silently — the whole point of
+    // the coverage floor, which caught this at 95.5 % against a 96 % floor.
+    //
+    // `routes/airport.ts` is here because §33.5 records a near-twin created
+    // rather than removed: its private `resolveAirportForSession` and the new
+    // module's `resolveAirport` apply identical rules for the airport-row
+    // lookup. If either is collapsed into the other, A13's evidence changes and
+    // this census should age for it.
+    //
+    // `lib/featureFlags.ts` is cited for the property A13's flag rests on:
+    // a missing row and an unreadable `feature_flags` BOTH read false, which is
+    // how `layover_discovery_mode_enabled` is FALSE-seeded by absence rather
+    // than by a migration.
+    "artifacts/api-server/src/services/airport/LayoverSnapshot.ts",
+    "artifacts/api-server/src/routes/airport.ts",
+    "artifacts/api-server/src/lib/rankLog.ts",
+    "artifacts/api-server/src/test/rankLogInsertErrors.test.ts",
+    "artifacts/api-server/src/lib/featureFlags.ts",
     // ── ADDED 2026-09-15 by §28: DV-83's subject, and the migrations that
     //    falsified thirteen rows ────────────────────────────────────────────
     //
