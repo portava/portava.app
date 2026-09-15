@@ -1637,3 +1637,166 @@ requirement is not discharged from code, and this section does not claim it.
 
 **None of this is deployed.** Three commits on a branch; merged would not be
 deployed either.
+
+---
+
+## §18 — Measurability, 2026-09-15: a `head_commit` and a scope, and ZERO verdicts re-graded
+
+This section does one thing: it makes this document the thirteenth census that
+`check:census-freshness` can age. It moves **no** verdict, re-reads **no**
+requirement row, and changes **no** headline number. §17.8's counts stand
+verbatim, re-read from `check:census-integrity` rather than from this document's
+prose: **169 rows · 158 C · 9 W · 1 N · 1 X**.
+
+### 18.1 The declaration
+
+| Field | Value |
+| --- | --- |
+| `head_commit` | `1fe72289b` — **FIRST DECLARATION, 2026-09-15.** It **starts a clock; it does not certify a past.** `1fe72289b` is the squash merge of PR #482, and it is the commit at which THIS DOCUMENT'S CONTENT — §15, §16 and §17 included — reached the default branch: `git log --follow -- docs/architecture/census-passport.md` lists exactly three commits on HEAD's line of history (`42aeac38e`, `014a25d56`, `1fe72289b`) and none since. **Ancestry proved, not assumed:** `git merge-base --is-ancestor 1fe72289b HEAD` exits 0 at HEAD `fd7ce4b80`. Every commit this census was actually MEASURED at is a pre-squash orphan and could not have been declared — `ebe72b34`, `3ca68cb06`, `cd400d2ff`, `a23502bc5` and `a2dd0837d` all resolve in this clone and **not one is an ancestor of HEAD**, which is the failure mode `checkCensusFreshness.ts` refuses by name. Read §18.4 before quoting this row: it says what the declaration does not certify. |
+
+### 18.2 What the checker actually requires, read out of the code
+
+Derived from `artifacts/api-server/src/scripts/checkCensusFreshness.ts` and
+`artifacts/api-server/src/scripts/lib/censusHeadCommit.ts`, not from any prose
+about them. A census is CHECKABLE only when **both** of these hold:
+
+1. **A `head_commit` TABLE ROW, not a mention.** The parser is two regexes. The
+   declaration is `head_commit` followed by a pipe and then, immediately, an
+   optionally-backticked hash of 7–40 hex characters; prose may follow the hash
+   but nothing may sit between the pipe and it. A line that opens a table cell
+   with `head_commit` and yields no hash is reported MALFORMED and FAILS the
+   run — a state added after a bolded hash made a real declaration invisible and
+   the run passed. Four earlier sections of this document discuss `head_commit`
+   in prose; none of them is a declaration, because none is a table row. §18.1
+   is, and it is the only one, so the ledger's own `since`-matching regex reads
+   it unambiguously.
+2. **An entry in `CENSUS_SCOPE`**, the hand-written table at the head of
+   `checkCensusFreshness.ts`, mapping this filename to the repo paths the census
+   is a measurement OF. A census with a commit and no scope is printed as
+   `declares … but has no scope in CENSUS_SCOPE — CANNOT BE CHECKED` and is
+   counted in the same "NOT passes" note as one with no commit at all. Every
+   path in an entry must EXIST: a pathspec matching nothing gives git an empty
+   diff, so a typo reports FRESH while watching nothing.
+
+Then three gates run in order, and each is a failure rather than a warning: the
+commit must resolve in this clone; it must be an ancestor of HEAD; and the union
+of `commit..HEAD`, `--cached` and working-tree diffs restricted to the scope must
+be empty, or else covered file-by-file by an entry in
+`CENSUS_STALENESS_ACKNOWLEDGED.json` whose `since` equals the declared commit and
+whose `files` array NAMES each changed path. An entry with no `files` covers
+nothing; a reason under 80 characters is rejected.
+
+### 18.3 The scope, and how it was derived
+
+The entry added to `CENSUS_SCOPE` lists **119** paths. It was not composed by
+judgement. It is the set of repo files THIS DOCUMENT CITES, extracted with
+`checkCensusScopeCoverage.ts`'s own citation regex and resolved with its own
+resolution rule, minus the machinery that checker's `NOT_GRADED` list excludes —
+this census names `checkCensusFreshness.ts`, `checkWriterlessReads.ts` and
+`package.json` as things that MEASURED it, and scoping a guard would age this
+document on every unrelated lane's guard work. Two deliberate additions sit on
+top of the mechanical set and are stated in the entry itself: six citations whose
+BASENAME matches two files (this tree carries staging copies under `files/`,
+`follows-backend/` and `portava-stamp-wave3-files/`) resolved by hand to the live
+path, because a Passport census that does not watch `artifacts/api-server/src/routes/passport.ts`
+is §12.5's hole in miniature; and the two standalone stamp components §16
+re-cites for P66, alongside the repo-root pair the P66 row cites directly.
+
+`check:census-scope-coverage` had no floor for this census, because a census with
+no scope is not floored there at all. One is added at **97 %**, two points below
+the measured **99 %** (113 of 114 cited files watched), which is that file's
+stated ratchet convention — a floor may be raised and never lowered. The single
+unwatched citation is machinery and is named in §18.6.
+
+### 18.4 What this does NOT certify, stated before anyone quotes a green check
+
+**It does not certify that any of the 169 verdicts is right, or that any was
+re-read at `1fe72289b`.** None was. §3, §12.5, §13.7 and §14 each refused to
+declare on the argument that declaring would "report FRESH about rows nobody
+re-read". That argument is answered, not waived, and the answer is mechanical:
+FRESH in this checker means *no counted file has changed since the declared
+commit*, and the script's own closing note says it does not cover "whether a
+census's verdicts are RIGHT; this checks age, not accuracy". CANNOT BE CHECKED is
+strictly weaker — it gives no clock at all, so a change to `PassportProjectionService.ts`
+was, until this commit, as silent as no change. §13.7 wrote down what would make
+declaring right and named two halves: a recensus, **and** a `CENSUS_SCOPE` entry
+"added in the same change so the declaration is checkable the moment it is made".
+This commit does the second half only. **The recensus is still owed.**
+
+**And one gap is bigger than that sentence implies, so it is named.** The last
+measurement in this document is §17's, taken at `a2dd0837d`. `a2dd0837d` is not
+an ancestor of `1fe72289b` — the squash makes them two trees, not two points on a
+line — and over this census's 119-path scope those two trees differ in **twelve
+files**: `CompassTools.ts`, `discoveryModifiers.ts`, `discoveryPde.ts`,
+`routes/airport.ts`, `routes/discovery.ts`, `routes/discoverySearch.ts`,
+`routes/mapProjection.ts`, `routes/telegraph.ts`, `LayoverSafetyEngine.ts`,
+`PassportMapService.ts`, `SharedContextService.ts` and `passportProjection.test.ts`
+(1,661 insertions, 297 deletions, `git diff --stat a2dd0837d 1fe72289b`). **None
+of the twelve was re-read by this pass**, and the declaration does not claim
+otherwise: it says when the DOCUMENT landed, not when its rows were last
+executed. That gap existed before this section and was invisible; it is now
+written down. It is the first thing the owed recensus should take.
+
+### 18.5 The three counted files that changed since `1fe72289b`, argued one at a time
+
+These are acknowledged in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json`,
+which is where the checker reads them. The argument is reproduced here because a
+ledger entry is easy to write and hard to find.
+
+| file | what changed | why it cannot have moved a verdict |
+|---|---|---|
+| `artifacts/api-server/src/services/memory/memoryParticipantVisibility.ts` | **One comment line**, +1/−1: a header note changed from "(migration 2721, NOT applied)" to "(migration 2721, applied to production 2026-09-15)". No executable line moved. | This census cites the file once, in §13.5, as the in-flight lane that would have to supply participants before P77's People view could exist. P77's blocker is not in this file at all: it is that `PassportMemory` in `travel-buddy-standalone/src/services/passportStamps.ts` carries no participant field, and that file is byte-identical since `1fe72289b`. A comment cannot add a field. |
+| `artifacts/api-server/src/lib/discoveryPde.ts` | +218/−15: DV-54, the neighbourhood geography key, plus per-read failure reporting (`degraded`) on the viewer loads. | This census cites the file in exactly one place, **P42's remedy column**, which states the closure condition: the owner lifting the ranker hold at `docs/discovery/ROADMAP.md:222#RANKER WORK GOES ON EXPLICIT HOLD`, **and** an explicit-intent term landing in `discoveryPde.ts` / `discoveryModifiers.ts` weighted above the generic interest term. Checked at HEAD: `explicitIntent`, `genericInterest` and `readVisibleExplicitIntent` occur **zero** times in either file; `discoveryModifiers.ts` is byte-identical since `1fe72289b`; and ROADMAP line 222 still reads the hold verbatim. A neighbourhood key is not an intent term and a diff is not an owner ruling, so neither limb of P42's condition is met and the row cannot have moved. |
+| `artifacts/api-server/src/routes/discovery.ts` | +70/−29 in two regions: DV-54 neighbourhood threading (lines 1113–1308) and the D11 `failedSources` report for the canonical source (line 3794 onward). | The census cites this file once, in the Headline block, for the claim that Discovery still builds identity payloads from `profiles`. That claim's verdict row is **P169**, closed `C` in §12 on `discoverySearch.ts` and `compass.ts` — neither of which is this file. The claim's own subject is untouched: `buildConsumerProjection` has **zero** references in this file at both `1fe72289b` and HEAD, `from("profiles")` likewise zero at both, and the diff contains no line matching `profiles`, `ConsumerProjection`, `identity`, `avatar` or `display_name`. The `profiles:submitted_by!left` embed and the `row.profiles` unwrap that the prose is actually about sit at lines 2974 and 3068, outside both changed regions; every hunk below line 3794 is a same-size replacement, so those lines did not even shift. |
+
+### 18.6 Findings recorded here and deliberately NOT acted on
+
+Not a single verdict was re-graded, per the rule this pass was run under. Three
+things were seen while deriving the scope and are left for a later pass:
+
+1. **The Headline's `routes/discovery.ts` citation — the one naming lines 1504
+   and 2523 — does not point at what the sentence says.** Line 1504 is a comment about opening hours and 2523
+   is a lone `}`, at `1fe72289b` and at HEAD alike — the lines are byte-identical
+   across the change, so this is not rot introduced by DV-54. The identity build
+   the sentence describes is real and lives at lines 2974 and 3068 of that file.
+   **Not repointed here**, because the Headline block is a dated `ebe72b34`
+   measurement that §12 has already superseded for this claim, and repointing a
+   superseded sentence is an edit to an earlier row.
+2. **Two citations name no file in the tree**: `trustProjection.ts` and
+   `passportPrivacy.ts`. They are unresolvable rather than wrong — no basename
+   matches — so nothing can be watched for them and nothing was guessed.
+3. **Two machinery files are counted as graded code by
+   `check:census-scope-coverage`, because its `NOT_GRADED` pattern cannot reach
+   them.** `artifacts/api-server/src/scripts/lib/censusHeadCommit.ts` is the
+   `head_commit` parser §18.2 reads — half of `checkCensusFreshness.ts`, split
+   into its own file — and the pattern only matches `src/scripts/*.ts`, not
+   `src/scripts/lib/*.ts`. `travel-buddy-standalone/scripts/check-test-mocks.mjs`
+   is the standalone package's test-mock guard, cited once in §17.7 as the thing
+   that was failing, and it lives outside `artifacts/api-server/` entirely. Both
+   are machinery this census NAMES as what measured it, and neither is product
+   code any census grades. **Both are left OUT of this scope on the machinery
+   rule** rather than watched — scoping a guard would age this census on every
+   unrelated lane's guard work — and the coverage ratio below wears the cost:
+   113 of 114, with the parser reported as the one unwatched citation. The right
+   fix is two entries in `NOT_GRADED`, which is a global list affecting all
+   thirteen censuses and can only RAISE a ratio; it is not made here because this
+   pass is scoped to one census and a global edit should be argued on its own.
+
+### 18.7 Headline — unchanged, and that is the point
+
+Read from `check:census-integrity` at HEAD `fd7ce4b80`, never hand-counted:
+
+> **Passport: 169 requirements · 158 BUILT-AND-CORRECT · 9 BUILT-BUT-WRONG ·
+> 1 NOT-BUILT · 1 CANNOT-VERIFY → CONSTRUCTED 167 / 169 = 98.8 % · CORRECT
+> 158 / 169 = 93.5 %.** Identical to §17.8 and to §16.5. This pass wrote no
+> product code and moved no row; what it changed is that from `1fe72289b`
+> forward, a change to any of 119 files this document grades is either
+> re-measured or argued in writing, instead of being invisible.
+
+| BUILT-AND-CORRECT | **158** |
+|---|---|
+| BUILT-BUT-WRONG | **9** |
+| NOT-BUILT | **1** |
+| CANNOT-VERIFY | **1** |
+
+158 + 9 + 1 + 1 = 169.
