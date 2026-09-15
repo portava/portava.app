@@ -61,10 +61,8 @@ import {
   lookupByGps,
   lookupByCity,
   lookupAirports,
-  buildFallbackProfile,
   upsertAirportProfile,
   type AirportProfile,
-  airportRowToProfile,
 } from "../services/airport/AirportProfileService.js";
 import {
   createSessionWrite,
@@ -93,6 +91,10 @@ import { safeEnvelope } from "../services/airport/LayoverEnvelope.js";
 // are one decision at a rung.
 import { reminderDisposition } from "../services/airport/LayoverReturnEscalation.js";
 import { airportPoint } from "../services/airport/LayoverTravelTime.js";
+// The session→airport lookup itself, published by the Layover contract. This
+// router had its own copy of the rule until it was collapsed into that one;
+// see `resolveAirportForSession` below.
+import { resolveSessionAirport } from "../services/airport/LayoverSnapshot.js";
 // Every feasibility number this file publishes comes from ONE call to
 // `certifySessionFeasibility` per request. `assess`, `computeWindow` and
 // `adviseLeaving` are deliberately NOT imported here any more: four handlers
@@ -190,48 +192,21 @@ type AirportResolution =
  * Resolves airport profile from session.airportId (real DB row with admin-
  * configured buffers), falling back to a defaults profile built from manual
  * fields. Used by safety, compass, return-deadline, and plan endpoints.
+ *
+ * ONE IMPLEMENTATION, AND IT IS NOT THIS ONE. The forty lines that used to sit
+ * here — bind the `error`, refuse on it, map the row through
+ * `airportRowToProfile`, fall back to the manual fields — were a second copy of
+ * `services/airport/LayoverSnapshot.ts`'s `resolveSessionAirport`, identical
+ * branch for branch and differing only in one log string. A duplicated lookup
+ * that decides a hard-return deadline drifts, and the drift is invisible until
+ * a traveller is handed the wrong "head back at" time; so the published
+ * contract owns the rule and this router is one of its callers. The three
+ * answers, the fail-closed posture on an unreadable table, and the `data ==
+ * null` fallback are unchanged — `services/airport/__tests__/
+ * layoverAirportResolutionParity.test.ts` pins all three against both doors.
  */
 async function resolveAirportForSession(sc: any, session: any): Promise<AirportResolution> {
-  if (session.airportId) {
-    // `error` is BOUND. supabase-js resolves on a database error, so the old
-    // `const { data } = await` read an unreadable `airport_profiles` as "this
-    // airport has no profile row" and silently fell through to
-    // buildFallbackProfile — which carries the GENERIC buffer defaults (60/90,
-    // 120/180, +30 immigration, +15 bags, +20 traffic). The session names a
-    // real airport whose admin-configured buffers exist and could not be read,
-    // and every hard-return time downstream would have been computed from the
-    // defaults instead, with nothing on screen saying so. That is the wrong
-    // "head back at" time, quietly. Callers get `ok: false` and refuse.
-    //
-    // The `data == null` case is a DIFFERENT answer and keeps the old
-    // behaviour: the row genuinely is not there, and the fallback profile
-    // built from the session's manual_* fields is the honest best available.
-    const { data, error } = await sc
-      .from("airport_profiles")
-      .select("*")
-      .eq("id", session.airportId)
-      .maybeSingle();
-    if (error) {
-      logger.warn(
-        { err: error, airportId: session.airportId, sessionId: session.id },
-        "airport profile unreadable — refusing rather than computing a return deadline from default buffers",
-      );
-      return { ok: false, message: String(error.message ?? "airport_profiles unreadable") };
-    }
-    if (data) {
-      // One row-to-profile mapping, not two. This handler hand-built the object
-      // while AirportProfileService built its own from the same columns, so a
-      // column added to one was silently absent from the other -- terminal_info
-      // has existed since 0127 and never reached a session route because of it.
-      return { ok: true, airport: airportRowToProfile(data) };
-    }
-  }
-  return { ok: true, airport: buildFallbackProfile({
-    iataCode: session.manualIata    ?? "UNK",
-    city:     session.manualCity    ?? "Unknown",
-    country:  session.manualCountry ?? "Unknown",
-    name:     session.manualAirportName ?? "Unknown Airport",
-  }) };
+  return resolveSessionAirport(sc, session);
 }
 
 /**

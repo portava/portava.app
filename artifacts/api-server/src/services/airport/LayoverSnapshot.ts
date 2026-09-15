@@ -30,8 +30,10 @@
  * canonical derivation — it has had one since `LayoverFeasibility.ts`, and six
  * services already consume it. The defect is that the canonical derivation was
  * only reachable by a caller who ALREADY HELD an `AirportProfile` and a
- * `LayoverSession`, and the only code that assembles those is a PRIVATE helper
- * inside `routes/airport.ts` (`resolveAirportForSession`). A lane like Discovery
+ * `LayoverSession`, and the only code that assembled those was a PRIVATE helper
+ * inside `routes/airport.ts` (`resolveAirportForSession`) — which now delegates
+ * to this file's exported `resolveSessionAirport`, so the rule has ONE
+ * implementation and the route is one of its callers. A lane like Discovery
  * holds neither. Its choices were to duplicate the loader and the time budget —
  * the second copy L6 forbids — or to gate on nothing, which is what
  * `GET /hidden-gems/layover-safe` does today when it takes `availableMinutes`
@@ -221,34 +223,72 @@ export type LayoverSnapshotResult =
   | { ok: false; reason: LayoverSnapshotRefusal; message: string };
 
 /**
+ * The fields the airport lookup reads, and nothing else.
+ *
+ * A full `LayoverSession` satisfies it. So does the PARTIAL `{ airportId }`
+ * that `routes/airport.ts`'s admin buffer preview hands it — that call site
+ * predates this type and used to be laundered through an `any` parameter, so
+ * the shape is stated here rather than left to be discovered.
+ */
+export interface AirportLookupSession {
+  id?: string | null;
+  airportId?: string | null;
+  manualIata?: string | null;
+  manualCity?: string | null;
+  manualCountry?: string | null;
+  manualAirportName?: string | null;
+}
+
+/** Three answers. The third is not an airport. */
+export type AirportLookupResult =
+  | { ok: true; airport: AirportProfile }
+  | { ok: false; message: string };
+
+/**
  * Resolve the session's airport, refusing on an unreadable table.
  *
- * The rules are `routes/airport.ts`'s `resolveAirportForSession`, and they are
- * three answers rather than two: the profile row, the manual-field fallback
+ * THE ONE IMPLEMENTATION OF THIS RULE. `routes/airport.ts`'s
+ * `resolveAirportForSession` was a second copy of it, byte-comparable branch
+ * for branch and differing only in one log string; it now delegates here. Two
+ * copies of a lookup that decides a hard-return deadline drift, and the drift
+ * is invisible until a traveller is served the wrong "head back at" time.
+ *
+ * Three answers rather than two: the profile row, the manual-field fallback
  * when there is genuinely no row, and "the table could not be read". Only the
  * first two are an airport. The row-to-profile mapping is
  * `AirportProfileService`'s own — this file does not hand-build a profile, which
  * is how `terminal_info` went missing from a route for two migrations.
  */
-async function resolveAirport(
+export async function resolveSessionAirport(
   db: SupabaseClient,
-  session: LayoverSession,
-): Promise<{ ok: true; airport: AirportProfile } | { ok: false; message: string }> {
+  session: AirportLookupSession,
+): Promise<AirportLookupResult> {
   if (session.airportId) {
-    // `error` is BOUND. An unreadable `airport_profiles` falling through to
-    // `buildFallbackProfile` is a silent downgrade to the GENERIC buffers
-    // (60/90, 120/180, +30, +15, +20), and every hard-return time downstream
-    // would then be computed from those instead of the airport's configured
-    // ones — the wrong "head back at" time, with nothing saying so.
+    // `error` is BOUND. supabase-js RESOLVES on a database error, so the old
+    // `const { data } = await` read an unreadable `airport_profiles` as "this
+    // airport has no profile row" and fell through to `buildFallbackProfile` —
+    // a silent downgrade to the GENERIC buffers (60/90, 120/180, +30, +15,
+    // +20). Every hard-return time downstream would then be computed from those
+    // instead of the airport's admin-configured ones: the wrong "head back at"
+    // time, with nothing on screen saying so. Callers get `ok: false` and
+    // refuse.
+    //
+    // The `data == null` case is a DIFFERENT answer: the row genuinely is not
+    // there, and the fallback profile built from the session's manual_* fields
+    // is the honest best available. It stays a 200.
     const { data, error } = await db
       .from("airport_profiles")
       .select("*")
       .eq("id", session.airportId)
       .maybeSingle();
     if (error) {
+      // One message for both doors. The two copies said "refusing rather than
+      // certifying a snapshot" and "refusing rather than computing a return
+      // deadline"; the refusal is the same refusal, and a log line that names
+      // only one of the two callers was never true of the other.
       logger.warn(
         { err: error, airportId: session.airportId, sessionId: session.id },
-        "airport profile unreadable — refusing rather than certifying a snapshot from default buffers",
+        "airport profile unreadable — refusing rather than answering from the generic buffer defaults",
       );
       return { ok: false, message: String(error.message ?? "airport_profiles unreadable") };
     }
@@ -303,7 +343,7 @@ export async function certifiedLayoverSnapshot(
   }
   const session = read.session;
 
-  const resolved = await resolveAirport(db, session);
+  const resolved = await resolveSessionAirport(db, session);
   if (!resolved.ok) {
     return { ok: false, reason: "airport_profiles_unreadable", message: resolved.message };
   }
