@@ -19,6 +19,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 // Imports the PURE predicate, not the auditor. `isMissing` compares two
 // in-memory structures and touches no database, so this test needs no Supabase
@@ -150,5 +151,63 @@ describe("audit:schema — a grant on an authz function is found where it actual
     });
     assert.equal(isMissing(grant("is_accepted_trip_member"), publicTwinOnly), false,
       "a name-keyed claim is satisfied by the public twin — the case the NOTE reports");
+  });
+});
+
+/**
+ * An ALLOWLIST entry asserts "live deliberately differs from what this migration
+ * claims". That assertion has a JUSTIFICATION living in another file, and nothing
+ * made the two move together — the entry would survive its own reason being
+ * deleted, silently hiding real drift from then on.
+ *
+ * This binds the trip_reservations_owner_delete entry to the migration that
+ * earns it. 0172 creates the policy; 2784 drops it and revokes DELETE from
+ * `authenticated` so that clients cancel and only the service deletes. If 2784
+ * ever stops carrying either half, the entry stops being true and this fails.
+ */
+describe("audit:schema ALLOWLIST — trip_reservations_owner_delete is earned, not assumed", () => {
+  const MIGRATIONS = new URL("../migrations/", import.meta.url);
+  const read = (f: string) => readFileSync(new URL(f, MIGRATIONS), "utf8");
+
+  it("0172 still CLAIMS the policy — otherwise the entry is dead and must be deleted", () => {
+    assert.match(
+      read("0172_trip_reservations.sql"),
+      /CREATE POLICY\s+trip_reservations_owner_delete\s+ON\s+trip_reservations\s+FOR DELETE/,
+      "0172 no longer claims trip_reservations_owner_delete; remove the ALLOWLIST entry rather than leaving it to hide a future policy of the same name",
+    );
+  });
+
+  it("2784 still DROPS the policy and REVOKEs DELETE — the entry's whole justification", () => {
+    const m2784 = read("2784_trip_reservation_history.sql");
+    assert.match(
+      m2784,
+      /DROP POLICY IF EXISTS\s+trip_reservations_owner_delete\s+ON\s+public\.trip_reservations/,
+      "2784 no longer drops the policy, so live may legitimately carry it — the ALLOWLIST entry would now hide real drift",
+    );
+    assert.match(
+      m2784,
+      /REVOKE DELETE ON public\.trip_reservations FROM authenticated/,
+      "2784 no longer revokes DELETE; the drop alone does not make the tightening true",
+    );
+  });
+
+  it("2784 refuses to record itself unless the revocation actually took", () => {
+    assert.match(
+      read("2784_trip_reservation_history.sql"),
+      /has_table_privilege\('authenticated', 'public\.trip_reservations', 'DELETE'\)[\s\S]{0,120}RAISE EXCEPTION/,
+      "2784's postcondition no longer proves authenticated lost DELETE, so applying it proves nothing about the live state the ALLOWLIST entry describes",
+    );
+  });
+
+  it("the allowlisted key is spelled the way the auditor builds policy keys", () => {
+    // auditMigrationsVsLive.ts:697 — add("policy", `${table}.${pol}`, …).
+    // A typo here is invisible: a key that matches nothing simply never
+    // suppresses anything, and the audit stays red for a reason no one reads.
+    const auditor = readFileSync(
+      new URL("../scripts/auditMigrationsVsLive.ts", import.meta.url), "utf8");
+    assert.ok(
+      auditor.includes('"policy:trip_reservations.trip_reservations_owner_delete"'),
+      "the ALLOWLIST entry is missing or misspelled; the auditor keys policies as policy:<table>.<policy>",
+    );
   });
 });

@@ -209,6 +209,31 @@ const ALLOWLIST = new Set([
   // policy and the auditor reads each migration's claims independently. It is
   // removable only if 0035 itself is rewritten.
   "policy:plan_geofences.trip_members_manage_geofences",
+  // 0172_trip_reservations.sql creates trip_reservations_owner_delete, and
+  // 2784_trip_reservation_history.sql:174 DROPs it. The drop was deliberate and is
+  // a TIGHTENING, not drift: 2784 comments it "§15.4 as a privilege: clients
+  // cancel; only the service deletes (account deletion)" and pairs the DROP with
+  // REVOKE DELETE ON public.trip_reservations FROM authenticated. Its own
+  // postcondition block RAISEs if `authenticated` can still delete, so the
+  // migration refuses to record itself unless the revocation took.
+  //
+  // The auditor reads each migration's claimed objects independently, so it
+  // cannot see that a later migration removed this one — hence an entry here
+  // rather than adding 0172 to SKIP_FILES, whose other claimed objects (the
+  // table, its columns, the three surviving policies) must still be verified.
+  // Same shape as the intel_append_only_stmt entries above.
+  //
+  // VERIFIED ON portava-ci 2026-09-15: the policy is absent; the live family is
+  // exactly trip_reservations_member_read [SELECT], trip_reservations_owner_insert
+  // [INSERT], trip_reservations_owner_update [UPDATE], trip_reservations_svc [ALL];
+  // has_table_privilege('authenticated','public.trip_reservations','DELETE') is
+  // false; 2784's history trigger and trip_reservation_events are both present.
+  // Live is deliberately not what 0172 says — this list's own contract.
+  //
+  // Removable only if 0172 itself is rewritten to stop claiming the policy.
+  // auditSchemaAuthzResolution.test.ts binds this entry to that justification:
+  // it fails if 2784 stops carrying either the DROP or the REVOKE.
+  "policy:trip_reservations.trip_reservations_owner_delete",
   "column:feature_flags.key", // live column is `flag`
   "column:highlights.user_id", // live column is `owner_id`
   "column:highlight_replies.user_id", // live column is `replier_id`

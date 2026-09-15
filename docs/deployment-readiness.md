@@ -168,14 +168,105 @@ database credentials this environment does not have.
 | 1 | API bundle builds | **VERIFIED PASS** (exit 0) | ran step 1 in this worktree |
 | 2 | Built bundle boots and serves | **VERIFIED PASS** | see §3.1 |
 | 3 | Frontend static build | **ASSUMED** — not run | `travel-buddy-standalone/scripts/build.js:518#spawnSync` |
+| 3a | ⚠ 2970 applied to production BEFORE the next deploy of `main` | **REQUIRED — NOT DONE.** `buildStats` already selects `evidences_presence`; the column is on neither database | §1.7 |
 | 4 | `SUPABASE_SERVICE_ROLE_KEY` set | **UNKNOWN — human must confirm in Replit Secrets** | `artifacts/api-server/src/lib/envValidation.ts:9#REQUIRED_KEYS` |
 | 5 | `SESSION_SECRET` set | **UNKNOWN — human must confirm in Replit Secrets** | same |
 | 6 | Replit UI build/run commands match `.replit` | **UNKNOWN — human must confirm in the Deployments UI** | `.replit:11#Best-effort` |
-| 7 | Migrations on production match this branch | **UNKNOWN — needs credentials** | `docs/migrations.md:49#Nothing` |
+| 7 | Migrations on production match this branch | **MEASURED — NO. 156 of 549 migration files have no production ledger row** | §1.6, read from `public.schema_migration_ledger` on `ajrurzioarfkagpuxfnb` |
 | 8 | Repo typecheck / census checks | **VERIFIED PASS** | §4 |
 
-Items 4, 5, 6 and 7 cannot be closed from this environment by any means. They
-are not "probably fine"; they are unmeasured.
+Items 4, 5 and 6 cannot be closed from this environment by any means. They are
+not "probably fine"; they are unmeasured, and each needs a human in the Replit
+UI. **Item 7 is now measured — see §1.6 — and the answer is no.**
+
+### 1.6 Production migration gap, MEASURED
+
+**VERIFIED 2026-09-15, read directly from `public.schema_migration_ledger` on the
+production project `ajrurzioarfkagpuxfnb`.** This closes checklist item 7, which
+this document previously recorded as UNKNOWN for want of credentials. It is a
+READ; nothing was applied.
+
+| | |
+|---|---|
+| migration files in `artifacts/api-server/src/migrations` | **549** |
+| distinct filenames with a production ledger row | **393** |
+| **files with NO production ledger row** | **156** |
+| rows with `applied_by='backfill'` | 382 (`0010_trip_plan.sql` … `2254_schema_migration_ledger.sql`) |
+| rows with `applied_by='manual'` | 11 (`2338_memory_location_precision.sql` … `2730_memory_derivative_registry.sql`) |
+| rows at or above `2890` | **zero** |
+
+**WHAT THE 393 DOES AND DOES NOT PROVE.** 382 of those rows carry
+`applied_by='backfill'` with the literal string `backfill` as their checksum.
+That is a row asserting parity, not evidence of an apply — the same distinction
+migration 2298 made concrete, where a ledger row existed and the migration's
+effects were provably absent. So 393 is an UPPER bound on what production has
+actually run, and 156 is a LOWER bound on the gap. The honest statement is:
+**at least 156 migrations in this branch have never been recorded against
+production, and an unknown further number have a row that proves nothing.**
+
+**THE WHOLE 2890-2971 BAND IS ABSENT.** Production carries zero ledger rows at
+or above 2890. Every migration this session has worked on — 2890 through 2971,
+including 2910, 2920, 2921, 2970 and 2971 — is unapplied to production. Nothing
+in this session changed that, and nothing in this session was authorised to.
+
+**THIS IS A TEST-DATABASE-VS-PRODUCTION DISTINCTION, NOT PROGRESS.** Migration
+work certified against `portava-ci` (`hwokxgbmezheskbzskfr`) says nothing about
+production. The two databases are measured separately and reported separately
+throughout this document.
+
+### 1.7 ⚠ ORDERING HAZARD: a reader is merged ahead of its column
+
+**VERIFIED 2026-09-15 by reading the code on `main` and querying both databases.
+This is a DEPLOY-ORDER constraint, not a defect in either half.**
+
+`services/passport/PassportMapService.ts:444#buildStats` — on `main` since
+#482 — issues:
+
+```
+.select("country, city, visibility, is_revoked, stamp_definitions(category, slug, evidences_presence)")
+```
+
+`stamp_definitions.evidences_presence` is added by
+`2970_stamp_definitions_evidences_presence.sql`, which is applied to **neither**
+database: the column is absent on production `ajrurzioarfkagpuxfnb` and absent on
+`portava-ci` `hwokxgbmezheskbzskfr` (both queried directly).
+
+PostgREST rejects a select naming a column that does not exist, so `buildStats`
+takes its documented failure branch and returns
+`countries: 0, cities: 0, neighborhoods: 0, planStamps: 0, hostStamps: 0,
+hiddenGemStamps: 0, safeReturnStamps: 0, totalStamps: 0` with `readFailed: true`
+(`PassportMapService.ts:452`).
+
+**THE FLAG IS HONEST AND THE SCREEN IS NOT.** `routes/passportStamps.ts:557`
+spreads `stats` into the response, so `readFailed` does reach the client — and
+`readFailed` appears **zero** times anywhere in `travel-buddy-standalone/src`.
+Nothing reads it. A traveller with a full Passport is therefore shown
+**0 countries, 0 cities, 0 stamps**, with no indication that the server could not
+look.
+
+That is the exact defect 2970 was written to remove, inverted: 2970 stops the
+Passport over-claiming ("you have been to 5 countries" for trips only planned),
+and this ordering makes it under-claim everything instead. Under-claiming is the
+safer of the two — it asserts nothing untrue *about where someone has been* — but
+"0 countries" shown to someone who has travelled is still a false number on a
+screen, and it is total rather than partial.
+
+**WHAT IS NOT KNOWN FROM HERE:** whether production is *currently* serving this.
+It depends on whether the deployment has been rebuilt from `main` since #482
+landed, and `https://portava.replit.app` is unreachable from this environment
+(§3.4) while the Replit Deployments UI cannot be read. **If the deployment
+predates #482 the Passport is fine today; if it has been rebuilt since, it is
+returning zeros now.** A human with the Replit dashboard can settle it in one
+look at the deployment's commit.
+
+**THE CONSTRAINT THIS PLACES ON THE NEXT DEPLOY, and it is not optional:**
+`2970_stamp_definitions_evidences_presence.sql` must be applied to production
+**before or with** the next deploy of `main`. Deploying the code first reproduces
+the zeros; applying the migration first is harmless to the running build, because
+the old code does not select the column. **Migration first, then deploy — never
+the other way round.** 2970's own header states the coupled form of this rule
+from the reverse direction: "Revert both, or neither."
+
 
 ---
 
