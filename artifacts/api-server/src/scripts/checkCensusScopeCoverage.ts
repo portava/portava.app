@@ -134,6 +134,18 @@ const CENSUS_SCOPE_FLOORS: Record<string, number> = {
                                           // its two test files to the scope, taking measured coverage to 100%.
   "census-layover.md": 0.96,   // widened 2026-09-11; RAISED 0.90 -> 0.96 on 2026-09-13 when §11's own migration, rollback and three test files were added to its scope, taking it to 100%. A ratchet, per the rule above.
   "census-map.md": 0.96,   // widened 2026-09-11
+  // SET 2026-09-15, the first floor this census has had: it had no scope entry
+  // at all until the measurability pass, and an unscoped census is not floored
+  // here — `check:census-freshness` reporting it CANNOT BE CHECKED is the louder
+  // complaint. Measured 99% (113 of 114) the moment the scope landed, floored two
+  // points down per the ratchet rule above. The one unwatched citation is
+  // `src/scripts/lib/censusHeadCommit.ts`, the head_commit parser census-passport
+  // §18.2 reads out; it is machinery that NOT_GRADED's pattern does not reach
+  // because the pattern stops at `src/scripts/*.ts`. Watching a guard from a
+  // census scope is the thing every comment in checkCensusFreshness.ts refuses,
+  // so the point is paid rather than the guard scoped. census-passport.md §18.6
+  // records it.
+  "census-passport.md": 0.97,
   "census-media.md": 0.96,   // widened 2026-09-11
   "census-sensing.md": 0.90,   // widened 2026-09-11: 16% -> 92%
   "census-telegraph.md": 0.87,   // widened 2026-09-11: 21% -> 89%
