@@ -1233,4 +1233,186 @@ it("entry never reads READY when the traveler_passports join cannot be read", as
   assert.equal(h.body.categories.entry, "ready", "visa_free with a readable join is genuinely ready");
   assert.deepEqual([...h.body.unmeasuredCategories].filter((c: string) => c === "entry"), []);
 });
+
+// ── D11 / swallowed-read inventory, second pass: the three raw reads ────────
+//
+// `trip_plan_items`, `trip_budget` and `trip_documents` were read as
+// `const { data } = await sc...` — the exact shape the inventory names. This
+// module had already ruled on the shape twice (trip_reservations,
+// trip_traveler_passports) and these three were missed by both passes, which
+// is why they are pinned here one source at a time rather than together: each
+// one produces a DIFFERENT false sentence, and a single combined assertion
+// would pass while two of the three were still wrong.
+
+it("reports plan as UNKNOWN — never N open days — when trip_plan_items cannot be read", async () => {
+  const tables = () => ({
+    trips: { rows: [baseTrip({ start_date: "2026-08-01", end_date: "2026-08-03" })] },
+    trip_members: { rows: [ownerMemberRow()] },
+    feature_flags: flagOn(),
+    trip_plan_items: { rows: [
+      { id: "p1", trip_id: TRIP_ID, category: "accommodation", status: "confirmed", day_date: "2026-08-01", starts_at: null, removed_at: null },
+      { id: "p2", trip_id: TRIP_ID, category: "transport", status: "confirmed", day_date: "2026-08-02", starts_at: null, removed_at: null },
+      { id: "p3", trip_id: TRIP_ID, category: "activity", status: "confirmed", day_date: "2026-08-03", starts_at: null, removed_at: null },
+    ] },
+  });
+
+  const { client } = makeFakeClient(tables(), { errorOnTables: ["trip_plan_items"] });
+  _setTestClient(client, true);
+  const r = await req(port, "GET", `/trips/${TRIP_ID}/readiness`, { token: "owner-token" });
+  assert.equal(r.status, 200);
+
+  // 1. The invented sentence is gone. Every one of the three days landed in
+  //    gapDates for want of ROWS, so the old code said "3 open days: Sat, Sun,
+  //    Mon" about a fully planned trip.
+  const gaps = findItem(r.body.items, "plan:gaps");
+  assert.ok(gaps, "the plan slot is still occupied — silence is not the fix");
+  assert.equal(gaps.status, "unknown");
+  assert.notEqual(gaps.status, "action_needed");
+  assert.ok(!/\d+\s+open day/i.test(gaps.title), `a day count must not be invented: ${gaps.title}`);
+  assert.equal(gaps.actionRef, null, "no dates may be handed to a client that would render them");
+
+  // 2. plan is unmeasured, not ready and not action_needed.
+  assert.equal(r.body.categories.plan, "unknown");
+  assert.ok([...r.body.unmeasuredCategories].includes("plan"));
+
+  // 3. The stay/transport sentences name the source that failed. Both were
+  //    covered by a plan item, so both gaps exist ONLY because of the failure.
+  const stay = findItem(r.body.items, "stay:none");
+  assert.ok(stay);
+  assert.equal(stay.status, "unknown");
+  assert.match(stay.detail, /plan items/, "the failing source must be named");
+  const transport = findItem(r.body.items, "transport:none");
+  assert.ok(transport);
+  assert.equal(transport.status, "unknown");
+  assert.match(transport.detail, /plan items/);
+
+  // 4. Control: the same fully planned trip, readable, has NO plan gap item
+  //    and a ready plan category.
+  const { client: healthy } = makeFakeClient(tables());
+  _setTestClient(healthy, true);
+  const h = await req(port, "GET", `/trips/${TRIP_ID}/readiness`, { token: "owner-token" });
+  assert.equal(findItem(h.body.items, "plan:gaps"), undefined, "a readable, complete plan reports no gaps");
+  assert.equal(h.body.categories.plan, "ready");
+  assert.equal(findItem(h.body.items, "stay:none"), undefined, "the accommodation item is seen");
+  assert.equal(findItem(h.body.items, "transport:none"), undefined, "the transport item is seen");
+
+  // 5. An unread plan must not score higher than a read one.
+  assert.ok(r.body.score <= h.body.score, `${r.body.score} vs ${h.body.score}`);
+});
+
+it("reports budget as UNKNOWN — never 'No budget set' — when trip_budget cannot be read", async () => {
+  const tables = () => ({
+    trips: { rows: [baseTrip()] },
+    trip_members: { rows: [ownerMemberRow()] },
+    feature_flags: flagOn(),
+    trip_budget: { rows: [{ trip_id: TRIP_ID, total_budget: 1000, spent: 100, currency: "USD" }] },
+  });
+
+  const { client } = makeFakeClient(tables(), { errorOnTables: ["trip_budget"] });
+  _setTestClient(client, true);
+  const r = await req(port, "GET", `/trips/${TRIP_ID}/readiness`, { token: "owner-token" });
+  assert.equal(r.status, 200);
+
+  const budget = findItem(r.body.items, "budget:none");
+  assert.ok(budget, "the budget slot is still occupied");
+  assert.equal(budget.status, "unknown");
+  assert.notEqual(budget.status, "incomplete");
+  assert.ok(!/No budget set/i.test(budget.title),
+    `a trip WITH a budget must not be told it has none: ${budget.title}`);
+  assert.equal(r.body.categories.budget, "unknown");
+  assert.ok([...r.body.unmeasuredCategories].includes("budget"));
+
+  // Control 1: the budget exists and is under — no item at all.
+  const { client: healthy } = makeFakeClient(tables());
+  _setTestClient(healthy, true);
+  const h = await req(port, "GET", `/trips/${TRIP_ID}/readiness`, { token: "owner-token" });
+  assert.equal(findItem(h.body.items, "budget:none"), undefined);
+  assert.equal(h.body.categories.budget, "ready");
+
+  // Control 2: a genuinely absent budget still says so. The prompt is not weakened.
+  const { client: empty } = makeFakeClient({
+    trips: { rows: [baseTrip()] },
+    trip_members: { rows: [ownerMemberRow()] },
+    feature_flags: flagOn(),
+    trip_budget: { rows: [] },
+  });
+  _setTestClient(empty, true);
+  const e = await req(port, "GET", `/trips/${TRIP_ID}/readiness`, { token: "owner-token" });
+  const prompt = findItem(e.body.items, "budget:none");
+  assert.ok(prompt, "an empty budget table still prompts");
+  assert.equal(prompt.status, "incomplete");
+  assert.match(prompt.title, /No budget set/);
+  assert.ok(!e.body.unmeasuredCategories.includes("budget"), "a read table is measured");
+});
+
+it("reports documents as UNKNOWN — never 'No documents saved' — when trip_documents cannot be read", async () => {
+  const tables = () => ({
+    trips: { rows: [baseTrip()] },
+    trip_members: { rows: [ownerMemberRow()] },
+    feature_flags: flagOn(),
+    trip_documents: { rows: [{ id: "d1", trip_id: TRIP_ID }] },
+  });
+
+  const { client } = makeFakeClient(tables(), { errorOnTables: ["trip_documents"] });
+  _setTestClient(client, true);
+  const r = await req(port, "GET", `/trips/${TRIP_ID}/readiness`, { token: "owner-token" });
+  assert.equal(r.status, 200);
+
+  const docs = findItem(r.body.items, "documents:none");
+  assert.ok(docs, "the documents slot is still occupied");
+  assert.equal(docs.status, "unknown");
+  assert.notEqual(docs.status, "incomplete");
+  assert.ok(!/No documents saved/i.test(docs.title),
+    `a trip WITH a document must not be told it has none: ${docs.title}`);
+  assert.equal(r.body.categories.documents, "unknown");
+  assert.ok([...r.body.unmeasuredCategories].includes("documents"));
+
+  // Control 1: the document is there and read — no item.
+  const { client: healthy } = makeFakeClient(tables());
+  _setTestClient(healthy, true);
+  const h = await req(port, "GET", `/trips/${TRIP_ID}/readiness`, { token: "owner-token" });
+  assert.equal(findItem(h.body.items, "documents:none"), undefined);
+  assert.equal(h.body.categories.documents, "ready");
+
+  // Control 2: genuinely empty still prompts.
+  const { client: empty } = makeFakeClient({
+    trips: { rows: [baseTrip()] },
+    trip_members: { rows: [ownerMemberRow()] },
+    feature_flags: flagOn(),
+    trip_documents: { rows: [] },
+  });
+  _setTestClient(empty, true);
+  const e = await req(port, "GET", `/trips/${TRIP_ID}/readiness`, { token: "owner-token" });
+  const prompt = findItem(e.body.items, "documents:none");
+  assert.ok(prompt);
+  assert.equal(prompt.status, "incomplete");
+  assert.match(prompt.title, /No documents saved/);
+});
+
+it("names BOTH failing sources when the plan and the reservations are unreadable together", async () => {
+  // The two-source sentence: "we cannot tell whether a stay is booked" is a
+  // claim about a plan item AND a reservation, and a reader who is told only
+  // one half failed will draw the wrong conclusion about the other.
+  const { client } = makeFakeClient(
+    {
+      trips: { rows: [baseTrip({ start_date: "2026-08-01", end_date: "2026-08-03" })] },
+      trip_members: { rows: [ownerMemberRow()] },
+      feature_flags: flagOn(),
+    },
+    { errorOnTables: ["trip_plan_items", "trip_reservations"] },
+  );
+  _setTestClient(client, true);
+  const r = await req(port, "GET", `/trips/${TRIP_ID}/readiness`, { token: "owner-token" });
+  assert.equal(r.status, 200);
+  const stay = findItem(r.body.items, "stay:none");
+  assert.ok(stay);
+  assert.equal(stay.status, "unknown");
+  assert.match(stay.detail, /plan items and its reservations/,
+    `both failing sources must be named: ${stay.detail}`);
+  assert.deepEqual(
+    [...r.body.unmeasuredCategories].sort(),
+    ["plan", "reservations", "stay", "transport"],
+    "every unmeasured category must be named",
+  );
+});
 });

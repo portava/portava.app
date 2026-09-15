@@ -111,3 +111,76 @@ describe("readSlotFit — a Buddy booking against the real freedom projection", 
     assert.equal(r.slot!.beginsAt, "2026-09-13T11:00:00.000Z");
   });
 });
+
+// ── The timezone read, and the sentence it produces ─────────────────────────
+//
+// `readSlotFit` reads the trip's timezone SECOND, after readTripWindows has
+// already answered. That read was `const { data } = await sc.from("trips")...`
+// with `error` discarded, so a failed read and a trip that genuinely declares
+// no timezone produced the identical `tzAssumed = true` — and the caller was
+// handed the sentence "the trip declared no timezone", which is a claim about
+// the trip, not about the read.
+//
+// A WHOLE-TABLE failure cannot reach this line: readTripWindows reads `trips`
+// too and returns NOT_CONSULTED first. The reachable shape is a failure of
+// THIS query only — a statement timeout, a column-level policy, a transient
+// error on the second round trip — so the fixture fails exactly the
+// `select("timezone")` read and leaves every other read intact.
+function failOnlyTimezoneRead(inner: any) {
+  return {
+    auth: inner.auth,
+    from(table: string) {
+      const chain = inner.from(table);
+      if (table !== "trips") return chain;
+      return new Proxy(chain, {
+        get(target: any, prop: string) {
+          if (prop === "select") {
+            return (cols?: string) => {
+              if (typeof cols === "string" && cols.trim() === "timezone") {
+                const f: any = {
+                  select: () => f, eq: () => f, in: () => f, is: () => f, or: () => f,
+                  gt: () => f, order: () => f, limit: () => f,
+                  maybeSingle: async () => ({ data: null, error: { message: "statement timeout", code: "57014" } }),
+                  then: (onF: any, onR: any) =>
+                    Promise.resolve({ data: null, error: { message: "statement timeout", code: "57014" } }).then(onF, onR),
+                };
+                return f;
+              }
+              return target.select(cols);
+            };
+          }
+          return target[prop];
+        },
+      });
+    },
+  };
+}
+
+describe("readSlotFit — an unread timezone is not a declaration", () => {
+  const Q = { tripId: TRIP_ID, viewerId: OWNER_ID, date: "2026-09-13", startTime: "11:00", durationHours: 1 };
+
+  it("says the timezone could not be READ, not that the trip declared none", async () => {
+    const r = await readSlotFit(failOnlyTimezoneRead(makeClient(base())) as any, Q, { now: NOW });
+    // The judgement is unchanged — UTC still stands in, because there is
+    // nothing else to stand in. Only the REASON is now true.
+    assert.match(r.info, /judged in UTC/);
+    assert.match(r.info, /could not be read/, `the read failure must be said: ${r.info}`);
+    assert.ok(
+      !/declared no timezone/.test(r.info),
+      `a trip WITH a timezone must not be reported as declaring none: ${r.info}`,
+    );
+  });
+
+  it("CONTROL — a trip that genuinely declares none still says so", async () => {
+    const t = base();
+    t.trips = t.trips!.map((x) => ({ ...x, timezone: null }));
+    const r = await readSlotFit(makeClient(t) as any, Q, { now: NOW });
+    assert.match(r.info, /declared no timezone/);
+    assert.ok(!/could not be read/.test(r.info));
+  });
+
+  it("CONTROL — a readable timezone adds no caveat at all", async () => {
+    const r = await readSlotFit(makeClient(base()) as any, Q, { now: NOW });
+    assert.ok(!/judged in UTC/.test(r.info), `Europe/Paris was read: ${r.info}`);
+  });
+});

@@ -574,7 +574,21 @@ router.post("/trips/:tripId/rescue", asyncHandler(async (req, res) => {
   const next = st.commitments.map((c) => ({ c, at: Date.parse(c.requiredArrivalAt ?? c.startsAt ?? "") })).filter((x) => Number.isFinite(x.at) && x.at > now.getTime()).sort((a, b) => a.at - b.at)[0] ?? null;
   const lodging = st.reservations.find((r) => /hotel|lodging|stay|accommodation|hostel|apartment/i.test(`${r.type ?? ""} ${r.title ?? ""}`)) ?? null;
   const transport = st.transport.filter((t) => t.state !== "completed").sort((a, b) => (a.plannedDepartureAt ?? "").localeCompare(b.plannedDepartureAt ?? ""))[0] ?? null;
-  const { data: tripRow } = await ctx.sc.from("trips").select("destination_country").eq("id", ctx.tripId).maybeSingle();
+  // SWALLOWED READ, RULED HARMLESS — with the reasoning, because "harmless" is
+  // a claim and the next reader must be able to check it rather than trust it.
+  // `destination_country` reaches `planRescue` and is read in exactly two
+  // places (TripRescue.ts:109 and :127), and BOTH are guarded by a different
+  // field: `ctx.homeCountry ? ... : ...` and `ctx.emergencyNumber ? ... : ...`.
+  // This call site passes `homeCountry: null` and `emergencyNumber: null`
+  // literally, on every request, so both guards take their false branch and the
+  // country is never read. A failed read and a trip with no destination country
+  // therefore produce a BYTE-IDENTICAL rescue plan, and no sentence anywhere in
+  // it asserts anything about the country. The error is destructured rather
+  // than discarded so that this stays checkable: if either literal above ever
+  // becomes a real value, this read starts feeding a sentence and must be
+  // upgraded to the degraded_unavailable shape the crew routes use.
+  const { data: tripRow, error: tripRowErr } = await ctx.sc.from("trips").select("destination_country").eq("id", ctx.tripId).maybeSingle();
+  void tripRowErr;
   const plan = planRescue(problem as RescueProblem, {
     now: now.getTime(), destinationCountry: (tripRow as any)?.destination_country ?? null, homeCountry: null, emergencyNumber: null,
     nextCommitment: next ? { id: next.c.id, type: next.c.type, arriveBy: new Date(next.at).toISOString() } : null,
