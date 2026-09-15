@@ -23,7 +23,7 @@ import {
 // is `INTEGER NOT NULL DEFAULT 0` exactly like `layover_plan_stops.travel_min`,
 // so the read path needs the same classifier the plan path already uses.
 import { statedTravelMin, statedDurationMin } from "./LayoverPlanFit.js";
-import { airportPoint, placePoint, landsideLeg } from "./LayoverTravelTime.js";
+import { airportPoint, placePoint, landsideLeg, travelTimeProvenanceColumn, type TravelTimeProvider } from "./LayoverTravelTime.js";
 // §8 — the outer edge of the safe envelope, which is the half a straight-line
 // LOWER BOUND can certify. See LayoverEnvelope's header for why the inner edge
 // cannot be, and why a block is the only verdict it may produce.
@@ -278,7 +278,7 @@ async function fetchDiscoveryPlaces(
    */
   from: { lat: number; lng: number } | null,
   departAt: Date,
-  limit = 8,
+  provider?: TravelTimeProvider, limit = 8, // provider: TESTS ONLY — see GenerateRecommendationsOptions
 ): Promise<Array<{
   recType: string;
   title: string;
@@ -333,7 +333,7 @@ async function fetchDiscoveryPlaces(
     // deployment the provider is `noRoutedProvider`, so every leg comes back
     // null — which is the point of asking rather than assuming.
     const legs = await Promise.all((data as any[]).map((p) =>
-      landsideLeg(from, placePoint({ lat: p.lat, lng: p.lng }), departAt),
+      landsideLeg(from, placePoint({ lat: p.lat, lng: p.lng }), departAt, provider),
     ));
 
     return (data as any[]).map((p, i) => ({
@@ -421,13 +421,13 @@ function mapPlaceTypeToRecType(placeType: string): string {
  */
 export interface GenerateRecommendationsOptions {
   /**
-   * When true (flag `layover_stable_recommendation_ids_enabled`, seeded FALSE), rows
-   * are upserted on (session_id, rec_key) and returned WITH their ids; cards
-   * that no longer apply are deleted individually. When false, the legacy
-   * delete-everything-then-insert path runs unchanged and — as before — the
-   * returned cards carry no id.
+   * When true (flag `layover_stable_recommendation_ids_enabled`, seeded FALSE), rows are
+   * upserted on (session_id, rec_key) and returned WITH their ids; cards that no longer
+   * apply are deleted individually. When false, the legacy delete-everything-then-insert
+   * path runs unchanged and — as before — the returned cards carry no id.
    */
   stableIds?: boolean;
+  travelTimeProvider?: TravelTimeProvider; // TESTS ONLY. Production gets LAYOVER_TRAVEL_TIME_PROVIDER.
 }
 
 /**
@@ -500,7 +500,7 @@ export async function generateRecommendations(
   //    time of day the traveler will actually be out there.
   const tod = timeOfDayContext(airport, session, nowMs);
   let discoveryCandidates = session.wantsToLeave && usableMinutes >= 90
-    ? await fetchDiscoveryPlaces(db, city, session.vibeChips, airportPoint(airport), new Date(nowMs))
+    ? await fetchDiscoveryPlaces(db, city, session.vibeChips, airportPoint(airport), new Date(nowMs), opts.travelTimeProvider)
     : [];
   if (!tod.coversEvening) {
     // Daytime-only window: nightlife cards would be dishonest.
@@ -668,8 +668,9 @@ export async function generateRecommendations(
   // Assess each through safety engine
   const rows: any[] = [];
   const keys: string[] = [];
-  // Provenance per row, kept BESIDE the row like `keys`: the row object is the
-  // insert/upsert payload and layover_recommendations has no column for it.
+  // Provenance per row, kept BESIDE the row like `keys` — and, when the row's
+  // own columns cannot express it, IN the row as well: 2745 added
+  // `travel_time_source` for exactly the figures they cannot.
   const sources: TravelTimeSource[] = [];
   let sortOrder = 0;
 
@@ -677,15 +678,12 @@ export async function generateRecommendations(
     const key = recommendationKey(candidate);
     const activityTimeMin = candidate.activityTimeMin;
     // WHAT GOES IN THE TWO NOT-NULL COLUMNS. `travel_time_min` and
-    // `activity_time_min` are `INTEGER NOT NULL DEFAULT 0 / 30` (migration
-    // 0127), so an absence has to be written as SOME integer. It is written as
-    // 0, and 0 is the one value the read path can tell apart from a stated
-    // figure for a landside row — the identical arrangement L47 left on
-    // `layover_plan_stops.travel_min`. `getRecommendations` and the return
-    // below both run it back through `statedTravelMin` / `statedDurationMin`,
-    // so the absence survives the round trip instead of becoming a measurement.
-    // No migration is needed for that, and inventing a nullable column here
-    // would break the write on every database that has not run it.
+    // `activity_time_min` are `INTEGER NOT NULL DEFAULT 0 / 30` (0127), so an
+    // absence has to be written as SOME integer. It is written as 0 — the one
+    // value the read path can tell apart from a stated figure for a landside
+    // row, the identical arrangement L47 left on `layover_plan_stops.travel_min`.
+    // `getRecommendations` and the return below run it back through
+    // `statedTravelMin` / `statedDurationMin`, so the absence survives the trip.
     const storedTravelMin   = candidate.assessment.statedTravelMin ?? 0;
     const storedActivityMin = candidate.assessment.statedActivityMin ?? 0;
     // The assessment `rankActivities` already made, against the SAME certified
@@ -693,7 +691,8 @@ export async function generateRecommendations(
     // number this request has already computed twice.
     const a = candidate.assessment;
     keys.push(key);
-    sources.push(travelTimeSourceFor(candidate));
+    const source = travelTimeSourceFor(candidate);
+    sources.push(source);
     const row = {
       session_id:       session.id,
       rec_type:         candidate.recType,
@@ -711,6 +710,7 @@ export async function generateRecommendations(
       neighborhood:     (candidate as any).neighborhood ?? null,
       sort_order:       sortOrder++,
       place_id:         (candidate as any).placeId ?? null,
+      ...travelTimeProvenanceColumn(source), // `{}` unless the row cannot say it itself
     };
     rows.push(row);
   }
@@ -967,13 +967,14 @@ export async function getRecommendations(
       safetyRating:   row.safety_rating,
       // A landside zero is an ABSENCE, not a free journey (census L293 / L47).
       travelTimeMin:  statedTravelMin({ travelMin: row.travel_time_min, insideAirport: Boolean(row.inside_airport) }),
-      // No column carries provenance; inferred from the row's own facts, which
-      // is exact only while no "measured" producer exists — see
-      // `persistedTravelTimeSource` for the three cases and why a stored
-      // positive number is still reported as the category constant it was.
+      // 2745's column, READ rather than a provenance inferred from the row. The
+      // select is `*`, so on a database that has not applied 2745 the key is
+      // simply absent — the same answer as NULL, and the same answer as a
+      // writer that said nothing: `unknown_provenance`, never a measurement.
       travelTimeSource: persistedTravelTimeSource({
         insideAirport: Boolean(row.inside_airport),
         travelTimeMin: row.travel_time_min,
+        provenance:    row.travel_time_source ?? null,
       }),
       activityTimeMin: statedDurationMin({ durationMin: row.activity_time_min }),
       returnBufferMin: row.return_buffer_min,

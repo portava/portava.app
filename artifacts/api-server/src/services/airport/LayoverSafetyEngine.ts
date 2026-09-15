@@ -156,58 +156,56 @@ export const RETURN_SOON_LEAD_MIN = 30;
  *                     safety route's 20 — are deleted, not relabelled. A
  *                     traveller is told the journey is unknown rather than told
  *                     a number that was chosen without a coordinate.
- *   category_default  a per-category constant chosen without reading a
- *                     coordinate. NOTHING PRODUCES ONE any more; the value
- *                     survives because rows written before L293 was closed
- *                     still hold such a number, and reporting those as
- *                     `unmeasured` would be a second fabrication in the other
- *                     direction. See `persistedTravelTimeSource`.
+ *   category_default  a per-category constant chosen without a coordinate.
+ *                     NOTHING PRODUCES ONE, and since 2745 nothing INFERS one:
+ *                     a row may SAY it, but no read path now decides it.
+ *   traveller_stated  a human gave the figure. Not a measurement, and not a
+ *                     fabrication either — it has a source with a name.
+ *   straight_line_bound  a great-circle LOWER BOUND, a kind of its own because
+ *                     it may only REFUSE: "a straight-line INFEASIBLE is a real
+ *                     verdict; a straight-line FEASIBLE is not."
+ *   unknown_provenance  A FIGURE IS STORED AND NOBODY RECORDED WHERE IT CAME
+ *                     FROM — every pre-2745 landside row, and every row whose
+ *                     writer left the column NULL. "We do not know" is an
+ *                     answer; `category_default` was a guess wearing one.
  *   measured          derived from a real route/distance for THIS place from
- *                     THIS airport — i.e. from a `TravelTimeProvider` whose
- *                     `routed` flag is true. Declared so a client can
- *                     distinguish it; the only configured provider on this tree
- *                     is `noRoutedProvider`, so nothing produces it (pinned by
- *                     src/test/layoverTravelTimeProvenance.test.ts). When one is
- *                     built, persist the source on the row — see
- *                     `travelTimeSourceFor` for why the read path cannot infer it.
+ *                     THIS airport — a `TravelTimeProvider` whose `routed` flag
+ *                     is true. Nothing produces it while the configured
+ *                     provider is `noRoutedProvider`;
+ *                     `travelTimeProvenanceColumn` puts it on the ROW.
+ *
+ * This is ALSO the vocabulary of `layover_recommendations.travel_time_source`
+ * (2745): the column stores the value named here, so there is no mapping
+ * between "what the row says" and "what the client is told" to drift.
  */
-export const TRAVEL_TIME_SOURCES = ["inside_airport", "category_default", "measured", "unmeasured"] as const;
+export const TRAVEL_TIME_SOURCES = [
+  "inside_airport", "category_default", "measured", "unmeasured",
+  "traveller_stated", "straight_line_bound", "unknown_provenance",
+] as const;
 export type TravelTimeSource = (typeof TRAVEL_TIME_SOURCES)[number];
 
 /**
  * Is a source a real route for THIS place from THIS airport, or a stand-in?
- *
- * Declared once, here, beside `TRAVEL_TIME_SOURCES`, for one reason: nothing
- * outside this file may write or compare the "measured" string — that is the
- * tripwire `src/test/layoverTravelTimeProvenance.test.ts` holds, because the
- * persisted read path infers provenance and the inference is exact only while
- * no producer exists. A consumer that needs to know whether a figure is routed
- * asks this table instead of re-spelling the value. This is a CLASSIFICATION
- * of the three declared sources, not a producer of any of them: adding a
- * routed producer still means adding a column, updating getRecommendations and
- * changing that test's expectation.
+ * Declared here because nothing outside this file may write or compare the
+ * "measured" string (the tripwire layoverTravelTimeProvenance.test.ts holds).
+ * A CLASSIFICATION, not a producer: a routed one must still persist (2745).
  */
 export const TRAVEL_TIME_SOURCE_IS_ROUTED: Record<TravelTimeSource, boolean> = {
-  inside_airport:   false,
-  category_default: false,
-  measured:         true,
-  // Not routed, and not a figure at all. Kept in the table rather than special-
-  // cased at the call sites, so "is this a route?" is still one question with
-  // one answer for every member of the vocabulary.
-  unmeasured:       false,
+  inside_airport:      false,
+  category_default:    false,
+  measured:            true,
+  // Four more, all false. `unknown_provenance` is the load-bearing one: not
+  // knowing where a number came from is not evidence that it was routed.
+  unmeasured:          false,
+  traveller_stated:    false,
+  straight_line_bound: false,
+  unknown_provenance:  false,
 };
 
 /**
- * Resolve the provenance of a travel-time figure, failing CLOSED: an absent
- * source is treated as the least-trusted kind that applies, never as measured.
- *
- * Today this is also how the persisted read path (`getRecommendations`)
- * recovers provenance, because `layover_recommendations` has no column for it
- * and adding one unconditionally would break the write on any database that
- * has not run the migration (the same hazard 2410 gates behind a flag). That
- * inference is honest ONLY while nothing produces "measured" — which the
- * provenance test pins. The day a measured producer lands, the row must carry
- * the source and this fallback must stop being used for persisted rows.
+ * Provenance of an IN-MEMORY candidate's figure, failing CLOSED: an absent
+ * source is the least-trusted kind that applies, never measured. The PERSISTED
+ * path is `persistedTravelTimeSource` — since 2745 it reads a column.
  */
 export function travelTimeSourceFor(c: {
   insideAirport: boolean;
@@ -220,33 +218,35 @@ export function travelTimeSourceFor(c: {
 }
 
 /**
- * Provenance of a PERSISTED row's travel figure, resolved from the row itself.
- *
- * `layover_recommendations.travel_time_min` is `INTEGER NOT NULL DEFAULT 0`
- * (migration 0127), so — exactly like `layover_plan_stops.travel_min` in L47 —
- * the column cannot hold "nobody measured this". The row's own
- * `inside_airport` is what tells the two apart, and `statedTravelMin` is where
- * that rule lives:
- *
- *   inside_airport, 0   0 minutes of landside travel, BY CONSTRUCTION. A fact.
+ * Provenance of a PERSISTED row's travel figure, READ from the row, not
+ * INFERRED from it. With no column this decided from the sign of an integer:
+ * a landside row holding a positive `travel_time_min` was reported
+ * `category_default`, because nothing else could have written it — a guess
+ * about history, and the exact thing `LayoverTravelTime`'s header refused to
+ * let a routed provider inherit. 2745 lets the row SAY instead. What is still
+ * read off the row is FACT, not a claim about a measurement:
+ *   inside_airport, 0   0 minutes of landside travel, BY CONSTRUCTION.
  *   landside, 0         nobody stated a journey. An ABSENCE -> "unmeasured".
- *   landside, > 0       a number is stored. Nothing produces one any more, so
- *                       it was written before L293 was closed -> the honest
- *                       label for it is still "category_default". Calling it
- *                       "unmeasured" would deny a figure the row visibly holds;
- *                       calling it "measured" would be the original defect.
- *
- * This remains exact only while nothing produces "measured" — see
- * `travelTimeSourceFor` for why, and `layoverTravelTimeProvenance.test.ts` for
- * the tripwire that holds it.
+ *   landside, > 0       a number is stored and nothing said where it came from
+ *                       -> "unknown_provenance"; `category_default` would name
+ *                       a producer, and "unmeasured" would deny the figure.
+ * The column is nullable, defaultless and un-backfilled, so a pre-2745 row, a
+ * database that lags it and a writer that said nothing all answer unknown.
  */
 export function persistedTravelTimeSource(row: {
   insideAirport: boolean;
   travelTimeMin: number | null | undefined;
+  /** `layover_recommendations.travel_time_source` (2745); absent/null = unrecorded. */
+  provenance?: string | null;
 }): TravelTimeSource {
+  // Outside the vocabulary is not trusted: an absence, not a claim.
+  const recorded = row.provenance;
+  if (recorded && (TRAVEL_TIME_SOURCES as readonly string[]).includes(recorded)) {
+    return recorded as TravelTimeSource;
+  }
   if (row.insideAirport) return "inside_airport";
   const stated = statedLegMin({ travelMin: row.travelTimeMin, insideAirport: false });
-  return stated === null ? "unmeasured" : "category_default";
+  return stated === null ? "unmeasured" : "unknown_provenance";
 }
 
 /**

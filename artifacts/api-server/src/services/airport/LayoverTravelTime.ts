@@ -83,6 +83,60 @@ export const UNMEASURED_LEG: LandsideLeg = {
 export const LAYOVER_TRAVEL_TIME_PROVIDER: TravelTimeProvider = noRoutedProvider;
 
 /**
+ * THE COLUMN HALF OF THAT OBLIGATION IS NOW DISCHARGED — the provider half is
+ * not, and the line above is unchanged and still `noRoutedProvider`.
+ *
+ * Migration 2745 adds `layover_recommendations.travel_time_source`, nullable,
+ * defaultless and un-backfilled, and `persistedTravelTimeSource` now READS it
+ * instead of inferring `category_default` from the sign of an integer. So the
+ * hazard the header above describes — "a routed provider appear[ing] in
+ * production with the read path still inferring 'category_default' for every
+ * row it wrote" — no longer exists on the READ side. What remains is that no
+ * routed provider exists to wire, and no straight-line stand-in will do: a
+ * lower bound is evidence of INFEASIBILITY only, for the reason stated above.
+ */
+export type { TravelTimeProvider };
+
+/**
+ * Which provenances a `layover_recommendations` row can recover from its OWN
+ * columns, and which have to be written down.
+ *
+ * `inside_airport` and `unmeasured` are both readable from `inside_airport` +
+ * `travel_time_min` alone (airside 0 is a fact by construction; a landside 0 is
+ * the absence the NOT NULL DEFAULT 0 column forces an absence to be stored as).
+ * Everything else is a CLAIM the row cannot reconstruct, and a claim nobody
+ * wrote down reads back as `unknown_provenance` — never as itself.
+ */
+const ROW_FACTS_RECOVER: Record<TravelTimeSource, boolean> = {
+  inside_airport:      true,
+  unmeasured:          true,
+  category_default:    false,
+  measured:            false,
+  traveller_stated:    false,
+  straight_line_bound: false,
+  // Recording "we do not know" adds nothing a NULL does not already say.
+  unknown_provenance:  true,
+};
+
+/**
+ * The provenance columns to merge into a `layover_recommendations` write — and
+ * `{}` for everything the row already expresses.
+ *
+ * WHY IT IS CONDITIONAL AND NOT ALWAYS WRITTEN. supabase-js sends every key in
+ * the payload, so a column the database has not got fails the whole insert —
+ * the hazard 2410's header documents. On this tree every landside leg is
+ * `unmeasured` and every airside one is `inside_airport`, so this returns `{}`
+ * for every row written today and no write can break on a database that lags
+ * 2745. The day a routed provider is assigned to the constant above, the key
+ * appears and the figure's provenance travels with it onto the row.
+ */
+export function travelTimeProvenanceColumn(
+  source: TravelTimeSource,
+): { travel_time_source?: TravelTimeSource } {
+  return ROW_FACTS_RECOVER[source] ? {} : { travel_time_source: source };
+}
+
+/**
  * An airport's coordinates, or `null` when it has none worth using.
  *
  * (0, 0) is the Gulf of Guinea and it is also what `buildFallbackProfile`

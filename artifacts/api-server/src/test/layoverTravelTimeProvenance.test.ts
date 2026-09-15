@@ -125,14 +125,24 @@ describe("travelTimeSourceFor — the fail-closed resolver", () => {
     assert.equal(travelTimeSourceFor({ insideAirport: false, travelTimeSource: "routed" as any }), "category_default");
   });
 
-  it("the vocabulary is exactly the four declared kinds", () => {
+  it("the vocabulary is exactly the seven declared kinds", () => {
     // CHANGED WITH L293, and NOT because it was asserting the defect: it was
     // asserting the SIZE of the vocabulary, which is a real thing to pin. What
     // moved is the vocabulary. "unmeasured" is the answer for a candidate that
     // has no travel figure at all — the state every landside card is now in —
     // and it needed a name of its own, because reporting it as
     // "category_default" would have claimed a constant that no longer exists.
-    assert.deepEqual([...TRAVEL_TIME_SOURCES], ["inside_airport", "category_default", "measured", "unmeasured"]);
+    //
+    // CHANGED AGAIN WITH 2745, for the same reason and with the same strength —
+    // an exact list, not a loosened one. `layover_recommendations.travel_time_source`
+    // stores THIS vocabulary, so it had to gain the three kinds a persisted row
+    // can now be in and previously could not express: a figure a human stated,
+    // a great-circle lower bound (only ever a refusal), and — the one the read
+    // path needed — "a figure is stored and nobody recorded where it came from".
+    assert.deepEqual([...TRAVEL_TIME_SOURCES], [
+      "inside_airport", "category_default", "measured", "unmeasured",
+      "traveller_stated", "straight_line_bound", "unknown_provenance",
+    ]);
   });
 });
 
@@ -180,7 +190,18 @@ describe("generateRecommendations — every card states where its travel time ca
 });
 
 describe("getRecommendations — the persisted read path recovers provenance conservatively", () => {
-  it("inside_airport rows read as inside_airport; every other row reads as category_default", async () => {
+  it("inside_airport rows read as inside_airport; an unlabelled figure reads as unknown_provenance", async () => {
+    // ── THIS ASSERTION ENCODED AN INFERENCE, AND 2745 DELETED THE INFERENCE ──
+    // The second half read `assert.equal(…"r2"…, "category_default")` and the
+    // title said "every other row reads as category_default". That was
+    // `persistedTravelTimeSource` deciding, from the SIGN OF AN INTEGER, that a
+    // stored landside 25 must have come from a category constant — a claim
+    // about a producer made about a row that named none, and the exact thing
+    // `LayoverTravelTime`'s header refused to let a routed provider inherit.
+    // `layover_recommendations.travel_time_source` (2745) lets the row say; r2
+    // says nothing, so the answer is now "we do not know". The claim this case
+    // is really making — a persisted row's provenance is recovered
+    // CONSERVATIVELY and never as a measurement — survives, strengthened.
     const t = tables();
     t.layover_recommendations.push(
       { id: "r1", session_id: "session-1", rec_type: "food", title: "Airport Dining", safety_rating: "safe", travel_time_min: 0, activity_time_min: 45, return_buffer_min: 140, hard_return_time: null, inside_airport: true, sort_order: 0 },
@@ -189,7 +210,18 @@ describe("getRecommendations — the persisted read path recovers provenance con
     const recs = cards(await getRecommendations(makeLayoverDb(t), "session-1"));
     assert.equal(recs.length, 2);
     assert.equal(recs.find((r) => r.id === "r1")!.travelTimeSource, "inside_airport");
-    assert.equal(recs.find((r) => r.id === "r2")!.travelTimeSource, "category_default");
+    assert.equal(recs.find((r) => r.id === "r2")!.travelTimeSource, "unknown_provenance");
+    // The figure is not denied along with its provenance — r2 still holds 25.
+    assert.equal(recs.find((r) => r.id === "r2")!.travelTimeMin, 25);
+  });
+
+  it("a row that DOES carry a provenance reads as exactly that", async () => {
+    const t = tables();
+    t.layover_recommendations.push(
+      { id: "r3", session_id: "session-1", rec_type: "activity", title: "Routed", safety_rating: "safe", travel_time_min: 41, activity_time_min: 90, return_buffer_min: 140, hard_return_time: null, inside_airport: false, sort_order: 0, travel_time_source: "measured" },
+    );
+    const recs = cards(await getRecommendations(makeLayoverDb(t), "session-1"));
+    assert.equal(recs[0]!.travelTimeSource, "measured");
   });
 });
 
@@ -199,7 +231,12 @@ describe("sanitizeRecommendation — the field always reaches the client", () =>
     activityTimeMin: 60, returnBufferMin: 120, insideAirport: false,
   };
   it("populates travelTimeSource from the raw record, defaulting closed", () => {
-    assert.equal(sanitizeRecommendation(base).travelTimeSource, "category_default");
+    // CHANGED WITH 2745, same strength: `base` states no source and holds a
+    // figure, so the fallback runs through `persistedTravelTimeSource`, which
+    // no longer names `category_default` for a record that named no producer.
+    // "Defaulting closed" is the claim, and unknown is further from a
+    // measurement than a category constant was, not nearer.
+    assert.equal(sanitizeRecommendation(base).travelTimeSource, "unknown_provenance");
     assert.equal(sanitizeRecommendation({ ...base, insideAirport: true, travelTimeMin: 0 }).travelTimeSource, "inside_airport");
     assert.equal(sanitizeRecommendation({ ...base, travelTimeSource: "measured" }).travelTimeSource, "measured");
   });

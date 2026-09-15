@@ -175,11 +175,21 @@ describe("layover cutover checker — the real tree", () => {
     assert.match(out, /derivation matches recommendationKey branch for branch/);
     // 2335 USED to appear here as a classified co-toucher. It was applied to
     // production on 2026-09-08, so it is no longer an UNAPPLIED co-toucher and its
-    // classification was struck. The evidence line the report prints for an empty
-    // co-toucher set is asserted instead — an empty set has to SAY so, or a
-    // condition that examined nothing would read the same as one that examined
-    // everything and found nothing.
-    assert.match(out, /no unapplied migration mutates an object 2411 touches/);
+    // classification was struck. For a while the line asserted here was the one
+    // the report prints for an EMPTY co-toucher set — an empty set has to SAY so,
+    // or a condition that examined nothing would read the same as one that
+    // examined everything and found nothing.
+    //
+    // 2026-09-15: the set is no longer empty. 2745_layover_recommendation_travel_provenance
+    // adds the travel-time provenance column to layover_recommendations, is
+    // unapplied, and therefore made the checker demand a written ordering
+    // decision — which it got. The assertion moves with the truth and keeps its
+    // strength: the report must NAME the co-toucher and its classification, which
+    // is strictly more than "the set is empty" ever proved. The empty-set line is
+    // still reachable and still pinned by the ORDERING_COLLISION cases below,
+    // which run against a mirrored tree rather than this one.
+    assert.match(out, /co-toucher 2745_layover_recommendation_travel_provenance: ORDER-INSENSITIVE/);
+    assert.doesNotMatch(out, /UNCLASSIFIED CO-TOUCHER/);
     assert.doesNotMatch(out, /co-toucher 2335_layover_recommendation_write_boundary/);
   });
 

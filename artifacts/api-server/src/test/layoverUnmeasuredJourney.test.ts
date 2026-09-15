@@ -379,7 +379,7 @@ describe("L293c — certifyFeasibility with no probe makes no journey claim", ()
 // ── D. THE PERSISTED READ PATH ──────────────────────────────────────────────
 
 describe("getRecommendations — a stored landside zero reads back as an absence", () => {
-  it("landside 0 ⇒ null / unmeasured; landside legacy 25 ⇒ 25 / category_default; airside 0 ⇒ 0 / inside_airport", async () => {
+  it("landside 0 ⇒ null / unmeasured; landside legacy 25 ⇒ 25 / unknown_provenance; airside 0 ⇒ 0 / inside_airport", async () => {
     const t = tables();
     t.layover_recommendations.push(
       { id: "r1", session_id: "session-1", rec_type: "food", title: "Airport Dining", safety_rating: "safe", travel_time_min: 0, activity_time_min: 45, return_buffer_min: 140, hard_return_time: null, inside_airport: true, sort_order: 0 },
@@ -393,15 +393,24 @@ describe("getRecommendations — a stored landside zero reads back as an absence
     assert.equal(by("r2").travelTimeMin, null, "a landside stored zero came back as a measured zero");
     assert.equal(by("r2").activityTimeMin, null);
     assert.equal(by("r2").travelTimeSource, "unmeasured");
-    // A row written before this fix still holds its category constant. It is
-    // reported as what it is, not upgraded and not erased.
+    // A row written before this fix still holds its number. It is reported as
+    // what it is, not upgraded and not erased.
+    //
+    // CHANGED WITH 2745, and the change is the point of that migration. This
+    // read `"category_default"`, which `persistedTravelTimeSource` DECIDED from
+    // the sign of the integer — nothing on the row said it. r3 names no
+    // producer, so the honest answer is that we do not know; the figure it
+    // visibly holds is still 25 and is still not denied.
     assert.equal(by("r3").travelTimeMin, 25);
-    assert.equal(by("r3").travelTimeSource, "category_default");
+    assert.equal(by("r3").travelTimeSource, "unknown_provenance");
   });
 
   it('"unmeasured" is part of the declared vocabulary and is NOT routed', () => {
     assert.ok((Engine.TRAVEL_TIME_SOURCES as readonly string[]).includes("unmeasured"));
     assert.equal(Engine.TRAVEL_TIME_SOURCE_IS_ROUTED.unmeasured, false);
+    // And neither is the state a row with no recorded provenance reads as.
+    assert.ok((Engine.TRAVEL_TIME_SOURCES as readonly string[]).includes("unknown_provenance"));
+    assert.equal(Engine.TRAVEL_TIME_SOURCE_IS_ROUTED.unknown_provenance, false);
   });
 });
 
