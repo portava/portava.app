@@ -569,3 +569,115 @@ describe("readContributorReputation — intel-derived, never reads social tables
     assert.equal(rep.contributorReliability, 0);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 7. THE LAST MILE — POST /v1/media/view-requests puts the discriminator on the wire
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// §5 above proves the SERVICE can tell "nobody was eligible" from "the opt-in
+// registry could not be read". That is only half a fix while the route drops the
+// flag: this handler enumerates its response fields (it does not spread the
+// service result the way routes/mediaActions.ts does for `planGateDetermined`),
+// so the two zeroes arrived at the client as the same body — and the client
+// renders a bare zero as the positive claim "No contributors are nearby yet".
+//
+// MUTATION: delete `recipientsDetermined` from the 201 body in
+// routes/mediaViewRequest.ts — the three tests below go RED.
+//
+// MUTATION THAT SURVIVES, recorded rather than hidden: swapping `=== true` for
+// `!== false` changes nothing, because the service's ok:true path always sets a
+// real boolean and `undefined` is unreachable from here. The stricter spelling
+// is a deliberate defensive choice with no test behind it, and saying so is
+// worth more than a test that cannot fail.
+import http from "node:http";
+import express from "express";
+import { _setTestClient } from "../lib/http.js";
+import mediaViewRequestRouter from "../routes/mediaViewRequest.js";
+
+const ROUTE_USER = "11111111-1111-4111-8111-111111111111";
+const ROUTE_PLACE = "22222222-2222-4222-8222-222222222222";
+
+/** makeDb + the `auth.getUser` seam requireUser needs. */
+function routeClient(db: any) {
+  return {
+    from: db.from,
+    _inserted: db._inserted,
+    auth: { getUser: async () => ({ data: { user: { id: ROUTE_USER } }, error: null }) },
+  };
+}
+
+async function postViewRequest(db: any): Promise<{ status: number; body: any }> {
+  _resetRateLimit();
+  _setTestClient(routeClient(db), true);
+  const app = express();
+  app.use(express.json());
+  app.use(mediaViewRequestRouter);
+  const server = http.createServer(app);
+  await new Promise<void>((r) => server.listen(0, r));
+  const port = (server.address() as any).port;
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/v1/media/view-requests`, {
+      method: "POST",
+      headers: { Authorization: "Bearer test.token", "Content-Type": "application/json" },
+      body: JSON.stringify({
+        subjectId: ROUTE_PLACE,
+        claimFamily: "crowd.level",
+        question: "Is the entrance still busy?",
+        city: "Da Nang",
+      }),
+    });
+    return { status: res.status, body: await res.json() };
+  } finally {
+    await new Promise<void>((r) => server.close(() => r()));
+    _setTestClient(null, false);
+  }
+}
+
+const emptyRegistry = () => ({
+  ...ON,
+  tables: {
+    media_view_requests: [],
+    media_view_request_optins: [],
+    blocks: [],
+    profiles: [],
+    hidden_gems: [],
+  },
+});
+
+describe("POST /v1/media/view-requests — the recipient count's provenance reaches the client", () => {
+  it("a genuinely empty contributor registry serves recipientsDetermined true", async () => {
+    const { status, body } = await postViewRequest(makeDb(emptyRegistry()));
+    assert.equal(status, 201);
+    assert.equal(body.recipientCount, 0);
+    assert.equal(body.recipientsDetermined, true, "a measured zero is a real answer");
+  });
+
+  it("an unreadable contributor registry serves the SAME zero with recipientsDetermined false", async () => {
+    const { status, body } = await postViewRequest(
+      makeDb({ ...emptyRegistry(), errorReads: ["media_view_request_optins"] }),
+    );
+    assert.equal(status, 201, "the coverage task is still created — nothing failed for the traveller");
+    assert.equal(body.recipientCount, 0, "fail-closed direction unchanged: nobody was asked");
+    assert.equal(
+      body.recipientsDetermined, false,
+      "a zero that was never counted must not be served as a zero that was",
+    );
+  });
+
+  it("the two bodies are not byte-identical — which is the whole point", async () => {
+    const measured = await postViewRequest(makeDb(emptyRegistry()));
+    const unread = await postViewRequest(
+      makeDb({ ...emptyRegistry(), errorReads: ["media_view_request_optins"] }),
+    );
+    assert.equal(measured.body.recipientCount, unread.body.recipientCount, "same count …");
+    assert.notEqual(
+      measured.body.recipientsDetermined, unread.body.recipientsDetermined,
+      "… and the client can still tell the two apart",
+    );
+  });
+
+  it("recipient ids are never on the wire (a view request must not reveal who was asked)", async () => {
+    const { body } = await postViewRequest(makeDb(emptyRegistry()));
+    assert.equal("recipients" in body, false);
+  });
+});
