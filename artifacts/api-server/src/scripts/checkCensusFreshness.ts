@@ -2019,6 +2019,25 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // Cited once by a cross-surface row; the Layover lane owns the file, this
     // census only grades what it reads from it.
     "artifacts/api-server/src/services/airport/__tests__/layoverPresenceDegraded.test.ts",
+    // ── ADDED by the scope-coverage floor, after §18's consumer audit ─────────
+    //
+    // §18 graded the REFUSAL ENVELOPE'S CONSUMERS for the first time and found
+    // four that render a refusal as an empty answer. Citing them dropped this
+    // census to 95 % against a floor of 96 %, which is the floor working: the
+    // census started grading a file nothing aged it on.
+    //
+    // `travel-buddy-standalone/src/services/discovery.ts` carries
+    // `getDiscoveryCategoryCounts`, which writes a fabricated `0` badge when the
+    // count read refuses. C14's verdict now rests on what that file does, so a
+    // change to it must age this census.
+    "travel-buddy-standalone/src/services/discovery.ts",
+    //
+    // The ledger is watched on the SOURCE-MANIFEST.json precedent above: §17.6's
+    // sentences are claims ABOUT this file ("rebuilds to 187 requirements,
+    // C=76 W=85 N=23 X=3"), so an entry or a count changing falsifies them. It
+    // is a generated artifact, and that is exactly why — a generated record that
+    // nothing ages is how §17.6's defect stayed invisible in the first place.
+    "docs/discovery/compliance-ledger.json",
     // WIDENED 2026-09-13 with A20's new evidence. That row was re-measured N → W
     // because the Telegraph §1–§11 lane published the content capability
     // contract A20 said did not exist, and a row is only as fresh as the files

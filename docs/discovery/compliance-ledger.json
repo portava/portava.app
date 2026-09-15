@@ -3,8 +3,8 @@
   "note": "Verdicts are READ from the census and are never authored here. `blocker` is the one hand-maintained field; see the header of src/scripts/buildDiscoveryLedger.ts for why it is not derived.",
   "total": 187,
   "byVerdict": {
-    "C": 76,
-    "W": 85,
+    "C": 75,
+    "W": 86,
     "N": 23,
     "X": 3
   },
@@ -12,7 +12,7 @@
     "FLAG": 17,
     "CODE_CROSS_SURFACE": 25,
     "MIGRATION": 31,
-    "CODE": 32,
+    "CODE": 33,
     "DEPLOY": 1,
     "RUNTIME_EVIDENCE": 4,
     "EXTERNAL_SETTING": 1
@@ -242,8 +242,8 @@
     },
     {
       "id": "C14",
-      "verdict": "C",
-      "line": 2409,
+      "verdict": "W",
+      "line": 2565,
       "blocker": "CODE"
     },
     {
