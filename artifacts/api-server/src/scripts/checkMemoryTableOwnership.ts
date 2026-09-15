@@ -79,11 +79,18 @@ const KERNEL_SIDE = new Set([
   "test/memoryCommandKernelFake.ts",
   "test/memoryCommandRoutes.test.ts",
   "test/memoryOutbox.test.ts",
-  // Asserts that the production-drift ratchet does NOT excuse the kernel's
-  // tables: they have no recorded production apply, and an excuse for them
-  // would mean the drift check had stopped requiring one. It names the kernel
-  // log only, as data in an assertion list.
-  "test/productionDriftExtraction.test.ts",
+  // REMOVED 2026-09-15, and the removal is the point rather than tidying.
+  // "test/productionDriftExtraction.test.ts" was listed here because it asserted
+  // that the production-drift ratchet does NOT excuse the kernel's tables, on
+  // the stated ground that "they have no recorded production apply, and an
+  // excuse for them would mean the drift check had stopped requiring one".
+  // That ground expired: 2710, 2711, 2720-2724 and 2730 WERE applied to
+  // production on 2026-09-15, so the kernel's tables are now simply PRESENT in
+  // the snapshot and the case would have passed for the wrong reason. Its list
+  // was rewritten to name migrations that genuinely still have no production
+  // apply, and it no longer references either memory event log -- so this entry
+  // became a classification of a file that does not need one, which is exactly
+  // what this checker refuses to let rot.
 ]);
 
 /**
