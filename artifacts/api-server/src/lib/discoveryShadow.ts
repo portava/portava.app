@@ -744,10 +744,20 @@ export interface ShadowPageTravelIntent {
 export interface ShadowTravelIntent {
   reason: TravelIntentReadReason;
   /**
-   * Why a zero is expected, or null once it is not. Non-null exactly while
-   * `TRIP_ADD_WRITERS` is empty — DERIVED, so the note cannot outlive the gap it
-   * describes: whoever wires the writer adds its path to that list and the note
-   * disappears from every row written afterwards, without editing this comment.
+   * Why a zero is expected, or null once it is not.
+   *
+   * TWO reasons can produce it, and since 2026-09-15 it is the SECOND: the
+   * writer landed (TRIP_ADD_WRITERS is no longer empty) but migration 2894,
+   * which admits the token to `rank_events_outcome_check`, is applied to no
+   * database, so the write is refused by the constraint. The field name
+   * `writerless` is now narrower than what it carries; it is kept because
+   * renaming a field on a shadow row is a wire change, and the note itself says
+   * which reason applies.
+   *
+   * Still DERIVED at the first step, so the "no writer" sentence cannot outlive
+   * the gap it describes. The second is retired by hand when 2894 is applied,
+   * because this module answers offline and must not read a database to say why
+   * a number is zero.
    */
   writerless: string | null;
   /** Null unless `reason` is `measured` — a read that did not happen produces no figure. */
@@ -761,13 +771,20 @@ export const TRIP_ADD_OUTCOME = "trip_add";
 /**
  * Every call site in this repository that reports `outcome='trip_add'`.
  *
- * EMPTY. `POST /api/places/:placeId/add-to-trip-plan` (routes/plan.ts) is the
- * production trip-add site for a Discovery place and it reports no outcome;
- * adding that report is a one-call change in a file this lane does not own.
- * When it lands, its path goes here and `tripAddWriterNote()` stops annotating
- * every row.
+ * NO LONGER EMPTY as of 2026-09-15. The client is the writer, and it had to be:
+ * only the client knows which surface served the item, and the outcome lookup
+ * hard-filters on `surface`. A server-side writer would have to guess one or
+ * search all of them, breaking the key-space separation `live_pulse` was split
+ * out to preserve.
+ *
+ * `POST /api/places/:placeId/add-to-trip-plan` (routes/plan.ts) STILL reports
+ * nothing of its own — it is the transport for the itinerary row, not the
+ * funnel — so an add made anywhere the plan picker is not involved remains
+ * unrecorded. That is why this is a LIST and not a boolean.
  */
-export const TRIP_ADD_WRITERS: readonly string[] = [];
+export const TRIP_ADD_WRITERS: readonly string[] = [
+  "travel-buddy-standalone/src/components/PlanPickerController.tsx",
+];
 
 /** The note itself, so the wording lives in one place and the tests can match it. */
 export const TRIP_ADD_HAS_NO_WRITER =
@@ -775,9 +792,39 @@ export const TRIP_ADD_HAS_NO_WRITER =
   "site, POST /api/places/:placeId/add-to-trip-plan (routes/plan.ts), reports no outcome. A measured " +
   "page therefore reads 0 — which means 'never recorded', not 'never wanted'";
 
-/** Null once a writer exists. See TRIP_ADD_WRITERS. */
+/**
+ * THE SECOND REASON A ZERO IS STILL EXPECTED, and the reason this function did
+ * not simply start returning null when the writer landed.
+ *
+ * Migration 2894 is the file that WIDENS `rank_events_outcome_check` to admit
+ * `trip_add`. It is applied to NO database — not production, not portava-ci —
+ * and the live CHECK was read in CI on 2026-09-15 carrying eight values with
+ * `trip_add` absent. So the writer now fires and the INSERT is refused by the
+ * constraint. The report is fire-and-forget, so a traveller's add still
+ * succeeds; what does not happen is the row.
+ *
+ * A zero therefore still does not mean "never wanted" — but it no longer means
+ * "nothing writes it" either, and saying the old sentence would now be false.
+ * This note says the true one.
+ */
+export const TRIP_ADD_VOCABULARY_UNAPPLIED =
+  "outcome='trip_add' is written (see TRIP_ADD_WRITERS) but migration 2894, which widens " +
+  "rank_events_outcome_check to admit it, is applied to no database — so every write is refused by the " +
+  "CHECK and a measured page reads 0. That means 'refused by a constraint the migration would widen', " +
+  "not 'never recorded' and not 'never wanted'. Retire this note when 2894 is applied and certified";
+
+/**
+ * Why a zero is expected, or null once it is not.
+ *
+ * DERIVED at both steps, so neither note can outlive the gap it describes:
+ * adding a path to TRIP_ADD_WRITERS retires the first, and applying 2894
+ * retires the second. The second is NOT derived from a live read — this module
+ * must answer offline — so it is retired by hand, which is why its own text
+ * names the condition rather than implying it was measured.
+ */
 export function tripAddWriterNote(): string | null {
-  return TRIP_ADD_WRITERS.length === 0 ? TRIP_ADD_HAS_NO_WRITER : null;
+  if (TRIP_ADD_WRITERS.length === 0) return TRIP_ADD_HAS_NO_WRITER;
+  return TRIP_ADD_VOCABULARY_UNAPPLIED;
 }
 
 /** Cap on the trip-add read. A page is bounded; the rows against it are not. */

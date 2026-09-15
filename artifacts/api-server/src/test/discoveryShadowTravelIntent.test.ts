@@ -200,13 +200,36 @@ describe("DV-79 — the axis on the shadow comparison", () => {
     assert.equal(dead.unmeasured.includes("estimated_travel_intent"), true);
   });
 
-  it("names the missing writer on the row, so a zero is never read as a finding", async () => {
+  it("names the reason for the zero on the row, so a zero is never read as a finding", async () => {
+    // UPDATED 2026-09-15, and the update is the mechanism working rather than a
+    // test being loosened. This case used to assert TRIP_ADD_WRITERS was EMPTY
+    // and that the note therefore named the missing writer. The writer landed
+    // (PlanPickerController reports trip_add on the committed-add path), so that
+    // assertion went RED exactly as its own message promised it would.
+    //
+    // The note did NOT become null, because a zero is still expected for a
+    // SECOND reason: migration 2894 widens rank_events_outcome_check to admit
+    // the token and is applied to no database, so every write is refused by the
+    // CHECK. The row must say which reason applies, and this pins that it does.
     const { client } = tripAddClient({ rows: [] });
     const dims = await compareShadowPagesWithCreators(client, legacy, pde);
-    assert.deepEqual(TRIP_ADD_WRITERS, [], "the writer list is empty today; adding one retires the note below");
+    assert.ok(TRIP_ADD_WRITERS.length > 0, "the writer landed; this list is how the first note retires");
+    assert.deepEqual(
+      [...TRIP_ADD_WRITERS],
+      ["travel-buddy-standalone/src/components/PlanPickerController.tsx"],
+      "the writer list names the path, so a reader can go and check the claim",
+    );
     assert.equal(dims.estimatedTravelIntent!.writerless, tripAddWriterNote());
-    assert.match(String(dims.estimatedTravelIntent!.writerless), /add-to-trip-plan/);
+    // The note must now name the CONSTRAINT, not the missing writer.
     assert.match(String(dims.estimatedTravelIntent!.writerless), /2894/);
+    assert.match(String(dims.estimatedTravelIntent!.writerless), /applied to no database/);
+    assert.match(String(dims.estimatedTravelIntent!.writerless), /refused by the/);
+    // And it must NOT still claim nothing writes it, which is the false sentence
+    // this whole update exists to remove.
+    assert.ok(
+      !String(dims.estimatedTravelIntent!.writerless).includes("nothing writes"),
+      "the note must not still say nothing writes trip_add — a writer exists",
+    );
   });
 });
 
