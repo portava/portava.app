@@ -1111,8 +1111,12 @@ describe("A14 — a missing input must NOT acquire a value (the property itself)
       `are ${PLAUSIBLE_DEFAULTS.join(", ")} — but ANY number fails this, which is ` +
       `the point: the test does not have to guess which one was chosen.)`,
     );
+    // `as readonly unknown[]`, not `actual as number`. `assert.equal(actual, null)`
+    // above narrows `actual` to `null`, so casting it to `number` is the error
+    // TS2352 names -- and widening the ARRAY keeps the assertion exactly as
+    // strong while casting nothing that could hide a real type mistake.
     assert.ok(
-      !PLAUSIBLE_DEFAULTS.includes(actual as number),
+      !(PLAUSIBLE_DEFAULTS as readonly unknown[]).includes(actual),
       `${what}: the value is one of the known substituted defaults`,
     );
   }

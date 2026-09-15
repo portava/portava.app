@@ -2184,6 +2184,13 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/discoveryPlaceWriteBoundary.test.ts",
     "artifacts/api-server/src/lib/discoveryServePointReport.ts",
     "artifacts/api-server/src/lib/discoveryLocalMomentum.ts",
+    // ADDED 2026-09-15 by §38. All three are this census's own SUBJECT --
+    // Discovery libraries built by Discovery rows (A14, DC-09) and cited by them --
+    // so the checker's other response, "say they are not what this census grades",
+    // would be false. Watching them is the honest one.
+    "artifacts/api-server/src/lib/discoveryLayoverMode.ts",
+    "artifacts/api-server/src/lib/discoveryLayoverTiming.ts",
+    "artifacts/api-server/src/lib/discoverySequenceFeatures.ts",
     "travel-buddy-standalone/src/hooks/useCommunityDiscovery.ts",
     "artifacts/api-server/src/migrations/2360_discovery_buddy_launch_gate_flag.sql",
     "artifacts/api-server/src/test/discoverySearch.test.ts",
