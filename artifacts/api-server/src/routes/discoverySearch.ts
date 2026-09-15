@@ -2087,14 +2087,31 @@ export async function dispatchSearch(
 
 const FAN_LIMIT = 20;
 
+/**
+ * The 17 buckets, in the exact order of the `settled` array below.
+ *
+ * A bucket that REJECTS is named from here rather than merely counted: "some of
+ * this answer is missing" without saying which part is not a usable answer
+ * either. These strings ride out on `refusal.failedSources`.
+ */
+const FAN_SOURCES = [
+  "travelers", "buddies", "events", "trips", "plans", "places", "hidden_gems",
+  "hashtags", "posts", "circles", "stamps", "activities", "cities", "countries",
+  "languages", "interests", "vibes",
+] as const;
+
 async function searchAll(
   sc: any, q: string, userId: string,
   blockedSet: Set<string> | null, ageRestrictedSet: Set<string> | null,
   globalOffset: number, limit: number,
   ctx?: SearchQueryContext,
-): Promise<{ results: SearchResult[]; hasMore: boolean; nextCursor: string | null }> {
+): Promise<{
+  results: SearchResult[]; hasMore: boolean; nextCursor: string | null;
+  /** Buckets whose read FAILED. Empty on the healthy path. */
+  unreadableSources: string[];
+}> {
   if (blockedSet === null || ageRestrictedSet === null) {
-    return { results: [], hasMore: false, nextCursor: null };
+    return { results: [], hasMore: false, nextCursor: null, unreadableSources: [] };
   }
 
   const settled = await Promise.allSettled([
@@ -2123,9 +2140,24 @@ async function searchAll(
   // searchPlaces already handles its own ordering — re-ranking by title here is still
   // OK for the "all" tab because diversity matters more than proximity when mixing types.
   // upcomingFirst is a no-op for types without startsAt (travelers, places, etc.)
-  const rawBuckets: SearchResult[][] = settled.map((r) => {
-    const items = r.status === "fulfilled" ? r.value : [];
-    return rankCombined(items, q, ctx?.userCity, { upcomingFirst: true });
+  // A REJECTED bucket used to become `[]` right here, and that `[]` then merged
+  // into the answer indistinguishably from a bucket that was read and matched
+  // nothing. `DiscoverySearchReadError` exists precisely so a swallowed
+  // supabase-js read error re-enters the route's catch arm and becomes a
+  // refusal — and `Promise.allSettled` catches it before that arm ever sees it.
+  // So `type=all`, which is the DEFAULT type and what the global search bar
+  // sends, answered `200 { results: [...] }` with a silently missing bucket and
+  // no refusal on it: D11's masquerade, on the route where a user is most
+  // likely to meet it. The names go out on the refusal instead.
+  const unreadableSources: string[] = [];
+  const rawBuckets: SearchResult[][] = settled.map((r, i) => {
+    if (r.status !== "fulfilled") {
+      const source = FAN_SOURCES[i] ?? `bucket_${i}`;
+      logger.warn({ err: r.reason, source }, "discovery/search type=all: source unreadable");
+      unreadableSources.push(source);
+      return [];
+    }
+    return rankCombined(r.value, q, ctx?.userCity, { upcomingFirst: true });
   });
 
   // ── Intent-category promotion ─────────────────────────────────────────────
@@ -2165,7 +2197,7 @@ async function searchAll(
   const page = merged.slice(globalOffset, globalOffset + limit);
   const hasMore = merged.length > globalOffset + limit;
   const nextCursor = hasMore ? encodeCursor(globalOffset + limit) : null;
-  return { results: page, hasMore, nextCursor };
+  return { results: page, hasMore, nextCursor, unreadableSources };
 }
 
 // ── Route handler ─────────────────────────────────────────────────────────────
@@ -2328,8 +2360,30 @@ router.get("/discovery/search", async (req, res) => {
     };
 
     if (type === "all") {
-      const { results, hasMore, nextCursor } = await searchAll(sc, effectiveQ, user.id, blockedSet, ageRestrictedSet, offset, limit, ctx);
-      res.status(200).json({ results, nextCursor, hasMore, query: effectiveQ, type, timeLabel: ctx.timeLabel });
+      const { results, hasMore, nextCursor, unreadableSources } =
+        await searchAll(sc, effectiveQ, user.id, blockedSet, ageRestrictedSet, offset, limit, ctx);
+      const body = { results, nextCursor, hasMore, query: effectiveQ, type, timeLabel: ctx.timeLabel };
+      if (unreadableSources.length > 0) {
+        // "partial" as long as ANY source answered, even when this page happens
+        // to be empty: the buckets that were read are a real result, and their
+        // emptiness is trustworthy. Only a fan-out where every source failed
+        // carries "nothing" — an empty collection that is empty BECAUSE of the
+        // failure, which is what that word means. `failedSources` says which
+        // absences are not evidence of absence.
+        sendDiscoveryRefusal(
+          res,
+          body,
+          discoveryRefusal(
+            "transient_db", "search_sources_unreadable", "GET /discovery/search",
+            unreadableSources.length === FAN_SOURCES.length ? "nothing" : "partial",
+            unreadableSources,
+          ),
+        );
+      } else {
+        res.status(200).json(body);
+      }
+      // Not suppressed on a partial: those items really were served, and
+      // dropping them would under-count exposure — see logServeUnlessRefused.
       logSearchServe(results);
     } else {
       // Fetch limit+1 to detect hasMore without false positives

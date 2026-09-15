@@ -563,6 +563,74 @@ describe("GET /discovery/search", () => {
     assertNoExposure("/discovery/search?type=plans with an unreadable `trips`");
   });
 
+  // ── P3/P4 — the same back door, one level up, on `type=all`.
+  //
+  // P1 above works because `searchPlans` re-raises DiscoverySearchReadError and
+  // the route's catch arm turns it into a refusal. `type=all` does not go
+  // through that arm. `searchAll` fans the 17 types out under
+  // `Promise.allSettled` and then collapses every REJECTED bucket to `[]`:
+  //
+  //     const items = r.status === "fulfilled" ? r.value : [];
+  //
+  // So the named error P1 invented, whose whole purpose is to re-enter the
+  // front door the refusal envelope guards, is caught by allSettled and thrown
+  // away — and `type=all`, which is the DEFAULT type and what the global search
+  // bar actually sends, answers `200 { results: [...] }` with a silently
+  // missing bucket and no refusal on it. The failure is now invisible in the
+  // one place a user is most likely to meet it.
+  //
+  // Coverage is "partial", not "nothing": the other buckets really were read
+  // and really were served, so their items are genuine exposure. `failedSources`
+  // names which ones were not, because "some of this is missing" without saying
+  // which part is not a usable answer either.
+  //
+  // P4 is the control and is as load-bearing as P3: with every table readable,
+  // the same `type=all` request must carry NO refusal. A fix that stamps a
+  // partial refusal on every fan-out response distinguishes nothing.
+  const HASHTAG_ROW = {
+    id: "d11hash0-0000-0000-0000-000000000001",
+    slug: "kopitiam",
+    name: "Kopitiam",
+    usage_count: 5,
+    created_at: "2026-09-01T00:00:00.000Z",
+    is_blocked: false,
+  };
+
+  it("P3 — type=all refuses PARTIAL when a bucket's read fails, instead of a silently short list", async () => {
+    setClient({
+      rows: { trip_plan_items: [PLAN_ROW], hashtags: [HASHTAG_ROW] },
+      errorTables: ["trips"],
+    });
+    const r = await get("/api/discovery/search?q=kopitiam&type=all", true);
+    assert.equal(r.status, 200);
+
+    // The buckets that worked are still served — throwing them away would be
+    // the same corruption in the other direction.
+    assert.ok(
+      r.body.results.some((x: any) => x.type === "hashtags"),
+      "the readable buckets must still be served on a partial refusal",
+    );
+
+    assertRefusal(r.body, {
+      class: "transient_db", code: "search_sources_unreadable", route: "GET /discovery/search",
+      coverage: "partial",
+    }, "/discovery/search?type=all with an unreadable `trips`");
+    assert.ok(
+      Array.isArray(r.body.refusal.failedSources) && r.body.refusal.failedSources.includes("plans"),
+      `failedSources must name the buckets that failed, got ${JSON.stringify(r.body.refusal?.failedSources)}`,
+    );
+  });
+
+  it("P4 — type=all over readable tables carries NO refusal (control)", async () => {
+    setClient({ rows: { trip_plan_items: [PLAN_ROW], trips: [], hashtags: [HASHTAG_ROW] } });
+    const r = await get("/api/discovery/search?q=kopitiam&type=all", true);
+    assert.equal(r.status, 200);
+    assert.equal(
+      r.body.refusal, undefined,
+      "a fan-out where every source answered must NOT be stamped with a refusal",
+    );
+  });
+
   it("P2 — a readable `trips` with no admissible parent carries NO refusal (control)", async () => {
     setClient({ rows: { trip_plan_items: [PLAN_ROW], trips: [] } });
     const r = await get("/api/discovery/search?q=kopitiam&type=plans", true);
