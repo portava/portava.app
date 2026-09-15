@@ -2031,6 +2031,34 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // count read refuses. C14's verdict now rests on what that file does, so a
     // change to it must age this census.
     "travel-buddy-standalone/src/services/discovery.ts",
+    // ── ADDED by the scope-coverage floor after §19 ──────────────────────────
+    //
+    // §19 closed two of §18's four consumer defects and NAMED THE OTHER TWO so
+    // they are not reported as closed. Naming them is citing them, and citing a
+    // file this census does not watch is what dropped coverage below the floor —
+    // the floor working, again, in the same section that fixed the last one.
+    //
+    // `app/map/index.tsx` carries the unfixed defect §19.6 names: a refusal takes
+    // the `ok` branch with `places: []`, clears the pins, and the screen renders
+    // "no places here" for an outage. A row that says a defect is OPEN is aged by
+    // the file being fixed, which is exactly when this census should wake up.
+    "travel-buddy-standalone/app/map/index.tsx",
+    //
+    // The executable half of §19.1. C14's `C` rests on what this suite asserts,
+    // so an edit to it must age the census — the rule this list already applies
+    // to `censusDigitPrefixIds.test.ts` for §15's arithmetic.
+    "travel-buddy-standalone/src/hooks/__tests__/useSearchSuggestions.refusal.component.test.tsx",
+    // And the executable half of §19.2, by the same rule.
+    "travel-buddy-standalone/src/services/__tests__/discovery.refusal.component.test.tsx",
+    //
+    // §17.6's defect is IN this generator, and §17.6's sentences are claims about
+    // what it now produces ("187 requirements, identical on three consecutive
+    // runs"). `censusDumpCompleteness.test.ts` is the pin for the upstream half
+    // of the same defect — the dump this generator reads — and §25 of
+    // census-telegraph showed that pin was itself blind to the shell-pipeline
+    // case. Both are watched so the next change to either ages the claims.
+    "artifacts/api-server/src/scripts/buildDiscoveryLedger.ts",
+    "artifacts/api-server/src/test/censusDumpCompleteness.test.ts",
     //
     // The ledger is watched on the SOURCE-MANIFEST.json precedent above: §17.6's
     // sentences are claims ABOUT this file ("rebuilds to 187 requirements,
