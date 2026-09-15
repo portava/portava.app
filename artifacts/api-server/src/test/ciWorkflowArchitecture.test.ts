@@ -616,10 +616,27 @@ describe("CI architecture — an unexecuted certification is not a pass", () => 
  *
  * WHAT THIS DOES NOT COVER
  * ------------------------
- *   * It cannot observe branch protection. Whether these three are REQUIRED
- *     status checks on `main` is a GitHub setting, not a repository fact, and no
- *     test in this tree can read it. A verdict job that gates nothing is still
- *     green here.
+ *   * It cannot observe branch protection FROM HERE. The tests are offline, so
+ *     no assertion below can tell a verdict that gates `main` from one that gates
+ *     nothing. What this block CAN do — and now does — is pin the string that
+ *     setting is expressed in; see the `name:` assertion below.
+ *
+ *     The setting itself is NOT unreadable, which is worth recording because the
+ *     opposite was assumed. `GET /repos/portava/portava.app/rules/branches/main`
+ *     and `GET /repos/portava/portava.app/rulesets` are both readable by a
+ *     read-only token, and on 2026-09-15 they returned, respectively, `[]` and a
+ *     single ruleset — id 20680634, "bughunt-20260805 protection", enforcement
+ *     `active`, `conditions.ref_name.include = ["refs/heads/bughunt-20260805"]`.
+ *     That ruleset requires exactly these three contexts, and it applies to a
+ *     one-off August branch rather than to `main`. `GET .../branches/main`
+ *     reported `protected: false` with classic protection `enabled: false`, and
+ *     the same token read `protected: true` for `bughunt-20260805`, so the
+ *     `false` is a real read and not a permissions mask.
+ *
+ *     So as of that date the three verdicts gate NOTHING on `main`: the jobs are
+ *     correct, complete and wired, and the required-check setting that would make
+ *     them load-bearing points at the wrong ref. Moving it is a GitHub settings
+ *     change, not a code change, and nothing in this tree can make it.
  *   * It does not re-prove the classifier behaviour for `live-db-verdict`; that
  *     is executed as a real process above.
  *   * It does not execute `ci-verdict`'s or `unwired-verdict`'s inline bash.
@@ -657,13 +674,29 @@ describe("CI architecture — each workflow's verdict covers every job in it", (
 
   const rx = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+  /**
+   * `context` is the CHECK RUN NAME, which is the job's `name:` value — NOT its
+   * job id. A required status check is matched by that string and by nothing
+   * else, so it is the load-bearing identifier of the three, and these literals
+   * are the exact contexts ruleset 20680634 names (verified byte-for-byte against
+   * the REST response on 2026-09-15; the separator is U+00B7 MIDDLE DOT).
+   */
   const VERDICTS = [
-    { file: "ci.yml", src: ci, id: "ci-verdict" },
-    { file: "live-db.yml", src: liveDb, id: "live-db-verdict" },
-    { file: "unwired-checks.yml", src: unwired, id: "unwired-verdict" },
+    {
+      file: "ci.yml", src: ci, id: "ci-verdict",
+      context: "CI \u00b7 verdict (skipped or cancelled is not a pass)",
+    },
+    {
+      file: "live-db.yml", src: liveDb, id: "live-db-verdict",
+      context: "live DB \u00b7 verdict (cancelled or skipped is not a pass)",
+    },
+    {
+      file: "unwired-checks.yml", src: unwired, id: "unwired-verdict",
+      context: "unwired \u00b7 verdict (skipped or cancelled is not a pass)",
+    },
   ] as const;
 
-  for (const { file, src, id } of VERDICTS) {
+  for (const { file, src, id, context } of VERDICTS) {
     describe(`${file} · ${id}`, () => {
       const block = jobBlock(src, id);
       const steps = block.slice(block.indexOf("steps:"));
@@ -677,6 +710,37 @@ describe("CI architecture — each workflow's verdict covers every job in it", (
             "jobs that need it, and GitHub scores a skipped required status " +
             "check as SUCCESSFUL. Renaming it also silently unbinds it from " +
             "branch protection, which matches required checks by name.",
+        );
+      });
+
+      it("publishes under the exact check-run name a required check is matched by", () => {
+        // THE GAP THIS CLOSES, found by mutation on 2026-09-15. Every other
+        // assertion in this block keys off the JOB ID. Branch protection does
+        // not: it matches a required status check against the CHECK RUN NAME,
+        // which GitHub takes from the job's `name:`. The two are unrelated
+        // strings here — job id `ci-verdict` publishes as
+        // "CI · verdict (skipped or cancelled is not a pass)".
+        //
+        // So rewriting `name:` while leaving the job id alone silently unbinds
+        // the job from every ruleset that requires it, and a mutation doing
+        // exactly that passed all 36 assertions. The check simply disappears
+        // from the branch's required set — and a required check that no longer
+        // reports is not red, it is ABSENT, which is the same
+        // "nothing ran, nothing is red" failure the verdict jobs exist to catch,
+        // one level up.
+        //
+        // This is pinned to a literal rather than derived, because the whole
+        // point is that the string is shared with a setting stored OUTSIDE the
+        // repository. A derived assertion would follow the rename and prove
+        // nothing. Changing `name:` must therefore be a deliberate two-place
+        // edit: this literal, and the required-checks setting.
+        assert.match(
+          block, new RegExp(`^ {4}name: ${rx(context)}$`, "m"),
+          `${id}'s \`name:\` is not exactly ${JSON.stringify(context)}. That string — not ` +
+            `the job id '${id}' — is the context a required status check is matched by, so ` +
+            "changing it unbinds the job from branch protection without turning anything " +
+            "red. If the rename is intended, update the required-checks setting in the same " +
+            "change and then update this literal.",
         );
       });
 
