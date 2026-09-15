@@ -3539,3 +3539,84 @@ it is the difference between a number and a guard.
 
 **None**, seventh consecutive section, and no row in this census grades any of
 the ten sites above.
+
+---
+
+## §25 — All of them, read; and the number was never 33
+
+§24 said ten of the 33 had been read and 23 had not. All are now read, and the
+first thing that fell out is that there were never 33 of them.
+
+### 25.1 Thirty-one, not thirty-three
+
+The measurement walks every function-like node and, for each, compares the
+error branch's return against the other returns in that scope. An arrow
+function nested inside a route handler is visited TWICE — once as itself and
+once as part of its enclosing function — so a site inside one is counted twice.
+`routes/tripDecisions.ts:125#return` and `routes/tripStructure.ts:100#failed`
+are each one site reported two ways.
+
+**31 distinct sites.** §23.1's "37" and §24's "33" were both the tool's row
+count, not a site count, and this is the third arithmetic correction this
+sequence of sections has had to make about its own numbers. That is what a
+measurement with no guard behind it does: nothing re-derives it, so each pass
+inherits the last one's arithmetic.
+
+### 25.2 What all 31 are, measured rather than remembered
+
+Classified by what the error branch actually contains — an assignment or push
+to a name declared outside the function, a `logger`/`log` call, or a comment
+above it naming the posture — rather than by reading impressions:
+
+| class | n | what it means |
+| --- | --- | --- |
+| CARRIED | 3 | the failure is recorded in a variable the RESPONSE reports. The caller is told. |
+| LOGGED | 9 | a `logger.warn` fires. An operator can see it; the caller cannot. |
+| COMMENTED | 2 | a comment states the posture, no log. A reader can see it; nobody at runtime can. |
+| **SILENT** | **17** | **no assignment, no log, no comment. A failed read leaves no trace anywhere.** |
+
+**Not one of the 31 is a fail-OPEN** — every one returns the restrictive
+answer, which is the opposite of the fourteen this file carried. The finding is
+not danger; it is INVISIBILITY, and it is concentrated: `GeoZoneService` (3),
+`LiveForYouService` (3), `MediaViewRequestService` (2),
+`duplicateDetection` (2), `socialIdentity` (2), plus `MediaActionResolver`,
+`MediaFeedRankingService`, `canonicalLocations`, `stamps/criteria/index` and
+`tripReadiness.safeSelect`.
+
+`canonicalLocations.ts:514#contains.error` is the one worth naming on its own: it refuses only
+when BOTH of its two reads fail (`if (prefix.error && contains.error)`), so a
+single-source failure silently halves the candidate pool and the caller gets a
+short list that looks complete. That is `searchAll`'s defect in miniature,
+inside a helper.
+
+### 25.3 What this section does NOT do
+
+It does not fix them, and it is not entitled to. They are Location, Media,
+Wall, Input-Intelligence and Trips surfaces; a census does not grade another
+census's code, and seventeen edits across ten files in five owners' territory,
+made by the Discovery pass because it happened to run the grep, is how a lane
+acquires work nobody asked it for and nobody reviews. The list is here, by
+file and line, so each owner can act on it — and "recorded" is not "fixed",
+which this section says rather than letting a table read as a burn-down.
+
+The deeper gap is unchanged and is not a logging gap: nine sites LOG and still
+do not tell the caller, which is exactly what §23.2 fixed in `searchCities`.
+Adding a `logger.warn` to the seventeen would move them into that column and
+close nothing that D11 is about.
+
+### 25.4 What would turn this red
+
+- **Still nothing runs the measurement.** Three sections have now quoted a
+  number from it and two of those numbers were wrong. A guard would have
+  re-derived it each time; a script in a scratch directory cannot.
+- **The classifier is textual.** "LOGGED" means a `logger.` or `log.` call
+  appears in the branch; a site that logs through another helper reads as
+  SILENT, and a site that logs something unrelated reads as LOGGED. Two of the
+  four columns are evidence; two are heuristics.
+- **The 31 are `[]` and `{}` only.** `null`, `false` and `0` were excluded as
+  deny/absent sentinels — a judgement that dropped the count from 171. Nothing
+  has re-examined the 140 that exclusion removed.
+
+### 25.5 Row moves
+
+**None**, eighth consecutive section.
