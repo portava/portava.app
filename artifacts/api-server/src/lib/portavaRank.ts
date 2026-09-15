@@ -353,7 +353,7 @@ export function scoreCandidate<T extends RankCandidate>(
   const viewerCity = (ctx.city ?? '').toLowerCase();
   const cityHit = !!viewerCity && (c.city ?? '').toLowerCase().includes(viewerCity);
   f.cityMatch = cityHit ? w.cityMatch : 0;
-  f.neighborhoodMatch = cityHit && c.neighborhood ? w.neighborhoodMatch : 0;
+  f.neighborhoodMatch = cityHit && neighborhoodMatches(ctx.neighborhood, c.neighborhood) ? w.neighborhoodMatch : 0;
 
   f.distance = w.distance * distanceScore(c.distanceKm);
   f.actionability = w.actionability * actionabilityScore(c.startsAt, nowMs);
@@ -626,6 +626,130 @@ export function repetitionPenalty(
   if (c.authorId && r.authorId === c.authorId) penalty += pen.author;      // creator
   if (r.kind === c.kind) penalty += pen.kind;                              // content type
   if (c.placeId && r.placeId === c.placeId) penalty += pen.place;          // place
-  if (c.neighborhood && r.neighborhood === c.neighborhood) penalty += pen.geo; // geography
+  if (neighborhoodMatches(c.neighborhood, r.neighborhood)) penalty += pen.geo;   // geography
   return penalty;
+}
+
+// ── DV-54, the geography KEY: neighborhoodMatch is a comparison, not a label ──
+//
+// Appended below the last line of this file rather than edited into the blocks
+// above, for the reason lib/discoveryPde.ts gives at its own merged block:
+// anchored citations in docs/architecture and docs/discovery point INTO this
+// file by line, and inserting a line silently repoints somebody else's
+// evidence. Two lines changed in place above (`f.neighborhoodMatch` in
+// `scoreCandidate`, and the geography clause of `repetitionPenalty`); nothing
+// moved.
+//
+// WHAT THIS FEATURE USED TO COMPUTE, AND WHY IT WAS WRONG:
+//
+//     f.neighborhoodMatch = cityHit && c.neighborhood ? w.neighborhoodMatch : 0
+//
+// `cityHit` is true for every candidate on any surface that stamps one city on
+// the whole request — which is exactly what lib/discoveryPde.ts does
+// (`city: viewer.city` on every candidate). The remaining term is `c.neighborhood`
+// being TRUTHY. So the feature paid 0.2 for CARRYING A LABEL. That is a
+// data-completeness bonus wearing the name of a relevance match, and it is not
+// even evenly available: an OSM place with an `addr:suburb` tag earns it and a
+// curated row whose `places.neighborhood` column was mapped onto `address`
+// cannot, so the ranker quietly preferred one SOURCE over another.
+//
+// WHAT IT COMPUTES NOW: the candidate's neighbourhood label compared against
+// the VIEWER's, both normalised. Presence earns nothing — a candidate with a
+// label and no viewer neighbourhood to compare it to scores exactly 0, which is
+// the anti-regression `src/test/discoveryDiversityAxes.test.ts` pins.
+//
+// `cityHit` IS KEPT AS A GUARD, deliberately. Neighbourhood names are not
+// globally unique — "Chinatown", "Old Town", "Downtown" and "Centro" name a
+// different place in every city that has one — and without the city term a
+// viewer whose neighbourhood is Chinatown/San Francisco would earn credit on
+// Chinatown/Bangkok. The weight's own comment has said "stacked on top of
+// cityMatch" since v1; this makes that stacking load-bearing rather than
+// decorative.
+//
+// THE WEIGHT STAYS 0.2, AND HERE IS WHY THAT IS REASONABLE NOW THAT IT MEANS
+// RELEVANCE. It was never argued when the feature meant presence — it was a v1
+// hand-tuned number like the rest of DEFAULT_WEIGHTS. Read against its
+// neighbours it sits where a geography REFINEMENT belongs:
+//   • below `cityMatch` 0.45 — the coarse geo signal must dominate the fine
+//     one, so being in the right city is worth more than being in the right
+//     part of it, and no neighbourhood match can rescue a wrong-city candidate;
+//   • below `categoryAffinity` 0.4 and `interestTag` 0.3 — ROADMAP step 7's
+//     "taste as the spine": a place in the viewer's own neighbourhood must not
+//     outrank one their taste prefers, on geography alone;
+//   • above `verifiedBonus` 0.15 and `LOCAL_MOMENTUM_MAX_CONTRIBUTION` 0.15 —
+//     a viewer-specific geo match is a stronger claim than a global modifier.
+// So it breaks ties between candidates the viewer's taste rates alike and moves
+// nothing that taste has already separated. That is the intended altitude, and
+// test N6 in src/test/discoveryDiversityAxes.test.ts VERIFIES the effect rather
+// than asserting it: two otherwise identical candidates, one matching, and the
+// matching one is ordered first — with the same fixture ordered the other way
+// when neither matches.
+//
+// This is an ordinary implementation choice with a recorded derivation, not an
+// owner decision. If the funnel ever contradicts it, v2's fitted weights
+// (see this file's header) replace it along with everything else here.
+
+/**
+ * Fold a geography label to a comparable key: trimmed, case-folded,
+ * diacritic-stripped, inner whitespace collapsed.
+ *
+ * "Le Marais", "le marais", "LE  MARAIS " and "Le Marais" written with a
+ * decomposed é elsewhere in the string all reduce to one key, because the two
+ * sides of this comparison come from DIFFERENT PRODUCERS — an OSM
+ * `addr:suburb` tag typed by a mapper, and a `places.neighborhood` column typed
+ * by a curator — and exact string equality between two humans' spellings is a
+ * comparison that quietly never fires.
+ *
+ * Returns '' for anything that is not a usable label (null, undefined,
+ * whitespace, punctuation-only). Callers treat '' as "no key", never as a key
+ * that matches another ''.
+ */
+export function normaliseGeoLabel(v: string | null | undefined): string {
+  if (typeof v !== 'string') return '';
+  return v
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * True when two geography labels name the same neighbourhood.
+ *
+ * ABSENT IS NEVER A MATCH. Two candidates with no label do not share a
+ * neighbourhood, and a candidate with a label does not match a viewer who has
+ * none — that guard is the whole difference between this feature and the
+ * presence bonus it replaces, and it is the same guard `repetitionPenalty`
+ * needs so that a page of unlabelled candidates does not penalise itself
+ * through `null === null`.
+ */
+export function neighborhoodMatches(
+  a: string | null | undefined, b: string | null | undefined,
+): boolean {
+  const ka = normaliseGeoLabel(a);
+  if (!ka) return false;
+  return ka === normaliseGeoLabel(b);
+}
+
+/**
+ * The viewer half of the geography comparison — declaration-merged onto
+ * `ViewerContext` above for the line-stability reason stated at the top of this
+ * block.
+ */
+export interface ViewerContext {
+  /**
+   * The viewer's own neighbourhood label, in whatever spelling its producer
+   * used — `neighborhoodMatches` normalises both sides, so no caller has to.
+   *
+   * ABSENT ⇒ `f.neighborhoodMatch` is 0 for EVERY candidate, labelled or not.
+   * That is the correct default and also today's production behaviour on every
+   * surface but Discovery: a surface that cannot say where the viewer is has
+   * not thereby learned that labelled places are better.
+   *
+   * Discovery supplies it from the viewer's own recent place-view history —
+   * see `loadViewerNeighborhood` at the end of lib/discoveryPde.ts, which says
+   * exactly which rows it derives from and what it cannot see.
+   */
+  neighborhood?: string | null;
 }
