@@ -46,7 +46,7 @@ import {
   discoveryRefusal,
   sendDiscoveryRefusal,
   logServeUnlessRefused, classifyRefusal, upstreamCall, UpstreamUnavailableError,
-} from "../lib/discoveryRefusal.js";
+} from "../lib/discoveryRefusal.js";  import { discoveryLayoverGate, serveUnderLayoverGate } from "../lib/discoveryLayoverMode.js";  // A14 / census-layover §25 L269 — Discovery's Layover mode. Declared on this line, not its own, because docs/ anchors routes/discovery.ts up to :3477 and check:doc-citations re-reads every one of them.
 import { resolveDiscoveryEngineMode } from "../lib/discoveryEngineMode.js";
 // The PDE ranking pipeline (D5=B, ranking half). portavaRank, the
 // DiscoveryRankingService re-rank and the assembly analytics all moved behind
@@ -3110,9 +3110,9 @@ router.get("/discovery/community", async (req, res) => {
         lng:       row.lng != null ? parseFloat(row.lng) : null,
       };
     });
-
+    const layoverGate = items.length > 0 ? await discoveryLayoverGate(sc, await resolveCommunityViewer(), items, "GET /discovery/community") : null;  if (layoverGate && !layoverGate.ok) { sendDiscoveryRefusal(res, { items: [], city, total: 0 }, layoverGate.refusal); return; }  const servedItems = layoverGate ? serveUnderLayoverGate(layoverGate, items) : items;  // A14 — only the certified action universe may be shown; a FAILED read refuses instead of shipping a shorter list. See lib/discoveryLayoverMode.ts.
     // Batch-fetch saved state and vote/review aggregates in parallel (both non-fatal)
-    const placeIds = items.map((i) => i.id);
+    const placeIds = servedItems.map((i) => i.id);
     const savedPlaceIds = new Set<string>();
     // Identity comes from resolveCommunityViewer above — this block used to own
     // the route's single auth.getUser, and the serve log below reads the same
@@ -3145,7 +3145,7 @@ router.get("/discovery/community", async (req, res) => {
     ]);
 
     res.json({
-      items: items.map((i) => {
+      items: servedItems.map((i) => {
         const a = voteAgg.get(i.id);
         return {
           ...i,
@@ -3154,13 +3154,13 @@ router.get("/discovery/community", async (req, res) => {
         };
       }),
       city,
-      total: items.length,
+      total: servedItems.length,
       ageFilterMeta: {
         ageFilter:         ageFilterComm,
         callerDobMissing:  ageFilterComm === "open_to_me" ? commCallerDobMissing : false,
         callerAgeState:    ageFilterComm === "open_to_me" ? describeCallerAgeState(commCallerAgeState) : null,
         bounds:            communityAgeBounds(),
-      },
+      }, ...(layoverGate?.summary ? { layover: layoverGate.summary } : {}),
     });
 
     // Serve point 10 — ruling D4=C: the baseline must describe everything users
@@ -3175,7 +3175,7 @@ router.get("/discovery/community", async (req, res) => {
     logServeUnlessRefused(res, getServiceClient(), {
       userId:     communityViewerId ?? "",
       servePoint: DiscoveryServePoint.COMMUNITY,
-      items:      items.map((i) => ({ id: i.id })),
+      items:      servedItems.map((i) => ({ id: i.id })),
       route:      "/discovery/community",
       context:    { city, ageFilter: ageFilterComm },
     });
