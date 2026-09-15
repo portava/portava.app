@@ -212,7 +212,7 @@ construction that is inert in production; it counts as built, consistent with ev
 | CMP-03 | Map `:162` Compass Map Mode: 3–5 best next moves with a WHY panel | **C** | M103/M105 `C` (`compassMapModel.ts:67-68, 212-223`); server surface `GET /compass/recommendations` (`routes/compass.ts:3164`). |
 | CW-01 | Wall `:146` Compass references canonical objects in responses/actions | **C** | `compass/CompassUiBlocks.ts:7-15` — every block reference validated against the turn's tool results; unknown ids dropped. |
 | CW-02 | Wall `:143` Ask Compass from a place-linked post | **C (gated)** | W85 `C`; `wall_compass_handoff_enabled` is **false** in production (2026-09-04). |
-| CTR-01 | Trust §35 Consume Trust through the canonical read (`getDisplayTrustScore`) | **W** | census-trust A17: four direct reads in Compass. After this pass **three** remain — `CompassProfileService.ts:86-89` (→ `null` when absent, `:251-252`, never substituted), `CompassTools.ts:855-858` (floor, now fail-closed), `CompassActiveUserRewardEngine.ts:188-199` (`trust_caps`). The fourth (`CompassNotificationEngine.ts` at what was then line 450 — prose, not a pointer, because the row is about the read that is GONE) read a value the column cannot hold and is replaced (§6 F2); what stands there now is `artifacts/api-server/src/compass/CompassNotificationEngine.ts:549#trustScore:             null,`, which supplies no trust value at all. |
+| CTR-01 | Trust §35 Consume Trust through the canonical read (`getDisplayTrustScore`) | **W** | census-trust A17: four direct reads in Compass. After this pass **three** remain — `CompassProfileService.ts:86-89` (→ `null` when absent, `:251-252`, never substituted), `CompassTools.ts:855-858` (floor, now fail-closed), `CompassActiveUserRewardEngine.ts:188-199` (`trust_caps`). The fourth (`CompassNotificationEngine.ts` at what was then line 450 — prose, not a pointer, because the row is about the read that is GONE) read a value the column cannot hold and is replaced (§6 F2); what stands there now is `artifacts/api-server/src/compass/CompassNotificationEngine.ts:586#trustScore:             null,`, which supplies no trust value at all. |
 | CTR-02 | Trust TABLE 22: permitted trust summary for the Compass person card | **C** | census-trust A14 `C`; served by CP-02's endpoint. `confidence` is wrong there (P50) and is Passport's (#467). |
 | CTR-03 | Sensing `:182-183` Compass never scores a person from passive movement (SX-47/48) | **C ⌀** | No Compass module reads `location_snapshots`/`journey_observations` (`grep` over `compass/` → nothing); the Graph reads `memories`, `user_stamps`, `trips`, `events` (`CompassGraphEngine.ts:9-12`). |
 
@@ -315,7 +315,7 @@ rather than a feature. No flag was added and **no migration was written or appli
 | # | Fix | file:line | Closes |
 |---|---|---|---|
 | F1 | Social trust floor fails closed on an unreadable `trust_profiles`; absent row unchanged | `compass/CompassTools.ts:844-865` | CC-07; CTG-09 (T418); CTR-01 (one of A17's four reads made safe) |
-| F2 | Sender-suspension read moved from the dead `trust_profiles.public_level` compare to `user_account_states` (banned/suspended, `expires_at` honoured), `error` bound and logged | `compass/CompassNotificationEngine.ts:443-483` | CC-09; census-trust A17 dead check |
+| F2 | Sender-suspension read moved from the dead `trust_profiles.public_level` compare to `user_account_states` (banned/suspended, `expires_at` honoured), `error` bound and logged | `compass/CompassNotificationEngine.ts:505-541` (was `:443-483`; see §21) | CC-09; census-trust A17 dead check |
 | F3 | `refreshHiddenUsers` with no snapshot and a failed read now throws (tool answers "failed") instead of using an empty hidden set | `compass/CompassTools.ts:277-318` | CC-08; CTG-02 (T219/T220 Compass leg) |
 | F4 | A Live `unsafe_density` claim is a hard exclusion for every viewer (`unsafe_density_safety`), gated behind `COMPASS_LIVE_CONSTRAINTS_ENABLED` | `compass/CompassLiveConstraints.ts:112-130, 406-415` | CX-01 (Sensing `docs/specs/Portava_Sensing_World_Experience_Intelligence_Upgrade_Architecture_v1.txt:129` SX-09, Compass half) |
 | F5 | Header count corrected (eight → eleven tools) | `compass/CompassTools.ts:4-5` | CC-05 |
@@ -2738,3 +2738,82 @@ results, at which point CR-02 must be re-derived against all nine error-returnin
 left at C on the route's evidence.
 
 `head_commit` is NOT re-declared. This section opened one journey and graded nothing.
+
+---
+
+## §21 — CC-09's `C` was resting on a read that failed open
+
+Two reads in `CompassNotificationEngine.evaluateNotification` bound their errors,
+logged what was about to happen, and then did it. Neither is new to this branch;
+both were found by sweeping the tree for the shape
+`scripts/checkUncheckedSupabaseReads.ts` names in its own header as the class it
+cannot see — an error observed and then discarded by falling through.
+
+### 21.1 The suspension read, and what F2 recorded
+
+§6 F2 records the sender-suspension read as CLOSED, with the closing evidence
+*"`error` bound and logged"*. Binding and logging is how this defect is FOUND. It
+is not how it is fixed. At HEAD before this section:
+
+```
+if (acctErr) {
+  console.warn("… push is being evaluated WITHOUT suspension suppression", …);
+} else {
+  senderSuspended = …;
+}
+```
+
+On a read error `senderSuspended` stayed at its initial `false`, and the synthetic
+item handed to `runSafetyFilter` therefore asserted, as a fact, that the sender is
+in good standing. **CC-09 says "A suspended sender is suppressed through
+safety-filter parity."** That held on the healthy path and failed on the outage
+path, which is where it matters — a suspension is a safety decision and an
+unreadable state table is not a clean record.
+
+### 21.2 The block read beside it
+
+The same function's `blocks` read did the same thing one step earlier, against a
+contract stated in its own comment eighteen lines above: *"A blocked sender must
+never reach the recipient via push — regardless of level, quiet hours, or
+category."* It bound both errors, logged *"push is being delivered WITHOUT block
+suppression"*, and delivered it. The comment beside the read even explains why the
+errors were bound — *"without binding these, a schema/query error delivers the
+push and leaves no trace that the check did not run"* — so the site knew the
+consequence, recorded it, and shipped it.
+
+Both now WITHHOLD the notification, on the rejected-read path and the thrown path
+alike. The two paths are fixed together deliberately: leaving them to disagree
+would mean the gate held or not depending on whether PostgREST reported the
+failure or threw it.
+
+### 21.3 Row moves
+
+**None.** CC-09 stays `C`, and saying why is the point of this section.
+
+| **ID** | **was** | **now** | why |
+| --- | --- | --- | --- |
+| CC-09 | **C** | **C** — no move, basis corrected | The row was already `C` and is left there. But its `C` was OPTIMISTIC: it described the healthy path and was false whenever the state read failed. A stricter reading would have had it at `W` until this section, and a reader who takes that view is not wrong. It is not moved down-and-back in one commit because that is churn, not measurement — what changed is the evidence, and it is stated here rather than silently upgraded. |
+
+`suppressionReason` distinguishes the two outcomes on purpose —
+`account_state_unknown:` and `block_state_unknown:` rather than the reasons a real
+suspension or a real block write. `logDecision` puts that string in the ledger,
+and "we could not check" must not be readable later as a moderation fact about a
+person. That distinction is asserted by a test, added because a mutation that
+collapsed the two reasons SURVIVED the first version of the suite.
+
+### 21.4 WHAT WOULD TURN THIS RED
+
+- **The suppression being read as a delivery failure.** These pushes are now
+  withheld during an outage. That is the correct answer for a safety gate and it
+  is still a silent non-delivery; nothing here tells the sender or the recipient
+  that a notification was withheld, and nothing retries.
+- **A third read in the same function.** The sweep that found these two covers
+  exclusion tables (`blocks`, `user_mutes`, `post_hides`). A gate that moves to a
+  table not in that set is invisible to it.
+- **census-trust A17's citation into this file is already dead**, and that is
+  trust's to fix rather than this census's: A17 names
+  `compass/CompassNotificationEngine.ts` (at two line numbers that today land on
+  this section's own comment text, so they are not repeated as a citation) among
+  "eleven direct `trust_profiles`/`trust_caps` reads", and `grep -c` for either
+  table in this file returns **0** — F2 replaced that compare, and the row's count has been one
+  too high since. The verdict stays `W` either way; the number does not.

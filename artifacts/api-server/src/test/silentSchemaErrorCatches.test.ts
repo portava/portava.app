@@ -343,10 +343,18 @@ const FIXED_SITES: Array<{ file: string; markers: string[]; reason: string }> = 
   },
   {
     file: "compass/CompassNotificationEngine.ts",
-    markers: ["push is being delivered WITHOUT block suppression"],
+    markers: [
+      "push SUPPRESSED (cannot establish the block relationship)",
+      "block_state_unknown:",
+    ],
     reason:
       "maybeSingle() returns null both for 'no block row' and for a rejected query, against a gate whose stated contract is " +
-      "that a blocked sender must never reach the recipient via push.",
+      "that a blocked sender must never reach the recipient via push. THE MARKER MOVED BECAUSE THE SITE GOT STRONGER: the old " +
+      "one pinned a CONFESSION — the site bound its errors, logged that the push was going out unsuppressed, and sent it. It " +
+      "now withholds the notification on both the rejected-read and the thrown path. The two markers pin the refusal itself: " +
+      "the new log line, and the ledger reason that keeps 'we could not check' distinguishable from 'this person is blocked'. " +
+      "The old marker was retired only after it was found still SATISFIED — by a code comment quoting it, which is a guard " +
+      "green on a quotation rather than on a diagnostic.",
   },
   {
     file: "lib/mediaAccess.ts",
