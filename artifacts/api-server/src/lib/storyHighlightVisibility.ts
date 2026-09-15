@@ -53,10 +53,48 @@
  * FAIL CLOSED. An unrecognised or null visibility is refused, never defaulted
  * to public. PURE: no DB access, decidable from the row.
  *
- * This module does not decide what SHOULD happen to the refused rungs — that
- * is the owner's call (add matching Highlight audiences, restrict promotion to
- * the faithful rungs, or snapshot an explicit viewer ACL onto the Highlight).
- * It makes sure the wrong thing cannot happen while that is decided.
+ * STORY_HIGHLIGHT_VISIBILITY — RESOLVED 2026-09-15. This paragraph used to end
+ * "that is the owner's call"; the call has now been made and it is option 2 of
+ * the three the blocker ledger listed: RESTRICT PROMOTION TO THE FAITHFUL
+ * RUNGS. The promotable set is exactly { public, circle_only } and the refusal
+ * is the intended behaviour, not a placeholder.
+ *
+ * WHY, on the evidence rather than on preference:
+ *
+ *   1. NO SPEC DESCRIBES THIS PROMOTION AT ALL. The Highlights/Memories spec
+ *      lists "an Instagram Stories clone" under Non-goals and contains no Story
+ *      object; the Wall spec's Stories row is a layout statement that says
+ *      nothing about audience. A rule cannot be read out of silence.
+ *   2. THE SPECS ARE NOT SILENT ON THE SHAPE, AND THE SHAPE DECIDES IT. A
+ *      Highlight's audience is supplied EXPLICITLY at publish time and backed
+ *      by a policy row — `publish(highlightId, audience)`, `audience_policy_id`,
+ *      `memory_visibility_policies`, "Publishing is always a separate
+ *      projection decision", "Public derivatives live behind explicit
+ *      publication policy". An audience silently INHERITED from another object
+ *      is what that model exists to prevent, so "map to the nearest rung" is
+ *      ruled out on the spec's own terms.
+ *   3. EVERY AVAILABLE MAPPING WIDENS. The four refused rungs have no target
+ *      that admits exactly the Story's viewers; each candidate admits strictly
+ *      more people than the owner chose. trip_crew is the sharp case and is
+ *      documented above.
+ *   4. THE COSTS ARE NOT SYMMETRIC. Refusing costs a capability, and a
+ *      capability can be added later. Mapping wrongly costs retroactive
+ *      exposure of content already published, which cannot be taken back.
+ *
+ * WHAT WOULD REOPEN IT — and this is a build, not a re-ruling. The spec's own
+ * VisibilityClass already contains the two rungs `highlights` lacks,
+ * SELECTED_PEOPLE and TRIP_CREW. Adding them (a single-trip audience carrying
+ * `stories.trip_id`, and an allow/hide ACL) would make close_friends,
+ * friends_only, custom and trip_crew faithfully promotable. Until those exist
+ * in the TABLE and in RLS, the refusal stands. A snapshot ACL frozen at
+ * promotion time was considered and rejected: it does not shrink when the owner
+ * later removes someone, so it is not widening on day one and is widening by
+ * day thirty.
+ *
+ * The ruling is pinned by src/test/storyHighlightVisibility.test.ts's
+ * "RULING: `trip_crew` may never map to `trip_only`" case, which asserts the
+ * SUBSTANCE rather than the promotable set — a set can be widened by editing
+ * one expectation, and this one cannot.
  */
 import type { HighlightVisibility } from "./highlightPermissions.js";
 

@@ -120,7 +120,7 @@ zone covering the viewport, Crowd Flow refuses rather than approximating.
 | `SENSING_AUTH_POSTURE` | `2481` | OWNER | No | Its CHECK constrains `issuance_class` to `authenticated_profile`. Under Option B the file is never run |
 | `MEDIA_CANONICAL_FLAG` | `2470` | OWNER | No | `media_canonical_enabled` is TRUE in production while the columns are absent — the condition that caused three weeks of swallowed write loss |
 | `LOCATION_PRECISION_DEFAULT` | *nothing* | OWNER | n/a | `2338` defaults to a no-op on purpose, so applying it does **not** pre-empt the product choice |
-| `STORY_HIGHLIGHT_VISIBILITY` | *nothing in this band* | OWNER | n/a | **Restated 2026-09-08 and it is not the flag.** `2339` gates feed bounding only, behind a FALSE flag. The unbound decision is what save-to-highlight does with the Story audiences a Highlight cannot represent — see below |
+| `STORY_HIGHLIGHT_VISIBILITY` | *nothing in this band* | OWNER | n/a | **RULED 2026-09-15 — option 1: promotion is restricted to the faithful rungs, `{ public, circle_only }`, and the 409 on the other four is intended.** No spec describes Story -> Highlight promotion at all (an "Instagram Stories clone" is a stated Non-goal), but the specs ARE determinate on the shape — a Highlight's audience is supplied explicitly at publish time and backed by a policy row, so it is never inherited. Every available mapping widens; `trip_crew` -> `trip_only` most sharply. No code changed: the ruling makes the existing refusal intended rather than provisional. Reopening it is a BUILD (add SELECTED_PEOPLE and a single-trip TRIP_CREW rung), not a re-ruling — see below |
 | Layover L50 — what BLOCKED means on screen | — | OWNER | No | Whether an unsafe recommendation is hidden, greyed, or shown with a warning |
 | `EVENT_START_TRANSITION` | `2600` (**not applied to production**) | **OWNER** | Yes, safely | Classified 2026-09-08 — see below |
 | `MAP_CANCELLED_TRIP_VISIBILITY` | *nothing* | **OWNER** | Yes, safely | Classified 2026-09-08 — see below |
@@ -549,7 +549,68 @@ Today the code refuses those four rungs with `409 not_promotable` and a stable
    owner's later list edits — a product statement, not a bug, and one that has
    to be chosen rather than inherited.
 
-**Not decided here.** Everything that does not depend on the answer is built.
+**DECIDED 2026-09-15 — option 1, and the decision is a ruling rather than a
+deferral.** The line above read *"Not decided here"* and is superseded; the
+analysis it sits under is unchanged and is what the ruling rests on.
+
+**THE RULING: promotion is restricted to the faithful rungs.** The promotable
+set is exactly `{ public, circle_only }`, and the `409 not_promotable` on the
+other four is now the INTENDED behaviour rather than a holding position. Nothing
+in the code changes — which is the point: the ruling costs no migration, widens
+nobody's audience, and can be reversed by building, not by re-arguing.
+
+Why option 1 and not 2 or 3, on evidence rather than preference:
+
+1. **No spec describes this promotion at all.** The Highlights/Memories spec
+   lists *"Building an Instagram Stories clone"* under **Non-goals** and contains
+   no Story object; the Wall spec's Stories row is a layout statement that says
+   nothing about audience. A rule cannot be read out of that silence, and
+   inventing one would be the worse error.
+2. **The specs ARE determinate on the SHAPE, and the shape settles it.** A
+   Highlight's audience is supplied explicitly at publish time and backed by a
+   policy row — `publish(highlightId, audience)`, `audience_policy_id`,
+   `memory_visibility_policies`, *"Publishing is always a separate projection
+   decision"*, *"Public derivatives live behind explicit publication policy"*. An
+   audience silently INHERITED from another object is exactly what that model
+   exists to prevent, so "map to the nearest rung" is excluded on the spec's own
+   terms — before any privacy argument is made.
+3. **Every available mapping widens**, and the table above says by how much.
+4. **The costs are not symmetric.** Refusing costs a capability, and a capability
+   can be added later. Mapping wrongly costs retroactive exposure of content
+   already published, which cannot be taken back.
+
+**Option 3 was considered and rejected on its own merits, not by default.** A
+viewer ACL snapshotted at promotion time is faithful on day one and stops
+tracking the owner's later edits — so somebody the owner has since removed from
+their close-friends list keeps seeing the Highlight. It is not widening at
+promotion and it *becomes* widening afterwards, which is the harder failure to
+notice.
+
+**Option 2 is the correct build-out when promotion for all six rungs is wanted,
+and it is a BUILD, not a re-ruling.** The spec's own `VisibilityClass` already
+names the two rungs `highlights` lacks — `SELECTED_PEOPLE` and `TRIP_CREW`.
+Adding a single-trip audience carrying `stories.trip_id`, plus an allow/hide ACL,
+to the TABLE and to RLS makes `close_friends`, `friends_only`, `custom` and
+`trip_crew` faithfully promotable. **The one thing that build must not do is
+re-use the existing `trip_only` rung for `trip_crew`** — that is the widening
+this section is about, and it must get a new single-trip rung of its own. The
+table and RLS have to reach production before any writer names the new columns.
+
+**What pins the ruling.** `src/test/storyHighlightVisibility.test.ts` gained
+*"RULING: `trip_crew` may never map to `trip_only` — one crew is not every
+crew"*. The pre-existing case pins the promotable SET, which an editor can widen
+by adding one string to an expectation; the new case pins the SUBSTANCE, and also
+refuses any of the five pre-existing Highlight rungs as a `trip_crew` target, so
+the mapping cannot come back by editing a list.
+
+**What this ruling does NOT touch.** `2339`'s feed-bounding flag (unrelated, still
+FALSE). `2720` and `2721` were queued behind this decision but are
+audience-neutral — resurfacing preference and location precision — and `2721`'s
+header names a different open decision, `LOCATION_PRECISION_DEFAULT`, which stays
+open. The `#461` rebase hazard recorded in `deployment-readiness.md` (migration
+`2313` reintroducing the `trip_members` self-join that `2530` removed) is a
+`trip_only` RLS regression, not a promotion decision, and **stays open
+regardless**.
 
 ### `TRIP_CREW_SIGNAL_ROLE_COVERAGE` — a split the file's own header says must not happen
 

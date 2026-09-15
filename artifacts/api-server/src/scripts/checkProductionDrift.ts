@@ -295,28 +295,63 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
   //    being held are still true, and are carried forward here rather than
   //    deleted with the rows that stated them:
   //
-  //      * STORY_HIGHLIGHT_VISIBILITY IS STILL AN OPEN OWNER DECISION. 2720 and
-  //        2721 were explicitly "queued behind" it, on the grounds that applying
-  //        a preference table before the rule is picked "would build the control
-  //        surface for a rule nobody has picked". The tables now exist. The rule
-  //        is still not picked. What makes that survivable rather than the
-  //        mistake the note feared is that every capability is seeded FALSE
-  //        (highlights_feed_bounded_enabled, memory_kernel_enabled,
+  //      * STORY_HIGHLIGHT_VISIBILITY IS RESOLVED (2026-09-15) — this entry
+  //        previously read "STILL AN OPEN OWNER DECISION" and is superseded, not
+  //        deleted, because the reasoning it carried is what the ruling rests on.
+  //        THE RULING: promotion is restricted to the faithful rungs. The
+  //        promotable set is exactly { public, circle_only } and the 409 refusal
+  //        on the other four is the INTENDED behaviour, not a placeholder.
+  //        Grounds, in order of weight: (a) no spec describes Story ->
+  //        Highlight promotion at all — the Highlights/Memories spec lists an
+  //        "Instagram Stories clone" under Non-goals and has no Story object —
+  //        so no rule can be read out of the silence; (b) the specs ARE
+  //        determinate on the shape, and the shape decides it: a Highlight's
+  //        audience is supplied explicitly at publish time and backed by a
+  //        policy row ("Publishing is always a separate projection decision"),
+  //        which rules out inheriting one; (c) every available mapping widens,
+  //        trip_crew -> trip_only most sharply, since one trip's accepted crew
+  //        becomes every crew the owner has ever had; (d) refusing costs a
+  //        capability that can be added later, mapping wrongly costs exposure
+  //        that cannot be taken back. Reopening it is a BUILD, not a re-ruling:
+  //        the spec's own VisibilityClass already names the two rungs
+  //        `highlights` lacks (SELECTED_PEOPLE, TRIP_CREW), and adding them to
+  //        the table and to RLS makes the other four faithfully promotable.
+  //        Pinned by src/test/storyHighlightVisibility.test.ts's
+  //        "RULING: `trip_crew` may never map to `trip_only`" case, which
+  //        asserts the substance rather than the promotable set.
+  //        SEPARATELY, and still true: 2720 and 2721 were queued behind this
+  //        decision on the grounds that a preference table would "build the
+  //        control surface for a rule nobody has picked". They are audience-
+  //        neutral — resurfacing preference and location precision — and 2721's
+  //        own header names a DIFFERENT open decision, LOCATION_PRECISION_DEFAULT,
+  //        which this ruling does not touch. Every capability is still seeded
+  //        FALSE (highlights_feed_bounded_enabled, memory_kernel_enabled,
   //        memory_location_precision_enabled,
   //        memory_public_feed_projection_enabled), the tables are empty, RLS is
-  //        on and owner-scoped, and no user-visible behaviour changed. The
-  //        decision gates ENABLEMENT now, not existence.
+  //        on and owner-scoped, and no user-visible behaviour changed by this
+  //        ruling: the code already refused, and the ruling makes the refusal
+  //        intended rather than provisional.
   //      * memory_event_outbox STILL HAS NO CONSUMER. Its entry said applying it
   //        "would create a table that accumulates nothing". That is exactly what
   //        it now is, deliberately: nothing writes to it while the kernel flag is
   //        FALSE, and no worker drains it. A §18 projection worker is still
   //        unbuilt.
   //
-  //    NOT APPLIED, and the tenth of this family: 2711_memory_kernel_execute.
-  //    See baseline/20260915b_production_tables.txt for why the mechanism, not
-  //    the authorization, is what stopped it. Until it lands, memory_kernel_execute
-  //    exists in portava-ci and in no production database, so the four kernel
-  //    tables above have no writer there at all.
+  //    APPLIED 2026-09-15, and the tenth of this family: 2711_memory_kernel_execute.
+  //    This note previously read "NOT APPLIED"; it is superseded. The blocker was
+  //    always the mechanism, never the authorization: the repo's own runner,
+  //    scripts/src/apply-migrations.ts, REFUSES the production ref by design and
+  //    that guard was not bypassed, so the 31,633 characters had to go through the
+  //    Management API by hand. What made that acceptable is that the result is
+  //    CHECKABLE rather than trusted — production stores the applied text, and
+  //    sha256(stored_text || "\n") equals the file's own sha256sum
+  //    (8fe87cb62ae4516bad70a6c970b15607d515b04584bc911d8d09c49b748081a7), so the
+  //    transcription is proven byte-identical instead of assumed. All six of the
+  //    migration's own postconditions passed inside its transaction, including the
+  //    two that matter most here: a client role cannot EXECUTE it, and
+  //    memory_kernel_enabled is still FALSE. So the four kernel tables now have a
+  //    writer in production that nothing calls — routes/memories.ts keeps its
+  //    direct-write path until an operator flips the flag.
 
   // Layover, migration 2700.
   layover_certified_computations: {
