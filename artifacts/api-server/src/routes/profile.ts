@@ -263,24 +263,24 @@ router.get("/me/profile/analytics", async (req, res) => {
     .eq("user_id", user.id)
     .gte("viewed_at", d7)
     .then(
-      (r: any) => (r.count as number | null) ?? 0,
+      (r: any) => countOrZero(r, "post_impressions_7d", req.log),
       () => 0,
     );
 
-  const profileViews7d   = views7Res.status    === "fulfilled" ? (views7Res.value.count    ?? 0) : 0;
-  const profileViews30d  = views30Res.status   === "fulfilled" ? (views30Res.value.count   ?? 0) : 0;
-  const followerDelta7d  = followers7Res.status === "fulfilled" ? (followers7Res.value.count ?? 0) : 0;
-  const followerDelta30d = followers30Res.status === "fulfilled" ? (followers30Res.value.count ?? 0) : 0;
-  const analyticsStampsEarned = analyticsStampsEarnedRes.status === "fulfilled"
-    ? ((analyticsStampsEarnedRes.value as any).count ?? 0)
-    : 0;
+  // settledCount / settledRows (foot of this file) BIND the `error` an allSettled
+  // `fulfilled` hides. Same answers; a failed read is no longer a silent zero.
+  const profileViews7d   = settledCount(views7Res,     "profile_views_7d",   req.log);
+  const profileViews30d  = settledCount(views30Res,    "profile_views_30d",  req.log);
+  const followerDelta7d  = settledCount(followers7Res, "follower_delta_7d",  req.log);
+  const followerDelta30d = settledCount(followers30Res, "follower_delta_30d", req.log);
+  const analyticsStampsEarned = settledCount(
+    analyticsStampsEarnedRes, "analytics_stamps_earned", req.log,
+  );
   const analyticsMilestones: Array<{ level: number; celebratedAt: string }> =
-    analyticsMilestonesRes.status === "fulfilled"
-      ? (((analyticsMilestonesRes.value as any).data ?? []) as any[]).map((m: any) => ({
-          level: m.milestone_level as number,
-          celebratedAt: m.celebrated_at as string,
-        }))
-      : [];
+    settledRows(analyticsMilestonesRes, "stamp_milestones", req.log).map((m: any) => ({
+      level: m.milestone_level as number,
+      celebratedAt: m.celebrated_at as string,
+    }));
 
   res.status(200).json({
     profileViews: { sevenDay: profileViews7d, thirtyDay: profileViews30d },
@@ -399,7 +399,7 @@ router.get("/me/profile", async (req, res) => {
     return;
   }
 
-  // Completeness score + trust score + stamp count: parallel queries (all fail-open)
+  // Completeness + trust + stamp count: parallel queries, still fail-open, but read out below through settledCount (foot of this file) — which BINDS the `error` an allSettled `fulfilled` hides, so a failed count is no longer a silent zero.
   const [stampRes, tripRes, followersRes, followingRes, trustRes, stampsEarnedRes, contentStampsReceivedRes, ageSignalRes] = await Promise.allSettled([
     sc ? sc.from("passport_stamps").select("user_id", { count: "exact", head: true }).eq("user_id", user.id).limit(1) : Promise.resolve({ count: 0 }),
     sc ? countUserTrips(sc, user.id) : Promise.resolve({ count: 0 }),
@@ -420,17 +420,17 @@ router.get("/me/profile", async (req, res) => {
     // pure function rather than re-reading the profile.
     sc ? readVerifiedAgeSignal(sc, user.id) : Promise.resolve(null),
   ]);
-  const hasStamp     = stampRes.status === "fulfilled" && ((stampRes.value as any).count ?? 0) > 0;
-  const tripCount    = tripRes.status === "fulfilled" ? ((tripRes.value as any).count ?? 0) : 0;
+  const hasStamp     = settledCount(stampRes, "passport_stamps", req.log) > 0;
+  const tripCount    = settledCount(tripRes, "trip_count", req.log);
   const hasTrip      = tripCount > 0;
-  const followersCount = followersRes.status === "fulfilled" ? ((followersRes.value as any).count ?? 0) : 0;
-  const followingCount = followingRes.status === "fulfilled" ? ((followingRes.value as any).count ?? 0) : 0;
+  const followersCount = settledCount(followersRes, "followers", req.log);
+  const followingCount = settledCount(followingRes, "following", req.log);
   const trustResult  = trustRes.status === "fulfilled" ? trustRes.value : null;
   // STAMPS reflects both passport milestones and content reactions (Roam/Watch
   // stamps placed by others on this user's posts/media) — counted exactly once
   // via the paginated countContentStampsReceived above.
   const contentStampsReceived = contentStampsReceivedRes.status === "fulfilled" ? contentStampsReceivedRes.value : 0;
-  const stampsEarned = (stampsEarnedRes.status === "fulfilled" ? ((stampsEarnedRes.value as any).count ?? 0) : 0) + contentStampsReceived;
+  const stampsEarned = settledCount(stampsEarnedRes, "user_stamps", req.log) + contentStampsReceived;
 
   const completeness = computeCompleteness(data, hasStamp, hasTrip);
 
@@ -708,14 +708,36 @@ router.patch("/me/profile", async (req, res) => {
     const sc = getServiceClient();
     if (sc) {
       try {
-        const { data: cur } = await sc
+        // RULED FAIL-OPEN, AND THE RULING IS NOW CHECKABLE. `error` was
+        // discarded here, and supabase-js RESOLVES on a database error, so an
+        // unreadable `profiles` arrived as `cur: null` and this block said
+        // "this user had no previous avatar or cover" about a user who had
+        // both. The `catch` above could never fire for that class — PostgREST
+        // failures arrive through `error`, not as a throw — so the failure was
+        // invisible in every direction.
+        //
+        // The ANSWER deliberately does not move: these two URLs decide only
+        // which old storage OBJECT gets deleted after the write commits.
+        // Null means "delete nothing", which orphans a file; a guess in the
+        // other direction would DELETE THE WRONG OBJECT, and that is
+        // unrecoverable. Fail-open is right here and stays. What changes is
+        // that the orphan is now reported rather than produced in silence —
+        // this is the highest-volume orphan producer in the codebase (see the
+        // cleanupOldMedia note below), so a silent one compounds.
+        const { data: cur, error: curErr } = await sc
           .from("profiles")
           .select("avatar_url, cover_photo_url")
           .eq("id", user.id)
           .maybeSingle();
+        if (curErr) {
+          req.log.warn(
+            { err: curErr, userId: user.id },
+            "profile PATCH: prior avatar/cover unreadable — skipping old-media cleanup, the replaced object will be ORPHANED (not deleted blind)",
+          );
+        }
         oldAvatarUrl = (cur as any)?.avatar_url ?? null;
         oldCoverUrl = (cur as any)?.cover_photo_url ?? null;
-      } catch { /* fail-open */ }
+      } catch { /* transport-level only; a PostgREST failure lands in curErr */ }
     }
   }
 
@@ -933,12 +955,43 @@ router.patch("/me/profile", async (req, res) => {
       // detection -- any present value re-fires it, even an unchanged one --
       // because the update has already run here and the prior language is not
       // in scope. Recorded rather than restructured.
-      const { data: prefRow } = await sc
+      // T344 (sibling of the four `routes/messaging.ts` reads): `error` was
+      // DISCARDED here. supabase-js RESOLVES on a database failure, so an
+      // unreadable `profiles` arrived as `prefRow: null`, and the gate was
+      // handed `autoTranslateMessages: undefined` — which it reads, correctly,
+      // as "the preference is unknown, fail closed". THE FALSE SENTENCE is
+      // therefore "this user has not enabled message translation", said about a
+      // user who has: they change their display language, get a 200, and their
+      // existing message translations stay in the OLD language permanently,
+      // because this sweep is fire-and-forget and is never retried.
+      //
+      // NOTE THE DIRECTION, because it is the OPPOSITE of the messaging.ts
+      // defect. There the swallow bound `before = null`, the gate read that as
+      // A CHANGE, and every failing save billed a ~200-message sweep to a PAID
+      // provider. Here the swallow suppresses a sweep the user is entitled to.
+      // Same swallow, same module, opposite blast radius — which is exactly why
+      // the discrimination belongs at each call site and not inside the gate.
+      //
+      // THE ANSWER DOES NOT MOVE, on purpose: "could not read the preference"
+      // must keep meaning "do not spend", and the profile write above has
+      // ALREADY COMMITTED, so turning this into a 503 would tell the client to
+      // retry a save that succeeded. What changes is that the loss is reported.
+      const { data: prefRow, error: prefErr } = await sc
         .from('profiles')
         .select('auto_translate_messages')
         .eq('id', user.id)
         .single();
-      if (shouldRetranslateOnLanguageChange({
+      if (prefErr) {
+        req.log.warn(
+          { err: prefErr, userId: user.id, newLanguage: p.preferredLanguage },
+          'profile PATCH: auto_translate_messages unreadable — language saved, NO retranslation sweep fired; a user with auto-translate ON keeps stale translations',
+        );
+      }
+      // `!prefErr` is redundant with the gate's own fail-closed read of an
+      // undefined preference, and is written anyway: it states at the CALL SITE
+      // that an unread preference is not evidence, so the property survives
+      // anyone later giving `autoTranslateMessages` a permissive default.
+      if (!prefErr && shouldRetranslateOnLanguageChange({
         newLanguage: p.preferredLanguage,
         autoTranslateMessages: (prefRow as any)?.auto_translate_messages,
       })) {
@@ -978,12 +1031,30 @@ router.patch("/me/profile", async (req, res) => {
         const sc = getServiceClient();
         if (!sc) return;
         // Look up the @portava account id.
-        const { data: portavaProfile } = await sc
+        // RULED FAIL-OPEN, AND THE RULING IS NOW CHECKABLE. `error` was
+        // discarded, so an unreadable `profiles` produced `null` and this
+        // returned — THE FALSE SENTENCE being "there is no @portava account",
+        // said about an account that exists. The new user's Pulse/Roam feed is
+        // then empty on day one and nothing ever retries. The answer stays
+        // (auto-following a row we could not read is not an option), but the
+        // two cases get different log lines, because they need different fixes:
+        // one is a DB blip, the other means the official account is missing.
+        const { data: portavaProfile, error: portavaErr } = await sc
           .from("profiles")
           .select("id")
           .eq("username", "portava")
           .maybeSingle();
-        if (!portavaProfile?.id) return;
+        if (portavaErr) {
+          req.log.warn(
+            { err: portavaErr, userId: user.id },
+            "onboarding auto-follow: @portava lookup UNREADABLE (not absent) — new user's feed will start empty",
+          );
+          return;
+        }
+        if (!portavaProfile?.id) {
+          req.log.warn({ userId: user.id }, "onboarding auto-follow: @portava account not found — new user's feed will start empty");
+          return;
+        }
         // Idempotent upsert — safe to call multiple times.
         await sc
           .from("user_follows")
@@ -2172,5 +2243,88 @@ router.patch("/me/privacy", async (req, res) => {
 
   res.status(200).json({ ...data, show_profile_picture_publicly: effectiveShowPicPublicly });
 });
+
+/**
+ * COUNTER READS — the ruling for every `count` and every list this file reports
+ * out of a `Promise.allSettled` batch, written once instead of eleven times.
+ *
+ * ── THE DEFECT CLASS ────────────────────────────────────────────────────────
+ * supabase-js RESOLVES on a database error. A failed `{ count: "exact" }` read
+ * arrives as `{ count: null, error }` and a failed list read as
+ * `{ data: null, error }` — and `allSettled` reports both as `fulfilled`,
+ * because the promise did fulfil. Every counter on this file's two read paths
+ * then ran the result through `count ?? 0` / `data ?? []` with `error` NEVER
+ * BOUND, so "your profile views could not be read" and "you had no profile
+ * views" were the same number on the wire, and "your milestones could not be
+ * read" and "you have celebrated no milestones" were the same empty list.
+ *
+ * ── RULED HARMLESS, AND WHY THAT IS A RULING AND NOT A SHRUG ────────────────
+ * Every number and list routed through here is REPORTED, never ACTED ON: none
+ * gates a permission, none authorises a write, none is persisted, and none is
+ * read back by the server. `hasStamp` / `hasTrip` feed computeCompleteness,
+ * whose output is a progress percentage shown to the profile's OWN OWNER; an
+ * unreadable counter understates it, which grants nothing and takes nothing
+ * away. So the zero STAYS: turning these into a refusal would take down
+ * GET /me/profile — the app's primary read, which has already successfully
+ * loaded the profile row by this point — because an analytics table blipped.
+ * That trade is the wrong way round.
+ *
+ * ── WHAT ACTUALLY CHANGES ───────────────────────────────────────────────────
+ * The failure stops being INVISIBLE. `error` is bound here rather than
+ * discarded, so the ruling above is checkable at one point rather than
+ * re-derived at each call site, and an operator sees which read failed instead
+ * of a user's honest-looking zero.
+ *
+ * `countUserTrips` is the case that shows why binding matters even when the
+ * answer does not move: it already returns `{ count: null, unavailable: true,
+ * reason }` — the domain layer went to the trouble of distinguishing the third
+ * state — and this route discarded the discrimination one line later.
+ */
+function settledCount(
+  r: PromiseSettledResult<any>,
+  label: string,
+  log?: { warn?: (o: unknown, m: string) => void },
+): number {
+  if (r.status !== "fulfilled") {
+    log?.warn?.({ label, err: r.reason }, "profile counter read REJECTED — reporting 0");
+    return 0;
+  }
+  return countOrZero(r.value, label, log);
+}
+
+/** The settled-value half, shared with the one counter that is awaited directly. */
+function countOrZero(
+  v: any,
+  label: string,
+  log?: { warn?: (o: unknown, m: string) => void },
+): number {
+  if (v?.error) {
+    log?.warn?.({ label, err: v.error }, "profile counter UNREADABLE — reporting 0 (ruling: settledCount)");
+    return 0;
+  }
+  // countUserTrips' own third state, which this route used to discard.
+  if (v?.unavailable === true) {
+    log?.warn?.({ label, reason: v.reason }, "profile counter UNAVAILABLE — reporting 0 (ruling: settledCount)");
+    return 0;
+  }
+  return (v?.count as number | null) ?? 0;
+}
+
+/** The list half of the same ruling: an unreadable table is not an empty one. */
+function settledRows(
+  r: PromiseSettledResult<any>,
+  label: string,
+  log?: { warn?: (o: unknown, m: string) => void },
+): any[] {
+  if (r.status !== "fulfilled") {
+    log?.warn?.({ label, err: r.reason }, "profile list read REJECTED — reporting []");
+    return [];
+  }
+  if (r.value?.error) {
+    log?.warn?.({ label, err: r.value.error }, "profile list UNREADABLE — reporting [] (ruling: settledCount)");
+    return [];
+  }
+  return (r.value?.data as any[] | null) ?? [];
+}
 
 export default router;
