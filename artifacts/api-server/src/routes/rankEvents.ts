@@ -20,7 +20,7 @@ import { asyncHandler } from "../lib/asyncHandler";
 import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine";
 import { RankingEvent, OUTCOME_TO_ANALYTICS_EVENT } from "../services/ranking/rankingAnalytics.js";
 import { recordNegativeDistributionSignal } from "../services/ranking/DiscoveryRankingService.js";
-import { recommendationIdFor } from "../lib/discoveryRecommendationId.js";
+import { recommendationIdFor } from "../lib/discoveryRecommendationId.js";  import { RECOMMENDATION_ID_SHAPE, RECOMMENDATION_ARBITER, RECOMMENDATION_ID_MIGRATION, isMissingRecommendationIdSchema, noteRecommendationIdAbsent, recommendationIdSchemaAbsent, reportRankEventsRejection, _resetRecommendationIdSchemaLatch as _resetSharedRecommendationIdLatch } from "../lib/rankEventsProvenance.js";  /* one line ON PURPOSE — see WHY THIS FILE IS EDITED IN PLACE, below. */
 const router = Router();
 
 // ── POST /rank-events — direct impression write ───────────────────────────────
@@ -60,20 +60,20 @@ router.post("/rank-events", asyncHandler(async (req, res) => {
     return;
   }
 
-  // Fire-and-forget: failures are non-fatal — a missed signal is better than
-  // a broken Living Page load.
-  const { error } = await sc.from("rank_events").insert({
-    event_type,
-    item_id:    entity_id,
-    surface:    "living_page",
-    user_id:    user.id,
-    served_at:  new Date().toISOString(),
-    outcome:    "impression",
-  });
-
-  if (error) {
-    req.log.warn({ err: error, event_type, entity_id }, "rank-events: direct insert failed (non-fatal)");
-  }
+  // DV-40 / DV-46 — this exposure carries 2891's token, so an outcome reported
+  // against it can be joined back to the impression that produced it. `living_page`
+  // is one of the two surfaces census-discovery §41.1 found wrongly recorded as
+  // writerless; a writer whose rows carry no join key is only half an answer to
+  // that, because nothing in its telemetry can be attributed to a ranking run.
+  //
+  // Fire-and-forget as before — failures are non-fatal, a missed signal is better
+  // than a broken Living Page load — but no longer only WARNED. §41.1's hazard is
+  // that a constraint refusing every row of a surface reads exactly like a surface
+  // nobody uses, so the refusal is COUNTED by the constraint that caused it.
+  const servedAt = new Date().toISOString();
+  await writeDirectImpression(sc, { event_type, item_id: entity_id,
+    surface: "living_page", user_id: user.id, served_at: servedAt,
+    outcome: "impression", recommendation_id: directExposureToken(user.id, entity_id, servedAt) }, req.log);
 
   res.json({ ok: true });
 }));
@@ -201,7 +201,7 @@ router.post("/rank-events/outcome", asyncHandler(async (req, res) => {
   // (+ optionally session): an impression, or a row on a lower funnel rung.
   // DV-46: id + the coordinates the exposure token needs. TWO whole chains, not
   // one computed list: check:write-path-columns resolves only a literal/const.
-  let query = (_recommendationIdColumn === "absent" ? sc.from("rank_events").select(EXPOSURE_COLUMNS_LEGACY) : sc.from("rank_events").select(EXPOSURE_COLUMNS))
+  let query = (recommendationIdSchemaAbsent() ? sc.from("rank_events").select(EXPOSURE_COLUMNS_LEGACY) : sc.from("rank_events").select(EXPOSURE_COLUMNS))
     .eq("user_id", user.id)
     .eq("item_id", item_id)
     .eq("surface", surface)
@@ -414,24 +414,46 @@ export function compassStageFor(outcome: Exclude<OutcomeValue, typeof DISMISS>):
 // shape that has always worked. The outcome is never dropped and the degradation
 // is never silent.
 
-/** rank_events.recommendation_id's shape CHECK, mirrored from migration 2891. */
-const RECOMMENDATION_ID_SHAPE = /^[A-Za-z0-9_-]{22}$/;
-
-/** The conflict arbiter. BOTH columns, in index order — `recommendation_id`
- *  alone raises 42P10 against 2891's index (the migration says so verbatim). */
-const RECOMMENDATION_ARBITER = "recommendation_id,outcome";
+// ── WHY THIS FILE IS EDITED IN PLACE ─────────────────────────────────────────
+//
+// EIGHT anchored doc citations point into lines 44-290 of this file — `44`,
+// `99`, `139`, `169`, `208`, `229-238`, `231`, `290` — and `check:doc-citations`
+// fails an anchor whose text is no longer at its line. Most of those citations
+// live in `docs/architecture/census-discovery.md`, which this lane may not edit.
+// So inserting ONE line above 290 would red a guard with no fix available here.
+//
+// That is why the shared import at the top sits on one line with an existing
+// one, and why the direct-impression handler was rewritten to exactly the line
+// count it had. It is a constraint of who owns which file today, recorded so the
+// next reader does not mistake the cramping for carelessness — and so it can be
+// undone in one edit once the census citations are re-anchored.
+//
+// Everything below this point is BELOW the last cited line and is written
+// normally.
 
 /** Exposure coordinates the outcome handler reads, WITH 2891's column. */
 const EXPOSURE_COLUMNS        = "id, position, served_at, session_id, features, recommendation_id";
 /** The same list on a database where 2891 has not been applied. */
 const EXPOSURE_COLUMNS_LEGACY = "id, position, served_at, session_id, features";
 
-let _recommendationIdColumn: "unknown" | "absent" = "unknown";
+/**
+ * This route's name in the rejection counter and in the schema latch. One
+ * string, because a counter keyed by a value spelled differently at two call
+ * sites reports two problems where there is one.
+ */
+const RANK_EVENTS_WRITER = "routes/rankEvents.ts";
 
-/** Test seam — the latch is process-wide, so a suite that simulates a 2891-less
- *  database would otherwise poison every suite that runs after it. */
+/**
+ * Test seam — re-exported rather than re-implemented.
+ *
+ * The latch now lives in `lib/rankEventsProvenance.ts` because BOTH writers of
+ * this table talk to one database: "2891 is not applied here" is one fact about
+ * the process, not one per module. The export stays on this path because the
+ * suites that reset it import it from here, and moving a test seam is a change
+ * to the tests rather than to the thing under test.
+ */
 export function _resetRecommendationIdSchemaLatch(): void {
-  _recommendationIdColumn = "unknown";
+  _resetSharedRecommendationIdLatch();
 }
 
 /**
@@ -446,40 +468,23 @@ export function _resetRecommendationIdSchemaLatch(): void {
  * the two agree, so the duplication cannot rot silently.
  */
 export function exposureColumns(): string {
-  return _recommendationIdColumn === "absent" ? EXPOSURE_COLUMNS_LEGACY : EXPOSURE_COLUMNS;
+  return recommendationIdSchemaAbsent() ? EXPOSURE_COLUMNS_LEGACY : EXPOSURE_COLUMNS;
 }
 
 /**
- * Does this PostgREST error mean "migration 2891 is not applied here"?
- *
- * Three codes, all of which this route can only produce for that one reason —
- * `recommendation_id` is the only column it names that is not in the pre-2891
- * thirteen, and the only ON CONFLICT it ever asks for:
- *   42703    undefined_column — the SELECT list or the filter named it;
- *   PGRST204 PostgREST's schema cache has no such column for a write;
- *   42P10    the column exists but the unique index that arbitrates it does not.
- * Anything else — a timeout, an RLS denial, a CHECK violation — is NOT this, and
- * must keep its 500 rather than be quietly absorbed by the fallback.
+ * `isMissingRecommendationIdSchema` — the three codes that mean "2891 is not
+ * applied here" — now lives in `lib/rankEventsProvenance.ts` and is re-exported
+ * so the suites that import it from this path keep working. Its reasoning is in
+ * that module beside the predicate itself, which is where it can also be read by
+ * the serve-log writer that needs exactly the same answer.
  */
-export function isMissingRecommendationIdSchema(err: unknown): boolean {
-  const e    = err as { code?: unknown; message?: unknown } | null | undefined;
-  const code = String(e?.code ?? "");
-  if (code === "42703" || code === "PGRST204" || code === "42P10") return true;
-  const msg = String(e?.message ?? "").toLowerCase();
-  if (msg.includes("on conflict specification")) return true;
-  if (!msg.includes("recommendation_id")) return false;
-  return msg.includes("does not exist")
-      || msg.includes("could not find")
-      || msg.includes("schema cache");
-}
+export { isMissingRecommendationIdSchema };
 
 function noteRecommendationIdUnavailable(err: unknown, log: RouteLog | undefined, where: string): void {
-  const firstTime = _recommendationIdColumn !== "absent";
-  _recommendationIdColumn = "absent";
-  if (!firstTime) return;   // one line per process, not one per request
+  if (!noteRecommendationIdAbsent(RANK_EVENTS_WRITER)) return;   // one line per process, not one per request
   warnOn(
     log,
-    { err, where, migration: "2891_rank_events_recommendation_id.sql" },
+    { err, where, migration: RECOMMENDATION_ID_MIGRATION },
     "rank-events/outcome: rank_events.recommendation_id is unavailable — outcome recorded " +
     "WITHOUT an exposure token; 04 §10.6 propagation is off until 2891 is applied",
   );
@@ -532,7 +537,7 @@ export function exposureTokenFor(
  * column list back.
  */
 export function canStampExposureToken(recommendationId: string): boolean {
-  return _recommendationIdColumn !== "absent" && RECOMMENDATION_ID_SHAPE.test(recommendationId);
+  return !recommendationIdSchemaAbsent() && RECOMMENDATION_ID_SHAPE.test(recommendationId);
 }
 
 /**
@@ -599,6 +604,20 @@ async function settleOutcomeUpdate(
     firstErr = retryErr;
   }
 
+  // The 500 and the error line are UNCHANGED — this path was never
+  // fire-and-forget and must not become quieter. What is added is the count.
+  //
+  // This is where `trip_add` dies today. 2894 admits it to
+  // `rank_events_outcome_check` and is applied to no database, so every
+  // PlanPickerController report reaches here, is refused with a 23514, and
+  // answers 500 — which `useRankOutcome`'s `.catch(() => {})` then discards, so
+  // the refusal is silent end to end. A 500 whose body says `db_error` cannot
+  // tell an operator WHICH constraint refused it or how many times; the counter
+  // can, and "rank_events_outcome_check, 412 times" is the sentence that gets
+  // 2894 applied.
+  reportRankEventsRejection(log, {
+    writer: RANK_EVENTS_WRITER, err: firstErr, extra: { outcome, where: "outcome update" },
+  });
   (log?.error ?? console.error).call(log ?? console, { err: firstErr }, "rank-events/outcome: update failed");
   return { ok: false, message: String(firstErr?.message ?? "db_error") };
 }
@@ -657,7 +676,7 @@ async function writeOutcomeAnalyticsRow(
     // a narrower client-shaped object may not carry, and calling it blind would
     // turn "no arbiter available" into a TypeError that silently loses the row.
     const arbitrated =
-      _recommendationIdColumn !== "absent" &&
+      !recommendationIdSchemaAbsent() &&
       typeof token === "string" && RECOMMENDATION_ID_SHAPE.test(token) &&
       typeof rel?.upsert === "function";
 
@@ -670,12 +689,122 @@ async function writeOutcomeAnalyticsRow(
       noteRecommendationIdUnavailable(res.error, log, "analytics upsert");
       const retry = await sc.from("rank_events").insert(bare);
       if (!retry?.error) return;
-      warnOn(log, { err: retry.error, ...ctx }, "rank-events/outcome: analytics insert failed (non-fatal)");
+      reportRankEventsRejection(log, { writer: RANK_EVENTS_WRITER, err: retry.error, extra: { ...ctx, where: "analytics insert" } });
       return;
     }
-    warnOn(log, { err: res.error, ...ctx }, "rank-events/outcome: analytics insert failed (non-fatal)");
+    // §41.1 — this is the row that carries `trip_add` into the outcome CHECK, so
+    // until 2894 is applied it is REFUSED on every database, and it is refused
+    // the same way the funnel update above is. Counted by constraint name, so
+    // "2894 is not applied" is a sentence somebody can be told.
+    reportRankEventsRejection(log, { writer: RANK_EVENTS_WRITER, err: res.error, extra: { ...ctx, where: "analytics insert" } });
   } catch (err) {
-    warnOn(log, { err, ...ctx }, "rank-events/outcome: analytics insert failed (non-fatal)");
+    reportRankEventsRejection(log, { writer: RANK_EVENTS_WRITER, err, extra: { ...ctx, where: "analytics insert threw" } });
+  }
+}
+
+// ── The direct `living_page` impression writer ───────────────────────────────
+
+/**
+ * The exposure token for a DIRECT impression — one a client reports for itself,
+ * rather than one a serve produced.
+ *
+ * `sessionId` is the empty string, and that is a decision rather than a gap.
+ * `POST /rank-events` carries no session: the Living Destination Page opens on
+ * its own, outside any ranked serve. Passing `""` makes the token a function of
+ * (user, instant, surface, item) and nothing else, which is the most that is
+ * KNOWN about this exposure. The alternative — minting a session id here — would
+ * put a value on the row that stands for nothing, and `recommendationIdFor` is
+ * deliberately total over missing coordinates for exactly this case.
+ *
+ * `position` is 0 because a direct view is one item, not a ranked page.
+ *
+ * The consequence is stated rather than hidden: two `place_view`s of one place
+ * by one user in the same millisecond collapse to one token, and 2891's unique
+ * index would settle the second into the first. At millisecond resolution that
+ * is a double-fired client, not two views.
+ */
+export function directExposureToken(userId: string, itemId: string, servedAt: string): string {
+  return recommendationIdFor({
+    userId, sessionId: "", servedAt, surface: "living_page", position: 0, itemId,
+  });
+}
+
+/** The direct-impression row, spelled out so `check:write-path-columns` can see it. */
+interface DirectImpressionRow {
+  event_type:        string;
+  item_id:           string;
+  surface:           string;
+  user_id:           string;
+  served_at:         string;
+  outcome:           string;
+  recommendation_id: string;
+}
+
+/**
+ * Write one direct impression, arbitrated by 2891's unique index where the
+ * database has it.
+ *
+ * Three shapes, in order, and the route never learns which one ran:
+ *   1. `upsert` on (recommendation_id, outcome) — a re-fired client event
+ *      SETTLES into the row it already wrote instead of appending a second
+ *      exposure. `ignoreDuplicates` is FALSE: DO NOTHING would make the repeat a
+ *      no-op, and the requirement is that the row ends up correct.
+ *   2. plain `insert` WITH the column — for a client object that has no
+ *      `upsert` method. Not having the METHOD says nothing about the database's
+ *      schema, so dropping the join key here would lose it for a reason that is
+ *      not about the column.
+ *   3. plain `insert` WITHOUT the column — once 42703 / PGRST204 / 42P10 has
+ *      established that 2891 is not applied here. The column is OMITTED rather
+ *      than sent as null: sending it again is the same failure a second time.
+ *
+ * Fire-and-forget throughout. This never throws and never rejects; the caller
+ * does not await a result and has none to branch on. A refused write is COUNTED
+ * and named (§41.1) instead of only warned.
+ */
+async function writeDirectImpression(
+  sc:  any,
+  row: DirectImpressionRow,
+  log: RouteLog | undefined,
+): Promise<void> {
+  // Spelled out rather than `{ ...row }` minus a key, for the reason
+  // writeOutcomeAnalyticsRow gives: a payload the AST cannot resolve is
+  // invisible to check:write-path-columns, and this is an INSERT into the table
+  // the whole Discovery funnel lives in.
+  const bare = {
+    event_type: row.event_type,
+    item_id:    row.item_id,
+    surface:    row.surface,
+    user_id:    row.user_id,
+    served_at:  row.served_at,
+    outcome:    row.outcome,
+  };
+  const withToken = { ...bare, recommendation_id: row.recommendation_id };
+  const ctx = { event_type: row.event_type, where: "direct impression" };
+
+  try {
+    const rel = sc.from("rank_events");
+    const canArbitrate =
+      !recommendationIdSchemaAbsent() &&
+      RECOMMENDATION_ID_SHAPE.test(row.recommendation_id) &&
+      typeof rel?.upsert === "function";
+
+    const first = canArbitrate
+      ? await rel.upsert(withToken, { onConflict: RECOMMENDATION_ARBITER, ignoreDuplicates: false })
+      : recommendationIdSchemaAbsent()
+        ? await rel.insert(bare)
+        : await rel.insert(withToken);
+    if (!first?.error) return;
+
+    if (isMissingRecommendationIdSchema(first.error)) {
+      noteRecommendationIdUnavailable(first.error, log, "direct impression");
+      const retry = await sc.from("rank_events").insert(bare);
+      if (!retry?.error) return;
+      reportRankEventsRejection(log, { writer: RANK_EVENTS_WRITER, err: retry.error, extra: ctx });
+      return;
+    }
+    reportRankEventsRejection(log, { writer: RANK_EVENTS_WRITER, err: first.error, extra: ctx });
+  } catch (err) {
+    reportRankEventsRejection(log, { writer: RANK_EVENTS_WRITER, err, extra: { ...ctx, where: "direct impression threw" } });
   }
 }
 
@@ -745,7 +874,7 @@ async function handleDirectEventBatch(req: any, res: any, userId: string): Promi
   // One timestamp for the whole batch: these rows describe one client flush, and
   // per-row clocks would make them look like separate serves.
   const servedAt = new Date().toISOString();
-  const rows = parsed.data.events.map((e) => ({
+  const bare = parsed.data.events.map((e) => ({
     event_type: e.event_type,
     item_id:    e.entity_id,
     surface:    "living_page",
@@ -753,9 +882,41 @@ async function handleDirectEventBatch(req: any, res: any, userId: string): Promi
     served_at:  servedAt,
     outcome:    "impression",
   }));
+  // DV-40 — the batch mints the same token the single form does, from the same
+  // coordinates, so a batched exposure is traceable to a ranking exactly as an
+  // unbatched one is. A writer that mints none would reopen the gap for the one
+  // shape nobody has called yet, which is the easiest place for it to hide.
+  //
+  // Two positions of ONE item inside a batch would collide (same user, same
+  // batch clock, same item, position 0) and 2891's index would make the upsert
+  // touch one row twice — a 21000 on the WHOLE statement, which for an
+  // all-or-nothing batch means every row lost. So the position is the item's
+  // INDEX in the batch, which is also the truthful thing to say about it.
+  const rows = bare.map((r, idx) => ({ ...r, recommendation_id: recommendationIdFor({
+    userId, sessionId: "", servedAt, surface: "living_page", position: idx, itemId: r.item_id,
+  }) }));
 
-  const { error } = await sc.from("rank_events").insert(rows);
+  const attempt = recommendationIdSchemaAbsent()
+    ? await sc.from("rank_events").insert(bare)
+    : await sc.from("rank_events").insert(rows);
+  // Unlike every other writer in this file the batch is NOT fire-and-forget — it
+  // answers `db_error` and writes nothing — so a 2891-less database must not be
+  // allowed to turn it into a permanent 500. Same three codes, same latch, one
+  // retry in the pre-2891 shape.
+  let error = attempt?.error ?? null;
+  if (error && isMissingRecommendationIdSchema(error)) {
+    noteRecommendationIdUnavailable(error, req.log, "direct impression batch");
+    error = (await sc.from("rank_events").insert(bare))?.error ?? null;
+  }
   if (error) {
+    // Counted as well as raised: this statement carries `surface: "living_page"`,
+    // one of §41.1's two wrongly-writerless surfaces, and a batch refused by the
+    // surface CHECK should be countable next to the single form's refusals
+    // rather than only visible as a 500 in a request log.
+    reportRankEventsRejection(req.log, {
+      writer: RANK_EVENTS_WRITER, err: error, rows: rows.length,
+      extra: { where: "direct impression batch" },
+    });
     (req.log?.error ?? console.error).call(
       req.log ?? console,
       { err: error, count: rows.length },
