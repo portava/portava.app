@@ -1955,6 +1955,62 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/2258_input_selection_history.sql",
   ],
   "census-discovery.md": [
+    // ── ADDED 2026-09-15 by §43: the registry B05 now rests on ──────────────
+    //
+    // §43 moves B05 W -> C, and the whole of its argument is that the canonical
+    // country registry Discovery needs already exists as pure data in this
+    // package. `lib/countryCodes.ts` is therefore a file this census GRADES —
+    // its ISO table, its alias index and `searchCountryRegistry`'s rung order
+    // are B05's evidence — and a census that grades a file it does not watch has
+    // a verdict that rots silently. It is watched here rather than left to the
+    // stamps lane that happens to have consumed it first.
+    //
+    // The suite is watched on `censusDigitPrefixIds.test.ts`'s precedent: B05's
+    // `C` rests on what those 20 cases assert, including the two ordering rules
+    // (§43.3) that no other test in the tree covers, so an edit to it must age
+    // this census.
+    //
+    // WHAT WOULD TURN THIS RED: a commit touching either while census-discovery
+    // still declares an older head_commit. Before this widening such a commit
+    // was silent — and `lib/countryCodes.ts` is the kind of shared, unowned data
+    // module that gets edited by whichever lane needs a country name next.
+    "artifacts/api-server/src/lib/countryCodes.ts",
+    "artifacts/api-server/src/test/discoveryCountryRegistry.test.ts",
+    //
+    // ── AND THE FIVE CONSUMERS §43.3's BLAST-RADIUS CLAIM NAMES ─────────────
+    //
+    // The coverage floor caught this section at 93 % against 96 %, correctly:
+    // §43.3 widened `toCountryCode`, which is SHARED, and then made a claim
+    // ABOUT the code that consumes it — "four call sites outside Discovery, and
+    // the four country suites were run, 76 tests, 0 failures". A sentence of
+    // this census is therefore a statement about these files, on the same rule
+    // that already watches `SOURCE-MANIFEST.json` and `compliance-ledger.json`
+    // here: a claim about a file is aged by that file changing.
+    //
+    // `xxCatalogRepair.ts` is the fifth and it is not a call site. It is the
+    // machinery §43.3's SAFETY argument leans on — the widening is safe partly
+    // because an `XX` catalog key that becomes resolvable is carried to its real
+    // code by that sweeper. If it stops doing so, the argument is stale.
+    //
+    // THE COST, STATED RATHER THAN BURIED (§36.5's rule). census-discovery now
+    // ages whenever the stamps lane edits its own country handling, and that is
+    // a lane whose work has nothing to do with Discovery. The alternative was to
+    // stop naming the files, which would have made the blast-radius claim
+    // unfalsifiable while keeping the percentage green — the one trade this
+    // floor exists to refuse.
+    "artifacts/api-server/src/lib/entryRequirements.ts",
+    "artifacts/api-server/src/lib/stampHelper.ts",
+    "artifacts/api-server/src/lib/stamps/countryLookup.ts",
+    "artifacts/api-server/src/lib/stamps/StampCatalogService.ts",
+    "artifacts/api-server/src/lib/stamps/xxCatalogRepair.ts",
+    //
+    // Pre-existing gap, closed in the same pass because the floor exposed it:
+    // §42.1 and §42.2 rest on what `discoveryDiversityAxes.test.ts` asserts —
+    // "E2 asserts an unsupplied `geoPenalty` leaves the order untouched", the
+    // N1–N10 / P1–P5 pins on `neighborhoodMatch` — and nothing aged this census
+    // when that suite changed. Same rule as `censusDigitPrefixIds.test.ts` and
+    // the two client refusal suites below.
+    "artifacts/api-server/src/test/discoveryDiversityAxes.test.ts",
     // ── ADDED 2026-09-15 by §33: the Layover door A13 is graded on ──────────
     //
     // §33 moves A13 N -> W on `services/airport/LayoverSnapshot.ts`, and §32

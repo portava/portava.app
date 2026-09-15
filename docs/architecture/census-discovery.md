@@ -5728,3 +5728,228 @@ over another.
   `neighborhoodMatch`, and this section deliberately creates none — inventing an
   id to carry a finding is how `DV-83` happened (§28), and the residue count in
   §41.3 is a measurement of the ids this document already has.
+
+## §43 — `B05` closes: the registry it was waiting for was in this package all along
+
+*Written 2026-09-15 by the Discovery closing lane. **One verdict moves, `W` → `C`.**
+`head_commit` is NOT re-declared: §0's re-instated `1fe72289b` stands, because
+this branch squash-merges and the squash sha does not exist yet. The two files
+this section changes are named in this census's entry in
+`CENSUS_STALENESS_ACKNOWLEDGED.json`, and that entry says plainly what moved —
+a VERDICT, not only evidence — rather than claiming the changes cannot have
+mattered. That is a wider use of an acknowledgement than §42 argued for, so it
+is stated here and not left for a reader to discover in a JSON file.*
+
+### 43.1 The row, and the sentence in it that was false
+
+| id | was | now | evidence |
+|---|---|---|---|
+| B05 | W | **C** | `GET /discovery/search?type=countries` resolves against ISO-3166-1, not against who signed up. **The row's stated blocker was FALSE at this tree.** It read *"Fix needs a canonical country registry Discovery does not own"*, and §10.1 sharpened that to *"`country_essentials` exists in production and is keyed by ISO code with **no name column**, so it is not the registry this needs"*. `country_essentials` is not — but `artifacts/api-server/src/lib/countryCodes.ts:187#export function toCountryCode(` is: ~195 ISO-3166-1 alpha-2 codes with canonical English names, an alias index carrying `holland`/`uk`/`bali`, and a diacritic-insensitive fold. It is PURE data with no I/O, it is in this package, and `lib/stamps/countryLookup.ts` already consumes it. Discovery now consumes the SAME module: `artifacts/api-server/src/lib/countryCodes.ts:286#export function searchCountryRegistry(` is the resolver a PICKER needs beside the parser that was already there, and `artifacts/api-server/src/routes/discoverySearch.ts:2111#const registry = searchCountryRegistry(q, offset + fetchLimit);` is where the country bucket reads it. Iceland is a country on this surface with no Icelander in the database. |
+
+**WHY THIS ONE AND NOT ANOTHER.** §18.3 named `B04` and `B05` as *"the only two
+of 111 that no other owner, migration or decision stands in front of"*, and
+§18.12 recorded that the pass which found them *"did not build B04 or B05"*.
+§41.4 left them in the 66 named non-correct rows. `B05` is the half of that pair
+that needs no flag, so it needs no migration, so it was closable by reading.
+
+### 43.2 What was built
+
+**The resolver, in the registry and not in Discovery.** `toCountryCode` answers
+*"is this string a country?"* — one input, one exact answer. A picker asks
+*"which countries could the person typing this mean?"*, and nothing answered
+that. `searchCountryRegistry(query, limit)` does, over seven ranked rungs:
+
+| rung | the query | example |
+|---:|---|---|
+| 0 | IS an ISO2 code | `in` → India |
+| 1 | EQUALS a canonical name | `japan` → Japan |
+| 2 | EQUALS an alias | `uk` → United Kingdom |
+| 3 | prefixes a canonical name | `united` → United Arab Emirates… |
+| 4 | prefixes an alias | `congo-` → DR Congo |
+| 5 | is inside a canonical name | `ran` → France |
+| 6 | is inside an alias | `ali` → Indonesia (Bali) |
+
+then alphabetically by canonical name, so a cursor means the same thing on the
+second request. **Substring and not prefix-only on purpose**: the profile leg it
+joins is a PostgREST `ilike '%q%'`, so a prefix-only registry would make the two
+halves of one bucket disagree about what "matches" means. **An alias is never a
+title** — `holland` resolves to *Netherlands*, and the alias is reported as
+`via`, never shown. Showing it would let a picker mint country names the
+entry-requirements corridor has never heard of.
+
+**The join, in `searchCountries`.** The registry head, then the free-text names
+only `profiles` knows, with a typed spelling folded into the canonical row by ISO
+code (`artifacts/api-server/src/routes/discoverySearch.ts:2132#if (code !== null && takenCodes.has(code)) continue;`).
+A name the registry cannot resolve **still lists**, carrying
+`metadata.source: "profile"` — dropping it to make the function tidy would
+delete a real answer. §27's position contract is unchanged: `lat`/`lng` are
+always present, null included, and `attachCentroids` still fills them when
+`canonical_locations` can.
+
+**The privacy model is untouched, and the refusal is deliberately NOT relaxed.**
+Blocked, age-restricted and discovery-opted-out profiles contribute nothing, as
+before. The registry leg needs no privacy read at all, so the obvious next move
+is to serve it when `profiles` or `profile_privacy_settings` could not be read —
+and it does not. A registry-only page is missing every free-text country only
+`profiles` knows, and a body short by an unknown amount is indistinguishable from
+a complete one. That is D11's masquerade pointing the other way: *"we did not
+look"* served as *"we looked, and this is all there is"*. The bucket has one
+answer and one refusal, because an intra-bucket partial is a shape the response
+envelope does not have.
+
+### 43.3 Two defects found by a failing test rather than by reasoning
+
+Neither is a graded row, and **no id is invented for either** — §42.3's rule,
+which is there because inventing one is how `DV-83` happened.
+
+**(1) A title-only re-rank cannot see an alias, so every colloquially-named
+country sorted last.** `dispatchSearch` passed the countries bucket through
+`rankByMatchTier`, which scores the TITLE against the raw query. "United
+Kingdom" does not contain "uk", so it scored tier 0 — behind *Ukraine*, which
+starts with the same two letters and means a different country. The same held
+for `holland`, `bali`, `dubai` and every other alias in the table: a row reached
+through an alias can never score above 0 on its own title. Countries now manage
+their own ordering (`artifacts/api-server/src/routes/discoverySearch.ts:2258#case "countries":   return searchCountries(sc, q, blockedSet, ageRestrictedSet, offset, fetchLimit);`),
+on `searchPlaces`' precedent two lines above it in the same switch, and the
+free-text tail is match-tier ranked inside the function
+(`artifacts/api-server/src/routes/discoverySearch.ts:2144#merged.push(...rankByMatchTier(tail, q));`)
+so the ordering the bucket used to get is kept for the half it is still right
+for. **This was a live defect before this pass and would have been one after it**
+— the registry's rung order would have been computed and then thrown away.
+
+**(2) `toCountryCode` skipped the alias table for any two-letter string.** The
+ISO branch read *"two letters are a code or they are nothing"* and returned null
+outright. `ALIASES` has exactly one two-letter key — `"uk"` — and `UK` is not an
+ISO-3166-1 code, so the most-typed colloquial country string in the product
+resolved to nothing: an entry-requirements lookup found no corridor
+(`lib/entryRequirements.ts` reads `destination_country` through this function),
+and a stamp keyed itself `XX` (`lib/stamps/StampCatalogService.ts`'s
+`toCountryCode(raw) ?? "XX"`). It now falls through to the name index. **The
+widening is strictly additive and only in the safe direction**: the ISO branch
+still runs first and wins, so no input that resolves today can change code and
+the only possible transition is `null` → a real code, never `A` → `B`. That is
+the argument `lib/stamps/countryLookup.ts`'s own header already makes for its
+fallback, and `lib/stamps/xxCatalogRepair.ts` is the machinery that exists to
+carry an `XX` row to a real code when one appears. **The blast radius is stated
+rather than waved at**: four call sites outside Discovery
+(`entryRequirements.ts`, `StampCatalogService.ts`, `stampHelper.ts`,
+`inputAssistance/validationSuite.ts`), and the four country suites
+(`stampCountryCodeCoverage`, `stampCountryLookup`, `stampCatalogCountryCodeType`,
+`stampCountryCodeTruncation`) plus `rentBuddyCountryParity` and
+`countryEssentials` were run — 76 tests, 0 failures.
+
+### 43.4 The tests, and the mutants each one killed
+
+`artifacts/api-server/src/test/discoveryCountryRegistry.test.ts` — 20 cases,
+registered in the `test` script (`check-test-registration` green: 1285 of 1315
+registered). **Failing first, measured rather than asserted**: with the resolver
+present and the route untouched, 7 of 19 were RED — R1, R2, R3, R5, R6, R7, R11.
+
+Seven mutants, each applied, run, watched red, then restored and compared
+byte-for-byte by `cmp`:
+
+| mutation applied | what went red |
+|---|---|
+| the registry leg returns `[]` | **8** — R1, R2, R3, R5, R6, R7, R11, R12 |
+| an alias becomes the row's title | **4** — U3, R6, R11, R12 |
+| the ISO-code fold between the legs is deleted | **1** — R12 |
+| the registry answers over a refused privacy read | **1** — R9 |
+| the title-only re-rank is put back on the bucket | **2** — R6, R12 |
+| the ISO2 rung is deleted from the resolver | **2** — U2, R5 |
+| `toCountryCode`'s two-letter early return is restored | **1** — R12 |
+
+**AN EIGHTH SURVIVED, AND R12 EXISTS BECAUSE OF IT.** Deleting the ISO-code fold
+left the suite GREEN on its first run. R3's fixture types the country the same
+way the registry spells it — `japan` against *Japan* — so the lowercase-name fold
+catches that on its own and the code fold is dead weight against it. The fold is
+the only thing that catches a DIFFERENT spelling of the same country, so R12 was
+written to type `Holland` and `UK`, and it is R12 that kills three of the seven
+mutants above. A test that cannot fail for the reason it was written is the
+failure mode §13.5 found in this census's own work and §42.2 found in the next
+lane's; it is the third time, and each time only the mutation said so.
+
+### 43.5 Headline, restated as a block so the last statement is the current one
+
+| bucket | count |
+|---|---|
+| BUILT-AND-CORRECT | **82** |
+| BUILT-BUT-WRONG | **82** |
+| NOT-BUILT | **21** |
+| CANNOT-VERIFY | **3** |
+
+`B05` moved WITHIN the built set, so CONSTRUCTED is unchanged at 164 / 188 =
+**87.2 %** and CORRECT rises to 82 / 188 = **43.6 %**, from 81 / 188 = 43.1 % at
+§39.7. The four buckets sum to 188 exactly. §18.3's bucket (a) — *"closable from
+code this lane owns"* — falls from two rows to one, and the one left is `B04`.
+
+### 43.6 A cross-lane request this lane did NOT take itself
+
+**`census-input-intelligence.md` G277 is the same requirement, and it still says
+`W`.** Its evidence is now false in the same two places B05's was: *"No canonical
+country resolver"* and *"a country picker therefore resolves against the user
+table, not a canonical country registry, so a country with no users in it does
+not exist."* Both are false at this tree. **That row is not re-graded here**, on
+§17.2's precedent that a lane does not move another census's verdict, and
+because G277's population is that census's to count. What this lane owes it is
+the notice, and that is this paragraph plus the named entry in
+`CENSUS_STALENESS_ACKNOWLEDGED.json`, which says for that census — alone among
+the seven — that the change **can** have moved a verdict and names which one.
+
+### 43.7 Rows examined and deliberately left, with the reason for each
+
+- **`B04`** (protected locations) — the other half of §18.3's bucket (a). NOT
+  built, and §10.5's argument is still right rather than merely old:
+  `lib/protectedLocations.ts` suppresses **fail-CLOSED** by design and
+  `protected_zones` is absent from production, so wiring Discovery into it with
+  no flag turns every production search into an empty result on the first failed
+  read. It needs a flag; a flag needs a migration; and a flag seeded FALSE lands
+  the row in §18.3's bucket (b) — still `W`. **It cannot reach `C` from this
+  tree in either direction**, which is why the effort went to `B05`.
+- **`B02`** (emoji in `sanitizeQuery`) — owner decision D5, recorded twice. The
+  fix is two characters of regex and §10.5 already says a reader should push
+  back on it. **Not overridden.** *"Overriding another lane's recorded owner
+  decision because the fix is small is how a census stops meaning anything"* is
+  this census's own sentence and it governs this pass too.
+- **`DV-31`** (*"can decay and rediscover"*) — the remaining leg is `02` §9.5's
+  *"periodically retest promising items"*, and §39's restatement says the only
+  thing that could do the re-exposing is the exploration governor, which is inert
+  behind `discovery_ranking_modifiers_enabled`. Building a retest would also mean
+  choosing what "promising" and "periodically" are, with no method here to derive
+  either — §42.1's refusal to invent a ranking constant, applied to a threshold.
+- **`DC-06` · `DC-15` · `DV-75`** (§41.5's other ranked items) — each closes PART
+  of a row. `DC-06`'s time-of-day normalizer takes it to 3 of 6; `DC-15` cannot
+  reach `C` because `10` §7 forbids editing the applied migrations that carry
+  two of its three legs; `DV-75`'s `live-db-verdict` cannot produce a verdict
+  from a checkout. None of the three is a verdict move, and none is user-facing.
+- **`A11`'s second half** — `lib/portavaRank.ts`'s `availableMinutes` is the
+  independent free-time calculation Trips `:185` forbids, and it is removable.
+  The row would still be `W`: its first half is
+  `TRIP_OPERATIONAL_PROJECTIONS_FLAG` (2778, seeded FALSE, schema 2760–2785
+  unapplied), so on every deployment the consumption refuses. Not taken, because
+  a change to the ranking context that moves no verdict is a change to a live
+  ranker for a document's benefit.
+
+### 43.8 WHAT WOULD TURN THIS RED
+
+- **Anyone reading B05's ORIGINAL cell.** Last-statement-wins means a reader who
+  stops at §2b gets *"Fix needs a canonical country registry Discovery does not
+  own"*, which is the sentence this section falsifies. Its neighbour §10.1 is
+  more specific and equally superseded.
+- **`searchCountryRegistry` growing a second copy anywhere.** The whole argument
+  for grading this `C` is that Discovery CONSUMES the registry rather than
+  carrying one. A country list inside `routes/discoverySearch.ts` would be the
+  defect `C32` and `DC-24` exist to catch, wearing a different hat, and this row
+  should go back to `W` the day one appears.
+- **Relaxing the refusal.** If a later pass decides the registry may answer over
+  an unreadable `profile_privacy_settings`, R9 goes red and it should; if R9 is
+  deleted instead, this row is no longer true. The registry leg is exactly the
+  kind of viewer-independent data that makes a masquerade look reasonable.
+- **`toCountryCode` acquiring a second two-letter alias.** The widening in §43.3
+  is safe because `"uk"` is the only two-letter key in `ALIASES` and `UK` is not
+  an ISO code. A future alias that collides with a real ISO2 code would be
+  shadowed by the ISO branch and silently never reached.
+- **The `head_commit` that is not re-declared.** §0's `1fe72289b` is older than
+  this section's own changes by construction. The acknowledgement entry is what
+  keeps `check:census-freshness` honest about that, and it is SPENT the moment
+  this census is re-declared at the squash — the checker fails on a `since` that
+  no longer matches, which is the interlock working.
