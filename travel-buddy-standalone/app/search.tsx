@@ -110,6 +110,11 @@ export default function SearchScreen() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [searched, setSearched] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // `refusal.coverage === 'partial'` on the last first-page response: some of
+  // the fan-out's sources answered and at least one could not be read. The rows
+  // that came back are real; what is missing behind these names is UNKNOWN, not
+  // absent — so the empty state below may not speak for it.
+  const [partialSources, setPartialSources] = useState<string[] | null>(null);
   const [timeLabel, setTimeLabel] = useState<string | null>(null);
 
   // ── Intent state ────────────────────────────────────────────────────────────
@@ -195,6 +200,7 @@ export default function SearchScreen() {
     if (isFirstPage) {
       setLoading(true);
       setError(null);
+      setPartialSources(null);
       setTimeLabel(null);
       setSearched(true);
       setCompassFallback([]);
@@ -251,6 +257,14 @@ export default function SearchScreen() {
 
       if (isFirstPage) {
         setResults(newRows);
+        // Kept whether or not rows came back. With rows it qualifies them; with
+        // none it is the only thing standing between a failed source and the
+        // empty state's claim that nothing matched.
+        setPartialSources(
+          res.data.refusal?.coverage === 'partial'
+            ? (res.data.refusal.failedSources ?? [])
+            : null,
+        );
         setTimeLabel(label ?? null);
 
         if (newRows.length > 0) {
@@ -631,12 +645,23 @@ export default function SearchScreen() {
           contentContainerStyle={[styles.center, { justifyContent: 'flex-start', paddingTop: space.xl }]}
           keyboardShouldPersistTaps="handled"
         >
-          <Text style={styles.emptyTitle}>No results found.</Text>
-          <Text style={styles.emptySub}>
-            {timeLabel && !needsLocationForNearby
-              ? `Nothing matched "${query.trim()}" · ${timeLabel}. Try a different term or filter.`
-              : `Nothing matched "${query.trim()}". Try a different search term or filter.`}
-          </Text>
+          {partialSources ? (
+            <>
+              <Text style={styles.emptyTitle}>Some of this search could not run.</Text>
+              <Text style={styles.emptySub}>
+                {`Part of the search failed, so this is not a statement about what exists. Try again in a moment.`}
+              </Text>
+            </>
+          ) : (
+            <>
+              <Text style={styles.emptyTitle}>No results found.</Text>
+              <Text style={styles.emptySub}>
+                {timeLabel && !needsLocationForNearby
+                  ? `Nothing matched "${query.trim()}" · ${timeLabel}. Try a different term or filter.`
+                  : `Nothing matched "${query.trim()}". Try a different search term or filter.`}
+              </Text>
+            </>
+          )}
 
           {/* Compass fallback section */}
           {(compassFallbackLoading || compassFallback.length > 0) && (

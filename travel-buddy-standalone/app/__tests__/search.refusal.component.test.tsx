@@ -262,6 +262,49 @@ describe('SearchScreen — a refusal is not an empty result set', () => {
     await waitFor(() => { expect(mockFetchCompass).toHaveBeenCalled(); }, PAST_DEBOUNCE);
   });
 
+  // ── The partial that carries NO rows ───────────────────────────────────────
+  //
+  // Until `GET /discovery/search?type=all` learned to refuse, this state could
+  // not occur: the fan-out collapsed every failed bucket to `[]` and answered
+  // with no refusal at all. Now that a partial CAN arrive with an empty page —
+  // 16 sources read and genuinely matching nothing, one unreadable — the screen
+  // must not close the gap with a claim the server did not make.
+  //
+  // "No results found. / Nothing matched «q»." is exactly that claim. The rows
+  // that were read are trustworthy; the ones behind `failedSources` are not
+  // absent, they are unknown, and the difference is the whole point of the
+  // envelope. The Compass fallback is left firing on purpose: it OFFERS
+  // alternatives, it does not assert an absence, and suppressing it here would
+  // delete a feature rather than fix a claim.
+  it('OUTAGE with no rows: a PARTIAL refusal does not claim that nothing matched', async () => {
+    mockSearchUnified.mockResolvedValue({
+      ok: true,
+      data: {
+        results: [], nextCursor: null, timeLabel: null,
+        refusal: { ...REFUSAL_NOTHING, code: 'search_sources_unreadable', coverage: 'partial', failedSources: ['plans'] },
+      },
+    });
+
+    const { queryByText } = await render(<SearchScreen />);
+    await waitFor(() => { expect(mockSearchUnified).toHaveBeenCalled(); }, PAST_DEBOUNCE);
+
+    await waitFor(() => {
+      expect(queryByText('Some of this search could not run.')).not.toBeNull();
+    }, PAST_DEBOUNCE);
+    expect(queryByText('No results found.')).toBeNull();
+  });
+
+  it('CONTROL: a genuinely empty result still says nothing matched', async () => {
+    mockSearchUnified.mockResolvedValue({
+      ok: true,
+      data: { results: [], nextCursor: null, timeLabel: null },
+    });
+
+    const { queryByText } = await render(<SearchScreen />);
+    await waitFor(() => { expect(queryByText('No results found.')).not.toBeNull(); }, PAST_DEBOUNCE);
+    expect(queryByText('Some of this search could not run.')).toBeNull();
+  });
+
   it('CONTROL: a PARTIAL refusal renders its real rows and fires no fallback', async () => {
     // `partial` carries real rows. It is not an outage to refuse and not an
     // empty answer to offer alternatives to.
