@@ -214,6 +214,9 @@ function verdictOf(cell: string): { verdict: Verdict; multiplier: number } | nul
     .trim()
     .replace(/\*/g, "")
     .replace(/[⌀†‡]/g, "") // vacuity / footnote flags qualify a verdict, they are not one
+    .replace(/`?∅`?/g, "") // `∅` (U+2205) is the same class — census-telegraph's "unguarded
+    // absence" flag, backticked. Kept on its own line so the line above stays
+    // byte-identical: census-input-intelligence quotes it VERBATIM.
     .replace(/\s*\([^()]*\)\s*$/, "") // `C (not spec-attributable)` — an attribution note, not a verdict
     .trim()
     .toUpperCase();

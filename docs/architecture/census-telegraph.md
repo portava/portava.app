@@ -7229,3 +7229,139 @@ it the route is not drivable end to end and the red above could not have been ta
 - **The standing one.** This is a BRANCH census. Migrations 2810–2813 are on no
   database, every flag they add is seeded FALSE, and nothing in this section is
   merged, deployed or flag-enabled.
+
+---
+
+## §25 — The twelve rows are counted, and the fix was in the tallier, not the table
+
+§24.1 measured a twelve-row gap between what `check:census-integrity` can parse
+(439) and what this census's denominator claims (451). §24.2 then restated the
+headline from the parsed 439 and said, correctly, that the restatement was **not
+enforced** — because the equality check fires only when parsed rows equal the
+denominator, and 439 ≠ 451 kept it off.
+
+This section closes the gap. **Not one verdict moved.**
+
+### 25.1 The gap was a parser omission, not a document defect
+
+All twelve rows are ordinary verdict rows in §5/§6 and every one of them already
+stated `N`. What the tallier could not read was the **flag beside the verdict**:
+
+| the cell as written | what `verdictOf()` did with it |
+| --- | --- |
+| `` N `∅` `` | returned `null` — the row was not counted at all |
+| `N ⌀` | stripped `⌀`, counted `N` |
+
+`` `∅` `` is defined by this census's own key at line 429 — *"`∅` unguarded absence
+(a prohibition currently unviolated …)"*. It is a **flag that qualifies a verdict**,
+which is precisely the category `verdictOf()` already handles, whose own comment
+reads *"vacuity / footnote flags qualify a verdict, they are not one"*. `⌀` (U+2300)
+was in the strip class; `∅` (U+2205) was not, and the backticks around it were not
+stripped either. Two characters that look alike, one of them handled.
+
+So the repair is one added strip in `src/scripts/checkCensusIntegrity.ts:212#verdictOf`:
+
+```
+     .replace(/[⌀†‡]/g, "") // vacuity / footnote flags qualify a verdict, they are not one
++    .replace(/`?∅`?/g, "") // `∅` (U+2205) is the same class — census-telegraph's "unguarded
++    // absence" flag, backticked. Kept on its own line so the line above stays
++    // byte-identical: census-input-intelligence quotes it VERBATIM.
+```
+
+**It is a separate line on purpose.** Widening the existing class to
+`` /`?[⌀∅†‡]`?/ `` produces a byte-identical dump — that was written first and
+diffed — but it rewrites line 216, and `census-input-intelligence.md:1304` quotes
+that line's text VERBATIM to explain why its own `C ᵖ` rows were once unreadable.
+`check:doc-citations` refused it immediately:
+
+> `docs/architecture/census-input-intelligence.md:1304  src/scripts/checkCensusIntegrity.ts:216#replace(/[⌀†‡]/g,  -- the WHOLE anchor appears NOWHERE in artifacts/api-server/src/scripts/checkCensusIntegrity.ts — the anchor text itself is wrong`
+
+A line number can be repointed; a quotation cannot. The other census's sentence is
+still true — `ᵖ` is still not stripped — so the honest fix is the one that leaves
+its evidence standing.
+
+**`ᵖ` was measured too, and deliberately not added.** census-input-intelligence
+§7 describes the identical defect for its 23 `C ᵖ` rows, so the obvious move was to
+strip `ᵖ` in the same pass. Adding it changes **nothing**: the dump is byte-identical
+with and without, because those 23 rows were since restated as plain `**C**` in that
+census's §8.3 row-move table and last-statement-wins already counts them —
+input-intelligence parses 373 of 373. A strip character that strips nothing is a
+speculative widening of the risk in §25.5 for no measured gain, so it is not here.
+That passage at line 1292–1305 is a historical capture, not a live gap.
+
+**The alternative was rejected.** The gap can also be closed by reshaping the twelve
+cells to `` N (`∅`) ``, which the existing trailing-parenthetical rule already
+strips. That was measured and it works — but it edits twelve historical rows of an
+**append-only** document to accommodate a tool, and it leaves the next `∅` row
+written anywhere in the corpus invisible in exactly the same way. Fixing the reader
+fixes the class.
+
+### 25.2 What the change moves, measured corpus-wide
+
+Full `CENSUS_INTEGRITY_DUMP=ALL` before and after, all 13 censuses, sorted and
+diffed:
+
+```
+before=3499  after=3511
+ADDED:    telegraph|T1|N    telegraph|T26|N   telegraph|T212|N  telegraph|T366|N
+          telegraph|T367|N  telegraph|T393|N  telegraph|T404|N  telegraph|T405|N
+          telegraph|T406|N  telegraph|T408|N  telegraph|T416|N  telegraph|T446|N
+REMOVED:  (none)
+```
+
+Twelve added lines, all `N`, all in telegraph. **No existing verdict changed, in any
+census.** Twelve rows that were always graded `N` in the body became visible to the
+machine; nothing was regraded. That is why there is no row-move table in this
+section — *absent from the dump* is not a verdict, so nothing moved from one.
+
+### 25.3 The headline, now enforced for the first time
+
+Parsed rows are now 451 = the denominator, so the equality check switched on and
+immediately failed §24.2's block. Captured verbatim:
+
+> `::error::census-telegraph.md: its stated headline sums to 439 (C 230 + W 157 + N 49 + X 3) against a denominator of 451, and EVERY requirement in that denominator was parsed — there is no prose gap for the difference to live in. A headline arrived at by adding this pass's moves to the previous headline carries the previous headline's error forward while looking freshly measured. Count the rows: C 230 / W 157 / N 61 / X 3.`
+
+The corrected headline, restated from the dump and **not** by adding to any previous
+headline:
+
+| Measure | Value |
+| --- | --- |
+| BUILT-AND-CORRECT | **230** |
+| BUILT-BUT-WRONG | **157** |
+| NOT-BUILT | **61** |
+| CANNOT-VERIFY | **3** |
+
+451 rows. CONSTRUCTED **85.81 %**, CORRECT **51.00 %**.
+
+This block supersedes §24.2's, which counted 439 and said so. It is the first
+headline in this census's history that a gate can fail on, and the gate is now the
+reason it is right rather than a claim that it is.
+
+### 25.4 The line-68 headline is still the one that was wrong
+
+Superseding §24.2 is bookkeeping. The finding §24.2 made is the real one and it
+survives unchanged: the headline at **line 68** — `98 / 172 / 178 / 3` — was the
+parsed headline for the whole branch and is **~130 rows away from the body**
+(understates C by 132, overstates N by 117 against the count above). It went green
+every time, because the only check that could have caught it was disabled by the
+same twelve-row gap this section just closed. A document can be append-only, fully
+gated, and still carry a false headline for its entire life if the gate that reads it
+is switched off by an unrelated parsing accident.
+
+### 25.5 WHAT WOULD TURN THIS RED
+
+- **The parser change over-reaching.** `` /`?∅`?/ `` also strips a backtick that
+  merely sits next to the flag. If any census ever writes a verdict cell where a
+  backtick adjacent to `∅` is load-bearing, this silently reshapes it. The
+  corpus-wide diff in §25.2 is the evidence that it does not today — twelve added,
+  zero changed, zero removed — and that diff is worth re-running, not trusting.
+- **The count itself.** 230/157/61/3 is the tool's count at this commit, not mine;
+  `node --import tsx src/scripts/checkCensusIntegrity.ts` re-derives it. If a later
+  section moves a row and restates the headline by *addition* rather than by re-running
+  the dump, that is the exact defect the error message above names.
+- **`∅` written outside a verdict cell.** The flag is stripped wherever it appears in
+  a verdict cell. A census that used `∅` to mean something else in such a cell would
+  now be misread, where before it was merely unread.
+- **The standing one.** This is a BRANCH census. Migrations 2810–2813 are on no
+  database, every flag they add is seeded FALSE, and nothing here is merged, deployed
+  or flag-enabled. A corrected headline is a corrected description of a branch.

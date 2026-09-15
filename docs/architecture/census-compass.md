@@ -1305,7 +1305,7 @@ Nothing is invented in its place and no existing prompt is treated as the specif
 `verdictOf` could not parse their verdict CELL. This section reproduces that failure from the other
 end — the id cell — and reports it rather than leaving it to be discovered.
 
-`artifacts/api-server/src/scripts/checkCensusIntegrity.ts:257#parseIdCell(cellRaw:` takes the id
+`artifacts/api-server/src/scripts/checkCensusIntegrity.ts:260#parseIdCell(cellRaw:` takes the id
 from the front of the cell as `^([A-Z]{1,4}-?)([0-9]{1,4})` and then allows a RANGE. **Three of the
 five id prefixes this section was instructed to use break on it, and one of the three breaks
 destructively:**
@@ -2310,7 +2310,7 @@ and they are counting different things.**
 `check:census-integrity`'s gap is `statedDenominator − parsedRows`. What sits in it is the set of
 rows whose **id cell** `parseIdCell` cannot read, which §13.6 enumerated: `CPH-EVAL`, `C1-01`…`C1-07`
 (six rows) and `CPV2-03`, `CPV2-11`, `CPV2-12`. That was ten. It is now **nine**, because
-`artifacts/api-server/src/scripts/checkCensusIntegrity.ts:304#const named = /^([A-Z]{1,4}-[A-Z]{2,8})(?![0-9A-Za-z-])/.exec(t);`
+`artifacts/api-server/src/scripts/checkCensusIntegrity.ts:307#const named = /^([A-Z]{1,4}-[A-Z]{2,8})(?![0-9A-Za-z-])/.exec(t);`
 taught the parser to read a named id and `CPH-EVAL` now parses — measured, not assumed:
 `CENSUS_INTEGRITY_DUMP=ALL` lists `CPH-EVAL` among the 132 and lists no `C1-` or `CPV2-` id at all.
 **So the nine in the gap are the six `C1` rows plus `CPV2-03`, `CPV2-11` and `CPV2-12`** — and the
@@ -2325,7 +2325,7 @@ sentence is true only in this narrower form, which is still worth fixing: **no C
 explicit verdict cell addressed to that clause's own acceptance bar.** §17.1 is that table.
 
 **The thing that would have made the baseline's reading right, and did not:**
-`artifacts/api-server/src/scripts/checkCensusIntegrity.ts:287#const digitPrefixed = /^([A-Z]{1,4}[0-9]-[0-9]{1,4})(?![0-9A-Za-z-])/.exec(t);`
+`artifacts/api-server/src/scripts/checkCensusIntegrity.ts:290#const digitPrefixed = /^([A-Z]{1,4}[0-9]-[0-9]{1,4})(?![0-9A-Za-z-])/.exec(t);`
 already handles a prefix that ends in a digit — it was added for census-trust's `TRV2-nn` rows and
 the comment above it says so. **§13.6's hazard is closed in the tool**, so the three `CPV2` ids were
 being written in backticks to dodge a bug that no longer exists. §17.2 restates them plainly.
