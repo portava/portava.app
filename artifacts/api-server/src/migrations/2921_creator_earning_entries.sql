@@ -81,7 +81,7 @@ BEGIN
 END
 $pre$;
 
-CREATE TABLE public.creator_earning_entries (
+CREATE TABLE IF NOT EXISTS public.creator_earning_entries (
   id                  uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
 
   -- Entries sharing a key sum to zero per currency. A single-sided booking is
@@ -156,16 +156,16 @@ CREATE TABLE public.creator_earning_entries (
 -- `09` §7.2 — uniqueness is a database index, not an application check. TOTAL,
 -- not partial, so PostgREST conflict-target inference matches it and a writer's
 -- ON CONFLICT DO NOTHING is a genuine no-op replay rather than an overwrite.
-CREATE UNIQUE INDEX cee_idempotency_key_once
+CREATE UNIQUE INDEX IF NOT EXISTS cee_idempotency_key_once
   ON public.creator_earning_entries (idempotency_key);
 -- At most one reversal per entry: reversing twice re-credits an earning that
 -- existed once, which is how a ledger invents money.
-CREATE UNIQUE INDEX cee_one_reversal_per_entry
+CREATE UNIQUE INDEX IF NOT EXISTS cee_one_reversal_per_entry
   ON public.creator_earning_entries (reverses_entry_id) WHERE reverses_entry_id IS NOT NULL;
-CREATE INDEX cee_attribution_idx  ON public.creator_earning_entries (attribution_id, occurred_at DESC);
-CREATE INDEX cee_type_rule_idx    ON public.creator_earning_entries (creator_type, rule_version);
-CREATE INDEX cee_beneficiary_idx  ON public.creator_earning_entries (beneficiary_user_id, occurred_at DESC);
-CREATE INDEX cee_transaction_idx  ON public.creator_earning_entries (transaction_key);
+CREATE INDEX IF NOT EXISTS cee_attribution_idx  ON public.creator_earning_entries (attribution_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS cee_type_rule_idx    ON public.creator_earning_entries (creator_type, rule_version);
+CREATE INDEX IF NOT EXISTS cee_beneficiary_idx  ON public.creator_earning_entries (beneficiary_user_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS cee_transaction_idx  ON public.creator_earning_entries (transaction_key);
 
 -- ── NO PRODUCER, NO EARNING ─────────────────────────────────────────────────
 -- A CHECK cannot read another table, and a FK cannot read another table's
@@ -203,6 +203,7 @@ $fn$;
 COMMENT ON FUNCTION public.creator_earning_requires_recorded_value_event() IS
   '07 §10: earnings are recordable only where value was actually attributed. Four of 07 §2''s six creator types have no producer for their value event; their attributions are attribution_basis = ''seam_no_producer'' (2920) and this refuses to book an earning against one. The rule is here rather than in application code because a CHECK cannot read another table.';
 
+DROP TRIGGER IF EXISTS cee_requires_recorded_value_event ON public.creator_earning_entries;
 CREATE TRIGGER cee_requires_recorded_value_event
   BEFORE INSERT ON public.creator_earning_entries
   FOR EACH ROW EXECUTE FUNCTION public.creator_earning_requires_recorded_value_event();
