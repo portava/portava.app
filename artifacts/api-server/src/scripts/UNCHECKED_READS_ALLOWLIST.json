@@ -3,9 +3,6 @@
   "//benign": "Sites where an empty-or-errored answer is genuinely the right one and nothing needs to know (label lookups, ranking enrichment). Permanent, with a rationale that stands on its own.",
   "//known_defects": "The burn-down ledger (same device as SILENT_SUPABASE_WRITES_BASELINE.json): in-scope reads that ignore .error TODAY, owned by other lanes. Classified 2026-09-07 by reading each site; FAIL-OPEN means a DB error yields the permissive/affirmative/destructive outcome, FAIL-CLOSED means it yields a silent denial or skip, UNCLASSIFIED means the consumer was not traced. This list may only shrink.",
   "benign": {
-    "lib/discoveryPde.ts::loadPdeViewer::user_follows.filter": "Ranking enrichment only: the followed-creator set biases ordering and never gates access; source already annotates the read non-fatal",
-    "lib/discoveryPde.ts::loadPdeViewer::compass_user_preferences.maybeSingle": "Ranking enrichment only: interest tags and category affinities bias ordering and never gate access; source annotates the read non-fatal",
-    "lib/discoveryPde.ts::loadPdeViewer::rank_events.filter": "Ranking enrichment only: the already-seen set applies a re-show penalty; an empty set re-shows items, it never reveals or withholds anything",
     "lib/locateFriendsSession.ts::readSessionForViewer::profiles.filter": "Display-name labels for members of a session the viewer is already authorized on; an empty map renders null names and reveals nothing"
   },
   "known_defects": {
@@ -99,12 +96,6 @@
     "routes/safeReturn.ts::post /me/safe-return/sessions/:id/confirm::feature_flags.maybeSingle#2": "FAIL-CLOSED: inline *_enabled capability flag reads as off and the side effect (stamp/memory/compass context) is skipped; the DB error is reported as a disabled feature",
     "routes/stamps.ts::use *::feature_flags.maybeSingle": "FAIL-CLOSED: stamp_system_v2_enabled unreadable -> 503 feature_not_available on every /stamps route; the DB error is reported as a disabled feature",
     "routes/telegraph.ts::post /telegraph/recommend::feature_flags.maybeSingle": "FAIL-CLOSED: inline *_enabled capability flag reads as off and the side effect (stamp/memory/compass context) is skipped; the DB error is reported as a disabled feature",
-    "routes/tripCrewLocation.ts::getMemberRole::trips.maybeSingle": "FAIL-CLOSED: owner lookup unreadable -> not owner -> falls to the member check; commit 9df204fa documents the direction, the error is still never observed",
-    "routes/tripCrewLocation.ts::getMemberRole::trip_members.maybeSingle": "FAIL-CLOSED: `if (!member) return null` -> 403; commit 9df204fa documents the direction, the error is still never observed (a DB outage reports as not_member)",
-    "routes/tripCrewLocation.ts::getMemberRoleAny::trips.maybeSingle": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",
-    "routes/tripCrewLocation.ts::getMemberRoleAny::trip_members.maybeSingle": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",
-    "routes/tripCrewLocation.ts::getAcceptedMemberIds::trips.maybeSingle": "FAIL-CLOSED: member set empty -> nobody is addressed, notified or admitted on this path; the DB error is never logged",
-    "routes/tripCrewLocation.ts::getAcceptedMemberIds::trip_members.filter": "FAIL-CLOSED: member set empty -> nobody is addressed, notified or admitted on this path; the DB error is never logged",
     "routes/visuals.ts::canEditEntity::events.maybeSingle": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",
     "routes/visuals.ts::canEditEntity::trips.maybeSingle": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",
             "services/hiddenGems/CompassHiddenGemService.ts::getCompassGemContext::feature_flags.maybeSingle": "FAIL-CLOSED: a *_enabled capability flag reads as off and the feature is skipped; the DB error is reported as a disabled feature (polarity per check-flag-polarity)",
@@ -150,10 +141,6 @@
     "lib/privacyResolver.ts::resolveCircleMembership::trip_members.maybeSingle": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",
     "lib/privacyResolver.ts::resolveCircleMembership::circle_memberships.maybeSingle": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",
       "lib/profileVisibility.ts::resolveProfileVisibility::user_friendships.maybeSingle": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",
-      "domain/trips/invariants/tripMembership.ts::isAcceptedTripMember::trips.maybeSingle": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",
-    "domain/trips/invariants/tripMembership.ts::isAcceptedTripMember::trip_members.maybeSingle": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",
-    "domain/trips/invariants/tripMembership.ts::acceptedCrewSize::trips.maybeSingle": "UNCLASSIFIED: returns 0 on an unreadable trips row; consumers gate on crew size thresholds in both directions and were not traced",
-    "domain/trips/invariants/tripMembership.ts::acceptedCrewSize::trip_members.filter": "UNCLASSIFIED: returns the owner alone (or 0) on unreadable trip_members; consumers gate on crew size thresholds in both directions and were not traced",
     "compass/CompassFallbackFeedBuilder.ts::isFallbackModeEnabled::feature_flags.maybeSingle": "FAIL-CLOSED: a *_enabled capability flag reads as off and the feature is skipped; the DB error is reported as a disabled feature (polarity per check-flag-polarity)",
       "compass/CompassMemoryService.ts::isCircleMember::circle_memberships.filter": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",
       "compass/CompassSocialEngine.ts::contextMemberIds::trip_members.filter": "FAIL-CLOSED: member set empty -> nobody is addressed, notified or admitted on this path; the DB error is never logged",
