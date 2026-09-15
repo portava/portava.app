@@ -107,9 +107,22 @@
  * impression for a page the user did not see on Discovery. Precondition,
  * stated rather than assumed: the caller's rows are already block-filtered
  * (DiscoveryPlace never carries submitted_by; the filter happens where the
- * rows are read). It has no consumer yet — the Map gateway is another agent's
- * file — and the census records it as "reader exists, consumer absent" rather
- * than as done.
+ * rows are read).
+ *
+ * CONSUMER, as of 2026-09-15: `routes/mapProjection.ts` calls this reader over
+ * its already-paginated page, behind THIS lane's own
+ * `discovery_candidate_projection_enabled` rather than a Map-side flag — so the
+ * Map cannot serve the projection while its owner's gate is shut. The sentence
+ * that stood here ("It has no consumer yet — the Map gateway is another agent's
+ * file") was true when it was written and is false now; census-discovery §31
+ * records the same correction against A25 and D10.
+ *
+ * It is still NOT done, and the reason has changed rather than gone away:
+ * measured read-only against production on 2026-09-15, the flag row
+ * `discovery_candidate_projection_enabled` DOES NOT EXIST there at all, and
+ * `isFlagEnabled` fails closed on an absent flag. Migration 2361 is applied to
+ * no production database, so this projection is dark for every real user, and
+ * §6 D9's mapping defaults are still unratified.
  */
 import type { RankCandidate, ScoredCandidate } from "./portavaRank.js";
 import type { DiscoveryRankProvenance } from "./discoveryRankProvenance.js";
