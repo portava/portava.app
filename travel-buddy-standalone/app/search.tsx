@@ -151,7 +151,13 @@ export default function SearchScreen() {
   // Routes through the P1 gateway (`global_search`) additively: gateway rows are
   // shown when available, else it degrades to the proven legacy typeahead.
   const suggestActive = !submitted && query.trim().length >= 2;
-  const { groups: suggestGroups, actionSuggestions, loading: suggestLoading, recordPick } = useGlobalSearchSuggestions(query, {
+  const {
+    groups: suggestGroups, actionSuggestions, loading: suggestLoading, recordPick,
+    // `coverage: 'nothing'` — the suggest read was refused, not empty. Carried
+    // to the panel so it does not print "no quick matches" on the server's
+    // behalf when the server never reached the table.
+    refused: suggestRefused,
+  } = useGlobalSearchSuggestions(query, {
     lat: userCoords?.lat,
     lng: userCoords?.lng,
     city: userCoords?.city,
@@ -608,6 +614,7 @@ export default function SearchScreen() {
           onPickResult={handleSuggestionPick}
           actionSuggestions={actionSuggestions}
           onPickAction={handleSuggestionAction}
+          refused={suggestRefused}
         />
       ) : loading ? (
         <View style={styles.center}>
