@@ -76,6 +76,10 @@ jest.mock('../../../hooks/compass/useCompassFeed', () => ({
 const mockCommunityState: { current: Record<string, unknown> } = {
   current: { gems: [], picks: [], places: [], loading: false, refused: false },
 };
+// `jest.requireActual` is NOT the fix here — the real module reaches Supabase at
+// import time, which is why this component test mocks it at all. It exports one
+// symbol today, so the stand-in is complete.
+// NOTE: intentionally exhaustive; see the block above for what it stands in for.
 jest.mock('../../../hooks/useCommunityDiscovery', () => ({
   useCommunityDiscovery: () => mockCommunityState.current,
 }));
