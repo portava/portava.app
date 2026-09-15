@@ -613,7 +613,7 @@ async function postViewRequest(db: any): Promise<{ status: number; body: any }> 
   app.use(express.json());
   app.use(mediaViewRequestRouter);
   const server = http.createServer(app);
-  await new Promise<void>((r) => server.listen(0, r));
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   const port = (server.address() as any).port;
   try {
     const res = await fetch(`http://127.0.0.1:${port}/v1/media/view-requests`, {
