@@ -20,7 +20,7 @@ import { asyncHandler } from "../lib/asyncHandler";
 import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine";
 import { RankingEvent, OUTCOME_TO_ANALYTICS_EVENT } from "../services/ranking/rankingAnalytics.js";
 import { recordNegativeDistributionSignal } from "../services/ranking/DiscoveryRankingService.js";
-
+import { recommendationIdFor } from "../lib/discoveryRecommendationId.js";
 const router = Router();
 
 // ── POST /rank-events — direct impression write ───────────────────────────────
@@ -45,7 +45,7 @@ router.post("/rank-events", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
-
+  if (isDirectEventBatchBody(req.body)) { await handleDirectEventBatch(req, res, user.id); return; }
   const parsed = directEventSchema.safeParse(req.body);
   if (!parsed.success) {
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
@@ -201,7 +201,7 @@ router.post("/rank-events/outcome", asyncHandler(async (req, res) => {
   // (+ optionally session): an impression, or a row on a lower funnel rung.
   let query = sc
     .from("rank_events")
-    .select("id")
+    .select(exposureColumns())   // DV-46: id + the coordinates the exposure token needs
     .eq("user_id", user.id)
     .eq("item_id", item_id)
     .eq("surface", surface)
@@ -213,27 +213,27 @@ router.post("/rank-events/outcome", asyncHandler(async (req, res) => {
     query = query.eq("session_id", session_id);
   }
 
-  const { data: rows, error: selectErr } = await query;
-  if (selectErr) {
-    req.log.error({ err: selectErr }, "rank-events/outcome: select failed");
-    sendError(res, "db_error", selectErr.message);
-    return;
+  const picked = await readUpgradableExposure(sc, query, {
+    userId: user.id, itemId: item_id, surface, outcome, sessionId: session_id,
+  }, req.log);
+  if (picked.error) {
+    req.log.error({ err: picked.error }, "rank-events/outcome: select failed");
+    sendError(res, "db_error", picked.error.message); return;
   }
-
-  const row = (rows as any[] ?? [])[0];
+  const row = picked.row;
   if (!row) {
     sendError(res, "not_found", "No matching impression row found for this item");
     return;
   }
-
+  const recommendationId = exposureTokenFor(row, user.id, item_id, surface);  // `04` §10.6
   const { error: updateErr } = await sc
     .from("rank_events")
-    .update({ outcome, outcome_at: new Date().toISOString() })
+    .update(outcomeUpdatePatch(outcome, recommendationId))  // outcome, outcome_at [, id]
     .eq("id", row.id);
 
-  if (updateErr) {
-    req.log.error({ err: updateErr }, "rank-events/outcome: update failed");
-    sendError(res, "db_error", updateErr.message);
+  const settled = await settleOutcomeUpdate(sc, row.id, outcome, recommendationId, updateErr, req.log);
+  if (!settled.ok) {
+    sendError(res, "db_error", settled.message);
     return;
   }
 
@@ -270,23 +270,23 @@ router.post("/rank-events/outcome", asyncHandler(async (req, res) => {
   // already updated above — this is an additive analytics insert only.
   const analyticsEventType = OUTCOME_TO_ANALYTICS_EVENT[outcome];
   if (analyticsEventType) {
-    void sc
-      .from("rank_events")
-      .insert({
-        event_type:  analyticsEventType,
-        item_id,
-        surface,
-        user_id:     user.id,
-        session_id:  session_id ?? null,
-        served_at:   new Date().toISOString(),
-        // Analytics sentinel — prevents impression-finding query from matching
-        outcome:     "analytics",
-      })
-      .then(() => {}, (err: unknown) => {
-        req.log.warn({ err, outcome, analyticsEventType }, "rank-events/outcome: analytics insert failed (non-fatal)");
-      });
+    // DV-46: `recommendation_id` makes this row part of the SAME exposure as the
+    // impression it follows, and migration 2891's UNIQUE (recommendation_id,
+    // outcome) index turns a repeat into an UPGRADE of the one analytics row
+    // rather than a second one. On a database without the column this falls back
+    // to the plain insert it has always been — loudly, once. Fire-and-forget.
+    void writeOutcomeAnalyticsRow(sc, {
+      event_type:  analyticsEventType,
+      item_id,
+      surface,
+      user_id:     user.id,
+      session_id:  session_id ?? null,
+      served_at:   new Date().toISOString(),
+      // Analytics sentinel — prevents impression-finding query from matching
+      outcome:     "analytics",
+      recommendation_id: recommendationId,
+    }, req.log, { outcome, analyticsEventType });
   }
-
   // content_distribution_stats.eligible_impressions is deliberately NOT touched
   // here.  This route used to be the ONLY writer of it — "an outcome confirms
   // the impression was real" — which made the exposure denominator a count of
@@ -299,5 +299,357 @@ router.post("/rank-events/outcome", asyncHandler(async (req, res) => {
 
   res.json({ ok: true });
 }));
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Everything below this line is declared BELOW the last anchored doc citation
+// into this file (`routes/rankEvents.ts:290#content_distribution_stats`). The
+// handlers above call into it by hoisted function declaration, so the citations
+// at :44, :99, :139, :169, :208, :229-238, :231 and :290 keep pointing at the
+// code they describe. Put new declarations here, not up there.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** The subset of pino's logger these helpers use; absent in unit tests. */
+type RouteLog = {
+  warn?:  (ctx: unknown, msg?: string) => void;
+  error?: (ctx: unknown, msg?: string) => void;
+};
+
+/** Same idiom as lib/requireAdmin.ts — a missing req.log must not become a 500. */
+function warnOn(log: RouteLog | undefined, ctx: unknown, msg: string): void {
+  (log?.warn ?? console.warn).call(log ?? console, ctx, msg);
+}
+
+// ── DV-46 / DSV2-12 — the exposure token on an outcome upgrade ────────────────
+//
+// `04` §5 asks that every served item carry a `recommendation_id`, and §10.6
+// asks that it PROPAGATE. lib/discoveryRecommendationId mints it and
+// lib/discoveryServeLog writes it (into `features.recommendationId`); migration
+// 2891 gives it a column plus `UNIQUE (recommendation_id, outcome)`. The gap
+// this closes is the last hop: an outcome upgrade that carried no token left the
+// exposure and its outcomes sharing no key at all.
+//
+// ── THE MIGRATION IS NOT APPLIED ANYWHERE ────────────────────────────────────
+// 2891 is staged and rehearsed on portava-ci only. Every path below therefore
+// has to be correct BOTH ways, and the failure mode to design against is not the
+// missing column — it is a route that turns a missing column into a 500 on an
+// endpoint whose whole job is to record a signal. So: attempt the arbitrated
+// shape, and on the specific errors that mean "2891 is not here", say so ONCE,
+// latch it, and redo the write in the shape that has always worked. The outcome
+// is never dropped and the degradation is never silent.
+
+/** rank_events.recommendation_id's shape CHECK, mirrored from migration 2891. */
+const RECOMMENDATION_ID_SHAPE = /^[A-Za-z0-9_-]{22}$/;
+
+/** The conflict arbiter. BOTH columns, in index order — `recommendation_id`
+ *  alone raises 42P10 against 2891's index (the migration says so verbatim). */
+const RECOMMENDATION_ARBITER = "recommendation_id,outcome";
+
+/** Exposure coordinates the outcome handler reads, WITH 2891's column. */
+const EXPOSURE_COLUMNS        = "id, position, served_at, session_id, features, recommendation_id";
+/** The same list on a database where 2891 has not been applied. */
+const EXPOSURE_COLUMNS_LEGACY = "id, position, served_at, session_id, features";
+
+let _recommendationIdColumn: "unknown" | "absent" = "unknown";
+
+/** Test seam — the latch is process-wide, so a suite that simulates a 2891-less
+ *  database would otherwise poison every suite that runs after it. */
+export function _resetRecommendationIdSchemaLatch(): void {
+  _recommendationIdColumn = "unknown";
+}
+
+export function exposureColumns(): string {
+  return _recommendationIdColumn === "absent" ? EXPOSURE_COLUMNS_LEGACY : EXPOSURE_COLUMNS;
+}
+
+/**
+ * Does this PostgREST error mean "migration 2891 is not applied here"?
+ *
+ * Three codes, all of which this route can only produce for that one reason —
+ * `recommendation_id` is the only column it names that is not in the pre-2891
+ * thirteen, and the only ON CONFLICT it ever asks for:
+ *   42703    undefined_column — the SELECT list or the filter named it;
+ *   PGRST204 PostgREST's schema cache has no such column for a write;
+ *   42P10    the column exists but the unique index that arbitrates it does not.
+ * Anything else — a timeout, an RLS denial, a CHECK violation — is NOT this, and
+ * must keep its 500 rather than be quietly absorbed by the fallback.
+ */
+export function isMissingRecommendationIdSchema(err: unknown): boolean {
+  const e    = err as { code?: unknown; message?: unknown } | null | undefined;
+  const code = String(e?.code ?? "");
+  if (code === "42703" || code === "PGRST204" || code === "42P10") return true;
+  const msg = String(e?.message ?? "").toLowerCase();
+  if (msg.includes("on conflict specification")) return true;
+  if (!msg.includes("recommendation_id")) return false;
+  return msg.includes("does not exist")
+      || msg.includes("could not find")
+      || msg.includes("schema cache");
+}
+
+function noteRecommendationIdUnavailable(err: unknown, log: RouteLog | undefined, where: string): void {
+  const firstTime = _recommendationIdColumn !== "absent";
+  _recommendationIdColumn = "absent";
+  if (!firstTime) return;   // one line per process, not one per request
+  warnOn(
+    log,
+    { err, where, migration: "2891_rank_events_recommendation_id.sql" },
+    "rank-events/outcome: rank_events.recommendation_id is unavailable — outcome recorded " +
+    "WITHOUT an exposure token; 04 §10.6 propagation is off until 2891 is applied",
+  );
+}
+
+/**
+ * The exposure's `recommendation_id`, in order of authority:
+ *   1. the column, once 2891 is applied and a writer fills it;
+ *   2. `features.recommendationId`, which lib/discoveryServeLog writes today;
+ *   3. derived from the row's own coordinates.
+ *
+ * (3) is not an invention: `recommendationIdFor` is pure and total over exactly
+ * (userId, sessionId, servedAt, surface, position, itemId), and every one of
+ * those is a column on the row just read — so it REPRODUCES what the serve-side
+ * writer computed rather than minting a rival identity for the same exposure.
+ *
+ * A stored value is used only if it matches 2891's shape CHECK. Otherwise it is
+ * some other system's token (Compass's HMAC handle, say) and writing it would
+ * fail the CHECK with a 23514 — a real error, on a path meant to degrade.
+ */
+export function exposureTokenFor(
+  row:     Record<string, unknown> | null | undefined,
+  userId:  string,
+  itemId:  string,
+  surface: string,
+): string {
+  const stored = row?.["recommendation_id"];
+  if (typeof stored === "string" && RECOMMENDATION_ID_SHAPE.test(stored)) return stored;
+  const inFeatures = (row?.["features"] as { recommendationId?: unknown } | null | undefined)?.recommendationId;
+  if (typeof inFeatures === "string" && RECOMMENDATION_ID_SHAPE.test(inFeatures)) return inFeatures;
+  const position = row?.["position"];
+  return recommendationIdFor({
+    userId,
+    sessionId: typeof row?.["session_id"] === "string" ? (row["session_id"] as string) : "",
+    servedAt:  typeof row?.["served_at"]  === "string" ? (row["served_at"]  as string) : "",
+    surface,
+    position:  typeof position === "number" ? position : -1,
+    itemId,
+  });
+}
+
+/** The funnel-row patch: `outcome` + `outcome_at`, plus the token when it can land. */
+export function outcomeUpdatePatch(
+  outcome: OutcomeValue,
+  recommendationId: string,
+): Record<string, unknown> {
+  const patch: Record<string, unknown> = { outcome, outcome_at: new Date().toISOString() };
+  if (_recommendationIdColumn !== "absent" && RECOMMENDATION_ID_SHAPE.test(recommendationId)) {
+    patch["recommendation_id"] = recommendationId;
+  }
+  return patch;
+}
+
+/**
+ * Execute the upgradable-row lookup, retrying without 2891's column if the
+ * database has not got it. The retry rebuilds the query from the same filters
+ * rather than reusing the builder, because a PostgREST builder is spent once
+ * awaited.
+ */
+async function readUpgradableExposure(
+  sc: any,
+  query: any,
+  f: { userId: string; itemId: string; surface: string; outcome: OutcomeValue; sessionId?: string },
+  log: RouteLog | undefined,
+): Promise<{ row: any | null; error: any | null }> {
+  const first = await query;
+  if (!first?.error) return { row: ((first?.data as any[]) ?? [])[0] ?? null, error: null };
+  if (!isMissingRecommendationIdSchema(first.error)) return { row: null, error: first.error };
+
+  noteRecommendationIdUnavailable(first.error, log, "outcome select");
+  let retry = sc
+    .from("rank_events")
+    .select(EXPOSURE_COLUMNS_LEGACY)
+    .eq("user_id", f.userId)
+    .eq("item_id", f.itemId)
+    .eq("surface", f.surface)
+    .in("outcome", upgradableOutcomesFor(f.outcome))
+    .order("served_at", { ascending: false })
+    .limit(1);
+  if (f.sessionId) retry = retry.eq("session_id", f.sessionId);
+
+  const second = await retry;
+  if (second?.error) return { row: null, error: second.error };
+  return { row: ((second?.data as any[]) ?? [])[0] ?? null, error: null };
+}
+
+/**
+ * Settle the funnel-row update.
+ *
+ * `firstErr` is the error from the update the handler already issued. A
+ * PGRST204 there means PostgREST's schema cache has no `recommendation_id` —
+ * which can happen even when the SELECT succeeded, because the cache and the
+ * catalogue drift independently — so the write is redone WITHOUT the column
+ * rather than resent unchanged, which would fail identically.
+ */
+async function settleOutcomeUpdate(
+  sc: any,
+  rowId: unknown,
+  outcome: OutcomeValue,
+  recommendationId: string,
+  firstErr: any,
+  log: RouteLog | undefined,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  if (!firstErr) return { ok: true };
+
+  if (isMissingRecommendationIdSchema(firstErr)) {
+    noteRecommendationIdUnavailable(firstErr, log, "outcome update");
+    const { error: retryErr } = await sc
+      .from("rank_events")
+      .update(outcomeUpdatePatch(outcome, recommendationId))   // the latch now omits the column
+      .eq("id", rowId);
+    if (!retryErr) return { ok: true };
+    firstErr = retryErr;
+  }
+
+  (log?.error ?? console.error).call(log ?? console, { err: firstErr }, "rank-events/outcome: update failed");
+  return { ok: false, message: String(firstErr?.message ?? "db_error") };
+}
+
+/**
+ * Write the analytics row for this outcome.
+ *
+ * With 2891 applied this is an ON CONFLICT UPGRADE on (recommendation_id,
+ * outcome): one analytics row per exposure, carrying the latest event type,
+ * instead of a fresh row every time an outcome is re-reported. `ignoreDuplicates`
+ * is deliberately FALSE — DO NOTHING would make a repeat a no-op, and the
+ * requirement is an upgrade.
+ *
+ * Without it, a plain insert of the same row minus the token: exactly what this
+ * route did before, so a 2891-less database loses nothing it had.
+ *
+ * Fire-and-forget throughout; this never rejects.
+ */
+async function writeOutcomeAnalyticsRow(
+  sc:  any,
+  row: Record<string, unknown>,
+  log: RouteLog | undefined,
+  ctx: { outcome: OutcomeValue; analyticsEventType: string },
+): Promise<void> {
+  const token = row["recommendation_id"];
+  const bare: Record<string, unknown> = { ...row };
+  delete bare["recommendation_id"];
+
+  try {
+    const rel = sc.from("rank_events");
+    // The capability check is not ceremony: `upsert` is the one method here that
+    // a narrower client-shaped object may not carry, and calling it blind would
+    // turn "no arbiter available" into a TypeError that silently loses the row.
+    const arbitrated =
+      _recommendationIdColumn !== "absent" &&
+      typeof token === "string" && RECOMMENDATION_ID_SHAPE.test(token) &&
+      typeof rel?.upsert === "function";
+
+    const res = arbitrated
+      ? await rel.upsert(row, { onConflict: RECOMMENDATION_ARBITER, ignoreDuplicates: false })
+      : await rel.insert(bare);
+    if (!res?.error) return;
+
+    if (arbitrated && isMissingRecommendationIdSchema(res.error)) {
+      noteRecommendationIdUnavailable(res.error, log, "analytics upsert");
+      const retry = await sc.from("rank_events").insert(bare);
+      if (!retry?.error) return;
+      warnOn(log, { err: retry.error, ...ctx }, "rank-events/outcome: analytics insert failed (non-fatal)");
+      return;
+    }
+    warnOn(log, { err: res.error, ...ctx }, "rank-events/outcome: analytics insert failed (non-fatal)");
+  } catch (err) {
+    warnOn(log, { err, ...ctx }, "rank-events/outcome: analytics insert failed (non-fatal)");
+  }
+}
+
+// ── DC-19 — the batch form of POST /rank-events ──────────────────────────────
+//
+// ADDITIVE. A body without an `events` key never reaches any of this: the
+// single-event path above is untouched, down to its `{ ok: true }` body and its
+// fire-and-forget treatment of a rejected insert.
+//
+// PARTIAL-FAILURE SEMANTICS: **ALL-OR-NOTHING**, chosen and not defaulted.
+//
+//   Why not per-item results? These are impression events and their only
+//   consumer is an exposure denominator. A 207-style body saying "14 of 20
+//   landed" is only useful to a client that will resend the other 6, and no
+//   client resends against a 2xx. A batch that half-lands therefore leaves the
+//   denominator holding a number nobody will ever correct — and an exposure
+//   denominator that is quietly wrong is the defect `04` §5 exists to prevent
+//   ("without exposure denominators, engagement rates are misleading").
+//
+//   So the rule is: validate EVERYTHING first, then write everything in ONE
+//   multi-row insert. PostgREST executes a multi-row insert as a single
+//   statement, so atomicity comes from the database rather than from a promise
+//   made here. One invalid item ⇒ 400, nothing written, the offending index
+//   named. A rejected insert ⇒ 500 `db_error`, never `{ ok: true }`.
+//
+//   THAT LAST LINE IS WHERE THE BATCH DELIBERATELY DIFFERS FROM THE SINGLE
+//   FORM. The single form answers a rejected insert with 200 `{ ok: true }` and
+//   a warn — "a missed signal beats a broken Living Page load" — and that stays,
+//   because clients depend on it. A new shape does not inherit it: a batch that
+//   reports success having written nothing is the masquerade `11` §9 forbids,
+//   and there is no compatibility argument for a shape nobody has called yet.
+
+/** Upper bound on one batch. An unbounded batch is an unbounded statement. */
+const DIRECT_EVENT_BATCH_MAX = 200;
+
+const directEventBatchSchema = z.object({
+  events: z.array(directEventSchema).min(1).max(DIRECT_EVENT_BATCH_MAX),
+});
+
+/**
+ * Is this the batch shape?
+ *
+ * Presence of `events` — NOT "is it a valid batch". A body carrying `events`
+ * that fails the schema must be a 400 about its batch, never a fall-through
+ * that re-reports it as a malformed single event.
+ */
+export function isDirectEventBatchBody(body: unknown): boolean {
+  return typeof body === "object" && body !== null && !Array.isArray(body)
+      && Object.prototype.hasOwnProperty.call(body, "events");
+}
+
+async function handleDirectEventBatch(req: any, res: any, userId: string): Promise<void> {
+  const parsed = directEventBatchSchema.safeParse(req.body);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    const where = (issue?.path?.length ?? 0) > 0 ? issue!.path.join(".") : "events";
+    sendError(res, "invalid_payload", `${where}: ${issue?.message ?? "Invalid payload"}`);
+    return;
+  }
+
+  const sc = getServiceClient();
+  if (!sc) {
+    sendError(res, "server_not_configured", "Service client not available");
+    return;
+  }
+
+  // One timestamp for the whole batch: these rows describe one client flush, and
+  // per-row clocks would make them look like separate serves.
+  const servedAt = new Date().toISOString();
+  const rows = parsed.data.events.map((e) => ({
+    event_type: e.event_type,
+    item_id:    e.entity_id,
+    surface:    "living_page",
+    user_id:    userId,
+    served_at:  servedAt,
+    outcome:    "impression",
+  }));
+
+  const { error } = await sc.from("rank_events").insert(rows);
+  if (error) {
+    (req.log?.error ?? console.error).call(
+      req.log ?? console,
+      { err: error, count: rows.length },
+      "rank-events: batch insert rejected — NOTHING was written",
+    );
+    sendError(res, "db_error", error.message);
+    return;
+  }
+
+  res.json({ ok: true, accepted: rows.length });
+}
 
 export default router;
