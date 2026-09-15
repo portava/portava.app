@@ -3192,9 +3192,9 @@ that were read are a real result and their emptiness is trustworthy — and
 The serve log still runs on a partial: those items really were served, and
 dropping them under-counts exposure in the other direction.
 
-Failing first: `test/discoveryRefusalD11.test.ts:606#it("P3 — type=all refuses PARTIAL when a bucket's read fails, instead of a silently short list",`,
+Failing first: `test/discoveryRefusalD11.test.ts:629#it("P3 — type=all refuses PARTIAL when a bucket's read fails, instead of a silently short list",`,
 red before the change with the served row and the missing `refusal` key both
-recorded in the assertion message. `test/discoveryRefusalD11.test.ts:794#it("P4 — type=all over readable tables carries NO refusal (control)",`
+recorded in the assertion message. `test/discoveryRefusalD11.test.ts:816#it("P4 — type=all over readable tables carries NO refusal (control)",`
 is the control and is as load-bearing: with every table readable the same
 request must carry NO refusal, so a fix that stamps a partial on every fan-out
 response does not pass. 40/40 in that suite; 166/166 across the seven other
@@ -3353,7 +3353,7 @@ The new cases were run against this work's parent in a throwaway worktree. **12
 RED there** — P3, P5, S1 and nine of the ten P8 failure cases — and every one
 of the ten CONTROLS green in BOTH trees, which is the whole difference between
 "throw on error" and "throw on everything". 64 pass / 1 skipped in
-`test/discoveryRefusalD11.test.ts:716#const SWALLOWED`; 572/572 across the
+`test/discoveryRefusalD11.test.ts:738#const SWALLOWED`; 572/572 across the
 twenty suites that mount this router.
 
 **The skip is a gap, not a pass.** `type=travelers` reads `profiles`, and so
@@ -3434,7 +3434,7 @@ privacy-preserving refusal from a search result. Both now throw
 and its twin in `searchCountries`), which serves the same empty collection and
 SAYS it did not look: the fail-closed direction intact, the masquerade gone.
 
-Failing first: `test/discoveryRefusalD11.test.ts:774#it(` — four cases, the two
+Failing first: `test/discoveryRefusalD11.test.ts:796#it(` — four cases, the two
 failure cases red before the change and their two controls green throughout.
 `profile_privacy_settings` is the testable half; `profiles` is what
 `requireUser` reads, so erroring it answers 503 before the route is entered —
@@ -3450,7 +3450,7 @@ case that is depends on how many ran before it. The file was already close
 enough that four more tipped two unrelated controls over, which means §22's
 twenty new cases passed partly by luck.
 
-`test/discoveryRefusalD11.test.ts:273#_resetRateLimit();` now runs in
+`test/discoveryRefusalD11.test.ts:296#_resetRateLimit();` now runs in
 `beforeEach`. A case is independent of its position. Nothing about what any
 case asserts changed — this is the same class of defect as the clock: a test
 whose result depends on how many ran before it is not a flaky test, it is an

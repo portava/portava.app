@@ -95,9 +95,24 @@ let inserts: Array<{ table: string; rows: unknown }> = [];
  * `errorTables` RESOLVE with `{ data: null, error }` — which is what supabase-js
  * actually does on a failed read. It does not reject. Building the fixture the
  * other way is how a fail-open bug gets written and then tested green.
+ *
+ * `errorReads` is the narrower seam: it fails a read of `table` ONLY when that
+ * read's `.select()` list names `selecting` as a whole column. `errorTables`
+ * fails a table for the entire request, and one request can read the same
+ * table twice for two different reasons — `requireUser` reads `profiles` for
+ * `account_status` before any discovery route is entered, and `searchTravelers`
+ * reads `profiles` again for the traveler columns. Keying the failure on a
+ * column only the searcher selects lets the auth read succeed and the search
+ * read fail, which is the outage D11 is about. The match is on the column
+ * list, not on the table, so it cannot be satisfied by a read that merely
+ * happens to touch the same table.
  */
-function buildFakeClient(opts: { errorTables?: string[]; rows?: Record<string, any[]> } = {}) {
+type ErrorRead = { table: string; selecting: string };
+function buildFakeClient(
+  opts: { errorTables?: string[]; errorReads?: ErrorRead[]; rows?: Record<string, any[]> } = {},
+) {
   const errorTables = new Set(opts.errorTables ?? []);
+  const errorReads = opts.errorReads ?? [];
   // THE SERVE LOG FLAG IS ON IN EVERY FIXTURE, DELIBERATELY.
   //
   // `logDiscoveryServe` returns before its insert unless
@@ -116,9 +131,13 @@ function buildFakeClient(opts: { errorTables?: string[]; rows?: Record<string, a
     fromCalls.push(table);
     const preds: Array<(r: any) => boolean> = [];
     const rows: any[] = rowsFor[table] ?? [];
+    let selected: string[] = [];
 
     const b: any = {
-      select() { return b; },
+      select(cols?: string) {
+        selected = typeof cols === "string" ? cols.split(",").map((c) => c.trim()) : [];
+        return b;
+      },
       insert(payload: unknown) { inserts.push({ table, rows: payload }); return b; },
       update() { return b; },
       upsert(payload: unknown) { inserts.push({ table, rows: payload }); return b; },
@@ -149,12 +168,16 @@ function buildFakeClient(opts: { errorTables?: string[]; rows?: Record<string, a
     };
 
     function filtered() { return rows.filter((r) => preds.every((p) => p(r))); }
+    function unreadable() {
+      if (errorTables.has(table)) return true;
+      return errorReads.some((e) => e.table === table && selected.includes(e.selecting));
+    }
     async function resolveList() {
-      if (errorTables.has(table)) return { data: null, error: { message: `${table} unavailable` }, count: null };
+      if (unreadable()) return { data: null, error: { message: `${table} unavailable` }, count: null };
       return { data: filtered(), error: null, count: filtered().length };
     }
     async function resolveOne() {
-      if (errorTables.has(table)) return { data: null, error: { message: `${table} unavailable` } };
+      if (unreadable()) return { data: null, error: { message: `${table} unavailable` } };
       return { data: filtered()[0] ?? null, error: null };
     }
     return b;
@@ -704,31 +727,30 @@ describe("GET /discovery/search", () => {
   // mean anything: an empty-but-READABLE table must still answer with no
   // refusal, so "throw on error" cannot be satisfied by throwing on everything.
   //
-  // NINE of the ten are exercised below. `travelers` is NOT, and the reason is
-  // recorded rather than worked around: its read is `profiles`, and so is
-  // `requireUser`'s, so `errorTables: ["profiles"]` answers 503 from the auth
-  // middleware before the route is entered. This harness errors a table for the
-  // whole request and cannot fail one read of `profiles` and not the other. Its
-  // CONTROL still runs. So `searchTravelers`' re-raise is fixed by the same
-  // edit as the other nine and is verified by NOTHING — that is a gap, not a
-  // pass, and it is named here so a reader does not count ten where there are
-  // nine.
-  const SWALLOWED: Array<{ type: string; table: string; reachable: boolean }> = [
-    { type: "travelers",   table: "profiles", reachable: false },
-    { type: "events",      table: "events", reachable: true },
-    { type: "plans",       table: "trip_plan_items" , reachable: true },
-    { type: "places",      table: "discovery_places" , reachable: true },
-    { type: "hidden_gems", table: "hidden_gems" , reachable: true },
-    { type: "hashtags",    table: "hashtags" , reachable: true },
-    { type: "posts",       table: "posts" , reachable: true },
-    { type: "circles",     table: "circles" , reachable: true },
-    { type: "stamps",      table: "stamp_definitions" , reachable: true },
-    { type: "activities",  table: "discovery_places" , reachable: true },
+  // All TEN are exercised below. `travelers` needs the narrower seam: its read
+  // is `profiles`, and so is `requireUser`'s, so `errorTables: ["profiles"]`
+  // answers 503 from the auth middleware before the route is entered. The
+  // `selecting` column tells the harness WHICH `profiles` read to fail — only
+  // `searchTravelers` selects `show_profile_picture_publicly`; `requireUser`
+  // selects `account_status`, the age gate selects `date_of_birth`, and the
+  // owner-status guard selects `id` — so the auth read succeeds, the search
+  // read fails, and the case is the same outage the other nine stage.
+  const SWALLOWED: Array<{ type: string; table: string; selecting?: string }> = [
+    { type: "travelers",   table: "profiles", selecting: "show_profile_picture_publicly" },
+    { type: "events",      table: "events" },
+    { type: "plans",       table: "trip_plan_items" },
+    { type: "places",      table: "discovery_places" },
+    { type: "hidden_gems", table: "hidden_gems" },
+    { type: "hashtags",    table: "hashtags" },
+    { type: "posts",       table: "posts" },
+    { type: "circles",     table: "circles" },
+    { type: "stamps",      table: "stamp_definitions" },
+    { type: "activities",  table: "discovery_places" },
   ];
 
-  for (const { type, table, reachable } of SWALLOWED) {
-    (reachable ? it : it.skip)(`P8 — type=${type} refuses when \`${table}\` cannot be read`, async () => {
-      setClient({ errorTables: [table] });
+  for (const { type, table, selecting } of SWALLOWED) {
+    it(`P8 — type=${type} refuses when \`${table}\` cannot be read`, async () => {
+      setClient(selecting ? { errorReads: [{ table, selecting }] } : { errorTables: [table] });
       const r = await get(`/api/discovery/search?q=kopitiam&type=${type}`, true);
       assert.equal(r.status, 200);
       assert.deepEqual(r.body.results, []);
