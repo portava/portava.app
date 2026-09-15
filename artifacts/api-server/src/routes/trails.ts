@@ -38,6 +38,9 @@ import { asyncHandler } from "../lib/asyncHandler.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { readTrailLiveIntel } from "../lib/trailLiveIntel.js";
 import {
+  windowSpanMs, type DerivedStoreProvenance,
+} from "../lib/discoveryRankProvenance.js";
+import {
   listTrails, getTrail, getTrailModules, relatedTrails, trailTrending,
   proposeTrail, attachContentToTrail, detachContentFromTrail,
   setTrailFollow, reportTrail, recordTrailHealthSnapshot,
@@ -219,6 +222,39 @@ router.get("/v1/discovery/trails/:id", asyncHandler(async (req: Request, res: Re
   });
 }));
 
+/**
+ * DC-17 on the wire — `10` §5's four facts about a DERIVED reading, published.
+ *
+ * `11` §4 forbids returning internal raw scores; none of these four is one. A
+ * model version, a feature version, a computation clock and the event-window
+ * bounds say WHAT WAS MEASURED, not how any item scored, and they are the only
+ * way a client can tell two readings of the same Trail apart when the answer it
+ * is given is a boolean.
+ *
+ * `spanMs` comes from `windowSpanMs`, never from `endMs - startMs`: `Number(null)`
+ * is 0, so raw subtraction would publish a corpus with NO oldest event and a
+ * window that admitted NOTHING as the same number. Three states survive to the
+ * client — `null` record (nothing was read), `spanMs: null` (unbounded start),
+ * and `spanMs: 0` (a window that admitted nothing).
+ *
+ * EXPORTED so that the three-state contract can be PINNED rather than asserted.
+ * The only producer that reaches this route today (`lib/discoveryLocalMomentum`)
+ * always stamps a `bounded` window, so the `unbounded_start` branch is not
+ * reachable through the HTTP surface — and a defensive branch no test can enter
+ * is a branch the next refactor deletes. Reaching it directly is the only way to
+ * keep `windowSpanMs` here from being collapsed into raw subtraction.
+ */
+export function toPublicProvenance(p: DerivedStoreProvenance | null) {
+  if (!p) return null;
+  return {
+    modelVersion: p.modelVersion,
+    featureVersion: p.featureVersion,
+    computedAt: p.computedAt,
+    window: { kind: p.window.kind, startMs: p.window.startMs, endMs: p.window.endMs },
+    spanMs: windowSpanMs(p.window),
+  };
+}
+
 router.get("/v1/discovery/trails/:id/modules", asyncHandler(async (req: Request, res: Response) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
@@ -247,6 +283,19 @@ router.get("/v1/discovery/trails/:id/modules", asyncHandler(async (req: Request,
       // claim the server cannot make when it could not measure.
       explorationSlots: m.explorationSlots,
     })),
+    // DC-17. `trending_now` is ordered by a store that computes over an event
+    // window; this is that store's own record, carried through rather than
+    // re-derived. `null` means no reading entered the page at all, so the
+    // ordering rests on no window — which a client must be able to see.
+    //
+    // NAMED `readingProvenance`, NOT `momentumProvenance`, ON PURPOSE. The
+    // route suite asserts that the serialised body contains no occurrence of
+    // the string "momentum" at all — `11` §4's "never return internal raw
+    // scores", pinned as a blunt tripwire rather than as a field list. That
+    // guard is over-broad and was left over-broad: it costs one word here and
+    // it catches a leak no narrower assertion would. Do not rename this field
+    // to match the service's, and do not loosen the assertion to allow it.
+    readingProvenance: toPublicProvenance(r.momentumProvenance),
   });
 
   // §11's snapshot, after the response and never blocking it — the shape
@@ -282,7 +331,16 @@ router.get("/v1/discovery/trails/:id/trending", asyncHandler(async (req: Request
   if (r.refusal) return sendTrailRefusal(res, r.refusal);
   // `11` §4's prohibition, honoured: `trending` is a BOOLEAN derived from the
   // Trail's momentum and the momentum number itself is not serialised.
-  res.json({ trending: (r.momentum ?? 0) > 0, items: r.items });
+  // DC-17 — `trending` is a BOOLEAN, so without the window it is a claim about
+  // an unspecified corpus. The provenance says which corpus, and `null` says
+  // that no reading was taken, which is not the same as "not trending".
+  // `readingProvenance` rather than `momentumProvenance`: see the note on the
+  // modules route above — the `11` §4 tripwire forbids the WORD here.
+  res.json({
+    trending: (r.momentum ?? 0) > 0,
+    items: r.items,
+    readingProvenance: toPublicProvenance(r.momentumProvenance),
+  });
 }));
 
 router.put("/v1/discovery/trails/:id/follow", asyncHandler(async (req: Request, res: Response) => {

@@ -46,6 +46,7 @@
 import {
   loadLocalMomentum, MOMENTUM_BASELINE_WINDOW_MS,
 } from "../../lib/discoveryLocalMomentum.js";
+import type { DerivedStoreProvenance } from "../../lib/discoveryRankProvenance.js";
 import {
   canonicaliseTrailProposal, capTrailLabels,
   isTrailLifecycleState, isTrailLifecycleTransitionAllowed,
@@ -297,6 +298,30 @@ export interface TrailModulesResult {
   refusal: TrailRefusal;
   modules: TrailModule[];
   health: TrailHealth | null;
+  /**
+   * DC-17 — the provenance of the ONE derived input that orders a module here.
+   *
+   * `trending_now` is ordered by `lib/discoveryLocalMomentum`, a store that
+   * COMPUTES over an event window. `10` §5 requires a derived feature to retain
+   * the window it was computed over, its feature version, its model version and
+   * its computation time, and this field is the loader's own record carried
+   * through rather than a second one minted here — a parallel stamp could claim
+   * a window the numbers did not come from.
+   *
+   * `null` means NO momentum reading entered this result: either the Trail has
+   * no `place` members to read momentum for, or the loader threw. A consumer
+   * that saw a provenance for that case would be told the ordering rests on a
+   * window that was never consulted.
+   *
+   * WHAT THIS FIELD STILL CANNOT SAY, stated rather than implied: the loader
+   * degrades a FAILED `rank_events` read into an empty map carrying a full
+   * provenance, so `provenance present + no momentum` covers both "the window
+   * was read and nothing surged" and "the read failed". That collapse happens
+   * in `lib/discoveryLocalMomentum.ts`, which this lane does not own; it is
+   * recorded here so the next reader does not mistake this field for a
+   * stronger guarantee than it is.
+   */
+  momentumProvenance: DerivedStoreProvenance | null;
 }
 
 const DAY = 86_400_000;
@@ -381,14 +406,14 @@ async function readExposureCounts(
 export async function getTrailModules(
   sc: any, trailId: string, opts: { pageSize?: number; nowMs?: number } = {},
 ): Promise<TrailModulesResult> {
-  if (!sc) return { refusal: "no_service_client", modules: [], health: null };
+  if (!sc) return { refusal: "no_service_client", modules: [], health: null, momentumProvenance: null };
   const nowMs = opts.nowMs ?? Date.now();
   const pageSize = Math.min(20, Math.max(1, opts.pageSize ?? 8));
 
   const t = await readTrail(sc, trailId);
-  if (t.refusal || !t.trail) return { refusal: t.refusal, modules: [], health: null };
+  if (t.refusal || !t.trail) return { refusal: t.refusal, modules: [], health: null, momentumProvenance: null };
   const m = await readMembers(sc, trailId);
-  if (m.refusal) return { refusal: m.refusal, modules: [], health: null };
+  if (m.refusal) return { refusal: m.refusal, modules: [], health: null, momentumProvenance: null };
 
   const health = computeTrailHealth({
     members: m.members.map((r) => ({
@@ -402,12 +427,20 @@ export async function getTrailModules(
   // The ONE non-chronological ordering input, and it is borrowed rather than
   // built: the momentum loader `GET /discovery` already uses, over the same
   // `rank_events` rows, with its own cache key so it cannot evict Discovery's.
+  //
+  // DC-17: the loader's `provenance` is RETAINED, not dropped. It is the record
+  // of the window `trending_now`'s order was computed over, and the reason it is
+  // carried rather than re-derived here is that a second stamp built beside the
+  // numbers can drift from the arithmetic it describes.
   const placeIds = m.members.filter((r) => r.source_type === "place").map((r) => r.source_id);
   let momentum: Record<string, number> = {};
+  let momentumProvenance: DerivedStoreProvenance | null = null;
   if (placeIds.length > 0) {
     try {
-      momentum = (await loadLocalMomentum(sc, placeIds, { cacheKey: `trail:${trailId}`, nowMs })).values;
-    } catch { momentum = {}; }
+      const reading = await loadLocalMomentum(sc, placeIds, { cacheKey: `trail:${trailId}`, nowMs });
+      momentum = reading.values;
+      momentumProvenance = reading.provenance;
+    } catch { momentum = {}; momentumProvenance = null; }
   }
 
   const toItem = (r: MemberRow) => ({
@@ -489,6 +522,7 @@ export async function getTrailModules(
   return {
     refusal: null,
     health,
+    momentumProvenance,
     modules: [
       justArrived,
       build("trending_now", "momentum", 2 * DAY, byMomentum),
@@ -551,6 +585,17 @@ export interface TrailTrendingResult {
   momentum: number | null;
   /** Member items with momentum, strongest first. Never a raw score to a client. */
   items: Array<{ id: string; sourceType: string; sourceId: string }>;
+  /**
+   * DC-17 — the per-item momentum reading's provenance, or `null` when no
+   * reading was taken (no members, or the loader threw). Same meaning, and the
+   * same stated limit, as `TrailModulesResult.momentumProvenance`.
+   *
+   * This one matters more than the modules one, because `trending` is published
+   * as a BOOLEAN: "is this Trail trending" with no window attached is a claim
+   * about an unspecified corpus, and two readings taken a day apart over "30
+   * days" answer it about different corpora.
+   */
+  momentumProvenance: DerivedStoreProvenance | null;
 }
 
 /**
@@ -564,22 +609,32 @@ export interface TrailTrendingResult {
  * ORDER and is never serialised. See routes/trails.ts.
  */
 export async function trailTrending(sc: any, trailId: string, nowMs = Date.now()): Promise<TrailTrendingResult> {
-  if (!sc) return { refusal: "no_service_client", momentum: null, items: [] };
+  // A FUNCTION, not a shared object. Every refusal path used to build its own
+  // literal; spreading one constant instead would hand every one of them the
+  // same `items` array, which is mutable on the published type.
+  const none = (refusal: TrailRefusal): TrailTrendingResult =>
+    ({ refusal, momentum: null, items: [], momentumProvenance: null });
+  if (!sc) return none("no_service_client");
   const t = await readTrail(sc, trailId);
-  if (t.refusal || !t.trail) return { refusal: t.refusal, momentum: null, items: [] };
+  if (t.refusal || !t.trail) return none(t.refusal);
   const m = await readMembers(sc, trailId);
-  if (m.refusal) return { refusal: m.refusal, momentum: null, items: [] };
+  if (m.refusal) return none(m.refusal);
 
   const itemIds = m.members.map((r) => r.source_id);
-  if (itemIds.length === 0) return { refusal: null, momentum: null, items: [] };
+  // No members ⇒ no reading was taken, so there is no window to report. A
+  // provenance here would describe a computation that never ran (DC-17).
+  if (itemIds.length === 0) return none(null);
 
   // The rows are `rank_events` rows, read through the momentum loader. Trail
   // momentum is those same rows folded onto the Trail — one kernel, two scopes,
   // no second velocity model (DV-25).
   let perItem: Record<string, number> = {};
+  let momentumProvenance: DerivedStoreProvenance | null = null;
   try {
-    perItem = (await loadLocalMomentum(sc, itemIds, { cacheKey: `trail:${trailId}`, nowMs })).values;
-  } catch { perItem = {}; }
+    const reading = await loadLocalMomentum(sc, itemIds, { cacheKey: `trail:${trailId}`, nowMs });
+    perItem = reading.values;
+    momentumProvenance = reading.provenance;
+  } catch { perItem = {}; momentumProvenance = null; }
 
   const { data, error } = await sc.from("rank_events")
     .select("item_id, outcome, served_at, outcome_at")
@@ -588,7 +643,7 @@ export async function trailTrending(sc: any, trailId: string, nowMs = Date.now()
     .limit(1000);
   let trailMomentum: number | null = null;
   if (error) {
-    if (isMissingRelation(error)) return { refusal: "trails_unavailable", momentum: null, items: [] };
+    if (isMissingRelation(error)) return none("trails_unavailable");
     logger.warn({ trailId, code: error.code }, "trail trending event read failed");
   } else {
     const folded = trailMomentumFromRankEvents((data ?? []) as any[], m.members, nowMs);
@@ -601,7 +656,7 @@ export async function trailTrending(sc: any, trailId: string, nowMs = Date.now()
     .slice(0, 20)
     .map((r) => ({ id: r.id, sourceType: r.source_type, sourceId: r.source_id }));
 
-  return { refusal: null, momentum: trailMomentum, items };
+  return { refusal: null, momentum: trailMomentum, items, momentumProvenance };
 }
 
 // ── The MODIFIER load (DV-18's trail_affinity producer) ─────────────────────
