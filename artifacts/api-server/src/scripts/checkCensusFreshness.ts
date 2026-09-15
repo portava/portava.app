@@ -1093,16 +1093,19 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/services/wall/WallCandidateLoaders.ts",
     "artifacts/api-server/src/routes/mediaViewRequest.ts",
     "artifacts/api-server/src/migrations/2037_media_tab_flags.sql",
-    // WIDENED 2026-09-15 by the Media lane. §15 cites a THIRD media proof suite
-    // by path, which pushed check:census-scope-coverage below its 96% floor.
-    // The three below are this census's own mutation-proof artifacts — §11, §14
-    // and §15 all rest verdicts on what they assert — so a silent edit to one is
-    // exactly the kind of change that should age this document. They are named
-    // one by one rather than by scoping `src/test/`, which would age the census
-    // on every unrelated surface's test work and get the check switched off.
+    // WIDENED 2026-09-15 by the Media lane. §15 cites three more media proof
+    // suites by path, which pushed check:census-scope-coverage below its 96%
+    // floor. The five below are this census's own mutation-proof artifacts —
+    // §11, §14 and §15 all rest verdicts on what they assert — so a silent edit
+    // to one is exactly the kind of change that should age this document. They
+    // are named one by one rather than by scoping `src/test/`, which would age
+    // the census on every unrelated surface's test work and get the check
+    // switched off.
     "artifacts/api-server/src/test/mediaIndependentSources.test.ts",
     "artifacts/api-server/src/test/mediaActionsCompass.test.ts",
     "artifacts/api-server/src/test/mediaPeopleLensPopulations.test.ts",
+    "artifacts/api-server/src/test/mediaGemStateLens.test.ts",
+    "artifacts/api-server/src/test/mediaExperienceConfidence.test.ts",
     "artifacts/api-server/src/services/passport/PassportMemoryService.ts",
     "artifacts/api-server/src/routes/compass.ts",
     "artifacts/api-server/src/test/mediaWorldBoundaryScrub.test.ts",
