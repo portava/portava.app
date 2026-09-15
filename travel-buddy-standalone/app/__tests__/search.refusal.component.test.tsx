@@ -322,3 +322,96 @@ describe('SearchScreen — a refusal is not an empty result set', () => {
     expect(mockFetchCompass).not.toHaveBeenCalled();
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PARTIAL COVERAGE THAT RETURNED ROWS
+//
+// The block above pins the two ends: `nothing` (retry affordance) and the
+// partial that happened to carry no rows (no "nothing matched" claim). The
+// middle case — a partial that DID return rows — was the one the screen could
+// not express. `partialSources` was computed on every first page, then read in
+// exactly one place: inside the `isEmpty` branch. With rows on screen that
+// branch never runs, so a short list from a half-read index looked exactly like
+// a complete answer, and the person had no way to tell the difference. That is
+// the same fabrication as the empty state's, only quieter: a list implies "this
+// is what there is".
+//
+// MapSearchSheet already solved this and is the precedent followed here: its
+// NOTICE_PARTIAL line is rendered from `allPartial` alone, above the results,
+// unconditionally — not folded into an empty-state branch. Wording is taken
+// from it verbatim so the two search surfaces say the same thing.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const NOTICE_PARTIAL = 'These results are incomplete — part of the search couldn’t be run.';
+
+describe('SearchScreen — a partial answer says so, with or without rows', () => {
+  afterEach(() => { jest.clearAllMocks(); });
+
+  it('PARTIAL WITH ROWS: shows the incomplete notice alongside the rows it did get', async () => {
+    mockSearchUnified.mockResolvedValue({
+      ok: true,
+      data: {
+        results: [{ id: 'r1', type: 'place', title: 'Real Place', actionState: {} }],
+        nextCursor: null, timeLabel: null,
+        refusal: {
+          ...REFUSAL_NOTHING, code: 'search_sources_unreadable',
+          coverage: 'partial', failedSources: ['plans'],
+        },
+      },
+    });
+
+    const { queryByTestId, queryByText } = await render(<SearchScreen />);
+    await waitFor(() => { expect(queryByTestId('result-r1')).not.toBeNull(); }, PAST_DEBOUNCE);
+    // The rows are real and stay. The notice is what was missing.
+    await waitFor(() => { expect(queryByText(NOTICE_PARTIAL)).not.toBeNull(); }, PAST_DEBOUNCE);
+  });
+
+  it('CONTROL: a COMPLETE search with rows shows no such notice', async () => {
+    // Without this, the notice could be shown on every search and the assertion
+    // above would still pass — which would make it meaningless.
+    mockSearchUnified.mockResolvedValue({
+      ok: true,
+      data: {
+        results: [{ id: 'r1', type: 'place', title: 'Real Place', actionState: {} }],
+        nextCursor: null, timeLabel: null,
+      },
+    });
+
+    const { queryByTestId, queryByText } = await render(<SearchScreen />);
+    await waitFor(() => { expect(queryByTestId('result-r1')).not.toBeNull(); }, PAST_DEBOUNCE);
+    expect(queryByText(NOTICE_PARTIAL)).toBeNull();
+  });
+
+  it('PARTIAL WITH NO ROWS: the notice is there too — coverage, not row count, decides', async () => {
+    // Same fact, other branch. The empty state's own wording still applies (the
+    // case above asserts it); this pins that the notice itself is driven by
+    // coverage and not by whether the list happened to come back empty.
+    mockSearchUnified.mockResolvedValue({
+      ok: true,
+      data: {
+        results: [], nextCursor: null, timeLabel: null,
+        refusal: {
+          ...REFUSAL_NOTHING, code: 'search_sources_unreadable',
+          coverage: 'partial', failedSources: ['plans'],
+        },
+      },
+    });
+
+    const { queryByText } = await render(<SearchScreen />);
+    await waitFor(() => { expect(queryByText(NOTICE_PARTIAL)).not.toBeNull(); }, PAST_DEBOUNCE);
+  });
+
+  it('CONTROL: a coverage:"nothing" refusal keeps the retry state and does not show the partial notice', async () => {
+    // "Nothing was searched" and "part of the search failed" are different
+    // facts. The first already has its own destination; the partial notice must
+    // not leak into it and soften it into "some results are missing".
+    mockSearchUnified.mockResolvedValue({
+      ok: true,
+      data: { results: [], nextCursor: null, timeLabel: null, refusal: REFUSAL_NOTHING },
+    });
+
+    const { queryByText } = await render(<SearchScreen />);
+    await waitFor(() => { expect(queryByText('Tap to retry')).not.toBeNull(); }, PAST_DEBOUNCE);
+    expect(queryByText(NOTICE_PARTIAL)).toBeNull();
+  });
+});

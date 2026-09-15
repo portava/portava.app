@@ -69,8 +69,15 @@ jest.mock('../../../hooks/compass/useCompassFeed', () => ({
 }));
 
 // NOTE: intentionally exhaustive — the real hook fetches community posts.
+// The lane's state is set per test: the hook ALREADY computes a `refused` flag
+// (useCommunityDiscovery.ts), and property (3) below is about whether this
+// screen reads it. The default below is the quiet, healthy, empty city, which
+// is what every pre-existing case in this file assumes.
+const mockCommunityState: { current: Record<string, unknown> } = {
+  current: { gems: [], picks: [], places: [], loading: false, refused: false },
+};
 jest.mock('../../../hooks/useCommunityDiscovery', () => ({
-  useCommunityDiscovery: () => ({ gems: [], picks: [], places: [], loading: false }),
+  useCommunityDiscovery: () => mockCommunityState.current,
 }));
 
 // ── Heavy child component stubs ───────────────────────────────────────────────
@@ -98,11 +105,17 @@ jest.mock('../../icons/TelegraphSendIcon', () => ({ TelegraphSendIcon: Null }));
 // called.
 const mockPrefillSavedPlaceIds = jest.fn();
 // NOTE: intentional stub — not under test; pulls Supabase + community data.
-jest.mock('../../DiscoveryWall', () => ({
-  HiddenGemsSection:    Null,
-  TravelerPicksSection: Null,
-  prefillSavedPlaceIds: (...args: unknown[]) => mockPrefillSavedPlaceIds(...args),
-}));
+jest.mock('../../DiscoveryWall', () => {
+  const React = require('react');
+  const { View } = require('react-native');
+  return {
+    // Rendered rather than nulled so the POSITIVE CONTROLS in property (3) can
+    // show that a lane which DID answer still puts its sections on screen.
+    HiddenGemsSection:    () => React.createElement(View, { testID: 'hidden-gems-section' }),
+    TravelerPicksSection: () => React.createElement(View, { testID: 'traveler-picks-section' }),
+    prefillSavedPlaceIds: (...args: unknown[]) => mockPrefillSavedPlaceIds(...args),
+  };
+});
 // NOTE: intentional stub — not under test; pulls reanimated animations.
 jest.mock('../PlaceSkeleton', () => ({ PlaceSkeletonList: Null }));
 
@@ -125,8 +138,12 @@ async function renderTab() {
   return render(<ForYouTab destination="Lisbon" onAddToPlan={jest.fn()} />);
 }
 
+/** A community place in the shape HiddenGemsSection/TravelerPicksSection take. */
+const COMMUNITY_GEM = { id: 'gem-1', name: 'Rooftop in Alfama', category: 'bar' };
+
 beforeEach(() => {
   jest.clearAllMocks();
+  mockCommunityState.current = { gems: [], picks: [], places: [], loading: false, refused: false };
   mockGetCachedDiscoveryPlaces.mockReturnValue(null);
   mockGetDiscoveryPlaces.mockResolvedValue({
     ok: true, data: { places: [], total: 0, destination: 'Lisbon', cached: false },
@@ -274,5 +291,81 @@ describe('ForYouTab — a refused place list is distinguishable on screen', () =
     await act(async () => {});
     expect(screen.queryByTestId('for-you-refused')).toBeNull();
     expect(screen.queryByText('No recommendations yet')).toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// (3) A REFUSED COMMUNITY LANE IS NOT A CITY WITHOUT COMMUNITY CONTENT
+//
+// `useCommunityDiscovery` already does the hard half: it reads
+// `result.data.refusal?.coverage === 'nothing'` and exposes `refused`
+// (useCommunityDiscovery.ts). Until now that flag had NO readers — ForYouTab
+// rendered the gems and picks sections on `length > 0` alone, so a refused read
+// and a city with no traveler submissions produced the same screen: nothing.
+//
+// That is the owner ruling's "consumers still treat it as successful empty
+// data" in its purest form — the distinguishable value exists, in this very
+// component's props, and is thrown away.
+//
+// The state rendered below is the one property (2) already established for the
+// OSM lane; this lane gets the same treatment, not a new invention.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('ForYouTab — a refused community lane is distinguishable on screen', () => {
+  it('renders a distinguishable notice when the community lane refused', async () => {
+    mockCommunityState.current = {
+      gems: [], picks: [], places: [], loading: false, refused: true,
+    };
+    await renderTab();
+    expect(await screen.findByTestId('for-you-community-refused')).toBeTruthy();
+  });
+
+  it('words it plainly, and does not claim the city has no community places', async () => {
+    mockCommunityState.current = {
+      gems: [], picks: [], places: [], loading: false, refused: true,
+    };
+    await renderTab();
+    await screen.findByTestId('for-you-community-refused');
+    expect(screen.getByText(/couldn't load traveler places for Lisbon/i)).toBeTruthy();
+    // Same register as the OSM refused state: no "error", no "failed".
+    expect(screen.queryByText(/error|failed|!/i)).toBeNull();
+  });
+
+  it('CONTROL: a city with genuinely no community content shows NO notice', async () => {
+    // The two answers must remain two answers. `refused: false` with empty
+    // arrays is a real read that found nothing, and this lane has always been
+    // silent about that — silence stays correct here.
+    mockCommunityState.current = {
+      gems: [], picks: [], places: [], loading: false, refused: false,
+    };
+    await renderTab();
+    await waitFor(() => expect(mockGetDiscoveryPlaces).toHaveBeenCalled());
+    await act(async () => {});
+    expect(screen.queryByTestId('for-you-community-refused')).toBeNull();
+  });
+
+  it('CONTROL: a lane that DID answer still renders its sections, and no notice', async () => {
+    // Without this, "render a notice when refused" would also be satisfied by a
+    // component that stopped rendering community content altogether.
+    mockCommunityState.current = {
+      gems: [COMMUNITY_GEM], picks: [COMMUNITY_GEM], places: [], loading: false, refused: false,
+    };
+    await renderTab();
+    expect(await screen.findByTestId('hidden-gems-section')).toBeTruthy();
+    expect(screen.getByTestId('traveler-picks-section')).toBeTruthy();
+    expect(screen.queryByTestId('for-you-community-refused')).toBeNull();
+  });
+
+  it('a refusal that still carried gems renders the gems, not the notice', async () => {
+    // `partial` never sets `refused` (the hook only sets it for coverage
+    // "nothing"), so a lane holding real rows must show them. This pins the
+    // asymmetry so a later "show the notice whenever anything went wrong"
+    // rewrite cannot quietly bury real content.
+    mockCommunityState.current = {
+      gems: [COMMUNITY_GEM], picks: [], places: [], loading: false, refused: false,
+    };
+    await renderTab();
+    expect(await screen.findByTestId('hidden-gems-section')).toBeTruthy();
+    expect(screen.queryByTestId('for-you-community-refused')).toBeNull();
   });
 });

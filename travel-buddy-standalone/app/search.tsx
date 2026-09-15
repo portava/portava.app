@@ -616,6 +616,33 @@ export default function SearchScreen() {
         </Pressable>
       )}
 
+      {/* PARTIAL COVERAGE — part of the search could not be run, and the rest
+          answered. `partialSources` was computed on every first page and then
+          read in exactly ONE place: inside the `isEmpty` branch below. With
+          rows on screen that branch never runs, so a short list from a
+          half-read index was indistinguishable from a complete answer — the
+          same fabrication the empty state makes, only quieter, because a list
+          implies "this is what there is".
+
+          MapSearchSheet already settled this: its NOTICE_PARTIAL is rendered
+          from coverage alone, above the results, with no reference to how many
+          rows came back (MapSearchSheet.tsx — NOTICE_PARTIAL / `allPartial`).
+          This is that, with its wording, so the two search surfaces say the
+          same sentence. Coverage decides, not row count.
+
+          `coverage: "nothing"` does not come through here: it returns before
+          `setPartialSources` and lands in the `error` branch, which says the
+          stronger thing. The `!error` guard keeps the weaker sentence from
+          softening it. */}
+      {!suggestActive && !error && partialSources && (
+        <View style={styles.partialBanner}>
+          <AlertCircle size={14} color={color.warn} />
+          <Text style={styles.partialBannerText}>
+            These results are incomplete — part of the search couldn’t be run.
+          </Text>
+        </View>
+      )}
+
       {/* Content area */}
       {suggestActive ? (
         <SearchSuggestionsPanel
@@ -1008,6 +1035,27 @@ const styles = StyleSheet.create({
   locationBannerAction: {
     ...t.small,
     fontWeight: '700' as const,
+    color: color.warn,
+  },
+  // Same chrome as the location banner: this is the same kind of statement —
+  // something about this screen is not what it looks like — and it sits in the
+  // same slot above the content.
+  partialBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    marginHorizontal: space.lg,
+    marginBottom: space.sm,
+    paddingHorizontal: space.md,
+    paddingVertical: 10,
+    backgroundColor: 'rgba(200,133,26,0.10)',
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: 'rgba(200,133,26,0.30)',
+  },
+  partialBannerText: {
+    flex: 1,
+    ...t.small,
     color: color.warn,
   },
   center: {

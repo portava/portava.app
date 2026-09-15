@@ -515,6 +515,27 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
             <PlaceSkeletonList count={2} />
           </View>
         )}
+
+        {/* The community read was refused. `useCommunityDiscovery` has always
+            computed this flag (`refusal.coverage === 'nothing'`) and nothing
+            read it, so the gems and picks sections simply did not render — the
+            same screen a city with no traveler submissions gets. Same shape as
+            the OSM lane's refused state above, deliberately: one lane going
+            quiet for a reason nobody can see is the defect, whichever lane it
+            is. `partial` never reaches here — the hook sets `refused` only for
+            "nothing" — so real rows are never traded for this notice. */}
+        {community.refused && (
+          <View style={styles.communitySection}>
+            <View style={styles.empty} testID="for-you-community-refused">
+              <Sparkles size={28} color={color.faint} />
+              <Text style={styles.emptyTitle}>Traveler places aren't loading right now</Text>
+              <Text style={styles.emptyDesc}>
+                {`We couldn't load traveler places for ${destination} just now — this is on our side, not yours. Pull to refresh.`}
+              </Text>
+            </View>
+          </View>
+        )}
+
         {community.gems.length > 0 && (
           <View style={styles.communitySection}>
             <HiddenGemsSection gems={community.gems} onAddToRoute={onAddToRoute} />
