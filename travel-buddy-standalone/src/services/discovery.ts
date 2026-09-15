@@ -753,9 +753,20 @@ export async function getDiscoveryCategoryCounts(
   );
   const counts: Partial<Record<DiscoveryCategory, number>> = {};
   results.forEach((result, i) => {
-    if (result.status === 'fulfilled' && result.value.ok) {
-      counts[COUNTABLE_CATEGORIES[i]] = result.value.data.total;
-    }
+    if (result.status !== 'fulfilled' || !result.value.ok) return;
+    // `ok: true` IS NOT "the server counted". A refusal arrives as `ok: true`
+    // with a `refusal` on the body and `total: 0`, so testing `ok` alone let a
+    // category the server never read contribute a real-looking ZERO — and the
+    // badge row then said "0" about a category nobody counted. That is not the
+    // "silently dropped failure" this function's own docstring promises; it is a
+    // fabricated number, the exact thing getDiscoveryCountsResult's type comment
+    // warns about for the batch sibling.
+    //
+    // An ABSENT key is the only honest value this return type can carry for
+    // "not counted". `coverage: "partial"` is NOT this case — the total it
+    // carries is a real count over real rows, so it is reported.
+    if (refusedEverything(result.value.data.refusal)) return;
+    counts[COUNTABLE_CATEGORIES[i]] = result.value.data.total;
   });
   return counts;
 }

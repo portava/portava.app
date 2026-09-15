@@ -42,6 +42,7 @@ jest.mock('../apiToken', () => ({ freshToken: () => mockFreshToken() }));
 import {
   getDiscoveryPlaces,
   getDiscoveryCategoryCountsBatch,
+  getDiscoveryCategoryCounts,
   getDiscoveryFeed,
   getSavedPlaceIds,
   getCachedDiscoveryPlaces,
@@ -181,6 +182,87 @@ describe('getDiscoveryCategoryCountsBatch', () => {
     nextResponse = { status: 200, body: { counts: {}, destination: 'Nowheresville', cached: true } };
     const res = await getDiscoveryCategoryCountsBatch('Nowheresville');
     expect(res.refusal).toBeUndefined();
+  });
+});
+
+// ── getDiscoveryCategoryCounts — the PER-CATEGORY fallback ───────────────────
+//
+// The batch endpoint above is the default. This is the fallback used when
+// age-filter or other per-request personalisation is needed, and it fans out to
+// GET /discovery once per category. Its own docstring promises "Individual
+// failures are silently dropped; only successful responses contribute to the
+// returned map" — but it tested `result.value.ok`, and a REFUSAL is `ok: true`.
+// A refused category therefore contributed its body's `total`, which is 0. The
+// badge row then read "0" for a category the server never counted: not a
+// dropped failure but a FABRICATED NUMBER, which is what the batch sibling's own
+// type comment already warns about in this same file.
+
+describe('getDiscoveryCategoryCounts (per-category fallback)', () => {
+  const COUNT_REFUSAL = {
+    class: 'upstream_unavailable', code: 'nominatim_http_429',
+    route: 'GET /discovery', coverage: 'nothing',
+  };
+
+  /** Serve a different body per `category` param — this function fans out. */
+  function serveByCategory(map: Record<string, unknown>) {
+    global.fetch = jest.fn((url: string | URL | Request) => {
+      const u = String(url);
+      calls.push(u);
+      const cat = new URL(u).searchParams.get('category') ?? '';
+      return Promise.resolve(
+        new Response(JSON.stringify(map[cat] ?? { places: [], total: 0, destination: 'X', cached: false }), {
+          status: 200, headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+    }) as unknown as typeof fetch;
+  }
+
+  it('OMITS a refused category rather than reporting it as a real zero', async () => {
+    serveByCategory({
+      food: { places: [], total: 0, destination: 'Miami', cached: false, refusal: COUNT_REFUSAL },
+      places: { places: [{ id: 'node/1' }], total: 42, destination: 'Miami', cached: false },
+    });
+    const counts = await getDiscoveryCategoryCounts('Miami');
+
+    // `food` was not counted. An absent key is the only honest answer this
+    // return type can carry; a 0 states, on the server's behalf, that Miami has
+    // no food.
+    expect(counts.food).toBeUndefined();
+    expect('food' in counts).toBe(false);
+    // And the categories that DID answer are unaffected.
+    expect(counts.places).toBe(42);
+  });
+
+  it('CONTROL: a genuinely empty category IS reported as 0', async () => {
+    // Without this, "omit the refused one" is satisfied by omitting everything,
+    // which distinguishes nothing and loses every real zero.
+    serveByCategory({
+      beaches: { places: [], total: 0, destination: 'Reykjavik', cached: false },
+    });
+    const counts = await getDiscoveryCategoryCounts('Reykjavik');
+    expect(counts.beaches).toBe(0);
+    expect('beaches' in counts).toBe(true);
+  });
+
+  it('CONTROL: a PARTIAL refusal carries a real count, so it IS reported', async () => {
+    // `coverage: "partial"` means some sources answered; the total it carries is
+    // a real number about real rows. Dropping it would discard a true count.
+    serveByCategory({
+      nightlife: {
+        places: [{ id: 'node/9' }], total: 7, destination: 'Miami', cached: false,
+        refusal: { ...COUNT_REFUSAL, coverage: 'partial' },
+      },
+    });
+    const counts = await getDiscoveryCategoryCounts('Miami');
+    expect(counts.nightlife).toBe(7);
+  });
+
+  it('CONTROL: every category answering gives the full set — the positive control', async () => {
+    serveByCategory({});  // all seven answer with a real, genuinely-empty body
+    const counts = await getDiscoveryCategoryCounts('Miami');
+    expect(Object.keys(counts).sort()).toEqual(
+      ['activities', 'beaches', 'events', 'food', 'nightlife', 'places', 'transport'],
+    );
   });
 });
 
