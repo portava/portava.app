@@ -145,13 +145,13 @@ export function compareServedOrders(legacyIds: string[], pdeIds: string[]): Shad
 //                            join to `discovery_places.submitted_by` (a column
 //                            since 0029_discovery_places.sql) — see
 //                            resolvePageAuthors at the foot of this file.
-//   estimated travel intent  No trip-add or itinerary-add signal is attached to
-//                            a served item (census-discovery DV-40: no
-//                            recommendation object, no per-item intent
-//                            outcome). Substituting distance would be a proxy
-//                            wearing a measurement's name. Reported `null` and
-//                            NAMED in `unmeasured`, because a zero would read
-//                            as "measured, and it was none".
+//   estimated travel intent  Migration 2894 admits `trip_add`, so the per-item
+//                            signal DV-40 wanted from a recommendation object
+//                            comes from the behaviour store — the writer reads
+//                            it itself (resolvePageTripAdds, at the foot). NO
+//                            WRITER SENDS THE TOKEN YET, so a measured page
+//                            reads zero: a read that RAN, kept apart from one
+//                            that failed, with the missing writer NAMED.
 
 /** The per-item facts the Phase 9 dimensions read. Structural, so the route can pass its own rows. */
 export interface ShadowPageItem {
@@ -263,8 +263,8 @@ export interface ShadowPhase9Comparison {
   pde: ShadowPageDimensions;
   /** Phase 9 "creator concentration" — the writer's OWN author join. Null only on a row written before it existed. */
   creatorConcentration: ShadowCreatorConcentration | null;
-  /** Phase 9 "estimated travel intent" — NOT measurable: no per-item trip/itinerary signal. */
-  estimatedTravelIntent: null;
+  /** Phase 9 "estimated travel intent" — recorded trip adds per page (2894). Null as above. */
+  estimatedTravelIntent: ShadowTravelIntent | null;
   /** The unmeasured axes, by name, so silence cannot be read as zero. */
   unmeasured: readonly string[];
 }
@@ -610,10 +610,16 @@ export function pageCreators(
  * fails. `UNMEASURED_PHASE9_AXES` stays as the answer for a caller with no
  * client at all, which is what `compareShadowPages` still is.
  */
-export function unmeasuredPhase9Axes(creators: ShadowCreatorConcentration | null): readonly string[] {
-  return creators?.reason === "measured"
-    ? (["estimated_travel_intent"] as const)
-    : UNMEASURED_PHASE9_AXES;
+export function unmeasuredPhase9Axes(
+  creators: ShadowCreatorConcentration | null,
+  intent: ShadowTravelIntent | null = null,
+): readonly string[] {
+  const unmeasured: string[] = [];
+  // Order matches UNMEASURED_PHASE9_AXES, so a row that measured neither says
+  // exactly what the seed constant says rather than saying it differently.
+  if (creators?.reason !== "measured") unmeasured.push("creator_concentration");
+  if (intent?.reason   !== "measured") unmeasured.push("estimated_travel_intent");
+  return unmeasured;
 }
 
 /**
@@ -643,5 +649,211 @@ export async function compareShadowPagesWithCreators(
     // the failed-read's clothes. The two must stay distinguishable in the row.
     : { reason: resolution.reason, legacy: null, pde: null };
 
-  return { ...base, creatorConcentration, unmeasured: unmeasuredPhase9Axes(creatorConcentration) };
+  // The travel-intent read is issued in the SAME await as the author join would
+  // be if they were independent, but they are not: both fail closed on their own
+  // terms, and one failing must not silence the other. Promise.all would reject
+  // the pair on the first rejection; neither helper rejects, so the sequential
+  // reads below are equivalent and one fewer thing to reason about.
+  const intentRead = await resolvePageTripAdds(sc, [...legacy.map((i) => i.id), ...pde.map((i) => i.id)]);
+  const estimatedTravelIntent: ShadowTravelIntent = intentRead.reason === "measured"
+    ? {
+        reason: "measured",
+        writerless: tripAddWriterNote(),
+        legacy: pageTravelIntent(legacy, intentRead.tripAdds),
+        pde: pageTravelIntent(pde, intentRead.tripAdds),
+      }
+    // NOT `pageTravelIntent(page, new Map())`. That is the measured-and-found-
+    // nothing answer, which is EXACTLY what production looks like today — so on
+    // this axis, more than any other, a failed read wearing it would be
+    // invisible. Both figures stay null; `reason` says which state this is.
+    : { reason: intentRead.reason, writerless: tripAddWriterNote(), legacy: null, pde: null };
+
+  return {
+    ...base,
+    creatorConcentration,
+    estimatedTravelIntent,
+    unmeasured: unmeasuredPhase9Axes(creatorConcentration, estimatedTravelIntent),
+  };
+}
+
+// ── Phase 9's SIXTH dimension: estimated travel intent (census-discovery DV-79) ─
+//
+// WHAT THE CENSUS ROW SAID, AND WHAT CHANGED
+// ==========================================
+// DV-79 graded this axis FAIL with the evidence "needs a per-item trip-add /
+// itinerary-add signal, which needs DV-40's recommendation object". DV-40
+// records that `recommendations` / `recommendation_items` have no `CREATE TABLE`
+// anywhere in the tree, so that route was closed and this axis stayed shut
+// behind it.
+//
+// Migration 2894 opened the other one. `rank_events.outcome` now admits
+// `trip_add`, which IS a per-item trip-add signal, on the behaviour store `04`
+// §2 says this surface must use — no recommendation object required, and no
+// parallel store created. The shadow writer reads it for itself, exactly as it
+// reads `discovery_places.submitted_by` for the creator axis: the served
+// response shape is untouched and no route changes.
+//
+// THERE IS NO WRITER, AND THE ROW SAYS SO
+// =======================================
+// The production trip-add site for a Discovery place is
+// `POST /api/places/:placeId/add-to-trip-plan` (routes/plan.ts). It writes a
+// `trip_plan_items` row and reports NO rank-events outcome. So every page in
+// production reads ZERO trip adds — from a read that succeeded.
+//
+// This is the axis where the zero is the EVERYDAY answer rather than an edge
+// case, which is precisely why the two must not collapse:
+//
+//   measured, tripAdds 0   the read ran; nobody has recorded a trip add for
+//                          these items. Today that is true of every page, and
+//                          `writerless` names the reason so the number is never
+//                          quoted as "travellers do not add from Discovery".
+//   unreadable             the read was rejected or threw. NOTHING is known.
+//                          Both page figures are `null` and the axis stays
+//                          NAMED in `unmeasured`. A 0 here would be the same
+//                          sentence as the line above, written from a
+//                          measurement nobody made.
+//   not_joinable           both pages were empty, so there was nothing to ask.
+//                          Not `measured`-with-n-0: no read was issued.
+//   no_client              no client to read with. Same knowledge, other cause.
+//
+// WHAT IS NOT SCOPED, AND WHY
+// ===========================
+// The read filters on `outcome` and `item_id` and nothing else. It is NOT
+// scoped to a surface: `item_id` is the canonical place id, a trip add is a
+// trip add wherever the traveller came from, and scoping to `discovery` would
+// count the same place's intent differently depending on which rail showed it.
+// It is NOT scoped to the viewer either: the axis compares what two PAGES
+// attract, not what one person did, exactly as `savedCount` already does.
+
+/** How the trip-add read went. Spelled as `CreatorReadReason` spells its states. */
+export type TravelIntentReadReason = "measured" | "not_joinable" | "no_client" | "unreadable";
+
+/** One page's recorded travel intent, ALWAYS carrying the denominator it was computed over. */
+export interface ShadowPageTravelIntent {
+  /** Items on the page. */
+  n: number;
+  /** Items with AT LEAST ONE recorded trip add. */
+  itemsWithTripAdd: number;
+  /** Trip-add rows found across the page's items. One item added twice counts twice HERE and once above. */
+  tripAdds: number;
+  /** `itemsWithTripAdd / n`; null for an empty page — 0/0 is undefined, not zero. */
+  tripAddRate: number | null;
+}
+
+/** The axis, per page, with the reason the read answered as it did. */
+export interface ShadowTravelIntent {
+  reason: TravelIntentReadReason;
+  /**
+   * Why a zero is expected, or null once it is not. Non-null exactly while
+   * `TRIP_ADD_WRITERS` is empty — DERIVED, so the note cannot outlive the gap it
+   * describes: whoever wires the writer adds its path to that list and the note
+   * disappears from every row written afterwards, without editing this comment.
+   */
+  writerless: string | null;
+  /** Null unless `reason` is `measured` — a read that did not happen produces no figure. */
+  legacy: ShadowPageTravelIntent | null;
+  pde: ShadowPageTravelIntent | null;
+}
+
+/** The `rank_events.outcome` token migration 2894 admits. */
+export const TRIP_ADD_OUTCOME = "trip_add";
+
+/**
+ * Every call site in this repository that reports `outcome='trip_add'`.
+ *
+ * EMPTY. `POST /api/places/:placeId/add-to-trip-plan` (routes/plan.ts) is the
+ * production trip-add site for a Discovery place and it reports no outcome;
+ * adding that report is a one-call change in a file this lane does not own.
+ * When it lands, its path goes here and `tripAddWriterNote()` stops annotating
+ * every row.
+ */
+export const TRIP_ADD_WRITERS: readonly string[] = [];
+
+/** The note itself, so the wording lives in one place and the tests can match it. */
+export const TRIP_ADD_HAS_NO_WRITER =
+  "nothing writes outcome='trip_add': the vocabulary admits it (migration 2894) and the only trip-add " +
+  "site, POST /api/places/:placeId/add-to-trip-plan (routes/plan.ts), reports no outcome. A measured " +
+  "page therefore reads 0 — which means 'never recorded', not 'never wanted'";
+
+/** Null once a writer exists. See TRIP_ADD_WRITERS. */
+export function tripAddWriterNote(): string | null {
+  return TRIP_ADD_WRITERS.length === 0 ? TRIP_ADD_HAS_NO_WRITER : null;
+}
+
+/** Cap on the trip-add read. A page is bounded; the rows against it are not. */
+export const TRIP_ADD_MAX_ROWS = 2_000;
+
+/** The result of the trip-add read: which state it is in, and what it counted. */
+export interface PageTripAddResolution {
+  reason: TravelIntentReadReason;
+  /** served id → trip-add rows recorded against it. An item with none is ABSENT, not mapped to 0. */
+  tripAdds: Map<string, number>;
+}
+
+/**
+ * Count recorded trip adds for a set of served ids. One read, never one per item.
+ *
+ * FAILS CLOSED and LOUDLY IN THE DATA: a rejected or throwing read returns
+ * `unreadable` with an EMPTY map, and the caller turns that into "no figure",
+ * never into "no trip adds". On this axis those two are one keystroke apart and
+ * the wrong one is what production looks like, so the distinction is carried in
+ * `reason` rather than inferred from an empty map.
+ *
+ * An EMPTY id set is `not_joinable`: no read was issued, and reporting it as a
+ * measured page that happened to find nothing would let "there was nothing to
+ * ask" stand in for "I asked and found none".
+ */
+export async function resolvePageTripAdds(
+  sc: any,
+  ids: readonly string[],
+): Promise<PageTripAddResolution> {
+  const tripAdds = new Map<string, number>();
+  if (!sc) return { reason: "no_client", tripAdds };
+
+  // De-duplicated: a page may serve the same id twice, and asking for it twice
+  // would not change the answer but would widen the `IN` list for nothing.
+  const unique = [...new Set(ids.filter((id): id is string => typeof id === "string" && id.length > 0))];
+  if (unique.length === 0) return { reason: "not_joinable", tripAdds };
+
+  try {
+    const { data, error } = await sc
+      .from("rank_events")
+      .select("item_id")
+      .eq("outcome", TRIP_ADD_OUTCOME)
+      .limit(TRIP_ADD_MAX_ROWS)
+      .in("item_id", unique);
+    if (error) {
+      logger.warn({ err: error }, "discoveryShadow: trip-add read rejected — estimated travel intent is UNKNOWN for this serve, not zero");
+      return { reason: "unreadable", tripAdds };
+    }
+    for (const r of (data as any[]) ?? []) {
+      const id = typeof r?.item_id === "string" ? r.item_id : null;
+      if (!id) continue;
+      tripAdds.set(id, (tripAdds.get(id) ?? 0) + 1);
+    }
+    return { reason: "measured", tripAdds };
+  } catch (err) {
+    logger.warn({ err }, "discoveryShadow: trip-add read threw — estimated travel intent is UNKNOWN for this serve, not zero");
+    return { reason: "unreadable", tripAdds };
+  }
+}
+
+/** Pure: one page plus a trip-add count map → its travel intent. No clock, no client, no throw. */
+export function pageTravelIntent(
+  items: readonly ShadowPageItem[],
+  tripAdds: ReadonlyMap<string, number>,
+): ShadowPageTravelIntent {
+  const n = items.length;
+  let itemsWith = 0;
+  let total = 0;
+  for (const it of items) {
+    if (!it) continue;
+    const c = tripAdds.get(it.id) ?? 0;
+    if (c > 0) itemsWith += 1;
+    total += c;
+  }
+  // `tripAddRate` is per ITEM, not per row: one place added to four different
+  // travellers' trips is one item with intent, and dividing rows by items would
+  // let a single popular place report a rate above 1.
+  return { n, itemsWithTripAdd: itemsWith, tripAdds: total, tripAddRate: n === 0 ? null : itemsWith / n };
 }

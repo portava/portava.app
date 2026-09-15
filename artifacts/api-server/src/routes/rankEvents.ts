@@ -1,10 +1,10 @@
 /**
  * POST /api/rank-events/outcome
  *
- * Records a user outcome (tap, save, join, rsvp, attended) against the most
- * recent matching rank_events row for the authenticated user whose current
+ * Records a user outcome (tap, save, join, rsvp, trip_add, attended) against the
+ * most recent matching rank_events row for the authenticated user whose current
  * outcome sits on a LOWER funnel rung — an impression row, or a row already
- * upgraded to a weaker outcome (impression → tap → save/join/rsvp → attended).
+ * upgraded to a weaker one (impression → tap → save/join/rsvp → trip_add → attended).
  *
  * Auth required.  Returns 404 when no upgradable row is found — phantom rows
  * are never created.
@@ -96,7 +96,7 @@ router.post("/rank-events", asyncHandler(async (req, res) => {
 // analytics insert further down echoes an outcome-derived row back into the
 // table. Shipping first would 404 every dismiss (the UPDATE would violate the
 // CHECK) while looking identical to "nobody dismisses anything".
-const OUTCOME_VALUES = ["tap", "save", "join", "rsvp", "attended", "dismiss"] as const;
+const OUTCOME_VALUES = ["tap", "save", "join", "rsvp", "attended", "dismiss", "trip_add"] as const;
 type OutcomeValue = typeof OUTCOME_VALUES[number];
 
 /**
@@ -110,20 +110,19 @@ type OutcomeValue = typeof OUTCOME_VALUES[number];
 const DISMISS: Extract<OutcomeValue, "dismiss"> = "dismiss";
 
 /**
- * Funnel rungs (0153_add_rank_events.sql: impression → tap → save/join/rsvp →
- * attended).  rank_events is a mutable-state table — an outcome UPDATES the
- * impression row in place — so the row can only ever hold ONE outcome, and it
- * should be the furthest rung reached.
+ * Funnel rungs (0153: impression → tap → save/join/rsvp → attended, plus
+ * `trip_add` from migration 2894).  rank_events is a mutable-state table — an
+ * outcome UPDATES the impression row in place — so the row can only ever hold
+ * ONE outcome, and it should be the furthest rung reached.
  *
  * The lookup below therefore accepts any row on a strictly LOWER rung than the
  * reported outcome, not only outcome='impression'.  Without that, the first
  * outcome consumes the row and every stronger one after it 404s: the discovery
  * surface reports 'tap' when a place card opens its detail sheet, and a 'save'
- * made from inside that sheet — the strongest signal the surface has — was
- * silently lost.  A weaker or equal outcome (a 'tap' after a 'save', a 'join'
- * after an 'rsvp') never downgrades: it finds no row and returns 404 exactly as
- * a duplicate did before.
- */
+ * made from inside that sheet was silently lost.  A weaker or equal outcome
+ * never downgrades: it finds no row and 404s exactly as a duplicate did.
+ * `trip_add` is ABOVE save (`04` §8: … → save → trip_add), BELOW attended (a
+ * plan is not a visit), and narrowed — see NOT_SUBSUMED_BY_TRIP_ADD below. */
 type FunnelOutcome = Exclude<OutcomeValue, typeof DISMISS>;
 
 const OUTCOME_RUNG: Record<FunnelOutcome | "impression", number> = {
@@ -132,7 +131,8 @@ const OUTCOME_RUNG: Record<FunnelOutcome | "impression", number> = {
   save:       2,
   join:       2,
   rsvp:       2,
-  attended:   3,
+  trip_add:   3,
+  attended:   4,
 };
 
 /** rank_events.outcome values a row may hold and still be upgraded to `outcome`. */
@@ -144,11 +144,11 @@ export function upgradableOutcomesFor(outcome: OutcomeValue): string[] {
   //   • 'dismiss' appears in no other outcome's upgradable set, so a later tap
   //     or save can never silently overwrite a recorded negative. A dismissed
   //     row is terminal, and a stronger signal after it 404s exactly as a
-  //     duplicate does.
+  //     duplicate does.  'trip_add' is narrowed the same way — see below.
   if (outcome === DISMISS) return ["impression"];
   const rung = OUTCOME_RUNG[outcome];
   return (Object.keys(OUTCOME_RUNG) as Array<keyof typeof OUTCOME_RUNG>)
-    .filter((o) => OUTCOME_RUNG[o] < rung);
+    .filter((o) => OUTCOME_RUNG[o] < rung && !(outcome === TRIP_ADD && NOT_SUBSUMED_BY_TRIP_ADD.has(o)));
 }
 
 /**
@@ -199,9 +199,9 @@ router.post("/rank-events/outcome", asyncHandler(async (req, res) => {
 
   // Find the most recent upgradable row for this user + item + surface
   // (+ optionally session): an impression, or a row on a lower funnel rung.
-  let query = sc
-    .from("rank_events")
-    .select(exposureColumns())   // DV-46: id + the coordinates the exposure token needs
+  // DV-46: id + the coordinates the exposure token needs. TWO whole chains, not
+  // one computed list: check:write-path-columns resolves only a literal/const.
+  let query = (_recommendationIdColumn === "absent" ? sc.from("rank_events").select(EXPOSURE_COLUMNS_LEGACY) : sc.from("rank_events").select(EXPOSURE_COLUMNS))
     .eq("user_id", user.id)
     .eq("item_id", item_id)
     .eq("surface", surface)
@@ -228,7 +228,7 @@ router.post("/rank-events/outcome", asyncHandler(async (req, res) => {
   const recommendationId = exposureTokenFor(row, user.id, item_id, surface);  // `04` §10.6
   const { error: updateErr } = await sc
     .from("rank_events")
-    .update(outcomeUpdatePatch(outcome, recommendationId))  // outcome, outcome_at [, id]
+    .update({ outcome, outcome_at: new Date().toISOString(), ...(canStampExposureToken(recommendationId) ? { recommendation_id: recommendationId } : {}) })
     .eq("id", row.id);
 
   const settled = await settleOutcomeUpdate(sc, row.id, outcome, recommendationId, updateErr, req.log);
@@ -246,10 +246,10 @@ router.post("/rank-events/outcome", asyncHandler(async (req, res) => {
   // viewer as having GONE to a place they explicitly waved away — the strongest
   // positive signal the chain carries, written from its opposite.
   if (outcome !== DISMISS) {
-    const stage =
-      outcome === "tap"  ? "viewed" :
-      outcome === "save" ? "saved"  :
-      "went"; // join / rsvp / attended
+    // 'trip_add' maps to `saved`, NOT the `went` fallthrough: a trip add is a
+    // plan to go and `went` asserts the traveller WAS THERE, which is the same
+    // class of fabrication the dismiss exclusion above exists to prevent.
+    const stage = compassStageFor(outcome);
     void linkOutcomeSignal(sc, user.id, item_id, stage, `route:rank_event_${outcome}`);
   }
 
@@ -319,6 +319,72 @@ function warnOn(log: RouteLog | undefined, ctx: unknown, msg: string): void {
   (log?.warn ?? console.warn).call(log ?? console, ctx, msg);
 }
 
+// ── DC-09 / DV-79 — `trip_add`, admitted by migration 2894 ───────────────────
+//
+// `04` §8's first behaviour chain is `impression → place_open → save → trip_add`
+// and `12` Phase 9's sixth comparison axis is "estimated travel intent". Both
+// were blocked on the same absence: the outcome CHECK vocabulary had no
+// trip-add token. A previous pass considered borrowing `join` and REFUSED —
+// `join` means "joined somebody's plan", and a place put on an itinerary has
+// joined nothing — and that refusal stands. 2894 removes the reason for it.
+//
+// WHERE IT SITS, AND WHAT THAT COSTS
+// ==================================
+// The rungs are now impression 0 · tap 1 · save/join/rsvp 2 · trip_add 3 ·
+// attended 4. Two of the three placements are forced:
+//
+//   ABOVE save — §8's chain is `… → save → trip_add`. At rung 2, a trip add
+//   arriving after a save would find no upgradable row and 404, so the single
+//   transition the chain exists to measure is the one it would lose.
+//
+//   BELOW attended — `attended` is "I went"; a trip add is "I plan to". A
+//   planning signal able to overwrite a confirmed visit would replace the
+//   strongest positive fact this funnel carries with a weaker one, leaving no
+//   trace that the stronger one was ever recorded.
+//
+// The third is a JUDGEMENT and is therefore narrowed by hand rather than left
+// to the integer. `join` and `rsvp` are commitments made TO SOMEBODY ELSE — a
+// host expecting you. `attended` may consume an `rsvp` because attending
+// CONTAINS it; adding the same event to your own itinerary does not contain it,
+// it is a different fact about a different party. So trip_add's upgradable set
+// is (impression, tap, save) and nothing else, exactly as `dismiss`'s is
+// ["impression"]. The refusal is symmetric: a later join/rsvp sits at a lower
+// rung than trip_add and cannot overwrite one either.
+//
+// THERE IS NO WRITER. `POST /api/places/:placeId/add-to-trip-plan`
+// (routes/plan.ts) is the production trip-add site for a Discovery place and it
+// reports no outcome, so nothing in this repository sends `trip_add` today. The
+// route accepting it is the half this lane owns; the report is a one-call change
+// in a file it does not. Until that lands, every read of outcome='trip_add'
+// returns zero rows — a corpus of zero from a read that RAN, which
+// lib/discoveryShadow.ts keeps distinct from a read that failed.
+
+/** The itinerary-commitment outcome (2894). Typed like DISMISS, for the same reason. */
+const TRIP_ADD: Extract<OutcomeValue, "trip_add"> = "trip_add";
+
+/**
+ * Outcomes a `trip_add` does NOT subsume, and may therefore never overwrite,
+ * even though the plain rung comparison would let it. See the note above.
+ */
+const NOT_SUBSUMED_BY_TRIP_ADD: ReadonlySet<string> = new Set(["join", "rsvp"]);
+
+/**
+ * The Compass outcome chain stage for a funnel outcome (viewed → saved → went).
+ *
+ * `trip_add` is `saved` and NOT the `went` fallthrough. `went` asserts the
+ * traveller WAS THERE; a trip add says they intend to be. Letting it fall
+ * through would record a visit that never happened — the same fabrication the
+ * handler's `dismiss` exclusion exists to prevent, from the opposite direction.
+ *
+ * Never called for `dismiss`: the chain has no negative stage, and the caller
+ * guards on that before reaching here.
+ */
+export function compassStageFor(outcome: Exclude<OutcomeValue, typeof DISMISS>): "viewed" | "saved" | "went" {
+  if (outcome === "tap") return "viewed";
+  if (outcome === "save" || outcome === TRIP_ADD) return "saved";
+  return "went"; // join / rsvp / attended
+}
+
 // ── DV-46 / DSV2-12 — the exposure token on an outcome upgrade ────────────────
 //
 // `04` §5 asks that every served item carry a `recommendation_id`, and §10.6
@@ -328,14 +394,21 @@ function warnOn(log: RouteLog | undefined, ctx: unknown, msg: string): void {
 // this closes is the last hop: an outcome upgrade that carried no token left the
 // exposure and its outcomes sharing no key at all.
 //
-// ── THE MIGRATION IS NOT APPLIED ANYWHERE ────────────────────────────────────
-// 2891 is staged and rehearsed on portava-ci only. Every path below therefore
-// has to be correct BOTH ways, and the failure mode to design against is not the
-// missing column — it is a route that turns a missing column into a 500 on an
-// endpoint whose whole job is to record a signal. So: attempt the arbitrated
-// shape, and on the specific errors that mean "2891 is not here", say so ONCE,
-// latch it, and redo the write in the shape that has always worked. The outcome
-// is never dropped and the degradation is never silent.
+// ── THE MIGRATION IS APPLIED, AND THE FALLBACK STAYS ─────────────────────────
+// 2891 was applied to portava-ci (rehearsal E4, steps 2/4/6) and to production
+// on 2026-09-14 (docs/architecture/production-deployment-2026-09-14.md, row 4).
+// The sentence that stood here — "staged and rehearsed on portava-ci only" — was
+// true when it was written and is no longer; it is corrected rather than deleted
+// so the record of when it changed survives.
+//
+// Every path below still has to be correct BOTH ways, because "applied to the
+// two databases we know about" is not "applied everywhere this code runs", and
+// the failure mode to design against is not the missing column — it is a route
+// that turns a missing column into a 500 on an endpoint whose whole job is to
+// record a signal. So: attempt the arbitrated shape, and on the specific errors
+// that mean "2891 is not here", say so ONCE, latch it, and redo the write in the
+// shape that has always worked. The outcome is never dropped and the degradation
+// is never silent.
 
 /** rank_events.recommendation_id's shape CHECK, mirrored from migration 2891. */
 const RECOMMENDATION_ID_SHAPE = /^[A-Za-z0-9_-]{22}$/;
@@ -357,6 +430,17 @@ export function _resetRecommendationIdSchemaLatch(): void {
   _recommendationIdColumn = "unknown";
 }
 
+/**
+ * The select list this route asks for, as one named DECISION.
+ *
+ * The outcome handler does NOT call it: `check:write-path-columns` resolves a
+ * `.select` argument only from a string literal or a same-file const string, so
+ * a computed list is a blind spot in the one check that compares a READ list
+ * against the live schema — and a read list that drifts fails the whole query
+ * with PGRST100. The handler therefore writes the branch out as two whole
+ * chains. This function is the same decision in one place, and the tests assert
+ * the two agree, so the duplication cannot rot silently.
+ */
 export function exposureColumns(): string {
   return _recommendationIdColumn === "absent" ? EXPOSURE_COLUMNS_LEGACY : EXPOSURE_COLUMNS;
 }
@@ -433,16 +517,18 @@ export function exposureTokenFor(
   });
 }
 
-/** The funnel-row patch: `outcome` + `outcome_at`, plus the token when it can land. */
-export function outcomeUpdatePatch(
-  outcome: OutcomeValue,
-  recommendationId: string,
-): Record<string, unknown> {
-  const patch: Record<string, unknown> = { outcome, outcome_at: new Date().toISOString() };
-  if (_recommendationIdColumn !== "absent" && RECOMMENDATION_ID_SHAPE.test(recommendationId)) {
-    patch["recommendation_id"] = recommendationId;
-  }
-  return patch;
+/**
+ * May this exposure token be written into `rank_events.recommendation_id`?
+ *
+ * The predicate half of what used to be `outcomeUpdatePatch`. The patch itself
+ * is now spelled out as an object literal at each of the two update sites: a
+ * payload built by a function call is invisible to `check:write-path-columns`,
+ * which is how a column can start being written before its migration is applied
+ * without any check noticing. The literal costs one repetition and buys the
+ * column list back.
+ */
+export function canStampExposureToken(recommendationId: string): boolean {
+  return _recommendationIdColumn !== "absent" && RECOMMENDATION_ID_SHAPE.test(recommendationId);
 }
 
 /**
@@ -501,7 +587,9 @@ async function settleOutcomeUpdate(
     noteRecommendationIdUnavailable(firstErr, log, "outcome update");
     const { error: retryErr } = await sc
       .from("rank_events")
-      .update(outcomeUpdatePatch(outcome, recommendationId))   // the latch now omits the column
+      // The latch is now "absent", so canStampExposureToken is false and the
+      // spread contributes nothing — the same patch the old helper produced.
+      .update({ outcome, outcome_at: new Date().toISOString(), ...(canStampExposureToken(recommendationId) ? { recommendation_id: recommendationId } : {}) })
       .eq("id", rowId);
     if (!retryErr) return { ok: true };
     firstErr = retryErr;
@@ -525,15 +613,39 @@ async function settleOutcomeUpdate(
  *
  * Fire-and-forget throughout; this never rejects.
  */
+interface OutcomeAnalyticsRow {
+  event_type: string;
+  item_id:    string;
+  surface:    string;
+  user_id:    string;
+  session_id: string | null;
+  served_at:  string;
+  /** Always the 'analytics' sentinel — the value that keeps this row out of the funnel lookup. */
+  outcome:    string;
+  recommendation_id: string;
+}
+
 async function writeOutcomeAnalyticsRow(
   sc:  any,
-  row: Record<string, unknown>,
+  row: OutcomeAnalyticsRow,
   log: RouteLog | undefined,
   ctx: { outcome: OutcomeValue; analyticsEventType: string },
 ): Promise<void> {
-  const token = row["recommendation_id"];
-  const bare: Record<string, unknown> = { ...row };
-  delete bare["recommendation_id"];
+  const token = row.recommendation_id;
+  // Spelled out rather than `{ ...row }` minus a key: a payload the AST cannot
+  // resolve is invisible to check:write-path-columns, and this is an INSERT into
+  // the table the whole Discovery funnel lives in. The column list is the thing
+  // the check exists to compare against the live schema, so it is written down.
+  const bare = {
+    event_type: row.event_type,
+    item_id:    row.item_id,
+    surface:    row.surface,
+    user_id:    row.user_id,
+    session_id: row.session_id,
+    served_at:  row.served_at,
+    outcome:    row.outcome,
+  };
+  const withToken = { ...bare, recommendation_id: row.recommendation_id };
 
   try {
     const rel = sc.from("rank_events");
@@ -546,7 +658,7 @@ async function writeOutcomeAnalyticsRow(
       typeof rel?.upsert === "function";
 
     const res = arbitrated
-      ? await rel.upsert(row, { onConflict: RECOMMENDATION_ARBITER, ignoreDuplicates: false })
+      ? await rel.upsert(withToken, { onConflict: RECOMMENDATION_ARBITER, ignoreDuplicates: false })
       : await rel.insert(bare);
     if (!res?.error) return;
 

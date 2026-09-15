@@ -43,22 +43,31 @@
  * `user_id`, `session_id`, `item_id`, `outcome`, `served_at` — plus `surface`
  * for scoping are all present, so nothing here waits on a deployment.
  *
- * AND MOST OF §8's STEPS ARE NOT IN IT
- * ====================================
+ * AND MOST OF §8's STEPS ARE STILL NOT IN IT
+ * =========================================
  * The outcome CHECK vocabulary is `impression, tap, save, join, rsvp, attended,
- * analytics` (0153/0197) plus `dismiss` (2297). That covers the first three
- * steps of the first chain and one step of the third. It carries NO token for
- * `trip_add`, for `video_complete`, `replay` or `send`, for a Trail open, for
- * directions, for a post, for a place visit or for a post-visit confirmation —
- * and there is no `dwell_ms`, `completion_pct` or `trail_id` column to stand in
- * (census-discovery DV-38, DV-41, DV-78 each record one of these absences).
+ * analytics` (0153/0197), plus `dismiss` (2297) and `trip_add` (2894). That
+ * covers ALL FOUR steps of the first chain and one step of the third. It
+ * carries no token for `video_complete`, `replay` or `send`, for a Trail open,
+ * for directions, for a post, for a place visit or for a post-visit
+ * confirmation — and there is no `dwell_ms`, `completion_pct` or `trail_id`
+ * column to stand in (census-discovery DV-38, DV-41, DV-78 each record one).
  *
  * Those steps come back `null` and are NAMED in `unrepresentableSteps`. A zero
  * would say "measured, and it never happened", which is the exact failure this
  * census exists to make impossible. Borrowing a neighbouring token would be
- * worse: `join` is the events/plans rung, not a trip add, and `attended` is a
- * funnel token rather than a visit confirmation (census-discovery DV-19 states
- * that in as many words).
+ * worse — and note what 2894 did NOT do: it did not make `join` mean a trip
+ * add, it gave the trip add a token of its own. `attended` is still a funnel
+ * token rather than a visit confirmation (census-discovery DV-19 says so).
+ *
+ * WHAT `trip_add` READS TODAY, AND WHY ZERO IS NOT NULL
+ * ====================================================
+ * 2894 admits the token; nothing WRITES it. `POST /api/places/:placeId/add-to-
+ * trip-plan` (routes/plan.ts) is the production trip-add site for a Discovery
+ * place and reports no outcome. So the trip_add step's counts are REAL numbers
+ * that will read 0 until that writer exists — a step that was measured and
+ * found empty, which is a different fact from a step nothing can record. The
+ * first is `reached: 0`; the second is `reached: null` beside a named reason.
  *
  * WHY A CHAIN IS RECONSTRUCTED FROM ONE ROW AND NOT FROM SEVERAL
  * =============================================================
@@ -121,7 +130,14 @@ export interface SequenceChainSpec {
 
 /**
  * The funnel rungs, read out of `routes/rankEvents.ts` rather than restated
- * from memory: impression → tap → save/join/rsvp → attended.
+ * from memory: impression → tap → save/join/rsvp → trip_add → attended.
+ *
+ * `trip_add` (migration 2894) sits ABOVE save because that is the order `04` §8
+ * writes the chain in, and BELOW attended because a plan to go is not a visit.
+ * The route narrows its upgradable set further — a trip add may not consume a
+ * join or an rsvp — but that is a WRITE-time rule about which rows may be
+ * overwritten; for READING a terminal rung, the ordering above is the whole of
+ * it, and a pair that ended at trip_add passed through save on the way.
  *
  * `dismiss` sits at the impression rung and goes no further. It is deliberately
  * not a rung of its own: a dismissed row WAS impressed (the route only admits a
@@ -143,15 +159,13 @@ const TERMINAL_RUNG: Readonly<Record<string, number>> = {
   save:       2,
   join:       2,
   rsvp:       2,
-  attended:   3,
+  trip_add:   3,
+  attended:   4,
 };
 
 /** Outcomes that are not behaviour: written by the ranker, never by a user. */
 const NON_BEHAVIOUR_OUTCOMES = new Set(["analytics"]);
 
-const NO_TRIP_ADD =
-  "the outcome CHECK vocabulary has no trip-add token; 'join' is the events/plans rung and borrowing it " +
-  "would manufacture the step (04 §6 names trip_id, which rank_events does not have)";
 const NO_MEDIA_PROGRESS =
   "no completion or playback column exists — 04 §6 names completion_pct and dwell_ms, and the live " +
   "13-column schema carries neither (census-discovery DV-38, DV-41)";
@@ -183,7 +197,12 @@ export const BEHAVIOR_CHAINS: readonly SequenceChainSpec[] = [
       // why place_open maps here rather than to an invented token.
       { step: "place_open", outcome: "tap", unrepresentable: null },
       { step: "save", outcome: "save", unrepresentable: null },
-      { step: "trip_add", outcome: null, unrepresentable: NO_TRIP_ADD },
+      // Migration 2894 gave the trip add a token of its own. It is NOT `join`:
+      // borrowing the events/plans rung was considered and refused, and the
+      // refusal stands — 2894 removed the reason for it rather than undoing it.
+      // Nothing writes this token yet (routes/plan.ts records no outcome), so
+      // the counts below are real numbers that read 0 until a writer exists.
+      { step: "trip_add", outcome: "trip_add", unrepresentable: null },
     ],
   },
   {

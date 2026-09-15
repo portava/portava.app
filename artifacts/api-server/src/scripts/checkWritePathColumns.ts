@@ -355,6 +355,34 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   ["src/routes/keyPackages.ts|insert|payload not statically resolvable", 1],
   // mediaFeed impression logging — upsert row array built at runtime.
   ["src/routes/mediaFeed.ts|insert|payload not statically resolvable", 1],
+  // ── DC-19's batch POST /rank-events (routes/rankEvents.ts) ────────────────
+  //
+  // ONE site, and the ONLY one of that file's five that could not be rewritten.
+  // The other four were: the outcome-lookup `.select` (now two whole chains,
+  // each with a const-string list), the two outcome `.update`s (now object
+  // literals with a conditional spread) and the analytics `.insert` (now a
+  // spelled-out literal instead of `{ ...row }` minus a key).
+  //
+  // This one is a MULTI-ROW insert of a runtime-length array:
+  //
+  //     const rows = parsed.data.events.map((e) => ({ ... }));
+  //     await sc.from("rank_events").insert(rows);
+  //
+  // `resolvePayload` follows object and array LITERALS and same-file consts; a
+  // `.map` result is a call expression and there is no literal form of "one row
+  // per element of a variable-length array". Rewriting it would mean abandoning
+  // the single-statement insert, and that statement is load-bearing: the batch
+  // is all-or-nothing precisely because PostgREST executes a multi-row insert as
+  // one statement, and a half-landed batch leaves the exposure denominator
+  // holding a number nobody will correct.
+  //
+  // WHAT THIS COSTS, and what covers it: the six columns this site writes —
+  // event_type, item_id, surface, user_id, served_at, outcome — are EXACTLY the
+  // six the single-event insert in the same file writes, and that site IS a
+  // literal and IS column-checked on every run. A column added to one and not
+  // the other is a code review away, not a schema drift; a column added to both
+  // is checked at the resolved one.
+  ["src/routes/rankEvents.ts|insert|payload not statically resolvable", 1],
   ["src/routes/meetups.ts|insert|payload not statically resolvable", 2],
   ["src/routes/memories.ts|insert|payload not statically resolvable", 2],
   // Bumped 1 -> 2 on 2026-09-09: a second runtime-built insert payload.

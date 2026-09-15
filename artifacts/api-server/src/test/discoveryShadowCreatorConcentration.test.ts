@@ -197,7 +197,15 @@ describe("DV-79 — compareShadowPagesWithCreators", () => {
       dims.unmeasured, ["estimated_travel_intent"],
       "creator_concentration is measured now and must NOT still be named as unmeasured",
     );
-    assert.equal(dims.estimatedTravelIntent, null, "the other axis is untouched and still unmeasurable");
+    // The other Phase 9 axis is INDEPENDENT of this one, and this fixture proves
+    // it in the strongest available way: `authorClient` serves `discovery_places`
+    // only, so the sixth axis's `rank_events` read fails closed here while the
+    // author join succeeds. One axis failing must never silence the other, and a
+    // failed intent read must never report a page figure. (The axis itself is
+    // graded in discoveryShadowTravelIntent.test.ts.)
+    assert.equal(dims.estimatedTravelIntent!.reason, "unreadable");
+    assert.equal(dims.estimatedTravelIntent!.legacy, null, "a read that did not happen produces no figure");
+    assert.equal(dims.estimatedTravelIntent!.pde, null);
     assert.equal(dims.legacy.categoryDistinct, 1, "the existing dimensions come through unchanged");
   });
 

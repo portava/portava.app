@@ -102,11 +102,15 @@ describe("DC-09 — the four chains are 04 §8's four chains, verbatim", () => {
     }
   });
 
-  it("only the impression→place_open→save prefix is representable at all", () => {
+  it("the first chain is representable end to end; the other three are not", () => {
     assert.deepEqual(
       chain("impression_place_open_save_trip_add").steps.map((s) => s.outcome),
-      ["impression", "tap", "save", null],
-      "trip_add has no token in the outcome CHECK vocabulary and must not borrow 'join'",
+      ["impression", "tap", "save", "trip_add"],
+      "migration 2894 admits a trip_add token of its own — it still must not borrow 'join'",
+    );
+    assert.equal(
+      chain("impression_place_open_save_trip_add").steps[3].outcome, "trip_add",
+      "'join' is the events/plans rung; borrowing it was refused and the refusal stands",
     );
     assert.deepEqual(chain("video_complete_replay_send").steps.map((s) => s.outcome), [null, null, null]);
     assert.deepEqual(chain("trail_open_place_open_directions").steps.map((s) => s.outcome), [null, "tap", null]);
@@ -155,14 +159,36 @@ describe("DC-09 — derivation over the funnel", () => {
     assert.equal(c.steps[0].reached, 5, "but five pairs passed through it");
   });
 
+  // The guard this test has always carried — an unrepresentable step reports
+  // null and never 0 — moved to a chain that still HAS one. It is unchanged in
+  // force; `trip_add` merely stopped being an example of it (migration 2894).
   it("an unrepresentable step is null, NEVER 0 — on both counts", () => {
     const f = deriveSequenceFeatures(rows);
+    const c = feature(f, "video_complete_replay_send");
+    assert.equal(c.steps[0].step, "video_complete");
+    assert.equal(c.steps[0].reached, null, "0 would assert that no video completed; nothing records it either way");
+    assert.equal(c.steps[0].exact, null);
+    assert.deepEqual(c.unrepresentableSteps, ["video_complete", "replay", "send"]);
+    assert.equal(c.fullyRepresentable, false);
+  });
+
+  it("trip_add is a REAL step now: a token, no `unrepresentable`, and counts that are numbers", () => {
+    const f = deriveSequenceFeatures([...rows, ev({ item_id: "db/p6", outcome: "trip_add" })]);
     const c = feature(f, "impression_place_open_save_trip_add");
     assert.equal(c.steps[3].step, "trip_add");
-    assert.equal(c.steps[3].reached, null, "0 would assert that nobody added a trip; nothing records it either way");
-    assert.equal(c.steps[3].exact, null);
-    assert.deepEqual(c.unrepresentableSteps, ["trip_add"]);
-    assert.equal(c.fullyRepresentable, false);
+    assert.equal(c.steps[3].outcome, "trip_add");
+    assert.equal(c.steps[3].unrepresentable, null);
+    assert.equal(c.steps[3].reached, 1, "one pair reached the trip-add rung");
+    assert.equal(c.steps[3].exact, 1);
+    assert.deepEqual(c.unrepresentableSteps, []);
+    assert.equal(c.fullyRepresentable, true, "every step of this chain now has a token");
+  });
+
+  it("a trip_add pair passed through every rung below it, and did NOT reach attended", () => {
+    const f = deriveSequenceFeatures([ev({ item_id: "db/p7", outcome: "trip_add" })]);
+    const c = feature(f, "impression_place_open_save_trip_add");
+    assert.deepEqual(c.steps.map((s) => s.reached), [1, 1, 1, 1], "trip_add is above save, so it reached every step");
+    assert.deepEqual(c.steps.map((s) => s.exact), [0, 0, 0, 1], "and stopped exactly at trip_add");
   });
 
   it("a chain with NO representable step reports no conversion at all", () => {
@@ -174,23 +200,40 @@ describe("DC-09 — derivation over the funnel", () => {
     assert.deepEqual(c.unrepresentableSteps, ["video_complete", "replay", "send"]);
   });
 
+  // Same guard, on the chain that is still a PREFIX. `Trail open → place open →
+  // directions` observes only its middle step, so its conversion is 1 over a
+  // window that answers neither end of the chain — and `fullyRepresentable:
+  // false` is the one field that stops a reader quoting it as the chain's.
   it("observedConversion is the OBSERVABLE PREFIX's conversion, and is not the chain's", () => {
+    const f = deriveSequenceFeatures(rows);
+    const c = feature(f, "trail_open_place_open_directions");
+    assert.equal(c.observedStart, 3);
+    assert.equal(c.observedEnd, 3, "the only REPRESENTABLE step is place_open");
+    assert.equal(c.observedConversion, 1);
+    assert.equal(
+      c.fullyRepresentable, false,
+      "so a reader cannot quote observedConversion as the chain's conversion — the chain's ends are unrecorded",
+    );
+  });
+
+  it("the first chain's observedConversion IS the chain's, because every step is recorded", () => {
     const f = deriveSequenceFeatures(rows);
     const c = feature(f, "impression_place_open_save_trip_add");
     assert.equal(c.observedStart, 5);
-    assert.equal(c.observedEnd, 1, "the last REPRESENTABLE step is save, not trip_add");
-    assert.equal(c.observedConversion, 0.2);
-    assert.equal(
-      c.fullyRepresentable, false,
-      "so a reader cannot quote observedConversion as the chain's conversion — the chain ends at a step nothing records",
-    );
+    assert.equal(c.observedEnd, 0, "no pair in this corpus reached trip_add — a real zero, over a step that is read");
+    assert.equal(c.observedConversion, 0);
+    assert.equal(c.fullyRepresentable, true);
   });
 
   it("no pair at all is zero reach for a representable step — which is NOT the same as null", () => {
     const f = deriveSequenceFeatures([]);
     const c = feature(f, "impression_place_open_save_trip_add");
     assert.equal(c.steps[0].reached, 0, "a corpus with no events really did have no impressions");
-    assert.equal(c.steps[3].reached, null, "but trip_add is still unrecordable, not zero");
+    assert.equal(c.steps[3].reached, 0, "and no trip adds — a read that RAN and found none, which is not null");
+    assert.equal(
+      feature(f, "video_complete_replay_send").steps[0].reached, null,
+      "while a step nothing records is still null, never 0",
+    );
     assert.equal(f.reason, "derived");
   });
 
@@ -279,11 +322,24 @@ describe("DC-09 — loadSequenceFeatures fails closed", () => {
           `${c.id}: a refusal named a different set of unrepresentable steps`,
         );
       }
-      // And the stronger fact this pins in its own right: on THIS schema not one
-      // of 04 §8's four chains is fully representable, so a `true` anywhere here
-      // is wrong on the merits and not merely inconsistent.
-      assert.ok(f.chains.every((c) => c.fullyRepresentable === false));
-      assert.ok(f.chains.every((c) => c.unrepresentableSteps.length > 0));
+      // And the stronger fact this pins in its own right, now stated as the
+      // INVARIANT rather than as a census of today's schema: `fullyRepresentable`
+      // is true exactly when no step is unrepresentable. A `true` beside a
+      // non-empty `unrepresentableSteps` is the mutation this kills — it is the
+      // shape that lets a reader quote `observedConversion` as a chain's
+      // conversion while the chain still ends at a step nothing records.
+      for (const c of f.chains) {
+        assert.equal(
+          c.fullyRepresentable, c.unrepresentableSteps.length === 0,
+          `${c.id}: fullyRepresentable=${c.fullyRepresentable} beside ${c.unrepresentableSteps.length} unrepresentable step(s)`,
+        );
+      }
+      // On THIS schema exactly one of 04 §8's four chains is fully representable
+      // (2894 gave trip_add a token); the other three still are not.
+      assert.deepEqual(
+        f.chains.map((c) => c.fullyRepresentable), [true, false, false, false],
+      );
+      assert.ok(f.chains.slice(1).every((c) => c.unrepresentableSteps.length > 0));
     });
   }
 });
@@ -309,4 +365,40 @@ describe("DC-09 — discoveryPde consumes it behind its existing surface", () =>
     assert.equal(viewer.sequences!.chains.length, 4);
     assert.equal(viewer.sequences!.reason, "derived");
   });
+});
+
+// ── MUTATION GUARD, on the DERIVED path too ──────────────────────────────────
+//
+// The guard above runs only on the three refusal paths, because that is where a
+// surviving mutant was found. The invariant it asserts — `fullyRepresentable`
+// is true exactly when no step is unrepresentable — is structural and must hold
+// on every path this module can return, including the healthy one. Without this
+// half, a mutant that sets `fullyRepresentable: true` in `deriveSequenceFeatures`
+// alone is invisible: the refusal path would agree with it, and the equality
+// check above would pass with both sides wrong.
+describe("DC-09 — representability is an invariant, not a per-path opinion", () => {
+  const corpora: Array<[string, SequenceEvent[]]> = [
+    ["an empty corpus", []],
+    ["a corpus that reached trip_add", [ev({ item_id: "db/z1", outcome: "trip_add" })]],
+    ["a corpus that stopped at impression", [ev({ item_id: "db/z2", outcome: "impression" })]],
+  ];
+  for (const [label, corpus] of corpora) {
+    it(`MUTATION GUARD: ${label} reports fullyRepresentable iff nothing is unrepresentable`, () => {
+      for (const c of deriveSequenceFeatures(corpus).chains) {
+        assert.equal(
+          c.fullyRepresentable, c.unrepresentableSteps.length === 0,
+          `${c.id}: fullyRepresentable=${c.fullyRepresentable} beside ${c.unrepresentableSteps.length} unrepresentable step(s)`,
+        );
+        // And the two are both derived from the SAME step list, so a step with a
+        // token may never appear in the unrepresentable names and vice versa.
+        const named = new Set(c.unrepresentableSteps);
+        for (const s of c.steps) {
+          assert.equal(
+            named.has(s.step), s.outcome === null,
+            `${c.id}/${s.step}: the unrepresentable list disagrees with the step's own token`,
+          );
+        }
+      }
+    });
+  }
 });
