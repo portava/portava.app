@@ -205,9 +205,13 @@ export async function loadDiscoveryModifiers(
   try { cityConfidence = await getCityConfidence(sc, params.city); } catch { cityConfidence = null; }
   const { momentumScale, explorationBudgetPct } = cityConfidenceInputs(cityConfidence);
 
+  // `.values`: the scalar is SCALED below by city confidence, so what reaches
+  // the ranker is no longer the number the momentum store computed. Carrying
+  // the store's provenance onto a rescaled number would label it as something
+  // it is not; the provenance stays with the unscaled store, where it is true.
   let rawMomentum: Record<string, number> = {};
   try {
-    rawMomentum = await loadLocalMomentum(sc, params.placeIds, { cacheKey: params.cacheKey, nowMs });
+    rawMomentum = (await loadLocalMomentum(sc, params.placeIds, { cacheKey: params.cacheKey, nowMs })).values;
   } catch { rawMomentum = {}; }
 
   const localMomentum: Record<string, number> = {};

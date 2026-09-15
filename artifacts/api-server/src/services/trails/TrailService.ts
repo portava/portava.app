@@ -320,7 +320,7 @@ export async function getTrailModules(
   let momentum: Record<string, number> = {};
   if (placeIds.length > 0) {
     try {
-      momentum = await loadLocalMomentum(sc, placeIds, { cacheKey: `trail:${trailId}`, nowMs });
+      momentum = (await loadLocalMomentum(sc, placeIds, { cacheKey: `trail:${trailId}`, nowMs })).values;
     } catch { momentum = {}; }
   }
 
@@ -458,7 +458,7 @@ export async function trailTrending(sc: any, trailId: string, nowMs = Date.now()
   // no second velocity model (DV-25).
   let perItem: Record<string, number> = {};
   try {
-    perItem = await loadLocalMomentum(sc, itemIds, { cacheKey: `trail:${trailId}`, nowMs });
+    perItem = (await loadLocalMomentum(sc, itemIds, { cacheKey: `trail:${trailId}`, nowMs })).values;
   } catch { perItem = {}; }
 
   const { data, error } = await sc.from("rank_events")

@@ -71,6 +71,9 @@
 // module needs are therefore declared here and pinned equal to the momentum
 // module's by a test, not shared by an import.
 import type { MomentumRow } from "./discoveryLocalMomentum.js";
+// NOT type-only, and safe: lib/discoveryRankProvenance imports nothing, so it
+// cannot close a cycle back through either of the two modules that use it.
+import { derivedStoreProvenance, type DerivedStoreProvenance } from "./discoveryRankProvenance.js";
 
 /** `03` §9's stages, in the specification's own order. */
 export const TREND_STATES = [
@@ -125,6 +128,17 @@ export interface TrendEvidence {
 export interface TrendReading {
   state: DiscoveryTrendState;
   evidence: TrendEvidence;
+  /**
+   * census-discovery DC-17 — what computed this reading, over which rows, when.
+   *
+   * On the READING rather than beside the map, because a reading is already a
+   * record with room for a field and because a single reading is the unit that
+   * travels: `readLocalTrendStates` hands one map out and a caller may keep one
+   * entry of it, so a stage that has been separated from its map must still be
+   * able to say which window produced it. Every reading from one call shares
+   * one object by reference — one computation, one window, one clock.
+   */
+  provenance: DerivedStoreProvenance;
 }
 
 /**
@@ -204,6 +218,13 @@ export function computeTrendStates(
     if (r.outcome !== "impression") bucket(r.item_id, r.outcome_at ?? null, weightFor(r.outcome));
   }
 
+  // Stamped ONCE, outside the loop, and shared by every reading: the three
+  // windows above are the same three windows for every place in this call, and
+  // reading the clock per place would let one corpus carry several computation
+  // times. `priorSince` is the oldest row that can survive the bucket filter,
+  // so it IS the window start rather than a restatement of it.
+  const provenance = derivedStoreProvenance({ startMs: priorSince, endMs: nowMs }, nowMs);
+
   const out: Record<string, TrendReading> = {};
   for (const [id, w] of acc) {
     const evidence: TrendEvidence = {
@@ -212,7 +233,7 @@ export function computeTrendStates(
       priorRate:  priorWindows > 0 ? w.prior / priorWindows : 0,
       totalWeight: w.recent + w.mid + w.prior,
     };
-    out[id] = { state: classifyTrendState(evidence), evidence };
+    out[id] = { state: classifyTrendState(evidence), evidence, provenance };
   }
   return out;
 }

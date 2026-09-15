@@ -313,5 +313,8 @@ export function trailMomentumFromRankEvents(
       folded.push({ ...e, item_id: trailId });
     }
   }
-  return computeLocalMomentum(folded, nowMs);
+  // `.values`: a Trail fold is scoped to Trails, and the momentum store's own
+  // provenance describes the PLACE-level window it was computed over. Restating
+  // it here would attach a window label to a different unit of analysis.
+  return computeLocalMomentum(folded, nowMs).values;
 }

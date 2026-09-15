@@ -80,6 +80,70 @@ export const DISCOVERY_MODEL_VERSION = "compass-discovery-2026-09";
 export const DISCOVERY_FEATURE_VERSION = "compass-factors-v1";
 
 /**
+ * The SOURCE EVENT WINDOW a derived store computed over, as epoch-ms bounds.
+ *
+ * Half-open `[startMs, endMs)` in intent — `endMs` is the clock the computation
+ * was handed, and a row stamped after it is in the future and was not counted.
+ * Stated as bounds rather than as a duration because a duration only says how
+ * wide the window was, not where it sat: two readings taken ten minutes apart
+ * over "30 days" describe two different corpora, and a consumer comparing them
+ * needs to be able to see that.
+ */
+export interface DerivedStoreWindow {
+  /** Oldest source event that could have contributed, epoch ms. */
+  startMs: number;
+  /** Newest — the clock the computation ran against, epoch ms. */
+  endMs: number;
+}
+
+/**
+ * `01` §7 / `06` §5's provenance, for a store that DERIVES numbers from an
+ * event window rather than from a ranked page.
+ *
+ * census-discovery DC-17: the two stores that compute over an event window —
+ * lib/discoveryLocalMomentum and lib/discoveryTrendState — returned their
+ * numbers bare, so a consumer could not tell a reading taken over a full corpus
+ * from one taken over a truncated window, nor a fresh reading from a cached
+ * one. The same four facts `DiscoveryRankProvenance` carries about a RANK, said
+ * about a COMPUTATION.
+ *
+ * The version pair is deliberately NOT a second vocabulary: both fields are the
+ * constants above. A momentum reading and a ranked page that claimed different
+ * versions of the same pipeline would be worse than neither claiming one.
+ */
+export interface DerivedStoreProvenance {
+  /** `06` §5 model_version — DISCOVERY_MODEL_VERSION. */
+  modelVersion: string;
+  /** `06` §5 feature_version — DISCOVERY_FEATURE_VERSION. */
+  featureVersion: string;
+  /** The event window the numbers were computed over. */
+  window: DerivedStoreWindow;
+  /**
+   * Epoch ms the COMPUTATION ran. Deliberately not re-stamped when a cached
+   * result is replayed, for the same reason `rankedAt` is not: reporting the
+   * read time would describe a computation that never took place.
+   */
+  computedAt: number;
+}
+
+/**
+ * Stamp one computation. The versions are filled from the constants above so a
+ * caller cannot mint its own pair, and the window is copied rather than held by
+ * reference so a later mutation of the caller's bounds cannot rewrite history.
+ */
+export function derivedStoreProvenance(
+  window: DerivedStoreWindow,
+  computedAt: number,
+): DerivedStoreProvenance {
+  return {
+    modelVersion:   DISCOVERY_MODEL_VERSION,
+    featureVersion: DISCOVERY_FEATURE_VERSION,
+    window: { startMs: window.startMs, endMs: window.endMs },
+    computedAt,
+  };
+}
+
+/**
  * Which retrieval produced a candidate. `06` §2 lists eleven candidate sources;
  * Discovery's serve path today has exactly two retrievals plus the case where
  * neither claimed the row, and inventing the other nine would be describing a
