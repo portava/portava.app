@@ -1024,17 +1024,17 @@ async function searchPlans(
         admitted: tripDiscoveryAdmits(p, userId),
       }));
     } else {
-      const { data: trips } = await sc
+      const { data: trips, error: tripsErr } = await sc
         .from("trips")
         .select("id, visibility, show_in_discovery, owner_id, status, start_date")
         .in("id", tripIds)
         // Same dead literals as searchTrips above ("deleted" / "banned" are not
-        // `trip_status` labels), and worse here: the result is destructured as
-        // `const { data: trips }` with the error never inspected, so `trips` was
-        // undefined, `allowedTrips` empty, and EVERY plan was dropped as
-        // "no allowed parent trip". `type=plans` returned [] on every request.
+        // `trip_status` labels). The error USED to be dropped here, and this is
+        // the branch production takes (§6 D3: 2420 unapplied, 2550 seeded FALSE),
+        // so a `trips` outage emptied `parents`, dropped every plan as "no
+        // allowed parent trip", and answered 200 {results: []} — D11's masquerade.
         .not("status", "in", '("draft","cancelled","archived")');
-
+      if (tripsErr) throw new DiscoverySearchReadError("trips", tripsErr);
       parents = ((trips ?? []) as any[]).map((t: any): DiscoveryPlanParentTrip => ({
         id: t.id as string,
         ownerId: t.owner_id as string,
@@ -1086,9 +1086,9 @@ async function searchPlans(
         createdAt: (p.created_at as string | null) ?? null,
         startsAt: null,
       }));
-  } catch {
-    return [];
-  }
+  // Everything this arm swallowed before, it still swallows. The ONE thing it
+  // must not swallow is the read failure it was itself hiding, re-raised so the
+  } catch (err) { if (err instanceof DiscoverySearchReadError) throw err; return []; }
 }
 
 /**
@@ -2641,3 +2641,42 @@ router.get("/discovery/people/:userId/passport", async (req, res) => {
 });
 
 export default router;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A read this file MUST NOT answer with an empty list.
+//
+// DECLARED HERE, AT THE END OF THE FILE, ON PURPOSE. 37 census rows and four
+// sibling censuses cite `routes/discoverySearch.ts` by line. Declaring this
+// type next to its use shifted 79 of those anchors, and repointing 79
+// citations across documents this lane does not own — to fix a defect in one
+// function — is a worse trade than one out-of-place declaration. Class bodies
+// are evaluated at module load and this one is referenced only from a request
+// handler, so the ordering is a reading inconvenience and not a TDZ hazard.
+//
+// WHAT IT IS FOR. Every per-type search function in this file swallows its own
+// failures and returns `[]`. For most of them the DIRECTION is a deliberate
+// fail-closed choice and is right. What it costs is the one thing owner ruling
+// D11 and `11` §9 forbid: that `[]` is byte-identical to the `[]` a query which
+// genuinely matched nothing produces, so the route answers `200 { results: [] }`
+// for an outage, with no `refusal` on it.
+//
+// supabase-js RESOLVES on a read failure. A discarded `error` therefore does not
+// throw, never reaches the route's catch arm, and never becomes a refusal — the
+// masquerade arrives through the back door of a destructure rather than through
+// the front door the refusal envelope guards.
+//
+// Throwing this type is how such a read re-enters the front door: the route's
+// catch arm answers it with `transient_db` / `search_failed` and
+// `coverage: "nothing"`, which is the truth. It is a NAMED type rather than a
+// bare Error so the per-type catch arms keep swallowing everything they already
+// swallowed and re-raise only this.
+// ─────────────────────────────────────────────────────────────────────────────
+export class DiscoverySearchReadError extends Error {
+  /** The relation that could not be read, for the log and the alert. */
+  readonly relation: string;
+  constructor(relation: string, cause?: unknown) {
+    super(`discovery search: ${relation} could not be read`, { cause });
+    this.name = "DiscoverySearchReadError";
+    this.relation = relation;
+  }
+}

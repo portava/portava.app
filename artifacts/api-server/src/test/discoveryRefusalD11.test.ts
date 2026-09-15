@@ -125,6 +125,13 @@ function buildFakeClient(opts: { errorTables?: string[]; rows?: Record<string, a
       eq(col: string, val: any) { preds.push((r) => r[col] === val); return b; },
       neq() { return b; },
       is() { return b; },
+      // `.not(col, op, val)` was MISSING from this builder, and its absence was
+      // not inert: `searchTrips` and `searchPlans` both end their `trips` query
+      // with `.not("status", "in", …)`, so every request that reached one died
+      // on `b.not is not a function` inside that function's own catch arm and
+      // returned `[]` — for a reason that had nothing to do with the fixture.
+      // Any assertion about those two lanes was passing on a TypeError.
+      not() { return b; },
       gt() { return b; }, gte() { return b; },
       lt() { return b; }, lte() { return b; },
       in() { return b; },
@@ -517,6 +524,54 @@ describe("GET /discovery/search", () => {
     const r = await get("/api/discovery/search", true);
     assert.equal(r.status, 400);
     assert.equal(r.body.error, "invalid_payload");
+  });
+
+  // ── P1/P2 — the refusal envelope's own back door, on `type=plans`.
+  //
+  // `searchPlans` resolves each plan's PARENT TRIP, and with
+  // `discovery_trip_projection_enabled` unseeded (which is production: census
+  // §6 D3 — migration 2420 unapplied, 2550 seeded FALSE) the gate resolves to
+  // `legacy` and the parents come from a direct `trips` read. supabase-js
+  // RESOLVES on a read failure, so a dropped `error` there makes `parents` empty
+  // and every plan is discarded as "no allowed parent trip" — the route then
+  // answers `200 { results: [] }` with no refusal on it. That body is
+  // byte-identical to the one a query that genuinely matches nothing gets, which
+  // is the exact masquerade `11` §9 and owner ruling D11 forbid, arriving
+  // through a read this route's own catch never sees.
+  //
+  // P2 is the control and is as load-bearing as P1: with `trips` READABLE and
+  // carrying no admissible parent, the same empty `results` must carry NO
+  // refusal. Without it, a "fix" that stamps a refusal on every empty plans
+  // response passes P1 and distinguishes nothing.
+  const PLAN_ROW = {
+    id: "d11plan0-0000-0000-0000-000000000001",
+    title: "Kopitiam crawl",
+    trip_id: "d11trip0-0000-0000-0000-000000000001",
+    creator_id: "d11user0-0000-0000-0000-000000000002",
+    created_at: "2026-09-01T00:00:00.000Z",
+    removed_at: null,
+  };
+
+  it("P1 — refuses when the parent-trip read fails, instead of `results: []`", async () => {
+    setClient({ rows: { trip_plan_items: [PLAN_ROW] }, errorTables: ["trips"] });
+    const r = await get("/api/discovery/search?q=kopitiam&type=plans", true);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.results, []);
+    assertRefusal(r.body, {
+      class: "transient_db", code: "search_failed", route: "GET /discovery/search",
+    }, "/discovery/search?type=plans with an unreadable `trips`");
+    assertNoExposure("/discovery/search?type=plans with an unreadable `trips`");
+  });
+
+  it("P2 — a readable `trips` with no admissible parent carries NO refusal (control)", async () => {
+    setClient({ rows: { trip_plan_items: [PLAN_ROW], trips: [] } });
+    const r = await get("/api/discovery/search?q=kopitiam&type=plans", true);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.results, []);
+    assert.equal(
+      r.body.refusal, undefined,
+      "a plans search that genuinely admits nothing must NOT be stamped with a refusal",
+    );
   });
 });
 
