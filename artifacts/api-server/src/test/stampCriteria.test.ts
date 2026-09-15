@@ -19,6 +19,8 @@ import { criteriaGate, evaluateAndAwardCriteria } from "../lib/stamps/criteria/i
 interface FakeOpts {
   counts?: Record<string, number>;      // table → count for head queries
   distinct?: Record<string, string[]>;  // "user_stamps.city" → values
+  /** FALSE stages those values as PLANNING stamps (evidences_presence: false). */
+  distinctEvidencesPresence?: boolean;
   flagOn?: boolean;
   defs?: any[];                         // stamp_definitions rows
 }
@@ -30,7 +32,15 @@ function makeSc(opts: FakeOpts = {}) {
       const b: any = {
         _filters: [] as Array<[string, any]>,
         _notNull: false,
-        select(_f: string, o?: any) { b._head = o?.head === true; b._field = _f; return b; },
+        // `distinctStampField` now selects `"<col>, stamp_definitions(evidences_presence)"`
+        // rather than a bare column, so take the FIRST top-level name as the
+        // field this double is staging values for.
+        select(_f: string, o?: any) {
+          b._head = o?.head === true;
+          b._select = _f;
+          b._field = String(_f ?? "").split(",")[0]!.trim();
+          return b;
+        },
         eq(k: string, v: any) { b._filters.push([k, v]); return b; },
         in(_k: string, _v: any[]) { return b; },
         not(_k: string, _op: string, _v: any) { b._notNull = true; return b; },
@@ -45,7 +55,15 @@ function makeSc(opts: FakeOpts = {}) {
         then(resolve: any) {
           if (b._head) { resolve({ count: counts[table] ?? 0, error: null }); return; }
           if (table === "user_stamps" && b._field && opts.distinct) {
-            const vals = (opts.distinct[`user_stamps.${b._field}`] ?? []).map((v) => ({ [b._field]: v }));
+            // Each staged value becomes a row carrying an embedded definition.
+            // `evidences_presence` defaults TRUE here because every existing
+            // case in this file stages places the traveller HAS visited; the
+            // planning case below sets it false explicitly.
+            const presence = opts.distinctEvidencesPresence !== false;
+            const vals = (opts.distinct[`user_stamps.${b._field}`] ?? []).map((v) => ({
+              [b._field]: v,
+              stamp_definitions: { slug: presence ? "first_trip_completed" : "trip_planner", evidences_presence: presence },
+            }));
             resolve({ data: vals, error: null }); return;
           }
           if (table === "stamp_definitions") {
@@ -84,6 +102,16 @@ describe("metric resolution", () => {
   it("resolves distinct stamp fields (cities_visited)", async () => {
     const sc = makeSc({ distinct: { "user_stamps.city": ["Cebu", "cebu", "Tokyo", ""] } });
     assert.equal(await resolveMetric(sc, U, "cities_visited", {}), 2); // dedup case-insensitive, drop blank
+  });
+  it("PLANNED-NEVER-TAKEN: the same places as planning stamps resolve to 0", async () => {
+    // `POST /api/trips` awards first_trip_created / trip_planner AT CREATION
+    // with the destination attached. Counting those made "cities_visited" a
+    // claim the traveller had been somewhere they had only thought about.
+    const sc = makeSc({
+      distinct: { "user_stamps.city": ["Cebu", "cebu", "Tokyo", ""] },
+      distinctEvidencesPresence: false,
+    });
+    assert.equal(await resolveMetric(sc, U, "cities_visited", {}), 0);
   });
   it("context wins over DB and coerces booleans", async () => {
     const sc = makeSc({ counts: { user_follows: 99 } });
