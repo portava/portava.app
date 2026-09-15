@@ -789,9 +789,14 @@ describe("GET /discovery/search", () => {
   // from a search result — and a refusal states the same emptiness while
   // SAYING it did not look, which keeps the fail-closed direction intact.
   //
-  // `profile_privacy_settings` is the testable half: `profiles` is also what
-  // `requireUser` reads, so erroring it answers 503 before the route, the same
-  // gap §22.3 records for `type=travelers`.
+  // BOTH halves are tested. `profile_privacy_settings` is reached with the
+  // table-wide `errorTables`; the `profiles` half uses the narrower `errorReads`
+  // seam — the same one P8's travelers case uses, for the same reason. On a
+  // `type=cities` request the only `profiles` reads in flight are
+  // `readAccountStatus`'s (`select("account_status")`) and `searchCities`'s
+  // (`select("id, home_city, home_country")`), so naming `home_city` fails the
+  // search read and lets `requireUser` through. `type=countries` is the same
+  // shape with `home_country`, its select being `select("id, home_country")`.
   for (const type of ["cities", "countries"]) {
     it(`P9 — type=${type} refuses when the opt-out read fails, instead of \`results: []\``, async () => {
       setClient({ errorTables: ["profile_privacy_settings"] });
@@ -802,6 +807,22 @@ describe("GET /discovery/search", () => {
         class: "transient_db", code: "search_failed", route: "GET /discovery/search",
       }, `/discovery/search?type=${type} with an unreadable \`profile_privacy_settings\``);
       assertNoExposure(`/discovery/search?type=${type} with an unreadable opt-out table`);
+    });
+
+    it(`P9 — type=${type} refuses when its own \`profiles\` read fails`, async () => {
+      // The other half of the same Promise.all. §23.2 recorded this one as
+      // unverified because `errorTables` fails a table for the whole request
+      // and `requireUser` reads `profiles` too; the column-scoped seam is what
+      // closes it.
+      const selecting = type === "cities" ? "home_city" : "home_country";
+      setClient({ errorReads: [{ table: "profiles", selecting }] });
+      const r = await get(`/api/discovery/search?q=kopitiam&type=${type}`, true);
+      assert.equal(r.status, 200);
+      assert.deepEqual(r.body.results, []);
+      assertRefusal(r.body, {
+        class: "transient_db", code: "search_failed", route: "GET /discovery/search",
+      }, `/discovery/search?type=${type} with an unreadable \`profiles\``);
+      assertNoExposure(`/discovery/search?type=${type} with an unreadable \`profiles\``);
     });
 
     it(`P9 CONTROL — type=${type} over a readable empty opt-out table carries NO refusal`, async () => {
