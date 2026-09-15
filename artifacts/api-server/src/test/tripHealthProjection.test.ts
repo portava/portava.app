@@ -63,6 +63,69 @@ export const base = (): Record<string, Row[]> => ({
 
 beforeEach(() => _resetTripMetrics());
 
+/**
+ * tripStatus must come from the INJECTED clock, not the real one.
+ *
+ * The bug these pin: `computeTripStatus` called `todayInTimezone(timezone)`
+ * without threading `now` through, so it read `new Date()`. Every other
+ * derivation in this projection uses the injected instant, so the response
+ * could carry a phase computed at one time beside a status computed at
+ * another.
+ *
+ * It hid because the fixture above only disagrees with the real clock for part
+ * of the day: its trip ends 2026-09-15 and its timezone is Europe/Paris, so the
+ * suite passed until 22:09 UTC on 2026-09-15 — the moment Paris rolled over to
+ * the 16th — and failed from then on.
+ *
+ * These two cases do not have that property. One sits far in the past and one
+ * far in the future, so whatever day the suite is run, the real clock
+ * contradicts at least one of them: drop the `now` argument again and a
+ * concrete one of these goes red immediately, not eventually.
+ */
+describe("tripStatus is read from the injected clock, at any wall-clock time", () => {
+  const statusFor = async (start: string, end: string, now: string) => {
+    const tables = base();
+    tables.trips = [{ ...tables.trips[0], start_date: start, end_date: end }];
+    tables.trip_commitments = [];
+    const r = await buildTripHealthProjection(
+      makeClient(tables) as any, TRIP_ID, OWNER_ID, { now: new Date(now) },
+    );
+    assert.ok(r.ok, JSON.stringify(r));
+    return r.projection.tripStatus;
+  };
+
+  it("a window long past by the real clock is ACTIVE when now is inside it", async () => {
+    // Real clock says "completed" forever. Only the injected clock says active.
+    assert.equal(
+      await statusFor("2020-01-01", "2020-01-31", "2020-01-15T12:00:00.000Z"),
+      "active",
+    );
+  });
+
+  it("a window far in the future by the real clock is ACTIVE when now is inside it", async () => {
+    // Real clock says "upcoming" for decades. Only the injected clock says active.
+    assert.equal(
+      await statusFor("2099-01-01", "2099-01-31", "2099-01-15T12:00:00.000Z"),
+      "active",
+    );
+  });
+
+  it("still reports completed when the injected clock is past the window", async () => {
+    // The fix must not simply pin "active" — the comparison still has to happen.
+    assert.equal(
+      await statusFor("2020-01-01", "2020-01-31", "2020-03-01T12:00:00.000Z"),
+      "completed",
+    );
+  });
+
+  it("still reports upcoming when the injected clock is before the window", async () => {
+    assert.equal(
+      await statusFor("2099-01-01", "2099-01-31", "2098-12-01T12:00:00.000Z"),
+      "upcoming",
+    );
+  });
+});
+
 describe("buildTripHealthProjection — health and phase from the same reads", () => {
   it("HEALTHY and FREE_TIME inside the window, under the envelope, with counts of what was looked at", async () => {
     const r = await buildTripHealthProjection(makeClient(base()) as any, TRIP_ID, OWNER_ID, { now: NOW });
