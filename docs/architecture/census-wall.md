@@ -1302,7 +1302,7 @@ The whole of `routes/wall.ts`'s diff is one line replaced in place at 1274, so *
 this census's forty-odd `routes/wall.ts` pointers moved** — the commit says it kept the edit
 line-neutral above every cited line, and that is checkable rather than taken on trust.
 `wallApi.ts` appends its new declarations *below the last pre-existing export* for the same
-reason, and `wallApi.ts:328` still reads `export async function revalidateCachedObjects(`
+reason, and `wallApi.ts:328#export async function revalidateCachedObjects(` still reads `export async function revalidateCachedObjects(`
 at both commits. Evidence run at this tree:
 `artifacts/api-server/src/test/wallIntentResolutionTruthfulness.test.ts` 8/8,
 `wallSessionIntent` 9/9, `wallRouteDegradation` 6/6, and the client
@@ -1334,7 +1334,7 @@ is inside `POST /posts/:postId/hide`, routed through a shared `lib/postHide` wri
 one import at the top. This census grades that file for one thing — the `captured_at`
 writer behind W66 and §16's two clocks — and those pointers were **re-read AFTER this
 change**, by §9, which is why they resolve today and do not resolve at `42aeac38`:
-`routes/posts.ts:145` is `sniffed.kind === "image" ? capturedAtFromImageBytes(rawBody) : null;`
+`routes/posts.ts:145#capturedAtFromImageBytes(rawBody)` is `sniffed.kind === "image" ? capturedAtFromImageBytes(rawBody) : null;`
 at `80e06702` and a blank line at `42aeac38`. Group D is the one group where an
 acknowledgement would have been the honest instrument, and it is moot: the re-read that an
 acknowledgement would have argued for had already happened.
