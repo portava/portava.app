@@ -68,7 +68,7 @@ const MIGRATIONS_DIR = join(API_SERVER_ROOT, "src", "migrations");
 const BASELINE_DIR = join(API_SERVER_ROOT, "baseline");
 
 /** The snapshot filename. Bump this when an operator captures a fresher one. */
-const PRODUCTION_SNAPSHOT = "20260907_production_tables.txt";
+const PRODUCTION_SNAPSHOT = "20260915_production_tables.txt";
 
 type Classification =
   /** Declared in the tree, never applied to production. MUST reach zero. */
@@ -93,18 +93,32 @@ interface Gap {
  */
 export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
   // ── The one that undermines every other migration claim ────────────────────
-  schema_migration_ledger: {
-    classification: "unapplied",
-    note:
-      "public.schema_migration_ledger DOES NOT EXIST IN PRODUCTION. The entire " +
-      "migration-provenance apparatus — isProofOfApply(), the 2254 backfill rows, " +
-      "check:migration-ledger — describes a table that lives only in portava-ci. " +
-      "apply-migrations.ts exits 2 ('no ledger table') without it, so the sanctioned " +
-      "applier has NEVER been able to run against production; every production " +
-      "migration was applied by some other means and is unrecorded. Nothing in the " +
-      "tree can currently answer 'which migrations are applied to production?'. " +
-      "This is the highest-priority entry in this file.",
-  },
+  // schema_migration_ledger: STRUCK OFF 2026-09-15 — it now EXISTS in production.
+  //
+  // This entry read "the highest-priority entry in this file", and it was right:
+  // without a ledger, apply-migrations.ts exited 2 against production ("no ledger
+  // table"), so the sanctioned applier had never been able to run there, and
+  // nothing in the tree could answer "which migrations are applied to
+  // production?". 2254_schema_migration_ledger.sql was applied to
+  // ajrurzioarfkagpuxfnb on 2026-09-15: one new table, RLS ENABLED with NO
+  // policies, anon/authenticated REVOKEd, service_role only, plus the 382
+  // backfill rows 2254 enumerates. Verified after the apply, by reading the
+  // catalog rather than trusting the applier's own report: 382 rows, 0 malformed
+  // checksums, relrowsecurity = true, 0 policies, anon and authenticated holding
+  // no grants — every postcondition 2254 states for itself.
+  //
+  // It is STRUCK OFF rather than left in place because this ratchet fails in BOTH
+  // directions: "a listed table that has since reached production and was not
+  // struck off also fails, because a ratchet that silently stays full stops being
+  // read." Leaving it would have been exactly that failure.
+  //
+  // WHAT THE LEDGER DOES NOT ESTABLISH, stated here so the next reader does not
+  // overclaim it: all 382 rows are applied_by = 'backfill', and a backfill row
+  // asserts ONLY that the filename existed in src/migrations/ when 2254 was
+  // authored. None of them is evidence that the file ran against production.
+  // Which pre-2254 migrations production actually has remains unreconstructable,
+  // exactly as 2254's own header says; check:missing-live-columns is still the
+  // instrument for pre-ledger drift. The ledger is authoritative FORWARD only.
 
   // ── Trips v4 §5.1: the schema spine, CI-only and deliberately writerless ──
   // Ten tables from migrations 2760-2763, applied to portava-ci 2026-09-09 and

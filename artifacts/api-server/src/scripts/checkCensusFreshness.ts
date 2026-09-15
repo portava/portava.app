@@ -1929,6 +1929,49 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/2258_input_selection_history.sql",
   ],
   "census-discovery.md": [
+    // ── ADDED 2026-09-15 by §28: DV-83's subject, and the migrations that
+    //    falsified thirteen rows ────────────────────────────────────────────
+    //
+    // §28 did two things that each cite files this census was not watching, and
+    // the coverage floor caught both — correctly, dropping this census to 88 %.
+    //
+    // (a) DV-83 is INVENTED in §28 and its subject is the CONSUMERS of the
+    //     refusal envelope. A census that grades a file and does not watch it
+    //     has a verdict that rots silently, which is the whole point of the
+    //     floor. The envelope itself, its suite, and the two client components
+    //     the row grades as NON-COMPLIANT are therefore watched here.
+    //
+    //     MapSearchSheet.tsx is a MAP component, and it is here deliberately.
+    //     §25/§26's lesson was that citing eight other lanes' files makes this
+    //     census claim code it does not grade — but DV-83 genuinely grades this
+    //     one: it is the single consumer in the tree that surfaces `partial`
+    //     unconditionally, and it is the exemplar the row's "what would turn it
+    //     C" is written against. If its refusal handling changes, DV-83's
+    //     verdict IS stale, and this census should be aged for it. That is the
+    //     mechanism working, not a scope inversion.
+    //
+    // (b) §28.3 records thirteen rows whose stated blocker is FALSE at this
+    //     tree, seven of them because migrations 2890-2893 were written with
+    //     headers citing census rows BY LINE NUMBER and the rows were never
+    //     re-derived back. Those migrations, 2910 and 2921 are now the evidence
+    //     for what those rows actually say, so they are watched: the next edit
+    //     to any of them should age this census rather than silently re-open
+    //     the same gap. routes/trails.ts and services/trails/TrailService.ts
+    //     are here for the same reason — they are what falsifies DV-18's
+    //     "absent from the repository", and they carry the Trails rows.
+    "artifacts/api-server/src/lib/discoveryRefusal.ts",
+    "artifacts/api-server/src/test/discoveryRefusalD11.test.ts",
+    "travel-buddy-standalone/src/components/discovery/DiscoveryEventPostsRail.tsx",
+    "travel-buddy-standalone/src/components/discovery/ForYouTab.tsx",
+    "travel-buddy-standalone/src/components/map/MapSearchSheet.tsx",
+    "artifacts/api-server/src/migrations/2890_rank_events_behavior_engine_columns.sql",
+    "artifacts/api-server/src/migrations/2891_rank_events_recommendation_id.sql",
+    "artifacts/api-server/src/migrations/2892_place_momentum.sql",
+    "artifacts/api-server/src/migrations/2893_rank_events_retire_writerless_surfaces.sql",
+    "artifacts/api-server/src/migrations/2910_discovery_trails.sql",
+    "artifacts/api-server/src/migrations/2921_creator_earning_entries.sql",
+    "artifacts/api-server/src/routes/trails.ts",
+    "artifacts/api-server/src/services/trails/TrailService.ts",
     // ── ADDED 2026-09-14, round 2 of the scope-coverage repair ──────────────
     // Found only because closing the first five raised the percentage and
     // exposed the next five. A coverage floor is a ratchet, not a checklist:

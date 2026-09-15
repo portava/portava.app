@@ -3754,3 +3754,137 @@ CONSTRUCTED 86.1 %, CORRECT 40.6 %, from a fresh `CENSUS_INTEGRITY_DUMP=ALL`;
   accepting the wider one. The lesson is not about this seam; it is that a
   recorded limitation stops being examined, which is the same failure mode §22
   found in §21.4 and §24 found in §23.5.
+
+---
+
+## §28 — `DV-83` is invented at last, and thirteen rows are blocked by things that are no longer true
+
+Two findings, and they point opposite ways. The first adds a requirement this census
+has been refusing to write for ten sections. The second says thirteen of the rows
+already here are failing against a world that has moved.
+
+### 28.1 `DV-83`, invented, and graded `W` by someone who did not write the code
+
+§18.2 recommended `DV-83` and declined to invent it. §19, §20, §21, §22, §23, §24,
+§25, §26 and §27 each closed a real defect in the refusal envelope and each recorded
+**NO VERDICT MOVES**, for the same reason every time: no row grades the envelope, so
+a census that cannot move when the defect is fixed is not measuring the defect. Ten
+sections is long past the point where a standing recommendation becomes a decision
+nobody made. It is taken here.
+
+The row is graded from an **independent audit**, commissioned precisely because §19.4
+put this census's conflict of interest on its face: the lane that wrote the consumer
+fixes also graded them. The auditor was given the requirement and no conclusion, was
+told to verify every prior claim rather than inherit it, and came back with `W` — and
+with four prior claims falsified, three of them this census's own.
+
+| id | Obligation (spec, line) | Verdict | Evidence |
+|---|---|---|---|
+| DV-83 | `11` §9 / owner ruling D11, the CONSUMER leg — *"A distinguishable response body alone is insufficient if consumers still treat it as successful empty data."* Every consumer of a Discovery envelope that can carry `refusal` branches on `coverage`, not on `ok` alone; no refused body is written to a client cache; and no refused body is rendered as an empty result | **W** | **Built and correct at the boundary, wrong at the edges.** The envelope, the single HTTP parse boundary (`travel-buddy-standalone/src/services/discovery.ts`, whose `withParsedRefusal` destructures the wire `refusal` out before re-adding the parsed one, so a malformed refusal cannot survive the spread and read as truthy), and **8 of 10** rendering consumers satisfy this, under ten consumer-side test files. **TWO DO NOT.** `src/components/discovery/DiscoveryEventPostsRail.tsx` branches on `if (res.ok)` alone and then `return null` when the list is empty — so a `coverage: "nothing"` refusal on `GET /discovery/feed` arrives as `ok: true, posts: []` and the "Live from events" rail SILENTLY VANISHES, byte-identical on screen to a city with no live event posts. It is the exact masquerade `lib/discoveryRefusal.ts` exists to defeat, one layer further out, and `getDiscoveryFeed` already hands it the `refusal` field it never reads. `src/components/discovery/ForYouTab.tsx` never reads the `refused` flag `useCommunityDiscovery` already computes — that flag has **zero readers in the tree** — so a refused community read renders as an empty city. Neither is covered by a test: the rail's own refusal suite asserts `sessionId` only. |
+
+**Population 187 → 188.** The denominator grows, which is the honest direction: this
+closes a gap in what is MEASURED, and a gap in measurement is not closed by grading
+the unmeasured thing `C`.
+
+### 28.2 What the audit falsified, including three of this census's own claims
+
+| Prior claim | Grade | Measured |
+|---|---|---|
+| "six routes emit the envelope" (§18.2) | **FALSE** | **Seven.** `GET /discovery/community/saved-ids` was omitted, and it is a real emitter — it refuses with `{ ids: [] }` and `transient_db / saved_ids_read_failed`. Its consumer is correctly handled; the route list was simply wrong. |
+| "eighteen refusal call sites" (§18.2) | **TRUE lexically, understated** | 18 textual `sendDiscoveryRefusal(` in `routes/`, but one of them sits inside the shared `sendGeocodeRefusal` helper invoked from two routes: **19 reachable emission points**. |
+| "a prior pass fixed exactly four consumers" (§19, §20) | **UNDERSTATED, and misleading** | All four are really present and really correct. But the tree carries **ten** consumer-side fixes and ten test files — and treating "four" as the finished set is exactly what left the rail and the community block unfixed. A count of what a pass DID is not a count of what EXISTS. |
+| `app/search.tsx` partial handling is closed (§21) | **PARTIAL** | `coverage: "nothing"` is correct and tested. `partial` is not: `partialSources` is computed but read only INSIDE the `isEmpty` branch, so **a partial refusal that returns some rows renders a short list with no notice at all**. Present but bypassable. |
+
+**`partial` reaches a human on exactly one screen.** `src/components/map/MapSearchSheet.tsx`
+renders an unconditional "These results are incomplete" notice. `app/search.tsx` does
+so only when the result set is empty. Every other consumer renders `partial` as a
+complete answer by explicit documented choice. So `failedSources` — the field whose
+entire purpose is to name what is missing — is invisible almost everywhere it applies.
+
+**And there is a server-side hole underneath it.** `routes/discovery.ts` records in its
+own comments that `queryDbPlaces`'s unreadable-vs-empty distinction is *deliberately
+absorbed* on `GET /discovery`'s four serve paths: a half-failed read there ships a
+short list with **no refusal key at all**, which its comment names as "the outstanding
+residual of D11". No consumer can branch on a field that was never sent, so on the
+largest Discovery route DV-83 is currently unsatisfiable by client work alone.
+
+**Nothing enforces this invariant statically.** There is no guard anywhere requiring a
+Discovery consumer to branch on `coverage`. The invariant is held only by per-consumer
+tests, which is precisely how the rail is non-compliant today with the suite green.
+
+### 28.3 Thirteen rows blocked by claims that are false at this tree
+
+The 111 non-correct rows were partitioned by **the first thing standing between the row
+and CORRECT**. Seven of the thirteen falsifications below come from ONE cause: a
+migrations lane wrote `2890`–`2893` in the reserved band, each header citing the census
+row it answers **by line number**, and the rows those migrations answer were never
+re-derived. Several still say *"this lane may not write one"* about a migration sitting
+in the tree.
+
+| row | says | actually |
+|---|---|---|
+| DV-37 | *"either is a migration, and **this lane may not write one**"* | `2891_rank_events_recommendation_id.sql` exists, quotes the row's two settlements verbatim, and takes the second: `recommendation_id` + a unique index. |
+| DV-38 | *"no `schema_version` COLUMN, which is a migration"* | `2890_rank_events_behavior_engine_columns.sql` adds it, tagged `→ DV-38`. |
+| DV-39 | *"no class column, no retention tier"* | Same migration adds `privacy_class` and `retention_tier`, both tagged `→ DV-39`. |
+| DV-41 | *"No dwell column"* | Same migration adds `dwell_ms` and `dwell_kind`. (The row's SECOND half — no client emits a dwell distinction — is still true.) |
+| DV-40 | *"Both are migrations this lane may not write"* | False for the column (2891). Still true for `recommendations` / `recommendation_items`, which have no `CREATE TABLE` anywhere. |
+| DV-44 | *"none was retired"* | `2893_rank_events_retire_writerless_surfaces.sql` performs the retirement. It is marked "apply LAST or not at all", but it exists. |
+| DV-72, DC-07 | *"`place_momentum` … absent from production **and repository**"* | `2892_place_momentum.sql` creates it. The other four projections are correctly out of scope. |
+| DV-18 | *"`trails` / `content_trails` / `trail_edges` are absent from the repository"* | `2910_discovery_trails.sql` creates all three — and §17.1 of THIS FILE moved DV-20 and DV-24 to `W` on exactly those objects. **The census contradicts itself internally.** |
+| DV-68 | graded **`N`** — "reversals are possible" not built | Directly contradicted by a file in the tree: `2921_creator_earning_entries.sql` declares `reverses_entry_id`, admits a `'reversal'` entry type, and adds `cee_no_self_reversal`. |
+| DV-65, DV-66, DV-67 | rest ENTIRELY on the §11.5 preamble — *"**None of the objects these documents specify exists.**"* | Partly false. `2920`, `2921`, `2922` and `2930` exist, and §17.1 moved DV-56–DV-60 and DV-64 to `W` on exactly those objects. These three rows carry no evidence cell of their own, so a stale preamble is all that grades them. |
+| A08 | *"the client runs it **on every keystroke in parallel with the gateway**… Two requests per keystroke"* | False. `useGlobalSearchSuggestions.ts` now gates the legacy hook on `legacyEnabled` and **cites A08 while doing it**. §6 decision **D1 has in substance been taken** and neither the row nor D1 records it. |
+| DV-06, DV-26, DV-54, DV-55, DV-09, DC-01, DV-78, DSV2-12 | fail a leg on *"no such surface"* / *"no object"* / *"none exists (DV-40 **N**)"* | Cascades of DV-18 and DV-40. DV-40 is `W`, not `N`. `routes/trails.ts`, `services/trails/TrailService.ts` and three `lib/discoveryTrail*.ts` modules all exist. |
+| DC-13, DC-24 | *"and **no Discovery route imports it**"* | Over-broad. `lib/discoveryPde.ts` imports four of that module's services and `lib/discoveryServeLog.ts` imports a fifth. What is true is NARROWER: `services/ranking/rankingConfig.ts` specifically has no Discovery importer. |
+
+**No verdict moves in §28 on the strength of this table, and that is deliberate.** A row
+whose stated blocker is false is not thereby CORRECT — it is UNGRADED, because the
+sentence that justified its verdict has stopped being a reason. Re-deriving twenty-three
+rows properly is a section of its own, and inventing verdicts for them here on the
+strength of a migration's existence would repeat the exact error §17.2 refused twice:
+**a file in the tree is not a satisfied requirement.** Six of the seven migrations named
+above are applied to `portava-ci` only and to no production database, and three of them
+are not even on `main`.
+
+### 28.4 The partition: this lane is not code-blocked, it is deployment-blocked
+
+All 111 non-correct rows classified by first blocker:
+
+| class | rows | meaning |
+|---|---:|---|
+| **HOLD** | **65** | An owner hold, a FALSE-seeded flag, production darkness, or an unapplied migration. No code in this lane can move them. |
+| **CROSS** | **33** | Another lane must publish a contract, engine, projection or column first. |
+| **GRADE** | **8** | Not a code defect: the row's own sentence is false or stale and needs re-derivation. |
+| **SELF** | **5** | Implementable now, entirely inside Discovery-owned files. |
+
+**Five of a hundred and eleven.** Three holds account for most of the 65: the ranker's
+explicit owner hold in `docs/discovery/ROADMAP.md` (*"No optimising ranking machinery
+over an empty corpus"*), §5's production darkness (every engine path but `legacy` dark
+by flag; the legacy path itself 13 serves, none in three weeks), and §17.3's ceiling
+(2910/2920/2921/2930 on `portava-ci` only, zero rows anywhere, branch unmerged).
+
+This is the most useful number in this document and it should be read plainly: **88 % of
+Discovery's open surface is hold-or-cross.** More Discovery code will not move it. The
+percentage has not moved in ten sections because the thing stopping it was never in
+this lane's files.
+
+### 28.5 What turns §28 red
+
+1. **`DV-83`'s `W` is one auditor's reading**, and this census has now been wrong twice
+   about how many consumers exist (six routes / seven; four fixes / ten). The row is
+   written so it can be falsified: if a consumer outside `travel-buddy-standalone/` ever
+   calls these routes, the audit missed it and the verdict is understated.
+2. **The `partial` policy is undecided, and DV-83's wording hides that.** "Branches on
+   `coverage`" is satisfied by treating `partial` as success — which is what seven
+   consumers do. Either the row should require surfacing it, and then five more
+   consumers plus a `failedSources` rendering path are in scope, or it should say
+   explicitly that `partial` may be rendered silently. Right now it says neither, and a
+   requirement that can be read two ways will be read the easy way.
+3. **§28.3 is thirteen falsifications found by ONE pass over rows nobody had re-read.**
+   The count is a lower bound, not an inventory. Its cause — migration headers citing
+   census line numbers that were never updated back — is still live, and nothing checks
+   the citation runs in that direction.
+4. **The partition is a judgement about FIRST blockers**, and a row with two blockers
+   can be filed HOLD when its other leg was SELF all along. DV-78 is the known example:
+   its negative-feedback leg is writable in `routes/discovery.ts` today and it is filed
+   HOLD because its dwell leg is not.
