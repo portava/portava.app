@@ -351,12 +351,16 @@ function warnOn(log: RouteLog | undefined, ctx: unknown, msg: string): void {
 // ["impression"]. The refusal is symmetric: a later join/rsvp sits at a lower
 // rung than trip_add and cannot overwrite one either.
 //
-// THERE IS NO WRITER. `POST /api/places/:placeId/add-to-trip-plan`
-// (routes/plan.ts) is the production trip-add site for a Discovery place and it
-// reports no outcome, so nothing in this repository sends `trip_add` today. The
-// route accepting it is the half this lane owns; the report is a one-call change
-// in a file it does not. Until that lands, every read of outcome='trip_add'
-// returns zero rows — a corpus of zero from a read that RAN, which
+// THE WRITER IS THE CLIENT, AND IT IS THE PLAN PICKER. When a traveller adds a
+// served Discovery item to a trip, travel-buddy-standalone's
+// PlanPickerController reports `trip_add` here through useRankOutcome, on the
+// SUCCESS path of the add and with the surface the impression was served under.
+// It is fire-and-forget like every other outcome: a failed report never breaks
+// the add. `POST /api/places/:placeId/add-to-trip-plan` (routes/plan.ts) still
+// reports nothing of its own — it is the transport for the itinerary row, not
+// the funnel — so an add made anywhere the picker is not involved is still
+// unrecorded, and a read of outcome='trip_add' can legitimately return zero
+// rows. That remains a corpus of zero from a read that RAN, which
 // lib/discoveryShadow.ts keeps distinct from a read that failed.
 
 /** The itinerary-commitment outcome (2894). Typed like DISMISS, for the same reason. */
