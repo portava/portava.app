@@ -20,7 +20,7 @@ production** (§5): the last `surface='discovery'` serve was 2026-08-15, thirtee
 
 | Field | Value |
 | --- | --- |
-| `head_commit` | `1ec2b9c4d` — RE-DECLARED 2026-09-15 by §19, replacing `80e067027`. §19 CLOSED TWO OF THE FOUR consumer defects §18 found — `useSearchSuggestions` (which no longer renders or CACHES a `coverage: "nothing"` refusal, and now exposes `refused`) and `getDiscoveryCategoryCounts` (which no longer contributes a refused category's `total: 0` as a real badge count) — and moved **C14 `W` → `C`** because §18's two named grounds for that `W` are false at this tree. §19.7 restates the headline from a fresh `CENSUS_INTEGRITY_DUMP=ALL` rather than by adding to §18's figure: 187-population **76 / 85 / 23 / 3**, CONSTRUCTED 86.1 % (unchanged), CORRECT **40.6 %**; 67-population **48 / 14 / 5 / 0**; 153-population **68 / 61 / 22 / 2**. The three counted files that changed since `80e067027` are exactly §19's own fixes — `useSearchSuggestions.ts`, `useGlobalSearchSuggestions.ts` and `travel-buddy-standalone/src/services/discovery.ts`. **§19.4 STATES A CONFLICT OF INTEREST ON ITS FACE**: the integrating lane wrote the fix and graded it, which §18 did not, so C14's grounds are written as falsifiable claims and §19.5 names what turns them red. It does **NOT** certify the 44 `W` rows §18.3 records as not individually re-read, nor the nine rows §18 put in a seventh bucket needing a production read, and §19.6 names the TWO consumer defects that are still open (`app/search.tsx`, `app/map/index.tsx`). §1's reading rule applies unchanged. **PRE-SQUASH HAZARD**: this repository squash-merges, so once this branch lands `1ec2b9c4d` is an ancestor of nothing and `check:census-freshness` will report this census unreadable until whoever merges re-declares the squash sha. The previous declaration read: `80e067027` — RE-DECLARED 2026-09-15 by the INTEGRATING LANE on §18's behalf, replacing `80a8d655a`. §18 audited the refusal envelope's CONSUMERS for the first time — ten of them — and found four that render a refusal as an empty answer; it moved **C14 `C` → `W`** against this census's own §17.2 standard, and it restated **all three denominators** at this tree: 67-pop **47/15/5/0**, 153-pop **67/62/22/2**, 187-pop **75 C / 86 W / 23 N / 3 X** — CONSTRUCTED 86.1 % (unchanged), CORRECT 40.6 % → **40.1 %**. A defect was closed and the number went DOWN, which is the census working. A census that has restated every one of its own numbers against a tree is MEASURED there, not merely un-aged, so the declaration MOVES rather than the acknowledgement ledger growing — and that is why there is no `census-discovery.md` entry in `CENSUS_STALENESS_ACKNOWLEDGED.json`. **EXACTLY TWO counted files changed since `80a8d655a`, and both are §18's own work**: `routes/discoverySearch.ts`, where §18 closed the dropped `trips` error that let `type=plans` answer `200 {results: []}` for an outage (the branch production takes — §6 D3: 2420 unapplied, 2550 seeded FALSE), and `docs/discovery/compliance-ledger.json`, the generated record, rebuilt at `80e067027` so it carries C14's move instead of the verdict §18 superseded — it had been stale and nothing said so, which is why that file is now WATCHED. Three consecutive rebuilds produce 187 requirements identically. It does **NOT** certify the 44 `W` rows §18.3 records as not individually re-read, nor the nine rows §18 put in a seventh bucket needing a production read, and §1's reading rule applies unchanged. **PRE-SQUASH HAZARD**: this repository squash-merges, so once this branch lands `80e067027` is an ancestor of nothing and `check:census-freshness` will report this census unreadable until whoever merges re-declares the squash sha. The previous declaration read: `80a8d655a` — RE-DECLARED 2026-09-14 by §17, replacing `3ca68cb06`. §17 re-derived the twenty rows this branch's Discovery changes bear on (thirteen Trails, five creator-economy, DV-64, C14), REFUSED two the lanes proposed (§17.2), and §17.6 records a defect in the ledger generator that had been silently dropping 80 % of the corpus. The 37 counted files that changed are that work. It does **NOT** certify the other 56 `C` rows, and §1's reading rule applies unchanged. The previous declaration read: `3ca68cb06` — RE-DECLARED 2026-09-13 by §10, replacing `820b60638`. §10 re-executed all 13 BUILT-BUT-WRONG rows and ten BUILT-AND-CORRECT ones at this commit; §10.4 names which ten and reports what it found (four stale line numbers, no wrong verdict). It does **not** certify the other 38 `C` rows. The previous declaration read: `820b60638` — RE-DECLARED 2026-09-13 by §9, replacing `42aeac38`. The previous declaration was a NEUTRAL move (0 counted files differ between `090684ab` and `42aeac38`) made by the Trips lane so this census could be aged at all. This one is not neutral and does not pretend to be: `820b60638` is the commit §9 measured at, it carries §9.5's build, and between `42aeac38` and it three sibling lanes edited files this census counts — which is how sixteen unreadable rows and two stale N verdicts survived unnoticed. §9.8 states exactly which rows were re-executed here (all 10 N, all 11 W, 22 of 46 C) and which 24 were not. It does NOT certify the 24. Read §9.1 before quoting any percentage. |
+| `head_commit` | `b51c7c9dd` — RE-DECLARED 2026-09-15 by §20, replacing `1ec2b9c4d`. §20 closed the LAST TWO of §18's four consumer defects — `app/search.tsx` (a `coverage: "nothing"` refusal no longer renders the empty state nor fires the Compass "no results" fallback; it takes the screen's existing `error` branch, which already carries a retry) and `app/map/index.tsx` (a refusal no longer clears `placesError`, which is what had been switching the "no places here" zero-results state ON). **NO VERDICT MOVES**: C14 already moved in §19, and §18.2 records that NEITHER screen is graded by any row — five routes and eighteen call sites emit the envelope and are graded by nothing, which §18.2 recommended closing with a new `DV-83` and which remains unactioned. The headline is therefore UNCHANGED from §19.7: 187-population **76 / 85 / 23 / 3**, CONSTRUCTED 86.1 %, CORRECT 40.6 %; 67-population **48 / 14 / 5 / 0**; 153-population **68 / 61 / 22 / 2** — restated here as unchanged rather than silently inherited. The two counted files that changed since `1ec2b9c4d` are exactly §20's own fixes. §20.3 names what this does NOT close: no row grades either screen, no screen renders anything about a `partial` answer, and `type=all` still folds a plans failure to `[]`. §20.4 names the shared assumption all four fixes now rest on. §1's reading rule applies unchanged. **PRE-SQUASH HAZARD**: this repository squash-merges, so once this branch lands `b51c7c9dd` is an ancestor of nothing and `check:census-freshness` will report this census unreadable until whoever merges re-declares the squash sha. The previous declaration read: `1ec2b9c4d` — RE-DECLARED 2026-09-15 by §19, replacing `80e067027`. §19 CLOSED TWO OF THE FOUR consumer defects §18 found — `useSearchSuggestions` (which no longer renders or CACHES a `coverage: "nothing"` refusal, and now exposes `refused`) and `getDiscoveryCategoryCounts` (which no longer contributes a refused category's `total: 0` as a real badge count) — and moved **C14 `W` → `C`** because §18's two named grounds for that `W` are false at this tree. §19.7 restates the headline from a fresh `CENSUS_INTEGRITY_DUMP=ALL` rather than by adding to §18's figure: 187-population **76 / 85 / 23 / 3**, CONSTRUCTED 86.1 % (unchanged), CORRECT **40.6 %**; 67-population **48 / 14 / 5 / 0**; 153-population **68 / 61 / 22 / 2**. The three counted files that changed since `80e067027` are exactly §19's own fixes — `useSearchSuggestions.ts`, `useGlobalSearchSuggestions.ts` and `travel-buddy-standalone/src/services/discovery.ts`. **§19.4 STATES A CONFLICT OF INTEREST ON ITS FACE**: the integrating lane wrote the fix and graded it, which §18 did not, so C14's grounds are written as falsifiable claims and §19.5 names what turns them red. It does **NOT** certify the 44 `W` rows §18.3 records as not individually re-read, nor the nine rows §18 put in a seventh bucket needing a production read, and §19.6 names the TWO consumer defects that are still open (`app/search.tsx`, `app/map/index.tsx`). §1's reading rule applies unchanged. **PRE-SQUASH HAZARD**: this repository squash-merges, so once this branch lands `1ec2b9c4d` is an ancestor of nothing and `check:census-freshness` will report this census unreadable until whoever merges re-declares the squash sha. The previous declaration read: `80e067027` — RE-DECLARED 2026-09-15 by the INTEGRATING LANE on §18's behalf, replacing `80a8d655a`. §18 audited the refusal envelope's CONSUMERS for the first time — ten of them — and found four that render a refusal as an empty answer; it moved **C14 `C` → `W`** against this census's own §17.2 standard, and it restated **all three denominators** at this tree: 67-pop **47/15/5/0**, 153-pop **67/62/22/2**, 187-pop **75 C / 86 W / 23 N / 3 X** — CONSTRUCTED 86.1 % (unchanged), CORRECT 40.6 % → **40.1 %**. A defect was closed and the number went DOWN, which is the census working. A census that has restated every one of its own numbers against a tree is MEASURED there, not merely un-aged, so the declaration MOVES rather than the acknowledgement ledger growing — and that is why there is no `census-discovery.md` entry in `CENSUS_STALENESS_ACKNOWLEDGED.json`. **EXACTLY TWO counted files changed since `80a8d655a`, and both are §18's own work**: `routes/discoverySearch.ts`, where §18 closed the dropped `trips` error that let `type=plans` answer `200 {results: []}` for an outage (the branch production takes — §6 D3: 2420 unapplied, 2550 seeded FALSE), and `docs/discovery/compliance-ledger.json`, the generated record, rebuilt at `80e067027` so it carries C14's move instead of the verdict §18 superseded — it had been stale and nothing said so, which is why that file is now WATCHED. Three consecutive rebuilds produce 187 requirements identically. It does **NOT** certify the 44 `W` rows §18.3 records as not individually re-read, nor the nine rows §18 put in a seventh bucket needing a production read, and §1's reading rule applies unchanged. **PRE-SQUASH HAZARD**: this repository squash-merges, so once this branch lands `80e067027` is an ancestor of nothing and `check:census-freshness` will report this census unreadable until whoever merges re-declares the squash sha. The previous declaration read: `80a8d655a` — RE-DECLARED 2026-09-14 by §17, replacing `3ca68cb06`. §17 re-derived the twenty rows this branch's Discovery changes bear on (thirteen Trails, five creator-economy, DV-64, C14), REFUSED two the lanes proposed (§17.2), and §17.6 records a defect in the ledger generator that had been silently dropping 80 % of the corpus. The 37 counted files that changed are that work. It does **NOT** certify the other 56 `C` rows, and §1's reading rule applies unchanged. The previous declaration read: `3ca68cb06` — RE-DECLARED 2026-09-13 by §10, replacing `820b60638`. §10 re-executed all 13 BUILT-BUT-WRONG rows and ten BUILT-AND-CORRECT ones at this commit; §10.4 names which ten and reports what it found (four stale line numbers, no wrong verdict). It does **not** certify the other 38 `C` rows. The previous declaration read: `820b60638` — RE-DECLARED 2026-09-13 by §9, replacing `42aeac38`. The previous declaration was a NEUTRAL move (0 counted files differ between `090684ab` and `42aeac38`) made by the Trips lane so this census could be aged at all. This one is not neutral and does not pretend to be: `820b60638` is the commit §9 measured at, it carries §9.5's build, and between `42aeac38` and it three sibling lanes edited files this census counts — which is how sixteen unreadable rows and two stale N verdicts survived unnoticed. §9.8 states exactly which rows were re-executed here (all 10 N, all 11 W, 22 of 46 C) and which 24 were not. It does NOT certify the 24. Read §9.1 before quoting any percentage. |
 | Originally censused at | working tree `507f8427` plus uncommitted sibling work, 2026-09-07 |
 | Recensused | 2026-09-08 — see §8 for the method and what it does not claim |
 
@@ -2683,7 +2683,7 @@ Every consumer in the tree, by whether it branches on `coverage`:
 | `travel-buddy-standalone/src/components/map/MapSearchSheet.tsx:192#!savedRes || !savedRes.ok || savedRes.data.refusal?.coverage === 'nothing';` | **yes** | Correct. This is the one that was already found and fixed. |
 | `travel-buddy-standalone/app/search.tsx:217#if (!res.ok) {` | **NO** | **Defect.** The main search screen. A `coverage: "nothing"` refusal is `ok: true, results: []`, so it renders the empty state AND fires the Compass "no results" fallback — offering alternatives to a search that never ran. The one screen `GET /discovery/search`'s envelope was built for is the one that cannot read it. |
 | `travel-buddy-standalone/src/hooks/useSearchSuggestions.ts:94#if (res.ok) {` | **NO** | **Defect, and it caches.** See §18.2. This is the consumer C14's `C` rested on. |
-| `travel-buddy-standalone/app/map/index.tsx:1120#if (res.ok && Array.isArray(res.data?.places)) {` | **NO** | **Defect.** A refusal takes the `ok` branch with `places: []`, clears the pins, and the screen's own `placesEmpty` then renders "no places here" for an outage. |
+| `travel-buddy-standalone/app/map/index.tsx:1137#if (res.ok && Array.isArray(res.data?.places)) {` | **NO** | **Defect.** A refusal takes the `ok` branch with `places: []`, clears the pins, and the screen's own `placesEmpty` then renders "no places here" for an outage. |
 | `travel-buddy-standalone/src/services/discovery.ts` — then-line 756, `if (result.status === 'fulfilled' && result.value.ok) {` (`getDiscoveryCategoryCounts`) — DE-POINTERED, see §19.2 | **NO** | **Defect, and it fabricates a number.** The per-category fan-out reads `.data.total` off a refused body and writes `0` into the badge. The BATCH sibling's own doc comment names this exact failure — *"a badge row rendered from it as zeros is a fabricated number"* — and the fan-out neither parses nor propagates `refusal`. |
 | `travel-buddy-standalone/src/components/discovery/DiscoveryEventPostsRail.tsx:65#if (res.ok) {` | no, but **safe** | The `coverage` branch is in the service (`sessionId: refusedEverything(refusal) ? null : …`), which is what keeps a refused feed out of the rank-outcome join, and the rail renders nothing at all when `posts` is empty, so it makes no claim of emptiness. Not a defect; recorded so it is not re-found. |
 | `travel-buddy-standalone/app/(tabs)/_layout.tsx:368#getDiscoveryCategoryCountsBatch(prefetchCity, 10).catch(() => {});` | n/a | Safe by the service, not by itself: the prefetch discards the result, and `getDiscoveryPlaces` refuses to write a refused body into the client cache. Safe today, and safe for a reason that lives in another file. |
@@ -3037,7 +3037,7 @@ Unfixed, and named so they are not reported as closed:
 - `travel-buddy-standalone/app/search.tsx:217#if (!res.ok) {` — the main search
   screen renders the empty state AND fires the Compass "no results" fallback for a
   search that never ran.
-- `travel-buddy-standalone/app/map/index.tsx:1120#if (res.ok && Array.isArray(res.data?.places)) {`
+- `travel-buddy-standalone/app/map/index.tsx:1137#if (res.ok && Array.isArray(res.data?.places)) {`
   — clears the pins and renders "no places here" for an outage.
 
 Neither is touched here. §18's count of four stands as the count that was found;
@@ -3069,3 +3069,86 @@ The other two populations move with it, since C14 is in the 67: 67-population
 fixing it. The number returning to where it started is not the census going in
 circles — it is one row that was wrong, found, and closed, and the two sections
 together are the record of which.
+
+---
+
+## §20 — All four of §18's consumers are closed
+
+§19 closed two and named two. Both of the two are now closed as well, so §18's
+finding is fully discharged. No verdict moves here: C14 already moved in §19, and
+neither remaining screen is graded by any row — which is itself the finding §18.2
+recorded and which this section does not pretend to fix.
+
+### 20.1 `app/search.tsx` — the fallback that answered an unasked question
+
+§18 called this the worst of the four, and the reason is that it did TWO things:
+
+> it renders the empty state AND fires the Compass "no results" fallback —
+> offering alternatives to a search that never ran
+
+The empty state SAID nothing matched; the Compass fallback then ACTED on that
+claim, spending a second network call and a section of screen. The screen's own
+code described the behaviour without seeing it — *"No results for any query —
+always fire Compass fallback regardless of active intent/chips"*.
+
+A `coverage: "nothing"` refusal now takes the screen's existing `error` branch,
+which already carries a "Tap to retry" affordance. No new UI state was invented:
+a refusal is a failure that succeeded in transport, and retry is the right offer
+for a `transient_db`.
+
+RED first, verbatim — `Expected number of calls: 0 / Received number of calls: 1
+/ 1: {"city": "Manila", "limit": 6, "q": "coffee", "surface": "search"}`. GREEN
+4/4. Three mutations, no survivors; the one worth keeping is **M3**, which kept
+`setError` but dropped the `return`: it killed only the fallback case, proving the
+`return` is behaviour rather than punctuation — a fix that merely set the message
+would still have spent the call and drawn the alternatives underneath it.
+
+### 20.2 `app/map/index.tsx` — the error that had to be erased
+
+> A refusal takes the `ok` branch with `places: []`, clears the pins, and the
+> screen's own `placesEmpty` then renders "no places here" for an outage.
+
+The test it passed was `if (res.ok && Array.isArray(res.data?.places))`, and a
+refusal satisfies both halves **honestly**: it really is `ok: true`, and its
+`places` really is an array — an empty one, because the server never read the
+table. There was nothing malformed to catch.
+
+**Clearing the error is what did the damage**, and that is the part worth
+recording. `placesEmpty` is `… && !placesError && legacyPlaces.length === 0`, so
+`setPlacesError(null)` on the success path is precisely what switches the
+zero-results state ON. The outage did not merely lose the pins: it asserted that
+the area has nothing in it, and it had to erase the evidence to do so.
+
+RED first: `Expected: "false" / Received: "true"`. GREEN 12/12 — four new cases
+beside the eight the file already had, none of which changed. **M3** again is the
+one that matters: keeping the branch but leaving `placesError` null killed both
+outage cases, proving the fix is the error being SET, not the branch existing.
+
+### 20.3 What is NOT closed by this
+
+- **No row grades either screen.** §18.2 recorded that five routes and eighteen
+  call sites emit the envelope and are graded by nothing, and recommended `DV-83`
+  rather than inventing a row. That recommendation stands unactioned. These two
+  fixes are therefore ungraded by construction: if they regress, the suites fail,
+  but no census verdict changes.
+- **Nothing is rendered about `partial`.** All four fixes carry `partial` through
+  as real data, which is right, but no screen tells a viewer that part of an
+  answer is missing. `failedSources` exists on the envelope and nothing reads it.
+- **`type=all` still folds a plans failure to `[]`** through `Promise.allSettled`
+  in `searchAll`. Only `type=plans` refuses today. Named in the Discovery lane's
+  own hand-over and still open.
+- **The standing one.** Nothing here is merged, deployed or flag-enabled, and §5's
+  reading — 13 `surface='discovery'` rows ever, latest 2026-08-15 — is unrefreshed.
+  Four fixes on a surface nobody has shown to be reached.
+
+### 20.4 WHAT WOULD TURN THIS RED
+
+- **A fifth consumer.** §18 audited ten and found four. The audit was a grep over
+  one checkout; a consumer reaching these routes from another package or over a
+  URL not in this repository is invisible to it. Four is a floor, not a census.
+- **The `partial` carve-out.** All four fixes admit a `partial` body as real data.
+  If `partial` is ever emitted with padding rather than rows, all four admit a
+  fabrication at once — a single shared assumption across four files, which is
+  the kind of thing that is cheap to write and expensive to be wrong about.
+- **A screen that renders `refused` as "no matches" anyway.** The hooks expose it;
+  nothing forces a consumer to read it.
