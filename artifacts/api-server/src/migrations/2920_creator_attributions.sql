@@ -363,7 +363,28 @@ INSERT INTO public.creator_rule_versions (creator_type, rule_version, effective_
   ('experience_host',   'creator-rules/experience-host/v1',   now() - interval '2 second',
    '07 §2:29 Experience Host. Subject exists (public.events); ticketing is off-platform, so no verified booking is recorded.'),
   ('travel_partner',    'creator-rules/travel-partner/v1',    now() - interval '1 second',
-   '07 §2:32 Travel Partner. Producer: lib/rentBuddyEarningsLedger.ts.');
+   '07 §2:32 Travel Partner. Producer: lib/rentBuddyEarningsLedger.ts.')
+-- RE-RUNNABLE, and this is the half the idempotence pass missed. Making the
+-- CREATEs guarded made the file's OBJECTS re-assertable; it did nothing about its
+-- DATA, and on 2026-09-15 at 16:25:01Z the apply stopped here with
+--   23505 duplicate key value violates unique constraint "crv_version_unique"
+--   DETAIL: Key (creator_type, rule_version)=(discovery_creator,
+--           creator-rules/discovery-creator/v1) already exists.
+-- All six rows were already present on portava-ci from a 2026-09-14 rehearsal
+-- that recorded no ledger row — the same unrecorded rehearsal that put the tables
+-- there. A RECONCILE state means the objects AND their seed data may already
+-- exist, so the seed has to say so.
+--
+-- ON CONFLICT ON THE VERSION KEY, NOT ON THE INSTANT. `crv_version_unique` is
+-- UNIQUE (creator_type, rule_version) and is the identity of a rule lineage;
+-- `crv_instant_unique` is UNIQUE (creator_type, effective_from) and exists so the
+-- "current version" read is single-valued. DO NOTHING on the version key skips
+-- the whole row, so the instant constraint is never reached for a row that
+-- already exists — and a genuinely NEW lineage still gets a fresh `now()`
+-- instant, so it cannot collide either. DO NOTHING rather than DO UPDATE
+-- deliberately: these notes are a record of what was decided on the day the
+-- lineage was created, and silently rewriting them would erase that.
+ON CONFLICT ON CONSTRAINT crv_version_unique DO NOTHING;
 
 -- ── Postconditions ──────────────────────────────────────────────────────────
 DO $post$

@@ -2867,7 +2867,7 @@ an unreadable prior roster emits NOTHING, because a burst of false "X joined"
 lines is worse than a missing one and the next poll shows the truth either way.
 
 `safety.reported` goes to the REPORTER and to nobody else
-(`lib/telegraphEvents.ts:439`, called at `routes/messaging.ts:3174` and `:3383`).
+(`lib/telegraphEvents.ts:717#export function emitSafetyReported`, called at `routes/messaging.ts:3174` and `:3383`).
 It is a dedicated emitter rather than a `publishToUsers` call at each handler
 for one reason: the audience is the load-bearing part, and a helper with no
 parameter that could carry a thread id or a second recipient makes it
@@ -2923,7 +2923,7 @@ removed from normal user search" when the flag is on, in the query.
 | --- | --- | --- | --- |
 | T182 | N | **C** | §13.2 `message.deleted`. In the union (`lib/telegraphEvents.ts:42`) and published by the delete route excluding the deleter (`routes/groupChat.ts:395`). No migration, no flag: true on every deployment of this branch. |
 | T185 | N | **C** | §13.2 `member.joined`. In the union (`:52`) and published from BOTH sync implementations (`services/groupChatSync.ts:160`, `:306`; `lib/chatSync.ts:128`, `:258`), for newcomers only, from a roster read taken before the write. |
-| T194 | N | **C** | §13.2 `safety.reported`. In the union (`:73`) and emitted to the reporter only through a dedicated emitter whose signature cannot carry a second audience (`lib/telegraphEvents.ts:439`; called at `routes/messaging.ts:3174`, `:3383`). |
+| T194 | N | **C** | §13.2 `safety.reported`. In the union (`:73`) and emitted to the reporter only through a dedicated emitter whose signature cannot carry a second audience (`lib/telegraphEvents.ts:717#export function emitSafetyReported`; called at `routes/messaging.ts:3174`, `:3383`). |
 | T154 | N | **W** | §12 `conversation_outbox`. The table exists (`migrations/2810_telegraph_message_kernel.sql:193`), with a dedupe key, an unpublished-first index and RLS enabled with zero policies. W and not C for two reasons stated in the file itself: **no database has run it**, and nothing drains it. |
 | T195 | N | **W** | §13.3 "canonical mutation and event-outbox write in the same database transaction". A trigger on `public.messages` (`:300`) gives exactly that, to every writer including the ones that forget — and a rolled-back insert was EXECUTED and proved to leave no event. W because no database has the trigger. |
 | T196 | W | **W** | §13.3 idempotent consumers. `telegraph_outbox.dedupe_key` is the handle a consumer needs and is UNIQUE (`:193`). Still W, and now for a sharper reason than before: the key exists on no database, and idempotency is a property of a consumer that does not exist. |

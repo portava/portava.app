@@ -431,15 +431,30 @@ describe("the five sites this session fixed — against the real files", () => {
     assert.equal(hit.tier, null, "a moderation-boundary read in a handler is fail-closed (nothing served) and outside the enforced tiers");
   });
 
-  it("routes/tripCrewLocation.ts getMemberRole: STILL drops .error on both reads (fixed by direction, not by observation) — reported, in scope, ledgered FAIL-CLOSED", () => {
+  // WAS: "getMemberRole STILL drops .error on both reads … ledgered FAIL-CLOSED".
+  // The Trips lane OBSERVED both errors, so the two reads left this scanner's
+  // output and their two ledger lines went stale — the checker said so in as
+  // many words ("site fixed, moved or renamed; delete the line") and they are
+  // deleted. The case is inverted rather than removed: deleting it would leave
+  // nothing to fail if the swallow came back, which is the whole reason the
+  // ledger entries existed.
+  it("routes/tripCrewLocation.ts getMemberRole: both reads now OBSERVE .error — nothing reported, nothing ledgered", () => {
     const rel = "routes/tripCrewLocation.ts";
     const hits = reads(real(rel), rel).filter((r) => r.fn === "getMemberRole");
-    assert.deepEqual(hits.map((r) => [r.table, r.shape, r.tier]), [
-      ["trips", "data-only", "gate-function"],
-      ["trip_members", "data-only", "gate-function"],
-    ]);
+    assert.deepEqual(
+      hits.map((r) => [r.table, r.shape, r.tier]),
+      [],
+      "a read reported here means the .error binding was dropped again; an unreadable roster would once more be indistinguishable from a genuine non-member",
+    );
+    // …and the ledger must not carry them either: an entry for a site that no
+    // longer exists is exactly the staleness the checker fails on.
     const ledger = loadAllowlist().known_defects;
-    for (const h of hits) assert.match(String(ledger[h.key] ?? ""), /^FAIL-CLOSED:/, `${h.key} must be ledgered as FAIL-CLOSED`);
+    for (const key of [
+      "routes/tripCrewLocation.ts::getMemberRole::trips.maybeSingle",
+      "routes/tripCrewLocation.ts::getMemberRole::trip_members.maybeSingle",
+    ]) {
+      assert.equal(ledger[key], undefined, `${key} is fixed; a ledger line for it is stale`);
+    }
   });
 
   it("routes/discovery.ts viewer resolution is an auth.getUser call — outside this guard's class, and said so", () => {
