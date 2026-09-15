@@ -2188,6 +2188,16 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // Discovery libraries built by Discovery rows (A14, DC-09) and cited by them --
     // so the checker's other response, "say they are not what this census grades",
     // would be false. Watching them is the honest one.
+    // ADDED 2026-09-15 by §39. Discovery's OWN tests, plus the capability
+    // reader A14 now reads its flag through -- all three are this census's
+    // subject. The two other-lane files §39 still names (the Layover travel-time
+    // port, the Trips add-to-plan route) are deliberately NOT added: §26 ruled
+    // that watching another census's code ages this one every time that lane
+    // touches a file it has no opinion about, and the fix there was to name
+    // OWNERS rather than paths -- which §39 now does for the rest.
+    "artifacts/api-server/src/test/discoveryCuratedSourceRefusal.test.ts",
+    "artifacts/api-server/src/test/discoveryLiveRankRoute.test.ts",
+    "artifacts/api-server/src/lib/capability/schemaCapability.ts",
     "artifacts/api-server/src/lib/discoveryLayoverMode.ts",
     "artifacts/api-server/src/lib/discoveryLayoverTiming.ts",
     "artifacts/api-server/src/lib/discoverySequenceFeatures.ts",
