@@ -89,7 +89,7 @@ are files, tables, routes, event types and literals, each re-derived on every ru
 | `src/routes/telegraphMemory.ts` | 2 | message_thread_members, messages, saved_messages |
 | `src/routes/telegraphShare.ts` | 2 | message_thread_members, message_threads, messages |
 | `src/routes/telegraphSharedContext.ts` | 3 | message_thread_members, message_threads |
-| `src/routes/telegraphStream.ts` | 2 | message_thread_members |
+| `src/routes/telegraphStream.ts` | 2 | message_thread_members, messages |
 
 ### 4. Direct client reads of a messaging table (§24's closing rule)
 
@@ -109,11 +109,12 @@ Transport: server-sent events. Endpoints in `src/routes/telegraphStream.ts`: `GE
 Bus: `src/lib/telegraphEvents.ts`, in-memory, lossy by design, with a cross-instance
 hook in `src/lib/telegraphBroadcast.ts`.
 
-7 event types:
+8 event types:
 
 - `gone`
 - `message.created`
 - `message.deleted`
+- `message.delivered`
 - `message.translated`
 - `message.unsent`
 - `message.updated`
