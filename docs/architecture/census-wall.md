@@ -11,7 +11,7 @@
 
 | Measure | Value |
 | --- | --- |
-| `head_commit` | `42aeac38` — RE-DECLARED 2026-09-10 from `9f8122ff5ed233a367fda6431589c9cb97df7979`, the working-tree commit this census was measured at. It was necessary because `9f8122ff` is PRE-SQUASH — this repository squash-merges, so it is an ancestor of nothing, is on no remote branch, and `check:census-freshness` could resolve it only on the clone that wrote it (`CENSUS_HEAD_COMMITS_UNREACHABLE_IN_CI`). Reproduced 2026-09-10 in a fresh clone of this branch: `git diff 9f8122ff..HEAD` aborts with `Invalid revision range`, and the check reported this census as unreadable rather than checking it. `42aeac38` is #476's squash, where this document's content reached `main`. **This is a RE-DECLARATION, not a re-measurement.** ONE counted file changed between `9f8122ff` and `42aeac38`: `travel-buddy-standalone/src/features/wall/components/__tests__/WallPromotionDisclosure.component.test.tsx`. The move is defensible only because it was re-verified mechanically on 2026-09-10 over `9f8122ff..42aeac38`: filtered to lines that are neither comment nor blank, that diff is EMPTY against a `--stat` of 4 insertions and 3 deletions — the edit rewords a `jest.mock` header so it begins with the literal word NOTE, which is what `check-test-mocks.mjs` requires. It is the TEST for W178; the verdict rests on the producers and render sites, none of which it touches, and a comment can neither render a disclosure nor assert one. The full argument is preserved under `retired` in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json`, where it had been written as an acknowledgement. **Changed by the Trips lane, not this one**, because CI could not run this check against this census at all until it was; nothing else in this document is touched, and reverting it costs only the check. |
+| `head_commit` | `4a16cfcc681e3e7a81ee9f8dde1645698fd424b3` — **RE-DECLARED 2026-09-15**, replacing `42aeac38`. `4a16cfcc6` is the newest commit that edits THIS DOCUMENT, and it is a descendant of every commit that touched a file this census counts: the nineteen counted files that changed after `42aeac38` all landed at or before it, and `git diff --name-only 4a16cfcc6..HEAD` over this census's whole `CENSUS_SCOPE` is **empty** — zero counted files, verified 2026-09-15 at HEAD `80e06702`. **THIS IS A RE-DECLARATION AND A TARGETED RE-READ, NOT A FULL RE-MEASUREMENT.** What it certifies: the four commit groups that aged this document were opened one by one and the rows each of their files carries were re-derived — see §12, which names every file, what changed in it, which rows cite it and why. **No verdict moved: 199 C / 0 W / 0 N / 6 X stands.** What it does NOT certify: that the 199 `C` rows were re-executed. They were not. §12 re-read only the rows the changed files carry; every other row still rests on the §6, §7, §9, §10 and §11 passes and on `check:doc-citations`, which proves a cited line exists and never that the sentence about it is still true. **PRE-SQUASH HAZARD, stated because this is the second time this row has had to be moved for it.** `4a16cfcc6` is a commit on `claude/sweet-fermat-fmx7up`, not on the default branch. It is resolvable today — it is pushed, so unlike `9f8122ff` it is not orphaned in a fresh clone — but this repository SQUASH-MERGES, so the moment this branch lands, `4a16cfcc6` stops being an ancestor of `main` and `check:census-freshness` will report *"exists in THIS clone but is not an ancestor of HEAD"*. **Whoever squashes this branch must re-declare this row at the squash commit**, exactly as 2026-09-10 did, and state there what changed in between. There was no post-squash alternative: the newest squash reachable from here is `014a25d56` (#481), which PRE-DATES three of the four commit groups §12 grades, so declaring it would have been a falser statement, not a safer one. The acknowledgement that `42aeac38` carried is spent — an acknowledgement whose `since` no longer matches makes the checker FAIL on mismatch — and has been moved, argument intact, into the `retired` array of `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json`. *The declaration this replaces, kept verbatim because these rows chain:* “`42aeac38` — RE-DECLARED 2026-09-10 from `9f8122ff5ed233a367fda6431589c9cb97df7979`, the working-tree commit this census was measured at. It was necessary because `9f8122ff` is PRE-SQUASH — this repository squash-merges, so it is an ancestor of nothing, is on no remote branch, and `check:census-freshness` could resolve it only on the clone that wrote it (`CENSUS_HEAD_COMMITS_UNREACHABLE_IN_CI`). Reproduced 2026-09-10 in a fresh clone of this branch: `git diff 9f8122ff..HEAD` aborts with `Invalid revision range`, and the check reported this census as unreadable rather than checking it. `42aeac38` is #476's squash, where this document's content reached `main`. **This is a RE-DECLARATION, not a re-measurement.** ONE counted file changed between `9f8122ff` and `42aeac38`: `travel-buddy-standalone/src/features/wall/components/__tests__/WallPromotionDisclosure.component.test.tsx`. The move is defensible only because it was re-verified mechanically on 2026-09-10 over `9f8122ff..42aeac38`: filtered to lines that are neither comment nor blank, that diff is EMPTY against a `--stat` of 4 insertions and 3 deletions — the edit rewords a `jest.mock` header so it begins with the literal word NOTE, which is what `check-test-mocks.mjs` requires. It is the TEST for W178; the verdict rests on the producers and render sites, none of which it touches, and a comment can neither render a disclosure nor assert one. The full argument is preserved under `retired` in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json`, where it had been written as an acknowledgement. **Changed by the Trips lane, not this one**, because CI could not run this check against this census at all until it was; nothing else in this document is touched, and reverting it costs only the check.” |
 | **Denominator (testable requirements)** | **205** |
 | BUILT-AND-CORRECT | **199** |
 | BUILT-BUT-WRONG | **0** |
@@ -262,7 +262,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
 | W67 | Consumes the platform-wide layer; no separate Wall autocomplete engine | C | `services/wall/WallSessionIntentService.ts` delegates parsing to the `lib/inputAssistance` gateway; the Wall owns no tokenizer. |
-| W68 | Typed intent creates a temporary Wall session context | C | `routes/wall.ts:784-798` — a per-request `session_intent` is parsed fresh and never persisted; otherwise the stored intent applies. Store: `wall_session_intents` (migration 2271), written at `WallSessionIntentService.ts:341`, deleted at `:227` and on account deletion (`artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1138#delete_wall_session_intent`). *(Cited as line 1068 until §8. That line was never this step — see §8.1.)* |
+| W68 | Typed intent creates a temporary Wall session context | C | `routes/wall.ts:784-798` — a per-request `session_intent` is parsed fresh and never persisted; otherwise the stored intent applies. Store: `wall_session_intents` (migration 2271), written at `artifacts/api-server/src/services/wall/WallSessionIntentService.ts:341#await sc.from("wall_session_intents").upsert(`, deleted at `artifacts/api-server/src/services/wall/WallSessionIntentService.ts:365#await sc.from("wall_session_intents").delete().eq("user_id", userId);` and on account deletion (`artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1138#delete_wall_session_intent`). *(Cited as line 1068 until §8. That line was never this step — see §8.1.)* *(The delete pointer read `:227` until §12 and had been wrong since `6decd4082`; at that commit line 227 became the `generateSuggestions` call, which is REAL CODE, so no checker could see it. Re-read and repointed to :365, and both pointers are anchored now so the next slide is machine-visible — see §12.2. Verdict unchanged.)* |
 | W69 | Canonical entities become structured filters, not raw strings | C | `lib/wallProjection.ts:401-417` `StructuredIntentFilter` carries `kind` + `entityId`; residual text stays in `keywords`. |
 | W70 | Clearing the intent restores the prior Wall state | C | `routes/wall.ts:1085-1099` `DELETE /wall/session-intent` → `clearStoredIntent`; client `hooks/useWallSessionIntent.ts` re-fetches unsteered. |
 | W71 | Voice input and typo normalization use the same global engine | **?** | **The Wall's half of this contract is now executed rather than asserted; the other half has no producer anywhere in the repository.** TYPO NORMALIZATION — proven end to end at the Wall: `artifacts/api-server/src/test/wallSessionIntent.test.ts:203#a misspelling typed into the Wall reaches the database ALREADY typo-normalized` runs the REAL shared gateway over a supabase fake that records every filter string it issues, and shows that `bankok street food` typed into the Wall arrives at the query layer as **bangkok** and never as the misspelling. The alias table is the shared engine's — `artifacts/api-server/src/routes/discoverySearchHelpers.ts:148#export function applyAliases(q: string): string {`, applied at `artifacts/api-server/src/lib/inputAssistance/queryNormalizer.ts:565#applyAliases(deEmoji)`, reached from the gateway at `artifacts/api-server/src/lib/inputAssistance/gateway.ts:175#normalizeQuery` — and the Wall owns no copy of it: `artifacts/api-server/src/test/wallSessionIntent.test.ts:221#the Wall itself owns no alias / typo table` scans `services/wall/**` + `routes/wall.ts` and refuses `SEARCH_ALIASES` / `applyAliases` / `normalizeLocationName`. VOICE — there is nothing to inherit: `grep -rniE 'voice\|speech\|dictation'` over `artifacts/api-server/src/lib/inputAssistance/` returns nothing, and neither `expo-speech` nor `react-native-voice` is a dependency of `travel-buddy-standalone`. The Wall cannot tell a transcript from a keystroke, and that is pinned too (`artifacts/api-server/src/test/wallSessionIntent.test.ts:248#the Wall has no source-specific text path`, two text ingresses, both `await parseIntent(`), so no Wall-side change can affect this verdict in either direction. **WHAT WOULD TURN THIS RED:** a speech-capture surface that produces text and hands it to `generateSuggestions`, built and graded by the **Global Input Intelligence** lane on `census-input-intelligence.md`. Until one exists this `?` is a SCOPE statement about another spec's tree, not a Wall gap — and it is now a scope statement with the Wall's side of the contract under test. |
@@ -544,7 +544,7 @@ anything, and they are the most consequential paragraphs in this census.
 2. **Live For You's `place_state` kind is structurally empty in production.** `readLiveClaimEnvelopes` returns `[]` when the promoted-scope allowlist is empty (`lib/liveClaimRead.ts:316-317`), and `intel_live_promoted_scopes` is on the writerless-reads ratchet as a deliberately-empty human allowlist whose own note says: *"This is why `wall_live_for_you_enabled` should stay off: it would serve an empty strip"* (`src/scripts/checkWriterlessReads.ts:174-181`). The other five strip kinds have their own producers and are unaffected.
 3. **§16's two clocks depend on a flag-gated writer.** `recordMediaAsset` returns early unless `media_canonical_enabled` is on (`artifacts/api-server/src/lib/mediaAssets.ts:321#if (!(await isFlagEnabled(sc, "media_canonical_enabled"))) return NONE;`), so `media_assets.captured_at` — the only `experienceAt` source — is written only when that flag is lit. The producer chain is complete and correct in code; whether it produces anything is a deployment fact.
 4. **§32's server sink is not deployed.** Migration 2308 creates `wall_telemetry_events`; production contains exactly one `wall*` table, `wall_session_intents`. Thirteen of the fifteen client-emitted §32 events therefore have nowhere to land, and the transport is fire-and-forget so the 404 is silent. The client half and the route half are both built and correct.
-5. **`wall_session_intents` is the Wall's only storage, and it does have writers** — `WallSessionIntentService.ts:341` (upsert), `:227` (delete), plus the account-deletion step at `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1138#delete_wall_session_intent` (cited as line 1068 until §8; see §8.1). It is *not* on the writerless-reads ratchet (`KNOWN_WRITERLESS_READS`, `checkWriterlessReads.ts:102-213`, does not list it). The counter-signal in the brief — one `wall*` table — is real and is explained: **the Wall genuinely rides on `posts`, `post_media`, `media_assets`, `media_attachments`, `shared_moments`, `places`, `hidden_gems`, `rent_buddy_profiles`, `trips`, `trip_members`, `user_follows`, `blocks` and `rank_events`, and owns almost no state of its own by design (§30).** That is the architecture working as specified, not a gap. The one thing it *should* own and does not yet have deployed is the §32 telemetry sink.
+5. **`wall_session_intents` is the Wall's only storage, and it does have writers** — `artifacts/api-server/src/services/wall/WallSessionIntentService.ts:341#await sc.from("wall_session_intents").upsert(` (upsert), `artifacts/api-server/src/services/wall/WallSessionIntentService.ts:365#await sc.from("wall_session_intents").delete().eq("user_id", userId);` (delete), plus the account-deletion step at `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1138#delete_wall_session_intent` (cited as line 1068 until §8; see §8.1). It is *not* on the writerless-reads ratchet (`KNOWN_WRITERLESS_READS`, `checkWriterlessReads.ts:102-213`, does not list it). The counter-signal in the brief — one `wall*` table — is real and is explained: **the Wall genuinely rides on `posts`, `post_media`, `media_assets`, `media_attachments`, `shared_moments`, `places`, `hidden_gems`, `rent_buddy_profiles`, `trips`, `trip_members`, `user_follows`, `blocks` and `rank_events`, and owns almost no state of its own by design (§30).** That is the architecture working as specified, not a gap. The one thing it *should* own and does not yet have deployed is the §32 telemetry sink.
 6. **Writer-attribution caveat.** `checkWriterlessReads.ts:39-41` states that a dynamic `.from(expr)` anywhere makes writer attribution INCOMPLETE and that the check errs toward silence. Every "nothing writes X" claim above was settled by reading the writer call sites, not by grepping `from("…")`.
 
 ---
@@ -1210,3 +1210,187 @@ from the same definition the row already cited
 remaining 2.9 % is six rows, and §3's deployment facts stand unchanged: the Wall is
 flag-dark and no viewer has seen any of it. Code on a detached head in a worktree is not
 merged, and merged is not deployed.
+
+---
+
+## §12 — The re-declaration, 2026-09-15: four commit groups opened, nineteen counted files re-read, no row moved, and one pointer that had been wrong since it was written
+
+*Freshness lane, worktree `/home/user/wt-fr-wall`, detached at `80e06702`. Scope was one
+question and nothing else: `check:census-freshness` reported this census STALE — "its
+acknowledgement covers 3 named file(s), but 16 counted file(s) changed that it does NOT
+name" — and there were two ways out. This section is the re-read that earns the one that
+was taken.*
+
+### 12.1 Why this is a RE-DECLARATION and not sixteen more acknowledgement paragraphs
+
+The ledger route was available and would have been the wrong answer, so it is worth
+stating what it would have required rather than only that it was declined. An
+acknowledgement must argue, file by file, that a change **cannot have moved a verdict**.
+Thirteen of the sixteen are this lane's own product and test files, landed by the Wall
+lane on this branch, and at least one of them — the input-engine outage work at
+`6decd4082` — plainly COULD have moved a verdict: it changes what
+`POST /wall/session-intent` returns, adds a state to the client hook, and is the
+downstream half of a finding this document records under W71. Writing "cannot have moved a
+verdict" over a behaviour change is exactly the sentence the freshness checker exists to
+refuse, and it would have been false here rather than merely weak.
+
+**§9.5 of this document had already said which route was correct**, in its own words:
+*"The acknowledgement ledger belongs to the integration owner and was deliberately not
+edited here; re-declaring `head_commit` at the commit that lands this work is the correct
+resolution, not an acknowledgement entry."* This section does that, and extends it to the
+three commit groups §9.5 could not have known about because they had not happened yet.
+
+The three files the spent acknowledgement DID name — `routes/rentABuddy.ts`,
+`routes/mediaFeed.ts`, `AccountDeletionService.ts` — are other lanes' changes and its
+arguments about them were good. Those arguments are not discarded: the entry has been
+moved into the `retired` array of
+`artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json` intact, which is
+what that array is for. It had to be moved rather than left: the checker compares an
+entry's `since` against this census's CURRENT `head_commit` and reports a mismatch as a
+problem of its own, so a re-declaration that left the entry in place would have traded one
+red line for another.
+
+### 12.2 One sentence in this document was FALSE, and no checker in the repository could see it
+
+W68 and §3's fifth deployment fact both said `wall_session_intents` is **"deleted at
+`:227`"** of `services/wall/WallSessionIntentService.ts`. That stopped being true at
+`6decd4082`, which inserted 90 lines of outage-probe above it. Read at `80e06702`, line 227
+is:
+
+```
+      suggestions = await generateSuggestions(probeClient(sc, probe), {
+```
+
+— the parse call, not the delete. The delete is at line 365. **This is the failure mode
+this corpus keeps paying for: the pointer did not land on a blank line or a brace, it
+landed on REAL CODE, so `check:citation-targets` counted it as a hit and
+`check:doc-citations` never saw it at all, because it was unanchored.** `4a16cfcc6`
+repointed the *upsert* half of the same sentence from `:203` to `:341` and left the delete
+half behind — the two numbers came from one edit and only one of them was fixed.
+
+Both pointers are now fully qualified and **anchored**, so the next slide is machine-visible
+rather than silent:
+`artifacts/api-server/src/services/wall/WallSessionIntentService.ts:341#await sc.from("wall_session_intents").upsert(`
+and
+`artifacts/api-server/src/services/wall/WallSessionIntentService.ts:365#await sc.from("wall_session_intents").delete().eq("user_id", userId);`.
+Each was repointed by reading the claim at both commits, never by offset: at `42aeac38` the
+delete statement was the file's only occurrence of `.from("wall_session_intents").delete()`
+and it is still its only occurrence at `80e06702`. **W68's verdict is unchanged** — a
+writer that moved is still a writer. `check:doc-citations` is RESULT clean with the new
+pointers and `check:citation-targets` stays at 248 / 248.
+
+### 12.3 The four commit groups, and the rows each one's files carry
+
+Nineteen counted files changed between `42aeac38` and `4a16cfcc6`. Every one was diffed
+with `git diff -U0`, and every row citing it was opened. **No row moved.** The re-derivation,
+group by group:
+
+**Group A — `6decd4082`, the input-engine outage (6 counted files).** The one group that
+could have moved something.
+
+| id | what the change does to the line this row cites | could it move the row? |
+| --- | --- | --- |
+| W67 | Adds `probeClient`, a Proxy that tallies query outcomes, and `intentIsOutage`. Neither is a tokenizer, an alias table or a normalizer; parsing is still `await generateSuggestions(...)` into the shared gateway. The pin that grades this — a scan of `services/wall/**` + `routes/wall.ts` refusing `SEARCH_ALIASES` / `applyAliases` / `normalizeLocationName` — passes at this tree (9/9). | no |
+| W68 | The upsert and delete statements are byte-identical at both commits; only their line numbers moved, which §12.2 repairs. A per-request intent is still parsed fresh and still never persisted. | no |
+| W69 | `StructuredIntentFilter` at `lib/wallProjection.ts:401-417` is byte-identical; the diff appends `IntentResolution` at old line 611 and a `resolution` member at old line 619, both BELOW every line this census cites in that file (the highest is 511). | no |
+| W70 | `DELETE /wall/session-intent` → `clearStoredIntent` is untouched; the hook's clear path gains `setResolution(null)` and still re-fetches unsteered. | no |
+| W71 | Stays CANNOT-VERIFY, and §11.2 already established why in a form this change cannot touch: voice has **no producer anywhere in this repository**, so no Wall-side change moves this row in either direction. The outage work strengthens the Wall's half of the contract; it does not manufacture a speech ingress. | no |
+| W110 | The `WallResponse` contract is assembled at `routes/wall.ts:978-987` and typed at `lib/wallProjection.ts:423-433`; both byte-identical. The new `intentResolution` field is on the `POST /wall/session-intent` response at line 1274, which is a different envelope and is not what W110 grades. | no |
+| W152–W158 | §34 is about degradation, and degradation is unchanged: an outage still fails soft and the Wall still renders. What changed is that it no longer degrades *indistinguishably*. No §34 row asserts that the four outcomes are indistinguishable, so none is contradicted and none is closed. | no |
+
+The whole of `routes/wall.ts`'s diff is one line replaced in place at 1274, so **not one of
+this census's forty-odd `routes/wall.ts` pointers moved** — the commit says it kept the edit
+line-neutral above every cited line, and that is checkable rather than taken on trust.
+`wallApi.ts` appends its new declarations *below the last pre-existing export* for the same
+reason, and `wallApi.ts:328` still reads `export async function revalidateCachedObjects(`
+at both commits. Evidence run at this tree:
+`artifacts/api-server/src/test/wallIntentResolutionTruthfulness.test.ts` 8/8,
+`wallSessionIntent` 9/9, `wallRouteDegradation` 6/6, and the client
+`useWallSessionIntent.outage.component.test.tsx` 8 of the 20 client assertions in its pair.
+
+**Group B — `8a76036c7`, the certification packet (4 counted files).** Four ADDED files
+under `features/wall/certification/`: `wallCertFixtures.ts`, `wallFrameCaptureFixture.ts`
+and their two suites. Zero deletions, so no existing pointer can have moved, and this
+census cites none of them. They carry W149, W159, W167 and W168 — and the packet's own
+first table says **"STILL `X` (CANNOT-VERIFY). Nothing in this document closes any of
+them."** That is not a claim taken on the commit's word: W149 needs a frame capture on a
+device, and the packet records that `/dev/kvm` is absent and no `vmx`/`svm` flag is exposed
+to this container, so an emulated Android would measure QEMU rather than the phone; W159
+and W167 need a named designer's signature on the render set, which exists and is unsigned;
+W168 needs recruited participants. All four blockers are the ones §11.2 already named, and
+all four rows stay CANNOT-VERIFY. The suites pass here (4/4 web-render, 1 fixture suite).
+
+**Group C — `8ba5e8515`, the §9 pass (5 counted files).** `wallPerformance.test.ts` and
+`WallFeed.renderCost.component.test.tsx` modified, three component suites added. **This
+group was graded by this document in the same commit that made it** — §9 is that commit's
+census half, W170 and W173 moved ?→C on exactly these files, and §11.1 re-executed the pins
+they left. Nothing to re-derive; the census already did it. One correction to §9.5, which
+listed the freshness damage as two files: it named the two MODIFIED files and omitted the
+three ADDED ones, and `git diff --name-only` reports an addition. The list was short by
+three; the argument was not wrong.
+
+**Group D — `aadad2799`, Media §10 on `routes/posts.ts` (1 counted file).** The only change
+is inside `POST /posts/:postId/hide`, routed through a shared `lib/postHide` writer, plus
+one import at the top. This census grades that file for one thing — the `captured_at`
+writer behind W66 and §16's two clocks — and those pointers were **re-read AFTER this
+change**, by §9, which is why they resolve today and do not resolve at `42aeac38`:
+`routes/posts.ts:145` is `sniffed.kind === "image" ? capturedAtFromImageBytes(rawBody) : null;`
+at `80e06702` and a blank line at `42aeac38`. Group D is the one group where an
+acknowledgement would have been the honest instrument, and it is moot: the re-read that an
+acknowledgement would have argued for had already happened.
+
+### 12.4 What this re-declaration does NOT certify
+
+- **It is not a re-measurement.** 199 rows are `C` and this pass re-opened seven of them
+  (W66, W67, W68, W69, W70, W110, W151) plus the six `X` rows. The other 192 rest where
+  they rested: on §6, §7, §9, §10 and §11, and on `check:doc-citations`, which proves a
+  cited line exists and never that the sentence about it is still true. §12.2 is this
+  section's own demonstration that the two are different things.
+- **It says nothing about deployment.** §3's six facts are unchanged. The Wall is
+  flag-dark, migration 2270 seeds all five flags OFF with a postcondition that fails the
+  migration if any is ON, the Live strip's `place_state` kind reads a deliberately-empty
+  allowlist, `experienceAt`'s writer sits behind `media_canonical_enabled`, and the §32
+  telemetry sink is not deployed. **Built on a branch is not merged; merged is not
+  deployed.** No viewer has seen any of this.
+- **It is PRE-SQUASH and will expire on merge.** `4a16cfcc6` is on
+  `claude/sweet-fermat-fmx7up` and is pushed, so it is not the orphan `9f8122ff` was — but
+  this repository squash-merges, and on the day this branch lands the commit stops being an
+  ancestor of `main`. `check:census-freshness` will then report it as *"exists in THIS clone
+  but is not an ancestor of HEAD"*. **The squasher must re-declare this row at the squash
+  commit.** The alternative was worse, not safer: the newest squash reachable from here is
+  `014a25d56` (#481), which pre-dates Groups A, B and C.
+- **It does not grade `wall-certification.md` or the certification packet.** Those are
+  separate documents with their own claims.
+
+### 12.5 A scope gap this pass found and did not close
+
+`artifacts/api-server/src/test/wallIntentResolutionTruthfulness.test.ts` is the test that
+pins Group A's whole argument — eight assertions, five server-side mutations proven red —
+and it is **not in this census's `CENSUS_SCOPE`**, because that list names Wall test files
+one by one rather than scoping `src/test/`. So the file that carries the evidence for W67's
+and W71's outage half can change without ageing this census by a day. It is the same shape
+of hole §9.5 reported for `routes/posts.ts` and the integration owner closed.
+**CROSS-LANE REQUEST to the integration owner: add
+`"artifacts/api-server/src/test/wallIntentResolutionTruthfulness.test.ts"` to
+`census-wall.md`'s scope list in `artifacts/api-server/src/scripts/checkCensusFreshness.ts`.**
+This lane did not edit that file: three sibling freshness lanes are editing the same tree
+this hour, and a scope widening is a change other censuses' numbers can feel. Left open and
+named rather than closed quietly.
+
+### 12.6 Headline — unchanged, restated from the rows because that is the only form that can be checked
+
+> **Wall, at `4a16cfcc6`: 205 requirements · 199 BUILT-AND-CORRECT · 0 BUILT-BUT-WRONG · 0
+> NOT-BUILT · 6 CANNOT-VERIFY → CONSTRUCTED 199 / 205 = 97.1 % · CORRECT 199 / 205 =
+> 97.1 %.** No row moved in this pass and none should have: nineteen counted files changed,
+> thirteen of them this lane's own, and every one of them was either graded by the census
+> in the commit that made it or re-derived here. The one thing that DID change is a
+> sentence that had been false since `6decd4082` and that nothing in the repository was
+> able to see.
+
+| BUILT-AND-CORRECT | **199** |
+|---|---|
+| BUILT-BUT-WRONG | **0** |
+| NOT-BUILT | **0** |
+| CANNOT-VERIFY | **6** |
+
+199 + 0 + 0 + 6 = 205.
