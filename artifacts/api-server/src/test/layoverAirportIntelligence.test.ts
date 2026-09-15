@@ -313,3 +313,82 @@ describe("the disclosure reaches a client — GET /overview and GET /safety", ()
     assert.equal(r.body.airportIntelligence.bufferSourceClass, "AIRPORT_PROFILE");
   });
 });
+
+// ── THE RUNG A PRODUCTION TRAVELLER ACTUALLY SEES ────────────────────────────
+//
+// TRIPWIRE, NOT A FIX. Nothing below changes behaviour; it pins what the
+// four-rung disclosure resolves to on the data this product actually has, so
+// that the day the rung starts meaning something else, a test says so.
+//
+// The rung is genuinely DERIVED — `airportIntelligence` reads `record.estimates`
+// and the separating signal is `a.id === null` in `bufferEstimates` — but the
+// evidence it reads is ADDRESSABILITY, never CURATION:
+//
+//   * `AIRPORT_RECORD` means "an `airport_profiles` row supplied every buffer
+//     term". 0127 declares those columns `NOT NULL DEFAULT 60/90/120/180/30/15/20`,
+//     and `upsertAirportProfile` writes exactly those defaults for an airport
+//     nobody has configured — so a row supplying a term and a row supplying
+//     NOTHING ABOUT THIS AIRPORT are the same row.
+//   * Production, from this repository's own committed measurement
+//     (`src/lib/capability/layover-cutover-measurement.json`): 3,206
+//     `airport_profiles` rows, 0 verified, 0 with any non-default buffer. So
+//     `VERIFIED_RECORD` is unreached, `LIVE` has no producer anywhere on this
+//     tree, and every session created through `POST /airport/sessions` gets an
+//     `airport_id` — which leaves `AIRPORT_RECORD` as the only rung a traveller
+//     can be shown.
+//
+// Whether the GENERIC rung should instead be reached by an uncurated row — or
+// should WITHHOLD landside guidance, census L243/L249 — is an OWNER DECISION
+// recorded in the census and deliberately not taken here.
+describe("the four rungs, measured against the airports this product has", () => {
+  it("an uncurated row and a generic fallback publish DIFFERENT rungs and IDENTICAL minutes", () => {
+    const s = session();
+    const now = Date.now();
+    const uncuratedRec = certifySessionFeasibility(UNCURATED, s, { nowMs: now });
+    const genericRec   = certifySessionFeasibility(GENERIC,   s, { nowMs: now });
+
+    // The disclosure is not vacuous: it does separate the two.
+    assert.equal(airportIntelligence(uncuratedRec).tier, "AIRPORT_RECORD");
+    assert.equal(airportIntelligence(genericRec).tier, "GENERIC");
+
+    // And what it separates is not the advice. Compare the four terms the
+    // AIRPORT is said to supply, by value, rather than asserting constants.
+    const terms = (r: typeof uncuratedRec) => ({
+      baseBuffer:       r.estimates.baseBuffer.valueMinutes,
+      immigrationExtra: r.estimates.immigrationExtra.valueMinutes,
+      bagsExtra:        r.estimates.bagsExtra.valueMinutes,
+      trafficExtra:     r.estimates.trafficExtra.valueMinutes,
+    });
+    assert.deepEqual(
+      terms(uncuratedRec), terms(genericRec),
+      "an uncurated airport_profiles row no longer holds the generic defaults — the rung may now mean curation, and this tripwire is stale",
+    );
+    assert.equal(
+      new Date(uncuratedRec.deadline.hardReturnTime).getTime(),
+      new Date(genericRec.deadline.hardReturnTime).getTime(),
+      "the two rungs now produce different deadlines — re-read the rung's contract",
+    );
+  });
+
+  it("a CURATED row is the control: when a value really differs, the minutes differ too", () => {
+    const s = session();
+    const now = Date.now();
+    const curated = airportRowToProfile(airportRow({ verified: true, international_buffer_min: 200 }));
+    const a = certifySessionFeasibility(curated, s, { nowMs: now });
+    const b = certifySessionFeasibility(GENERIC, s, { nowMs: now });
+    assert.notEqual(a.estimates.baseBuffer.valueMinutes, b.estimates.baseBuffer.valueMinutes,
+      "the control that stops the case above from passing because the arithmetic ignores the row entirely");
+  });
+
+  it("three of the four rungs are unreached on this tree, and the reasons are different", () => {
+    // VERIFIED_RECORD: reachable in code, empty in production (0 of 3,206).
+    assert.equal(airportIntelligence(certifySessionFeasibility(CURATED, session(), { nowMs: Date.now() })).tier,
+      "VERIFIED_RECORD");
+    // LIVE: no producer anywhere outside src/test/ — liveConditions is null on
+    // every request this tree can make, which the suite above pins positively.
+    assert.equal(
+      airportIntelligence(certifySessionFeasibility(UNCURATED, session(), { nowMs: Date.now() })).liveObserved,
+      false,
+    );
+  });
+});
