@@ -240,9 +240,35 @@ describe("the presence property is asked for, and is a real column", () => {
   });
 
   it("a migration in band 2970-2979 adds the column and seeds it per slug", () => {
-    const files = fs.readdirSync(MIGRATIONS_DIR).filter((f) => /^297\d_.*\.sql$/.test(f));
-    assert.equal(files.length, 1, `expected exactly one migration in band 2970-2979, got ${files.join(", ") || "none"}`);
-    const sql = fs.readFileSync(path.join(MIGRATIONS_DIR, files[0]), "utf8");
+    // LOCATING THE MIGRATION, AND WHY NOT BY BAND ALONE. This used to read every
+    // 297x file and assert there was exactly one, so that `files[0]` was
+    // unambiguous. But the band is a LOCATOR here, not a reservation — nothing
+    // gives Passport ownership of 2970-2979 — so the assertion failed the first
+    // time an unrelated migration landed next door
+    // (2971_layover_discovery_mode_flag.sql), reporting a Passport defect that
+    // did not exist. A check that reddens on its neighbours is a false-positive
+    // generator, and the next migration in the band would have done it again.
+    //
+    // The band is still REQUIRED — this column belongs to that release step, and
+    // a file that added it from 2800 or 3100 should still fail. What changed is
+    // that the band now SELECTS candidates and the column IDENTIFIES the one,
+    // instead of the band having to identify it by being empty of everything else.
+    const inBand = fs.readdirSync(MIGRATIONS_DIR).filter((f) => /^297\d_.*\.sql$/.test(f));
+    const adders = inBand.filter((f) =>
+      new RegExp(`ALTER\\s+TABLE\\s+public\\.stamp_definitions\\s+ADD\\s+COLUMN[^;]*\\b${PRESENCE_COLUMN}\\b`, "i")
+        .test(fs.readFileSync(path.join(MIGRATIONS_DIR, f), "utf8")));
+
+    // STILL EXACTLY ONE, and this half is the assertion that carries weight: two
+    // migrations adding the same column is a real defect (the second fails 42701
+    // mid-apply and stops the chain), and zero means the column's migration was
+    // deleted or renumbered out of the band while every reader below kept
+    // selecting it. Neither is reachable by a neighbour minding its own business.
+    assert.equal(
+      adders.length, 1,
+      `expected exactly one migration in band 2970-2979 to ADD stamp_definitions.${PRESENCE_COLUMN}; ` +
+        `band holds [${inBand.join(", ") || "none"}], adders [${adders.join(", ") || "none"}]`,
+    );
+    const sql = fs.readFileSync(path.join(MIGRATIONS_DIR, adders[0]), "utf8");
 
     assert.ok(
       new RegExp(`ALTER\\s+TABLE[\\s\\S]{0,80}stamp_definitions[\\s\\S]{0,200}${PRESENCE_COLUMN}`, "i").test(sql),
