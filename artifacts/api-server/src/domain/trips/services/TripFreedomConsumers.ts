@@ -177,16 +177,31 @@ export async function readSlotFit(sc: any, q: SlotQuery, opts: { now?: Date } = 
   const p = read.projection;
   if (!q.startTime) return unplaced(p, "the booking has no start time; a whole day cannot be fitted to a window");
   if (!Number.isFinite(q.durationHours) || q.durationHours <= 0) return unplaced(p, "the booking has no usable duration");
-  let tz = "UTC"; let tzAssumed = true;
+  // SWALLOWED READ, AND THE SENTENCE IS THE HARM. `error` was discarded, so an
+  // unreadable `trips` row produced the identical `tzAssumed = true` as a trip
+  // that genuinely declares no timezone — and the caller was then told, in
+  // words it may show a member, "the trip declared no timezone". That is a
+  // claim about the trip made out of a query that never answered, and it is
+  // acted on: a member reading it goes and sets a timezone that is already set.
+  // The JUDGEMENT is unchanged (UTC stands in either way, because there is
+  // nothing else to stand in); what the caller can now distinguish is WHY.
+  let tz = "UTC"; let tzAssumed = true; let tzUnreadable = false;
   try {
-    const { data } = await sc.from("trips").select("timezone").eq("id", q.tripId).maybeSingle();
-    const declared = (data as any)?.timezone;
-    if (typeof declared === "string" && isValidTimezone(declared)) { tz = declared; tzAssumed = false; }
-  } catch { /* judged in UTC, said below */ }
+    const { data, error } = await sc.from("trips").select("timezone").eq("id", q.tripId).maybeSingle();
+    if (error) tzUnreadable = true;
+    else {
+      const declared = (data as any)?.timezone;
+      if (typeof declared === "string" && isValidTimezone(declared)) { tz = declared; tzAssumed = false; }
+    }
+  } catch { tzUnreadable = true; }
   const hhmm = /^(\d{2}):(\d{2})/.exec(String(q.startTime).trim());
   const begins = hhmm ? wallTimeToUtc(tz, `${q.date}T${hhmm[1]}:${hhmm[2]}`) : null;
   if (!begins) return unplaced(p, `the booking's date and start time could not be read as a wall time (${q.date} ${q.startTime})`);
   const ends = new Date(begins.getTime() + q.durationHours * 3_600_000);
   const fit = fitSlotToWindows(p, { beginsAt: begins, endsAt: ends });
-  return tzAssumed ? { ...fit, info: `${fit.info}; the trip declared no timezone, so the slot was judged in UTC` } : fit;
+  if (!tzAssumed) return fit;
+  const why = tzUnreadable
+    ? "the trip's timezone could not be read, so the slot was judged in UTC"
+    : "the trip declared no timezone, so the slot was judged in UTC";
+  return { ...fit, info: `${fit.info}; ${why}` };
 }

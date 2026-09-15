@@ -7,6 +7,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "../../../lib/logger.js";
+import { CrewMapUnavailableError } from "./TripCrewLocationService.js";
 
 const logger = rootLogger.child({ service: "TripCrewLiveShareService" });
 
@@ -177,12 +178,21 @@ export async function getActiveLiveShares(
   startedAt: string;
 }>> {
   const now = new Date().toISOString();
-  const { data } = await db
+  const { data, error } = await db
     .from("trip_crew_location_sessions")
     .select("id, user_id, visibility_level, expires_at, started_at, allowed_member_ids")
     .eq("trip_id", tripId)
     .eq("status", "active")
     .gt("expires_at", now);
+
+  // SWALLOWED READ. `error` was discarded, so an unreadable sessions table came
+  // back as [] and the caller answered 200 with an EMPTY live-share list —
+  // "nobody on this trip is sharing their location right now" — which is a
+  // statement about the crew, not about the reader, and it is the one a member
+  // would act on by not looking for anyone. The refusal reuses the crew map's
+  // own 503 (CrewMapUnavailableError, degraded_unavailable, retryable) rather
+  // than inventing a second vocabulary for the same condition on the same table.
+  if (error) throw new CrewMapUnavailableError("trip_crew_location_sessions", String((error as any)?.message ?? (error as any)?.code ?? "db_error"));
 
   return ((data as any[]) ?? [])
     .filter((row) => (row.allowed_member_ids ?? []).includes(viewerId))
