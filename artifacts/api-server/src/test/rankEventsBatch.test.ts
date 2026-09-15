@@ -37,6 +37,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import express, { type Express } from "express";
 import { _setTestClient } from "../lib/http.js";
+import { RANK_EVENTS_REJECTED_MSG } from "../lib/rankEventsProvenance.js";
 
 const ALICE_ID = "a1a1a1a1-aaaa-aaaa-aaaa-000000000001";
 
@@ -148,12 +149,28 @@ describe("DC-19 — the single-event form of POST /rank-events is unchanged", as
   it("S2. a rejected insert is STILL non-fatal for the single form — 200 { ok: true } + a warn", async () => {
     const inserts: Insert[] = [];
     logs.length = 0;
-    _setTestClient(makeClient({ inserts, insertError: { message: "check constraint violated" } }) as any, true);
+    _setTestClient(makeClient({
+      inserts,
+      insertError: {
+        code: "23514",
+        message: 'new row for relation "rank_events" violates check constraint "rank_events_surface_check"',
+      },
+    }) as any, true);
 
     const r = await post(url, ONE);
     assert.equal(r.status, 200, "unchanged: a missed Living-Page signal beats a broken page load");
     assert.deepEqual(await r.json(), { ok: true });
-    assert.ok(logs.some((l) => /direct insert failed/i.test(l.msg)), "the rejection is still warned");
+    // The MESSAGE changed and the assertion changed with it, deliberately. This
+    // route used to warn "rank-events: direct insert failed (non-fatal)", which
+    // is one of three spellings of one event across this table's writers and is
+    // findable from neither of the other two. census-discovery §41.1's hazard is
+    // that a constraint refusing a whole surface reads like a surface nobody
+    // uses; the fix is one findable shape carrying the constraint's NAME, so
+    // that is what is asserted now — including the name, since a unified message
+    // without it would be the same silence in a tidier font.
+    const hit = logs.find((l) => l.msg === RANK_EVENTS_REJECTED_MSG);
+    assert.ok(hit, `the rejection is still warned. logs: ${JSON.stringify(logs.map((l) => l.msg))}`);
+    assert.equal((hit!.ctx as any).constraint, "rank_events_surface_check");
   });
 
   it("S3. an invalid single event still 400s", async () => {
