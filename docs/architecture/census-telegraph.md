@@ -6903,3 +6903,329 @@ ran.
 `check:census-integrity` now reads **C=230 W=157 N=49 X=3** across 451 rows. One
 row moved. §1's stated 209 / 176 / 51 / 3 is still §21.8's gap and still not
 closed here.
+
+---
+
+## §24 — The twelve rows the tallier drops are not prose; the twelve `not_found` defects are already fixed; and the one fail-open nobody had named
+
+Written by the TELEGRAPH lane in worktree `/home/user/wt-w5-telegraph`, detached at
+`2844870a0`. **Nothing here is merged, nothing is deployed, no flag was enabled.**
+No `head_commit` is re-declared: this section re-derived 36 rows and re-read a further
+handful, not all 451, and §1's reading rule applies unchanged.
+
+Every OLD verdict below was taken from
+`CENSUS_INTEGRITY_DUMP=ALL node --import tsx/esm src/scripts/checkCensusIntegrity.ts`,
+never from this document's prose. That distinction earned its keep twice in this
+section — §24.1 and §24.4 both disprove a sentence this census states about itself.
+
+### 24.1 The twelve unreadable requirements are ORDINARY VERDICT ROWS, and this document says twice that they are not
+
+`check:census-integrity` reports, for this census alone in the corpus:
+
+> `telegraph  439  230  157  49  3  451  12 counted where this tool cannot read`
+
+This document explains that gap twice, and **both statements are false.** §1's
+restatement says:
+
+> *"the remaining 12 of 451 being requirements this census states in prose rather
+> than in a verdict table"*
+
+and §13.10 repeats it:
+
+> *"The 12 requirements this census counts in prose rather than in a verdict table
+> are unchanged and are still not machine-checkable, so 439 of the 451 are."*
+
+**The twelve are T1, T26, T212, T366, T367, T393, T404, T405, T406, T408, T416 and
+T446.** Every one of them is an ordinary row in an ordinary verdict table in §5 or
+§6. They were found by subtracting the dump's 439 ids from T1–T451; no prose was
+consulted, and none needed to be. The first of them, in full:
+
+> `| T1 | North star: … | N <backtick>∅<backtick> | Unguarded absence. … |` (the verdict cell is the empty-set glyph wrapped in code backticks)
+
+**What actually defeats the parser is the CELL SHAPE, and it is the same defect
+`checkCensusIntegrity.ts` has already had to fix four times.** `verdictOf()` strips
+`⌀`, `†` and `‡` from a verdict cell, and strips a trailing parenthesised note, but
+this census marks an unguarded absence with a BACKTICKED `∅` (U+2205 EMPTY SET, not
+the U+2300 `⌀` the strip list carries). `` N `∅` `` therefore matches no verdict
+token and the row is dropped whole. That file's own header says what this looks
+like when it happens:
+
+> *"Those four are not prose: M47, M169, M176 and M177 are ordinary table rows, and
+> the census's own headline counts them. … the difference was invisible as a
+> discrepancy because it surfaced as an unreconciled-prose number instead."*
+
+**MEASURED, not argued.** Rewriting the 33 affected cells from `` N `∅` `` to
+`` N (`∅`) `` — the trailing-parenthesised-note shape `verdictOf()` already
+supports, adding two characters and removing nothing — was applied, dumped, and
+diffed against the dump taken before it. The diff is **exactly twelve added lines**:
+`T1|N`, `T26|N`, `T212|N`, `T366|N`, `T367|N`, `T393|N`, `T404|N`, `T405|N`,
+`T406|N`, `T408|N`, `T416|N`, `T446|N`. **Not one existing verdict changed**, and
+parsed rows became 451 against a stated denominator of 451.
+
+So the twelve are not prose, they are not unverdicted, and they are not
+unmachine-checkable. They are **twelve NOT-BUILT requirements that every tally this
+census has ever published has silently omitted.** The body's true count is
+**C 230 / W 157 / N 61 / X 3 = 451**; the published 49 NOT-BUILT understates the
+not-built pile by twelve rows, a quarter of its own size. CONSTRUCTED% and CORRECT%
+are unaffected — all twelve are N, so `(230+157)/451` and `230/451` hold either way,
+which is precisely why nothing ever noticed.
+
+**THE EDIT WAS MEASURED AND THEN REVERTED.** `docs/architecture/census-telegraph.md`
+was restored byte-identical to its pre-section state (`cmp`-verified) before this
+section was appended, on an explicit scope instruction from the integration owner
+that closing the gap is a corpus-level decision and not this lane's to take. **This
+section recommends closing it.** The change is two characters per cell in one file,
+it moves no verdict, and it is reproducible in one command:
+
+```
+python3 -c "import re,io;p='docs/architecture/census-telegraph.md';s=open(p).read();print(re.subn(r'\|( *[CWNX] )\`∅\`( *\|)', r'|\1(\`∅\`)\2', s)[1])"
+```
+
+**Whoever closes it must restate the headline in the same commit.** Making the
+twelve readable takes parsed rows to 451 = the stated denominator, which removes the
+prose-gap exemption in `checkCensusIntegrity.ts` and turns the headline-equality
+check on for this census for the first time. It then fails immediately, and not on
+the twelve rows — on the header. Captured verbatim from the reverted-then-reapplied
+state:
+
+> `::error::census-telegraph.md: its stated headline is C 98 / W 172 / N 178 / X 3 but its own rows count C 230 / W 157 / N 61 / X 3. Both sum to 451, so this is not an arithmetic slip — it is a headline that stopped describing the table underneath it. EVERY requirement in the denominator was parsed, so there is no prose gap for the difference to live in.`
+
+### 24.2 The headline that has never been checked, and never can be
+
+`check:census-integrity` parses exactly one headline table in this document: the
+**v1 / v1.1 split at line 68**, which states **98 / 172 / 178 / 3**. The parser takes
+the LAST number on each line, so the three-column shape `| BUILT-AND-CORRECT | 86 |
+12 | 98 |` reads as 98. §1's own four-row table above it is not the last such block
+and never wins.
+
+That headline is **~130 rows away from the document's own body** and has been for the
+whole branch. §1's restated paragraph (209/176/51/3), §13.10's blockquote
+(211/176/49/3) and §23.6's tally (230/157/49/3) are all prose and none of them is
+parsed. The equality check that would have caught the drift **fires only when parsed
+rows equal the stated denominator**, and telegraph's twelve-row gap means 439 ≠ 451
+permanently. So the census with the largest BUILT-BUT-WRONG population in the corpus
+holds the one machine-checked headline in the corpus that is **unreachable by
+construction**, and every gate has been green over it the entire time.
+
+This section appends a two-column block restated from a fresh dump. It becomes the
+last such block and therefore the parsed headline. **It is still not ENFORCED**, and
+saying so is the point: closing §24.1's gap is what would make it enforced.
+
+| Measure | Value |
+| --- | --- |
+| BUILT-AND-CORRECT | **230** |
+| BUILT-BUT-WRONG | **157** |
+| NOT-BUILT | **49** |
+| CANNOT-VERIFY | **3** |
+
+Those four are the parsed rows — 439 of 451 — as of this section. **They are not the
+body count.** Counting the twelve rows §24.1 identifies, the body states
+C 230, W 157, N 61, X 3, summing to 451. CONSTRUCTED **85.8 %**, CORRECT **51.0 %**
+under either reading, because all twelve are NOT-BUILT.
+
+The line-68 headline is **superseded**: it understates C by 132, overstates W by 15
+and overstates N by 129. It is left in place because this document is append-only and
+last-statement-wins; nothing above this line was edited.
+
+### 24.3 The 209 non-correct rows, partitioned
+
+157 W + 49 N + 3 X. §13.4's four groups were joined to the current dump rather than
+inherited; the join is what produces the first four rows.
+
+| partition | count | how it was derived |
+| --- | --- | --- |
+| (a) closable from code this lane owns | 10 | §13.4 BRANCH rows still non-C whose named artifact is in this lane's file set: T31, T39, T157, T166, T169, T170, T201, T379, T381, T409 |
+| (b) unapplied migration or a flag seeded FALSE | 24 | §13.4's OWNER group, all 24 still W. 2810–2813 are in no database; every flag they add is seeded FALSE |
+| (b)+(a) BOTH — needs the deploy AND a change in an owned file | 12 | §13.4's BOTH group, all 12 still W: T80, T142, T144, T147, T154, T158, T196, T221, T228, T231, T369, T385 |
+| (c) owner decision, named | 6 | T4 (share `memories` from a private-by-default domain), T396 (the spec states two six-level attention ladders that disagree at P3/P4/P5), T202 (§20 forbids payment requests — permanently false BY DESIGN), T255 (what "immediate/high priority" means in delivery), T286 and T287 (a client directory layout and a server package split, deliberately unenforced) |
+| (d) another lane's file | 25 | client tree `travel-buddy-standalone/` (T6, T11, T12, T104, T106, T108, T123, T124, T218, T262, T264, T265, T271, T295, T320, T411, T413, T423, T448); `routes/circle.ts` + client producers (T35, T359, T445); Trips-owned routes (T319); `services/notifications/NotificationDeduplicationService.ts` (T397); 30 files across many lanes (T220) |
+| (e) absent capability — no storage, no subsystem, no referent | 129 | §13.4's NEITHER group less the four owner decisions above (80), plus all 49 NOT-BUILT rows |
+| (f) the census sentence is already FALSE at HEAD | 3 | §24.4 — quoted, with the disproving line |
+| X — cannot verify | 3 | the three rows §7 names, T71 among them |
+
+(a)+(b)+(b·a)+(c)+(d)+(e) = 10+24+12+6+25+129 = **206**, plus 3 X = **209**. (f)
+overlaps the others and is not added.
+
+### 24.4 Sentences this census states that are FALSE at HEAD
+
+1. **§1, restated 2026-09-12 by the integrator** — *"the remaining 12 of 451 being
+   requirements this census states in prose rather than in a verdict table."*
+   **Disproved by** `census-telegraph.md:439`, an ordinary verdict-table row:
+   `| T1 | North star: … | N <backtick>∅<backtick> | Unguarded absence. … |` (the verdict cell is the empty-set glyph wrapped in code backticks)
+   — and by the eleven others at :479, :718, :953, :954, :1003, :1014, :1015, :1016,
+   :1018, :1026 and :1056. §24.1 has the measurement.
+
+2. **§13.10** — *"The 12 requirements this census counts in prose rather than in a
+   verdict table are unchanged and are still not machine-checkable, so 439 of the 451
+   are."* Same disproof. They are machine-checkable; two characters per cell is the
+   whole of it.
+
+3. **§23.6** — *"`check:census-integrity` now reads **C=230 W=157 N=49 X=3** across
+   451 rows."* **Disproved by the tool's own line**, which is what §23.6 is quoting:
+   `telegraph  439  230  157  49  3  451  12 counted where this tool cannot read`.
+   The four counts are right; **the "across 451 rows" is not** — the tool reads them
+   across 439. The distinction is the whole of §24.1.
+
+Two further statements are UNDERSTATED rather than false, and are corrected in
+§24.5's table: T220's file count and T123's module count have each grown since the
+pass that measured them.
+
+### 24.5 §13's 36 remaining BRANCH rows, re-derived
+
+§13.4 assigned 51 rows to BRANCH. §17.8 item 4 recorded ten reaching C (T79, T388,
+T430, T438, T3, T36, T37, T38, T290, T349), five reclassified (T31→BOTH;
+T4, T201, T218, T396→NEITHER) and thirty-six remaining, twelve of them re-read.
+
+**Re-derived from the dump, not inherited: the 51 now stand at 14 C and 37 non-C.**
+Four of §17.8's thirty-six have reached C since it was written — **T344 and T363**
+(§20.6), **T268** (§21) and **T410** (§22). **Thirty-two of the thirty-six are still
+open.** Each was checked against the tree, and the previous pass was right about
+every one of them; the value here is that it is now a claim made after looking.
+
+| **ID** | **was** | **now** | why |
+| --- | --- | --- | --- |
+| T11 | W | W | Still open. The ACTION Confirm control still refuses rather than executing: `travel-buddy-standalone/src/features/telegraph/kinds/TypedMessageRenderer.tsx` renders "Confirmation is not available on this screen". §13.12 item 5 called this smaller than a fix and larger than nothing; it is unchanged. |
+| T35 | W | W | Still open, and the named producer is still the named producer: `artifacts/api-server/src/routes/circle.ts:365#msg_type:  "circle_status_card",` still hand-rolls the payload. `discovery_card`, `post_card` and `compass_card` are still written client-side. Another lane's file. |
+| T123 | W | W | Still open, and LARGER than §17.8 recorded. §13.4 said "three surfaces"; §17.8 corrected it to eleven client modules. Counted today: **12** client modules under `travel-buddy-standalone/src` still reference the static `TG` tokens. |
+| T157 | W | W | Still open. `envelopeVersion` appears in exactly four non-test files — `services/telegraph/coordination.ts`, `services/telegraph/messageKinds.ts` and two client kind modules — i.e. §6.2's kinds and coordination and nothing else, which is the row's own statement. |
+| T166 | W | W | Still open. `routes/telegraphCommands.ts` exposes four action kinds — `add_to_plan`, `ask_followup`, `create_meetup`, `open_poll`. `CREATE_DECISION` is not among them. |
+| T169 | W | W | Still open, same four kinds; §9.1's seven quick states are not commands. |
+| T170 | W | W | Still open. `SHARE_LOCATION` exists in `services/telegraph/vocabulary.ts`, `layers.ts`, `shareables.ts`, `sharedContext.ts` and `coordination.ts` as a coordination ACTION, and in no command kind. |
+| T220 | W | W | Still open, and LARGER again. §13.4 said eight modules; §17.8 corrected it to thirty non-test files, twenty-seven outside the shared helpers. Counted today: **33** non-test files query `blocks` directly, **30** of them outside `lib/blockGuard.ts`, `lib/blocks.ts` and `lib/exclusionSet.ts`. §24.6 adds a guard to one of the thirty and consolidates none of them. |
+| T295 | W | W | Still open and unchanged in size. `check:telegraph-slos` on this tree reports "6 client bypass site(s) across 3 file/table pair(s)" — the row's claim exactly, shrink-only, and still six. |
+| T319 | W | W | Still open. Neither `services/groupChatSync.ts` nor `lib/chatSync.ts` calls an `rpc(` — the trip-membership write and the thread-membership write are still two statements, not one transaction. Trips-owned routes. |
+| T320 | W | W | Still open. `travel-buddy-standalone/src/components/rentabuddy/BookingMilestoneMessage.tsx` contains **zero** occurrences of `fetch` or `useEffect`; it still renders the sender's snapshot. |
+| T344 | C | C | **Re-derived, not moved.** All twelve §17.8 sites are closed at HEAD (§24.6 reads each one). The new fail-open §24.6 fixes is not one of this row's named reads, is in a different file, and is a PERMISSIVE answer rather than a plausible-empty one, so by §20.6's rule it never counted here. This row does not reopen. |
+| T359 | W | W | Still open, and it is T35's remainder: the four legacy producers. Same evidence as T35. |
+| T363 | C | C | Re-derived with T344, same evidence, same reasoning. Does not reopen. |
+| T379 | W | W | Still open. `TelegraphRelationship` appears in **no** `.ts` or `.tsx` file in the tree. The canonical resolver the row asks for has not been written. |
+| T397 | W | W | Still open. No `causal`, `causeId` or `causalId` identity exists anywhere under `artifacts/api-server/src/services`. The dedupe service is `services/notifications/NotificationDeduplicationService.ts` — another lane's file, which §13.4 did not say. |
+| T409 | W | W | Still open at one sixth, and the sixth is now readable. `domain/telegraph/policies/shareAuthorizationPolicy.ts` entries carry `literal / column / family / sourceDomain / authorizedBy / note`. Of §30A.10's six dimensions that is AUTHORIZATION only; preview, current state, actions, search behaviour and revocation have no field on any entry. |
+| T413 | W | W | Still open, and now precisely bounded — a refinement §13.4 could not make. Of the three object-card surfaces, `travel-buddy-standalone/src/features/telegraph/sharing/PortavaObjectMessage.tsx` DOES render `revocation.resolved.projection`. `PostCardMessage.tsx` and `DiscoveryCardMessage.tsx` branch on `revocation.state === 'unavailable'` and then render `payload.*` throughout — the sender's snapshot. One of three, not zero of three. |
+| T423 | W | W | Still open. `I18nManager` and `isRTL` appear in **no** file in the tree. |
+| T445 | W | W | Still open, same remainder as T35 and T359. |
+| T448 | W | W | Still open, same two legacy cards as T413. |
+
+**Not individually re-derived, and named so the omission is not mistaken for a
+finding:** T4, T6, T12, T39, T104, T106, T108, T124, T201, T218, T262, T264, T265,
+T271, T381, T396, T411. All seventeen are surfaces in the client tree or owner
+decisions; each was read at its §13.4 statement and none has an artifact in this
+tree that would falsify it, but that is a weaker claim than the rows above and is
+labelled as one.
+
+### 24.6 Step 5's premise is false at HEAD — the twelve `not_found` defects are already closed
+
+This lane was asked to fix *"twelve enumerated-but-unfixed unchecked-read defects:
+ten in `routes/messaging.ts`, two in `routes/groupChat.ts`."* **All twelve are fixed
+at HEAD.** §17.8's own table carries a block-quote saying so — *"ALL TWELVE ARE NOW
+CLOSED — see §18"* — and the code was read rather than the prose:
+
+- Each of the twelve citations in §17.8's table was opened. Every one is now
+  `const { data: x, error: xErr } = await …` followed by
+  `if (xErr) { req.log.error(…); sendError(res, 'degraded_unavailable', …); return; }`
+  and the 404 one line below.
+- `routes/groupChat.ts` contains **zero** occurrences of the dropped-error shape
+  `const { data: x } = await`.
+- `routes/messaging.ts` contains **three**, and all three are §19.6's deliberately
+  unchanged "neither" sites (the prior-preference read, the lost-CAS-race status
+  re-read, the preview-message insert), each with a stated reason.
+
+Re-fixing them would have been twelve unproven no-ops. The time went to §24.7
+instead.
+
+### 24.7 The fail-open no row in this census had named, and no guard could see
+
+`routes/telegraph.ts` resolves `@handle` mentions inside AI recommendation text and
+emits a `tagSpans` entry — a user id, a handle and a character range the client
+renders as a live mention. Before emitting, it reads `blocks` in both directions.
+
+That read BOUND its error and LOGGED it, and then carried on with an empty
+`blockedSet`. Its own comment stated the consequence rather than preventing it:
+
+> *"Both leave blockedSet empty and both let blocked users through."*
+
+`blocks` is an EXCLUSION TABLE: a row means DENY, so an empty read means ALLOW and a
+dropped OR INERT error is fail-open by construction. **On an unreadable `blocks`,
+this route emitted a resolved, positioned mention for somebody the caller may have
+blocked, or who may have blocked the caller.**
+
+`check:unchecked-supabase-reads` reports 0 FAIL-OPEN and that number is true of what
+it measures. Its own header names this as the class it cannot see:
+
+> *"A read can bind its error, read it, and still produce the permissive result. …
+> Call this shape ERROR-INERT: the error branch yields the same value the empty read
+> would. SO THE LEDGER'S '0 FAIL-OPEN' DOES NOT COVER IT."*
+
+This is the first instance of that shape found in a Telegraph-owned file, and it
+means the corpus's most productive defect class has a second costume that no section
+of this census had looked for. It is **worse than the twelve §18 closed**: those
+turned an outage into a false absence, which is a lie about data. This turned an
+outage into an ADMISSION, which is a lie about permission.
+
+**Red first.** `artifacts/api-server/src/test/telegraphMentionBlockFailClosed.test.ts:1#/**`,
+4 cases, 1 outage and 3 CONTROL. Against the unfixed route: **3 passed, 1 failed**,
+and the failure is the outage case, verbatim —
+
+> `not ok 1 - OUTAGE: an unreadable blocks table emits NO mention span` … `actual: [ { type: 'user', id: '71000000-…-000000000002', matchToken: 'mallory', startChar: 32, endChar: 40 } ]  expected: undefined`
+
+With the fix: **4 / 4.**
+
+**Three mutations, each killing exactly one case and no other.**
+
+| mutation | failed | what it proves |
+| --- | --- | --- |
+| guard neutralised — `if (false && blockErr) break;` | 1 — the outage case | the guard is what closes it, not something else in the route |
+| guard unconditional — `if (true) break;` | 1 — the healthy-tree control | the control is load-bearing: the route really can emit a span |
+| blanket — hashtag spans suppressed too | 1 — the scoped-refusal control | the refusal is scoped to mentions and is held there |
+
+The fix is `artifacts/api-server/src/routes/telegraph.ts:295#if (blockErr)` — on a
+block-read error, no mention span is emitted at all. Hashtag spans are untouched;
+they do not consult the block set, and dropping them too would be a blanket answer
+rather than a scoped one, which is what the third mutation exists to prevent.
+
+**NO ROW MOVES.** §16.4's rule: a row that is W because a class is unfinished does
+not become C when one member is finished. T344 and T363 are already C and, by
+§20.6's rule that a refusal is not a plausible empty state, this site never counted
+against them in either direction — it is not a plausible empty state, it is a
+permissive one. **T220 does not move either**: this adds a guard to one of the thirty
+files that query `blocks` directly and consolidates none of them.
+
+**A harness limit, stated so no case is trusted for the wrong reason.**
+`telegraphCertificationHarness`'s `.or()` parser understands `eq`, `neq` and `is`,
+not `in`, so a filter built as `blocked_id.in.(…)` matches nothing in the fake even
+when a matching row is seeded. A "healthy tree, genuinely blocked user, no span"
+case would therefore pass whether or not the block guard works — the
+green-for-an-unrelated-reason failure this repository has already paid for once. It
+is deliberately NOT written; the fourth case proves the suppression path with
+`tag_permission: 'nobody'`, which the fake evaluates in full.
+
+**One enabling change, recorded because it is not a fix.** The route imported
+`openai` directly while `lib/openai.ts` exports a `getOpenAI()` / `_setTestOpenAI()`
+seam that two other suites already use. The route now calls `getOpenAI()`. Without
+it the route is not drivable end to end and the red above could not have been taken.
+
+### 24.8 What would turn this red (P24)
+
+- **§24.1's measurement.** A cell among the 33 whose verdict letter is not what this
+  section assumes. Falsifiable in one command: reapply the reshape, dump, and diff
+  against the pre-change dump. Anything other than exactly twelve added `|N` lines
+  falsifies it. It was run; it was twelve.
+- **§24.2's headline.** Any later section restating the buckets in a two-column
+  block, which would supersede this one. And the standing weakness: **this headline
+  is written, not checked**, and stays that way until §24.1's gap is closed.
+- **§24.5's re-derivation.** Any of the twenty-one greps returning a different count
+  on a different tree — T220's 33/30, T123's 12, T295's 6, T157's four files and
+  T409's six-field registry entries are the load-bearing ones. Three of the five have
+  already grown once under measurement, which is the direction to expect.
+- **§24.7's fix.** Three things. (1) If `blockErr` can be truthy while `blockRows`
+  is nonetheless complete — it cannot with supabase-js, but a client swap would break
+  that. (2) If suppressing mentions is judged the wrong direction: it is a DEGRADED
+  answer, not a refusal, and a reader who thinks an unreadable block list should
+  return `degraded_unavailable` for the whole request rather than an undecorated one
+  should say so — §20.7 is the row where that argument belongs. (3) The route is
+  reached only when `AI_INTEGRATIONS_OPENAI_API_KEY` is configured and the model
+  returns an `@handle`; **a C over a path nothing reaches is vacuous**, and this is a
+  fix on a live route whose frequency nobody here measured.
+- **The standing one.** This is a BRANCH census. Migrations 2810–2813 are on no
+  database, every flag they add is seeded FALSE, and nothing in this section is
+  merged, deployed or flag-enabled.
