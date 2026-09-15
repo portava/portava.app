@@ -85,6 +85,48 @@ describe("CENSUS_INTEGRITY_DUMP — the transcript must agree with its own count
     }
   });
 
+  /**
+   * THE CASE THE SUITE ABOVE CANNOT SEE.
+   *
+   * `dump()` uses spawnSync, and spawnSync's stdout pipe is drained by libuv in
+   * the parent. That is NOT how a person reads this tool. A person writes
+   *
+   *     CENSUS_INTEGRITY_DUMP=ALL npm run -s check:census-integrity | grep ...
+   *
+   * which is a SHELL pipeline: the shell creates the pipe, and node's fd 1 is a
+   * plain pipe end. Under `--import tsx` that fd delivers exactly one 64 KiB
+   * pipe buffer and silently discards the rest, while `fs.writeSync` RETURNS THE
+   * FULL BYTE COUNT — it reports a write it did not perform. The dump crossed
+   * 64 KiB long ago, so every such reading has been truncated mid-line.
+   *
+   * This case builds the pipeline with `sh -c` so the shape under test is the
+   * shape people actually run.
+   */
+  it("delivers every row through a REAL SHELL PIPELINE, not just a drained spawnSync pipe", () => {
+    const r = spawnSync("sh", ["-c", `node --import tsx/esm '${SCRIPT}' | cat`], {
+      cwd: API_ROOT,
+      encoding: "utf8",
+      env: { ...process.env, CENSUS_INTEGRITY_DUMP: "ALL" },
+      maxBuffer: 1 << 28,
+      timeout: 300_000,
+    });
+    const m = /CENSUS_INTEGRITY_DUMP=[A-Z,\s]+: (\d+) row\(s\)/.exec(r.stderr ?? "");
+    assert.ok(m, `stderr did not declare a row count:\n${(r.stderr ?? "").slice(-2000)}`);
+    const declared = Number(m[1]);
+    const text = r.stdout ?? "";
+    const rows = text.split("\n").filter((l) => /^[a-z0-9-]+\|/.test(l));
+    assert.equal(
+      rows.length, declared,
+      `through a shell pipeline stderr declared ${declared} row(s) and stdout carried ${rows.length} ` +
+        `(${text.length} bytes). A dump that stops at a pipe-buffer boundary is INDISTINGUISHABLE from ` +
+        `a corpus that shrank, and it is how every human reads this tool.`,
+    );
+    // A truncation lands mid-line, so the last line is a fragment. Assert the
+    // transcript ENDS cleanly as well as counting right: a cut that happened to
+    // fall on a newline would pass the count check on a filtered dump.
+    assert.ok(text.endsWith("\n"), "the transcript does not end with a newline — it was cut mid-line");
+  });
+
   it("a filter that matches nothing REFUSES rather than reporting an empty corpus", () => {
     const r = spawnSync("node", ["--import", "tsx/esm", SCRIPT], {
       cwd: API_ROOT, encoding: "utf8",

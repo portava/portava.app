@@ -89,7 +89,7 @@
  *
  * Run: node --import tsx/esm src/scripts/checkCensusIntegrity.ts
  */
-import { readdirSync, readFileSync, writeSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 /**
@@ -614,77 +614,94 @@ if (DUMP) {
   const dumped = lines.length;
 
   /**
-   * writeSync, NOT console.log, and the reason is a defect this file caused.
+   * process.stdout.write, NOT fs.writeSync, and NOT followed by process.exit().
+   * This line has now been wrong twice, in opposite directions, and both
+   * versions lost rows silently.
    *
-   * When stdout is a PIPE — which is how EVERY consumer runs this: `| grep`,
-   * and `execFileSync` in buildDiscoveryLedger.ts — Node's console.log is
-   * ASYNCHRONOUS. `process.exit()` below then discards whatever is still
-   * buffered. The stderr count is computed before the write and stayed
-   * truthful, so the transcript read
+   * ROUND 1 — console.log + process.exit(0). When stdout is a pipe Node's
+   * console.log is ASYNCHRONOUS, and the exit discarded whatever was still
+   * buffered. The Discovery ledger rebuilt to 177, 36 and 36 requirements on an
+   * unchanged tree and nothing failed.
    *
-   *     CENSUS_INTEGRITY_DUMP=ALL: 3499 row(s) from 13 census file(s).
+   * ROUND 2 — fs.writeSync(1, …) + process.exit(0). The comment that replaced
+   * round 1 claimed: "fs.writeSync(1, …) blocks until the bytes are handed to
+   * the OS whatever stdout is" and "one write, not 3499, so there is also no
+   * partial-line boundary to land on." BOTH HALVES ARE FALSE, and the second is
+   * exactly backwards — one oversized write is precisely where a pipe cuts.
+   * Measured under `--import tsx` with stdout a shell-pipeline pipe:
    *
-   * while the consumer received 36 of Discovery's 187 rows. THE ONE
-   * AUTHORITATIVE RECORD for Discovery compliance was rebuilt from that: three
-   * consecutive runs on an unchanged tree produced 177, 36 and 36 requirements.
-   * Nothing failed. The ledger simply lost 80 % of its rows and said so in a
-   * field nobody compares.
+   *     requested=200001  writeSync_returned=200001  ->  reader received 65536
    *
-   * fs.writeSync(1, …) blocks until the bytes are handed to the OS whatever
-   * stdout is, so the exit below cannot truncate it. One write, not 3499, so
-   * there is also no partial-line boundary to land on.
+   * writeSync REPORTED A WRITE IT DID NOT PERFORM, so looping on its return
+   * value cannot fix it either. Chunking was measured too and is NOT a fix, it
+   * only moves the cliff: 32 KiB chunks of a 2 MB payload delivered 196,608
+   * bytes to a fast reader and 65,536 to a reader that slept 0.5 s first.
+   *
+   * Removing process.exit() alone does NOT fix it either — writeSync bypasses
+   * the stream, so the bytes are already gone. Measured: still 65,536.
+   *
+   * WHAT WORKS, measured at 200 KB and at 2 MB, against a fast reader and a
+   * slow one: the STREAM plus a natural exit. process.stdout.write applies
+   * backpressure and re-drives partial writes, and process.exitCode lets Node
+   * flush before the process ends, where process.exit() would cut it off again.
+   * The tail of this file is guarded by `if (!DUMP)` for that reason — the dump
+   * must fall out of the bottom rather than exit from the middle.
    */
-  if (dumped > 0) writeSync(1, `${lines.join("\n")}\n`);
+  if (dumped > 0) process.stdout.write(`${lines.join("\n")}\n`);
   console.error(`CENSUS_INTEGRITY_DUMP=${DUMP}: ${dumped} row(s) from ${results.length} census file(s).`);
   // A filter that matches nothing looks exactly like a clean corpus. Say so.
   if (dumped === 0) {
     console.error(`::error::CENSUS_INTEGRITY_DUMP=${DUMP} matched no rows — the filter is wrong, the corpus is not empty.`);
-    process.exit(1);
+    process.exitCode = 1;
   }
-  process.exit(0);
 }
 
-console.log("\nPer-census verdict counts, recomputed from the tables:\n");
-console.log(`  ${"census".padEnd(28)} ${"rows".padStart(5)} ${"C".padStart(5)} ${"W".padStart(5)} ${"N".padStart(5)} ${"X".padStart(4)}  ${"denom".padStart(6)}  unreconciled`);
-let totalRows = 0;
-let totalGap = 0;
-for (const r of results) {
-  totalRows += r.rows.length;
-  const gap = r.statedDenominator === null ? null : r.statedDenominator - r.rows.length;
-  if (gap !== null) totalGap += gap;
-  const name = r.file.replace(/^census-|\.md$/g, "");
+// The DUMP block above falls out of the bottom instead of calling process.exit(),
+// so the report below must be skipped explicitly. An exit from the middle is what
+// truncated the dump twice; this guard is what makes not exiting possible.
+if (!DUMP) {
+  console.log("\nPer-census verdict counts, recomputed from the tables:\n");
+  console.log(`  ${"census".padEnd(28)} ${"rows".padStart(5)} ${"C".padStart(5)} ${"W".padStart(5)} ${"N".padStart(5)} ${"X".padStart(4)}  ${"denom".padStart(6)}  unreconciled`);
+  let totalRows = 0;
+  let totalGap = 0;
+  for (const r of results) {
+    totalRows += r.rows.length;
+    const gap = r.statedDenominator === null ? null : r.statedDenominator - r.rows.length;
+    if (gap !== null) totalGap += gap;
+    const name = r.file.replace(/^census-|\.md$/g, "");
+    console.log(
+      `  ${name.padEnd(28)} ${String(r.rows.length).padStart(5)} ${String(r.counts.C).padStart(5)} ${String(r.counts.W).padStart(5)} ${String(r.counts.N).padStart(5)} ${String(r.counts.X).padStart(4)}  ` +
+        `${(r.statedDenominator ?? "—").toString().padStart(6)}  ${gap === null ? "denominator not stated in a parseable form" : `${gap} counted where this tool cannot read`}` +
+        `${r.allDenominators.length > 1 ? ` [states ${r.allDenominators.length} denominators: ${r.allDenominators.join(", ")} — scored against more than one population on purpose]` : ""}` +
+        `${r.revised.length > 0 ? ` [${r.revised.length} row(s) revised by a later recount; last statement taken]` : ""}` +
+        `${r.nonVerdictRows > 0 ? ` [${r.nonVerdictRows} id-keyed row(s) carry no verdict — not verdict tables, not counted]` : ""}` +
+        `${r.hypotheticalRows > 0 ? ` [${r.hypotheticalRows} row(s) in a PR-comparison table — skipped, they describe UNMERGED work]` : ""}` +
+        `${r.hasCorrectionHeader ? "  [carries a CORRECTION HEADER]" : ""}`,
+    );
+  }
+
   console.log(
-    `  ${name.padEnd(28)} ${String(r.rows.length).padStart(5)} ${String(r.counts.C).padStart(5)} ${String(r.counts.W).padStart(5)} ${String(r.counts.N).padStart(5)} ${String(r.counts.X).padStart(4)}  ` +
-      `${(r.statedDenominator ?? "—").toString().padStart(6)}  ${gap === null ? "denominator not stated in a parseable form" : `${gap} counted where this tool cannot read`}` +
-      `${r.allDenominators.length > 1 ? ` [states ${r.allDenominators.length} denominators: ${r.allDenominators.join(", ")} — scored against more than one population on purpose]` : ""}` +
-      `${r.revised.length > 0 ? ` [${r.revised.length} row(s) revised by a later recount; last statement taken]` : ""}` +
-      `${r.nonVerdictRows > 0 ? ` [${r.nonVerdictRows} id-keyed row(s) carry no verdict — not verdict tables, not counted]` : ""}` +
-      `${r.hypotheticalRows > 0 ? ` [${r.hypotheticalRows} row(s) in a PR-comparison table — skipped, they describe UNMERGED work]` : ""}` +
-      `${r.hasCorrectionHeader ? "  [carries a CORRECTION HEADER]" : ""}`,
+    `\nNOTE: ${files.length} census file(s) read; ${totalRows} verdict row(s) parsed; ${totalGap} requirement(s) across all ` +
+      `censuses are counted somewhere this tool cannot read (prose blocks that enumerate several requirements in one ` +
+      `paragraph — a legitimate way to count them and an impossible one to parse).`,
   );
-}
+  console.log(
+    `NOTE: DOES NOT COVER, stated rather than implied: (1) whether a verdict is CORRECT — this checks that the document ` +
+      `agrees with itself, not that it agrees with the code; (2) the prose-counted requirements above; (3) whether the ` +
+      `stated headline percentages match the parsed counts EXCEPT where a census has no prose gap at all (parsed rows = ` +
+      `stated denominator), where the headline must sum to the denominator and is checked; elsewhere the prose gap makes a ` +
+      `mismatch expected rather than wrong. ${results.filter((r) => r.hasCorrectionHeader).length} of ${files.length} ` +
+      `censuses already carry a correction header saying their own headline had drifted from their own body — that is ` +
+      `the failure mode this file exists to make harder, not one it can claim to have closed.`,
+  );
 
-console.log(
-  `\nNOTE: ${files.length} census file(s) read; ${totalRows} verdict row(s) parsed; ${totalGap} requirement(s) across all ` +
-    `censuses are counted somewhere this tool cannot read (prose blocks that enumerate several requirements in one ` +
-    `paragraph — a legitimate way to count them and an impossible one to parse).`,
-);
-console.log(
-  `NOTE: DOES NOT COVER, stated rather than implied: (1) whether a verdict is CORRECT — this checks that the document ` +
-    `agrees with itself, not that it agrees with the code; (2) the prose-counted requirements above; (3) whether the ` +
-    `stated headline percentages match the parsed counts EXCEPT where a census has no prose gap at all (parsed rows = ` +
-    `stated denominator), where the headline must sum to the denominator and is checked; elsewhere the prose gap makes a ` +
-    `mismatch expected rather than wrong. ${results.filter((r) => r.hasCorrectionHeader).length} of ${files.length} ` +
-    `censuses already carry a correction header saying their own headline had drifted from their own body — that is ` +
-    `the failure mode this file exists to make harder, not one it can claim to have closed.`,
-);
-
-// process.exitCode rather than process.exit(), for the same reason the dump
-// block uses writeSync: exiting here would discard the NOTE lines above when
-// stdout is a pipe.
-if (problems.length > 0) {
-  console.error(`\n${problems.length} problem(s) found.`);
-  process.exitCode = 1;
-} else {
-  console.log("\ncheck:census-integrity PASSED");
+  // process.exitCode rather than process.exit(), for the same reason the dump
+  // block uses writeSync: exiting here would discard the NOTE lines above when
+  // stdout is a pipe.
+  if (problems.length > 0) {
+    console.error(`\n${problems.length} problem(s) found.`);
+    process.exitCode = 1;
+  } else {
+    console.log("\ncheck:census-integrity PASSED");
+  }
 }
