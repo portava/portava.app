@@ -1117,7 +1117,24 @@ function FullScreenMapScreenInner() {
       if (cancelled) return;
       placesFetchedRef.current = true;
       setPlacesLoading(false);
-      if (res.ok && Array.isArray(res.data?.places)) {
+      // A REFUSAL SATISFIES BOTH HALVES OF THE TEST BELOW and is not a result.
+      // `coverage: "nothing"` arrives as `ok: true` with a `places` that really
+      // is an array — an EMPTY one, because the server never read the table — so
+      // it took the success path, emptied the pins and CLEARED `placesError`.
+      //
+      // Clearing the error is what did the damage: `placesEmpty` is
+      // `… && !placesError && legacyPlaces.length === 0`, so wiping the error is
+      // exactly what switches the zero-results state ON. The outage rendered as a
+      // confident claim that this area has nothing in it.
+      //
+      // `placesError` is the honest destination and it already exists — it draws
+      // the error card with a retry, which is the right offer for a transient
+      // read failure. `partial` is NOT routed here: the places it carries are
+      // real, and drawing them beats refusing them.
+      if (res.ok && res.data?.refusal?.coverage === 'nothing') {
+        setPlaces([]);
+        setPlacesError('Could not read nearby places — this is not a statement about what is here.');
+      } else if (res.ok && Array.isArray(res.data?.places)) {
         setPlaces(res.data.places);
         setPlacesError(null);
       } else {
