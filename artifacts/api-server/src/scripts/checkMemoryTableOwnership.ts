@@ -62,6 +62,14 @@ const LEGACY_SIDE = new Set([
   "migrations/2194_memory_reset_export.sql",
   "migrations/2197_memory_reset_category_scope.sql",
   "migrations/2200_memory_projection_exclude_deleted_profiles.sql",
+  // 2320 restores the Highlights/Memories provenance spine (memory_episodes,
+  // memory_evidence). It is PROJECTION-side and not a borderline call: its
+  // erase_memory_for_user body really DELETEs FROM public.memory_events
+  // (:361) as part of the account-deletion cascade, and its column comments
+  // deliberately reuse memory_events.source's vocabulary verbatim (:240,
+  // :421) rather than open a competing one. It names memory_domain_events
+  // nowhere.
+  "migrations/2320_memory_episode_provenance_spine.sql",
   "migrations/2333_derived_memory_and_consent_grant_boundary.sql",
   "lib/deletionDispositions.ts",
   "lib/memoryProjectionScheduler.ts",

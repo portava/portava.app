@@ -77,6 +77,39 @@ const BASELINE_DIR = join(API_SERVER_ROOT, "baseline");
  */
 export const PRODUCTION_SNAPSHOT = "20260915b_production_tables.txt";
 
+/**
+ * `unmerged-pr` HAS NO MEMBERS AS OF 2026-09-15, AND IS KEPT — ruling, with the
+ * reason, because the guard's own error message asked for the opposite.
+ *
+ * Restoring 2311/2320 — to close three `schema_migration_ledger` rows that named
+ * no file on disk — made intel_claim_reviews, memory_episodes and memory_evidence
+ * declared in this tree, so the STALE UNMERGED-PR assertion below correctly
+ * refused their `unmerged-pr` notes and all three became `unapplied`. They were
+ * the last three members, and productionDriftExtraction.test.ts's positive
+ * control then failed with: "no unmerged-pr entry remains — if that is genuinely
+ * true, delete the classification rather than leaving a rule that exempts
+ * nothing."
+ *
+ * THE CLASSIFICATION IS NOT DELETED. Two reasons, in order of weight:
+ *
+ *   1. It describes a situation this repository keeps producing. 2311, 2315,
+ *      2320 and the whole 289x-295x block each arrived as "a table an unmerged
+ *      PR's migration declares, applied to portava-ci to unblock someone". The
+ *      next one is a question of when. Deleting the type does not prevent that
+ *      case; it only removes the name for it, the exemption that keeps it out of
+ *      the must-reach-zero total, and — the part that actually matters — the
+ *      STALE assertion that notices the day the PR lands. That is strictly less
+ *      coverage than an idle rule that works.
+ *
+ *   2. The vacuity the control complains about was never really about the
+ *      population. The control asserted over a COPY of the rule kept in the test
+ *      file, so an empty population left the copy unexercised — and the copy
+ *      could have drifted from this file without anything noticing either way.
+ *      Both predicates are therefore exported below and the test calls THESE,
+ *      against a constructed fixture as well as the real ratchet. The
+ *      discrimination is now proven directly, on the real implementation,
+ *      whether or not any live entry happens to carry the classification.
+ */
 type Classification =
   /** Declared in the tree, never applied to production. MUST reach zero. */
   | "unapplied"
@@ -252,17 +285,43 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
       "decision — the store is inert by construction — but that is a reason to leave it " +
       "unapplied, not a reason to leave it unaccounted.",
   },
+  // ── RECLASSIFIED 2026-09-15, unmerged-pr -> unapplied. The migration files
+  //    are now IN THIS TREE, so the exemption is false by construction.
+  //
+  //    WHY THEY ARE HERE. public.schema_migration_ledger carried three rows with
+  //    applied_by='manual' — 2311, 2320 and 2325 — whose FILES were on no merged
+  //    branch, which is check:migration-ledger finding #2, "ledger rows with no
+  //    file on disk". Each row records a REAL apply to portava-ci on 2026-09-07.
+  //    Deleting such a row would make the ledger assert that a migration which
+  //    DID run never ran, so the remedy was to restore the files, each verified
+  //    by sha256 against the checksum its ledger row recorded. The entries below
+  //    are what those files being present costs this ratchet, paid rather than
+  //    dodged. (2325 adds a column and a function, no table, so it has no entry.)
+  //
+  //    The rule applied is the one the 289x-295x block below records in full:
+  //    `unmerged-pr` is for a table whose migration you CANNOT SEE. The moment
+  //    the file is here the table is declared here, whatever the source branch's
+  //    merge status, and `unapplied` — "declared in the tree, never applied to
+  //    production, MUST reach zero" — is exactly what these are. All three were
+  //    confirmed absent from the production snapshot; portava-ci is not
+  //    production, and an apply there has never been evidence about this one.
+  //
+  //    NO WRITER EXISTS FOR ANY OF THE THREE in this tree, and that is stated
+  //    rather than left to be discovered: by the Trips §5.1 rule above, a table
+  //    nothing writes satisfies nothing. Each migration's writer lives in the
+  //    application code of its source branch, which was deliberately NOT brought
+  //    across — the ledger row names a FILE, and only the file was owed.
   intel_claim_reviews: {
-    classification: "unmerged-pr",
-    note: "Migration 2311, PRs #456/#457 (UNMERGED). Applied to portava-ci 2026-09-07.",
+    classification: "unapplied",
+    note: "Migration 2311 (restored from claude/safety-review-s1b-20260906, sha256 18e8899bf13a…, the checksum its ledger row records). Creates one table; additive and idempotent, alters nothing, seeds no flag, writes no row. NO WRITER in this tree: the writer is services/intel/SafetyReviewService.ts on the source branch and did not come with the file. Applied to portava-ci 2026-09-07, absent from production.",
   },
   memory_episodes: {
-    classification: "unmerged-pr",
-    note: "Migration 2320, PR #470 (UNMERGED). Applied to portava-ci 2026-09-07.",
+    classification: "unapplied",
+    note: "Migration 2320 (restored from claude/memory-canonical-object-20260906, sha256 1d13adeec896…, the checksum its ledger row records). Inert by construction: RLS on with no policy, service_role-only grants, and its own postcondition asserts memory_projection stays FALSE. NO WRITER in this tree: memory/memoryEpisodeContract.ts stayed on the source branch. Applied to portava-ci 2026-09-07, absent from production.",
   },
   memory_evidence: {
-    classification: "unmerged-pr",
-    note: "Migration 2320, PR #470 (UNMERGED). Applied to portava-ci 2026-09-07.",
+    classification: "unapplied",
+    note: "Migration 2320. Same block as memory_episodes; append-only at BOTH the grant and the trigger. NO WRITER in this tree. Note the one non-additive act in 2320: it DROP/CREATEs erase_memory_for_user(uuid) to widen its return from three counts to five so account deletion reaches the spine — 2190's body is reproduced verbatim inside it, and 2320 is the LAST definer of that function in this tree, so the widening is not undone by a later file.",
   },
   // Trip Kernel foundation (Trips spec §4/§5.1), migration 2420. Applied to
   // portava-ci 2026-09-07. Inert in production until an owner applies 2420 AND
@@ -770,6 +829,62 @@ export function appliedAfterSnapshot(): Map<string, string> {
   return out;
 }
 
+/**
+ * THE TWO RATCHET-ROT PREDICATES, exported so that exactly ONE implementation of
+ * each exists and the test exercises the same code main() does.
+ *
+ * They used to live inline in main() and be RE-STATED in
+ * productionDriftExtraction.test.ts. That was a copy, and a copy has two
+ * failure modes the originals do not: it can drift from this file silently, and
+ * — the one that actually bit — when the real ratchet has no `unmerged-pr`
+ * member, asserting over the copy proves nothing about the rule at all. Taking
+ * `gaps` and `declared` as parameters instead of reading the module constants
+ * lets the test hand them a CONSTRUCTED ratchet and check that each predicate
+ * discriminates, independently of what the live ratchet happens to contain.
+ *
+ * Both ask the TREE, never the note.
+ */
+
+/**
+ * Entries classified `unmerged-pr` whose table IS declared by a migration here.
+ *
+ * `unmerged-pr` means "a PR declares this table; it is not drift until that PR
+ * lands" — correct the day the entry is written, false the day the PR lands. If
+ * a migration file in this tree declares the table, the PR has landed by
+ * definition and the entry is excusing the table from the must-reach-zero total
+ * with a sentence that stopped being true.
+ */
+export function staleUnmergedEntries(
+  gaps: Record<string, Gap>,
+  declared: Set<string>,
+): string[] {
+  return Object.entries(gaps)
+    .filter(([t, g]) => g.classification === "unmerged-pr" && declared.has(t))
+    .map(([t]) => t)
+    .sort();
+}
+
+/**
+ * Entries for a table NOTHING IN THE TREE DECLARES and production does not have.
+ *
+ * Not drift, not a gap: a sentence about storage no migration asks for, which
+ * inflates the must-reach-zero count with work that does not exist.
+ * `unmerged-pr` is exempt by definition — those tables are declared in a PR's
+ * migration, which is precisely why they are not declared here. That exemption
+ * is the one `staleUnmergedEntries` asks in the other direction, and neither is
+ * sound without the other.
+ */
+export function undeclaredEntries(
+  gaps: Record<string, Gap>,
+  declared: Set<string>,
+  production: Set<string>,
+): string[] {
+  return Object.entries(gaps)
+    .filter(([t, g]) => g.classification !== "unmerged-pr" && !declared.has(t) && !production.has(t))
+    .map(([t]) => t)
+    .sort();
+}
+
 function main(): void {
   const production = readProductionSnapshot();
   const declared = declaredTables();
@@ -831,10 +946,7 @@ function main(): void {
   // the "must reach zero" count with work that does not exist. `unmerged-pr` is
   // exempt by definition: those tables are declared in a PR's migration, which
   // is precisely why they are not declared here.
-  const undeclared = Object.entries(KNOWN_PRODUCTION_GAPS)
-    .filter(([t, g]) => g.classification !== "unmerged-pr" && !declared.has(t) && !production.has(t))
-    .map(([t]) => t)
-    .sort();
+  const undeclared = undeclaredEntries(KNOWN_PRODUCTION_GAPS, declared, production);
 
   if (undeclared.length > 0) {
     failed = true;
@@ -864,10 +976,7 @@ function main(): void {
   //
   // The question is mechanical and asks the TREE, never the note: if a migration
   // file in this tree declares the table, the PR has landed by definition.
-  const staleUnmerged = Object.entries(KNOWN_PRODUCTION_GAPS)
-    .filter(([t, g]) => g.classification === "unmerged-pr" && declared.has(t))
-    .map(([t]) => t)
-    .sort();
+  const staleUnmerged = staleUnmergedEntries(KNOWN_PRODUCTION_GAPS, declared);
 
   if (staleUnmerged.length > 0) {
     failed = true;

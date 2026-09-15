@@ -1175,6 +1175,14 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   // back. A census is a measurement of a SURFACE, not of the tools used to read
   // it, so only the surface is scoped.
   "census-telegraph.md": [
+    // ADDED 2026-09-15 with the file itself. 2325 was restored to this tree to
+    // close a schema_migration_ledger row that named no file on disk; the census
+    // cites it three times as "in open PR #472 — not on this branch", which the
+    // restore made false about the FILE (see §26). The path is counted here so
+    // any further change to it ages this census, and it is listed in the
+    // telegraph acknowledgement for the restore itself, which moved no verdict
+    // because no reader came with the file.
+    "artifacts/api-server/src/migrations/2325_telegraph_unsend_before_seen.sql",
     "artifacts/api-server/src/lib/calls/",
     "artifacts/api-server/src/lib/telegraphBroadcast.ts",
     "artifacts/api-server/src/lib/telegraphEvents.ts",

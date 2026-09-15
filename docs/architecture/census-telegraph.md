@@ -7365,3 +7365,76 @@ is switched off by an unrelated parsing accident.
 - **The standing one.** This is a BRANCH census. Migrations 2810–2813 are on no
   database, every flag they add is seeded FALSE, and nothing here is merged, deployed
   or flag-enabled. A corrected headline is a corrected description of a branch.
+
+---
+
+## §26 — 2325 is now in this tree, and three passages that say otherwise are superseded
+
+Written by the integrating lane, 2026-09-15. **No verdict moves and no figure in
+§1 changes.** This section exists because three passages of this census are now
+false in their literal wording, and last-statement-wins is the only mechanism
+this corpus has for saying so.
+
+### 26.1 What happened
+
+`public.schema_migration_ledger` in the shared CI project carried a row with
+`applied_by='manual'` for `2325_telegraph_unsend_before_seen.sql` whose migration
+FILE was on no merged branch — `check:migration-ledger` finding #2, *"ledger rows
+with no file on disk"*. The row records a real apply to `portava-ci` on
+2026-09-07. Deleting it would have made the ledger assert that a migration which
+DID run never ran, so the file was restored instead, taken from
+`claude/telegraph-agreed-subset-20260906` (commit `4cf1d9c76`) and verified:
+sha256 `cdb839929c2b877d91740470cb6f677701632611142bc7b643756724c0493490`, which
+is the checksum the ledger row itself records.
+
+### 26.2 The three passages, and exactly how far they are wrong
+
+| Where | What it says | Status |
+| --- | --- | --- |
+| `docs/architecture/census-telegraph.md:138#not on this branch` | *"in open PR #472 — **not on this branch**"* | The FILE is on this branch as of 2026-09-15. The PR is still open and still unmerged. |
+| `docs/architecture/census-telegraph.md:403#The exception that is not in HEAD` | *"`migrations/2325_…`, the route that calls it, and `test/telegraphUnsendBeforeSeen.test.ts`"* | The migration is here; **the route and the test are not**. The heading remains true of what it grades. |
+| `docs/architecture/census-telegraph.md:1130#Five files:` | lists 2325 among five | Accurate as a description of PR #472, which still carries all five. One of the five is now also in this tree. |
+
+Only the migration file came across, and that is not an accident of effort: a
+ledger row names a FILE, and the file is the whole of what was owed. Bringing the
+route and the test would have been importing an unmerged PR's application code
+under cover of a ledger repair.
+
+### 26.3 Why the eleven rows do not move
+
+§9 scores PR #472 in no bucket, and the eleven rows it would move — T75, T76,
+T77, T161, T326, T327, T338, T387 from NOT-BUILT, and T79, T220, T314 from
+BUILT-BUT-WRONG — are gated on the route and the test, neither of which is here.
+Nothing in this tree calls `telegraph_unsend_message_before_seen`, so none of the
+behaviour those rows grade is reachable.
+
+And the fact those rows actually turn on is untouched: **`messages.unsent_at`
+does not exist in production.** §0's Database row corroborates that from
+`artifacts/api-server/baseline/20260907_production_tables.txt`, the current
+capability snapshot agrees, and an apply to `portava-ci` has never been evidence
+about production. A migration file sitting in a tree applies itself to nothing.
+
+### 26.4 What the restore did change, mechanically
+
+- `artifacts/api-server/src/migrations/2325_telegraph_unsend_before_seen.sql` is
+  now counted in `CENSUS_SCOPE["census-telegraph.md"]`, so any FURTHER change to
+  it ages this census. The restore itself is named in the telegraph entry of
+  `CENSUS_STALENESS_ACKNOWLEDGED.json`, with this reasoning.
+- The file ALTERs `public.messages` (`ADD COLUMN IF NOT EXISTS unsent_at
+  timestamptz`), which its own header's blanket "additive" gloss does not admit.
+  It is additive and idempotent, and it does not collide with 2810, which adds
+  the same column with the same type under the same guard and applies after it.
+- It creates no table, so `check:production-drift` gains no entry from it — the
+  three entries that check DID gain came from 2311 and 2320, which are Intel and
+  Highlights/Memories work and are recorded in those lanes.
+
+### 26.5 WHAT WOULD TURN THIS RED
+
+- **PR #472 merging.** Then the route and the test arrive, the eleven rows become
+  live questions, and §9's *"neither PR below is scored in any bucket"* needs
+  re-deriving rather than re-reading.
+- **Anything calling `telegraph_unsend_message_before_seen` in this tree.** The
+  claim in 26.3 is a grep, and a grep expires. `check:writerless-reads` does not
+  cover it: that check reports tables read with no writer, and this is a function.
+- **`messages.unsent_at` appearing in production.** That is the fact 26.3 rests
+  on, and the snapshot it is read from is refreshed, not continuous.

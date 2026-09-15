@@ -38,6 +38,8 @@ import {
   stripSqlNoise,
   appliedAfterSnapshot,
   declaredTables,
+  staleUnmergedEntries,
+  undeclaredEntries,
   KNOWN_PRODUCTION_GAPS,
   PRODUCTION_SNAPSHOT,
 } from "../scripts/checkProductionDrift.js";
@@ -205,15 +207,60 @@ describe("appliedAfterSnapshot excuses a recorded apply and nothing else", () =>
  * WHAT WOULD TURN THIS RED: reclassify any table declared by a migration in this
  * tree as `unmerged-pr`. The assertion is mechanical — it asks the tree, not the
  * note — so a stale note cannot satisfy it and a correct one cannot fail it.
+ *
+ * ── WHY THIS SUITE CALLS THE GUARD INSTEAD OF RESTATING IT, 2026-09-15 ──────
+ * Restoring 2311/2320 — to close three `schema_migration_ledger` rows that named
+ * no file on disk — made intel_claim_reviews, memory_episodes and memory_evidence
+ * declared in this tree, so all three were reclassified `unmerged-pr` ->
+ * `unapplied`, which checkProductionDrift's own error message demands. They were
+ * the last three members, and the positive control below then failed asking for
+ * the classification to be DELETED "rather than leaving a rule that exempts
+ * nothing".
+ *
+ * The classification is kept — checkProductionDrift.ts states that ruling and its
+ * reasons at the `Classification` type. What is fixed here is the thing that made
+ * an empty population fatal in the first place: this file used to RE-STATE both
+ * predicates rather than call them, so with no live member the copy went
+ * unexercised and could drift from the guard in either direction unnoticed. Both
+ * are now exported and called directly, against the real ratchet AND against a
+ * constructed one, so each is proven to discriminate however the live ratchet is
+ * populated. That is more coverage than the population check it replaces, not
+ * less — and it is why deleting the classification was not the remedy.
  */
 describe("an unmerged-pr classification expires when the PR lands", () => {
   const declared = declaredTables();
+  const production = new Set<string>(); // the fixture ratchet is not in production
 
-  it("no unmerged-pr entry is declared by a migration in this tree", () => {
-    const landed = Object.entries(KNOWN_PRODUCTION_GAPS)
-      .filter(([t, g]) => g.classification === "unmerged-pr" && declared.has(t))
-      .map(([t]) => t)
-      .sort();
+  /** A ratchet built to order, so the assertions do not depend on the live one. */
+  const fixture = {
+    landed_but_still_excused: {
+      classification: "unmerged-pr" as const,
+      note: "the PR landed; a migration in this tree declares this table",
+    },
+    genuinely_unmerged: {
+      classification: "unmerged-pr" as const,
+      note: "no migration in this tree declares this table",
+    },
+    plain_unapplied: {
+      classification: "unapplied" as const,
+      note: "declared by nothing, and not exempt",
+    },
+  };
+  // Borrow two real table names so `declared` answers honestly for them: one the
+  // tree DOES declare, one it does not. Hard-coding a name that later stops being
+  // declared would make this fixture lie in the same way the old control did.
+  const aDeclaredTable = [...declared].sort()[0];
+  const anUndeclaredTable = "a_table_no_migration_anywhere_declares";
+  assert.ok(aDeclaredTable, "the tree must declare at least one table");
+  assert.ok(!declared.has(anUndeclaredTable), "the undeclared fixture name must really be undeclared");
+
+  const builtRatchet = {
+    [aDeclaredTable]: fixture.landed_but_still_excused,
+    [anUndeclaredTable]: fixture.genuinely_unmerged,
+  };
+
+  it("no unmerged-pr entry in the REAL ratchet is declared by a migration in this tree", () => {
+    const landed = staleUnmergedEntries(KNOWN_PRODUCTION_GAPS, declared);
     assert.deepEqual(
       landed,
       [],
@@ -222,16 +269,47 @@ describe("an unmerged-pr classification expires when the PR lands", () => {
     );
   });
 
-  it("the entries that ARE still unmerged are still unmerged — the positive control", () => {
-    // If this list ever empties, the assertion above becomes vacuous: a rule
-    // with nothing to exempt passes whether or not it works.
-    const stillUnmerged = Object.entries(KNOWN_PRODUCTION_GAPS)
-      .filter(([t, g]) => g.classification === "unmerged-pr" && !declared.has(t))
-      .map(([t]) => t);
-    assert.ok(
-      stillUnmerged.length > 0,
-      "no unmerged-pr entry remains — if that is genuinely true, delete the classification " +
-        "rather than leaving a rule that exempts nothing",
+  it("STALE detection fires on a landed entry and spares a genuinely unmerged one", () => {
+    // This is the positive control, and it no longer asks how many members the
+    // live ratchet has. It asks the guard's own predicate to tell the two apart.
+    const stale = staleUnmergedEntries(builtRatchet, declared);
+    assert.deepEqual(
+      stale,
+      [aDeclaredTable],
+      "the predicate must flag the unmerged-pr entry the tree declares, and only that one",
     );
+  });
+
+  it("the undeclared check exempts unmerged-pr and catches everything else", () => {
+    // The other direction of the same exemption. If this stopped holding,
+    // `unmerged-pr` would be reported as a phantom entry the day it was written,
+    // and the pressure would be to delete the classification for the wrong reason.
+    const exempted = undeclaredEntries(builtRatchet, declared, production);
+    assert.deepEqual(
+      exempted,
+      [],
+      "an unmerged-pr entry the tree does not declare is exempt — that is the classification's whole job",
+    );
+
+    const withPlain = { ...builtRatchet, [`${anUndeclaredTable}_2`]: fixture.plain_unapplied };
+    assert.deepEqual(
+      undeclaredEntries(withPlain, declared, production),
+      [`${anUndeclaredTable}_2`],
+      "a non-unmerged-pr entry that nothing declares must still be caught",
+    );
+  });
+
+  it("the REAL ratchet has no entry for a table nothing declares", () => {
+    const undeclared = undeclaredEntries(
+      KNOWN_PRODUCTION_GAPS,
+      declared,
+      new Set(
+        readFileSync(new URL(`../../baseline/${PRODUCTION_SNAPSHOT}`, import.meta.url), "utf8")
+          .split("\n")
+          .map((l) => l.trim())
+          .filter((l) => l && !l.startsWith("#")),
+      ),
+    );
+    assert.deepEqual(undeclared, [], `ratcheted but declared by no migration: ${undeclared.join(", ")}`);
   });
 });
