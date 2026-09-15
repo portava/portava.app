@@ -223,7 +223,7 @@ export function computeTrendStates(
   // reading the clock per place would let one corpus carry several computation
   // times. `priorSince` is the oldest row that can survive the bucket filter,
   // so it IS the window start rather than a restatement of it.
-  const provenance = derivedStoreProvenance({ startMs: priorSince, endMs: nowMs }, nowMs);
+  const provenance = derivedStoreProvenance({ kind: "bounded", startMs: priorSince, endMs: nowMs }, nowMs);
 
   const out: Record<string, TrendReading> = {};
   for (const [id, w] of acc) {

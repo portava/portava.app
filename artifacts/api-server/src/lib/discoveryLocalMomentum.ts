@@ -189,7 +189,7 @@ export function computeLocalMomentum(rows: readonly MomentumRow[], nowMs: number
   // arithmetic they describe because they are the same two numbers. Stamped
   // even when `out` is empty: "this window was read and nothing surged" is a
   // measurement, and the bare `{}` it used to return could not say it.
-  return { values: out, provenance: derivedStoreProvenance({ startMs: baselineSince, endMs: nowMs }, nowMs) };
+  return { values: out, provenance: derivedStoreProvenance({ kind: "bounded", startMs: baselineSince, endMs: nowMs }, nowMs) };
 }
 
 // ── Loader, with a bounded per-key cache ──────────────────────────────────────

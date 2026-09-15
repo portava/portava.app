@@ -80,21 +80,21 @@ export const DISCOVERY_MODEL_VERSION = "compass-discovery-2026-09";
 export const DISCOVERY_FEATURE_VERSION = "compass-factors-v1";
 
 /**
- * The SOURCE EVENT WINDOW a derived store computed over, as epoch-ms bounds.
+ * The SOURCE EVENT WINDOW a computation ran over, as epoch-ms bounds.
  *
  * Half-open `[startMs, endMs)` in intent — `endMs` is the clock the computation
  * was handed, and a row stamped after it is in the future and was not counted.
  * Stated as bounds rather than as a duration because a duration only says how
  * wide the window was, not where it sat: two readings taken ten minutes apart
- * over "30 days" describe two different corpora, and a consumer comparing them
- * needs to be able to see that.
+ * over "30 days" describe two different corpora, which a consumer must see.
+ *
+ * `kind` keeps two absences apart: a window that admitted nothing is `bounded`
+ * with `startMs === endMs`; a corpus with NO oldest event is `unbounded_start`,
+ * whose `startMs` is `null`, never a plausible-looking 0. See `windowSpanMs`.
  */
-export interface DerivedStoreWindow {
-  /** Oldest source event that could have contributed, epoch ms. */
-  startMs: number;
-  /** Newest — the clock the computation ran against, epoch ms. */
-  endMs: number;
-}
+export type DerivedStoreWindow =
+  | { kind: "bounded";         startMs: number; endMs: number }
+  | { kind: "unbounded_start"; startMs: null;   endMs: number };
 
 /**
  * `01` §7 / `06` §5's provenance, for a store that DERIVES numbers from an
@@ -138,7 +138,7 @@ export function derivedStoreProvenance(
   return {
     modelVersion:   DISCOVERY_MODEL_VERSION,
     featureVersion: DISCOVERY_FEATURE_VERSION,
-    window: { startMs: window.startMs, endMs: window.endMs },
+    window: { ...window },
     computedAt,
   };
 }
@@ -166,16 +166,16 @@ export interface DiscoveryRankProvenance {
   candidateSource: DiscoveryCandidateSource;
   /** `06` §5 recommendation reasons — the ranker's own factor keys, strongest first. */
   reasons: string[];
-  /**
-   * `04` §13 RAW — the per-signal contributions the ranker computed. `01` §7's
-   * feature vector, without which a cached order cannot be re-ranked.
-   */
+  /** `04` §13 RAW — the per-signal contributions the ranker computed. `01` §7's
+   *  feature vector, without which a cached order cannot be re-ranked. */
   features: Record<string, number>;
-  /**
-   * `04` §13 DERIVED — what was computed FROM the features. Kept in its own
-   * field so the separation is structural rather than a naming convention.
-   */
+  /** `04` §13 DERIVED — what was computed FROM the features. Kept in its own
+   *  field so the separation is structural rather than a naming convention. */
   scores: Record<string, number>;
+  /** DC-17 field 4 — the SOURCE EVENT WINDOW this rank could have read. Optional
+   *  only so a hand-built fixture can decline to claim one: `buildRankProvenance`
+   *  always stamps it, and the `StampedRankProvenance` it returns requires it. */
+  sourceWindow?: DerivedStoreWindow;
   /** `06` §5 ranking timestamp: epoch ms the RANKER ran. Never the cache read time. */
   rankedAt: number;
 }
@@ -260,20 +260,94 @@ export function reasonsFromPipelineResult(r: RankedPipelineRow): string[] {
 }
 
 /**
+ * DC-17 field 4 — the SOURCE EVENT WINDOW one Compass discovery rank ran over.
+ *
+ * WHAT ACTUALLY BOUNDS THE RANKER'S INPUTS, READ RATHER THAN ASSUMED
+ * ==================================================================
+ * `rankItemsForDiscovery` (compass/CompassFeedBuilder.ts) has exactly three
+ * DB-derived inputs, and only one of them is a time slice:
+ *
+ *   preloadFairExposureData    reads `compass_visibility_boosts.appearance_count`
+ *                              with NO time predicate — a running counter whose
+ *                              oldest contributing appearance is not recorded.
+ *   loadUnderexposedItemIds    reads `content_distribution_stats` filtered only
+ *                              on `underexposure_status` — a standing column,
+ *                              again with no oldest event.
+ *   computeActiveUserScore     loads `compass_active_user_events` bounded at 365
+ *                              days, then re-scores the SAME rows over 24 h, 7 d,
+ *                              30 d, 90 d and "lifetime". The only real bound.
+ *
+ * Two of the three are aggregates, so the corpus that reached the ranker has no
+ * oldest event. The honest record of that is `unbounded_start` — not the 365-day
+ * bound, which describes one input of three, and not 0, which would claim the
+ * corpus begins at the epoch. `01` §7 keeps the feature vector so a cached order
+ * can be re-ranked; a window invented here would make that re-rank compare
+ * against a corpus nobody read, which is worse than admitting the bound is open.
+ *
+ * `endMs` is the rank clock the caller already read once for `rankedAt`, so the
+ * two cannot drift: a row stamped after the ranker returned did not reach it.
+ *
+ * Not a parameter of `buildRankProvenance`, for the same reason the version pair
+ * is not: a caller that could hand in its own window could describe a corpus the
+ * ranker never read. It moves when the pipeline above moves, and when it does,
+ * DISCOVERY_MODEL_VERSION moves with it.
+ */
+export function rankSourceWindow(rankedAt: number): DerivedStoreWindow {
+  return { kind: "unbounded_start", startMs: null, endMs: rankedAt };
+}
+
+/**
+ * How wide a window is, in ms — or `null` when there is no oldest event to
+ * measure from.
+ *
+ * The accessor exists so that the two absences cannot be collapsed by accident.
+ * `Number(null)` is 0, so a consumer that read `endMs - startMs` off the raw
+ * bounds would report an UNBOUNDED corpus and a ZERO-WIDTH one as the same
+ * number. Here they are `null` and `0`, which no arithmetic can confuse, and a
+ * provenance record that was never built at all is a third thing again — `null`
+ * at its own field (lib/discoveryCandidate.ts keeps that distinction on the
+ * served row) rather than a record carrying a blank window.
+ */
+export function windowSpanMs(w: DerivedStoreWindow): number | null {
+  return w.kind === "unbounded_start" ? null : w.endMs - w.startMs;
+}
+
+/**
+ * What `buildRankProvenance` emits: the `06` §5 record with DC-17's fourth field
+ * PRESENT, not merely permitted.
+ *
+ * The base record leaves `sourceWindow` optional so that a record assembled by
+ * hand — a fixture, a replayed row from an older cache entry — can exist without
+ * claiming a window it never had. Everything the ranker produces comes through
+ * here, and here it is required, so "the producer forgot" is not a state this
+ * type can represent.
+ */
+export interface StampedRankProvenance extends DiscoveryRankProvenance {
+  sourceWindow: DerivedStoreWindow;
+}
+
+/**
  * Project one ranked page into `id → provenance`.
  *
  * `rankedAt` is supplied by the caller — the clock is read ONCE, at the moment
  * the ranker returns, and the same value is stamped on every row of that page.
  * Reading it per row would make one page carry several ranking times.
+ *
+ * The source event window is derived from that one clock and SHARED BY REFERENCE
+ * across every row, for the reason lib/discoveryLocalMomentum gives for keeping
+ * its own provenance beside the map rather than inside every value: one rank is
+ * one computation over one corpus, and N copies of that sentence are N chances
+ * for two rows of the same page to disagree about it.
  */
 export function buildRankProvenance(
   ranked: readonly RankedPipelineRow[],
   sourceById: ReadonlyMap<string, DiscoveryCandidateSource>,
   rankedAt: number,
   ids: { normalize?: (id: string) => string } = {},
-): Map<string, DiscoveryRankProvenance> {
+): Map<string, StampedRankProvenance> {
   const norm = ids.normalize ?? ((x: string) => x);
-  const out = new Map<string, DiscoveryRankProvenance>();
+  const sourceWindow = rankSourceWindow(rankedAt);
+  const out = new Map<string, StampedRankProvenance>();
   for (const r of ranked) {
     const id = norm(r.item.id);
     out.set(id, {
@@ -283,6 +357,7 @@ export function buildRankProvenance(
       reasons:         reasonsFromPipelineResult(r),
       features:        featuresFromPipelineResult(r),
       scores:          scoresFromPipelineResult(r),
+      sourceWindow,
       rankedAt,
     });
   }
