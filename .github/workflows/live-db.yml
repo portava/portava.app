@@ -107,6 +107,35 @@ on:
   schedule:
     - cron: '17 6 * * *'
   workflow_dispatch:
+    inputs:
+      # THE ONLY WAY TO REACH apply-migrations' --apply-unproven FROM CI.
+      #
+      # 2254 seeded 388 ledger rows with applied_by='backfill' and no real
+      # checksum. That table's own comment says such a row asserts only that
+      # the FILENAME existed — it is not proof of an apply. The applier
+      # therefore skips those files rather than replay them, because replaying
+      # a migration that DID run is the destructive direction and nothing in
+      # the ledger can tell the two cases apart.
+      #
+      # When a check proves a specific backfilled file did NOT in fact run
+      # (audit:schema, check:missing-live-columns, or a later migration's
+      # postcondition failing on its absent objects), the applier's own
+      # remedy is `--apply-unproven <file>`. It is deliberately NOT a bare
+      # switch: a human names each file, one at a time, having established
+      # for each that its objects are genuinely missing.
+      #
+      # This input preserves that contract exactly. It is empty by default, so
+      # push, schedule and pull_request runs are byte-for-byte unchanged and
+      # no file is ever replayed unattended; only a hand-typed dispatch that
+      # names files can pass it, and the apply step below still refuses to run
+      # anywhere but the default branch.
+      apply_unproven:
+        description: >-
+          Comma-separated migration filenames whose backfill ledger row has
+          been PROVEN false (objects verified absent). Leave empty for a
+          normal apply. Each file must be idempotent or genuinely unapplied.
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -745,7 +774,21 @@ jobs:
       - name: 'migrations — apply to the sanctioned CI project'
         if: ${{ !cancelled() && steps.install.outcome == 'success' && github.ref == 'refs/heads/main' }}
         shell: bash
-        run: bash .github/scripts/pnpm-run.sh scripts @workspace/scripts db:apply-migrations
+        #
+        # The --apply-unproven tail is empty on every push, schedule and PR
+        # run, so those invocations are unchanged. It is non-empty only on a
+        # workflow_dispatch that typed filenames into the input above; the
+        # applier still exits 2 if the flag arrives without a file list, so a
+        # malformed dispatch fails loudly rather than applying everything.
+        env:
+          APPLY_UNPROVEN: ${{ github.event.inputs.apply_unproven || '' }}
+        run: |
+          if [ -n "${APPLY_UNPROVEN}" ]; then
+            echo "::notice::apply-migrations: replaying ${APPLY_UNPROVEN} — a dispatch named these files as having a backfill ledger row proven false."
+            bash .github/scripts/pnpm-run.sh scripts @workspace/scripts db:apply-migrations --apply-unproven "${APPLY_UNPROVEN}"
+          else
+            bash .github/scripts/pnpm-run.sh scripts @workspace/scripts db:apply-migrations
+          fi
 
       # CERTIFICATION. A separate process, reading the catalog, because an
       # applier's own report is a claim about a request and not about a
