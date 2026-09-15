@@ -29,6 +29,12 @@ import {
   formatAgeLimitLabel,
   validateAgeRange,
 } from "../lib/ageEligibility.js";
+import {
+  resolveGateAge,
+  resolveGateAges,
+  AGE_NOT_VERIFIED_ADULT_MESSAGE,
+  AGE_CHECK_UNAVAILABLE_MESSAGE,
+} from "../lib/gateAge.js";
 import { nameVisibilitySet, nameVisibleFor } from "../lib/publicIdentity.js";
 import { truncateDisplayName } from "../lib/displayName.js";
 
@@ -643,18 +649,21 @@ router.post("/meetups/:meetupId/invites", async (req, res) => {
   if ((meetup as any).age_limit_enabled && toInvite.length > 0) {
     const sc = getServiceClient();
     if (sc) {
-      const { data: profiles } = await sc
-        .from("profiles")
-        .select("id, date_of_birth")
-        .in("id", toInvite);
-      const dobByUser: Record<string, string | null> = {};
-      for (const row of profiles ?? []) {
-        dobByUser[(row as any).id] = (row as any).date_of_birth ?? null;
-      }
+      // THROUGH THE SEAM (lib/gateAge.ts), and batched: ONE profiles read and
+      // ONE identity_verifications read for the whole invitee list, whatever
+      // its length. Reading the verification per invitee would have been the
+      // N+1 the batched `profiles` read here already avoids.
+      //
+      // An invitee whose government document says they are a minor is
+      // age-ineligible for an 18+ meetup no matter what birthday they typed —
+      // which is what this pre-check missed entirely until the seam existed.
+      const resolved = await resolveGateAges(sc, toInvite);
       const eligible: string[] = [];
       for (const uid of toInvite) {
-        const dob = dobByUser[uid] ?? null;
-        const result = getAgeEligibilityReason(dob, true, (meetup as any).min_age, (meetup as any).max_age);
+        const gate = resolved.get(uid) ?? { state: "unreadable" as const };
+        const result = gate.state === "ok"
+          ? getAgeEligibilityReason(gate.dateOfBirth, true, (meetup as any).min_age, (meetup as any).max_age)
+          : { eligible: false };
         if (result.eligible) {
           eligible.push(uid);
         } else {
@@ -716,18 +725,25 @@ router.post("/meetups/:meetupId/rsvp", async (req, res) => {
       // about the caller's own profile, telling them to add a date of birth they
       // may well already have. A check that could not run says so, and says it
       // retryably.
-      const { data: profileRow, error: profileErr } = await sc
-        .from("profiles")
-        .select("date_of_birth")
-        .eq("id", user.id)
-        .maybeSingle();
-      if (profileErr) {
-        req.log?.warn?.({ err: profileErr, meetupId }, "age gate: profiles read failed — RSVP refused, not admitted");
-        sendError(res, "degraded_unavailable", "Age check is temporarily unavailable for this meetup");
+      // THROUGH THE SEAM (lib/gateAge.ts). The `profiles` read and the
+      // `identity_verifications` read are issued together, so this gate costs
+      // the same one round trip it always did.
+      //
+      // The seam keeps the distinction this block already fought for and adds
+      // one: `unreadable` covers a failed read of EITHER table and is refused
+      // retryably without a word about the caller's record, and
+      // `verified_minor` refuses with the age requirement rather than with the
+      // missing-date-of-birth message — because the date of birth is present,
+      // and contradicted.
+      const gateAge = await resolveGateAge(sc, user.id);
+      if (gateAge.state === "unreadable") {
+        req.log?.warn?.({ meetupId }, "age gate: age could not be resolved — RSVP refused, not admitted");
+        sendError(res, "degraded_unavailable", AGE_CHECK_UNAVAILABLE_MESSAGE);
         return;
       }
-      const dob = (profileRow as any)?.date_of_birth ?? null;
-      const eligibility = getAgeEligibilityReason(dob, true, meetupRow.min_age, meetupRow.max_age);
+      const eligibility = gateAge.state === "verified_minor"
+        ? { eligible: false, reason: "not_verified_adult", publicMessage: AGE_NOT_VERIFIED_ADULT_MESSAGE }
+        : getAgeEligibilityReason(gateAge.dateOfBirth, true, meetupRow.min_age, meetupRow.max_age);
       if (!eligibility.eligible) {
         // Write audit log (best-effort)
         void (async () => {

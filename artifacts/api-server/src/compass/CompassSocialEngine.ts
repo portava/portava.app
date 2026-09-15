@@ -13,8 +13,8 @@
  *      preference list.
  *   3. Group aggregation — merges every member's preferences and constraints
  *      into a single ranking profile (most-restrictive budget, union of
- *      blocks, youngest known age, all-verified flag) so group recommendations
- *      satisfy everyone.
+ *      blocks, the youngest age the group is KNOWN to be, all-verified flag)
+ *      so group recommendations satisfy everyone.
  *
  * Display-name rule: people are referred to by @handle unless they opted in
  * (profile_privacy_settings.show_real_name) — resolved by callers via
@@ -25,6 +25,10 @@ import type { CompassProfile } from "./types.js";
 import { canViewCirclePresenceBatch, type ContextType } from "../lib/circleAccessGuard.js";
 import { nameVisibilitySet } from "../lib/publicIdentity.js";
 import { wrapUgc } from "./CompassStructuredContext.js";
+// The ONE place a date of birth becomes an age a gate may act on. This file
+// used to carry its own `ageFromDob()` and is the ninth gate that copy fed;
+// it now consumes an already-RESOLVED `GateAge` and does no age arithmetic.
+import type { GateAge } from "../lib/gateAge.js";
 
 // ── Travel compatibility ──────────────────────────────────────────────────────
 
@@ -149,8 +153,19 @@ export interface GroupMemberPrefs {
   budgetStyle: string | null;
   travelPace: string | null;
   verified: boolean;
-  /** Age computed SERVER-SIDE from DOB — never leaves the server. */
-  age: number | null;
+  /**
+   * The member's age AS A GATE MAY ACT ON IT, resolved through `lib/gateAge.ts`
+   * by the caller that read the profile row.
+   *
+   * NOT a `number | null`. The number lives only on the `ok` arm of `GateAge`,
+   * so `aggregateGroupPreferences` cannot reach it without first having written
+   * something for `verified_minor` and for `unreadable` — which is the whole
+   * reason the seam's return type is a union. The previous shape (a plain
+   * `age: number | null` filled in from `profiles.date_of_birth`) is exactly
+   * how a provider-verified minor's typed adult birthday reached
+   * `eventSatisfiesGroup` and passed an 18+ event for the whole group.
+   */
+  ageGate: GateAge;
 }
 
 export interface GroupAggregate {
@@ -163,7 +178,17 @@ export interface GroupAggregate {
   budgetStyle: string | null;
   travelStyleUnion: string[];
   allVerified: boolean;
-  /** Youngest KNOWN age; null when no member's age is known. */
+  /**
+   * The youngest age the whole group is KNOWN to be, or null.
+   *
+   * null means "this group has no age an age gate may act on" — because a
+   * member is a provider-verified minor, because the verification table could
+   * not be read, or because a member simply has no date of birth on file. The
+   * three are deliberately indistinguishable HERE: the aggregate is shared with
+   * the whole group, and "which of your friends failed the check, and why" is
+   * not a fact this structure is allowed to carry. `eventSatisfiesGroup` turns
+   * null into a refusal.
+   */
   youngestAge: number | null;
 }
 
@@ -188,8 +213,27 @@ export function aggregateGroupPreferences(members: GroupMemberPrefs[]): GroupAgg
 
   const travelStyleUnion = [...new Set(members.flatMap((m) => norm(m.travelStyles)))];
   const allVerified = size > 0 && members.every((m) => m.verified === true);
-  const knownAges = members.map((m) => m.age).filter((a): a is number => typeof a === "number");
-  const youngestAge = knownAges.length > 0 ? Math.min(...knownAges) : null;
+  // AGE. A member contributes a number ONLY from the `ok` arm of their resolved
+  // GateAge: `verified_minor` (a provider result on file contradicts the typed
+  // birthday) and `unreadable` (the check could not run — an OUTAGE, never a
+  // statement about that person) contribute nothing, and neither does an `ok`
+  // member with no date of birth on file.
+  //
+  // And a member who contributes nothing makes the GROUP's youngest age null,
+  // rather than being skipped so the next-youngest member stands in for them.
+  // Skipping is what made this a defect worth fixing: a group of {adult 30,
+  // verified minor} would otherwise aggregate to youngestAge 30 and walk into
+  // an `age_min: 18` event with the minor in it. Null is the answer that
+  // `eventSatisfiesGroup` refuses, and refusing a group because one member's
+  // age is unknown is the posture `eventSatisfiesGroup` already claimed to have.
+  const knownAges: number[] = [];
+  let anyMemberUnresolved = false;
+  for (const m of members) {
+    const resolved = m.ageGate;
+    if (resolved.state === "ok" && typeof resolved.age === "number") knownAges.push(resolved.age);
+    else anyMemberUnresolved = true;
+  }
+  const youngestAge = !anyMemberUnresolved && knownAges.length > 0 ? Math.min(...knownAges) : null;
 
   return { size, sharedInterests, interestUnion, budgetStyle, travelStyleUnion, allVerified, youngestAge };
 }
@@ -215,6 +259,20 @@ export function buildGroupRankingProfile(
     mutedUserIds: viewer.mutedUserIds ?? [],
   };
   if (agg.youngestAge !== null) profile.viewerAge = agg.youngestAge;
+  // ...and when it is null, the GROUP has no age, so the group profile must not
+  // keep carrying the VIEWER's own age (inherited by the spread above). An adult
+  // viewer's 30 standing in for a group that contains a verified minor is the
+  // same wrong number this change removed from `youngestAge`, one layer later.
+  //
+  // Deleting it rather than substituting a number: `viewerAge` is `number |
+  // undefined` and every number here would be invented. Unset is the state both
+  // downstream readers already define — CompassSafetyFilter applies its
+  // conservative DEFAULT_VIEWER_AGE, CompassEligibilityEngine skips its
+  // defence-in-depth check — and it is strictly more closed than the adult age
+  // it replaces. It is NOT a full gate: the group's real age gate for events is
+  // `eventSatisfiesGroup`, which has already refused every age-restricted
+  // candidate before ranking sees it.
+  else delete profile.viewerAge;
   return profile;
 }
 
@@ -236,7 +294,19 @@ export function eventSatisfiesGroup(
   const ageMin = ev.age_min ?? null;
   if (ageMin !== null && ageMin > 0) {
     // Fail-closed for the group when any member's age is unknown or too low.
-    if (agg.youngestAge === null || agg.youngestAge < ageMin) {
+    //
+    // The two refusals are reported SEPARATELY because they are different
+    // sentences. "not met by all members" is a finding about ages we know;
+    // "could not be confirmed" covers a verified-minor contradiction, an
+    // unreadable identity_verifications read, and a member with no date of
+    // birth on file, and says only that the check did not produce an answer.
+    // Collapsing the second into the first would report an OUTAGE as a
+    // statement about somebody in the group, which is precisely what
+    // lib/gateAge.ts exists to stop. Neither reason names a member.
+    if (agg.youngestAge === null) {
+      return { ok: false, reason: "age_could_not_be_confirmed_for_every_member" };
+    }
+    if (agg.youngestAge < ageMin) {
       return { ok: false, reason: "age_restriction_not_met_by_all_members" };
     }
   }
@@ -246,17 +316,15 @@ export function eventSatisfiesGroup(
   return { ok: true };
 }
 
-/** Age from a DOB string — server-side only; the DOB itself never leaves. */
-export function ageFromDob(dob: string | null | undefined): number | null {
-  if (!dob) return null;
-  const d = new Date(dob);
-  if (isNaN(d.getTime())) return null;
-  const now = new Date();
-  let age = now.getFullYear() - d.getFullYear();
-  const m = now.getMonth() - d.getMonth();
-  if (m < 0 || (m === 0 && now.getDate() < d.getDate())) age--;
-  return age >= 0 && age < 130 ? age : null;
-}
+// `ageFromDob()` USED TO BE HERE, and it was this file's private copy of the
+// un-contradicted arithmetic: a date of birth in, a number out, with the
+// provider result never consulted. It is DELETED rather than left unused —
+// a DOB→age helper sitting next to a gate is how the next gate skips the rule,
+// which is how this defect reached nine gate families. The one implementation
+// lives in `lib/ageEligibility.ts#calculateUserAge` and is reachable only
+// through `lib/gateAge.ts`, which folds in the verified-minor contradiction
+// before anyone sees a number. `src/test/ageGateSeamCoverage.test.ts` fails if
+// a copy comes back.
 
 // ── "Who's around" — permission-gated presence lookup ─────────────────────────
 

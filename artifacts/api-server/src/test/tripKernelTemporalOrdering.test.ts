@@ -31,7 +31,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-import { executeTripCommand, type TripCommand } from "../lib/tripKernel.js";
+import { executeTripCommand, type TripCommand } from "../domain/trips/commands/tripKernel.js";
 
 /** A client whose rpc must NEVER be reached when the command is refused early. */
 function rpcSpy(result: any = { ok: true, version: 1, event_id: "e1", contract_version: 2 }) {
@@ -70,7 +70,7 @@ describe("§4.4 — an inverted plan interval is refused before the kernel is ca
   it("the reason is the EXISTING code, not a new one", async () => {
     // The kernel function already returns TRIP_TEMPORAL_RANGE_INVERTED for the
     // trip-level range. One fact, one word.
-    const src = readFileSync(new URL("../lib/tripKernel.ts", import.meta.url), "utf8");
+    const src = readFileSync(new URL("../domain/trips/commands/tripKernel.ts", import.meta.url), "utf8");
     assert.match(src, /"TRIP_TEMPORAL_RANGE_INVERTED"/);
     assert.equal(/TRIP_TEMPORAL_INVALID|TRIP_INTERVAL_INVERTED|TRIP_PLAN_TEMPORAL/.test(src), false,
       "a second spelling of the same rejection has appeared");

@@ -6,9 +6,11 @@
 | **`.docx` reconciliation** | Extracted `word/document.xml`, stripped tags, whitespace-normalised, diffed against the `.txt`. **The only differences are three XML entity escapes** (`&amp;` in the title, and no `&lt;`/`&gt;` in this spec). The `.txt` is a faithful transcription; the "`.docx` is authority" clause never had to be exercised. |
 | **Section count** | The brief said 50 sections. **50 top-level sections is correct**, but the spec also carries **11 numbered subsections** (§4.1, §6.1, §15.1, §15.2, §16.1, §16.2, §16.3, §23.1, §31.1, §46.1, §46.2) — **61 numbered units**. Counting only the 50 undercounts §16 (three subsections, 31 requirements) and §46 (two subsections, 14 requirements) badly. |
 | **Tree censused** | `claude/portava-continuation-uqta94`, HEAD `68ed59d9`. Backend paths relative to `artifacts/api-server/src/`, client paths to `travel-buddy-standalone/` unless stated. |
+| `head_commit` | `80a8d655a` — RE-DECLARED 2026-09-14 by §16, replacing `42aeac38`. RE-DECLARED 2026-09-14 by the Media pass, which re-measured **all 153 non-`C` rows** and moved none — the finding being that what remains is client screens, seeded-off flags and rankers outside any lane's file set. Eight counted files changed, all of them that pass's own refusal work. It does **NOT** certify the 297 `C` rows, and §1's reading rule applies unchanged. The previous declaration read: `42aeac38` — DECLARED 2026-09-11, and **it starts a clock rather than certifying a past**. Read the next row before quoting it. |
+| **What that declaration does and does not say** | `42aeac38` is #476's squash — the commit where this document itself reached `main`. The 450 verdicts were taken at working tree `68ed59d9`, which this repository's squash-merge orphaned: it resolves in no clone, so **nobody can diff `68ed59d9..42aeac38`, and this declaration does not claim that interval was empty.** What it does claim is mechanically checked: `git diff --name-only 42aeac38..HEAD` over the 26 paths now in `CENSUS_SCOPE["census-media.md"]` returns **0 files**, and from here on any change to one of them ages this census. That is the whole value — before it, `check:census-freshness` reported this document as CANNOT BE CHECKED, which is the weakest of the three states and the one it had been in since it was written. FRESH here means *no counted file has moved since `42aeac38`*. It does **not** mean the rows were re-read; none has been. Declared by the Trips lane while recounting the sibling census, on the pattern `check:census-freshness` itself recommends for an orphaned declaration; if the Media lane disagrees, reverting costs only the check. |
 | **Database** | Not queried. Production storage facts are the ones supplied as ground truth plus the committed snapshot `artifacts/api-server/baseline/20260907_production_tables.txt` and `src/scripts/checkProductionDrift.ts:168-176`. |
 | **Method** | Requirement-level, four buckets, one bucket per requirement. Every BUILT verdict cites a `file:line` that was opened and read. |
-| **Sibling** | `docs/architecture/census-trips.md`, produced in the same pass under the same denominator rule, so the two are directly comparable. Trips scores 41.7 % constructed / 17.3 % correct / **0.0 % spec-attributable**. |
+| **Sibling** | `docs/architecture/census-trips.md`, produced in the same pass under the same denominator rule, so the two are directly comparable. Trips scores **47.9 % constructed / 19.7 % correct** — its §36 recount at merged `main` `014a25d5`, which superseded the 41.7 % / 17.3 % this row used to quote. Its spec-attributable figure was **withdrawn**, not restated: §26 of that census established the 0.0 % was false, and no measured replacement exists. |
 
 ---
 
@@ -168,14 +170,41 @@ pre-existing product feature), `services/ranking/MediaFeedRankingService.ts`,
 contribution service, the whole `posts`/`post_media` spine, and the entire legacy
 Watch/Grid/Gems client surface.
 
+> **METHOD RESTATED 2026-09-14 — the first half stands; "pre-existing" is renamed UNKNOWN.**
+>
+> **What stands.** The attributable test is positive evidence and it is the good kind: the
+> artifact's own header names this spec or one of its phases (the list of headers directly
+> above this paragraph is that evidence), or a migration in the declared Media v2 band created
+> it. **216 — and, after §14's ten, 226 — is a count of rows carrying that evidence, and it
+> does not move.**
+>
+> **What does not.** The *"pre-existing"* test is *"the artifact predates the programme and the
+> spec merely happens to describe it"*. Predating a programme is a fact about file history, not
+> about what its author was working from; a specification can be written and worked from long
+> before this repository has a copy, so predating it is consistent with both answers. The owner
+> has ruled that inference out of this corpus. **Read every `P` below as UNKNOWN**: *no evidence
+> was found attributing this artifact to this spec, and none was gathered attributing it
+> anywhere else either.* Some of the named artifacts carry a hint of provenance in this
+> document's own parenthesis — `lib/mediaProcessing.ts` *"written for the privacy audit"*,
+> `lib/delayedPostPublisher.ts` *"a pre-existing product feature"* — and a **P** becomes
+> **attributable-elsewhere** as soon as that hint is a citation in the file itself rather than a
+> note here.
+>
+> **What this changes in the numbers: nothing.** 216 A and 75 P still sum to the 291 correct
+> verdicts. The 75 are now 75 UNKNOWN rather than 75 "not this spec's", and the sentence
+> *"the spec inherited rather than commissioned"* below is an inference the evidence does not
+> carry — it may well be true, and it is not measured.
+> See `docs/architecture/attribution-method.md`.
+
 | | count | share of 450 |
 | --- | --- | --- |
 | BUILT-AND-CORRECT, spec-attributable | **216** | **48.0 %** |
-| BUILT-AND-CORRECT, pre-existing | 75 | 16.7 % |
+| BUILT-AND-CORRECT, attribution UNKNOWN (was labelled "pre-existing") | 75 | 16.7 % |
 | (BUILT-AND-CORRECT, total) | 291 | 64.7 % |
 
 Per-section split of the 291 correct verdicts, so the 216 can be re-derived rather than
-taken on trust — `A` = attributable, `P` = pre-existing:
+taken on trust — `A` = attributable to this spec (evidenced), `P` = attribution UNKNOWN
+(the mark formerly read "pre-existing"; see the method restatement above):
 
 `§2 6A · §3 5A · §4 6A · §5 4A · §6/§6.1 1A+2P · §7 8A · §8 1A+1P · §9 4A+2P · §10 4A ·
 §11 1A · §12/§13 2A · §14 2A · §15 7A+1P · §16 22A+8P · §17 6A · §18 2A · §19 6A · §20 1A ·
@@ -331,12 +360,12 @@ testable structure by §3 and §4.1. Narrative.
 | --- | --- | --- | --- |
 | MD2 | World-first, not creator-first | **W** | World-first exists (`services/media/MediaProjectionService.ts:439` groups by zone before anything else; `lib/media/mediaProjection.ts:95` comments the contributor as *"visible but secondary"*). The live ranker is creator-first: `services/ranking/MediaFeedRankingService.ts:11-15` lists `activeCreatorBoost`, `newCreatorBoost`, `returningCreatorBoost`, `underexposedBoost` as its boost layer and `:16` a per-creator fatigue layer. Creator identity is the ranking axis there, not the world. |
 | MD3 | No infinite-feed dependency | **W** | `src/components/media/WatchFeed.tsx:1-8` — *"full-screen vertical video feed … renders a paging list"* — is the default mode of the shipped tab. The World shell has no infinite feed; the shell is not what ships. |
-| MD4 | Media does not own truth; Live Intelligence owns current claims and confidence | **C** | `MediaProjectionService.ts:379` `readCurrentState` is the only source of a current-state label and it delegates to `lib/liveClaimRead.readLiveClaimEnvelopes`; `:1-22` states the rule. `lib/media/mediaFreshness.ts:2-12` keeps media freshness a pure age function. |
+| MD4 | Media does not own truth; Live Intelligence owns current claims and confidence | **C** | `MediaProjectionService.ts:621#export async function readCurrentState(` is the only source of a current-state label and it delegates to `lib/liveClaimRead.readLiveClaimEnvelopes`; `:1-22` states the rule. `lib/media/mediaFreshness.ts:2-12` keeps media freshness a pure age function. |
 | MD5 | A photo or video may become an evidence candidate but never becomes truth automatically | **C** | `lib/media/mediaEvidenceLink.ts:130` — `if (!(await isFlagEnabled(sc, MEDIA_EVIDENCE_FLAG))) return refuse("flag_disabled")` — the seam is dark, and even ON it produces a *link*, not a claim: `:69-74` is a refusal taxonomy, and the module never writes `intel_claims`/`intel_state_snapshots`. |
 | MD6 | Observed, inferred, user-claimed, generated and predicted information remain distinguishable | **C** | `lib/media/mediaTimeBands.ts:16-32` — Typical is tagged `historical_pattern`, Likely-Next `portava_prediction`, both `NON_OBSERVATION` source classes, both constructed `live:false`. `mediaEvidenceEligibility.ts:38-48` carries the §6 eight-value source vocabulary including `generated`. |
 | MD7 | Every meaningful media object connects to action or context | **C** | `services/media/MediaActionResolver.ts:1-33` resolves a per-item action set against the same authorization gate as each target endpoint; `routes/mediaActions.ts:43` serves it. Contextual open: `MediaWorldShell.tsx:63-78` stages the place's other perspectives rather than a global feed. |
 | MD8 | Authentic media outranks generated fallback media | **N** | *Unguarded absence.* No `source_type` / provenance term appears in `MediaFeedRankingService.ts` or in the World-shell ordering (`MediaProjectionService.ts:846-848` sorts by `capturedAt` only). Nothing would prevent generated media from outranking authentic media if any existed. |
-| MD9 | Privacy, location precision, blocks, trust and eligibility resolve before client projection | **C** | `routes/mediaWorld.ts:18-33` states the invariant and `MediaProjectionService.ts:344` `projectCandidatesProtected` enforces it — every non-owner projection passes `lib/mediaEligibility.filterEligibleMediaCandidates` and then the `lib/mediaLocationVisibility` choke point before shaping. |
+| MD9 | Privacy, location precision, blocks, trust and eligibility resolve before client projection | **C** | `routes/mediaWorld.ts:18-33` states the invariant and `MediaProjectionService.ts:575#export async function projectCandidatesProtected(` `projectCandidatesProtected` enforces it — every non-owner projection passes `lib/mediaEligibility.filterEligibleMediaCandidates` and then the `lib/mediaLocationVisibility` choke point before shaping. |
 | MD10 | Hidden Gems are first-class and require stronger protection than normal Places | **C** | `lib/mediaLocationVisibility.ts:354` `resolveMediaLocationWithGemProtection` applies the stricter of asset tier and gem ceiling; `:542` `gemCeilingForItem` matches by canonical place **and** coordinate proximity; `:601` `loadRestrictiveGems` throws so the caller treats the batch as undetermined rather than open. |
 | MD11 | Success is measured by useful real-world outcomes, not merely minutes watched | **W** | The outcome vocabulary exists (`src/features/media/telemetry/mediaTelemetry.ts:71-78`, eight §45 events) and is dark. The live ranker multiplies by `watchCompletionRate`, `qualifiedViewCount` and `rewatchRate` (`MediaFeedRankingService.ts:60-70`) — minutes watched is a first-class ranking input on the surface that ships. |
 
@@ -348,8 +377,8 @@ testable structure by §3 and §4.1. Narrative.
 | MD13 | PLACES — visual reality organised around canonical Places (Current View mosaics, time rail, place state, actions) | **C** | `MediaProjectionService.ts:503` `buildPlaceProjection`; client `screens/MediaPlacesScreen.tsx:170,213` renders time and map modes. |
 | MD14 | EXPERIENCES — media organised around real-world experiences | **C** | `services/media/MediaExperienceResolver.ts:1-14`, resolving a canonical Event or Trip; client `screens/MediaExperiencesScreen.tsx:56`. |
 | MD15 | HIDDEN GEMS — protected discovery and current Gem state | **W** | The lens exists but is not a Media v2 projection: `MediaWorldShell.tsx:24` imports the **pre-existing** `components/media/GemsFeed.tsx` and there is no `/media/gems` endpoint in `routes/mediaWorld.ts` (the seven registered routes at `:96,120,149,196,221,245,271` do not include one). §43's `GET /media/gems` is unserved and the lens shows the old feed. |
-| MD16 | PEOPLE — explicitly social lens | **C** | `MediaProjectionService.ts:587` `buildPeopleProjection` (the only builder that requests `needFollows: true`, `routes/mediaWorld.ts:214`); client `screens/MediaPeopleScreen.tsx`. |
-| MD17 | MY WORLD — owner library and personal experience history | **C** | `MediaProjectionService.ts:660` `buildMyWorldProjection`; `services/media/MyWorldMemoryService.ts:1-33`; client `screens/MyWorldMediaScreen.tsx`. |
+| MD16 | PEOPLE — explicitly social lens | **C** | `MediaProjectionService.ts:1025#export async function buildPeopleProjection(` `buildPeopleProjection` (the only builder that requests `needFollows: true`, `routes/mediaWorld.ts:214`); client `screens/MediaPeopleScreen.tsx`. |
+| MD17 | MY WORLD — owner library and personal experience history | **C** | `MediaProjectionService.ts:1142#export async function buildMyWorldProjection(` `buildMyWorldProjection`; `services/media/MyWorldMemoryService.ts:1-33`; client `screens/MyWorldMediaScreen.tsx`. |
 
 ### §4 Screen Architecture — the eleven screens
 
@@ -405,10 +434,10 @@ testable structure by §3 and §4.1. Narrative.
 | MD45 | MediaAsset → Person | **C** | `lib/media/mediaProjection.ts:176` `projectContributor` (handle-first, presentation-name opt-in applied by the caller). |
 | MD46 | → Place | **C** | `MediaActionResolver.ts:201` `refs.push({ kind:"place", … })`, through the location choke point. |
 | MD47 | → Neighborhood | **C** | `mediaProjection.ts:89-91` carries `neighborhood`/`city`/`country` as coarse labels. |
-| MD48 | → Event | **C** | `MediaExperienceResolver.ts:33#kind` `kind: "event" | "trip"`, emitted at `:152#event`, gated by `checkEventEligibility` (imported at `:17#checkEventEligibility` from `routes/events.ts`). |
+| MD48 | → Event | **C** | `MediaExperienceResolver.ts:112#kind` `kind: "event" | "trip"`, emitted at `:254#event`, gated by `checkEventEligibility` (imported at `:17#checkEventEligibility` from `routes/events.ts`). |
 | MD49 | → Trip | **C** | `MediaActionResolver.ts:255` `kind:"trip"`, emitted only when the viewer may see the trip. |
 | MD50 | → Hidden Gem | **C** | `MediaActionResolver.ts:222`, and only for a gem the viewer may be told about (`HiddenGemPrivacyGuard.mayDiscloseGemIdentity`, cited at `:31-33`). |
-| MD51 | → Shared Moment | **N** | `MediaActionResolver.ts:53` — `MediaEntityKind = "media" \| "place" \| "trip" \| "gem"`. No shared-moment edge anywhere in the context graph, though the product has shared moments. |
+| MD51 | → Shared Moment | **C** | *(CLOSED 2026-09-14 by the Media lane.)* The edge was in the schema and nothing read it: `shared_moment_contributions.post_id` references `posts(id)` (`artifacts/api-server/src/migrations/2064_shared_moments_foundation.sql:38#post_id UUID REFERENCES posts(id) ON DELETE SET NULL`). It is now resolved on the media context graph at `artifacts/api-server/src/services/media/MediaActionResolver.ts:357#kind: "shared_moment"`, behind three gates that are the Shared Moments surface's OWN, not new policy: the capability chain (`:337#areSharedMomentsEnabled`), an APPROVED contribution, and accepted membership via `lib/places/sharedMoments.momentRole` — the same predicate `GET /shared-moments/:id` answers `not_member` on. A non-member is told nothing: not the id, not the title. Proof: `artifacts/api-server/src/test/mediaActionsCompass.test.ts` "MD51 — a media item resolves to the Shared Moment it was contributed to" (5 cases). Mutations that turned it red: dropping the membership gate; accepting a pending contribution; dropping the capability chain; treating an archived Moment as active. **One implementation note that is a cross-lane request, not a caveat:** the kind rides on `MediaGraphKind` (`artifacts/api-server/src/services/media/MediaActionResolver.ts:82#MediaGraphKind`) rather than on `MediaEntityKind`, because `compass/CompassMediaContext.ts:305` builds `Record<MediaEntityRef["kind"], string>` and widening that union is a compile-breaking edit to a file this lane does not own. §14.3. |
 | MD52 | → Time | **C** | `mediaProjection.ts:84` `capturedAt`; the writer is `lib/mediaAssets.ts:69-84`. |
 | MD53 | → Observation | **W** | The only media→observation path is `lib/media/mediaEvidenceLink.ts`, which is a *link* table behind `media_evidence_enabled` (`:130`), and no projection carries an observation ref. The edge is drawn in code and severed at runtime. |
 | MD54 | Context resolution is server-side | **C** | `routes/mediaWorld.ts:18-33`; `resolveMediaEntities` runs in `services/media/`, and the client's `services/mediaProjection.ts` only fetches. |
@@ -434,8 +463,8 @@ testable structure by §3 and §4.1. Narrative.
 | MD64 | QUALIFICATION | **C** | `mediaEvidenceEligibility.isEvidenceEligible` — fail-closed on an unrecognised edit operation (`:14-19`), and the read path re-verifies so a later generative edit cannot leave a stale link. |
 | MD65 | OBSERVATION | **W** | Media never becomes an observation. `mediaEvidenceLink` produces a *link* row; `:1-13` states it *"never writes `intel_observations`/`intel_claims`/`intel_state_snapshots`"*. The stage is deliberately not wired, which is right for safety and wrong against §9. |
 | MD66 | CLAIM SYSTEM | **W** | The claim system exists (`lib/intelProjection`, `2130_intel_storage.sql`) and has no media input by construction (MD65). |
-| MD67 | LIVE INTELLIGENCE | **C** | `lib/liveClaimRead.readLiveClaimEnvelopes`, consumed at `MediaProjectionService.ts:379`; fail-closed to `[]`. |
-| MD68 | MEDIA / DISCOVERY / MAP / COMPASS outputs | **C** | `routes/mediaWorld.ts` (media), `MediaProjectionService.ts:916` map clusters, `compass/CompassMediaContext.ts:98` consumed at `routes/compass.ts:1484`. |
+| MD67 | LIVE INTELLIGENCE | **C** | `lib/liveClaimRead.readLiveClaimEnvelopes`, consumed at `MediaProjectionService.ts:621#export async function readCurrentState(`; fail-closed to `[]`. |
+| MD68 | MEDIA / DISCOVERY / MAP / COMPASS outputs | **C** | `routes/mediaWorld.ts` (media), `MediaProjectionService.ts:916` map clusters, `compass/CompassMediaContext.ts:232` consumed at `routes/compass.ts:1567#const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, Date.now());`. |
 
 ### §10 IntelligenceEligibility
 
@@ -482,16 +511,16 @@ testable structure by §3 and §4.1. Narrative.
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
 | MD94 | Go There / Show on Map / Directions | **W** | `MediaActionResolver.ts:378-384` emits `show_on_map`, targeting `/api/media/places/:placeId` — a projection, deliberately coordinate-free. There is **no directions action**: no `directions` id in the resolver's thirteen (`:332,340,348,358,378,385,396,413,421,436,458,479,495`), and `directions_tap` exists only as a telemetry name (`routes/mediaAnalyticsBatch.ts:41`) with no emitter. "Go There" and "Directions" are unbuilt; "Show on Map" is built and correct. |
-| MD95 | Ask Compass | **C** | `MediaActionResolver.ts:19-20` (Compass-gated) → `compass/CompassMediaContext.ts:98` `buildCompassMediaContext`, consumed at `routes/compass.ts:1484`. |
+| MD95 | Ask Compass | **C** | `MediaActionResolver.ts:19-20` (Compass-gated) → `compass/CompassMediaContext.ts:232` `buildCompassMediaContext`, consumed at `routes/compass.ts:1567#const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, Date.now());`. |
 | MD96 | Save Place | **C** | Resolved to the existing saved-places endpoint and served at `routes/mediaActions.ts:43,82`. |
 | MD97 | Add to Trip | **C** | `MediaActionResolver.ts:16-18` — offered only when `canEditPlan` passes, which is the exact gate the trip-plan-item endpoint enforces, so the rail can never grant access the endpoint would deny. |
 | MD98 | Create Plan | **C** | Same resolver, Compass-gated (`:19-20`). |
 | MD99 | Meet Here | **C** | `MediaActionResolver.ts:18-19` — respects the new-event kill switch. |
-| MD100 | Invite People | **N** | No invite member in the resolver's action vocabulary; nothing in `routes/mediaActions.ts` emits one. |
-| MD101 | Find Similar / Cheaper / Quieter / Busier | **W** | "Find somewhere like this" reaches Compass as a structured ask (`CompassMediaContext.ts:9-12`). There is no cheaper / quieter / busier comparator anywhere — no comparative modifier in the resolver, the Compass media context, or the projection. One of four. |
+| MD100 | Invite People | **C** | *(CLOSED 2026-09-14 by the Media lane.)* `artifacts/api-server/src/services/media/MediaActionResolver.ts:569#id: "invite_people",` → `POST /api/shared-moments/:id/invites`, an EXISTING endpoint, offered only to an owner/manager of the Shared Moment the media belongs to — the exact `ownerOrManager` gate that endpoint enforces (`artifacts/api-server/src/routes/sharedMoments.ts:119#if (!(await ownerOrManager(ctx.sc, params.data.id, ctx.userId))) { sendError(res, "forbidden"); return; }`), so §47 holds: the rail asks the same question the endpoint asks. A plain member sees the Moment and is NOT offered the invite; media with no Moment gets no action (no dead actions). Proof: `artifacts/api-server/src/test/mediaActionsCompass.test.ts` "MD100 — Invite People, gated by the endpoint's own ownerOrManager check" (6 cases). Mutations red: offering it to any member; removing the action. |
+| MD101 | Find Similar / Cheaper / Quieter / Busier | **W** | "Find somewhere like this" reaches Compass as a structured ask (`CompassMediaContext.ts:9-12`). There is no cheaper / quieter / busier comparator anywhere — no comparative modifier in the resolver, the Compass media context, or the projection. One of four. *(EVIDENCE CORRECTED 2026-09-13 by the integrating lane; **the verdict does NOT move**. One third of the sentence above is no longer true: `fa5d7c25d` — census-compass §12's CM-03 build — put a comparator INTO the Compass media context, `artifacts/api-server/src/compass/CompassMediaContext.ts:81#export const COMPARATOR_AXIS_CLAIM` mapping *quieter* to `crowd.level` and *cheaper* to `price.cover`, with `artifacts/api-server/src/compass/CompassMediaContext.ts:199#export function buildComparatorBaselines` reporting per axis whether a permitted, unexpired claim exists — provenance only, never a value. The other two thirds were re-measured rather than assumed and still hold: `grep -rn "quieter|cheaper|busier"` over `artifacts/api-server/src/services/media/` returns NOTHING, so neither the resolver nor the projection has a comparative modifier, and **busier has one nowhere on this path**. `W` therefore stands on what this row actually grades — the §23.1 media ACTION set, which still offers `find_similar` and no comparative action, one of four.)* |
 | MD102 | See Nearby | **C** | `MediaActionResolver.ts:385-392` — emitted only when a place resolves, targeting `GET /api/media/map` scoped to the media's coarse city. No coordinate leaves the server; the client positions the clusters through the Map gateway it already holds. |
-| MD103 | View Event / Passport | **W** | Event refs resolve (`MediaExperienceResolver.ts:152#event`). Passport does not: `MediaActionResolver.ts:53` `MediaEntityKind = "media" \| "place" \| "trip" \| "gem"` has no passport member, and §29 keeps Passport on Postcards. Half built. |
-| MD104 | Share through Telegraph | **W** | The action is emitted (`MediaActionResolver.ts:340-344`) and the endpoint accepts the target (`routes/mediaFeed.ts:2281` `z.enum(["native","copy_link","telegraph"])`) — but the handler **ignores it**: `:2297-2299` records a share event and returns a `shareUrl`, and no Telegraph thread, message or intent is created on any branch. The action resolves to a URL, not to Telegraph. |
+| MD103 | View Event / Passport | **W** | Event refs resolve (`MediaExperienceResolver.ts:254#event`). Passport does not: `MediaActionResolver.ts:53` `MediaEntityKind = "media" \| "place" \| "trip" \| "gem"` has no passport member, and §29 keeps Passport on Postcards. Half built. |
+| MD104 | Share through Telegraph | **W** | The action is emitted (`MediaActionResolver.ts:340-344`) and the endpoint accepts the target (`routes/mediaFeed.ts:2295` `z.enum(["native","copy_link","telegraph"])`) — but the handler **ignores it**: `:2297-2299` records a share event and returns a `shareUrl`, and no Telegraph thread, message or intent is created on any branch. The action resolves to a URL, not to Telegraph. |
 | MD105 | Report / Not Relevant | **C** | `routes/mediaFeed.ts:1070` `POST /media/:id/report`; not-interested/hide are consumed as ranking penalties at `MediaFeedRankingService.ts:65-70`. |
 | MD106 | §15.1 "I Want This" — an intent signal, explicitly not a Like | **C** | `2256_media_intent_signals.sql:1-21` gives it its own table and its own grant posture and states the rule — *"a want is never conflated with an engagement count"*; written only through the service-role endpoint at `routes/mediaActions.ts:161`, read at `MediaActionResolver.ts:612`. **Table absent from production** (§3). |
 | MD107 | §15.2 "Do This Experience" — convert an eligible Trail / Trip recap / creator itinerary / experience collection into an executable Compass plan | **W** | `MediaActionResolver.ts:16-18` resolves *"Do This Experience"* to the **trip-plan-item** endpoint: it adds items to a trip. There is no compilation into a Compass plan, and no Trail, recap or itinerary source is read. The action exists and does a smaller, different thing. |
@@ -529,8 +558,8 @@ testable structure by §3 and §4.1. Narrative.
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| MD140 | EARLIER band | **C** | `lib/media/mediaTimeBands.ts:451` `assembleTimeBands`, called at `MediaProjectionService.ts:878`; Earlier is the observed media record. |
-| MD141 | NOW band | **C** | `MediaProjectionService.ts:874` reads `readCurrentState` (gated `liveClaimRead`); empty when live is off, so no fabricated now. |
+| MD140 | EARLIER band | **C** | `lib/media/mediaTimeBands.ts:451` `assembleTimeBands`, called at `MediaProjectionService.ts:1482#const { bands, neverLiveRemoved } = assembleTimeBands({`; Earlier is the observed media record. |
+| MD141 | NOW band | **C** | `MediaProjectionService.ts:1479#readCurrentState(sc, opts.placeId ?? null, nowMs),` reads `readCurrentState` (gated `liveClaimRead`); empty when live is off, so no fabricated now. |
 | MD142 | TYPICAL band | **C** | `mediaTimeBands.ts:22-24` — Typical items are tagged `historical_pattern` and constructed `live:false`; sourced from `readIntelTimeSubstrate` off the live path. |
 | MD143 | LIKELY NEXT band | **C** | `mediaTimeBands.ts:23-25` — tagged `portava_prediction`, `live:false`. |
 | MD144 | Historical and forecast states must be visually distinct | **C** | `mediaTimeBands.ts:50-57` `TimeBandRenderClass = "observed" \| "typical" \| "predicted"` is emitted for the client to key distinct treatments; `components/MediaTimeRail.tsx` + `state/timeBands.ts` consume it. |
@@ -538,13 +567,13 @@ testable structure by §3 and §4.1. Narrative.
 | MD146 | Media Perspective Resolver stage | **C** | `MediaPerspectiveService.ts:1-15`. |
 | MD147 | Independent Sources stage | **W** | The *count* is displayed nowhere and computed nowhere in the media path: `MediaPerspectiveService` counts `contributorCount`, which is distinct contributors, not independent sources. The independence machinery exists (`lib/intelIndependence.ts` merges crews/shared-media/synchronised units) but nothing in Media calls it. |
 | MD148 | Coverage Analysis stage | **C** | `routes/mediaViewRequest.ts:111` `GET /v1/media/places/:placeId/visual-coverage` over `lib/missionGeneration` / `intel_mission_candidates`. |
-| MD149 | Corroboration stage | **W** | `MediaContributorReputationService.ts:1-12` reads `intel_state_snapshots` for *contributor* corroboration. Nothing corroborates one perspective against another; a place's mosaic carries no agreement measure. |
-| MD150 | Contradiction stage | **N** | `lib/intelConflict.ts` exists for intel claims and is not reached from any media path; no media projection carries a contradiction signal. |
-| MD151 | Visual Consensus Projection | **N** | No consensus object exists. `grep -rniE "consensus" artifacts/api-server/src/services/media artifacts/api-server/src/lib/media` → nothing. |
-| MD152 | When reports disagree, surface uncertainty ("Mixed reports — conditions may be changing") | **N** | *Unguarded absence.* No mixed-reports copy, no uncertainty state on `PlaceProjection` or `WorldZone` (`MediaProjectionService.ts:405-423`). A disagreeing set of perspectives renders as an agreeing one. |
+| MD149 | Corroboration stage | **C** | *(CLOSED 2026-09-14 by the Media lane.)* A place's mosaic now carries an agreement measure: `artifacts/api-server/src/services/media/MediaConsensusService.ts:186#export function buildVisualConsensus` counts INDEPENDENT SOURCES (MD147's `lib/intelIndependence` clusters, exported for reuse at `artifacts/api-server/src/services/media/MediaPerspectiveService.ts:120#export function countIndependentSources`) among the perspectives inside the FRESH window, and grades them `none \| single_source \| corroborated \| well_corroborated`. It inherits the anti-manipulation posture rather than restating it: one account posting three photos, two accounts posting one file, and a trip crew each corroborate NOTHING. Stale perspectives corroborate nothing about the current picture. Served on `PlaceProjection` (`artifacts/api-server/src/services/media/MediaProjectionService.ts:854#consensus: buildVisualConsensus(media, currentState.claims, nowMs, {`) and on every `WorldZone` (`:731#buildVisualConsensus`). Proof: `artifacts/api-server/src/test/mediaIndependentSources.test.ts` "MD149 — corroboration counts INDEPENDENT sources inside the fresh window" (5 cases). Mutations red: counting contributors instead of clusters; ignoring the fresh window; dropping the field from the projection. |
+| MD150 | Contradiction stage | **C** | *(CLOSED 2026-09-14 by the Media lane.)* The media path now REACHES `lib/intelConflict` — it does not fork it. The conflict state was already riding on every gated live-claim envelope Media fetches (`artifacts/api-server/src/lib/liveClaimRead.ts:136#conflictState: ConflictState;`) and Media was dropping it on the floor; `artifacts/api-server/src/services/media/MediaConsensusService.ts:156#function worstContradiction(` folds it into a place/zone-level `contradiction` block through the canonical `normalizeConflictState`, so an unrecognised stored value still reads as `material` — the stricter direction. A photograph asserts no value, so perspectives are NOT scored against each other; inventing a value axis for them would be fabrication and is refused explicitly in the module header. Proof: `artifacts/api-server/src/test/mediaIndependentSources.test.ts` "MD150 — the contradiction stage reaches lib/intelConflict from a media path" (4 cases), including an end-to-end fixture that promotes a scope and serves a `conflict_state = material` snapshot. Mutations red: returning no contradiction; reading the state leniently instead of through `normalizeConflictState`. |
+| MD151 | Visual Consensus Projection | **C** | *(CLOSED 2026-09-14 by the Media lane.)* The consensus object exists and is served: `artifacts/api-server/src/services/media/MediaConsensusService.ts:119#export interface VisualConsensus {` — `state` (`insufficient \| corroborated \| mixed`), the corroboration measure (MD149), the contradiction block (MD150), the §18 uncertainty label and a `requestAnotherObservation` flag that routes to the EXISTING §19 Request-a-View surface. It is on `PlaceProjection` (`artifacts/api-server/src/services/media/MediaProjectionService.ts:761#consensus: VisualConsensus;`) and on `WorldZone` (`:662#VisualConsensus`). Empty input yields `insufficient`, never agreement. Proof: `artifacts/api-server/src/test/mediaIndependentSources.test.ts` "MD151 — a Visual Consensus Projection object exists and is well-formed" + "the consensus object is SERVED on the place projection". |
+| MD152 | When reports disagree, surface uncertainty ("Mixed reports — conditions may be changing") | **C** | *(CLOSED 2026-09-14 by the Media lane.)* The copy is `artifacts/api-server/src/services/media/MediaConsensusService.ts:77#export const MIXED_REPORTS_LABEL = "Mixed reports — conditions may be changing";`, emitted as `consensus.uncertaintyLabel` on the place projection and on every world zone, and the consensus `state` flips to `mixed`. THRESHOLD, stated because it is the whole judgement: the banner fires only on a **material** conflict, the same threshold `lib/intelConflict` itself uses to suppress a Live label; a `minor` disagreement is recorded in the block and gets no banner, because escalating it would put "Mixed reports" on every venue where two honest people said 'busy' and 'packed'. A material dispute OUTRANKS corroboration — four agreeing photographs do not settle a disputed live claim. CAVEAT, the same one MD159 carries: with the intel spine holding zero rows in production (`docs/architecture/intel-spine-liveness.md`) no live claim can conflict there yet, so the banner is correct and currently unreachable in prod. Proof: `artifacts/api-server/src/test/mediaIndependentSources.test.ts` "MD152 — when reports disagree, the uncertainty is SURFACED" (3 cases) plus the end-to-end promoted-scope fixture. Mutations red: nulling the label; giving `minor` the banner; letting corroboration outrank the dispute. |
 | MD153 | §19 "Last visual update Nm ago" / "Show what's happening?" mission prompt | **C** | `components/RequestAViewPrompt.tsx`; freshness copy from `state/freshness.ts`. |
 | MD154 | §19 Request a View — a user requests a specific current perspective | **C** | `services/media/MediaViewRequestService.ts:1-27` + `routes/mediaViewRequest.ts:61`; it **consumes** the existing `intel_mission_candidates` machinery rather than forking a parallel mission system. |
-| MD155 | §19 control: opt-in contributor eligibility | **C** | `MediaViewRequestService.ts:20-24` — *"only opted-in + eligible + un-blocked contributors are selected as recipients; block state that cannot be read ⇒ ask nobody"*; opt-in written at `routes/mediaViewRequest.ts:94`. |
+| MD155 | §19 control: opt-in contributor eligibility | **C** | `MediaViewRequestService.ts:20-24` — *"only opted-in + eligible + un-blocked contributors are selected as recipients; block state that cannot be read ⇒ ask nobody"*; opt-in written at `routes/mediaViewRequest.ts:111#/v1/media/view-requests/opt-in`. *(Repointed and ANCHORED 2026-09-15: the line was 94 and the `recipientsDetermined` provenance comment pushed it down 17. `check:doc-citations` did NOT catch it — the citation was UNANCHORED, so the only thing checked was that the file is long enough, which is exactly the blind spot that pass names. Anchored now so the next shift fails loudly.)* |
 | MD156 | §19 control: throttling | **C** | `MediaViewRequestService.ts:14-17` — per-viewer **and** per-place fixed windows via `lib/rateLimit`. |
 | MD157 | §19 control: safety | **C** | `MediaViewRequestService.ts:17-20` — a place hosting a restrictive gem or protected location is refused, and an **undetermined** gem lookup is refused rather than guessed. |
 | MD158 | §19 control: anti-spam | **C** | `MediaViewRequestService.ts:16` — a near-duplicate OPEN request for the same (place, family) is refused. |
@@ -558,19 +587,19 @@ testable structure by §3 and §4.1. Narrative.
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| MD164 | `MediaExperienceProjection` contract | **C** | `services/media/MediaExperienceResolver.ts:31` onward; served at `routes/mediaWorld.ts:149`. |
-| MD165 | An experience resolves from a canonical Event **or** a Trip (`placeIds`, `eventId`, `tripId`) | **C** | `MediaExperienceResolver.ts:33#kind` `kind: "event" | "trip"`, with event eligibility reusing `routes/events.checkEventEligibility` (imported at `:17#checkEventEligibility`) rather than re-implementing it. |
+| MD164 | `MediaExperienceProjection` contract | **C** | `services/media/MediaExperienceResolver.ts:110#export interface MediaExperienceProjection {` onward; served at `routes/mediaWorld.ts:149`. |
+| MD165 | An experience resolves from a canonical Event **or** a Trip (`placeIds`, `eventId`, `tripId`) | **C** | `MediaExperienceResolver.ts:112#kind` `kind: "event" | "trip"`, with event eligibility reusing `routes/events.checkEventEligibility` (imported at `:17#checkEventEligibility`) rather than re-implementing it. |
 | MD166 | `currentState` on an experience | **C** | `MediaExperienceResolver.ts:24-27` reads current state only through the gated live-claim read. |
 | MD167 | `perspectiveCount` + `contributorCount` | **C** | Assembled from `MediaPerspectiveService` group counts. |
 | MD168 | `freshness` | **C** | `lib/media/mediaFreshness.aggregateFreshness`, imported at `MediaExperienceResolver.ts:29`. |
 | MD169 | `confidence` | **W** | The field exists on the shape but no experience-level confidence is computed — the only confidence in the media path is the per-forecast band in `mediaTimeBands`. A declared-but-unfilled field. |
 | MD170 | `heroMedia` drawn through the eligibility gate and coarse projector | **C** | `MediaExperienceResolver.ts:10-13` + `projectCandidatesProtected`. |
-| MD171 | §23.1 Experience chains (Dinner → Rooftop → Nightclub) | **N** | No chain type, no ordered multi-place experience anywhere in `services/media/`. `MediaExperienceProjection` carries `placeIds: string[]` with no ordering semantics and no traversal. |
-| MD172 | §23.1 action: Follow This Night | **N** | No such action in `MediaActionResolver`. |
-| MD173 | §23.1 action: Save Route | **N** | Route plans exist (`route_plans`, `routes/routePlan.ts`) and no media action reaches them. |
+| MD171 | §23.1 Experience chains (Dinner → Rooftop → Nightclub) | **C** | *(CLOSED 2026-09-14 by the Media lane.)* `artifacts/api-server/src/services/media/MediaExperienceResolver.ts:76#export function buildExperienceChain(media: readonly MediaProjection[]): ExperienceChain {` derives an ORDERED multi-place chain and `MediaExperienceProjection` now carries it (`:60#ExperienceChain`), on both the event and the trip branch (`:266#buildExperienceChain`, `:330#buildExperienceChain`). THE ORDER IS OBSERVED, NOT ASSERTED: a stop's position is the FIRST observed perspective at that place, and the object says so in a `derivedFrom: "observed_capture_times"` field so the claim travels with the data. Nothing infers a route, a traveller's path or an intention: a place with no perspective is not a stop, a place the lib/mediaLocationVisibility choke point withheld is not a stop, one place is not a chain, and an empty experience gets an empty chain. Proof: `artifacts/api-server/src/test/mediaWorldProjection.test.ts` "MD171 — an experience carries an ORDERED chain derived from observed capture times" (6 cases). Mutations red: keeping page order; keying on the last perspective instead of the first; admitting a withheld place; calling one place a chain. |
+| MD172 | §23.1 action: Follow This Night | **C** | *(CLOSED 2026-09-14 by the Media lane.)* `artifacts/api-server/src/services/media/MediaActionResolver.ts:645#id: "follow_this_night",` → `GET /api/media/experiences/:experienceId`, the projection that carries the chain, offered ONLY when the media's experience actually has one (`chain.isChain`, i.e. two or more distinct DISCLOSABLE places with observed perspectives) and only when `resolveExperience` re-passes the viewer gate. A trip the viewer may not see yields no action. Proof: `artifacts/api-server/src/test/mediaActionsCompass.test.ts` "MD172/MD173 — the §23.1 chain actions" (5 cases). Mutations red: offering it without a chain. |
+| MD173 | §23.1 action: Save Route | **W** | *(PARTLY CLOSED 2026-09-14 by the Media lane — the verdict moves N → W, not to C.)* WHAT CLOSED: a media action now reaches the canonical route-plan system, which is the whole of what the row said was missing. `artifacts/api-server/src/services/media/MediaActionResolver.ts:665#id: "save_route",` → `POST /api/route-plans`, with the chain's stops as canonical place ids, capped at the endpoint's own `max(20)` and offered only when the chain clears its own `min(2)` (`artifacts/api-server/src/routes/routePlan.ts:62#  stops: z.array(CandidateStopSchema).min(2).max(20),`) — so the rail never offers a route the endpoint would reject. WHAT IS STILL OPEN: `CandidateStopSchema` requires `lat`/`lng` (`:48#lat:`) and this rail is coordinate-free by construction, so the emitted stops are not directly submittable — the client must complete each stop through the Map gateway it already holds, exactly as it does for `show_on_map`. **WHAT WOULD TURN THIS RED:** a client call site that takes this action's `stops`, resolves their geometry through the Map gateway and posts a route plan that comes back with an id — or, alternatively, a `sourceType`/`sourceId` branch in `POST /route-plans` that resolves a canonical place id server-side, which would close it without a client. Neither exists today. |
 | MD174 | §23.1 action: Add to Trip (on an experience) | **C** | `MediaActionResolver.ts:16-18` — the same `canEditPlan`-gated trip-plan-item action, offered on experience-bound media. |
 | MD175 | §23.1 action: Remix | **N** | No remix concept anywhere in the tree. |
-| MD176 | §23.1 action: Ask Compass (on an experience) | **C** | `CompassMediaContext.ts:98` carries the experience's entity refs into the Compass ask. |
+| MD176 | §23.1 action: Ask Compass (on an experience) | **C** | `CompassMediaContext.ts:232` carries the experience's entity refs into the Compass ask. |
 
 ### §24 Ranking
 
@@ -641,11 +670,11 @@ and can never inflate one.
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| MD216 | The People lens prioritises followed users, Trip Crew, Shared Moment participants and relevant creators | **W** | `MediaProjectionService.ts:587` `buildPeopleProjection` is the only builder requesting `needFollows: true` (`routes/mediaWorld.ts:214`) — followed users and creators are handled. Trip Crew and Shared Moment participants are not: no `trip_members` or shared-moment read in the builder. Two of four. |
+| MD216 | The People lens prioritises followed users, Trip Crew, Shared Moment participants and relevant creators | **W** | `MediaProjectionService.ts:1025#export async function buildPeopleProjection(` `buildPeopleProjection` is the only builder requesting `needFollows: true` (`routes/mediaWorld.ts:214`) — followed users and creators are handled. Trip Crew and Shared Moment participants are not: no `trip_members` or shared-moment read in the builder. Two of four. |
 | MD217 | Uploading media does not imply precise live location | **C** | `lib/mediaProcessing.ts:1-22` strips **all** EXIF including GPS on re-encode, and `lib/videoMetadata.ts` strips the MP4/MOV capture-location atoms; `mediaProjection.ts:76-97` has no coordinate field to carry one even if it survived. |
 | MD218 | MediaAsset = photo or video file | **C** | `0191_media_assets.sql:18` `media_type IN ('image','video')`. |
 | MD219 | Post = social publication | **C** | `posts` spine; `routes/posts.ts`. |
-| MD220 | Postcard = curated travel narrative, Passport-facing media expression | **C** | `passport_postcards`, `routes/postcards.ts`; counted as its own My-World bucket at `MediaProjectionService.ts:743`. |
+| MD220 | Postcard = curated travel narrative, Passport-facing media expression | **C** | `passport_postcards`, `routes/postcards.ts`; counted as its own My-World bucket at `MediaProjectionService.ts:1271#{ key: "postcards", label: "Postcards"`. |
 | MD221 | Memory = preserved meaningful experience | **C** | `memories` table; `services/passport/PassportMemoryService.ts:133`; `MyWorldMemoryService.ts:1-33` consumes rather than forking it. |
 | MD222 | Shared Moment = permitted shared real-world experience | **W** | The object exists (`routes/sharedMoments.ts`, shared-moment Wall renderer) but it is **outside the media context graph** (MD51) and outside the People lens (MD216); §28 requires it as a media object semantic and Media cannot address one. |
 | MD223 | Perspective = visual contribution to world context | **C** | `MediaPerspectiveService.ts:1-15`. |
@@ -653,7 +682,7 @@ and can never inflate one.
 | MD225 | Passport continues to use Postcards as its primary media expression | **C** | `services/passport/` reads `passport_postcards`; no media-world projection is mounted inside Passport. |
 | MD226 | Do not duplicate the full Media product inside Passport | **C** | `MyWorldMemoryService.ts:1-33` — the My-World memory reader *consumes* the §12 derived-memory core and reuses `PassportRemembersService`'s suppression filter rather than forking it; `:14-23` is explicit that the allow/deny boundary is shared, not copied. |
 | MD227 | My World filters: All · Posts · Postcards · Memories · Trips · Tagged · Hidden Gems | **C** | `MyWorldMediaScreen.tsx:5-7`; server counts at `MediaProjectionService.ts:742-746`. |
-| MD228 | Search my world | **N** | No search input on `MyWorldMediaScreen.tsx`, no `q`/`query` parameter on `GET /media/me` (`routes/mediaWorld.ts:221-243`), and no media search service at all (MD324). |
+| MD228 | Search my world | **W** | *(PARTLY CLOSED 2026-09-14 by the Media lane — N → W.)* WHAT CLOSED: the owner-scoped search exists server-side. `artifacts/api-server/src/services/media/MediaSearchService.ts:320#export async function searchMedia` takes `scope: "me"` and narrows through the shared loader's single-author path, so "Show my Bangkok rooftop photos" is answerable as `q` + `city` + `scope=me` (proved by `mediaWorldProjection.test.ts` "scope=me returns only the viewer's own media"). WHAT IS STILL OPEN, unchanged: `MyWorldMediaScreen.tsx` has no search input, and `GET /media/me` still takes no `q` — the owner library and the search are two endpoints, not one. **WHAT WOULD TURN THIS RED:** a search field on the My World surface that issues `GET /media/search?scope=me`, or a `q` parameter on `GET /media/me`. The first is client work this lane does not own; the second is a ten-line change to `routes/mediaWorld.ts` that was deliberately NOT made, because duplicating the matcher in a second endpoint is how the two drift apart. |
 | MD229 | Owner-only buckets: Drafts · Archived · Uploads · Processing | **C** | `MediaProjectionService.ts:681-712` builds `drafts`/`archived`/`processing` from the owner's own rows and `:742` counts uploads; the route resolves identity from the session only (`routes/mediaWorld.ts:225-231`). |
 
 ### §31 Memory Integration · §31.1 Hidden Gem Memory
@@ -683,18 +712,18 @@ here. (MD238's rank reads `hidden_gem_contributions`, absent from production —
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| MD242 | The `CompassMediaContext` contract | **C** | `compass/CompassMediaContext.ts:98` `buildCompassMediaContext`, wired into the real ask path at `routes/compass.ts:1484`. |
-| MD243 | `entityRefs` — coarse, opaque, viewer-permitted | **C** | `CompassMediaContext.ts:26-33` — refs come from `resolveMediaEntities`, which runs the location/gem choke point, so a hidden venue, a gem-ceilinged place, and a protected gem's **name** are all withheld before anything is rendered into the prompt. |
-| MD244 | `viewerContext` | **C** | `CompassMediaContext.ts:49-54` — `viewerCountry` and `subjectCity` only, *"never a coordinate"*. |
+| MD242 | The `CompassMediaContext` contract | **C** | `compass/CompassMediaContext.ts:232` `buildCompassMediaContext`, wired into the real ask path at `routes/compass.ts:1567#const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, Date.now());`. |
+| MD243 | `entityRefs` — coarse, opaque, viewer-permitted | **C** | `CompassMediaContext.ts:26-53` — refs come from `resolveMediaEntities`, which runs the location/gem choke point, so a hidden venue, a gem-ceilinged place, and a protected gem's **name** are all withheld before anything is rendered into the prompt. |
+| MD244 | `viewerContext` | **C** | `CompassMediaContext.ts:69-74` — `viewerCountry` and `subjectCity` only, *"never a coordinate"*. |
 | MD245 | `permittedIntelligenceRefs` | **C** | `CompassMediaContext.ts:19-25` — filtered **twice**: the intel comes only from the gated fail-closed live-claim read, then is filtered to refs whose place the viewer is eligible to see. |
-| MD246 | Question: "Is this worth going to now?" | **C** | `CompassMediaContext.ts:9-12` names it as the driving case; the context lines are appended to the ask at `routes/compass.ts:1484`. |
+| MD246 | Question: "Is this worth going to now?" | **C** | `CompassMediaContext.ts:9-12` names it as the driving case; the context lines are appended to the ask at `routes/compass.ts:1567#const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, Date.now());`. |
 | MD247 | Question: "Find somewhere like this." | **C** | Same; `find_similar` action at `MediaActionResolver.ts:396`. |
 | MD248 | Question: "Is this still busy?" | **C** | Answerable from `permittedIntelligenceRefs` (gated live claims); returns nothing rather than guessing when live is off. |
 | MD249 | Question: "Where is this?" | **C** | `entityRefs` carry the coarse place label subject to the owner's tier and any gem ceiling. |
 | MD250 | Question: "Build a plan around this." | **C** | `create_plan` action (`MediaActionResolver.ts:421`), Compass-gated. |
 | MD251 | Question: "What's nearby?" | **C** | `see_nearby` (`MediaActionResolver.ts:385`) + the map projection. |
-| MD252 | Question: "Where should we go after this?" | **N** | No sequencing concept in the media→Compass context: no next-stop, no chain (MD171), no time-of-evening term. |
-| MD253 | Question: "Find a quieter or cheaper version." | **N** | See MD101 — no comparative modifier exists anywhere in the media path. |
+| MD252 | Question: "Where should we go after this?" | **N** | No sequencing concept in the media→Compass context: no next-stop, no chain (MD171), no time-of-evening term. *(STATED ABSENCE FALSIFIED 2026-09-13, and **this verdict is owed a re-read this note does not perform**. `fa5d7c25d` added a sequencing concept to exactly the context this row says has none: `artifacts/api-server/src/compass/CompassMediaContext.ts:225#export function buildSequencingAnchor` carries the canonical place the media resolved to, the coarse city, and a `chainable` flag that is FALSE — with the prompt saying the question cannot be answered — when the location/gem choke point withheld the place, and the block is rendered into the real ask at `routes/compass.ts:1567#const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, Date.now());`. census-compass §12.1 records the build as CM-03 `W → C` and cites this row by name. The letter is left at `N` because moving a row onto `C` is a media re-measure with mutations, not an integrator's note; the debt is recorded here and in this census's entry in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json` rather than silenced.)* |
+| MD253 | Question: "Find a quieter or cheaper version." | **N** | See MD101 — no comparative modifier exists anywhere in the media path. *(STATED ABSENCE FALSIFIED 2026-09-13, and **this verdict is owed a re-read this note does not perform** — see MD101, whose correction above states what is now true and what still is not. The comparator this row says exists nowhere exists in the Compass media context as of `fa5d7c25d`, for two of its three words, and reaches the ask; census-compass §12.1's CM-03 records the build. The letter is left at `N` for MD252's reason, and the debt is recorded rather than silenced.)* |
 | MD254 | Question: "Add this to my Trip." | **C** | `add_to_trip` (`MediaActionResolver.ts:458`), gated by `canEditPlan`. |
 
 ### §33 Privacy Model
@@ -767,8 +796,8 @@ over `travel-buddy-standalone/src`, `travel-buddy-standalone/app` and
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| MD287–MD293 | The seven example queries: "What does An Thuong look like right now?" · "Show hidden beaches near Da Nang." · "Nightlife that looks social tonight." · "Show my Bangkok rooftop photos." · "Where was this photo taken?" · "Show festival media from my Vietnam Trip." · "Find places that look like this." | **N** ×7 | There is no media search at all: no `MediaSearchScreen` (MD27), no `mediaSearch` client service (MD324), no `/media/search` route (MD367), and `routes/discoverySearch.ts` / `routes/mapSearch.ts` are place-and-post searches that carry no perspective, freshness or visual-similarity concept. Two of the seven ("Where was this photo taken?", "Find places that look like this") would additionally require capabilities the tree does not have (reverse-geo on stripped media; visual similarity — `lib/media/pHashUtils.ts` exists but serves dedup, not search). |
-| MD294 | Result types: Media · Places · Hidden Gems · Events · Trips · Experiences · People | **N** | No media search result union exists to type. |
+| MD287–MD293 | The seven example queries: "What does An Thuong look like right now?" · "Show hidden beaches near Da Nang." · "Nightlife that looks social tonight." · "Show my Bangkok rooftop photos." · "Where was this photo taken?" · "Show festival media from my Vietnam Trip." · "Find places that look like this." | **W** ×7 | *(RE-GRADED 2026-09-14 by the Media lane — N ×7 → W ×7.)* The stated basis of the N was three clauses and one of them is now false: `GET /media/search` exists (MD367) over `MediaSearchService` (MD349). Per query, so the ×7 is not a wave of the hand: **answerable today, server-side** — "Show my Bangkok rooftop photos" (`scope=me` + `city` + `q`), "Where was this photo taken?" (`mediaId` → the coarse place, proved by `mediaWorldProjection.test.ts` "MD291 — 'Where was this photo taken?' resolves a media id to its coarse place"), "Show festival media from my Vietnam Trip." (`tripId` + `q`), "What does An Thuong look like right now?" (`q` + `freshOnly`). **Partly answerable** — "Show hidden beaches near Da Nang." (`city` + `q` + gem results, but "near" is city-coarse, never a radius) and "Nightlife that looks social tonight." (`category` + `freshOnly`, but nothing models "looks social"). **Not answerable at all** — "Find places that look like this.": there is no cross-place visual index; `lib/media/pHashUtils` + `mediaDedupWorker` are a near-duplicate collapser over one place's own uploads and are NOT a similarity search, and the service says so in `MEDIA_SEARCH_UNSUPPORTED` rather than implying otherwise. And NO USER CAN ASK ANY OF THE SEVEN: MD27 and MD324 are still N. **WHAT WOULD TURN THIS RED:** a client search surface issuing these queries (MD27/MD324), a radius parameter resolved through the canonical Map rather than a city string, a modelled "social"/"busy-looking" signal on the perspective, and a cross-place visual-similarity index. Each is a separate, named build; none is a wording change. |
+| MD294 | Result types: Media · Places · Hidden Gems · Events · Trips · Experiences · People | **W** | *(PARTLY CLOSED 2026-09-14 by the Media lane — N → W.)* A result union now exists and is served: `artifacts/api-server/src/services/media/MediaSearchService.ts:127#export interface MediaSearchResults {` carries `media`, `places`, `people`, `hiddenGems` and `experiences`. FIVE KINDS COVERING FIVE OF THE SEVEN NAMED TYPES. Events and Trips are NOT separate result kinds: both reach results only as an `experience` item (the existing `MediaExperienceProjection`, which carries `kind: "event" \| "trip"`), so a search cannot return an event that no media is attached to, or a trip with no perspectives. **WHAT WOULD TURN THIS RED:** an `events` and a `trips` array on `MediaSearchResults`, each populated from the canonical event/trip surfaces through their own eligibility gates (`checkEventEligibility`, trip visibility) rather than through media attachment — i.e. a search that finds the Beach Festival because it is called Beach Festival, not because somebody photographed it. |
 
 ### §39 Offline / Degraded Mode
 
@@ -813,7 +842,7 @@ noted; a responsibility with no implementation anywhere is **N**.
 | MD321 | `services/mediaPrivacy.ts` | **W** | Privacy is resolved server-side and correctly (`lib/mediaLocationVisibility`); the client carries no privacy module and therefore no client-side privacy state for a composer to consult. |
 | MD322 | `services/mediaContext.ts` | **N** | Only `types/mediaContext.ts` exists — the type, not the service. No client context resolver. |
 | MD323 | `services/mediaIntelligence.ts` | **N** | Absent. |
-| MD324 | `services/mediaSearch.ts` | **N** | Absent (see §38). |
+| MD324 | `services/mediaSearch.ts` | **N** | Absent. The SERVER half now exists (`artifacts/api-server/src/services/media/MediaSearchService.ts:320#export async function searchMedia` + `GET /media/search`, MD349/MD367), so this row is no longer blocked on "there is nothing to call" — it is blocked only on the client module. **WHAT WOULD TURN THIS RED:** `travel-buddy-standalone/src/features/media/services/mediaSearch.ts` calling `GET /api/media/search` and typed against `MediaSearchResults`, with a registered test. Client paths are outside the Media backend lane's ownership; this needs the client lane or an explicit hand-off. |
 | MD325 | `services/mediaCache.ts` | **N** | Absent (see §39). |
 | MD326 | `services/mediaActions.ts` | **C** | `src/features/media/services/mediaActions.ts` |
 | MD327 | `state/mediaWorldStore.ts` | **C** | `src/features/media/state/worldState.ts` + `hooks/useMediaWorld.ts` — renamed, same responsibility. |
@@ -845,7 +874,7 @@ Judged by responsibility, not by name — the divergence is recorded in each row
 | MD346 | MediaExperienceResolver | **C** | `services/media/MediaExperienceResolver.ts`. |
 | MD347 | HiddenGemMediaService | **C** | `services/hiddenGems/HiddenGemService.ts` + `HiddenGemContributionService.ts` + `lib/hiddenGemState.ts`. |
 | MD348 | MediaRankingService | **W** | `services/ranking/MediaFeedRankingService.ts` exists and ranks the **legacy** feed on engagement multipliers (§24); the World shell has no ranking stage at all (`MediaProjectionService.ts:846-848` sorts by capture time). Neither is §24's ranker. |
-| MD349 | MediaSearchService | **N** | Absent (§38). |
+| MD349 | MediaSearchService | **C** | *(CLOSED 2026-09-14 by the Media lane.)* `artifacts/api-server/src/services/media/MediaSearchService.ts:320#export async function searchMedia` — free text plus city / category / place / trip / scope / freshness / media-id criteria over the SHARED candidate loader and coarse projector, not a second read path. That is the load-bearing property and it is what the tests mostly assert: a blocked author, a private account, a coordinate and an undisclosable hidden gem are each absent from results because `loadEligibleCandidates` + `projectCandidatesProtected` are the only way in. Free text is matched AFTER projection, against the caption plus the DISCLOSURE-APPLIED labels, so a viewer cannot confirm "there is media at a place called X" for a venue the choke point just declined to name them. A criteria-free search returns nothing — it never degrades into the feed. Proof: `artifacts/api-server/src/test/mediaWorldProjection.test.ts` "MD349 — MediaSearchService: text recall" (5 cases) + "search is NOT a second read path: every gate still binds" (3) + "MD294 — the result kinds this search actually produces" (5). Mutations red: querying `posts` directly instead of the shared loader; ignoring the text term; dropping the empty-means-empty guard; dropping `mayDiscloseGemIdentity`; ignoring `freshOnly`; un-narrowing `scope=me`; emitting a place whose id was withheld. Known bounds, stated in the module header not hidden: no visual similarity, no radius, and free-text recall is capped by the shared loader's page. |
 | MD350 | MediaActionResolver | **C** | `services/media/MediaActionResolver.ts`. |
 | MD351 | MediaModerationService | **C** | `routes/adminMedia.ts` + `lib/moderationAudit.ts` + `post_media_moderation_ledger` + `lib/mediaEligibility` as the distribution gate. |
 | MD352 | MediaProcessingService | **C** | `lib/mediaProcessing.ts` + `lib/mediaPipeline.ts` (one policy for both transports) + `lib/videoMetadata.ts`. |
@@ -855,7 +884,7 @@ Judged by responsibility, not by name — the divergence is recorded in each row
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
 | MD353 | Media Context Gateway — canonical systems feed one gateway | **C** | `MediaProjectionService.ts:1-23` is that gateway: *"A THIN reader/aggregator … It owns NO truth."* |
-| MD354 | Viewer Eligibility resolves next | **C** | `MediaProjectionService.ts:344` `projectCandidatesProtected` is the only shaping path for a non-owner projection, and it runs eligibility then the location choke point. |
+| MD354 | Viewer Eligibility resolves next | **C** | `MediaProjectionService.ts:575#export async function projectCandidatesProtected(` `projectCandidatesProtected` is the only shaping path for a non-owner projection, and it runs eligibility then the location choke point. |
 | MD355 | Media Projection stage | **C** | `lib/media/mediaProjection.toMediaProjection` — a field whitelist (`:76-97`), not a policy. |
 | MD356 | Media Ranking stage before the client | **N** | The stage does not exist in the World-shell pipeline: `buildWorldProjection` sorts zones by item count (`:456-459`) and `buildTimelineProjection` by capture time (`:846-848`). Nothing between projection and client ranks anything. |
 
@@ -873,7 +902,7 @@ Judged by responsibility, not by name — the divergence is recorded in each row
 | MD364 | `GET /media/:mediaId/actions` | **C** | `routes/mediaActions.ts:43` |
 | MD365 | `GET /media/map` | **C** | `routes/mediaWorld.ts:271` |
 | MD366 | `GET /media/timeline` | **C** | `routes/mediaWorld.ts:245` |
-| MD367 | `GET /media/search` | **N** | Absent (§38). |
+| MD367 | `GET /media/search` | **C** | *(CLOSED 2026-09-14 by the Media lane.)* Registered as the eighth endpoint of the §43 router at `artifacts/api-server/src/routes/mediaWorld.ts:277#  "/media/search",`, `requireUser` + a tighter rate limit than the browse lenses (30/min — a search box is the cheapest enumeration primitive on any surface that has one), and it answers through `sendProjection`, so the fail-closed precise-location boundary scrub applies to it like every other route. Reachability is proved, not assumed: `artifacts/api-server/src/test/mediaWorldProjection.test.ts` "MD367 — GET /media/search is a reachable, auth-gated endpoint" starts the router on a loopback port and asserts 401/403 rather than 404, with an unregistered sibling path as the 404 control, and separately asserts `routes/index.ts` mounts `mediaWorldRouter` BEFORE `mediaFeedRouter` — the one line that keeps `/media/search` from being swallowed by `mediaFeed`'s `/media/:id`. `mediaWorldBoundaryScrub.test.ts`'s per-route segment count was raised 7 → 8 in the same pass, so the new endpoint is inside the boundary guard rather than beside it. |
 | MD368 | `POST /media` | **C** | `POST /api/media/upload` (`src/services/media.ts:197` is its client), plus the signed-URL transport documented at `lib/mediaPipeline.ts:8-17`. |
 | MD369 | `POST /media/:id/attachments` | **N** | No attachment endpoint. Attachments are written only from inside two services (`PassportMemoryService.ts:133`, `HiddenGemService.ts:150`); no route creates one. |
 | MD370 | `POST /media/:id/contribution` | **W** | The nearest thing is `POST /api/media/:id/intent` (`routes/mediaActions.ts:82,145`) — a want-signal, not a contribution. Gem contributions go to `routes/hiddenGems.ts`, not to a media contribution endpoint. |
@@ -992,7 +1021,7 @@ and this line dropped every one of them … the funnel simply read zero."*
 | MD431 | Hidden Gems owns gem identity and gem-specific state | **C** | `hidden_gems` + `lib/hiddenGemState.ts:13-18`, which derives state at read time so it cannot drift from the owner. |
 | MD432 | Trips owns Trip context | **C** | Media reads `trips`/`trip_members` and never writes them; `MediaActionResolver.ts:458` hands "Add to Trip" to the trip endpoint under that endpoint's own gate. |
 | MD433 | Events owns event identity and lifecycle | **C** | `MediaExperienceResolver.ts:1-14` reuses `routes/events.checkEventEligibility` rather than re-implementing event visibility. |
-| MD434 | Live Intelligence owns current claims, evidence, confidence, freshness | **C** | `lib/liveClaimRead` is the sole source of a current-state label for Media (`MediaProjectionService.ts:379`); media freshness is typed so it cannot claim `live` (`mediaFreshness.ts:21`). |
+| MD434 | Live Intelligence owns current claims, evidence, confidence, freshness | **C** | `lib/liveClaimRead` is the sole source of a current-state label for Media (`MediaProjectionService.ts:621#export async function readCurrentState(`); media freshness is typed so it cannot claim `live` (`mediaFreshness.ts:21`). |
 | MD435 | Discovery owns opportunity ranking | **W** | `services/ranking/DiscoveryRankingService.ts` exists, and Media has its **own** ranker (`MediaFeedRankingService.ts`) with its own boost flags — the ownership line is crossed in the direction §48 forbids. |
 | MD436 | Compass owns recommendation and decision support | **C** | `compass/CompassMediaContext.ts:1-14` — *"It does NOT fork the Compass engine; the engine stays propose-only."* Media supplies context and reads nothing back as truth. |
 | MD437 | Map owns geographic projection | **C** | `MediaProjectionService.ts:906-914` — the media map carries **no geometry** and omits any cluster it cannot bind to a canonical place (`:934-937`). The strongest ownership boundary in the census. |
@@ -1083,3 +1112,1644 @@ separate clauses.
 
 That is not a construction failure. Every one of the 291 correct verdicts is real code I
 read. It is a **shipping** failure, and no certification scoped to construction can see it.
+
+---
+
+## 9. Six C rows executed, four of them wrong, and the two the pass repaired
+
+| Field | Value |
+| --- | --- |
+| **Measured at** | `3eaf2436f` — the tip of `claude/sweet-fermat-fmx7up` when this pass started, and an ancestor of the branch head that carries §9. The document's single `head_commit` row (§0) is **not** moved: this section re-reads six rows, not 450, and a document-wide declaration must not be moved by a partial re-measurement. The counted files this pass changed are named, one at a time with an argument, in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json`. |
+| **Method** | For each row: read the OBJECT the row cites, then execute the claim the row makes — follow the call site to a writer, or to the absence of one. Six rows were picked for weight, not for ease: everything §36 (moderation), the two report rows, and §16.1's duplicate check. |
+| **What this section is NOT** | A re-measurement of the other 444 rows. Nothing here says they are right; it says nobody re-read them. |
+| **Prior sections** | Unchanged and not restated. §1–§8 stand as written. Last statement wins for the six ids below. |
+
+### 9.1 What the report endpoint actually does
+
+MD105 read **C** on this evidence: the row named `POST /media/:id/report` at line 1070 of
+`routes/mediaFeed.ts` and said *"not-interested/hide are consumed as ranking penalties"* at
+lines 65 to 70 of `services/ranking/MediaFeedRankingService.ts`.
+Both halves are false, and the way they are false is worse than either.
+
+**The client sends viewer preferences to the moderation endpoint.** The Media options sheet
+is the reachable one — `components/media/MediaMoreMenu.tsx` is imported by `WatchFeed.tsx`
+and `GemsFeed.tsx`, which are two of the three modes of the shipped Media tab, not the dark
+World shell. For a non-owner its first two rows are "Not interested" and "Hide", **above**
+"Report", and both post to the report endpoint:
+`travel-buddy-standalone/src/components/media/MediaMoreMenu.tsx:135#await hideMedia(mediaId);`
+and `travel-buddy-standalone/src/components/media/MediaMoreMenu.tsx:142#await reportMedia(mediaId, 'hide_from_feed');`,
+through `travel-buddy-standalone/src/services/mediaInteractions.ts:124#export async function hideMedia`.
+
+So, before this pass:
+
+- On a **post**, tapping "Not interested" inserted a row into `reports` with
+  `reason_code = 'not_interested'` — the table `routes/reports.ts` documents as
+  evidence-preserving and never deleted. A viewer's taste became a permanent accusation
+  against another user's content.
+- On a **gem**, the same tap ran `reportGem`, which inserts `hidden_gem_reports` and then
+  increments the gem's report count at
+  `artifacts/api-server/src/services/hiddenGems/HiddenGemModerationService.ts:66#const { error: updError } = await db.from("hidden_gems").update({ report_count: next }).eq("id", gemId);`.
+  That is the same counter whose sibling function spends a paragraph explaining that a
+  report pile must never become a finding, or the trust system becomes a weapon.
+- **Nothing was hidden.** `post_hides` — created by
+  `artifacts/api-server/src/migrations/0116_post_hides.sql:9#CONSTRAINT post_hides_unique UNIQUE (user_id, post_id)`,
+  present in production, and READ by
+  `artifacts/api-server/src/routes/pulse.ts:157#const { data: hiddenRows } = await sc`
+  to suppress a viewer's hidden posts — was written by **nothing anywhere in the tree**.
+  Pulse honoured a list no surface could add to.
+- **The cited ranking penalty had no inputs.** `notInterestedPenalty` reads three fields
+  (`artifacts/api-server/src/services/ranking/MediaFeedRankingService.ts:348#const hideR = hideRate ?? (notInterestedCount != null ? notInterestedCount / total : 0);`)
+  and no producer in the tree set any of them. Every feed was ranked as though nobody had
+  ever hidden anything. MD105's second clause described a computation whose operands did
+  not exist.
+
+Three further divergences from the contract the row claims: the schema accepted
+`z.string().max(100).default("spam")`, so an **unknown** reason was written verbatim as a
+`reason_code` and a **missing** reason became a spam report; no severity was computed, so a
+`harassment` report from Media never reached the auto-restrict and anti-retaliation path
+`routes/reports.ts` exists to run; and there was no rate limit and no duplicate check, with
+`alreadyReported` hard-coded false on the post branch.
+
+**MD105: C → W at `3eaf2436f`.** MD371 (`POST /media/:id/report`) stays **C** — the endpoint
+§43 names does exist — but its one-citation evidence is exactly the kind of C that cannot
+see any of the above, and this section is the correction to that record rather than to the
+verdict.
+
+### 9.2 §36's "Safety moderation" is an admin console and an audit log
+
+MD269 read **C** on `media_assets.moderation_status`, `routes/adminMedia.ts`,
+`post_media_moderation_ledger` *(in production)* and `lib/moderationAudit.ts`. Executed:
+
+1. **The only production writer of `post_media` rows is the postcard transport**, and it
+   promotes to distributable unconditionally. The row is created pending at
+   `artifacts/api-server/src/routes/postcards.ts:481#moderation_status: 'pending',` and the
+   completion handler sets
+   `artifacts/api-server/src/routes/postcards.ts:978#moderation_status:      'approved',`
+   with no classifier, no queue and no hold of any kind between them. Nothing decides; the
+   state machine's promotion step is a literal.
+2. **`post_media_moderation_ledger` has no reader and no writer.** It appears in
+   `src/test/generated/liveColumns.json` and the two committed schema snapshots and nowhere
+   else — no migration creates it, no module touches it. It was cited as evidence by two
+   rows.
+3. **`lib/moderationAudit.ts` writes `moderation_actions`** — an audit of what an admin did,
+   after they did it. It is a record, not a stage.
+4. **`routes/adminMedia.ts` can write exactly three values** —
+   `artifacts/api-server/src/routes/adminMedia.ts:846#action === "approve" ? "approved" :`
+   and the two beneath it. Reactive and manual.
+
+§36 lists Safety moderation as a **pipeline stage**. What exists is an unconditional
+promotion plus a console someone may use afterwards. **MD269 C → W**, and with it
+**MD283 C → W** (§37 says video takes the same pipeline as images, which is true and is
+the problem — nothing decodes video, so nothing could classify it even in principle) and
+**MD351 C → W** (§41 names a *MediaModerationService*; there is no such module, and one of
+the four things cited in its place is inert).
+
+### 9.3 The distribution gate was fail-closed at one level and fail-open at the next
+
+MD273 read **C**: *"`filterEligibleMediaCandidates` is the fail-closed distribution gate"*,
+plus a second clause naming line 1119 of `services/wall/WallCandidateLoaders.ts` as the place
+*"the moderation states that must never reach a social surface"* are listed. The two clauses
+are about different code, and the row read them as one gate.
+
+The POST-level gate is an allow-list and is fail-closed. The per-`post_media`-row gate,
+fourteen lines below it in the same function, was a **deny-list of two legacy values**,
+`rejected` and `flagged`. Migration 2250 then reconciled media moderation onto the §36
+vocabulary —
+`artifacts/api-server/src/migrations/2250_media_asset_canonical_model.sql:26#3. moderation_status reconciled to a canonical superset`
+— adding `limited`, `removed` and `owner_deleted`, and the deny-list was never extended. A
+restricted item, a **taken-down** item and an **owner-deleted** item all read as
+distributable to the gate this document calls fail-closed. The strict list the row cites,
+`artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:1120#const QUICK_MEDIA_BLOCKED_MODERATION`,
+blocks four of them — but it runs on `media_assets`, the dark canonical layer, not on
+`post_media`, where the live gate is. The repository held two answers to one question, in
+two files, and the census quoted the strict one while the lax one ran.
+
+**MD273 C → W at `3eaf2436f`.** Bound stated honestly: `adminMedia` cannot write any of the
+three leaked states today, so this was a gate standing open, not a leak flowing through it.
+
+### 9.4 MD112's evidence was stale, in the direction that undercounts
+
+MD112 (§16.1 DUPLICATE CHECK) read **N** on *"No gem-level duplicate detection exists at
+submission **or anywhere else**."* The second half is false. Gem duplicate detection exists
+and is real similarity scoring, not a stub:
+`artifacts/api-server/src/lib/inputAssistance/duplicateDetection.ts:110#export function scoreGemDuplicate`
+and `artifacts/api-server/src/lib/inputAssistance/duplicateDetection.ts:241#export async function findDuplicateGems`,
+consumed by
+`artifacts/api-server/src/services/hiddenGems/HiddenGemModerationService.ts:288#export async function getDuplicateCandidates`
+and served at
+`artifacts/api-server/src/routes/hiddenGems.ts:1500#router.get("/admin/hidden-gems/duplicate-candidates"`.
+
+What is missing is only the placement §16.1 asks for: the submission handler
+`artifacts/api-server/src/routes/hiddenGems.ts:267#router.post("/hidden-gems"` does not call
+it, so the check is an admin queue rather than a stage. **MD112 N → W.**
+
+**Deliberately not built, and why.** The obvious fix — call `findDuplicateGems` at
+submission — would produce a `duplicateCandidates` field on the 201 that no client reads,
+because the detector's own contract forbids the only action that would matter: it never
+blocks creation and never auto-merges, and leaves the decision to the creation flow or the
+user. A server field with no decision behind it is a vacuous C, and shipping one to move a
+letter is the failure mode this document exists to catch. What MD112 needs is a client
+merge-or-create step; that is a client decision, not a server one, and it is named here
+rather than faked.
+
+### 9.5 What this pass built
+
+All five changes are on surfaces a user reaches today. None needs a migration; none is
+behind a flag.
+
+1. **The report endpoint now separates three intents.** New module
+   `artifacts/api-server/src/lib/reportReasons.ts:119#if (VIEWER_PREFERENCE_REASONS.has(r)) return "preference";`
+   classifies a reason as preference, abuse, gem-place-mismatch or unknown, and the endpoint
+   dispatches on it at
+   `artifacts/api-server/src/routes/mediaFeed.ts:1140#const intent = classifyMediaReportReason(reason);`.
+   A preference on a post upserts `post_hides`
+   (`artifacts/api-server/src/routes/mediaFeed.ts:1193#const hidden = await hidePostForViewer(sc, user.id, id);`)
+   and files nothing; a preference on a gem files nothing at all
+   (`artifacts/api-server/src/routes/mediaFeed.ts:1160#res.json({ ok: true, alreadyReported: false, hidden: false, store: "none" });`),
+   because production has no per-viewer gem hide store — doing nothing beats filing an
+   accusation. An unknown reason is refused instead of defaulted, and `reason` is now
+   required: `artifacts/api-server/src/routes/mediaFeed.ts:1131#reason: z.string().min(1).max(100),`.
+2. **A real report now carries the real contract.** Rate limit, a duplicate check that
+   fails closed the way `reportGem`'s does
+   (`artifacts/api-server/src/routes/mediaFeed.ts:1213#const { data: existingReport, error: existingErr } = await sc`),
+   and a computed severity
+   (`artifacts/api-server/src/routes/mediaFeed.ts:1242#severity: reportSeverityFor(reason),`).
+   The vocabulary is now one list, imported by both writers of the `reports` table:
+   `artifacts/api-server/src/routes/reports.ts:30#import { REPORT_REASON_CODES, reportSeverityFor }`
+   and `artifacts/api-server/src/routes/reports.ts:119#const severity = reportSeverityFor(reason_code);`.
+3. **The hide now hides.** A viewer-hide gate in the one choke point every media candidate
+   crosses — `artifacts/api-server/src/lib/mediaEligibility.ts:355#if (hiddenPostIds.has(c.id)) return false;`
+   — so Watch, Grid and, through `projectCandidatesProtected`, all six World-shell builders
+   honour it. Fail-soft, like the mute gate beside it and unlike the block gate: losing it
+   costs a preference, not a safety decision.
+4. **The §36 deny-list is now the union of the two the repository was holding**:
+   `artifacts/api-server/src/lib/mediaEligibility.ts:78#export const NON_DISTRIBUTABLE_MEDIA_MODERATION_STATES`.
+   It stays a deny-list rather than becoming an allow-list because `post_media` defaults to
+   the legacy `'pending'` and an allow-list would hide every new upload — that asymmetry is
+   argued in the constant's own header rather than left to look like an oversight.
+5. **The §24 penalty stops being a read with no writer.** `loadMediaSignals` now reads the
+   `watch_impression` rows `POST /media/:id/view` has always written and nothing has ever
+   read, and publishes a hide count **only** where an impression denominator exists —
+   without one,
+   `artifacts/api-server/src/services/ranking/MediaFeedRankingService.ts:346#const total = totalImpressions ?? 1;`
+   would turn a single tap into the maximum penalty.
+
+### 9.6 Mutations, and what each one turned red
+
+Seven. Each was applied, run, reverted, and the file compared byte-for-byte against its
+pre-mutation copy with `cmp`. Suite:
+`artifacts/api-server/src/test/mediaReportIntent.test.ts:171#describe("classifyMediaReportReason"`,
+26 cases, registered in `artifacts/api-server/package.json`.
+
+| Mutation | What it did | What went red |
+| --- | --- | --- |
+| M1 | restore `.default("spam")` on the reason schema | `refuses a body with no reason` — 1 of 26 |
+| M2 | make the classifier never return `preference`, and add the two preference strings to the report vocabulary | 4 red, incl. `hide writes post_hides, not reports` and `a preference on a GEM files nothing and never moves report_count` |
+| M3 | delete `severity` from the `reports` insert | `a harassment report is high severity` and `a spam report is normal severity` |
+| M4 | delete the viewer-hide gate line from `mediaEligibility` | `a hidden post never reaches the feed` |
+| M5 | shrink the deny-list back to `rejected` and `flagged` | 4 red: `owner_deleted`, `removed` and `limited` all became distributable |
+| M6 | publish a hide count with no impression denominator | `publishes NO hide count without an impression denominator` |
+| M7 | stop counting `watch_impression` rows | `counts distinct hides as notInterestedCount once the item has impressions` |
+
+M2 is the one worth naming: it is not a typo-scale edit but a re-creation of the exact
+production behaviour §9.1 reports, and it is the mutation that proves the suite would have
+caught the defect had the suite existed.
+
+**What would leave these green and worthless (P24).** M4 and M5 assert on
+`filterEligibleMediaCandidates` directly, so both stay green if a FEED stops calling it.
+That is not hypothetical for the World shell, whose callers are dark. The partial protection
+is `src/test/mediaFeed.test.ts`, which drives the HTTP route. There is still no test that
+the shipped route consults the gate *for the hide specifically*; that gap is real and is
+stated rather than papered over.
+
+### 9.7 Row moves
+
+Executed at `3eaf2436f`, before this pass's code:
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| MD105 | C | W | The reachable "Not interested" and "Hide" rows filed moderation reports on posts and on gems; the cited ranking penalty read three fields no producer wrote; the endpoint accepted any string, defaulted a missing reason to spam, computed no severity, rate-limited nothing and never checked for a duplicate. §9.1. |
+| MD273 | C | W | The per-`post_media` gate was the legacy two-value deny-list; `limited`, `removed` and `owner_deleted` — three of the six states 2250 made admissible — passed it. The strict list the row cited runs on a different table. §9.3. |
+| MD269 | C | W | §36 Safety moderation has no classifier, no hold and no queue: the postcard transport promotes to approved unconditionally, and one of the four things cited as evidence has no reader or writer in the tree. §9.2. |
+| MD283 | C | W | §37 video moderation is the same pipeline, and the pipeline decides nothing. Video is additionally never decoded, so no classifier could run on it even if one existed. §9.2. |
+| MD351 | C | W | There is no MediaModerationService. What exists is an admin route, an audit writer, an inert table and the distribution gate — the last of which §9.3 shows was itself half open. §9.2. |
+| MD112 | N | W | Stale evidence, in the undercounting direction: gem duplicate detection exists and scores real similarity; it runs in the admin queue rather than at submission, which is W, not N. §9.4. |
+
+After this pass's code, on the branch:
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| MD105 | W | C | Preference and abuse are separated and dispatched (§9.5.1); the report half carries the vocabulary, the rate limit, the duplicate check and the severity (§9.5.2); the preference half is stored in `post_hides`, honoured by every media surface (§9.5.3) and reaches the ranker with a denominator (§9.5.5). Seven mutations red. **The C is earned by the fix, not by the original evidence** — the row was silently wrong for as long as it read C. |
+| MD273 | W | C | The deny-list is now the union of the two the repository held, and the four leaked states are asserted red by mutation M5. |
+
+MD269, MD283, MD351 and MD112 are **not** repaired and stay where the first table puts
+them. A safety classifier, a video decode tier, a moderation service and a client
+merge-or-create flow are none of them branch-scale work, and none of them is faked here.
+
+### 9.8 Restated headline
+
+> | Measure | Was, §0 | Now |
+> | --- | --- | --- |
+> | Denominator (testable requirements) | 450 | **450** |
+> | BUILT-AND-CORRECT | 291 | **288** |
+> | BUILT-BUT-WRONG | 69 | **73** |
+> | NOT-BUILT | 88 | **87** |
+> | CANNOT-VERIFY | 2 | **2** |
+> | **CONSTRUCTED%** = (C+W)/450 | 80.0 % | **361 / 450 = 80.2 %** |
+> | **CORRECT%** (raw) = C/450 | 64.7 % | **288 / 450 = 64.0 %** |
+>
+> **Correctness went DOWN and construction went up by one row.** That is the whole shape of
+> this pass: four rows moved backward on executed evidence, two moved forward on code that
+> exists and is mutation-tested, and one moved up out of NOT-BUILT because its evidence was
+> stale rather than because anything was built for it.
+
+The **spec-attributable** figure (§0: 216 / 450) is **not restated**. Attribution was not
+re-run, and adjusting it by subtracting the demoted rows would be arithmetic dressed as
+measurement. Read §0's attribution number as measured at `68ed59d9` and untouched here.
+
+### 9.9 CEILING — what this pass could not reach, and why
+
+- **The dark shell is still the ceiling on everything §4.1, §15, §32, §44 and §45.**
+  `MEDIA_WORLD_SHELL_ENABLED` is seeded false and `MEDIA_ANALYTICS_ENABLED` is seeded false
+  (`artifacts/api-server/src/migrations/2038_media_admin_flags.sql:65#('MEDIA_ANALYTICS_ENABLED', false,`).
+  Every §44 telemetry row and every §45 north-star emitter is therefore correct over a path
+  nothing reaches — **⌀** by the owner's rule, **C** by this document's own convention (§1,
+  *"Flag-dark is a deployment fact, not a verdict"*). Those two rules disagree, and §9.10
+  puts the disagreement to the owner rather than silently re-basing a hundred rows.
+- **`media_assets` is still on no read path**, so MD36–MD38, MD272 and MD338–MD339 remain
+  what §6 already says they are.
+- **MD8 (authentic outranks generated) cannot be built without the canonical flip.** The
+  ranker has no provenance input because `post_media` has no `source_type` column;
+  `media_assets` has one and is dark. Building a penalty term over a field that is always
+  null would be a vacuous C, which is why it was not built.
+- **Deployment.** Everything in §9.5 is on a branch. Built on a branch is not merged; merged
+  is not deployed. Nothing here has run against production data, and no database was queried
+  in this pass either.
+- **The other 444 rows were not re-read.** Six were, and four of them were wrong. On a
+  document with 288 C rows and no prior adversarial re-read, that is not a reassuring
+  sample — it is a reason to expect more.
+
+### 9.10 Two decisions surfaced rather than taken
+
+1. **The flag-dark convention contradicts the owner's honesty rule.** §1 of this document
+   grades a complete implementation behind a flag seeded OFF as BUILT-AND-CORRECT, following
+   the Wall census. The owner's standing rule is that a row is correct only when true on
+   every deployment, and that a C over a path nothing reaches is vacuous. Applying the
+   owner's rule here would move a large fraction of the 288 — the whole §44 and §45
+   telemetry block, the §15 action rail, the §32 Compass affordances and the §4.1 shell —
+   from C to W in one edit, and would make this census incomparable with the twelve siblings
+   that follow the other convention. **Not taken.** It is a corpus-wide convention change,
+   and one lane should not make it inside one document.
+2. **`census-media.md` counts `routes/mediaFeed.ts`, which `census-wall.md` also counts.**
+   This pass changed it, so both censuses are acknowledged in
+   `CENSUS_STALENESS_ACKNOWLEDGED.json` with a per-file argument. One Wall citation — W7's
+   `post_saves` anchor — moved by 110 lines and was repointed, not deleted. The
+   anchored-citation check is what found it, which is the check working.
+
+---
+
+## 10. CORRECTION to §9.1 — the hide was already built, and Media was bypassing it
+
+**§9.1 states something false, and this section is the correction rather than a
+deletion.** The sentence was:
+
+> **Nothing was hidden.** `post_hides` … was written by **nothing anywhere in the tree**.
+> Pulse honoured a list no surface could add to.
+
+Both halves are wrong. At `3eaf2436f`, `post_hides` had **one writer and three readers**:
+
+| | Where |
+| --- | --- |
+| WRITER | `POST /api/posts/:postId/hide` — `artifacts/api-server/src/routes/posts.ts:2619#router.post("/posts/:postId/hide"`, an idempotent upsert on the same conflict target §9 later duplicated |
+| READER | the following feed — `artifacts/api-server/src/routes/posts.ts:1238#.from("post_hides")` |
+| READER | the global feed — `artifacts/api-server/src/routes/posts.ts:1380#.from("post_hides")` |
+| READER | Pulse — `artifacts/api-server/src/routes/pulse.ts:157#const { data: hiddenRows } = await sc` |
+| CLIENT | `travel-buddy-standalone/src/services/posts.ts:652#export async function hidePost` , called from `travel-buddy-standalone/src/components/PulseFeedCard.tsx:141#const ok = await hidePost(item.id);` |
+| TEST | `artifacts/api-server/src/test/postHide.test.ts:5#- Authenticated user can hide a post (upserts into post_hides, returns { hidden: true })` |
+
+### 10.1 How the error was made, because the method is the point
+
+The absence was established with
+`grep -rn "post_hides" src migrations | grep -v "\.test\." | head -20`. The writer sorted
+past the cut. **An absence asserted from a truncated list is not a measurement**, and §7's
+first method caveat already says this document settles every "nothing writes X" by opening
+call sites rather than by counting greps — a rule I stated and then broke in the same
+document. The two "nothing writes X" claims §7 names (`media_assets`,
+`media_intent_signals`) were settled properly; this third one was not, and it is the one I
+added.
+
+It is the same defect class §9 exists to catch, arriving by the same route: a confident
+sentence, an anchored citation, and a check underneath it that was never run.
+
+### 10.2 The corrected finding is worse, not weaker
+
+Portava has a **complete, reachable, tested hide feature**: a route, three feed readers, a
+client service and a UI entry point on the Pulse card. Tapping "Hide" on a Pulse card
+worked. Tapping "Hide" on the **Media** tab — the same gesture, two rows above "Report" in
+the same options sheet — posted to `/api/media/:id/report` and filed a moderation report
+instead.
+
+So Media did not lack a hide. Media built a **divergent duplicate of a working feature and
+pointed it at the moderation queue**. "The feature was never built" would be a gap; this is
+a bypass, and a bypass is worse, because the working path's existence is what makes the
+wrong one look finished.
+
+### 10.3 Does MD105's verdict move? No — re-derived.
+
+The W at `3eaf2436f` rested on four things. The false one was **decoration on the first,
+not load-bearing**, and each of the surviving three is independently sufficient:
+
+| Leg | Status |
+| --- | --- |
+| Preference taps filed moderation reports on both the post and the gem surface | Holds, and §10.2 strengthens it |
+| The report half diverged from the contract: `.default("spam")`, no severity, no rate limit, no duplicate check | Holds — re-verified at `routes/mediaFeed.ts` on the base |
+| The "Not Relevant" ranking penalty read three fields no producer in `src` set | Holds — `hideRate` and `notInterestedCount` are consumed and set by nothing; `adminCompass`'s `hideRatePct` is a different field off `hide_category` |
+| *"`post_hides` had no writer"* | **FALSE — withdrawn** |
+
+The C after the repair never depended on the withdrawn leg either. What it needs is that
+the media path now writes the store and that the media surfaces honour it: the report route
+writes through `artifacts/api-server/src/lib/postHide.ts:49#export async function hidePostForViewer`,
+the gate at `artifacts/api-server/src/lib/mediaEligibility.ts:355#if (hiddenPostIds.has(c.id)) return false;`
+reads it, and the ranker counts it. Mutations M2, M4 and M8 hold all three red.
+
+**No verdict moves.** MD105 stays **C**, re-derived on the corrected premises; MD273,
+MD269, MD283, MD351 and MD112 are untouched by this correction — none of them cited
+`post_hides`.
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| MD105 | C | C | Unchanged. §9.7's W→C is re-derived in §10.3 with the false premise removed; the three surviving legs each carry it on their own. |
+
+### 10.4 Two writers by choice, or one writer by design
+
+§9 wrote a second three-line upsert into `post_hides` rather than reaching the existing
+hide path — which, at the time, it did not know existed. Left alone that would be two
+copies of an idempotency contract, and the conflict target **is** the contract: get
+`onConflict`/`ignoreDuplicates` wrong on one caller and a second tap becomes a 500 on a
+gesture whose entire point is that repeating it is harmless. That is the same drift that
+had already put two different moderation deny-lists in two files (§9.3).
+
+So this section extracts `artifacts/api-server/src/lib/postHide.ts:58#{ onConflict: "user_id,post_id", ignoreDuplicates: true },`
+and routes **both** callers through it —
+`artifacts/api-server/src/routes/posts.ts:2637#const hidden = await hidePostForViewer(sc, user.id, postId);`
+and `artifacts/api-server/src/routes/mediaFeed.ts:1193#const hidden = await hidePostForViewer(sc, user.id, id);`.
+**Two routes reach the hide, by choice; one writer, in one file.** A new case,
+`the media hide "writes through the SAME idempotency contract as POST /posts/:postId/hide"`,
+asserts the conflict target rather than only the row.
+
+### 10.5 Mutation M8
+
+| Mutation | What it did | What went red |
+| --- | --- | --- |
+| M8 | change the shared writer's conflict target to `post_id` and `ignoreDuplicates: false` | `writes through the SAME idempotency contract as POST /posts/:postId/hide` — 1 of 27; `postHide.test.ts` stayed green, which is the point: its own fake never inspected the options, so the contract was unasserted on BOTH callers until now |
+
+Applied, run, reverted, `cmp` byte-identical. 27 cases in `mediaReportIntent`, 4 in
+`postHide`, all green after revert.
+
+### 10.6 Restated headline — unchanged by this correction
+
+> | Measure | Value |
+> | --- | --- |
+> | Denominator (testable requirements) | **450** |
+> | BUILT-AND-CORRECT | **288** |
+> | BUILT-BUT-WRONG | **73** |
+> | NOT-BUILT | **87** |
+> | CANNOT-VERIFY | **2** |
+> | **CONSTRUCTED%** = (C+W)/450 | **361 / 450 = 80.2 %** |
+> | **CORRECT%** (raw) = C/450 | **288 / 450 = 64.0 %** |
+>
+> Identical to §9.8. A correction that withdraws a premise without moving a verdict must
+> not move the number either, and saying so is part of the correction.
+
+### 10.7 What §9 got right, kept verbatim because it still applies
+
+§9's closing observation stands and this section is its best illustration: **six rows of a
+288-row C column were re-read and four were wrong.** The honest reading was never "four
+rows were wrong" — it was "nobody has checked the other 282, and the sample says that
+matters." §10 adds the second half: the re-reader is in the sample too. One of the three
+supporting claims under the pass's own headline finding was false, it was anchored,
+authoritative and wrong for one commit, and it was caught by a reviewer rather than by any
+check in this repository. Nothing here can check whether a stated absence was actually
+searched for.
+
+**Citations repointed, not deleted.** §9's anchors into `routes/mediaFeed.ts` moved when
+§10 changed that file, and §9.5.1's citation of the inline upsert names code §10 replaced.
+Both were repointed at the lines the code now occupies, and `census-wall.md` W7's
+`post_saves` anchor moved a second time and was repointed again. `check:doc-citations`
+found every one of them, which is the third time in two sections that an anchored citation
+has earned its keep.
+
+---
+
+## 11. The C column audited — 208 rows machine-resolved, 120 executed, seven wrong
+
+| Field | Value |
+| --- | --- |
+| **Measured at** | `f8384ea5b` — the tip of `claude/sweet-fermat-fmx7up` when this pass started. The document's `head_commit` row (§0) is **not** moved: this section re-reads a SAMPLE, not 450 rows. The counted files this pass changed are named, with an argument each, in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json`. |
+| **What §10.7 asked for** | *"six rows of a 288-row C column were re-read and four were wrong … nobody has checked the other 282, and the sample says that matters."* This section checks 120 of them and reports the rate it actually measured, which is far lower than 67 % and still high enough to matter. |
+| **Prior sections** | Unchanged and not restated. §1–§10 stand as written. Last statement wins for the ids in §11.9. |
+
+### 11.1 Method, and the two sample sizes — stated separately because only one is a measurement
+
+1. **MACHINE-RESOLVED — 208 of the 288 C rows.** Every C row carrying a
+   `file:line` citation had every citation resolved against the tree and the
+   cited line printed and read; 208 rows carry at least one, the other 80 cite a
+   bare filename or nothing. **Zero citations were out of range.** That result is
+   worth exactly what `check:doc-citations` says it is worth — these are all
+   UNANCHORED, *"a bare path:line; nothing here can tell you it is wrong"* — and
+   at least 20 of the 208 point at a line holding something other than the object
+   the row names (§11.8). A range check is not a correctness check, which is the
+   whole reason for pass 2.
+2. **EXECUTED — 120 of the 288.** The claim itself run down: the call site
+   opened, the writer or reader followed to its end, the absence settled by
+   enumerating **every** reference rather than by a grep that stops.
+
+**The rate, both ways, because one of them flatters.** Of the 120, **23 are §40
+module rows whose requirement IS existence** (MD303–MD312, MD315, MD317–MD319,
+MD326–MD328, MD330, MD333–MD337 — each verified present *and* referenced by a
+real importer, so none is an orphan file scoring a letter). Those are easy by
+construction. The other **97 carry a behavioural claim**, and **seven of the 97
+were wrong**:
+
+> **Seven of the 97 executed behavioural C rows were wrong — a 7.2 % error
+> rate.** Taken over all 120 executed rows it is 5.8 %.
+
+**What that says about §9's 67 %.** §9 re-read six rows and four were wrong, and
+its closing sentence treated that as a reason to expect more. It was — but the
+six were chosen adversarially (the whole §36 moderation block and the two report
+rows), and 4/6 is not the rate. 7.2 % is. That is the better number and it is
+not a reassuring one: applied to the 288 C rows, it projects **roughly twenty
+more wrong rows that nobody has found**, and this pass leaves 168 C rows
+unexecuted.
+
+**Coverage — every section, named so the sample cannot be read as the easy
+ones.** The 120 touch all 38 §5 sections that have a C row:
+
+`§2 MD4·5·7·9·10 · §3 MD12·13·16·17 · §4 MD18·19·20·22·23·24 ·
+§5 MD30·31·32·34 · §6 MD39·40·42 · §7 MD45·46·47·49·50·52·54 · §8 MD55·56 ·
+§9 MD59·61·62·67·68 · §10 MD69·72·74 · §11 MD80 · §12–§14 MD81·86·88 ·
+§15 MD95·96·102·106 · §16 MD108·110·114·116·117·121·122·123·126·127·130·139 ·
+§17–§22 MD140·141·142·143·145·148·154·155·156·157·159·161·163 ·
+§23 MD164·166·167·168·170·176 · §24 MD178·183·185·190·191·192·193·199 ·
+§25 MD202·204·205·206·208 · §26 MD209·210·211·212 ·
+§27–§30 MD217·218·220·227·229 · §31 MD230–MD241 ·
+§32 MD242·243·244·245·247·250·251·254 · §33 MD256·257·258 ·
+§34 MD260·261·262·263 · §35 MD264·265 · §36 MD266·267·272·273 ·
+§37 MD278·279·285 · §39 MD302 · §40 the 23 above · §41 MD340·344·352 ·
+§42 MD353·354·355 ·
+§43 MD357·358·359·361·362·363·364·365·366·368·371·372·373 ·
+§44 MD375·377·379·384·386·387·388·389·390·391·392·393 ·
+§45 MD394·395·397·398·401 · §46 MD404·406·407·413 · §46.1 MD414·417·418 ·
+§46.2 MD420·423·426 · §48 MD430·431·432·434·437·438 · §49 MD442·450`
+
+**The rule that found all seven.** §10.1 says an absence asserted from a
+truncated list is not a measurement. Every "nothing writes X" / "nothing reads
+X" settled below was settled by enumerating **every** reference to the
+identifier across both trees and opening each one. No `head -N` was applied to
+any search whose result is asserted here as an absence. Five of the seven were
+found the other way round — a row claiming something IS produced, where nothing
+produced it.
+
+### 11.2 The 73 W rows, grouped by WHY — sizes, and the full partition
+
+Grouped before anything was built, because the group a row is in decides whether
+building it is honest or vacuous. Every one of the 73 appears in exactly one
+group; the ids are listed so the partition can be checked rather than trusted.
+
+| Group | Size | What it means |
+| --- | --- | --- |
+| **(a) Logic wrong in code this branch can fix** | **11** | No migration, no flag, no dark store, no new product decision. |
+| **(b) Logic right, nothing reaches it** | **15** | The compliant artifact exists and is correct; the surface a user reaches is the non-compliant twin. |
+| **(c) Capped by a flag seeded FALSE or an unapplied migration** | **19** | The code is not the binding constraint. |
+| **(d) Needs something nobody has written** | **28** | A classifier, a video decoder, a screen, a client flow. |
+
+- **(a) — 11.** MD15, MD33, MD94, MD104, MD147, MD213, MD216, MD370, MD378, MD383, MD428.
+- **(b) — 15.** MD1, MD2, MD3, MD11, MD29, MD87, MD215, MD286, MD402, MD408, MD412, MD419, MD424, MD425, MD427.
+- **(c) — 19.** MD36, MD37, MD38, MD41, MD43, MD44, MD53, MD57, MD60, MD65, MD66, MD188, MD255, MD274, MD338, MD339, MD343, MD429, MD445.
+- **(d) — 28.** MD35, MD58, MD71, MD73, MD79, MD101, MD103, MD107, MD112, MD149, MD169, MD187, MD194, MD222, MD269, MD275, MD276, MD283, MD300, MD320, MD321, MD348, MD351, MD405, MD435, MD444, MD446, MD449.
+
+**The uncomfortable result of grouping first: group (a) is 11 rows and this pass
+moved none of them.** Each is a small server change whose product would be read
+by nothing — and §9.4 already refused exactly that shape and named it: *"A
+server field with no decision behind it is a vacuous C, and shipping one to move
+a letter is the failure mode this document exists to catch."* The eleven are
+re-argued one at a time in §11.6 rather than converted into eleven letters.
+
+### 11.3 Seven C rows executed, and what each of them actually did
+
+#### 11.3.1 MD47 — the §7 Neighborhood edge was drawn in the type and severed in the data
+
+MD47 read **C** on *"`mediaProjection.ts` lines 89-91 carry `neighborhood`/`city`/`country`
+as coarse labels."* Those lines are a **type declaration** —
+`artifacts/api-server/src/lib/media/mediaProjection.ts:113#neighborhood: string | null;`
+today. Executed, the field was `null` on every projection the World shell has
+ever served, on every route, for every viewer:
+
+- the raw projector hard-codes it —
+  `artifacts/api-server/src/lib/media/mediaProjection.ts:347#neighborhood: null,`
+  — which is correct on its own terms, because `posts` has no neighborhood
+  column: `MEDIA_PROJECTION_POST_COLUMNS` selects `location_name`,
+  `location_city`, `location_country` and `canonical_place_id`, and no fourth
+  label;
+- the disclosure applier copies it off the resolved disclosure —
+  `artifacts/api-server/src/lib/media/mediaProjection.ts:394#neighborhood: d.neighborhood,`;
+- and the disclosure's input never carried one. `disclosureForRow` built
+  `{ name, city, country, lat, lng }`, so
+  `artifacts/api-server/src/lib/mediaLocationVisibility.ts:225#const neighborhood = input.neighborhood ?? null;`
+  resolved to `null` every time.
+
+The **tier machinery was complete and correct the whole time**:
+`artifacts/api-server/src/lib/mediaLocationVisibility.ts:281#case "neighborhood": {`
+discloses the label at the neighborhood and place tiers and nulls it at
+city / country / hidden. Only the producer was missing. Two consumers read the
+field as a label fallback and have therefore always fallen through to `city`.
+
+**MD47 C → W at `f8384ea5b`**, repaired in §11.4.1.
+
+#### 11.3.2 MD227 — the Tagged bucket was a literal, under a comment that was false
+
+MD227 read **C** for §30's seven My World filters. Six read real rows. The
+seventh was
+`{ key: "tagged", label: "Tagged", ownerOnly: false, count: 0, media: [] }`,
+under the comment *"Tagged has no backing people-tag table yet (pre-launch)"*.
+
+Executed: `public.tags` is created by
+`artifacts/api-server/src/migrations/0044_tags_hashtags.sql:15#CREATE TABLE IF NOT EXISTS tags (`,
+is in the committed production baseline (`baseline/20260907_production_tables.txt`),
+and is **written on the post-create path** —
+`artifacts/api-server/src/routes/posts.ts:874#sourceType: 'post',` hands the new
+post's id to `processTagging`, which upserts at
+`artifacts/api-server/src/services/tagging/TaggingService.ts:392#.from('tags')`
+after the tag-permission, block and rate checks. The bucket reported zero over a
+populated table, and the comment that explained the zero is the same defect
+class §10.1 records against itself: an absence asserted without opening the
+writer. Six of seven, which this census grades **W** (MD35: *"Two of three."*).
+
+**MD227 C → W**, repaired in §11.4.2.
+
+#### 11.3.3 MD386, MD387, MD389, MD393 and MD209 — five §44/§26 signals with no producer anywhere
+
+MD386 (Stamp), MD387 (Comment), MD389 (Save) and MD393 (Profile open) each read
+**C** citing the batch allow-list —
+`artifacts/api-server/src/routes/mediaAnalyticsBatch.ts:38#const VALID_EVENT_TYPES = new Set<string>([`,
+whose next three lines name `like`, `comment`, `save`, `profile_open` and
+`place_open` among twenty-two accepted event types.
+An allow-list entry is a thing the server will ACCEPT. It is not a producer, and
+this census already knows the difference: MD213 and MD378 are **W** on the words
+*"`directions_tap` is in the batch allow-list … the outcome name exists with no
+emitter"*, and MD383 is **W** for the same reason. The four rows above were
+graded C on evidence identical in kind.
+
+Settled by enumeration, not by grep-and-stop:
+
+- `media_events` has exactly one writer in the tree —
+  `artifacts/api-server/src/lib/mediaAnalytics.ts:189#const { error } = await sc.from("media_events").insert({`
+  — and `recordMediaEvent` had five call sites: two `impression`, one branching
+  over `rewatch`/`completion`/`qualified_view`/`impression`, one `share`, and
+  the batch endpoint.
+- On the client, **one** file posts to that endpoint —
+  `travel-buddy-standalone/src/hooks/useMediaAnalytics.ts:125#await fetch(` —
+  **one** component consumes the hook —
+  `travel-buddy-standalone/src/features/media/components/MediaActionRail.tsx:94#const { record } = useMediaAnalytics();`
+  — and its recorder is called from exactly **one** place,
+  `travel-buddy-standalone/src/features/media/telemetry/mediaTelemetry.ts:235#record(event, payload);`,
+  inside `emitMediaNorthStar`, which can only ever emit one of the eight §45
+  `media_*` names.
+
+So `like`, `comment`, `save`, `profile_open`, `place_open`, `mode_switch`,
+`add_to_trip`, `directions_tap` and the rest of the §44 vocabulary had **no
+producer on either side of the wire**. The §44 Stamp / Comment / Save /
+Profile-open funnels read zero by construction — the same shape §9.1 found for
+`hideRate` and `notInterestedCount` — and the reason the like handler
+(`artifacts/api-server/src/routes/mediaFeed.ts:2226#router.post("/media/:id/like", asyncHandler(async (req, res) => {`)
+and the save handler recorded nothing is simply that nobody ever added the line.
+
+**MD386, MD387, MD389, MD393 C → W.** MD209 (§26 *"People saved this place"*)
+goes with them: it rests on `save` **and** `place_open`, and neither had a
+producer. **MD209 C → W.** MD386 and MD389 are repaired in §11.4.3; the other
+three are argued in §11.6.
+
+MD375 (§44 Place explored) and MD379 (§44 Added to Trip) were checked in the
+same sweep and **stay C**: each also cites a §45 north-star name, and those
+eight DO have an emitter — the action rail. That emitter is dark behind
+`MEDIA_WORLD_SHELL_ENABLED`, which is the open decision §9.10 put to the owner
+and which this section does not pre-empt.
+
+### 11.4 What this pass built
+
+Three changes, all server-side, none behind a new flag, none needing a migration.
+
+1. **The §7 neighborhood label has a producer.**
+   `artifacts/api-server/src/services/media/MediaProjectionService.ts:475#export async function loadPlaceNeighborhoods(`
+   batches one `places` read over the page's distinct `canonical_place_id`s —
+   the same column `buildPlaceProjection` already reads for a place header, so
+   Media does not open a second neighborhood source (§48: Places owns place
+   identity) — and
+   `artifacts/api-server/src/services/media/MediaProjectionService.ts:585#const [ctx, neighborhoods] = await Promise.all([`
+   runs it alongside the gem context. The label is handed to the choke point as
+   an **input**, never written onto the projection, so `coarsenMediaLocation`
+   still decides: a gem-ceilinged or privacy-coarsened item names no
+   neighborhood. The gem lookup beside it stays fail-CLOSED while this one is
+   fail-SOFT, and the asymmetry is argued in the function's own header rather
+   than left to look like an oversight — losing the gem context would WIDEN
+   disclosure, losing this one only removes a label.
+2. **The §30 Tagged bucket reads the table that was there all along.**
+   `artifacts/api-server/src/services/media/MediaProjectionService.ts:1317#export async function loadTaggedPostIds(`
+   reads `tags` for `status='approved'`, `source_type='post'`, and
+   `artifacts/api-server/src/services/media/MediaProjectionService.ts:1370#export async function loadTaggedMedia(`
+   puts those ids through `loadEligibleCandidates` and
+   `projectCandidatesProtected` — **being tagged is not consent to see the
+   post**, so the blocks / mutes / suspension / visibility / moderation gate,
+   the private-account guard and the location choke point all still run. Bound
+   stated rather than hidden: `feedType: "for_you"` means a tagged `trip_only`
+   or `private` post is withheld rather than guessed at, because admitting it
+   would need a membership proof this bucket does not hold.
+3. **§44 Stamp and Save emit.**
+   `artifacts/api-server/src/routes/mediaFeed.ts:2254#recordMediaEvent("like", {`
+   and `artifacts/api-server/src/routes/mediaFeed.ts:2360#recordMediaEvent("save", {`
+   — server-side, beside the `share` event that already did this, because the
+   server is the only witness to whether the write succeeded. Save emits only
+   AFTER the upsert, so the number counts saves that happened rather than taps
+   that were attempted. Both sit inside `recordMediaEvent`'s existing
+   `MEDIA_ANALYTICS_ENABLED` gate; this pass flips no flag.
+
+### 11.5 Mutations, and what each one turned red
+
+Seven. Each applied, run, reverted, and the file compared byte-for-byte against
+its pre-mutation copy with `cmp`. Suite:
+`artifacts/api-server/src/test/mediaProjectionGaps.test.ts:242#describe("MD47 — the neighborhood label has a producer", () => {`,
+14 cases in three groups, registered in `artifacts/api-server/package.json`.
+
+| Mutation | What it did | What went red |
+| --- | --- | --- |
+| M9 | drop the `neighborhood` argument from `disclosureForRow`'s call | `a served projection CARRIES the neighborhood at place tier` — 1 of 14 |
+| M10 | make `loadPlaceNeighborhoods` return an empty map | 2 red: the loader's own case and the served projection |
+| M11 | disclose the neighborhood at the `city` tier too — bypass the choke point | `WITHHOLDS the neighborhood when a Hidden Gem ceiling coarsens the item to city` |
+| M12 | restore the hard-coded `count: 0, media: []` on the Tagged bucket | `the Tagged bucket carries the tagged media, not a hard-coded zero` |
+| M13 | let `loadTaggedPostIds` admit `status='pending'` tags | `ignores a PENDING tag — a tag awaiting approval is not yet the viewer's` |
+| M14 | delete the `like` `recordMediaEvent` call | `POST /media/:id/like records a like media event` |
+| M15 | delete the `save` `recordMediaEvent` call | `POST /media/:id/save records a save media event` |
+
+M11 is the one worth naming. M9, M10 and M12–M15 all ask "did the producer come
+back", which is the regression that matters here because a missing producer
+leaves every existing assertion green — that is exactly how all three defects
+survived. M11 asks the other question: it proves the neighborhood travels
+THROUGH the privacy choke point rather than around it, so a future "fix" that
+wrote the label straight onto the projection goes red instead of quietly naming
+a protected gem's neighborhood.
+
+**What would leave these green and worthless.** The §44 cases assert on the two
+HTTP handlers, so they stay green if a CLIENT stops calling those endpoints —
+and they say nothing at all about `comment`, `place_open` or `profile_open`,
+which remain unproduced. The §7 and §30 cases drive `buildPlaceProjection` and
+`buildMyWorldProjection` directly, so they would not notice a ROUTE that stopped
+calling those builders. That is the same P24 gap §9.6 records, still open.
+
+### 11.6 What was NOT built, and the argument for each
+
+**The eleven group-(a) rows**, each a small server change whose product nothing
+would read:
+
+- **MD94 / MD213 / MD378 (directions).** `directions_tap` has no emitter because
+  there is no directions affordance to tap (MD94). Adding the action id first
+  puts a fourteenth entry in the resolver that no rail renders.
+- **MD370 / MD383 (contribution).** `media_contribution` is declared *"reserved"*
+  and `hidden_gem_contributions` is **absent from production**
+  (`scripts/checkProductionDrift.ts`). A contribution endpoint writing to a table
+  that is not there is worse than no endpoint.
+- **MD104 (Share through Telegraph).** The share handler accepts
+  `target: "telegraph"` and returns a URL. Telegraph's own §5 contract
+  (`services/telegraph/shareables.ts`) shares by placing an object body into a
+  **conversation**, and the media share endpoint holds no conversation id. The
+  honest fix is a client composer hand-off; a server field naming a Telegraph
+  object that no composer consumes is §9.4's vacuous C again.
+- **MD147 (Independent Sources).** `lib/intelIndependence.clusterByIndependence`
+  exists and is real. Its detectors merge units on shared evidence media, common
+  source and synchronised timing — **none of which a media projection carries**:
+  no group key, no asset hash, no source ref. Called with what Media has, every
+  perspective becomes its own singleton and `independentSourceCount` equals
+  `contributorCount`, which is the precise thing MD147 says is wrong. Building
+  the call without the signals would turn a true W into a false C.
+- **MD216 (People lens).** §27 names four populations and the builder handles
+  two. Adding trip crew makes it three of four, which this census still grades
+  W. A build that neither moves the letter nor completes the requirement is
+  gold-plating.
+- **MD15 / MD33 / MD428 (client-shaped).** The Gems lens ignoring its own mode
+  bar, `GET /media/gems` being unserved while the lens renders the pre-existing
+  `GemsFeed`, and `WhyThisSheet` explaining the ranker's reasons instead of
+  §47's five are all decided in the client. Two of §47's five reasons — fresh
+  perspectives in the last 10 minutes, area activity increasing — are not
+  ranking inputs at all, so the server has nothing to send.
+- **MD43** is in group (c) rather than (a) for a reason worth stating, because
+  it looks branch-fixable and is not: `media_attachments.visibility_override`
+  has one writer, on the flag-gated canonical path, and **production does not
+  have the column** — migration 2250 is unapplied there. A reader for it would
+  be a read of a column that does not exist.
+
+**MD387 (Comment), MD393 (Profile open), and MD209's `place_open` half.** Media
+has no comment-CREATE endpoint —
+`artifacts/api-server/src/routes/mediaFeed.ts:2462#router.get("/media/:id/comments", asyncHandler(async (req, res) => {`
+is a read, and comments are created on the posts spine. Emitting a *media*
+`comment` signal from the generic post-comment handler would attribute every
+Wall and Pulse comment to Media, which is worse than a zero. `profile_open` and
+`place_open` are client navigations with no server touchpoint at all. All three
+stay **W**.
+
+### 11.7 CORRECTION to §3 — `media_canonical_enabled` is not off in production
+
+§3's gate table records `media_canonical_enabled` as `false`, sourced to
+*"`0191_media_assets.sql`, postcondition in `2250`"*, and eight W rows repeat the
+phrase "the flag is off". **The seed is false; the database is not.**
+`artifacts/api-server/src/lib/mediaAssets.ts:15#travel-buddy  ajrurzioarfkagpuxfnb  (production)  media_canonical_enabled = TRUE`
+records a 2026-09-07 measurement, and the same header says in its own words that
+*"every comment in this tree that calls the canonical layer 'dark' is reading
+the migration, not the database."* This census read the migration.
+
+**No verdict moves, and the corrected reason is worse than the stated one.** The
+canonical writer is dead in production not because the flag is off but because
+migration **2250 is unapplied there**: the payload names `captured_at`,
+`provenance` and `intelligence_eligibility`, that database has none of them, and
+since 2026-09-07 a schema-capability guard refuses the write outright rather
+than attempting one PostgREST rejects. MD36, MD37, MD38, MD57, MD60, MD338,
+MD339, MD343 and MD429 are therefore group **(c)** as §11.2 places them, but for
+the migration half of that group and not the flag half. The practical difference
+is real: a flag is one row to flip, and an unapplied migration in a production
+database is not.
+
+`routes/sharedMoments.ts` gates a contribution on the caller owning a
+`media_assets` row, so with the writer dead that request path cannot succeed for
+any media uploaded since 2026-08-16 — a consequence §3 could not see while it
+believed the layer was merely dark.
+
+### 11.8 The citation decay §5 is carrying, named rather than repointed
+
+At least 20 of the 208 machine-resolved rows cite a line holding something other
+than the object the row names. The concentration is `routes/mediaFeed.ts`, which
+§9 and §10 grew by about 113 lines: MD55, MD105, MD118, MD203, MD363, MD371,
+MD386 and MD388 all cite pre-§9 numbers. Others drifted on their own — MD272
+cites `lib/mediaAssets.ts` line 129 for `computeIntelligenceEligibility`, which is at
+`artifacts/api-server/src/lib/mediaAssets.ts:366#const intelligenceEligibility = computeIntelligenceEligibility({`;
+MD110 and MD114 cite `HiddenGemService.ts` line 150 for a media-attachment write that
+is at
+`artifacts/api-server/src/services/hiddenGems/HiddenGemService.ts:188#unaffected). Records media_assets + media_attachments(entityType=hidden_gem)`;
+MD45 cites `mediaProjection.ts` line 176 for `projectContributor`, now at
+`artifacts/api-server/src/lib/media/mediaProjection.ts:294#function projectContributor(row: MediaCandidateRow): MediaContributor`.
+
+Two are worth naming past the line number, because the wrong line carries a
+wrong sentence:
+
+- **MD106.** The row says the intent signal is *"written only through the
+  service-role endpoint at `routes/mediaActions.ts` line 161, read at
+  `MediaActionResolver.ts` line 612."* The two are **the wrong way round**:
+  `artifacts/api-server/src/routes/mediaActions.ts:161#.from("media_intent_signals")`
+  is the DELETE, and
+  `artifacts/api-server/src/services/media/MediaActionResolver.ts:795#.from("media_intent_signals")`
+  is the upsert — the writer. Enumerated exhaustively, `media_intent_signals`
+  has **no reader anywhere in either tree**, so the asserted read does not exist.
+  MD106 **stays C**, re-derived: its requirement is that a want is an intent
+  signal and not a Like, which the separate table, the separate grant posture
+  and the separate write path all carry on their own. The missing consumer is a
+  real gap and it is not the thing MD106 asserts.
+- **MD199.** Cites `services/ranking/CreatorCapEnforcer.ts` for the media
+  repetition cap. That module is used by Wall, Compass, Pulse and Discovery and
+  **not by Media**, which has its own
+  `artifacts/api-server/src/services/ranking/MediaFeedRankingService.ts:488#export function enforceMediaCreatorCaps<T extends MediaFeedItem>(`.
+  MD199 **stays C** — `seenPenalty`, the fatigue layer and
+  `enforceMediaCreatorCaps` satisfy "− Repetition" — on a correctly named module.
+
+**Not repointed here, deliberately.** UNANCHORED sits at its ceiling of 6490 with
+zero headroom, and rewriting forty §5 citations inside a pass whose job was to
+measure verdicts would fuse two edits that should stay separable. Every citation
+this section ADDS carries an anchor. The list above is the finding; a
+citation-repointing pass is a different pass, and the ids are named so that pass
+does not have to begin by re-deriving them.
+
+### 11.9 Row moves
+
+Executed at `f8384ea5b`, before this pass's code:
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| MD47 | C | W | §7 "→ Neighborhood": the field was `null` on every projection ever served. The raw projector hard-codes it and the disclosure input never carried one, so the tier logic — complete and correct — had nothing to disclose. The cited evidence was a type declaration. §11.3.1. |
+| MD209 | C | W | §26 "People saved this place" rests on the `save` and `place_open` events; neither had a producer anywhere in either tree. §11.3.3. |
+| MD227 | C | W | §30's Tagged filter was `count: 0, media: []` under a comment claiming no backing table, while `public.tags` is in production and written on the post-create path. Six of seven. §11.3.2. |
+| MD386 | C | W | §44 Stamp: `like` is an allow-list entry with no emitter — the same evidence that makes MD213 and MD383 W. §11.3.3. |
+| MD387 | C | W | §44 Comment: the same, and Media has no comment-create endpoint to emit from. §11.3.3. |
+| MD389 | C | W | §44 Save: the same. §11.3.3. |
+| MD393 | C | W | §44 Profile open: the same; a client navigation with no server touchpoint. §11.3.3. |
+
+After this pass's code, on the branch:
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| MD47 | W | C | `loadPlaceNeighborhoods` produces the label, `disclosureForRow` hands it to the choke point, and the choke point still decides — asserted in both directions by M9/M10 (it arrives) and M11 (it is withheld under a gem ceiling). |
+| MD227 | W | C | The Tagged bucket reads `tags` and re-gates every id through the eligibility gate and the location choke point. M12 and M13 red. |
+| MD386 | W | C | `POST /media/:id/like` records a `like` media event. M14 red. |
+| MD389 | W | C | `POST /media/:id/save` records a `save` media event, after the upsert succeeds. M15 red. |
+
+MD209, MD387 and MD393 are **not** repaired and stay where the first table puts
+them, for the reasons in §11.6. MD106 and MD199 had their EVIDENCE corrected and
+their verdicts re-derived (§11.8); neither moves.
+
+### 11.10 Restated headline
+
+> | Measure | Was, §10.6 | Now |
+> | --- | --- | --- |
+> | Denominator (testable requirements) | 450 | **450** |
+> | BUILT-AND-CORRECT | 288 | **285** |
+> | BUILT-BUT-WRONG | 73 | **76** |
+> | NOT-BUILT | 87 | **87** |
+> | CANNOT-VERIFY | 2 | **2** |
+> | **CONSTRUCTED%** = (C+W)/450 | 80.2 % | **361 / 450 = 80.2 %** |
+> | **CORRECT%** (raw) = C/450 | 64.0 % | **285 / 450 = 63.3 %** |
+>
+> **Correctness went down again and construction did not move at all.** Seven
+> rows were wrong before this pass touched anything; three of them are still
+> wrong afterwards. Construction is identical because nothing here was
+> CONSTRUCTED that was not already constructed — the three repairs closed
+> producers for fields and events that were already declared, so the W column
+> absorbed them and the C+W total never noticed.
+
+The **spec-attributable** figure (§0: 216 / 450) is **not restated**, for the
+reason §9.8 gives: attribution was not re-run, and adjusting it by subtracting
+the demoted rows would be arithmetic dressed as measurement.
+
+### 11.11 Decisions surfaced rather than taken
+
+1. **§9.10's first decision is still open, and this pass leaned on it twice.**
+   Grading a complete implementation behind a flag seeded OFF as
+   BUILT-AND-CORRECT is what keeps MD375 and MD379 at C in §11.3.3 — their only
+   emitter is the dark action rail — and what keeps the whole §24 ranking block
+   at C over `MEDIA_RANKING_ENABLED`, which returns chronological order when
+   off. Applying the owner's "true on every deployment" rule instead would move
+   those rows and a hundred like them. **Still not taken here**: it is a
+   corpus-wide convention change. It is named again because this section's audit
+   depended on it — without it, the §44/§45 block does not split into "has a
+   dark emitter" (C) and "has no emitter at all" (W), and that distinction is
+   what five of the seven moves rest on.
+2. **§9.10's second decision is discharged again, not re-opened.** This pass
+   changed `routes/mediaFeed.ts` once more, so `census-wall.md` ages again and is
+   acknowledged again with a per-file argument. W7's `post_saves` anchor moved a
+   THIRD time — the `save` emitter added eighteen lines above it — and was
+   repointed at `routes/mediaFeed.ts:2340#.from("post_saves")`. `check:doc-citations` found it,
+   which is the fourth time in three sections that an anchored citation has
+   earned its keep, and the only reason this section can say the repoint is
+   right rather than hope so.
+3. **New, and for the owner rather than for a lane: §3 is wrong about
+   production** (§11.7). The remedy is not a document edit — it is a decision
+   about migration 2250, which production does not have and which nine W rows
+   are waiting on.
+
+### 11.12 The least flattering true thing about this pass
+
+**It measured a column it was also allowed to grade, and the grading went the
+way that flattered the measurement.** Seven rows moved C → W and four of those
+seven came back to C by the end of the same pass, on code this same pass wrote
+and this same pass tested. Nothing outside this section checked either the
+demotion or the repair. §10 exists precisely because the previous lane's
+headline finding was false, anchored and unreviewed for a commit, and the
+structural fact that produced it is unchanged here: **nothing in this repository
+can check whether a stated absence was actually searched for**, and five of
+§11.3's seven demotions rest on stated absences.
+
+Second, smaller, and still true: **group (a) — the eleven W rows this branch
+could fix — is exactly the group this pass did not touch.** Every repair in
+§11.4 repairs a row this pass itself demoted an hour earlier. The argument in
+§11.6 for leaving the eleven alone is, I believe, correct; it is also the
+argument that made the pass's own work the only work it did.
+
+## 12. Group (a) opened — two of the eleven built, one filed under the wrong blocker
+
+Measured at `d9ab209d7`. §1–§11 stand as written; last statement wins for the
+ids in §12.7. `head_commit` is **not** moved: this section re-reads a queue, not
+450 rows.
+
+### 12.1 What this section was asked for, and what it found first
+
+§11.12 named its own least flattering fact: *"group (a) — the eleven W rows this
+branch could fix — is exactly the group this pass did not touch."* This section
+took those eleven as its queue. Before building anything it re-executed the
+§11.6 argument for each, and the first result is about the queue rather than the
+code:
+
+> **One of the eleven is not in group (a), and one of the nineteen in group (c)
+> is not in group (c).** §11.6's own sentence moves MD43 into (c) on the ground
+> that *"production does not have the column."* Production has the column. §12.5.
+
+Second, and smaller: **§11.2's partition covers 73 rows and the W column is 76.**
+MD209, MD387 and MD393 were demoted in §11.3 and never placed in a group — they
+belong to (d), (d) and (d) respectively on §11.6's own arguments (no
+comment-create endpoint; a client navigation with no server touchpoint; both).
+Nothing follows from this for a verdict; it is stated so the next pass does not
+read "(a)+(b)+(c)+(d) = the W column" and come up three short.
+
+### 12.2 MD216 — the People lens was two of four, and is now four
+
+The row: *"The People lens prioritises followed users, Trip Crew, Shared Moment
+participants and relevant creators … Trip Crew and Shared Moment participants
+are not: no `trip_members` or shared-moment read in the builder. Two of four."*
+
+§11.6 declined it on the ground that *"adding trip crew makes it three of four,
+which this census still grades W."* That argument is correct about a partial
+build and says nothing about a complete one. Both populations were buildable
+together, with no migration, no flag and no new table: `trip_members` and
+`shared_moment_memberships` are both in the committed production baseline
+(`artifacts/api-server/baseline/20260907_production_tables.txt`), and both
+already have readers inside the Media lane itself
+(`` `artifacts/api-server/src/services/media/MediaExperienceResolver.ts:295#.from("trip_members")` ``).
+
+**Why the two populations were not merely missing but unreachable.** The lens
+loaded `feedType: "following"` alone, and that feed type's per-item visibility
+gate refuses any author the viewer does not follow —
+`` `artifacts/api-server/src/lib/mediaEligibility.ts:381#if (authorId !== viewerCtx.viewerUserId && !viewerCtx.followedCreatorIds.has(authorId)) {` ``.
+A Trip Crew member was therefore structurally absent from this lens no matter
+what they posted. Meanwhile the client's own copy named both populations to the
+user — *"Perspectives from people you follow, your Trip Crew, and Shared Moments
+will appear here"*
+(`` `travel-buddy-standalone/src/features/media/screens/MediaPeopleScreen.tsx:45#message="Perspectives from people you follow, your Trip Crew, and Shared Moments will appear here."` ``)
+— so the lens was advertising two populations the server could not supply.
+
+**Built.** `` `artifacts/api-server/src/services/media/MediaProjectionService.ts:904#export async function loadPeopleAffinities(` ``
+resolves both populations in two hops each, where the FIRST hop is the viewer's
+own accepted membership — an invitation the viewer never accepted yields nobody,
+and an invitation somebody else never accepted does not make them crew. The lens
+then runs TWO lanes
+(`` `artifacts/api-server/src/services/media/MediaProjectionService.ts:1025#export async function buildPeopleProjection(` ``):
+the follow lane unchanged, and an affinity lane that is `feedType: "for_you"`
+NARROWED to the crew and Shared Moment ids by a new composing filter
+(`` `artifacts/api-server/src/services/media/MediaProjectionService.ts:274#if (filter.authorIds && filter.authorIds.length > 0) {` ``).
+
+**The bound is stated rather than hidden**, on the precedent §11.4 set for the
+Tagged bucket: the affinity lane is PUBLIC-ONLY, so a crew member's `trip_only`
+or `private` post is withheld rather than guessed at. Admitting it would need a
+per-item membership proof this lane does not carry, and inventing one inside the
+choke point is the failure this census exists to catch.
+
+§27's declared order is the priority order, and it beats the perspective count:
+a contributor who qualifies under more than one population is counted ONCE, at
+the earliest-declared one. `relation` is carried to the client
+(`` `travel-buddy-standalone/src/features/media/types/peopleLens.ts:21#export type PeopleLensRelation = 'followed' | 'trip_crew' | 'shared_moment';` ``)
+and shown on the section header, so the population is visible and not merely
+ordered.
+
+**Three values, not four, and the reason is the row's own.** MD216 credits the
+follow graph with *"followed users and creators"*; a "relevant creator" has no
+second source, so a fourth enum value would be a vocabulary entry standing in
+for a build.
+
+### 12.3 MD147 — Independent Sources was `contributorCount` under a second name
+
+The row: *"the count is displayed nowhere and computed nowhere in the media
+path … The independence machinery exists (`lib/intelIndependence.ts`) but
+nothing in Media calls it."*
+
+Executed, it was worse than "computed nowhere": the field existed, was served on
+every `PerspectiveSummary`, and its entire implementation was
+`independentSourceCount: contributors.size` under a comment calling it *"a
+coarser, honest proxy"*. Three accounts posting ONE photograph read as three
+independent sources — the exact consensus inflation `intelIndependence`'s own
+header cites §11 anti-manipulation and AT-04 to refuse.
+
+**§11.6's argument for leaving it is half wrong, and the wrong half is the
+load-bearing one.** It says the independence detectors need *"shared evidence
+media, common source and synchronised timing — none of which a media projection
+carries: no group key, no asset hash, no source ref."* Two of those three are
+false:
+
+- **Asset key.** `IndependenceObservation.mediaRefs` is documented as *"asset
+  keys / content hashes of media evidence"*
+  (`` `artifacts/api-server/src/lib/intelIndependence.ts:66#/** Asset keys / content hashes of media evidence attached to this observation. */` ``).
+  The served media URL **is** the asset key: two posts resolving to one stored
+  file are one source. The projection has carried it all along.
+- **Group key.** `posts.trip_id` is a party token and is already selected by
+  `MEDIA_PROJECTION_POST_COLUMNS`. It must never be written onto a projection —
+  the projection is a privacy whitelist and trip membership is not on it — but
+  it can be handed to the aggregator as an input.
+- **Common source** is the half that IS right, and it is *inapplicable* rather
+  than missing: no media perspective is ever produced by an official feed or a
+  partner API, so there is no reference for a photograph to carry.
+
+**Built.**
+`` `artifacts/api-server/src/services/media/MediaPerspectiveService.ts:120#function countIndependentSources(` ``
+clusters the perspectives; the party token reaches it as a side channel built
+from the candidate rows
+(`` `artifacts/api-server/src/services/media/MediaProjectionService.ts:770#function partyTokensByPostId(` ``)
+and is asserted never to leave the server on the projection.
+
+**The sync detector is made INERT on purpose, and that is the decision worth
+recording.** `valueKey` is the perspective's own id, which cannot collide, so
+the synchronised-behaviour rule can never fire. A photograph asserts no value:
+two strangers shooting the same bar seconds apart are two witnesses, and mapping
+that detector onto `placeId` would destroy honest corroboration rather than
+catch coordination. Mutation M24 does exactly that and reddens four cases,
+including two that were green before this pass — which is the evidence that the
+inertness is a choice and not an omission.
+
+### 12.4 Mutations
+
+Ten. Each applied, run, and reverted, with the file's SHA-256 recomputed after
+the revert and compared to the pre-mutation digest. Suites:
+`` `artifacts/api-server/src/test/mediaPeopleLensPopulations.test.ts:182#describe("MD216 — loadPeopleAffinities resolves the two missing §27 populations", () => {` ``
+(13 cases) and
+`` `artifacts/api-server/src/test/mediaIndependentSources.test.ts:85#describe("MD147 — independent sources are CLUSTERED, not counted as contributors", () => {` ``
+(14 cases), both registered at the END of `artifacts/api-server/package.json`.
+
+| Mutation | What it did | What went red |
+| --- | --- | --- |
+| M16 | force the affinity lane's id set empty | 4 of 13 — both populations and the ordering |
+| M17 | drop the accepted-status check on the second membership hop | `an UNACCEPTED membership admits nobody — on either table` |
+| M18 | sort the lens by perspective count only | `orders the populations as §27 names them` |
+| M19a | delete the QUERY-level `for_you` visibility restriction | **nothing** — the per-item gate still refused |
+| M19b | delete the query-level restriction AND the per-item `for_you` gate | `THE BOUND: a crew member's trip_only and private posts are withheld` |
+| M20 | remove the followed-id pre-filter AND the post-id dedupe | `a person who is BOTH followed and crew is counted ONCE` |
+| M21 | restore `independentSourceCount: contributors.size` | 5 of 14 |
+| M22 | empty `mediaRefs` — drop the shared-evidence-media signal | 3 of 14, incl. the AT-04 three-copy case |
+| M23 | stop passing the party token from the place projection | `two authors of one trip … → 1 independent source` |
+| M24 | map the sync detector onto `placeId` instead of the perspective id | 4 of 14, incl. two that assert honest corroboration SURVIVES |
+
+**M19a is reported because it stayed green.** It is the honest half of the pair:
+the public-only bound does not rest on the one line the test appears to be
+about, it is defended twice, and only removing BOTH layers reddens the case. A
+mutation that fails to redden is evidence about the assertion, and suppressing
+it would make the other nine look stronger than they are.
+
+**What would leave these green and worthless.** Both suites drive the builders
+directly, so neither would notice a ROUTE that stopped calling them — the same
+P24 gap §9.6 opened and §11.5 restated, still open. The MD147 cases assert on
+`buildPerspectiveSummary`, which is reached from `buildPlaceProjection` alone;
+no other builder computes a perspective summary, so there is no second caller
+for them to be silent about.
+
+### 12.5 CORRECTION to §11.6 — MD43 is not capped by migration 2250
+
+§11.6 places MD43 in group (c) with an argument stated as fact:
+*"`media_attachments.visibility_override` has one writer, on the flag-gated
+canonical path, and **production does not have the column** — migration 2250 is
+unapplied there. A reader for it would be a read of a column that does not
+exist."*
+
+**Production has the column, and 2250 is not what creates it.** The column is
+created inline by `0191_media_assets.sql`'s `CREATE TABLE`
+(`` `artifacts/api-server/src/migrations/0191_media_assets.sql:52#visibility_override TEXT,` ``),
+`media_attachments` is in the production table list
+(`artifacts/api-server/baseline/20260907_production_tables.txt`), and the
+production structure dump carries the column on that table
+(`artifacts/api-server/baseline/20260819_baseline_structure.sql:7227`). 2250 adds
+it only conditionally, for a database whose 0191 predates it. The successor
+migration says so in its own words: *"§6.1 media_attachments columns (assert
+present; 0191 created them)"*
+(`` `artifacts/api-server/src/migrations/2470_media_asset_canonical_columns_flag_agnostic.sql:186#-- ── 4. §6.1 media_attachments columns (assert present; 0191 created them) ─────` ``).
+
+**The verdict does not move and the real blocker is different in kind.** MD43
+stays **W**. Its own row text is right — *"nothing reads it"* — and the reason no
+reader exists is not an absent column but an absent CALLER: the only module that
+could consult the override is
+`` `artifacts/api-server/src/lib/media/mediaCanonicalRead.ts:199#export async function attachCanonicalMedia(` ``,
+which selects `entity_id, position, is_cover` and the asset, never
+`visibility_override`, and which that same file records as *"called from
+nowhere, and that is a real gap"*. `media_attachments` is also empty in both
+databases. So MD43 is a **(d)** row — work nobody has commissioned — not a (c)
+row waiting on a deploy. **It was not built here**, because a reader wired into a
+function with no caller, over a table with no rows, would move a letter without
+moving the product, and that is §9.4's vacuous C.
+
+### 12.6 Migration 2250, re-established at HEAD — it is not the thing nine rows wait on
+
+§11.11 closes on *"a decision about migration 2250, which production does not
+have and which nine W rows are waiting on."* Re-executed:
+
+- **2250 cannot be applied to production as written, and not for a reason
+  anybody has to decide.** Its final postcondition raises if
+  `media_canonical_enabled` is TRUE
+  (`` `artifacts/api-server/src/migrations/2250_media_asset_canonical_model.sql:223#RAISE EXCEPTION 'POSTCONDITION FAILED: media_canonical_enabled is ON — Phase 1 must not flip the read path';` ``),
+  the flag IS TRUE in production (§11.7's own correction), and the raise is
+  inside `BEGIN … COMMIT` — so the transaction rolls back and the columns are
+  not created. The ledger records it as `do_not_apply` as written
+  (`docs/architecture/migration-disposition-ledger.md:134`).
+- **A successor exists and is the file the rows actually wait on.** `2470`
+  re-issues the same column set without that postcondition, and is itself
+  `blocked_by_owner_decision — MEDIA_CANONICAL_FLAG`
+  (`docs/architecture/migration-disposition-ledger.md:130`).
+- **So the open item is not "apply 2250".** It is a choice of ORDER, and 2470's
+  own header states both: take the flag DOWN and then apply 2250, or apply 2470
+  under the live flag. Either creates the four `media_assets` columns; neither
+  is a thing a lane may do.
+
+**The count is nine, and §11.6 made it ten by accident.** §11.7 names MD36,
+MD37, MD38, MD57, MD60, MD338, MD339, MD343 and MD429 — nine, and all nine rest
+on `captured_at` / `provenance` / `intelligence_eligibility`, which production
+genuinely lacks. §11.6 added MD43 as a tenth on the visibility_override ground
+refuted in §12.5. **Nine is right; MD43 was never one of them.**
+
+### 12.7 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| MD216 | W | **C** | §27's four populations are four. `loadPeopleAffinities` resolves Trip Crew and Shared Moment participants from two tables already in production, a second `for_you`-narrowed lane admits their public perspectives, and §27's declared order beats the count. M16/M17/M18/M20 red; M19b red on the stated public-only bound. §12.2. |
+| MD147 | W | **C** | `independentSourceCount` is `clusterByIndependence` over the two signals a perspective carries — the asset key and the party token — instead of a second name for `contributorCount`. Three copies of one photograph are one source. M21/M22/M23 red; M24 red in the other direction, proving the sync detector's inertness is a choice. §12.3. |
+| MD43 | W | **W** | Verdict unchanged, blocker replaced. §11.6's *"production does not have the column"* is false — 0191 created it inline and the production dump carries it. The real blocker is that `attachCanonicalMedia` has no caller and `media_attachments` is empty in both databases, which makes MD43 a **(d)** row, not a **(c)** one. §12.5. |
+
+Nothing else moved. The other nine group-(a) rows were re-read and §11.6's
+argument holds for each: MD94 / MD213 / MD378 wait on a directions affordance
+that does not exist, MD370 / MD383 on a table absent from production,
+MD104 on a conversation id the share handler does not hold, MD15 / MD33 / MD428
+on decisions taken in the client.
+
+### 12.8 The §9.10 decision, scoped — the rows it moves, and both verdicts
+
+Not taken here. Named exactly, because §11.11 said *"those rows and a hundred
+like them"* and a hundred is not a list.
+
+`MEDIA_RANKING_ENABLED` is seeded FALSE
+(`` `artifacts/api-server/src/migrations/2038_media_admin_flags.sql:23#('MEDIA_RANKING_ENABLED', false,` ``)
+and with it false the ranker returns chronological order with `score=0` and no
+snapshot
+(`` `artifacts/api-server/src/services/ranking/MediaFeedRankingService.ts:648#if (!flags.rankingEnabled) {` ``).
+`MEDIA_WORLD_SHELL_ENABLED` is seeded FALSE
+(`` `artifacts/api-server/src/migrations/2300_phantom_feature_flag_rows.sql:116#false,` ``).
+
+| block | rows | verdict as graded today | verdict under *"a flag-dark row is not a realized row"* |
+| --- | --- | --- | --- |
+| §24 ranker terms — each graded C on a `DEFAULT_WEIGHTS` weight or a ranking layer | MD178, MD180, MD181, MD182, MD183, MD185, MD186, MD189, MD190, MD193, MD199, MD200 — **12** | **C** | **W** |
+| §44 outcome names whose only emitter is the dark action rail | MD375, MD379 — **2** | **C** | **W** |
+
+**Two §24 rows are deliberately NOT on that list.** MD191 (Privacy) and MD192
+(Safety) are graded C on a GATE that runs before ranking and independently of the
+flag, which their own evidence says in as many words. They stay C under either
+reading, and including them would have inflated the decision's cost by two.
+
+**The corpus was not enumerated.** These fourteen are the two blocks §11.11
+names, verified row by row. Whether the convention has the same cost elsewhere
+is unmeasured here — and census-map grades the identical shape the other way
+today (`census-map.md` §41), so the decision is a corpus convention and not a
+media one.
+
+### 12.9 §11.8 is stale in the direction that matters
+
+§11.8 declined to repoint forty §5 citations because *"UNANCHORED sits at its
+ceiling of 6490 with zero headroom."* Measured at `d9ab209d7`:
+**6417 of 6490 — 73 of headroom.** The argument for a separate pass still
+stands on its own merits; the arithmetic it rested on does not. The forty ids
+§11.8 names are still unrepointed and still correct as findings.
+
+Five anchored citations WERE repointed here, by exact original line text and not
+by offset, because this section's code displaced them:
+`loadPlaceNeighborhoods` 323→338, `[ctx, neighborhoods]` 433→448,
+`loadTaggedPostIds` 902→1106, `loadTaggedMedia` 949→1153 in this document, and
+the Hidden Gems bucket 861→1065 in `census-highlights-memories.md`.
+`census-telegraph.md` cites the same file twice at `:978`, now `:1182`, and both
+were repointed — the third time in four sections that an anchored citation has
+caught its own decay, and the reason this paragraph can say the repoint is right
+rather than hope so.
+
+### 12.10 Restated headline
+
+> | Measure | Was, §11.10 | Now |
+> | --- | --- | --- |
+> | Denominator (testable requirements) | 450 | **450** |
+> | BUILT-AND-CORRECT | 285 | **287** |
+> | BUILT-BUT-WRONG | 76 | **74** |
+> | NOT-BUILT | 87 | **87** |
+> | CANNOT-VERIFY | 2 | **2** |
+> | **CONSTRUCTED%** = (C+W)/450 | 80.2 % | **361 / 450 = 80.2 %** |
+> | **CORRECT%** (raw) = C/450 | 63.3 % | **287 / 450 = 63.8 %** |
+>
+> Restated from `pnpm -s check:census-integrity`, not by hand. Construction does
+> not move, again and for the same reason: both repairs closed a computation for
+> a field that was already declared and already served, so the W column handed
+> two rows to the C column and the C+W total never noticed. The gap between the
+> two figures fell 16.9 → **16.2** points.
+
+The **spec-attributable** figure (§0: 216 / 450) is **not restated**: attribution
+was not re-run, and adjusting it by adding two promoted rows would be arithmetic
+dressed as measurement.
+
+### 12.11 The least flattering true thing about this pass
+
+**It closed the two easiest rows in group (a) and left the argument for the
+other nine exactly where it found it.** MD216 and MD147 were the two rows whose
+requirement was satisfiable entirely inside one server file, over tables that
+are already in production, with no product decision in the way. That is why they
+were closed, and a pass that picked the two tractable rows out of eleven should
+say so rather than imply the queue was worked.
+
+Second, and structural: **§12.5 is the second time in two sections that a stated
+deployment blocker turned out to be false when somebody opened the migration.**
+§11.7 corrected §3 about `media_canonical_enabled`; §12.5 corrects §11.6 about
+`visibility_override`. Both were asserted from reading a migration rather than
+the database, both were wrong in the direction that made a row look harder than
+it is, and nothing in this repository can catch the next one — the production
+table list and the structure dump are the only two artifacts that could, and
+neither is consulted by any check.
+
+## 13. MD227's C was awarded against a fixture, and the column it read does not exist
+
+| | |
+|---|---|
+| **Measured at** | `32f07232f` — the tip of `claude/sweet-fermat-fmx7up` when this pass started. The document's `head_commit` row (§0) is **not** moved: this section re-reads ONE function, not 450 rows. |
+| **Found by** | `check:write-path-columns` on the `api-server · check:all + live_pulse gate` job of PR #483, which runs with credentials against the sanctioned CI project and is therefore the only check in this repository that compares a select list against a live `information_schema`. Not by a test, and not by reading the code. |
+
+### 13.1 What was wrong
+
+§11.3.2 moved **MD227** W → C on the sentence *"The Tagged bucket reads `tags`"*, and
+§12 restated it as *"the §30 Tagged bucket reads the table that was there all
+along."* Both sentences are true about the TABLE and false about the read.
+`artifacts/api-server/src/services/media/MediaProjectionService.ts:1317#export async function loadTaggedPostIds(`
+selected and ordered by `tags.tagged_at`. **There is no such column.** The
+canonical `0043_tags_hashtags.sql` declares it and it was never applied —
+`migrations/README.md` line 12 says so in as many words, and `docs/migrations.md`
+line 26 records it in the schema-audit allowlist for exactly that reason. Live
+`tags` carries `created_at`.
+
+PostgREST rejects an unknown column with 42703 and fails the WHOLE statement,
+and supabase-js RESOLVES that rejection rather than throwing. So the read landed
+in the function's own `if (error)` branch and returned `[]` with a warn line.
+**The Tagged bucket was empty for every viewer, on every request, since the row
+was moved to C** — and it was empty in the one way nothing above it could
+detect, because "you have no tags" is the documented degradation and looks
+identical.
+
+### 13.2 Why four tests over this function did not notice
+
+`src/test/mediaProjectionGaps.test.ts` covers `loadTaggedPostIds` four times and
+all four passed, because every fixture row carried a `tagged_at` key. The
+fixtures had been written to match the code, so the tests proved the code
+matched the fixture and proved nothing about the database. This is the same
+failure shape `src/test/helpers/schemaStrictSupabase.ts` was built for after the
+Memory/Compass lane shipped five of them, and the helper existed in this tree the
+whole time — the media lane simply did not reach for it.
+
+### 13.3 What now backs the row
+
+`artifacts/api-server/src/test/mediaTaggedBucketLiveSchema.test.ts:60#describe("§30 Tagged bucket — every column it names is a column the live tags table has", () => {`
+drives the production function through `makeSchemaStrictClient`, which validates
+every column named in a select list or a filter against
+`generated/liveColumns.json` — the live `information_schema` — and answers 42703
+exactly as production does. Watched RED first: **3 of 3 failed** before the
+repair, each reporting `column tags.tagged_at does not exist`; **3 of 3 pass**
+after. The four `tagged_at` fixture keys in `mediaProjectionGaps.test.ts` were
+replaced with `created_at` in the same commit, so no fixture in this tree
+re-plants the dead column.
+
+### 13.4 No verdict moves, and that is the uncomfortable part
+
+**MD227 stays C**, so no percentage in this document changes and none is
+restated. That is not a clean outcome: the row was C for the whole interval
+between §11.3.2 and this section while the feature it grades returned nothing,
+and the census had no way to say so because a verdict records a judgement, not
+the date the judgement stopped being true. The honest summary is that
+**CORRECT% was overstated by one row for that interval** and the correction is
+visible only here, in prose, rather than in the count.
+
+### 13.5 What would have caught it sooner, and what still would not
+
+Only `check:write-path-columns`, and only in a job with live credentials — which
+is why this was found by CI on a pull request and not by the 20,000-test local
+suite, `run-all-checks.sh`, or any reviewer reading the diff. The general lesson
+is narrow and worth stating plainly: **in this repository a column name is not
+checkable by reading code, tests, or migrations.** The canonical migration chain
+asserted this column exists; it was wrong, and it had been wrong in writing since
+the file was authored. `check:missing-live-columns` reads migrations against the
+live schema from the other direction and passed on this same run, because
+`tags.tagged_at` is in ITS allowlist — the allowlist entry recorded the drift and
+then silenced the only other check that could have named it.
+
+---
+
+## 14. The Media lane pass — ten rows closed, and a falsifier for every row left open
+
+This section is the record of the 2026-09-14 Media lane pass. It did three
+things: it built and certified ten requirements, it re-graded eight more in the
+direction the evidence pointed, and it attached a concrete falsifier — *what
+would turn this red* — to every one of the 153 requirements still not C. The
+third is the part that makes the other two auditable: a census whose open rows
+have no stated falsifier is a list of complaints.
+
+### 14.1 What was built, and the mutation that proved each test
+
+Every test below was written FIRST, run, and seen to fail for the right reason
+before any implementation existed. Every implementation was then mutated and the
+test seen to go red. The mutations are listed per row above; the summary:
+
+| Rows | What was built | Files |
+| --- | --- | --- |
+| MD149 · MD150 · MD151 · MD152 | §18 Corroboration → Contradiction → Visual Consensus, served on `PlaceProjection` and every `WorldZone`, with the §18 "Mixed reports" copy | `artifacts/api-server/src/services/media/MediaConsensusService.ts` (new), `MediaProjectionService.ts`, `MediaPerspectiveService.ts` |
+| MD349 · MD367 | §38 media search + `GET /media/search`, over the SHARED candidate loader and coarse projector | `artifacts/api-server/src/services/media/MediaSearchService.ts` (new), `routes/mediaWorld.ts` |
+| MD51 · MD100 | §28 Shared Moment in the media context graph, and §15 Invite People behind the invite endpoint's own gate | `artifacts/api-server/src/services/media/MediaActionResolver.ts` |
+| MD171 · MD172 | §23.1 experience chains ordered by observed capture time, and Follow This Night | `artifacts/api-server/src/services/media/MediaExperienceResolver.ts`, `MediaActionResolver.ts` |
+
+Twenty-nine mutations were run across the four clusters. **Two of them did not
+redden the suite on the first attempt, and that is reported rather than quietly
+fixed**, because a mutation that fails to redden is the census's own warning
+that a test is weaker than its name:
+
+1. **Dropping `mayDiscloseGemIdentity` from the search left every test green.**
+   The "a PROTECTED hidden gem yields no gem result" case was passing for a
+   different reason than its name claimed: a protected gem makes the LOCATION
+   choke point withhold the place id upstream, so the gem lookup was never
+   handed a place to look under and the predicate was unreached. A second case
+   was added — an `archived` but `public` gem, which is not restrictive (so the
+   place stays disclosable) and is not identity-disclosable (so the predicate
+   must refuse it). The mutation now reddens. The original case was kept, and
+   relabelled to say what it actually proves.
+2. **Two chain mutations did not redden**: keying a stop on its LAST perspective
+   instead of its first, and admitting a place the disclosure choke point had
+   withheld. The first fixture happened to have no stop that was revisited, so
+   first and last ordered identically; the second produced an ANONYMOUS stop
+   (`placeId: null`) rather than a named one, which the assertion did not look
+   for. Both fixtures were rewritten — a Dinner → Rooftop → Dinner night where
+   the two keys give opposite orders, and an assertion that every stop carries a
+   real canonical place id. Both mutations now redden.
+
+A third mutation (`sendProjection` → `res.json` on the new search route) did not
+redden the search suite and DID redden `mediaWorldBoundaryScrub.test.ts`, which
+is the file that owns that guarantee. That one was a mis-aimed mutation, not a
+weak test.
+
+### 14.2 Rows found mis-graded or mis-cited
+
+| Row | Finding |
+| --- | --- |
+| MD162 | **Mis-cited.** It cites `lib/mapProducers/crowdFlowProducer.ts`; no such file exists. The producer is `artifacts/api-server/src/lib/crowdFlowProducer.ts:264#export const CROWD_FLOW_FLAG = "map_crowd_flow_enabled";`, which is where MD163 correctly points. The verdict is unaffected — Media still does not consume it — but the row is one of the 18 citations §0 says name no file in the tree, and this is which file it should have named. |
+| MD152 | **Partly overstated, in the direction that flatters the gap.** "No uncertainty state on `PlaceProjection` or `WorldZone`" was true at the OBJECT level and false at the field level: the per-claim `conflictState` was already riding inside `currentState.claims[]` / `liveClaims[]`, so a client that knew to look could already find it. What was genuinely absent was any place-level or zone-level state and any copy. The row is now C on both. |
+| MD287–MD293 | **Re-graded N ×7 → W ×7.** See the row. |
+| MD228 · MD294 · MD173 | **Re-graded N → W.** Each says in its own cell which part closed and which did not. |
+| MD149 | **Re-graded W → C**, and the W was correct when written — `MediaContributorReputationService` really is contributor corroboration, not perspective corroboration. |
+| Headline | **Already drifted before this pass.** The `## Headline` table at the top of the document still reads C 291 / W 69 / N 88 / X 2, which has not described the rows since §11.10; `check:census-integrity` reads the LAST restated headline (§12.10, C 287 / W 74 / N 87 / X 2) and that one did reconcile. The top table is left as the historical record it is, and §14.5 restates from the rows. |
+
+### 14.3 Cross-lane requests
+
+1. **`artifacts/api-server/src/compass/CompassMediaContext.ts`** — add
+   `shared_moment: "shared moment"` to `REF_KIND_LABEL` (`:305`). MD51's edge is
+   currently carried on a second union, `MediaGraphKind`, purely because that
+   file builds `Record<MediaEntityRef["kind"], string>` and widening
+   `MediaEntityKind` would not compile. With the label added, `MediaGraphKind`
+   collapses back into `MediaEntityKind` and `ResolvedMediaEntities.graphRefs`
+   back into `.refs`. This is a one-line change and a strictly better shape; it
+   was not made because the file is not this lane's.
+2. **`artifacts/api-server/package.json`** — no new test file was created, so no
+   registration is needed. Stated because it was checked, not assumed: all new
+   cases were added to four ALREADY-REGISTERED suites
+   (`mediaIndependentSources.test.ts`, `mediaWorldProjection.test.ts`,
+   `mediaActionsCompass.test.ts`, `mediaWorldBoundaryScrub.test.ts`).
+3. **`services/ranking/**`** — sixteen of the open rows (§14.4 family F9) are
+   about the ranker, and `services/ranking/MediaFeedRankingService.ts` is outside
+   the Media lane's paths. Whichever lane owns it needs the family F9 falsifiers.
+4. **Four ANCHORED citations in three other censuses were displaced by this
+   pass's code and must be repointed by the lanes that own those documents.**
+   This is the anchored-citation mechanism working exactly as §12.9 describes —
+   the anchors caught their own decay, loudly, on the run that broke them — and
+   the repoints are not made here because "any census other than your own" is off
+   limits. Each has been re-located by exact original line text, not by offset,
+   so the new number is verified rather than arithmetic:
+   - `docs/architecture/census-highlights-memories.md:469` cites the My World
+     "gems" bucket at line 1091 of MediaProjectionService; it is now at
+     `artifacts/api-server/src/services/media/MediaProjectionService.ts:1276#key: "gems"`.
+   - `docs/architecture/census-telegraph.md:301` and `docs/architecture/census-telegraph.md:1119`
+     both cite the owner-scoped table read at line 1214; it is now at
+     `artifacts/api-server/src/services/media/MediaProjectionService.ts:1399#.from(table)`.
+   - `docs/architecture/census-trust.md:738` cites the viewer profile select at
+     lines 108-112; it is now at
+     `artifacts/api-server/src/services/media/MediaProjectionService.ts:101#.select("location_country")`.
+   (The stale line numbers are given as plain numbers above, deliberately: written
+   in citation shape they would be re-parsed as citations of THIS document and
+   would fail `check:doc-citations` here instead of there.)
+   The fifteen displaced anchors inside THIS census were repointed in the same
+   pass, the same way. `check:doc-citations` was ALREADY failing before this pass,
+   across many documents and for unrelated reasons — the largest cluster is
+   `docs/discovery/ROADMAP.md` — so this pass did not break that check and cannot
+   fix it. What it can account for is its own share: **twenty** anchored
+   citations were displaced by this pass's code, **sixteen** of them live in this
+   census and are repointed, and the four above do not and are not.
+
+### 14.4 WHAT WOULD TURN THIS RED — the falsifier register
+
+One entry per requirement still not C, grouped ONLY where the falsifier is
+literally the same artifact. The rule for an entry: it names a thing that could
+be built or measured, and says who can supply it. "More work" is not an entry.
+
+**F1 — The compliant surface is built and dark.** `MEDIA_WORLD_SHELL_ENABLED` is
+seeded `false` (`artifacts/api-server/src/migrations/2300_phantom_feature_flag_rows.sql:36-42`)
+and the Media tab's default mode is `'watch'`. Every row here is "the §46-shaped
+thing exists; the thing users reach is the other one".
+*Settled by:* a migration seeding that flag `true` **and** a `mediaStore` default
+that is not `'watch'` **and** a `docs/architecture/mobile-reachability-ledger.md`
+entry showing the World shell reachable. *Who:* the integration owner — lanes may
+not enable a feature flag (LANE-RULES §6) — plus the client lane for the default.
+Rows: MD1, MD2, MD3, MD11, MD15, MD29, MD33, MD87, MD286, MD402, MD408, MD412, MD428.
+
+**F2 — The forbidden thing is built and shipping.** These four are §46.2
+prohibitions the tree VIOLATES, so nothing is missing; something is present.
+*Settled by:* the full-screen paging autoplay feed no longer the seeded default
+mode, and the Stamp/comment/save count rail no longer the primary overlay —
+evidenced by the seed row and by `WatchItemOverlay`'s rail. *Who:* client lane +
+integration owner. Rows: MD419, MD424, MD425, MD427.
+
+**F3 — A named client module simply does not exist.** Each row names a file.
+*Settled by:* that file existing under `travel-buddy-standalone/src/features/media/`,
+reachable from a route, with a registered test. *Who:* the client lane; the Media
+backend lane cannot supply any of them and says so rather than leaving them to
+look like backend debt. Rows: MD21 (`HiddenGemsMediaScreen`), MD25 (`MediaMapScreen`),
+MD26 (`MediaTimelineScreen`), MD27 (`MediaSearchScreen`), MD28 (`MediaContributionScreen`),
+MD313 (`HiddenGemCard.tsx`), MD314 (`MediaContextSheet.tsx`), MD316 (`MediaContributionSheet.tsx`),
+MD320 (`services/mediaProcessing.ts`), MD321 (`services/mediaPrivacy.ts`),
+MD322 (`services/mediaContext.ts`), MD323 (`services/mediaIntelligence.ts`),
+MD324 (`services/mediaSearch.ts` — now unblocked server-side, see its row),
+MD325 (`services/mediaCache.ts`), MD329 (`state/mediaMapStore.ts`),
+MD331 (`state/mediaFilterStore.ts`), MD332 (`state/myMediaStore.ts`),
+MD35 and MD405 and MD449 (all three are the My World **Map** mode placeholder at
+`MyWorldMediaScreen.tsx:95-99`, and all three fall together the moment that mode
+renders the canonical Map projection the server already produces at
+`MediaProjectionService.ts:916`), MD415 and MD416 (gem glow / map contour — the
+DATA exists at `mediaLocationVisibility.ts:98`; no client draws it).
+
+**F4 — Offline / degraded mode (§39) has no store.** Nothing in the media tree
+persists CONTENT; `AsyncStorage` holds mode and toggles only.
+*Settled by:* a client cache module that persists a scoped, curated set, with an
+eviction policy, a trip/place scope, and a visible last-updated stamp that is
+never rendered as live (§39's own closing sentence). *Who:* client lane.
+Rows: MD295, MD296, MD297, MD298, MD299, MD300 (currently an HTTP image cache,
+which is caching but not §39), MD301.
+
+**F5 — The canonical asset store is dark and unread.** `lib/mediaAssets.ts:118`
+returns `null` before writing whenever `media_canonical_enabled` is off, and it
+is off; `attachCanonicalMedia` has no caller; `media_attachments` is empty in
+both databases.
+*Settled by:* (a) the flag enabled in a real environment, (b) a backfill so
+`media_assets` covers live media rather than 8 rows, and (c) at least one READ
+path calling `attachCanonicalMedia` — after which `canonical_media` stops being
+absent on every row and `firstCanonicalMedia` stops returning null on every row.
+*Who:* integration owner (flag + backfill); the read-path caller is Media lane
+work that is pointless before (a) and (b). Rows: MD36, MD38, MD43, MD44, MD57,
+MD60, MD338, MD339, MD343, MD429.
+Three of the family need a MIGRATION as well, which LANE-RULES §2 forbids a lane
+to author unasked: MD37 (drop the legacy `'user'` default from `0191:31` so every
+write lands inside the §6 eight-value set), MD41 (a CHECK on
+`media_attachments.entity_type` over the nine §5 values, plus writers for
+`shared_moment` and `observation`), MD255 (a `visibility` CHECK admitting the six
+§33 audiences — today the column is bare `TEXT DEFAULT 'inherit'` and the post
+enum has three values), MD274 (flip the DEFAULT to a §36 value and migrate the
+legacy rows, which `2250` deliberately did not do).
+
+**F6 — The media → intelligence boundary is a refusal, not a gap.** These rows
+are W/N because a seam was built and deliberately left unwired.
+| Row | What would settle it |
+| --- | --- |
+| MD53 | `media_evidence_enabled` on **and** an observation ref carried on a media projection. Today the link table exists behind the flag (`lib/media/mediaEvidenceLink.ts:130`) and no projection carries the ref. |
+| MD63 | Any pixel/frame/scene analysis at all. `mediaEvidenceEligibility` classifies from DECLARED source and edit list; there is no decode step anywhere, and for video there is no decoder (F11). A stage that does not exist cannot be partly built. |
+| MD65 · MD66 | A media path that writes `intel_observations` / `intel_claims`. `mediaEvidenceLink.ts:1-13` states it never does. Settling this is a SAFETY decision before it is a code change, and should be recorded as one. |
+| MD58 | Corroboration, observation refs and expiration on a media projection. Corroboration is now half-answered — §18's consensus (MD149) puts an agreement measure on the place, but `MediaProjection` itself still carries none, and observation refs and expiry are still absent. |
+| MD71 | Either `freshnessClass` gaining `'live'` (which `mediaFreshness.ts:21` types out on purpose and which this census judges SAFER than the spec), or the spec conceding the cap. This row cannot be closed by code alone; it needs a spec decision. |
+| MD73 | A `locationConfidence` scalar distinguishing a GPS-verified capture from a hand-typed venue. The inputs exist (`mediaAssets.ts:105` has a boolean `hasLocation`; EXIF is stripped server-side) — what is missing is a captured provenance bit saying WHICH, recorded at upload. |
+| MD75 · MD78 | An `expiresAt` on an asset's intelligence eligibility. `mediaEvidenceEligibility.ts:29-31` declines it by design, with a reason. Settled by the spec conceding, or by a migration adding the column and a writer. |
+| MD76 · MD77 | A `MediaTemporalState` contract and a `socialExpiresAt` column. Neither exists under any name; a grep for the type returns nothing in either tree. |
+| MD79 | A path from "shown" back to "hidden". `delayedPostPublisher` only ever begins disclosure. Settled by a scheduled re-hide, or by the spec accepting one-way disclosure. |
+| MD445 | MD65 closing. Its first half (qualification) is delivered. |
+
+**F7 — Perspective vantages (§12).** `MediaPerspectiveService.ts:8-12` declines
+to invent a vantage the data does not support, and buckets from `category`.
+*Settled by:* a perspective/vantage value CAPTURED at contribution time (a
+column, or a composer affordance that asks), not a classifier guessing from a
+photo — the service's refusal is correct until the data exists. *Who:* schema +
+client capture. Rows: MD82, MD83, MD84, MD85, and MD444 (three of its four parts
+are delivered; the vantages are the fourth).
+
+**F8 — Entry contexts (§14).** `setPerspectiveViewerContext` has exactly one
+caller passing exactly one kind. *Settled by:* a second producer for each kind —
+an Event surface, a People surface, a Trip surface, and a Media Map (MD25) —
+each passing its own entry-context kind. Rows: MD89, MD90, MD91, MD92.
+
+**F9 — Ranking (§24).** `services/ranking/**` is outside this lane's paths; see
+§14.3.
+| Row | What would settle it |
+| --- | --- |
+| MD8 | A provenance term in the ordering: `source_type` reaching the ranker/projection and `generated`/`derivative` ordering below `camera`/`official`. Today no ordering reads provenance, and the World-shell sort is `capturedAt` only. This is an UNGUARDED ABSENCE, so it can also be settled by a guard + test proving generated media cannot outrank authentic — which is cheaper than the feature and is the honest minimum. |
+| MD177 | A viewer-intent input on `RankCandidate`/`ViewerContext`. `media_intent_signals` is written (§15.1) and read only by the action rail for its own button state (`artifacts/api-server/src/services/media/MediaActionResolver.ts:795#.from("media_intent_signals")`); the store exists and is not a ranking input. |
+| MD179 | A viewer-trip affinity term in `DEFAULT_WEIGHTS`. `kindPrior` has a `trip` CANDIDATE kind, which is a different thing. |
+| MD184 · MD201 | A live-claim term in either ranker, and a penalty on low-confidence ones. MD201 is unguarded: a live term could be added tomorrow with no penalty and nothing would object. |
+| MD187 | A quality term that is not an engagement proxy — resolution, sharpness, duration fit, composition. Today quality IS `watchCompletionRate` / `qualifiedViewCount` / `rewatchRate`, which is the thing §45 forbids optimising for. |
+| MD188 | A `source_type`/provenance term (with MD8). Author trust is not asset provenance. |
+| MD194 | A predicted real-world action, not a per-candidate-kind constant. `actionability 0.9` is a genuine partial and is a property of the kind. |
+| MD195 · MD196 · MD198 | An experience-fit term, a connection-usefulness term, a narrative-value term. None exists under any name. |
+| MD197 | A call site for `MediaContributorReputationService` inside `services/ranking/`. The scorer exists and nothing reads it. |
+| MD207 | A fourth reputation dimension reading journey history. `computeContributorReputation` computes three. |
+| MD348 · MD356 | A ranking stage between projection and client in the World-shell pipeline. `buildWorldProjection` sorts zones by item count and `buildTimelineProjection` by capture time; neither is a ranker. |
+| MD435 | Media ceasing to own a second ranker, or §48 conceding it. The ownership line is crossed in the direction §48 forbids, and that is a design decision, not a bug. |
+
+**F10 — Telemetry names with no emitter (§44/§45).** `mediaTelemetry.ts` declares
+several transitions "reserved: no rail trigger yet"; `mediaAnalyticsBatch.ts:41`
+allow-lists some names that nothing sends.
+*Settled by,* per row: a PRODUCER that emits the event, plus a test that fails
+without it. The allow-list is this lane's file; the emitters are the client's.
+| Row | Producer that would settle it |
+| --- | --- |
+| MD213 · MD378 · MD396 | A directions tap on a §15 surface emitting `media_route`. `directions_tap` exists on the legacy gems surface only, and there is no Directions action to tap (MD94). |
+| MD214 · MD399 | An arrival detector on a media path. None exists; the geofence machinery is trip-scoped. |
+| MD374 | An event name for a Visual Opportunity open, plus the World shell's opportunity cards emitting it. |
+| MD376 | A gem-open event name in the batch allow-list, plus an emitter. `gems_filter_change` is allow-listed; an open is not. |
+| MD381 | An invite event. **The action now exists (MD100)**, so this row's stated blocker — "no invite action" — is gone; what remains is the event name and the emitter. |
+| MD382 | An experience-completion detector. `completion` in the allow-list is VIDEO completion, the opposite signal. |
+| MD383 · MD400 | A contribution surface (MD28) emitting `media_contribution`. |
+| MD385 | A creation event on the Memory/Postcard path. `MyWorldMemoryService` is read-only by design, so this needs the writer side. |
+| MD387 · MD393 | A server touchpoint for comment-create and profile-open on a media surface. Both are client navigations today. |
+| MD209 | Producers for `save` and `place_open`. Neither exists in either tree. |
+| MD215 | The counts ceasing to dominate — see F2. |
+
+**F11 — The video tier has no decoder.** `lib/mediaProcessing.ts:18-19` states
+that videos are sniffed and size-capped, never transcoded, because there is no
+ffmpeg in this tier.
+*Settled by:* a processing tier that can decode — which is an infrastructure
+decision with a cost, not a code change, and should be recorded as such.
+| Row | What would settle it |
+| --- | --- |
+| MD275 | A writer filling `media_assets.thumbnail_path` for video. The column exists. |
+| MD276 | A server-side probe of the container. Duration is whatever the uploader declared. |
+| MD277 | An HLS/DASH manifest. `WatchVideoCell.tsx:158` plays one progressive URL. |
+| MD280 | A caption/subtitle track on the asset and a `textTrack` on the player. |
+| MD281 · MD284 | A chunked/resumable upload with a resume token, and a background task registration. `uploadMedia` is a single foreground `fetch`. |
+| MD282 | Transcoding. Images are already re-encoded and capped; video is not. |
+| MD283 | MD282 plus F12 — video is never decoded, so no classifier could run on it even if one existed. |
+
+**F12 — Moderation decides nothing.** Rows MD269, MD351.
+*Settled by:* a classifier with a hold state and a queue that a decision can come
+out of — today the postcard transport promotes to approved unconditionally and
+what exists is an admin route, an audit writer, an inert table and the
+distribution gate. *Who:* needs a moderation-provider decision first.
+
+**F13 — Actions and Compass, the parts still open.**
+| Row | What would settle it |
+| --- | --- |
+| MD94 | A `directions` action. It needs a canonical directions endpoint to target; there is none, and the rail's rule is that every action resolves to an EXISTING endpoint, so inventing one here would be the wrong fix. "Go There"/"Show on Map" are built. |
+| MD101 · MD253 | The third comparator. `CompassMediaContext.ts:81#export const COMPARATOR_AXIS_CLAIM` now maps *quieter* and *cheaper*; *busier* and *find similar to this specific thing* are not mapped. Compass lane. |
+| MD103 | A `passport` member in the entity graph. §29 keeps Passport on Postcards, so this is a SPEC boundary question before it is a build: settled either by §29 conceding, or by a passport ref with its own eligibility gate. |
+| MD104 | A Telegraph thread/message/intent actually created when `target = "telegraph"`. `routes/mediaFeed.ts:2297-2299` records a share event and returns a URL on every branch. This is Media-lane code and a Telegraph-lane contract; it was not built here because inventing the thread shape unilaterally is how two lanes end up with two share paths. |
+| MD107 | A compilation into a **Compass** plan from a Trail / recap / itinerary source. Today "Do This Experience" adds items to a TRIP, which is a smaller, different thing that works. |
+| MD173 | See its row — a client call site, or a server-side place-id resolution in `POST /route-plans`. |
+| MD175 | A remix concept anywhere. There is none, and building one from nothing is a product decision, not a census repair. |
+| MD252 | The re-read this census still owes. `CompassMediaContext.ts:225#export function buildSequencingAnchor` exists and the row's stated absence is false; the verdict was deliberately left at N by the correcting lane and **is still owed a re-read**. This pass did not perform it either, because the file is the Compass lane's and the row turns on that lane's build. Recorded again rather than silently inherited. |
+
+**F14 — Hidden Gems (§16).**
+| Row | What would settle it |
+| --- | --- |
+| MD112 | Duplicate detection running at SUBMISSION, not only in the admin queue. The scorer is real and the placement is the gap. |
+| MD120 | A gem outcome record — a table or a claim linking a visit back to the gem. `compass_outcome_events` is Compass's and carries no gem semantics. |
+| MD360 | `GET /media/gems` serving a §16 gem-STATE projection. The lens falls back to `GET /media/gems-feed`, a ranked social feed. This is squarely in this lane's paths and was NOT built this pass — the four clusters above were chosen instead, and that is a prioritisation, not a blocker. It is the cheapest remaining row in the census for this lane. |
+
+**F15 — Everything else, one at a time.**
+| Row | What would settle it |
+| --- | --- |
+| MD162 | Media consuming the canonical crowd flow. The producer is `lib/crowdFlowProducer.ts` (NOT the path this row cites — see §14.2), and `deriveCrowdFlow` has no production caller anywhere, so Media would be its first consumer. Note the producer currently reports two wired signal families and refuses to publish below `MIN_SIGNAL_FAMILIES` for most buckets, so a Media consumer would correctly render nothing today — settled by the consumer PLUS evidence that a flow can actually be produced. Media perspectives cannot themselves become a family: a photograph declares no ORIGIN zone, which is `UNFED_FAMILY_BLOCKERS`' `no_declared_origin`, the blocker no amount of wiring removes. |
+| MD169 | An experience-level `confidence` computation. The field is declared and unfilled; the only confidence on the media path is the per-forecast band in `mediaTimeBands`. |
+| MD222 | **Partly closed by MD51** — the Shared Moment is now IN the media context graph and addressable from the rail. Still open: the People lens (MD216) does not carry shared-moment participants as a population. Settled by `buildPeopleProjection` emitting the `shared_moment` relation it already types. |
+| MD228 · MD294 · MD287–MD293 | See their rows. |
+| MD369 | A `POST /media/:id/attachments` route. Attachments are written only from inside `PassportMemoryService` and `HiddenGemService`. This lane's path; not built this pass, and pointless before F5 (the write is a no-op under the seeded-off flag). |
+| MD370 | A contribution endpoint distinct from the §15.1 intent signal. Gem contributions go to `routes/hiddenGems.ts`. Blocked with MD28 on there being a contribution surface to serve. |
+| MD403 (X) | A measured contrast ratio and a dynamic-type pass on a device. This census agrees it is genuine runtime QA — it is the ONE §46 item where it agrees. Settled by a QA artifact, not by reading the tree. |
+| MD441 (X) | The Phase 0/1 media audit DOCUMENT. The WORK landed (`0191`, `2250` name their phase); `docs/media/` holds no audit. Settled by the audit artifact being committed, or by the programme recording that it was never written. |
+| MD446 | "Show Me Now" existing under some name. Four of its six parts are delivered; "Go There" is MD94. |
+
+### 14.5 Restated headline
+
+> | Measure | Was, §12.10 | Now |
+> | --- | --- | --- |
+> | Denominator (testable requirements) | 450 | **450** |
+> | BUILT-AND-CORRECT | 287 | **297** |
+> | BUILT-BUT-WRONG | 74 | **83** |
+> | NOT-BUILT | 87 | **68** |
+> | CANNOT-VERIFY | 2 | **2** |
+> | **CONSTRUCTED%** = (C+W)/450 | 80.2 % | **380 / 450 = 84.4 %** |
+> | **CORRECT%** (raw) = C/450 | 63.8 % | **297 / 450 = 66.0 %** |
+>
+> Restated from `pnpm -s check:census-integrity`, not by hand. The moves are ten
+> N/W → C (§14.1) and ten N → W (MD173, MD228, MD294, MD287–MD293). Construction
+> moves this time, by 4.2 points, and it moves for the ordinary reason: nineteen
+> requirements that had NOTHING now have something. The gap between the two
+> figures is **18.4** points, up from 16.2 — which is the honest shape of a pass
+> that opened more than it finished, and the register in §14.4 is where that
+> extra distance is itemised rather than averaged away.
+
+The **spec-attributable** figure (§0: 216 / 450) is restated ONCE and only
+because the addition is checkable rather than estimated: all ten newly-C rows
+were built in this pass against a named section of this spec (§15, §18, §23.1,
+§28, §38), so attribution rises by exactly ten to **226 / 450 = 50.2 %**. No
+pre-existing row's attribution was re-judged, and if that re-judgement ever
+happens this number must be re-derived, not adjusted.
+
+### 14.6 The least flattering true thing about this pass
+
+**It closed the rows it could reach, and the rows it could reach are not the
+rows that matter most.** The single largest fact about Media is unchanged and
+untouched by anything above: the §46-compliant surface is behind a flag seeded
+`false`, and the surface users reach is the full-screen autoplaying stranger-video
+feed §46.2 forbids twice. Thirteen rows sit in family F1 and four more in F2, and
+this pass moved none of them, because a lane may not enable a feature flag and
+may not edit the client. Everything built here — the consensus object, the search,
+the Shared Moment edge, the chains — is served by endpoints inside that same dark
+shell. **They are correct, they are tested, and today nobody can see any of them.**
+
+A second, smaller one: **MD360 was the cheapest row in this census for this lane
+and it was not built.** `GET /media/gems` is one route in a file this lane owns,
+over a projection service this lane owns, and it would have closed a row and
+un-blocked two more (MD15, MD33). It lost to four clusters that each closed more.
+That is a defensible prioritisation and it is still a row that should have been
+easier to finish than to explain.

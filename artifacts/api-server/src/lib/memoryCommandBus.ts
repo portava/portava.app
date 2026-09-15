@@ -276,7 +276,7 @@ export function assertLifecycleTransition(from: string | null | undefined, to: s
 //
 // Eleven of §17's seventeen names, plus one extension. Every name below either
 // appears in §17 verbatim or is marked EXT with the gap it fills — the same
-// discipline lib/tripKernel.ts applies to UPDATE_PLAN.
+// discipline domain/trips/commands/tripKernel.ts applies to UPDATE_PLAN.
 
 export const MEMORY_COMMAND_TYPES = [
   "CREATE_MEMORY",      // §17
@@ -403,7 +403,7 @@ export type MemoryKernelResult =
     };
 
 // ── §24 memory_command_rejected_total by reason ──────────────────────────────
-// In-process counter, the shape lib/tripKernel.ts already established. No
+// In-process counter, the shape domain/trips/commands/tripKernel.ts already established. No
 // exporter exists in this codebase; readers are tests and, one day, whatever
 // metrics endpoint the platform grows. §24 asks for reason codes in operational
 // logs — this is the counted half; the logged half is sendMemoryCommandRejection.
@@ -425,7 +425,7 @@ function countRejection(reason: string): void {
 // ── HTTP envelope (§19) ──────────────────────────────────────────────────────
 // §19: "client-generated operation IDs and server-side idempotency". The header
 // is the IETF one (draft-ietf-httpapi-idempotency-key-header), the same choice
-// lib/tripKernel.ts made, so a client speaks one dialect to both kernels.
+// domain/trips/commands/tripKernel.ts made, so a client speaks one dialect to both kernels.
 //
 // ABSENT KEY. A fresh UUID, i.e. the request is NOT idempotent — which is
 // exactly what every Memory write does today, so a client that has never heard

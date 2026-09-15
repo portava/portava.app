@@ -43,7 +43,7 @@ import { checkAndRecordSnapshot } from "../services/location/LocationSafetyServi
 import { NotificationDeduplicationService } from "../services/notifications/NotificationDeduplicationService.js";
 import { runSense } from "../compass/CompassSenseEngine.js";
 import { runLiveCheck } from "../compass/CompassLiveEngine.js";
-import { evaluateNotification } from "../compass/CompassNotificationEngine.js";
+import { evaluateNotification, type NotificationPayload } from "../compass/CompassNotificationEngine.js";
 
 const USER = "11111111-1111-1111-1111-111111111111";
 const THREAD = "22222222-2222-2222-2222-222222222222";
@@ -556,5 +556,142 @@ describe("CompassNotificationEngine — category safety-block flag", () => {
     });
     const d = await evaluateNotification(sc, USER, payload, { nowMinutes: 720 });
     assert.notEqual(d.suppressionReason, "safety_block:nightlife");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CompassNotificationEngine — the BLOCKED-SENDER gate, whose own comment states
+// the contract it was breaking
+//
+// The engine's comment above this read says, in its own words:
+//
+//   "A blocked sender must never reach the recipient via push — regardless of
+//    level, quiet hours, or category."
+//
+// and the comment beside the read explains exactly why the error must be bound:
+//
+//   "maybeSingle() returns `data: null` both when there is no block row and when
+//    the query was rejected ... without binding these, a schema/query error
+//    delivers the push and leaves no trace that the check did not run."
+//
+// It BOUND them. It then logged "push is being delivered WITHOUT block
+// suppression" — and delivered it. The code named the consequence and committed
+// it anyway. A log line is not a guard; `blocks` is an EXCLUSION table, so an
+// unreadable one must SUPPRESS, never admit.
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("CompassNotificationEngine — an unreadable block list must not deliver", () => {
+  const SENDER = "22222222-2222-4222-8222-222222222222";
+  // `message_normal`, not an invented "message": typecheck:tests exists to stop a
+  // fixture describing a shape production never emits, and it caught this one.
+  const payload: NotificationPayload = {
+    type:  "message_normal",
+    title: "New message",
+    body:  "…",
+    data:  { senderId: SENDER },
+  };
+
+  it("FAILURE: an unreadable `blocks` read SUPPRESSES instead of delivering", async () => {
+    const sc = makeFailClosedClient({
+      rows: { blocks: [] },
+      failOn: (ctx) =>
+        ctx.table === "blocks"
+          ? { message: "server closed the connection unexpectedly", code: "08006" }
+          : null,
+    });
+    const d = await evaluateNotification(sc, USER, payload, { nowMinutes: 720 });
+    assert.equal(
+      d.outcome,
+      "suppressed_blocked_sender",
+      "an unreadable block list delivered the push — the gate's stated contract is that a blocked sender NEVER reaches the recipient",
+    );
+  });
+
+  it("HEALTHY: a readable, EMPTY block list still delivers — the control", async () => {
+    // Without this, "suppress on failure" is satisfied by suppressing every
+    // push, which would silently disable notifications rather than fix a gate.
+    const sc = makeFailClosedClient({ rows: { blocks: [] } });
+    const d = await evaluateNotification(sc, USER, payload, { nowMinutes: 720 });
+    assert.notEqual(
+      d.outcome,
+      "suppressed_blocked_sender",
+      "an empty block list means nobody is blocked, and must keep meaning that",
+    );
+  });
+
+  it("HEALTHY: a real block row still suppresses — the positive control", async () => {
+    const sc = makeFailClosedClient({
+      rows: { blocks: [{ id: "b1", blocker_id: USER, blocked_id: SENDER }] },
+    });
+    const d = await evaluateNotification(sc, USER, payload, { nowMinutes: 720 });
+    assert.equal(d.outcome, "suppressed_blocked_sender");
+  });
+
+  // ── the SECOND read in the same gate, found by the same sweep ──────────────
+  //
+  // `user_account_states` is where suspension lives. The engine reads it to set
+  // `isSuspended` on the synthetic item it hands to runSafetyFilter. On a read
+  // error it logged that the push was "being evaluated WITHOUT suspension
+  // suppression" and left `senderSuspended` at its initial `false` — so the
+  // safety filter was told, as a fact, that the sender is in good standing.
+  //
+  // census-compass §6 F2 records this site as CLOSED, with the closing evidence
+  // "`error` bound and logged". Binding and logging is how you FIND this defect,
+  // not how you fix it.
+  it("FAILURE: an unreadable `user_account_states` does not assert the sender is in good standing", async () => {
+    const sc = makeFailClosedClient({
+      rows: { blocks: [], user_account_states: [] },
+      failOn: (ctx) =>
+        ctx.table === "user_account_states"
+          ? { message: "server closed the connection unexpectedly", code: "08006" }
+          : null,
+    });
+    const d = await evaluateNotification(sc, USER, payload, { nowMinutes: 720 });
+    assert.notEqual(
+      d.outcome,
+      "sent",
+      "an unreadable account-state read delivered the push — suspension could not be established and was reported as absent",
+    );
+  });
+
+  it("HEALTHY: a readable, EMPTY account-state table still delivers — the control", async () => {
+    const sc = makeFailClosedClient({ rows: { blocks: [], user_account_states: [] } });
+    const d = await evaluateNotification(sc, USER, payload, { nowMinutes: 720 });
+    assert.equal(d.outcome, "sent", "no suspension row means the sender is not suspended, and must keep meaning that");
+  });
+
+  it("the LEDGER can still tell 'we could not check' from 'this person is blocked'", async () => {
+    // Added because a mutation SURVIVED: collapsing the unreadable-read reason
+    // into the real-block reason changed nothing any test could see, even though
+    // the engine's own comment claims the two must stay distinguishable.
+    // `logDecision` writes suppressionReason to the ledger, so a reader who
+    // cannot tell them apart will later read an outage as a moderation fact
+    // about a person.
+    //
+    // Asserted as a DIFFERENCE between two runs rather than against a literal:
+    // a test that matched the string would measure wording, and this session has
+    // sprung that trap twice already.
+    const unreadable = await evaluateNotification(
+      makeFailClosedClient({
+        rows: { blocks: [] },
+        failOn: (ctx) =>
+          ctx.table === "blocks"
+            ? { message: "server closed the connection unexpectedly", code: "08006" }
+            : null,
+      }),
+      USER, payload, { nowMinutes: 720 },
+    );
+    const reallyBlocked = await evaluateNotification(
+      makeFailClosedClient({ rows: { blocks: [{ id: "b1", blocker_id: USER, blocked_id: SENDER }] } }),
+      USER, payload, { nowMinutes: 720 },
+    );
+
+    assert.equal(unreadable.outcome, reallyBlocked.outcome, "both withhold the push, which is the point");
+    assert.notEqual(
+      unreadable.suppressionReason,
+      reallyBlocked.suppressionReason,
+      "an unreadable block list and a real block now write the SAME ledger reason — " +
+        "the outage is recorded as a statement about this person",
+    );
   });
 });

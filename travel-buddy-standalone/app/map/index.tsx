@@ -75,15 +75,15 @@ import {
   dismissProposal,
   type TripStop,
   type OptimizeProposal,
-} from '../../src/features/map/trip/tripMapModel.ts';
+} from '../../src/features/trips/map/tripMapModel.ts';
 import {
   composeTripMap,
   persistOptimizeAcceptance,
   type ComposedTripMap,
-} from '../../src/features/map/trip/tripMapSources.ts';
-import { fetchTripPlanMap, reorderPlanItems, createPlanItem } from '../../src/services/tripPlan.ts';
+} from '../../src/features/trips/map/tripMapSources.ts';
+import { fetchTripPlanMap, reorderPlanItems, createPlanItem } from '../../src/features/trips/planning/tripPlan.ts';
 import { listSaved } from '../../src/services/discoveryBookmarks.ts';
-import { getCrewMap } from '../../src/services/tripCrewLocation.ts';
+import { getCrewMap } from '../../src/features/trips/crew/tripCrewLocation.ts';
 import { fetchTripRoutePlan } from '../../src/services/routePlan.ts';
 import { getActiveSession } from '../../src/services/safeReturn.ts';
 import { fetchCompassRecommendations } from '../../src/services/compass.ts';
@@ -903,7 +903,6 @@ function FullScreenMapScreenInner() {
   // ── Entity layer filter state ───────────────────────────────────────────────
   // enabledLayers now lives in the store (initialised by FullScreenMapScreen
   // wrapper which passes the mode-aware initial value to MapStoreProvider).
-  const [filterSheetOpen, setFilterSheetOpen] = useState(false);
 
   // Restore persisted layer preferences on mount — skipped in circle/passport mode
   // so the preset is not overwritten by stored prefs.
@@ -1118,7 +1117,24 @@ function FullScreenMapScreenInner() {
       if (cancelled) return;
       placesFetchedRef.current = true;
       setPlacesLoading(false);
-      if (res.ok && Array.isArray(res.data?.places)) {
+      // A REFUSAL SATISFIES BOTH HALVES OF THE TEST BELOW and is not a result.
+      // `coverage: "nothing"` arrives as `ok: true` with a `places` that really
+      // is an array — an EMPTY one, because the server never read the table — so
+      // it took the success path, emptied the pins and CLEARED `placesError`.
+      //
+      // Clearing the error is what did the damage: `placesEmpty` is
+      // `… && !placesError && legacyPlaces.length === 0`, so wiping the error is
+      // exactly what switches the zero-results state ON. The outage rendered as a
+      // confident claim that this area has nothing in it.
+      //
+      // `placesError` is the honest destination and it already exists — it draws
+      // the error card with a retry, which is the right offer for a transient
+      // read failure. `partial` is NOT routed here: the places it carries are
+      // real, and drawing them beats refusing them.
+      if (res.ok && res.data?.refusal?.coverage === 'nothing') {
+        setPlaces([]);
+        setPlacesError('Could not read nearby places — this is not a statement about what is here.');
+      } else if (res.ok && Array.isArray(res.data?.places)) {
         setPlaces(res.data.places);
         setPlacesError(null);
       } else {
@@ -2566,7 +2582,7 @@ function FullScreenMapScreenInner() {
         // The header owns the city name now; showing it twice is noise.
         title={null}
         topInset={mapHeaderStackOffset(insets.top) + MAP_FILTER_CHIPS_HEIGHT}
-        onFiltersPress={() => dispatchMapEvent({ type: 'OPEN_OVERLAY', overlay: 'LAYERS' })}
+        onFiltersPress={() => dispatchMapEvent({ type: 'OPEN_OVERLAY', overlay: 'FILTERS' })}
         // §30 RECENTER — return camera control to the machine (FOLLOW_USER).
         // The button's own easeTo does the move; this records the intent.
         onRecenter={() => dispatchMapEvent({ type: 'RECENTER' })}
@@ -2601,7 +2617,7 @@ function FullScreenMapScreenInner() {
         compassResults={compassOverrideEntities !== null}
         activeIndex={activeIndex}
         onIndexChange={handleCarouselIndexChange}
-        onFiltersPress={() => setFilterSheetOpen(true)}
+        onFiltersPress={() => dispatchMapEvent({ type: 'OPEN_OVERLAY', overlay: 'FILTERS' })}
         onBeforeNavigate={() => { pushedToDetailRef.current = true; }}
         passportLoading={mode === 'passport' ? passportLoading : undefined}
         passportError={mode === 'passport' ? passportError : undefined}
@@ -3234,10 +3250,17 @@ function FullScreenMapScreenInner() {
         context={layerContext}
       />
 
-      {/* Layer filter bottom sheet */}
+      {/* ── §33 FILTERS overlay ──────────────────────────────────────────────
+          This sheet used to be driven by a plain `useState` that bypassed the
+          machine entirely, so `MAP_OVERLAYS`' declared `'FILTERS'` state was
+          never entered by anything outside the reducer's own tests — a dead
+          state in the machine and a sheet outside it (census-map M226). It is
+          the machine's now, which is what makes D1 mutual exclusion real:
+          opening Filters closes Layers, Search and Intent, and hardware back
+          resolves through `resolveBack` like every other overlay. */}
       <MapFilterSheet
-        visible={filterSheetOpen}
-        onClose={() => setFilterSheetOpen(false)}
+        visible={overlayOpen('FILTERS')}
+        onClose={() => dispatchMapEvent({ type: 'CLOSE_OVERLAY', overlay: 'FILTERS' })}
         enabledLayers={enabledLayers}
         onChangeEnabledLayers={setEnabledLayers}
       />

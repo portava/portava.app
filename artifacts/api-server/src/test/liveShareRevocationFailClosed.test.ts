@@ -24,7 +24,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { revokeAccessForMember } from "../services/tripCrew/TripCrewLiveShareService.js";
+import { revokeAccessForMember } from "../domain/trips/services/TripCrewLiveShareService.js";
 
 const TRIP = "11111111-1111-4111-8111-111111111111";
 const REMOVED = "22222222-2222-4222-8222-222222222222";
@@ -142,7 +142,7 @@ describe("revokeAccessForMember fails closed", () => {
 
   it("the fix is in the source, not only in these expectations", () => {
     const src = readFileSync(
-      new URL("../services/tripCrew/TripCrewLiveShareService.ts", import.meta.url),
+      new URL("../domain/trips/services/TripCrewLiveShareService.ts", import.meta.url),
       "utf8",
     );
     assert.match(src, /error: readError/, "the sessions read must bind its error");

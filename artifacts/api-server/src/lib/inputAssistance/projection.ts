@@ -20,6 +20,15 @@ import type { CanonicalCityBinding, GeoDefault } from './geoResolver';
 import { cityBinding, airportCityBinding } from './geoResolver';
 import type { StaticAirport } from '../../services/airport/StaticAirportData';
 import { searchTypeToEntity, type DispatchSearchType } from './entityMap';
+import {
+  applyTemporalFit,
+  applyTrustConfidence,
+  applyFeasibility,
+  applyTripFit,
+  applySpamRisk,
+  gemLocationPrecision,
+  type TemporalWindow,
+} from './rankingSignals';
 import type {
   InputContext,
   InputSuggestion,
@@ -39,6 +48,22 @@ function tierConfidence(tier: number): number {
   }
 }
 
+/** §15 signals the caller resolved once per request and passes down. */
+export interface ProjectionSignals {
+  /**
+   * §18 normalized temporal window parsed from the user's own text, or null
+   * when the text carries no time operator. Feeds TemporalFit (§15).
+   */
+  temporalWindow?: TemporalWindow | null;
+  /**
+   * §18 task feasibility: the ACTIVE TASK (session city / Trip window) makes
+   * this row less appropriate. A demotion, never a removal — see taskContext.ts.
+   */
+  demoted?: boolean;
+  /** §15 TripFit: this row sits inside the active Trip's city. */
+  tripFit?: boolean;
+}
+
 /**
  * Project one internal SearchResult into a UI-ready InputSuggestion.
  *
@@ -46,15 +71,43 @@ function tierConfidence(tier: number): number {
  * canonical destination, so nothing is a dead row (§13). `freshness` is left
  * UNSET — Phase 1 does not wire the LiveSuggestionService, and a live label must
  * never be fabricated when live state is unavailable (§31).
+ *
+ * §15 ranking signals (Phase 9). The base confidence is still the match tier —
+ * ExactMatch/PrefixMatch, unchanged — and TrustConfidence then TemporalFit are
+ * applied on top by `rankingSignals.ts`. Both are no-ops on a row that carries
+ * neither a trust flag nor a start time, so every existing row's confidence is
+ * byte-identical to its pre-Phase-9 value.
  */
 export function projectSearchResult(
   r: SearchResult,
   context: InputContext,
   policyVersion: string,
   q: string,
+  signals: ProjectionSignals = {},
 ): InputSuggestion {
   const entityType = searchTypeToEntity(r.type as DispatchSearchType);
-  const confidence = tierConfidence(matchTier(r.title, q, r.subtitle));
+  // §15 signal stack. Order is deliberate: the boosts (Trust, Temporal, TripFit)
+  // are applied first and each is clamped by SIGNAL_CEILING, then the penalties
+  // (SpamRisk, task infeasibility) subtract from the result — so a stuffed or
+  // out-of-task row cannot boost its way back above a clean one.
+  const confidence = applyFeasibility(
+    applySpamRisk(
+      applyTripFit(
+        applyTemporalFit(
+          applyTrustConfidence(
+            tierConfidence(matchTier(r.title, q, r.subtitle)),
+            r.verified,
+            r.isOfficial,
+          ),
+          r.startsAt,
+          signals.temporalWindow ?? null,
+        ),
+        signals.tripFit === true,
+      ),
+      `${r.title} ${r.subtitle ?? ''}`,
+    ),
+    signals.demoted === true,
+  );
 
   // Canonical registry rows carry source:"canonical" in metadata; every other
   // entity from dispatchSearch is likewise a canonical Portava entity match.
@@ -82,6 +135,14 @@ export function projectSearchResult(
   // Only copy display-safe optional fields — NEVER internal metadata (§42).
   if (r.subtitle) suggestion.subtitle = r.subtitle;
   if (r.matchedReason) suggestion.reason = r.matchedReason;
+  // §20 verification / trust context. Set only when TRUE, so a row that is not
+  // a person carries neither key and no reader can mistake an absent flag for a
+  // negative claim about somebody.
+  if (r.verified === true) suggestion.verified = true;
+  if (r.isOfficial === true) suggestion.official = true;
+  // §20/§24 Hidden Gem protection label — a precision word, never a position.
+  const precision = entityType === 'hidden_gem' ? gemLocationPrecision(r.metadata) : undefined;
+  if (precision) suggestion.locationPrecision = precision;
   if (r.destinationRoute) {
     suggestion.destination = { route: r.destinationRoute, entityType, entityId: r.id };
     suggestion.canonicalUri = `portava:${r.destinationRoute}`;

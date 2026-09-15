@@ -276,6 +276,31 @@ export interface CreatorSignals {
    * score is computed or persisted from an input that failed to load.
    */
   safetyMultiplier: number;
+
+  /**
+   * The signal sources whose read FAILED on this pass, by table name. EMPTY on
+   * a clean pass — never absent, so "nothing degraded" and "this caller cannot
+   * see degradation" are not the same observation.
+   *
+   * ── WHY THIS FIELD EXISTS ─────────────────────────────────────────────────
+   * supabase-js RESOLVES `{ data: null, error }` on a database error. Every
+   * read below destructured `data` alone, so an outage, a 42P01, a 42703 or a
+   * 414 arrived as an empty result set and the surrounding `catch` never fired
+   * — nothing threw. A creator whose `posts` read failed therefore produced
+   * signals IDENTICAL to a creator who has never posted, and
+   * `persistActivityScore` stamped the resulting score with a fresh
+   * `calculated_at` asserting it had just been measured.
+   *
+   * The rule in `aggregate` is unchanged and deliberate: a non-veto source
+   * degrades to zero rather than stopping the pass. What changes is that the
+   * degradation is now on the RETURN VALUE. A `logger.warn` tells an operator;
+   * it does not tell the caller, and the caller is who decides what the number
+   * means.
+   *
+   * Optional on the interface only so the many fixtures that construct
+   * `CreatorSignals` by hand keep compiling; `aggregate` always sets it.
+   */
+  degradedSources?: readonly string[];
 }
 
 // ─── Score result ─────────────────────────────────────────────────────────────
@@ -292,6 +317,14 @@ export interface CreatorActivityScoreResult {
   repetitionPenalty:            number;
   safetyMultiplier:             number;
   calculationVersion:           string;
+  /**
+   * The signal sources that could not be READ on the pass this score was
+   * computed from. Empty on a clean pass. A non-empty list means the score
+   * UNDERSTATES this creator by an unknown amount — it is not a measurement of
+   * them, and a caller that treats it as one is making a claim the data does
+   * not carry. See `CreatorSignals.degradedSources`.
+   */
+  degradedSources:              readonly string[];
 }
 
 // ─── Saturating transform ─────────────────────────────────────────────────────
@@ -467,6 +500,10 @@ export function computeActivityScore(
     repetitionPenalty:            Math.round(repetitionPenalty * 100) / 100,
     safetyMultiplier:             safetyMultiplier,
     calculationVersion:           ACTIVITY_SCORE_VERSION,
+    // Carried, never recomputed: this function is pure and cannot know what the
+    // aggregator could not read. Defaulting to [] here would silently restore
+    // the conflation for any caller that hand-builds signals.
+    degradedSources:              signals.degradedSources ?? [],
   };
 }
 
@@ -518,6 +555,9 @@ export class CreatorSignalAggregator {
    * creator's activity rather than overstating their safety.
    */
   async aggregate(userId: string): Promise<CreatorSignals> {
+    // Per-call, never instance state: `aggregate` is re-entrant and two
+    // creators scored concurrently must not inherit each other's outages.
+    const degraded = new Set<string>();
     const now    = Date.now();
     const ago24h = new Date(now - 1  * 24 * 60 * 60 * 1_000).toISOString();
     const ago7d  = new Date(now - 7  * 24 * 60 * 60 * 1_000).toISOString();
@@ -527,7 +567,7 @@ export class CreatorSignalAggregator {
     // Fetch blocked IDs first — required to filter participation and response
     // signals before counting. Block lists are typically small so one serial
     // round-trip is acceptable; everything else runs in parallel after.
-    const blockedIds = await this._fetchBlockedIds(userId);
+    const blockedIds = await this._fetchBlockedIds(degraded, userId);
 
     // FAIL-CLOSED, shape 2 (lib/exclusionSet.ts). An unreadable block list does
     // NOT stop the pass — that is `trust_profiles`' privilege, because it is a
@@ -542,6 +582,10 @@ export class CreatorSignalAggregator {
       // This score is PERSISTED with a fresh calculated_at, so nothing
       // downstream can tell a genuinely low participation score from one zeroed
       // by an unreadable block list. Record it here or it leaves no trace.
+      // `_fetchBlockedIds` has already put `blocks` in `degraded`, so this
+      // reaches the CALLER as well as the log. The comment above used to end
+      // "record it here or it leaves no trace", and a log line is not a trace
+      // the caller can read.
       logger.warn(
         { userId },
         "aggregate: blocks unreadable — participation and positive-response components scored as 0",
@@ -557,16 +601,16 @@ export class CreatorSignalAggregator {
       spamSignals,
       safetyMultiplier,
     ] = await Promise.all([
-      this._fetchContributions(userId, ago24h, ago7d, ago30d, ago90d),
-      this._fetchActiveDays(userId, ago90d),
+      this._fetchContributions(degraded, userId, ago24h, ago7d, ago30d, ago90d),
+      this._fetchActiveDays(degraded, userId, ago90d),
       blockScoped
-        ? this._fetchParticipation(userId, ago90d, blockedIds!)
+        ? this._fetchParticipation(degraded, userId, ago90d, blockedIds!)
         : Promise.resolve({ participationEvents: 0, participationDistinctUsers: 0 }),
       blockScoped
-        ? this._fetchPositiveResponses(userId, ago90d, blockedIds!)
+        ? this._fetchPositiveResponses(degraded, userId, ago90d, blockedIds!)
         : Promise.resolve({ receivedPositiveActions: 0, receivedInteractionVolume: 0 }),
-      this._fetchMaintenance(userId, ago90d),
-      this._fetchSpamSignals(userId, ago90d),
+      this._fetchMaintenance(degraded, userId, ago90d),
+      this._fetchSpamSignals(degraded, userId, ago90d),
       this._fetchSafetyMultiplier(userId),
     ]);
 
@@ -578,7 +622,36 @@ export class CreatorSignalAggregator {
       maintenanceActions: maintenance,
       ...spamSignals,
       safetyMultiplier,
+      // Sorted so the list is stable across passes and comparable between them.
+      degradedSources: [...degraded].sort(),
     };
+  }
+
+  /**
+   * ONE read, with the RESOLVED error handled — which is the whole point.
+   *
+   * `const { data } = await builder()` is the defect this helper removes:
+   * supabase-js does not reject on a database error, it resolves with
+   * `{ data: null, error }`. So `data ?? []` yields an empty result set, the
+   * enclosing `catch` never runs, and an outage is byte-identical to "this
+   * creator did nothing". Here `error` and a thrown client get the SAME answer
+   * — no rows, and `source` recorded so the caller can tell.
+   *
+   * It takes a THUNK rather than a table name on purpose: every `.from()` in
+   * this file must stay a static literal at its call site or
+   * `check:write-path-columns` cannot verify its columns against the live
+   * schema, which is how `post_edits.edited_at` and `profile_views.viewed_at`
+   * would silently become 42703s.
+   */
+  private async _rows(degraded: Set<string>, source: string, build: () => any): Promise<any[]> {
+    try {
+      const { data, error } = await build();
+      if (error) { degraded.add(source); return []; }
+      return (data as any[]) ?? [];
+    } catch {
+      degraded.add(source);
+      return [];
+    }
   }
 
   // ── Blocked account IDs ───────────────────────────────────────────────────
@@ -594,14 +667,17 @@ export class CreatorSignalAggregator {
    * an abuser most wants inflated, inflated exactly by the accounts that
    * blocked them.
    */
-  private async _fetchBlockedIds(userId: string): Promise<Set<string> | null> {
+  private async _fetchBlockedIds(
+    degraded: Set<string>,
+    userId: string,
+  ): Promise<Set<string> | null> {
     try {
       // blocks table: blocker_id, blocked_id
       const { data, error } = await (this.db as any)
         .from("blocks")
         .select("blocker_id, blocked_id")
         .or(`blocker_id.eq.${userId},blocked_id.eq.${userId}`);
-      if (error) return null;
+      if (error) { degraded.add("blocks"); return null; }
 
       const ids = new Set<string>();
       for (const r of (data as any[]) ?? []) {
@@ -610,6 +686,7 @@ export class CreatorSignalAggregator {
       }
       return ids;
     } catch {
+      degraded.add("blocks");
       return null;
     }
   }
@@ -621,11 +698,16 @@ export class CreatorSignalAggregator {
    * Uses direct table queries for accuracy.
    */
   private async _fetchContributions(
+    degraded: Set<string>,
     userId: string,
     ago24h: string, ago7d: string, ago30d: string, ago90d: string,
   ): Promise<Pick<CreatorSignals, "contributions24h"|"contributions7d"|"contributions30d"|"contributions90d">> {
     try {
       // Fetch content timestamps from all contribution tables in parallel.
+      // Each goes through `_rows`, so a RESOLVED error is recorded rather than
+      // read as "this creator published nothing" — the single most consequential
+      // instance of that conflation in this file, because `posts` failing also
+      // empties the join key every received-signal component depends on.
       const [postsData, eventsData, tripsData, reviewsData, placesData] = await Promise.all([
         // posts: author_id, status, post_status, created_at
         //
@@ -647,51 +729,51 @@ export class CreatorSignalAggregator {
         // Deliberately excluded: hidden/reported/deleted (not visible to the
         // community, and counting `reported` would reward flagged content) and
         // draft/private/pending_*/canceled/expired (never published).
-        (this.db as any)
+        this._rows(degraded, "posts", () => (this.db as any)
           .from("posts")
           .select("created_at")
           .eq("author_id", userId)
           .eq("status", "active")
           .eq("post_status", "published")
-          .gte("created_at", ago90d),
+          .gte("created_at", ago90d)),
 
         // events: host_id, created_at
-        (this.db as any)
+        this._rows(degraded, "events", () => (this.db as any)
           .from("events")
           .select("created_at")
           .eq("host_id", userId)
-          .gte("created_at", ago90d),
+          .gte("created_at", ago90d)),
 
         // trips: owner_id, created_at
-        (this.db as any)
+        this._rows(degraded, "trips", () => (this.db as any)
           .from("trips")
           .select("created_at")
           .eq("owner_id", userId)
-          .gte("created_at", ago90d),
+          .gte("created_at", ago90d)),
 
         // reviews: reviewer_id, state, created_at
-        (this.db as any)
+        this._rows(degraded, "reviews", () => (this.db as any)
           .from("reviews")
           .select("created_at")
           .eq("reviewer_id", userId)
           .eq("state", "published")
-          .gte("created_at", ago90d),
+          .gte("created_at", ago90d)),
 
         // discovery_places: submitted_by, created_at
-        (this.db as any)
+        this._rows(degraded, "discovery_places", () => (this.db as any)
           .from("discovery_places")
           .select("created_at")
           .eq("submitted_by", userId)
-          .gte("created_at", ago90d),
+          .gte("created_at", ago90d)),
       ]);
 
       // Merge all timestamps into one flat array
       const timestamps: string[] = [
-        ...((postsData.data  as any[]) ?? []).map((r: any) => r.created_at),
-        ...((eventsData.data as any[]) ?? []).map((r: any) => r.created_at),
-        ...((tripsData.data  as any[]) ?? []).map((r: any) => r.created_at),
-        ...((reviewsData.data as any[]) ?? []).map((r: any) => r.created_at),
-        ...((placesData.data  as any[]) ?? []).map((r: any) => r.created_at),
+        ...postsData.map((r: any) => r.created_at),
+        ...eventsData.map((r: any) => r.created_at),
+        ...tripsData.map((r: any) => r.created_at),
+        ...reviewsData.map((r: any) => r.created_at),
+        ...placesData.map((r: any) => r.created_at),
       ].filter(Boolean);
 
       return {
@@ -742,7 +824,11 @@ export class CreatorSignalAggregator {
    * price of having no append-only log at all; activity_events was that log and
    * never had a writer.
    */
-  private async _fetchActiveDays(userId: string, ago90d: string): Promise<number> {
+  private async _fetchActiveDays(
+    degraded: Set<string>,
+    userId: string,
+    ago90d: string,
+  ): Promise<number> {
     // WRITTEN OUT, ONE STATIC `.from("literal")` PER SOURCE, ON PURPOSE.
     //
     // The obvious shape here is a [table, actorCol, timeCol] table driven by a
@@ -756,46 +842,47 @@ export class CreatorSignalAggregator {
     // the loop is not worth its brevity: spelled out, every column name here is
     // checked against the live schema on every CI run.
     const q = this.db as any;
-    const src = (
+    // One unavailable source must not zero the whole component — that is how
+    // the previous version failed, silently and completely. `_rows` is what
+    // makes the recovery honest as well as partial: the source that could not
+    // be read is NAMED on the way out, so thirteen sources answering and one
+    // failing is no longer reported as fourteen sources answering.
+    const src = async (
+      source: string,
       builder: () => any,
       timeCol: string,
     ): Promise<{ rows: any[]; timeCol: string }> =>
-      Promise.resolve()
-        .then(builder)
-        .then((res: any) => ({ rows: (res?.data as any[]) ?? [], timeCol }))
-        // One unavailable source must not zero the whole component — that is
-        // how the previous version failed, silently and completely.
-        .catch(() => ({ rows: [] as any[], timeCol }));
+      ({ rows: await this._rows(degraded, source, builder), timeCol });
 
     const results = await Promise.all([
       // Authored contributions — the same rows recentContribution counts.
-      src(() => q.from("posts").select("created_at")
+      src("posts", () => q.from("posts").select("created_at")
         .eq("author_id", userId).gte("created_at", ago90d), "created_at"),
-      src(() => q.from("events").select("created_at")
+      src("events", () => q.from("events").select("created_at")
         .eq("host_id", userId).gte("created_at", ago90d), "created_at"),
-      src(() => q.from("trips").select("created_at")
+      src("trips", () => q.from("trips").select("created_at")
         .eq("owner_id", userId).gte("created_at", ago90d), "created_at"),
-      src(() => q.from("reviews").select("created_at")
+      src("reviews", () => q.from("reviews").select("created_at")
         .eq("reviewer_id", userId).gte("created_at", ago90d), "created_at"),
-      src(() => q.from("discovery_places").select("created_at")
+      src("discovery_places", () => q.from("discovery_places").select("created_at")
         .eq("submitted_by", userId).gte("created_at", ago90d), "created_at"),
       // Actions on other people's content — the half publish-days would lose.
-      src(() => q.from("posts_comments").select("created_at")
+      src("posts_comments", () => q.from("posts_comments").select("created_at")
         .eq("user_id", userId).gte("created_at", ago90d), "created_at"),
-      src(() => q.from("post_saves").select("created_at")
+      src("post_saves", () => q.from("post_saves").select("created_at")
         .eq("user_id", userId).gte("created_at", ago90d), "created_at"),
-      src(() => q.from("post_shares").select("created_at")
+      src("post_shares", () => q.from("post_shares").select("created_at")
         .eq("user_id", userId).gte("created_at", ago90d), "created_at"),
-      src(() => q.from("content_stamps").select("created_at")
+      src("content_stamps", () => q.from("content_stamps").select("created_at")
         .eq("user_id", userId).gte("created_at", ago90d), "created_at"),
-      src(() => q.from("event_rsvps").select("created_at")
+      src("event_rsvps", () => q.from("event_rsvps").select("created_at")
         .eq("user_id", userId).gte("created_at", ago90d), "created_at"),
-      src(() => q.from("user_follows").select("created_at")
+      src("user_follows", () => q.from("user_follows").select("created_at")
         .eq("follower_id", userId).gte("created_at", ago90d), "created_at"),
       // The two that do NOT use created_at. Spelled out is the point.
-      src(() => q.from("post_edits").select("edited_at")
+      src("post_edits", () => q.from("post_edits").select("edited_at")
         .eq("user_id", userId).gte("edited_at", ago90d), "edited_at"),
-      src(() => q.from("profile_views").select("viewed_at")
+      src("profile_views", () => q.from("profile_views").select("viewed_at")
         .eq("viewer_id", userId).gte("viewed_at", ago90d), "viewed_at"),
     ]);
     const days = new Set<string>();
@@ -843,20 +930,26 @@ export class CreatorSignalAggregator {
    * already succeeded — a partial count is a degraded signal, an empty one is a
    * wrong signal.
    */
-  private async _inChunks(ids: string[], build: (chunk: string[]) => any): Promise<any[]> {
+  private async _inChunks(
+    degraded: Set<string>,
+    source: string,
+    ids: string[],
+    build: (chunk: string[]) => any,
+  ): Promise<any[]> {
     const rows: any[] = [];
     for (let i = 0; i < ids.length; i += IN_LIST_CHUNK) {
-      try {
-        const { data } = await build(ids.slice(i, i + IN_LIST_CHUNK));
-        for (const r of ((data as any[]) ?? [])) rows.push(r);
-      } catch {
-        continue;
-      }
+      // Through `_rows`: the 414 this chunking exists to prevent is RESOLVED by
+      // supabase-js, not thrown, so the `catch` this loop used to rely on would
+      // not have fired for the very failure the comment above names.
+      const chunk = await this._rows(degraded, source, () => build(ids.slice(i, i + IN_LIST_CHUNK)));
+      for (const r of chunk) rows.push(r);
     }
     return rows;
   }
 
   private async _ownersOf(
+    degraded: Set<string>,
+    source: string,
     fetchChunk: (chunk: string[]) => any,
     ownerCol: string,
     ids: string[],
@@ -875,21 +968,19 @@ export class CreatorSignalAggregator {
     // defect this file exists to fix, just with a size threshold in front of it.
     for (let i = 0; i < unique.length; i += IN_LIST_CHUNK) {
       const chunk = unique.slice(i, i + IN_LIST_CHUNK);
-      try {
-        const { data } = await fetchChunk(chunk);
-        for (const r of ((data as any[]) ?? [])) {
-          const owner = r?.[ownerCol];
-          if (r?.id && owner) out.set(String(r.id), String(owner));
-        }
-      } catch {
-        // One bad chunk must not discard the owners already resolved.
-        continue;
+      // One bad chunk must not discard the owners already resolved — and it
+      // must not pass for a chunk with no owners either, which is what the
+      // `catch`-only version did for every RESOLVED error, the 414 included.
+      for (const r of await this._rows(degraded, source, () => fetchChunk(chunk))) {
+        const owner = r?.[ownerCol];
+        if (r?.id && owner) out.set(String(r.id), String(owner));
       }
     }
     return out;
   }
 
   private async _fetchParticipation(
+    degraded: Set<string>,
     userId: string, ago90d: string, blockedIds: Set<string>,
   ): Promise<Pick<CreatorSignals, "participationEvents"|"participationDistinctUsers">> {
     // The distinct-USER half carries 70% of this component (see the scorer):
@@ -904,35 +995,29 @@ export class CreatorSignalAggregator {
     // to measure a population it does not claim to.
     try {
       const [comments, rsvps] = await Promise.all([
-        (async () => {
-          try {
-            const { data } = await (this.db as any)
-              .from("posts_comments")
-              .select("post_id")
-              .eq("user_id", userId)
-              .is("deleted_at", null)
-              .gte("created_at", ago90d);
-            return ((data as any[]) ?? []).map((r) => String(r?.post_id ?? "")).filter(Boolean);
-          } catch { return [] as string[]; }
-        })(),
-        (async () => {
-          try {
-            const { data } = await (this.db as any)
-              .from("event_rsvps")
-              .select("event_id")
-              .eq("user_id", userId)
-              .gte("created_at", ago90d);
-            return ((data as any[]) ?? []).map((r) => String(r?.event_id ?? "")).filter(Boolean);
-          } catch { return [] as string[]; }
-        })(),
+        this._rows(degraded, "posts_comments", () => (this.db as any)
+          .from("posts_comments")
+          .select("post_id")
+          .eq("user_id", userId)
+          .is("deleted_at", null)
+          .gte("created_at", ago90d),
+        ).then((rows) => rows.map((r) => String(r?.post_id ?? "")).filter(Boolean)),
+        this._rows(degraded, "event_rsvps", () => (this.db as any)
+          .from("event_rsvps")
+          .select("event_id")
+          .eq("user_id", userId)
+          .gte("created_at", ago90d),
+        ).then((rows) => rows.map((r) => String(r?.event_id ?? "")).filter(Boolean)),
       ]);
 
       const [postOwners, eventOwners] = await Promise.all([
         this._ownersOf(
+          degraded, "posts",
           (chunk) => (this.db as any).from("posts").select("id, author_id").in("id", chunk),
           "author_id", comments,
         ),
         this._ownersOf(
+          degraded, "events",
           (chunk) => (this.db as any).from("events").select("id, host_id").in("id", chunk),
           "host_id", rsvps,
         ),
@@ -970,6 +1055,7 @@ export class CreatorSignalAggregator {
    * inflate the positive-response score.
    */
   private async _fetchPositiveResponses(
+    degraded: Set<string>,
     userId: string, ago90d: string, blockedIds: Set<string>,
   ): Promise<Pick<CreatorSignals, "receivedPositiveActions"|"receivedInteractionVolume">> {
     // ── THIS COMPONENT IS NOW A COUNT, NOT A RATE. A PRODUCT CHANGE. ─────────
@@ -1000,18 +1086,19 @@ export class CreatorSignalAggregator {
     // honest than an append-only log, but it is a different measurement, and a
     // creator's score can fall because someone else undid their engagement.
     try {
-      const authored = await this._fetchAuthoredPostIds(userId, ago90d);
+      const authored = await this._fetchAuthoredPostIds(degraded, userId, ago90d);
       const postIdSet = new Set(authored);
 
       // Static `.from()` and static select list per source, for the same reason
       // as _fetchActiveDays: a dynamic table name is unverifiable against the
       // live schema, and a wrong column here reads as "nobody engaged".
       const countOn = async (
+        source: string,
         build: (chunk: string[]) => any,
         actorCol: string,
       ): Promise<string[]> => {
         if (postIdSet.size === 0) return [];
-        const rows = await this._inChunks(authored, build);
+        const rows = await this._inChunks(degraded, source, authored, build);
         return rows
           .map((r) => String(r?.[actorCol] ?? ""))
           .filter((a) => a && a !== userId && !blockedIds.has(a));
@@ -1019,24 +1106,20 @@ export class CreatorSignalAggregator {
       const qq = this.db as any;
 
       const [saves, shares, comments, follows, stamps] = await Promise.all([
-        countOn((chunk) => qq.from("post_saves").select("user_id, post_id")
+        countOn("post_saves", (chunk) => qq.from("post_saves").select("user_id, post_id")
           .in("post_id", chunk).gte("created_at", ago90d), "user_id"),
-        countOn((chunk) => qq.from("post_shares").select("user_id, post_id")
+        countOn("post_shares", (chunk) => qq.from("post_shares").select("user_id, post_id")
           .in("post_id", chunk).gte("created_at", ago90d), "user_id"),
-        countOn((chunk) => qq.from("posts_comments").select("user_id, post_id")
+        countOn("posts_comments", (chunk) => qq.from("posts_comments").select("user_id, post_id")
           .in("post_id", chunk).gte("created_at", ago90d), "user_id"),
-        (async () => {
-          try {
-            const { data } = await (this.db as any)
-              .from("user_follows")
-              .select("follower_id")
-              .eq("following_id", userId)
-              .gte("created_at", ago90d);
-            return ((data as any[]) ?? [])
-              .map((r) => String(r?.follower_id ?? ""))
-              .filter((a) => a && a !== userId && !blockedIds.has(a));
-          } catch { return [] as string[]; }
-        })(),
+        this._rows(degraded, "user_follows", () => (this.db as any)
+          .from("user_follows")
+          .select("follower_id")
+          .eq("following_id", userId)
+          .gte("created_at", ago90d),
+        ).then((rows) => rows
+          .map((r) => String(r?.follower_id ?? ""))
+          .filter((a) => a && a !== userId && !blockedIds.has(a))),
         (async () => {
           // content_stamps is polymorphic with NO owner column and NO FK, and
           // one user can hold TWO rows for the same post — routes/posts.ts
@@ -1046,27 +1129,25 @@ export class CreatorSignalAggregator {
           // this creator's post ids and then DEDUPED on (user_id, entity_id),
           // or a single like would count twice.
           if (postIdSet.size === 0) return [] as string[];
-          try {
-            const rows = await this._inChunks(authored, (chunk) =>
-              (this.db as any)
-                .from("content_stamps")
-                .select("user_id, entity_id, entity_type")
-                .in("entity_id", chunk)
-                .in("entity_type", ["post", "media"])
-                .gte("created_at", ago90d),
-            );
-            const seen = new Set<string>();
-            const out: string[] = [];
-            for (const r of rows) {
-              const actor = String(r?.user_id ?? "");
-              const key = `${actor}:${String(r?.entity_id ?? "")}`;
-              if (!actor || actor === userId || blockedIds.has(actor)) continue;
-              if (seen.has(key)) continue;
-              seen.add(key);
-              out.push(actor);
-            }
-            return out;
-          } catch { return [] as string[]; }
+          const rows = await this._inChunks(degraded, "content_stamps", authored, (chunk) =>
+            (this.db as any)
+              .from("content_stamps")
+              .select("user_id, entity_id, entity_type")
+              .in("entity_id", chunk)
+              .in("entity_type", ["post", "media"])
+              .gte("created_at", ago90d),
+          );
+          const seen = new Set<string>();
+          const out: string[] = [];
+          for (const r of rows) {
+            const actor = String(r?.user_id ?? "");
+            const key = `${actor}:${String(r?.entity_id ?? "")}`;
+            if (!actor || actor === userId || blockedIds.has(actor)) continue;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            out.push(actor);
+          }
+          return out;
         })(),
       ]);
 
@@ -1078,23 +1159,30 @@ export class CreatorSignalAggregator {
   }
 
   /** This creator's live post ids in the window — the join key for received signals. */
-  private async _fetchAuthoredPostIds(userId: string, ago90d: string): Promise<string[]> {
-    try {
-      const { data } = await (this.db as any)
-        .from("posts")
-        .select("id")
-        .eq("author_id", userId)
-        .eq("status", "active")
-        .gte("created_at", ago90d);
-      return ((data as any[]) ?? []).map((r) => String(r?.id ?? "")).filter(Boolean);
-    } catch {
-      return [];
-    }
+  private async _fetchAuthoredPostIds(
+    degraded: Set<string>,
+    userId: string,
+    ago90d: string,
+  ): Promise<string[]> {
+    // The join key for EVERY received signal. An unreadable `posts` here empties
+    // saves, shares, comments and stamps at once, which is why it must not pass
+    // for "this creator has no live posts".
+    const rows = await this._rows(degraded, "posts", () => (this.db as any)
+      .from("posts")
+      .select("id")
+      .eq("author_id", userId)
+      .eq("status", "active")
+      .gte("created_at", ago90d));
+    return rows.map((r) => String(r?.id ?? "")).filter(Boolean);
   }
 
   // ── Maintenance actions ───────────────────────────────────────────────────
 
-  private async _fetchMaintenance(userId: string, ago90d: string): Promise<number> {
+  private async _fetchMaintenance(
+    degraded: Set<string>,
+    userId: string,
+    ago90d: string,
+  ): Promise<number> {
     // NARROWER THAN IT WAS, and the narrowing is stated rather than hidden. The
     // activity_events version counted five kinds of upkeep: content_updated,
     // place_corrected, event_details_completed, trip_details_completed,
@@ -1108,21 +1196,18 @@ export class CreatorSignalAggregator {
     // not widened, this component will read 0 for most creators — which is TRUE
     // of the data, not a defect in the scorer, and is visible in the persisted
     // signals rather than silently folded into another lane.
-    try {
-      const { data } = await (this.db as any)
-        .from("post_edits")
-        .select("id")
-        .eq("user_id", userId)
-        .gte("edited_at", ago90d);   // NB: edited_at, not created_at
-      return ((data as any[]) ?? []).length;
-    } catch {
-      return 0;
-    }
+    const rows = await this._rows(degraded, "post_edits", () => (this.db as any)
+      .from("post_edits")
+      .select("id")
+      .eq("user_id", userId)
+      .gte("edited_at", ago90d));   // NB: edited_at, not created_at
+    return rows.length;
   }
 
   // ── Spam / anti-gaming signals ────────────────────────────────────────────
 
   private async _fetchSpamSignals(
+    degraded: Set<string>,
     userId: string, ago90d: string,
   ): Promise<Pick<CreatorSignals, "burstEpisodes"|"duplicateContentCount"|"followUnfollowCycles"|"rapidSameTypeCount"|"eventCreateDeleteCycles">> {
     // TWO OF THE FIVE SIGNALS ARE NOT REPRESENTABLE, and are reported as 0
@@ -1141,14 +1226,16 @@ export class CreatorSignalAggregator {
     // Burst and rapid-same-type ARE representable from posts.created_at, which
     // has a real writer and an index (idx_posts_created).
     try {
-      const { data } = await (this.db as any)
+      // A failed read here suppresses BOTH penalties, so the conflation runs in
+      // the creator's favour rather than against them. It is recorded all the
+      // same: "no spam was detected" and "spam could not be looked for" are not
+      // the same finding about an account.
+      const rows: any[] = await this._rows(degraded, "posts", () => (this.db as any)
         .from("posts")
         .select("created_at, content")
         .eq("author_id", userId)
         .gte("created_at", ago90d)
-        .order("created_at", { ascending: true });
-
-      const rows: any[] = (data as any[]) ?? [];
+        .order("created_at", { ascending: true }));
       const times = rows
         .map((r) => new Date(String(r?.created_at ?? "")).getTime())
         .filter((t) => Number.isFinite(t))

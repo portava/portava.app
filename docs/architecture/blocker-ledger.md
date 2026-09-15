@@ -1,7 +1,13 @@
 # Live blocker ledger
 
-**Updated 2026-09-08.** Every row measured, not inferred. Types: `CODE` ·
+**Updated 2026-09-14.** Every row measured, not inferred. Types: `CODE` ·
 `MANUAL_SQL` · `OPS_DATA` · `OWNER` · `EXTERNAL` · `HOLD`.
+
+*2026-09-14: `WALL_ACCENT_COLOUR` is **RESOLVED** — the owner ruled SPEC IS STALE.
+The entry is kept in full below, because this repository keeps the reasoning and
+because a resolved decision that leaves no record of what was weighed is a
+decision that gets re-litigated. One residue was opened by the same ruling and is
+NOT resolved: `PASSPORT_DARK_MODE_FIRST`.*
 
 "Buildable now?" means: can engineering finish it without owner action, without
 production SQL, and without data that does not exist.
@@ -114,7 +120,7 @@ zone covering the viewport, Crowd Flow refuses rather than approximating.
 | `SENSING_AUTH_POSTURE` | `2481` | OWNER | No | Its CHECK constrains `issuance_class` to `authenticated_profile`. Under Option B the file is never run |
 | `MEDIA_CANONICAL_FLAG` | `2470` | OWNER | No | `media_canonical_enabled` is TRUE in production while the columns are absent — the condition that caused three weeks of swallowed write loss |
 | `LOCATION_PRECISION_DEFAULT` | *nothing* | OWNER | n/a | `2338` defaults to a no-op on purpose, so applying it does **not** pre-empt the product choice |
-| `STORY_HIGHLIGHT_VISIBILITY` | *nothing in this band* | OWNER | n/a | **Restated 2026-09-08 and it is not the flag.** `2339` gates feed bounding only, behind a FALSE flag. The unbound decision is what save-to-highlight does with the Story audiences a Highlight cannot represent — see below |
+| `STORY_HIGHLIGHT_VISIBILITY` | *nothing in this band* | OWNER | n/a | **RULED 2026-09-15 — option 1: promotion is restricted to the faithful rungs, `{ public, circle_only }`, and the 409 on the other four is intended.** No spec describes Story -> Highlight promotion at all (an "Instagram Stories clone" is a stated Non-goal), but the specs ARE determinate on the shape — a Highlight's audience is supplied explicitly at publish time and backed by a policy row, so it is never inherited. Every available mapping widens; `trip_crew` -> `trip_only` most sharply. No code changed: the ruling makes the existing refusal intended rather than provisional. Reopening it is a BUILD (add SELECTED_PEOPLE and a single-trip TRIP_CREW rung), not a re-ruling — see below |
 | Layover L50 — what BLOCKED means on screen | — | OWNER | No | Whether an unsafe recommendation is hidden, greyed, or shown with a warning |
 | `EVENT_START_TRANSITION` | `2600` (**not applied to production**) | **OWNER** | Yes, safely | Classified 2026-09-08 — see below |
 | `MAP_CANCELLED_TRIP_VISIBILITY` | *nothing* | **OWNER** | Yes, safely | Classified 2026-09-08 — see below |
@@ -124,10 +130,12 @@ zone covering the viewport, Crowd Flow refuses rather than approximating.
 | `RAB_EARNINGS_LEDGER_VOIDING` | *nothing* | **OWNER** | Yes, safely | **NEW 2026-09-08.** Declined, expired and cancelled bookings still show estimated earnings — see below |
 | `TRUST_OVERRIDE_PIN_OR_CAP` | *nothing* | **OWNER** | Nothing live turns on it | **NEW 2026-09-08.** The last open row in census-trust, and the only thing between Trust and 100 % — see below |
 | `MESSAGING_DEGRADED_READ_POSTURE` | *nothing* | **OWNER** | Yes, safely | **NEW 2026-09-08.** 43 enrichment reads across ~15 endpoints: 503 or degrade visibly — see below |
-| `TRIP_CREW_SIGNAL_ROLE_COVERAGE` | *nothing* | **OWNER** | Yes, but it WIDENS a gate | **NEW 2026-09-08.** `lib/tripMembership.ts` omits `co_host` and `viewer` while claiming to mirror `getMemberRole` — see below |
+| `TRIP_CREW_SIGNAL_ROLE_COVERAGE` | *nothing* | **OWNER** | Yes, but it WIDENS a gate | **NEW 2026-09-08.** `domain/trips/invariants/tripMembership.ts` omits `co_host` and `viewer` while claiming to mirror `getMemberRole` — see below |
 | `LAYOVER_RETURN_REMINDER_DELIVERY` | *nothing* | **OWNER** | Yes, safely | **NEW 2026-09-08.** The server-side push path for the return deadline is dead code — see below |
 | `MODERATION_TARGET_NULLABILITY` | *needs a schema change* | **OWNER** | No | **NEW 2026-09-08.** `moderation_actions.target_user_id` is NOT NULL, which is what forces the skip-vs-fabricate dilemma — see below |
 | `INTERACTION_COOLDOWN_READ_DIRECTION` | *nothing* | **OWNER** | Yes, safely | **NEW 2026-09-08.** A measured fail-open; flipping it blocks legitimate pairs during an outage across 15+ routes — see below |
+| ~~`WALL_ACCENT_COLOUR`~~ | *nothing* | **OWNER** | — | **RESOLVED 2026-09-14: SPEC IS STALE.** `docs/architecture/brand-palette-decision.md`. Closed `census-wall.md` W166 and `census-passport.md` P129/P132 — see below, entry kept in full |
+| `PASSPORT_DARK_MODE_FIRST` | *nothing* | **OWNER** | Yes, expensively | **NEW 2026-09-14.** The residue of the palette ruling: §27 asks for dark-mode-first and the ruling ratified a light identity without retiring that clause — see below |
 
 ### `PASSPORT_CREW_PRESENCE_AUDIENCE` — surfaced while separating Safe Return from Locate Friends
 
@@ -279,7 +287,7 @@ for that reason, not because the work is hard.
 Measured 2026-09-08. `lib/mapProjectionTripRead.ts:195` filters trips only on
 `.not("status","is",null)`, so a CANCELLED trip is projected onto the map (scoped
 to trips the viewer is an accepted member of). `TRIP_DISCOVERY_EXCLUDED_STATUSES`
-in `lib/tripDiscoveryProjection.ts:93` excludes `draft`, `cancelled` and
+in `domain/trips/contracts/tripDiscoveryProjection.ts:93` excludes `draft`, `cancelled` and
 `archived` from discovery.
 
 So the decision is not hypothetical and it is not "what should we do one day":
@@ -290,7 +298,7 @@ which is right — making them agree in either direction IS the decision.
 ### `TRIP_REMINDER_DELIVERY` — a store with a field that promises delivery
 
 **NEW 2026-09-08.** `trip_reminders.remind_at` and `is_sent` have no deliverer
-anywhere in the tree. `is_sent` is only ever READ. `lib/tripReminderScheduler.ts`
+anywhere in the tree. `is_sent` is only ever READ. `server/trips/projectionWorkers/tripReminderScheduler.ts`
 is a different mechanism — it drives "your trip starts tomorrow" from
 `trips.reminder_sent_at` and does not read this table at all.
 
@@ -541,11 +549,72 @@ Today the code refuses those four rungs with `409 not_promotable` and a stable
    owner's later list edits — a product statement, not a bug, and one that has
    to be chosen rather than inherited.
 
-**Not decided here.** Everything that does not depend on the answer is built.
+**DECIDED 2026-09-15 — option 1, and the decision is a ruling rather than a
+deferral.** The line above read *"Not decided here"* and is superseded; the
+analysis it sits under is unchanged and is what the ruling rests on.
+
+**THE RULING: promotion is restricted to the faithful rungs.** The promotable
+set is exactly `{ public, circle_only }`, and the `409 not_promotable` on the
+other four is now the INTENDED behaviour rather than a holding position. Nothing
+in the code changes — which is the point: the ruling costs no migration, widens
+nobody's audience, and can be reversed by building, not by re-arguing.
+
+Why option 1 and not 2 or 3, on evidence rather than preference:
+
+1. **No spec describes this promotion at all.** The Highlights/Memories spec
+   lists *"Building an Instagram Stories clone"* under **Non-goals** and contains
+   no Story object; the Wall spec's Stories row is a layout statement that says
+   nothing about audience. A rule cannot be read out of that silence, and
+   inventing one would be the worse error.
+2. **The specs ARE determinate on the SHAPE, and the shape settles it.** A
+   Highlight's audience is supplied explicitly at publish time and backed by a
+   policy row — `publish(highlightId, audience)`, `audience_policy_id`,
+   `memory_visibility_policies`, *"Publishing is always a separate projection
+   decision"*, *"Public derivatives live behind explicit publication policy"*. An
+   audience silently INHERITED from another object is exactly what that model
+   exists to prevent, so "map to the nearest rung" is excluded on the spec's own
+   terms — before any privacy argument is made.
+3. **Every available mapping widens**, and the table above says by how much.
+4. **The costs are not symmetric.** Refusing costs a capability, and a capability
+   can be added later. Mapping wrongly costs retroactive exposure of content
+   already published, which cannot be taken back.
+
+**Option 3 was considered and rejected on its own merits, not by default.** A
+viewer ACL snapshotted at promotion time is faithful on day one and stops
+tracking the owner's later edits — so somebody the owner has since removed from
+their close-friends list keeps seeing the Highlight. It is not widening at
+promotion and it *becomes* widening afterwards, which is the harder failure to
+notice.
+
+**Option 2 is the correct build-out when promotion for all six rungs is wanted,
+and it is a BUILD, not a re-ruling.** The spec's own `VisibilityClass` already
+names the two rungs `highlights` lacks — `SELECTED_PEOPLE` and `TRIP_CREW`.
+Adding a single-trip audience carrying `stories.trip_id`, plus an allow/hide ACL,
+to the TABLE and to RLS makes `close_friends`, `friends_only`, `custom` and
+`trip_crew` faithfully promotable. **The one thing that build must not do is
+re-use the existing `trip_only` rung for `trip_crew`** — that is the widening
+this section is about, and it must get a new single-trip rung of its own. The
+table and RLS have to reach production before any writer names the new columns.
+
+**What pins the ruling.** `src/test/storyHighlightVisibility.test.ts` gained
+*"RULING: `trip_crew` may never map to `trip_only` — one crew is not every
+crew"*. The pre-existing case pins the promotable SET, which an editor can widen
+by adding one string to an expectation; the new case pins the SUBSTANCE, and also
+refuses any of the five pre-existing Highlight rungs as a `trip_crew` target, so
+the mapping cannot come back by editing a list.
+
+**What this ruling does NOT touch.** `2339`'s feed-bounding flag (unrelated, still
+FALSE). `2720` and `2721` were queued behind this decision but are
+audience-neutral — resurfacing preference and location precision — and `2721`'s
+header names a different open decision, `LOCATION_PRECISION_DEFAULT`, which stays
+open. The `#461` rebase hazard recorded in `deployment-readiness.md` (migration
+`2313` reintroducing the `trip_members` self-join that `2530` removed) is a
+`trip_only` RLS regression, not a promotion decision, and **stays open
+regardless**.
 
 ### `TRIP_CREW_SIGNAL_ROLE_COVERAGE` — a split the file's own header says must not happen
 
-`lib/tripMembership.ts` admits `owner` and `member`. `getMemberRole`, which its
+`domain/trips/invariants/tripMembership.ts` admits `owner` and `member`. `getMemberRole`, which its
 header claims to mirror, admits `owner`, `co_host` and `member`. Measured: for a
 trip with an owner and an ACCEPTED `co_host`, `isAcceptedTripMember(co_host)` is
 **false**, `acceptedCrewSize` is **1**, and `isSharedCrewMember(owner)` is
@@ -679,7 +748,51 @@ on the answer, and no code change improves the situation before it.
 
 ---
 
-## `WALL_ACCENT_COLOUR` — the last open row in the Wall census, and it is a brand decision
+## `WALL_ACCENT_COLOUR` — **RESOLVED 2026-09-14: SPEC IS STALE**
+
+> ### THE RULING, AND WHAT IT DID AND DID NOT DO
+>
+> **The owner chose SPEC IS STALE.** Keep Portava's existing palette — Paper
+> `#FFFFFF` · Ink `#1C1C1A` · Seal red `#D32F2F` · Vermilion `#FF4D2E` · Teal ink
+> `#0A3D4A` — retain the Passport and Wall colour identities, and update the
+> conflicting purple/navy requirements. The amendment is
+> `docs/architecture/brand-palette-decision.md`; the supplied spec bytes are
+> deliberately NOT edited, because their sha256 digests are what prove what the
+> owner supplied.
+>
+> **This entry is NOT deleted.** Everything below is the measurement and the
+> argument as they stood when the question was open, preserved unchanged. Read
+> the paragraphs that say "is not built", "cannot choose" and "nothing is
+> buildable" as answered by the block you are reading.
+>
+> **What it closed, and it took verification rather than the ruling alone** — the
+> ruling attaches its own condition: *"Verify each affected requirement before
+> closing it; this decision does not automatically resolve unrelated theme,
+> layout, or accessibility criteria."* Each row below was opened at
+> `/home/user/wt-483` and established individually:
+>
+> | row | outcome | why |
+> |---|---|---|
+> | `census-wall.md` W166 | **W → C** | the colour half was the whole remainder; the structural half is enforced by a test that binds on token NAMES, not hexes, so it held either way. `census-wall.md` §10.1 |
+> | `census-passport.md` P129 | **W → C** | a pure colour-to-role clause; seal red `#D32F2F` is ratified and is what ships. `census-passport.md` §15.1 |
+> | `census-passport.md` P132 | **W → C** | and the row's own evidence was FALSE — teal-ink already carried availability and social context; the ruling's contribution was ratifying that a Passport screen may draw from the shared palette. `census-passport.md` §15.4 |
+> | `census-passport.md` P128 | **stays W** | half-closed. Surfaces ratified; *"dark-mode first"* is a THEME criterion the ruling reserves in terms, and the Passport has no dark mode at all. Now `PASSPORT_DARK_MODE_FIRST`, below |
+> | `census-passport.md` P13 | **stays W** | a composition, not a colour — the ruling's own worked counter-example. *"The mockup approves the palette only — not a new layout"* |
+> | `census-passport.md` P133 | **stays W** | the same: portrait placement and an absent glass treatment. Never a palette row |
+>
+> **So: three rows closed across two censuses, not six.** §9.3 of `census-wall.md`
+> and §12.4 of `census-passport.md` both estimated six (five plus W166) by
+> counting rows that shared a *heading*, and half of that count did not survive
+> being opened. The estimate was 3.0 points of the Passport census; the measured
+> figure is 1.2. **A count of rows sharing a cause is not evidence about any of
+> them.**
+>
+> **What it cost: nothing.** The branch not taken — PALETTE IS WRONG — required
+> `theme/tokens.ts` accent values and every AA pairing recomputed across the whole
+> client. The contrast suite's thresholds are computed against the ratified values,
+> so nothing is recomputed and `census-wall.md` W190 is untouched. **No token was
+> edited, nothing was repainted, no screen was rebuilt** — the ruling's closing
+> paragraph forbids all three.
 
 Raised 2026-09-08 by the Wall recensus (`census-wall.md` §6). W166 is the **one**
 remaining non-CANNOT-VERIFY row between the Wall and 205/205: 196 correct, 1
@@ -727,10 +840,83 @@ IS WRONG the first step is a design decision about which purple, and the contras
 consequences follow from that value. There is no commit that improves the
 situation before the answer.
 
+> **ANSWERED 2026-09-14.** SPEC IS STALE, so the work was documentary and it is
+> done: the amendment is written, three rows verified and closed, three verified
+> and left open with their remainders named. The prediction above was right about
+> the shape and wrong about the size — "a sentence in a document" was in fact six
+> requirements to re-open one at a time, and half of them did not move. It was
+> also right that no commit improves the situation before the answer: this pass
+> changed no code at all.
+
 **Note on scope, so this is not read as bigger than it is:** W166 is worth 0.5 %
 of one census. It is on this ledger because it is the LAST row, not because it is
 urgent — and because a census that says "1 BUILT-BUT-WRONG" with no explanation
 of who can fix it is the shape that quietly becomes permanent.
+
+> **2026-09-14: that 0.5 % is now zero.** The Wall census carries **no
+> BUILT-BUT-WRONG row at all** — 205 · 199 C · 0 W · 0 N · 6 ? — so its
+> CONSTRUCTED and CORRECT figures are the same number for the first time and the
+> whole remainder is CANNOT-VERIFY. None of the six is a palette question: three
+> need a designer or users, two need a device or a database, and one belongs to
+> the Input Intelligence lane.
+
+---
+
+## `PASSPORT_DARK_MODE_FIRST` — the one thing the palette ruling opened rather than closed
+
+Raised 2026-09-14 while executing `WALL_ACCENT_COLOUR`'s resolution. OWNER, and it
+exists only because the ruling was careful: *"this decision does not automatically
+resolve unrelated theme, layout, or accessibility criteria."* Without that sentence
+this would have been closed by accident, inside a row that looked entirely like a
+colour row.
+
+### The measurement
+
+`census-passport.md` P128 grades one spec sentence:
+`docs/specs/Portava_Passport_Engineering_Architecture_and_Design_Spec.txt:273#Dark-mode first with deep navy/black surfaces.`
+It is **two** requirements wearing one clause, and the ruling reaches exactly one of
+them.
+
+- **Surfaces — settled.** The owner ratified Paper `#FFFFFF` and Ink `#1C1C1A` by
+  name and said *"retain the existing Passport and Wall colour identities"*. That is
+  `travel-buddy-standalone/src/theme/passportTokens.ts:8#paper:        '#FFFFFF',`
+  and `travel-buddy-standalone/src/theme/passportTokens.ts:11#ink:          '#1C1C1A',`.
+  There is nothing left to decide about what colour a Passport surface is.
+- **Theme — untouched, and the gap is wider than "the default is light".** Measured
+  at `/home/user/wt-483`: `grep -rn useColorScheme` over
+  `travel-buddy-standalone/src/theme/`, `src/components/passport/` and
+  `src/features/passport/` returns **0**. `PP` is a single frozen object with one
+  value per role and no dark counterpart, read directly by 60+ call sites with no
+  theme provider between them. The client's only two scheme readers are
+  `travel-buddy-standalone/src/features/telegraph/theme/telegraphTheme.ts:117#const scheme = useColorScheme();`
+  and the tab bar, neither of which is a Passport surface. **The Passport does not
+  have a light-first dark mode. It has one theme.**
+
+### The question
+
+| | Meaning | What changes | Cost |
+|---|---|---|---|
+| **CLAUSE RETIRED** | a ratified light paper identity supersedes "dark-mode first" the same way vermilion superseded purple | one paragraph in `docs/architecture/brand-palette-decision.md`; P128 becomes `C` with no code change | none |
+| **DARK MODE IS STILL REQUIRED** | the Passport must ship two themes, dark as the primary | a second `PP` token set, a provider, every Passport surface moved off its direct `PP` import, and a dark value chosen for all 14 roles — then re-run for contrast | the largest client change on this ledger, and it is a rebuild of working screens |
+
+### Why engineering is not choosing
+
+Because the second option is the thing the ruling's last paragraph forbids —
+*"build upon existing components and shared tokens; do not rebuild working
+screens"* — while the first option is an owner amending an owner's document.
+Engineering can state that the tree has one theme, which it now has; it cannot
+decide whether that is a defect or the design.
+
+**What is buildable now, either way:** nothing, in the same sense
+`WALL_ACCENT_COLOUR` meant it. If the clause is retired the change is a paragraph;
+if dark mode is required the first step is a palette decision for 14 roles, and
+every line of code follows from those values.
+
+**Note on scope.** P128 is worth 0.6 % of one census and is **one** row, not five —
+P13 and P133 fail on composition and P129/P132 are closed, so this is the entire
+residue of the palette question across both censuses. It is on this ledger because
+a row half-closed by a ruling is the shape most likely to be quietly finished off
+by the next pass that reads only the heading.
 
 ---
 
@@ -753,8 +939,8 @@ used everywhere and is not the problem. The RESOLUTION is copied.
 | --- | --- | --- | --- |
 | `lib/mapTravelers.ts` | canonical | was inline, order correct | **fixed** — now requests `buildMapPresenceProjections` (P98) |
 | `services/passport/PassportConsumerProjections.ts` | canonical | **a FIFTH copy, added by the fix above** | **fixed** — see below |
-| `routes/discoverySearch.ts:624` | canonical | `p.name` ALONE, and `display_name` was not even in the SELECT | **fixed** — adopts `presentedName`; a user with a display name was shown the other one |
-| `routes/compass.ts:3672` | canonical | `display_name ?? name ?? username` inline | **NOT fixed — see below** |
+| `routes/discoverySearch.ts:642` | canonical | `p.name` ALONE, and `display_name` was not even in the SELECT | **fixed** — adopts `presentedName`; a user with a display name was shown the other one |
+| `routes/compass.ts:3702` | canonical | `display_name ?? name ?? username` inline | **NOT fixed — see below** |
 | `services/passport/PassportProjectionService.ts` | canonical | canonical | fine |
 
 ### The fifth copy, written by the commit that removed the first
@@ -806,7 +992,7 @@ NOT-BUILT row in that census (150 C / 17 W / 1 N / 1 ?).
 
 Passport spec §11 names seven capabilities derived from trust evidence + domain
 policy. Six exist and are derived server-side in
-`services/passport/PassportProjectionService.ts:683#buildOwnerCapabilities`:
+`services/passport/PassportProjectionService.ts:740#export function buildOwnerCapabilities`:
 
 ```
 canJoinPublicTrip · canHostTrip · canCreateLargePlan
@@ -1269,6 +1455,50 @@ No row was written by hand, no row was deleted, and no branch was merged. §33 o
 `census-trips.md` records the last time this lane back-filled ledger rows and
 why those six carry `checksum='backfill'` rather than a hash; repeating that for
 another six would trade a loud problem for a quiet one.
+
+### Re-measured on merged `main` at `014a25d5` — this is now the ONLY thing red on main
+
+`CI (live DB)` run `34430889373`, the push build of #481's squash:
+
+```
+✖  check:migration-ledger FAILED — this database does not represent this branch.
+   3 ledger row(s) name a migration file that is not in src/migrations/.
+     • 2311_intel_claim_reviews.sql              (applied_by=manual)
+     • 2320_memory_episode_provenance_spine.sql  (applied_by=manual)
+     • 2325_telegraph_unsend_before_seen.sql     (applied_by=manual)
+   497 file(s) on disk, 500 ledger row(s) on hwokxgbmezheskbzskfr
+```
+
+`certify:migrations` fails at **stage 1**, so no later stage runs, `schema-drift`
+fails, and `live DB · verdict` marks `live-db-security-suites` and
+`post-media-revocation-rehearsal` as NOT EXECUTED. **Everything else in that job
+passed**: `apply-migrations` had nothing to do (109 proven applied, 0 pending),
+`audit:schema` reported *"Live schema contains every object claimed by the
+migrations"* across 494 files and 5,748 objects, `check:media-objects` and
+`audit:shadow-append-only` both passed.
+
+**It is not the merge's doing, measured rather than assumed.**
+`git diff --name-status 0edcb3eb 014a25d5 -- src/migrations/` is EMPTY — that
+squash added and changed no migration at all — and all three rows are
+`applied_by=manual`, written from branches that are still open. The count is
+unchanged from the day this entry was opened.
+
+### Why no pull request can catch this, which is worth knowing before the next green is believed
+
+`db:apply-migrations` and `certify:migrations` are gated on
+`github.ref == 'refs/heads/main'` (`live-db.yml:746` and `:757`). A PR's
+`schema-drift` job runs the **dry run** and then skips both. So #481 was
+truthfully 27 of 27 green and that green **never covered this gate** — the first
+execution of `certify:migrations` against a change is the push build after it
+merges. Any "fully certified" claim resting on PR checks alone is scoped
+narrower than it sounds, and this is the gap.
+
+### Still not done here, and the temptation is now stronger
+
+Deleting three rows would turn `main` green in one commit. It would also erase
+the only evidence that portava-ci ran schema no merged branch can show, which is
+the entire finding. The closures in the section above are still the only honest
+ones, and they belong to the owners of those branches.
 
 ---
 

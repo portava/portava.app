@@ -74,7 +74,7 @@ export const PROJECTIONS: readonly ProjectionEntry[] = [
     producers: ["lib/mapTripProjectionWorker.ts"],
     producerFunctions: ["trip_map_projection_drain", "trip_map_projection_rebuild"],
     consumers: ["lib/mapProjectionTripRead.ts"],
-    scheduler: { starts: "startTripMapProjectionScheduler", from: "index.ts" },
+    scheduler: { starts: "startTripOutboxWorker", from: "index.ts" },
   },
   {
     key: "INTEL_STATE_SNAPSHOTS",

@@ -15,6 +15,8 @@ import { BOOT_HRTIME } from "./lib/bootTime";
 import { callsWebhookHandler, callsWebhookRawParser } from "./routes/callsWebhook";
 import { webhookHandler as verificationWebhookHandler, webhookRawParser as verificationWebhookRawParser } from "./routes/verification.js";
 import wellKnownShareRouter from "./routes/wellKnownShare.js";
+import { telegraphObservability } from "./middlewares/telegraphObservability.js";
+import telegraphDiagnosticsRouter from "./routes/telegraphDiagnostics.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -169,6 +171,20 @@ app.use("/api/static", express.static(path.join(__dirname, "../static"), {
   maxAge: "7d",
   immutable: false,
 }));
+
+// ── Telegraph §28 / §30A.17 observability ─────────────────────────────────────
+// Mounted BEFORE the router so it times what the user waits for — routing, body
+// parsing, auth and handler — rather than only the handler. It classifies by
+// method and path shape, records an outcome and a duration, and carries no
+// content: the recorder's signature has no parameter a message body could
+// travel in. See src/middlewares/telegraphObservability.ts for why a refusal is
+// deliberately not counted as an availability failure.
+app.use(telegraphObservability());
+
+// §30A.17 internal support tooling: admin-gated, purpose-scoped, audit-logged
+// delivery and projection diagnostics. Mounted alongside the main router rather
+// than inside it so the Telegraph lane owns one file.
+app.use("/api", telegraphDiagnosticsRouter);
 
 app.use("/api", router);
 

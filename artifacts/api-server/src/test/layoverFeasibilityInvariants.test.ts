@@ -177,18 +177,44 @@ describe("§6.1 L51 — raising any buffer term never increases usable time", ()
 /** Safety order, worst last. `airport_only` is a PREFERENCE, not a safety judgement. */
 const SAFETY_ORDER = { safe: 0, possible_but_risky: 1, not_recommended: 2, airport_only: 0 } as const;
 
+/**
+ * ── THE SWEEP'S DOMAIN CHANGED WITH census-layover L293, AND IT HAD TO ───────
+ *
+ * This sweep used to run `travel = 0..300` with `activityTimeMin ∈ {0, 30, 120}`
+ * and require the rating to be monotone across all of it. Two of those inputs
+ * are not "a small journey" and "a short visit" — they are ABSENCES:
+ *
+ *   travel = 0 on a LANDSIDE candidate is not an instant journey; it is the
+ *     value an `INTEGER NOT NULL DEFAULT 0` column holds when nobody measured
+ *     one (the same reading L47 gave `layover_plan_stops.travel_min`).
+ *   activityTimeMin = 0 is not a zero-minute visit; the column's own CHECK is
+ *     `BETWEEN 5 AND 720`, so 0 is a duration nobody stated.
+ *
+ * While `estimateTravelTime` existed, both read as measurements and the sweep
+ * ran over them without noticing. They now fail closed, which breaks
+ * monotonicity AT THE JOIN — rank 2 (an unmeasured refusal) sits to the left of
+ * rank 0 (a measured one-minute leg) — and that is not a regression in the
+ * property: it is the sweep having been run over a domain where the property
+ * was never stated. "A LONGER travel leg never improves the rating" presupposes
+ * a travel leg.
+ *
+ * So the domain starts at a STATED leg (1 minute) and a STATED duration, the
+ * property is asserted at full strength over it, and the two absences are
+ * asserted SEPARATELY below — where the claim about them is the true one: they
+ * are refusals, not the safest point of a continuum.
+ */
 describe("§6.1 L52 — a longer travel leg never expands the safe envelope", () => {
   const NOW = Date.parse("2030-06-15T00:00:00.000Z");
   const a = airport();
 
-  for (const activityTimeMin of [0, 30, 120]) {
+  for (const activityTimeMin of [5, 30, 120]) {
     for (const verified of [true, false]) {
       it(`travelTimeMin ↑ (activity ${activityTimeMin}, verified ${verified}) never improves the rating`, () => {
         const s = session({ wantsToLeave: true });
         let prevRating = -1;
         let prevRequired = -1;
         let sawWorse = false;
-        for (let travel = 0; travel <= 300; travel++) {
+        for (let travel = 1; travel <= 300; travel++) {
           const r = assess(a, s, {
             title: "c", travelTimeMin: travel, activityTimeMin, insideAirport: false, verified,
           }, NOW);
@@ -199,10 +225,26 @@ describe("§6.1 L52 — a longer travel leg never expands the safe envelope", ()
           prevRating = rank;
           prevRequired = r.requiredMinutes;
         }
-        assert.ok(sawWorse, "the rating never degraded across 0..300 min of travel — the sweep proves nothing");
+        assert.ok(sawWorse, "the rating never degraded across 1..300 min of travel — the sweep proves nothing");
       });
     }
   }
+
+  it("the two ABSENCES the old sweep swallowed are refusals, not the safe end of the continuum", () => {
+    const s = session({ wantsToLeave: true });
+    // A landside zero: no journey was ever stated. Not "safe at 0 minutes".
+    const noLeg = assess(a, s, { title: "c", travelTimeMin: 0, activityTimeMin: 30, insideAirport: false, verified: true }, NOW);
+    assert.equal(SAFETY_ORDER[noLeg.rating], 2, `landside 0 rated ${noLeg.rating}`);
+    assert.equal(noLeg.requiredMinutesIsLowerBound, true);
+    // A zero duration: the column's CHECK is 5..720, so nobody chose this.
+    const noDwell = assess(a, s, { title: "c", travelTimeMin: 30, activityTimeMin: 0, insideAirport: false, verified: true }, NOW);
+    assert.equal(SAFETY_ORDER[noDwell.rating], 2, `activity 0 rated ${noDwell.rating}`);
+    assert.equal(noDwell.requiredMinutesIsLowerBound, true);
+    // And a stated one-minute leg is the FIRST point of the swept domain, so
+    // the sweep above starts where the property it asserts begins to hold.
+    const stated = assess(a, s, { title: "c", travelTimeMin: 1, activityTimeMin: 30, insideAirport: false, verified: true }, NOW);
+    assert.equal(stated.requiredMinutesIsLowerBound, false);
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

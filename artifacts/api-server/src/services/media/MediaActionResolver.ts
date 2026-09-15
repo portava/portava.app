@@ -40,22 +40,58 @@ import { isKillSwitchEngaged } from "../../lib/featureFlags.js";
 import { isCompassEnabled } from "../../compass/flags.js";
 import {
   disclosureForRow,
-  loadEligibleCandidates,
+  loadEligibleCandidatesOrRefuse,
   loadProjectionGemContext,
   type ViewerResolved,
 } from "./MediaProjectionService.js";
 import { resolveExperience } from "./MediaExperienceResolver.js";
 import { mayDiscloseGemIdentity } from "../hiddenGems/HiddenGemPrivacyGuard.js";
+import { areSharedMomentsEnabled, momentRole, type MomentRole } from "../../lib/places/sharedMoments.js";
 import type { MediaCandidateRow } from "../../lib/media/mediaProjection.js";
 
 // ── Entity refs the media resolves to ─────────────────────────────────────────
 
+/**
+ * §28's object semantics reach the rail through these kinds. `shared_moment` is
+ * the §28 "permitted shared real-world experience": the edge is
+ * `shared_moment_contributions.post_id` (migration 2064), and it is emitted ONLY
+ * to an accepted member of that Moment — a non-member is not told it exists.
+ */
+/** The LOCATION-graph kinds. Unchanged — see MediaGraphKind below for why. */
 export type MediaEntityKind = "media" | "place" | "trip" | "gem";
+
+/**
+ * The full §7 media context graph, which §28's object semantics widen beyond the
+ * location graph: `shared_moment` is the §28 "permitted shared real-world
+ * experience", and the edge is `shared_moment_contributions.post_id` (migration
+ * 2064). It is emitted ONLY to an accepted member of that Moment — a non-member
+ * is not told it exists.
+ *
+ * WHY THIS IS A SECOND UNION RATHER THAN A WIDER `MediaEntityKind`.
+ * `compass/CompassMediaContext.ts:305` builds `Record<MediaEntityRef["kind"],
+ * string>` for its prompt formatter, so widening `MediaEntityKind` is a
+ * compile-breaking change to a file this lane does not own. Splitting keeps the
+ * Compass adapter's exhaustive map intact and correct (it formats the LOCATION
+ * refs) while the rail carries the whole graph.
+ *
+ * CROSS-LANE REQUEST, stated so it is not lost: add
+ * `shared_moment: "shared moment"` to `REF_KIND_LABEL` in
+ * `compass/CompassMediaContext.ts`, then `MediaGraphKind` can collapse back into
+ * `MediaEntityKind` and `ResolvedMediaEntities.graphRefs` into `.refs`.
+ */
+export type MediaGraphKind = MediaEntityKind | "shared_moment";
 
 export interface MediaEntityRef {
   kind: MediaEntityKind;
   id: string;
   /** Coarse label only (place name / city) — NEVER a coordinate. */
+  label: string | null;
+}
+
+/** A ref over the full graph. Same shape, wider kind. */
+export interface MediaGraphRef {
+  kind: MediaGraphKind;
+  id: string;
   label: string | null;
 }
 
@@ -67,8 +103,19 @@ export interface ResolvedMediaEntities {
   gemId: string | null;
   /** Trip id the media is attached to AND the viewer may see, else null. */
   tripId: string | null;
+  /**
+   * Shared Moment (§28) this media was contributed to AND the viewer is an
+   * accepted member of, else null. Null also covers: the capability being off,
+   * an archived Moment, and a contribution that is not approved.
+   */
+  sharedMomentId: string | null;
+  /** The viewer's role in that Moment — the invite gate's input. Null with the id. */
+  sharedMomentRole: MomentRole | null;
   city: string | null;
+  /** LOCATION refs only — the shape Compass's prompt formatter enumerates. */
   refs: MediaEntityRef[];
+  /** The full §7 graph: `refs` plus the §28 Shared Moment edge when there is one. */
+  graphRefs: MediaGraphRef[];
 }
 
 // ── Action shapes ─────────────────────────────────────────────────────────────
@@ -86,6 +133,9 @@ export type MediaActionId =
   | "meet_here"
   | "i_want_this"
   | "share_telegraph"
+  | "invite_people"
+  | "follow_this_night"
+  | "save_route"
   | "report";
 
 export interface MediaActionTarget {
@@ -114,9 +164,10 @@ export interface MediaAction {
   target: MediaActionTarget;
 }
 
-export interface MediaActionSet {
+export interface MediaActionSet extends PlanGateDetermination {
   mediaId: string;
-  entityRefs: MediaEntityRef[];
+  /** The full §7 graph (see MediaGraphKind), not just the location refs. */
+  entityRefs: MediaGraphRef[];
   actions: MediaAction[];
 }
 
@@ -156,7 +207,7 @@ export async function loadEligibleMediaRow(
   const ownedOrFollowed =
     !!authorId && (authorId === viewer.viewerId || viewer.followedCreatorIds.has(authorId));
 
-  const rows = await loadEligibleCandidates(sc, viewer, {
+  const rows = await loadEligibleCandidatesOrRefuse(sc, viewer, {
     feedType: ownedOrFollowed ? "following" : "for_you",
     authorId: ownedOrFollowed ? authorId : null,
     postIds: [mediaId],
@@ -263,7 +314,69 @@ export async function resolveMediaEntities(
     }
   }
 
-  return { mediaId, placeId, gemId, tripId, city, refs };
+  // ── Shared Moment ref (§28) ───────────────────────────────────────────────
+  // `shared_moment_contributions.post_id` references `posts(id)` (2064), so a
+  // media item contributed to a Moment already carries the edge; nothing in the
+  // media tree was reading it. Three gates, all of them the Shared Moments
+  // surface's OWN, so this can never widen what that surface would disclose:
+  //
+  //   1. The capability chain (`areSharedMomentsEnabled`) — the same check
+  //      routes/sharedMoments.ts::guard makes before any Moment read.
+  //   2. An APPROVED contribution. A pending/removed contribution is not a
+  //      membership of the media.
+  //   3. `momentRole(...) !== null` — accepted membership, the same predicate
+  //      GET /shared-moments/:id answers `not_member` on. A non-member learns
+  //      nothing: not the id, not the title.
+  //
+  // FAIL CLOSED — any failed read yields no ref. An ARCHIVED Moment yields no
+  // ref either: it is not an experience anyone can still be invited into.
+  let sharedMomentId: string | null = null;
+  let sharedMomentRole: MomentRole | null = null;
+  const graphRefs: MediaGraphRef[] = [];
+  try {
+    if (await areSharedMomentsEnabled(sc)) {
+      const { data: contribution } = await (sc as any)
+        .from("shared_moment_contributions")
+        .select("moment_id, status")
+        .eq("post_id", mediaId)
+        .eq("status", "approved")
+        .maybeSingle();
+      const momentId = (contribution as any)?.moment_id;
+      if (typeof momentId === "string" && momentId.length > 0) {
+        const role = await momentRole(sc, momentId, viewer.viewerId);
+        if (role) {
+          const { data: moment } = await (sc as any)
+            .from("shared_moments")
+            .select("id, title, status")
+            .eq("id", momentId)
+            .maybeSingle();
+          if (moment && (moment as any).status === "active") {
+            sharedMomentId = momentId;
+            sharedMomentRole = role;
+            graphRefs.push({
+              kind: "shared_moment",
+              id: momentId,
+              label: typeof (moment as any).title === "string" ? (moment as any).title : null,
+            });
+          }
+        }
+      }
+    }
+  } catch {
+    /* non-fatal — no shared-moment ref */
+  }
+
+  return {
+    mediaId,
+    placeId,
+    gemId,
+    tripId,
+    city,
+    refs,
+    graphRefs: [...refs, ...graphRefs],
+    sharedMomentId,
+    sharedMomentRole,
+  };
 }
 
 // ── Plan-editable trips (the SAME gate the trip-plan endpoints enforce) ────────
@@ -274,13 +387,13 @@ export async function resolveMediaEntities(
  * Trip" / "Do This Experience" honor §47: the rail asks the same question the
  * endpoint would, so it can never offer an add the endpoint would refuse.
  *
- * Bounded — checks at most `max` candidate trips. Empty on any failure.
+ * Bounded — checks at most `max`. Returns `null`, never `[]`, when the gate could not be DECIDED (unreadable trip_members, or a canEditPlan probe that did not run); `[]` stays the real answer "this viewer has no plan-editable trip".
  */
 export async function loadPlanEditableTripIds(
   sc: SupabaseClient,
   userId: string,
   max = 30,
-): Promise<string[]> {
+): Promise<string[] | null> {
   let candidateTripIds: string[] = [];
   try {
     const { data, error } = await (sc as any)
@@ -288,10 +401,10 @@ export async function loadPlanEditableTripIds(
       .select("trip_id, role")
       .eq("user_id", userId)
       .neq("role", "invited");
-    if (error || !Array.isArray(data)) return [];
+    if (error || !Array.isArray(data)) return null; // the read did not run — not "no trips"
     candidateTripIds = (data as any[]).map((r) => String(r.trip_id)).slice(0, max);
   } catch {
-    return [];
+    return null;
   }
   if (candidateTripIds.length === 0) return [];
 
@@ -299,8 +412,8 @@ export async function loadPlanEditableTripIds(
   for (const tripId of candidateTripIds) {
     // canEditPlan is the authoritative per-trip gate the POST plan-item routes
     // call. Using it here (not a looser re-implementation) is the point.
-    const ok = await canEditPlan(sc, tripId, userId).catch(() => null);
-    if (ok === true) editable.push(tripId);
+    const ok = await canEditPlan(sc, tripId, userId).catch(() => "unavailable" as const);
+    if (ok === "unavailable") return null; else if (ok === true) editable.push(tripId); // canEditPlan's OWN null means "trip gone" — a real exclusion
   }
   return editable;
 }
@@ -446,13 +559,31 @@ export async function resolveMediaActions(
     });
   }
 
+  // ── Invite People (§15) → POST /api/shared-moments/:id/invites ────────────
+  // Offered ONLY to an owner/manager of the Moment this media belongs to, which
+  // is the EXACT `ownerOrManager` gate that endpoint enforces (§47). A plain
+  // member sees the Moment (a read they are entitled to) and is not handed an
+  // invite the endpoint would refuse; a non-member has no ref at all.
+  if (entities.sharedMomentId && (entities.sharedMomentRole === "owner" || entities.sharedMomentRole === "manager")) {
+    actions.push({
+      id: "invite_people",
+      label: "Invite people",
+      outcome: "meet",
+      target: {
+        method: "POST",
+        endpoint: "/api/shared-moments/:id/invites",
+        params: { id: entities.sharedMomentId },
+      },
+    });
+  }
+
   // ── Trip-plan actions — gated by the SAME check the endpoint enforces ──────
   // Add to Trip (§15) / Do This Experience (§15.2) both resolve to the generic
   // trip-plan-item endpoint, whose gate is canEditPlan. Offer them ONLY when the
   // viewer actually has a plan-editable trip. Dropping this gate can only add a
   // dead action — never a privileged one — because the endpoint re-checks.
-  const editableTripIds = await loadPlanEditableTripIds(sc, viewer.viewerId);
-  if (editableTripIds.length > 0) {
+  const planEditable = await loadPlanEditableTripIds(sc, viewer.viewerId); // null ⇒ gate undecided
+  const editableTripIds = planEditable ?? []; if (editableTripIds.length > 0) {
     // Add to Trip → POST /api/trips/:tripId/plan/items (a media/place plan item).
     actions.push({
       id: "add_to_trip",
@@ -497,9 +628,61 @@ export async function resolveMediaActions(
       outcome: "navigate",
       target: { method: "GET", endpoint: "/api/media/experiences/:experienceId", params: { experienceId: entities.tripId } },
     });
+
+    // ── §23.1 chain actions ─────────────────────────────────────────────────
+    // Offered ONLY when the experience actually HAS a chain — two or more
+    // distinct DISCLOSABLE places with observed perspectives. That is the
+    // target endpoint's own bar, not a nicety: POST /route-plans validates
+    // `stops: z.array(...).min(2).max(20)`, so a one-place experience would
+    // yield a route the endpoint rejects. resolveExperience re-applies the
+    // viewer gate, so a trip the viewer may not see yields no chain and no
+    // actions.
+    const chainExp = await resolveExperience(sc, viewer, entities.tripId, nowMs).catch(() => null);
+    const chain = chainExp?.chain ?? null;
+    if (chain?.isChain) {
+      // Follow This Night → the experience projection, which carries the chain.
+      actions.push({
+        id: "follow_this_night",
+        label: "Follow this night",
+        outcome: "navigate",
+        target: {
+          method: "GET",
+          endpoint: "/api/media/experiences/:experienceId",
+          params: {
+            experienceId: entities.tripId,
+            chainStops: chain.stops.map((st) => ({ placeId: st.placeId, title: st.label })),
+          },
+        },
+      });
+
+      // Save Route → the EXISTING route-plan endpoint. Coordinate-free, like
+      // every other action on this rail: the stop carries the canonical place id
+      // and a coarse title, and the client resolves geometry through the Map
+      // gateway it already holds. `CandidateStopSchema` requires lat/lng, so the
+      // client must complete the stop before submitting — that is the division
+      // of labour, and it is stated rather than hidden.
+      actions.push({
+        id: "save_route",
+        label: "Save route",
+        outcome: "plan",
+        target: {
+          method: "POST",
+          endpoint: "/api/route-plans",
+          params: {
+            title: chainExp?.title ?? "Saved route",
+            routeStyle: "custom",
+            stops: chain.stops.slice(0, 20).map((st) => ({
+              sourceType: "place",
+              sourceId: st.placeId,
+              title: st.label ?? "Stop",
+            })),
+          },
+        },
+      });
+    }
   }
 
-  return { mediaId, entityRefs: entities.refs, actions };
+  return { mediaId, entityRefs: entities.graphRefs, actions, planGateDetermined: planEditable !== null };
 }
 
 // ── Do This Experience (§15.2) ────────────────────────────────────────────────
@@ -514,7 +697,7 @@ export interface ExperiencePlanStop {
   category: string;
 }
 
-export interface ExperiencePlanProposal {
+export interface ExperiencePlanProposal extends PlanGateDetermination {
   experienceId: string;
   kind: "event" | "trip";
   /** The EXISTING plan-creation endpoint each stop is submitted to (per trip). */
@@ -570,7 +753,7 @@ export async function buildDoThisExperiencePlan(
     }
   }
 
-  const eligibleTripIds = await loadPlanEditableTripIds(sc, viewer.viewerId);
+  const planEditable = await loadPlanEditableTripIds(sc, viewer.viewerId); // null ⇒ gate undecided
 
   return {
     experienceId,
@@ -578,7 +761,7 @@ export async function buildDoThisExperiencePlan(
     targetEndpoint: "/api/trips/:tripId/plan/items",
     method: "POST",
     stops,
-    eligibleTripIds,
+    eligibleTripIds: planEditable ?? [], planGateDetermined: planEditable !== null,
   };
 }
 
@@ -622,4 +805,33 @@ export async function recordMediaIntent(
     );
   if (error) return { recorded: false, reason: "db_error" };
   return { recorded: true };
+}
+
+/**
+ * Whether the trip-plan gate was DECIDED, carried on every surface that spends
+ * its answer (MediaActionSet, ExperiencePlanProposal).
+ *
+ * ── WHY IT EXISTS ───────────────────────────────────────────────────────────
+ * `loadPlanEditableTripIds` reads `trip_members` and then runs canEditPlan per
+ * candidate trip. supabase-js RESOLVES on a read failure, so `[]` was the answer
+ * for BOTH "you have no trip you may add to" and "we could not find out". The
+ * resolver spends that by withholding `add_to_trip` / `do_this_experience`, and
+ * the Do-This-Experience proposal ships it as `eligibleTripIds: []` — a positive
+ * enumeration of the trips the viewer may plan into. A viewer who owns three
+ * editable trips was shown, byte for byte, the surface of a viewer who owns
+ * none, with nothing anywhere to say which had happened.
+ *
+ * The fail-closed direction is unchanged and must stay: an action the endpoint
+ * would refuse is never offered, and an undecided gate offers nothing. What
+ * changes is that the emptiness is now LABELLED. `false` means the absence is
+ * not a decision, so a caller may retry, degrade, or say "we couldn't check"
+ * instead of silently asserting "you have nowhere to put this".
+ *
+ * Declared at the end of the file, not inline in the two interfaces, because
+ * both sit above this file's last anchored doc citation (line 795) and may only
+ * be edited one line for one line — `extends` is that one line.
+ */
+export interface PlanGateDetermination {
+  /** false ⇒ the plan-editable-trip gate could not be read; an empty result is not a "no". */
+  planGateDetermined: boolean;
 }

@@ -213,7 +213,29 @@ const STOP_READER = 'isKillSwitchEngaged';
 // would be stale the moment it was written (the check says so itself). The gap
 // was never in the call site; it was that a real shared reader was missing from
 // the vocabulary, which is the same defect the `isEnabled` note above records.
-const CAP_READERS = ['isFlagEnabled', 'isLivePlacesCapabilityEnabled', 'isEnabled', 'getFlagRow'];
+//
+// `readFlagState` joined this list on 2026-09-15, when lib/discoveryLayoverMode.ts
+// became its second caller. It is the tree's only FOUR-VALUED flag reader —
+// `on` / `off` / `absent` / `unreadable`, defined in lib/capability/
+// schemaCapability.ts — and it decides nothing, because the safe direction for
+// a RESTRICTION flag is neither on nor off but "say so and let the caller
+// refuse". Adding it here is a WIDENING OF WHAT THIS CHECK CAN SEE, not a
+// loosening: it has had a caller (resolveCapability, the whole capability
+// contract) since long before this entry, and every one of those reads was
+// INVISIBLE to R2 — a stop routed through resolveCapability would not have been
+// caught. It is also why a SHADOW_READERS entry appears for its defining file
+// below: it is a shared reader living outside SHARED_HELPER_FILES, which this
+// check is right to make someone declare.
+//
+// It is listed as a CAP reader rather than given a class of its own because of
+// what this list is FOR. R2 below fails any STOP flag read through anything but
+// isKillSwitchEngaged, and membership here is what makes that rule fire for a
+// stop read through readFlagState instead of the read going unseen — the
+// UNSEEN read is the hole, not the classification. What this list cannot say
+// — whether the CALLER's branch on the value is the right one — it could not
+// say for isFlagEnabled either; the file's own header states that limit
+// ("IT DOES NOT ENFORCE: that the classification is RIGHT").
+const CAP_READERS = ['isFlagEnabled', 'isLivePlacesCapabilityEnabled', 'isEnabled', 'getFlagRow', 'readFlagState'];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SCAN SCOPE
@@ -1022,6 +1044,21 @@ const APP_UNRESOLVED_READS = [
 // with each other.
 // ─────────────────────────────────────────────────────────────────────────────
 const SHADOW_READERS = [
+  {
+    file: 'lib/capability/schemaCapability.ts',
+    fn: 'readFlagState',
+    reason:
+      'NOT A SHADOW OF A SHARED HELPER -- it is the tree\'s only FOUR-VALUED flag reader, and it appears here ' +
+      'because it lives outside SHARED_HELPER_FILES and readFlagState joined CAP_READERS on 2026-09-15. It ' +
+      'returns "on" | "off" | "absent" | "unreadable" and DECIDES NOTHING: the error is BOUND (`if (!res || ' +
+      '!("error" in res) || res.error) return "unreadable"`) and the catch returns "unreadable" too, so no ' +
+      'failure path can produce "on". Its two callers both act on that. resolveCapability (same file) treats ' +
+      'everything that is not "on" as enabled:false and logs the unreadable case at WARN -- fail-CLOSED. ' +
+      'lib/discoveryLayoverMode.ts REFUSES on "unreadable" (Discovery refusal envelope, coverage "nothing", ' +
+      'failedSources ["feature_flags"]) and is off on "absent"/"off" -- stricter than fail-closed, because ' +
+      'its flag is a RESTRICTION and "we could not read it" must not silently lift the restriction. ' +
+      'Verified by hand at 3aef5dfbe against schemaCapability.ts:324-333 and :347-359.',
+  },
   // routes/airport.ts had the one shadow that FAILED OPEN — `if (error) return
   // true; if (data == null) return true;`, the exact inverse of the shared
   // helper under the same name, feeding every gate in that router. It was
@@ -1090,6 +1127,20 @@ const SHADOW_READERS = [
 // ─────────────────────────────────────────────────────────────────────────────
 const UNRESOLVABLE = [
   {
+    file: 'lib/capability/schemaCapability.ts',
+    expr: 'def.flag',
+    covers: ['media_canonical_enabled', 'locate_friends_enabled', 'intel_rewards'],
+    reason:
+      'resolveCapability(sc, def) reads def.flag, a field of the CapabilityDefinition handed to it. The ' +
+      'registry of definitions is lib/capability/registry.ts, whose CAPABILITIES map is Object.freeze()d and ' +
+      'holds exactly three: MEDIA_CANONICAL (media_canonical_enabled, :55), LOCATE_FRIENDS_CREW_PRESENCE ' +
+      '(locate_friends_enabled, :120) and INTEL_REWARD_REVERSAL (intel_rewards, :179). All three are ' +
+      'CAPABILITY, and every path through this file is fail-CLOSED -- see the SHADOW_READERS entry for ' +
+      'readFlagState above. This read was INVISIBLE to the check until readFlagState joined CAP_READERS on ' +
+      '2026-09-15, which is the point of adding it: an unseen read is not a safe read. Verified by hand at ' +
+      '3aef5dfbe (grep -n \'flag: "\' lib/capability/registry.ts returns exactly those three lines).',
+  },
+  {
     file: 'lib/visuals/service.ts',
     expr: 'purposeFlag(req.purpose)',
     covers: ['ai_event_headers_enabled', 'ai_place_headers_enabled', 'ai_trip_covers_enabled'],
@@ -1125,8 +1176,29 @@ const UNRESOLVABLE = [
     expr: 'READINESS_FLAG',
     covers: ['trip_readiness_enabled'],
     reason:
-      'Imported const from lib/tripReadiness.ts (trip_readiness_enabled), CAPABILITY by convention. The check ' +
+      'Imported const from domain/trips/services/tripReadiness.ts (trip_readiness_enabled), CAPABILITY by convention. The check ' +
       'resolves consts only within a single file and does not follow imports. Verified by hand at c89f09a77.',
+  },
+  {
+    file: 'lib/discoveryLayoverMode.ts',
+    expr: 'LAYOVER_DISCOVERY_MODE_FLAG',
+    covers: ['layover_discovery_mode_enabled'],
+    reason:
+      'Imported const from services/airport/LayoverSnapshot.ts:147 ' +
+      '(layover_discovery_mode_enabled), CAPABILITY by the *_enabled convention. NOT a stop: `true` turns ' +
+      'the Layover restriction on, and no operator ever reaches for this row to halt an incident. It is ' +
+      'read through readFlagState, NOT isFlagEnabled, and that changed on 2026-09-15 because this flag ' +
+      'WITHHOLDS rather than adds: isFlagEnabled answers false for a missing row AND for an unreadable ' +
+      'feature_flags, and the consumer treated false as OFF, so an unreadable flags table silently served ' +
+      'the ORDINARY UNGATED list. readFlagState keeps the three answers apart and the consumer now refuses ' +
+      '(coverage "nothing", failedSources ["feature_flags"]) on the unreadable one -- STRICTER than ' +
+      'fail-closed-to-off, never weaker. An ABSENT row is still an answer and still means off. The check ' +
+      'resolves consts only within a single file and does not follow imports. Declared rather than inlined ' +
+      'AS A LITERAL ON PURPOSE: the constant is published from the LAYOVER side precisely so the producing ' +
+      'lane and the consuming lane cannot spell the flag differently, and copying the string into Discovery ' +
+      'to satisfy this check would re-create the divergence the export exists to prevent. Verified by hand ' +
+      'at 3aef5dfbe -- grep for the identifier across src/ (excluding tests) returns exactly three non-test ' +
+      'sites: the declaration, the import, and the single readFlagState call.',
   },
   {
     file: 'routes/entryRequirements.ts',
@@ -1188,7 +1260,14 @@ const DIRECT_READS = [
   // ── Fire-and-forget background tasks. A failed read means the side effect ─
   // ── silently does not happen. Safe here (no stamp / no memory is not an ───
   // ── exposure) but caller-dependent, hence recorded per site. ──────────────
-  { file: 'routes/airport.ts',    flag: 'passport_stamps_enabled',   reason: `Read directly inside a \`void (async () => ...)\` block, ${V}: a failed read means no layover stamp is emitted. Fail-closed in the sense that matters — nothing is exposed.` },
+  // REMOVED 2026-09-13 (census-layover L19/L162): `routes/airport.ts` no longer
+  // reads `passport_stamps_enabled` directly. The layover seam moved off session
+  // CREATION — where it minted a stamp for a city the traveller had not been to,
+  // inside a `void (async () => ...)` block that could not report what it did —
+  // onto `DELETE /airport/sessions/:id`, where it is awaited and goes through the
+  // shared `isFlagEnabled` reader like every other gate on that file. The entry
+  // is deleted rather than kept "in case it comes back": this checker fails on a
+  // stale entry precisely so an allowlist cannot outlive its site.
   { file: 'routes/geofence.ts',   flag: 'passport_stamps_enabled',   reason: `Read directly inside a fire-and-forget block, ${V}: failure means no check-in stamp. Fail-closed.` },
   { file: 'routes/geofence.ts',   flag: 'passport_memories_enabled', reason: `Read directly inside a fire-and-forget block, ${V}: failure means no suggested memory. Fail-closed.` },
   { file: 'routes/hiddenGems.ts', flag: 'hidden_gems_passport_enabled', reason: `Read directly inside a fire-and-forget block, ${V}: failure means no gem-visit stamp. Fail-closed.` },

@@ -11,6 +11,7 @@ import { isBlockedBetween } from "../lib/blockGuard.js";
 import { z } from "zod";
 import crypto from "node:crypto";
 import { getServiceClient } from "../lib/supabase.js";
+import { runTripCloseout } from "../domain/trips/services/TripCloseoutService.js";
 import { logger } from "../lib/logger.js";
 import {
   requireUser,
@@ -19,14 +20,27 @@ import {
   sendError,
   type ApiErrorCode,
 } from "../lib/http.js";
-import { sendPushWithRetry } from "../lib/pushWithRetry.js";
+import {
+  canViewTrip, canManageJoinRequests, canEditTrip, canHostTrip, canAccessTripContent, canContributeToTrip,
+  canEditOwnOrAsOwner, canSeePrivateContributions, isTripOwner,
+} from "../domain/trips/policies/tripPolicy.js";
+import { isFlagEnabled } from "../lib/featureFlags.js";
+import { absenceDisclosure } from "../lib/privacy/absenceDisclosure.js";
+import { sendTripRefusal } from "../domain/trips/contracts/tripReasonCodes.js";
+import { sendTripPush } from "../domain/trips/policies/tripPush.js";
 import { nameVisibilitySet, sanitizeIdentity, nameVisibleFor, presentedName } from "../lib/publicIdentity.js";
 import { truncateDisplayName } from "../lib/displayName.js";
 import {
   toPrivateTripPreview,
   toAuthorizedTripView,
 } from "../lib/privacy/tripSerializers.js";
-import { computeTripStatus } from "../lib/tripStatus.js";
+import { computeTripStatus } from "../domain/trips/invariants/tripStatus.js";
+import {
+  deriveTripLifecycle,
+  TRIP_LIFECYCLE_STATES,
+  type LifecycleInputs,
+} from "../domain/trips/services/TripLifecycle.js";
+import { operationalState } from "../domain/trips/projections/TripSafetyProjection.js";
 import {
   isTripKernelEnabled,
   readCommandEnvelope,
@@ -34,13 +48,13 @@ import {
   sendKernelRejection,
   setTripVersionHeader,
   type TripKernelResult,
-} from "../lib/tripKernel.js";
+} from "../domain/trips/commands/tripKernel.js";
 
 const router = Router();
 const UUID_RE = /^[0-9a-f-]{36}$/i;
 
 /**
- * Trip Kernel gate (Trips spec §4; lib/tripKernel.ts; migrations 2420/2450/2500).
+ * Trip Kernel gate (Trips spec §4; domain/trips/commands/tripKernel.ts; migrations 2420/2450/2500).
  * Returns the service client when `trip_kernel_enabled` is TRUE, else null.
  * Null means: run the pre-kernel direct write exactly as before. The flag read
  * is fail-closed, so an unreadable feature_flags table is "off", never "on".
@@ -459,7 +473,8 @@ router.patch("/trips/:tripId/settings", async (req, res) => {
   if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
   const t = trip as any;
-  if (t.owner_id !== user.id) { sendError(res, "forbidden", "Only the trip owner can update this trip"); return; }
+  const editTrip = await canEditTrip(sc, { userId: user.id }, tripId, { trip: t });
+  if (!editTrip.allowed) { sendTripRefusal(res, "forbidden", editTrip.reason, "Only the trip owner can update this trip"); return; }
 
   // Date conflict check
   const newStart = b.startDate !== undefined ? b.startDate : t.start_date;
@@ -584,7 +599,8 @@ router.post("/trips/:tripId/cancel", async (req, res) => {
   const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id, status").eq("id", tripId).maybeSingle();
   if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
-  if ((trip as any).owner_id !== user.id) { sendError(res, "forbidden", "Only the owner can cancel a trip"); return; }
+  const cancelAuth = await canEditTrip(sc, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
+  if (!cancelAuth.allowed) { sendTripRefusal(res, "forbidden", cancelAuth.reason, "Only the owner can cancel a trip"); return; }
   if ((trip as any).status === "cancelled") { res.json({ status: "cancelled", idempotent: true }); return; }
   if ((trip as any).status === "archived")  { sendError(res, "invalid_state_transition", "Cannot cancel an archived trip"); return; }
 
@@ -650,7 +666,7 @@ router.post("/trips/:tripId/cancel", async (req, res) => {
         }
       }
       if (recipients.length > 0) {
-        await sendPushWithRetry(sc2, recipients, {
+        await sendTripPush(sc2, recipients, {
           title: "Trip cancelled",
           body:  `${(tripRow as any)?.title ?? "A trip"} has been cancelled`,
           data:  { type: "trip_cancelled", tripId },
@@ -674,10 +690,11 @@ router.post("/trips/:tripId/complete", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
-  const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id, status").eq("id", tripId).maybeSingle();
+  const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id, status, timezone").eq("id", tripId).maybeSingle();
   if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
-  if ((trip as any).owner_id !== user.id) { sendError(res, "forbidden", "Only the owner can complete a trip"); return; }
+  const completeAuth = await canEditTrip(sc, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
+  if (!completeAuth.allowed) { sendTripRefusal(res, "forbidden", completeAuth.reason, "Only the owner can complete a trip"); return; }
   if ((trip as any).status === "completed") { res.json({ status: "completed", idempotent: true }); return; }
 
   const terminal = ["cancelled", "archived"];
@@ -722,7 +739,10 @@ router.post("/trips/:tripId/complete", async (req, res) => {
     if ((completeRows ?? []).length === 0) { sendError(res, "not_found", "Trip not found"); return; }
   }
   await logActivity(sc, tripId, user.id, "trip_completed");
-  res.json({ status: "completed", tripId });
+  // §20.2: the closeout, AFTER the transition, so a failed step cannot
+  // un-complete the trip and every step is reported rather than implied.
+  const closeout = await runTripCloseout(sc, tripId, { timezone: (trip as any).timezone ?? null, actorUserId: user.id });
+  res.json({ status: "completed", tripId, closeout });
 });
 
 // POST /api/trips/:tripId/archive
@@ -740,7 +760,8 @@ router.post("/trips/:tripId/archive", async (req, res) => {
   const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id, status").eq("id", tripId).maybeSingle();
   if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
-  if ((trip as any).owner_id !== user.id) { sendError(res, "forbidden", "Only the owner can archive a trip"); return; }
+  const archiveAuth = await canEditTrip(sc, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
+  if (!archiveAuth.allowed) { sendTripRefusal(res, "forbidden", archiveAuth.reason, "Only the owner can archive a trip"); return; }
   if ((trip as any).status === "archived") { res.json({ status: "archived", idempotent: true }); return; }
 
   // Trip Kernel path (ARCHIVE_TRIP, contract v2). Off => the direct update below.
@@ -803,7 +824,7 @@ router.post("/trips/:tripId/archive", async (req, res) => {
         }
       }
       if (recipients.length > 0) {
-        await sendPushWithRetry(sc2, recipients, {
+        await sendTripPush(sc2, recipients, {
           title: "Trip archived",
           body:  `${(tripRow as any)?.title ?? "A trip"} has been archived`,
           data:  { type: "trip_archived", tripId },
@@ -830,7 +851,8 @@ router.delete("/trips/:tripId", async (req, res) => {
   const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id, status").eq("id", tripId).maybeSingle();
   if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
-  if ((trip as any).owner_id !== user.id) { sendError(res, "forbidden", "Only the owner can delete a trip"); return; }
+  const deleteAuth = await canEditTrip(sc, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
+  if (!deleteAuth.allowed) { sendTripRefusal(res, "forbidden", deleteAuth.reason, "Only the owner can delete a trip"); return; }
 
   // Trip Kernel path (ARCHIVE_TRIP, contract v2). Legacy writes 'archived'
   // unconditionally, so a second DELETE re-writes an archived row; ARCHIVE_TRIP
@@ -896,6 +918,21 @@ router.delete("/trips/:tripId", async (req, res) => {
 // ===========================================================================
 
 // POST /api/trips/:tripId/join-request
+// TR51 (§4.1): the last five trip writes that read the request body without a schema.
+// Each schema accepts exactly what the hand-rolled check accepted (a missing
+// field stays optional, an over-long title is still trimmed to the column) and
+// refuses only a wrong TYPE, which the old code silently ignored.
+const JoinRequestSchema = z.object({ message: z.string().nullish() });
+const InviteLinkSchema = z.object({ maxUses: z.number().nullish(), expiresInHours: z.number().nullish() });
+const ChecklistTitleSchema = z.object({ title: z.string().transform((t) => t.trim().slice(0, 200)).refine((t) => t.length > 0, "title is required") });
+const ChecklistItemPatchSchema = z.object({
+  isDone: z.boolean().optional(),
+  label: z.string().optional(),
+  sortOrder: z.number().optional(),
+  assignedTo: z.string().uuid().nullable().optional(),
+  dueDate: z.string().nullable().optional(),
+});
+
 router.post("/trips/:tripId/join-request", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
@@ -961,7 +998,9 @@ router.post("/trips/:tripId/join-request", async (req, res) => {
     }
   }
 
-  const message = typeof req.body?.message === "string" ? req.body.message.slice(0, 500) : null;
+  const parsedJoin = JoinRequestSchema.safeParse(req.body ?? {});
+  if (!parsedJoin.success) { sendError(res, "invalid_payload", "message must be a string"); return; }
+  const message = parsedJoin.data.message ? parsedJoin.data.message.slice(0, 500) : null;
 
   const { data: newReq, error } = await sc
     .from("trip_join_requests")
@@ -988,7 +1027,7 @@ router.post("/trips/:tripId/join-request", async (req, res) => {
       const requesterName = truncateDisplayName(requesterNameAllowed
         ? ((requesterRow as any)?.display_name ?? ((requesterRow as any)?.handle ? `@${(requesterRow as any).handle}` : "Someone"))
         : ((requesterRow as any)?.handle ? `@${(requesterRow as any).handle}` : "Someone"));
-      await sendPushWithRetry(sc2, { userId: ownerId, tokens: [(ownerRow as any)?.expo_push_token] }, {
+      await sendTripPush(sc2, { userId: ownerId, tokens: [(ownerRow as any)?.expo_push_token] }, {
         title: "New join request",
         body:  `${requesterName} wants to join ${(tripRow as any)?.title ?? "your trip"}`,
         data:  { type: "trip_join_request_received", tripId },
@@ -1016,13 +1055,10 @@ router.post("/trips/:tripId/join-requests/:requestId/approve", async (req, res) 
   const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
   if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
-  const approveIsOwner = (trip as any).owner_id === user.id;
-  if (!approveIsOwner) {
-    const approveM = await requireTripMember(sc, tripId, user.id);
-    if (!approveM || !["owner", "co_host"].includes(approveM.role)) {
-      sendError(res, "forbidden", "Only the owner or co-host can approve join requests"); return;
-    }
-  }
+  // §6.1 host — owner or accepted co-host — as canManageJoinRequests defines
+  // it and as the kernel's `host` capability (2500) re-checks it.
+  const approveHost = await canManageJoinRequests(sc, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
+  if (!approveHost.allowed) { sendTripRefusal(res, "forbidden", approveHost.reason, "Only the owner or co-host can approve join requests"); return; }
 
   const { data: req_, error: req_Err } = await sc
     .from("trip_join_requests")
@@ -1104,7 +1140,7 @@ router.post("/trips/:tripId/join-requests/:requestId/approve", async (req, res) 
         sc2.from("trips").select("title").eq("id", tripId).maybeSingle(),
         sc2.from("profiles").select("expo_push_token").eq("id", requestedUserId).maybeSingle(),
       ]);
-      await sendPushWithRetry(sc2, { userId: requestedUserId, tokens: [(requesterRow as any)?.expo_push_token] }, {
+      await sendTripPush(sc2, { userId: requestedUserId, tokens: [(requesterRow as any)?.expo_push_token] }, {
         title: "Join request approved!",
         // Privacy: do not expose the trip name on the lock screen.
         // Full details load after the user opens the app with their session.
@@ -1113,7 +1149,7 @@ router.post("/trips/:tripId/join-requests/:requestId/approve", async (req, res) 
       });
       // In-app notification: store with generic text — no trip name in params.
       // notifRouter.route() is intentionally NOT called here; push was already
-      // sent above via sendPushWithRetry to avoid double-delivery.
+      // sent above via sendTripPush to avoid double-delivery.
       const { NotificationService } = await import("../services/notifications/NotificationService.js");
       const notifSvc = new NotificationService(sc2);
       await notifSvc.create({
@@ -1147,13 +1183,8 @@ router.post("/trips/:tripId/join-requests/:requestId/decline", async (req, res) 
   const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
   if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
-  const declineIsOwner = (trip as any).owner_id === user.id;
-  if (!declineIsOwner) {
-    const declineM = await requireTripMember(sc, tripId, user.id);
-    if (!declineM || !["owner", "co_host"].includes(declineM.role)) {
-      sendError(res, "forbidden", "Only the owner or co-host can decline join requests"); return;
-    }
-  }
+  const declineHost = await canManageJoinRequests(sc, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
+  if (!declineHost.allowed) { sendTripRefusal(res, "forbidden", declineHost.reason, "Only the owner or co-host can decline join requests"); return; }
 
   const { data: req_, error: req_Err } = await sc
     .from("trip_join_requests")
@@ -1193,7 +1224,7 @@ router.post("/trips/:tripId/join-requests/:requestId/decline", async (req, res) 
         sc2.from("trips").select("title").eq("id", tripId).maybeSingle(),
         sc2.from("profiles").select("expo_push_token").eq("id", declinedUserId).maybeSingle(),
       ]);
-      await sendPushWithRetry(sc2, { userId: declinedUserId, tokens: [(requesterRow as any)?.expo_push_token] }, {
+      await sendTripPush(sc2, { userId: declinedUserId, tokens: [(requesterRow as any)?.expo_push_token] }, {
         title: "Join request update",
         // Privacy: do not expose the trip name on the lock screen.
         body:  "Your trip access request was not approved.",
@@ -1201,7 +1232,7 @@ router.post("/trips/:tripId/join-requests/:requestId/decline", async (req, res) 
       });
       // In-app notification: store with generic text — no trip name in params.
       // notifRouter.route() is intentionally NOT called here; push was already
-      // sent above via sendPushWithRetry to avoid double-delivery.
+      // sent above via sendTripPush to avoid double-delivery.
       const { NotificationService } = await import("../services/notifications/NotificationService.js");
       const notifSvc = new NotificationService(sc2);
       await notifSvc.create({
@@ -1279,10 +1310,13 @@ router.post("/trips/:tripId/invite-link", async (req, res) => {
   const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
   if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
-  if ((trip as any).owner_id !== user.id) { sendError(res, "forbidden", "Only the owner can create invite links"); return; }
+  const createLinkAuth = await canEditTrip(sc, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
+  if (!createLinkAuth.allowed) { sendTripRefusal(res, "forbidden", createLinkAuth.reason, "Only the owner can create invite links"); return; }
 
-  const maxUses    = typeof req.body?.maxUses === "number" ? req.body.maxUses : null;
-  const expiresIn  = typeof req.body?.expiresInHours === "number" ? req.body.expiresInHours : null;
+  const parsedLink = InviteLinkSchema.safeParse(req.body ?? {});
+  if (!parsedLink.success) { sendError(res, "invalid_payload", "maxUses and expiresInHours must be numbers when given"); return; }
+  const maxUses    = parsedLink.data.maxUses ?? null;
+  const expiresIn  = parsedLink.data.expiresInHours ?? null;
   const expiresAt  = expiresIn ? new Date(Date.now() + expiresIn * 3_600_000).toISOString() : null;
   const token      = crypto.randomBytes(20).toString("hex");
 
@@ -1321,7 +1355,8 @@ router.delete("/trips/:tripId/invite-link/:linkId", async (req, res) => {
   const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
   if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
-  if ((trip as any).owner_id !== user.id) { sendError(res, "forbidden", "Only the owner can revoke invite links"); return; }
+  const revokeLinkAuth = await canEditTrip(sc, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
+  if (!revokeLinkAuth.allowed) { sendTripRefusal(res, "forbidden", revokeLinkAuth.reason, "Only the owner can revoke invite links"); return; }
 
   const { data: link, error: linkErr } = await sc
     .from("trip_invite_links")
@@ -1362,7 +1397,8 @@ router.get("/trips/:tripId/invite-links", async (req, res) => {
   const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
   if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
-  if ((trip as any).owner_id !== user.id) { sendError(res, "forbidden", "Only the owner can view invite links"); return; }
+  const viewLinksAuth = await canEditTrip(sc, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
+  if (!viewLinksAuth.allowed) { sendTripRefusal(res, "forbidden", viewLinksAuth.reason, "Only the owner can view invite links"); return; }
 
   const { data: links, error: linksErr } = await sc
     .from("trip_invite_links")
@@ -1850,7 +1886,8 @@ router.get("/trips/:tripId/nearby-places", async (req, res) => {
   const isPublic = t.visibility === "public";
   if (!isPublic) {
     const membership = await requireTripMember(sc, tripId, user.id);
-    if (!membership && t.owner_id !== user.id) { sendError(res, "not_member", "Not a trip member"); return; }
+    const access = await canAccessTripContent(sc, { userId: user.id }, tripId, { trip: t, role: membership?.role ?? null });
+    if (!access.allowed) { sendTripRefusal(res, "not_member", access.reason, "Not a trip member"); return; }
   }
 
   if (!t.destination_city) {
@@ -1898,11 +1935,8 @@ router.get("/trips/:tripId/destinations", async (req, res) => {
   if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
 
-  const isOwner = (trip as any).owner_id === user.id;
-  if (!isOwner) {
-    const membership = await requireTripMember(sc, tripId, user.id);
-    if (!membership) { sendError(res, "not_member", "Not a trip member"); return; }
-  }
+  const access = await canAccessTripContent(sc, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
+  if (!access.allowed) { sendTripRefusal(res, "not_member", access.reason, "Not a trip member"); return; }
 
   const { data, error } = await sc
     .from("trip_destinations")
@@ -1945,14 +1979,8 @@ router.post("/trips/:tripId/destinations", async (req, res) => {
   if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
 
-  const isOwner = (trip as any).owner_id === user.id;
-  if (!isOwner) {
-    const membership = await requireTripMember(sc, tripId, user.id);
-    if (!membership || !["owner", "co_host"].includes(membership.role)) {
-      sendError(res, "forbidden", "Only the trip owner or co-host can add destinations");
-      return;
-    }
-  }
+  const addDestAuth = await canHostTrip(sc, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
+  if (!addDestAuth.allowed) { sendTripRefusal(res, "forbidden", addDestAuth.reason, "Only the trip owner or co-host can add destinations"); return; }
 
   const { data, error } = await sc
     .from("trip_destinations")
@@ -2072,14 +2100,8 @@ router.delete("/trips/:tripId/destinations/:destId", async (req, res) => {
   if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
 
-  const isOwner = (trip as any).owner_id === user.id;
-  if (!isOwner) {
-    const membership = await requireTripMember(sc, tripId, user.id);
-    if (!membership || !["owner", "co_host"].includes(membership.role)) {
-      sendError(res, "forbidden", "Only the trip owner or co-host can remove destinations");
-      return;
-    }
-  }
+  const removeDestAuth = await canHostTrip(sc, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
+  if (!removeDestAuth.allowed) { sendTripRefusal(res, "forbidden", removeDestAuth.reason, "Only the trip owner or co-host can remove destinations"); return; }
 
   // Verify the destination belongs to this trip before deleting.
   const { data: dest, error: destErr } = await sc
@@ -2136,14 +2158,8 @@ router.patch("/trips/:tripId/destinations/:destId", async (req, res) => {
   if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
 
-  const isOwner = (trip as any).owner_id === user.id;
-  if (!isOwner) {
-    const membership = await requireTripMember(sc, tripId, user.id);
-    if (!membership || !["owner", "co_host", "member"].includes(membership.role)) {
-      sendError(res, "forbidden", "Only trip members can update destination dates");
-      return;
-    }
-  }
+  const datesAuth = await canContributeToTrip(sc, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
+  if (!datesAuth.allowed) { sendTripRefusal(res, "forbidden", datesAuth.reason, "Only trip members can update destination dates"); return; }
 
   // Verify the destination belongs to this trip
   const { data: dest, error: destErr } = await sc
@@ -2192,13 +2208,8 @@ router.get("/trips/:tripId/budget", async (req, res) => {
   if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
 
-  const isOwner = (trip as any).owner_id === user.id;
-  if (!isOwner) {
-    const membership = await requireTripMember(sc, tripId, user.id);
-    if (!membership || !["owner", "co_host"].includes(membership.role)) {
-      sendError(res, "forbidden", "Budget is only visible to the trip owner and co-hosts"); return;
-    }
-  }
+  const budgetAuth = await canHostTrip(sc, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
+  if (!budgetAuth.allowed) { sendTripRefusal(res, "forbidden", budgetAuth.reason, "Budget is only visible to the trip owner and co-hosts"); return; }
 
   const { data: budget, error: budgetErr } = await sc
     .from("trip_budget")
@@ -2226,13 +2237,8 @@ router.put("/trips/:tripId/budget", async (req, res) => {
   if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
 
-  const isPutOwner = (trip as any).owner_id === user.id;
-  if (!isPutOwner) {
-    const membership = await requireTripMember(sc, tripId, user.id);
-    if (!membership || !["owner", "co_host"].includes(membership.role)) {
-      sendError(res, "forbidden", "Only the trip owner or co-host can update the budget"); return;
-    }
-  }
+  const budgetPutAuth = await canHostTrip(sc, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
+  if (!budgetPutAuth.allowed) { sendTripRefusal(res, "forbidden", budgetPutAuth.reason, "Only the trip owner or co-host can update the budget"); return; }
 
   const BudgetSchema = z.object({
     currency:    z.string().max(3).optional(),
@@ -2282,9 +2288,11 @@ router.get("/trips/:tripId/documents", async (req, res) => {
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
 
   const membership = await requireTripMember(sc, tripId, user.id);
-  if (!membership && (trip as any).owner_id !== user.id) { sendError(res, "not_member", "Not a trip member"); return; }
+  const access = await canAccessTripContent(sc, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as any).owner_id }, role: membership?.role ?? null });
+  if (!access.allowed) { sendTripRefusal(res, "not_member", access.reason, "Not a trip member"); return; }
 
-  const isOwner = (trip as any).owner_id === user.id;
+  // §6.3: the owner sees private documents whoever wrote them; everyone else sees their own.
+  const isOwner = (await canSeePrivateContributions(sc, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as any).owner_id } })).allowed;
 
   let query = sc
     .from("trip_documents")
@@ -2368,8 +2376,9 @@ router.get("/trips/:tripId/documents/:docId", async (req, res) => {
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
 
   const membership = await requireTripMember(sc, tripId, user.id);
-  const isOwner = (trip as any).owner_id === user.id;
-  if (!membership && !isOwner) { sendError(res, "not_member", "Not a trip member"); return; }
+  const access = await canAccessTripContent(sc, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as any).owner_id }, role: membership?.role ?? null });
+  if (!access.allowed) { sendTripRefusal(res, "not_member", access.reason, "Not a trip member"); return; }
+  const isOwner = isTripOwner(trip as { owner_id: string }, { userId: user.id });
 
   const { data: doc, error: docErr } = await sc
     .from("trip_documents")
@@ -2411,9 +2420,8 @@ router.patch("/trips/:tripId/documents/:docId", async (req, res) => {
   if (docErr) throw readUnavailable("trip_documents", docErr);
   if (!doc) { sendError(res, "not_found", "Document not found"); return; }
 
-  const isOwner   = (trip as any).owner_id === user.id;
-  const isCreator = (doc as any).creator_id === user.id;
-  if (!isOwner && !isCreator) { sendError(res, "forbidden", "Cannot update this document"); return; }
+  const docEdit = await canEditOwnOrAsOwner(sc, { userId: user.id }, tripId, (doc as any).creator_id ?? null, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
+  if (!docEdit.allowed) { sendTripRefusal(res, "forbidden", docEdit.reason, "Cannot update this document"); return; }
 
   const DocPatchSchema = z.object({
     title:        z.string().min(1).max(200).optional(),
@@ -2466,9 +2474,8 @@ router.delete("/trips/:tripId/documents/:docId", async (req, res) => {
   if (docErr) throw readUnavailable("trip_documents", docErr);
   if (!doc) { sendError(res, "not_found", "Document not found"); return; }
 
-  const isOwner   = (trip as any).owner_id === user.id;
-  const isCreator = (doc as any).creator_id === user.id;
-  if (!isOwner && !isCreator) { sendError(res, "forbidden", "Cannot delete this document"); return; }
+  const docDelete = await canEditOwnOrAsOwner(sc, { userId: user.id }, tripId, (doc as any).creator_id ?? null, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
+  if (!docDelete.allowed) { sendTripRefusal(res, "forbidden", docDelete.reason, "Cannot delete this document"); return; }
 
   // A DELETE that matched no row is genuinely idempotent here — the row was just
   // read and authorized two statements above — so a zero-row delete keeps its
@@ -2500,9 +2507,11 @@ router.get("/trips/:tripId/notes", async (req, res) => {
   if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
   const membership = await requireTripMember(sc, tripId, user.id);
-  if (!membership && (trip as any).owner_id !== user.id) { sendError(res, "not_member", "Not a trip member"); return; }
+  const access = await canAccessTripContent(sc, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as any).owner_id }, role: membership?.role ?? null });
+  if (!access.allowed) { sendTripRefusal(res, "not_member", access.reason, "Not a trip member"); return; }
 
-  const isOwner = (trip as any).owner_id === user.id;
+  // §6.3: the owner sees private notes whoever wrote them; everyone else sees their own.
+  const isOwner = (await canSeePrivateContributions(sc, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as any).owner_id } })).allowed;
   let query = sc
     .from("trip_notes")
     .select("id, title, content, is_private, author_id, created_at, updated_at")
@@ -2572,9 +2581,8 @@ router.patch("/trips/:tripId/notes/:noteId", async (req, res) => {
   if (noteErr) throw readUnavailable("trip_notes", noteErr);
   if (!note) { sendError(res, "not_found", "Note not found"); return; }
 
-  const isOwner  = (trip as any).owner_id === user.id;
-  const isAuthor = (note as any).author_id === user.id;
-  if (!isOwner && !isAuthor) { sendError(res, "forbidden", "Cannot update this note"); return; }
+  const noteEdit = await canEditOwnOrAsOwner(sc, { userId: user.id }, tripId, (note as any).author_id ?? null, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
+  if (!noteEdit.allowed) { sendTripRefusal(res, "forbidden", noteEdit.reason, "Cannot update this note"); return; }
 
   const NotePatchSchema = z.object({
     title:     z.string().max(200).nullable().optional(),
@@ -2622,9 +2630,8 @@ router.delete("/trips/:tripId/notes/:noteId", async (req, res) => {
   if (noteErr) throw readUnavailable("trip_notes", noteErr);
   if (!note) { sendError(res, "not_found", "Note not found"); return; }
 
-  const isOwner  = (trip as any).owner_id === user.id;
-  const isAuthor = (note as any).author_id === user.id;
-  if (!isOwner && !isAuthor) { sendError(res, "forbidden", "Cannot delete this note"); return; }
+  const noteDelete = await canEditOwnOrAsOwner(sc, { userId: user.id }, tripId, (note as any).author_id ?? null, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
+  if (!noteDelete.allowed) { sendTripRefusal(res, "forbidden", noteDelete.reason, "Cannot delete this note"); return; }
 
   // A DELETE that matched no row is genuinely idempotent here — the row was just
   // read and authorized two statements above — so a zero-row delete keeps its
@@ -2747,9 +2754,8 @@ router.delete("/trips/:tripId/saved-places/:placeEntryId", async (req, res) => {
   if (entryErr) throw readUnavailable("trip_saved_places", entryErr);
   if (!entry) { sendError(res, "not_found", "Saved place not found"); return; }
 
-  const isOwner   = (trip as any).owner_id === user.id;
-  const isCreator = (entry as any).user_id === user.id;
-  if (!isOwner && !isCreator) { sendError(res, "forbidden", "Cannot remove this saved place"); return; }
+  const placeDelete = await canEditOwnOrAsOwner(sc, { userId: user.id }, tripId, (entry as any).user_id ?? null, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
+  if (!placeDelete.allowed) { sendTripRefusal(res, "forbidden", placeDelete.reason, "Cannot remove this saved place"); return; }
 
   // A DELETE that matched no row is genuinely idempotent here — the row was just
   // read and authorized two statements above — so a zero-row delete keeps its
@@ -2831,8 +2837,9 @@ router.post("/trips/:tripId/checklists", async (req, res) => {
   const membership = await requireTripMember(sc, tripId, user.id);
   if (!membership) { sendError(res, "not_member", "Not a trip member"); return; }
 
-  const title = typeof req.body?.title === "string" ? req.body.title.trim().slice(0, 200) : "";
-  if (!title) { sendError(res, "invalid_payload", "title is required"); return; }
+  const parsedChecklist = ChecklistTitleSchema.safeParse(req.body ?? {});
+  if (!parsedChecklist.success) { sendError(res, "invalid_payload", "title is required"); return; }
+  const title = parsedChecklist.data.title;
 
   const { data, error } = await sc
     .from("trip_checklists")
@@ -2859,8 +2866,9 @@ router.patch("/trips/:tripId/checklists/:checklistId", async (req, res) => {
   const membership = await requireTripMember(sc, tripId, user.id);
   if (!membership) { sendError(res, "not_member", "Not a trip member"); return; }
 
-  const title = typeof req.body?.title === "string" ? req.body.title.trim().slice(0, 200) : undefined;
-  if (!title) { sendError(res, "invalid_payload", "title is required"); return; }
+  const parsedChecklistPatch = ChecklistTitleSchema.safeParse(req.body ?? {});
+  if (!parsedChecklistPatch.success) { sendError(res, "invalid_payload", "title is required"); return; }
+  const title = parsedChecklistPatch.data.title;
 
   const { data, error } = await sc
     .from("trip_checklists")
@@ -2894,9 +2902,8 @@ router.delete("/trips/:tripId/checklists/:checklistId", async (req, res) => {
   if (listErr) throw readUnavailable("trip_checklists", listErr);
   if (!list) { sendError(res, "not_found", "Checklist not found"); return; }
 
-  const isOwner   = (trip as any).owner_id === user.id;
-  const isCreator = (list as any).created_by === user.id;
-  if (!isOwner && !isCreator) { sendError(res, "forbidden", "Cannot delete this checklist"); return; }
+  const listDelete = await canEditOwnOrAsOwner(sc, { userId: user.id }, tripId, (list as any).created_by ?? null, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
+  if (!listDelete.allowed) { sendTripRefusal(res, "forbidden", listDelete.reason, "Cannot delete this checklist"); return; }
 
   // Two writes, neither bound. The dangerous ordering is items-then-list: if the
   // items delete failed and the list delete succeeded, the items are ORPHANED
@@ -2977,11 +2984,8 @@ router.delete("/trips/:tripId/checklists/:checklistId/items/:itemId", async (req
   if (itemErr) throw readUnavailable("trip_checklist_items", itemErr);
   if (!item) { sendError(res, "not_found", "Checklist item not found"); return; }
 
-  const isOwner = (trip as any).owner_id === user.id;
-  const membership = isOwner ? null : await requireTripMember(sc, tripId, user.id);
-  if (!isOwner && (!membership || !["owner", "co_host", "member"].includes(membership.role))) {
-    sendError(res, "forbidden", "Not a trip member"); return;
-  }
+  const itemAuth = await canContributeToTrip(sc, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
+  if (!itemAuth.allowed) { sendTripRefusal(res, "forbidden", itemAuth.reason, "Not a trip member"); return; }
 
   // A DELETE that matched no row is genuinely idempotent here — the row was just
   // read and authorized two statements above — so a zero-row delete keeps its
@@ -3010,22 +3014,24 @@ router.patch("/trips/:tripId/checklists/:checklistId/items/:itemId", async (req,
   const membership = await requireTripMember(sc, tripId, user.id);
   if (!membership) { sendError(res, "not_member", "Not a trip member"); return; }
 
+  const parsedItem = ChecklistItemPatchSchema.safeParse(req.body ?? {});
+  if (!parsedItem.success) {
+    const issue = parsedItem.error.issues[0];
+    sendError(res, "invalid_payload", issue?.path[0] === "assignedTo" ? "assignedTo must be a UUID or null" : `${String(issue?.path[0] ?? "body")}: ${issue?.message ?? "invalid"}`);
+    return;
+  }
+  const itemBody = parsedItem.data;
   const patch: Record<string, any> = {};
-  if (typeof req.body?.isDone === "boolean")   patch.is_done    = req.body.isDone;
-  if (typeof req.body?.label  === "string")    patch.label      = req.body.label.slice(0, 300);
-  if (typeof req.body?.sortOrder === "number") patch.sort_order = req.body.sortOrder;
+  if (itemBody.isDone !== undefined)    patch.is_done    = itemBody.isDone;
+  if (itemBody.label !== undefined)     patch.label      = itemBody.label.slice(0, 300);
+  if (itemBody.sortOrder !== undefined) patch.sort_order = itemBody.sortOrder;
   // `assigned_to` and `due_date` were WRITE-ONCE: POST .../items accepts both
   // and the list route returns both, but this PATCH accepted neither, so an
   // item assigned to the wrong person or given the wrong date could only be
   // corrected by deleting and recreating it (which loses its id and its place
   // in the list). `null` clears the field, which is the only way to unassign.
-  if (req.body?.assignedTo === null)                  patch.assigned_to = null;
-  else if (typeof req.body?.assignedTo === "string") {
-    if (!UUID_RE.test(req.body.assignedTo)) { sendError(res, "invalid_payload", "assignedTo must be a UUID or null"); return; }
-    patch.assigned_to = req.body.assignedTo;
-  }
-  if (req.body?.dueDate === null)                     patch.due_date = null;
-  else if (typeof req.body?.dueDate === "string")     patch.due_date = req.body.dueDate;
+  if (itemBody.assignedTo !== undefined) patch.assigned_to = itemBody.assignedTo;
+  if (itemBody.dueDate !== undefined)    patch.due_date    = itemBody.dueDate;
 
   if (Object.keys(patch).length === 0) { sendError(res, "invalid_payload", "No fields to update"); return; }
 
@@ -3158,14 +3164,8 @@ router.get("/trips/:tripId/activity", async (req, res) => {
   if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
 
-  const isOwner = (trip as any).owner_id === user.id;
-  if (!isOwner) {
-    const membership = await requireTripMember(sc, tripId, user.id);
-    if (!membership || !["owner", "co_host"].includes(membership.role)) {
-      sendError(res, "forbidden", "Only the owner or co-host can view the activity log");
-      return;
-    }
-  }
+  const activityAuth = await canHostTrip(sc, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
+  if (!activityAuth.allowed) { sendTripRefusal(res, "forbidden", activityAuth.reason, "Only the owner or co-host can view the activity log"); return; }
 
   const limit = Math.min(parseInt(String(req.query.limit ?? "50"), 10) || 50, 200);
 
@@ -3178,6 +3178,137 @@ router.get("/trips/:tripId/activity", async (req, res) => {
 
   if (error) { sendError(res, "db_error", error.message); return; }
   res.json({ activity: data ?? [] });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/trips/:tripId/lifecycle — Trips spec §3.1, derived (census TR35)
+// ---------------------------------------------------------------------------
+/**
+ * The four §3.1 facts a deployment can actually read, each independently.
+ *
+ * Exported so the endpoint's behaviour is testable without an HTTP server, and
+ * so the "a failed read leaves its fact null" rule is stated in ONE place
+ * rather than four times inside the handler.
+ */
+export async function readTripLifecycleFacts(
+  sc: any,
+  tripId: string,
+  viewerId: string,
+  now: Date,
+): Promise<Pick<LifecycleInputs, "confirmedBookings" | "travelLegs" | "completedPlanItems" | "recordedMemories" | "activeDisruptions">> {
+  const [reservations, plans, memories, sessions] = await Promise.all([
+    sc.from("trip_reservations").select("id, type, starts_at, ends_at").eq("trip_id", tripId).eq("status", "confirmed"),
+    sc.from("trip_plan_items").select("id").eq("trip_id", tripId).eq("status", "done").is("removed_at", null),
+    sc.from("passport_memories").select("id").eq("trip_id", tripId),
+    sc.from("safe_return_sessions")
+      .select("id, user_id, status, escalation_level, closed_at, notify_trip_crew_enabled")
+      .eq("trip_id", tripId).in("status", ["active", "missed"]),
+  ]);
+
+  const rows = (r: any): any[] | null => (r?.error ? null : ((r?.data ?? []) as any[]));
+
+  const resRows = rows(reservations);
+  const planRows = rows(plans);
+  const memoryRows = rows(memories);
+  const sessionRows = rows(sessions);
+
+  return {
+    confirmedBookings: resRows === null ? null : resRows.length,
+    // §3.1's TRAVELING and RETURNING are about the journey, so only the two
+    // reservation types that ARE a journey count as legs.
+    travelLegs: resRows === null ? null : resRows
+      .filter((r) => r.type === "flight" || r.type === "transport")
+      .map((r) => ({ id: String(r.id), startsAt: r.starts_at ?? null, endsAt: r.ends_at ?? null })),
+    completedPlanItems: planRows === null ? null : planRows.length,
+    recordedMemories: memoryRows === null ? null : memoryRows.length,
+    activeDisruptions: sessionRows === null ? null : sessionRows.filter((s) => {
+      const visible = String(s.user_id) === viewerId || s.notify_trip_crew_enabled === true;
+      return visible && operationalState(s, now.getTime()) === "NEEDS_HELP";
+    }).length,
+  };
+}
+
+/**
+ * The §3.1 primary lifecycle, computed rather than stored.
+ *
+ * This router's own header has always said it carries "lifecycle"; until now
+ * the only lifecycle it had was `trips.status`, the SEVEN stored values
+ * `computeTripStatus` derives. §3.1 names THIRTEEN, and says in the same
+ * paragraph that lifecycle "is computed from canonical facts plus explicit
+ * user actions" — so the answer is a derivation
+ * (domain/trips/services/TripLifecycle.ts), not a column, exactly as §3.2's
+ * eight operational phases already are.
+ *
+ * NO FLAG, AND NOTHING FROM 2760-2795. Every fact read below is a table
+ * production carries today (baseline/20260907_production_tables.txt), which is
+ * why this endpoint answers on a real deployment rather than reporting
+ * `feature_disabled` the way the §19.2 projections do.
+ *
+ * A READ THAT FAILS LEAVES ITS FACT UNREAD. Each fact is passed as null when
+ * its table could not be read, the clause that needed it cannot fire, and the
+ * response's `unread` names it. That is why this endpoint does not refuse on a
+ * failed read: a lifecycle over the calendar alone is a true smaller answer,
+ * and a silent zero would have made ABANDONED fire on an unread table.
+ *
+ * SAFE RETURN IS THE ONE DISRUPTION FACT A DEPLOYMENT HAS. The §17 register
+ * (`trip_disruptions`, 2785) is in no database, so DISRUPTED is derived from
+ * the input §3.2's phase already treats as disruption: a Safe Return session
+ * in NEEDS_HELP. The opt-in applied here is DELIBERATELY NARROWER than
+ * TripHealthProjection's — only the viewer's own session, or one whose owner
+ * set `notify_trip_crew_enabled`, is counted — because this endpoint does not
+ * read sharing preferences and must not turn an un-shared alarm into a word
+ * the whole crew can read.
+ */
+router.get("/trips/:tripId/lifecycle", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { tripId } = req.params;
+  if (!UUID_RE.test(tripId)) { sendError(res, "invalid_payload", "Invalid tripId"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+
+  const { data: trip, error: tripErr } = await sc
+    .from("trips")
+    .select("id, owner_id, title, destination_city, start_date, end_date, status, timezone")
+    .eq("id", tripId)
+    .maybeSingle();
+  if (tripErr) throw readUnavailable("trips", tripErr);
+  if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
+  const t = trip as any;
+
+  const access = await canAccessTripContent(sc, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: t.owner_id } });
+  if (!access.allowed) { sendTripRefusal(res, "forbidden", access.reason, "Only the trip owner or crew may read the trip's lifecycle"); return; }
+
+  const now = new Date();
+  const facts = await readTripLifecycleFacts(sc, tripId, user.id, now);
+  const storedStatus = computeTripStatus(
+    t.title ?? null, t.destination_city ?? null, t.start_date ?? null, t.end_date ?? null,
+    String(t.status ?? "planning"), t.timezone ?? null,
+  );
+  const decision = deriveTripLifecycle({
+    now,
+    timezone: t.timezone ?? null,
+    startDate: t.start_date ?? null,
+    endDate: t.end_date ?? null,
+    storedStatus,
+    title: t.title ?? null,
+    destinationCity: t.destination_city ?? null,
+    ...facts,
+  });
+
+  res.json({
+    tripId,
+    lifecycle: decision.state,
+    reason: decision.reason,
+    unread: decision.unread,
+    evidence: decision.evidence,
+    /** The stored seven, unchanged: `trips.status` is still what a writer persists. */
+    storedStatus,
+    states: TRIP_LIFECYCLE_STATES,
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -3210,29 +3341,24 @@ router.get("/trips/:tripId", async (req, res) => {
 
   const t = trip as any;
 
-  // Block check FIRST — blocking overrides all other relationships, including
-  // membership. A blocked user must not access even the minimal preview.
-  if (user) {
-    const blocked = await isBlocked(sc, user.id, t.owner_id);
-    if (blocked) { sendError(res, "not_found", "Trip not found"); return; }
-  }
+  // §6.1 canViewTrip decides the whole §6.3 ladder — block first (blocking
+  // overrides membership), then crew/owner, then public / buddies / private.
+  // The route only RENDERS the decision. Two renderings are deliberate:
+  //
+  //   TRIP_AUTH_BLOCKED   → 404 "Trip not found", with NO reason on the wire.
+  //                         The policy says why; the client must not be told,
+  //                         because "you are blocked" reveals the block.
+  //                         sendTripRefusal would throw on this reason, so it
+  //                         goes through plain sendError on purpose.
+  //   TRIP_PRIVACY_*      → the LockedTripPreview sentinel deep-link handlers
+  //                         expect (200, `locked: true`, nothing else about the
+  //                         trip), now carrying the Appendix B reason.
+  const view = await canViewTrip(sc, { userId: user?.id ?? null }, tripId, { trip: t });
 
-  // Unauthenticated callers cannot be members or owners.
-  const isMember = user ? await requireTripMember(sc, tripId, user.id) : null;
-  const isOwner  = user ? t.owner_id === user.id : false;
-
-  // Members / owner always get the full authorized view regardless of visibility.
-  if (isMember || isOwner) {
-    res.json(toAuthorizedTripView(t));
+  if (!view.allowed && view.reason === "TRIP_AUTH_BLOCKED") {
+    sendError(res, "not_found", "Trip not found");
     return;
   }
-
-  // Enforce visibility for non-members / unauthenticated:
-  //   "public"  — anyone (including unauthenticated) may see the stripped shape
-  //   "buddies" — only authenticated mutual followers may see the stripped shape
-  //   "invite"  — only explicitly accepted members (handled above); others → 404
-  //   "private" — members only (handled above); others → 404
-  const vis = (t.visibility ?? "private") as string;
 
   // Helper: fetch the viewer's pending join-request status (fail-open).
   const getJoinRequestStatus = async (): Promise<string | null> => {
@@ -3248,28 +3374,27 @@ router.get("/trips/:tripId", async (req, res) => {
     } catch { return null; }
   };
 
-  if (vis === "public") {
-    res.json(toPrivateTripPreview(t, await getJoinRequestStatus()));
+  if (view.allowed && view.view === "authorized") {
+    // Members / owner always get the full authorized view regardless of visibility.
+    res.json(toAuthorizedTripView(t));
     return;
   }
-
-  if (vis === "buddies" && user) {
-    // Mutual-follow check: viewer follows owner AND owner follows viewer.
-    const [{ data: viewerFollowsOwner }, { data: ownerFollowsViewer }] = await Promise.all([
-      sc.from("user_follows").select("follower_id").eq("follower_id", user.id).eq("following_id", t.owner_id).maybeSingle(),
-      sc.from("user_follows").select("follower_id").eq("follower_id", t.owner_id).eq("following_id", user.id).maybeSingle(),
-    ]);
-    if (viewerFollowsOwner && ownerFollowsViewer) {
-      res.json(toPrivateTripPreview(t, await getJoinRequestStatus()));
-      return;
-    }
+  if (view.allowed) {
+    // public, or buddies with a mutual follow: the stripped shape. §6.3 "must
+    // not leak future absence from home": while trip_absence_guard_enabled is
+    // on, a trip that has not begun carries no dates on this preview whatever
+    // show_exact_dates says, and says why (lib/privacy/absenceDisclosure.ts).
+    // Off — the seeded state — the preview is byte-for-byte what it was.
+    const absence = absenceDisclosure(t, Date.now(), await isFlagEnabled(sc, "trip_absence_guard_enabled"));
+    res.json(toPrivateTripPreview(t, await getJoinRequestStatus(), { withholdFutureDates: absence.withholdDates }));
+    return;
   }
 
   // All other cases (invite/private, not a member, not a mutual buddy):
   // return a LockedTripPreview sentinel so deep-link handlers can render a
   // private-wall screen rather than a generic "not found" error.
   // No title, destination, dates, or member information is included.
-  res.status(200).json({ locked: true, tripId });
+  res.status(200).json({ locked: true, tripId, reason: view.reason });
 });
 
 export default router;

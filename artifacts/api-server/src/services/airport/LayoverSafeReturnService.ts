@@ -48,6 +48,10 @@ import type { AirportProfile } from "./AirportProfileService.js";
 import type { LayoverSession } from "./LayoverSessionService.js";
 import type { LayoverReturnState } from "./LayoverSafetyEngine.js";
 import {
+  returnNotificationPosture,
+  type ReturnNotificationPosture,
+} from "./LayoverReturnEscalation.js";
+import {
   certifySessionFeasibility,
   certificationHeader,
   type FeasibilityAirport,
@@ -84,6 +88,14 @@ export interface SafeReturnPosture {
   /** §15.1 the abort control is offered on EVERY active landside plan. */
   abortAvailable: boolean;
   minutesToHardReturn: number;
+  /**
+   * census L18 — "Safe Return owns … notification priority". The rung this
+   * state sits on, DECIDED IN `services/airport/LayoverReturnEscalation.ts`
+   * and only asked for here, so the priority a message would carry is not a
+   * second thing the layover surface invents for itself. Nothing is sent: see
+   * that file's owner boundary.
+   */
+  notification: ReturnNotificationPosture;
 }
 
 /**
@@ -121,6 +133,7 @@ export function safeReturnPosture(record: LayoverFeasibilityRecord): SafeReturnP
     primaryAction,
     abortAvailable: true,
     minutesToHardReturn,
+    notification: returnNotificationPosture(state),
   };
 }
 

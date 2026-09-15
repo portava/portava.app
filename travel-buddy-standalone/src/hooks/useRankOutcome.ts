@@ -1,9 +1,9 @@
 /**
  * useRankOutcome — fire-and-forget outcome reporting for the Portava learning loop.
  *
- * Sends tap/save/join/rsvp outcomes to POST /api/rank-events/outcome so that
- * the rank_events table accumulates the full impression → outcome funnel needed
- * to fit v2 weights (spec §7).
+ * Sends tap/save/join/rsvp/trip_add outcomes to POST /api/rank-events/outcome so
+ * that the rank_events table accumulates the full impression → outcome funnel
+ * needed to fit v2 weights (spec §7).
  *
  * Design constraints:
  * - All calls are fire-and-forget: errors are swallowed, UI is never blocked.
@@ -31,7 +31,19 @@ import { freshToken } from '../services/apiToken.ts';
  * surface is a separate key space, so the collision cannot happen at all.
  */
 type Surface = 'pulse' | 'discovery' | 'events' | 'live_pulse';
-type Outcome = 'tap' | 'save' | 'join' | 'rsvp' | 'attended';
+/**
+ * Must stay a subset of OUTCOME_VALUES in the API's src/routes/rankEvents.ts,
+ * for the same reason `Surface` must: that zod enum 400s anything it does not
+ * recognise, so a value added here first loses every outcome silently.
+ *
+ * 'trip_add' is the itinerary-commitment rung (migration 2894). It sits ABOVE
+ * save and BELOW attended on the server's ladder, and its upgradable set is
+ * (impression, tap, save) only — a trip add does not subsume a join or an rsvp,
+ * which are commitments made to somebody else. It is reported by
+ * PlanPickerController when an add to a trip SUCCEEDS, never when the picker is
+ * merely opened: an open is an intention, and the funnel records the act.
+ */
+type Outcome = 'tap' | 'save' | 'join' | 'rsvp' | 'attended' | 'trip_add';
 
 /**
  * The surface an impression was WRITTEN under — the value a component must be
@@ -77,7 +89,8 @@ export function fireRankOutcome(
 
 /**
  * React hook version.  Provides stable `reportTap`, `reportSave`, `reportJoin`,
- * and `reportRsvp` callbacks that deduplicate within the component lifetime.
+ * `reportRsvp` and `reportTripAdd` callbacks that deduplicate within the
+ * component lifetime.
  *
  * @param surface  Which feed surface these outcomes belong to.  `null` /
  *   `undefined` means "this instance was not reached from a served impression"
@@ -113,6 +126,12 @@ export function useRankOutcome({
   const reportSave = useCallback((itemId: string) => report(itemId, 'save'), [report]);
   const reportJoin = useCallback((itemId: string) => report(itemId, 'join'), [report]);
   const reportRsvp = useCallback((itemId: string) => report(itemId, 'rsvp'), [report]);
+  // Dedup is per mount and PlanPickerController's provider is mounted for the
+  // app's lifetime, so adding the SAME item to a second trip reports once. That
+  // matches the server: rank_events holds one mutable row per
+  // (user, item, surface) at the furthest rung reached, so the second report
+  // would upgrade nothing.
+  const reportTripAdd = useCallback((itemId: string) => report(itemId, 'trip_add'), [report]);
 
-  return { reportTap, reportSave, reportJoin, reportRsvp };
+  return { reportTap, reportSave, reportJoin, reportRsvp, reportTripAdd };
 }

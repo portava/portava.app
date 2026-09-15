@@ -28,9 +28,9 @@ import {
   executeTripCommand,
   sendKernelRejection,
   setTripVersionHeader,
-} from "../lib/tripKernel.js";
+} from "../domain/trips/commands/tripKernel.js";
 import { logger } from "../lib/logger";
-import { clearReminderDedup } from "../lib/tripReminderScheduler";
+import { clearReminderDedup } from "../server/trips/projectionWorkers/tripReminderScheduler";
 import { invalidateCompassHomeCache } from "./compassHome.js";
 import { executeAccountDeletion } from "../services/accountDeletion/AccountDeletionService.js";
 import { runSchemaDriftCheck, getCachedSchemaDriftResult } from "../lib/schemaDriftCheck";
@@ -38,7 +38,7 @@ import { logAdminAccess, accessReason } from "../lib/adminAudit.js";
 import { resolveStoragePath } from "../lib/storagePath.js";
 import { logModerationAction, auditReportAction } from "../lib/moderationAudit.js";
 
-import { requireAdmin } from "../lib/requireAdmin.js";
+import { requireAdmin } from "../lib/requireAdmin.js"; import { computeAttemptsPerVerifiedUser } from "../services/identityVerification/attemptMetrics.js"; // same line on purpose: a new import line shifts every anchored citation into this file
 import { listRestrictionsForAudit } from "../services/trust/TrustRestrictionService.js";
 import {
   GEO_ZONE_DB_TYPES,
@@ -58,6 +58,7 @@ import { revokeModerationTrustConsequences } from "../services/trust/TrustAdminS
 import { promoteLiveScope, withdrawLiveScope, liveScopeKey } from "../lib/intelLiveScopePromotion.js";
 import { isPromotedScopeActive } from "../lib/liveClaimRead.js";
 import { isFlagEnabled, getFlagRow } from "../lib/featureFlags.js";
+import { ACCEPTED_ENGINE_MODE_SPELLINGS } from "../lib/discoveryEngineMode.js";
 
 const router = Router();
 
@@ -868,7 +869,14 @@ const setFlagMetadataSchema = z.object({
  * edge turns a silent no-op into an error message.
  */
 const CONSTRAINED_FLAG_METADATA: Record<string, { key: string; allowed: readonly string[] }> = {
-  DISCOVERY_ENGINE_MODE: { key: "mode", allowed: ["legacy", "shadow", "pde"] as const },
+  // DERIVED, never re-typed. This list was the literal ["legacy","shadow","pde"]
+  // while `lib/discoveryEngineMode.ts` grew `compare` and `partial` — so two of
+  // the five states `01` §8 requires could be RESOLVED by the engine and never
+  // SELECTED by an operator through this route. It failed closed, so nothing was
+  // unsafe; it also meant a capability the shipping product could not reach,
+  // which is not a capability. Importing the resolver's own list is what stops
+  // the two drifting apart again.
+  DISCOVERY_ENGINE_MODE: { key: "mode", allowed: ACCEPTED_ENGINE_MODE_SPELLINGS },
 };
 
 router.patch("/admin/feature-flags/:flag/metadata", async (req, res) => {
@@ -1599,8 +1607,44 @@ router.post("/admin/users/:userId/unverify", async (req, res) => {
   const auditR = await logModerationAction(sc, userId, adminUserId, "unverify", (req.body as any)?.reason ?? null);
   if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
 
+  // ── verification_level IS PART OF THE REVOCATION, NOT A DUPLICATE OF IT ────
+  // This patch used to clear only `verified` / `verification_status` /
+  // `verified_at` — the exact inverse of what /verify sets, which is why it
+  // looked complete. It is not, because a FOURTH column carries the same claim
+  // and is written by a different path.
+  //
+  // `profiles.verification_level` has exactly one writer in this server,
+  // routes/verification.ts#applyVerifiedProfile (the provider ID-check success
+  // path), and lib/travelerVerification.ts:85-88 reads it as a SUFFICIENT
+  // id-verified signal — ORed with the other two, not ANDed:
+  //
+  //     verification_level !== 'none' || verification_status === 'verified'
+  //                                   || Boolean(id_verified_at)
+  //
+  // So clearing two of three disjuncts revoked nothing. An admin unverifying a
+  // user after a fraudulent or disputed document left them passing every gate
+  // that calls loadTravelerIdentity, including routes/rentABuddyRollout.ts's
+  // MVP-mode booking gate — and Rent-a-Buddy pairs strangers in person.
+  //
+  // Nothing else could clear it either: the one writer only ever sets a
+  // VERIFIED level, so before this line there was no code path in the product
+  // that could take an ID-verified standing away. This is the plan's V-4
+  // `verification_revoked` effect ("clears profiles.verification_level"),
+  // placed on the action that already means revoke rather than added as a
+  // second, competing one.
+  //
+  // 'none' is the column's schema default and its pre-verification value, so
+  // this restores rather than invents a state. What it deliberately does NOT do
+  // is reverse derived trust effects: that is the unresolved reversal/retention
+  // policy (census-trust.md §12.7, D-REVERSAL), and taking it here would be
+  // deciding it.
   const { error } = await sc.from("profiles")
-    .update({ verified: false, verification_status: "unverified", verified_at: null })
+    .update({
+      verified: false,
+      verification_status: "unverified",
+      verified_at: null,
+      verification_level: "none",
+    })
     .eq("id", userId);
 
   if (error) { sendError(res, "db_error", error.message); return; }
@@ -2751,7 +2795,7 @@ router.post("/admin/trips/:tripId/reset-reminder", async (req, res) => {
 
   // trip-kernel:non-aggregate(trips.reminder_retry_count, trips.reminder_sent_at, trips.reminder_delivered_at)
   //
-  // The inverse of lib/tripReminderScheduler's two-phase claim: it RELEASES the
+  // The inverse of server/trips/projectionWorkers/tripReminderScheduler's two-phase claim: it RELEASES the
   // at-most-once claim so the hourly sweep will consider this trip again. It
   // touches exactly the three claim columns and nothing a client can see — the
   // trip's title, dates, status, visibility, crew and plan are all untouched,
@@ -3494,6 +3538,58 @@ router.post("/admin/intel/live-scopes/withdraw", async (req, res) => {
     "intel live scope withdrawn via admin surface",
   );
   res.json({ scopeKey: r.scopeKey, action: r.action, withdrawnBy: { userId, displayName } });
+});
+
+/**
+ * GET /admin/verification/attempt-metrics — TV-6c.
+ *
+ * verified-foundation-plan.md V-6 asks for two things and only the first was
+ * built: rate limiting is the cost CONTROL (routes/verification.ts, 3 sessions
+ * per 24 h) and "monitor attempts per verified user (>2.0 average means UX
+ * friction worth fixing)" is the MEASUREMENT. This is the measurement's
+ * reachable caller — without one the module would be the defect TV-7a was, a
+ * capability declared, mapped, and called from nowhere.
+ *
+ * Admin-only: it is a platform-wide figure over every user's verification
+ * history, not a per-user fact.
+ *
+ * Answers 503 rather than a zero when the table cannot be read. A monitoring
+ * endpoint that reports "0 attempts" out of a failed read is worse than one
+ * that reports nothing, because it is believed. "No verified users yet" —
+ * production's actual state today, 0 rows in identity_verifications — is
+ * likewise returned as its own state with a null average, not as 0.0.
+ *
+ * Placed at the end of the file deliberately: every anchored citation into
+ * routes/admin.ts names a line below 2400, and inserting a route mid-file
+ * would move all of them.
+ *
+ * Optional `?days=N` bounds the scan to rows created in the last N days.
+ */
+router.get("/admin/verification/attempt-metrics", async (req, res) => {
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
+  if (!admin) return;
+  const { sc } = admin;
+
+  const daysRaw = Number(req.query.days);
+  const days = Number.isFinite(daysRaw) && daysRaw > 0 ? Math.min(3650, Math.floor(daysRaw)) : null;
+  const since = days ? new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString() : null;
+
+  let metrics;
+  try {
+    metrics = await computeAttemptsPerVerifiedUser(sc, { since });
+  } catch (err: any) {
+    req.log.error({ err }, "admin: verification attempt metrics unreadable");
+    sendError(
+      res,
+      "degraded_unavailable",
+      "Verification attempt metrics are unavailable — identity_verifications could not be read",
+      { exposeDetail: true },
+    );
+    return;
+  }
+
+  void logAdminAccess(sc, admin.userId, "profile", "list", "view", accessReason(req));
+  res.json(metrics);
 });
 
 export default router;

@@ -42,7 +42,7 @@
  * Run: node --import tsx/esm src/scripts/checkProjectionConsumers.ts
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { callsFunction } from "./lib/callsFunction.js";
 import { stripComments } from "./lib/stripComments.js";
@@ -235,7 +235,12 @@ function main(): void {
     // Only the RUNTIME tree can strand a projection. src/scripts is operational
     // tooling — and this very file matches PROJECTION_SHAPED by name, so without
     // the exclusion the check reports itself as an unregistered projection.
-    const shaped = [...writers].filter((w) => PROJECTION_SHAPED.test(w) && !w.startsWith("scripts/"));
+    // The rule is about the file's NAME (the comment above PROJECTION_SHAPED says
+    // so), not the directory it lives in: §61 moved the reminder, live-share
+    // and retention schedulers under server/trips/projectionWorkers/, and a
+    // path test would have called each of them a projection writer for the
+    // directory's sake. The basename carries the claim; the directory does not.
+    const shaped = [...writers].filter((w) => PROJECTION_SHAPED.test(basename(w)) && !w.startsWith("scripts/"));
     if (shaped.length === 0) continue;
     problems.push(
       `UNREGISTERED PROJECTION: ${table} is written by ${shaped.join(", ")} and is not in the projection registry. ` +

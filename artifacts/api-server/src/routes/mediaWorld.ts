@@ -8,6 +8,7 @@
  *   GET /api/media/me                         §30   owner library (My World)
  *   GET /api/media/timeline                   §17   Earlier / Now rails (observed only, no forecast)
  *   GET /api/media/map                        §21   perspective counts per canonical place
+ *   GET /api/media/search                     §38   media / places / people / gems / experiences
  *
  * ADDITIVE. These are NEW routes and touch NO existing media serving
  * (mediaFeed.ts is unchanged). They are registered BEFORE mediaFeedRouter in
@@ -53,6 +54,7 @@ import {
   buildMediaMapProjection,
 } from "../services/media/MediaProjectionService.js";
 import { resolveExperience } from "../services/media/MediaExperienceResolver.js";
+import { searchMedia, type MediaSearchScope } from "../services/media/MediaSearchService.js";
 
 const router = Router();
 
@@ -264,6 +266,54 @@ router.get(
     const viewer = await resolveViewer(sc, auth.user.id, { needFollows: !placeId });
     const projection = await buildTimelineProjection(sc, viewer, { placeId, nowMs });
     sendProjection(res, "timeline", projection);
+  }),
+);
+
+// ── GET /media/search ────────────────────────────────────────────────────────
+// §38. A READ over the SAME candidate loader + coarse projector every lens above
+// uses — see MediaSearchService's header for why it is not a second read path.
+// A criteria-free query returns an empty result, never the feed.
+router.get(
+  "/media/search",
+  asyncHandler(async (req, res) => {
+    const nowMs = Date.now();
+    const auth = await requireUser(req, res);
+    if (!auth) return;
+    const sc = getServiceClient();
+    if (!sc) {
+      sendError(res, "server_not_configured");
+      return;
+    }
+    // Tighter than the browse lenses on purpose: a search box is the cheapest
+    // enumeration primitive on any surface that has one.
+    const rl = checkRateLimit("media_search", auth.user.id, 30, 60_000);
+    if (!rl.allowed) {
+      res.setHeader("Retry-After", Math.ceil(rl.retryAfterMs / 1000).toString());
+      sendError(res, "rate_limited", "Too many requests. Please wait.");
+      return;
+    }
+    const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
+    const scopeRaw = str(req.query.scope);
+    const scope: MediaSearchScope =
+      scopeRaw === "me" || scopeRaw === "trip" ? scopeRaw : "all";
+    const viewer = await resolveViewer(sc, auth.user.id, { needFollows: scope === "me" });
+    const results = await searchMedia(
+      sc,
+      viewer,
+      {
+        q: str(req.query.q),
+        city: parseCity(req.query.city),
+        category: str(req.query.category),
+        placeId: str(req.query.placeId),
+        tripId: str(req.query.tripId),
+        mediaId: str(req.query.mediaId),
+        scope,
+        freshOnly: req.query.freshOnly === "true" || req.query.freshOnly === "1",
+        limit: Number.parseInt(str(req.query.limit) ?? "", 10) || undefined,
+      },
+      nowMs,
+    );
+    sendProjection(res, "search", results);
   }),
 );
 

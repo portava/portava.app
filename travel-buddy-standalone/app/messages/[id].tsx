@@ -26,7 +26,7 @@ import {
   ArrowLeft, Zap, Send, Users, Globe, Check, CalendarClock, ArrowRight,
   CheckCircle, MoreVertical, Info, VolumeX, Languages, Paperclip, Compass,
   Bot, Reply, Copy, Trash2, Flag, CheckCheck, AlertCircle, Search, BookmarkPlus,
-  RefreshCw, Clock, ChevronDown, X, Phone, Video, Lock,
+  RefreshCw, Clock, ChevronDown, X, Phone, Video, Lock, Sparkles,
 } from 'lucide-react-native';
 import { resolveCircleCardNav } from '../../src/lib/circleCardNavigation.ts';
 import { useCallState, useCallActions } from '../../src/context/CallContext';
@@ -52,6 +52,31 @@ import { deleteMessage, muteThread, leaveThread, reportThread, retryTranslation,
 import { DiscoveryCardMessage } from '../../src/components/DiscoveryCardMessage';
 import { PostCardMessage } from '../../src/components/PostCardMessage';
 import { ThreadSafetySheet } from '../../src/components/ThreadSafetySheet';
+import { SharedContextRail, shouldCollapseOnScroll } from '../../src/features/telegraph/index.ts';
+import { PortavaObjectMessage } from '../../src/features/telegraph/sharing/PortavaObjectMessage.tsx';
+import { TypedMessageRenderer, rendersTypedKind } from '../../src/features/telegraph/kinds/TypedMessageRenderer.tsx';
+import { rendersKnownMessageType, safeUnknownBody } from '../../src/features/telegraph/kinds/unsupportedPayload.ts';
+import { parseKindEnvelope as parseTelegraphKindEnvelope } from '../../src/features/telegraph/kinds/kindsApi.ts';
+import { useAnnouncementAcknowledgement } from '../../src/features/telegraph/kinds/useAnnouncementAcknowledgement.ts';
+import { CoordinationPanel } from '../../src/features/telegraph/coordination/CoordinationPanel.tsx';
+import { ContentDrawerSheet } from '../../src/features/telegraph/drawer/ContentDrawerSheet.tsx';
+import { RecapSheet } from '../../src/features/telegraph/memory/RecapSheet.tsx';
+import { useThreadRecap } from '../../src/features/telegraph/memory/useThreadRecap.ts';
+import { saveMessageAsMemoryDraft, draftSavedMessage } from '../../src/features/telegraph/memory/memoryApi.ts';
+import {
+  unsendMessage,
+  deriveReceiptState,
+  deriveSeenBy,
+  canOfferUnsend,
+  receiptLabel,
+  DELIVERED_UNAVAILABLE_CLIENT,
+  type MessageReceipt,
+} from '../../src/features/telegraph/lifecycle/lifecycleApi.ts';
+import { headerSubtitle } from '../../src/features/telegraph/header/headerAxes.ts';
+import { useConversationHeader } from '../../src/features/telegraph/header/useConversationHeader.ts';
+import { ComposerPlusMenu } from '../../src/features/telegraph/composer/ComposerPlusMenu.tsx';
+import { TypedComposePrompt, type TypedComposeKind } from '../../src/features/telegraph/composer/TypedComposePrompt.tsx';
+import { sendTypedMessage, type SendableKind } from '../../src/features/telegraph/kinds/kindsApi.ts';
 import { TelegraphRecommendationCard } from '../../src/components/TelegraphRecommendationCard';
 import type { TelegraphSuggestion, MeetupPrefill } from '../../src/services/telegraphChat';
 import { blockUser } from '../../src/services/blocks';
@@ -71,6 +96,12 @@ import { checkCircleMembership } from '../../src/services/circle';
 import { sendMessage, sendMediaMessage } from '../../src/services/messaging';
 import { useMessageMediaPicker } from '../../src/hooks/useMessageMediaPicker';
 import { MessageMediaBubble } from '../../src/components/MessageMediaBubble';
+// Telegraph §22 — the two traveller-facing abuse controls. Both render what
+// the server decided; neither decides anything locally.
+import { MessageSafetyBanner } from '../../src/features/telegraph/components/MessageSafetyBanner';
+import { StrangerMediaShield } from '../../src/features/telegraph/components/StrangerMediaShield';
+// Telegraph §16.2 / §17.4 — data-saver and the degradation ladder.
+import { useDataSaver } from '../../src/features/telegraph/hooks/useDataSaver';
 import * as Haptics from 'expo-haptics';
 import { usePlainBottomInset } from '../../src/hooks/useBottomInset';
 import * as Clipboard from 'expo-clipboard';
@@ -140,17 +171,26 @@ function LongPressActionSheet({
   onDeleteForMe,
   onReply,
   onSave,
+  onUnsent,
+  receipt,
 }: {
   message: Message | null;
   mine: boolean;
   threadId?: string;
+  /**
+   * §7.3's receipt for this message, or null when it is not the caller's own.
+   * The Unsend row is offered from this and nothing else.
+   */
+  receipt: MessageReceipt | null;
   onClose: () => void;
   onDeleteForMe: (id: string) => Promise<void>;
   onReply: (msg: Message) => void;
   onSave: (msg: Message) => void;
+  onUnsent: (id: string) => void;
 }) {
   const plainInsetForSheets = usePlainBottomInset();
   const [showReport, setShowReport] = useState(false);
+  const [busy, setBusy] = useState<null | 'unsend' | 'memory'>(null);
 
   if (!message) return null;
   const text = message.displayBody ?? message.body ?? '';
@@ -196,6 +236,70 @@ function LongPressActionSheet({
               <Text style={las.rowLabel}>{label}</Text>
             </Pressable>
           ))}
+          {/* Telegraph §10.2 — promote THIS ONE message into a private Memory
+              draft. Singular by construction: there is no "save this
+              conversation" anywhere, on either side of the wire. */}
+          <Pressable
+            style={las.row}
+            testID="telegraph-save-to-memory"
+            disabled={busy !== null}
+            onPress={async () => {
+              setBusy('memory');
+              const r = await saveMessageAsMemoryDraft(message.id);
+              setBusy(null);
+              onClose();
+              if (r.ok) {
+                // Read back from the server, not asserted here.
+                Alert.alert('Saved to Memory', draftSavedMessage(r.data.draft));
+              } else {
+                Alert.alert('Not saved', r.message ?? 'We could not save that. Nothing was created.');
+              }
+            }}
+          >
+            <Sparkles size={18} color={color.ink} />
+            <Text style={las.rowLabel}>Save to Memory</Text>
+          </Pressable>
+
+          {/* Telegraph §7.4 — unsend, offered ONLY while nobody has seen it.
+              `canOfferUnsend` is the affordance rule, not the authorization
+              one: the server checks again and is the only thing that decides.
+              Withdrawing the row once a recipient has seen the message is how a
+              sender learns the rule instead of meeting it as a refusal. This is
+              not the Delete below — a delete works after it has been seen and
+              leaves a redacted slot. */}
+          {mine && threadId && !canOfferUnsend(receipt) && receipt ? (
+            <View style={las.row}>
+              <RefreshCw size={18} color={color.faint} />
+              <Text style={[las.rowLabel, { color: color.mute }]}>
+                {receiptLabel(receipt)} — too late to unsend
+              </Text>
+            </View>
+          ) : null}
+
+          {mine && threadId && canOfferUnsend(receipt) && (
+            <Pressable
+              style={las.row}
+              testID="telegraph-unsend-message"
+              disabled={busy !== null}
+              onPress={async () => {
+                setBusy('unsend');
+                const r = await unsendMessage(threadId, message.id);
+                setBusy(null);
+                onClose();
+                if (r.ok) onUnsent(message.id);
+                else {
+                  Alert.alert(
+                    'Not unsent',
+                    r.message ?? 'That message could no longer be unsent.',
+                  );
+                }
+              }}
+            >
+              <RefreshCw size={18} color={color.ink} />
+              <Text style={las.rowLabel}>Unsend</Text>
+            </Pressable>
+          )}
+
           {mine && (
             <Pressable
               style={las.row}
@@ -640,6 +744,7 @@ function MessageBubble({
   isGroupThread,
   onLongPress,
   receiptState,
+  receiptSeenBy,
   readerAvatars,
   dismissedAiMsgIds,
   onDismissAiCard,
@@ -649,6 +754,7 @@ function MessageBubble({
   currentUserId,
   isCircleMember,
   onCircleCardPress,
+  threadId,
 }: {
   item: Message;
   mine: boolean;
@@ -658,7 +764,9 @@ function MessageBubble({
   defaultShowOriginal: boolean;
   isGroupThread: boolean;
   onLongPress?: () => void;
-  receiptState?: 'sent' | 'delivered' | 'read' | null;
+  receiptState?: 'sent' | 'read' | null;
+  /** §7.3's "Seen by N" for a group. Null renders the plain "Seen". */
+  receiptSeenBy?: number | null;
   /** Up to 3 avatar URIs of group members who've read past this message. */
   readerAvatars?: string[];
   dismissedAiMsgIds?: Set<string>;
@@ -669,9 +777,26 @@ function MessageBubble({
   currentUserId?: string;
   isCircleMember?: boolean | null;
   onCircleCardPress?: () => void;
+  /** Telegraph §5.3: the thread a shared card is being rendered in. */
+  threadId?: string | null;
 }) {
   const [pickerPayload, setPickerPayload] = useState<AddToTripPayload | null>(null);
   const [showOriginal, setShowOriginal] = useState(defaultShowOriginal || !autoTranslate);
+
+  // Telegraph §19 — an ANNOUNCEMENT that asks to be acknowledged. Computed
+  // before the early returns because the hook below cannot be conditional; it
+  // makes no request when `enabled` is false.
+  const announcementEnvelope =
+    item.msgType === 'announcement' ? parseTelegraphKindEnvelope(item.msgType, item.body ?? null) : null;
+  const announcementNeedsAck =
+    announcementEnvelope?.kind === 'ANNOUNCEMENT' &&
+    announcementEnvelope.payload?.requiresAcknowledgement === true;
+  const announcementAck = useAnnouncementAcknowledgement({
+    threadId,
+    messageId: item.id,
+    viewerId: currentUserId,
+    enabled: announcementNeedsAck,
+  });
 
   // Brief highlight when a pending translation resolves to 'translated'
   const flashAnim = useRef(new Animated.Value(0)).current;
@@ -714,20 +839,57 @@ function MessageBubble({
     );
   }
 
-  // Discovery card
-  if (item.msgType === 'system' && item.subtype === 'discovery_card') {
+  // Telegraph §6.2 typed kinds — LOCATION, ACTION, ANNOUNCEMENT, SAFETY, GIF,
+  // MEDIA_ALBUM, MEMORY_NOTE. Each carries a validated envelope in the body.
+  if (rendersTypedKind(item.msgType)) {
     return (
       <Pressable onLongPress={onLongPress} delayLongPress={300}>
-        <DiscoveryCardMessage body={item.body ?? ''} mine={mine} />
+        <TypedMessageRenderer
+          msgType={item.msgType ?? null}
+          body={item.body ?? null}
+          mine={mine}
+          acknowledged={announcementAck.acknowledged}
+          // §19 — undefined when this thread cannot be written to, so the
+          // renderer says acknowledgement is unavailable instead of drawing a
+          // button that does nothing. That inert button is exactly what was
+          // here before: no mount passed this prop at all.
+          onAcknowledge={
+            announcementNeedsAck && threadId ? () => void announcementAck.acknowledge() : undefined
+          }
+        />
       </Pressable>
     );
   }
 
-  // Shared post card — sent from a post's ShareSheet
+  // Telegraph §6.2 PORTAVA_OBJECT — a typed REFERENCE, resolved for this
+  // viewer at render (§5.2 layer three) and degraded when revoked (§5.3).
+  if (item.msgType === 'portava_object') {
+    return (
+      <Pressable onLongPress={onLongPress} delayLongPress={300}>
+        <PortavaObjectMessage
+          body={item.body ?? null}
+          mine={mine}
+          threadId={threadId ?? null}
+          messageId={item.id}
+        />
+      </Pressable>
+    );
+  }
+
+  // Discovery card — §5.3: threadId makes the snapshot revocable.
+  if (item.msgType === 'system' && item.subtype === 'discovery_card') {
+    return (
+      <Pressable onLongPress={onLongPress} delayLongPress={300}>
+        <DiscoveryCardMessage body={item.body ?? ''} mine={mine} threadId={threadId ?? null} messageId={item.id} />
+      </Pressable>
+    );
+  }
+
+  // Shared post card — sent from a post's ShareSheet. §5.3 as above.
   if (item.msgType === 'system' && item.subtype === 'post_card') {
     return (
       <Pressable onLongPress={onLongPress} delayLongPress={300}>
-        <PostCardMessage body={item.body ?? ''} mine={mine} />
+        <PostCardMessage body={item.body ?? ''} mine={mine} threadId={threadId ?? null} messageId={item.id} />
       </Pressable>
     );
   }
@@ -807,6 +969,9 @@ function MessageBubble({
   } else {
     bodyToShow = item.displayBody ?? item.body ?? '';
   }
+  // §30A.13 / census T430 — the second of the two unknown-type fallbacks; see
+  // the header of unsupportedPayload.ts for why the rule is this narrow.
+  if (!rendersKnownMessageType(item.msgType)) bodyToShow = safeUnknownBody(bodyToShow);
 
   const isTranslated = item.translated && autoTranslate && !showOriginal;
   const isPending = item.translationStatus === 'pending';
@@ -930,15 +1095,13 @@ function MessageBubble({
       {/* Read receipt — shown on every confirmed own message */}
       {mine && receiptState && deliveryStatus !== 'sending' && deliveryStatus !== 'failed' && (
         <View style={styles.receiptRow}>
+          {/* §7.3: Sent or Seen. There is no DELIVERED to report. */}
           {receiptState === 'read' ? (
             <>
               <CheckCheck size={11} color={color.signal} />
-              <Text style={styles.receiptSent}>Read</Text>
-            </>
-          ) : receiptState === 'delivered' ? (
-            <>
-              <CheckCheck size={11} color={color.mute} />
-              <Text style={[styles.receiptSent, { color: color.mute }]}>Delivered</Text>
+              <Text style={styles.receiptSent}>
+                {receiptSeenBy && receiptSeenBy > 1 ? `Seen by ${receiptSeenBy}` : 'Seen'}
+              </Text>
             </>
           ) : (
             <>
@@ -1068,6 +1231,8 @@ export default function TelegraphThread() {
   // Long-press action sheet state
   const [actionMsg, setActionMsg] = useState<Message | null>(null);
   const [actionMsgMine, setActionMsgMine] = useState(false);
+  /** §7.3's receipt for the long-pressed message, built from measured reads. */
+  const [actionMsgReceipt, setActionMsgReceipt] = useState<MessageReceipt | null>(null);
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
   // Per-thread translation overrides (null = fall back to global langSettings)
   const [threadAutoTranslate, setThreadAutoTranslate] = useState<boolean | null>(null);
@@ -1084,6 +1249,9 @@ export default function TelegraphThread() {
   const listRef = useRef<FlatList>(null);
   const shouldAnimateMessage = useMessageEntranceGate();
   const mediaPicker = useMessageMediaPicker();
+  // Telegraph §16.2 / §17.4 — the degradation ladder. Consulted here for
+  // media; the AI tray consults it for `ai`.
+  const dataSaver = useDataSaver();
   const [showMediaPickerSheet, setShowMediaPickerSheet] = useState(false);
 
   function handleBlockPress() {
@@ -1398,6 +1566,24 @@ export default function TelegraphThread() {
 
   // Scroll-to-bottom FAB — shown when the user has scrolled away from newest
   const [showJumpFab, setShowJumpFab] = useState(false);
+  // Telegraph §11.2 row 4: "User scrolls down → Rail collapses/sticks
+  // minimally; messages get priority."
+  const [railCollapsed, setRailCollapsed] = useState(false);
+  // Telegraph §6.4: the content drawer. Its entry point used to be dead code.
+  const [showContentDrawer, setShowContentDrawer] = useState(false);
+  /**
+   * Telegraph §10.3 — the end-of-night recap. `useThreadRecap` performs the
+   * READ; the affordance below appears only when the server found a COMPLETED
+   * plan, so a thread with no confirmed session never gets offered a recap of
+   * a night that did not happen.
+   */
+  const [showRecap, setShowRecap] = useState(false);
+  const threadRecap = useThreadRecap(id ?? null);
+  /** §2.2's availability + safe presence axes for the header. One read. */
+  const telegraphHeader = useConversationHeader(id ?? null);
+  // Telegraph §6.1: the composer's + menu, and the two typed-compose sheets.
+  const [showPlusMenu, setShowPlusMenu] = useState(false);
+  const [typedCompose, setTypedCompose] = useState<TypedComposeKind | null>(null);
 
   // Send button springs in/out with input content
   const hasInput = input.trim().length > 0 || mediaPicker.media !== null;
@@ -1411,21 +1597,65 @@ export default function TelegraphThread() {
     }).start();
   }, [hasInput, sendAnim]);
 
-  // Per-message receipt state.
-  // DM: cross-checks the other party's last_read_at — 'read' > 'delivered' > 'sent'.
-  // Group: always 'delivered' for confirmed messages; readerAvatarsForMsg shows WHO read.
-  const receiptForMsg = useCallback((msg: Message): 'sent' | 'delivered' | 'read' | null => {
-    if (isDirect && dmOtherLastRead) {
-      return new Date(dmOtherLastRead) >= new Date(msg.createdAt) ? 'read' : 'delivered';
-    }
-    const ageSecs = (Date.now() - new Date(msg.createdAt).getTime()) / 1000;
-    return ageSecs > 3 ? 'delivered' : 'sent';
-  }, [isDirect, dmOtherLastRead]);
 
   // Group-thread member reads — fetched once per thread to drive reader avatar chips.
   const [groupMemberReads, setGroupMemberReads] = useState<
     { userId: string; lastReadAt: string | null; avatarUrl: string | null }[]
   >([]);
+  /**
+   * Telegraph §7.3 — the per-message receipt, derived from measured reads.
+   *
+   * THIS USED TO FABRICATE "DELIVERED". The group branch was
+   * `ageSecs > 3 ? 'delivered' : 'sent'` — a double tick shown because three
+   * seconds had elapsed — and the direct branch returned 'delivered' whenever
+   * the other party's last_read_at was older than the message. Nothing on this
+   * deployment produces a delivery signal of any kind: there is no per-device
+   * acknowledgement and no `lastDeliveredSequence` column, which is exactly why
+   * `services/telegraph/unsend.ts` returns `delivered: null` with a reason
+   * instead of a boolean. A tick that says "Delivered" on a timer is a claim
+   * about the recipient's device that nobody measured.
+   *
+   * So DELIVERED is gone from this surface. What remains is what the server can
+   * actually see: SEEN, when a recipient's `last_read_at` has passed the
+   * message, and SENT otherwise — §7.4's own predicate, and the same one the
+   * unsend window uses.
+   */
+  const receiptForMsg = useCallback((msg: Message): 'sent' | 'read' | null => {
+    return deriveReceiptState(
+      isDirect
+        ? { createdAt: msg.createdAt, otherLastReadAt: dmOtherLastRead }
+        : { createdAt: msg.createdAt, memberReads: groupMemberReads },
+    );
+  }, [isDirect, dmOtherLastRead, groupMemberReads]);
+
+  /** §7.3's "Seen by N" for a group; null for a direct chat, which says "Seen". */
+  const seenByForMsg = useCallback((msg: Message): number | null => {
+    if (isDirect) return null;
+    return deriveSeenBy(msg.createdAt, groupMemberReads);
+  }, [isDirect, groupMemberReads]);
+
+  /**
+   * The same receipt in the shape §7.3's helpers take, for the long-press sheet.
+   *
+   * `delivered` is null here for the same reason it is null on the wire: this
+   * deployment has no delivery signal, and the sheet must not invent one either.
+   */
+  const receiptForLongPress = useCallback((msg: Message): MessageReceipt => {
+    const state = receiptForMsg(msg);
+    const seenBy = isDirect
+      ? (state === 'read' ? 1 : 0)
+      : (deriveSeenBy(msg.createdAt, groupMemberReads) ?? 0);
+    return {
+      messageId: msg.id,
+      status: state === 'read' ? 'SEEN' : 'SENT',
+      delivered: null,
+      deliveredUnavailableReason: DELIVERED_UNAVAILABLE_CLIENT,
+      seenBy,
+      seenByUserIds: [],
+      recipientCount: isDirect ? 1 : groupMemberReads.length,
+    };
+  }, [isDirect, groupMemberReads, receiptForMsg]);
+
 
   useEffect(() => {
     if (isDirect || !id) { setGroupMemberReads([]); return; }
@@ -1587,8 +1817,18 @@ export default function TelegraphThread() {
     const displayName = isDirect
       ? (dmProfile?.name ?? headerTitle)
       : headerTitle;
-    // Direct: show "City · Last active" subtitle
-    const directSubtitle = dmProfile?.city ? `${dmProfile.city} · Active recently` : 'Active recently';
+    // Telegraph §2.2 — "user/crew name · availability · safe presence".
+    //
+    // This line used to read `dmProfile?.city ? `${city} · Active recently` :
+    // 'Active recently'`. "Active recently" was a constant: it appeared for a
+    // person last seen a year ago exactly as for one typing at that moment, and
+    // nothing anywhere measured it. §4's hard rule is that AVAILABLE, ONLINE,
+    // NEARBY and SHARING LOCATION are separate states that must never be
+    // collapsed — asserting one of them for free is the cheapest way to break
+    // it. The city is a real fact and stays; the presence claim is now the
+    // server's two consent-gated axes, and says nothing when they say nothing.
+    const directSubtitle =
+      headerSubtitle(telegraphHeader.other, dmProfile?.city ? [dmProfile.city] : []);
     const subtitle = threadType === 'trip'
       ? (memberCount !== null ? `${memberCount} members` : 'Trip Chat')
       : threadType === 'circle'
@@ -1679,7 +1919,11 @@ export default function TelegraphThread() {
                 <Text style={styles.headerTag}>Telegraph</Text>
               </>
             ) : (
-              <Text style={styles.headerTag} numberOfLines={1}>{subtitle}</Text>
+              subtitle ? (
+                <Text style={styles.headerTag} numberOfLines={1} testID="telegraph-header-subtitle">
+                  {subtitle}
+                </Text>
+              ) : null
             )}
           </View>
         </Pressable>
@@ -1687,11 +1931,35 @@ export default function TelegraphThread() {
         {/* Right-side action icons */}
         {!compact && (
           <View style={styles.headerActions}>
-            {/* Thread info + message search hidden until built (beta-audit).
-                Safety/overflow controls live in ThreadSafetySheet. */}
-            {false ? <Pressable hitSlop={8} style={styles.headerIconBtn} onPress={() => Alert.alert('Thread info', 'Members, shared media, and settings — coming soon.')}>
+            {/* Telegraph §6.4 content drawer + object-aware search. This
+                entry point was dead code — a Pressable behind a literal
+                `false` whose onPress was an Alert saying "coming soon" —
+                until the drawer route and this sheet existed. */}
+            {/* Telegraph §10.3 — only when a plan in this thread actually
+                finished. `threadRecap.available` is the server's answer, not a
+                guess from the clock. */}
+            {threadRecap.available ? (
+              <Pressable
+                hitSlop={8}
+                style={styles.headerIconBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Look back on this night"
+                testID="telegraph-open-recap"
+                onPress={() => setShowRecap(true)}
+              >
+                <Sparkles size={18} color={color.mute} />
+              </Pressable>
+            ) : null}
+            <Pressable
+              hitSlop={8}
+              style={styles.headerIconBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Shared content and search"
+              testID="telegraph-open-content-drawer"
+              onPress={() => setShowContentDrawer(true)}
+            >
               <Info size={18} color={color.mute} />
-            </Pressable> : null}
+            </Pressable>
             {canShowCallButtons && (
               <>
                 <Pressable
@@ -1815,6 +2083,16 @@ export default function TelegraphThread() {
       )}
       <QuickActionBar />
 
+      {/* Telegraph §2.2 / §3: the Shared Context Rail sits between the header
+          and the message stream. It renders nothing when there is no mutual
+          canonical state, and nothing when the read failed. */}
+      {id ? <SharedContextRail threadId={id} scrolled={railCollapsed} /> : null}
+
+      {/* Telegraph §2.2's optional coordination panel / §9's coordination
+          mode. Renders only while the thread is actually coordinating, or
+          while a decision or commitment is unresolved. */}
+      {id ? <CoordinationPanel threadId={id} /> : null}
+
       <FlatList
         windowSize={9}
         initialNumToRender={18}
@@ -1833,6 +2111,7 @@ export default function TelegraphThread() {
           const { contentSize, layoutMeasurement, contentOffset } = e.nativeEvent;
           const distanceFromBottom = contentSize.height - layoutMeasurement.height - contentOffset.y;
           setShowJumpFab(distanceFromBottom > 320);
+          setRailCollapsed(shouldCollapseOnScroll(contentOffset.y));
         }}
         scrollEventThrottle={120}
         renderItem={({ item }) => {
@@ -1873,19 +2152,38 @@ export default function TelegraphThread() {
                 animate={shouldAnimateMessage(m.clientId ?? m.id, m.createdAt)}
                 style={[styles.bubbleRow, mine && styles.bubbleRowMine]}
               >
-                <MessageMediaBubble
-                  mediaType={(m.mediaType as 'image' | 'video') ?? 'image'}
-                  mediaUrl={m.mediaUrl}
-                  thumbnailUrl={m.mediaThumbnailUrl}
-                  durationSeconds={m.mediaDurationSeconds}
-                  mine={mine}
-                  senderName={!mine && isGroupThread ? m.senderName : null}
-                  createdAt={m.createdAt}
-                  uploadState={m.uploadState ?? null}
-                  uploadProgress={m.uploadProgress ?? 0}
-                  onCancel={m.uploadState === 'uploading' ? () => mediaPicker.cancel() : undefined}
-                  onRetry={m.uploadState === 'failed' ? () => mediaPicker.retry() : undefined}
-                />
+                {/*
+                  Telegraph §22: media from someone the viewer has not
+                  connected with is COVERED, not blurred — the shield does not
+                  mount its children, so the bytes are never fetched. The
+                  server decides (`senderConnected`); an explicit `false` is
+                  the only thing that shields, so an older server that does not
+                  send the field behaves exactly as before.
+                */}
+                <StrangerMediaShield
+                  messageId={m.id}
+                  mediaKind={(m.mediaType as 'image' | 'video') ?? 'image'}
+                  senderConnected={mine || m.senderConnected !== false}
+                  degraded={m.senderConnectednessDegraded === true}
+                  // §16.2 / §17.4: the same cover, a different reason. A
+                  // message the viewer is uploading is never withheld from
+                  // them — they chose to send it.
+                  dataSaverOn={!mine && !m.uploadState && !dataSaver.mayLoad('mediaPreview')}
+                >
+                  <MessageMediaBubble
+                    mediaType={(m.mediaType as 'image' | 'video') ?? 'image'}
+                    mediaUrl={m.mediaUrl}
+                    thumbnailUrl={m.mediaThumbnailUrl}
+                    durationSeconds={m.mediaDurationSeconds}
+                    mine={mine}
+                    senderName={!mine && isGroupThread ? m.senderName : null}
+                    createdAt={m.createdAt}
+                    uploadState={m.uploadState ?? null}
+                    uploadProgress={m.uploadProgress ?? 0}
+                    onCancel={m.uploadState === 'uploading' ? () => mediaPicker.cancel() : undefined}
+                    onRetry={m.uploadState === 'failed' ? () => mediaPicker.retry() : undefined}
+                  />
+                </StrangerMediaShield>
               </MessageEntrance>
             );
           }
@@ -1909,6 +2207,7 @@ export default function TelegraphThread() {
               <MessageBubble
                 item={m}
                 mine={mine}
+                threadId={id ?? null}
                 groupStart={item.groupStart}
                 groupEnd={item.groupEnd}
                 autoTranslate={autoTranslate}
@@ -1918,8 +2217,10 @@ export default function TelegraphThread() {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                   setActionMsg(m);
                   setActionMsgMine(mine);
+                  setActionMsgReceipt(mine ? receiptForLongPress(m) : null);
                 }}
                 receiptState={mine ? receiptForMsg(m) : null}
+                receiptSeenBy={mine ? seenByForMsg(m) : null}
                 readerAvatars={mine ? readerAvatarsForMsg(m) : undefined}
                 dismissedAiMsgIds={dismissedAiMsgIds}
                 onDismissAiCard={(msgId) => setDismissedAiMsgIds((prev) => new Set([...prev, msgId]))}
@@ -1929,6 +2230,17 @@ export default function TelegraphThread() {
                 currentUserId={userId ?? undefined}
                 isCircleMember={isCircleMember}
                 onCircleCardPress={m.msgType === 'circle_status_card' ? onCircleCardPress : undefined}
+              />
+              {/*
+                Telegraph §22: the traveller-facing half of the travel-scam
+                signals. The field is present only on messages the viewer did
+                NOT send and only when something fired, so the common case is
+                one null check and no render.
+              */}
+              <MessageSafetyBanner
+                messageId={m.id}
+                signals={m.safetySignals ?? null}
+                onReport={() => { setActionMsg(m); setActionMsgMine(false); }}
               />
             </MessageEntrance>
           );
@@ -1989,8 +2301,15 @@ export default function TelegraphThread() {
         </View>
       )}
 
-      {/* Telegraph suggestion tray — above the composer */}
-      {id && !hideAiSuggestions && (
+      {/*
+        Telegraph suggestion tray — above the composer.
+        §17.4 puts AI FIRST on the degradation ladder ("deprioritize typing,
+        reactions, media preview and AI before text or safety coordination"), so
+        the tray is the first thing data-saver withholds. It is not disabled —
+        the person's own hide-AI preference is still the other condition — it is
+        simply not fetched, which is where the bytes are.
+      */}
+      {id && !hideAiSuggestions && dataSaver.mayLoad('ai') && (
         <TelegraphSuggestionTray
           threadId={id}
           lastSentMessage={lastSentMessage}
@@ -2049,38 +2368,78 @@ export default function TelegraphThread() {
         </View>
       )}
 
-      {/* Media picker bottom sheet */}
-      <Modal
-        visible={showMediaPickerSheet}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setShowMediaPickerSheet(false)}
-      >
-        <Pressable style={styles.pickerOverlay} onPress={() => setShowMediaPickerSheet(false)} />
-        <View style={[styles.pickerSheet, { paddingBottom: Math.max(insets.bottom, 20) }]}>
-          <View style={styles.pickerHandle} />
-          <Text style={styles.pickerTitle}>Attach media</Text>
-          <Pressable style={styles.pickerRow} onPress={async () => { setShowMediaPickerSheet(false); await mediaPicker.pickFromLibrary(); }}>
-            <Text style={styles.pickerRowIcon}>🖼️</Text>
-            <Text style={styles.pickerRowLabel}>Photo Library</Text>
-          </Pressable>
-          <Pressable style={styles.pickerRow} onPress={async () => { setShowMediaPickerSheet(false); await mediaPicker.pickFromCamera(); }}>
-            <Text style={styles.pickerRowIcon}>📷</Text>
-            <Text style={styles.pickerRowLabel}>Camera</Text>
-          </Pressable>
-          <Pressable style={styles.pickerRow} onPress={async () => { setShowMediaPickerSheet(false); await mediaPicker.pickVideo(); }}>
-            <Text style={styles.pickerRowIcon}>🎬</Text>
-            <Text style={styles.pickerRowLabel}>Video Library</Text>
-          </Pressable>
-          <Pressable style={styles.pickerCancelRow} onPress={() => setShowMediaPickerSheet(false)}>
-            <Text style={styles.pickerCancelLabel}>Cancel</Text>
-          </Pressable>
-        </View>
-      </Modal>
+      {/* Telegraph §6.1: the composer's + menu. Eight entries, each with its
+          own availability and its own reason — an entry that cannot complete
+          in this tree is shown DISABLED rather than hidden. */}
+      <ComposerPlusMenu
+        visible={showPlusMenu}
+        onClose={() => setShowPlusMenu(false)}
+        onSelect={async (entryId) => {
+          setShowPlusMenu(false);
+          if (entryId === 'CAMERA') { await mediaPicker.pickFromCamera(); return; }
+          if (entryId === 'PHOTOS') { await mediaPicker.pickFromLibrary(); return; }
+          if (entryId === 'VIDEO') { await mediaPicker.pickVideo(); return; }
+          if (entryId === 'LOCATION') { setTypedCompose('LOCATION'); return; }
+          if (entryId === 'MEMORY_NOTE') { setTypedCompose('MEMORY_NOTE'); return; }
+        }}
+      />
+
+      <TypedComposePrompt
+        kind={typedCompose}
+        authorId={userId ?? null}
+        onCancel={() => setTypedCompose(null)}
+        onSubmit={async (kind: SendableKind, payload: unknown) => {
+          setTypedCompose(null);
+          if (!id) return;
+          const res = await sendTypedMessage(id, kind, payload);
+          if (!res.ok) {
+            Alert.alert('Could not send', res.message ?? 'Please try again.');
+            return;
+          }
+          await reload();
+        }}
+      />
+
+      <ContentDrawerSheet
+        visible={showContentDrawer}
+        threadId={id ?? ''}
+        onClose={() => setShowContentDrawer(false)}
+      />
+
+      {/* §10.3: the recap is a READ that already happened. `initialRecap`
+          hands the sheet what `useThreadRecap` read, so opening it creates
+          nothing and re-reads nothing. Every button in it is an offer. */}
+      <RecapSheet
+        visible={showRecap}
+        threadId={id ?? ''}
+        onClose={() => setShowRecap(false)}
+        initialRecap={threadRecap.response}
+        onCurate={(action) => {
+          if (action === 'DONE') return;
+          // Each of §10.3's other three actions needs a surface this lane did
+          // not build. Saying so is the point: the recap already promised it
+          // wrote nothing, and a button that silently did nothing would be a
+          // quieter lie than this one.
+          const what =
+            action === 'CREATE_MEMORY'
+              ? 'Building a Memory from a whole night needs a curation screen that does not exist yet. You can still save any single message to your Memory drafts from the message itself.'
+              : action === 'SHARE_PHOTOS'
+                ? 'Sharing this night\u2019s photos in one go is not built yet.'
+                : 'Following the people you met from here is not built yet.';
+          Alert.alert('Nothing was saved', what);
+        }}
+      />
 
       <View style={[styles.compose, { paddingBottom: Math.max(insets.bottom, 8) }]}>
         {/* Media attachment button */}
-        <Pressable style={styles.composeIconBtn} onPress={() => setShowMediaPickerSheet(true)} hitSlop={6}>
+        <Pressable
+          style={styles.composeIconBtn}
+          onPress={() => setShowPlusMenu(true)}
+          hitSlop={6}
+          accessibilityRole="button"
+          accessibilityLabel="Add to this message"
+          testID="telegraph-composer-plus"
+        >
           <Paperclip size={18} color={mediaPicker.media ? color.signal : color.mute} />
         </Pressable>
 
@@ -2229,6 +2588,8 @@ export default function TelegraphThread() {
             else Alert.alert('Error', r.message ?? 'Could not save message.');
           });
         }}
+        onUnsent={() => { void reload(); }}
+        receipt={actionMsgReceipt}
       />
 
       {/* Per-thread translation settings */}

@@ -94,7 +94,7 @@ first matching family wins; the ledger applies it in source order.
 | Builder | File | Resolves |
 | --- | --- | --- |
 | `airportUrl(...parts)` | `src/services/layover.ts:27` | all 17 `/api/airport/sessions/*` routes |
-| `planUrl(tripId, ...parts)` | `src/services/tripPlan.ts:23` | 7 `/api/trips/:id/plan*` routes |
+| `planUrl(tripId, ...parts)` | `src/features/trips/planning/tripPlan.ts:23` | 7 `/api/trips/:id/plan*` routes |
 | `trustUrl(...parts)` | `src/services/trustAdmin.ts:28` | 11 `/api/admin/trust/*` routes |
 | `api(path)` | `src/services/appeals.ts:42` | `/api/appeals*` |
 | `api(path)` | `src/services/reviews.ts:67` | `/api/reviews*`, `/api/places/:id/reviews`, ... |
@@ -118,7 +118,7 @@ served by `router.post("/v1/intel/observations/:id/claims:action")`
 76 `/api/...` mentions in the client sit in comments. Excluding them cuts the legacy list
 from 114 to 39. The canonical case, verified at the call site:
 
-- `app/map/index.tsx:1046` and `app/map/__tests__/projectedPlaces.component.test.tsx:7`
+- `app/map/index.tsx:1045` and `app/map/__tests__/projectedPlaces.component.test.tsx:7`
   both name `GET /api/discovery/places`. **No such route exists on the server.**
 - The real call is `getDiscoveryPlaces()` at `src/services/discovery.ts:474`, which fetches
   `` `${base}/api/discovery?${params}` `` at **`src/services/discovery.ts:521`**.
@@ -136,7 +136,7 @@ Seven comment-only mentions name no route that exists:
 | `/api/threads/:threadId/telegraph` | `src/services/telegraphChat.ts:3` |
 | `/api/admin/trust` | `src/services/trustAdmin.ts:4` |
 | `/api/visuals` | `src/services/visuals.ts:2` |
-| `/api/discovery/places` | `app/map/index.tsx:1046` |
+| `/api/discovery/places` | `app/map/index.tsx:1045` |
 
 ### Reading a chain in the JSON
 
@@ -215,7 +215,7 @@ auth behaviour, and there is no route to wire it to.
 `POST /api/map/compass-command` (`mapSearch.ts:230`) genuinely have no client caller.
 
 **`/api/map/search` was NOT wired, on purpose.** `MapSearchSheet` is not unmounted - it is
-mounted at `app/map/index.tsx:3181` - and it already searches, via `searchUnified()`
+mounted at `app/map/index.tsx:3180` - and it already searches, via `searchUnified()`
 (`src/services/discovery.ts:793`) against `GET /api/discovery/search`
 (`discovery.ts:825`). Re-pointing it would be a regression on two counts:
 
@@ -314,7 +314,7 @@ Full per-route detail, including the resolved chain for each wired route, is in
 | POST | `/api/compass/sense/check` | `artifacts/api-server/src/routes/compassSense.ts:101` |
 | GET | `/api/compass/sense/nudges` | `artifacts/api-server/src/routes/compassSense.ts:122` |
 | GET | `/api/compass/value-delivered` | `artifacts/api-server/src/routes/compassOutcomes.ts:67` |
-| GET | `/api/discovery/people/:userId/passport` | `artifacts/api-server/src/routes/discoverySearch.ts:2247` |
+| GET | `/api/discovery/people/:userId/passport` | `artifacts/api-server/src/routes/discoverySearch.ts:2510` |
 | GET | `/api/events/:id/activity` | `artifacts/api-server/src/routes/events.ts:5956` |
 | GET | `/api/events/:id/attendees` | `artifacts/api-server/src/routes/events.ts:3710` |
 | DELETE | `/api/events/:id/attendees/:userId` | `artifacts/api-server/src/routes/events.ts:4930` |
@@ -434,7 +434,7 @@ Full per-route detail, including the resolved chain for each wired route, is in
 | GET | `/api/shared-moments/suggestions/mine` | `artifacts/api-server/src/routes/sharedMoments.ts:91` |
 | POST | `/api/tags` | `artifacts/api-server/src/routes/tags.ts:46` |
 | GET | `/api/telegraph/commands/:commandId` | `artifacts/api-server/src/routes/telegraphCommands.ts:371` |
-| GET | `/api/telegraph/threads/:threadId/header/:userId` | `artifacts/api-server/src/routes/telegraph.ts:354` |
+| GET | `/api/telegraph/threads/:threadId/header/:userId` | `artifacts/api-server/src/routes/telegraph.ts:370` |
 | PATCH | `/api/threads/:threadId/messages/:messageId` | `artifacts/api-server/src/routes/messaging.ts:2442` |
 | GET | `/api/trips/:tripId/activity` | `artifacts/api-server/src/routes/trips-expansion.ts:2766` |
 | POST | `/api/trips/:tripId/archive` | `artifacts/api-server/src/routes/trips-expansion.ts:614` |

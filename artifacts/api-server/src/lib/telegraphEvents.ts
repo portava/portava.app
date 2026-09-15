@@ -31,15 +31,74 @@ export type TelegraphEventType =
   | "thread.updated"
   | "message.created"
   | "message.updated"
+  /**
+   * Telegraph §13.2 `message.deleted`. census-telegraph T182: "Not in the event
+   * union, and `routes/groupChat.ts:340-381` publishes nothing at all — a
+   * delete reaches other clients only on their next poll." The row is retained
+   * and redacted (the tombstone §17.2 requires), so this event carries the
+   * message id and NOT the body — there is no body left to carry, and a
+   * consumer that wanted one would be asking for the thing the delete removed.
+   */
+  | "message.deleted"
+  /**
+   * Telegraph §13.2 `message.unsent`. census-telegraph T181: "Absent. PR #472
+   * adds no event either — its diff against `lib/telegraphEvents.ts` is empty."
+   *
+   * Distinct from `message.deleted` and the distinction is the product's claim:
+   * an unsend asserts the message never reached a mind, and §7.4 refuses it
+   * once any eligible recipient has seen it. A client that collapsed the two
+   * into one "gone" state would render a retraction as a tombstone and lose the
+   * only difference that matters to the person who sent it.
+   */
+  | "message.unsent"
   | "message.translated"
+  /**
+   * Telegraph §13.2 `member.joined`. census-telegraph T185: "Not in the union;
+   * only `member.left` exists. A trip-membership sync (`services/groupChatSync.ts`)
+   * is silent to open clients." The payload names WHO joined and by what route
+   * (`source: 'trip_sync' | 'circle_sync' | 'request_accepted'`), because a
+   * client showing "X joined" needs to know it was a membership sync rather
+   * than an invite that does not exist (T212).
+   */
+  | "member.joined"
   | "member.left"
   | "typing.started"
   | "typing.stopped"
   | "read.updated"
+  /**
+   * Telegraph §13.2 `message.seen`. census-telegraph T179: "`read.updated` …
+   * carries a **thread-level** `lastReadAt`, not a per-message seen fact, so no
+   * consumer can answer 'was *this* message seen'."
+   *
+   * It joins `read.updated` rather than replacing it: the two answer different
+   * questions and both have consumers. `read.updated` says where a person's
+   * marker now is — which is what an unread count needs. This one names the
+   * MESSAGE IDS that crossed the marker on this advance, which is what a sender
+   * watching their own message needs, and what §7.4's unseen-unsend window is
+   * closed by.
+   *
+   * The payload carries ids, a reader and a timestamp, and never a body: a
+   * seen event is a fact about delivery, not a copy of the conversation, and it
+   * is fanned out to a whole thread.
+   */
+  | "message.seen"
   | "request.created"
   | "request.accepted"
   | "request.declined"
   | "user.blocked"
+  /**
+   * Telegraph §13.2 `safety.reported`. census-telegraph T194: "Not in the
+   * union; reports write a row and emit nothing."
+   *
+   * DELIVERED TO THE REPORTER ONLY, and that is the whole design. Telling the
+   * reported party that a report exists is the fastest way to get a reporter
+   * hurt, and telling the rest of a group thread turns a safety action into a
+   * public accusation. The reporter gets it because THEY need the confirmation
+   * — a report whose only feedback is a toast that has already gone is a report
+   * people file twice. The payload carries the target TYPE and the report id,
+   * never the target's identity.
+   */
+  | "safety.reported"
   | "call.incoming"
   | "call.accepted"
   | "call.declined"
@@ -388,4 +447,27 @@ export async function publishToThread(
       "publishToThread threw resolving members — realtime event DROPPED for every member of this thread",
     );
   }
+}
+
+/**
+ * Telegraph §13.2 `safety.reported` — published to the REPORTER, and to nobody
+ * else.
+ *
+ * A dedicated emitter rather than a bare `publishToUsers` call at each report
+ * handler, for one reason: the audience is the load-bearing part of this event
+ * and a helper makes it impossible to widen by accident. There is no parameter
+ * here that could carry a thread id or a second recipient, so "who sees a
+ * report" is a decision made once, in this file, rather than at every call
+ * site that files one.
+ *
+ * The payload deliberately omits the target's identity. A reporter's own client
+ * already knows what they reported; putting the reported user's id on a wire
+ * that a realtime transport fans out is how it ends up somewhere it should not.
+ */
+export function emitSafetyReported(
+  reporterUserId: string,
+  payload: { reportId: string | null; targetType: "thread" | "message" | "user"; filedAt: string },
+): void {
+  if (!reporterUserId) return;
+  publishToUsers([reporterUserId], { type: "safety.reported", threadId: null, payload });
 }

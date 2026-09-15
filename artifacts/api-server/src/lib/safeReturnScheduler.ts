@@ -24,7 +24,7 @@ import {
   alertFellShort,
   type AlertOutcome,
 } from "../services/safeReturn/SafeReturnNotificationService";
-import { expireShare } from "../services/safeReturn/SafeReturnLiveShareService";
+import { expireShareSettled } from "../services/safeReturn/SafeReturnLiveShareService";
 
 const logger = rootLogger.child({ job: "SafeReturnScheduler" });
 
@@ -169,9 +169,31 @@ async function processExpiredSessions(): Promise<void> {
 
 // ── Stale live-share expiry ───────────────────────────────────────────────────
 
-async function processExpiredLiveShares(): Promise<void> {
-  const db = getServiceClient();
-  if (!db) return;
+/**
+ * What the sweep actually did. RETURNED rather than only logged, because a test
+ * that asserts on log output asserts on a format; this is the contract. The
+ * production caller ignores it — the value is that it can no longer be absent.
+ */
+export type ExpirySweepSummary = {
+  swept: boolean;
+  reason?: "no_client" | "read_failed" | "threw";
+  ok: number;
+  noMatch: number;
+  unavailable: number;
+};
+
+/**
+ * EXPORTED, AND THE SEAM IS ONE DEFAULTED PARAMETER RATHER THAN A REWRITE.
+ * The production call below still invokes it with no arguments and still gets
+ * `getServiceClient()`; a test passes a fake instead. Nothing about the shape of
+ * what is being tested changes — which is the objection to seams, and the reason
+ * this one is a default rather than a required argument or an injected module.
+ */
+export async function processExpiredLiveShares(
+  client?: ReturnType<typeof getServiceClient>,
+): Promise<ExpirySweepSummary> {
+  const db = client ?? getServiceClient();
+  if (!db) return { swept: false, reason: "no_client", ok: 0, noMatch: 0, unavailable: 0 };
 
   try {
     const now = new Date().toISOString();
@@ -191,21 +213,63 @@ async function processExpiredLiveShares(): Promise<void> {
     // failure, and it now says so.)
     if (error) {
       logger.error({ err: error }, "processExpiredLiveShares: stale-share read FAILED — expired shares were not swept this tick");
-      return;
+      return { swept: false, reason: "read_failed", ok: 0, noMatch: 0, unavailable: 0 };
     }
-    if (!stale || stale.length === 0) return;
+    if (!stale || stale.length === 0) return { swept: true, ok: 0, noMatch: 0, unavailable: 0 };
 
     logger.info({ count: stale.length }, "processExpiredLiveShares: expiring stale shares");
 
-    await Promise.allSettled(
-      (stale as any[]).map((row: any) =>
-        expireShare(db, row.id).catch((err: unknown) =>
-          logger.warn({ err, shareId: row.id }, "processExpiredLiveShares: expireShare threw"),
-        ),
-      ),
+    // ── WHY THIS COUNTS RATHER THAN FIRE-AND-FORGETS ─────────────────────────
+    //
+    // `expireShare` is a LOSSY PROJECTION of `expireShareSettled` and its own
+    // header says so. It collapses "the filter matched no row" (normal: already
+    // closed, or someone else swept it) and "the statement did not complete"
+    // (the share's state is UNKNOWN, and it is a live location share that the
+    // person has already stopped agreeing to) into the same `null`.
+    //
+    // Discarding that `null` made the two indistinguishable HERE too, which is
+    // the shape the Layover lane found one directory over: a sweep that fails
+    // for every share looks exactly like a sweep with nothing to do. Both log
+    // nothing and both return. The tick then reports success.
+    //
+    // So the outcomes are counted and an `unavailable` is reported at ERROR with
+    // the count, separately from `no_match`. It does not retry and it does not
+    // throw: the next tick sweeps again, and a share left open is found again
+    // because its `expires_at` has not moved. What changes is that the failure
+    // is VISIBLE on the tick it happened, instead of being inferred later from
+    // a share that outlived its window.
+    const settled = await Promise.allSettled(
+      (stale as any[]).map((row: any) => expireShareSettled(db, row.id)),
     );
+
+    let ok = 0;
+    let noMatch = 0;
+    const unavailable: Array<{ shareId: string; reason: string }> = [];
+    settled.forEach((r, i) => {
+      const shareId = String((stale as any[])[i]?.id ?? "unknown");
+      if (r.status === "rejected") {
+        unavailable.push({ shareId, reason: String((r.reason as any)?.message ?? r.reason ?? "threw") });
+        return;
+      }
+      if (r.value.outcome === "ok") ok += 1;
+      else if (r.value.outcome === "no_match") noMatch += 1;
+      else unavailable.push({ shareId, reason: r.value.reason });
+    });
+
+    if (unavailable.length > 0) {
+      logger.error(
+        { ok, noMatch, unavailable: unavailable.length, shares: unavailable.slice(0, 10) },
+        "processExpiredLiveShares: some shares could NOT be expired — their state is unknown and a " +
+          "location may still be shared past the window the person agreed to",
+      );
+    } else {
+      logger.info({ ok, noMatch }, "processExpiredLiveShares: swept");
+    }
+
+    return { swept: true, ok, noMatch, unavailable: unavailable.length };
   } catch (err) {
     logger.warn({ err }, "processExpiredLiveShares: threw");
+    return { swept: false, reason: "threw", ok: 0, noMatch: 0, unavailable: 0 };
   }
 }
 

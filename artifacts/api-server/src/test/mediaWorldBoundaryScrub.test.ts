@@ -193,12 +193,18 @@ describe("B. no mediaWorld endpoint answers without the boundary scrub", () => {
 
   it("every registered endpoint sends through sendProjection — checked per route, not in aggregate", () => {
     // §43 lists seven endpoints: world, places/:placeId, experiences/:id,
-    // people, me, timeline, map. Counting sendProjection call sites in
-    // aggregate is NOT enough: the experience route sends from two branches, so
-    // a total of 7 survives one endpoint dropping the boundary. Split the file
-    // at each router.get and require a send inside each segment.
+    // people, me, timeline, map. §38's search endpoint is the eighth. Counting
+    // sendProjection call sites in aggregate is NOT enough: the experience route
+    // sends from two branches, so a total of 8 survives one endpoint dropping the
+    // boundary. Split the file at each router.get and require a send inside each
+    // segment.
+    //
+    // THE COUNT IS PART OF THE GUARD, not bookkeeping: a NEW endpoint added to
+    // this router has to come here and be looked at, which is how the boundary
+    // stays attached to every route instead of to the seven that existed when
+    // this file was written.
     const segments = code.split(/router\s*\.\s*get\s*\(/).slice(1);
-    assert.equal(segments.length, 7, `expected the seven §43 endpoints, found ${segments.length}`);
+    assert.equal(segments.length, 8, `expected the seven §43 endpoints + §38 search, found ${segments.length}`);
 
     const pathOf = (seg: string) => (seg.match(/"([^"]+)"/) ?? [, "?"])[1];
     const missing = segments.filter((s) => !/\bsendProjection\s*\(\s*res\s*,/.test(s)).map(pathOf);

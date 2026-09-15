@@ -37,7 +37,12 @@ import {
   isSharingActive,
   effectivePulseVisibility,
 } from "../services/location/LocationPermissionService.js";
-import { checkNearPrivateStay, isNearPrivateStay } from "../services/location/GeoZoneService.js";
+import {
+  checkNearPrivateStay,
+  isNearPrivateStay,
+  findZonesAt,
+  findZonesByCity,
+} from "../services/location/GeoZoneService.js";
 import { getUserTrustLevel } from "../services/location/LocationSafetyService.js";
 import {
   createSession,
@@ -78,6 +83,7 @@ function makeRowFake(spec: RowFakeSpec): any {
             case "eq":  return String(v) === String(val);
             case "neq": return String(v) !== String(val);
             case "in":  return Array.isArray(val) && val.map(String).includes(String(v));
+            case "ilike": return String(v).toLowerCase() === String(val).toLowerCase();
             case "is":  return val === null ? v == null : v === val;
             case "not.is": return val === null ? v != null : v !== val;
             case "gt":  return v > val;
@@ -122,6 +128,7 @@ function makeRowFake(spec: RowFakeSpec): any {
         eq(c: string, v: any)  { filters.push([c, "eq", v]);  return b; },
         neq(c: string, v: any) { filters.push([c, "neq", v]); return b; },
         in(c: string, v: any)  { filters.push([c, "in", v]);  return b; },
+        ilike(c: string, v: any) { filters.push([c, "ilike", v]); return b; },
         is(c: string, v: any)  { filters.push([c, "is", v]);  return b; },
         not(c: string, op: string, v: any) { filters.push([c, `not.${op}`, v]); return b; },
         gt(c: string, v: any)  { filters.push([c, "gt", v]);  return b; },
@@ -318,6 +325,71 @@ describe("GeoZoneService hotel blur — an unperformed check must not skip the b
 
     assert.equal(result.near, false);
     assert.equal(await isNearPrivateStay(db as any, USER, 16.05, 108.2), false);
+  });
+});
+
+describe("GeoZoneService zone reads — an unreadable geo_zones is not a city without zones", () => {
+  // The two zone readers are a feed/lookup surface, which is exactly where the
+  // defect hides best: "no neighbourhood zone covers this pin" and "no city has
+  // this name" are both perfectly ordinary answers, so `[]` from a failed read
+  // is byte-identical to the truth. Neither has a caller in the repo today, so
+  // the discrimination was added before one exists rather than after one has
+  // silently shipped the wrong answer.
+
+  it("findZonesAt says the read did not run, instead of returning an empty zone list", async () => {
+    const db = makeRowFake({ rows: { geo_zones: [] }, failReads: () => DB_ERROR });
+
+    const r = await findZonesAt(db as any, 16.05, 108.2);
+
+    assert.equal(r.ok, false, "a failed geo_zones read is not 'no zone covers this coordinate'");
+    assert.notDeepEqual(r, { ok: true, zones: [] }, "the two absences must not be the same value");
+    if (r.ok === false) assert.ok(r.reason.length > 0, "the reason travels with the refusal");
+  });
+
+  it("findZonesAt returns a real ok:true, zones [] when the read ran and nothing was in range", async () => {
+    const db = makeRowFake({
+      rows: {
+        geo_zones: [
+          { id: "z1", zone_type: "neighborhood", name: "Far away", city: "Hanoi",
+            center_lat: 21.03, center_lng: 105.85, radius_meters: 500, featured: false },
+        ],
+      },
+    });
+
+    assert.deepEqual(await findZonesAt(db as any, 16.05, 108.2), { ok: true, zones: [] });
+  });
+
+  it("findZonesAt still maps the zones it did find", async () => {
+    const db = makeRowFake({
+      rows: {
+        geo_zones: [
+          { id: "z1", zone_type: "neighborhood", name: "An Thuong", city: "Da Nang",
+            center_lat: 16.05, center_lng: 108.2, radius_meters: 2000, featured: true },
+        ],
+      },
+    });
+
+    const r = await findZonesAt(db as any, 16.05, 108.2);
+    assert.equal(r.ok, true);
+    if (r.ok) {
+      assert.equal(r.zones.length, 1);
+      assert.equal(r.zones[0].name, "An Thuong");
+    }
+  });
+
+  it("findZonesByCity says the read did not run, instead of 'that city has no zones'", async () => {
+    const db = makeRowFake({ rows: { geo_zones: [] }, failReads: () => DB_ERROR });
+
+    const r = await findZonesByCity(db as any, "Da Nang");
+
+    assert.equal(r.ok, false, "an unreadable table must not answer for the city");
+    assert.notDeepEqual(r, { ok: true, zones: [] });
+  });
+
+  it("findZonesByCity returns a real ok:true, zones [] for a city with no zones", async () => {
+    const db = makeRowFake({ rows: { geo_zones: [] } });
+
+    assert.deepEqual(await findZonesByCity(db as any, "Da Nang"), { ok: true, zones: [] });
   });
 });
 

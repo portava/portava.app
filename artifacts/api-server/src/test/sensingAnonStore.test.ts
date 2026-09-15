@@ -426,6 +426,15 @@ const PERMITTED_MENTIONS = new Map<string, string>([
     "the CI-vs-production drift registry classifies sensing_anon_contributions as a known gap. " +
       "That is data ABOUT the table, not a caller of it.",
   ],
+  [
+    join("scripts", "checkCensusFreshness.ts"),
+    "CENSUS_SCOPE names lib/sensingAnonStore.ts as a PATH that ages census-sensing.md — the file is " +
+      "listed so that editing it marks that census stale. A path in a staleness registry is data " +
+      "about the file, not a reader of the store; this script imports nothing and touches no table. " +
+      "It is there for a reason the census itself records: census-sensing's CORRECTION HEADER says " +
+      "the document was already stale when committed because this exact store landed two minutes " +
+      "earlier, so it is the one path whose omission would have hidden the defect.",
+  ],
 ]);
 
 describe("the store is reachable only from the callers the ruling names", () => {

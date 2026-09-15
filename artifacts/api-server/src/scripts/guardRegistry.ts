@@ -513,6 +513,158 @@ export const GUARDS: readonly GuardEntry[] = [
     reach: { kind: "check-all", script: "check:census-freshness" },
   },
   {
+    checker: "src/scripts/checkCensusScopeCoverage.ts",
+    inspects: {
+      countPattern: "(\\d+) census(?:es)? measured for scope coverage",
+      unit: "censuses measured for citation-vs-scope coverage",
+    },
+    responsibility:
+      "A census must WATCH the files it CITES, or its freshness guard protects the wrong half of it.",
+    // check:census-freshness asks whether anything a census counts has changed,
+    // and what it counts is declared by hand in CENSUS_SCOPE. Nothing checked
+    // that declaration against the census. Measured 2026-09-11: census-trips
+    // cited 49 files with 10 in scope, and the scope covered the Trip Kernel
+    // programme -- the thing being BUILT -- so it watched the W rows, which say
+    // something is not right, and left the C rows unguarded. A W row that rots
+    // stays wrong; a C row that rots becomes a false assurance, and
+    // census-freshness reported FRESH throughout, truthfully, about the wrong
+    // half. The inversion is not a Trips quirk: no census watches even three
+    // quarters of what it cites and the median is under a third.
+    reach: { kind: "check-all", script: "check:census-scope-coverage" },
+  },
+  {
+    checker: "src/scripts/checkCensusRowMoveLabels.ts",
+    inspects: {
+      countPattern: "(\\d+) labelled id cell\\(s\\) scanned",
+      unit: "labelled requirement-id cells scanned for a label naming another row's object",
+    },
+    responsibility:
+      "A labelled requirement id must not name another requirement's object; the id is what every count uses.",
+    // census-trips 29.4 restates the rows it moved, labelling each id with the
+    // object it is about. Its last two rows read TR89 `trip_snapshots` and
+    // TR90 `trip_outcomes` while the body assigns TR89 `trip_events`, TR90
+    // `trip_snapshots`, TR91 `trip_outcomes`: from TR89 on the ids ran one
+    // ahead of the objects. TR89 was already W so the move was a no-op; TR90
+    // was accidentally right; and TR91 -- never moved -- kept NOT-BUILT with
+    // the evidence "Does not exist." while CREATE TABLE public.trip_outcomes
+    // sat in a migration on merged main. The error propagated INTO the code:
+    // migration 2768 comments `RECORD_OUTCOME -> trip_outcomes (TR90)`, citing
+    // the census's own off-by-one back at it.
+    //
+    // Deliberately narrow. A label that REFINES -- the table behind a type, a
+    // column of the object, a key inside the function -- is normal, and three
+    // in the corpus do it. Only a label naming ANOTHER row's object in the SAME
+    // id sequence fails; without that scoping the first run accused
+    // census-discovery twice, where F2 closes D2 and says so by reusing the
+    // word.
+    reach: { kind: "check-all", script: "check:census-row-move-labels" },
+  },
+  {
+    checker: "src/scripts/checkTripPolicyCallsites.ts",
+    inspects: {
+      countPattern: "(\\d+) inline host/owner check\\(s\\) remain",
+      unit: "inline owner/host authorization checks remaining in trip route files",
+      zeroIsProved:
+        "census-trips §50 (2026-09-12): the thirty-eight inline copies were each converted to a domain/trips/policies/tripPolicy.ts " +
+        "decision (canEditTrip, canHostTrip, canAccessTripContent, canContributeToTrip, canEditOwnOrAsOwner, " +
+        "canSeePrivateContributions, tripRoleOf, isTripOwner, planEditPermits) and the BASELINE is zero for all " +
+        "three files. Zero is the expected state; the scan still runs its four patterns over every trip route file " +
+        "and a new inline check fails the build. Proved by the check's own caller counts (every policy name has a " +
+        "caller) and by the route suites that grade TR103/TR106/TR107/TR108/TR117–TR121, which pass unmodified.",
+    },
+    responsibility:
+      "Trip routes authorize through the named §6.1 policy functions; inline host checks may only shrink.",
+    // census-trips TR102 measured the §6.1 rule true for plans and false for
+    // everything else: 46 inline owner/co_host checks across the trip route
+    // files, each a copy of a rule that lived nowhere else. domain/trips/policies/tripPolicy.ts
+    // now names all nine functions and tests them as rules against every
+    // actor kind §6.2 lists. This ratchets the copies down (per-file baseline,
+    // may only shrink) and fails when a §6.1 function has no caller outside
+    // the module — the built-but-not-wired case.
+    reach: { kind: "check-all", script: "check:trip-policy-callsites" },
+  },
+  {
+    checker: "src/scripts/checkPlaceIdBridge.ts",
+    inspects: {
+      countPattern: "(\\d+) source file\\(s\\) scanned",
+      unit: "source files scanned for an unsanctioned place id-space crossing",
+    },
+    responsibility:
+      "The place id-space crossing stays single: only lib/placeIdBridge.ts may cross it.",
+    // census-trips TR32/TR94 claimed this was "enforced by a standing ratchet
+    // rather than convention" and named check:schema-references as the ratchet.
+    // Measured 2026-09-11: that check verifies select-list columns exist and says
+    // nothing about id spaces, and NO file under src/scripts/ or scripts/
+    // mentioned placeIdBridge. The crossing was in fact single -- verified by
+    // reading every caller -- so the verdict was true and its reason was false.
+    // This makes the reason true. The defect it guards is silent: the Discovery
+    // serve path emits db/<discovery_places.id>, db/<places.id> and node/<osm_id>
+    // while place memory is keyed on discovery_places.id, so crossing with a raw
+    // served id matches nothing and reports EVERY place as new to the user.
+    reach: { kind: "check-all", script: "check:place-id-bridge" },
+  },
+  {
+    checker: "src/scripts/checkTripWriteValidation.ts",
+    inspects: {
+      countPattern: "(\\d+) trip write endpoint\\(s\\) scanned",
+      unit: "trip write endpoints scanned for body-schema validation",
+    },
+    responsibility:
+      "A trip write that reads req.body parses a schema; the known-unvalidated list only shrinks.",
+    // census-trips TR51 was recorded C on the sentence "every trip write parses
+    // a zod schema first". Measured 2026-09-11: 53 write endpoints across the
+    // three files it cites, 8 reading req.body with no schema, POST /trips among
+    // them. TR51 moved C -> W. POST /trips is closed and its entry deleted; seven
+    // remain. What the absence costs is TYPE validation, not authorization —
+    // requireUser and check:route-auth-gate cover that independently — so a
+    // malformed payload became a 500 from the database where a 400 belongs.
+    reach: { kind: "check-all", script: "check:trip-write-validation" },
+  },
+  {
+    checker: "src/scripts/checkTripDecisionDiff.ts",
+    inspects: {
+      countPattern: "trip decision diff: (\\d+)(?: of \\d+)? scenario\\(s\\)",
+      unit: "synthetic Trip scenarios diffed against golden.json",
+    },
+    responsibility:
+      "A planner or coordination engine that decides a corpus scenario differently from golden.json is red until the golden is regenerated with a note (Trips spec §24; census-trips TR409, TR410).",
+    // The corpus is src/domain/trips/replay/corpus.ts; the record is canonical
+    // (sorted keys, rounded scores, no free text); the report classifies
+    // changed decisions, conservatism up/down, new conflicts and large diffs.
+    reach: { kind: "check-all", script: "check:trip-decision-diff" },
+  },
+  {
+    checker: "src/scripts/tripWritePathInventory.ts",
+    inspects: {
+      countPattern: "(\\d+)",
+      unit: "lines of the generated inventory block compared (exit 0 when the document's block is the tree's)",
+      zeroIsProved: "The check prints no count on a pass — it prints PASSED when the document's generated block equals a fresh render, and lists the added/removed lines when it does not. Zero drift is the pass; the test src/test/tripWritePathInventory.test.ts asserts the same equality in-process and that a synthetic drift is reported line by line.",
+    },
+    responsibility:
+      "docs/architecture/trips-phase0-inventory.md's generated block (tables, kernel commands, issuers, direct write paths, /trips routes, modules) equals the tree's; an undocumented write path is red (Trips spec §24 Phase 0; census-trips TR434).",
+    reach: { kind: "check-all", script: "check:trip-write-path-inventory" },
+  },
+  {
+    checker: "src/scripts/checkTripPushPolicy.ts",
+    inspects: {
+      countPattern: "(\\d+) trip push site\\(s\\) bypass NotificationRouter",
+      unit: "trip push sites bypassing the attention policy",
+      zeroIsProved:
+        "Since census-trips §42 (2026-09-12) every trip push site calls sendTripPush (domain/trips/policies/tripPush.ts), which applies §11.4's attention policy per recipient; the ten former bypasses are gone. Zero is proved, not assumed: the checker also counts the direct sendPushWithRetry calls in domain/trips/policies/tripPush.ts and fails unless there is exactly ONE — the router's own dispatch — so a renamed call (zero) or a second dispatch path inside the router (two) is red, and a scan that matched nothing cannot pass as a tree with nothing to match.",
+    },
+    responsibility:
+      "A trip push that skips NotificationRouter is counted, and the list only shrinks.",
+    // census-trips TR200 read C because NotificationRouter consults preferences,
+    // dedup and the Compass evaluator before dispatching. It does. Measured
+    // 2026-09-11: ten trip push sites never reach it, calling sendPushWithRetry
+    // directly -- a transport wrapper that filters tokens and retries transient
+    // Expo failures and consults no policy at all. One site documents the bypass
+    // in a comment, to avoid double-delivery. The cost is concrete: per-user
+    // channel preferences, per-category preferences and quiet hours are all
+    // skipped, so a user inside their quiet hours still receives them.
+    reach: { kind: "check-all", script: "check:trip-push-policy" },
+  },
+  {
     checker: "src/scripts/checkCensusPolicyCitations.ts",
     inspects: {
       countPattern: "(\\d+) census policy citation\\(s\\) checked",
@@ -545,6 +697,24 @@ export const GUARDS: readonly GuardEntry[] = [
     // saying their headline had drifted from their own body, which is the
     // failure this makes harder rather than one it can claim to have closed.
     reach: { kind: "check-all", script: "check:census-integrity" },
+  },
+  {
+    checker: "src/scripts/checkMemoryCertification.ts",
+    inspects: {
+      countPattern: "fixtures (\\d+) certified",
+      unit: "§25 canonical certification fixtures certified against spec-derived expectations",
+    },
+    responsibility:
+      "The Highlights/Memories spec §25 certification suite — twelve canonical fixtures, nine hard " +
+      "invariant tests and nine property/chaos scenarios — runs against the real memory engines and " +
+      "reports, per requirement, whether the property HELD, was VIOLATED, or has NO SURFACE in this " +
+      "repository to be true of.",
+    // NO_SURFACE and PARTIAL are findings, not failures. Failing on them would
+    // make deleting the scenario the cheapest way to a green build, and the
+    // number of them is the honest measure of how much of §25 is real. What
+    // fails is a fixture diverging from its spec-derived expectation, an
+    // invariant being violated, or a scenario breaking.
+    reach: { kind: "check-all", script: "check:memory-certification" },
   },
   {
     checker: "src/scripts/checkSecurityDefinerOracles.ts",
@@ -651,6 +821,142 @@ export const GUARDS: readonly GuardEntry[] = [
       kind: "test-control",
       test: "src/test/uncheckedSupabaseReads.test.ts",
       seams: ["UNCHECKED_READS_SRC_ROOT", "UNCHECKED_READS_ALLOWLIST"],
+    },
+  },
+  {
+    checker: "src/scripts/checkTelegraphCertification.ts",
+    responsibility:
+      "Telegraph's §26/§27 certification plan stays complete, cited, executed, and " +
+      "monotone — the set of certification entries this tree does NOT satisfy can only shrink.",
+    // A certification plan that lives only in a spec cannot go red, which is the
+    // same defect this registry exists for, one level out. The ten §26 matrix
+    // cases, seven §27.1 properties, twelve §27.2 fixtures and six §27.3
+    // contracts are declared as data under src/domain/telegraph/invariants/ and
+    // driven by three suites; this verifies that every entry is named by its
+    // suite, that every cited artifact exists, that every named lane is a real
+    // package script, and that the unenforced count never grows. It deliberately
+    // does NOT judge whether a status is correct — that is what the suites do.
+    reach: { kind: "check-all", script: "check:telegraph-certification" },
+    inspects: {
+      countPattern: "(\\d+) certification entries inspected across",
+      unit: "certification entries inspected",
+    },
+  },
+  {
+    checker: "src/scripts/checkTelegraphShareProducers.ts",
+    responsibility:
+      "Every Telegraph message type literal is classified, and a private-by-default " +
+      "domain cannot be declared out of the share authorization policy.",
+    // Telegraph has no share contract: four producers hand-roll their own payload
+    // and nothing asks whether the object behind the card may be shared at all.
+    // The census scored that area as an UNGUARDED ABSENCE — a guarantee that
+    // lasts until the fifth producer. This makes the classification unavoidable,
+    // and its second rule is the one with teeth: a producer whose sourceDomain is
+    // private-by-default may only be PRIVATE_SOURCE, which requires a derivative
+    // grant. It also declares the dynamic sites a literal scan cannot see, the
+    // same admission checkWriterlessReads makes about dynamic .from(expr).
+    reach: { kind: "check-all", script: "check:telegraph-share-producers" },
+    inspects: {
+      countPattern: "(\\d+) file\\(s\\) scanned across",
+      unit: "source files scanned for message type literals",
+    },
+  },
+  {
+    checker: "src/scripts/checkTelegraphSlos.ts",
+    responsibility:
+      "Telegraph's §28 metrics and §30A.17 SLOs have targets, real emitters and a " +
+      "safety-strictest ordering, and §24's client-side joins of raw messaging tables only shrink.",
+    // The census measured the starting point: "No metric is emitted for messaging
+    // and no target constant exists… Telegraph has no telemetry sink at all." And
+    // one level worse than absent — the realtime bus ALREADY counted everything it
+    // swallowed and nothing read those counters but a test, so a realtime outage
+    // was a number nobody could reach. This checks that every declared metric has
+    // something recording it, that no emitter records a key no SLO declares (the
+    // recorder ignores unknown keys at runtime by design, so this is the only
+    // place a typo can be caught), and that §30A.17's closing sentence holds as an
+    // ORDERING between rows rather than as a label anyone can write.
+    reach: { kind: "check-all", script: "check:telegraph-slos" },
+    inspects: {
+      countPattern: "(\\d+) SLOs inspected across",
+      unit: "SLO declarations inspected",
+    },
+  },
+  {
+    checker: "src/scripts/generateTelegraphInventory.ts",
+    responsibility:
+      "Telegraph's §25.1 Phase 0 inventory exists as a committed artifact and cannot go " +
+      "stale — the report is regenerated from the tree and diffed against what is committed.",
+    // Named generate*, not check*, because writing the report is its primary
+    // job and --check is the gate over it. The census's observation was exact:
+    // "the CAPABILITY to do it exists as standing CI lanes (T297); the
+    // deliverable does not." A hand-written inventory would have been the
+    // deliverable for one day; this is the deliverable and the thing that keeps
+    // it true. It emits no file:line citations on purpose — a generated line
+    // number is invalidated by any edit above it in a file this report does not
+    // own, and check:doc-citations would then go red for a reason nobody caused.
+    reach: { kind: "check-all", script: "check:telegraph-inventory" },
+    inspects: {
+      countPattern: "(\\d+) inventory lines re-derived",
+      unit: "inventory lines re-derived and compared",
+    },
+  },
+  {
+    checker: "src/scripts/checkTelegraphPackageBoundaries.ts",
+    responsibility:
+      "Telegraph's §23 domain package is populated, reached from outside itself, and " +
+      "contains no other domain's business logic.",
+    // The defect it prevents is the one that makes an architecture document
+    // worthless: the folders exist, three of eight have a file in them, nothing
+    // outside imports any of it, and a reader concludes the boundary is real
+    // because the directories are there. Rule 3 is §23's own sentence
+    // mechanised — Telegraph may CALL an integration and may not CONTAIN one —
+    // with three named delegations allowed, each carrying the reason it is
+    // allowed (re-implementing the §14.3 window predicate would fork an
+    // authorization rule, which is worse than importing it).
+    reach: { kind: "check-all", script: "check:telegraph-package-boundaries" },
+    inspects: {
+      countPattern: "(\\d+) domain modules inspected across",
+      unit: "Telegraph domain modules inspected",
+    },
+  },
+
+  // APPENDED AT THE END ON PURPOSE, not filed with the other workflow-reached
+  // guards above. Two censuses cite this file by line — census-trips:5174 and
+  // census-highlights-memories:915 — and inserting into the middle displaced
+  // both, which check:doc-citations caught. Appending shifts nothing. A new
+  // entry belongs here unless its position carries meaning.
+  {
+    checker: "scripts/check-citation-targets.mjs",
+    responsibility:
+      "An UNANCHORED single-line citation lands on real code, not on a blank line or a bare bracket — the one stale-pointer case answerable without reading the claim.",
+    reach: { kind: "workflow", script: "check:citation-targets" },
+    // MEASURED: "check:citation-targets — 2882 single-line unanchored citation(s)
+    // judged, 295 land on nothing". The JUDGED count is the inspection proof: a
+    // green that judged nothing would be a green over an empty corpus, which is
+    // the failure this registry exists to make visible.
+    inspects: {
+      countPattern: "(\\d+) single-line unanchored citation\\(s\\) judged",
+      unit: "single-line unanchored citation(s) judged against the file they name",
+    },
+  },
+
+  // APPENDED, for the reason stated above the entry before it: two censuses
+  // cite this file by line, so a new entry goes at the end unless its position
+  // carries meaning.
+  {
+    checker: "scripts/check-citation-symbols.mjs",
+    responsibility:
+      "An UNANCHORED citation that NAMES a symbol points at a file containing that symbol — the second stale-pointer case answerable without reading the claim, where check:citation-targets closes the first.",
+    reach: { kind: "workflow", script: "check:citation-symbols" },
+    // MEASURED: "check:citation-symbols — 159 symbol-naming citation(s) judged".
+    // The JUDGED count is the inspection proof, and this checker needs one more
+    // than most: its adjacency rule is a grammar, and a grammar that stops
+    // matching reports a clean corpus rather than an error. Getting the closing
+    // backtick wrong silently cut the judged set from 178 to 60 during
+    // development, and nothing but this number showed it.
+    inspects: {
+      countPattern: "(\\d+) symbol-naming citation\\(s\\) judged",
+      unit: "symbol-naming citation(s) judged against the file they name",
     },
   },
 ];

@@ -282,3 +282,85 @@ export function buildCompressionHierarchy(
     engine_version: COMPRESSION_ENGINE_VERSION,
   };
 }
+
+/* ============================================================================
+ * §13 themes, derived from structure — census H105.
+ *
+ * `buildLifeChapters` takes themes; nothing in this repository produced any, so
+ * the LIFE_CHAPTER level was always empty and the function was, in effect,
+ * unreachable even from its own siblings. These are the themes §13 names in one
+ * phrase — "Life Chapters and cross-trip themes" — and the emphasis is on
+ * CROSS-TRIP: a place you visited three times on one trip is that trip, not a
+ * chapter of a life. So a theme requires the same structural key to recur in at
+ * least `minDistinctTrips` DIFFERENT trips.
+ *
+ * Derived from ids only. A theme's `label` is composed here from the key, never
+ * from a title or a caption, so a chapter cannot become a second home for a
+ * Memory's words (§28.8) — which is the exact property H105 states.
+ *
+ * A moment with no trip_id counts as its own distinct "trip" bucket keyed by
+ * the moment id: two untripped visits to the same place a year apart ARE a
+ * recurrence, and folding them into one bucket would hide it.
+ * ============================================================================ */
+
+export interface ThemeDerivationOptions {
+  /** How many distinct trips a key must appear in before it is a chapter. */
+  readonly minDistinctTrips?: number;
+  /** Total moments a chapter must have. */
+  readonly minMembers?: number;
+}
+
+const DEFAULT_MIN_DISTINCT_TRIPS = 2;
+const DEFAULT_MIN_CHAPTER_MEMBERS = 2;
+
+function tripBucketOf(m: GraphMoment): string {
+  return m.trip_id ?? `~untripped:${m.memory_id}`;
+}
+
+export function deriveChapterThemes(
+  moments: readonly GraphMoment[],
+  opts: ThemeDerivationOptions = {},
+): ChapterTheme[] {
+  const minTrips = opts.minDistinctTrips ?? DEFAULT_MIN_DISTINCT_TRIPS;
+  const minMembers = opts.minMembers ?? DEFAULT_MIN_CHAPTER_MEMBERS;
+  if (moments.length === 0) return [];
+
+  const placeTrips = new Map<string, Set<string>>();
+  const personTrips = new Map<string, Set<string>>();
+  for (const m of moments) {
+    const bucket = tripBucketOf(m);
+    if (m.place_id) {
+      const s = placeTrips.get(m.place_id) ?? new Set<string>();
+      s.add(bucket);
+      placeTrips.set(m.place_id, s);
+    }
+    for (const p of m.people ?? []) {
+      const s = personTrips.get(p) ?? new Set<string>();
+      s.add(bucket);
+      personTrips.set(p, s);
+    }
+  }
+
+  const themes: ChapterTheme[] = [];
+  for (const [placeId, trips] of placeTrips) {
+    if (trips.size < minTrips) continue;
+    themes.push({
+      key: `place:${placeId}`,
+      label: `Returning to ${placeId}`,
+      min_members: minMembers,
+      matches: (m) => m.place_id === placeId,
+    });
+  }
+  for (const [personId, trips] of personTrips) {
+    if (trips.size < minTrips) continue;
+    themes.push({
+      key: `person:${personId}`,
+      label: `Travelling with ${personId}`,
+      min_members: minMembers,
+      matches: (m) => (m.people ?? []).includes(personId),
+    });
+  }
+  // Sorted so two runs over the same moments emit the same chapters in the same
+  // order; `buildLifeChapters` sorts again, and both are deliberate.
+  return themes.sort((a, b) => a.key.localeCompare(b.key));
+}

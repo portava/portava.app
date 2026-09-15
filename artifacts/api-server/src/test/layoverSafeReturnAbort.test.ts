@@ -474,7 +474,13 @@ describe("§15.2 recompute, do NOT append delay minutes", () => {
   });
 
   it("a disruption can change the escalation state, and the record says so", () => {
-    const tight = { ...engineSession, departureTime: new Date(NOW + 150 * 60_000).toISOString() };
+    // The fixture must put `before` INSIDE the RETURN_SOON lead (0 < deadline
+    // <= 30 min from now) and the case is about the TRANSITION, not the offset.
+    // 150 minutes did that until the buffer gained the §8.1 L72 return-transport
+    // term: 14:00 Taipei + 150 min is 16:30, the weekday PEAK band, so the
+    // certified buffer grew by 12 and the deadline crossed into RETURN_NOW. The
+    // offset moves with it so the case still exercises what it was written for.
+    const tight = { ...engineSession, departureTime: new Date(NOW + 165 * 60_000).toISOString() };
     const r = recomputeForDisruption(engineAirport, tight, {
       state: "DELAYED",
       newDepartureTime: new Date(NOW + 8 * 3_600_000).toISOString(),

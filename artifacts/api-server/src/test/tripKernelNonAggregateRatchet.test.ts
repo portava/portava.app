@@ -262,7 +262,7 @@ describe("nonAggregate is ratcheted per file", () => {
 
 describe("the five declared sites in the real tree", () => {
   const expected: Array<[string, number]> = [
-    ["lib/tripReminderScheduler.ts", 3],
+    ["server/trips/projectionWorkers/tripReminderScheduler.ts", 3],
     ["routes/admin.ts", 1],
     ["services/contentTranslation.ts", 1],
   ];

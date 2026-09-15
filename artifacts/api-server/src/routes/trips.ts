@@ -8,17 +8,23 @@ import {
   sendKernelRejection,
   setTripVersionHeader,
   planCommandTypeForPatch,
-} from "../lib/tripKernel.js";
-import { computeTripStatus } from "../lib/tripStatus.js";
+  planStatusTransitionRefused,
+  IDEMPOTENCY_KEY_HEADER,
+} from "../domain/trips/commands/tripKernel.js";
+import { computeTripStatus } from "../domain/trips/invariants/tripStatus.js";
 import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getServiceClient, isServiceClientReady } from "../lib/supabase";
 import { detectAndStoreLanguage, invalidateContentTranslations } from "../services/contentTranslation.js";
 import { requireUser, isAcceptedTripMember, requireTripMember, sendError, canEditPlanItem, canEditPlan, type PlanEditPermission } from "../lib/http.js";
+import { canEditTrip, canInviteParticipant, isTripOwner, planEditPermits } from "../domain/trips/policies/tripPolicy.js";
+import { sendTripRefusal } from "../domain/trips/contracts/tripReasonCodes.js";
 import { toCamel } from "./plan.js";
+import { logTripActivity, findTripActivityByKey } from "../domain/trips/events/tripActivityLog.js";
 import { syncTripChatMembers } from "../lib/chatSync.js";
 import { getRestrictionState } from "../services/trust/TrustRestrictionService.js";
-import { sendPushWithRetry } from "../lib/pushWithRetry.js";
+import { sendTripPush } from "../domain/trips/policies/tripPush.js";
+import { recordOpportunityCompletion } from "../domain/trips/services/tripOpportunityMetrics.js";
 import { awardStamp, type StampLogger } from "../services/passport/StampAwardEngine.js";
 import { buildConsumerProjection } from "../services/passport/PassportConsumerProjections.js";
 import { nameVisibilitySet, sanitizeIdentity, nameVisibleFor } from "../lib/publicIdentity";
@@ -28,7 +34,7 @@ import { readBlockExclusions, isExcluded, sendExclusionsUnavailable } from "../l
 const router = Router();
 
 /**
- * Trip Kernel gate (Trips spec §4; lib/tripKernel.ts; migration 2420).
+ * Trip Kernel gate (Trips spec §4; domain/trips/commands/tripKernel.ts; migration 2420).
  * Returns the service client when `trip_kernel_enabled` is TRUE, else null.
  * Null means: run the pre-kernel direct write exactly as before. The flag read
  * is fail-closed, so an unreadable feature_flags table is "off", never "on".
@@ -293,7 +299,12 @@ router.post("/trips", async (req, res) => {
     return;
   }
 
-  const { title, destinationCity, destinationCountry, startDate, endDate, visibility, coverUrl, coverMediaType, coverImageWidth, coverImageHeight, tripNotes, showHeaderPublicly } = req.body;
+  const parsedBody = CreateTripSchema.safeParse(req.body);
+  if (!parsedBody.success) {
+    sendError(res, "invalid_payload", parsedBody.error.issues[0]?.message ?? "Invalid trip payload");
+    return;
+  }
+  const { title, destinationCity, destinationCountry, startDate, endDate, visibility, coverUrl, coverMediaType, coverImageWidth, coverImageHeight, tripNotes, showHeaderPublicly } = parsedBody.data;
 
   // Date conflict check — applies even when title/city are absent (draft support)
   if (startDate && endDate && new Date(startDate) > new Date(endDate)) {
@@ -334,9 +345,10 @@ router.post("/trips", async (req, res) => {
         cover_image_width: (coverImageWidth as number | null | undefined) ?? null,
         cover_image_height: (coverImageHeight as number | null | undefined) ?? null,
         trip_notes: tripNotes ?? null,
-        show_header_publicly: typeof showHeaderPublicly === "boolean"
-          ? showHeaderPublicly
-          : (visibility ?? "private") === "public",
+        // Typed by CreateTripSchema now, so absence is the only fallback case;
+        // the old `typeof === "boolean"` test silently turned the STRING "false"
+        // into the derived default instead of refusing it.
+        show_header_publicly: showHeaderPublicly ?? ((visibility ?? "private") === "public"),
       },
     });
     if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
@@ -384,7 +396,10 @@ router.post("/trips", async (req, res) => {
   if (newTripIdForLang && (title ?? '').trim()) {
     const _sc = getServiceClient();
     if (_sc) {
-      const textToDetect = tripNotes ? `${title} ${tripNotes}` : title;
+      // `title` is `string | undefined` now that CreateTripSchema types it —
+      // the guard above already proved it is a non-empty string, but the
+      // compiler cannot see through `(title ?? '').trim()`, so narrow it here.
+      const textToDetect = tripNotes ? `${title} ${tripNotes}` : (title ?? "");
       detectAndStoreLanguage(_sc, 'trip', newTripIdForLang, textToDetect, req.log).catch(() => {});
     }
   }
@@ -760,6 +775,37 @@ const UUID_RE = /^[0-9a-f-]{36}$/i;
 
 const TripStatusEnum = ["draft", "upcoming", "active", "planning", "completed", "cancelled", "archived"] as const;
 
+/**
+ * POST /trips body. census-trips TR51's testable claim is that "every trip write
+ * parses a zod schema first"; measured 2026-09-11 that was false for eight
+ * endpoints, this one among them — twelve fields came straight off `req.body`
+ * and the only validation was startDate <= endDate. TR51 moved C -> W on that
+ * measurement and this closes the flagship create.
+ *
+ * DELIBERATELY NOT STRICTER THAN PatchTripSchema. Every field below mirrors the
+ * one this router has enforced on PATCH /trips/:tripId all along, so a client
+ * able to patch a field can create with it and this cannot reject a payload the
+ * API already accepted elsewhere. Unknown keys are STRIPPED rather than
+ * rejected — zod's default, and exactly what the destructuring it replaces did.
+ *
+ * Every field is optional: a trip with no title or city is a DRAFT, which
+ * computeTripStatus below depends on and which the client relies on.
+ */
+const CreateTripSchema = z.object({
+  title:              z.string().min(1).max(200).optional(),
+  destinationCity:    z.string().max(100).optional(),
+  destinationCountry: z.string().max(100).nullable().optional(),
+  startDate:          z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  endDate:            z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  visibility:         z.enum(["public", "private", "buddies", "invite"]).optional(),
+  coverUrl:           z.string().url().nullable().optional(),
+  coverMediaType:     z.enum(["image", "video"]).nullable().optional(),
+  coverImageWidth:    z.number().int().positive().nullable().optional(),
+  coverImageHeight:   z.number().int().positive().nullable().optional(),
+  tripNotes:          z.string().nullable().optional(),
+  showHeaderPublicly: z.boolean().optional(),
+});
+
 const PatchTripSchema = z.object({
   // Plan edit settings
   planEditPermission: z.enum(PlanEditPermissionEnum).optional(),
@@ -827,7 +873,10 @@ router.patch("/trips/:tripId", async (req, res) => {
   }
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
   const t = trip as any;
-  if (t.owner_id !== user.id) { sendError(res, "forbidden", "Only the trip owner can update this trip"); return; }
+  // §6.1 canEditTrip. The row is already in hand, so it is passed rather than
+  // re-read; the RULE (owner only) is the policy module's, tested as a rule.
+  const edit = await canEditTrip(sc, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: t.owner_id } });
+  if (!edit.allowed) { sendTripRefusal(res, "forbidden", edit.reason, edit.message); return; }
 
   // Date conflict check across current + incoming values
   const newStart = b.startDate !== undefined ? b.startDate : (t.start_date ?? null);
@@ -966,7 +1015,7 @@ router.patch("/trips/:tripId", async (req, res) => {
           );
           // Route through NotificationService so the privacy guard + dedup run.
           // notifRouter.route() is intentionally NOT called here; push is sent
-          // below via sendPushWithRetry to avoid double-delivery.
+          // below via sendTripPush to avoid double-delivery.
           const { NotificationService } = await import("../services/notifications/NotificationService.js");
           const notifSvc = new NotificationService(sc);
           await Promise.allSettled(
@@ -995,7 +1044,7 @@ router.patch("/trips/:tripId", async (req, res) => {
           }
           const recipients = [...tokensByUser.entries()].map(([userId, tokens]) => ({ userId, tokens }));
           if (recipients.length > 0) {
-            await sendPushWithRetry(sc, recipients, {
+            await sendTripPush(sc, recipients, {
               title: "How was the trip?",
               body: `Leave a review for "${tripTitle}" — your feedback helps the community.`,
               data: { type: "review_prompt", entityType: "trip", entityId: tripId, entityName: tripTitle },
@@ -1099,6 +1148,12 @@ router.get("/trips/:tripId/plan-permission", async (req, res) => {
  * Reuses the existing trip_members table with role='invited'.
  * Friendship alone NEVER creates this row — only explicit owner invitation.
  */
+// TR51 (§4.1 "command service validates schema"): the two membership writes
+// parse a schema first, like the other 46. The messages are the ones the
+// hand-rolled checks used to send, so no client sees a new sentence.
+const InviteMemberSchema = z.object({ userId: z.string().uuid() });
+const AddMemberSchema = z.object({ userId: z.string().uuid(), role: z.enum(["member", "invited"]).default("member") });
+
 router.post("/trips/:tripId/invite", async (req, res) => {
   if (!isServiceClientReady) {
     res.status(503).json({ error: "server_not_configured" });
@@ -1115,8 +1170,9 @@ router.post("/trips/:tripId/invite", async (req, res) => {
   const { tripId } = req.params;
   if (!/^[0-9a-f-]{36}$/i.test(tripId)) { res.status(400).json({ error: "invalid_payload", message: "Invalid trip id" }); return; }
 
-  const userId = req.body?.userId;
-  if (!userId || !/^[0-9a-f-]{36}$/i.test(userId)) { res.status(400).json({ error: "invalid_payload", message: "userId must be a valid UUID" }); return; }
+  const parsedInvite = InviteMemberSchema.safeParse(req.body ?? {});
+  if (!parsedInvite.success) { res.status(400).json({ error: "invalid_payload", message: "userId must be a valid UUID" }); return; }
+  const userId = parsedInvite.data.userId;
   if (userId === user.id) { res.status(400).json({ error: "invalid_payload", message: "You cannot invite yourself" }); return; }
 
   // Only the trip owner may invite
@@ -1130,7 +1186,10 @@ router.post("/trips/:tripId/invite", async (req, res) => {
     return;
   }
   if (!trip) { res.status(404).json({ error: "not_found", message: "Trip not found" }); return; }
-  if ((trip as any).owner_id !== user.id) { res.status(403).json({ error: "forbidden", message: "Only the trip owner can invite members" }); return; }
+  // §6.1 canInviteParticipant — owner only, as the kernel's INVITE_PARTICIPANT
+  // capability is. Passed the row already read.
+  const invite = await canInviteParticipant(client, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
+  if (!invite.allowed) { sendTripRefusal(res, "forbidden", invite.reason, "Only the trip owner can invite members"); return; }
 
   // Blocked-user guard: cannot invite a user with an active block in either
   // direction. Fail-closed shared helper — the previous .maybeSingle() raised on
@@ -1196,7 +1255,7 @@ router.post("/trips/:tripId/invite", async (req, res) => {
       const inviterName = truncateDisplayName(inviterNameAllowed
         ? ((inviterRow as any)?.display_name ?? ((inviterRow as any)?.handle ? `@${(inviterRow as any).handle}` : "Someone"))
         : ((inviterRow as any)?.handle ? `@${(inviterRow as any).handle}` : "Someone"));
-      await sendPushWithRetry(sc2, { userId, tokens: [(inviteeRow as any)?.expo_push_token] }, {
+      await sendTripPush(sc2, { userId, tokens: [(inviteeRow as any)?.expo_push_token] }, {
         title: "Trip invitation",
         // Privacy: do not include the trip name or destination in the push body —
         // the invitee has not accepted yet and the content may be private.
@@ -1206,7 +1265,7 @@ router.post("/trips/:tripId/invite", async (req, res) => {
       });
       // In-app notification: store with generic text — no trip name in params.
       // notifRouter.route() is intentionally NOT called here; push was already
-      // sent above via sendPushWithRetry to avoid double-delivery.
+      // sent above via sendTripPush to avoid double-delivery.
       const { NotificationService } = await import("../services/notifications/NotificationService.js");
       const notifSvc = new NotificationService(sc2);
       await notifSvc.create({
@@ -1318,7 +1377,7 @@ router.post("/trips/:tripId/accept-invite", async (req, res) => {
       const sc2 = getServiceClient();
       if (!sc2) return;
       const { data: tripRow } = await sc2.from("trips").select("title, owner_id").eq("id", tripId).maybeSingle();
-      if (!tripRow || (tripRow as any).owner_id === user.id) return; // skip if caller IS owner
+      if (!tripRow || isTripOwner(tripRow as { owner_id: string }, { userId: user.id })) return; // skip if caller IS owner
       const [{ data: ownerRow }, { data: acceptorRow }] = await Promise.all([
         sc2.from("profiles").select("expo_push_token").eq("id", (tripRow as any).owner_id).maybeSingle(),
         sc2.from("profiles").select("display_name, handle").eq("id", user.id).maybeSingle(),
@@ -1327,7 +1386,7 @@ router.post("/trips/:tripId/accept-invite", async (req, res) => {
       const acceptorName = truncateDisplayName(acceptorNameAllowed
         ? ((acceptorRow as any)?.display_name ?? ((acceptorRow as any)?.handle ? `@${(acceptorRow as any).handle}` : "Someone"))
         : ((acceptorRow as any)?.handle ? `@${(acceptorRow as any).handle}` : "Someone"));
-      await sendPushWithRetry(sc2, { userId: (tripRow as any).owner_id as string, tokens: [(ownerRow as any)?.expo_push_token] }, {
+      await sendTripPush(sc2, { userId: (tripRow as any).owner_id as string, tokens: [(ownerRow as any)?.expo_push_token] }, {
         title: (tripRow as any).title ?? "Your trip",
         body: `${acceptorName} joined your trip!`,
         data: { type: "trip_invite_accepted", tripId },
@@ -1401,7 +1460,7 @@ router.post("/trips/:tripId/decline-invite", async (req, res) => {
       const declinerName = truncateDisplayName(declinerNameAllowed
         ? ((declinerRow as any)?.display_name ?? ((declinerRow as any)?.handle ? `@${(declinerRow as any).handle}` : "Someone"))
         : ((declinerRow as any)?.handle ? `@${(declinerRow as any).handle}` : "Someone"));
-      await sendPushWithRetry(sc2, { userId: ownerId, tokens: [(ownerRow as any)?.expo_push_token] }, {
+      await sendTripPush(sc2, { userId: ownerId, tokens: [(ownerRow as any)?.expo_push_token] }, {
         title: "Invite declined",
         body:  `${declinerName} declined your invitation to ${(tripRow as any)?.title ?? "your trip"}`,
         data:  { type: "trip_invite_declined", tripId },
@@ -1468,13 +1527,8 @@ router.get("/me/plan-editable-trips", async (req, res) => {
     }
   }
 
-  const editable = (trips as any[]).filter((trip) => {
-    if (trip.owner_id === user.id) return true;
-    const perm: string = trip.plan_edit_permission ?? "all_members";
-    if (perm === "all_members") return true;
-    if (perm === "owner_only")  return false;
-    return (editorMap[trip.id] ?? []).includes(user.id);
-  });
+  // §6.2's plan-edit rule, decided by the policy module (TR102), not spelled here.
+  const editable = (trips as any[]).filter((trip) => planEditPermits(trip, user.id, editorMap[trip.id] ?? []));
 
   res.json({
     trips: editable.map((t: any) => ({
@@ -1543,7 +1597,7 @@ const ReorderBatchSchema = z.object({
 
 // ── Conflict detection helper ─────────────────────────────────────────────────
 
-function computeWarnings(
+export function computeWarnings(
   items: any[],
   tripStartDate: string | null | undefined,
   tripEndDate: string | null | undefined,
@@ -1911,9 +1965,39 @@ router.patch("/trips/:tripId/plan/items/:itemId", async (req, res) => {
       payload: { item_id: itemId, patch: columnPatch, updated_at: updatedAt },
     });
     if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    // §21.1 opportunity_completed_total — a §13 opportunity's plan, done.
+    recordOpportunityCompletion(planCommandTypeForPatch(patch), r.result, tripId, r.duplicate);
     setTripVersionHeader(res, r.version);
     res.json(toCamel(r.result));
     return;
+  }
+
+  // §3.3 holds in the flag-off twin too (census-trips TR47, TR48): an arrow
+  // out of a terminal state is refused with the kernel path's own reason and
+  // shape; a request carrying an Idempotency-Key the audit already holds for
+  // this item is answered with the row as it stands, nothing written twice;
+  // and the write it does make is audited as `plan_item_updated`. What the
+  // twin cannot give is the kernel's receipt and event — that is what the
+  // flag is for.
+  const refused = planStatusTransitionRefused(auth.status, patch.status);
+  if (refused) {
+    res.status(409).json({
+      error: "invalid_state_transition",
+      message: `A ${refused.from} plan item cannot become ${refused.to}`,
+      reason: "TRIP_PLAN_INVALID_TRANSITION", from: refused.from, to: refused.to,
+    });
+    return;
+  }
+  const legacyEnv = readCommandEnvelope(req);
+  if (!legacyEnv.ok) { sendError(res, "invalid_payload", legacyEnv.message); return; }
+  const suppliedKey = req.get(IDEMPOTENCY_KEY_HEADER) ? legacyEnv.idempotencyKey : null;
+  if (suppliedKey) {
+    const seen = await findTripActivityByKey(client, tripId, "plan_item_updated", suppliedKey);
+    if (seen && (seen.metadata as any)?.item_id === itemId) {
+      const { data: current, error: curErr } = await client.from("trip_plan_items").select("*").eq("id", itemId).maybeSingle();
+      if (curErr) { sendError(res, "db_error", curErr.message); return; }
+      if (current) { res.json(toCamel(current)); return; }
+    }
   }
 
   // trip-kernel:legacy-path — flag-off twin of the plan-item command above.
@@ -1925,6 +2009,14 @@ router.patch("/trips/:tripId/plan/items/:itemId", async (req, res) => {
     .single();
 
   if (error) { req.log.error({ err: error }, "update plan item"); sendError(res, "db_error", error.message); return; }
+
+  await logTripActivity(client, tripId, user.id, "plan_item_updated", {
+    item_id: itemId,
+    changed_keys: Object.keys(dbPatch).filter((k) => k !== "updated_at"),
+    status_from: auth.status ?? null,
+    status_to: patch.status ?? null,
+    idempotency_key: suppliedKey,
+  });
 
   res.json(toCamel(updated));
 });
@@ -2047,9 +2139,13 @@ router.post("/trips/:tripId/members", async (req, res) => {
   const { tripId } = req.params;
   if (!/^[0-9a-f-]{36}$/i.test(tripId)) { res.status(400).json({ error: "invalid_payload", message: "Invalid trip id" }); return; }
 
-  const { userId, role = "member" } = req.body ?? {};
-  if (!userId || !/^[0-9a-f-]{36}$/i.test(userId)) { res.status(400).json({ error: "invalid_payload", message: "userId must be a valid UUID" }); return; }
-  if (role !== "member" && role !== "invited") { res.status(400).json({ error: "invalid_payload", message: "role must be 'member' or 'invited'" }); return; }
+  const parsedMember = AddMemberSchema.safeParse(req.body ?? {});
+  if (!parsedMember.success) {
+    const issue = parsedMember.error.issues[0];
+    res.status(400).json({ error: "invalid_payload", message: issue?.path[0] === "role" ? "role must be 'member' or 'invited'" : "userId must be a valid UUID" });
+    return;
+  }
+  const { userId, role } = parsedMember.data;
   if (userId === user.id) { res.status(400).json({ error: "invalid_payload", message: "Cannot add yourself" }); return; }
 
   // `error` bound for the same reason as the first `trips` read in this file:
@@ -2062,7 +2158,9 @@ router.post("/trips/:tripId/members", async (req, res) => {
     return;
   }
   if (!trip) { res.status(404).json({ error: "not_found", message: "Trip not found" }); return; }
-  if ((trip as any).owner_id !== user.id) { res.status(403).json({ error: "forbidden", message: "Only the trip owner can add members" }); return; }
+  // §6.1 canInviteParticipant: adding a member IS inviting them. Owner only.
+  const add = await canInviteParticipant(client, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
+  if (!add.allowed) { sendTripRefusal(res, "forbidden", add.reason, "Only the trip owner can add members"); return; }
 
   // `existing` picks the WRITE, not just the response: SET_PARTICIPANT_ROLE vs
   // ADD_PARTICIPANT for the kernel, UPDATE vs INSERT on the legacy path. An
@@ -2149,7 +2247,8 @@ router.delete("/trips/:tripId/members/:userId", async (req, res) => {
     return;
   }
   if (!trip) { res.status(404).json({ error: "not_found", message: "Trip not found" }); return; }
-  if ((trip as any).owner_id !== user.id) { res.status(403).json({ error: "forbidden", message: "Only the trip owner can remove members" }); return; }
+  const removeAuth = await canEditTrip(client, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
+  if (!removeAuth.allowed) { sendTripRefusal(res, "forbidden", removeAuth.reason, "Only the trip owner can remove members"); return; }
 
   // The same rule one line further in, and it matters more here: the ROLE this
   // read returns is what stops the trip owner being removed. An unreadable
@@ -2193,7 +2292,7 @@ router.delete("/trips/:tripId/members/:userId", async (req, res) => {
 
   syncTripChatMembers(tripId, client).catch((e) => req.log?.error({ err: e }, "syncTripChatMembers failed"));
 
-  const { revokeAccessForMember } = await import("../services/tripCrew/TripCrewLiveShareService.js");
+  const { revokeAccessForMember } = await import("../domain/trips/services/TripCrewLiveShareService.js");
   revokeAccessForMember(client, tripId, userId).catch((e: unknown) => req.log?.error({ err: e }, "revokeAccessForMember failed"));
 
   res.status(200).json({ status: "removed", tripId, userId });
@@ -2290,9 +2389,8 @@ router.post("/trips/:tripId/plan/reorder", async (req, res) => {
     return;
   }
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
-  if ((trip as { owner_id: string }).owner_id !== user.id) {
-    sendError(res, "forbidden", "Only the trip owner can reorder plan items"); return;
-  }
+  const reorderAuth = await canEditTrip(client, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as { owner_id: string }).owner_id } });
+  if (!reorderAuth.allowed) { sendTripRefusal(res, "forbidden", reorderAuth.reason, "Only the trip owner can reorder plan items"); return; }
 
   // Current sort_order of exactly the requested items, scoped to this trip and
   // excluding soft-deleted rows.

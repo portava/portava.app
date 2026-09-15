@@ -434,6 +434,14 @@ export interface GraphRebuildReport {
   citiesModeled: number;
   citiesScored: number;
   strongestCity: string | null;
+  /**
+   * §28.8 — what the revocation sweep removed this run. Absent on a build that
+   * did not run the sweep (buildGraphFromSources alone); present on every
+   * rebuildIntelligenceGraph, including when it removed nothing, because
+   * "swept, found nothing" and "never swept" are different states and the
+   * scheduler log is where anyone would notice the difference.
+   */
+  experienceRevocations?: ExperienceReconcileReport;
 }
 
 // ── Node kinds ────────────────────────────────────────────────────────────────
@@ -516,6 +524,32 @@ function normStr(raw: unknown): string | null {
   return s.length > 0 ? s : null;
 }
 
+// ── §28.10 eligibility for a Memory, named once ───────────────────────────────
+
+/**
+ * May this `memories` row become public-world intelligence?
+ *
+ * ONE definition, used by BOTH halves of the contract — the builder that adds
+ * an experience node and `reconcileExperienceNodes` that removes one. That is
+ * the whole reason it is a function rather than two predicates: when the two
+ * disagree, the graph either keeps a row it would no longer admit or deletes
+ * one it just wrote, and neither failure announces itself.
+ *
+ * The answer is the conjunction of the two columns the spec makes load-bearing:
+ * §5 lifecycle (`published` — a draft, archived, deleted or removed Memory is
+ * not a published account of anything) and §10 audience (`public` — the only
+ * rung of the six whose audience is the world).
+ *
+ * A row that is ABSENT — hard-deleted with its owner's account by
+ * AccountDeletionService — is not passed here at all; `reconcileExperienceNodes`
+ * treats absence as ineligible, which is the §28.8 case ("never keep deleted
+ * Memories in … Compass projections").
+ */
+export function isPublicWorldMemory(row: { state?: unknown; visibility?: unknown } | null | undefined): boolean {
+  if (!row) return false;
+  return row.state === "published" && row.visibility === "public";
+}
+
 // ── Batch builders (existing data → graph) ────────────────────────────────────
 
 const BUILD_LIMIT = 5000;
@@ -534,7 +568,7 @@ export async function buildGraphFromSources(
   try {
     const { data } = await db
       .from("user_stamps")
-      .select("user_id, city, country, earned_at, is_revoked, lat, lng")
+      .select("user_id, city, country, earned_at, is_revoked, lat, lng, stamp_definitions(evidences_presence)")
       .eq("is_revoked", false)
       .limit(BUILD_LIMIT);
     for (const r of (data as any[]) ?? []) {
@@ -543,8 +577,26 @@ export async function buildGraphFromSources(
       const at = r.earned_at ? String(r.earned_at) : null;
       batch.node("person", String(r.user_id));            // no profile attrs — privacy
       batch.node("city", city, city, { country: r.country ?? null });
-      batch.edge({ src_type: "person", src_key: String(r.user_id), dst_type: "city", dst_key: city, edge_type: "visited", at });
+      // The city NODE and its coordinates are facts about a PLACE and are kept
+      // for every row. Everything below is a factual claim about a PERSON —
+      // that they were in this city, and that they were active there at this
+      // hour — so it may only be made for a stamp whose definition evidences
+      // presence (`stamp_definitions.evidences_presence`, migration 2970).
+      //
+      // `POST /api/trips` awards `first_trip_created` and `trip_planner` AT
+      // CREATION with the destination attached and nothing having occurred, so
+      // without this a trip somebody planned and never took wrote them a
+      // `visited` edge and an `active_in` time slice for a city they have never
+      // been to. 2970 closed the Passport's Countries/Cities numbers against
+      // exactly those rows and named this writer as a surface it did not fix.
+      //
+      // `!== true` and not falsiness: a row read through a path that did not
+      // select the column arrives `undefined`, and a missing join is not
+      // evidence of a visit.
+      const def = Array.isArray(r.stamp_definitions) ? r.stamp_definitions[0] : r.stamp_definitions;
       registerCityCoordinates(city, r.lat, r.lng);
+      if (def?.evidences_presence !== true) continue;
+      batch.edge({ src_type: "person", src_key: String(r.user_id), dst_type: "city", dst_key: city, edge_type: "visited", at });
       if (at) {
         const slice = timeSliceKey(new Date(at), city, { lat: r.lat, lng: r.lng });
         batch.node("time_slice", `${city}|${slice}`, city, { slice });
@@ -688,20 +740,57 @@ export async function buildGraphFromSources(
   //
   // public.memories is the experience record 05_Graph_Engine names: a person's
   // own account of being somewhere, anchored to a place, a trip and/or an
-  // event, with a location and a time. Only PUBLISHED memories are read, and
-  // never `only_me` ones — that visibility is the owner's explicit choice and
-  // the graph does not override it, even under service_role. The node carries
-  // WHICH anchors exist, never the title, caption or media.
+  // event, with a location and a time. The node carries WHICH anchors exist,
+  // never the title, caption or media.
+  //
+  // ── ELIGIBILITY: `public` ONLY, and this is NARROWER than it used to be ────
+  //
+  // The predicate here was `state = 'published' AND visibility <> 'only_me'`,
+  // and the comment beside it argued that excluding `only_me` respected "the
+  // owner's explicit choice". It did not. `memories.visibility` (0067) is a
+  // SIX-rung ladder — public / friends_only / trip_crew / circle_only /
+  // only_me / custom — so `<> 'only_me'` admitted FOUR private audiences:
+  // friends_only, trip_crew, circle_only and custom. Each of those is also an
+  // explicit owner choice, and each is a choice of a NAMED audience that is not
+  // the world. `hidden_user_ids` was never consulted at all.
+  //
+  // What that fed is not a private surface. Everything written here lands in
+  // compass_graph_nodes / compass_graph_edges, which buildCityWorldModels and
+  // computeCityConfidenceIndex fold into per-city Destination World Models and
+  // the city-confidence index — read by every user through the Compass feed,
+  // the prompt context lines and discoveryModifiers. That is public-world
+  // intelligence, and the rebuild runs DAILY from lib/intelligenceGraphScheduler
+  // .ts, not on demand.
+  //
+  // Highlights/Memories spec §28.10: "Never route public-world intelligence
+  // directly from private Memory without consent/eligibility/anonymization."
+  // Anonymization held — the read APIs in this file return aggregates. Consent
+  // and eligibility did not: nothing asked, and the gate admitted four private
+  // audiences. Two legs of a three-leg rule is not the rule.
+  //
+  // `public` is the one rung on that ladder whose audience IS the world, so it
+  // is the one rung that needs no separate consent record to be eligible. The
+  // other five are excluded until there is a publication policy to consult
+  // (spec §10; migration 2721 `highlight_projection_policies` is written and
+  // unapplied, so there is nothing to consult today).
+  //
+  // This is strictly NARROWING. It removes observations from an aggregate; it
+  // cannot add one. A city whose depth came from private memories gets a lower,
+  // truer confidence score — census-compass grades that score's honesty, and a
+  // score standing partly on data its owners never published was not honest.
   try {
     const { data } = await db
       .from("memories")
       .select("id, owner_id, place_id, trip_id, event_id, location_city, location_country, location_lat, location_lng, starts_at, created_at, state, visibility")
       .eq("state", "published")
-      .neq("visibility", "only_me")
+      .eq("visibility", "public")
       .limit(BUILD_LIMIT);
     for (const r of (data as any[]) ?? []) {
       if (!r.id || !r.owner_id) continue;
-      if (r.state !== "published" || r.visibility === "only_me") continue;   // belt and braces over the filter
+      // Belt and braces over the filter: a client that ignores a predicate, or
+      // a fake that implements `eq` loosely, must not be the only thing standing
+      // between a friends_only Memory and the world model.
+      if (!isPublicWorldMemory(r)) continue;
       const city = normCity(r.location_city);
       const at = r.starts_at ? String(r.starts_at) : r.created_at ? String(r.created_at) : null;
       const key = String(r.id);
@@ -1317,12 +1406,195 @@ export async function cleanupNonCanonicalCityRows(
 // ── Full rebuild orchestrator ─────────────────────────────────────────────────
 
 /** Rebuild graph → world models → confidence index, in order. */
+// ── §28.8 revocation for experience nodes ────────────────────────────────────
+
+/** What one reconciliation pass removed. Zeroes are a real answer, not a skip. */
+export interface ExperienceReconcileReport {
+  /** `experience` nodes examined against `memories`. */
+  examined: number;
+  /** Nodes whose Memory is gone or no longer eligible, and were deleted. */
+  nodesDeleted: number;
+  /** Edges touching a deleted experience node, on either endpoint. */
+  edgesDeleted: number;
+  /**
+   * Node keys this pass REFUSED TO JUDGE, because the `memories` read that
+   * would have decided them failed. They are neither kept-by-decision nor
+   * deleted; the next tick decides them. Non-zero means the sweep was PARTIAL
+   * — the batches that answered were acted on, the ones that did not were left
+   * exactly as they were. Without this number a sweep that judged three nodes
+   * of three thousand reports the same `nodesDeleted: 0` as one that judged
+   * all three thousand and found nothing to remove.
+   */
+  undecided: number;
+  /** True when a read failed, so this pass could not judge every node. */
+  unresolved: boolean;
+}
+
+/**
+ * Memory ids whose graph node must go, out of the ids this pass asked about.
+ *
+ * DELETE ONLY ON A POSITIVE ANSWER. `liveIds` holds the ids a SUCCESSFUL read
+ * returned and `isPublicWorldMemory` accepted, so an asked-about id missing
+ * from it means "gone, or no longer eligible" — exactly the condition to
+ * revoke on, PROVIDED the read succeeded and the id was actually asked for.
+ * A failed read returns the same empty set as a fully-revoked one, and
+ * deleting on that would empty the graph during an outage. So the caller
+ * passes the ids it asked about and `ok`; on `ok === false` nothing is dead,
+ * which is what makes carrying on to the next batch after a failed one safe.
+ */
+function deadExperienceKeys(
+  asked: readonly string[],
+  liveIds: ReadonlySet<string>,
+  ok: boolean,
+): string[] {
+  if (!ok) return [];
+  return asked.filter((k) => !liveIds.has(k));
+}
+
+/**
+ * Remove `experience` nodes — and every edge touching them — whose source
+ * Memory is no longer eligible to be public-world intelligence.
+ *
+ * WHY THIS HAS TO EXIST. `buildGraphFromSources` persists with `upsert` and
+ * nothing else. Upsert adds and updates; it never removes. So a Memory that
+ * was `public` on Monday and is deleted, archived, or narrowed to `only_me` on
+ * Tuesday keeps its experience node and its person/place/trip/event/city edges
+ * for as long as the tables exist, and keeps contributing to the city's world
+ * model and confidence score. The daily rebuild does not fix that — it reruns
+ * the same additive build.
+ *
+ * Highlights/Memories spec §28.8: "Never keep deleted Memories in embeddings,
+ * public caches, Highlights, Passport, or Compass projections." §21 says the
+ * same for a privacy narrowing: "Make private: revoke public derivatives."
+ * compass_graph_nodes IS a Compass projection and the world model IS a public
+ * derivative, so the rule lands here.
+ *
+ * ONE ELIGIBILITY PREDICATE, NOT TWO. The dooming decision runs through
+ * `isPublicWorldMemory` — the same function `buildGraphFromSources` gates its
+ * write on. A sweep with its own looser predicate (`visibility <> 'only_me'`,
+ * say) is the defect it is supposed to close, wearing the fix's name: it keeps
+ * exactly the named-audience rows the builder now refuses to write, so a
+ * Memory narrowed from `public` to `friends_only` survives the sweep forever.
+ *
+ * POSITIVE, NOT INFERRED BY ABSENCE — deliberately. The obvious implementation
+ * is "delete every experience node the build did not just write", and it is
+ * wrong here: `buildGraphFromSources` reads at most BUILD_LIMIT (5000) rows, so
+ * on a tree with more eligible Memories than that, absence from this run's
+ * batch means "not read", not "not eligible", and the sweep would delete live
+ * rows. This asks `memories` about the ids it actually holds instead, in
+ * batches, so the answer does not depend on how much the builder read.
+ *
+ * FAILS CLOSED, PER BATCH. A `memories` read that errors or throws decides
+ * NOTHING: `deadExperienceKeys` refuses to name a key on `ok === false`, so
+ * not one node in that batch can be deleted, and its keys are counted into
+ * `undecided` instead. The batches that DID answer are still acted on — a
+ * single transient read must not hold a privacy revocation for another day,
+ * and it cannot widen one either, because a batch that failed contributes no
+ * dead keys. `unresolved` says at least one batch was skipped; `undecided`
+ * says how many nodes that left unjudged.
+ */
+export async function reconcileExperienceNodes(db: SupabaseClient): Promise<ExperienceReconcileReport> {
+  const report: ExperienceReconcileReport = { examined: 0, nodesDeleted: 0, edgesDeleted: 0, undecided: 0, unresolved: false };
+
+  let nodes: any[];
+  try {
+    const { data, error } = await db
+      .from("compass_graph_nodes")
+      .select("id, node_key")
+      .eq("node_type", "experience")
+      .limit(CLEANUP_FETCH_LIMIT);
+    // An unreadable node table is not an empty one. Bind the error rather than
+    // letting `data: null` read as "no experience nodes" — then `unresolved`
+    // separates the two reports, which are otherwise identical zeroes.
+    if (error) { report.unresolved = true; return report; }
+    nodes = (data as any[]) ?? [];
+  } catch {
+    report.unresolved = true;
+    return report;
+  }
+
+  const idByMemory = new Map<string, string[]>();
+  for (const n of nodes) {
+    const key = String(n.node_key ?? "");
+    if (!key) continue;
+    const list = idByMemory.get(key);
+    if (list) list.push(String(n.id));
+    else idByMemory.set(key, [String(n.id)]);
+  }
+  const memoryIds = [...idByMemory.keys()];
+  report.examined = memoryIds.length;
+  if (memoryIds.length === 0) return report;
+
+  /** Memory ids that MAY stay. Absent from this set ⇒ gone or ineligible. */
+  const eligible = new Set<string>();
+  /** Keys a positive, successful read named as gone or no longer eligible. */
+  const doomed = new Set<string>();
+  let undecided = 0;
+  for (let i = 0; i < memoryIds.length; i += DELETE_CHUNK) {
+    const chunk = memoryIds.slice(i, i + DELETE_CHUNK);
+    let ok = false;
+    try {
+      const { data, error } = await db
+        .from("memories")
+        .select("id, state, visibility")
+        .in("id", chunk);
+      if (error) {
+        report.unresolved = true;
+      } else {
+        ok = true;
+        for (const r of (data as any[]) ?? []) {
+          if (isPublicWorldMemory(r)) eligible.add(String(r.id));
+        }
+      }
+    } catch {
+      report.unresolved = true;
+    }
+    for (const k of deadExperienceKeys(chunk, eligible, ok)) doomed.add(k);
+    if (!ok) undecided += chunk.length;
+  }
+  report.undecided = undecided;
+
+  const doomedNodeIds: string[] = [];
+  for (const key of doomed) doomedNodeIds.push(...(idByMemory.get(key) ?? []));
+  if (doomedNodeIds.length === 0) return report;
+
+  // Edges FIRST. A node row deleted before its edges leaves edges pointing at
+  // nothing, and those edges are what buildCityWorldModels actually counts —
+  // an `in_city` edge from a revoked experience keeps inflating the city's
+  // sample size whether or not its node still exists. If the process dies
+  // between the two deletes, this order leaves a node nothing derives from;
+  // the other order leaves the leak.
+  try {
+    const { data: edges } = await db
+      .from("compass_graph_edges")
+      .select("id, src_type, src_key, dst_type, dst_key")
+      .limit(CLEANUP_FETCH_LIMIT * 5);
+    const doomedEdgeIds: string[] = [];
+    for (const e of (edges as any[]) ?? []) {
+      const touches =
+        (String(e.src_type ?? "") === "experience" && doomed.has(String(e.src_key ?? ""))) ||
+        (String(e.dst_type ?? "") === "experience" && doomed.has(String(e.dst_key ?? "")));
+      if (touches) doomedEdgeIds.push(String(e.id));
+    }
+    report.edgesDeleted = await deleteByIds(db, "compass_graph_edges", doomedEdgeIds);
+  } catch { /* fail-soft: the node sweep below still runs */ }
+
+  report.nodesDeleted = await deleteByIds(db, "compass_graph_nodes", doomedNodeIds);
+  return report;
+}
+
 export async function rebuildIntelligenceGraph(db: SupabaseClient): Promise<GraphRebuildReport> {
   const { nodesUpserted, edgesUpserted, nodesFailed, edgesFailed } = await buildGraphFromSources(db);
+  // §28.8 / §21 — BEFORE the aggregates are folded, not after. buildCityWorldModels
+  // and computeCityConfidenceIndex both read compass_graph_edges, so a revoked
+  // experience swept afterwards would still have been counted into this run's
+  // world model and confidence score, and would sit there until tomorrow.
+  const experienceRevocations = await reconcileExperienceNodes(db);
   const citiesModeled = await buildCityWorldModels(db);
   const { scored, strongestCity } = await computeCityConfidenceIndex(db);
   return {
     nodesUpserted, edgesUpserted, nodesFailed, edgesFailed,
     citiesModeled, citiesScored: scored, strongestCity,
+    experienceRevocations,
   };
 }

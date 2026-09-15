@@ -368,7 +368,7 @@ There is **no function named `serveSharePage`** anywhere in the tree. The name s
 |---|---|---|
 | `POST /api/posts/:postId/share` | `routes/posts.ts:2766` | **Yes** — upserts `post_shares` |
 | `POST /api/media/:id/share` | `routes/mediaFeed.ts:2023` | Yes — media analytics |
-| `POST /api/memories/:id/share` | `routes/memories.ts:897` | Yes |
+| `POST /api/memories/:id/share` | `routes/memories.ts:928` | Yes |
 | `POST /api/hidden-gems/:id/share-telegraph` | `routes/hiddenGems.ts:993` | Yes — inserts a `subtype:"hidden_gem"` message |
 | `POST /api/events/:id/share-link`, `DELETE .../:linkId`, `GET /api/events/share-link/:token/preview` | `routes/events.ts:5057, 5092, 1813` | Yes — event share links |
 | `GET/POST /api/shared-moments…` (14 routes) | `routes/sharedMoments.ts` | Yes |

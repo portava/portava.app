@@ -7,7 +7,7 @@
  * There are 49 `trip*.test.ts` suites — 993 tests, 0 skipped — and every one of
  * them runs against a double or against the TypeScript wrapped around the RPC.
  * They are worth having: they pin the SHAPE of the contract and they go red if
- * `lib/tripKernel.ts` starts inventing answers. What they cannot do is prove the
+ * `domain/trips/commands/tripKernel.ts` starts inventing answers. What they cannot do is prove the
  * contract, because `public.trip_kernel_execute` is 103,400 characters of
  * PL/pgSQL and none of them executes a line of it. Ask what would turn them red
  * and the answer is "editing the TypeScript or editing the fake", which is not a
@@ -70,7 +70,7 @@ import { randomUUID } from "node:crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 import { deleteFixtureUser, findUserByEmail, fixtureEmail, fixtureLabel } from "./liveFixtureUsers.js";
-import { executeTripCommand, type TripCommand, type TripKernelResult } from "../lib/tripKernel.js";
+import { executeTripCommand, type TripCommand, type TripKernelResult } from "../domain/trips/commands/tripKernel.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
@@ -420,7 +420,19 @@ describe("TRIP_KERNEL_CREATE_TRIP_UNGUARDED_INSERT — pinned as the CURRENT beh
       payload: { title: "tripkern draft with no city" },
     });
     assert.equal(r.ok, false);
-    assert.equal((r as any).reason, "TRIP_KERNEL_UNAVAILABLE",
-      "the trip family's INSERT is now guarded — close TRIP_KERNEL_CREATE_TRIP_UNGUARDED_INSERT and expect TRIP_COMMAND_MALFORMED here");
+    // 2795 (census-trips §53) guards the INSERT. Which behaviour this database
+    // has is read from its migration ledger, not assumed: with 2795 applied the
+    // draft is refused by name (TRIP_COMMAND_MALFORMED, the constraint's own
+    // sentence); without it the pinned defect stands, and this test says which
+    // world it measured.
+    const { data: ledger } = await sc.from("schema_migration_ledger").select("filename").like("filename", "2795_%").limit(1);
+    const guarded = Array.isArray(ledger) && ledger.length > 0;
+    if (guarded) {
+      assert.equal((r as any).reason, "TRIP_COMMAND_MALFORMED", "2795 is applied here: the draft must be refused by name");
+      assert.match(String((r as any).detail ?? ""), /destination_city/);
+    } else {
+      assert.equal((r as any).reason, "TRIP_KERNEL_UNAVAILABLE",
+        "2795 is NOT in this database's ledger, so the §35 defect is still the measured behaviour here; apply 2795 (Batch C) and this branch expects TRIP_COMMAND_MALFORMED");
+    }
   });
 });

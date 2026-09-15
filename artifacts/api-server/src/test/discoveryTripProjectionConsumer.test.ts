@@ -2,7 +2,7 @@
  * Discovery consumes the Trip-owned TripDiscoveryProjection — behind
  * discovery_trip_projection_enabled (migration 2550, seeded FALSE).
  * routes/discoverySearch.ts searchTrips / searchPlans;
- * lib/discoveryTripProjectionConsumer.ts; lib/tripDiscoveryProjection.ts
+ * lib/discoveryTripProjectionConsumer.ts; domain/trips/contracts/tripDiscoveryProjection.ts
  * (Trips spec §19.1, §25; census-discovery A10 / D3).
  *
  * WHAT IS PROVEN HERE
@@ -56,7 +56,7 @@ import { SCHEMA_PROBE_SENTINEL_ID } from "../lib/capability/schemaRequirement.js
 import {
   TRIP_DISCOVERY_SOURCE_COLUMNS,
   projectTripForDiscovery,
-} from "../lib/tripDiscoveryProjection.js";
+} from "../domain/trips/contracts/tripDiscoveryProjection.js";
 import { PRIVATE_TRIP_COVER_PLACEHOLDER } from "../lib/privacy/coverPlaceholders.js";
 
 // ── IDs ───────────────────────────────────────────────────────────────────────

@@ -38,7 +38,7 @@ import { fileURLToPath } from "node:url";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const API_ROOT = resolve(HERE, "..", "..");
 const CHECKER = join(API_ROOT, "src", "scripts", "checkFlagSchemaPrerequisites.ts");
-const SNAPSHOT = join(API_ROOT, "src", "lib", "capability", "snapshots", "20260908-production-schema.json");
+const SNAPSHOT = join(API_ROOT, "src", "lib", "capability", "snapshots", "20260915-production-schema.json");
 const APPLIED = join(API_ROOT, "src", "lib", "capability", "production-applied-migrations.json");
 
 let tmp = "";
@@ -76,9 +76,19 @@ describe("snapshot freshness tripwire", () => {
   });
 
   it("FAILS when a migration is recorded as applied AFTER the snapshot was captured", () => {
+    // DERIVED from the snapshot, not hard-coded. This fixture used to pin the
+    // literal "20260909999999", which was after the 2026-09-08 capture and
+    // silently became BEFORE it the day the snapshot was refreshed to 09-15 —
+    // so the test went red for a reason that had nothing to do with the
+    // behaviour it guards. Reading the watermark makes the fixture outlive
+    // every future refresh: it is always one tick newer than whatever the
+    // committed snapshot claims.
+    const snapWatermark = String(
+      JSON.parse(readFileSync(SNAPSHOT, "utf8")).productionMigrationWatermark,
+    );
     const applied = JSON.parse(readFileSync(APPLIED, "utf8"));
     applied.migrations.push({
-      version: "20260909999999",
+      version: `${snapWatermark}1`,
       name: "2999_a_migration_applied_after_the_snapshot",
     });
     const p = join(tmp, "applied-newer.json");

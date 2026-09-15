@@ -5,7 +5,12 @@
  * Groups notifications created since the last digest, formats a summary, and routes it.
  *
  * Safety-critical (urgent/important) notifications are NEVER digest-only — they
- * must have already been delivered immediately when created.
+ * must have already been delivered immediately when created. That is enforced
+ * by a PRIORITY filter, which Telegraph §19's attention bands are not: an
+ * event may be `normal` and still be something a person has to act on today.
+ * `isDigestible` (domain/telegraph/policies/attentionLadder.ts) is consulted
+ * per event type alongside the priority filter, and answers `undefined` for
+ * every event it does not claim.
  *
  * ── THE DELIVERY CLAIM THIS FILE MAKES, AND NOW IMPLEMENTS ───────────────────
  * AT MOST ONCE per (user, category, digest day). A digest is named after the
@@ -30,6 +35,7 @@ import { logger as rootLogger } from "../../lib/logger.js";
 import { NotificationService, type CreateNotificationInput } from "./NotificationService.js";
 import { NotificationRouter } from "./NotificationRouter.js";
 import { NotificationPreferenceService } from "./NotificationPreferenceService.js";
+import { isDigestible } from "../../domain/telegraph/policies/attentionLadder.js";
 
 const logger = rootLogger.child({ service: "NotificationDigestService" });
 
@@ -149,7 +155,7 @@ export class NotificationDigestService {
       // in today's digest and again in tomorrow's.
       const { data: rows, error: rowsErr } = await this.db
         .from('notifications')
-        .select('id, title, body, priority')
+        .select('id, title, body, priority, event_type')
         .eq('user_id', userId)
         .eq('category', category)
         .gt('created_at', since)
@@ -166,7 +172,15 @@ export class NotificationDigestService {
         return;
       }
 
-      const notifications = (rows ?? []) as Array<{ id: string; title: string; body: string; priority: string }>;
+      // ── TELEGRAPH §19: A BAND MAY FORBID DIGEST-ONLY DELIVERY ────────────
+      // The `.in('priority', ['normal','low'])` above is a PRIORITY filter, and
+      // §19's bands are not priorities: `safe_return.cleared` ("they are back")
+      // is `normal`, and P1 coordination means a person acts on it today, not
+      // in tomorrow morning's summary. `isDigestible` answers per EVENT TYPE,
+      // and `undefined` — the ladder does not claim this event — keeps the row,
+      // so nothing that used to be digested stops being digested by accident.
+      const all = (rows ?? []) as Array<{ id: string; title: string; body: string; priority: string; event_type?: string | null }>;
+      const notifications = all.filter((n) => isDigestible(n.event_type) !== false);
       if (notifications.length === 0) return;
 
       const label = CATEGORY_LABELS[category];

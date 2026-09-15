@@ -105,6 +105,33 @@ export interface LayoverWindow {
    */
   returnState: LayoverReturnState;
   engineVersion: string;
+  /**
+   * §7 — the generalised Temporal Freedom Engine's window for this layover's
+   * two commitments (the inbound flight and the outbound flight). `null` when
+   * there is none, which is the case `shortfallMinutes` explains.
+   *
+   * Typed narrowly on purpose: the server sends the engine's whole
+   * `FreedomWindow` and this declares only the members a screen reads. The rest
+   * are on the wire and unread, which is a fact about this client rather than
+   * about the server.
+   */
+  freedomWindow: {
+    beginsAt: string;
+    endsAt: string;
+    durationMinutes: number;
+    /** Minutes reserved off the end for the return buffer. */
+    reservedMinutes: number | null;
+    /** Never true while no routed travel-time provider is configured. */
+    certified: boolean;
+  } | null;
+  /**
+   * §7.2 — how many minutes short the traveller is when there is NO window at
+   * all: the required buffer (and, for a layover with no gap, the cutoff
+   * itself) leaves nothing between landing and heading back. `null` whenever a
+   * window exists. Before this the traveller saw `usableMinutes: 0` and the
+   * number they were short by existed nowhere.
+   */
+  shortfallMinutes: number | null;
 }
 
 export interface LeaveAdvice {
@@ -138,7 +165,21 @@ export interface PlanFit {
   returnTravelMin: number;
   neededMin: number;
   usableMinutes: number;
+  /** Narrow claim: TRUE only when `fit === 'fits'`. */
   fitsWindow: boolean;
+  /**
+   * §6.1's plan-level answer, three-valued because the server refuses to
+   * certify a total that omits a leg nobody stated (census L47). `over` is
+   * certain — even the lower bound overflows; `unknown` means the plan may fit
+   * and has not been measured; `fits` means every leg is stated and it does.
+   */
+  fit: 'fits' | 'over' | 'unknown';
+  /** Landside stops whose journey is not a stated figure. */
+  unstatedTravelStops: number;
+  /** Stops whose dwell time is not a stated figure. */
+  unstatedDurationStops: number;
+  /** TRUE when `neededMin` omits a leg, so the real total is larger. */
+  neededMinIsLowerBound: boolean;
   overflowMin: number;
   backByTime: string;
 }
@@ -198,6 +239,30 @@ export interface LayoverCertification {
   verdict: LeaveAdvice['verdict'];
   confidence: EstimateConfidence;
   bufferPercentile: EstimatePercentile;
+}
+
+/**
+ * §2.1 "degrades VISIBLY" · §22 "do not imply equivalent intelligence globally".
+ *
+ * Transcribed from `airportIntelligence()` in
+ * `artifacts/api-server/src/services/airport/LayoverFeasibility.ts`. The server
+ * derives every field from the certified record's own estimates; the client
+ * must not re-derive a maturity of its own from `airport.verified`, because a
+ * second opinion about the same numbers is the duplicate derivation this
+ * surface has been removing for four passes.
+ */
+export type AirportIntelligenceTier = 'GENERIC' | 'AIRPORT_RECORD' | 'VERIFIED_RECORD' | 'LIVE';
+
+export interface LayoverAirportIntelligence {
+  tier: AirportIntelligenceTier;
+  airportAddressable: boolean;
+  airportVerified: boolean;
+  liveObserved: boolean;
+  bufferSourceClass: string;
+  /** 2 = an airport row supplied the buffers, 3 = a code constant did. */
+  bufferFallbackLevel: 0 | 1 | 2 | 3;
+  confidence: EstimateConfidence;
+  sourceRefs: string[];
 }
 
 export type SafeReturnPrimaryAction = 'explore' | 'plan_return' | 'return_now' | 'recover_connection';
@@ -339,6 +404,99 @@ export type ReturnNowOutcome =
   | { kind: 'offline' }
   | { kind: 'error'; status: number | null; message: string };
 
+/**
+ * §8 / §13 — the certified safe-envelope GEOMETRY, exactly as the server cuts
+ * it (`services/airport/LayoverEnvelope.ts`). Published on `GET /overview` as
+ * `safeEnvelope` since census L63 and, until this type existed, READ BY
+ * NOTHING: the map had no geometry to consume because no client type had a
+ * field for it, which is why L116 and L121 both read `N` while the server was
+ * already sending the answer.
+ *
+ * TWO radii, and the difference is the point. `radiusMetres` is PROVED —
+ * outside it the round trip exceeds the certified window at a straight-line
+ * lower bound, so nothing fits however it is travelled to. `plannedRadiusMetres`
+ * is the CONTRACTED planning edge after the §6.2 confidence haircut; a place
+ * between the two is FLAGGED and never blocked.
+ *
+ * `certifiedInward: false` is a permanent, deliberate field: being inside the
+ * disc is not a certification that anything fits, because there is no routed
+ * provider to certify with. A surface that renders the disc as "safe" is the
+ * L293 defect in a new shape.
+ */
+export interface LayoverSafeEnvelope {
+  centre: { lat: number; lng: number };
+  /** Metres. Outside this, nothing fits at any speed. */
+  radiusMetres: number;
+  /** The certified §7 window the radius was cut from. */
+  usableMinutes: number;
+  maxOneWayMinutes: number;
+  basis: 'straight_line_lower_bound';
+  /** Always true: a point outside the disc is certainly infeasible. */
+  certifiedOutward: true;
+  /** Always false: a point inside the disc is NOT certified to fit. */
+  certifiedInward: false;
+  confidence: EstimateConfidence | null;
+  /** Minutes of the window deliberately not planned against. */
+  uncertaintyBudgetMinutes: number;
+  plannedMaxOneWayMinutes: number;
+  /** The contracted edge. <= radiusMetres, equal only at HIGH confidence. */
+  plannedRadiusMetres: number;
+}
+
+/** §13's band vocabulary. `SAFE`/`TIGHT` have no producer on this tree. */
+export type EnvelopeBand = 'SAFE' | 'TIGHT' | 'BLOCKED' | 'UNCERTIFIED';
+
+/**
+ * §13 L122 — the feasibility state a candidate PIN carries, straight off the
+ * recommendation contract (`services/airport/layoverRankingFeasibility.ts`).
+ *
+ * The map consumes this and does not recalculate: L115 forbids a second
+ * feasibility rule on the client, and the overview's `safeEnvelope` makes one
+ * tempting (a haversine against `centre` is four lines). The band is decided
+ * once, on the server, beside the certification that produced the window.
+ */
+export interface CandidateFeasibility {
+  band: EnvelopeBand;
+  /** TRUE only when an envelope actually measured this candidate. */
+  certified: boolean;
+  lowerBoundOneWayMin: number | null;
+  /** Inside the contracted planning edge. `null` when nothing measured it. */
+  withinPlannedEdge: boolean | null;
+  reason: string | null;
+  plannedEdgeReason: string | null;
+  /** Whether this band CERTIFIES a fit. False for every band this tree emits. */
+  impliesFit: boolean;
+}
+
+/**
+ * Mirrors `services/airport/LayoverReturnEscalation.ts#ReminderDisposition`.
+ * Kept structural rather than importing: this package does not depend on the
+ * api-server sources, and a wire shape that drifts should fail at the surface
+ * that reads it, not silently typecheck against a stale copy of the server.
+ */
+export interface LayoverReminderDisposition {
+  action: 'none' | 'keep' | 'fired' | 'reschedule' | 'cancel';
+  reason:
+    | 'no_reminder_scheduled'
+    | 'reminder_unreadable'
+    | 'aligned'
+    | 'below_material_threshold'
+    | 'already_fired'
+    | 'deadline_moved'
+    | 'deadline_moved_after_fire'
+    | 'rung_already_passed'
+    | 'deadline_passed';
+  /** POSITIVE: the flight went later, so the reminder now fires too EARLY. */
+  driftMinutes: number;
+  materialChange: boolean;
+  /** The instant to schedule at, or null when there is nothing to schedule. */
+  firesAt: string | null;
+  /** The instant currently stored, so a surface can say what it replaces. */
+  staleFiresAt: string | null;
+  /** The §15 rung in force. `label` is the only field a surface should render. */
+  rung: { level: string; priority: string; label: string };
+}
+
 export interface LayoverOverview {
   session: LayoverSession;
   airport: PublicAirport;
@@ -347,12 +505,35 @@ export interface LayoverOverview {
   stops: PlanStop[];
   planFit: PlanFit;
   share: { enabled: boolean; othersInCity: number };
+  /**
+   * §24 — what the SERVER thinks of the reminder it stored, recomputed against
+   * the currently certified hard return on every overview read.
+   *
+   * `action` is the whole point: a reminder scheduled against a deadline that
+   * has since moved is not a reminder, and a footer that keeps rendering
+   * "Reminder set" over it is lying. `reason` is a stable token and never a
+   * sentence — the surface writes its own words.
+   *
+   * Optional for the same reason as `toolsConsulted`: an older server does not
+   * send it, and absent must render as nothing rather than as `none`.
+   */
+  reminder?: LayoverReminderDisposition;
   /** §2.1 — which rules and which inputs produced `advice`/`window`. */
   certification: LayoverCertification;
+  /** §2.1/§22 — how much of THIS airport went into those numbers. */
+  airportIntelligence: LayoverAirportIntelligence;
   /** §15 — the posture the surface should take now. */
   safeReturn: SafeReturnPosture;
   /** §16 — the bundle that lets an offline client say how old its answer is. */
   offlineBundle: LayoverOfflineBundle;
+  /**
+   * §8/§13 — the certified envelope geometry the map draws. `null` only when
+   * the airport has no usable coordinate, which is what every
+   * `buildFallbackProfile` airport carries: an envelope centred on (0,0) would
+   * block every real place on earth, so the absence of a coordinate produces
+   * the absence of an envelope and never a default one.
+   */
+  safeEnvelope: LayoverSafeEnvelope | null;
   returnReminderAt: string | null;
   localTimes: LayoverLocalTimes;
 }
@@ -415,8 +596,15 @@ export interface LayoverRecommendation {
   description: string | null;
   safetyRating: SafetyRating;
   safetyLabel: string;
-  travelTimeMin: number;
-  activityTimeMin: number;
+  /**
+   * Minutes to get there, or NULL when nobody has measured the journey
+   * (census-layover L293). It is not 0 and must never be rendered as one: the
+   * server has no routed travel-time provider, so this is null for every
+   * landside card. Show the absence; a blank reads as "nearby".
+   */
+  travelTimeMin: number | null;
+  /** Minutes at the destination, or NULL when nobody stated a duration. */
+  activityTimeMin: number | null;
   returnBufferMin: number;
   hardReturnTime: string | null;
   warningReason: string | null;
@@ -428,6 +616,12 @@ export interface LayoverRecommendation {
   meetupLocationReveal: string | null;
   placeId: string | null;
   sortOrder: number;
+  /**
+   * §13 L122 — the band this card's PIN renders. Always present from a server
+   * that has the candidate-feasibility contract; optional here only so an older
+   * server degrades to "not measured" rather than to a crash.
+   */
+  feasibility?: CandidateFeasibility;
 }
 
 export interface LayoverSafetyResult {
@@ -449,10 +643,15 @@ export interface LayoverSafetyResult {
   layoverMinutes: number;
   tier: LayoverTier;
   tierLabel: string;
-  /** Provenance of the 20-minute landside probe leg. Never "measured" here. */
+  /**
+   * Provenance of this answer's landside leg. There is no longer a leg here at
+   * all — census L293c deleted the fabricated 20-minute probe this endpoint
+   * used to score — so the value is "unmeasured", and never "measured".
+   */
   travelTimeSource: string;
   advice: LeaveAdvice;
   certification: LayoverCertification;
+  airportIntelligence: LayoverAirportIntelligence;
   safeReturn: SafeReturnPosture;
 }
 
@@ -489,7 +688,33 @@ export interface CompassAnswer {
   boundaryViolations: CompassBoundaryViolation[];
   /** §20 — which rules and which inputs produced the figures above. */
   certification: LayoverCertification;
+  /**
+   * §12 — the deterministic tools the model actually invoked for THIS answer,
+   * in the order they ran. Empty when it answered from the certified record
+   * alone, which is the common case and is not a degradation.
+   *
+   * Optional on the wire because a deployment running an older server does not
+   * send it. A surface must render nothing rather than "Checked: " with an
+   * empty list, and must never infer "no tools were available" from its
+   * absence — absent means UNREPORTED, not none.
+   */
+  toolsConsulted?: LayoverToolName[];
 }
+
+/** §12's twelve, in the order `06_Layover.md` §12 lists them. */
+export type LayoverToolName =
+  | 'getLayoverContext'
+  | 'getConnectionState'
+  | 'getTimeWallet'
+  | 'getSafeEnvelope'
+  | 'getReachableExperiences'
+  | 'simulatePlan'
+  | 'getReturnContract'
+  | 'getAirportState'
+  | 'getCrewCandidates'
+  | 'requestConstraintClarification'
+  | 'replan'
+  | 'explainDecision';
 
 // ── API calls ─────────────────────────────────────────────────────────────────
 
@@ -530,17 +755,93 @@ export async function createLayoverSession(payload: CreateSessionPayload): Promi
   return res.json();
 }
 
+/**
+ * §11.1 as the server published it for one edit.
+ *
+ * `ran: false` is the COMMON case and is not a failure: most edits move nothing
+ * the eleven-type vocabulary can describe, and the server names which. The
+ * screen shows the reason rather than inventing "nothing changed", because
+ * "nothing changed" is a claim and a refusal is not.
+ */
+export type ReplanOutcome =
+  | { ran: false; reason: string; detail: string }
+  | {
+      ran: true;
+      wiringVersion: string;
+      replannerVersion: string;
+      event: {
+        eventId: string;
+        eventType: string;
+        occurredAt: string;
+        receivedAt: string;
+        source: string;
+        dedupKey: string;
+        confidence: string;
+      };
+      diff: {
+        verdictChanged: boolean;
+        returnStateChanged: boolean;
+        tierChanged: boolean;
+        usableMinutesDelta: number;
+        /** Positive = the deadline moved LATER (more freedom). */
+        deadlineDeltaMinutes: number;
+        candidatesGained: string[];
+        candidatesLost: string[];
+        /**
+         * Stops the recomputation could not judge because a leg or a dwell is
+         * unstated (census L47). PUBLISHED AND NOT YET RENDERED — listed here
+         * because this file's rule is that a field appears when the server puts
+         * it on the wire, and named as unread in census §17.5 rather than
+         * scored as reachable.
+         */
+        candidatesUnmeasured: string[];
+        reasonCodesAdded: string[];
+        reasonCodesRemoved: string[];
+      };
+      invalidation: {
+        noLongerFeasible: string[];
+        staleCertification: string[];
+        newInputHash: string;
+      };
+      opportunity: { why: string[]; reasonCodes: string[] } | null;
+      notify: { notify: false; reason: string } | { notify: true; priority: 'high' | 'normal'; reason: string };
+      disruptionState: string;
+      certification: LayoverCertification;
+      reasonCodes: string[];
+      snapshotPersisted: false;
+      snapshotUnavailableReason: string;
+      counts: { impacted: number; replanned: number; skipped: number; notifications: number };
+    };
+
+export interface SessionUpdateResult {
+  session: LayoverSession;
+  replan: ReplanOutcome;
+}
+
+/**
+ * PATCH the session and read back what the replanner made of the edit.
+ *
+ * The `replan` half is additive on the server, so an older server answers
+ * without it; that is reported as an explicit refusal rather than left
+ * undefined, so a caller cannot mistake "this build does not replan" for
+ * "nothing changed".
+ */
 export async function updateLayoverSession(
   sessionId: string,
   updates: Partial<CreateSessionPayload>,
-): Promise<LayoverSession> {
+): Promise<SessionUpdateResult> {
   const res = await authedFetch(airportUrl('sessions', sessionId), {
     method: 'PATCH',
     body: JSON.stringify(updates),
   });
   if (!res.ok) throw new Error(`Failed to update layover session: ${res.status}`);
   const json = await res.json();
-  return json.session;
+  const replan: ReplanOutcome = json.replan ?? {
+    ran: false,
+    reason: 'not_published',
+    detail: 'this server did not publish a replan decision',
+  };
+  return { session: json.session, replan };
 }
 
 export async function getRecommendations(sessionId: string): Promise<LayoverRecommendation[]> {
@@ -654,9 +955,51 @@ export async function returnToAirportNow(sessionId: string): Promise<ReturnNowOu
   };
 }
 
-export async function endLayoverSession(sessionId: string): Promise<boolean> {
-  const res = await authedFetch(airportUrl('sessions', sessionId), { method: 'DELETE' });
-  return res.ok;
+/**
+ * §3 L19 · §17 L162 — how the layover ended, and whether to keep a stamp of it.
+ *
+ * `outcome` and `passportStamp` are two separate answers and the client must
+ * send them separately: "I made my flight" is a fact about the session, and
+ * "put this city in my Passport" is a durable artifact the traveller elects.
+ * The server refuses the second without the first and says which term failed —
+ * `reason` below is the server's word, never re-derived here.
+ */
+export type LayoverEndOutcome = 'completed' | 'cancelled';
+
+export type LayoverStampReason =
+  | 'written'
+  | 'already_stamped'
+  | 'not_elected'
+  | 'not_completed'
+  | 'feature_disabled'
+  | 'no_city'
+  | 'write_failed';
+
+export interface LayoverEndResult {
+  ok: boolean;
+  outcome: LayoverEndOutcome;
+  passportStamp: { requested: boolean; written: boolean; reason: LayoverStampReason } | null;
+}
+
+export async function endLayoverSession(
+  sessionId: string,
+  opts: { outcome?: LayoverEndOutcome; passportStamp?: boolean } = {},
+): Promise<LayoverEndResult> {
+  const outcome: LayoverEndOutcome = opts.outcome ?? 'cancelled';
+  const res = await authedFetch(airportUrl('sessions', sessionId), {
+    method: 'DELETE',
+    body: JSON.stringify({ outcome, passportStamp: opts.passportStamp === true }),
+  });
+  if (!res.ok) return { ok: false, outcome, passportStamp: null };
+  let body: any = null;
+  try { body = await res.json(); } catch { body = null; }
+  return {
+    ok: true,
+    // The SERVER's outcome, not the requested one: an older server that ignores
+    // the field must not have its answer overwritten by this client's hope.
+    outcome: body?.outcome === 'completed' ? 'completed' : 'cancelled',
+    passportStamp: body?.passportStamp ?? null,
+  };
 }
 
 // ── Dashboard / overview ──────────────────────────────────────────────────────
@@ -693,6 +1036,14 @@ export async function getLayoverOverview(sessionId: string): Promise<LayoverOver
     if (json[field] == null) {
       console.warn(`[layover] overview is missing "${field}" — server contract mismatch`);
     }
+  }
+  // `safeEnvelope` is checked for ABSENCE and not for null, and the difference
+  // is a real distinction on the wire: the server sends `null` on purpose for an
+  // airport with no usable coordinate (see LayoverSafeEnvelope), and warning on
+  // that would train the warning to be ignored. `undefined` is the contract
+  // mismatch — a server that does not publish the field at all.
+  if (!('safeEnvelope' in json)) {
+    console.warn('[layover] overview is missing "safeEnvelope" — server contract mismatch');
   }
   return json as LayoverOverview;
 }
@@ -802,10 +1153,22 @@ export async function getLayoverBuddies(sessionId: string): Promise<{
 
 // ── Telegraph ─────────────────────────────────────────────────────────────────
 
+/**
+ * census-layover L271 — `posted` is the field the caller actually needs.
+ *
+ * The route used to return `ok: true` and a `threadId` whether or not the
+ * message reached that thread, and this screen navigated on `threadId` alone.
+ * A traveller was therefore pushed into a chat their text was not in, and told
+ * nothing. `posted` says whether the message is in the thread; `postFailure`
+ * names why not (`e2ee` | `unverifiable` | `no_thread` | `insert_failed`) so
+ * the caller can say something true rather than something reassuring.
+ */
 export async function sendLayoverTelegraph(sessionId: string, message: string): Promise<{
   intent: string;
   city: string | null;
   threadId: string | null;
+  posted: boolean;
+  postFailure: string | null;
 } | null> {
   const res = await authedFetch(airportUrl('sessions', sessionId, 'telegraph'), {
     method: 'POST',

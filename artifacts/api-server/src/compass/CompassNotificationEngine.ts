@@ -428,7 +428,7 @@ export async function evaluateNotification(
       // delivers the push and leaves no trace that the check did not run.
       if (senderBlockErr || recipientBlockErr) {
         console.warn(
-          "CompassNotificationEngine: blocked-sender check failed — push is being delivered WITHOUT block suppression",
+          "CompassNotificationEngine: blocked-sender check failed — push SUPPRESSED (cannot establish the block relationship)",
           {
             userId,
             senderId,
@@ -438,16 +438,40 @@ export async function evaluateNotification(
               (senderBlockErr as any)?.message ?? (recipientBlockErr as any)?.message,
           },
         );
+        // A LOG LINE IS NOT A GUARD. This branch used to name the exact outcome
+        // it was about to produce — that the push was going out with no block
+        // suppression applied — and then produce it. (The old wording is NOT
+        // quoted here: `silentSchemaErrorCatches.test.ts` pins these messages by
+        // substring, and a comment repeating a retired marker satisfies that
+        // guard with a quotation instead of a diagnostic. It did, until this was
+        // caught.) `blocks` is an EXCLUSION table: a row means DENY, so an
+        // empty read means ALLOW and an UNREADABLE one means nothing at all. This
+        // gate's stated contract, eighteen lines above, is that "a blocked sender
+        // must never reach the recipient via push", and a delivered push is
+        // unrecallable — so the only answer consistent with that sentence is to
+        // withhold this one notification.
+        //
+        // The reason is DISTINCT from a real block on purpose: `logDecision`
+        // writes it to the ledger, and "we could not check" must not be readable
+        // later as "this person is blocked".
+        return decide("suppressed_blocked_sender", `block_state_unknown:${senderId}`);
       }
       if (senderBlockedRecipient || recipientBlockedSender) {
         return decide("suppressed_blocked_sender", `blocked:${senderId}`);
       }
     } catch (err) {
-      // fail-open: a DB error should not block safety checking elsewhere
+      // SAME UNKNOWN, SAME ANSWER. This arm used to read "fail-open: a DB error
+      // should not block safety checking elsewhere". That reasoning is about not
+      // ABORTING the pipeline, and it does not follow that the push should go: a
+      // throw leaves the block relationship exactly as unknown as a rejected
+      // read does, and suppressing this notification blocks no other check.
+      // Leaving the two paths to disagree would have meant the gate held or not
+      // depending on whether PostgREST reported the failure or threw it.
       console.warn(
-        "CompassNotificationEngine: blocked-sender check rejected — push is being delivered WITHOUT block suppression",
+        "CompassNotificationEngine: blocked-sender check rejected — push SUPPRESSED (cannot establish the block relationship)",
         { userId, senderId, err },
       );
+      return decide("suppressed_blocked_sender", `block_state_unknown:${senderId}`);
     }
   }
 
@@ -487,19 +511,32 @@ export async function evaluateNotification(
           .eq("user_id", senderId)
           .in("state", ["banned", "suspended"]);
         if (acctErr) {
+          // SAME SHAPE AS THE BLOCK READ ABOVE, one step further along. This
+          // branch used to log and fall through, leaving `senderSuspended` at
+          // its initial false — so the synthetic item handed to runSafetyFilter
+          // asserted, as a fact, that the sender is in good standing. An
+          // unreadable state table is not a clean record.
+          //
+          // census-compass §6 F2 recorded this site as closed with the evidence
+          // "`error` bound and logged". Binding and logging is how this defect
+          // is FOUND; it is not how it is fixed.
           console.warn(
-            "CompassNotificationEngine: sender account-state check failed — push is being evaluated WITHOUT suspension suppression",
+            "CompassNotificationEngine: sender account-state check failed — push SUPPRESSED (cannot establish suspension)",
             { userId, senderId, code: (acctErr as any)?.code, message: (acctErr as any)?.message },
           );
+          return decide("suppressed_safety_filter", `account_state_unknown:${senderId}`);
         } else {
           senderSuspended = ((acctRows ?? []) as Array<{ state: string; expires_at: string | null }>)
             .some((r) => r.expires_at == null || Date.parse(r.expires_at) > nowMs);
         }
       } catch (err) {
+        // Same unknown, same answer — see the block read above for why the
+        // thrown and the rejected path must not disagree.
         console.warn(
-          "CompassNotificationEngine: sender account-state check rejected — push is being evaluated WITHOUT suspension suppression",
+          "CompassNotificationEngine: sender account-state check rejected — push SUPPRESSED (cannot establish suspension)",
           { userId, senderId, err },
         );
+        return decide("suppressed_safety_filter", `account_state_unknown:${senderId}`);
       }
     }
 

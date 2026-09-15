@@ -208,6 +208,15 @@ function specOf(state: FakeState, table: string): TableSpec {
 /** Writes are captured here so a test can assert what reached the table. */
 const writes: Array<{ table: string; rows: any[] }> = [];
 
+/**
+ * Every `from(table)` the routes performed, in order.
+ *
+ * §33/M256's precondition is "when cached/server-ready", and the only part of
+ * that this tree can decide without a device is whether the server-side caches
+ * exist AND HOLD. A cache hit must leave no entry here; see section 6.
+ */
+const reads: string[] = [];
+
 function buildQuery(table: string, spec: TableSpec) {
   let rows = [...(spec.rows ?? [])];
   const err = spec.error ?? null;
@@ -253,7 +262,7 @@ function makeClient(state: FakeState) {
       getUser: async (token: string) =>
         token === TOKEN ? { data: { user: { id: USER } }, error: null } : { data: { user: null }, error: { message: "Unauthorized" } },
     },
-    from: (table: string) => buildQuery(table, specOf(state, table)),
+    from: (table: string) => { reads.push(table); return buildQuery(table, specOf(state, table)); },
   };
 }
 
@@ -295,7 +304,7 @@ before(async () => {
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
 });
 after(async () => { await new Promise<void>((res, rej) => server.close((e) => (e ? rej(e) : res()))); });
-beforeEach(() => { writes.length = 0; _clearFlowZoneCache(); _clearProtectedZoneCache(); });
+beforeEach(() => { writes.length = 0; reads.length = 0; _clearFlowZoneCache(); _clearProtectedZoneCache(); });
 
 const adminState = (over: FakeState = {}): FakeState => ({
   profiles: [{ id: USER, role: "admin", display_name: "Admin", username: "admin", handle: "admin" }],
@@ -479,5 +488,108 @@ describe("the owner's manual SQL template", () => {
     assert.match(s, /appears %s times in the batch/);
     assert.match(s, /already exists in geo_zones/);
     assert.match(s, /INSERT INTO public\.geo_zones/);
+  });
+});
+
+// ── 6. the zone-model caches actually cache ──────────────────────────────────
+
+/**
+ * M256 — "viewport intelligence first results within ~500-800 ms **when
+ * cached/server-ready**" — and the half of it that needs no device.
+ *
+ * THE GAP THIS CLOSES. `routes/mapProjection.ts` carries three module-level
+ * read-through caches (`protected_zones`, flow `geo_zones`, city `geo_zones`),
+ * each with a 30 s TTL and an exported `_clear*Cache()` hook. Eleven map test
+ * files import those hooks. Every one of them uses the hook to DEFEAT the
+ * cache so it cannot leak fixtures between cases, and **not one asserts that a
+ * cache hit avoids the read.** The caches are the "cached" in M256's
+ * precondition, and until now the only thing pinned about them was that they
+ * can be turned off.
+ *
+ * A latency budget in milliseconds still needs a running server and a warm
+ * database, and none of that is here. What is here is the property the budget
+ * rests on: on the second poll of a settled camera, the zone model costs zero
+ * round trips. If that stops being true, the 500-800 ms target stops being
+ * reachable no matter what the network does, and nothing in this repository
+ * would have said so.
+ *
+ * ANTI-VACUITY. Each case asserts the FIRST request really did read the table
+ * before asserting the second did not. A route that stopped reading `geo_zones`
+ * altogether — or a fixture that never reached the loader — fails that first
+ * assertion instead of passing the second one for free.
+ *
+ * M256 STAYS `?`. This makes no claim about milliseconds, about a device, or
+ * about a warm production cache. It closes one falsifiable sub-property.
+ */
+describe("M256 — the server-side zone caches hold across polls", () => {
+  function seeded(): FakeState {
+    const v = validateGeoZoneSeed(fixture());
+    assert.ok(v.ok);
+    return flowState(loaderRows(v.rows));
+  }
+
+  const countOf = (table: string) => reads.filter((t) => t === table).length;
+
+  it("a second poll within the TTL re-reads neither geo_zones nor protected_zones", async () => {
+    const state = seeded();
+
+    const first = await projection(state);
+    assert.equal(first.status, 200, JSON.stringify(first.body));
+    // Anti-vacuity: the cold path must genuinely have gone to the database.
+    const coldGeo = countOf("geo_zones");
+    const coldProtected = countOf("protected_zones");
+    assert.ok(coldGeo >= 1, "the cold request never read geo_zones — the fixture never reached the loader");
+    assert.ok(coldProtected >= 1, "the cold request never read protected_zones");
+    assert.equal(first.body.crowdFlow.zoneModel.zones, 4);
+
+    const second = await projection(state);
+    assert.equal(second.status, 200, JSON.stringify(second.body));
+    assert.equal(countOf("geo_zones") - coldGeo, 0, "the warm poll re-read geo_zones");
+    assert.equal(countOf("protected_zones") - coldProtected, 0, "the warm poll re-read protected_zones");
+
+    // And the cached answer is the SAME answer, not a cheaper emptier one.
+    assert.equal(second.body.crowdFlow.zoneModel.zones, first.body.crowdFlow.zoneModel.zones);
+    assert.equal(second.body.crowdFlow.refusal, first.body.crowdFlow.refusal);
+  });
+
+  it("clearing the cache makes the next poll read again — the test can tell a cache from a dead route", async () => {
+    const state = seeded();
+    await projection(state);
+    const afterCold = countOf("geo_zones");
+
+    await projection(state);
+    assert.equal(countOf("geo_zones"), afterCold, "still warm");
+
+    _clearFlowZoneCache();
+    await projection(state);
+    assert.ok(
+      countOf("geo_zones") > afterCold,
+      "after a clear the loader must go back to the database; if it does not, the " +
+        "first case above proves nothing about caching",
+    );
+  });
+
+  it("a FAILED read is not cached — the next poll retries instead of serving the failure for 30 s", async () => {
+    const broken = seeded();
+    broken.geo_zones = { error: { message: "geo_zones unreadable" } };
+
+    const first = await projection(broken);
+    assert.equal(first.status, 200, JSON.stringify(first.body));
+    // Fail-closed, per loadFlowZones' own contract: null means "could not be
+    // read", and Crowd Flow must refuse rather than publish over nothing. The
+    // route keeps that DISTINCT from `no_zone_model` — this pass expected the
+    // two to be conflated and was wrong, which is worth recording: an
+    // unreadable zone table and an empty one are different operator problems
+    // and the refusal says which.
+    assert.equal(first.body.crowdFlow.refusal, "zone_read_failed");
+    const afterFailure = countOf("geo_zones");
+    assert.ok(afterFailure >= 1);
+
+    const second = await projection(broken);
+    assert.ok(
+      countOf("geo_zones") > afterFailure,
+      "a failed read was cached — a transient database error would darken Crowd Flow for a full TTL",
+    );
+    assert.equal(second.body.crowdFlow.refusal, "zone_read_failed");
   });
 });

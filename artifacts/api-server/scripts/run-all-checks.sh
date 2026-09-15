@@ -157,6 +157,16 @@ run_check "check:security-definer-oracles" pnpm run check:security-definer-oracl
 # counted in prose where no tool can read them — so it is visible how much of
 # each headline rests on something checkable.
 run_check "check:census-integrity" pnpm run check:census-integrity
+# check:memory-certification — the Highlights/Memories spec's section 25 asks
+# for named, replayable certification fixtures, nine hard invariant tests and
+# nine property/chaos scenarios. This runs all thirty against the real memory
+# engines and prints, per requirement, whether the property HELD, was VIOLATED,
+# or has NO SURFACE in this repository to be true of. NO_SURFACE and PARTIAL do
+# not fail the run: they are findings about missing product, and failing on them
+# would make "delete the scenario" the cheapest route to green. It found one
+# real defect on its first run (dedupeEvidence's survivor depended on delivery
+# order) and that fix is in src/services/memoryProjections/evidence.ts.
+run_check "check:memory-certification" pnpm run check:memory-certification
 # check:census-freshness — a census that has gone stale must not be quotable as
 # current truth. Two of them sat at numbers measured hundreds of commits earlier
 # and were read as present-tense fact; re-measured, one moved up and one moved
@@ -174,6 +184,72 @@ run_check "check:census-freshness" pnpm run check:census-freshness
 # policies over authz.is_trip_crew. RLS policies are a UNION and a schema claim
 # is a claim about the END of the chain; this checks the citation, not the
 # sentence.
+# check:census-scope-coverage — a census must WATCH the files it CITES.
+# check:census-freshness asks whether anything a census counts has changed, and
+# what it counts is declared by hand in CENSUS_SCOPE. Nothing checked that
+# declaration against the census. Measured 2026-09-11: census-trips cited 49
+# files with 10 in scope, and the scope covered the Trip Kernel programme — so
+# it watched the W rows, the ones saying something is NOT right, and left the C
+# rows unguarded. A W row that rots stays wrong; a C row that rots becomes a
+# false assurance, and census-freshness reported FRESH throughout, truthfully,
+# about the wrong half. The inversion is not a Trips quirk: no census watches
+# even three quarters of what it cites, and the median is under a third.
+# Per-census floors are a ratchet — raise one when you widen a scope; lowering
+# one to get green is the single response that is never right.
+run_check "check:census-scope-coverage" pnpm run check:census-scope-coverage
+# check:census-row-move-labels — a census revises a verdict by RESTATING the row
+# in a later "Row moves" section, labelled with the object it is about. When the
+# label and the id name different objects, the id wins (every count uses it) and
+# the wrong requirement moves. census-trips §29.4 did exactly that: its last two
+# rows read TR89 `trip_snapshots` and TR90 `trip_outcomes` while the body assigns
+# TR89 `trip_events`, TR90 `trip_snapshots`, TR91 `trip_outcomes`. TR89 was
+# already W so the move was a no-op, TR90 was accidentally right, and TR91 —
+# never moved — kept NOT-BUILT with the evidence "Does not exist." while CREATE
+# TABLE public.trip_outcomes sat in a merged migration. §39 moved it.
+# The rule is deliberately narrow: a label that REFINES (a table behind a type,
+# a column, a key) is normal and three in the corpus do it. Only a label naming
+# ANOTHER row's object in the SAME id sequence fails.
+run_check "check:census-row-move-labels" pnpm run check:census-row-move-labels
+# check:trip-policy-callsites — Trips spec §6.1 "application code calls policy
+# functions rather than scattering host checks", as a ratchet. Measured
+# 2026-09-12: the trip route files carried 46 inline owner/host checks, each a
+# copy of a rule that lived nowhere else and could be tested only through a
+# route. lib/tripPolicy.ts now names the nine §6.1 functions; this check fails
+# when a route file's inline count GROWS or a new file gains one, and when a
+# §6.1 function has no call site outside the policy module — a policy nobody
+# calls is a library, not a capability.
+run_check "check:trip-policy-callsites" pnpm run check:trip-policy-callsites
+# check:place-id-bridge — census-trips TR32/TR94 said the single place id-space
+# crossing was "Enforced by a standing ratchet rather than convention", naming
+# check:schema-references as that ratchet. It is not: that check verifies a
+# select-list column exists on the table being read, and says nothing about id
+# spaces. No file under src/scripts/ or scripts/ mentioned placeIdBridge at all.
+# The verdict was true and its stated reason was false. This is the ratchet, so
+# the reason is now true: the Discovery serve path emits three id spaces while
+# place memory is keyed on discovery_places.id, and crossing without the bridge
+# reports EVERY place as new to the user — silent and confident, not an error.
+run_check "check:place-id-bridge" pnpm run check:place-id-bridge
+# check:trip-write-validation — census-trips TR51 ("Command service validates
+# schema") was C, and the row's own testable half is the sentence "every trip
+# write parses a zod schema first". Measured 2026-09-11 across the three files it
+# cites: 53 write endpoints, 8 reading req.body with NO schema — POST /trips, the
+# primary create, among them. TR51 moved C -> W. Shrink-only baseline, same idiom
+# as the RLS allowlists: fix one and delete its line, because an entry left in
+# after it stops being true goes on excusing the next. Not about authorization —
+# that is check:route-auth-gate's job and is enforced independently.
+run_check "check:trip-write-validation" pnpm run check:trip-write-validation
+run_check "check:trip-decision-diff" pnpm run check:trip-decision-diff
+run_check "check:trip-write-path-inventory" pnpm run check:trip-write-path-inventory
+# check:trip-push-policy — census-trips TR200 ("Trip events must pass an attention
+# policy") read C because NotificationRouter consults preferences, dedup and the
+# Compass evaluator. It does. Measured 2026-09-11: TEN trip push sites do not go
+# through it — they call sendPushWithRetry, a pure transport wrapper that filters
+# tokens and retries, consulting nothing. One says so in a comment. That skips
+# per-user channel preferences, per-category preferences and QUIET HOURS, so a
+# user who switched a category off still gets all ten. TR200 moved C -> W.
+# Shrink-only, and keyed on file:line rather than a count, because a bare total
+# stays green across a substitution.
+run_check "check:trip-push-policy" pnpm run check:trip-push-policy
 run_check "check:census-policy-citations" pnpm run check:census-policy-citations
 # check:memory-table-ownership — public.memory_events (the Memory projection
 # family's log, live in production and read by the account-deletion cascade) and
@@ -302,6 +378,56 @@ run_check "check:authorization-contract" pnpm run check:authorization-contract
 # storage rather than a broken image, and a sweep should be scheduled
 # deliberately instead of triggered by a red build.
 run_check "check:media-objects" pnpm run check:media-objects
+# check:telegraph-certification — Telegraph's §26 RLS matrix and §27 certification
+# plan, as data a checker can read. The plan was, at the last census, entirely
+# unbuilt or satisfied incidentally by case tests written for other reasons, and
+# nothing anywhere would have noticed if it stopped being satisfied. Thirty-five
+# entries are declared under src/domain/telegraph/invariants/ and driven by three
+# suites; this enforces completeness, citation resolution, lane existence, test
+# coverage, and a SHRINK-ONLY ratchet on the entries this tree does not satisfy.
+# It does not judge whether a status is right — the suites do that, and a status
+# is a claim about what they prove.
+# check:telegraph-package-boundaries — §23's domain package exists, every one of its
+# eight subdirectories has something in it, every module is imported from OUTSIDE
+# the package, and nothing in it imports another domain's service. That last rule is
+# §23's own sentence mechanised — "Trips, Buddy, Safety, Memories, Discovery and
+# Compass remain integrations; Telegraph does not embed their canonical business
+# logic" — with three named delegations allowed, each carrying its reason. The
+# failure it prevents is the one that makes architecture documents worthless: the
+# folders exist, three of eight have a file, nothing imports any of it, and a reader
+# concludes the boundary is real because the directories are there.
+run_check "check:telegraph-package-boundaries" pnpm run check:telegraph-package-boundaries
+run_check "check:telegraph-certification" pnpm run check:telegraph-certification
+# check:telegraph-share-producers — every msg_type/subtype literal in either tree
+# is classified in the Telegraph share registry, orphan declarations are removed,
+# and a producer whose source domain is private-by-default may ONLY be declared
+# PRIVATE_SOURCE, which requires a derivative grant from the owning domain. That
+# second rule is what stops the registration rule being satisfiable by declaring
+# a Memory card "PUBLIC". It also requires the DYNAMIC sites a literal scan
+# cannot see to be declared, which is how the unvalidated client-supplied
+# `subtype` on POST /threads/:id/messages got written down.
+run_check "check:telegraph-share-producers" pnpm run check:telegraph-share-producers
+# check:telegraph-slos — Telegraph's §28 metric table and §30A.17 SLOs, plus §24's
+# projection rule. Before this there was nothing: no metric emitted for messaging,
+# no target constant, and — one level worse than absent — the realtime bus already
+# counted everything it swallowed while NOTHING read those counters except a test,
+# so a realtime outage was a number nobody could reach. Six rules: completeness,
+# every target a number or the spec's own words, emitters that really name their
+# metric, no emission of an undeclared key, safety/privacy strictest ENFORCED AS AN
+# ORDERING between rows rather than as a label, and three shrink-only ratchets —
+# unmeasured SLOs, absent projections, and client-side joins of a raw messaging
+# table. That last one is the rule that decays silently: one convenient PostgREST
+# call from a new screen and nothing notices.
+run_check "check:telegraph-slos" pnpm run check:telegraph-slos
+# check:telegraph-inventory — §25.1's mandatory Phase 0 inventory, regenerated and
+# diffed. The census scored it NOT-BUILT with the right observation: "the CAPABILITY
+# to do it exists as standing CI lanes; the deliverable does not." It is a generated
+# document rather than a written one because an inventory written by hand is stale
+# the next day, and a stale inventory is worse than none — it is a document people
+# quote. This fails when the committed report stops matching the tree, so the
+# artifact both exists and cannot rot.
+run_check "check:telegraph-inventory" pnpm run check:telegraph-inventory
+
 run_gate  "check:rank-events-surfaces" pnpm run check:rank-events-surfaces
 
 echo ""

@@ -10,7 +10,8 @@
  * POST   /admin/trust/events/:eventId/dismiss      — dismiss pending event
  * POST   /admin/trust/users/:userId/restrict       — apply restriction
  * POST   /admin/trust/restrictions/:id/remove      — lift restriction (POST + body)
- * POST   /admin/trust/users/:userId/cap/override   — lift a cap early
+ * POST   /admin/trust/users/:userId/score/override — set a category CEILING
+ * POST   /admin/trust/users/:userId/cap/override   — remove a score-override ceiling
  * GET    /admin/trust/gaming-flags                 — suspected gaming rings
  * POST   /admin/trust/gaming-flags/:id/mark-reviewed — dismiss a gaming flag
  * GET    /admin/trust/settings                     — read trust settings
@@ -22,18 +23,22 @@ import { Router } from "express";
 import { logAdminAccess, accessReason } from "../lib/adminAudit.js";
 import { z } from "zod";
 import { sendError } from "../lib/http.js";
+import { logger } from "../lib/logger.js";
 import {
   confirmEvent,
   dismissEvent,
   adminApplyRestriction,
   adminLiftRestriction,
   adminResolveReview,
+  adminOverrideScore,
+  adminRemoveOverride,
   getPendingEvents,
 } from "../services/trust/TrustAdminService.js";
-import { getTrustProfileResult, recalculateTrustScore } from "../services/trust/TrustScoreService.js";
+import { ALL_CATEGORIES, getTrustProfileResult, recalculateTrustScore } from "../services/trust/TrustScoreService.js";
+import type { TrustCategory } from "../services/trust/TrustEventService.js";
 import { listRestrictionsForAudit } from "../services/trust/TrustRestrictionService.js";
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
-import { getActiveCaps, liftCap } from "../services/trust/TrustCapService.js";
+import { getActiveCaps, getCapForUser } from "../services/trust/TrustCapService.js";
 import type { RestrictionType } from "../services/trust/TrustRestrictionService.js";
 
 import { requireAdmin } from "../lib/requireAdmin.js";
@@ -48,6 +53,9 @@ import {
 const router = Router();
 
 const UUID = /^[0-9a-f-]{36}$/i;
+
+/** The nine scored categories, as a membership test for admin input. */
+const TRUST_CATEGORIES = new Set<string>(ALL_CATEGORIES);
 
 /**
  * Structural bounds for each trust setting. These are NOT policy: the numbers
@@ -356,7 +364,96 @@ router.post("/admin/trust/restrictions/:id/remove", async (req, res) => {
   }
 });
 
+// ── POST /admin/trust/users/:userId/score/override ───────────────────────────
+//
+// The apply half of the owner's ruling — CAP NOW, PIN LATER BEHIND A FLAG —
+// and, until this route existed, a capability nobody had. `adminOverrideScore`
+// has been the only admin-initiated ceiling writer in the product and had NO
+// caller outside its own tests, so no admin could set a ceiling at all and the
+// ruling governed an unreachable function.
+//
+// An override is a MAXIMUM. Events may still move the category below it; it
+// cannot raise a score, and it does not take precedence over a moderation
+// ceiling. The service reports which of those actually happened
+// (`ceilingBinding`) rather than answering `{ ok: true }` to both, and this
+// route passes that through unedited: an upward override that withheld nothing
+// must not read to an admin like one that did.
+//
+// PIN semantics, expiry and two-admin precedence are NOT here. The flag they
+// are meant to sit behind does not exist yet.
+
+const ScoreOverrideSchema = z.object({
+  category: z.string().min(1).max(64),
+  score:    z.number().min(0).max(100),
+  reason:   z.string().min(1).max(500),
+});
+
+router.post("/admin/trust/users/:userId/score/override", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc, userId: adminId } = admin;
+
+  const { userId } = req.params;
+  if (!UUID.test(userId)) { sendError(res, "invalid_payload", "Invalid userId"); return; }
+
+  const parsed = ScoreOverrideSchema.safeParse(req.body);
+  if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
+  if (!TRUST_CATEGORIES.has(parsed.data.category)) {
+    sendError(res, "invalid_payload", `Unknown trust category: ${parsed.data.category}`);
+    return;
+  }
+
+  try {
+    // Awaited, not fire-and-forget: `adminOverrideScore` throws unless the
+    // ceiling is READ BACK from trust_profiles, so awaiting it is what makes
+    // this route's `ok` a report of a persisted ceiling rather than a receipt
+    // for a request.
+    const result = await adminOverrideScore(
+      sc, adminId, userId, parsed.data.category as TrustCategory, parsed.data.score, parsed.data.reason,
+    );
+    // Await so the affected user's compass cache is cleared before we respond
+    await invalidateCompassCache(sc, userId, "trust_score_override");
+    res.json(result);
+  } catch (err: any) {
+    sendError(res, "db_error", err?.message ?? "Could not apply score override", { exposeDetail: true });
+  }
+});
+
 // ── POST /admin/trust/users/:userId/cap/override ─────────────────────────────
+//
+// The REMOVAL half. Despite its name this route has always lifted a cap rather
+// than applying one, and it did so outside the service that owns the semantics.
+// Four separate defects, all of them the same family — reporting success
+// without confirming it:
+//
+//  1. NO TYPE CHECK. It lifted ANY cap by id, `behavior_confirmed` included.
+//     That is relief from a moderation ceiling, which is recorded as
+//     deliberately NOT built and gated on an unanswered authority question, and
+//     an admin could grant it through a route named "override". Only an
+//     `admin_override` ceiling is liftable here now; anything else is refused
+//     with the reason said out loud.
+//
+//  2. NO USER SCOPING — the worst of the four and the one nobody had written
+//     down. `liftCap` filtered on the cap id alone. `:userId` was used for the
+//     audit row and the cache invalidation and NOT for the update, so an admin
+//     could lift a cap belonging to user B through user A's URL: B's ceiling
+//     gone, the audit trail recording it against A, and B's compass cache never
+//     invalidated. The cap is now looked up by (id, user) BEFORE anything is
+//     written, so a mismatched pair is a 404 and the audit row is true by
+//     construction.
+//
+//  3. NOTHING DISTINGUISHED "LIFTED ONE" FROM "LIFTED NOTHING". The update
+//     carried no `.select()`, so a nonexistent, already-lifted or someone
+//     else's cap all resolved and this route answered `ok`.
+//
+//  4. FIRE-AND-FORGET RECALCULATION WITH THE ERROR SWALLOWED, then
+//     `{ ok: true }`. `recalculateTrustScore` is fail-closed and THROWS on an
+//     unreadable settings/events/caps table, so the ceiling could be lifted
+//     with the score never recalculated while the caller was told it worked.
+//
+// All four are answered by doing the work in `adminRemoveOverride`, which lifts
+// with scoping, awaits the recalculation, re-reads the caps and the profile,
+// and refuses to audit a removal it cannot observe.
 
 const CapOverrideSchema = z.object({
   capId:  z.string().regex(UUID, "capId must be a valid UUID"),
@@ -374,23 +471,44 @@ router.post("/admin/trust/users/:userId/cap/override", async (req, res) => {
   const parsed = CapOverrideSchema.safeParse(req.body);
   if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
 
+  // Scoped read FIRST, through the Trust seam — `services/trust/` owns
+  // `trust_caps`, and `getCapForUser` keeps the three answers three: an
+  // unreadable table must not be answered as "no such cap for this user",
+  // which is the shape that turns a transient outage into a confident 404.
+  const lookup = await getCapForUser(sc, { capId: parsed.data.capId, userId });
+  if (lookup.state === "unavailable") {
+    sendError(res, "db_error", `Could not read cap: ${lookup.reason}`);
+    return;
+  }
+  if (lookup.state === "not_found") {
+    sendError(res, "not_found", "No cap with that id belongs to this user.");
+    return;
+  }
+  const cap = lookup.cap;
+  if (cap.liftedAt) {
+    sendError(res, "conflict", "That cap has already been lifted.");
+    return;
+  }
+  const reasonCode = String(cap.reasonCode ?? "");
+  if (reasonCode !== "admin_override") {
+    sendError(res, "forbidden",
+      `Cap ${parsed.data.capId} is a '${reasonCode}' ceiling, not an admin override. ` +
+      "Relief from a moderation ceiling is not built: lifting it here would grant, through a " +
+      "score-override endpoint, standing that an admin does not have the authority to restore.");
+    return;
+  }
+
   try {
-    await liftCap(sc, parsed.data.capId, adminId);
-    // Fire-and-forget score recalculation after cap is lifted
-    recalculateTrustScore(sc, userId).catch(() => {});
-    await sc.from("trust_admin_actions").insert({
-      admin_id:    adminId,
-      target_user: userId,
-      action_type: "lift_cap",
-      reason:      parsed.data.reason,
-      source_id:   parsed.data.capId,
-      metadata:    {},
-    });
-    // Await so the affected user's compass cache is cleared before we respond
+    const result = await adminRemoveOverride(
+      sc, adminId, userId, cap.category as TrustCategory, parsed.data.reason, parsed.data.capId,
+    );
+    // Await so the affected user's compass cache is cleared before we respond —
+    // and for the user whose cap was actually lifted, which is now the same user
+    // by construction rather than by hope.
     await invalidateCompassCache(sc, userId, "trust_cap_lifted");
-    res.json({ ok: true, capId: parsed.data.capId });
+    res.json({ ...result, capId: parsed.data.capId });
   } catch (err: any) {
-    sendError(res, "db_error", err?.message ?? "Could not lift cap");
+    sendError(res, "db_error", err?.message ?? "Could not lift cap", { exposeDetail: true });
   }
 });
 
@@ -481,16 +599,41 @@ router.put("/admin/trust/settings/:key", async (req, res) => {
 
   if (error) { sendError(res, "db_error", error.message); return; }
 
-  // Audit log (fire-and-forget — wrap in real Promise so .catch() is available)
-  Promise.resolve().then(() =>
-    sc.from("trust_admin_actions").insert({
+  // AUDIT — `update_setting`, not `score_override`. IDF-53.
+  //
+  // This filed a SETTINGS edit under the score-override action type, so a query
+  // for "who overrode a user's score" answered with settings edits. It was
+  // visible in the row's own data: `target_user` is `adminId`, the admin
+  // auditing themselves, because a settings edit has no target user — a
+  // `score_override` row whose target is its own author is a contradiction the
+  // schema stored without complaint. `update_setting` is admitted by
+  // `trust_admin_actions_action_type_check` as of migration 2940; renaming the
+  // literal without that migration would have produced a 23514 and, because
+  // supabase-js RESOLVES on a DB error, NO AUDIT ROW AT ALL — silently.
+  //
+  // AND THE FAILURE IS NO LONGER DISCARDED. `.catch(() => {})` over a supabase
+  // call is worse than it looks: the rejection path is not the failure path
+  // here, so that catch never even ran, and a refused insert was
+  // indistinguishable from a written one. That is exactly how the wrong
+  // action_type survived long enough to become a checklist row. The insert is
+  // still fire-and-forget — a settings edit must not fail because its audit row
+  // did — but a failure is now READ and logged at error, so the next one is
+  // visible instead of silent.
+  await (async () => {
+    const { error: auditError } = await sc.from("trust_admin_actions").insert({
       admin_id:    adminId,
       target_user: adminId,
-      action_type: "score_override",
+      action_type: "update_setting",
       reason:      `Updated trust setting ${key} to ${parsed.data.value}`,
       metadata:    { key, value: parsed.data.value },
-    }),
-  ).catch(() => {});
+    });
+    if (auditError) {
+      logger.error(
+        { key, adminId, code: (auditError as any)?.code, message: (auditError as any)?.message },
+        "trust setting updated but its audit row was REFUSED — the change is live and unrecorded",
+      );
+    }
+  })();
 
   // Fire-and-forget: recalculate all users' scores so the new weights/decay take effect.
   // Read all user_ids from trust_profiles in one query, then recalc each sequentially.

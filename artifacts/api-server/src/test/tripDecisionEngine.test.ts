@@ -22,7 +22,7 @@ import {
   recommend, recommendAll, assessOption, propagateRisks,
   RECOMMENDATION_KINDS, DECISION_REASONS,
   type Goal, type DecisionTask, type Proposal, type Risk,
-} from "../services/trips/TripDecisionEngine.js";
+} from "../domain/trips/services/TripDecisionEngine.js";
 
 const NOW = new Date("2026-10-01T12:00:00.000Z");
 

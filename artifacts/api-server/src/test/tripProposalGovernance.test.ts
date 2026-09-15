@@ -10,11 +10,11 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-import { TRIP_EVENT_TYPES } from "../lib/tripKernel.js";
+import { TRIP_EVENT_TYPES } from "../domain/trips/commands/tripKernel.js";
 
 const gov = readFileSync(new URL("../migrations/2774_trip_proposal_governance.sql", import.meta.url), "utf8");
 const kern = readFileSync(new URL("../migrations/2775_trip_kernel_proposal_governance_and_apply.sql", import.meta.url), "utf8");
-const ts = readFileSync(new URL("../lib/tripKernel.ts", import.meta.url), "utf8");
+const ts = readFileSync(new URL("../domain/trips/commands/tripKernel.ts", import.meta.url), "utf8");
 const ledger = readFileSync(new URL("../../../../docs/architecture/blocker-ledger.md", import.meta.url), "utf8");
 
 describe("§9.3 — the vocabulary is the spec's", () => {

@@ -15,8 +15,8 @@ import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import tripCrewLocationRouter from "../routes/tripCrewLocation.js";
-import { buildCrewCard } from "../lib/tripCrewLocation.js";
-import { sweepExpiredLiveShares, revokeAccessForMember } from "../services/tripCrew/TripCrewLiveShareService.js";
+import { buildCrewCard } from "../domain/trips/services/tripCrewLocation.js";
+import { sweepExpiredLiveShares, revokeAccessForMember } from "../domain/trips/services/TripCrewLiveShareService.js";
 
 // ── Test server ───────────────────────────────────────────────────────────────
 

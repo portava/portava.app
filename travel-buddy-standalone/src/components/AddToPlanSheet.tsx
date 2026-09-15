@@ -5,7 +5,7 @@ import {
 import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
 import { X, ChevronDown } from 'lucide-react-native';
 import type { TripPlanItem, TripPlanCategory, TripPlanLockType } from '../types/models.ts';
-import { createPlanItem } from '../services/tripPlan.ts';
+import { createPlanItem } from '../features/trips/planning/tripPlan.ts';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 import { DatePickerField } from './DateTimePickerField';
 import { LockTypeSelector } from './itinerary/LockTypeSelector.tsx';

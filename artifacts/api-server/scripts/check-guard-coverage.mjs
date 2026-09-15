@@ -789,6 +789,23 @@ const EXEMPT = [
   },
 
   {
+    file: 'src/test/wallSessionIntentLiveDbStatus.test.ts',
+    pinnedTestEnv: true,
+    reason:
+      'W146 ANNOUNCEMENT half of the Wall session-intent live harness. Its whole job is to make the ordinary '
+      + 'suite SAY, on every run, that src/test/wallSessionIntentLiveDb.test.ts (which DOES import the strict '
+      + 'guard front door, and is therefore unregisterable in the curated test script) was not verified against '
+      + 'a database. It reads process.env.SUPABASE_URL and process.env.SUPABASE_SERVICE_ROLE_KEY at exactly two '
+      + 'lines, and uses both only to COMPOSE THE BANNER STRING that names what is missing. The detector here is '
+      + 'NAME-BASED and cannot tell a read that dials from a read that describes. Measured on this file: zero '
+      + 'createClient, zero getServiceClient, zero .from(, zero fetch, zero import of src/lib/supabase. '
+      + 'Importing the strict guard here would make the file exit 2 on every ordinary run — which is precisely '
+      + 'the silence it exists to prevent, so the exemption is not a convenience but the requirement. '
+      + 'EXEMPTION MEANS UNGUARDED, NOT SAFE — if this file ever constructs a client or issues a request, the '
+      + 'exemption is void and it must import the guard or leave the curated list.',
+  },
+
+  {
     file: 'src/test/notificationIssuance.test.ts',
     pinnedTestEnv: true,
     reason:

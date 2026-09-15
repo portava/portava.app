@@ -81,7 +81,7 @@ export const RESIDUAL_PREDICATE = [
  * silently.
  */
 const CO_TOUCHER_CLASSIFICATION_DEFAULT: Record<string, string> = {
-  // EMPTY, AND THAT IS A RESULT RATHER THAN AN OMISSION.
+  // WAS EMPTY, AND THE EMPTINESS WAS A RESULT RATHER THAN AN OMISSION.
   //
   // This map held one entry — 2335_layover_recommendation_write_boundary,
   // classified ORDER-INSENSITIVE because it changes only RLS policies and role
@@ -96,11 +96,28 @@ const CO_TOUCHER_CLASSIFICATION_DEFAULT: Record<string, string> = {
   // this list quietly accumulating decisions about migrations that are already
   // in the database.
   //
-  // An empty map is a legitimate GO for ORDERING_COLLISION: the condition
+  // An empty map was a legitimate GO for ORDERING_COLLISION: the condition
   // records "no unapplied migration mutates an object 2411 touches" as evidence
   // rather than passing silently. It is NOT a licence to apply 2411 — that is
   // still blocked on NON_VACUITY, because the measurement says the backfill
   // would key 30 rows and preserve nothing.
+  //
+  // 2026-09-15: ONE ENTRY AGAIN, because a new unapplied co-toucher landed in the
+  // tree and the checker refused to let ordering be decided by luck. The decision
+  // is written here rather than assumed.
+  "2745_layover_recommendation_travel_provenance":
+    "ORDER-INSENSITIVE. 2745 adds ONE nullable, defaultless column — " +
+    "layover_recommendations.travel_time_source — and its CHECK, and writes NO ROW: " +
+    "it has no UPDATE, no INSERT and no DELETE, and its own postcondition fails if the " +
+    "count of labelled rows changes while it runs. 2411 writes the rec_key COLUMN on the " +
+    "same table and reads (id, place_id, inside_airport, rec_type, title, city, session_id) " +
+    "to derive it. The two share no column in either direction: 2745 neither reads nor " +
+    "writes rec_key or any column 2411's derivation depends on, and 2411 neither reads nor " +
+    "writes travel_time_source. Either order leaves the identical shape and the identical " +
+    "rows, and neither can make the other's precondition or postcondition false — 2411's " +
+    "unique index on (session_id, rec_key) is untouched by an ADD COLUMN, and 2745's " +
+    "precondition asks only for the table and travel_time_min. It also does not touch the " +
+    "cutover flag row: 2745 seeds no flag at all.",
 };
 
 /**

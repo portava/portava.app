@@ -154,32 +154,100 @@ function normaliseTerminalInfo(raw: unknown): Record<string, unknown> | null {
   return Object.keys(obj).length > 0 ? obj : null;
 }
 
+/**
+ * ── census L294/C2 — WHY THESE FOUR LOOKUPS RETURN A RECORD ─────────────────
+ *
+ * Each of the four resolvers below used to answer `AirportProfile | null`, and
+ * on an unreadable `airport_profiles` each logged (`noteFallback`) and then
+ * answered from the STATIC dataset — whose every buffer is a generic constant
+ * (60 / 120 / 30 / 15 / 20). That answer is byte-identical to the honest one
+ * for an airport this product has simply never curated, which is the §22 L0
+ * tier and a DESIGNED state. So "the database is down" and "we do not know this
+ * airport" were the same value, exactly as "the write was refused" and "there
+ * is no such session" were the same value before §19.
+ *
+ * It is worse here than a lost log line, because `POST /airport/sessions` takes
+ * this profile and — when it carries no id — `upsertAirportProfile` WRITES the
+ * generic defaults into `airport_profiles` and links the session to that row.
+ * `routes/airport.ts` already states the harm on the one branch that was
+ * guarded: *"EVERY later hard-return time for it is computed from the generic
+ * buffer defaults — permanently, long after the database recovers. The
+ * transient failure would have been baked into the row."* That guard was on the
+ * `airportId` branch and on neither of the other two.
+ *
+ * The `resolveBy*` / `searchAirports` names keep their exact old signatures —
+ * `src/test/airport.test.ts` binds them and belongs to another lane — and are
+ * one-line projections of the records below. Nothing about their behaviour
+ * moves; what is new is that a caller may now ASK.
+ */
+export interface AirportLookup {
+  airport: AirportProfile | null;
+  /** TRUE only when `airport_profiles` could not be READ. Not "not found". */
+  degraded: boolean;
+  /** Named so a route can disclose it. Empty unless `degraded`. */
+  degradedReasons: string[];
+  /** TRUE when the answer came from the static dataset rather than the table. */
+  fromStatic: boolean;
+}
+
+export interface AirportLookupList {
+  airports: AirportProfile[];
+  degraded: boolean;
+  degradedReasons: string[];
+  fromStatic: boolean;
+}
+
+const AIRPORT_PROFILES_UNREADABLE = "airport_profiles_unreadable";
+
+function degradedReasonsFor(unreadable: boolean): string[] {
+  return unreadable ? [AIRPORT_PROFILES_UNREADABLE] : [];
+}
+
 /** Resolve by IATA code (e.g. "TPE", "NRT"). Case-insensitive. */
-export async function resolveByIata(
+export async function lookupByIata(
   db: SupabaseClient,
   iataCode: string,
-): Promise<AirportProfile | null> {
+): Promise<AirportLookup> {
+  let unreadable = false;
   try {
     const { data, error } = await db
       .from("airport_profiles")
       .select("*")
       .ilike("iata_code", iataCode.trim())
       .maybeSingle();
-    if (error) noteFallback("resolveByIata", error);
-    if (data) return rowToProfile(data);
-  } catch { /* fall through */ }
+    if (error) { noteFallback("resolveByIata", error); unreadable = true; }
+    if (data) return { airport: rowToProfile(data), degraded: false, degradedReasons: [], fromStatic: false };
+  } catch (err) {
+    // NOT dead code the way a supabase-js catch is: `.ilike` on a malformed
+    // code and `rowToProfile` on a malformed row both throw synchronously.
+    noteFallback("resolveByIata", err);
+    unreadable = true;
+  }
   // Static fallback
   const s = resolveStaticByIata(iataCode);
-  return s ? staticToProfile(s) : null;
+  return {
+    airport: s ? staticToProfile(s) : null,
+    degraded: unreadable,
+    degradedReasons: degradedReasonsFor(unreadable),
+    fromStatic: true,
+  };
+}
+
+export async function resolveByIata(
+  db: SupabaseClient,
+  iataCode: string,
+): Promise<AirportProfile | null> {
+  return (await lookupByIata(db, iataCode)).airport;
 }
 
 /** Resolve by nearest GPS coordinate within maxDistanceKm. */
-export async function resolveByGps(
+export async function lookupByGps(
   db: SupabaseClient,
   lat: number,
   lng: number,
   maxDistanceKm = 50,
-): Promise<AirportProfile | null> {
+): Promise<AirportLookup> {
+  let unreadable = false;
   try {
     const delta = maxDistanceKm / 111; // rough degree equivalent
     const { data, error } = await db
@@ -191,37 +259,52 @@ export async function resolveByGps(
       .lte("lng", lng + delta)
       .limit(20);
 
-    if (error) noteFallback("resolveByGps", error);
-    if (!data || data.length === 0) {
-      // Static GPS fallback
-      const s = resolveStaticByGps(lat, lng);
-      return s ? staticToProfile(s) : null;
-    }
-
-    // Find closest DB row
-    let closest: any = null;
-    let closestDist = Infinity;
-    for (const row of data) {
-      const dLat = Number(row.lat) - lat;
-      const dLng = Number(row.lng) - lng;
-      const dist = Math.sqrt(dLat * dLat + dLng * dLng);
-      if (dist < closestDist) {
-        closestDist = dist;
-        closest = row;
+    if (error) { noteFallback("resolveByGps", error); unreadable = true; }
+    if (data && data.length > 0) {
+      // Find closest DB row
+      let closest: any = null;
+      let closestDist = Infinity;
+      for (const row of data) {
+        const dLat = Number(row.lat) - lat;
+        const dLng = Number(row.lng) - lng;
+        const dist = Math.sqrt(dLat * dLat + dLng * dLng);
+        if (dist < closestDist) {
+          closestDist = dist;
+          closest = row;
+        }
+      }
+      if (closest) {
+        return { airport: rowToProfile(closest), degraded: false, degradedReasons: [], fromStatic: false };
       }
     }
-    return closest ? rowToProfile(closest) : null;
-  } catch {
-    const s = resolveStaticByGps(lat, lng);
-    return s ? staticToProfile(s) : null;
+  } catch (err) {
+    noteFallback("resolveByGps", err);
+    unreadable = true;
   }
+  const s = resolveStaticByGps(lat, lng);
+  return {
+    airport: s ? staticToProfile(s) : null,
+    degraded: unreadable,
+    degradedReasons: degradedReasonsFor(unreadable),
+    fromStatic: true,
+  };
+}
+
+export async function resolveByGps(
+  db: SupabaseClient,
+  lat: number,
+  lng: number,
+  maxDistanceKm = 50,
+): Promise<AirportProfile | null> {
+  return (await lookupByGps(db, lat, lng, maxDistanceKm)).airport;
 }
 
 /** Resolve by city name search. Returns the first match. */
-export async function resolveByCity(
+export async function lookupByCity(
   db: SupabaseClient,
   city: string,
-): Promise<AirportProfile | null> {
+): Promise<AirportLookup> {
+  let unreadable = false;
   try {
     const { data, error } = await db
       .from("airport_profiles")
@@ -229,21 +312,36 @@ export async function resolveByCity(
       .ilike("city", `%${city.trim()}%`)
       .limit(1)
       .maybeSingle();
-    if (error) noteFallback("resolveByCity", error);
-    if (data) return rowToProfile(data);
-  } catch { /* fall through */ }
+    if (error) { noteFallback("resolveByCity", error); unreadable = true; }
+    if (data) return { airport: rowToProfile(data), degraded: false, degradedReasons: [], fromStatic: false };
+  } catch (err) {
+    noteFallback("resolveByCity", err);
+    unreadable = true;
+  }
   // Static fallback
   const s = resolveStaticByCity(city);
-  return s ? staticToProfile(s) : null;
+  return {
+    airport: s ? staticToProfile(s) : null,
+    degraded: unreadable,
+    degradedReasons: degradedReasonsFor(unreadable),
+    fromStatic: true,
+  };
+}
+
+export async function resolveByCity(
+  db: SupabaseClient,
+  city: string,
+): Promise<AirportProfile | null> {
+  return (await lookupByCity(db, city)).airport;
 }
 
 /** Search airports by query (IATA, city, name). Returns up to 10 results. */
-export async function searchAirports(
+export async function lookupAirports(
   db: SupabaseClient,
   query: string,
-): Promise<AirportProfile[]> {
+): Promise<AirportLookupList> {
   const q = query.trim();
-  if (!q) return [];
+  if (!q) return { airports: [], degraded: false, degradedReasons: [], fromStatic: false };
   // The .or() argument is a filter EXPRESSION: an unescaped `,` in `q` ends the
   // current predicate and starts a caller-chosen one, and a bare `%` turns the
   // prefix search into a full scan. `q` arrives from a z.string().max(100) with
@@ -251,6 +349,7 @@ export async function searchAirports(
   // The static fallback below keeps using the raw `q` — it is an in-memory
   // string match with no filter grammar to break out of.
   const qSafe = safeOrIlikeValue(q);
+  let unreadable = false;
   try {
     const { data, error } = await db
       .from("airport_profiles")
@@ -258,12 +357,29 @@ export async function searchAirports(
       .or(`iata_code.ilike.${qSafe}%,city.ilike.%${qSafe}%,name.ilike.%${qSafe}%`)
       .order("verified", { ascending: false })
       .limit(10);
-    if (error) noteFallback("searchAirports", error);
+    if (error) { noteFallback("searchAirports", error); unreadable = true; }
     // If DB has results, use them
-    if (data && data.length > 0) return data.map(rowToProfile);
-  } catch { /* fall through */ }
+    if (data && data.length > 0) {
+      return { airports: data.map(rowToProfile), degraded: false, degradedReasons: [], fromStatic: false };
+    }
+  } catch (err) {
+    noteFallback("searchAirports", err);
+    unreadable = true;
+  }
   // Static fallback — always available even with empty DB
-  return searchStaticAirports(q, 10).map(staticToProfile);
+  return {
+    airports: searchStaticAirports(q, 10).map(staticToProfile),
+    degraded: unreadable,
+    degradedReasons: degradedReasonsFor(unreadable),
+    fromStatic: true,
+  };
+}
+
+export async function searchAirports(
+  db: SupabaseClient,
+  query: string,
+): Promise<AirportProfile[]> {
+  return (await lookupAirports(db, query)).airports;
 }
 
 /** Build a minimal fallback profile when the airport is not in the DB. */

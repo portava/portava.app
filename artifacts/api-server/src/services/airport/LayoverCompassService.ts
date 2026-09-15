@@ -44,12 +44,20 @@
  * answer including the deterministic fallbacks.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { openai } from "../../lib/openai.js";
+// `getOpenAI()`, not the bare `openai` export. The bare export is the real
+// client always, so this file could not be driven with a model answer in a
+// test — which meant the §12 boundary below could only ever be exercised
+// against strings handed to it directly, and nothing proved the PRODUCTION
+// path passed the certified verdict to it. It does now, and
+// `__tests__/layoverCompassEntryBoundary.test.ts` drives a widening answer
+// through this function to prove it.
+import { getOpenAI } from "../../lib/openai.js";
 import type { AirportProfile } from "./AirportProfileService.js";
 import type { LayoverSession } from "./LayoverSessionService.js";
 import {
   safetyLabel,
   type LayoverReturnState,
+  type LeaveAdvice,
   type SafetyRating,
 } from "./LayoverSafetyEngine.js";
 import {
@@ -59,6 +67,7 @@ import {
   type FeasibilitySession,
   type LayoverFeasibilityRecord,
 } from "./LayoverFeasibility.js";
+import { planFitTotals, planFitVerdict, type PlanFitStop } from "./LayoverPlanFit.js";
 import { formatLocalTime } from "./AirportTime.js";
 import { sanitizeCompassAnswer } from "./LayoverPrivacyGuard.js";
 
@@ -68,6 +77,21 @@ export interface CompassLayoverInput {
   airport: AirportProfile;
   /** Max chars for the AI answer */
   maxLength?: number;
+  /**
+   * The two caller-owned halves of the §12 tool context. Nothing in this file
+   * reads a database, so a tool can only ever see what the route handed it —
+   * which is the property that makes `runLayoverTool` a boundary rather than a
+   * convenience, and the reason these are parameters and not a fetch.
+   *
+   * EACH CARRIES ITS READ OUTCOME, NOT JUST ITS ROWS. `recommendations: []`
+   * from a failed read and `recommendations: []` from a layover with nothing
+   * worth doing are the same value and opposite claims (census L294), so the
+   * absent case is spelled as a reason rather than as an empty array.
+   */
+  recommendations?: Array<Record<string, unknown>>;
+  recommendationsUnavailableReason?: string | null;
+  stops?: LayoverToolContext["stops"];
+  stopsUnavailableReason?: string | null;
 }
 
 export interface CompassLayoverAnswer {
@@ -83,6 +107,15 @@ export interface CompassLayoverAnswer {
   boundaryViolations: CompassBoundaryViolation[];
   /** §20 — which rules and which inputs produced the figures above. */
   certification: ReturnType<typeof certificationHeader>;
+  /**
+   * §12 — the deterministic tools the model actually invoked, in order, for
+   * THIS answer. Empty when the model answered from the context alone, which
+   * is the common case. A name only appears here if `runLayoverTool` ran it and
+   * answered `ok`; a refusal (unknown name, unreadable table, unavailable tool)
+   * is deliberately NOT listed, because the point of the list is to say what
+   * the sentence above rests on.
+   */
+  toolsConsulted: LayoverToolName[];
 }
 
 const LEAVING_PATTERNS = [
@@ -148,21 +181,43 @@ Traveler's question: "${question}"
 
 Answer (max ${maxLength} characters):`;
 
+  // ── §12 — THE TOOLS ARE OFFERED, CHOSEN AND RUN ───────────────────────────
+  //
+  // This is the line every recount of census L102–L113 has turned on. The
+  // twelve tools were declared and callable for four passes and the model was
+  // never given them, so twelve requirements read `W` on the distinction
+  // between a function and a tool. `LAYOVER_TOOL_SCHEMAS` now travels on the
+  // request and `runLayoverTool` executes whatever comes back.
+  //
+  // NOTHING ABOUT THE SAFETY BOUNDARY CHANGES, and that is why this needed no
+  // flag. Every tool reads out of `record`, `session`, `airport` or the
+  // caller-supplied lists; none of them computes a deadline, a buffer or an
+  // envelope. So the widest thing a tool can hand the model is the certified
+  // record itself, and the answer the model writes from it still goes through
+  // `enforceCompassEnvelope` below exactly as before.
+  const toolCtx: LayoverToolContext = {
+    session, airport, record,
+    recommendations: input.recommendations,
+    recommendationsUnavailableReason: input.recommendationsUnavailableReason ?? null,
+    stops: input.stops,
+    stopsUnavailableReason: input.stopsUnavailableReason ?? null,
+  };
+  const toolsConsulted: LayoverToolName[] = [];
   let answer: string;
   try {
-    const completion = await openai.chat.completions.create({
-      model: "gpt-5-mini",
-      max_completion_tokens: 300,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user",   content: userPrompt },
-      ],
+    answer = await runModelWithTools({
+      systemPrompt, userPrompt, maxLength, ctx: toolCtx, consulted: toolsConsulted,
     });
-    answer = (completion.choices[0]?.message?.content ?? "").trim().slice(0, maxLength);
   } catch {
     // Graceful fallback — the same deterministic text the boundary check falls
     // back to, so a refused model answer and an unreachable model produce the
     // identical, certified reply rather than two different ones.
+    answer = "";
+  }
+  if (!answer) {
+    // An empty completion is a model failure that does not throw, and it used
+    // to be published as an empty `answer` string. A model that spends every
+    // round calling tools and never writes a sentence lands here too.
     answer = deterministicAnswer({ involvesLeaving, usableMin, availMin, bufferMin, hardReturnLocal });
   }
 
@@ -174,6 +229,10 @@ Answer (max ${maxLength} characters):`;
     airport,
     hardReturnTime,
     usableMinutes: usableMin,
+    // The CERTIFIED verdict, from the same record the deadline came from. The
+    // risk-band check is inert without it, so this argument is what makes
+    // census L101's third noun enforced rather than declared.
+    verdict: record.verdict,
   });
   const boundaryViolations = bounded.violations;
   const boundedText = bounded.ok
@@ -205,7 +264,120 @@ Answer (max ${maxLength} characters):`;
     clarifyingQuestion: nextClarifyingQuestion(airport, session, now.getTime()),
     boundaryViolations,
     certification: certificationHeader(record),
+    toolsConsulted,
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §12 — the tool loop
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * How many times the model may come back asking for another tool.
+ *
+ * A model that answers a tool result with another tool call is normal; a model
+ * that does it forever is a request that never returns, on a route a traveller
+ * is holding a phone in front of. Four rounds is enough for "what is my
+ * deadline, does my plan fit, what is reachable" and is bounded, and the
+ * traveller gets the certified deterministic answer if the budget runs out —
+ * never an empty string, and never a hang.
+ */
+const MAX_TOOL_ROUNDS = 4;
+
+/**
+ * One chat turn, plus up to `MAX_TOOL_ROUNDS` tool rounds, returning the text
+ * the model finally wrote (possibly empty — the caller decides what an empty
+ * answer means).
+ *
+ * THE FAILURE PATHS ARE THE POINT, so they are listed rather than inferred:
+ *
+ *  - a tool name the model invented        → `unknown_tool:<name>`, fed back
+ *  - `arguments` that are not JSON         → `malformed_tool_arguments`, fed back
+ *  - a tool that is unavailable on this tree → its own reason, fed back
+ *
+ * None of them throws and none of them ends the conversation. A hallucinated
+ * function name must cost the traveller a sentence, not their answer: the
+ * refusal goes back to the model as a tool result and it gets another round to
+ * say something true. Only a throw from the model client itself reaches the
+ * caller's catch.
+ */
+async function runModelWithTools(args: {
+  systemPrompt: string;
+  userPrompt: string;
+  maxLength: number;
+  ctx: LayoverToolContext;
+  consulted: LayoverToolName[];
+}): Promise<string> {
+  const { systemPrompt, userPrompt, maxLength, ctx, consulted } = args;
+  const messages: any[] = [
+    { role: "system", content: systemPrompt },
+    { role: "user", content: userPrompt },
+  ];
+
+  for (let round = 0; round <= MAX_TOOL_ROUNDS; round += 1) {
+    const completion = await getOpenAI().chat.completions.create({
+      model: "gpt-5-mini",
+      max_completion_tokens: 300,
+      messages,
+      tools: LAYOVER_TOOL_SCHEMAS,
+      tool_choice: "auto",
+    } as any);
+
+    const message: any = completion.choices[0]?.message ?? {};
+    const calls: any[] = Array.isArray(message.tool_calls) ? message.tool_calls : [];
+    if (calls.length === 0 || round === MAX_TOOL_ROUNDS) {
+      return String(message.content ?? "").trim().slice(0, maxLength);
+    }
+
+    messages.push({ role: "assistant", content: message.content ?? null, tool_calls: calls });
+    for (const c of calls) {
+      const result = runNamedLayoverTool(c?.function?.name, ctx, c?.function?.arguments);
+      if (result.ok) consulted.push(result.tool);
+      messages.push({
+        role: "tool",
+        tool_call_id: String(c?.id ?? ""),
+        content: JSON.stringify(result),
+      });
+    }
+  }
+  return "";
+}
+
+/**
+ * `runLayoverTool` behind the two checks a model-chosen call needs and a
+ * caller-chosen one does not: is this a tool at all, and are the arguments
+ * parseable?
+ *
+ * Kept separate from `runLayoverTool` so that the twelve-tool sweep in
+ * `layoverPrivacyCompassContract.test.ts` still exercises the boundary itself,
+ * and so that "the model made this name up" is a distinguishable outcome rather
+ * than a `TypeError` in a switch.
+ */
+export function runNamedLayoverTool(
+  name: unknown,
+  ctx: LayoverToolContext,
+  rawArgs: unknown,
+): LayoverToolResult | { ok: false; tool: string; unavailable: true; reason: string } {
+  const candidate = String(name ?? "");
+  if (!(LAYOVER_TOOL_NAMES as readonly string[]).includes(candidate)) {
+    return { ok: false, tool: candidate, unavailable: true, reason: `unknown_tool:${candidate || "(unnamed)"}` };
+  }
+  const tool = candidate as LayoverToolName;
+
+  let parsed: Record<string, unknown> = {};
+  if (typeof rawArgs === "string" && rawArgs.trim() !== "") {
+    try {
+      const j = JSON.parse(rawArgs);
+      if (j && typeof j === "object" && !Array.isArray(j)) parsed = j as Record<string, unknown>;
+      else return { ok: false, tool, unavailable: true, reason: "malformed_tool_arguments" };
+    } catch {
+      return { ok: false, tool, unavailable: true, reason: "malformed_tool_arguments" };
+    }
+  } else if (rawArgs && typeof rawArgs === "object" && !Array.isArray(rawArgs)) {
+    parsed = rawArgs as Record<string, unknown>;
+  }
+
+  return runLayoverTool(tool, ctx, parsed);
 }
 
 /**
@@ -250,9 +422,19 @@ function deterministicAnswer(input: {
 // §12 — the boundary, enforced on the model's own words
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type CompassBoundaryViolationKind =
-  | "return_deadline_widened"
-  | "usable_time_widened";
+/**
+ * The whole violation vocabulary, declared once so a new check cannot invent a
+ * spelling and so a test can count them. Two were built by §18; the two below
+ * them are census L101's remaining nouns.
+ */
+export const COMPASS_BOUNDARY_KINDS = [
+  "return_deadline_widened",
+  "usable_time_widened",
+  "entry_status_asserted",
+  "risk_band_widened",
+] as const;
+
+export type CompassBoundaryViolationKind = (typeof COMPASS_BOUNDARY_KINDS)[number];
 
 export interface CompassBoundaryViolation {
   kind: CompassBoundaryViolationKind;
@@ -306,7 +488,18 @@ function clockToMinutes(raw: string): number | null {
  */
 export function enforceCompassEnvelope(
   answer: string,
-  ctx: { airport: Pick<AirportProfile, "timezone">; hardReturnTime: Date; usableMinutes: number },
+  ctx: {
+    airport: Pick<AirportProfile, "timezone">;
+    hardReturnTime: Date;
+    usableMinutes: number;
+    /**
+     * The CERTIFIED §9 verdict for this session. Optional only so that a caller
+     * which genuinely holds no verdict (there is none today) is not forced to
+     * invent one — when it is absent the risk-band check does not run, which is
+     * the direction a missing input must fail for a guard that REFUSES.
+     */
+    verdict?: LeaveAdvice["verdict"];
+  },
 ): { ok: boolean; text: string; violations: CompassBoundaryViolation[] } {
   const violations: CompassBoundaryViolation[] = [];
   const tz = ctx.airport.timezone ?? "UTC";
@@ -355,8 +548,81 @@ export function enforceCompassEnvelope(
     }
   }
 
+  // ── census L101: VISA / ENTRY STATUS ───────────────────────────────────────
+  //
+  // "Visa/entry is not a field at all on main, so a model assertion about it is
+  // unconstrained by anything." Nothing on this tree reads entry permission —
+  // `adviseLeaving` emits `ENTRY_NOT_CONFIRMED` on every session and carries
+  // "Visa or transit-permit requirements for your nationality" as a standing
+  // UNKNOWN. So any answer that ASSERTS the permission is contradicting the
+  // server's own certified unknown, and this is the one question whose wrong
+  // answer ends with a traveller refused at a border.
+  //
+  // NEGATION-AWARE, and that is the whole difficulty. "You won't need a visa"
+  // is an assertion; "we can't confirm whether you need a visa" is the truth
+  // the server itself publishes, and a guard that refuses the second would be
+  // switched off inside a week. The rule is therefore: an entry/visa sentence
+  // trips ONLY when it is not hedged by an uncertainty marker or a
+  // check-it-yourself instruction.
+  for (const m of answer.matchAll(ENTRY_ASSERTION)) {
+    const sentence = m[0];
+    if (ENTRY_HEDGE.test(sentence)) continue;
+    violations.push({
+      kind: "entry_status_asserted",
+      stated: sentence.trim().slice(0, 140),
+      certified: "ENTRY_NOT_CONFIRMED — no entry permission state exists on this tree",
+    });
+  }
+
+  // ── census L101 / L3: THE RISK BAND ────────────────────────────────────────
+  //
+  // ONE-DIRECTIONAL BY CONSTRUCTION. Talking the band DOWN ("it is not safe to
+  // leave") is always allowed — a model may be more cautious than the record,
+  // never less. Only an upgrade is a widening, so the trigger is an explicit
+  // permission phrase on a session the record did not certify as `yes`.
+  if (ctx.verdict !== undefined && ctx.verdict !== "yes") {
+    for (const m of answer.matchAll(SAFE_TO_LEAVE)) {
+      const sentence = m[0];
+      if (NEGATED_SAFETY.test(sentence)) continue;
+      violations.push({
+        kind: "risk_band_widened",
+        stated: sentence.trim().slice(0, 140),
+        certified: `certified verdict: ${ctx.verdict}`,
+      });
+    }
+  }
+
   return { ok: violations.length === 0, text: answer, violations };
 }
+
+/**
+ * A sentence that mentions entry, a visa or a transit permit. Sentence-scoped
+ * (`[^.!?]*`) so the hedge test below reads the SAME sentence rather than the
+ * whole answer — an answer that hedges once and asserts twice must still trip.
+ */
+const ENTRY_ASSERTION =
+  /[^.!?]*\b(?:visas?|visa-free|permits?|entry\s+requirements?|immigration\s+clearance|enter\s+the\s+country)\b[^.!?]*[.!?]?/gi;
+
+/**
+ * The hedges that make an entry sentence honest rather than an assertion: an
+ * admission of not knowing, or an instruction to verify.
+ *
+ * `may`, `might` and `could` are DELIBERATELY ABSENT. They read as hedges in
+ * English generally and as PERMISSION in exactly this context — "you may enter
+ * without a visa" is the assertion this guard exists to catch, not a hedge of
+ * it. Leaving them out makes the guard refuse a few honest sentences and never
+ * pass a permission claim, which is the direction a refusal must fail.
+ */
+const ENTRY_HEDGE =
+  /\b(?:can(?:'|’)?t|cannot|can\s+not|don(?:'|’)?t|do\s+not|unable\s+to|not\s+able\s+to|unknown|unsure|uncertain|we\s+have\s+not|haven(?:'|’)?t|check|verify|confirm\s+with|depends?)\b/i;
+
+/** An explicit permission to go landside. */
+const SAFE_TO_LEAVE =
+  /[^.!?]*\b(?:safe\s+to\s+(?:leave|go|head\s+out)|you\s+can\s+safely\s+(?:leave|go)|plenty\s+of\s+time|go\s+ahead\s+and\s+leave|you(?:'|’)?ll\s+easily\s+make\s+it)\b[^.!?]*[.!?]?/gi;
+
+/** …unless the sentence is a refusal wearing the same words. */
+const NEGATED_SAFETY =
+  /\b(?:not|isn(?:'|’)?t|is\s+not|don(?:'|’)?t|do\s+not|won(?:'|’)?t|rather\s+than|instead\s+of|avoid)\b/i;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // §12.1 value-of-information
@@ -506,8 +772,16 @@ export interface LayoverToolContext {
   record: LayoverFeasibilityRecord;
   /** Persisted recommendation cards, already privacy-sanitised by the caller. */
   recommendations?: Array<Record<string, unknown>>;
+  /**
+   * Why the card list is absent, when it is. `null`/absent means the caller
+   * READ the table and this is what was in it; a string means the read failed
+   * and the tool must refuse rather than report an empty shortlist.
+   */
+  recommendationsUnavailableReason?: string | null;
   /** Plan stops, in order. */
   stops?: Array<{ title: string; durationMin: number; travelMin: number; insideAirport: boolean }>;
+  /** Same distinction for the plan. Zero stops fit every window (census L47). */
+  stopsUnavailableReason?: string | null;
 }
 
 export type LayoverToolName =
@@ -626,6 +900,12 @@ export function runLayoverTool(
       });
 
     case "getReachableExperiences":
+      // An unreadable `layover_recommendations` is not an empty shortlist.
+      // Answering `[]` here would tell a traveller sitting in a terminal that
+      // there is nothing worth their four hours, on the strength of a failed
+      // SELECT — the exact substitution census L294 forbids, and the one the
+      // route's own reader already refuses to make.
+      if (ctx.recommendationsUnavailableReason) return no(ctx.recommendationsUnavailableReason);
       return ok({
         recommendations: ctx.recommendations ?? [],
         // The list is what the recommendation service persisted; this tool does
@@ -634,19 +914,31 @@ export function runLayoverTool(
       });
 
     case "simulatePlan": {
-      const candidate = Array.isArray(args.candidateSet)
-        ? (args.candidateSet as Array<{ durationMin?: number; travelMin?: number; insideAirport?: boolean }>)
+      const modelSuppliedSet = Array.isArray(args.candidateSet);
+      // Zero stops fit every window, so "your plan fits" computed from a failed
+      // read of `layover_plan_stops` is a certification made out of nothing
+      // (census L47; `loadStops`' own doc comment says the same in the route).
+      // A candidate set the MODEL supplied is still answerable — it does not
+      // come from the table — so only the stored-plan branch refuses.
+      if (!modelSuppliedSet && ctx.stopsUnavailableReason) return no(ctx.stopsUnavailableReason);
+      const candidate: PlanFitStop[] = modelSuppliedSet
+        ? (args.candidateSet as PlanFitStop[])
         : (ctx.stops ?? []);
-      const planned = candidate.reduce(
-        (sum, s) => sum + (Number(s.durationMin) || 0) + (Number(s.travelMin) || 0), 0,
-      );
-      const lastOutside = [...candidate].reverse().find((s) => !s.insideAirport);
-      const neededMin = planned + (lastOutside ? (Number(lastOutside.travelMin) || 0) : 0);
+      // The same arithmetic and the same refusal as `computePlanFit` — through
+      // the same module, so this tool cannot answer a question about a plan
+      // differently from the screen the traveller is looking at (census L47).
+      // A leg nobody stated is not a zero-minute leg, so `neededMin` is a lower
+      // bound and `fitsWindow` is false unless every leg is stated.
+      const totals = planFitTotals(candidate);
+      const fit = planFitVerdict(totals, r.envelope.usableMinutes);
       return ok({
-        neededMin,
+        neededMin: totals.neededMin,
         usableMinutes: r.envelope.usableMinutes,
-        fitsWindow: neededMin <= r.envelope.usableMinutes,
-        overflowMin: Math.max(0, neededMin - r.envelope.usableMinutes),
+        fitsWindow: fit === "fits",
+        fit,
+        unstatedTravelStops: totals.unstatedTravelStops,
+        neededMinIsLowerBound: totals.neededMinIsLowerBound,
+        overflowMin: Math.max(0, totals.neededMin - r.envelope.usableMinutes),
         backByTime: r.deadline.hardReturnTime.toISOString(),
       });
     }
@@ -727,12 +1019,26 @@ export function runLayoverTool(
 /**
  * Tool declarations in OpenAI's function-calling shape.
  *
- * DECLARED, NOT YET PASSED TO THE MODEL. Handing these to
- * `openai.chat.completions.create` changes what the model does and therefore
- * what a traveller reads, which on this surface is a change made behind a flag,
- * not as a side effect of adding a schema. `runLayoverTool` is callable today;
- * wiring the model to choose among these is the next step and is named in this
- * lane's report.
+ * PASSED TO THE MODEL, on every `POST /api/airport/sessions/:id/compass`.
+ * `runModelWithTools` above puts this array on the request and executes what
+ * comes back through `runNamedLayoverTool`.
+ *
+ * ── WHY THIS IS NOT BEHIND A FLAG ───────────────────────────────────────────
+ * An earlier version of this comment said handing these to the model "is a
+ * change made behind a flag", and twelve census requirements (L102–L113) sat
+ * `W` behind that sentence for four passes. The sentence was cautious about the
+ * wrong thing. A flag seeded FALSE would have left the tools exactly as dark as
+ * they were while reading as if the work were done.
+ *
+ * What makes the wiring safe is structural rather than operational: no tool
+ * computes anything. Every value any of them returns is read out of the
+ * certified record, the session, the airport profile or a caller-supplied list,
+ * so the widest answer the model can obtain from a tool IS the certified
+ * record — and the sentence it then writes still passes through
+ * `enforceCompassEnvelope`, which refuses a later deadline, more usable time,
+ * an entry-permission claim or a widened risk band whatever the model read.
+ * The blast radius of the tools is therefore bounded by the same guard that
+ * already bounded the toolless answer.
  */
 export const LAYOVER_TOOL_SCHEMAS = LAYOVER_TOOL_NAMES.map((name) => ({
   type: "function" as const,

@@ -8,6 +8,12 @@
  *                          (exclude / demote, fail-closed, gated OFF by default;
  *                          see CompassLiveConstraints.ts). An excluded item is
  *                          never scored, so no score can override it (AT-14).
+ *   2c. Safety attention → Trips §17: while a SEVERE SAFETY STATE holds the
+ *                          traveller's attention (an active Safe Return
+ *                          session), commercial and entertainment candidates
+ *                          are withheld and only safety/logistics ones are
+ *                          scored. UNGATED — no flag, no projection. See
+ *                          CompassSafetyAttention.ts.
  *   3. Privacy Guard    → sanitise (strip GPS, hotel addr, admin notes, etc.)
  *   4. Scoring Engine   → rank (per-type weighted formula)
  *   5. Plan B           → next-best same-category alternative for every pick a
@@ -41,6 +47,13 @@ import {
   type PlanBConstrainedCandidate,
   type PlanBEntry,
 } from "./CompassLiveConstraints.js";
+import {
+  applySafetyAttention,
+  safetyAttentionFrom,
+  safetyAttentionOnTheWire,
+  SUPPRESSIBLE_ITEM_TYPES,
+  type SafetyAttentionReading,
+} from "./CompassSafetyAttention.js";
 import { logger } from "../lib/logger.js";
 import { fetchCompassFlags } from "./flags.js";
 
@@ -95,6 +108,11 @@ export interface PipelineSummary {
   /** IG-07 — candidates a Live hard constraint excluded before ranking. */
   liveExcludedCount: number;
   liveConstraints:   PipelineLiveConstraintsSummary;
+  /**
+   * Trips §17 — the severe-safety switch as consulted for this viewer, and how
+   * many commercial/entertainment candidates it withheld before scoring.
+   */
+  safetyAttention:   ReturnType<typeof safetyAttentionOnTheWire>;
 }
 
 /** Injectable gate overrides for testing (do not use in production). */
@@ -210,13 +228,39 @@ export async function runPipeline(
     survivors.push(item);
   }
 
+  // Gate 2c (Trips §17, census-compass CT-11): while a severe safety state has
+  // the traveller's attention, a commercial or entertainment candidate is
+  // withheld HERE — before the live stage reads intel for it and before it is
+  // sanitised or scored. It is never scored, so no score can put it back, which
+  // is the same ordering rule AT-14 gives the live exclusions below.
+  //
+  // `profile.safeReturnActive` is the safe_return_sessions read the profile
+  // already carries, so this stage adds no query. Only the "go out and spend"
+  // item types are governed; a notification, a person or a trip passes.
+  const safetyReading: SafetyAttentionReading = safetyAttentionFrom(profile.safeReturnActive === true);
+  const safetyHeld = applySafetyAttention(
+    survivors,
+    safetyReading,
+    // The descriptive fields a candidate adapter fills in. `type` is included
+    // deliberately: a `hidden_gem` names no category of its own, and the type
+    // word is the only term some adapters supply.
+    (it) => [
+      String(it.type),
+      ...(it.interestTags ?? []),
+      typeof it["category"] === "string" ? it["category"] : null,
+      typeof it["title"] === "string" ? it["title"] : null,
+    ],
+    { suppressible: (it) => SUPPRESSIBLE_ITEM_TYPES.has(it.type) },
+  );
+  const attended = safetyHeld.kept;
+
   // Gate 2b (IG-07): Live intel as HARD constraints, BEFORE privacy/scoring.
   // Null whenever the stage may not run (gate off / Live not servable) — then
   // nothing below changes. A stage failure is contained: it never throws into
   // the feed and never fabricates a claim.
   let liveStage: Awaited<ReturnType<typeof prepareLiveIntelStage>> = null;
   try {
-    liveStage = await prepareLiveIntelStage(db, survivors, profile, _testOverrides?.liveIntel);
+    liveStage = await prepareLiveIntelStage(db, attended, profile, _testOverrides?.liveIntel);
   } catch (err) {
     logger.warn({ err }, "Compass pipeline: live-intel stage failed — continuing without live constraints");
     liveStage = null;
@@ -224,7 +268,7 @@ export async function runPipeline(
   const liveExcluded: LiveExclusionRecord[] = [];
   const liveDemoted: PipelineLiveConstraintsSummary["demoted"] = [];
 
-  for (const item of survivors) {
+  for (const item of attended) {
     const liveIntel = liveStage?.annotations.get(item.id);
 
     // A Live EXCLUSION removes the candidate here — before it is sanitised or
@@ -289,7 +333,7 @@ export async function runPipeline(
   // so "did the constraint change the pick?" is decided honestly.
   let planB: PlanBEntry[] = [];
   if (liveStage && (liveExcluded.length > 0 || liveDemoted.length > 0)) {
-    const excludedItems = new Map(survivors.map((i) => [i.id, i] as const));
+    const excludedItems = new Map(attended.map((i) => [i.id, i] as const));
     const constrained: PlanBConstrainedCandidate[] = [
       ...liveExcluded.map((e) => ({
         item: excludedItems.get(e.itemId)!,
@@ -339,5 +383,6 @@ export async function runPipeline(
       demoted:         liveDemoted,
       planB,
     },
+    safetyAttention: safetyAttentionOnTheWire(safetyReading, safetyHeld.withheld),
   };
 }

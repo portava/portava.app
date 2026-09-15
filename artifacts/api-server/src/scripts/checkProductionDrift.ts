@@ -67,9 +67,49 @@ const API_SERVER_ROOT = join(HERE, "..", "..");
 const MIGRATIONS_DIR = join(API_SERVER_ROOT, "src", "migrations");
 const BASELINE_DIR = join(API_SERVER_ROOT, "baseline");
 
-/** The snapshot filename. Bump this when an operator captures a fresher one. */
-const PRODUCTION_SNAPSHOT = "20260907_production_tables.txt";
+/**
+ * The snapshot filename. Bump this when an operator captures a fresher one.
+ *
+ * EXPORTED so tests measure the rule against the snapshot actually in use
+ * rather than restating its date. A test that hard-codes the capture date goes
+ * stale silently on the next refresh, which is how two cases in
+ * productionDriftExtraction.test.ts came to assert the opposite of the truth.
+ */
+export const PRODUCTION_SNAPSHOT = "20260915b_production_tables.txt";
 
+/**
+ * `unmerged-pr` HAS NO MEMBERS AS OF 2026-09-15, AND IS KEPT — ruling, with the
+ * reason, because the guard's own error message asked for the opposite.
+ *
+ * Restoring 2311/2320 — to close three `schema_migration_ledger` rows that named
+ * no file on disk — made intel_claim_reviews, memory_episodes and memory_evidence
+ * declared in this tree, so the STALE UNMERGED-PR assertion below correctly
+ * refused their `unmerged-pr` notes and all three became `unapplied`. They were
+ * the last three members, and productionDriftExtraction.test.ts's positive
+ * control then failed with: "no unmerged-pr entry remains — if that is genuinely
+ * true, delete the classification rather than leaving a rule that exempts
+ * nothing."
+ *
+ * THE CLASSIFICATION IS NOT DELETED. Two reasons, in order of weight:
+ *
+ *   1. It describes a situation this repository keeps producing. 2311, 2315,
+ *      2320 and the whole 289x-295x block each arrived as "a table an unmerged
+ *      PR's migration declares, applied to portava-ci to unblock someone". The
+ *      next one is a question of when. Deleting the type does not prevent that
+ *      case; it only removes the name for it, the exemption that keeps it out of
+ *      the must-reach-zero total, and — the part that actually matters — the
+ *      STALE assertion that notices the day the PR lands. That is strictly less
+ *      coverage than an idle rule that works.
+ *
+ *   2. The vacuity the control complains about was never really about the
+ *      population. The control asserted over a COPY of the rule kept in the test
+ *      file, so an empty population left the copy unexercised — and the copy
+ *      could have drifted from this file without anything noticing either way.
+ *      Both predicates are therefore exported below and the test calls THESE,
+ *      against a constructed fixture as well as the real ratchet. The
+ *      discrimination is now proven directly, on the real implementation,
+ *      whether or not any live entry happens to carry the classification.
+ */
 type Classification =
   /** Declared in the tree, never applied to production. MUST reach zero. */
   | "unapplied"
@@ -93,18 +133,32 @@ interface Gap {
  */
 export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
   // ── The one that undermines every other migration claim ────────────────────
-  schema_migration_ledger: {
-    classification: "unapplied",
-    note:
-      "public.schema_migration_ledger DOES NOT EXIST IN PRODUCTION. The entire " +
-      "migration-provenance apparatus — isProofOfApply(), the 2254 backfill rows, " +
-      "check:migration-ledger — describes a table that lives only in portava-ci. " +
-      "apply-migrations.ts exits 2 ('no ledger table') without it, so the sanctioned " +
-      "applier has NEVER been able to run against production; every production " +
-      "migration was applied by some other means and is unrecorded. Nothing in the " +
-      "tree can currently answer 'which migrations are applied to production?'. " +
-      "This is the highest-priority entry in this file.",
-  },
+  // schema_migration_ledger: STRUCK OFF 2026-09-15 — it now EXISTS in production.
+  //
+  // This entry read "the highest-priority entry in this file", and it was right:
+  // without a ledger, apply-migrations.ts exited 2 against production ("no ledger
+  // table"), so the sanctioned applier had never been able to run there, and
+  // nothing in the tree could answer "which migrations are applied to
+  // production?". 2254_schema_migration_ledger.sql was applied to
+  // ajrurzioarfkagpuxfnb on 2026-09-15: one new table, RLS ENABLED with NO
+  // policies, anon/authenticated REVOKEd, service_role only, plus the 382
+  // backfill rows 2254 enumerates. Verified after the apply, by reading the
+  // catalog rather than trusting the applier's own report: 382 rows, 0 malformed
+  // checksums, relrowsecurity = true, 0 policies, anon and authenticated holding
+  // no grants — every postcondition 2254 states for itself.
+  //
+  // It is STRUCK OFF rather than left in place because this ratchet fails in BOTH
+  // directions: "a listed table that has since reached production and was not
+  // struck off also fails, because a ratchet that silently stays full stops being
+  // read." Leaving it would have been exactly that failure.
+  //
+  // WHAT THE LEDGER DOES NOT ESTABLISH, stated here so the next reader does not
+  // overclaim it: all 382 rows are applied_by = 'backfill', and a backfill row
+  // asserts ONLY that the filename existed in src/migrations/ when 2254 was
+  // authored. None of them is evidence that the file ran against production.
+  // Which pre-2254 migrations production actually has remains unreconstructable,
+  // exactly as 2254's own header says; check:missing-live-columns is still the
+  // instrument for pre-ledger drift. The ledger is authoritative FORWARD only.
 
   // ── Trips v4 §5.1: the schema spine, CI-only and deliberately writerless ──
   // Ten tables from migrations 2760-2763, applied to portava-ci 2026-09-09 and
@@ -135,6 +189,23 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
   trip_outcomes:       { classification: "unapplied", note: "Trips §5.1/§20 (2763). In portava-ci, absent from production. Same block." },
   trip_proposal_votes: { classification: "unapplied", note: "Trips §9.3 / §1 (2774) — one vote per crew member per proposal, the relation MAJORITY and UNANIMOUS are counted over. Absent from BOTH databases like the rest of this lane: nothing in it is on main and .github/workflows/live-db.yml applies only from main. Its writer is 2775 (VOTE_ON_PROPOSAL). Rehearsed end to end on db/harness/run.sh." },
   trip_plan_participants: { classification: "unapplied", note: "Trips §5.1/§9.1 (2771) — the attendance relation census-trips TR83 is about. Absent from BOTH databases, unlike the 2760-2763 block which portava-ci carries: nothing in this Trips lane is on main, and .github/workflows/live-db.yml applies only from main. Its writer is 2772 (JOIN_PLAN / LEAVE_PLAN / SET_PLAN_ATTENDANCE). Rehearsed end to end on db/harness/run.sh." },
+
+  // ── Trips §41 (census-trips), migrations 2780-2785: seven kernel families ──
+  // Absent from BOTH databases, like 2771/2774 above: this branch is not on
+  // main and .github/workflows/live-db.yml applies only from main. Every reader
+  // of these tables sits behind trip_operational_projections_enabled (FALSE in
+  // both projects; check:flag-schema-prerequisites lists the whole batch as that
+  // flag's prerequisite) and every writer behind trip_kernel_enabled (also
+  // FALSE). Rehearsed on scripts/local-db (the api-server-local-db CI job).
+  trip_subgroups:          { classification: "unapplied", note: "Trips §9.5 (2780) — temporary crews. Writer: CREATE_SUBGROUP / JOIN_SUBGROUP / LEAVE_SUBGROUP / DISSOLVE_SUBGROUP in trip_kernel_execute; reader: TripCloseoutService (§20.2 dissolve) under trip_operational_projections_enabled." },
+  trip_subgroup_members:   { classification: "unapplied", note: "Trips §9.5 (2780) — membership of trip_subgroups. Written only by the kernel; read by TripCrewLocationService for subgroup-scoped live shares under the same flag." },
+  trip_decisions:          { classification: "unapplied", note: "Trips §5.3/§21.2 (2781) — the persisted decision ledger. Writer: lib TripDecisionLedger.persistTripDecision, flag-gated and table-probed; absent table = in-process ring only, stated by DECISION_RETENTION." },
+  trip_transport_segments: { classification: "unapplied", note: "Trips §7.4 (2782) — transport legs with a state machine. Written only by the kernel (ADD/UPDATE/SET_STATE/REMOVE_TRANSPORT_SEGMENT); no TS reader yet." },
+  trip_reservation_events: { classification: "unapplied", note: "Trips §18.3 (2784) — append-only reservation history, trigger-fed from trip_reservations. Read by GET /trips/:id/reservations/:rid/history under trip_operational_projections_enabled." },
+  trip_disruptions:        { classification: "unapplied", note: "Trips §17 (2785) — disruption register. Written only by the kernel (DECLARE/RESOLVE_DISRUPTION); TripHealth does not consult it yet (census §41.3)." },
+  trip_transport_policies: { classification: "unapplied", note: "Trips §7.4 (2793) — the transport-mode policy the route-availability check reads (census-trips §47, TR137). Written by PUT /trips/:tripId/transport-policy (owner, §6.1 canEditTrip) and read by GET /trips/:tripId/feasibility, both under trip_operational_projections_enabled; absent from every database but the local replica until this branch merges and the owner's Batch C applies it." },
+  trip_meeting_checkpoints: { classification: "unapplied", note: "Trips §10.4 / §11.3 (2794) — meeting checkpoints: a chosen §14.3 candidate with its explanation, a meet-by and a status (census-trips §52, TR177/TR198). Written only by the kernel (CREATE_MEETING_CHECKPOINT / CLOSE_MEETING_CHECKPOINT); read by routes/tripMeetingCheckpoints, TripHealthProjection (REGROUP_OPEN), the map's meetup layer and the offline bundle, all under trip_operational_projections_enabled; absent from every database but the local replica until this branch merges and the owner's Batch C applies it." },
+  trip_meeting_checkpoint_participants: { classification: "unapplied", note: "Trips §10.4 (2794) — who is expected at a meeting checkpoint and their arrival state. Written only by the kernel (CREATE_MEETING_CHECKPOINT / SET_MEETING_ARRIVAL); read under the same flag as trip_meeting_checkpoints." },
 
   // ── A guarantee the docs rest on, that production does not have ───────────
   protected_zones: {
@@ -198,23 +269,59 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
 
   // ── Applied to CI this session, deliberately not to production ─────────────
   sensing_anon_contributions: {
-    classification: "unmerged-pr",
+    // RECLASSIFIED 2026-09-14, unmerged-pr -> unapplied. This note used to read
+    // "PR #475 (UNMERGED) ... Not drift until that PR lands". It landed:
+    // 2315_sensing_anon_contributions.sql is on `main` and in portava-ci's
+    // ledger. It reached main inside #476 rather than under its own number, so
+    // no commit subject ever named #475 and the excuse stayed plausible while
+    // being false. Nothing caught it because the "declared by NO migration"
+    // check in main() exempted unmerged-pr in one direction only; the assertion
+    // that closes that is STALE UNMERGED-PR, below.
+    classification: "unapplied",
     note:
-      "Migration 2315, PR #475 (UNMERGED). Applied to portava-ci on 2026-09-07 to " +
-      "unblock the schema-drift audit. Not drift until that PR lands, and applying it " +
-      "to production needs an owner decision — the store is inert by construction.",
+      "Migration 2315, ON MAIN (it reached main inside #476) and applied to portava-ci " +
+      "2026-09-07. Absent from production, so it counts toward the must-reach-zero total " +
+      "like any other unapplied migration. Applying it to production remains an owner " +
+      "decision — the store is inert by construction — but that is a reason to leave it " +
+      "unapplied, not a reason to leave it unaccounted.",
   },
+  // ── RECLASSIFIED 2026-09-15, unmerged-pr -> unapplied. The migration files
+  //    are now IN THIS TREE, so the exemption is false by construction.
+  //
+  //    WHY THEY ARE HERE. public.schema_migration_ledger carried three rows with
+  //    applied_by='manual' — 2311, 2320 and 2325 — whose FILES were on no merged
+  //    branch, which is check:migration-ledger finding #2, "ledger rows with no
+  //    file on disk". Each row records a REAL apply to portava-ci on 2026-09-07.
+  //    Deleting such a row would make the ledger assert that a migration which
+  //    DID run never ran, so the remedy was to restore the files, each verified
+  //    by sha256 against the checksum its ledger row recorded. The entries below
+  //    are what those files being present costs this ratchet, paid rather than
+  //    dodged. (2325 adds a column and a function, no table, so it has no entry.)
+  //
+  //    The rule applied is the one the 289x-295x block below records in full:
+  //    `unmerged-pr` is for a table whose migration you CANNOT SEE. The moment
+  //    the file is here the table is declared here, whatever the source branch's
+  //    merge status, and `unapplied` — "declared in the tree, never applied to
+  //    production, MUST reach zero" — is exactly what these are. All three were
+  //    confirmed absent from the production snapshot; portava-ci is not
+  //    production, and an apply there has never been evidence about this one.
+  //
+  //    NO WRITER EXISTS FOR ANY OF THE THREE in this tree, and that is stated
+  //    rather than left to be discovered: by the Trips §5.1 rule above, a table
+  //    nothing writes satisfies nothing. Each migration's writer lives in the
+  //    application code of its source branch, which was deliberately NOT brought
+  //    across — the ledger row names a FILE, and only the file was owed.
   intel_claim_reviews: {
-    classification: "unmerged-pr",
-    note: "Migration 2311, PRs #456/#457 (UNMERGED). Applied to portava-ci 2026-09-07.",
+    classification: "unapplied",
+    note: "Migration 2311 (restored from claude/safety-review-s1b-20260906, sha256 18e8899bf13a…, the checksum its ledger row records). Creates one table; additive and idempotent, alters nothing, seeds no flag, writes no row. NO WRITER in this tree: the writer is services/intel/SafetyReviewService.ts on the source branch and did not come with the file. Applied to portava-ci 2026-09-07, absent from production.",
   },
   memory_episodes: {
-    classification: "unmerged-pr",
-    note: "Migration 2320, PR #470 (UNMERGED). Applied to portava-ci 2026-09-07.",
+    classification: "unapplied",
+    note: "Migration 2320 (restored from claude/memory-canonical-object-20260906, sha256 1d13adeec896…, the checksum its ledger row records). Inert by construction: RLS on with no policy, service_role-only grants, and its own postcondition asserts memory_projection stays FALSE. NO WRITER in this tree: memory/memoryEpisodeContract.ts stayed on the source branch. Applied to portava-ci 2026-09-07, absent from production.",
   },
   memory_evidence: {
-    classification: "unmerged-pr",
-    note: "Migration 2320, PR #470 (UNMERGED). Applied to portava-ci 2026-09-07.",
+    classification: "unapplied",
+    note: "Migration 2320. Same block as memory_episodes; append-only at BOTH the grant and the trigger. NO WRITER in this tree. Note the one non-additive act in 2320: it DROP/CREATEs erase_memory_for_user(uuid) to widen its return from three counts to five so account deletion reaches the spine — 2190's body is reproduced verbatim inside it, and 2320 is the LAST definer of that function in this tree, so the widening is not undone by a later file.",
   },
   // Trip Kernel foundation (Trips spec §4/§5.1), migration 2420. Applied to
   // portava-ci 2026-09-07. Inert in production until an owner applies 2420 AND
@@ -230,76 +337,87 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
   //    what it says here: the file exists in src/migrations and no database
   //    outside portava-ci has ever run it.
 
-  // Highlights / Memories, migrations 2720-2724.
-  highlight_resurfacing_preferences: {
-    classification: "unapplied",
-    note:
-      "Migration 2720. Per-user control over what may resurface. Queued behind the " +
-      "STORY_HIGHLIGHT_VISIBILITY owner decision, which fixes who a resurfaced " +
-      "highlight may be shown TO; applying the preference table before that is " +
-      "decided would build the control surface for a rule nobody has picked.",
-  },
-  highlight_projection_policies: {
-    classification: "unapplied",
-    note:
-      "Migration 2721. The projection policy rows the Highlights/Memories spec " +
-      "s18 requires. Same gate as 2720: it encodes visibility policy, and " +
-      "STORY_HIGHLIGHT_VISIBILITY is open.",
-  },
-  highlight_sources: {
-    classification: "unapplied",
-    note:
-      "Migration 2722. Provenance for a highlight (which memory, which version). " +
-      "Ordered after 2720/2721 because it references the policy identity they " +
-      "establish; not independently applicable.",
-  },
-  highlight_revocation_log: {
-    classification: "unapplied",
-    note:
-      "Migration 2724. Append-only record of revoked derivatives. Depends on " +
-      "2722's source identity — a revocation of nothing is not storable — so it " +
-      "cannot lead the family in.",
-  },
-
-  // Memory command kernel, migrations 2710/2711/2730.
-  memory_domain_events: {
-    classification: "unapplied",
-    note:
-      "Migration 2710, RENAMED from memory_events on this branch: production " +
-      "already holds a DIFFERENT public.memory_events (12 columns, the s4/s15 " +
-      "projection ledger) that ten migrations and the deletion cascade build on. " +
-      "2710's original name would have collided, and CREATE TABLE IF NOT EXISTS " +
-      "would have skipped SILENTLY, leaving the kernel writing into a table with " +
-      "the wrong shape. Unapplied anywhere but portava-ci while the outbox lane " +
-      "certifies it.",
-  },
-  memory_event_outbox: {
-    classification: "unapplied",
-    note:
-      "Migration 2710. Transactional outbox for memory domain events. No worker " +
-      "consumes it yet, so applying it to production would create a table that " +
-      "accumulates nothing — the same shape as trip_outbox above, and held for " +
-      "the same reason.",
-  },
-  memory_command_receipts: {
-    classification: "unapplied",
-    note:
-      "Migration 2710. Idempotency receipts for the memory command bus. Meaningless " +
-      "without the kernel that writes them; applied only with 2710 as a whole.",
-  },
-  memory_command_audit: {
-    classification: "unapplied",
-    note:
-      "Migration 2710. Audit trail for accepted and refused memory commands. Same " +
-      "family, same apply.",
-  },
-  memory_derivative_registry: {
-    classification: "unapplied",
-    note:
-      "Migration 2730. One row per built derivative of the Memory domain " +
-      "(spec s18). Ordered strictly after 2710: a derivative registry keyed on " +
-      "domain-event identity cannot precede the events.",
-  },
+  // ── STRUCK OFF 2026-09-15: nine tables from 2710/2720/2721/2722/2724/2730 ──
+  //    now EXIST in production, applied by the operator under explicit
+  //    authorization. This ratchet fails in BOTH directions — "a listed table
+  //    that has since reached production and was not struck off also fails,
+  //    because a ratchet that silently stays full stops being read" — so the
+  //    entries are removed rather than left standing.
+  //
+  //    Each was run verbatim from its version-controlled file and recorded in
+  //    public.schema_migration_ledger with applied_by = 'manual' and the file's
+  //    real sha256, then verified by reading the catalog: tables, indexes,
+  //    relrowsecurity, policy counts and the anon/authenticated grant boundary.
+  //
+  //    THE HAZARD memory_domain_events' entry NAMED WAS CHECKED, NOT ASSUMED.
+  //    It warned that 2710 was renamed from memory_events because production
+  //    already holds a DIFFERENT public.memory_events, and that the original
+  //    name would have made CREATE TABLE IF NOT EXISTS skip SILENTLY, leaving
+  //    the kernel writing into a table with the wrong shape. Measured after the
+  //    apply: memory_domain_events has 11 columns, memory_events still has 12,
+  //    and they are distinct relations. The rename did its job.
+  //
+  //    WHAT THE STRIKE-OFF MUST NOT ERASE — two reasons these entries gave for
+  //    being held are still true, and are carried forward here rather than
+  //    deleted with the rows that stated them:
+  //
+  //      * STORY_HIGHLIGHT_VISIBILITY IS RESOLVED (2026-09-15) — this entry
+  //        previously read "STILL AN OPEN OWNER DECISION" and is superseded, not
+  //        deleted, because the reasoning it carried is what the ruling rests on.
+  //        THE RULING: promotion is restricted to the faithful rungs. The
+  //        promotable set is exactly { public, circle_only } and the 409 refusal
+  //        on the other four is the INTENDED behaviour, not a placeholder.
+  //        Grounds, in order of weight: (a) no spec describes Story ->
+  //        Highlight promotion at all — the Highlights/Memories spec lists an
+  //        "Instagram Stories clone" under Non-goals and has no Story object —
+  //        so no rule can be read out of the silence; (b) the specs ARE
+  //        determinate on the shape, and the shape decides it: a Highlight's
+  //        audience is supplied explicitly at publish time and backed by a
+  //        policy row ("Publishing is always a separate projection decision"),
+  //        which rules out inheriting one; (c) every available mapping widens,
+  //        trip_crew -> trip_only most sharply, since one trip's accepted crew
+  //        becomes every crew the owner has ever had; (d) refusing costs a
+  //        capability that can be added later, mapping wrongly costs exposure
+  //        that cannot be taken back. Reopening it is a BUILD, not a re-ruling:
+  //        the spec's own VisibilityClass already names the two rungs
+  //        `highlights` lacks (SELECTED_PEOPLE, TRIP_CREW), and adding them to
+  //        the table and to RLS makes the other four faithfully promotable.
+  //        Pinned by src/test/storyHighlightVisibility.test.ts's
+  //        "RULING: `trip_crew` may never map to `trip_only`" case, which
+  //        asserts the substance rather than the promotable set.
+  //        SEPARATELY, and still true: 2720 and 2721 were queued behind this
+  //        decision on the grounds that a preference table would "build the
+  //        control surface for a rule nobody has picked". They are audience-
+  //        neutral — resurfacing preference and location precision — and 2721's
+  //        own header names a DIFFERENT open decision, LOCATION_PRECISION_DEFAULT,
+  //        which this ruling does not touch. Every capability is still seeded
+  //        FALSE (highlights_feed_bounded_enabled, memory_kernel_enabled,
+  //        memory_location_precision_enabled,
+  //        memory_public_feed_projection_enabled), the tables are empty, RLS is
+  //        on and owner-scoped, and no user-visible behaviour changed by this
+  //        ruling: the code already refused, and the ruling makes the refusal
+  //        intended rather than provisional.
+  //      * memory_event_outbox STILL HAS NO CONSUMER. Its entry said applying it
+  //        "would create a table that accumulates nothing". That is exactly what
+  //        it now is, deliberately: nothing writes to it while the kernel flag is
+  //        FALSE, and no worker drains it. A §18 projection worker is still
+  //        unbuilt.
+  //
+  //    APPLIED 2026-09-15, and the tenth of this family: 2711_memory_kernel_execute.
+  //    This note previously read "NOT APPLIED"; it is superseded. The blocker was
+  //    always the mechanism, never the authorization: the repo's own runner,
+  //    scripts/src/apply-migrations.ts, REFUSES the production ref by design and
+  //    that guard was not bypassed, so the 31,633 characters had to go through the
+  //    Management API by hand. What made that acceptable is that the result is
+  //    CHECKABLE rather than trusted — production stores the applied text, and
+  //    sha256(stored_text || "\n") equals the file's own sha256sum
+  //    (8fe87cb62ae4516bad70a6c970b15607d515b04584bc911d8d09c49b748081a7), so the
+  //    transcription is proven byte-identical instead of assumed. All six of the
+  //    migration's own postconditions passed inside its transaction, including the
+  //    two that matter most here: a client role cannot EXECUTE it, and
+  //    memory_kernel_enabled is still FALSE. So the four kernel tables now have a
+  //    writer in production that nothing calls — routes/memories.ts keeps its
+  //    direct-write path until an operator flips the flag.
 
   // Layover, migration 2700.
   layover_certified_computations: {
@@ -309,6 +427,33 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
       "computation so an answer can be REPLAYED rather than re-derived. Creates " +
       "one table and alters nothing. Queued behind 2741, which landed in " +
       "production 2026-09-08; not yet certified through its own gate.",
+  },
+
+  // Layover, migration 2860.
+  airport_fact_observations: {
+    classification: "unapplied",
+    note:
+      "Migration 2860. The spec s10 observation channel: one airport operational " +
+      "fact per row with the provenance and TTL census L14/L86 record as absent " +
+      "from every existing layover table. Creates one table, alters nothing, " +
+      "SELECT-only for authenticated and nothing for anon. UNAPPLIED ON PURPOSE " +
+      "and with NO WRITER, following 2700's ordering rule — a writer that names a " +
+      "column of an unapplied table fails outright on every database. The reader " +
+      "(src/services/airport/LayoverAirportTruth.ts) is pure and takes its " +
+      "observations as an argument, so nothing degrades while this is absent. " +
+      "Apply, confirm the postconditions, THEN land an ingest route behind a flag.",
+  },
+  layover_external_events: {
+    classification: "unapplied",
+    note:
+      "Migration 2860, same file. The spec s11 canonical event envelope with the " +
+      "UNIQUE dedup key s24 requires and census L194/L263 score as missing. Not a " +
+      "widening of layover_events: that table is an in-app audit trail with a NOT " +
+      "NULL profiles FK on every row, and an external event has no user. " +
+      "Unapplied with no writer and no producer — there is no flight or airport " +
+      "feed on this tree at all, so the table would be empty even if applied. " +
+      "The pipeline that would read it " +
+      "(src/services/airport/LayoverEventReplanner.ts) is pure.",
   },
 
   // Sensing, migration 2480.
@@ -323,6 +468,168 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
       "committed. Under Option B the file is never run at all, so applying it " +
       "would TAKE the decision.",
   },
+
+  // Telegraph, migration 2810.
+  telegraph_outbox: {
+    classification: "unapplied",
+    note:
+      "Migration 2810 (Telegraph §13.3 conversation_outbox). Applied to NO database " +
+      "— not production and not portava-ci — and declared here the moment the file " +
+      "entered the tree rather than after somebody noticed it. Two reasons it waits, " +
+      "and neither is 'not got round to it': (1) NOTHING DRAINS IT. The table takes " +
+      "one row per message lifecycle transition and no consumer reads them, so " +
+      "applying it and turning its flag on would grow a table nobody empties — which " +
+      "is why the trigger that writes it is gated on telegraph_message_kernel_enabled " +
+      "and that flag is seeded FALSE. (2) The rest of 2810 adds columns to " +
+      "public.messages, the hottest table in the product, and the sequence it " +
+      "introduces is only meaningful after a per-conversation backfill an operator " +
+      "runs deliberately. DDL and behaviour were EXECUTED on a throwaway PostgreSQL " +
+      "16 carrying the baseline plus the chain from 2093 (209 applied, 6 " +
+      "known-unreplayable, 0 unexpected), and the rollback was executed on the same " +
+      "database and verified to leave migration 2400's visible_from_at intact. " +
+      "RLS is enabled with zero policies, so no non-service role can read it.",
+  },
+
+  // ── Telegraph §12's four side tables, migration 2811, as one block ─────────
+  // They are one decision — stop putting structure in messages.body and in
+  // nullable columns on messages — and they share 2810's flag, deliberately:
+  // two switches for one capability is how a half-on state gets created by
+  // accident. Every one ships with RLS on and a SELECT-only policy keyed on
+  // ACTIVE thread membership, with a POSTCONDITION that fails if a non-SELECT
+  // policy ever appears, so a client cannot write any of them directly.
+  //
+  // NONE HAS A WRITER TODAY, and census-trips' own rule — "a table nothing
+  // writes satisfies nothing" — is why census-telegraph T142/T143/T144/T147
+  // move only to BUILT-BUT-WRONG on the strength of this migration. The one
+  // partial exception is message_reactions, which POST /api/telegraph/commands
+  // writes when the kernel flag is on; the flag is seeded FALSE and no database
+  // has the table, so "partial" here means "the code exists", not "rows exist".
+  //
+  // DDL and re-application were EXECUTED on a throwaway PostgreSQL 16 carrying
+  // the baseline plus the chain from 2093.
+  message_edits: {
+    classification: "unapplied",
+    note:
+      "Migration 2811 (Telegraph §12 message_edits). Applied to no database. §12 says " +
+      "'versioned text edits WHERE RETAINED' and previous_body is nullable for exactly " +
+      "that reason — retention is a policy choice this schema declines to make. No writer: " +
+      "the edit route still overwrites messages.body in place.",
+  },
+  message_reactions: {
+    classification: "unapplied",
+    note:
+      "Migration 2811 (Telegraph §12 message_reactions). Applied to no database. Its " +
+      "consumer PREDATES it: a telegraph.reaction notification template ('reacted to your " +
+      "message') has existed with no table, no route and no UI. The 16-character cap on " +
+      "emoji is a control rather than formatting — a reaction that could hold a sentence " +
+      "would be a message bypassing the send path's block guard, rate limit and §22 scam " +
+      "detection. Written by POST /api/telegraph/commands behind 2810's flag, which is " +
+      "seeded FALSE.",
+  },
+  message_attachments: {
+    classification: "unapplied",
+    note:
+      "Migration 2811 (Telegraph §12/§16.1 message_attachments). Applied to no database. " +
+      "Replaces the four nullable media columns on public.messages, which §12.1 names as " +
+      "the anti-pattern and which cap a message at one attachment of two kinds. References " +
+      "public.media_assets with ON DELETE RESTRICT so an asset deletion cannot silently " +
+      "erase the fact that a message carried one. No writer: messages.media_url is still " +
+      "the live path.",
+  },
+  conversation_action_refs: {
+    classification: "unapplied",
+    note:
+      "Migration 2811 (Telegraph §12 conversation_action_refs). Applied to no database. " +
+      "The explicit reference table §12.1 asks for, carrying payload_version and revoked_at " +
+      "— the property a string inside messages.body cannot have, and the one census T46 " +
+      "says is missing when a source object is deleted and the shared card lives on. No " +
+      "writer.",
+  },
+
+  // ── Telegraph §22 restricted moderation storage (migration 2812) ───────────
+  // The one table in this lane whose ABSENCE is a live harm rather than a
+  // missing feature: census T284 measured that a reported message deleted by
+  // its sender is destroyed, because deletion blanks messages.body in place and
+  // nothing copied it first. The snapshot is taken at REPORT time by
+  // services/telegraphReportEvidence.ts, behind its own flag.
+  //
+  // DDL and re-application were EXECUTED on a throwaway PostgreSQL 16 carrying
+  // the baseline plus the chain from 2093.
+  telegraph_report_evidence: {
+    classification: "unapplied",
+    note:
+      "Migration 2812 (Telegraph §22 evidence). Applied to no database. RLS is ENABLED " +
+      "with FORCE and NO POLICY AT ALL, so only the service role can read it — a " +
+      "membership-keyed policy would hand the reported party their own evidence file — " +
+      "and a postcondition RAISES if any policy is ever added. Deliberately has no foreign " +
+      "key to public.messages, so a deletion cannot cascade the evidence away; its one FK " +
+      "is to public.reports ON DELETE CASCADE, because evidence is retained to serve a " +
+      "report. Written by POST /api/messages/:id/report and POST /api/threads/:id/report " +
+      "behind telegraph_report_evidence_enabled, which is seeded FALSE. retention_until is " +
+      "NULL and nothing purges: a deletion schedule for moderation evidence is an owner " +
+      "decision, and a job running on a number this migration invented would be worse than " +
+      "no job.",
+  },
+  // ── Added 2026-09-15 by the INTEGRATION OWNER. Twelve tables from this
+  // branch's 289x-295x band, absent from production because the branch is not
+  // merged and live-db.yml applies ONLY from main.
+  //
+  // CLASSIFIED `unmerged-pr` FIRST, AND THAT WAS WRONG. The reasoning was that
+  // `unapplied` implies a decision taken and not carried out, and no such
+  // decision exists for these. The checker refused it within one CI run:
+  //
+  //   ✖ 12 table(s) are classified 'unmerged-pr' but a migration in THIS TREE
+  //     declares them ... the classification is false and the table is being
+  //     excused from the must-reach-zero total by a sentence that stopped
+  //     being true.
+  //
+  // The rule is mechanical and it is right: `unmerged-pr` is for a table whose
+  // migration you CANNOT SEE, declared by a PR that is not this tree. The
+  // moment the migration file is here, the table is declared here, and the
+  // excuse is false by construction — whatever the branch's merge status. These
+  // are `unapplied`: "declared in the tree, never applied to production, MUST
+  // reach zero", which is exactly what they are.
+  //
+  // The STALE UNMERGED-PR assertion that caught this was added on 2026-09-14
+  // for `sensing_anon_contributions`, whose own note records the identical
+  // mistake — an excuse that "stayed plausible while being false" because
+  // nothing checked it. It has now caught its author's successor, which is the
+  // only real evidence an assertion of that kind works.
+  //
+  // NOT hand-applied to portava-ci either, which is the same ruling recorded on
+  // stamp_definitions.evidences_presence in checkMissingLiveColumns.ts. Applying
+  // migrations to the CI project from unmerged branches is the RECORDED root
+  // cause of `CI (live DB)` being red on main's own sha across five consecutive
+  // scheduled runs — portava-ci carries 2900/2901/2910/2930 under `rehearsal_*`
+  // names and certification cannot reconcile that with the ledger. Turning a
+  // check green by repeating the thing that broke another one trades a visible
+  // red for an invisible one.
+  //
+  // Each note names its migration and says whether a WRITER exists, because the
+  // Trips §5.1 block above establishes that a table nothing writes satisfies
+  // nothing — a gap entry that omits that is hiding the more important half.
+
+  // Discovery Trails, migration 2910 — six tables, one migration, one block.
+  trails:                 { classification: "unapplied", note: "Discovery Trails (2910). Created and written by the trail service; behind the trails flag. Absent from production only because this branch is unmerged." },
+  trail_edges:            { classification: "unapplied", note: "Discovery Trails (2910). Same block as trails; one writer. The edge set is what makes a trail a path rather than a list." },
+  trail_follows:          { classification: "unapplied", note: "Discovery Trails (2910). Same block; two writers (follow and unfollow). Viewer-scoped." },
+  trail_health_snapshots: { classification: "unapplied", note: "Discovery Trails (2910). Same block; one writer. A snapshot table — absent means no history, not a broken read." },
+  trail_reports:          { classification: "unapplied", note: "Discovery Trails (2910). Same block; one writer. Moderation intake for a surface that is not live in production." },
+  content_trails:         { classification: "unapplied", note: "Discovery Trails (2910). Same block; two writers. The join from a trail to the content it threads." },
+
+  // Creator economy, migrations 2920/2921 — gated by a flag 2922 seeds FALSE.
+  creator_attributions:    { classification: "unapplied", note: "Creator economy (2920). Written by services/creators/CreatorAttributionService.ts, every path gated on creator_attribution_enabled — which migration 2922 seeds FALSE. So it would be created empty and STAY empty after the merge: enabling it is a separate owner decision, and census-discovery 17.2 records that four of the six creator types have no value-event producer at all." },
+  creator_rule_versions:   { classification: "unapplied", note: "Creator economy (2920). NO WRITER, deliberately — the percentages live here as DATA, seeded by the migration itself, which is what 09 section 8's 'actual percentages must remain configurable' requires. Nothing in src/ writes it and nothing should." },
+  creator_earning_entries: { classification: "unapplied", note: "Creator economy (2921). Written by CreatorAttributionService's balanced-pair upsert, same flag, same FALSE seed. Its columns are pinned against this migration by src/test/creatorLedgerRowSchemaDrift.test.ts, which is the cover for the three write-path sites allowlisted as unresolvable." },
+
+  // Rent-a-Buddy earnings, migration 2901.
+  rent_buddy_earnings_entries: { classification: "unapplied", note: "Rent-a-Buddy earnings (2901). Read through a module constant in services/ledger/CanonicalShareReader.ts and joined by the 2930 canonical-share view, so 2930 cannot be applied before it. Absent from production because the branch is unmerged." },
+
+  // Place momentum, migration 2892.
+  place_momentum: { classification: "unapplied", note: "Place momentum (2892). NO CONSUMER IN src/ AT ALL outside its own tests: grepping the tree for the name, excluding src/migrations, finds only test/placeMomentumSqlParity.test.ts and one table-name list. The classification function it ships is exercised by that parity test against the SQL, so it is not dead — but NOTHING READS THE TABLE, and by the Trips 5.1 rule above it satisfies nothing until something does. Stated here rather than discovered at deploy time." },
+
+  // Input-assistance telemetry, migration 2950.
+  input_assistance_telemetry_events: { classification: "unapplied", note: "Input-assistance telemetry (2950). lib/inputAssistance/telemetry.ts names it as TELEMETRY_TABLE and routes/inputAssistance.ts is its door; the payload is REBUILT server-side rather than accepted from the client, which is the property that makes the table safe to have. Absent from production because the branch is unmerged." },
 };
 
 /**
@@ -522,6 +829,62 @@ export function appliedAfterSnapshot(): Map<string, string> {
   return out;
 }
 
+/**
+ * THE TWO RATCHET-ROT PREDICATES, exported so that exactly ONE implementation of
+ * each exists and the test exercises the same code main() does.
+ *
+ * They used to live inline in main() and be RE-STATED in
+ * productionDriftExtraction.test.ts. That was a copy, and a copy has two
+ * failure modes the originals do not: it can drift from this file silently, and
+ * — the one that actually bit — when the real ratchet has no `unmerged-pr`
+ * member, asserting over the copy proves nothing about the rule at all. Taking
+ * `gaps` and `declared` as parameters instead of reading the module constants
+ * lets the test hand them a CONSTRUCTED ratchet and check that each predicate
+ * discriminates, independently of what the live ratchet happens to contain.
+ *
+ * Both ask the TREE, never the note.
+ */
+
+/**
+ * Entries classified `unmerged-pr` whose table IS declared by a migration here.
+ *
+ * `unmerged-pr` means "a PR declares this table; it is not drift until that PR
+ * lands" — correct the day the entry is written, false the day the PR lands. If
+ * a migration file in this tree declares the table, the PR has landed by
+ * definition and the entry is excusing the table from the must-reach-zero total
+ * with a sentence that stopped being true.
+ */
+export function staleUnmergedEntries(
+  gaps: Record<string, Gap>,
+  declared: Set<string>,
+): string[] {
+  return Object.entries(gaps)
+    .filter(([t, g]) => g.classification === "unmerged-pr" && declared.has(t))
+    .map(([t]) => t)
+    .sort();
+}
+
+/**
+ * Entries for a table NOTHING IN THE TREE DECLARES and production does not have.
+ *
+ * Not drift, not a gap: a sentence about storage no migration asks for, which
+ * inflates the must-reach-zero count with work that does not exist.
+ * `unmerged-pr` is exempt by definition — those tables are declared in a PR's
+ * migration, which is precisely why they are not declared here. That exemption
+ * is the one `staleUnmergedEntries` asks in the other direction, and neither is
+ * sound without the other.
+ */
+export function undeclaredEntries(
+  gaps: Record<string, Gap>,
+  declared: Set<string>,
+  production: Set<string>,
+): string[] {
+  return Object.entries(gaps)
+    .filter(([t, g]) => g.classification !== "unmerged-pr" && !declared.has(t) && !production.has(t))
+    .map(([t]) => t)
+    .sort();
+}
+
 function main(): void {
   const production = readProductionSnapshot();
   const declared = declaredTables();
@@ -583,10 +946,7 @@ function main(): void {
   // the "must reach zero" count with work that does not exist. `unmerged-pr` is
   // exempt by definition: those tables are declared in a PR's migration, which
   // is precisely why they are not declared here.
-  const undeclared = Object.entries(KNOWN_PRODUCTION_GAPS)
-    .filter(([t, g]) => g.classification !== "unmerged-pr" && !declared.has(t) && !production.has(t))
-    .map(([t]) => t)
-    .sort();
+  const undeclared = undeclaredEntries(KNOWN_PRODUCTION_GAPS, declared, production);
 
   if (undeclared.length > 0) {
     failed = true;
@@ -600,6 +960,40 @@ function main(): void {
         "  real unmerged PR declares it.",
     );
   }
+  // ── STALE UNMERGED-PR: the exemption above, asked in the other direction ────
+  //
+  // `unmerged-pr` means "a PR declares this table; it is not drift until that PR
+  // lands". That is correct the day the entry is written and wrong the day the
+  // PR lands, and until 2026-09-14 nothing watched for the second day.
+  //
+  // It had already happened once. `sensing_anon_contributions` carried
+  // "PR #475 (UNMERGED) ... Not drift until that PR lands" while
+  // 2315_sensing_anon_contributions.sql sat on main — it reached main inside
+  // #476, so no commit subject ever named #475 and the sentence stayed
+  // plausible. The effect was not cosmetic: an `unmerged-pr` entry is excused
+  // from the MUST-REACH-ZERO total, so a landed migration was being counted as
+  // somebody else's problem.
+  //
+  // The question is mechanical and asks the TREE, never the note: if a migration
+  // file in this tree declares the table, the PR has landed by definition.
+  const staleUnmerged = staleUnmergedEntries(KNOWN_PRODUCTION_GAPS, declared);
+
+  if (staleUnmerged.length > 0) {
+    failed = true;
+    const declaring = declaringMigrations();
+    console.error(
+      `\n✖ ${staleUnmerged.length} table(s) are classified 'unmerged-pr' but a migration in THIS TREE declares them:`,
+    );
+    for (const t of staleUnmerged) {
+      console.error(`    ${t} — declared by ${(declaring.get(t) ?? ["(unknown)"]).join(", ")}`);
+    }
+    console.error(
+      "\n  The PR has landed, so the classification is false and the table is being\n" +
+        "  excused from the must-reach-zero total by a sentence that stopped being\n" +
+        "  true. Reclassify each as 'unapplied', or strike it off if production has it.",
+    );
+  }
+
 
   const unapplied = Object.entries(KNOWN_PRODUCTION_GAPS).filter(
     ([t, g]) => g.classification === "unapplied" && !production.has(t),

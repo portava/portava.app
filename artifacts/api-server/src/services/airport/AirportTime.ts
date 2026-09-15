@@ -63,6 +63,45 @@ function hourFormatter(tz: string): Intl.DateTimeFormat {
   return f;
 }
 
+/**
+ * Hour-and-minute formatter cache, for the same reason as the hour one above.
+ *
+ * `localHourMinute` exists because the safety engine's ramp needs to know WHERE
+ * the next local hour boundary falls, and it cannot assume that is at the next
+ * whole UTC minute-of-hour: Asia/Kolkata is +05:30 and Asia/Kathmandu +05:45,
+ * so the local minute differs from the UTC one by a constant the caller must
+ * not guess.
+ */
+const hourMinuteFormatterCache = new Map<string, Intl.DateTimeFormat>();
+
+function hourMinuteFormatter(tz: string): Intl.DateTimeFormat {
+  let f = hourMinuteFormatterCache.get(tz);
+  if (!f) {
+    f = new Intl.DateTimeFormat("en-GB", { timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false });
+    hourMinuteFormatterCache.set(tz, f);
+  }
+  return f;
+}
+
+/**
+ * Local hour and minute at the airport for a UTC instant, in ONE formatter
+ * call. Falls back to the UTC clock on an unusable zone, exactly as
+ * `localHour` does, so a caller never has to handle a third shape.
+ */
+export function localHourMinute(tz: string, at: Date): { hour: number; minute: number } {
+  try {
+    const parts = hourMinuteFormatter(tz).formatToParts(at);
+    const get = (t: string) => Number(parts.find((p) => p.type === t)?.value ?? "NaN");
+    let hour = get("hour");
+    const minute = get("minute");
+    if (!Number.isFinite(hour) || !Number.isFinite(minute)) throw new Error("unparseable");
+    if (hour === 24) hour = 0;
+    return { hour, minute };
+  } catch {
+    return { hour: at.getUTCHours(), minute: at.getUTCMinutes() };
+  }
+}
+
 /** Local hour-of-day (0–23) at the airport for a UTC instant. */
 export function localHour(tz: string, at: Date): number {
   try {

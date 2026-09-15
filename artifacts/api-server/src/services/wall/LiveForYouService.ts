@@ -385,7 +385,7 @@ export async function buildGemLiveCandidates(
       )
       .in("canonical_place_id", [...byPlace.keys()])
       .eq("status", "active");
-    if (error || !Array.isArray(data)) return [];
+    if (error || !Array.isArray(data)) return []; // D11: ruled — see LIVE_STRIP_EMPTINESS_RULING at the foot of this file
     const out: LiveForYouCandidate[] = [];
     for (const row of data as any[]) {
       const placeId = row.canonical_place_id ? String(row.canonical_place_id) : null;
@@ -454,7 +454,7 @@ export async function buildSocialPresenceLiveCandidates(
       .in("author_id", [...followedCreatorIds].slice(0, 500))
       .gte("created_at", cutoff)
       .limit(500);
-    if (error || !Array.isArray(data)) return [];
+    if (error || !Array.isArray(data)) return []; // D11: ruled — see LIVE_STRIP_EMPTINESS_RULING at the foot of this file
     // distinct followed authors per place + newest post per place.
     const distinctByPlace = new Map<string, Set<string>>();
     const newestByPlace = new Map<string, number>();
@@ -536,7 +536,7 @@ export async function buildBuddyLiveCandidates(
       .eq("available_now", true)
       .in("city", [...cities.keys()])
       .limit(50);
-    if (error || !Array.isArray(data)) return [];
+    if (error || !Array.isArray(data)) return []; // D11: ruled — see LIVE_STRIP_EMPTINESS_RULING at the foot of this file
     const nightlifeByCity = new Map<string, boolean>();
     const seenCity = new Set<string>();
     for (const row of data as any[]) {
@@ -1056,3 +1056,48 @@ export async function buildTripSignalLiveCandidates(
     return [];
   }
 }
+
+/**
+ * ── D11 RULING: THE THREE PRODUCER READS MAY ANSWER `[]` ON A FAILURE ────────
+ *
+ * `LIVE_STRIP_EMPTINESS_RULING`. Three reads in this file — hidden_gems in
+ * buildGemLiveCandidates, posts in buildSocialPresenceLiveCandidates,
+ * rent_buddy_profiles in buildBuddyLiveCandidates — return `[]` when the read
+ * FAILED, which is also what they return when there is genuinely nothing to
+ * show. That is the swallowed-read class, and on a feed surface it is as well
+ * camouflaged as it gets: "no gem here", "nobody you follow was here", "no
+ * Buddy available" are the ordinary answers, so nothing about an empty strip
+ * looks wrong. The ruling below is that the camouflage is nonetheless harmless,
+ * and it is a ruling about the CALLERS, not about the reads.
+ *
+ *  1. AN ABSENT STRIP ITEM ASSERTS NOTHING. The strip's contract is 0..4 items
+ *     assembled in priority order. It is not an enumeration ("these are your
+ *     trips"), not a gate ("this is not a duplicate") and not a count that
+ *     anything reports. A missing item removes a claim from the page; it does
+ *     not add a false one. That is the difference between this site and
+ *     `eligibleTripIds: []` in MediaActionResolver, which WAS fixed.
+ *
+ *  2. THE CALLER HAS ALREADY RULED, IN ADVANCE, IN WRITING. Spec §34 / TABLE 5:
+ *     Live Intelligence unavailable ⇒ degrade the strip, social feed stays
+ *     normal. routes/wall.ts implements exactly that and nothing else: each
+ *     producer call is wrapped in `.catch(err => { logger.warn(...); return [] })`,
+ *     and buildLiveStrip wraps the assembly in the same. The caller's whole
+ *     decision, for a failure it CAN see, is "log it and carry on with []" —
+ *     so telling it about this failure buys a behaviour it already performs.
+ *
+ *  3. THE ONE DOWNSTREAM CONSUMER MOVES THE PERMISSIVE WAY, HARMLESSLY. The
+ *     strip's items seed `liveStripSubjectIds` / `liveStripSignals`, which only
+ *     SUPPRESS a Context Thread that would repeat a strip item. An empty strip
+ *     suppresses nothing, so the failure mode is "the same fact may appear
+ *     twice" — never a fact asserted that was not read.
+ *
+ * WHAT WOULD CHANGE THIS RULING: a surface that reports the strip's emptiness
+ * as a fact ("nothing is live near you"), or a consumer that reads an empty
+ * strip as coverage rather than as no-suppression. Neither exists today.
+ *
+ * WHAT IS EXPLICITLY NOT THE FIX: adding a `logger.warn` to the three branches.
+ * Each producer's catch already logs — a THROWN failure is logged, a RESOLVED
+ * one is not — so a log here would only close the asymmetry for operators, and
+ * an operator seeing it is not the caller being told. Left alone on purpose.
+ */
+export const LIVE_STRIP_EMPTINESS_RULING = "spec §34 / TABLE 5: an unavailable producer degrades the strip; an absent strip item asserts nothing" as const;

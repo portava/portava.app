@@ -1,5 +1,5 @@
 /**
- * Trip Kernel — lib/tripKernel.ts, the gated plan-item handlers in
+ * Trip Kernel — domain/trips/commands/tripKernel.ts, the gated plan-item handlers in
  * routes/trips.ts, and the §24 Phase 1 writer ratchet.
  *
  * Spec: docs/specs/Portava_Trips_Development_Architecture_Spec_v4.txt
@@ -39,7 +39,7 @@ import {
   tripCommandFamily,
   TRIP_EVENT_TYPES,
   TRIP_KERNEL_CONTRACT_VERSION,
-} from "../lib/tripKernel.js";
+} from "../domain/trips/commands/tripKernel.js";
 import { countCanonicalWrites, judge, surveyTree, ungatedOf } from "../scripts/checkTripKernelWriters.js";
 import { TRIP_KERNEL_DIRECT_WRITERS } from "../scripts/tripKernelWriterBaseline.js";
 
@@ -496,8 +496,14 @@ describe("trip_kernel_enabled = false (seeded value): the direct writes run unto
 
     const p = await call(port, "PATCH", `/api/trips/${TRIP_ID}/plan/items/${ITEM_A}`, "alice-tok", { status: "done" });
     assert.equal(p.status, 200);
+    // Until census-trips §55 this pin read "legacy path accepts done -> tentative,
+    // exactly as before" — the defect TR48 names. §3.3 draws no arrow out of a
+    // terminal state, and the flag-off twin now refuses it with the kernel
+    // path's own reason and shape, still without calling the kernel.
     const back = await call(port, "PATCH", `/api/trips/${TRIP_ID}/plan/items/${ITEM_A}`, "alice-tok", { status: "tentative" });
-    assert.equal(back.status, 200, "legacy path accepts done -> tentative, exactly as before");
+    assert.equal(back.status, 409, "the flag-off twin refuses done -> tentative (TR48)");
+    assert.equal(back.body.reason, "TRIP_PLAN_INVALID_TRANSITION");
+    assert.deepEqual([back.body.from, back.body.to], ["done", "tentative"]);
 
     const rm = await call(port, "PATCH", `/api/trips/${TRIP_ID}/plan/items/${ITEM_B}/remove`, "bob-tok");
     assert.equal(rm.status, 200);
@@ -736,7 +742,7 @@ describe("check:trip-kernel-writers (§24 Phase 1 ratchet)", () => {
   });
   it("a trip-kernel:legacy-path marker gates exactly the statement it precedes, and only in a file that imports the kernel", () => {
     const gatedSrc = `
-      import { executeTripCommand } from "../lib/tripKernel.js";
+      import { executeTripCommand } from "../domain/trips/commands/tripKernel.js";
       if (kernel) { await executeTripCommand(kernel, cmd); return; }
       // trip-kernel:legacy-path — flag-off twin
       const { error } = kernelDone ? { error: null } : await client.from("trip_members").insert({ a: 1 });

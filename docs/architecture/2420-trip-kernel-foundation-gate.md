@@ -159,11 +159,11 @@ DEFAULT 0` on **PostgreSQL 17.6** (measured: `server_version_num = 170006`) is a
 
 ```
 lib/mapProjectionTripRead.ts:193      → .map(toAuthorizedTripView)
-lib/tripReadiness.ts:269              → explicit field reads only
-routes/trips-expansion.ts:107,141,175,208 → .map(toAuthorizedTripView)
-routes/trips-expansion.ts:389         → explicit field reads only
-routes/trips-expansion.ts:468         → toAuthorizedTripView(updated)
-routes/trips-expansion.ts:2797        → explicit field reads only
+domain/trips/services/tripReadiness.ts:269              → explicit field reads only
+routes/trips-expansion.ts:113,147,181,214 → .map(toAuthorizedTripView)
+routes/trips-expansion.ts:395         → explicit field reads only
+routes/trips-expansion.ts:474         → toAuthorizedTripView(updated)
+routes/trips-expansion.ts:2803        → explicit field reads only
 ```
 
 `lib/privacy/tripSerializers.ts:84 toAuthorizedTripView` copies **38 named
@@ -178,7 +178,7 @@ missing live is the dangerous one) — no drift-test breakage, and the snapshot 
 be refreshed at leisure.
 
 **Behaviour.** `trip_kernel_enabled` seeds FALSE and `isFlagEnabled` is
-fail-closed, so `lib/tripKernel.ts` is unreachable and every write path stays
+fail-closed, so `domain/trips/commands/tripKernel.ts` is unreachable and every write path stays
 byte-for-byte what it was. The three new tables stay empty; `trip_outbox` has no
 worker by design.
 

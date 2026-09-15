@@ -20,8 +20,8 @@ import { render, waitFor, fireEvent } from '@testing-library/react-native';
 
 import {
   TripCrewPresenceCard, describeAge, presenceIdempotencyKey, PRESENCE_TTL_SECONDS,
-} from '../trip/TripCrewPresenceCard.tsx';
-import type { PresenceRead, PresenceEntry } from '../../services/tripPresence.ts';
+} from '../../features/trips/crew/TripCrewPresenceCard.tsx';
+import type { PresenceRead, PresenceEntry } from '../../features/trips/crew/tripPresence.ts';
 import type { TripCommandResult } from '../../services/tripCommands.ts';
 
 const TRIP_ID = 'trip-presence-test';

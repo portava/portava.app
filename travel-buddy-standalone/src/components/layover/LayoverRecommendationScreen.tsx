@@ -90,7 +90,11 @@ function RecCard({ rec, onAskCompass, onSafeReturn, onAddToPlan, onAddToRoute, o
         {!rec.insideAirport && (
           <View style={styles.metaItem}>
             <Plane size={12} color="#888" />
-            <Text style={styles.metaText}>{rec.travelTimeMin} min travel</Text>
+            {/* Null means nobody measured it (L293). "null min travel" was
+                what an unguarded render produced. */}
+            <Text style={styles.metaText}>
+              {rec.travelTimeMin === null ? 'travel time not measured' : `${rec.travelTimeMin} min travel`}
+            </Text>
           </View>
         )}
         <View style={styles.metaItem}>

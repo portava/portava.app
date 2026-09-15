@@ -63,18 +63,86 @@ export async function createCap(
   };
 }
 
-/** Lift a specific cap (admin or expiry) */
+/**
+ * Read one cap, SCOPED TO THE USER it is claimed to belong to.
+ *
+ * The seam exists so an admin surface does not have to reach into `trust_caps`
+ * itself — `services/trust/` owns that table — and so the three answers stay
+ * three. supabase-js RESOLVES on a database error, so a caller writing
+ * `const { data } = await …` cannot tell "no such cap for this user" from
+ * "the table could not be read", and reads the outage as a clean not-found.
+ * That is the shape that turns a transient failure into a confident 404 at a
+ * gate, so the states are returned rather than collapsed.
+ */
+export type CapLookup =
+  | { state: "ok"; cap: TrustCap & { liftedAt: string | null } }
+  | { state: "not_found" }
+  | { state: "unavailable"; reason: string };
+
+export async function getCapForUser(
+  db: SupabaseClient,
+  input: { capId: string; userId: string },
+): Promise<CapLookup> {
+  const { data, error } = await db
+    .from("trust_caps")
+    .select("id, user_id, category, ceiling_score, reason_code, source_event_id, expires_at, lifted_at, created_at")
+    .eq("id", input.capId)
+    .eq("user_id", input.userId)
+    .maybeSingle();
+  if (error) return { state: "unavailable", reason: error.message ?? (error as any).code ?? "db_error" };
+  if (!data) return { state: "not_found" };
+  const d = data as any;
+  return {
+    state: "ok",
+    cap: {
+      id:            d.id,
+      userId:        d.user_id,
+      category:      d.category,
+      ceilingScore:  d.ceiling_score,
+      reasonCode:    d.reason_code,
+      sourceEventId: d.source_event_id,
+      expiresAt:     d.expires_at,
+      liftedAt:      d.lifted_at ?? null,
+      createdAt:     d.created_at,
+    },
+  };
+}
+
+/**
+ * Lift one specific cap (admin or expiry).
+ *
+ * ── THE CAP MUST BELONG TO THE USER IT IS BEING LIFTED FOR ──────────────────
+ * This filtered on `id` alone. A cap id is the only thing an admin surface
+ * passes, and the user id travelling beside it was used for the audit row and
+ * the cache invalidation and NOT for the update — so lifting cap X "for user A"
+ * lifted user B's ceiling, filed an audit row saying it happened to A, and left
+ * B's cached compass standing on a score that had just changed. Scoping is a
+ * required argument rather than an optional one precisely so no future caller
+ * can reintroduce that by omission.
+ *
+ * ── AND THE OUTCOME IS OBSERVED, NOT ASSUMED ───────────────────────────────
+ * The update carried no `.select()`, so "lifted one cap" and "matched nothing"
+ * were the same resolved value: lifting a nonexistent id, an already-lifted cap,
+ * or another user's cap all returned success. The `.select("id")` makes the
+ * difference visible and the boolean makes callers handle it — a removal that
+ * lifted nothing must never be reported or audited as a removal.
+ *
+ * Returns true when a cap was actually lifted, false when nothing matched.
+ * Throws only on a database error: not-found and unreadable stay distinct.
+ */
 export async function liftCap(
   db: SupabaseClient,
-  capId: string,
-  liftedBy: string,
-): Promise<void> {
-  const { error } = await db
+  input: { capId: string; userId: string; liftedBy: string },
+): Promise<boolean> {
+  const { data, error } = await db
     .from("trust_caps")
-    .update({ lifted_at: new Date().toISOString(), lifted_by: liftedBy })
-    .eq("id", capId)
-    .is("lifted_at", null);
+    .update({ lifted_at: new Date().toISOString(), lifted_by: input.liftedBy })
+    .eq("id", input.capId)
+    .eq("user_id", input.userId)
+    .is("lifted_at", null)
+    .select("id");
   if (error) throw new Error(`liftCap DB error: ${error.message}`);
+  return Array.isArray(data) && data.length > 0;
 }
 
 /** Expire all caps whose expires_at has passed (call from cleanup job) */

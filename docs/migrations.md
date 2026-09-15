@@ -1396,3 +1396,108 @@ The following tables existed in the live DB before or were created by this wave.
 - **Why `audit:schema` reads 0 and not 1 afterwards.** `auditMigrationsVsLive.ts:730` suppresses an `rls:` claim whose relation is absent ("declared for a table nobody created" is not drift), so `rls:post_event_links` was **not** among the 9 reported — it becomes a reported gap the instant the table exists without RLS. Creating the table promotes that claim from suppressed to live-checked. The count went 9 → 0 *because* the enable was included; it would have gone 9 → 1 had it been omitted. The audit would have caught it, but only after the table had already sat unprotected.
 - **Three declared RLS policies were NOT applied and remain deliberately unapplied** — `media_assets_public_select`, `media_attachments_public_select` (`20260811_media_rls.sql`) and `users_view_highlight_replies` (`0026_highlights.sql` / `2033_rls_hardening.sql`). They are allowlisted at `auditMigrationsVsLive.ts:221-236` with the reasoning written out in full there; all three are pure widenings or superseded declarations, and their absence is the restrictive direction. Of the twelve objects the 2026-08-10 production audit found declared-but-absent (`docs/schema-reconciliation-2026-08-08.md` §2), **nine are now applied and three are deliberately not**.
 - **Provenance, stated plainly given this file's own header warning.** The apply and the verification were executed by the operator in the Supabase SQL editor and reported back; this session composed the SQL, checked its structure offline, and recorded the outcome. Nothing here was observed by the session that wrote it. The two queries above are the way to re-establish it independently — do that before relying on this row.
+
+---
+
+## 2026-09-15 — The three CI ledger orphans: files restored, and the checksum's meaning pinned down (2311 / 2320 / 2325)
+
+**Nothing was applied to any database by this entry.** It records a repository
+repair and a verification, both performed against `portava-ci`
+(`hwokxgbmezheskbzskfr`) read-only. Production (`ajrurzioarfkagpuxfnb`) was not
+touched and is not described here.
+
+### What was wrong
+
+`public.schema_migration_ledger` on `portava-ci` carried three rows whose
+migration FILE existed on no merged branch — `check:migration-ledger` finding
+#2, *"ledger rows with no file on disk"*. Each row is a real apply made by hand
+on 2026-09-07 to unblock an open PR. **The rows were not deleted**, and deleting
+them was never the remedy: a row records an apply that really happened, so
+removing it would make the ledger assert that a migration which DID run never
+ran — an accurate record of an awkward act replaced by an inaccurate record of
+no act. The file was the thing missing, so the file is what was restored.
+
+### The three, and the verification
+
+Files restored from their source branches, then hashed locally with `sha256sum`
+and compared against the `checksum` column read back from the live ledger:
+
+| file | sha256 (file on disk) | ledger `checksum` | `applied_by` |
+| --- | --- | --- | --- |
+| `2311_intel_claim_reviews.sql` | `18e8899b…e3d985` | identical, all 64 hex | `manual` |
+| `2320_memory_episode_provenance_spine.sql` | `1d13adee…6ab04e` | identical, all 64 hex | `manual` |
+| `2325_telegraph_unsend_before_seen.sql` | `cdb83992…493490` | identical, all 64 hex | `manual` |
+
+All three rows carry `applied_at = 2026-09-07 04:55:22.645066+00`.
+
+### CORRECTION — what that checksum does and does not prove
+
+The commit that restored these files said the matching checksums meant *"these
+are the bytes that were applied."* **That is wrong, and the ledger's own `notes`
+column says so.** Read back verbatim, each row records a transformation:
+
+- 2311 — *"Body applied is the committed file with SQL comments stripped; every
+  DDL statement and postcondition ran verbatim."*
+- 2320 — *"Comments stripped and outer BEGIN/COMMIT removed; all DDL and
+  postconditions ran verbatim, including the erase_memory_for_user widening to
+  5 columns."*
+- 2325 — *"Comments stripped and outer BEGIN/COMMIT removed; all DDL and
+  postconditions ran verbatim."*
+
+So the `checksum` column is the hash of the **committed file**, not of the text
+submitted to the database. The match therefore proves **file identity** — that
+the file now on disk is the one the row names, and not a later edit of it, which
+would have been finding #3 and a worse problem. That is exactly and only what
+finding #2 requires. It proves nothing about transport, and this file's own
+header warning is the reason to say so rather than let the stronger reading
+stand.
+
+### Installed objects, checked separately — the claim the checksum cannot make
+
+Queried directly from `pg_proc` / `pg_class` / `pg_attribute` on `portava-ci`,
+which is a different kind of evidence from either the file hash or the stored
+text:
+
+| object | observed |
+| --- | --- |
+| `public.erase_memory_for_user` | returns **5** columns — `projections_deleted, events_deleted, feedback_deleted, episodes_deleted, evidence_deleted`; `prosecdef = true` |
+| `public.telegraph_unsend_message_before_seen` | present, `(p_message_id uuid, p_actor_id uuid, p_thread_id uuid)`, `prosecdef = true` |
+| `public.intel_claim_reviews` | present, RLS **enabled**, 9 columns |
+| `public.memory_episodes` | present, RLS **enabled**, 22 columns |
+| `public.memory_evidence` | present, RLS **enabled**, 11 columns |
+| `public.messages.unsent_at` | present, `timestamp with time zone`, nullable |
+
+The five-column return is the load-bearing one: it is 2320's single
+non-additive act, and observing it in the catalogue is what turns the notes'
+*"including the erase_memory_for_user widening to 5 columns"* from a claim into
+a reading.
+
+### What is still NOT established
+
+- **`check:migration-ledger` has not run against this tree.** It executes only
+  inside `certify:migrations`, which `live-db.yml` gates on
+  `github.ref == 'refs/heads/main'` — so it cannot run on a pull request at all,
+  and the restore will be exercised by the gate for the first time when the
+  branch merges. Everything above is the evidence available before that.
+- **Nothing here says anything about production.** These three are applied to
+  `portava-ci` only. `check:production-drift` carries all three as `unapplied`,
+  which is the honest classification for a table declared in the tree and absent
+  from production.
+- **No writer came with any of the three.** Each migration's application code
+  stayed on its unmerged branch, so all three objects are inert in this tree.
+
+### Re-establish it independently
+
+    SELECT filename, applied_by, checksum, applied_at, notes
+      FROM public.schema_migration_ledger
+     WHERE filename IN ('2311_intel_claim_reviews.sql',
+                        '2320_memory_episode_provenance_spine.sql',
+                        '2325_telegraph_unsend_before_seen.sql')
+     ORDER BY filename;
+    -- compare each `checksum` against `sha256sum` of the file of the same name
+    -- in artifacts/api-server/src/migrations/
+
+    SELECT pg_get_function_result(p.oid)
+      FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+     WHERE n.nspname = 'public' AND p.proname = 'erase_memory_for_user';
+    -- expect a 5-column TABLE(...), ending episodes_deleted, evidence_deleted

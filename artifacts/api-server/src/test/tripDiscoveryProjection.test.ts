@@ -1,5 +1,5 @@
 /**
- * TripDiscoveryProjection — lib/tripDiscoveryProjection.ts, the Trip-owned
+ * TripDiscoveryProjection — domain/trips/contracts/tripDiscoveryProjection.ts, the Trip-owned
  * contract Discovery consumes (Trips spec §1, §6.3, §19.1, §25;
  * census-discovery A10 / D3).
  *
@@ -33,7 +33,7 @@ import {
   searchTripDiscoveryProjections,
   readTripDiscoveryProjections,
   type TripDiscoveryProjection,
-} from "../lib/tripDiscoveryProjection.js";
+} from "../domain/trips/contracts/tripDiscoveryProjection.js";
 import { PRIVATE_TRIP_COVER_PLACEHOLDER } from "../lib/privacy/coverPlaceholders.js";
 
 const OWNER = "aaaaaaaa-0000-0000-0000-000000000001";

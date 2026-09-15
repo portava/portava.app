@@ -81,6 +81,12 @@ export const SERVER_DIRS = [
   resolve(API_ROOT, "src/services"),
   resolve(API_ROOT, "src/lib"),
   resolve(API_ROOT, "src/compass"),
+  // census-trips §61 moved the Trips kernel, its services and its projections
+  // to src/domain/trips/ and the routers to src/server/trips/. Their writes
+  // attribute tables (trip_crew_location_preferences, trip_readiness_items)
+  // that would otherwise read as written by nothing; their reads are judged.
+  resolve(API_ROOT, "src/domain"),
+  resolve(API_ROOT, "src/server"),
 ];
 /** Additional places a WRITE may live. Reads here are not judged. */
 export const WRITER_ONLY_DIRS = [
@@ -198,11 +204,17 @@ export const KNOWN_WRITERLESS_READS: Record<
       "as venue reference data, not personal location. Populated out of band.",
   },
   canonical_locations: {
-    readers: 3,
+    readers: 4,
     classification: "external-seed",
     note:
       "Canonical city/region reference rows, also in REFERENCE_LOCATION_TABLES. Populated out " +
-      "of band rather than by application code.",
+      "of band rather than by application code. FOUR readers since 2026-09-14, each a literal " +
+      "`.from(\"canonical_locations\")` and each a plain reference lookup, never a write: " +
+      "lib/mapTravelers.ts, lib/inputAssistance/personalization.ts, routes/discoverySearch.ts, " +
+      "and — the one that moved this count from 3 — lib/inputAssistance/taskContext.ts, which " +
+      "resolves a cityId to a display name for an assistance task's context and fails soft to " +
+      "no city constraint. The count is raised rather than the entry deleted: it is the only " +
+      "thing that notices the FIFTH reader.",
   },
 };
 

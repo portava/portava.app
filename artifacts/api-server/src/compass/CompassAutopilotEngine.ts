@@ -22,7 +22,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { randomUUID } from "node:crypto";
 import { getWeatherContext, type DailyWeather } from "../lib/weatherCache.js";
-import { tripKernelClient, executeTripCommand, planCommandTypeForPatch } from "../lib/tripKernel.js";
+import { tripKernelClient, executeTripCommand, planCommandTypeForPatch } from "../domain/trips/commands/tripKernel.js";
+import { COMPASS_AUTOPILOT_ALGORITHM_VERSION } from "./CompassAlgorithmVersion.js";
+import { recordOpportunityCompletion } from "../domain/trips/services/tripOpportunityMetrics.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -75,6 +77,15 @@ export interface ItemChange {
   lockType: LockType;
   before: Record<string, unknown>;
   after: Record<string, unknown>;
+  /**
+   * Trips §18 (census-compass CT-13) — the versioned algorithm that produced
+   * this change, stored WITH it. `trip_autopilot_proposals` has no envelope
+   * column and this pass wrote no migration, so the stamp rides on every entry
+   * of the `changes` JSONB: a proposal stays explainable as long as any one
+   * change survives. Optional on the type so a row written before the stamp
+   * existed still parses.
+   */
+  algorithmVersion?: string;
 }
 
 export interface RepairProposal {
@@ -538,7 +549,18 @@ export function buildRepairProposals(
   }
 
   // Safety net: a proposal must never contain a change to a fixed item.
-  return proposals.filter((p) => p.changes.every((c) => c.lockType !== "fixed"));
+  //
+  // Trips §18 — and, on the way out, STAMP every surviving change with the
+  // algorithm version. Stamping here rather than at each of the eight
+  // construction sites is the point: a ninth repair rule added later cannot
+  // forget to stamp itself, because nothing reaches a caller except through
+  // this return.
+  return proposals
+    .filter((p) => p.changes.every((c) => c.lockType !== "fixed"))
+    .map((p) => ({
+      ...p,
+      changes: p.changes.map((c) => ({ ...c, algorithmVersion: COMPASS_AUTOPILOT_ALGORITHM_VERSION })),
+    }));
 }
 
 // ── Run: detect + propose (durable, deduped, never auto-executed) ─────────────
@@ -633,7 +655,7 @@ export async function applyProposal(
   const items = await fetchPlanItems(sc, proposal.trip_id);
   const byId = new Map(items.map((i) => [i.id, i]));
 
-  // Trip Kernel gate, read once per proposal (Trips spec §4.1; lib/tripKernel.ts).
+  // Trip Kernel gate, read once per proposal (Trips spec §4.1; domain/trips/commands/tripKernel.ts).
   // routes/compassAutopilot.ts authorized the actor (own pending proposal,
   // accepted member, canEditPlan) before calling; the kernel re-checks crew.
   const kernel = await tripKernelClient(sc);
@@ -660,21 +682,22 @@ export async function applyProposal(
     // not; that lands in `blocked` with the reason, never as a silent skip.
     if (kernel) {
       const { updated_at, ...columns } = patch;
+      const commandType = planCommandTypeForPatch({
+        status: columns.status as string | undefined,
+        dayDate: columns.day_date as string | null | undefined,
+        startsAt: columns.starts_at as string | null | undefined,
+        endsAt: columns.ends_at as string | null | undefined,
+      });
       const r = await executeTripCommand(kernel, {
         commandId: randomUUID(),
         tripId: proposal.trip_id,
         actorUserId: proposal.user_id,
         expectedTripVersion: null,
         idempotencyKey: `autopilot:${proposal.id}:${c.itemId}`,
-        type: planCommandTypeForPatch({
-          status: columns.status as string | undefined,
-          dayDate: columns.day_date as string | null | undefined,
-          startsAt: columns.starts_at as string | null | undefined,
-          endsAt: columns.ends_at as string | null | undefined,
-        }),
+        type: commandType,
         payload: { item_id: c.itemId, patch: columns, updated_at },
       });
-      if (r.ok) applied++;
+      if (r.ok) { applied++; recordOpportunityCompletion(commandType, r.result, proposal.trip_id, r.duplicate); }
       else blocked.push(`${c.title}: ${r.reason}`);
       continue;
     }

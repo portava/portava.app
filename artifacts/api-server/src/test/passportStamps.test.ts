@@ -87,15 +87,17 @@ interface FakeState {
  * otherwise is what let buildStats's four counters read green in this file
  * while returning zero for every real traveller.
  */
-function definitionFor(stampType: string): { category: string; slug: string } {
+function definitionFor(stampType: string): { category: string; slug: string; evidences_presence: boolean } {
   switch (stampType) {
-    case "plan":        return { category: "event",    slug: "event_participant" };
-    case "host":        return { category: "event",    slug: "event_host" };
-    case "hidden_gem":  return { category: "location", slug: "hidden_gem_hunter" };
-    case "safe_return": return { category: "safety",   slug: "safe_return_completed" };
+    case "plan":        return { category: "event",    slug: "event_participant",     evidences_presence: false };
+    case "host":        return { category: "event",    slug: "event_host",            evidences_presence: false };
+    case "hidden_gem":  return { category: "location", slug: "hidden_gem_hunter",     evidences_presence: false };
+    case "safe_return": return { category: "safety",   slug: "safe_return_completed", evidences_presence: false };
     case "trip":
-    case "trip_crew":   return { category: "trip",     slug: "first_trip" };
-    default:            return { category: "location", slug: "city_explorer" };
+    case "trip_crew":   return { category: "trip",     slug: "first_trip",            evidences_presence: false };
+    // A GPS-verified city stamp: the one family here that really does prove the
+    // traveller was there.
+    default:            return { category: "location", slug: "city_explorer",         evidences_presence: true };
   }
 }
 
@@ -574,8 +576,25 @@ describe("Passport Stats", () => {
   it("returns correct country, city, and stamp-type counts", async () => {
     const r = await req("GET", "/api/me/passport/stats");
     assert.equal(r.status, 200);
-    assert.equal(r.body.countries, 2); // Japan, Thailand
-    assert.equal(r.body.cities, 3);    // Tokyo, Osaka, Bangkok
+
+    // ── Countries/Cities count only PRESENCE-EVIDENCING stamps ───────────────
+    // These read `2` and `3` until census-highlights-memories §K.4: every
+    // non-revoked row's city and country was counted, so a destination attached
+    // to a stamp earned WITHOUT going there was rendered as a place visited.
+    // Migration 2970 puts the property on `stamp_definitions.evidences_presence`
+    // and `buildStats` honours it.
+    //
+    // Of the five fixture rows, only s1 (Tokyo) and s2 (Osaka) are `city`
+    // stamps → `city_explorer`, awarded solely from a GPS-verified postcard.
+    // Bangkok is reached only by s3 (`plan` → `event_participant`) and s4
+    // (`safe_return` → `safe_return_completed`); neither writes a place it can
+    // vouch for, so Thailand is no longer claimed as a country visited.
+    assert.equal(r.body.countries, 1); // Japan — NOT Thailand
+    assert.equal(r.body.cities, 2);    // Tokyo, Osaka — NOT Bangkok
+
+    // POSITIVE CONTROL, and the reason this is a narrowing rather than a break:
+    // the counters that are NOT a been-there claim are all unchanged. If the
+    // filter had been applied to the wrong thing these would have moved too.
     assert.equal(r.body.totalStamps, 5);
     assert.equal(r.body.planStamps, 1);
     assert.equal(r.body.hostStamps, 1);

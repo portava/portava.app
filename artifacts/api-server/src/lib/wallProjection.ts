@@ -609,6 +609,35 @@ export interface StructuredIntentFilter {
   value?: string | null;
 }
 
+/**
+ * WHY THE PARSE OUTCOME IS A NAMED VALUE AND NOT AN EMPTY ARRAY (W71).
+ *
+ * `filters: []` used to mean four different things at once: nothing was said,
+ * the shared engine matched nothing, or the shared engine was DOWN. The third is
+ * an outage and the other two are findings about the user's words, and the Wall
+ * reported all of them with the same bytes — so `POST /wall/session-intent`
+ * answered 200 with "no filters" whether the engine had spoken or died, and the
+ * client rendered the outage as though the user's words had simply matched
+ * nothing. An outage must never be reported as a fact about the user.
+ *
+ * These four values are the states a caller can act on. They are produced in
+ * exactly one place (`WallSessionIntentService.parseIntent`) and are never
+ * inferred from the length of `filters` by anyone downstream.
+ */
+export type IntentResolution =
+  /** The shared engine ran and returned at least one canonical entity. */
+  | "resolved"
+  /** The shared engine ran and matched no canonical entity. A real finding. */
+  | "resolved_no_entities"
+  /** There was nothing to parse — blank input. Silence, not a no-match. */
+  | "no_text"
+  /**
+   * The shared Global Input Intelligence engine threw or was unavailable.
+   * An OUTAGE. Steering still degrades softly (spec §34), but nothing about the
+   * user's words was established and nothing about them may be reported.
+   */
+  | "engine_unavailable";
+
 export interface StructuredIntent {
   /** Structured canonical filters (never raw strings, spec §17). */
   filters: StructuredIntentFilter[];
@@ -617,6 +646,12 @@ export interface StructuredIntent {
   /** Always true — this intent is session-scoped and non-persistent by default. */
   sessionScoped: true;
   createdAt: string;
+  /**
+   * Which of the four outcomes produced this intent (W71). Required: an optional
+   * field would let any construction site quietly reintroduce the collapse this
+   * type exists to prevent.
+   */
+  resolution: IntentResolution;
 }
 
 // ── Wall API response contract (spec §27) ────────────────────────────────────

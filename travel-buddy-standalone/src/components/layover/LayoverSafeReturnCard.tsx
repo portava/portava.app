@@ -24,17 +24,12 @@
  * untouched: this component neither schedules nor requests a notification. The
  * dashboard's existing "Remind me" owns that, unchanged.
  */
-import React, { useCallback, useRef, useState } from 'react';
+import React from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { AlertTriangle, CheckCircle2, Clock, Plane, WifiOff } from 'lucide-react-native';
 import { color, radius, space, type as t } from '../../theme/tokens.ts';
-import {
-  returnToAirportNow,
-  type LayoverOverview,
-  type ReturnContract,
-  type ReturnNowOutcome,
-  type SafeReturnPosture,
-} from '../../services/layover.ts';
+import { type LayoverOverview } from '../../services/layover.ts';
+import type { SafeReturnAbortController } from './useSafeReturnAbort.ts';
 import {
   describeAbortEffects,
   describeDeadline,
@@ -50,8 +45,13 @@ interface Props {
   nowMs: number;
   /** Only an ACTIVE session can be aborted — the server rejects the rest. */
   canAbort: boolean;
-  /** Called after any abort that reached the server, so the screen can reload. */
-  onAborted?: () => void;
+  /**
+   * The abort, owned by the screen (`useSafeReturnAbort`) so that the footer
+   * CTA and the map's airport element can fire the SAME one — census L42 and
+   * L123. This card is still the only place the return CONTRACT is rendered,
+   * which is what §13.4 said a second control must not cost.
+   */
+  abort: SafeReturnAbortController;
 }
 
 const TONE_COLOR: Record<PostureTone, string> = {
@@ -61,20 +61,10 @@ const TONE_COLOR: Record<PostureTone, string> = {
   critical: color.signal,
 };
 
-interface AbortState {
-  outcome: ReturnNowOutcome;
-  /** The contract, wherever it came from — success body or failure body. */
-  contract: ReturnContract | null;
-  posture: SafeReturnPosture | null;
-}
-
-export function LayoverSafeReturnCard({ overview, nowMs, canAbort, onAborted }: Props) {
-  const [busy, setBusy] = useState(false);
-  const [abort, setAbort] = useState<AbortState | null>(null);
-  // A second press while the first is in flight must not fire a second POST.
-  // State alone is not enough: two taps inside one frame both read `busy=false`
-  // before React commits. The ref is written synchronously, so it is.
-  const inFlight = useRef(false);
+export function LayoverSafeReturnCard({ overview, nowMs, canAbort, abort: controller }: Props) {
+  const busy = controller.busy;
+  const abort = controller.state;
+  const handleReturnNow = controller.run;
 
   const tz = overview.airport.timezone ?? overview.localTimes.timezone;
   const posture = abort?.posture ?? overview.safeReturn;
@@ -87,32 +77,6 @@ export function LayoverSafeReturnCard({ overview, nowMs, canAbort, onAborted }: 
     nowMs,
   );
   const cert = summarizeCertification(overview.certification);
-
-  const handleReturnNow = useCallback(async () => {
-    if (inFlight.current) return;
-    inFlight.current = true;
-    setBusy(true);
-    try {
-      const outcome = await returnToAirportNow(overview.session.id);
-      const contract =
-        outcome.kind === 'ok' ? outcome.result.returnContract
-        : outcome.kind === 'partial' ? outcome.returnContract
-        : null;
-      const nextPosture =
-        outcome.kind === 'ok' ? outcome.result.posture
-        : outcome.kind === 'partial' ? outcome.posture
-        : null;
-      setAbort({ outcome, contract, posture: nextPosture });
-      // 'ok' and 'partial' both changed server state (stops cancelled, status,
-      // ledger). 'already_ended' means the screen is holding a stale session.
-      if (outcome.kind === 'ok' || outcome.kind === 'partial' || outcome.kind === 'already_ended') {
-        onAborted?.();
-      }
-    } finally {
-      inFlight.current = false;
-      setBusy(false);
-    }
-  }, [overview.session.id, onAborted]);
 
   const contract = abort?.contract ?? null;
   const outcome = abort?.outcome ?? null;

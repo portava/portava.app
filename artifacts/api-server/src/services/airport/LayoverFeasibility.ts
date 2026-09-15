@@ -47,14 +47,19 @@ import {
   computeWindow,
   computeReturnDeadline,
   travelTimeSourceFor,
+  assessWindowOnly,
   TRAVEL_TIME_SOURCE_IS_ROUTED,
   type ActivityCandidate,
   type LayoverReasonCode,
   type LayoverWindow,
   type LeaveAdvice,
+  type LiveConditions,
   type SafetyAssessment,
   type TravelTimeSource,
 } from "./LayoverSafetyEngine.js";
+// L47's classifier, reused for the same reason census L293 reuses it in the
+// engine: a landside 0 is an absence, not a free journey.
+import { statedTravelMin } from "./LayoverPlanFit.js";
 
 /**
  * Version of the RECORD SHAPE, separate from `LAYOVER_ENGINE_VERSION` (the
@@ -65,8 +70,16 @@ import {
  * History:
  *   2026.09.08-1  first certified record: single derivation for the four route
  *                 call sites, inputHash, §6.2 estimate representation.
+ *   2026.09.13-1  §10 `liveConditions` becomes a named input (so it is inside
+ *                 the hash and inside a replay) and a sixth `liveExtra`
+ *                 estimate. `null` for every caller on this tree outside
+ *                 tests; the shape changed, so the shape's version moved.
+ *   2026.09.14-1  §8.1 L72: a seventh `returnTransport` estimate beside a
+ *                 seventh breakdown term. The shape gained a field, so the
+ *                 shape's version moved; the arithmetic gained a term, so
+ *                 `LAYOVER_ENGINE_VERSION` moved too and for its own reason.
  */
-export const LAYOVER_FEASIBILITY_VERSION = "2026.09.08-1";
+export const LAYOVER_FEASIBILITY_VERSION = "2026.09.14-1";
 
 // ── §6.2 Estimate representation ─────────────────────────────────────────────
 
@@ -205,6 +218,24 @@ export interface BufferEstimates {
   bagsExtra: Estimate;
   trafficExtra: Estimate;
   timeOfDayExtra: Estimate;
+  /**
+   * §10 live conditions as the sixth term. THE ONLY ESTIMATE ON THIS TREE THAT
+   * CAN CARRY A NON-DEGENERATE PROVENANCE: when conditions are supplied it is
+   * sourceClass LIVE at fallback level 0 with a real `observedAt`/`expiresAt`,
+   * and when they are not it is a 0-minute STATIC_DEFAULT — which is what every
+   * production request produces, because nothing supplies conditions.
+   */
+  liveExtra: Estimate;
+  /**
+   * §8.1 L72 — the return leg's ground-transport forecast, as the seventh term.
+   *
+   * It is a STATIC_DEFAULT at fallback level 3 and never claims better: the
+   * band table behind it (`layoverRouting`, over `TripDepartureAssumptions`) is
+   * an assumption about an hour, not a reading of a road. What makes it
+   * different from the six above is that it is the only term whose value moves
+   * with WHEN the traveller must be back, which is what census L72 asks for.
+   */
+  returnTransport: Estimate;
 }
 
 export interface FeasibilityEstimates extends BufferEstimates {
@@ -228,7 +259,9 @@ export function conservativeBufferMinutes(
     estimateMinutesAt(b.immigrationExtra, percentile) +
     estimateMinutesAt(b.bagsExtra, percentile) +
     estimateMinutesAt(b.trafficExtra, percentile) +
-    estimateMinutesAt(b.timeOfDayExtra, percentile)
+    estimateMinutesAt(b.timeOfDayExtra, percentile) +
+    estimateMinutesAt(b.returnTransport, percentile) +
+    estimateMinutesAt(b.liveExtra, percentile)
   );
 }
 
@@ -253,16 +286,25 @@ export type FeasibilitySession = Pick<LayoverSession,
 >;
 
 /**
- * The generic "can I go landside at all" probe. `GET /:id/safety` has always
- * asked this question with a 20-minute leg and a 30-minute activity that
- * describe no real place (census L293c); the numbers are unchanged, but they
- * are now a NAMED INPUT that lands in the record and in the hash, instead of a
- * literal buried in a route handler where nothing could see it.
+ * A named landside journey to certify alongside the window.
+ *
+ * `GET /:id/safety` used to build one of these out of thin air — a 20-minute
+ * leg and a 30-minute activity describing no real place, identical for every
+ * session at every airport — purely so `assess` had something to score, and
+ * published the score as the session's overall safety. §7 made the literal a
+ * NAMED INPUT so it landed in the record's `inputHash`; census L293c is the
+ * finding that naming a fabrication does not stop it being one, and the
+ * route no longer passes a probe at all (`assessWindowOnly` answers instead).
+ *
+ * The shape survives because a caller that genuinely HAS a journey — a real
+ * place with a real leg — should be able to certify it. Its terms are
+ * therefore `number | null`: a probe may state that nobody measured the
+ * journey, and `assess` then fails closed on it like any other candidate.
  */
 export interface LandsideProbe {
   title: string;
-  travelTimeMin: number;
-  activityTimeMin: number;
+  travelTimeMin: number | null;
+  activityTimeMin: number | null;
   travelTimeSource: TravelTimeSource;
 }
 
@@ -278,14 +320,29 @@ export interface FeasibilityInputs {
   bufferPercentile: EstimatePercentile;
   /** Absent = the traveller's landside question is not being asked. */
   landsideProbe: LandsideProbe | null;
+  /**
+   * §10 reconciled live conditions behind the buffer. A NAMED INPUT rather
+   * than an ambient read, for the same reason `landsideProbe` is one: it lands
+   * in `inputHash`, so a record computed under an observed 40-minute security
+   * queue is a different computation from the same session computed without
+   * one, and `replayFeasibility` reproduces the right one. `null` for every
+   * caller on this tree outside tests.
+   */
+  liveConditions: LiveConditions | null;
 }
 
 /** Project the domain objects onto the named input set. */
 export function feasibilityInputs(
   airport: FeasibilityAirport,
   session: FeasibilitySession,
-  opts: { nowMs: number; landsideProbe?: LandsideProbe | null; bufferPercentile?: EstimatePercentile },
+  opts: {
+    nowMs: number;
+    landsideProbe?: LandsideProbe | null;
+    bufferPercentile?: EstimatePercentile;
+    liveConditions?: LiveConditions | null;
+  },
 ): FeasibilityInputs {
+  const live = opts.liveConditions ?? null;
   return {
     engineVersion: LAYOVER_ENGINE_VERSION,
     feasibilityVersion: LAYOVER_FEASIBILITY_VERSION,
@@ -313,6 +370,19 @@ export function feasibilityInputs(
     nowMs: opts.nowMs,
     bufferPercentile: opts.bufferPercentile ?? SAFETY_CRITICAL_PERCENTILE,
     landsideProbe: opts.landsideProbe ?? null,
+    // Projected field by field, like `airport` and `session` above: a caller
+    // handing in an object with extra keys must not change the hash, or two
+    // structurally identical computations stop matching.
+    liveConditions: live
+      ? {
+          securityWaitExtraMin: live.securityWaitExtraMin,
+          immigrationWaitExtraMin: live.immigrationWaitExtraMin,
+          groundTransportExtraMin: live.groundTransportExtraMin,
+          reasonCodes: [...live.reasonCodes],
+          observedAt: live.observedAt,
+          expiresAt: live.expiresAt,
+        }
+      : null,
   };
 }
 
@@ -384,6 +454,18 @@ export interface LayoverFeasibilityRecord {
 
   /** The landside probe's assessment, when a probe was named. */
   landside: (SafetyAssessment & { probe: LandsideProbe }) | null;
+
+  /**
+   * The session's answer WITH NO JOURNEY IN IT — "given my window, can I go out
+   * at all?" — rated against the same certified deadline as everything above.
+   *
+   * It exists because `GET /:id/safety` must publish an overall rating and used
+   * to get one by inventing a candidate (census L293c). Computed here rather
+   * than in the route so it cannot be derived twice, at two instants, from two
+   * deadlines: that is the duplicate-buffer defect `9c26efba` closed, and a
+   * second derivation in a handler is exactly how it came back last time.
+   */
+  windowOnly: SafetyAssessment;
 }
 
 /**
@@ -396,14 +478,21 @@ export interface LayoverFeasibilityRecord {
  * that table for why. Today nothing on this tree is routed, so this is always
  * STATIC_DEFAULT / LOW / fallback 3.
  */
-function outboundTravelEstimate(probe: LandsideProbe): Estimate {
+function outboundTravelEstimate(probe: LandsideProbe): Estimate | null {
+  // NOTHING MEASURED, NOTHING ESTIMATED. A probe whose leg is unstated has no
+  // outbound travel estimate — not a zero-minute one, and not a LOW-confidence
+  // placeholder either. `estimates.outboundTravel` is already `Estimate | null`,
+  // and `worstConfidence` folds in only the estimates that exist, so an absence
+  // stays an absence all the way into the record's confidence.
+  const stated = statedTravelMin({ travelMin: probe.travelTimeMin, insideAirport: false });
+  if (stated === null) return null;
   const source = travelTimeSourceFor({
     insideAirport: false,
     travelTimeSource: probe.travelTimeSource,
   });
   const routed = TRAVEL_TIME_SOURCE_IS_ROUTED[source];
   return pointEstimate(
-    probe.travelTimeMin,
+    stated,
     routed ? "LIVE" : "STATIC_DEFAULT",
     routed ? "MEDIUM" : "LOW",
     routed ? 0 : 3,
@@ -438,6 +527,46 @@ function bufferEstimates(inputs: FeasibilityInputs, breakdown: SafetyAssessment[
       breakdown.timeOfDayExtra, "STATIC_DEFAULT", "LOW", 3,
       ["LayoverSafetyEngine.timeOfDayBand"],
     ),
+    // §8.1 L72. The band table is a source constant like the ramp above it, so
+    // it never inherits the airport row's class even though the MINUTES it
+    // multiplies come from `traffic_extra_min` — that term is published as its
+    // own estimate directly above, with the row's provenance, and claiming the
+    // row's provenance twice would launder an assumption into an airport fact.
+    returnTransport: pointEstimate(
+      breakdown.returnTransportExtra, "STATIC_DEFAULT", "LOW", 3,
+      // NAMES ITS PRODUCER, and it used to name a function no production path
+      // calls. `layoverRouting.returnTransportForecast` is referenced nowhere
+      // outside the tests; this value comes from LayoverSafetyEngine's own
+      // `returnTransportExtra`, which ramps the time-of-day and return terms
+      // JOINTLY and then subtracts timeOfDayExtra. The two agree wherever
+      // timeOfDayExtra is 0 — which is why the wrong label survived — and
+      // disagree at 15:00Z on a 475-minute layover, where this records 7 and
+      // the helper returns 6. Pinned by layoverReturnConditions.test.ts §6.2.
+      ["LayoverSafetyEngine.returnTransportExtra", "TripDepartureAssumptions.DEPARTURE_FACTORS"],
+    ),
+    liveExtra: liveExtraEstimate(inputs.liveConditions, breakdown.liveExtra),
+  };
+}
+
+/**
+ * The §10 live term as a §6.2 estimate.
+ *
+ * Two cases, and the difference between them is the whole point of §2.1's
+ * "never fabricate freshness": with conditions supplied the term is LIVE at
+ * fallback level 0 and carries the observation's own `observedAt`/`expiresAt`;
+ * with none it is a ZERO-minute STATIC_DEFAULT at level 3 with a source ref
+ * that says so in words. It never claims to be a live reading of "no queue".
+ */
+function liveExtraEstimate(live: LiveConditions | null, minutes: number): Estimate {
+  if (!live) {
+    return pointEstimate(0, "STATIC_DEFAULT", "LOW", 3, ["no live conditions supplied"]);
+  }
+  return {
+    ...pointEstimate(minutes, "LIVE", "MEDIUM", 0, [
+      `LayoverAirportTruth.liveConditionsFrom(${live.reasonCodes.join(",") || "no codes"})`,
+    ]),
+    observedAt: live.observedAt,
+    expiresAt: live.expiresAt,
   };
 }
 
@@ -451,9 +580,11 @@ function bufferEstimates(inputs: FeasibilityInputs, breakdown: SafetyAssessment[
 export function certifyFeasibility(inputs: FeasibilityInputs): LayoverFeasibilityRecord {
   const { airport, session, nowMs } = inputs;
 
+  const live = inputs.liveConditions;
+
   // ONE deadline computation. Everything below reads it; nothing recomputes it.
-  const deadline = computeReturnDeadline(airport, session);
-  const envelope = computeWindow(airport, session, nowMs);
+  const deadline = computeReturnDeadline(airport, session, live);
+  const envelope = computeWindow(airport, session, nowMs, live);
 
   const probe = inputs.landsideProbe;
   const candidate: ActivityCandidate | null = probe
@@ -468,9 +599,12 @@ export function certifyFeasibility(inputs: FeasibilityInputs): LayoverFeasibilit
   const landside = candidate
     ? { ...assess(airport, session, candidate, nowMs, deadline), probe: probe! }
     : null;
+  // Same deadline object, not a second derivation. See `windowOnly`.
+  const windowOnly = assessWindowOnly(airport, session, envelope, nowMs, deadline);
 
   const advice = adviseLeaving(airport, session, envelope, {
     travelTimeSource: probe?.travelTimeSource,
+    liveConditions: live,
   });
 
   const buffers = bufferEstimates(inputs, deadline.breakdown);
@@ -487,6 +621,10 @@ export function certifyFeasibility(inputs: FeasibilityInputs): LayoverFeasibilit
     buffers.baseBuffer, buffers.immigrationExtra, buffers.bagsExtra,
     buffers.trafficExtra, buffers.timeOfDayExtra, estimates.exitDelay,
     ...(estimates.outboundTravel ? [estimates.outboundTravel] : []),
+    // The live term folds in ONLY when it is a live term. A "no conditions
+    // supplied" zero is a placeholder, and folding its LOW confidence in would
+    // report the ABSENCE of live intelligence as evidence about the buffer.
+    ...(live ? [buffers.liveExtra] : []),
   ];
 
   return {
@@ -506,6 +644,7 @@ export function certifyFeasibility(inputs: FeasibilityInputs): LayoverFeasibilit
     reasonCodes: advice.reasonCodes,
     disclaimer: advice.disclaimer,
     landside,
+    windowOnly,
   };
 }
 
@@ -523,7 +662,12 @@ export const replayFeasibility = certifyFeasibility;
 export function certifySessionFeasibility(
   airport: FeasibilityAirport,
   session: FeasibilitySession,
-  opts: { nowMs: number; landsideProbe?: LandsideProbe | null; bufferPercentile?: EstimatePercentile },
+  opts: {
+    nowMs: number;
+    landsideProbe?: LandsideProbe | null;
+    bufferPercentile?: EstimatePercentile;
+    liveConditions?: LiveConditions | null;
+  },
 ): LayoverFeasibilityRecord {
   return certifyFeasibility(feasibilityInputs(airport, session, opts));
 }
@@ -541,5 +685,131 @@ export function certificationHeader(r: LayoverFeasibilityRecord) {
     verdict: r.verdict,
     confidence: r.confidence,
     bufferPercentile: r.inputs.bufferPercentile,
+  };
+}
+
+// ── §2.1 "degrades VISIBLY" · §22 airport maturity ───────────────────────────
+
+/**
+ * How much of THIS airport's own intelligence the numbers rest on, weakest
+ * first.
+ *
+ *   GENERIC          no `airport_profiles` row supplied any buffer term. The
+ *                    minutes are this repository's constants; NOTHING about the
+ *                    specific airport went into them.
+ *   AIRPORT_RECORD   a row addressed to THIS airport supplied them, and nobody
+ *                    has verified that row. Addressable is not curated: those
+ *                    columns are `NOT NULL DEFAULT 60/90/120/180/30/15/20`
+ *                    (`src/migrations/0127_layover_system.sql:28#domestic_buffer_min`),
+ *                    so an uncurated row holds exactly the generic numbers.
+ *                    What this rung claims is that the value CAN be curated per
+ *                    airport, not that it has been.
+ *   VERIFIED_RECORD  that row carries `verified = TRUE`. Measured 2026-09-07:
+ *                    0 of 3,206 production rows do, so this rung is reachable
+ *                    and currently empty in production.
+ *   LIVE             a live observation folded into the buffer. Nothing on this
+ *                    tree supplies `liveConditions` outside tests, so this rung
+ *                    is DECLARED AND UNREACHED — it is here so a future producer
+ *                    cannot invent a spelling, and the positive control in
+ *                    `src/test/layoverAirportIntelligence.test.ts` is what stops
+ *                    `liveObserved` from being a literal `false`.
+ */
+export const AIRPORT_INTELLIGENCE_TIERS = [
+  "GENERIC",
+  "AIRPORT_RECORD",
+  "VERIFIED_RECORD",
+  "LIVE",
+] as const;
+export type AirportIntelligenceTier = (typeof AIRPORT_INTELLIGENCE_TIERS)[number];
+
+/**
+ * What a surface must be able to say, in the traveller's own interest, about
+ * where the minutes it is showing them came from.
+ *
+ * Census L9 (§2.1) — *"missing live intelligence degrades VISIBLY to
+ * historical/conservative fallback"* — and L250 (§22) — *"do not imply
+ * equivalent intelligence globally"* — are one gap stated twice: the fallback
+ * ladder has always been real and it has never been visible. A traveller at an
+ * airport nobody has curated read the same numbers, with the same presentation
+ * and the same confidence, as one at an airport an admin had configured by
+ * hand.
+ *
+ * EVERY FIELD IS READ OFF THE RECORD, NOT RECOMPUTED. The provenance comes from
+ * `record.estimates` — the very objects `bufferEstimates` built the arithmetic
+ * out of — and `airportVerified` from `record.inputs.airport`, the named input
+ * set that is inside `inputHash`. A disclosure derived from a second read of
+ * the profile could disagree with the numbers it describes, which is the
+ * duplicate-derivation defect this module exists to prevent.
+ *
+ * IT DECIDES NOTHING. Like `confidence` above, this is reported and not acted
+ * on. Withholding landside recommendations at the GENERIC rung is spec §22's
+ * "airport-side guidance only by default" (census L243) — a product decision
+ * with a cost, because in production EVERY airport is at GENERIC or
+ * AIRPORT_RECORD — and it is not taken here.
+ */
+export interface AirportIntelligenceDisclosure {
+  tier: AirportIntelligenceTier;
+  /** True when an `airport_profiles` row for THIS airport supplied every buffer term. */
+  airportAddressable: boolean;
+  /** That row's own curation flag. False when there is no row. */
+  airportVerified: boolean;
+  /** True when a live observation folded into the buffer. */
+  liveObserved: boolean;
+  /** Weakest source class among the terms the AIRPORT supplies. */
+  bufferSourceClass: EstimateSourceClass;
+  /** Worst (highest) fallback level among those same terms. 2 = a row, 3 = a constant. */
+  bufferFallbackLevel: EstimateFallbackLevel;
+  /** The record's own confidence — the weakest estimate behind the verdict. */
+  confidence: EstimateConfidence;
+  /** What to look at to see where the numbers came from. Deduplicated, sorted. */
+  sourceRefs: string[];
+}
+
+/**
+ * The four terms the AIRPORT contributes, and deliberately only those.
+ *
+ * `timeOfDayExtra` and `exitDelay` are source constants whatever the airport
+ * row says — `bufferEstimates` marks them STATIC_DEFAULT explicitly — so
+ * folding them in would collapse every airport to GENERIC and destroy the
+ * distinction this disclosure exists to draw.
+ */
+function airportSuppliedTerms(e: FeasibilityEstimates): Estimate[] {
+  return [e.baseBuffer, e.immigrationExtra, e.bagsExtra, e.trafficExtra];
+}
+
+export function airportIntelligence(r: LayoverFeasibilityRecord): AirportIntelligenceDisclosure {
+  const terms = airportSuppliedTerms(r.estimates);
+  const airportAddressable = terms.every((t) => t.sourceClass === "AIRPORT_PROFILE");
+  const airportVerified = r.inputs.airport.verified;
+  const liveObserved = r.estimates.liveExtra.sourceClass === "LIVE";
+
+  // Weakest class wins: ESTIMATE_SOURCE_CLASSES is ordered weakest-first, so a
+  // single constant among four columns must not present as a curated airport.
+  let weakest = ESTIMATE_SOURCE_CLASSES.length - 1;
+  for (const t of terms) {
+    const i = ESTIMATE_SOURCE_CLASSES.indexOf(t.sourceClass);
+    if (i >= 0 && i < weakest) weakest = i;
+  }
+
+  const tier: AirportIntelligenceTier = liveObserved
+    ? "LIVE"
+    : airportAddressable && airportVerified
+      ? "VERIFIED_RECORD"
+      : airportAddressable
+        ? "AIRPORT_RECORD"
+        : "GENERIC";
+
+  return {
+    tier,
+    airportAddressable,
+    airportVerified,
+    liveObserved,
+    bufferSourceClass: ESTIMATE_SOURCE_CLASSES[weakest]!,
+    bufferFallbackLevel: terms.reduce<EstimateFallbackLevel>(
+      (worst, t) => (t.fallbackLevel > worst ? t.fallbackLevel : worst),
+      0,
+    ),
+    confidence: r.confidence,
+    sourceRefs: [...new Set(terms.flatMap((t) => t.sourceRefs))].sort(),
   };
 }

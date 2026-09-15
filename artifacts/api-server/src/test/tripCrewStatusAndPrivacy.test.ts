@@ -17,7 +17,7 @@
  *      "not accepted trip members" for anyone it did reject — and a live-share
  *      recipient is who getCrewMap hands EXACT COORDINATES to.
  *
- *   3. services/tripCrew/TripCrewLocationService.getCrewMap dropped the
+ *   3. domain/trips/services/TripCrewLocationService.getCrewMap dropped the
  *      `.error` of the `location_preferences` read. supabase-js RESOLVES on a
  *      DB error, so an unreadable table is indistinguishable from an empty one:
  *      hotel_blur_enabled read as FALSE for everyone and exact coordinates were
@@ -28,13 +28,13 @@
  *      false. A member with ghost mode ON and an active live share was drawn on
  *      the map with an area label.
  *
- *   5. services/tripCrew/TripCrewLiveShareService.startLiveShare stopped the
+ *   5. domain/trips/services/TripCrewLiveShareService.startLiveShare stopped the
  *      caller's existing session with an UPDATE whose `.error` was never bound.
  *      A failed stop was followed by an unconditional INSERT, so the trip held
  *      TWO active sessions — the older one still naming the older, wider
  *      allowed_member_ids — and the route answered 201.
  *
- *   6. lib/tripMembership.ts applied the same role-only rule to the intel crew
+ *   6. domain/trips/invariants/tripMembership.ts applied the same role-only rule to the intel crew
  *      token: a removed member still counted as accepted crew.
  *
  * FAKE-CLIENT NOTE (false-green guard): the failure injector keys on the exact
@@ -55,7 +55,7 @@ import {
   isAcceptedTripMember,
   acceptedCrewSize,
   isSharedCrewMember,
-} from "../lib/tripMembership.js";
+} from "../domain/trips/invariants/tripMembership.js";
 
 // ── Identities ────────────────────────────────────────────────────────────────
 
@@ -600,7 +600,7 @@ describe("D. POST /crew/live-share/start — a failed stop must not be followed 
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// E. lib/tripMembership — the crew token's own status gate
+// E. domain/trips/invariants/tripMembership — the crew token's own status gate
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function membershipClient(members: any[], trips: any[] = TRIPS) {
@@ -608,7 +608,7 @@ function membershipClient(members: any[], trips: any[] = TRIPS) {
   return makeFakeClient(baseState({ tripMembers: members, trips }), rec);
 }
 
-describe("E. lib/tripMembership — a removed member is not accepted crew", () => {
+describe("E. domain/trips/invariants/tripMembership — a removed member is not accepted crew", () => {
   it("E1. isAcceptedTripMember is false for {role:member, status:removed}", async () => {
     const sc = membershipClient([M_OWNER, M_REMOVED]);
     assert.equal(await isAcceptedTripMember(sc, TRIP_ID, REMOVED_ID), false);

@@ -11,9 +11,21 @@
  *
  * The heavy sibling sections are stubbed; LayoverSafeReturnCard and
  * LayoverCompassCard are NOT — they are what is under test here.
+ *
+ * WIDENED 2026-09-13 (second pass): the §13 exploration collapse. See the block
+ * of cases at the end of this file — and note that the sibling sections it
+ * collapses are the STUBS above, so what those cases assert is the screen's own
+ * decision to mount them or not, which is precisely the claim.
+ *
+ * WIDENED 2026-09-13: LayoverFlightChangeCard joins them, for the same reason
+ * and with a sharper edge. It is the ONLY thing on this tree that produces a
+ * §11 event, so the whole eight-step replanner is reachable by exactly one
+ * component being in exactly one tree. A card that stopped being mounted would
+ * take the pipeline back to having no caller outside `src/test/`, and every
+ * other test in the repository would stay green.
  */
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 
 import LayoverDashboardScreen from '../[id].tsx';
 
@@ -37,6 +49,8 @@ jest.mock('react-native-safe-area-context', () => ({
 jest.mock('../../../src/lib/safeNotifications', () => ({
   scheduleLocalNotificationAt: jest.fn(async () => null),
   cancelScheduledNotification: jest.fn(async () => undefined),
+  // §17.1 L165 — whether an OS dialog is about to appear. Driven per test.
+  notificationPromptWouldAppear: jest.fn(async () => false),
 }));
 
 // ── Heavy sibling sections, stubbed to null ───────────────────────────────────
@@ -55,7 +69,19 @@ jest.mock('../../../src/components/layover/LayoverPlanSection', () => ({ Layover
 // NOTE: intentional stub — see above.
 jest.mock('../../../src/components/layover/LayoverRecsSection', () => ({ LayoverRecsSection: () => null }));
 // NOTE: intentional stub — see above.
-jest.mock('../../../src/components/layover/LayoverMapCard', () => ({ LayoverMapCard: () => null }));
+// NOT a null stub: the map card's own test proves it can BE a return CTA
+// anchor, and this one proves the screen actually hands it one. A component
+// that could anchor the CTA but is passed no return facts anchors nothing —
+// the same reachability argument this whole file exists for (census L123).
+jest.mock('../../../src/components/layover/LayoverMapCard', () => {
+  const { View } = require('react-native');
+  return {
+    LayoverMapCard: (props: any) => {
+      (global as any).__mapCardProps = props;
+      return <View testID="layover-map-card-stub" />;
+    },
+  };
+});
 // NOTE: intentional stub — see above.
 jest.mock('../../../src/components/layover/LayoverPeopleSection', () => ({ LayoverPeopleSection: () => null }));
 
@@ -154,12 +180,16 @@ jest.mock('../../../src/services/layover', () => ({
   getLayoverBuddies: jest.fn(async () => ({ city: 'Bangkok', buddies: [] })),
   getLayoverPresence: jest.fn(async () => ({ sharing: false, count: 0, travelers: [] })),
   addStopFromRecommendation: jest.fn(async () => null),
-  endLayoverSession: jest.fn(async () => true),
+  endLayoverSession: jest.fn(async () => ({ ok: true, outcome: 'cancelled', passportStamp: { requested: false, written: false, reason: 'not_elected' } })),
   sendLayoverTelegraph: jest.fn(async () => null),
   setReturnDeadline: jest.fn(async () => null),
   setShareCityStatus: jest.fn(async () => null),
   returnToAirportNow: jest.fn(async () => ({ kind: 'offline' })),
   askCompass: jest.fn(async () => null),
+  updateLayoverSession: jest.fn(async () => ({
+    session: (global as any).__overview.session,
+    replan: { ran: false, reason: 'window_unchanged', detail: 'no feasibility input moved' },
+  })),
 }));
 
 beforeEach(() => {
@@ -216,4 +246,291 @@ test('a NORMAL posture leaves the card below the hero, with the plan it aborts',
   await waitFor(() => expect(screen.getByTestId('layover-safe-return-card')).toBeTruthy());
   const order = testIdOrder();
   expect(order.indexOf('layover-safe-return-card')).toBeGreaterThan(order.indexOf('layover-hero-stub'));
+});
+
+test('the dashboard mounts the flight-change card — the §11 ingest reaches a traveller', async () => {
+  (global as any).__overview = overview(false);
+  await render(<LayoverDashboardScreen />);
+
+  await waitFor(() => expect(screen.getByTestId('layover-flight-change-card')).toBeTruthy());
+  // The producer control itself, not just the card frame.
+  expect(screen.getByTestId('flight-shift-60')).toBeTruthy();
+  expect(screen.getByTestId('flight-shift--15')).toBeTruthy();
+});
+
+// ── §13 L120 / L141 — the exploration block collapses on the certified posture ─
+//
+// WIDENED 2026-09-13 (second pass). `explorationCollapsed` had been derived,
+// published, tested server-side and read by NOTHING for two censuses, while
+// `returnRoutePrimary` — the field beside it in the same object — was read.
+// That is the failure mode this file was written for, one field over.
+//
+// Every case below drives `explorationCollapsed` INDEPENDENTLY of
+// `returnRoutePrimary`, because the two are equal in production
+// (`safeReturnPosture` sets both to `escalated`) and a test that moved them
+// together would pass just as happily against a screen that read the wrong one.
+//
+// MUTATIONS RUN AGAINST `app/layover/[id].tsx`, each reverted and `cmp`-verified
+// byte-identical afterwards. 9 pass / 0 fail unmutated:
+//   1. the derivation keyed off `returnRoutePrimary` instead of
+//      `explorationCollapsed` ............................... 4 failed
+//   2. the derivation forced to `false` (never collapse) ..... 3 failed
+//   3. "Show them anyway" wired to a no-op `onPress` ......... 1 failed
+//   4. `&& !showExploration` dropped, so the override cannot win
+//      ..................................................... 1 failed
+//
+// Mutation 1 is the one worth reading. It fails FOUR cases and not one, because
+// three of the four collapse cases carry `returnRoutePrimary: false` — if the
+// fixture had moved the two fields together the way production does, a screen
+// reading the wrong field would have been green.
+
+function postureOverview(patch: Record<string, unknown>) {
+  const base = overview(false);
+  return { ...base, safeReturn: { ...base.safeReturn, ...patch } };
+}
+
+test('a collapsed posture replaces the exploration block with a notice', async () => {
+  (global as any).__overview = postureOverview({
+    explorationCollapsed: true,
+    returnState: 'RETURN_NOW',
+    primaryAction: 'return_now',
+  });
+  await render(<LayoverDashboardScreen />);
+
+  await waitFor(() => expect(screen.getByTestId('layover-exploration-collapsed')).toBeTruthy());
+  expect(screen.queryByTestId('layover-exploration')).toBeNull();
+  expect(screen.getByTestId('layover-exploration-collapsed-title')).toHaveTextContent(
+    "It's time to head back",
+  );
+  // The explainer is NOT an exploration affordance and stays mounted.
+  expect(screen.getByTestId('layover-compass-card')).toBeTruthy();
+  // §15.1 — so does the abort.
+  expect(screen.getByTestId('return-to-airport-btn')).toBeTruthy();
+});
+
+test('CONNECTION_AT_RISK names the reason it collapsed', async () => {
+  (global as any).__overview = postureOverview({
+    explorationCollapsed: true,
+    returnState: 'CONNECTION_AT_RISK',
+    primaryAction: 'recover_connection',
+  });
+  await render(<LayoverDashboardScreen />);
+
+  // Scoped to the notice's own node: the Safe Return card says the same
+  // sentence in the same posture, and an unscoped getByText finds both.
+  await waitFor(() =>
+    expect(screen.getByTestId('layover-exploration-collapsed-title')).toHaveTextContent(
+      'Your connection is at risk',
+    ),
+  );
+});
+
+test('collapsed is not hidden — one press restores the whole block', async () => {
+  (global as any).__overview = postureOverview({
+    explorationCollapsed: true,
+    returnState: 'RETURN_NOW',
+    primaryAction: 'return_now',
+  });
+  await render(<LayoverDashboardScreen />);
+
+  await waitFor(() => expect(screen.getByTestId('layover-exploration-show-anyway')).toBeTruthy());
+  fireEvent.press(screen.getByTestId('layover-exploration-show-anyway'));
+  await waitFor(() => expect(screen.getByTestId('layover-exploration')).toBeTruthy());
+  expect(screen.queryByTestId('layover-exploration-collapsed')).toBeNull();
+});
+
+test('the collapse is keyed on explorationCollapsed, not on the hoist beside it', async () => {
+  // returnRoutePrimary TRUE, explorationCollapsed FALSE: the card hoists and
+  // the city stays. A screen that keyed the collapse off the hoist fails here.
+  (global as any).__overview = postureOverview({
+    explorationCollapsed: false,
+    returnRoutePrimary: true,
+    returnState: 'RETURN_NOW',
+    primaryAction: 'return_now',
+  });
+  await render(<LayoverDashboardScreen />);
+
+  await waitFor(() => expect(screen.getByTestId('layover-exploration')).toBeTruthy());
+  expect(screen.queryByTestId('layover-exploration-collapsed')).toBeNull();
+  const order = testIdOrder();
+  expect(order.indexOf('layover-safe-return-card')).toBeLessThan(order.indexOf('layover-hero-stub'));
+});
+
+test('a NORMAL posture leaves the exploration block standing', async () => {
+  (global as any).__overview = overview(false);
+  await render(<LayoverDashboardScreen />);
+
+  await waitFor(() => expect(screen.getByTestId('layover-exploration')).toBeTruthy());
+  expect(screen.queryByTestId('layover-exploration-collapsed')).toBeNull();
+});
+
+// ── §17.1 L165 — the permission is explained BEFORE the OS asks ──────────────
+//
+// The request was already contextual — it fires inside the "Remind me" tap and
+// nowhere else — and that half was never the gap. The gap was that nothing said
+// WHY, and the OS dialog cannot: the sentence it shows is the app's name and
+// the word "notifications".
+//
+// MUTATIONS, each against the screen, reverted and `cmp`-verified. 13 pass / 0
+// fail unmutated:
+//   1. `handleReminder` calling `scheduleReminder` directly (no sheet) 3 failed
+//   2. the probe replaced by `true` — the sheet shown unconditionally   1 failed
+//   3. "Not now" wired to `scheduleReminder` instead of dismissing      1 failed
+
+const notifications = require('../../../src/lib/safeNotifications');
+const layoverService = require('../../../src/services/layover');
+
+test('a traveller whose phone is about to ask is told why first', async () => {
+  notifications.notificationPromptWouldAppear.mockResolvedValueOnce(true);
+  layoverService.setReturnDeadline.mockClear();
+  (global as any).__overview = overview(false);
+  await render(<LayoverDashboardScreen />);
+
+  await waitFor(() => expect(screen.getByTestId('layover-remind-me')).toBeTruthy());
+  fireEvent.press(screen.getByTestId('layover-remind-me'));
+
+  await waitFor(() => expect(screen.getByText('Let us warn you when to head back')).toBeTruthy());
+  // The reason is SPECIFIC to this permission, not a generic "enable alerts".
+  expect(screen.getByText(/safe return time can move/)).toBeTruthy();
+  // Nothing has been scheduled or written yet — the explanation precedes the ask.
+  expect(layoverService.setReturnDeadline).not.toHaveBeenCalled();
+  expect(notifications.scheduleLocalNotificationAt).not.toHaveBeenCalled();
+});
+
+test('continuing from the rationale proceeds to the real reminder', async () => {
+  notifications.notificationPromptWouldAppear.mockResolvedValueOnce(true);
+  layoverService.setReturnDeadline.mockClear();
+  (global as any).__overview = overview(false);
+  await render(<LayoverDashboardScreen />);
+
+  await waitFor(() => expect(screen.getByTestId('layover-remind-me')).toBeTruthy());
+  fireEvent.press(screen.getByTestId('layover-remind-me'));
+  await waitFor(() => expect(screen.getByText('Continue')).toBeTruthy());
+  fireEvent.press(screen.getByText('Continue'));
+
+  await waitFor(() => expect(layoverService.setReturnDeadline).toHaveBeenCalledWith('sess-1', 30));
+});
+
+test('a traveller who already granted permission is not shown an explanation', async () => {
+  // The probe answers false, which is the production case for anyone who has
+  // used the reminder once. An explanation on every tap is how people learn to
+  // dismiss the one that matters.
+  layoverService.setReturnDeadline.mockClear();
+  (global as any).__overview = overview(false);
+  await render(<LayoverDashboardScreen />);
+
+  await waitFor(() => expect(screen.getByTestId('layover-remind-me')).toBeTruthy());
+  fireEvent.press(screen.getByTestId('layover-remind-me'));
+
+  await waitFor(() => expect(layoverService.setReturnDeadline).toHaveBeenCalledWith('sess-1', 30));
+  expect(screen.queryByText('Let us warn you when to head back')).toBeNull();
+});
+
+test('"Not now" dismisses the explanation and asks the OS for nothing', async () => {
+  notifications.notificationPromptWouldAppear.mockResolvedValueOnce(true);
+  layoverService.setReturnDeadline.mockClear();
+  notifications.scheduleLocalNotificationAt.mockClear();
+  (global as any).__overview = overview(false);
+  await render(<LayoverDashboardScreen />);
+
+  await waitFor(() => expect(screen.getByTestId('layover-remind-me')).toBeTruthy());
+  fireEvent.press(screen.getByTestId('layover-remind-me'));
+  await waitFor(() => expect(screen.getByText('Not now')).toBeTruthy());
+  fireEvent.press(screen.getByText('Not now'));
+
+  await waitFor(() => expect(screen.queryByText('Let us warn you when to head back')).toBeNull());
+  expect(layoverService.setReturnDeadline).not.toHaveBeenCalled();
+  expect(notifications.scheduleLocalNotificationAt).not.toHaveBeenCalled();
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// §5 L42 — "RETURN_SOON → RETURN_NOW: switch primary CTA to Return to Airport"
+//
+// The footer held "Remind me / Ask locals / End" in every posture, which §5's
+// row recorded as "No CTA ever switches" and §13.4 declined to fix because
+// doing it honestly meant lifting the abort out of the card. It is lifted
+// (`useSafeReturnAbort`), so the footer's primary slot can fire the SAME
+// abort the card does, and the contract it returns still lands in one place.
+//
+// The switch is keyed on the server's `returnRoutePrimary`. That matters: a
+// footer that re-derived RETURN_NOW from a local clock would be a second
+// opinion about the one number a traveller acts on.
+// ══════════════════════════════════════════════════════════════════════════
+
+test('L42 — at RETURN_NOW the primary footer control IS Return to airport', async () => {
+  (global as any).__overview = overview(true);
+  await render(<LayoverDashboardScreen />);
+
+  await waitFor(() => expect(screen.getByTestId('layover-footer-return-now')).toBeTruthy());
+  // And the control it replaced is gone: a reminder is a promise about a
+  // future that has arrived.
+  expect(screen.queryByTestId('layover-remind-me')).toBeNull();
+});
+
+test('L42 — in a NORMAL posture the footer is unchanged', async () => {
+  (global as any).__overview = overview(false);
+  await render(<LayoverDashboardScreen />);
+
+  await waitFor(() => expect(screen.getByTestId('layover-remind-me')).toBeTruthy());
+  expect(screen.queryByTestId('layover-footer-return-now')).toBeNull();
+});
+
+test('L42 — the footer CTA fires the SAME abort, not a second one', async () => {
+  layoverService.returnToAirportNow.mockClear();
+  (global as any).__overview = overview(true);
+  await render(<LayoverDashboardScreen />);
+
+  await waitFor(() => expect(screen.getByTestId('layover-footer-return-now')).toBeTruthy());
+  fireEvent.press(screen.getByTestId('layover-footer-return-now'));
+
+  await waitFor(() => expect(layoverService.returnToAirportNow).toHaveBeenCalledTimes(1));
+  expect(layoverService.returnToAirportNow).toHaveBeenCalledWith('sess-1');
+});
+
+test('L42 — the card and the footer share one controller, so two taps are one POST', async () => {
+  // The double-press guard lives in the hook, not in either control. If each
+  // control owned its own abort this would be 2.
+  layoverService.returnToAirportNow.mockClear();
+  // A DEFERRED, not a timer: the abort must still be in flight when the second
+  // control is pressed, and the test must not leave a pending promise behind
+  // for the next one.
+  let release: (v: unknown) => void = () => {};
+  layoverService.returnToAirportNow.mockImplementation(
+    () => new Promise((resolve) => { release = resolve; }),
+  );
+  (global as any).__overview = overview(true);
+  await render(<LayoverDashboardScreen />);
+
+  await waitFor(() => expect(screen.getByTestId('layover-footer-return-now')).toBeTruthy());
+  fireEvent.press(screen.getByTestId('layover-footer-return-now'));
+  fireEvent.press(screen.getByTestId('return-to-airport-btn'));
+
+  await waitFor(() => expect(layoverService.returnToAirportNow).toHaveBeenCalledTimes(1));
+  await act(async () => { release({ kind: 'offline' }); });
+  layoverService.returnToAirportNow.mockImplementation(async () => ({ kind: 'offline' }));
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// §13 L123 — the map's airport element is HANDED the return facts
+// ══════════════════════════════════════════════════════════════════════════
+
+test('L123 — the screen passes the certified return anchor to the map card', async () => {
+  (global as any).__mapCardProps = null;
+  (global as any).__overview = overview(false);
+  await render(<LayoverDashboardScreen />);
+
+  await waitFor(() => expect((global as any).__mapCardProps).toBeTruthy());
+  const anchor = (global as any).__mapCardProps.airportReturn;
+  expect(anchor).toBeTruthy();
+  // The SERVER's numbers, not a local re-derivation.
+  expect(anchor.hardReturnTime).toBe(HARD_RETURN);
+  expect(anchor.minutesToHardReturn).toBe(220);
+  expect(anchor.returnState).toBe('NORMAL');
+  expect(anchor.canReturn).toBe(true);
+
+  // And the action is the screen's ONE abort, not a second POST of its own.
+  layoverService.returnToAirportNow.mockClear();
+  await act(async () => { anchor.onReturnNow(); });
+  await waitFor(() => expect(layoverService.returnToAirportNow).toHaveBeenCalledTimes(1));
+  expect(layoverService.returnToAirportNow).toHaveBeenCalledWith('sess-1');
 });

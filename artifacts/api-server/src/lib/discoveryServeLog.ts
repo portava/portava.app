@@ -41,7 +41,18 @@
 import { randomUUID } from "node:crypto";
 import { isFlagEnabled } from "./featureFlags.js";
 import { logger } from "./logger.js";
+// `12` "Stop conditions" — this writer is the only instrument that knows whether
+// an event actually landed, so it is the only place that can feed the two stop
+// conditions Discovery can enforce. Recording is in-process and cannot throw.
+import { recordServeLogOutcome } from "./discoveryStopConditions.js";
 import { recordImpressionDistributionStats } from "../services/ranking/DiscoveryRankingService.js";
+// `04` §5 "Recommendation denominator" — every served item must have a
+// recommendation_id, and the nine-field minimum record must be recoverable from
+// the row. Six fields were already columns here; these complete the other
+// three without a migration. See lib/discoveryRecommendationId for why the
+// Compass token could not be reused as-is.
+import { recommendationIdFor } from "./discoveryRecommendationId.js";
+import { DISCOVERY_MODEL_VERSION } from "./discoveryRankProvenance.js";
 
 /** Feature flag gating every write in this module. Absent row ⇒ disabled. */
 export const DISCOVERY_SERVE_LOG_FLAG = "discovery_serve_log_enabled";
@@ -122,6 +133,130 @@ const RANKED_IN_REQUEST = new Set<number>([
  */
 export type RankItemKind = "post" | "event" | "plan" | "buddy" | "place" | "gem";
 
+/**
+ * The same six values as a RUNTIME array.
+ *
+ * `04` §10.5 asks for the CHECK/enum constraints to be TESTED. A TypeScript
+ * union cannot be tested: it is erased before anything runs, so no assertion can
+ * compare it with the vocabulary `migrations/0153_add_rank_events.sql:18`
+ * declares. The array is what makes the comparison possible, and the union above
+ * is derived from it so the two cannot drift apart.
+ */
+export const RANK_ITEM_KINDS = [
+  "post", "event", "plan", "buddy", "place", "gem",
+] as const satisfies readonly RankItemKind[];
+
+// ── `04` §3's last two required properties ───────────────────────────────────
+//
+// §3: "Every event write must be: schema-valid, attributable to a surface,
+// observable on failure, idempotent where retried, VERSIONED, PRIVACY-
+// CLASSIFIED." The first three are satisfied above and by the module header;
+// idempotency needs a unique key this lane may not add (census-discovery
+// DV-37 — a migration). These two do not.
+
+/**
+ * `04` §6 `schema_version` — which RECORD SHAPE produced this row.
+ *
+ * NOT the column §6 names: `rank_events` has thirteen columns and adding a
+ * fourteenth is a migration (census-discovery DV-38). This is the same
+ * accommodation §13.3 made for `04` §5's three missing fields and for the same
+ * reason — `04` §6's own instruction is *"if the current table cannot represent
+ * this safely, extend it by migration rather than introducing a competing event
+ * store"*, and a competing store is the one outcome nobody wants. The jsonb the
+ * row already writes is not a competing store.
+ *
+ * Why it matters even without a column: since §13.3 a row may or may not carry
+ * `recommendationId`, `modelVersion` and `reasonCodes`, and an absent
+ * `reasonCodes` means EITHER "written before that shape existed" OR "this serve
+ * grounded no reason". Without a version stamp those two are the same row.
+ *
+ * BUMP THIS when the meaning of an existing key in `features` changes, or when
+ * a key is removed. Adding a key does not require a bump — a reader that does
+ * not know the key ignores it — but removing or REDEFINING one does, because a
+ * reader that does know it will be wrong.
+ */
+export const DISCOVERY_EVENT_SCHEMA_VERSION = 1;
+
+/**
+ * `04` §3 "privacy-classified", named with `04` §11's own first layer.
+ *
+ * §11 lists four suggested layers — raw recent events, durable
+ * aggregates/features, audit/security events, anonymised long-term statistics —
+ * and then says *"exact retention must be decided with privacy/legal review"*.
+ * So this is deliberately a CLASSIFICATION and not a retention rule: it states
+ * which of §11's layers the row belongs to, which is a fact about the row, and
+ * says nothing about how long it is kept, which is not this lane's to decide.
+ *
+ * The label is only worth having if it is TRUE, which is what
+ * `classifyServeContext` below is for: a row claiming to be a plain behavioural
+ * event while carrying a viewer's coordinates would be a worse artefact than an
+ * unlabelled row, because a retention or export rule would then be applied to it
+ * on the strength of a label nothing enforced.
+ */
+export const DISCOVERY_EVENT_PRIVACY_CLASS = "raw_behavioral_event";
+
+/**
+ * Context keys that carry, or could carry, a precise position.
+ *
+ * `lib/rankLog.ts:66-67` strips the same class of key from ITS features for
+ * `04` §12 / spec §8, and this writer — which now feeds ten call sites across
+ * four route files — did not. The rule lived here only as a JSDoc sentence on
+ * `context` ("Never coordinates") and as a comment at two of the ten call sites.
+ * A rule enforced by whoever remembers it is enforced until somebody does not.
+ *
+ * `distanceKm` is in the set because `rankLog` strips it: a distance from a
+ * viewer to a known venue reconstructs the viewer. `radiusKm` is NOT — a search
+ * radius is a request parameter, not a position, and it is the only spatial
+ * diagnostic the baseline has.
+ */
+export const PRECISE_LOCATION_CONTEXT_KEYS: ReadonlySet<string> = new Set([
+  "lat", "lng", "latitude", "longitude", "distancekm",
+  "coords", "coordinates", "geo", "gps", "position", "point", "bbox",
+]);
+
+/** Suffixes that make a key a coordinate whatever it is prefixed with. */
+const PRECISE_LOCATION_SUFFIXES = ["lat", "lng", "latitude", "longitude"] as const;
+
+export interface ClassifiedServeContext {
+  /** Context safe to store on a `raw_behavioral_event` row. */
+  kept: Record<string, string | number | boolean | null>;
+  /**
+   * Keys withheld, under the CALLER'S OWN SPELLING so the offending call site
+   * can be found by grep. Names only — never the values, which are the thing
+   * being withheld.
+   */
+  dropped: string[];
+}
+
+/**
+ * Split a caller's context into what may be stored and what may not.
+ *
+ * Pure, synchronous and total: no clock, no client, no throw.
+ *
+ * THE BIAS IS STATED. Matching is on the normalised key name, so a key whose
+ * name does not say it is a coordinate is not caught — this is a vocabulary,
+ * not an oracle, and it cannot inspect values. Where it errs it errs toward
+ * dropping: a key ending in "lat" that is not a latitude loses a diagnostic,
+ * and losing a diagnostic is recoverable in a way that storing a position is
+ * not.
+ */
+export function classifyServeContext(
+  context?: Record<string, string | number | boolean | null> | null,
+): ClassifiedServeContext {
+  const kept: Record<string, string | number | boolean | null> = {};
+  const dropped: string[] = [];
+  if (!context) return { kept, dropped };
+  for (const [key, value] of Object.entries(context)) {
+    const norm = key.toLowerCase().replace(/[^a-z0-9]/g, "");
+    const precise =
+      PRECISE_LOCATION_CONTEXT_KEYS.has(norm) ||
+      PRECISE_LOCATION_SUFFIXES.some((s) => norm.endsWith(s));
+    if (precise) dropped.push(key);
+    else kept[key] = value;
+  }
+  return { kept, dropped };
+}
+
 /** Minimal shape this module needs from a served item. */
 export interface ServedItem {
   id: string;
@@ -177,9 +312,16 @@ export interface DiscoveryServeLogParams {
   items:       readonly ServedItem[];
   /** Route path, for when Stage 0b widens this beyond GET /discovery. */
   route?:      string;
-  sessionId?:  string;
+  sessionId?:  string;  /** The serve clock, when the CALLER already minted one (DC-22): the route derives the recommendation ids it puts on the RESPONSE from the same instant, and two clocks would mint two ids for one exposure. Omitted ⇒ read here, exactly as before. */ servedAt?: string;
   /** Free-form context, e.g. { destination, category }. Never coordinates. */
   context?:    Record<string, string | number | boolean | null>;
+  /**
+   * `04` §5 "reason codes" — the GROUNDED codes the ranker produced for each
+   * item, keyed by item id. Absent for a serve point that ran no ranker, and an
+   * item the ranker said nothing about gets `[]` rather than an invented code:
+   * a reason nothing backs is worse on a denominator than no reason at all.
+   */
+  reasonCodesById?: Readonly<Record<string, readonly string[]>>;
 }
 
 // ── Flag read, with a short TTL cache ─────────────────────────────────────────
@@ -227,17 +369,37 @@ export async function logDiscoveryServe(
   sc:     any,
   params: DiscoveryServeLogParams,
 ): Promise<void> {
+  // Declared OUTSIDE the try so the catch can see it, and LOCAL rather than
+  // module-level because several serves are in flight at once — a module-level
+  // counter would be clobbered by an interleaved call and attribute one serve's
+  // item count to another's throw.
+  let attemptedItems = 0;
   try {
     if (!sc) return;
-    const { userId, servePoint, items, route, sessionId, context } = params;
+    const { userId, servePoint, items, route, sessionId, context, reasonCodesById } = params;  const servedAtIn = params.servedAt;
     if (!userId || items.length === 0) return;
 
     if (!(await serveLogEnabled(sc))) return;
 
-    const servedAt = new Date().toISOString();
+    const servedAt = servedAtIn ?? new Date().toISOString();
     // One session id for the whole batch — mirrors the "single open" semantics
     // callers rely on for funnel reconstruction (lib/rankLog.ts:97-100).
     const effectiveSessionId = sessionId ?? randomUUID();
+
+    // `04` §3 "privacy-classified", enforced before anything is built. Done
+    // ONCE per batch rather than per row: the context is one object shared by
+    // every row of the serve, and classifying it per item would re-derive the
+    // same answer N times and log the same warning N times.
+    const classified = classifyServeContext(context);
+    if (classified.dropped.length > 0) {
+      // Same rule as the insert-rejection branch below: a refusal nobody can
+      // see is how a defect survives. Key NAMES only — the values are the thing
+      // being withheld, and a warning that printed them would be the leak.
+      logger.warn(
+        { servePoint, route, droppedKeys: classified.dropped },
+        "discoveryServeLog: precise-location keys withheld from features (04 §12)",
+      );
+    }
 
     const rows = items.map((item, idx) => ({
       user_id:    userId,
@@ -251,7 +413,26 @@ export async function logDiscoveryServe(
         // stored Compass order and is deliberately `false`: the order came from
         // a ranker, but not from this request.
         rankedInRequest: RANKED_IN_REQUEST.has(servePoint),
-        ...(context ?? {}),
+        ...classified.kept,
+        // `04` §5 — placed AFTER the context spread ON PURPOSE. These three are
+        // the record, not decoration: a caller passing a `context` key of the
+        // same name must not be able to overwrite the denominator with its own
+        // value, and putting them first would let it.
+        recommendationId: recommendationIdFor({
+          userId, sessionId: effectiveSessionId, servedAt,
+          surface: "discovery", position: idx, itemId: item.id,
+        }),
+        modelVersion: DISCOVERY_MODEL_VERSION,
+        reasonCodes: reasonCodesById?.[item.id] ?? [],
+        // `04` §3's last two properties, after the context spread for the same
+        // reason the three above are: a caller must not be able to restate
+        // which shape wrote the row or what class it belongs to.
+        schemaVersion: DISCOVERY_EVENT_SCHEMA_VERSION,
+        privacyClass: DISCOVERY_EVENT_PRIVACY_CLASS,
+        // Present ONLY when something was withheld, so a present key always
+        // means a call site sent a coordinate and an absent one is not an
+        // ambiguous silence.
+        ...(classified.dropped.length > 0 ? { privacyDropped: classified.dropped } : {}),
       },
       outcome:    "impression",
       served_at:  servedAt,
@@ -259,7 +440,18 @@ export async function logDiscoveryServe(
       session_id: effectiveSessionId,
     }));
 
+    attemptedItems = rows.length;
     const { error } = await sc.from("rank_events").insert(rows);
+    // `12` stop condition evidence. Recorded ONLY here, after an insert was
+    // actually attempted: a serve that wrote nothing because the flag was off
+    // returned above and is not a logging gap — it is the flag doing its job,
+    // and counting it would make the stop trip hardest while the feature is
+    // disabled.
+    recordServeLogOutcome({
+      outcome: error ? "rejected" : "landed",
+      servedItems: rows.length,
+      landedRows: error ? 0 : rows.length,
+    });
     if (error) {
       // Deliberately NOT silent — see the module header.
       logger.warn(
@@ -274,6 +466,14 @@ export async function logDiscoveryServe(
       await recordImpressionDistributionStats(sc, rows.map((r) => r.item_id), userId);
     }
   } catch (err) {
+    // A throw AFTER the rows were built is an attempt that produced nothing, and
+    // it is the failure mode most likely to be invisible: no `error` object, no
+    // rejected row, no count anywhere. `attemptedItems` is set immediately before
+    // the insert and reset after it, so a throw from anywhere else — the flag
+    // read, the client lookup — records nothing and cannot manufacture a gap.
+    if (attemptedItems > 0) {
+      recordServeLogOutcome({ outcome: "threw", servedItems: attemptedItems, landedRows: 0 });
+    }
     logger.warn({ err }, "discoveryServeLog: impression insert threw");
   }
 }

@@ -62,12 +62,30 @@ const HIGHLIGHT_COLUMNS =
  *       KEEP_PRIVATE_FOREVER and HIDE_PERSON_FROM_RESURFACING bear on a
  *       proactively-assembled feed.
  *
- * WHY THIS RUNS ON THE FEEDS AND NOT ON THE PROFILE READ. §21 draws the line
- * for us: "Do not resurface — retain and search privately; suppress PROACTIVE
- * resurfacing." GET /users/:id/highlights is an explicit retrieval — a person
- * asked for that person's Highlights — so a DO_NOT_RESURFACE control does not
- * apply to it. GET /highlights/active and GET /highlights/following-feed are
+ * WHY THE §11 PASS RUNS ON THE FEEDS AND NOT ON THE PROFILE READ. §21 draws the
+ * line for us: "Do not resurface — retain and search privately; suppress
+ * PROACTIVE resurfacing." GET /users/:id/highlights is an explicit retrieval — a
+ * person asked for that person's Highlights — so a DO_NOT_RESURFACE control does
+ * not apply to it. GET /highlights/active and GET /highlights/following-feed are
  * assembled by the system and are exactly what "proactive" means.
+ *
+ * THAT RATIONALE IS ABOUT §11 AND WAS BEING APPLIED TO §10 AS WELL, which was
+ * wrong and is corrected here. One section header sat over two independent
+ * passes and the sentence above was true of only the first. §10 does not
+ * distinguish proactive from explicit: a profile read PUBLISHES a Highlight's
+ * `location_name` to a viewer exactly as a feed does, and the owner's selected
+ * rung binds either way. So `applyResurfacingControls` still runs on the feeds
+ * only, and `applyLocationPrecision` now runs on all three reads that publish a
+ * location. It changes nothing on today's database — 2721 is unapplied, the
+ * policy read answers `absent`, and `absent` is a documented no-op — which is
+ * why this is closed BEFORE the migration lands rather than after.
+ *
+ * NO OWNER BYPASS is introduced by that third call site, because neither
+ * existing one has it: GET /highlights/active clamps the viewer's own
+ * Highlights too. The Memory sibling (`protectMemoryRow`) DOES bypass for the
+ * owner, so the two surfaces disagree; which reading §10 wants is an owner
+ * decision, and matching the call sites that already exist is the choice that
+ * cannot widen disclosure.
  *
  * THREE STATES, NOT TWO. See services/highlights/highlightSchemaAvailability.ts.
  * `absent` (the tables are not deployed — migrations 2720/2721 are written and
@@ -656,7 +674,18 @@ router.get("/users/:userId/highlights", async (req, res) => {
     }
   }
 
-  const result = visible.map((h: any) => ({
+  // §10 — clamp each location to the owner's selected precision, exactly as
+  // GET /highlights/active and GET /highlights/following-feed do. `sc` is the
+  // service client the author lookup above already required; when it is null
+  // the policy cannot be read at all, and the honest answer is the same
+  // fail-closed one `readProjectionPolicies` gives an unreadable table.
+  // `sc` may be null here — the author lookup above already tolerates that — and
+  // `readProjectionPolicies` answers `unreadable` for a null client rather than
+  // this handler inventing a state of its own. See that function's comment.
+  const policies: ProjectionPolicyRead = await readProjectionPolicies(sc, highlightIds);
+  const disclosed = applyLocationPrecision(visible as any[], policies, req.log, "GET /users/:userId/highlights");
+
+  const result = disclosed.map((h: any) => ({
     ...h,
     author,
     viewCount: viewCountMap[h.id] ?? 0,
@@ -899,9 +928,16 @@ router.delete("/highlights/:id", async (req, res) => {
   // that no longer admits the row matches zero rows, errors nothing, and this
   // handler answered 204 for a highlight still live on the owner's profile.
   // Taking your own content down is exactly the operation that must not lie.
+  // ONE clock read for the stamp. `deleteCommittedAt` below is a SECOND,
+  // DELIBERATE read taken AFTER the write returns — it starts the §24
+  // revocation stopwatch, so folding it into this one would charge the write's
+  // own duration to the revocation. Two Date.now() reads with different jobs
+  // are fine; mixing one with a no-arg `new Date()` is what split-clock
+  // forbids, because those two silently disagree about the same instant.
+  const deletedAtMs = Date.now();
   const { data: deleted, error } = await client
     .from("highlights")
-    .update({ deleted_at: new Date().toISOString() })
+    .update({ deleted_at: new Date(deletedAtMs).toISOString() })
     .eq("id", id)
     .eq("owner_id", user.id)
     .select("id");
@@ -916,6 +952,7 @@ router.delete("/highlights/:id", async (req, res) => {
     sendError(res, "db_error", "The highlight could not be deleted. Please try again.", { exposeDetail: true });
     return;
   }
+  const deleteCommittedAt = Date.now();
 
   /* §21 — revocation propagation.
    *
@@ -948,6 +985,11 @@ router.delete("/highlights/:id", async (req, res) => {
           await invalidateCompassCache(sc, user.id, "highlight_deleted");
         }
       : undefined,
+    // §24 `privacy_revocation_latency` — census H219. The soft delete above has
+    // already committed, so this is the moment the owner's decision took
+    // effect and the metric's clock starts there rather than inside the call.
+    log: req.log,
+    requestedAt: deleteCommittedAt,
   });
   if (!report.complete) {
     req.log.error(

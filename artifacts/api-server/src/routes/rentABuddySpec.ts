@@ -7,7 +7,7 @@ import { getServiceClient } from "../lib/supabase.js";
 // rentABuddy.ts (which already gates its own 70 handlers with it). Imported
 // rather than re-implemented so this router cannot drift from the meaning of
 // `rent_buddy_enabled`. See its doc comment for why admin routes are exempt.
-import { findBlockingAvailabilityException, sendBuddyUnavailable, getUserLimits, deriveServiceCountry, resolveLaunchControlFromRows, requireRentBuddyEnabled, recordBookingEvent, NO_SHOW_REPORTABLE_STATUSES, enforceCityRestrictions } from "./rentABuddy.js";
+import { findBlockingAvailabilityException, sendBuddyUnavailable, getUserLimits, deriveServiceCountry, resolveLaunchControlFromRows, requireRentBuddyEnabled, recordBookingEvent, NO_SHOW_REPORTABLE_STATUSES, enforceCityRestrictions, refuseKnownMinorTraveler } from "./rentABuddy.js";
 import { adjustBuddyCounter } from "../services/rentBuddy/ReliabilityCounters.js";
 import { requireBookingKyc } from "../lib/rentBuddyKycGate.js";
 import { TRAINING_CHECKLIST_ITEMS } from "./rentABuddy.js";
@@ -446,6 +446,26 @@ router.post("/rent-a-buddy/buddies/:buddyId/request", asyncHandler(async (req, r
     });
   }
 
+  // ── Verified-minor refusal (IDF-25 / IDF-27) ───────────────────────────────
+  // OUTSIDE the launch-control block below, and in the same position the
+  // canonical path puts it (rentABuddy.ts, enforceBookingCreationGates: after
+  // kill switch / rollout / limits, before launch controls).
+  //
+  // THIS IS THE WHOLE FIX. Every age check this route had lived inside
+  // `if (launchCtrl) { … }`, so with `rent_buddy_launch_controls` EMPTY the
+  // route fell past the deny-by-default branch — which only fires when rows
+  // exist — straight to the insert, and seated a booking for a traveller whose
+  // government document says they are a minor. The canonical route refuses that
+  // booking with no launch control involved, and rentABuddy.ts:1735 states the
+  // invariant this was breaking: "no creation path may seat a booking that
+  // POST /rent-a-buddy/bookings would refuse."
+  //
+  // Exposure was LATENT rather than live — production holds 13 launch-control
+  // rows, so the empty-table branch is not reachable there today — and the
+  // shared helper is called rather than copied so this alias cannot drift from
+  // the canonical refusal again.
+  if (!await refuseKnownMinorTraveler(serviceClient, res, user.id)) return;
+
   // Required field validation
   if (!bookingDate || !durationH || !city || !category) {
     return res.status(400).json({
@@ -563,6 +583,26 @@ router.post("/rent-a-buddy/buddies/:buddyId/request", asyncHandler(async (req, r
         return res.status(403).json({ error: "verification_required", message: "Phone verification is required to book in this location. Please verify your phone number to continue." });
       }
       // Missing DOB is an explicit block — age cannot be verified without it.
+      //
+      // The two OTHER ways `travIdentity.age` becomes null are handled above and
+      // are checked here as well rather than left to ordering: a verified minor
+      // and an unreadable `identity_verifications` must never reach this branch,
+      // because this message says the user's date of birth is missing and in
+      // both of those cases it is on file. `refuseKnownMinorTraveler` has
+      // already returned for both; this is the belt to its braces, and it is
+      // what keeps the message honest if the two are ever reordered.
+      if (travIdentity.verificationUnreadable) {
+        return res.status(503).json({
+          error: "age_verification_unavailable",
+          message: "Your age could not be verified right now. Please try again shortly.",
+        });
+      }
+      if (travIdentity.verifiedMinor) {
+        return res.status(403).json({
+          error: "age_requirement",
+          message: "Rent a Buddy bookings are only available to users aged 18 and over.",
+        });
+      }
       if (travIdentity.age === null) {
         return res.status(403).json({ error: "age_verification_required", message: "Date of birth verification is required to make a booking in this location." });
       }

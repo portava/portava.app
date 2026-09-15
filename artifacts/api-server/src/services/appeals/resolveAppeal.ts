@@ -8,7 +8,7 @@
 
 import { randomUUID } from "node:crypto";
 import { recordTrustEvent } from "../trust/TrustEventService.js";
-import { executeTripCommand, tripKernelClient } from "../../lib/tripKernel.js";
+import { executeTripCommand, tripKernelClient } from "../../domain/trips/commands/tripKernel.js";
 
 export interface Appeal {
   id: string;
@@ -435,7 +435,7 @@ export async function resolveAppeal(
 
     case "trip": {
       // Restoring a moderated trip is a change to the Trip aggregate: it moves
-      // trips.status, which every crew member reads and which lib/tripStatus.ts
+      // trips.status, which every crew member reads and which domain/trips/invariants/tripStatus.ts
       // and the lifecycle rules in §3.1 govern. It is a Trip Command.
       //
       // UPDATE_TRIP is the command, and its `owner` capability is EXACTLY the

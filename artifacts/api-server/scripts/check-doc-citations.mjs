@@ -110,10 +110,37 @@ const REPO_ROOT = path.resolve(path.dirname(SCRIPT), '..', '..', '..');
 // ---------------------------------------------------------------------------
 export const COVERED = [
   {
+    // The trust ratification packet and the plan it reconciles against. Added
+    // 2026-09-14 with docs/trust/scoring-parameters-for-ratification.md, whose
+    // whole content is `file:line#symbol` evidence about production behaviour —
+    // a document of that kind with unchecked citations is the rot this checker
+    // exists to stop, and it would have been the only such document in the tree.
+    dir: 'docs/trust',
+  },
+  {
     // The unit that produced this checker. Its status table is the thing the
     // "maintain it in the same PR" rule is about, and its reconciliation is
     // built entirely out of citations.
     dir: 'docs/discovery',
+  },
+  {
+    // B8, 2026-09-14. The Compass corpus — the phase-1 spec, the master
+    // roadmap, the phase summaries, the nine-query eval runbook and the
+    // compliance record. census-compass grades against these five and
+    // `docs/compass/compliance-v1.md` is the same shape as the Discovery one
+    // directly above: a reconciliation built out of `file:line#symbol`
+    // evidence. Two of the five are ALSO manifest-verified owner sources
+    // (`phase1-spec.md` and `master-roadmap.md` are entries 1 and 2 of
+    // docs/specs/upgrades-v2/SOURCE-MANIFEST.json), so their citations are the
+    // ones a reader is most likely to act on.
+    //
+    // MEASURED BEFORE ADOPTING, not assumed: the corpus total moves from 253
+    // findings / 124 broken anchors to the numbers in the commit message, and
+    // every finding this brings in is PRE-EXISTING rot that nothing was
+    // looking at. Adopting it is what makes those visible; it does not create
+    // them. WHAT WOULD TURN THIS RED: a citation in any of the five pointing
+    // past the end of its file, or an anchored one whose needle has moved.
+    dir: 'docs/compass',
   },
   {
     // The defect list, refreshed as defects close; each entry cites its fix.
@@ -187,9 +214,151 @@ export const COVERED = [
 // Whoever adds anchors next should move this number up with them in the same
 // PR — that is the ratchet doing its job, not a chore.
 // ---------------------------------------------------------------------------
-export const MIN_ANCHORED_CITATIONS = 243;
+// 2026-09-11: the Trips census pass took this 243 -> 278. Those 35 are not new
+// citations; they are corrections. census-trips.md was measured at `68ed59d9`
+// and its BUILT-AND-CORRECT rows cited lines that the Trip Kernel programme
+// then moved underneath them — `canEditPlan` by 10 lines, `isAcceptedTripMember`
+// by 22, the plan-mutation guard in `routes/trips.ts` by 219, the only reader of
+// `trip_activity_log` by 641. Every one stayed IN RANGE, so the range half of
+// this check was green on all of them. That is the class this file's header
+// predicted was "much larger than the out-of-range one", measured on a second
+// document and found larger there too.
+// The Highlights/Memories census closed its prose gap on 2026-09-13 — 154
+// requirements that lived in paragraphs became rows — and anchored every
+// citation those rows carry. Measured count 347, so the floor is 347. Same
+// ratchet, same rule: raising it is the job, lowering it is a deliberate
+// reduction in coverage and must be argued for in the PR that does it.
+// Four more landed with the section 24 evidence corrections in the same pass: 351.
+// MERGED 2026-09-13: both raises above are real and were measured on different
+// trees — the Trips pass on this branch, the Highlights pass on a worktree 141
+// commits behind it. Neither number is the merged tree's, so the floor below is
+// re-measured HERE rather than taking the larger of two stale counts.
+// RAISED 2026-09-13 from 1532 to the merged tree's measurement after §11.2 of
+// census-layover anchored 31 citations (14 mechanically, 17 by re-reading the
+// claim). Raising is the job; the number is what the checker counts, not a guess.
+// RAISED AGAIN 2026-09-13 from 1640 by census-layover §12, which wrote 61 new
+// citations and anchored every one, and repointed 13 EXISTING anchors that its
+// own edits to routes/airport.ts and two client files had displaced. That
+// repointing is the argument for the anchor form in one line: the check named
+// all 13 by re-reading the anchor at the cited line, and the 106 UNANCHORED
+// citations into the same three files moved silently and are still wrong. The
+// ceiling below did NOT fall this pass; §12.4 says why.
+// RAISED AGAIN 2026-09-13 from 2507 to the merged tree's count after the trust
+// lane anchored §12 (2635 -> 2816 in its own worktree) and the three regrade
+// lanes wrote their new rows anchored rather than bare. That last part is the
+// point worth keeping: census GROWTH does not have to buy itself headroom under
+// the ceiling below. A new requirement can carry an anchored citation on the day
+// it is written, and these three censuses grew by 153 rows while UNANCHORED FELL.
+export const MIN_ANCHORED_CITATIONS = 3381;
 
-const SKIP_DIRS = new Set(['.git', 'node_modules']);
+// ---------------------------------------------------------------------------
+// THE FULL-ANCHOR PASS, and why it is a SECOND pass rather than a wider ANCHOR
+// ---------------------------------------------------------------------------
+// ANCHOR above stops at the first space, and that is not an oversight — the
+// citation grammar matches UNBACKTICKED text too, so an anchor allowed to run
+// to the end of the line would swallow the prose after `foo.ts:12#bar baz`.
+//
+// The cost of that stop was measured on 2026-09-13 and it is not small. A
+// multi-word anchor is verified on its FIRST TOKEN only, so
+// `#const held = applyAttentionSuppression(...)` is checked as `const`, which
+// matches almost every line of every TypeScript file in the repo. Twenty-one
+// citations across census-trips, census-sensing and census-telegraph pointed at
+// the WRONG LINE while this script reported "anchored citations whose anchor is
+// NOT at the cited lines: 0". Two of them were off by fifteen lines; one had a
+// malformed anchor (two fragments concatenated by an earlier re-anchor) that
+// appeared nowhere in the file at all. The range half could not see them — every
+// one was IN RANGE — and the anchor half said they held. That is the
+// vacuous-green state this file's header warns about, reached through a
+// different door.
+//
+// So: a citation written INSIDE BACKTICKS has an unambiguous end, and for those
+// the whole anchor can be compared. That is this pass. It is additive — it
+// cannot make a previously-passing unbackticked citation fail — and it carries
+// its own floor so the class cannot be quietly emptied.
+
+// SHRINK-ONLY, same contract as MIN_ANCHORED_CITATIONS above. Measured 1147 on
+// 2026-09-13 across docs/architecture, docs/handoff and docs/ci after the 21
+// corrections. Raising it is expected; lowering it is a deliberate reduction in
+// coverage and must be justified in the PR that does it.
+// RAISED 2026-09-13 from 1319 for the same reason — every one of those 31 is
+// backticked, so all 31 landed in the whole-anchor population too.
+// RAISED AGAIN 2026-09-13 from 1513 by census-layover §12: every citation it
+// wrote is backticked with the path spelled out, after ten of them were first
+// written as bare `:NNN#anchor` continuations with a space in the anchor — the
+// shape §11.2 taught this file to refuse, and the refusal caught all ten.
+// RAISED AGAIN 2026-09-13 from 2329 alongside the floor above, same measurement,
+// same tree. The gap between the two floors (3381 anchored, 3193 whole-anchor)
+// is 188 citations written with an anchor but NOT backticked: checkable for
+// their first token only. That gap is the next thing to close, not a rounding
+// error, and it is stated here so it is not rediscovered as a surprise.
+export const MIN_FULL_ANCHOR_CITATIONS = 3193;
+
+// ---------------------------------------------------------------------------
+// THE CEILING, and why a floor on the good form was not enough
+// ---------------------------------------------------------------------------
+// The two numbers above are FLOORS on anchored citations. A floor stops the
+// good form from being deleted. It does not stop the BAD form from being
+// added, and the bad form is the one that rots.
+//
+// MEASURED 2026-09-13 while merging the Layover lane. census-layover cites
+// `LayoverRecommendationService.ts` by bare `path:line` in four rows, and all
+// four named the wrong code — not because the merge moved them, but because
+// they were ALREADY wrong at the census's own head_commit `af1864a7` and at
+// `014a25d5`, its base:
+//
+//   L5   cites :309-318 for the wholesale delete-and-reinsert.
+//        At BOTH commits the delete is at :473 and the insert at :477.
+//   L78  cites :251-257 for "verified first, then a time-of-day nudge".
+//        That range is a placeType -> recType map.
+//   L182 cites :23-47 for timeOfDayContext sampling every 30 minutes.
+//        That range is import statements.
+//   L258 cites :320-328 for "logs only { count: rows.length }".
+//        That range is a section comment.
+//
+// THIS SCRIPT WAS GREEN OVER ALL FOUR, truthfully. The range half only asks
+// whether the file is long enough, and 309 in a 500-line file is. The anchor
+// halves never saw them, because an unanchored citation gives them nothing to
+// re-read. The whole class is invisible by construction, and it is by far the
+// largest class in the corpus.
+//
+// So the ceiling. It cannot repair the existing population — that is a pass of
+// its own, done a document at a time — but it stops the population GROWING,
+// which is the part that compounds. Every citation added from here carries an
+// anchor, or this check goes red and says why.
+//
+// GROW-ONLY IS THE WRONG DIRECTION HERE, so read the contract carefully: unlike
+// the floors above, this number may only ever go DOWN. Raising it is a
+// deliberate decision to add unverifiable claims and must be argued for in the
+// PR that does it. Lowering it is the job.
+//
+// Measured 2026-09-13 on the merged tree: 8135 citations, 1610 anchored.
+// LOWERED 2026-09-13 from 6525 by §11.2 of census-layover, then to 6491 by
+// census-trips §67, which had to repoint three more citations in
+// census-compass and census-telegraph that were ALREADY wrong at HEAD —
+// `:18` a blank line, `:81` a ` */`, `:152` a `  }`. The ratchet's own
+// direction, twice on the day it was added.
+// LOWERED 2026-09-13 by section C, 6491 -> 6490. A ceiling that may only fall has to be
+// pulled down when it falls, or the one citation of headroom it just gained is headroom
+// for the next unanchored one. The single citation is census-telegraph's
+// `routes/memories.ts:1858`, which this pass had to repoint anyway because the file
+// shrank past it, and which got an anchor on the way.
+//
+// 2026-09-13, HELD AT 6434 WITH 32 CITATIONS OF HEADROOM, DELIBERATELY AND ON
+// RECORD. The three regrade lanes pushed this to 6564 — 130 over — by adding
+// rows faster than they anchored them. The instruction was to anchor the 130
+// rather than raise the ceiling, and that is what happened: the count is 6402.
+// The ceiling is NOT being pulled down to 6402 in the same commit, because the
+// same instruction said to leave it where it is. So the 32 is real headroom and
+// a reader should know it exists: the next 32 unanchored citations will pass
+// this check. Whoever writes them should lower this number instead.
+export const MAX_UNANCHORED_CITATIONS = 6434;
+
+// Exported so src/test/docCitations.test.ts walks the same tree: a second
+// checkout under .claude/worktrees/ (an agent's) carries stale copies of every
+// cited file, and a walker that indexes them resolves a citation against the
+// wrong tree — first as "ambiguous", then, once the copies diverge, as "does
+// not appear", against a file nobody cited.
+export const SKIP_DIRS = new Set(['.git', 'node_modules', '.claude']);
 
 // Extensions a `file.ext:NNN` citation is allowed to name. Same list as
 // check-memory-citations.mjs.
@@ -235,6 +404,28 @@ export const INHERITED_RE = new RegExp(String.raw`\x60:(${SPEC})${ANCHOR}\x60`, 
 // resolves `:1786` against whatever file was cited last, which is a guess.
 export const BARE_PATH_RE = new RegExp(
   String.raw`\x60((?:\.{1,2}\/)*(?:${SEG}+\/)*${SEG}+\.(?:${EXT_ALT}))\x60`,
+  'g',
+);
+
+const FULL_ANCHOR_RE = new RegExp(
+  String.raw`\x60((?:${SEG}+\/)*${SEG}+\.(?:${EXT_ALT})):(${SPEC})#([^\x60]+)\x60`,
+  'g',
+);
+
+// A BARE `:NNN#anchor` WHOSE ANCHOR HAS A SPACE MATCHES NOTHING AT ALL, and
+// that is worse than either half being wrong: the citation is not checked, not
+// counted, and not reported. INHERITED_RE's ANCHOR stops at the first space (it
+// has to — the grammar reads unbackticked prose too), and FULL_ANCHOR_RE needs
+// the path spelled out, so a shape like `:622#count: rows.length` falls between
+// them. Found 2026-09-13 the only way it can be: by mutating one to a wrong
+// line and watching the check stay green.
+//
+// Measured across docs/architecture, docs/handoff and docs/ci at the moment it
+// was found: 310 inherited `:spec#anchor` citations, ZERO of them multi-word.
+// So this refuses a shape nothing currently uses, which is the cheapest moment
+// to refuse it. The fix for an author is one word: spell the path.
+const UNBINDABLE_INHERITED_RE = new RegExp(
+  String.raw`\x60:(${SPEC})#([^\x60]*\s[^\x60]*)\x60`,
   'g',
 );
 
@@ -436,9 +627,13 @@ export function evaluateCitations({ coveredFiles, readFile, byBasename }) {
   const badRange = [];
   const badAnchor = [];
   const ambiguous = [];
+  const undecidable = [];
   const orphans = [];
+  const badFullAnchor = [];
+  const unbindable = [];
   let total = 0;
   let anchored = 0;
+  let fullAnchored = 0;
 
   const lineCache = new Map();
   const linesOf = (rel) => {
@@ -508,10 +703,74 @@ export function evaluateCitations({ coveredFiles, readFile, byBasename }) {
           reason: `"${c.anchor}" does not appear at ${target.rel}:${where}`,
           detail: 'the code moved, or the citation named the wrong place',
         });
+      } else if (holding.length > 1) {
+        // ── AN ANCHOR THAT HOLDS IN TWO FILES DECIDES NOTHING ────────────────
+        // "holds for at least one candidate" is the right rule when the other
+        // candidates are wrong. It is the WRONG rule when two candidates both
+        // satisfy it, because then the pass is green without anyone — checker
+        // or reader — knowing which file the citation meant. A later edit to
+        // the file the author actually meant leaves the citation green on the
+        // strength of the copy they did not mean. That is a citation certified
+        // by the wrong file, and it is indistinguishable from a correct one.
+        //
+        // Measured before it was written, not assumed: of 648 ambiguous
+        // citations in the corpus, 413 have two or more candidates long enough
+        // to contain the cited line, 30 of those carry an anchor, and 0 of
+        // those 30 hold in more than one file. So this lands as a ratchet AT
+        // ZERO — it forbids a shape that does not yet exist rather than
+        // grandfathering one that does. The remedy is always available and
+        // always cheap: spell enough of the path to name one file.
+        const where = ranges.map(([lo, hi]) => (lo === hi ? `${lo}` : `${lo}-${hi}`)).join(',');
+        undecidable.push({
+          doc: docRel, line: c.line, cited: label,
+          reason: `"${c.anchor}" holds at :${where} in ${holding.length} different files`,
+          detail: `${holding.map((h) => h.rel).join(' AND ')} — spell the path so it names one`,
+        });
       }
     }
+
+    // ── A SHAPE NO PASS CAN SEE — refused rather than skipped ───────────────
+    for (const m of text.matchAll(UNBINDABLE_INHERITED_RE)) {
+      unbindable.push({
+        doc: docRel,
+        line: text.slice(0, m.index).split('\n').length,
+        cited: `:${m[1]}#${m[2]}`,
+        reason: 'a bare `:NNN#anchor` with a SPACE in the anchor is matched by no pass — ' +
+          'spell the file path so the whole-anchor pass can read it',
+      });
+    }
+
+    // ── SECOND PASS: backticked citations, compared on the WHOLE anchor ──────
+    // Deliberately independent of the loop above: it re-extracts from the same
+    // text with a grammar that can see a multi-word anchor, because the first
+    // pass cannot and the gap between them is where twenty-one wrong lines hid.
+    for (const m of text.matchAll(FULL_ANCHOR_RE)) {
+      const [, citedPath, spec, fullAnchor] = m;
+      const candidates = resolveCitationPath(citedPath, byBasename, fromDir);
+      if (candidates.length !== 1) continue; // ambiguity is the first pass's to report
+      const lines = linesOf(candidates[0]);
+      if (lines === null) continue;
+      const { ranges } = expandLineSpec(spec);
+      if (ranges.length === 0) continue;
+      fullAnchored += 1;
+      if (anchorHolds(lines, ranges, fullAnchor)) continue;
+      const where = ranges.map(([lo, hi]) => (lo === hi ? `${lo}` : `${lo}-${hi}`)).join(',');
+      const found = lines
+        .map((t, n) => (t.includes(fullAnchor) ? n + 1 : 0))
+        .filter(Boolean)
+        .slice(0, 3);
+      const docLine = text.slice(0, m.index).split('\n').length;
+      badFullAnchor.push({
+        doc: docRel,
+        line: docLine,
+        cited: `${citedPath}:${where}#${fullAnchor.length > 60 ? fullAnchor.slice(0, 60) + '…' : fullAnchor}`,
+        reason: found.length
+          ? `the WHOLE anchor is at ${candidates[0]}:${found.join(',')}, not ${where}`
+          : `the WHOLE anchor appears NOWHERE in ${candidates[0]} — the anchor text itself is wrong`,
+      });
+    }
   }
-  return { badRange, badAnchor, ambiguous, orphans, total, anchored };
+  return { badRange, badAnchor, ambiguous, undecidable, orphans, total, anchored, badFullAnchor, fullAnchored, unbindable };
 }
 
 // ---------------------------------------------------------------------------
@@ -553,6 +812,8 @@ function main() {
   console.log(`  covered files ............ ${coveredFiles.length}`);
   console.log(`  file:line citations ...... ${res.total}`);
   console.log(`  of those, anchored ....... ${res.anchored} (floor ${MIN_ANCHORED_CITATIONS})`);
+  console.log(`  whole-anchor checkable ... ${res.fullAnchored} (floor ${MIN_FULL_ANCHOR_CITATIONS}) — backticked, so the anchor has an unambiguous end`);
+  console.log(`  UNANCHORED ............... ${res.total - res.anchored} (ceiling ${MAX_UNANCHORED_CITATIONS}) — a bare path:line; nothing here can tell you it is wrong`);
   console.log(`  repo files indexed ....... ${repoIndex.fileCount}`);
   console.log('');
 
@@ -580,6 +841,18 @@ function main() {
     (c) => `${c.doc}:${c.line}  ${c.cited}  -- ${c.reason}`);
   failed += res.badAnchor.length;
 
+  section('BACKTICKED citations whose WHOLE anchor is not at the cited line', res.badFullAnchor,
+    (c) => `${c.doc}:${c.line}  ${c.cited}  -- ${c.reason}`);
+  failed += res.badFullAnchor.length;
+
+  section('citations written in a shape NO pass can check', res.unbindable,
+    (c) => `${c.doc}:${c.line}  ${c.cited}  -- ${c.reason}`);
+  failed += res.unbindable.length;
+
+  section('citations whose anchor holds in MORE THAN ONE candidate file', res.undecidable,
+    (c) => `${c.doc}:${c.line}  ${c.cited}  -- ${c.reason}; ${c.detail}`);
+  failed += res.undecidable.length;
+
   if (res.orphans.length) {
     console.log('');
     console.log(`INFO bare \`:NNN\` specs with no file named on their line: ${res.orphans.length}`);
@@ -603,6 +876,29 @@ function main() {
   }
 
   console.log('');
+  if (res.fullAnchored < MIN_FULL_ANCHOR_CITATIONS) {
+    console.error(
+      `CHECKER ERROR: ${res.fullAnchored} whole-anchor-checkable citation(s) found, ` +
+      `floor is ${MIN_FULL_ANCHOR_CITATIONS}. This is the half that caught 21 citations ` +
+      `pointing at the wrong line while the first-token comparison called them clean. ` +
+      `Deleting backticks or anchors empties it silently, so the count is floored. ` +
+      `Restore them, or justify the reduction in the PR that lowers this number.`,
+    );
+    process.exit(2);
+  }
+  const unanchored = res.total - res.anchored;
+  if (unanchored > MAX_UNANCHORED_CITATIONS) {
+    console.error(
+      `CHECKER ERROR: ${unanchored} UNANCHORED citation(s) found, ceiling is ` +
+      `${MAX_UNANCHORED_CITATIONS} — ${unanchored - MAX_UNANCHORED_CITATIONS} more than the tree ` +
+      `carried when this ceiling was measured. An unanchored \`path:line\` is checked for ONE ` +
+      `thing, that the file is long enough; nothing here can tell you it names the right code, ` +
+      `and four citations in census-layover proved that class can be wrong for months while this ` +
+      `script reports clean. Add \`#anchor\` to the new citations — a short literal from the ` +
+      `line, so the checker can re-read it — or, if the count really must rise, say in the PR ` +
+      `which claims you are choosing to leave unverifiable and why.`);
+    process.exit(2);
+  }
   if (res.anchored < MIN_ANCHORED_CITATIONS) {
     console.error(
       `CHECKER ERROR: ${res.anchored} anchored citation(s) found, floor is ` +

@@ -31,13 +31,14 @@ import {
   type OwnerFieldVisibility,
 } from "./PassportPrivacyGuard.js";
 import { getSafeTrustSummary, getPublicTrustBadge } from "../trust/TrustPrivacyGuard.js";
+import { buildExperienceGraphProjection, type ExperienceGraphProjection } from "./PassportExperienceGraphService.js";
 import { getDisplayTrustScore, getTrustProfileResult, type TrustProfileRead } from "../trust/TrustScoreService.js";
 import { getRestrictionState, type RestrictionState } from "../trust/TrustRestrictionService.js";
 import { buildStats } from "./PassportMapService.js";
 import { buildUnifiedStamps, filterUnifiedStamps, type UnifiedStamp, type StampSource } from "./UnifiedStampService.js";
 import { loadMemoriesRead } from "./PassportMemoryService.js";
 import { filterMemories } from "./PassportPrivacyGuard.js";
-import { countUserTrips } from "../../lib/tripCounts.js";
+import { countUserTrips } from "../../domain/trips/services/tripCounts.js";
 import { nameVisibilitySet, sanitizeIdentity } from "../../lib/publicIdentity.js";
 import { buildFeaturedJourney, type JourneyProjection, type JourneyPermissions } from "./PassportJourneyService.js";
 import {
@@ -237,8 +238,54 @@ export interface DomainTrust {
   domain: string;
   /** Presentation word, e.g. "Excellent" | "Strong" | "Established" | "Building" | "New" | "Not applicable". */
   presentation: string;
-  /** False when the domain does not apply to this user (e.g. Buddy for a non-buddy). */
+  /**
+   * False when the domain does not apply to this user (e.g. Buddy for a
+   * non-buddy). It has exactly this ONE meaning. "Not measured" is a different
+   * statement about a person and lives in `basis` — repurposing this flag for
+   * it would change the word a real person is shown, which is an owner
+   * decision rather than a field.
+   */
   applicable: boolean;
+  /** What this domain's word rests on. See `domainTrustBasis`. */
+  basis: DomainTrustBasis;
+}
+
+/**
+ * WHAT ONE DOMAIN'S PRESENTATION WORD RESTS ON (§9/§10 "explainable").
+ *
+ *   unavailable     `trust_profiles` could not be READ. Whatever the word says,
+ *                   it is not a statement about this person's trust.
+ *   measured        every category the domain averages was present on the
+ *                   profile — the word is a measurement.
+ *   partial         some were present and some were the neutral substitution.
+ *                   A mean of three real scores and one default is neither a
+ *                   measurement nor a default, and saying so is the point.
+ *   substituted     NONE was present. The word is the neutral 50's word — the
+ *                   56-of-58 production case census-passport §3 measured.
+ *   not_applicable  the domain does not apply at all (Buddy for a non-buddy).
+ *                   Zero-of-zero inputs is vacuously "all measured", and
+ *                   reporting THAT as `measured` would claim a domain nobody
+ *                   scored had been scored.
+ *
+ * EXPORTED so its test exercises the shipped predicate rather than a copy of
+ * it, for the same reason `trustConfidenceBasis` is.
+ */
+export type DomainTrustBasis =
+  | "measured"
+  | "partial"
+  | "substituted"
+  | "unavailable"
+  | "not_applicable";
+
+export function domainTrustBasis(
+  state: TrustProfileRead["state"],
+  measuredInputs: number,
+  totalInputs: number,
+): DomainTrustBasis {
+  if (state === "unavailable") return "unavailable";
+  if (totalInputs <= 0) return "not_applicable";
+  if (measuredInputs <= 0) return "substituted";
+  return measuredInputs >= totalInputs ? "measured" : "partial";
 }
 
 export interface TrustProjection {
@@ -246,25 +293,33 @@ export interface TrustProjection {
   publicLevel: string;
   /** Numeric 0–100 exposed only where appropriate (§9) — self view. */
   score: number | null;
-  confidence: "low" | "medium" | "high";
+  /** Band, or `null` = NOT MEASURED (P50). See `passportTrustConfidence` at the foot of this file. */
+  confidence: TrustConfidenceBand | null;
   /**
    * WHAT `confidence` WAS COMPUTED FROM. Added 2026-09-09 for census-trust P45
    * ("domain-specific/confidence-aware/explainable") and P50 ("an 82 with high
    * evidence is not an 82 with little").
    *
-   * `confidence` is derived from TRAVEL statistics — `stats.stamps +
-   * stats.trips * 2 + verified` — and the comment above it has always called
-   * that "evidence-aware". It is aware of evidence about TRAVEL, not about
-   * TRUST: a traveller with twenty stamps and zero trust events reads
-   * `confidence: "high"` over a trust score that is entirely the substituted
-   * neutral 50. Migration 2371 added the trust engine's own measure
-   * (`evidence_weight` = sum of decay weights, `evidence_count` = raw undecayed
-   * count, both written by `measureEvidence`) and nothing here read it.
+   * `confidence` USED TO BE derived from TRAVEL statistics — `stats.stamps +
+   * stats.trips * 2 + verified` — under a comment that called it
+   * "evidence-aware". It was aware of evidence about TRAVEL, not about TRUST: a
+   * traveller with twenty stamps and zero trust events read `confidence:
+   * "high"` over a trust score that was entirely the substituted neutral 50.
+   * That formula is GONE (P50). `confidence` now comes only from migration
+   * 2371's `evidence_weight` — the trust engine's own decay-weighted measure,
+   * written by `measureEvidence` — through `passportTrustConfidence`.
    *
-   * This field does not change `confidence` — recalibrating that scale is a
-   * product judgement, not a defect fix. It makes the number EXPLAINABLE, and
-   * it makes a MEASURED 50 distinguishable from a SUBSTITUTED one, which is the
-   * half of P45/P50 that is unambiguously an engineering gap.
+   * This field therefore no longer distinguishes two live derivations; it
+   * reports WHICH ABSENCE produced a `null` band, which is the part a consumer
+   * cannot recover from the band itself:
+   *
+   *   trust_evidence  a band was produced, and it is a measurement.
+   *   travel_proxy    the profile was READ and the engine has recorded no
+   *                   evidence measure at all (a pre-2371 row). The name is
+   *                   kept because it is on the wire and a client types it;
+   *                   nothing derives from travel any more.
+   *   unavailable     `trust_profiles` could not be read. Nothing here is a
+   *                   statement about this person.
    */
   confidenceBasis: "trust_evidence" | "travel_proxy" | "unavailable";
   /** `trust_profiles.evidence_weight` when the profile was read; null otherwise. */
@@ -341,7 +396,7 @@ export interface MemoryProjection {
  * whose failure mode is a zero or an empty array indistinguishable from the
  * truthful version of the same value.
  */
-export type PassportUnreadableSection = "stats" | "stamps" | "memories" | "trust" | "trips";
+export type PassportUnreadableSection = "stats" | "stamps" | "memories" | "trust" | "trips" | "experience_graph";
 
 export interface PassportProjection {
   userId: string;
@@ -358,6 +413,8 @@ export interface PassportProjection {
   memories: MemoryProjection[];
   travelIdentity?: TravelIdentityProjection;
   sharedContext?: SharedContextProjection;
+  /** P159 — the owner's own shape in CompassGraphEngine's Experience Graph; absent for every other viewer. */
+  experienceGraph?: ExperienceGraphProjection;
   capabilities: PassportActionCapabilities;
   viewerContext: PassportViewerContext;
   /**
@@ -1069,22 +1126,34 @@ function buildDomainTrust(
   overallScore: number,
   categories: Record<string, number> | null | undefined,
   isBuddy: boolean,
+  state: TrustProfileRead["state"],
+  overallMeasured: boolean,
 ): DomainTrust[] {
   const c = (k: string): number => {
     const v = Number((categories as Record<string, number> | undefined)?.[k]);
     return Number.isFinite(v) ? v : 50;
   };
+  // The SAME test `c` applies, asked separately so the answer does not depend on
+  // the order the domains happen to read their categories in — `respect_safety`
+  // feeds three domains and must report identically to each.
+  const isMeasured = (k: string): boolean =>
+    Number.isFinite(Number((categories as Record<string, number> | undefined)?.[k]));
+  const basisOf = (...keys: string[]): DomainTrustBasis =>
+    domainTrustBasis(state, keys.filter(isMeasured).length, keys.length);
+
   const domains: DomainTrust[] = [
-    { key: "overall",     domain: "Overall",     presentation: presentationWord(overallScore), applicable: true },
-    { key: "traveler",    domain: "Traveler",    presentation: presentationWord(mean(c("respect_safety"), c("communication"), c("location_honesty"), c("passport_authenticity"))), applicable: true },
-    { key: "trip_guest",  domain: "Trip Guest",  presentation: presentationWord(mean(c("plan_attendance"), c("respect_safety"), c("communication"))), applicable: true },
-    { key: "trip_host",   domain: "Trip Host",   presentation: presentationWord(c("host_quality")), applicable: true },
-    { key: "contributor", domain: "Contributor", presentation: presentationWord(mean(c("content_quality"), c("community_value"), c("guide_accuracy"))), applicable: true },
+    { key: "overall",     domain: "Overall",     presentation: presentationWord(overallScore), applicable: true, basis: domainTrustBasis(state, overallMeasured ? 1 : 0, 1) },
+    { key: "traveler",    domain: "Traveler",    presentation: presentationWord(mean(c("respect_safety"), c("communication"), c("location_honesty"), c("passport_authenticity"))), applicable: true, basis: basisOf("respect_safety", "communication", "location_honesty", "passport_authenticity") },
+    { key: "trip_guest",  domain: "Trip Guest",  presentation: presentationWord(mean(c("plan_attendance"), c("respect_safety"), c("communication"))), applicable: true, basis: basisOf("plan_attendance", "respect_safety", "communication") },
+    { key: "trip_host",   domain: "Trip Host",   presentation: presentationWord(c("host_quality")), applicable: true, basis: basisOf("host_quality") },
+    { key: "contributor", domain: "Contributor", presentation: presentationWord(mean(c("content_quality"), c("community_value"), c("guide_accuracy"))), applicable: true, basis: basisOf("content_quality", "community_value", "guide_accuracy") },
     // Buddy is a contextual projection (§20): "Not applicable" unless the user
-    // actually offers a buddy service.
+    // actually offers a buddy service. A domain that does not apply has no
+    // inputs, so `basisOf()` reports not_applicable rather than a vacuous
+    // "measured".
     isBuddy
-      ? { key: "buddy", domain: "Buddy", presentation: presentationWord(mean(c("host_quality"), c("respect_safety"), c("communication"))), applicable: true }
-      : { key: "buddy", domain: "Buddy", presentation: "Not applicable", applicable: false },
+      ? { key: "buddy", domain: "Buddy", presentation: presentationWord(mean(c("host_quality"), c("respect_safety"), c("communication"))), applicable: true, basis: basisOf("host_quality", "respect_safety", "communication") }
+      : { key: "buddy", domain: "Buddy", presentation: "Not applicable", applicable: false, basis: basisOf() },
   ];
   return domains;
 }
@@ -1114,18 +1183,26 @@ export function trustConfidenceBasis(
   return evidenceCount != null || evidenceWeight != null ? "trust_evidence" : "travel_proxy";
 }
 
+/**
+ * P50 — `stats` is DELIBERATELY NOT A PARAMETER. Travel statistics used to be
+ * the input this function measured trust from; removing them from the
+ * signature is what makes the fabricated formula unreconstructable here rather
+ * than merely unused. `verified` survives only as a LABEL suffix, never as a
+ * term in a score.
+ */
 async function buildTrust(
   sc: SupabaseClient,
   userId: string,
   context: PassportViewerContext,
-  stats: TravelStats,
   verified: boolean,
   isBuddy: boolean,
 ): Promise<TrustProjection> {
-  // Confidence is evidence-aware (§9/§10): a score built on many stamps/trips is
-  // more trustworthy than the same number on a brand-new account.
-  const evidence = stats.stamps + stats.trips * 2 + (verified ? 3 : 0);
-  const confidence: TrustProjection["confidence"] = evidence >= 12 ? "high" : evidence >= 4 ? "medium" : "low";
+  // P50. `confidence` is NOT computed here any more. It used to be a weighted
+  // sum of stamps, trips and the verified flag — travel volume dressed as trust
+  // evidence — and it is now read from the trust engine's own measure BELOW,
+  // after the profile read, by `passportTrustConfidence`. `stats` and
+  // `verified` no longer reach it at all, which is the point: this service has
+  // no business measuring trust.
 
   // The canonical category scores + overall drive the TABLE 12 per-domain
   // presentation for EVERY context (public included) — domains carry only words,
@@ -1142,21 +1219,47 @@ async function buildTrust(
   const profile = profileRead.state === "ok" ? profileRead.profile : null;
   const degraded = profileRead.state === "unavailable";
 
-  // Explainability, not recalibration. `confidence` above is unchanged; this
-  // says what it rests on, so a consumer can tell a measured score from the
-  // neutral substitution. `null` evidence on an `ok` profile is a pre-2371 row
-  // — "not measured" is a different answer from "measured, nothing there", and
-  // it reports as travel_proxy because that is what the number actually used.
+  // `null` evidence on an `ok` profile is a pre-2371 row — "not measured" is a
+  // different answer from "measured, nothing there".
   const evidenceWeight = profileRead.state === "ok" ? profileRead.profile.evidenceWeight : null;
   const evidenceCount = profileRead.state === "ok" ? profileRead.profile.evidenceCount : null;
   const confidenceBasis = trustConfidenceBasis(profileRead.state, evidenceWeight, evidenceCount);
-  const overallForDomains = profile && Number.isFinite(Number(profile.overall_score)) ? Number(profile.overall_score) : 50;
-  const domains = buildDomainTrust(overallForDomains, profile?.categories as Record<string, number> | undefined, isBuddy);
+  // P50 — the band, from the trust engine's own decay-weighted evidence, or
+  // `null` when there is no measurement to band. `confidenceBasis` says which
+  // of the two "not measured" reasons applies (`unavailable` vs
+  // `travel_proxy`, whose name now means "the engine recorded no evidence"),
+  // and `degraded` says so again at the section level.
+  const confidence = passportTrustConfidence(profileRead.state, evidenceWeight);
+  const overallMeasured = !!profile && Number.isFinite(Number(profile.overall_score));
+  const overallForDomains = overallMeasured ? Number(profile!.overall_score) : 50;
+  // Explainability at the level the words are SHOWN. `presentation` is
+  // unchanged on every branch — see `DomainTrust.applicable` for why the
+  // substituted domains keep both their word and their flag.
+  const domains = buildDomainTrust(
+    overallForDomains,
+    profile?.categories as Record<string, number> | undefined,
+    isBuddy,
+    profileRead.state,
+    overallMeasured,
+  );
 
   if (context === "public") {
     const badge = await getPublicTrustBadge(sc, userId);
-    // Non-stigmatizing copy for low-evidence accounts (§10).
-    const label = confidence === "low" ? (verified ? "New Traveler · Verified" : "New Traveler") : badge.label;
+    // Non-stigmatizing copy for a NEW TRAVELLER (§10) — decided by the
+    // authoritative public level, not by a travel-volume sum.
+    //
+    // P50, the server half of P45's defect. This line used to read
+    // `confidence === "low"`, so the fabricated band OVERRODE the measured
+    // verdict: a traveller whose `trust_profiles` row says `trusted` but who
+    // had few stamps was published to the world as "New Traveler". The
+    // vocabulary is unchanged — `publicTrustLabel("new_traveler")` IS
+    // "New Traveler", so for a genuine new traveller this selects the same
+    // string `badge.label` already carried; what changes is that a MEASURED
+    // level now wins over a constant. Choosing different WORDS for these bands
+    // is the owner's standing D-WORD decision and is untouched here.
+    const label = badge.level === "new_traveler"
+      ? (verified ? "New Traveler · Verified" : "New Traveler")
+      : badge.label;
     return {
       label, publicLevel: badge.level, score: null, confidence,
       confidenceBasis, evidenceWeight, evidenceCount,
@@ -1166,7 +1269,13 @@ async function buildTrust(
   }
 
   const summary = await getSafeTrustSummary(sc, userId);
-  const label = confidence === "low" && summary.publicLevel === "new_traveler"
+  // The `confidence === "low" &&` conjunct that used to stand here was
+  // REDUNDANT, not load-bearing: when `publicLevel` is `new_traveler` the
+  // title-cased fallback spells "New Traveler" too, so dropping the fabricated
+  // band changes this branch's output for NO input. The `· Verified` suffix is
+  // the only difference the conjunct ever made, and it made it on travel
+  // volume rather than on whether the account is verified.
+  const label = summary.publicLevel === "new_traveler"
     ? (verified ? "New Traveler · Verified" : "New Traveler")
     : (summary.publicLevel.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()));
 
@@ -1960,12 +2069,18 @@ export async function buildPassportProjection(
   }
 
   // 6. Trust + credentials.
-  const trust = await buildTrust(sc, userId, context, stats, identity.verified, buddyRep !== null);
+  const trust = await buildTrust(sc, userId, context, identity.verified, buddyRep !== null);
   // A trust block built from an unreadable `trust_profiles` is the new-account
   // default, not a reading — and `buildProjectionCachePolicy` must not cache it
   // as though it were.
   if (trust.degraded === true) markUnreadable("trust");
   const credentials = buildCredentials(profile, trust, stats, reputation, buddyRep);
+
+  // 6b. P159 — the traveller's own shape in the Experience Graph. Reads the
+  //     edges CompassGraphEngine already writes; builds no graph of its own.
+  //     `null` for every viewer but the owner (the unruled half of P159).
+  const experienceGraph = (await buildExperienceGraphProjection(sc, userId, context)) ?? undefined;
+  if (experienceGraph?.unreadable === true) markUnreadable("experience_graph");
 
   // 7. Stamps — BOTH gates, in order (§22):
   //      a) the collection-level tier the owner set on the whole stamp shelf, and
@@ -2072,6 +2187,7 @@ export async function buildPassportProjection(
     memories,
     travelIdentity,
     sharedContext,
+    ...(experienceGraph ? { experienceGraph } : {}),
     capabilities,
     viewerContext: context,
     // Absent when everything was read. Present only to stop a placeholder being
@@ -2157,4 +2273,84 @@ export function buildProjectionCachePolicy(projection: PassportProjection): Proj
   const ttls = Object.values(sections);
   const maxAge = ttls.length ? Math.min(...ttls) : PASSPORT_DYNAMIC_MAX_AGE;
   return { maxAge, sections };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P50 — trust confidence, derived from the trust engine's own evidence measure
+//
+// Declared HERE, at the foot of the file, rather than beside `TrustProjection`:
+// this module is cited by line number from a dozen places in
+// docs/architecture/**, and adding seventy lines in the middle of it moves
+// every one of them. Function declarations hoist, so `buildTrust` above reads
+// this exactly as if it stood there.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The three measured evidence bands. `null` beside this type means NOT measured. */
+export type TrustConfidenceBand = "low" | "medium" | "high";
+
+/**
+ * MIRROR of `EARN_CONFIDENCE_WEIGHT` in
+ * `services/trust/TrustScoreService.ts` — the decay-weighted evidence at which
+ * the trust engine grants a category FULL positive credit. That module owns the
+ * number and does not export it, and this lane may not modify
+ * `services/trust/**`, so it is mirrored here WITH A DRIFT GUARD:
+ * `src/test/passportTrustEvidenceConfidence.test.ts` reads
+ * `TrustScoreService.ts` and fails if the two ever disagree. A mirror with a
+ * guard is not a second scoring system; a second constant nobody compares is.
+ */
+export const TRUST_EARN_CONFIDENCE_WEIGHT = 5;
+
+/**
+ * P50 — "an 82 with high evidence is not equivalent to an 82 with little".
+ *
+ * WHAT THIS REPLACED, AND WHY IT HAD TO GO. `confidence` used to be
+ *
+ *     REMOVED 2026-09-14 — evidence = stamps + trips×2 + (verified ? 3 : 0)
+ *     evidence >= 12 ? "high" : evidence >= 4 ? "medium" : "low";
+ *
+ * — a weighted sum invented in a projection service, over TRAVEL volume, sold
+ * as a statement about TRUST. Nothing anywhere ratified 2, 3, 12 or 4; no trust
+ * event, cap or score reached it; and a traveller with twenty stamps and zero
+ * trust events read `"high"` over a trust score that was entirely the
+ * substituted neutral 50. It was the fabricated central number P154 names.
+ *
+ * WHAT IT IS NOW. The trust engine's OWN measure and nothing else:
+ * `trust_profiles.evidence_weight`, written by `measureEvidence`
+ * (`TrustScoreService.ts`) as the decay-weighted count of applied/confirmed
+ * trust events, read through `getTrustProfileResult`. The band is the engine's
+ * own ramp read at its own three structural points — the same
+ * complete / partial / empty split `domainTrustBasis` already ships:
+ *
+ *   high    the ramp is COMPLETE: weight ≥ TRUST_EARN_CONFIDENCE_WEIGHT, the
+ *           engine's own point of full positive credit.
+ *   medium  the ramp is PARTIAL: some decayed evidence, not yet full credit.
+ *   low     MEASURED AND EMPTY: the profile was read and the engine recorded
+ *           zero evidence. That is a measurement, not an absence.
+ *   null    NOT MEASURED. `trust_profiles` was unreadable, or absent, or is a
+ *           pre-2371 row with no `evidence_weight` at all. No band is emitted,
+ *           because there is nothing to band. This is the P50 requirement that
+ *           absence must never become invented certainty.
+ *
+ * No numeric cut point is invented here: the only threshold is the engine's,
+ * mirrored under a drift guard, and the other two boundaries are zero and
+ * "greater than zero".
+ *
+ * EXPORTED so its test exercises the shipped predicate rather than a copy of
+ * it, for the same reason `trustConfidenceBasis` and `domainTrustBasis` are.
+ */
+export function passportTrustConfidence(
+  state: TrustProfileRead["state"],
+  evidenceWeight: number | null | undefined,
+): TrustConfidenceBand | null {
+  // Unreadable and absent are BOTH "not measured" here. They differ in what a
+  // consumer should say about them — `confidenceBasis` and `degraded` carry
+  // that difference — but neither of them is evidence, so neither may produce
+  // a band.
+  if (state !== "ok") return null;
+  if (evidenceWeight === null || evidenceWeight === undefined) return null;
+  const w = Number(evidenceWeight);
+  // A non-finite or negative weight is a corrupt measurement, not a weak one.
+  if (!Number.isFinite(w) || w < 0) return null;
+  if (w >= TRUST_EARN_CONFIDENCE_WEIGHT) return "high";
+  return w > 0 ? "medium" : "low";
 }

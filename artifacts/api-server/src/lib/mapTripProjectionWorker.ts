@@ -19,7 +19,7 @@
  * published_at, attempts) and trip_events(event_id, trip_id,
  * aggregate_version, sequence, type). 2450 (contract v2) adds actor_role and a
  * `family` payload key; neither is read. The event vocabulary is
- * TRIP_EVENT_TYPES from lib/tripKernel.ts, imported here as published —
+ * TRIP_EVENT_TYPES from domain/trips/commands/tripKernel.ts, imported here as published —
  * the drain accepts any 'trip.%' label and records it; the test pins the SQL
  * literals in 2420/2450 against that list so vocabulary drift is loud.
  *
@@ -47,7 +47,7 @@
 import { getServiceClient } from "./supabase.js";
 import { logger } from "./logger.js";
 import { isFlagEnabled } from "./featureFlags.js";
-import { TRIP_EVENT_TYPES } from "./tripKernel.js";
+import { TRIP_EVENT_TYPES } from "../domain/trips/commands/tripKernel.js";
 
 export const TRIP_MAP_PROJECTION_FLAG = "trip_map_projection_worker_enabled";
 export const TRIP_MAP_PROJECTION_DRAIN_RPC = "trip_map_projection_drain";
@@ -57,10 +57,6 @@ export const TRIP_MAP_PROJECTION_SCHEMA_VERSION = 1;
 export const CONSUMED_TRIP_EVENT_TYPES: readonly string[] = TRIP_EVENT_TYPES;
 
 export const TRIP_MAP_PROJECTION_BATCH_LIMIT = 200;
-const STARTUP_DELAY_MS = 90 * 1000;   // after the server is up; the outbox is durable, nothing is lost by waiting
-const INTERVAL_MS = 60 * 1000;        // projection_lag_seconds (§21) is bounded by this when the flag is on
-
-let _timer: ReturnType<typeof setTimeout> | null = null;
 
 export interface TripMapProjectionPassResult {
   skipped: boolean;
@@ -121,24 +117,13 @@ export async function runTripMapProjectionPass(
   }
 }
 
-export function startTripMapProjectionScheduler(): void {
-  if (_timer !== null) return;
-  logger.info(
-    { startupDelayMs: STARTUP_DELAY_MS, intervalMs: INTERVAL_MS, flag: TRIP_MAP_PROJECTION_FLAG },
-    "TripMapProjectionScheduler scheduled (no-op until the flag is enabled)",
-  );
-  _timer = setTimeout(function tick() {
-    void runTripMapProjectionPass()
-      .catch((err) => logger.warn({ err }, "trip map projection pass failed"))
-      .finally(() => { _timer = setTimeout(tick, INTERVAL_MS); });
-  }, STARTUP_DELAY_MS);
-}
-
-export function stopTripMapProjectionScheduler(): void {
-  if (_timer !== null) { clearTimeout(_timer); _timer = null; }
-}
-
-/** Test hook: is a timer currently scheduled? */
-export function _tripMapProjectionSchedulerArmed(): boolean {
-  return _timer !== null;
-}
+// ── §61 (census-trips): the LOOP lives in server/trips/outboxWorker.ts ──────
+// Trips owns WHEN the outbox is read; this file keeps WHAT the map makes of an
+// event (runTripMapProjectionPass, above). The old names stay exported so
+// routes/health.ts, routes/admin.ts and this worker's tests read the same loop
+// they always did.
+export {
+  startTripOutboxWorker as startTripMapProjectionScheduler,
+  stopTripOutboxWorker as stopTripMapProjectionScheduler,
+  _tripOutboxWorkerArmed as _tripMapProjectionSchedulerArmed,
+} from "../server/trips/outboxWorker.js";

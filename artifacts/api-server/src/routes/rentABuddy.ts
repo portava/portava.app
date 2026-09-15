@@ -37,7 +37,7 @@ import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEng
 import { checkRentBuddyAccess, invalidateSuggestedCityCache } from "./rentABuddyRollout.js";
 import { requireBookingKyc } from "../lib/rentBuddyKycGate.js";
 import { notifyBookingParty } from "../lib/bookingNotify.js";
-import { loadTravelerIdentity } from "../lib/travelerVerification.js";
+import { loadTravelerIdentity, readVerifiedAgeSignal } from "../lib/travelerVerification.js";
 import {
   AWAITING_BUDDY_STATUSES, ACCEPTED_STATUSES, UPCOMING_STATUSES,
   CANCELLABLE_STATUSES, CHANGE_ALLOWED_STATUSES, THREAD_ALLOWED_STATUSES,
@@ -45,6 +45,7 @@ import {
 } from "../lib/rentBuddyBookingStatus.js";
 import { runBuddyRequestSweep } from "../lib/rentBuddyRequestSweeper.js";
 import { createEarningsLedgerEntry } from "../lib/rentBuddyEarningsLedger.js";
+import { readSlotFit, type SlotFit } from "../domain/trips/services/TripFreedomConsumers.js";
 // The ONE reader of rent_buddy_fee_rules. The earnings-summary route used to
 // carry its own level-blind 0.15; see lib/rentBuddyFeeSchedule.ts for why a
 // numeric fallback was the defect rather than the safety net (M1 / M10).
@@ -1673,6 +1674,51 @@ export async function enforceCityRestrictions(opts: {
 }
 
 /**
+ * Refuse a booking when a provider result on file says the traveller is a minor.
+ *
+ * ── WHAT THIS IS FOR (IDF-25 / IDF-27) ──────────────────────────────────────
+ * `profiles.date_of_birth` is typed by the user. `identity_verifications.
+ * is_over_18` is a government document's answer to the same question, written
+ * on every provider result state by `routes/verification.ts`. Until this check
+ * existed nothing in the product read the second one as a gate, so a traveller
+ * whose document proved they were a minor kept the adult birthday they had
+ * typed and booked a stranger for an in-person meeting.
+ *
+ * ── THREE ANSWERS, NOT TWO ─────────────────────────────────────────────────
+ *   verified minor      → 403 `age_requirement`. An AGE refusal, not a
+ *                         "verify your ID" nudge the user could go satisfy, and
+ *                         deliberately not the missing-DOB message either: the
+ *                         date of birth is on file and is contradicted.
+ *   check unreadable    → 503 `age_verification_unavailable`. An unknown answer
+ *                         is an outage, not a verdict about this person, and it
+ *                         refuses THIS booking exactly as the unreadable
+ *                         launch-control and city-restriction reads already do.
+ *   no contradiction    → true, and the gate stack continues unchanged.
+ *
+ * Nothing beyond the refusal happens here — no suspension, no age restriction,
+ * no rewrite of the contradicted date of birth. Those are a separate owner
+ * decision; this function is the refusal only.
+ */
+export async function refuseKnownMinorTraveler(serviceClient: any, res: any, userId: string): Promise<boolean> {
+  const signal = await readVerifiedAgeSignal(serviceClient, userId);
+  if (signal.verificationUnreadable) {
+    res.status(503).json({
+      error: "age_verification_unavailable",
+      message: "Your age could not be verified right now. Please try again shortly.",
+    });
+    return false;
+  }
+  if (signal.verifiedMinor) {
+    res.status(403).json({
+      error: "age_requirement",
+      message: "Rent a Buddy bookings are only available to users aged 18 and over.",
+    });
+    return false;
+  }
+  return true;
+}
+
+/**
  * The SINGLE implementation of the gate stack that POST /rent-a-buddy/bookings
  * runs once the buddy, city and category are known. Extracted (audit RAB-1 /
  * RAB-2) so every other creation path — rebook, package-book, offer-accept —
@@ -1749,6 +1795,16 @@ export async function enforceBookingCreationGates(opts: {
       return false;
     }
   }
+
+  // ── Verified-minor refusal (IDF-25 / IDF-27) ───────────────────────────────
+  // BEFORE the launch-control branch, deliberately. Every age check in this
+  // function lives inside `if (launchCtrl)`, so a rule placed there would fire
+  // only where an admin has configured a control for this location, and could
+  // additionally be sidestepped by turning `requireIdVerification` off — that
+  // flag is the only other identity condition in the block. A government
+  // document stating the traveller is a minor is not a location policy, and
+  // this is the booking path that pairs strangers in person.
+  if (!await refuseKnownMinorTraveler(serviceClient, res, userId)) return false;
 
   // ── Launch control gating (age / DOB / ID / phone) ──────────────────────────
   // countryCode must be provided whenever launch controls are configured —
@@ -2112,6 +2168,29 @@ router.post("/rent-a-buddy/bookings", async (req, res) => {
     return sendBuddyUnavailable(res, blockingException.exception_type);
   }
 
+  // Trips §7.3 (census-trips TR133): a booking placed on a trip is judged
+  // against the trip's freedom windows — the same windows Compass and Saved
+  // Ideas consume — never against a second idea of free time computed here.
+  // A slot that runs into a commitment is refused with the commitment named.
+  // Windows that cannot be read (the operational-projections gate is closed
+  // on every deployment today; or the traveller is not on that trip) let the
+  // booking through, and the response says they were not consulted.
+  let tripFit: SlotFit | null = null;
+  if (typeof tripId === "string" && UUID_RE.test(tripId)) {
+    tripFit = await readSlotFit(serviceClient, {
+      tripId, viewerId: user.id, date: String(bookingDate),
+      startTime: typeof startTime === "string" && startTime.length > 0 ? startTime : null,
+      durationHours: Number(durationH),
+    });
+    if (tripFit.verdict === "CONFLICT") {
+      return res.status(409).json({
+        error: "trip_time_conflict", reason: tripFit.reason,
+        message: `This booking overlaps a commitment on your trip: ${tripFit.info}.`,
+        tripFit,
+      });
+    }
+  }
+
   const { data: booking, error } = await serviceClient
     .from("rent_buddy_bookings")
     .insert({
@@ -2162,7 +2241,7 @@ router.post("/rent-a-buddy/bookings", async (req, res) => {
     await notifyBookingParty(getServiceClient(), buddyUserId, "rent_buddy.booking_requested", (booking as any).id);
   }
 
-  return res.status(201).json({ booking: mapBooking(booking), policyText: POLICY_TEXT });
+  return res.status(201).json({ booking: mapBooking(booking), policyText: POLICY_TEXT, ...(tripFit ? { tripFit } : {}) });
 });
 
 router.get("/rent-a-buddy/bookings", async (req, res) => {
@@ -6203,9 +6282,23 @@ router.get("/rent-a-buddy/me/eligibility", async (req, res) => {
   const idVerified = travIdentity.idVerified;
   if (requireId && !idVerified) reasons.push("id_not_verified");
 
+  // THREE REASONS, NOT ONE. `loadTravelerIdentity` collapses BOTH the verified-
+  // minor contradiction and an unreadable `identity_verifications` into
+  // `age === null`, and this endpoint reported all of it as `age_unverified` —
+  // a statement that this user has no date of birth on file. For a verified
+  // minor that is false (it is on file and contradicted), and during an outage
+  // of a DIFFERENT table it is a verdict invented out of a failed read. The
+  // interface already carries `verifiedMinor` and `verificationUnreadable`;
+  // this reads them instead of guessing from the hole they leave behind.
   let ageOk = true;
   const age: number | null = travIdentity.age;
-  if (age !== null) {
+  if (travIdentity.verificationUnreadable) {
+    reasons.push("age_check_unavailable");
+    ageOk = false;
+  } else if (travIdentity.verifiedMinor) {
+    reasons.push("age_not_verified_adult");
+    ageOk = false;
+  } else if (age !== null) {
     if (age < minAge) { reasons.push(`age_under_${minAge}`); ageOk = false; }
     if (isNightlife && age < nightlifeMinAge) { reasons.push(`nightlife_requires_${nightlifeMinAge}`); ageOk = false; }
   } else {

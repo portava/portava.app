@@ -76,8 +76,8 @@ export const MEMORY_TABLE_OWNERSHIP: readonly MemoryTableOwnership[] = [
     reader: "lib/memoryOutbox.ts, and projection rebuilds",
     appendOnly: true,
     canonical: true,
-    liveInProduction: false,
-    providedBy: "2710_memory_command_kernel_tables.sql (NOT APPLIED)",
+    liveInProduction: true,
+    providedBy: "2710_memory_command_kernel_tables.sql (applied to production 2026-09-15)",
     notes:
       "The Highlights/Memories spec §17 domain event log. Distinct from memory_events in " +
       "every column. Named memory_domain_events precisely so no reader can confuse the two.",
@@ -89,8 +89,8 @@ export const MEMORY_TABLE_OWNERSHIP: readonly MemoryTableOwnership[] = [
     reader: "the outbox consumer",
     appendOnly: false,
     canonical: false,
-    liveInProduction: false,
-    providedBy: "2710_memory_command_kernel_tables.sql (NOT APPLIED)",
+    liveInProduction: true,
+    providedBy: "2710_memory_command_kernel_tables.sql (applied to production 2026-09-15)",
     notes: "Transactional outbox. Not a duplicate of memory_domain_events: it carries delivery state.",
   },
   {
@@ -100,8 +100,8 @@ export const MEMORY_TABLE_OWNERSHIP: readonly MemoryTableOwnership[] = [
     reader: "the command bus, for idempotency replay",
     appendOnly: false,
     canonical: false,
-    liveInProduction: false,
-    providedBy: "2710_memory_command_kernel_tables.sql (NOT APPLIED)",
+    liveInProduction: true,
+    providedBy: "2710_memory_command_kernel_tables.sql (applied to production 2026-09-15)",
     notes: "PK (actor_user_id, idempotency_key). Cascades with the Memory.",
   },
   {
@@ -111,8 +111,8 @@ export const MEMORY_TABLE_OWNERSHIP: readonly MemoryTableOwnership[] = [
     reader: "operators",
     appendOnly: true,
     canonical: true,
-    liveInProduction: false,
-    providedBy: "2710_memory_command_kernel_tables.sql (NOT APPLIED)",
+    liveInProduction: true,
+    providedBy: "2710_memory_command_kernel_tables.sql (applied to production 2026-09-15)",
     notes:
       "Deliberately separate from the receipt: the receipt cascades with the Memory, the audit " +
       "survives it. Records rejected attempts too, which is the half an outcome-only log loses.",
@@ -124,8 +124,8 @@ export const MEMORY_TABLE_OWNERSHIP: readonly MemoryTableOwnership[] = [
     reader: "retrieval, staleness and revocation",
     appendOnly: false,
     canonical: false,
-    liveInProduction: false,
-    providedBy: "2730_memory_derivative_registry.sql (NOT APPLIED)",
+    liveInProduction: true,
+    providedBy: "2730_memory_derivative_registry.sql (applied to production 2026-09-15)",
     notes: "Every row rebuildable from memories; a DROP loses nothing that cannot be regenerated.",
   },
   {

@@ -43,6 +43,7 @@
  */
 import type { LayoverFeasibilityRecord } from "./LayoverFeasibility.js";
 import type { LayoverReturnState } from "./LayoverSafetyEngine.js";
+import { planFitTotals } from "./LayoverPlanFit.js";
 
 /** Version of the crew constraint rules. Travels on every solution. */
 export const LAYOVER_CREW_VERSION = "2026.09.08-1";
@@ -183,18 +184,20 @@ export function sharedReturnBy(members: CrewMember[]): { iso: string | null; bin
 /**
  * Minutes a branch's itinerary needs, including getting back.
  *
- * Deliberately the SAME arithmetic as `computePlanFit` in routes/airport.ts:
- * every stop's dwell plus its travel, plus one more leg equal to the travel of
- * the last stop that is outside the airport (the ride back). It is duplicated
- * rather than imported because the route helper is not exported and this lane
- * does not own that file; if the two ever diverge the crew number is the wrong
- * one, and `layoverCrewConstraints.test.ts` pins the shape so the divergence is
- * visible rather than silent.
+ * The SAME arithmetic as `computePlanFit` in routes/airport.ts, and now
+ * literally so: both call `planFitTotals`. It used to be a hand-copy, with a
+ * comment saying that if the two ever diverged the crew number would be the
+ * wrong one — census L47 is what that divergence cost when it happened, so the
+ * copy is gone and there is one rule.
+ *
+ * THE NUMBER IS A LOWER BOUND, and this signature cannot say so: a stop whose
+ * landside journey nobody stated contributes its dwell and nothing else, so a
+ * branch that "needs" 90 minutes may need more. Callers deciding feasibility
+ * want `planFitTotals` directly and its `neededMinIsLowerBound`; this helper
+ * stays a plain minute count because that is what the branch solver compares.
  */
 export function branchNeededMinutes(stops: CrewPlanStop[]): number {
-  const planned = stops.reduce((sum, s) => sum + (s.durationMin ?? 0) + (s.travelMin ?? 0), 0);
-  const lastOutside = [...stops].reverse().find((s) => !s.insideAirport);
-  return planned + (lastOutside ? (lastOutside.travelMin ?? 0) : 0);
+  return planFitTotals(stops).neededMin;
 }
 
 /**

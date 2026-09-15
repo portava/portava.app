@@ -4,6 +4,8 @@ import { requireUser, sendError, safeSecretEquals } from "../lib/http";
 import { nameVisibilitySet } from "../lib/publicIdentity.js";
 import { getServiceClient } from "../lib/supabase";
 import { resolveStoragePath } from "../lib/storagePath.js";
+import { readVerifiedAgeSignal } from "../lib/travelerVerification.js";
+import { gateAgeFrom } from "../lib/gateAge.js";
 import { executeAccountDeletion } from "../services/accountDeletion/AccountDeletionService.js";
 import { retranslateForUser } from "../services/messageTranslation";
 import { shouldRetranslateOnLanguageChange } from "../lib/retranslateGate";
@@ -14,7 +16,7 @@ import { sniffMedia, processImage, type ProcessedImage, type SniffResult } from 
 import { appMediaRef } from "../lib/postSchemas";
 import { computeTrustScore } from "../lib/trustScore.js";
 import { countContentStampsReceived } from "../services/stamps/ContentStampService.js";
-import { countUserTrips } from "../lib/tripCounts.js";
+import { countUserTrips } from "../domain/trips/services/tripCounts.js";
 import { validateUsername } from "../lib/usernameRules.js";
 
 /**
@@ -398,7 +400,7 @@ router.get("/me/profile", async (req, res) => {
   }
 
   // Completeness score + trust score + stamp count: parallel queries (all fail-open)
-  const [stampRes, tripRes, followersRes, followingRes, trustRes, stampsEarnedRes, contentStampsReceivedRes] = await Promise.allSettled([
+  const [stampRes, tripRes, followersRes, followingRes, trustRes, stampsEarnedRes, contentStampsReceivedRes, ageSignalRes] = await Promise.allSettled([
     sc ? sc.from("passport_stamps").select("user_id", { count: "exact", head: true }).eq("user_id", user.id).limit(1) : Promise.resolve({ count: 0 }),
     sc ? countUserTrips(sc, user.id) : Promise.resolve({ count: 0 }),
     sc ? sc.from("user_follows").select("follower_id", { count: "exact", head: true }).eq("following_id", user.id) : Promise.resolve({ count: 0 }),
@@ -411,6 +413,12 @@ router.get("/me/profile", async (req, res) => {
     // Uses the paginated/RPC counter so lifetime totals are exact for
     // high-post-count users rather than capped by a single-page query.
     sc ? countContentStampsReceived(sc, user.id) : Promise.resolve(0),
+    // THROUGH THE SEAM (lib/gateAge.ts), and inside the batch that was already
+    // being awaited — so `ageGateRequired` costs one more read and not one more
+    // round trip. The `profiles` row is already in hand as `data`, which is why
+    // this reads only the verification signal and folds the two with the seam's
+    // pure function rather than re-reading the profile.
+    sc ? readVerifiedAgeSignal(sc, user.id) : Promise.resolve(null),
   ]);
   const hasStamp     = stampRes.status === "fulfilled" && ((stampRes.value as any).count ?? 0) > 0;
   const tripCount    = tripRes.status === "fulfilled" ? ((tripRes.value as any).count ?? 0) : 0;
@@ -426,20 +434,28 @@ router.get("/me/profile", async (req, res) => {
 
   const completeness = computeCompleteness(data, hasStamp, hasTrip);
 
-  const ageGateRequired = (() => {
-    const dob = (data as any).date_of_birth as string | null | undefined;
-    if (!dob) return true;
-    const birth = new Date(dob + 'T00:00:00');
-    if (isNaN(birth.getTime())) return true;
-    const now = new Date();
-    let age = now.getFullYear() - birth.getFullYear();
-    const m = now.getMonth() - birth.getMonth();
-    if (m < 0 || (m === 0 && now.getDate() < birth.getDate())) age--;
-    return age < 18;
-  })();
+  // THE FLAG THE CLIENT ACTS ON. It used to be computed from the typed date of
+  // birth alone, right here, with its own copy of the arithmetic — so a user
+  // whose government document says they are a minor was told by the server that
+  // no age gate applied to them, on every profile load.
+  //
+  // `ageSignal` is null only when there is no service client at all, which is
+  // the same "cannot check" state an errored read produces; both fail closed.
+  const ageSignal = ageSignalRes.status === "fulfilled" ? ageSignalRes.value : null;
+  const ageGate = gateAgeFrom(
+    (data as any).date_of_birth as string | null | undefined,
+    ageSignal ?? { verifiedMinor: false, verificationUnreadable: true },
+  );
+  const ageGateRequired = ageGate.state !== "ok" || ageGate.age === null || ageGate.age < 18;
+  // The DISTINCT THIRD ANSWER, on the wire. `ageGateRequired: true` alone
+  // cannot tell a client "this person is under 18" from "we could not check",
+  // and shipping the first when the second is true is a statement about the
+  // user that nothing supports.
+  const ageVerificationUnavailable = ageGate.state === "unreadable";
   res.status(200).json({
     ...mapProfile(data),
     ageGateRequired,
+    ageVerificationUnavailable,
     completeness,
     tripCount,
     followersCount,

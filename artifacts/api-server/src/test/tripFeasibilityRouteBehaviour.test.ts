@@ -36,7 +36,7 @@ import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import {
   DRIVE_METRES_PER_SECOND, DRIVE_WAIT_SECONDS, WALK_MAX_METRES,
-} from "../services/trips/TravelTimeProvider.js";
+} from "../domain/trips/contracts/TravelTimeProvider.js";
 
 const OWNER_ID = "11111111-1111-1111-1111-111111111111";
 const OTHER_ID = "33333333-3333-3333-3333-333333333333";

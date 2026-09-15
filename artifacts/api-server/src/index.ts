@@ -10,7 +10,6 @@ import { startWeatherCacheCleanup } from "./lib/weatherCacheCleanup";
 import { startDiscoveryCacheCleanup } from "./lib/discoveryCacheCleanup";
 import { initTelegraphBroadcast } from "./lib/telegraphBroadcast";
 import { startSafeReturnScheduler } from "./lib/safeReturnScheduler";
-import { startTripCrewLiveShareScheduler } from "./lib/tripCrewLiveShareScheduler";
 import { startDelayedPostPublisher } from "./lib/delayedPostPublisher";
 import { startCompassAbuseScanScheduler } from "./lib/compassAbuseScanScheduler";
 import { startCompassSenseScheduler } from "./lib/compassSenseScheduler";
@@ -20,7 +19,6 @@ import { startZombieTokenSweeper } from "./lib/zombieTokenSweeper";
 import { startEventWaitlistSweeper } from "./lib/eventWaitlistSweeper";
 import { startEventLifecycleScheduler } from "./lib/eventLifecycle.js";
 import { startCallSweepScheduler } from "./lib/callSweepScheduler";
-import { startTripReminderScheduler } from "./lib/tripReminderScheduler";
 import { startIntelligenceGraphScheduler } from "./lib/intelligenceGraphScheduler";
 import { startIntelCoverageScheduler } from "./lib/intelCoverageScheduler";
 import { startInviteSlotReconciler } from "./lib/inviteSlotReconciler";
@@ -55,7 +53,9 @@ import { startIntelRewardScheduler } from "./lib/intelRewardScheduler.js";
 import { startIntelAttributionScheduler } from "./lib/intelAttributionScheduler.js";
 import { registerScopedTrustApplier } from "./lib/intelScopedTrustApply.js";
 import { startMemoryProjectionScheduler } from "./lib/memoryProjectionScheduler.js";
-import { startTripMapProjectionScheduler } from "./lib/mapTripProjectionWorker.js";
+// §61 (census-trips TR440): the Trips outbox loop and the trip projection workers, each started as one thing.
+import { startTripOutboxWorker } from "./server/trips/outboxWorker.js";
+import { startTripProjectionWorkers } from "./server/trips/projectionWorkers/index.js";
 import { startPlaceDayLifecycleWorker } from "./lib/places/placeDaysWorker.js";
 
 assertRequiredEnv(logger);
@@ -112,7 +112,7 @@ app.listen(port, (err) => {
   startDiscoveryCacheCleanup();
   initTelegraphBroadcast();
   startSafeReturnScheduler();
-  startTripCrewLiveShareScheduler();
+  startTripProjectionWorkers(); // reminders, live-share expiry, retention sweep — server/trips/projectionWorkers
   startDelayedPostPublisher();
   startCompassAbuseScanScheduler();
   // Periodic Compass Sense evaluator: delivers nudges to opted-in
@@ -125,7 +125,6 @@ app.listen(port, (err) => {
   startEventWaitlistSweeper();
   startEventLifecycleScheduler(); // open|full|waitlist -> started once now >= starts_at; flag-gated (event_start_transition_enabled, seeded FALSE by 2600), fail-closed
   startCallSweepScheduler();
-  startTripReminderScheduler();
   startIntelligenceGraphScheduler();
   // Deletes location_snapshots past expires_at. The table's only reader already
   // filters on expires_at, so purging expired rows changes no result; without
@@ -159,7 +158,10 @@ app.listen(port, (err) => {
   // aggregate_version. Flag-gated on trip_map_projection_worker_enabled,
   // fail-closed; a no-op (one flag read a minute) until enabled. Production
   // has no outbox yet, so it has no input there until 2334→2337→2420→2520 apply.
-  startTripMapProjectionScheduler();
+  startTripOutboxWorker(); // drains trip_outbox for every registered consumer — server/trips/outboxWorker
+  // Trips spec §5.3 / §21.3 retention: calls 2789's trip_activity_log_prune()
+  // and 2791's trip_reservations_forget_raw_text() every six hours while
+  // trip_retention_sweep_enabled (2792) is on. Fail-closed; a no-op until then.
   // IG-08 coverage producer: assembles (zone, claim-family) gap snapshots and
   // (when intel_missions is also on) generates mission candidates. Flag-gated on
   // intel_coverage, fail-closed; a no-op until enabled.

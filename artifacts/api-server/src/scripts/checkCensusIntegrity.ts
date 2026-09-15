@@ -92,7 +92,25 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-const CENSUS_DIR = new URL("../../../../docs/architecture/", import.meta.url).pathname;
+/**
+ * The corpus this tool reads.
+ *
+ * `CENSUS_INTEGRITY_DIR` is a TEST-ONLY seam, and it is narrow on purpose: it
+ * changes WHICH directory is read and nothing else. Every floor below still
+ * applies to whatever it points at, so a fixture cannot be a way to make the
+ * tool agree with less than the real corpus would demand — a fixture with too
+ * few censuses fails MIN_CENSUS_FILES exactly as a broken tree would.
+ *
+ * It exists because the id grammar is module-private and there is no other way
+ * to put a single crafted cell in front of it. CI never sets this: the package
+ * script `check:census-integrity` runs with it unset and reads the real
+ * `docs/architecture/`, which is the invocation that gates the branch. The
+ * fixture run is an ADDITIONAL unit test, never the only reach — the failure
+ * mode `guardRegistry.ts` exists to prevent.
+ */
+const CENSUS_DIR = process.env.CENSUS_INTEGRITY_DIR
+  ? process.env.CENSUS_INTEGRITY_DIR.replace(/\/?$/, "/")
+  : new URL("../../../../docs/architecture/", import.meta.url).pathname;
 
 /** A tree with no censuses is a tree this check could not find. */
 const MIN_CENSUS_FILES = 10;
@@ -123,6 +141,8 @@ interface CensusResult {
   /** Every denominator the document states. More than one is deliberate, not a bug. */
   allDenominators: number[];
   duplicates: Array<{ id: string; lines: number[] }>;
+  /** Rows whose `×N` disagrees with the id count in the same cell. */
+  multiplierMismatches: Array<{ cell: string; stated: number; ids: number; line: number }>;
   hasCorrectionHeader: boolean;
 }
 
@@ -141,22 +161,185 @@ const VERDICT_ALIASES: Record<string, Verdict> = {
   X: "X", CV: "X",
 };
 
-/** `**C**` / ` BAC ` / `**BW**` → the bucket, or null if the cell is not a verdict. */
-function verdictOf(cell: string): Verdict | null {
-  const t = cell.trim().replace(/\*/g, "").toUpperCase();
-  return VERDICT_ALIASES[t] ?? null;
+/**
+ * `**C**` / ` BAC ` / `**BW**` / `**N** ×8` / `**C** ⌀` / `**?**` → the bucket and
+ * how many requirements the cell claims, or null if the cell is not a verdict.
+ *
+ * THREE FORMS WERE SILENTLY DROPPED BEFORE 2026-09-11, and each drop made a
+ * census look like it counted in prose when it had in fact written a table row:
+ *
+ *  - `?` is the CANNOT-VERIFY token in census-trips/map/wall ("Verdict key:
+ *    **?** CANNOT-VERIFY"). It was absent from VERDICT_ALIASES, so every row
+ *    carrying it vanished — 8 in wall, 5 in map, 3 in telegraph, and so on.
+ *    The corpus was under-reporting CANNOT-VERIFY, which is the one bucket a
+ *    reader uses to judge how much of a census is assertion.
+ *  - `⌀` marks a *vacuously* satisfied requirement (census-trips flags three,
+ *    census-map and census-compass more). It is a reader's footnote on a
+ *    verdict, not a different verdict, and it made the cell unparseable.
+ *  - `×N` states that one row carries N consecutive requirements. Dropping it
+ *    dropped the row AND the N requirements with it.
+ *
+ * A FOURTH was found on 2026-09-13, and it is the same mistake as `⌀`.
+ * census-map writes four of its rows as `C *(not spec-attributable)*` — the
+ * verdict, then a parenthesised note saying the artifact predates the spec and
+ * so does not count toward that census's ATTRIBUTION percentage. It is a
+ * qualifier on a verdict, exactly as `⌀` is, and it was the entire reason
+ * census-map reported "4 counted where this tool cannot read". Those four are
+ * not prose: M47, M169, M176 and M177 are ordinary table rows, and the census's
+ * own headline counts them. With them dropped the tool reported C 231 against a
+ * document stating 235, and the difference was invisible as a discrepancy
+ * because it surfaced as an unreconciled-prose number instead.
+ *
+ * SCOPED, AND MEASURED RATHER THAN ASSERTED. Only a trailing parenthesised note
+ * is stripped, and only around the verdict token; a prose cell containing a
+ * parenthesis still fails the token match below. Dumping (census, id, verdict)
+ * for all thirteen censuses before and after, the diff is FOUR LINES: M47,
+ * M169, M176 and M177 appear, each as C. Not one existing verdict anywhere
+ * changes.
+ *
+ * It does read more CELLS than that, and saying otherwise would be the
+ * comfortable version. Thirty-seven cells across six censuses newly parse —
+ * `C (gated)` in compass, `C (by reference)` in discovery, `W (improved)` and
+ * `C (tree)` in layover, `BW (unchanged)` in sensing, `W (§27)` and
+ * `N (§29)` in trips. Every one is a verdict cell with a qualifier, which is
+ * why none of them moves a count: each restates an id a recount section had
+ * already restated, or sits in a PR-comparison table that is skipped. What they
+ * DO move is this tool's own bookkeeping — the per-census "revised", "no
+ * verdict" and "PR-comparison" tallies printed below shift in five censuses.
+ * Those numbers are how a reader judges how much of a headline is
+ * machine-checked, so the shift is reported here rather than discovered later.
+ */
+function verdictOf(cell: string): { verdict: Verdict; multiplier: number } | null {
+  const t = cell
+    .trim()
+    .replace(/\*/g, "")
+    .replace(/[⌀†‡]/g, "") // vacuity / footnote flags qualify a verdict, they are not one
+    .replace(/`?∅`?/g, "") // `∅` (U+2205) is the same class — census-telegraph's "unguarded
+    // absence" flag, backticked. Kept on its own line so the line above stays
+    // byte-identical: census-input-intelligence quotes it VERBATIM.
+    .replace(/\s*\([^()]*\)\s*$/, "") // `C (not spec-attributable)` — an attribution note, not a verdict
+    .trim()
+    .toUpperCase();
+  const m = /^([A-Z]{1,3}|\?)\s*(?:[×X]\s*([0-9]{1,4}))?$/.exec(t);
+  if (!m) return null;
+  const verdict = VERDICT_ALIASES[m[1] === "?" ? "CV" : m[1]!];
+  if (!verdict) return null;
+  return { verdict, multiplier: m[2] ? Number(m[2]) : 1 };
 }
 
 /**
- * A requirement id. The hyphen is not decoration: census-compass numbers its
- * rows CX-03, and a pattern without it silently parsed that whole census as
- * empty — the exact vacuity this file is supposed to catch, committed by the
- * file itself on its first run.
+ * A requirement id CELL, which is not always a single id.
+ *
+ * The hyphen is not decoration: census-compass numbers its rows CX-03, and a
+ * pattern without it silently parsed that whole census as empty — the exact
+ * vacuity this file is supposed to catch, committed by the file itself on its
+ * first run. THREE MORE SHAPES were dropped the same way, and together they hid
+ * 69 of census-trips' 451 requirements and every one of its later corrections:
+ *
+ *  1. A RANGE. `| TR38–TR45 | …phases… | **N** ×8 |` is one row stating eight
+ *     verdicts, and census-trips says so in its own key: *"A cell reading `**N**
+ *     ×9` is one verdict applied to the consecutive ids named in that row; each
+ *     id remains individually addressable."* The old pattern required the cell
+ *     to be exactly one id, so the row was not read at all — neither as eight
+ *     requirements nor as one.
+ *  2. A COMPOUND. `| TR58–TR62 + TR64–TR66 | … |` skips an id deliberately
+ *     (TR63 is scored W on its own row, the other eight N). Same outcome.
+ *  3. A LABELLED id. Every "Row moves" table in census-trips §29.4/§30.3/§31.3
+ *     and every "Row corrections" table in §32.4 writes `` | TR78 `trip_stages`
+ *     | W | **W** | why | ``. The id is there, followed by a human label. The
+ *     old pattern rejected the cell for the label, so TWENTY-EIGHT verdict
+ *     REVISIONS — the newest statements in the document, the whole point of
+ *     those sections — were invisible while the superseded originals counted.
+ *
+ * So the id expression is taken from the FRONT of the cell and any trailing
+ * label is kept only for reporting. A cell whose leading token is not an id
+ * still parses to nothing, which is what keeps prose rows out.
  */
-const ID_CELL = /^\*{0,2}([A-Z]{1,4}-?[0-9]{1,4}[a-z]?)\*{0,2}$/;
+interface IdCell { ids: string[]; label: string }
+
+function parseIdCell(cellRaw: string): IdCell | null {
+  const t = cellRaw.trim().replace(/\*/g, "").trim();
+
+  // ── TWO MORE SHAPES, BOTH MEASURED ON census-trust §12 (2026-09-13) ────────
+  //
+  // 4. A LETTERED SERIES. `TV-P1` … `TV-P5` are census-trust's five privacy
+  //    invariants. The pattern below requires a DIGIT straight after the
+  //    prefix, so `TV-P1` matched nothing and all five rows were dropped —
+  //    silently, exactly like CX-03 was. This is checked FIRST and returns a
+  //    single id, because a lettered series is never a range: `TV-P1–TV-P5`
+  //    has never been written and would be ambiguous with a label if it were.
+  //
+  // 5. A PREFIX THAT ENDS IN A DIGIT. `TRV2-03` is one requirement of
+  //    `Portava_Trust_Architecture_Upgrade_v2.md`. The general pattern read
+  //    `TRV` as the prefix, `2` as the first number and `-03` as a RANGE
+  //    separator, and expanded one row into the invented ids TRV2, TRV3. Worse
+  //    than dropping it: `TRV2-11` expanded to ten ids, last-statement-wins
+  //    overwrote each earlier expansion, and one `CV` row vanished into nine
+  //    fabricated `C`s. The trust tally read 91 rows / 73 C where the document
+  //    said 93 / 69 — a machine disagreeing with a census by four correct rows,
+  //    in its favour, which is the one direction that must never be silent.
+  //
+  // Both are recognised before the general range grammar, never inside it, so
+  // no existing census's parse can change. PROVED, not argued: the full
+  // per-census table was captured before and after this edit and every one of
+  // the other twelve censuses is byte-identical.
+  const lettered = /^([A-Z]{1,4}-[A-Z]{1,2}[0-9]{1,4})(?![0-9A-Za-z-])/.exec(t);
+  if (lettered) {
+    return { ids: [lettered[1]!], label: t.slice(lettered[1]!.length).trim() };
+  }
+  const digitPrefixed = /^([A-Z]{1,4}[0-9]-[0-9]{1,4})(?![0-9A-Za-z-])/.exec(t);
+  if (digitPrefixed) {
+    return { ids: [digitPrefixed[1]!], label: t.slice(digitPrefixed[1]!.length).trim() };
+  }
+  // 6. A NAMED id, carrying no digits at all. `CPH-EVAL` is census-compass's
+  //    standing nine-query evaluation set — one requirement, named rather than
+  //    numbered because it is not the Nth of anything. Every pattern above and
+  //    the general grammar below require a digit, so it matched nothing and the
+  //    row was dropped silently, which is the same failure as TV-P1 and CX-03
+  //    in a third costume: a requirement invisible to the tallier while the
+  //    document counts it.
+  //
+  //    Deliberately narrow. The suffix is 2-8 capitals with NO digit and no
+  //    lowercase, and the cell must end or break straight after it, so an
+  //    ordinary prose cell cannot be read as an id. A range of named ids is not
+  //    a thing anyone has written and would be unorderable if it were, so this
+  //    returns exactly one id and never expands.
+  const named = /^([A-Z]{1,4}-[A-Z]{2,8})(?![0-9A-Za-z-])/.exec(t);
+  if (named) {
+    return { ids: [named[1]!], label: t.slice(named[1]!.length).trim() };
+  }
+
+  const lead = /^([A-Z]{1,4}-?)([0-9]{1,4})/.exec(t);
+  if (!lead) return null;
+  const prefix = lead[1]!;
+  // One or more segments joined by `+` or `,`; each a single id or an id range.
+  // The prefix may be repeated (`TR58–TR62`) or elided (`H26–H30`, `TR38–45`).
+  const seg = `(?:${prefix})?[0-9]{1,4}[a-z]?`;
+  const expr = new RegExp(`^${seg}(?:\\s*[–—-]\\s*${seg})?(?:\\s*[+,]\\s*${seg}(?:\\s*[–—-]\\s*${seg})?)*`);
+  const head = expr.exec(t);
+  if (!head) return null;
+  const ids: string[] = [];
+  for (const part of head[0]!.split(/\s*[+,]\s*/)) {
+    const range = new RegExp(`^(?:${prefix})?([0-9]{1,4})[a-z]?\\s*[–—-]\\s*(?:${prefix})?([0-9]{1,4})[a-z]?$`).exec(part.trim());
+    if (range) {
+      const a = Number(range[1]);
+      const b = Number(range[2]);
+      // A descending or absurd range is a typo, not a range. Reject the whole
+      // cell so it surfaces as unparsed rather than inventing hundreds of ids.
+      if (b < a || b - a > 600) return null;
+      for (let k = a; k <= b; k++) ids.push(prefix + k);
+      continue;
+    }
+    const single = new RegExp(`^(?:${prefix})?([0-9]{1,4})([a-z]?)$`).exec(part.trim());
+    if (single) { ids.push(prefix + single[1] + single[2]); continue; }
+    return null;
+  }
+  return { ids, label: t.slice(head[0]!.length).trim() };
+}
 
 function parseCensus(file: string, text: string): CensusResult {
   const seenRows: Row[] = [];
+  const multiplierMismatches: CensusResult["multiplierMismatches"] = [];
   let nonVerdictRows = 0;
   let hypotheticalRows = 0;
   const lines = text.split("\n");
@@ -188,9 +371,8 @@ function parseCensus(file: string, text: string): CensusResult {
     if (cells.length < 3) return;
     // Is this line a header? It is if the NEXT line is a separator.
     if (isSeparator(lines[i + 1] ?? "")) { headerCells = cells.map((c) => c.trim()); return; }
-    const idm = ID_CELL.exec(cells[0]!.trim());
-    if (!idm) return;
-    const id = idm[1]!;
+    const idCell = parseIdCell(cells[0]!);
+    if (!idCell) return;
     // The verdict is whichever cell holds a bare verdict token. Censuses differ
     // in column count (some carry an extra "spec section" column), so the
     // position is FOUND rather than assumed — assuming column 4 would silently
@@ -203,7 +385,7 @@ function parseCensus(file: string, text: string): CensusResult {
     // verdict being superseded. Taking the first recorded the OLD verdict as
     // current for 31 layover rows, which would have reported the pre-pass state
     // as the present one.
-    const found: Verdict[] = [];
+    const found: Array<{ verdict: Verdict; multiplier: number }> = [];
     for (let c = 1; c < cells.length; c++) {
       const got = verdictOf(cells[c]!);
       if (got) found.push(got);
@@ -214,8 +396,16 @@ function parseCensus(file: string, text: string): CensusResult {
       hypotheticalRows++;
       return;
     }
-    if (found.length > 0) seenRows.push({ id, verdict: found[found.length - 1]!, line: i + 1 });
-    else nonVerdictRows++;
+    if (found.length === 0) { nonVerdictRows++; return; }
+    const last = found[found.length - 1]!;
+    // A `×N` that disagrees with the number of ids in the same cell is a
+    // COUNTING ERROR the document states about itself — `| TR38–TR45 | … | N ×9 |`
+    // claims nine requirements on eight ids. Whichever is right, the headline
+    // derived from it is wrong, and no reader would ever see the discrepancy.
+    if (last.multiplier > 1 && last.multiplier !== idCell.ids.length) {
+      multiplierMismatches.push({ cell: cells[0]!.trim(), stated: last.multiplier, ids: idCell.ids.length, line: i + 1 });
+    }
+    for (const id of idCell.ids) seenRows.push({ id, verdict: last.verdict, line: i + 1 });
   });
 
   // LAST STATEMENT WINS. A census that revises a verdict does it by restating
@@ -259,9 +449,27 @@ function parseCensus(file: string, text: string): CensusResult {
   // the LAST such block in the file is the current headline. A block that does
   // not state all four buckets is not a headline and is ignored — this must not
   // half-read a table and then accuse it of not summing.
+  //
+  // THE LABEL MUST MATCH THE WHOLE CELL, and the `[^|]*` that used to follow it
+  // was a live bug that had simply never been reached. Every census writes both
+  //
+  //     | CANNOT-VERIFY | **1** |                    <- the bucket count
+  //     | CANNOT-VERIFY share | **1 / 451 = 0.2 %** | <- a percentage
+  //
+  // and `CANNOT-VERIFY[^|]*` matches BOTH. Last-block-wins then took the share
+  // row, and "last number on the line" turned `1 / 451 = 0.2 %` into **2**. The
+  // same happened in wall (`8 / 205 = 3.9%` → 9), passport (→ 6), map and
+  // input-intelligence. It bit nothing only because the headline-sum check
+  // below fires exclusively when parsed rows equal the denominator, which no
+  // affected census reached while entire row shapes were being dropped. Fixing
+  // the parser above reaches it for six censuses at once, so a matcher that
+  // reads a percentage as a count would have failed four of them on arithmetic
+  // that was never wrong. Measured before and after: with `[^|]*` the sums are
+  // media 168, passport 174, trips 452, wall 206 against denominators of
+  // 450/169/451/205; anchored, all four sum exactly to their denominator.
   const headlineFor = (label: RegExp): number[] => {
     const found: number[] = [];
-    for (const m of text.matchAll(new RegExp(`^>?\\s*\\|\\s*${label.source}[^|]*((?:\\|[^|\\n]*)+)\\|\\s*$`, "gim"))) {
+    for (const m of text.matchAll(new RegExp(`^>?\\s*\\|\\s*\\*{0,2}${label.source}\\*{0,2}\\s*((?:\\|[^|\\n]*)+)\\|\\s*$`, "gim"))) {
       const nums = [...m[1]!.matchAll(/\*{0,2}([0-9]{1,4})\*{0,2}/g)].map((x) => Number(x[1]));
       if (nums.length > 0) found.push(nums[nums.length - 1]!);
     }
@@ -287,6 +495,7 @@ function parseCensus(file: string, text: string): CensusResult {
     statedDenominator,
     statedHeadline,
     duplicates,
+    multiplierMismatches,
     hasCorrectionHeader: /CORRECTION HEADER/i.test(text),
   };
 }
@@ -336,7 +545,36 @@ for (const f of files) {
           `headline carries the previous headline's error forward while looking freshly measured. Count the rows: ` +
           `C ${r.counts.C} / W ${r.counts.W} / N ${r.counts.N} / X ${r.counts.X}.`,
       );
+    } else if (h.c !== r.counts.C || h.w !== r.counts.W || h.n !== r.counts.N || h.x !== r.counts.X) {
+      // ── A HEADLINE THAT SUMS CORRECTLY AND STILL DISAGREES WITH ITS TABLE ──
+      //
+      // Summing to the denominator only proves the four numbers are a partition
+      // of the right total. It does NOT prove they are THIS document's
+      // partition: a headline measured before a later section revised thirty
+      // rows still sums to 451 while naming a distribution the body no longer
+      // states. That is exactly how census-trips came to publish 78/110/262/1
+      // over a body saying 89/127/234/1 — the same 451, a different document.
+      //
+      // Where there is no prose gap the table IS the headline, so equality is
+      // decidable and anything else is drift. Applied to the six censuses that
+      // reach this branch, five already agree to the row; only the one whose
+      // staleness was already known does not.
+      problems.push(
+        `::error::${f}: its stated headline is C ${h.c} / W ${h.w} / N ${h.n} / X ${h.x} but its own rows count ` +
+          `C ${r.counts.C} / W ${r.counts.W} / N ${r.counts.N} / X ${r.counts.X}. Both sum to ${r.statedDenominator}, ` +
+          `so this is not an arithmetic slip — it is a headline that stopped describing the table underneath it. ` +
+          `EVERY requirement in the denominator was parsed, so there is no prose gap to explain the difference: ` +
+          `either the headline predates a later section's row moves, or the rows do. Restate the headline from the ` +
+          `rows, or say in the document which of the two is wrong.`,
+      );
     }
+  }
+  for (const m of r.multiplierMismatches) {
+    problems.push(
+      `::error::${f}: line ${m.line} — the cell "${m.cell}" names ${m.ids} requirement id(s) and its verdict claims ` +
+        `×${m.stated}. One of the two is a typo and the headline built on it is wrong by ${Math.abs(m.stated - m.ids)}, ` +
+        `in a row a reader would never think to re-count.`,
+    );
   }
 }
 
@@ -346,43 +584,124 @@ if (files.length < MIN_CENSUS_FILES) {
 
 for (const p of problems) console.error(p);
 
-console.log("\nPer-census verdict counts, recomputed from the tables:\n");
-console.log(`  ${"census".padEnd(28)} ${"rows".padStart(5)} ${"C".padStart(5)} ${"W".padStart(5)} ${"N".padStart(5)} ${"X".padStart(4)}  ${"denom".padStart(6)}  unreconciled`);
-let totalRows = 0;
-let totalGap = 0;
-for (const r of results) {
-  totalRows += r.rows.length;
-  const gap = r.statedDenominator === null ? null : r.statedDenominator - r.rows.length;
-  if (gap !== null) totalGap += gap;
-  const name = r.file.replace(/^census-|\.md$/g, "");
+/**
+ * DUMP MODE — `CENSUS_INTEGRITY_DUMP=W` (or `C`, `N`, `X`, or `ALL`).
+ *
+ * Prints one `census|id|verdict|line` record per parsed row and exits 0 without
+ * running any assertion. It exists so that a lane aiming at the BUILT-BUT-WRONG
+ * rows reads THIS parser's answer rather than writing a second regex over the
+ * same tables — the mistake that produced "3 CPV2 / 0 DSV2 / 6 TRV2" from a
+ * pattern that required the id cell to be exactly an id. A second parser that
+ * disagrees with the guard is worse than no parser, because it disagrees
+ * silently.
+ *
+ * It reports the SAME rows the counts above are computed from: revisions
+ * already collapsed to their last statement, PR-comparison rows already
+ * skipped. If this dump and the count table ever disagree, the count table is
+ * the one to trust and this block is the bug.
+ */
+const DUMP = process.env.CENSUS_INTEGRITY_DUMP?.trim().toUpperCase();
+if (DUMP) {
+  const want = DUMP === "ALL" ? null : DUMP.split(/[,\s]+/).filter(Boolean);
+  const lines: string[] = [];
+  for (const r of results) {
+    const name = r.file.replace(/^census-|\.md$/g, "");
+    for (const row of r.rows) {
+      if (want && !want.includes(row.verdict)) continue;
+      lines.push(`${name}|${row.id}|${row.verdict}|${row.line}`);
+    }
+  }
+  const dumped = lines.length;
+
+  /**
+   * process.stdout.write, NOT fs.writeSync, and NOT followed by process.exit().
+   * This line has now been wrong twice, in opposite directions, and both
+   * versions lost rows silently.
+   *
+   * ROUND 1 — console.log + process.exit(0). When stdout is a pipe Node's
+   * console.log is ASYNCHRONOUS, and the exit discarded whatever was still
+   * buffered. The Discovery ledger rebuilt to 177, 36 and 36 requirements on an
+   * unchanged tree and nothing failed.
+   *
+   * ROUND 2 — fs.writeSync(1, …) + process.exit(0). The comment that replaced
+   * round 1 claimed: "fs.writeSync(1, …) blocks until the bytes are handed to
+   * the OS whatever stdout is" and "one write, not 3499, so there is also no
+   * partial-line boundary to land on." BOTH HALVES ARE FALSE, and the second is
+   * exactly backwards — one oversized write is precisely where a pipe cuts.
+   * Measured under `--import tsx` with stdout a shell-pipeline pipe:
+   *
+   *     requested=200001  writeSync_returned=200001  ->  reader received 65536
+   *
+   * writeSync REPORTED A WRITE IT DID NOT PERFORM, so looping on its return
+   * value cannot fix it either. Chunking was measured too and is NOT a fix, it
+   * only moves the cliff: 32 KiB chunks of a 2 MB payload delivered 196,608
+   * bytes to a fast reader and 65,536 to a reader that slept 0.5 s first.
+   *
+   * Removing process.exit() alone does NOT fix it either — writeSync bypasses
+   * the stream, so the bytes are already gone. Measured: still 65,536.
+   *
+   * WHAT WORKS, measured at 200 KB and at 2 MB, against a fast reader and a
+   * slow one: the STREAM plus a natural exit. process.stdout.write applies
+   * backpressure and re-drives partial writes, and process.exitCode lets Node
+   * flush before the process ends, where process.exit() would cut it off again.
+   * The tail of this file is guarded by `if (!DUMP)` for that reason — the dump
+   * must fall out of the bottom rather than exit from the middle.
+   */
+  if (dumped > 0) process.stdout.write(`${lines.join("\n")}\n`);
+  console.error(`CENSUS_INTEGRITY_DUMP=${DUMP}: ${dumped} row(s) from ${results.length} census file(s).`);
+  // A filter that matches nothing looks exactly like a clean corpus. Say so.
+  if (dumped === 0) {
+    console.error(`::error::CENSUS_INTEGRITY_DUMP=${DUMP} matched no rows — the filter is wrong, the corpus is not empty.`);
+    process.exitCode = 1;
+  }
+}
+
+// The DUMP block above falls out of the bottom instead of calling process.exit(),
+// so the report below must be skipped explicitly. An exit from the middle is what
+// truncated the dump twice; this guard is what makes not exiting possible.
+if (!DUMP) {
+  console.log("\nPer-census verdict counts, recomputed from the tables:\n");
+  console.log(`  ${"census".padEnd(28)} ${"rows".padStart(5)} ${"C".padStart(5)} ${"W".padStart(5)} ${"N".padStart(5)} ${"X".padStart(4)}  ${"denom".padStart(6)}  unreconciled`);
+  let totalRows = 0;
+  let totalGap = 0;
+  for (const r of results) {
+    totalRows += r.rows.length;
+    const gap = r.statedDenominator === null ? null : r.statedDenominator - r.rows.length;
+    if (gap !== null) totalGap += gap;
+    const name = r.file.replace(/^census-|\.md$/g, "");
+    console.log(
+      `  ${name.padEnd(28)} ${String(r.rows.length).padStart(5)} ${String(r.counts.C).padStart(5)} ${String(r.counts.W).padStart(5)} ${String(r.counts.N).padStart(5)} ${String(r.counts.X).padStart(4)}  ` +
+        `${(r.statedDenominator ?? "—").toString().padStart(6)}  ${gap === null ? "denominator not stated in a parseable form" : `${gap} counted where this tool cannot read`}` +
+        `${r.allDenominators.length > 1 ? ` [states ${r.allDenominators.length} denominators: ${r.allDenominators.join(", ")} — scored against more than one population on purpose]` : ""}` +
+        `${r.revised.length > 0 ? ` [${r.revised.length} row(s) revised by a later recount; last statement taken]` : ""}` +
+        `${r.nonVerdictRows > 0 ? ` [${r.nonVerdictRows} id-keyed row(s) carry no verdict — not verdict tables, not counted]` : ""}` +
+        `${r.hypotheticalRows > 0 ? ` [${r.hypotheticalRows} row(s) in a PR-comparison table — skipped, they describe UNMERGED work]` : ""}` +
+        `${r.hasCorrectionHeader ? "  [carries a CORRECTION HEADER]" : ""}`,
+    );
+  }
+
   console.log(
-    `  ${name.padEnd(28)} ${String(r.rows.length).padStart(5)} ${String(r.counts.C).padStart(5)} ${String(r.counts.W).padStart(5)} ${String(r.counts.N).padStart(5)} ${String(r.counts.X).padStart(4)}  ` +
-      `${(r.statedDenominator ?? "—").toString().padStart(6)}  ${gap === null ? "denominator not stated in a parseable form" : `${gap} counted where this tool cannot read`}` +
-      `${r.allDenominators.length > 1 ? ` [states ${r.allDenominators.length} denominators: ${r.allDenominators.join(", ")} — scored against more than one population on purpose]` : ""}` +
-      `${r.revised.length > 0 ? ` [${r.revised.length} row(s) revised by a later recount; last statement taken]` : ""}` +
-      `${r.nonVerdictRows > 0 ? ` [${r.nonVerdictRows} id-keyed row(s) carry no verdict — not verdict tables, not counted]` : ""}` +
-      `${r.hypotheticalRows > 0 ? ` [${r.hypotheticalRows} row(s) in a PR-comparison table — skipped, they describe UNMERGED work]` : ""}` +
-      `${r.hasCorrectionHeader ? "  [carries a CORRECTION HEADER]" : ""}`,
+    `\nNOTE: ${files.length} census file(s) read; ${totalRows} verdict row(s) parsed; ${totalGap} requirement(s) across all ` +
+      `censuses are counted somewhere this tool cannot read (prose blocks that enumerate several requirements in one ` +
+      `paragraph — a legitimate way to count them and an impossible one to parse).`,
   );
-}
+  console.log(
+    `NOTE: DOES NOT COVER, stated rather than implied: (1) whether a verdict is CORRECT — this checks that the document ` +
+      `agrees with itself, not that it agrees with the code; (2) the prose-counted requirements above; (3) whether the ` +
+      `stated headline percentages match the parsed counts EXCEPT where a census has no prose gap at all (parsed rows = ` +
+      `stated denominator), where the headline must sum to the denominator and is checked; elsewhere the prose gap makes a ` +
+      `mismatch expected rather than wrong. ${results.filter((r) => r.hasCorrectionHeader).length} of ${files.length} ` +
+      `censuses already carry a correction header saying their own headline had drifted from their own body — that is ` +
+      `the failure mode this file exists to make harder, not one it can claim to have closed.`,
+  );
 
-console.log(
-  `\nNOTE: ${files.length} census file(s) read; ${totalRows} verdict row(s) parsed; ${totalGap} requirement(s) across all ` +
-    `censuses are counted somewhere this tool cannot read (prose blocks that enumerate several requirements in one ` +
-    `paragraph — a legitimate way to count them and an impossible one to parse).`,
-);
-console.log(
-  `NOTE: DOES NOT COVER, stated rather than implied: (1) whether a verdict is CORRECT — this checks that the document ` +
-    `agrees with itself, not that it agrees with the code; (2) the prose-counted requirements above; (3) whether the ` +
-    `stated headline percentages match the parsed counts EXCEPT where a census has no prose gap at all (parsed rows = ` +
-    `stated denominator), where the headline must sum to the denominator and is checked; elsewhere the prose gap makes a ` +
-    `mismatch expected rather than wrong. ${results.filter((r) => r.hasCorrectionHeader).length} of ${files.length} ` +
-    `censuses already carry a correction header saying their own headline had drifted from their own body — that is ` +
-    `the failure mode this file exists to make harder, not one it can claim to have closed.`,
-);
-
-if (problems.length > 0) {
-  console.error(`\n${problems.length} problem(s) found.`);
-  process.exit(1);
+  // process.exitCode rather than process.exit(), for the same reason the dump
+  // block uses writeSync: exiting here would discard the NOTE lines above when
+  // stdout is a pipe.
+  if (problems.length > 0) {
+    console.error(`\n${problems.length} problem(s) found.`);
+    process.exitCode = 1;
+  } else {
+    console.log("\ncheck:census-integrity PASSED");
+  }
 }
-console.log("\ncheck:census-integrity PASSED");

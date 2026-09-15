@@ -19,9 +19,11 @@
 import { Router } from "express";
 import { randomUUID } from "node:crypto";
 import { asyncHandler } from "../lib/asyncHandler.js";
-import { isTripKernelEnabled, executeTripCommand } from "../lib/tripKernel.js";
+import { isTripKernelEnabled, executeTripCommand } from "../domain/trips/commands/tripKernel.js";
 import { z } from "zod";
 import { requireUser, sendError, canEditPlan, isAcceptedTripMember } from "../lib/http.js";
+import { tripOperationalProjectionsGate } from "../domain/trips/policies/tripOperationalProjections.js";
+import { sendTripRefusal } from "../domain/trips/contracts/tripReasonCodes.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { nameVisibilitySet } from "../lib/publicIdentity.js";
 import { optimizeRoute, type RouteStyle, type CandidateStop } from "../services/routeOptimizer.js";
@@ -100,6 +102,24 @@ router.post("/route-plans", asyncHandler(async (req, res) => {
     const permitted = await canEditPlan(client, tripId, user.id);
     if (permitted === null) { sendError(res, "not_found", "Trip not found"); return; }
     if (!permitted) { sendError(res, "forbidden", "You don't have permission to edit this trip plan"); return; }
+
+    // §25 (census-trips §62, TR437): under the operational-projections gate a
+    // route plan that names a trip is a VIEW over that trip's own plan — every
+    // stop must be one of its plan items — not a second itinerary with its own
+    // places. Where the gate is closed (every deployment today) the route plan
+    // is created as before.
+    const gate = await tripOperationalProjectionsGate(client);
+    if (gate.enabled) {
+      const { data: planItems, error: planErr } = await client.from("trip_plan_items").select("id").eq("trip_id", tripId).is("removed_at", null);
+      if (planErr) { sendTripRefusal(res, "db_error", "TRIP_PROJECTION_UNAVAILABLE", "The trip's plan could not be read"); return; }
+      const planIds = new Set(((planItems ?? []) as any[]).map((i) => String(i.id)));
+      const stray = stops.filter((s) => s.sourceType !== "plan_item" || !s.sourceId || !planIds.has(String(s.sourceId)));
+      if (stray.length > 0) {
+        sendTripRefusal(res, "conflict", "TRIP_IDENTITY_STOP_NOT_IN_PLAN",
+          `${stray.length} stop(s) are not plan items of this trip (${stray.map((s) => s.title).join(", ")}); a trip's route is its plan — add the place to the plan first`);
+        return;
+      }
+    }
   }
 
   // sourceId is carried on CandidateStop so the optimizer preserves it through

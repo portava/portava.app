@@ -26,7 +26,7 @@ Verified facts:
 | `WallMoment` has **zero occurrences** outside `docs/` | `grep -rI --exclude-dir={node_modules,.git,docs} WallMoment .` → no output |
 | `docs/architecture/census-wall.md` mentions Sensing **zero times** | `grep -ci sensing docs/architecture/census-wall.md` → 0 |
 | `census-wall.md` mentions `WallMoment` **zero times** | same grep → 0 |
-| `census-sensing.md` counts it as **S74, NOT-BUILT**, inside its own 127 denominator | `census-sensing.md:270` |
+| `census-sensing.md` counts it as **S74, NOT-BUILT**, inside its own 127 denominator | `census-sensing.md:485#S74` |
 | `census-sensing.md` references the Wall **16 times** | `grep -c Wall census-sensing.md` |
 
 So **"Wall 95.1 % constructed / 91.7 % correct"** (`census-wall.md:15-20`) is true *against the
@@ -84,7 +84,7 @@ the 108 obligations below is counted by the census of the surface that owes it.*
    that caveat and is written as *"no direct `.from()` write found"*, never *"no writer exists"*.
 2. **Absence of a NAME is not absence of a RESPONSIBILITY.** `UserNowProjection` has zero
    occurrences, yet `routes/compassHome.ts` discharges its responsibility
-   (`census-sensing.md:281`, S81 BUILT-AND-CORRECT). Every "zero occurrences" row below therefore
+   (`census-sensing.md:497#S81`, S81 BUILT-AND-CORRECT). Every "zero occurrences" row below therefore
    separately asks whether an equivalent exists under another name, and says so.
 
 ---
@@ -161,7 +161,7 @@ Every one of these is counted **by `census-sensing.md` only**, inside its 127 de
 `census-highlights-memories.md`, `census-media.md` mention Sensing **zero times**;
 `census-telegraph.md` mentions it twice and `census-map.md` four times, in both cases only about
 *census methodology*, never as an obligation (`census-telegraph.md:7,229`;
-`census-map.md:33,36,871`).
+`census-map.md:44,36,871`).
 
 #### §7 Required Tweaks: Map — 10, owed by Map
 
@@ -216,7 +216,7 @@ Every one of these is counted **by `census-sensing.md` only**, inside its 127 de
 |---|---|---|---|---|
 | SX-26 | `TripWorldContext` projection: current world state, nearby opportunities, disruptions, ExperienceSessions, crew context (`:153`) | **NO — `TripWorldContext` zero occurrences, verified by grep.** Nearest thing is `compass/CompassTripContext.ts:1-18` (223 lines), which is trip *grounding* — day N of M, today's plan items — with no world state | S83 **BW** | no (no census-trips; census-layover does not cover it) |
 | SX-27 | World Intelligence may propose Trip changes but may not mutate canonical Trip plans; consequential changes pass through Trip Kernel (`:154`) | PARTIAL — no intel module writes a `trip_*` table (subject to the `.from()` caveat) **but there is no Trip Kernel to pass through**: `TripKernel`, `TripCommand`, `expectedTripVersion`, `aggregateVersion` all zero occurrences | S84 **BC** *(for the intel half only)* | see **T-01** — the non-intel half is counted by NOBODY |
-| SX-28 | Layover Temporal Freedom Engine intersects feasibility with live Experience value, forecast, friction and safe-return (`:155`) | NO — `grep -rn liveClaimRead services/airport/` → nothing | S85 **BW** | **counted twice**: census-layover L81, L276 record the same absence *"from the other side"* (`census-layover.md:380,703`) — see §5 |
+| SX-28 | Layover Temporal Freedom Engine intersects feasibility with live Experience value, forecast, friction and safe-return (`:155`) | NO — `grep -rn liveClaimRead services/airport/` → nothing | S85 **BW** | **counted twice**: census-layover L81, L276 record the same absence *"from the other side"* (`census-layover.md:396,703`) — see §5 |
 | SX-29 | Peak interception: can the user reach the experience before its useful window decays? (`:156`) | NO — no decay-window or interception arithmetic found | S86 **NB** | no |
 
 #### §12 Required Tweaks: Telegraph — 4, owed by Telegraph
@@ -301,7 +301,7 @@ eight.** They are now counted exactly like Sensing's: **inside GII's own denomin
 of the seven surfaces that owe them.** That census's own closing verdict is worth quoting, because
 it contradicts the certification this section originally had to rely on: *"'Recommendation:
 certify for launch on the code-verifiable dimensions' — **Not supportable at this denominator.**"*
-(`census-input-intelligence.md:1203`).
+(`census-input-intelligence.md:1237`).
 
 Platform-side facts, verified this pass: the policy registry covers **26 typed contexts**
 (`lib/inputAssistance/policyRegistry.ts:97-321`, from `global_search` through `compass_prompt`,
@@ -315,7 +315,7 @@ and two more). The certification names five wired surfaces (`:11-13`).
 
 | # | Obligation (spec line) | Owes | Exists? | Counted by |
 |---|---|---|---|---|
-| G-01 | No surface owns a separate autocomplete/typeahead engine; all typed assistance goes through the shared layer (`:8`, core rule `:7`) | Discovery, Media, Map, Trips, Telegraph, Compass, Create | **PARTIAL — three competing paths found.** `routes/discoverySearch.ts:1831` `GET /api/discovery/suggest — grouped live typeahead` imports nothing from `lib/inputAssistance`; `routes/hashtags.ts:8` `GET /api/hashtags/suggestions — autocomplete`; `routes/places.ts:424` `/places/google-autocomplete`. The Wall by contrast delegates correctly (`WallSessionIntentService.ts`, census-wall W67 `C`) | census-input-intelligence **G6 `W`** — *"The layer is real and 10 screens consume it, but four independent engines are still live and unmigrated"*, naming `hooks/useSearchSuggestions.ts` and `hooks/useGooglePlacesAutocomplete.ts` among them. **Counted by no consuming surface's census.** |
+| G-01 | No surface owns a separate autocomplete/typeahead engine; all typed assistance goes through the shared layer (`:8`, core rule `:7`) | Discovery, Media, Map, Trips, Telegraph, Compass, Create | **PARTIAL — three competing paths found.** `routes/discoverySearch.ts:2094` `GET /api/discovery/suggest — grouped live typeahead` imports nothing from `lib/inputAssistance`; `routes/hashtags.ts:8` `GET /api/hashtags/suggestions — autocomplete`; `routes/places.ts:424` `/places/google-autocomplete`. The Wall by contrast delegates correctly (`WallSessionIntentService.ts`, census-wall W67 `C`) | census-input-intelligence **G6 `W`** — *"The layer is real and 10 screens consume it, but four independent engines are still live and unmigrated"*, naming `hooks/useSearchSuggestions.ts` and `hooks/useGooglePlacesAutocomplete.ts` among them. **Counted by no consuming surface's census.** |
 | G-02 | §14 Zero-character assistance per context: City picker, Place picker, **Telegraph recipient**, **Compass prompt**, Global Search, **Hidden Gem location** (`:140-152`) | Telegraph, Compass, Hidden Gems, Search, Trips | PARTIAL — policies exist for all six contexts; client wiring found for search / geo picker / telegraph recipient / compass AI / creation only | census-input-intelligence **G85–G90**: Telegraph recipient `C` (G87), Compass prompt `C` (G88), city picker `W`, Global Search `W`, **Place picker `N`**, **Hidden Gem location `W`** |
 | G-03 | §16 Context carryover bounded to the active task/session; must not silently change unrelated persistent preferences (`:160-163`) | Trips, Compass, Hidden Gems, Events | PARTIAL — the session-bias comparison exists (`lib/inputAssistance/gateway.ts:165-168`); could not establish that every consuming surface honours the boundedness rule | census-input-intelligence **G107 `W`, G108 `C`** — carryover is bounded correctly but is *only* `applySessionBias` |
 | G-04 | §17 Autofilled dependent fields remain visible, attributable and editable; no invisible field mutation (`:164-166`) | Trips, Events, Hidden Gems, Create | COULD NOT ESTABLISH — no cross-field prefill contract found under a searchable name | census-input-intelligence **G109 `W`, G110 `C`** — the city binding is complete; no invisible mutation (`SmartInput.tsx:112-117`) |
@@ -341,11 +341,11 @@ while this table was being written.
 | # | Obligation (spec line) | Owes | Exists? | Counted by |
 |---|---|---|---|---|
 | T-01 | *"No Map, Compass, Telegraph, Discovery, Buddy, or UI component may independently invent canonical trip state"* — all consequential changes pass through the **Trip Kernel** (`:12`) | Map, Compass, Telegraph, Discovery, Buddy | **NO, and violated.** `TripKernel`, `TripCommand`, `expectedTripVersion`, `aggregateVersion` are all **zero occurrences, verified by grep** — there is no kernel. Canonical trip state is written directly from outside `routes/trips`: `compass/CompassAutopilotEngine.ts:206` (`trip_autopilot_settings` upsert) and `:598` (`trip_autopilot_proposals` insert); `routes/airport.ts:181,183,700` (Layover writing `trip_plan_items`); `lib/visuals/service.ts:566` (`trips` update); `routes/requests.ts:529` (`trip_members` update); `routes/admin.ts:2288` (`trips` update). **Caveat:** this list comes from a literal `.from("trip…")` grep and, per `checkWriterlessReads.ts:39,344-345`, is a **floor, not a ceiling** — dynamic `.from(expr)` and RPC writes are invisible to it | **census-trips `TR1` `N`** (landed mid-pass): *"There is no kernel. `routes/trips.ts:1491-1535` writes `trip_plan_items.status` directly…"* — an **additional** violation site my own grep missed, because my filter excluded `routes/trips`. Before that census: only the World-Intelligence subset, by census-sensing S84 (`BC`) |
-| T-02 | *"Map, Compass, Discovery, Telegraph, Safety, Buddy, Passport, and Memory consume explicit Trip projections/contracts rather than duplicating Trip semantics"* (`:25`, `:488`) | Map, Compass, Discovery, Telegraph, Safety, Buddy, Passport, Memory | PARTIAL — the Map side is real (census-map M145 `C`, `features/map/trip/tripMapSources.ts:16`, DTOs in, no re-derivation) and Passport's Trips variant is consumed (census-passport P96 `C`). But **none of the eight named projections exists by name**: `TripTodayProjection`, `TripMapProjection`, `TripCompassProjection`, `TripMemoryProjection`, `TripPassportProjection` are **zero occurrences, verified by grep** (`:373`) | Map side by census-map M145; Passport side by census-passport P96. **The projection contracts themselves: NOBODY yet** — Trips §18 is still beyond census-trips' §16 frontier. **This is the last uncounted cross-cutting obligation in Portava.** |
-| T-03 | *"Discovery, Compass, Saved Ideas, and Buddy matching consume these [Temporal Freedom] windows rather than independently calculating 'free time'"* (`:185`) | Discovery, Compass, Saved Ideas, Buddy | **NO, and violated.** `FreedomWindow` / `freedom_window` / `temporalFreedom`: **zero occurrences, verified by grep**. Independent free-time arithmetic exists instead: `lib/portavaRank.ts:86` *"Minutes of free window (layover mode / availability) — actionability cap"* and `:246` *"Layover/limited-window mode: must start within the window"*; `routes/hiddenGems.ts:137-138` `minimumLayoverMinutes` | census-layover counts the **engine** (L56–L59) from Layover's side. **census-trips `TR131` `N`, `TR132` `N`, `TR133` `N`** now count the consumer side: *"Each does its own thing: `compass/CompassTools.ts:141-157` `check_trip_conflicts` re-derives overlap from `trip_plan_items.day_date`…"* — an independent-calculation site my grep missed. Still counted by **none** of Discovery, Compass or Buddy |
-| T-04 | Compass may create a proposal but cannot silently mutate other participants' commitments (`:234`); Compass authority is bounded — may not invent canonical flight/booking/place facts, relax safety, or expand certified freedom (`:278`) | Compass | PARTIAL — `compass/CompassTools.ts:305` `AddToTripProposal` is a real proposal shape; but `CompassAutopilotEngine.ts:598` inserts `trip_autopilot_proposals` directly, without a kernel to arbitrate | census-trips **TR155 `C`** — *"The one §9 requirement that is genuinely met, and met deliberately: `CompassTools.ts:14` — 'add_to_trip proposes only'"* — and **TR215 `C`** for the authorization bound. **My PARTIAL verdict was too harsh on the proposal path and is corrected by TR155; the autopilot writes remain a separate T-01 violation.** Counted by no Compass census, there being none |
+| T-02 | *"Map, Compass, Discovery, Telegraph, Safety, Buddy, Passport, and Memory consume explicit Trip projections/contracts rather than duplicating Trip semantics"* (`:25`, `:488`) | Map, Compass, Discovery, Telegraph, Safety, Buddy, Passport, Memory | PARTIAL — the Map side is real (census-map M145 `C`, `features/trips/map/tripMapSources.ts:16`, DTOs in, no re-derivation) and Passport's Trips variant is consumed (census-passport P96 `C`). But **none of the eight named projections exists by name**: `TripTodayProjection`, `TripMapProjection`, `TripCompassProjection`, `TripMemoryProjection`, `TripPassportProjection` are **zero occurrences, verified by grep** (`:373`) | Map side by census-map M145; Passport side by census-passport P96. **The projection contracts themselves: NOBODY yet** — Trips §18 is still beyond census-trips' §16 frontier. **This is the last uncounted cross-cutting obligation in Portava.** |
+| T-03 | *"Discovery, Compass, Saved Ideas, and Buddy matching consume these [Temporal Freedom] windows rather than independently calculating 'free time'"* (`:185`) | Discovery, Compass, Saved Ideas, Buddy | **NO, and violated.** `FreedomWindow` / `freedom_window` / `temporalFreedom`: **zero occurrences, verified by grep**. Independent free-time arithmetic exists instead: `lib/portavaRank.ts:86` *"Minutes of free window (layover mode / availability) — actionability cap"* and `:246` *"Layover/limited-window mode: must start within the window"*; `routes/hiddenGems.ts:137-138` `minimumLayoverMinutes` | census-layover counts the **engine** (L56–L59) from Layover's side. **census-trips `TR131` `N`, `TR132` `N`, `TR133` `N`** now count the consumer side: *"Each does its own thing: `compass/CompassTools.ts:146-162` `check_trip_conflicts` re-derives overlap from `trip_plan_items.day_date`…"* — an independent-calculation site my grep missed. Still counted by **none** of Discovery, Compass or Buddy |
+| T-04 | Compass may create a proposal but cannot silently mutate other participants' commitments (`:234`); Compass authority is bounded — may not invent canonical flight/booking/place facts, relax safety, or expand certified freedom (`:278`) | Compass | PARTIAL — `compass/CompassTools.ts:310` `AddToTripProposal` is a real proposal shape; but `CompassAutopilotEngine.ts:598` inserts `trip_autopilot_proposals` directly, without a kernel to arbitrate | census-trips **TR155 `C`** — *"The one §9 requirement that is genuinely met, and met deliberately: `CompassTools.ts:14` — 'add_to_trip proposes only'"* — and **TR215 `C`** for the authorization bound. **My PARTIAL verdict was too harsh on the proposal path and is corrected by TR155; the autopilot writes remain a separate T-01 violation.** Counted by no Compass census, there being none |
 | T-05 | Trips must remain fully operational without Compass; AI is not a safety dependency (`:283`) | Compass, Trips | COULD NOT ESTABLISH — no degradation test for a Compass-absent Trip found | **census-trips TR222 `C`** — *"every trip route is registered independently… `src/test/tripsHostingDegraded.test.ts` exercises the degraded path"*. **My COULD-NOT-ESTABLISH is resolved: it does hold.** |
-| T-06 | The Trip Map must never draw a stale location as if it were current; marker treatment and accessible text expose freshness (`:244`) | Map | PARTIAL — the Map carries `freshness` on every object (`lib/mapObjects.ts:362-398`, census-map) but the *trip-crew* staleness rule specifically was not located | **census-trips `TR165` `W` — and it is a violation, not a gap**: *"It does. `buildCrewCard` (`lib/tripCrewLocation.ts:131-146`) returns `statusLabel: \"live_sharing_active\"` with an `areaLabel` whenever a live-share grant is active, regardless of how old…"*. **Counted by census-trips, owed by the Map, and absent from census-map's 96.6 %** |
+| T-06 | The Trip Map must never draw a stale location as if it were current; marker treatment and accessible text expose freshness (`:244`) | Map | PARTIAL — the Map carries `freshness` on every object (`lib/mapObjects.ts:362-398`, census-map) but the *trip-crew* staleness rule specifically was not located | **census-trips `TR165` `W` — and it is a violation, not a gap**: *"It does. `buildCrewCard` (`domain/trips/services/tripCrewLocation.ts:131-146`) returns `statusLabel: \"live_sharing_active\"` with an `areaLabel` whenever a live-share grant is active, regardless of how old…"*. **Counted by census-trips, owed by the Map, and absent from census-map's 96.6 %** |
 | T-07 | Public Trip content must not leak lodging detail, exact private location, future absence from home, safety state, or unconsented participant data (`:175`) | Map, Discovery, Wall, Telegraph, Media | PARTIAL — Map's private-anchor handling exists (Map spec §14.1); the cross-surface guarantee was not verified end-to-end here | census-trips **TR117 `C`** for the lodging clause (`src/test/tripPrivacy.test.ts:5-8`); the other four leak classes across five surfaces remain unverified |
 
 ### 2.D — Layover spec (6) — counted by `census-layover.md`, filed under Layover
@@ -372,7 +372,7 @@ figures do not.
 
 | # | Obligation (spec line) | Owes | Exists? | Counted by |
 |---|---|---|---|---|
-| P-01 | *"Do not create separate profile systems for self, public, Trips, Buddy, Discovery or Telegraph"* (`:57`) | Trips, Buddy, Discovery, Telegraph | YES — `PassportConsumerProjections.ts:818` is the single assembler | census-passport **P20 `C`** |
+| P-01 | *"Do not create separate profile systems for self, public, Trips, Buddy, Discovery or Telegraph"* (`:57`) | Trips, Buddy, Discovery, Telegraph | YES — `PassportConsumerProjections.ts:825` is the single assembler | census-passport **P20 `C`** |
 | P-02 | §21 Context-specific projections for **Discovery, Trips, Buddy, Map, Telegraph, Compass, Safety** (`:207-221`) | six consumers | **PARTIAL — four of six variants have no caller and Map has no variant at all.** `PassportConsumerVariant` (`services/passport/PassportConsumerProjections.ts:82-88`) has six members and **no Map variant**; `buildConsumerProjection` has exactly three call sites (`routes/rentABuddy.ts:1241`, `routes/trips.ts:467`, `EventPassportService.ts:423`) | census-passport **P95 `W` (Discovery), P96 `C` (Trips), P97 `C` (Buddy), P98 `N` (Map), P99 `W` (Telegraph), P100 `W` (Compass), P101 `W` (Safety)** |
 | P-03 | *"Other surfaces request the appropriate Passport projection instead of rebuilding identity, availability, trust and social context"* (`:334`, §35 canonical architecture rule) | all consumers | PARTIAL — *"Adoption is three of seven consumers"* | census-passport **P169 `W`**; the census adds (`:561-563`) that the Passport certification *"does not test §21 at all"* |
 | P-04 | A Passport block must propagate across Discovery, Telegraph, Trips, Presence, Map, Shared Moments, Bump, Buddy and Compass. *"Do not implement blocking independently per surface."* (`:263`) | nine surfaces | YES — `fetchBlockedSet` applied in every one of the named trees | census-passport **P120 `C`** |
@@ -428,7 +428,7 @@ the Map does not.
 |---|---|---|---|---|
 | MP-01 | §20 Data ownership: Places, Live Intelligence, Discovery, Compass, Presence, Trips, Telegraph, Memory, Passport, Trust, Safety, Buddy each own a named fact and the Map does not (`:11`, `:196-222`) | thirteen domains | YES — *"the gateway satisfies them structurally by calling each owner's privacy-complete reader rather than querying"* (`routes/mapProjection.ts:14-27,52-66`) | census-map **M140–M152, all `C`** |
 | MP-02 | §26 *"Pulse and Map must be two presentations of the same underlying intelligence… map states should never contradict Pulse"* (`:264`) | Discovery/Pulse | YES — `features/map/pulse/pulseMapBridge.ts:475-530` has a `findContradictions` function | census-map **M190–M192 `C`** — Discovery has no census to record its half |
-| MP-03 | §11 Trip Map renders the current Trip *"without duplicating or replacing Trip ownership"*; proposed changes require user acceptance; the map must not silently rewrite the canonical Trip (`:143-145`) | Trips | YES from the Map side — `features/map/trip/tripMapSources.ts:16` takes DTOs and re-derives nothing | census-map **M145 `C`**; **no census-trips** to record the Trips side |
+| MP-03 | §11 Trip Map renders the current Trip *"without duplicating or replacing Trip ownership"*; proposed changes require user acceptance; the map must not silently rewrite the canonical Trip (`:143-145`) | Trips | YES from the Map side — `features/trips/map/tripMapSources.ts:16` takes DTOs and re-derives nothing | census-map **M145 `C`**; **no census-trips** to record the Trips side |
 | MP-04 | §14 *"Compass does not create live facts; it reasons over structured state produced elsewhere"* (`:162`) | Compass | YES — `features/map/compass/compassMapModel.ts:8` | census-map **M143 `C`** |
 
 ### 2.J — Wall spec (4) — counted by `census-wall.md`
@@ -480,8 +480,8 @@ Per originating spec:
 
 The censuses are not wrong. Each one measured its spec faithfully, and Passport's, Layover's and
 Input Intelligence's went out of their way to record cross-surface adoption honestly
-(`census-passport.md:305-315`, `census-layover.md:694-702`,
-`census-input-intelligence.md:305` G6, `census-trips.md` TR133/TR165). The failure is **filing**,
+(`census-passport.md:305-315`, `census-layover.md:710-702`,
+`census-input-intelligence.md:335` G6, `census-trips.md` TR133/TR165). The failure is **filing**,
 and it has three forms:
 
 **Form 1 — misattribution (106 obligations).** Spec A requires surface B to do something. Census A
@@ -517,7 +517,7 @@ There is additionally one **finding** counted twice, which the second census fla
 
 | Finding | Counted by | Counted by | Note |
 |---|---|---|---|
-| **SX-28** — nothing under `services/airport/` reads `liveClaimRead`; live experience value, forecast and friction never reach the Layover feasibility intersection | census-sensing **S85 `BW`** | census-layover **L81 `N`** and **L276 `N`** | `census-layover.md:380` says so explicitly: *"the same finding `census-sensing.md:290` records from the other side"*. One absence, three requirement rows, two denominators. |
+| **SX-28** — nothing under `services/airport/` reads `liveClaimRead`; live experience value, forecast and friction never reach the Layover feasibility intersection | census-sensing **S85 `BW`** | census-layover **L81 `N`** and **L276 `N`** | `census-layover.md:396` says so explicitly: *"the same finding `census-sensing.md:319 — **NOTE 2026-09-14: `SX-28` appears in NO census.** It is an id this document carries alone, so this citation cannot name the row it claims; the line it points at is that census's Attribution section header. Needs a read, not a repoint` records from the other side"*. One absence, three requirement rows, two denominators. |
 
 And one **near-miss** worth recording, because it is the shape a future double count will take:
 
@@ -565,9 +565,9 @@ owner will never look:
 | Violation | Counted by | The surface that owes it, and where it is *not* recorded |
 |---|---|---|
 | **No Trip Kernel exists; canonical trip state is written from seven sites** — `routes/trips.ts:1491-1535`, `compass/CompassAutopilotEngine.ts:206,598`, `routes/airport.ts:181,183,700`, `lib/visuals/service.ts:566`, `routes/requests.ts:529`, `routes/admin.ts:2288` (a **floor**, per `checkWriterlessReads.ts:39,344-345`) | census-trips **TR1 `N`**; the intel subset by census-sensing **S84 `BC`** | Compass and Layover each write canonical trip state. Neither has a row for it: **Compass has no census at all**, and `census-layover.md`'s L267 scores the Trips seam `W` for what it *lacks*, not for what it *writes*. |
-| **No Temporal Freedom Engine; free-time arithmetic duplicated** — `lib/portavaRank.ts:86,246`, `routes/hiddenGems.ts:137-138`, `compass/CompassTools.ts:141-157` | census-trips **TR131, TR132, TR133 — all `N`** | Owed by Discovery, Compass, Saved Ideas and Buddy. **None of the four has a census.** |
-| **The Trip Map draws stale location as if it were current** — `lib/tripCrewLocation.ts:131-146` returns `live_sharing_active` regardless of age | census-trips **TR165 `W`** — *"It does."* | Owed by the **Map**. `census-map.md` reports 96.6 % constructed / 80.2 % correct over 293 requirements and **does not contain this row**. |
-| **Four independent autocomplete engines remain live and unmigrated** — `hooks/useSearchSuggestions.ts`, `hooks/useGooglePlacesAutocomplete.ts` and two others, plus `routes/discoverySearch.ts:1831` and `routes/hashtags.ts:8` server-side | census-input-intelligence **G6 `W`** | Owed by Discovery, Media, Map, Trips, Telegraph, Compass and Create. **Recorded in none of their censuses**; the Wall's, which *does* record its side, marks it `C` (W67). |
+| **No Temporal Freedom Engine; free-time arithmetic duplicated** — `lib/portavaRank.ts:86,246`, `routes/hiddenGems.ts:137-138`, `compass/CompassTools.ts:146-162` | census-trips **TR131, TR132, TR133 — all `N`** | Owed by Discovery, Compass, Saved Ideas and Buddy. **None of the four has a census.** |
+| **The Trip Map draws stale location as if it were current** — `domain/trips/services/tripCrewLocation.ts:131-146` returns `live_sharing_active` regardless of age | census-trips **TR165 `W`** — *"It does."* | Owed by the **Map**. `census-map.md` reports 96.6 % constructed / 80.2 % correct over 293 requirements and **does not contain this row**. |
+| **Four independent autocomplete engines remain live and unmigrated** — `hooks/useSearchSuggestions.ts`, `hooks/useGooglePlacesAutocomplete.ts` and two others, plus `routes/discoverySearch.ts:2094` and `routes/hashtags.ts:8` server-side | census-input-intelligence **G6 `W`** | Owed by Discovery, Media, Map, Trips, Telegraph, Compass and Create. **Recorded in none of their censuses**; the Wall's, which *does* record its side, marks it `C` (W67). |
 
 Two of my own verdicts were **corrected** by censuses that landed after I wrote them, and are left
 visible rather than quietly amended: T-04 (I said PARTIAL; `census-trips` TR155 `C` shows
@@ -645,7 +645,7 @@ Inbound counts are obligations owed **by** that surface **from other specs**. Th
 > **no Map variant at all** (P-02 / census-passport P98 `N`). And the Trips census, which landed
 > after census-map, records a Map defect census-map does not contain: **the Trip Map draws a stale
 > crew location as if it were current** (`census-trips.md` TR165 `W`, *"It does"*,
-> `lib/tripCrewLocation.ts:131-146`). **The Map's 80.2 % does not know about it.**
+> `domain/trips/services/tripCrewLocation.ts:131-146`). **The Map's 80.2 % does not know about it.**
 
 > ### Passport
 > **Passport is 98.2 % constructed and 85.8 % correct against its own 169-requirement spec — the
@@ -745,7 +745,7 @@ Inbound counts are obligations owed **by** that surface **from other specs**. Th
 > seven specs**. Five come from Sensing §8, of which **three diverge and one is NOT-BUILT** — and
 > the NOT-BUILT one (SX-11, live ranking) is the single obligation in this document that is
 > explicitly **gated by an owner hold**, not merely unbuilt. Discovery also runs one of the three
-> typeahead paths that G-01 forbids (`routes/discoverySearch.ts:1831`).
+> typeahead paths that G-01 forbids (`routes/discoverySearch.ts:2094`).
 
 > ### Safety and Trust · Presence, RAB and Locate My Friends · Places, Events and Hidden Gems · Search, Create and Attention — **no spec, no census**
 > Between them these carry **34 inbound obligations**, every one of which is recorded only in
@@ -799,8 +799,8 @@ Stated plainly, because a legitimate "don't know" is more useful here than a gue
    number nobody can defend.
 6. **Production liveness.** Every "exists" verdict above describes **code that is correct and
    would run**. `docs/architecture/intel-spine-liveness.md` measured every `intel_*` table in
-   production at `count(*) = 0` with the gates open; `census-sensing.md:47-63` and
-   `census-layover.md:767` both make the same point about their own numbers. Nothing here is
+   production at `count(*) = 0` with the gates open; `census-sensing.md:57-63` and
+   `census-layover.md:783` both make the same point about their own numbers. Nothing here is
    evidence that anything has run.
 
 ---

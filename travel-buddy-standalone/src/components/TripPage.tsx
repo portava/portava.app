@@ -5,7 +5,6 @@ import { CachedImage } from './CachedImage.tsx';
 import { fallbackUriFor } from '../lib/visuals/fallbackAssets.ts';
 import { SharedVideoPlayer } from './ui/SharedVideoPlayer.tsx';
 import { router } from 'expo-router';
-import Svg, { Path } from 'react-native-svg';
 import {
   CalendarDays, User as UserIcon, Clock, MapPin, CheckCircle2, Circle as CircleIcon,
   CalendarPlus, UserPlus, Sparkles, Settings, Bookmark, Plus, ChevronRight, Plane,
@@ -13,10 +12,10 @@ import {
   MessageCircle, ShieldCheck, ImagePlus, Info, X, Bell,
 } from 'lucide-react-native';
 import { useTripSavedPlaces } from '../hooks/useTripSavedPlaces.ts';
-import { fetchCompassTripBrief, reportCompassViewed, type CompassRecommendation } from '../services/compass.ts';
+import { fetchCompassTripBrief, reportCompassViewed, type CompassRecommendation, type CompassBriefAttention } from '../services/compass.ts';
 import { resolveCompassTitle, formatCompassSubtitle } from '../utils/compassFormat.ts';
 import { openTripChat } from '../services/messaging.ts';
-import { createPlanItem } from '../services/tripPlan.ts';
+import { createPlanItem } from '../features/trips/planning/tripPlan.ts';
 import type { BookmarkedPlace } from '../services/discoveryBookmarks.ts';
 import type { TripDetail, SavedIdea, TimelineDay, PassportStamp, User } from '../types/models.ts';
 import type { TripPlan, TripPlanStatus } from '../__fixtures__/tripDetail.ts';
@@ -29,28 +28,6 @@ import { HighlightViewer } from './HighlightViewer.tsx';
 import { AddToPlanSheet } from './AddToPlanSheet.tsx';
 import { useHighlightRingState } from '../hooks/useHighlightRingState.ts';
 import { deriveTripDisplayStatus, tripStatusLabel } from '../lib/tripStatus.ts';
-
-/* ── Progress ring (semicircle arc) ── */
-function ProgressRing({ pct }: { pct: number | null }) {
-  const r = 46, cx = 60, cy = 60;
-  const start = Math.PI;
-  // A null pct means the readiness read did not answer. The arc stays at the
-  // track (no filled sweep) and the label says so, rather than drawing an
-  // empty ring over "0%" — which reads as a measured, very bad score.
-  const end = Math.PI - ((pct ?? 0) / 100) * Math.PI;
-  const x1 = cx + r * Math.cos(start), y1 = cy - r * Math.sin(start);
-  const x2 = cx + r * Math.cos(end), y2 = cy - r * Math.sin(end);
-  const bgX = cx + r * Math.cos(0), bgY = cy - r * Math.sin(0);
-  return (
-    <View style={{ alignItems: 'center' }}>
-      <Svg width={120} height={70} viewBox="0 0 120 70">
-        <Path d={`M ${x1} ${y1} A ${r} ${r} 0 0 1 ${bgX} ${bgY}`} stroke={color.haze} strokeWidth="9" fill="none" strokeLinecap="round" />
-        <Path d={`M ${x1} ${y1} A ${r} ${r} 0 0 1 ${x2} ${y2}`} stroke={color.signal} strokeWidth="9" fill="none" strokeLinecap="round" />
-      </Svg>
-      <Text style={ring.pct}>{pct === null ? '—' : `${pct}%`}</Text>
-    </View>
-  );
-}
 
 /* ── Trip hero header ── */
 export function TripHero({ trip }: { trip: TripDetail }) {
@@ -107,13 +84,18 @@ export function TripHero({ trip }: { trip: TripDetail }) {
         <Action icon={<Settings size={18} color={color.ink} />} label="Trip Settings" onPress={() => router.push({ pathname: '/trip/edit', params: { id: trip.id } } as any)} />
       </View>
 
-      <View style={hero.progressCard}>
-        <Text style={hero.progressTitle}>Trip Progress</Text>
-        <ProgressRing pct={trip.progress} />
-        <Text style={hero.progressSub}>
-          {trip.progress === null
-            ? "We couldn't check this trip's readiness just now."
-            : 'Your trip is coming together!'}
+      {/* Trips spec §8 (census-trips TR142): readiness is an explanatory
+          projection, not a gamified truth score. This card was a semicircle
+          ring with a percentage in it — "Trip Progress 14%" — fed by the same
+          number TripReadinessCard showed. It now says what the server said:
+          the headline, then the seven checks. No ring, no percentage. */}
+      <View style={hero.progressCard} testID="trip-hero-readiness">
+        <Text style={hero.progressTitle}>Trip readiness</Text>
+        <Text style={hero.progressSub} testID="trip-hero-readiness-line">
+          {trip.readinessHeadline
+            ?? (trip.progress === null
+              ? "We couldn't check this trip's readiness just now."
+              : 'What is ready, and what is not:')}
         </Text>
         <View style={{ gap: space.sm, marginTop: space.md, alignSelf: 'stretch' }}>
           {trip.progressSteps.map((s) => (
@@ -816,6 +798,7 @@ function BriefItemCard({ item, tripId }: { item: CompassRecommendation; tripId?:
 export function CompassTripBrief({ tripId, city, startDate, endDate }: CompassTripBriefProps) {
   const [expanded, setExpanded]     = useState(true);
   const [items, setItems]           = useState<CompassRecommendation[]>([]);
+  const [attention, setAttention]   = useState<CompassBriefAttention | null>(null);
   const [loading, setLoading]       = useState(false);
   const [fetched, setFetched]       = useState(false);
 
@@ -824,14 +807,21 @@ export function CompassTripBrief({ tripId, city, startDate, endDate }: CompassTr
     setLoading(true);
     fetchCompassTripBrief({ tripId: tripId ?? '', city, startDate, endDate, limit: 6 })
       .then((res) => {
-        if (res.ok && res.data) setItems(res.data.recommendations);
+        if (res.ok && res.data) {
+          setItems(res.data.recommendations);
+          // Trips §17.2 (TR319): the server's switch reading, shown as it was read.
+          setAttention(res.data.attention ?? null);
+        }
       })
       .catch(() => {})
       .finally(() => { setLoading(false); setFetched(true); });
   }, [tripId, city, startDate, endDate]);
 
-  // Hide entirely when loaded with no items (Compass disabled, no results, or no city)
-  if (fetched && items.length === 0 && !loading) return null;
+  const suppressed = attention?.suppressed === true;
+
+  // Hide entirely when loaded with no items (Compass disabled, no results, or
+  // no city) — unless the switch withheld them, which is worth a line.
+  if (fetched && items.length === 0 && !loading && !suppressed) return null;
 
   return (
     <View>
@@ -845,6 +835,12 @@ export function CompassTripBrief({ tripId, city, startDate, endDate }: CompassTr
           <ActivityIndicator size="small" color={color.signal} />
           <Text style={cb.loadingText}>Loading recommendations…</Text>
         </View>
+      )}
+      {!loading && suppressed && (
+        <Text style={cb.attentionNote} testID="compass-brief-attention">
+          Commercial and entertainment suggestions are held back while this trip needs your attention
+          {attention?.withheld ? ` (${attention.withheld} held back)` : ''}. Safety and logistics stay.
+        </Text>
       )}
       {!loading && expanded && items.length > 0 && (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={cb.strip}>
@@ -926,7 +922,7 @@ export function TripMapPreview({ tripId }: { tripId?: string } = {}) {
 }
 
 /* ── Trip Crew Map section ── */
-export { CrewMapSection as TripCrewSection } from './tripCrew/CrewMapSection.tsx';
+export { CrewMapSection as TripCrewSection } from '../features/trips/crew/CrewMapSection.tsx';
 
 /* ── Safety / Check-In (compact stub) ── */
 export function TripSafety({ tripId }: { tripId?: string }) {
@@ -987,9 +983,6 @@ export function TripPostsSection({ posts }: { posts: { id: string; city: string;
 
 /* ─── Styles ─────────────────────────────────────────────────────────────── */
 
-const ring = StyleSheet.create({
-  pct: { ...t.hero, color: color.ink, fontSize: 28, marginTop: -18 },
-});
 
 const hero = StyleSheet.create({
   wrap: { padding: space.lg, gap: space.md },
@@ -1012,9 +1005,9 @@ const hero = StyleSheet.create({
   actions: { flexDirection: 'row', gap: space.sm, flexWrap: 'wrap' },
   action: { flexGrow: 1, flexBasis: '47%', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze, borderRadius: radius.md, paddingVertical: space.md },
   actionText: { ...t.small, fontWeight: '700', color: color.ink },
-  progressCard: { backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze, borderRadius: radius.lg, padding: space.lg, alignItems: 'center' },
+  progressCard: { backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze, borderRadius: radius.lg, padding: space.lg, alignItems: 'flex-start' },
   progressTitle: { ...t.title, color: color.ink, fontSize: 18, alignSelf: 'flex-start' },
-  progressSub: { ...t.small, color: color.mute, fontWeight: '600', marginTop: 4 },
+  progressSub: { ...t.small, color: color.ink, fontWeight: '600', marginTop: 4 },
   stepRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   stepText: { ...t.body, color: color.mute },
   stepDone: { color: color.ink },
@@ -1131,6 +1124,7 @@ const cr = StyleSheet.create({
 });
 
 const cb = StyleSheet.create({
+  attentionNote: { fontSize: 13, lineHeight: 18, color: color.mute, paddingHorizontal: 16, paddingBottom: 8 },
   card:        { marginHorizontal: space.lg, backgroundColor: color.ink, borderRadius: radius.lg, padding: space.lg, gap: space.md, ...shadow.card },
   emptyCard:   { marginHorizontal: space.lg, backgroundColor: color.ink, borderRadius: radius.lg, padding: space.lg, gap: space.md, ...shadow.card },
   head:        { flexDirection: 'row', alignItems: 'center', gap: space.md },

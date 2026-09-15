@@ -103,17 +103,57 @@ after(() => {
 interface Run {
   status: number | null;
   out: string;
+  /** True when the child was KILLED by the timeout rather than exiting. */
+  timedOut: boolean;
 }
+
+/**
+ * How long the spawned security suite may take.
+ *
+ * ── WHY THIS IS NOT 300_000 ANY MORE ────────────────────────────────────────
+ * It was, and a full-suite run measured 300_119 ms — NINETEEN MILLISECONDS over.
+ * This file spawns the ENTIRE security suite as a subprocess while the other
+ * ~5,180 suites run alongside it, so its wall-clock is a function of machine
+ * load rather than of anything it asserts. A budget the healthy case lands
+ * within by 0.006 % is a coin flip, not a limit.
+ */
+const SUITE_TIMEOUT_MS = 900_000;
 
 function runSuite(env: Record<string, string> = {}): Run {
   const r = spawnSync("bash", [SUITE], {
     cwd: API_ROOT,
     encoding: "utf8",
     env: { ...process.env, ...env },
-    timeout: 300_000,
+    timeout: SUITE_TIMEOUT_MS,
     maxBuffer: 64 * 1024 * 1024,
   });
-  return { status: r.status, out: `${r.stdout ?? ""}${r.stderr ?? ""}` };
+  // `spawnSync` reports a timeout kill as signal SIGTERM with a null status.
+  // DISTINGUISHING IT IS THE POINT. When the child is killed mid-run its output
+  // is TRUNCATED, so every "✔ PASSED: <check>" line after the cut is missing —
+  // and the assertions below read those lines. A timeout therefore used to
+  // surface as `check:guard-coverage did not PASS on the real tree`, which names
+  // an innocent guard and sends the reader to inspect a check that never
+  // actually failed. A test that misattributes its own failure is worse than one
+  // that fails loudly.
+  const timedOut = r.error !== undefined && (r.error as NodeJS.ErrnoException).code === "ETIMEDOUT"
+    || r.signal === "SIGTERM";
+  return { status: r.status, out: `${r.stdout ?? ""}${r.stderr ?? ""}`, timedOut };
+}
+
+/**
+ * Fail with the TRUE cause when the suite was killed, instead of letting a
+ * truncated transcript be read as a guard verdict. Call this before any
+ * assertion that parses `r.out`.
+ */
+function assertCompleted(r: Run): void {
+  if (!r.timedOut) return;
+  throw new Error(
+    `the spawned security suite was KILLED after ${SUITE_TIMEOUT_MS} ms and its output is ` +
+      `TRUNCATED. No guard verdict can be read from this run — any "did not PASS" below ` +
+      `would name a check that was never reached. This is a load/timeout failure, not a ` +
+      `security finding. Last 400 chars of the truncated transcript:\n` +
+      r.out.slice(-400),
+  );
 }
 
 /** Write an executable stub check and return its absolute path. */
@@ -152,6 +192,7 @@ function scored(out: string): { passed: string[]; failed: string[] } {
 describe("security check suite runner", () => {
   it("CONTROL — the real tree, no seams: its true status, and every static security guard passes", () => {
     const r = runSuite();
+    assertCompleted(r);
     const { passed, failed } = scored(r.out);
 
     assert.notEqual(
@@ -227,6 +268,7 @@ describe("security check suite runner", () => {
         `--report-ere '^[[:space:]]*[0-9]+ UNCLASSIFIED — survive deletion' -- bash ${s}`,
     );
     const r = runSuite({ SECURITY_SUITE_CHECKS: m, SECURITY_SUITE_UNENFORCED: emptyUnenforced() });
+    assertCompleted(r);
     assert.equal(r.status, 0, r.out);
     assert.match(r.out, /stub:ratchet: 225 UNCLASSIFIED — survive deletion, undecided/);
   });
@@ -239,6 +281,7 @@ describe("security check suite runner", () => {
         `--report-ere '^[[:space:]]*[0-9]+ UNCLASSIFIED' -- bash ${s}`,
     );
     const r = runSuite({ SECURITY_SUITE_CHECKS: m, SECURITY_SUITE_UNENFORCED: emptyUnenforced() });
+    assertCompleted(r);
     assert.equal(r.status, 0, r.out);
     assert.match(r.out, /stub:quiet: UNKNOWN — no line matched/);
   });
@@ -259,6 +302,7 @@ describe("security check suite runner", () => {
       `security_check "check:guard-reachability" --guard "src/scripts/checkDataRights.ts" -- bash ${s}`,
     );
     const r = runSuite({ SECURITY_SUITE_CHECKS: m, SECURITY_SUITE_UNENFORCED: emptyUnenforced() });
+    assertCompleted(r);
     assert.equal(r.status, 1, r.out);
     assert.match(r.out, /registry cross-reference UNAVAILABLE/);
     assert.ok(!/0 of the [0-9]+ check\(s\) above are declared MANUAL/.test(r.out), r.out);
@@ -278,6 +322,7 @@ describe("security check suite runner", () => {
        `security_check "stub:unwired-guard" --guard "src/scripts/stubUnwired.ts" -- bash ${other}`].join("\n"),
     );
     const r = runSuite({ SECURITY_SUITE_CHECKS: m, SECURITY_SUITE_UNENFORCED: emptyUnenforced() });
+    assertCompleted(r);
     assert.equal(r.status, 0, r.out);
     assert.match(r.out, /1 of the 2 check\(s\) above are declared MANUAL \/ NOT ENFORCED BY CI/);
     assert.match(r.out, /• stub:unwired-guard — enforced by THIS suite only/);
@@ -290,6 +335,7 @@ describe("security check suite runner", () => {
       `security_check "stub:needs-credentials" -- bash ${s}`,
     );
     const r = runSuite({ SECURITY_SUITE_CHECKS: m, SECURITY_SUITE_UNENFORCED: emptyUnenforced() });
+    assertCompleted(r);
     assert.equal(r.status, 1, r.out);
     assert.match(r.out, /✘ FAILED: stub:needs-credentials \(exit 2/);
     assert.match(r.out, /✘ stub:needs-credentials/); // named in the summary
@@ -300,6 +346,7 @@ describe("security check suite runner", () => {
     const s = stub("crash", 'echo "TypeError: cannot read properties of undefined" >&2; exit 1');
     const m = manifest("exit1", `security_check "stub:crashed" -- bash ${s}`);
     const r = runSuite({ SECURITY_SUITE_CHECKS: m, SECURITY_SUITE_UNENFORCED: emptyUnenforced() });
+    assertCompleted(r);
     assert.equal(r.status, 1, r.out);
     assert.match(r.out, /✘ FAILED: stub:crashed \(exit 1/);
   });
@@ -310,6 +357,7 @@ describe("security check suite runner", () => {
     const s = stub("silent3", "exit 3");
     const m = manifest("exit3", `security_check "stub:silent-blocked" -- bash ${s}`);
     const r = runSuite({ SECURITY_SUITE_CHECKS: m, SECURITY_SUITE_UNENFORCED: emptyUnenforced() });
+    assertCompleted(r);
     assert.equal(r.status, 1, r.out);
     assert.match(r.out, /✘ FAILED: stub:silent-blocked \(exit 3/);
   });
@@ -321,6 +369,7 @@ describe("security check suite runner", () => {
       `security_check "stub:no-verdict" --require '^VERDICT: [1-9][0-9]* table\\(s\\) clean$' -- bash ${s}`,
     );
     const r = runSuite({ SECURITY_SUITE_CHECKS: m, SECURITY_SUITE_UNENFORCED: emptyUnenforced() });
+    assertCompleted(r);
     assert.equal(r.status, 1, r.out);
     assert.match(r.out, /✘ FAILED: stub:no-verdict \(exit 0 but a REQUIRED verdict line is absent/);
     assert.match(r.out, /missing: \/\^VERDICT/);
@@ -335,6 +384,7 @@ describe("security check suite runner", () => {
       `security_check "stub:vacuous" --require '^VERDICT: [1-9][0-9]* table\\(s\\) clean$' -- bash ${s}`,
     );
     const r = runSuite({ SECURITY_SUITE_CHECKS: m, SECURITY_SUITE_UNENFORCED: emptyUnenforced() });
+    assertCompleted(r);
     assert.equal(r.status, 1, r.out);
     assert.match(r.out, /✘ FAILED: stub:vacuous \(exit 0 but a REQUIRED verdict line is absent/);
   });
@@ -345,6 +395,7 @@ describe("security check suite runner", () => {
       `security_check "stub:unrunnable" -- ${join(tmp, "this-binary-does-not-exist")}`,
     );
     const r = runSuite({ SECURITY_SUITE_CHECKS: m, SECURITY_SUITE_UNENFORCED: emptyUnenforced() });
+    assertCompleted(r);
     assert.equal(r.status, 1, r.out);
     assert.match(r.out, /✘ FAILED: stub:unrunnable \(exit 127 — the check COULD NOT RUN/);
   });
@@ -361,6 +412,7 @@ describe("security check suite runner", () => {
       ].join("\n"),
     );
     const r = runSuite({ SECURITY_SUITE_CHECKS: m, SECURITY_SUITE_UNENFORCED: emptyUnenforced() });
+    assertCompleted(r);
     const { passed, failed } = scored(r.out);
     assert.equal(r.status, 1, r.out);
     assert.deepEqual(failed, ["stub:first-fails", "stub:third-fails"], r.out);
@@ -385,6 +437,7 @@ describe("security check suite runner", () => {
         `--count-ere 'FAILED — [0-9]+ locally declared admin guard' -- bash ${findings}`,
     );
     const r = runSuite({ SECURITY_SUITE_CHECKS: m, SECURITY_SUITE_UNENFORCED: u });
+    assertCompleted(r);
     assert.equal(r.status, 0, r.out);
     assert.match(r.out, /✔ ALL 2 SECURITY CHECK\(S\) PASSED/);
     // A green suite must still say what it did not run — otherwise it is the
@@ -406,6 +459,7 @@ describe("security check suite runner", () => {
         `--count-ere '[0-9]+ leaky key' -- bash ${silent}`,
     );
     const r = runSuite({ SECURITY_SUITE_CHECKS: m, SECURITY_SUITE_UNENFORCED: u });
+    assertCompleted(r);
     assert.equal(r.status, 0, r.out);
     assert.match(r.out, /src\/scripts\/stubLive\.ts — findings UNKNOWN/);
     assert.ok(!/stubLive\.ts — 0 standing/.test(r.out), r.out);
@@ -414,6 +468,7 @@ describe("security check suite runner", () => {
   it("FAILS with exit 2 on a vacuous run — a suite that examines nothing is not a pass", () => {
     const m = manifest("empty", "# declares no checks at all\n:");
     const r = runSuite({ SECURITY_SUITE_CHECKS: m, SECURITY_SUITE_UNENFORCED: emptyUnenforced() });
+    assertCompleted(r);
     assert.equal(r.status, 2, r.out);
     assert.match(r.out, /✘ VACUOUS — 0 checks executed/);
   });
@@ -421,6 +476,7 @@ describe("security check suite runner", () => {
   it("FAILS with exit 2 when a declared check has no command behind it", () => {
     const m = manifest("nocmd", `security_check "stub:declared-but-empty" --guard "x.ts"`);
     const r = runSuite({ SECURITY_SUITE_CHECKS: m, SECURITY_SUITE_UNENFORCED: emptyUnenforced() });
+    assertCompleted(r);
     assert.equal(r.status, 2, r.out);
     assert.match(r.out, /SUITE CONFIGURATION ERROR: stub:declared-but-empty: no command given/);
   });
@@ -430,6 +486,7 @@ describe("security check suite runner", () => {
       SECURITY_SUITE_CHECKS: join(tmp, "nope.manifest.sh"),
       SECURITY_SUITE_UNENFORCED: emptyUnenforced(),
     });
+    assertCompleted(r);
     assert.equal(r.status, 2, r.out);
     assert.match(r.out, /SUITE CONFIGURATION ERROR: SECURITY_SUITE_CHECKS=.*does not exist/);
   });

@@ -62,6 +62,14 @@ const LEGACY_SIDE = new Set([
   "migrations/2194_memory_reset_export.sql",
   "migrations/2197_memory_reset_category_scope.sql",
   "migrations/2200_memory_projection_exclude_deleted_profiles.sql",
+  // 2320 restores the Highlights/Memories provenance spine (memory_episodes,
+  // memory_evidence). It is PROJECTION-side and not a borderline call: its
+  // erase_memory_for_user body really DELETEs FROM public.memory_events
+  // (:361) as part of the account-deletion cascade, and its column comments
+  // deliberately reuse memory_events.source's vocabulary verbatim (:240,
+  // :421) rather than open a competing one. It names memory_domain_events
+  // nowhere.
+  "migrations/2320_memory_episode_provenance_spine.sql",
   "migrations/2333_derived_memory_and_consent_grant_boundary.sql",
   "lib/deletionDispositions.ts",
   "lib/memoryProjectionScheduler.ts",
@@ -79,11 +87,18 @@ const KERNEL_SIDE = new Set([
   "test/memoryCommandKernelFake.ts",
   "test/memoryCommandRoutes.test.ts",
   "test/memoryOutbox.test.ts",
-  // Asserts that the production-drift ratchet does NOT excuse the kernel's
-  // tables: they have no recorded production apply, and an excuse for them
-  // would mean the drift check had stopped requiring one. It names the kernel
-  // log only, as data in an assertion list.
-  "test/productionDriftExtraction.test.ts",
+  // REMOVED 2026-09-15, and the removal is the point rather than tidying.
+  // "test/productionDriftExtraction.test.ts" was listed here because it asserted
+  // that the production-drift ratchet does NOT excuse the kernel's tables, on
+  // the stated ground that "they have no recorded production apply, and an
+  // excuse for them would mean the drift check had stopped requiring one".
+  // That ground expired: 2710, 2711, 2720-2724 and 2730 WERE applied to
+  // production on 2026-09-15, so the kernel's tables are now simply PRESENT in
+  // the snapshot and the case would have passed for the wrong reason. Its list
+  // was rewritten to name migrations that genuinely still have no production
+  // apply, and it no longer references either memory event log -- so this entry
+  // became a classification of a file that does not need one, which is exactly
+  // what this checker refuses to let rot.
 ]);
 
 /**

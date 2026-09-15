@@ -114,7 +114,7 @@ import {
   loadDiscoveryModifiers, inertModifiers,
   type DiscoveryModifiers, type ModifiersReason,
 } from "./discoveryModifiers.js";
-
+import { loadSequenceFeatures, type DiscoverySequenceFeatures } from "./discoverySequenceFeatures.js";
 /**
  * The structural subset of a discovery place that ranking reads.
  *
@@ -500,7 +500,7 @@ export async function loadPdeViewer(
     } catch { /* non-fatal */ }
   }
 
-  return { userId, city, followedIds, interestTags, categoryAffinities, seenIds, placeAffinities };
+  return { userId, city, followedIds, interestTags, categoryAffinities, seenIds, placeAffinities, sequences: await loadSequenceFeatures(sc, userId) };
 }
 
 type PlaceCandidate<T extends PdePlace> = RankCandidate & { __place: T };
@@ -542,6 +542,10 @@ export async function rankForViewer<T extends PdePlace>(
   } else {
     try {
       modifiers = await loadDiscoveryModifiers(sc, {
+        // The Trail modifier is the one user-dependent input, so the viewer is
+        // named here rather than implied. Without it loadDiscoveryModifiers
+        // performs no Trail read at all.
+        viewerId: viewer.userId,
         city: viewer.city,
         placeIds: places.map((p) => p.id),
         cacheKey: opts.candidateKey ?? deriveCandidateKey(viewer.city, places.map((p) => p.id)),
@@ -572,6 +576,12 @@ export async function rankForViewer<T extends PdePlace>(
     // Capped local momentum (portavaRank LOCAL_MOMENTUM_MAX_CONTRIBUTION).
     // Undefined with the flag off ⇒ the feature is 0 for every candidate.
     localMomentum: modifiers.enabled ? modifiers.localMomentum : undefined,
+    // `02` Trails as a bounded MODIFIER — the viewer's followed Trails, already
+    // scaled by §11 health and DV-25 momentum, capped in portavaRank at
+    // TRAIL_AFFINITY_MAX_CONTRIBUTION. Gated on `enabled` and NOT on the map
+    // being empty: an inert record must leave the feature vector byte-identical
+    // to the pre-Trail pipeline, which is what makes the flag a rollback.
+    trailAffinity: modifiers.enabled ? modifiers.trailAffinity : undefined,
   };
 
   // Map place → RankCandidate.
@@ -788,4 +798,52 @@ export async function rankForViewer<T extends PdePlace>(
     modifiers,
     governor,
   };
+}
+
+// ── 04 §8 behaviour chains, on the viewer (census-discovery DC-09) ────────────
+//
+// `04` §8 lists four behaviour chains and requires that sequence features be
+// "derived downstream rather than hard-coded into clients". The derivation
+// lives in lib/discoverySequenceFeatures.ts; this is where it reaches the
+// engine, on the struct that already carries every other per-user input.
+//
+// It rides `loadPdeViewer` rather than getting a loader of its own for the
+// reason the struct's own header gives: everything viewer-specific belongs in
+// one place, so "may never be cached on the candidate key" stays checkable by
+// reading. The read is non-fatal exactly like the four beside it — a viewer
+// whose history cannot be read is ranked without the feature, and says so
+// (`sequences.reason`) rather than being ranked as a viewer who did nothing.
+//
+// WHAT IT COSTS, SAID PLAINLY: one more round trip on a path that under D5=B
+// runs on EVERY request, for a feature nothing scores on yet. It is an indexed
+// read (rank_events_user_served_at, then the surface filter) on the same table
+// the seen-set read already uses, and it is deliberately NOT folded into that
+// read: the seen set is a 24-hour window sized to Cache A's TTL, these features
+// are a 30-day one, and widening the seen window to share a query would change
+// portavaRank's largest negative term for every viewer. A round trip is the
+// cheaper mistake than a silent ranking change.
+//
+// IT IS VACUOUS TODAY, AND THAT IS NOT A DEFECT. Discovery is dark in
+// production — thirteen `surface='discovery'` rows in `rank_events` ever — so
+// every chain computes empty until the surface is actually reached. The module
+// header says this at length so that an empty chain is never mistaken for a
+// missing one.
+//
+// DECLARATION MERGING, DELIBERATELY. This field belongs beside `placeAffinities`
+// in the interface above, and it is down here instead because every line up
+// there is the target of an anchored citation in docs/architecture and
+// docs/discovery: inserting one line silently repoints someone else's evidence,
+// and this file is in the COVERED registry of scripts/check-doc-citations.mjs
+// precisely so that kind of drift is loud. Merge, then, rather than shift.
+export interface PdeViewer {
+  /**
+   * `04` §8's four chains for this viewer, derived from `rank_events`.
+   *
+   * Every chain is NAMED even when nothing could be derived, and a step the
+   * live 13-column schema cannot represent reports `null` rather than 0 — see
+   * lib/discoverySequenceFeatures.ts. Nothing in the ranker reads it yet: it is
+   * a feature the engine now CARRIES, and a consumer that scored on a chain
+   * with no production traffic would be scoring on noise.
+   */
+  sequences?: DiscoverySequenceFeatures;
 }

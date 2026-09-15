@@ -12,10 +12,18 @@
  * availability fit, proximity) and trusted humans (social proximity,
  * trust-weighted engagement) over raw virality.
  *
- * The module is PURE and dependency-free: callers assemble a ViewerContext
- * and Candidates from whatever data their surface already loads, and get
- * back a scored, diversified, exploration-mixed ordering. Missing signals
- * simply contribute 0 — every surface can adopt it incrementally.
+ * The module is PURE: callers assemble a ViewerContext and Candidates from
+ * whatever data their surface already loads, and get back a scored,
+ * diversified, exploration-mixed ordering. Missing signals simply contribute
+ * 0 — every surface can adopt it incrementally.
+ *
+ * It has exactly ONE import, and it is deliberate: `trailAffinityContribution`
+ * from lib/discoveryTrailAffinity.ts. The Trail modifier's cap is enforced in
+ * that module rather than restated here, because a cap written down twice is a
+ * cap that can disagree with itself — and `02_Trails.md` §11's bound is the
+ * whole reason Trails is allowed near this file at all (see
+ * TRAIL_AFFINITY_MAX_CONTRIBUTION). Nothing else may be added: this stays a
+ * scoring kernel, not a place where data is loaded.
  *
  * Phases:
  *   v1 (now)  — hand-tuned DEFAULT_WEIGHTS, deterministic exploration.
@@ -23,6 +31,10 @@
  *               funnel (see rank_events logging in PORTAVA-ALGORITHM.md).
  *   v3        — per-user weight deltas + embedding recall for candidates.
  */
+
+import {
+  trailAffinityContribution, TRAIL_AFFINITY_MAX_CONTRIBUTION,
+} from "./discoveryTrailAffinity.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -107,6 +119,25 @@ export interface ViewerContext {
    * "capped local_momentum as modifiers only").
    */
   localMomentum?: Record<string, number>;
+  /**
+   * place_id → Trail affinity in [0, 1]
+   * (services/trails/TrailService.loadViewerTrailModifier, assembled into the
+   * request by lib/discoveryModifiers.ts): how strongly this place sits in a
+   * Trail the VIEWER FOLLOWS, already scaled by `02` §11 Trail health and by
+   * DV-25 Trail momentum before it arrives here.
+   *
+   * UNLIKE `localMomentum` this one IS user-dependent — it is the viewer's own
+   * follow graph — which is why it is a per-request input and never cacheable
+   * across viewers (`06` §4: "Candidate caches may be user-independent. Final
+   * ranking must not be.").
+   *
+   * Absent ⇒ 0 for every candidate, which is the behaviour of every deployment
+   * where `discovery_ranking_modifiers_enabled` is off or migration 2910 is not
+   * applied. Its contribution is HARD-CAPPED at TRAIL_AFFINITY_MAX_CONTRIBUTION
+   * regardless of weights, for the reason ROADMAP step 7 gives: trails are "a
+   * future MODIFIER to the ranker, never a parallel engine".
+   */
+  trailAffinity?: Record<string, number>;
 }
 
 export interface RankWeights {
@@ -133,6 +164,13 @@ export interface RankWeights {
    * an admin weight override cannot turn a modifier into a driver.
    */
   localMomentum: number;
+  /**
+   * Weight on the Trail-affinity modifier. Same contract as `localMomentum`:
+   * the contribution is clamped to TRAIL_AFFINITY_MAX_CONTRIBUTION inside
+   * `trailAffinityContribution`, so an admin weight override cannot turn the
+   * modifier into a driver.
+   */
+  trailAffinity: number;
   kindPrior: Partial<Record<CandidateKind, number>>;
 }
 
@@ -197,6 +235,9 @@ export const DEFAULT_WEIGHTS: RankWeights = {
   capacityOpen: 0.1,
   seenPenalty: -0.6,
   localMomentum: LOCAL_MOMENTUM_MAX_CONTRIBUTION,   // the weight IS the cap; see above
+  trailAffinity: TRAIL_AFFINITY_MAX_CONTRIBUTION,   // 0.10 — the owner's approved
+                                                    // initial setting, 2026-09-14;
+                                                    // see lib/discoveryTrailAffinity.ts
   kindPrior: { event: 0.15, plan: 0.15, gem: 0.05, buddy: 0.0, post: 0.0 },
 };
 
@@ -337,6 +378,18 @@ export function scoreCandidate<T extends RankCandidate>(
   f.localMomentum = momentum > 0
     ? Math.min(LOCAL_MOMENTUM_MAX_CONTRIBUTION, Math.max(0, w.localMomentum * momentum))
     : 0;
+
+  // Trail affinity — the second CAPPED modifier, clamped the same way and for
+  // the same reason (`docs/architecture/02_Trails.md:5-12`: trails are "a
+  // future MODIFIER to the ranker, never a parallel engine"). The clamp lives
+  // in lib/discoveryTrailAffinity.trailAffinityContribution so the cap has ONE
+  // definition; a negative or non-finite affinity contributes 0 rather than a
+  // penalty, because a place belonging to no Trail says nothing bad about it.
+  // Keyed by candidate id, exactly as localMomentum is, so a surface that maps
+  // place ids to candidate ids needs no second key space.
+  f.trailAffinity = trailAffinityContribution(
+    ctx.trailAffinity?.[c.id] ?? 0, w.trailAffinity,
+  );
 
   let score = 0;
   for (const k of Object.keys(f)) score += f[k];

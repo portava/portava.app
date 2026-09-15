@@ -66,7 +66,8 @@ Two warnings about that guard:
    `/api` prefix literally: `POST /api/calls/webhook` (`app.ts:122`) and
    `POST /api/verification/webhook` (`app.ts:126`). Both must precede `express.json()`
    (`app.ts:131`) because signature verification needs the unparsed body
-   (`routes/verification.ts:238`, `:290`). `callsWebhook.ts` exports a handler and registers
+   (`routes/verification.ts:314#export const webhookRawParser = express.raw({ type: () => true, limit: "512kb" });`,
+   `routes/verification.ts:317#const rawBody = Buffer.isBuffer(req.body)`). `callsWebhook.ts` exports a handler and registers
    nothing, which is why it is not in the 140.
 2. **The root share surface.** `wellKnownShare.ts` is mounted with no prefix (`app.ts:144`) and
    owns `/.well-known/apple-app-site-association` (`:97`), `/.well-known/assetlinks.json`
@@ -154,7 +155,7 @@ Three properties of the envelope are load-bearing:
   for.
 - **The global handler used to emit a DIFFERENT shape** — `{ error: { code, message } }`, a
   nested object where every route returns a flat string, so a client reading `body.error` as a
-  code got an object for any unhandled throw. **CLOSED.** The global handler no longer emits a different shape. It moved out of `app.ts` into `lib/errorEnvelope.ts:42#globalErrorHandler` — so the one response writer in the system that is not `sendError` can be tested against the real function instead of the hand-copied replica that could not fail when the original changed — and it now emits the same FLAT `{ error: "<code>", message }` every route emits (`app.ts:225#globalErrorHandler` registers it last). Decided in the direction of the 4159 `sendError` call sites, not the one handler.
+  code got an object for any unhandled throw. **CLOSED.** The global handler no longer emits a different shape. It moved out of `app.ts` into `lib/errorEnvelope.ts:42#globalErrorHandler` — so the one response writer in the system that is not `sendError` can be tested against the real function instead of the hand-copied replica that could not fail when the original changed — and it now emits the same FLAT `{ error: "<code>", message }` every route emits (`app.ts:241#globalErrorHandler` registers it last). Decided in the direction of the 4159 `sendError` call sites, not the one handler.
 
 ### The defect class: supabase-js RESOLVES, it does not throw
 
@@ -202,7 +203,7 @@ Twenty modules use them (PR #469's own count; 15 more bypassed them). The curren
 failure-vs-emptiness gap is what callers then do with
 `null`: most answer `200` with an empty collection —
 `rentABuddyMarketplace.ts:414,519,632,666,1139,1963`, `sharedMoments.ts:287`, `placeDays.ts:94`,
-`discoverySearch.ts:458,595,699,768,869,955,1070,1152,1252,1319,1417,1599`. That is **privacy-safe
+`discoverySearch.ts:476,613,717,786,887,973,1088,1170,1502,1569,1667,1849`. That is **privacy-safe
 and diagnostically silent**: the viewer, the client and the operator all see "nothing here".
 
 Two sites already model the answer this campaign wants. `sharedMoments.ts:122,146` refuse with
@@ -279,7 +280,7 @@ participants, `safetyNotes` to the host (`events.ts:3753-3787`). A new response 
 the row directly instead of calling the formatter silently drops those redactions.
 
 Four files leak snake_case: `adminRankingConfig.ts:220,316` (`old_value`, `old_enabled`),
-`compass.ts:1995,2048,2860` and `places.ts:460,495` (`powered_by`) — the compass ones because a
+`compass.ts:2002,2048,2860` and `places.ts:460,495` (`powered_by`) — the compass ones because a
 DB row is spread into the response as a fallback.
 
 **There is no uniform list envelope.** Each router names its own collection key — `places`,
@@ -322,7 +323,7 @@ hardcoded fallback and an origin-less allowance for mobile/curl (`app.ts:31-86`)
 decision, Redis-backed when `REDIS_URL` is set and **fail-open to per-process buckets** when it
 is not, so with N instances a client gets N× the budget. Any exact cross-instance ceiling must be
 enforced against the DB; the call-start limit is the worked example. `Retry-After` is set on
-some 429s (`circle.ts:725`, `discoverySearch.ts:1778`) but is not a global property of the code.
+some 429s (`circle.ts:725`, `discoverySearch.ts:2028`) but is not a global property of the code.
 Rate-limit buckets are module-global and bleed across test files — call `_resetRateLimit()` per
 suite (`.agents/memory/api-server-testing.md`).
 

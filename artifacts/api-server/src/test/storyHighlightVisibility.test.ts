@@ -44,6 +44,42 @@ describe("resolveHighlightVisibilityForStory — only faithful mappings, everyth
     assert.deepEqual([...PROMOTABLE_STORY_VISIBILITIES].sort(), ["circle_only", "public"]);
   });
 
+  // THE RULING GUARD (STORY_HIGHLIGHT_VISIBILITY, resolved 2026-09-15).
+  //
+  // The case above pins the promotable SET, and a set is easy to widen: an
+  // editor who adds `trip_crew: "trip_only"` to the table need only add one
+  // string to that expectation and it goes green again. This case pins the
+  // SUBSTANCE instead, so the one mapping that looks obvious and is wrong
+  // cannot be re-introduced by editing an expectation.
+  //
+  // A `trip_crew` Story admits the accepted crew of ONE trip — `stories.trip_id`,
+  // enforced in checkStoryAccess. A `trip_only` Highlight admits anyone who
+  // shares ANY accepted trip with the owner, because `highlights` has no
+  // trip_id column and every highlight read path resolves `sharesTrip` across
+  // all of the viewer's trips. The mapping would therefore hand the Highlight
+  // to every crew member of every other trip the owner has ever been on —
+  // people who were never on the trip the Story was for.
+  //
+  // This stays true until `highlights` GAINS a single-trip audience. Until
+  // then the assertion below is not a stylistic preference; it is the reason
+  // the rung is refused.
+  it("RULING: `trip_crew` may never map to `trip_only` — one crew is not every crew", () => {
+    const target = (STORY_TO_HIGHLIGHT_VISIBILITY as Record<string, string | null>).trip_crew;
+    assert.notEqual(
+      target, "trip_only",
+      "trip_only admits anyone sharing ANY trip with the owner; a trip_crew Story admits one trip's crew",
+    );
+    // And if a later pass gives `trip_crew` a target at all, it must be one
+    // that did not exist when this ruling was made — not a re-use of a rung
+    // whose predicate is already known to be wider.
+    if (target !== null) {
+      assert.ok(
+        !["public", "travelers_nearby", "circle_only", "trip_only", "private"].includes(target),
+        `trip_crew was given the pre-existing rung "${target}", every one of which is wider than one trip's crew`,
+      );
+    }
+  });
+
   it("public → public and circle_only → circle_only", () => {
     assert.deepEqual(resolveHighlightVisibilityForStory({ visibility: "public", hidden_user_ids: [] }),
       { ok: true, visibility: "public", storyVisibility: "public" });

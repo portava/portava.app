@@ -1,5 +1,5 @@
 /**
- * Trip Readiness — persistence honesty in lib/tripReadiness.computeReadiness
+ * Trip Readiness — persistence honesty in domain/trips/services/tripReadiness.computeReadiness
  *
  * computeReadiness ends with a two-step persist:
  *
@@ -32,7 +32,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { computeReadiness } from "../lib/tripReadiness.js";
+import { computeReadiness } from "../domain/trips/services/tripReadiness.js";
 
 const TRIP_ID  = "10000000-0000-0000-0000-000000000001";
 const OWNER_ID = "10000000-0000-0000-0000-0000000000a1";

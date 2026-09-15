@@ -1677,3 +1677,86 @@ describe("people search resolves the real name through the CANONICAL helper", ()
     assert.equal((results as any[]).find((u: any) => u.id === ALICE)?.title, "alice");
   });
 });
+
+// ── Trips §7.3 — events placed against the trip's freedom windows (TR133) ────
+//
+// With `tripId` in the query, each event result carries metadata.tripFit from
+// the REAL freedom projection (the Temporal Freedom Engine's windows, never a
+// notion of free time computed in Discovery), and events that fit lead. Windows
+// that cannot be read are reported as NOT_CONSULTED on every row.
+
+describe("GET /api/discovery/search — events carry tripFit when a trip is in context (Trips §7.3, TR133)", () => {
+  const TRIP_ID  = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
+  const PLACE_A  = "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbb1";
+  const PLACE_B  = "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbb2";
+  const FITS_ID  = "fe000000-0000-4000-a000-0000000000f1";
+  const CLASH_ID = "fe000000-0000-4000-a000-0000000000f2";
+  // A Paris trip a year out: commitment A at 10:00Z on the 13th, B due 16:00Z ~10 km north.
+  const tripTables = (gate = true) => ({
+    profiles: [{ id: ALICE, handle: "alice", name: "Alice", avatar_url: null, is_private: false, home_city: null, home_country: null, account_status: "active" }],
+    blocks: [],
+    feature_flags: [{ flag: "trip_operational_projections_enabled", enabled: gate }],
+    trips: [{ id: TRIP_ID, owner_id: ME, version: 1, title: "Paris", start_date: "2027-09-12", end_date: "2027-09-15", status: "active", timezone: "Europe/Paris" }],
+    trip_members: [{ trip_id: TRIP_ID, user_id: ME, role: "owner", status: "accepted" }],
+    trip_commitments: [
+      { id: "A", trip_id: TRIP_ID, type: "event", starts_at: "2027-09-13T10:00:00.000Z", required_arrival_at: null, place_id: PLACE_A, lateness_tolerance: null, prep_duration: null, flexibility: "flexible" },
+      { id: "B", trip_id: TRIP_ID, type: "event", starts_at: null, required_arrival_at: "2027-09-13T16:00:00.000Z", place_id: PLACE_B, lateness_tolerance: null, prep_duration: null, flexibility: "flexible" },
+    ],
+    places: [{ id: PLACE_A, latitude: 48.8566, longitude: 2.3522 }, { id: PLACE_B, latitude: 48.9466, longitude: 2.3522 }],
+    events: [
+      // The search orders by starts_at, so the CLASHING event comes first on
+      // its own (15:50Z, in the travel reserved before B) and the fitting one
+      // second (18:00Z, in the after-last window): "fits lead" is then a
+      // reordering the test can see.
+      { id: CLASH_ID, title: "Paris rooftop hour", host_id: ALICE, cover_url: null, city: "Paris", country: "France", starts_at: "2027-09-13T15:50:00.000Z", visibility: "public", state: "open", created_at: "2026-07-01T00:00:00Z" },
+      { id: FITS_ID,  title: "Paris evening walk", host_id: ALICE, cover_url: null, city: "Paris", country: "France", starts_at: "2027-09-13T18:00:00.000Z", visibility: "public", state: "open", created_at: "2026-07-01T00:00:00Z" },
+    ],
+    event_rsvps: [],
+    profile_privacy_settings: [],
+  });
+
+  it("the event inside a window is FITS and leads; the one in B's reserved travel is CONFLICT naming B", async () => {
+    setup(tripTables());
+    const r = await get(`/discovery/search?q=paris&type=events&tripId=${TRIP_ID}`);
+    assert.equal(r.status, 200);
+    const { results } = await r.json() as any;
+    assert.equal(results.length, 2);
+    const fits = results.find((r: any) => r.id === FITS_ID)!; const clash = results.find((r: any) => r.id === CLASH_ID)!;
+    assert.equal(fits.metadata.tripFit.verdict, "FITS", JSON.stringify(fits.metadata.tripFit));
+    assert.ok(fits.metadata.tripFit.windowId);
+    assert.ok(fits.metadata.tripFit.decisionId, "the freedom decision it was read from");
+    assert.equal(clash.metadata.tripFit.verdict, "CONFLICT", JSON.stringify(clash.metadata.tripFit));
+    assert.deepEqual(clash.metadata.tripFit.conflictingCommitmentIds, ["B"]);
+    assert.equal(clash.metadata.tripFit.reason, "TRIP_TEMPORAL_CONFLICT");
+    assert.equal(results[0].id, FITS_ID, "the fitting event leads");
+  });
+
+  it("without tripId nothing is placed and the order is the search's own", async () => {
+    setup(tripTables());
+    const r = await get("/discovery/search?q=paris&type=events");
+    const { results } = await r.json() as any;
+    assert.equal(results.length, 2);
+    assert.equal(results[0].id, CLASH_ID);
+    assert.equal("tripFit" in results[0].metadata, false);
+  });
+
+  it("gate closed: every row says NOT_CONSULTED with the reason, and nothing is reordered", async () => {
+    setup(tripTables(false));
+    const r = await get(`/discovery/search?q=paris&type=events&tripId=${TRIP_ID}`);
+    const { results } = await r.json() as any;
+    assert.equal(results.length, 2);
+    assert.equal(results[0].id, CLASH_ID);
+    for (const row of results) {
+      assert.equal(row.metadata.tripFit.verdict, "NOT_CONSULTED");
+      assert.match(row.metadata.tripFit.info, /not enabled/);
+    }
+  });
+
+  it("a malformed tripId is ignored, not an error", async () => {
+    setup(tripTables());
+    const r = await get("/discovery/search?q=paris&type=events&tripId=not-a-uuid");
+    assert.equal(r.status, 200);
+    const { results } = await r.json() as any;
+    assert.equal("tripFit" in results[0].metadata, false);
+  });
+});

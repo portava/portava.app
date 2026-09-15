@@ -31,6 +31,7 @@
  */
 import { SCHEMA_PROBE_SENTINEL_ID, type CapabilityDefinition } from "./schemaRequirement.js";
 import { DISCOVERY_TRIP_PROJECTION } from "../discoveryTripProjectionConsumer.js";
+import { TRIP_OPERATIONAL_PROJECTIONS } from "../../domain/trips/policies/tripOperationalProjections.js";
 
 /** The `media_assets` columns migration 2250 adds. Nothing before it does. */
 export const MEDIA_CANONICAL_ASSET_COLUMNS = [
@@ -137,7 +138,62 @@ export const LOCATE_FRIENDS_CREW_PRESENCE: CapabilityDefinition = {
 };
 
 /** flag → definition. The ratchet and the tests enumerate this. */
+/**
+ * The ONE column migration 2900 adds to `intel_reward_ledger`. Nothing before
+ * it does, and the sign-by-role CHECK it replaces the two non-negativity CHECKs
+ * with is defined in terms of this column — so a database without the column
+ * cannot express a reversal at all, not merely link one.
+ */
+export const INTEL_REWARD_REVERSAL_COLUMNS = ["reverses_entry_id"] as const;
+
+/**
+ * Reversals on the one ledger this product books contributor earnings to
+ * (`09` §9.2, §11).
+ *
+ * WHY THIS ENTRY EXISTS
+ * =====================
+ * `checkFlagSchemaPrerequisites` found it, in the words its own message uses:
+ * *"intel_rewards is ON in production and its code names
+ * intel_reward_ledger.reverses_entry_id which production lacks."* Both halves
+ * were checked rather than inherited — `reverses_entry_id` comes from
+ * `2900_intel_reward_ledger_reversals.sql`, and 2900 appears NOWHERE in
+ * `production-applied-migrations.json`, whose own header requires an entry in
+ * the same change that applies the migration.
+ *
+ * `services/ledger/RewardReversal.ts` gated on `isFlagEnabled` alone, which
+ * answers only the first half of this file's contract — `enabled` iff the flag
+ * is ON **and** the schema is READY. It did fail closed: PostgREST answered
+ * 42703, the `readErr` branch was taken, nothing was written, no money moved.
+ * What it could not do was SAY SO. `db_error` sends an operator to look at
+ * connectivity and grants and the ledger's health, at everything except the one
+ * true cause, which is that a migration was never applied to the database the
+ * flag is on in. That is the founding case in this file wearing different
+ * clothes: MEDIA_CANONICAL was TRUE in production over a `media_assets` without
+ * 2250's columns for three weeks, and every rejection was swallowed.
+ *
+ * NOT DECIDED HERE: whether production should get 2900 or have `intel_rewards`
+ * turned off. That is the owner's deploy decision. This entry makes either
+ * order safe, and — unlike the state it replaces — makes the wrong one LOUD.
+ */
+export const INTEL_REWARD_REVERSAL: CapabilityDefinition = {
+  flag: "intel_rewards",
+  providedBy: ["2900_intel_reward_ledger_reversals.sql"],
+  requires: {
+    tables: {
+      intel_reward_ledger: { columns: INTEL_REWARD_REVERSAL_COLUMNS },
+    },
+  },
+  consumers: ["services/ledger/RewardReversal.ts"],
+  note:
+    "A reversal that cannot be booked leaves a credit the world has contradicted standing for ever; " +
+    "refusing with the migration named is the difference between an operator who can act and one who cannot.",
+};
+
 export const CAPABILITIES: Readonly<Record<string, CapabilityDefinition>> = Object.freeze({
+  // Registered because services/ledger/RewardReversal.ts names the flag at its
+  // own read site, so scanFlagReads resolves it. The consumer is that same
+  // module: it is the only path that reads or writes the reversal column.
+  [INTEL_REWARD_REVERSAL.flag]: INTEL_REWARD_REVERSAL,
   [MEDIA_CANONICAL.flag]: MEDIA_CANONICAL,
   // Registered because it has read sites the ratchet can SEE: scanFlagReads
   // resolves four (the isFlagEnabled call in the consumer, plus
@@ -152,6 +208,11 @@ export const CAPABILITIES: Readonly<Record<string, CapabilityDefinition>> = Obje
   // assembler, which is the module that reads this feature's storage from
   // outside the feature.
   [LOCATE_FRIENDS_CREW_PRESENCE.flag]: LOCATE_FRIENDS_CREW_PRESENCE,
+  // Registered because domain/trips/policies/tripOperationalProjections.ts reads the flag by
+  // name (the gate every operational projection builder calls first), so
+  // scanFlagReads resolves it. The consumers are the three builders; the
+  // routes and Compass tools reach the schema only through them.
+  [TRIP_OPERATIONAL_PROJECTIONS.flag]: TRIP_OPERATIONAL_PROJECTIONS,
   // NOT registered here, deliberately: MAP_TRIP_PROJECTION_CAPABILITY
   // (lib/mapProjectionTripContract.ts). resolveCapability takes the definition
   // directly, so the Map reader is fully guarded either way.

@@ -14,7 +14,7 @@
 import { getServiceClient } from "../supabase.js";
 import { isFlagEnabled } from "../featureFlags.js";
 import { randomUUID } from "node:crypto";
-import { tripKernelClient, executeTripCommand } from "../tripKernel.js";
+import { tripKernelClient, executeTripCommand } from "../../domain/trips/commands/tripKernel.js";
 import {
   buildPrompt,
   promptVersionFor,
