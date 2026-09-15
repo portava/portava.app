@@ -219,6 +219,28 @@ export default function SearchScreen() {
         return;
       }
 
+      // A REFUSAL IS NOT AN EMPTY RESULT SET, and this screen is the one the
+      // refusal envelope was built for. `coverage: "nothing"` means the server
+      // did not read the sources: it arrives as `ok: true` with `results: []`,
+      // byte-identical to a query that genuinely matched nothing.
+      //
+      // Taken as empty it did TWO things, not one. The empty state SAID nothing
+      // matched. The Compass fallback below then ACTED on that claim — a second
+      // network call and a section of screen offering alternatives to a question
+      // nobody answered.
+      //
+      // The honest destination already exists in this component: the `error`
+      // branch, with its "Tap to retry" affordance, which is what a transport
+      // failure gets. A refusal is a failure that succeeded in transport, so it
+      // belongs there. `partial` is deliberately NOT routed here — the rows it
+      // carries are real, and showing them beats refusing them.
+      if (res.data.refusal?.coverage === 'nothing') {
+        if (isFirstPage) {
+          setError('Search is unavailable right now — nothing was searched, so this is not a statement about what exists.');
+        }
+        return;
+      }
+
       const { results: newRows, nextCursor: newCursor, timeLabel: label } = res.data;
 
       if (isFirstPage) {
