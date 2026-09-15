@@ -9,7 +9,7 @@
  *   category     string  for_you | places | food | nightlife | activities |
  *                        events | beaches | transport   (default: for_you)
  *   radiusKm     number  search radius 1–100 km  (default: 10)
- *   page         number  1-based page (default: 1); PAGE_SIZE=20
+ *   page         number  1-based page (default: 1); PAGE_SIZE=20.  cursor  string  base64url offset — GET /discovery/feed's spelling, decoded by decodeOffset — selecting the same window without the page arithmetic. Additive: `page` is untouched when it is absent, and it takes precedence when both are sent.
  *
  * Response: { places: DiscoveryPlace[], destination: string, total: number }
  *
@@ -38,7 +38,7 @@ import { fetchUserTimezone, localHourFor, nowUtcInstant } from "../lib/localTime
 import { isEnabled } from "../compass/flags";
 import type { RankCandidate, ScoredCandidate } from "../lib/portavaRank";
 import { logImpression } from "../lib/rankLog";
-import { logDiscoveryServe, DiscoveryServePoint } from "../lib/discoveryServeLog.js";
+import { logDiscoveryServe, DiscoveryServePoint } from "../lib/discoveryServeLog.js";  import { recommendationIdFor } from "../lib/discoveryRecommendationId.js";  // DC-22 — the id the serve log mints is now also handed to the client; see newServeExposure at the foot of this file.
 // D11 / `11` §9 — "A failure must not masquerade as success." One vocabulary for
 // every Discovery refusal; lib/discoveryRefusal.ts documents why the status stays
 // 200 and the named refusal rides inside the existing envelope instead.
@@ -1643,7 +1643,7 @@ router.get("/discovery", async (req, res) => {
     ? (req.query.category as string)
     : "for_you";
   const radiusKm  = Math.max(1, Math.min(100, parseFloat(req.query.radiusKm as string) || defaultRadius));
-  const page      = Math.max(1, parseInt(req.query.page as string) || 1);
+  const { page, offset } = resolveDiscoveryPaging(req.query.page, req.query.cursor, PAGE_SIZE), exposure = newServeExposure(callerUserId);  // DC-22 — `page` keeps its exact old meaning; `cursor` is the second, additive vocabulary. Both resolve to ONE offset, so no serve path can disagree with another about which window it served.
   const radiusM   = Math.round(radiusKm * 1000);
   const openNow   = req.query.openNow === "1";
   const minRating = req.query.minRating ? parseFloat(req.query.minRating as string) : null;
@@ -1879,12 +1879,12 @@ router.get("/discovery", async (req, res) => {
     const liveRanked = await withDiscoveryLiveRank(getServiceClient(), servedFiltered, {
       mode: parseIntentMode(req.query.intentMode),
     });
-    const slice    = liveRanked.places.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(toPublic);
+    const slice    = liveRanked.places.slice(offset, offset + PAGE_SIZE).map(toPublic);
     const totalMs  = Date.now() - t0;
     req.log.info({ cacheLevel, destination, category, totalMs, pdeServed: pdeScoredById !== null }, "discovery: cache hit");
     // §7 New-to-Me annotation — additive, order-preserving, flag-gated, fail-safe.
     const annotatedSlice = await annotateNewToMe(getServiceClient(), callerUserId, slice);
-    const candidateSlice = await withDiscoveryCandidates(getServiceClient(), annotatedSlice, {
+    const candidateSlice = await withDiscoveryCandidates(getServiceClient(), withRecommendationIds(annotatedSlice, exposure), {
       cacheLevel, cachedAt, scoredById: pdeScoredById, rankedBy: pdeScoredById ? "pde" : "none",
       liveRankById: liveRanked.applied ? liveRanked.byId : null,
     });
@@ -1924,7 +1924,7 @@ router.get("/discovery", async (req, res) => {
         });
       } else {
         void logDiscoveryServe(getServiceClient(), {
-          userId: callerUserId, servePoint, items: slice,
+          userId: callerUserId, servePoint, items: slice, sessionId: exposure.sessionId, servedAt: exposure.servedAt,  // DC-22 — the SAME exposure the response was stamped with, so an outcome reported against a served id lands on this row.
           context: {
             destination: destination!, category, cacheLevel,
             engineMode: engineMode.mode, modeReason: engineMode.reason,
@@ -1971,7 +1971,7 @@ router.get("/discovery", async (req, res) => {
             // against a filtered page would report divergence that filtering
             // caused and ranking did not.
             const pdeFiltered = applyFilters(outcome.ranked);
-            const pdeSlice    = pdeFiltered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+            const pdeSlice    = pdeFiltered.slice(offset, offset + PAGE_SIZE);
             await logDiscoveryShadowServe(shadowSc, {
               userId: callerUserId,
               destination: destination!, category, radiusKm, page, pageSize: PAGE_SIZE, sortBy,
@@ -2129,12 +2129,12 @@ router.get("/discovery", async (req, res) => {
             const cCacheHit = cAcceptance.usable ? cStored : undefined;
             if (cCacheHit) {
               const cFiltered = applyFilters(cCacheHit.places);
-              const cSlice = cFiltered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(toPublic);
+              const cSlice = cFiltered.slice(offset, offset + PAGE_SIZE).map(toPublic);
               req.log.info({ destination, cacheLevel: "compass_candidate_hit" }, "discovery: compass candidate cache hit");
               const cAnnotated = await annotateNewToMe(getServiceClient(), callerUserId, cSlice);
               // 06 §5: cachedAt is the entry's own write clock, which the TTL
               // check above already reads. Passing null discarded it.
-              const cCandidates = await withDiscoveryCandidates(getServiceClient(), cAnnotated, {
+              const cCandidates = await withDiscoveryCandidates(getServiceClient(), withRecommendationIds(cAnnotated, exposure), {
                 cacheLevel: "compass_candidate_hit", cachedAt: cCacheHit.at, scoredById: null, rankedBy: "compass",
                 // `06` §5 / DSV2-06 — the stored provenance is REPLAYED, not
                 // rebuilt. `rankedAt` inside it is the moment the ranker ran;
@@ -2146,7 +2146,7 @@ router.get("/discovery", async (req, res) => {
               // Stage 0 — serve point 4. Replays a stored Compass order; no
               // ranker ran in this request, so rankedInRequest is false.
               void logDiscoveryServe(compassSc, {
-                userId: callerUserId, servePoint: DiscoveryServePoint.CACHE_B_HIT, items: cSlice,
+                userId: callerUserId, servePoint: DiscoveryServePoint.CACHE_B_HIT, items: cSlice, sessionId: exposure.sessionId, servedAt: exposure.servedAt,
                 context: {
                   destination, category, cacheLevel: "compass_candidate_hit",
                   engineMode: engineMode.mode, modeReason: engineMode.reason,
@@ -2224,9 +2224,9 @@ router.get("/discovery", async (req, res) => {
             // Only pipeline-passed items appear when the flag is enabled.
             const merged = compassRanked;
             const cFiltered  = applyFilters(merged);
-            const cSlice     = cFiltered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(toPublic);
+            const cSlice     = cFiltered.slice(offset, offset + PAGE_SIZE).map(toPublic);
             const cFreshAnnotated = await annotateNewToMe(getServiceClient(), callerUserId, cSlice);
-            const cFreshCandidates = await withDiscoveryCandidates(getServiceClient(), cFreshAnnotated, {
+            const cFreshCandidates = await withDiscoveryCandidates(getServiceClient(), withRecommendationIds(cFreshAnnotated, exposure), {
               cacheLevel: "compass_fresh_rank", cachedAt: Date.now(), scoredById: null, rankedBy: "compass",
               provenanceById: cProvenanceById,
             });
@@ -2236,7 +2236,7 @@ router.get("/discovery", async (req, res) => {
             // this path has never written a rank_events row: it returns before
             // the logImpression call on the cold path below.
             void logDiscoveryServe(compassSc, {
-              userId: callerUserId, servePoint: DiscoveryServePoint.COMPASS_FRESH_RANK, items: cSlice,
+              userId: callerUserId, servePoint: DiscoveryServePoint.COMPASS_FRESH_RANK, items: cSlice, sessionId: exposure.sessionId, servedAt: exposure.servedAt,
               context: {
                 destination, category, cacheLevel: "compass_fresh_rank",
                 engineMode: engineMode.mode, modeReason: engineMode.reason,
@@ -2247,7 +2247,7 @@ router.get("/discovery", async (req, res) => {
             });
             return;
           }
-        } catch { /* fall through to normal rule-based path */ }
+        } catch (err) { /* DV-07 — KEEP the fall-through (a ranker failure degrades to the rule-based path, never a 500) but SAY SO: a degraded serve and a healthy one were indistinguishable from outside the process. */ req.log.warn({ err, destination, category, engineMode: engineMode.mode }, "discovery: compass rank path failed — degrading to the rule-based path"); }
       }
     }
 
@@ -2287,7 +2287,7 @@ router.get("/discovery", async (req, res) => {
     const coldLiveRanked = await withDiscoveryLiveRank(getServiceClient(), filtered, {
       mode: parseIntentMode(req.query.intentMode),
     });
-    const slice = coldLiveRanked.places.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(toPublic);
+    const slice = coldLiveRanked.places.slice(offset, offset + PAGE_SIZE).map(toPublic);
     // Log impressions for exactly the items that were served — after filter + page slice.
     if (callerUserId && scoredByPlaceId.size > 0) {
       const servedScored = slice
@@ -2316,7 +2316,7 @@ router.get("/discovery", async (req, res) => {
       "discovery: cold fetch",
     );
     const coldAnnotated = await annotateNewToMe(getServiceClient(), callerUserId, slice);
-    const coldCandidates = await withDiscoveryCandidates(getServiceClient(), coldAnnotated, {
+    const coldCandidates = await withDiscoveryCandidates(getServiceClient(), withRecommendationIds(coldAnnotated, exposure), {
       // scoredByPlaceId is always a Map here; it is EMPTY when no per-user
       // ranker ran (anonymous caller, or a ranker failure). Empty ⇒ "none".
       cacheLevel: "miss", cachedAt: Date.now(),
@@ -3882,5 +3882,144 @@ function emptyFeedEnvelope(destination: string | null, sessionId: string) {
     sessionId,
   };
 }
+
+/* ───────────────────────────────────────────────────────────────────────────
+ * DC-22 — the two things `GET /discovery` computed and never told the client.
+ *
+ * Declared HERE, at the foot of the file, and not beside the handler that uses
+ * them. That is not stylistic: docs/ carries anchored `routes/discovery.ts:NNN`
+ * citations up to :3477 which `check:doc-citations` re-reads, so a declaration
+ * inserted above that line silently repoints every citation below it. Function
+ * declarations hoist, so the call sites above read exactly as if these were
+ * local — and the citations stay true.
+ *
+ * The two answers travel together because they are the same kind of fact: both
+ * describe THE SERVE rather than any place in it, and both fall out of the two
+ * numbers a serve is made of — which window was served, and when.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The identity of one serve, minted ONCE per request.
+ *
+ * `04` §5's recommendation id binds an EXPOSURE — (viewer, session, instant,
+ * surface, position, item) — and not an item, because the same place served to
+ * the same viewer twice is two exposures and a denominator that collapses them
+ * under-counts by exactly the repeats. `lib/discoveryRecommendationId.ts` makes
+ * that argument in full.
+ *
+ * Which is why this is minted here and then handed BOTH ways — onto the
+ * response through `withRecommendationIds`, and into `logDiscoveryServe` as its
+ * `sessionId` + `servedAt`. The writer would otherwise read its own clock and
+ * mint its own session id, and the client would be holding an id that joins to
+ * no row in `rank_events`: two ids for one exposure, which is worse than none,
+ * because it looks joinable.
+ */
+interface ServeExposure {
+  /**
+   * NULL for an anonymous caller, deliberately. The serve log writes no row
+   * without a `user_id`, so an id minted for an anonymous serve would name an
+   * exposure record that does not exist. `withRecommendationIds` therefore
+   * emits nothing at all rather than a well-formed id that joins to nothing.
+   */
+  userId:    string | null;
+  /** One session id for the whole serve — the same "single open" semantics the serve log documents. */
+  sessionId: string;
+  /** ISO-8601. The instant the serve is stamped with, and the one written to `rank_events.served_at`. */
+  servedAt:  string;
+}
+
+/** Mint the exposure identity for this request. Called once, before any serve path runs. */
+function newServeExposure(userId: string | null): ServeExposure {
+  return { userId, sessionId: randomUUID(), servedAt: new Date().toISOString() };
+}
+
+/**
+ * Stamp each served item with the recommendation id of ITS exposure.
+ *
+ * `position` is the item's index in the page as served, which is the same index
+ * `logDiscoveryServe` writes to `rank_events.position` — the four serve paths
+ * all log the very array they serve, in order, so the two agree by construction
+ * rather than by coincidence.
+ *
+ * CALLED ON THE `annotate*` ARRAY, one step BEFORE `withDiscoveryCandidates`,
+ * and not on the array the envelope names. That ordering is deliberate twice
+ * over: the projection spreads its input (`{ ...p, candidate }`) so the id
+ * survives untouched, and `src/test/discoveryCandidate.test.ts`'s source guard
+ * reads every `places: <name>` site and demands `<name>` be assigned directly
+ * from `await withDiscoveryCandidates(`. Wrapping at the envelope would have
+ * made that guard unreadable-by-construction — the guard would have had to be
+ * loosened to accept a wrapper, which is a worse trade than calling this one
+ * line earlier.
+ *
+ * Additive: one new key on each place. A client that has never heard of it is
+ * unaffected, exactly as with the `refusal` key.
+ */
+function withRecommendationIds<T extends { id: string }>(
+  items: readonly T[],
+  exposure: ServeExposure,
+): Array<T & { recommendationId?: string }> {
+  const userId = exposure.userId;
+  if (!userId) return items as Array<T & { recommendationId?: string }>;
+  return items.map((item, position) => ({
+    ...item,
+    recommendationId: recommendationIdFor({
+      userId,
+      sessionId: exposure.sessionId,
+      servedAt:  exposure.servedAt,
+      surface:   "discovery",
+      position,
+      itemId:    item.id,
+    }),
+  }));
+}
+
+/**
+ * Resolve the served window from `page` OR `cursor`, into ONE offset.
+ *
+ * ADDITIVE, and the shape of this function is the guarantee. With no `cursor`
+ * in the query the `page` arithmetic is character-for-character what it always
+ * was — `Math.max(1, parseInt(...) || 1)`, then `(page - 1) * pageSize` — so
+ * every existing client selects exactly the items it selected before.
+ *
+ * `cursor` wins when present and is read through `decodeOffset`, the helper
+ * `GET /discovery/feed` already uses, so the two Discovery routes speak one
+ * cursor vocabulary instead of two. It is honoured as a true OFFSET rather than
+ * rounded to a page boundary: rounding would silently drop or repeat items for
+ * a client that paged from anywhere but a multiple of `pageSize`.
+ *
+ * `page` is still returned because the shadow observation records which page it
+ * compared; a cursor-driven request reports the page its offset falls in.
+ */
+function resolveDiscoveryPaging(
+  rawPage: unknown, rawCursor: unknown, pageSize: number,
+): { page: number; offset: number } {
+  const page = Math.max(1, parseInt(rawPage as string) || 1);
+  if (typeof rawCursor !== "string" || rawCursor.length === 0) {
+    return { page, offset: (page - 1) * pageSize };
+  }
+  const offset = decodeOffset(rawCursor);
+  return { page: Math.floor(offset / pageSize) + 1, offset };
+}
+
+/* WHY THERE IS NO `nextCursor` KEY ON THIS ROUTE'S ENVELOPE.
+ *
+ * `GET /discovery/feed` answers with one, and the obvious completion of the
+ * above is to do the same here. It is deliberately NOT done, and the reason is
+ * an existing, deliberate contract: `src/test/discoveryCuratedSourceRefusal.test.ts`
+ * CONTROL 2 asserts that a healthy `GET /discovery` answers with EXACTLY the
+ * keys it answered with before, in exactly that order, on all four serve paths
+ * — the pin the D11 refusal work put down so that a distinguishable FAILURE
+ * could be added without a different SUCCESS. A `nextCursor` key breaks that
+ * pin on every one of the four.
+ *
+ * `cursor` is therefore an INPUT vocabulary here: it selects the window, the
+ * `page` arithmetic is untouched, and the response shape does not move. A
+ * client walks with `total` (already in the envelope) and the documented
+ * PAGE_SIZE at the head of this file, exactly as a `page` client does today.
+ *
+ * Emitting the key is the remaining half, and it belongs to whoever owns that
+ * envelope contract — changing a shape another census pinned is not a thing to
+ * do from inside this one.
+ */
 
 export default router;

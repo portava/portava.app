@@ -312,7 +312,7 @@ export interface DiscoveryServeLogParams {
   items:       readonly ServedItem[];
   /** Route path, for when Stage 0b widens this beyond GET /discovery. */
   route?:      string;
-  sessionId?:  string;
+  sessionId?:  string;  /** The serve clock, when the CALLER already minted one (DC-22): the route derives the recommendation ids it puts on the RESPONSE from the same instant, and two clocks would mint two ids for one exposure. Omitted ⇒ read here, exactly as before. */ servedAt?: string;
   /** Free-form context, e.g. { destination, category }. Never coordinates. */
   context?:    Record<string, string | number | boolean | null>;
   /**
@@ -376,12 +376,12 @@ export async function logDiscoveryServe(
   let attemptedItems = 0;
   try {
     if (!sc) return;
-    const { userId, servePoint, items, route, sessionId, context, reasonCodesById } = params;
+    const { userId, servePoint, items, route, sessionId, context, reasonCodesById } = params;  const servedAtIn = params.servedAt;
     if (!userId || items.length === 0) return;
 
     if (!(await serveLogEnabled(sc))) return;
 
-    const servedAt = new Date().toISOString();
+    const servedAt = servedAtIn ?? new Date().toISOString();
     // One session id for the whole batch — mirrors the "single open" semantics
     // callers rely on for funnel reconstruction (lib/rankLog.ts:97-100).
     const effectiveSessionId = sessionId ?? randomUUID();
