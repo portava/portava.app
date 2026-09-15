@@ -1112,7 +1112,7 @@ async function queryDbPlaces(
           lat,
           lng,
           tags: [row.category, row.tag].filter(Boolean) as string[],
-          address: (row.neighborhood ?? null) as string | null,
+          address: (row.neighborhood ?? null) as string | null, neighborhood: (row.neighborhood ?? null) as string | null, // DV-54: the same column also reaches the ranker as a geography key — see the note at the end of lib/discoveryPde.ts. `address` is unchanged; the client still reads it.
           website: null,
           phone: null,
           openingHours: null,
@@ -1248,7 +1248,7 @@ async function queryCanonicalPlaces(
           lat,
           lng,
           tags: [row.primary_category].filter(Boolean) as string[],
-          address: (row.neighborhood ?? row.address ?? null) as string | null,
+          address: (row.neighborhood ?? row.address ?? null) as string | null, neighborhood: (row.neighborhood ?? null) as string | null, // DV-54, same as queryDbPlaces: the geography key is the `neighborhood` column, never the street `address` fallback.
           website: null,
           phone: null,
           openingHours: null,

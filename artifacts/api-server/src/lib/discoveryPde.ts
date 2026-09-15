@@ -100,7 +100,7 @@
  * NULL (0153_add_rank_events.sql) so it cannot be observed either. Anonymous
  * requests keep the legacy unranked order; this module is not consulted.
  */
-import { rankCandidates } from "./portavaRank.js";
+import { rankCandidates, normaliseGeoLabel } from "./portavaRank.js";
 import type { RankCandidate, ViewerContext, ScoredCandidate } from "./portavaRank.js";
 import { rankItems as drsRankItems } from "../services/ranking/DiscoveryRankingService.js";
 import type { RankingInput, RankingViewerContext } from "../services/ranking/DiscoveryRankingService.js";
@@ -412,15 +412,15 @@ export async function loadPdeViewer(
   userId: string,
   city: string | null,
 ): Promise<PdeViewer> {
-  const followedIds = new Set<string>();
+  const followedIds = new Set<string>(); const degraded: PdeReadFailure[] = []; // see the degradation note at the end of this file
   if (sc) {
     try {
-      const { data: followRows } = await sc
+      const { data: followRows, error: followErr } = await sc
         .from("user_follows")
         .select("following_id")
         .eq("follower_id", userId);
-      for (const row of (followRows as any[]) ?? []) followedIds.add(row.following_id as string);
-    } catch { /* non-fatal */ }
+      if (!readFailed(degraded, "follows", followErr)) for (const row of (followRows as any[]) ?? []) followedIds.add(row.following_id as string);
+    } catch (err) { readFailed(degraded, "follows", err ?? true); }
   }
 
   let interestTags = new Set<string>();
@@ -430,15 +430,15 @@ export async function loadPdeViewer(
       // category_weights rides the SAME select as interests — the learned
       // preference signal costs no extra round trip on a path that, under
       // D5=B, runs on every request rather than on the rare cache miss.
-      const { data: prefRow } = await sc
+      const { data: prefRow, error: prefErr } = await sc
         .from("compass_user_preferences")
         .select("interests, category_weights")
         .eq("user_id", userId)
         .maybeSingle();
-      const interests: string[] = (prefRow as any)?.interests ?? [];
+      const interests: string[] = (readFailed(degraded, "preferences", prefErr) ? [] : (prefRow as any)?.interests) ?? [];
       interestTags = new Set(interests.map((t: string) => t.toLowerCase()));
-      categoryAffinities = normaliseCategoryAffinities((prefRow as any)?.category_weights);
-    } catch { /* non-fatal */ }
+      categoryAffinities = readFailed(degraded, "preferences", prefErr) ? undefined : normaliseCategoryAffinities((prefRow as any)?.category_weights);
+    } catch (err) { readFailed(degraded, "preferences", err ?? true); }
   }
 
   // Recent discovery impressions → portavaRank's seenPenalty (weight -0.6, the
@@ -459,7 +459,7 @@ export async function loadPdeViewer(
   if (sc) {
     try {
       const since = new Date(Date.now() - SEEN_WINDOW_MS).toISOString();
-      const { data: seenRows } = await sc
+      const { data: seenRows, error: seenErr } = await sc
         .from("rank_events")
         .select("item_id")
         .eq("user_id", userId)
@@ -482,10 +482,10 @@ export async function loadPdeViewer(
         .gte("served_at", since)
         .order("served_at", { ascending: false })
         .limit(SEEN_MAX_IDS);
-      for (const row of (seenRows as any[]) ?? []) {
+      if (!readFailed(degraded, "seen", seenErr)) for (const row of (seenRows as any[]) ?? []) {
         if (row?.item_id) seenIds.add(row.item_id as string);
       }
-    } catch { /* non-fatal */ }
+    } catch (err) { readFailed(degraded, "seen", err ?? true); }
   }
 
   // Place-engagement affinity → portavaRank's ×1.15 PLACE_ENGAGEMENT_BOOST.
@@ -500,7 +500,7 @@ export async function loadPdeViewer(
     } catch { /* non-fatal */ }
   }
 
-  return { userId, city, followedIds, interestTags, categoryAffinities, seenIds, placeAffinities, sequences: await loadSequenceFeatures(sc, userId) };
+  return { userId, city, followedIds, interestTags, categoryAffinities, seenIds, placeAffinities, degraded, neighborhood: await loadViewerNeighborhood(sc, placeAffinities, degraded), sequences: await loadSequenceFeatures(sc, userId) };
 }
 
 type PlaceCandidate<T extends PdePlace> = RankCandidate & { __place: T };
@@ -559,7 +559,7 @@ export async function rankForViewer<T extends PdePlace>(
 
   const viewerContext: ViewerContext = {
     userId:       viewer.userId,
-    city:         viewer.city ?? undefined,
+    city:         viewer.city ?? undefined, neighborhood: viewer.neighborhood ?? undefined, // DV-54: the viewer half of the geography comparison
     followedIds:  viewer.followedIds,
     interestTags: viewer.interestTags,
     // Was omitted, so f.categoryAffinity (weight 0.4) was a constant 0 for every
@@ -590,7 +590,7 @@ export async function rankForViewer<T extends PdePlace>(
   const candidates: PlaceCandidate<T>[] = places.map((p) => ({
     id:         p.id,
     kind:       p.id.startsWith("db/") ? "gem" as const : "place" as const,
-    city:       viewer.city,
+    city:       viewer.city, neighborhood: p.neighborhood ?? null, // DV-54 geography key — see the note at the end of this file
     category:   p.category ?? null,
     distanceKm: p.distanceKm ?? null,
     verified:   p.id.startsWith("db/") ? true : null,
@@ -846,4 +846,207 @@ export interface PdeViewer {
    * with no production traffic would be scoring on noise.
    */
   sequences?: DiscoverySequenceFeatures;
+}
+
+// ── DV-54, the geography axis: the key is now THREADED, and what that turned on ─
+//
+// Appended below the last line of this file rather than edited into the
+// candidate map above, for the reason the note on `PdeViewer.sequences` gives:
+// this file is in the COVERED registry of scripts/check-doc-citations.mjs
+// precisely so that shifting a cited line is loud. Every edit this change makes
+// ABOVE this point replaces a line in place; nothing moved. The single
+// EXCEPTION is deliberate and is named in the commit: the follows read at :418
+// now destructures `error`, and census-discovery's DV-14 anchors on the old
+// text of that line.
+//
+// WHAT WAS WITHHELD HERE BEFORE, AND WHAT RULED IT. An earlier pass added the
+// place and geography diversity axes to `portavaRank.diversify` but refused to
+// set `candidate.neighborhood`, because threading the key would ALSO switch on
+// `scoreCandidate`'s `neighborhoodMatch` weight, which at the time paid 0.2 for
+// a candidate merely CARRYING a label — `cityHit` is true for every candidate
+// on this surface, so the only remaining term was truthiness — and paid it
+// unevenly, because routes/discovery.ts mapped a DB-backed place's
+// `neighborhood` column onto `address` and nothing else. The owner ruled that
+// label presence must not earn relevance credit and that the spec-supported
+// meaning be implemented with comparable inputs across sources. It is.
+//
+// THE THREE THINGS THAT RULING REQUIRED, ALL OF THEM NOW TRUE:
+//
+//   1. A REAL COMPARISON. `portavaRank.scoreCandidate` now computes
+//      `cityHit && neighborhoodMatches(ctx.neighborhood, c.neighborhood)`.
+//      Presence earns nothing: a labelled candidate with no viewer
+//      neighbourhood to compare against scores exactly 0, and so does a
+//      labelled candidate whose label differs from the viewer's.
+//
+//   2. COMPARABLE INPUTS ACROSS SOURCES. routes/discovery.ts now sets
+//      `neighborhood` from the `places.neighborhood` column on BOTH DB-backed
+//      mappings (`queryDbPlaces` and the canonical-places query) in addition to
+//      the `address` fallback it already wrote, so a curated place reaches this
+//      engine with the same field an OSM place carries from
+//      `osmNeighborhood(tags)`. Before that a curated place could never earn
+//      the credit whatever it was worth. `src/test/discoveryDiversityAxes.test.ts`
+//      test N4 asserts the two sources earn the IDENTICAL feature value.
+//
+//   3. NORMALISATION. Both sides go through `normaliseGeoLabel` (case,
+//      diacritics, whitespace), because the two producers are a mapper typing
+//      an OSM tag and a curator typing a column, and exact equality between two
+//      humans' spellings is a comparison that quietly never fires.
+//
+// WHAT THIS CHANGES FOR A LIVE REQUEST, SAID PLAINLY RATHER THAN IMPLIED. Two
+// things move, and only for viewers who have a derived neighbourhood:
+// `f.neighborhoodMatch` can now be 0.2 instead of always 0, and `diversify`'s
+// geography clause has a key to compare — though `geoPenalty` is still
+// UNDEFAULTED (absent ⇒ 0), so the diversity half remains inert until a
+// magnitude is ruled. For every viewer whose `neighborhood` is null — which is
+// every viewer with no curated place-view history, i.e. effectively all of them
+// while Discovery is dark — the ordering is byte-identical to before.
+
+/**
+ * `PdePlace`, merged: the geography label the ranker compares.
+ *
+ * Declaration-merged for the line-stability reason above. `DiscoveryPlace`
+ * already declares this field, so nothing widens in the round trip; it is
+ * optional because the Compass fallback shape and every cached candidate
+ * written before this change simply do not carry it, and absent must mean
+ * "no key", not "no credit for anyone".
+ */
+export interface PdePlace {
+  /** Neighbourhood label — `osmNeighborhood(tags)` for OSM rows, the
+   *  `places.neighborhood` column for DB-backed ones. */
+  neighborhood?: string | null;
+}
+
+/** The reads `loadPdeViewer` performs that can fail INDEPENDENTLY of the request. */
+export type PdeReadFailure = "follows" | "preferences" | "seen" | "viewer_neighborhood";
+
+/**
+ * `PdeViewer`, merged: which viewer-side reads failed, and the derived
+ * neighbourhood.
+ *
+ * WHY `degraded` EXISTS AT ALL — the defect it closes, stated so it is not
+ * re-introduced. supabase-js RESOLVES on a database error; it does not throw.
+ * The three reads above destructured `data` and discarded `error`, so the
+ * surrounding `try/catch` never fired on the case it was written for, and a
+ * failed read was BYTE-IDENTICAL to "no rows": a viewer whose follow graph 500s
+ * was ranked as following nobody, a viewer whose preferences 500 was ranked as
+ * having no taste, and nothing in the returned value said so. The
+ * degradation was real and invisible, which is the worst of both.
+ *
+ * Each read now records its own failure and the caller can tell the two apart.
+ * The reads stay NON-FATAL, which was always right for a feed request — a
+ * viewer who follows nobody still gets a page. What changes is that "ranked
+ * without the follow graph because it could not be read" is now a statement the
+ * caller can make, log and alert on, instead of a silence.
+ *
+ * NOT the same as `buildPlaceAffinities` returning `{}`, which is a RULED
+ * conflation (see the D11 ruling in services/ranking/MediaFeedRankingService.ts):
+ * that map is spent as one multiplicative boost, so an empty one withholds a
+ * lift and claims nothing. These three are different — a missing follow set
+ * changes which authors score at all.
+ */
+export interface PdeViewer {
+  /** Empty when every viewer-side read succeeded. Never undefined from `loadPdeViewer`. */
+  degraded?: PdeReadFailure[];
+  /**
+   * The viewer's own neighbourhood label, or null — see `loadViewerNeighborhood`.
+   * Handed to `portavaRank` as `ViewerContext.neighborhood`; null ⇒ the
+   * `neighborhoodMatch` feature is 0 for every candidate, which is the
+   * pre-DV-54 ordering exactly.
+   */
+  neighborhood?: string | null;
+}
+
+/**
+ * Record a read failure once, and answer "did this read fail?".
+ *
+ * Idempotent on purpose: a call site that consults the same error twice (the
+ * preferences read does — once for interests, once for category weights) must
+ * not report the failure twice.
+ */
+function readFailed(into: PdeReadFailure[], which: PdeReadFailure, err: unknown): boolean {
+  if (!err) return false;
+  if (!into.includes(which)) into.push(which);
+  return true;
+}
+
+/**
+ * Cap on the ids sent to the neighbourhood lookup. `placeAffinities` is already
+ * bounded by the 30-day place-view window, but that window has no row cap of
+ * its own, and an `.in()` list is a URL on this client.
+ */
+const VIEWER_NEIGHBORHOOD_MAX_IDS = 200;
+
+/**
+ * Derive the viewer's neighbourhood: the one they have viewed most in the last
+ * 30 days.
+ *
+ * WHICH SOURCE, AND WHY THIS ONE. There is no viewer neighbourhood anywhere in
+ * the tree to read — `ViewerContext` had none, `profiles` has none, and
+ * `compass_user_profiles` carries `current_city`/`current_country` and stops
+ * there (migration 0051). So it is DERIVED, and the derivation is the viewer's
+ * own recent behaviour rather than a profile field, for the reason this whole
+ * surface is built on: `PdeViewer.city` is the DESTINATION the request names,
+ * not where the user lives, so a home address would answer a question nobody
+ * asked. "Which part of the place I am browsing do I keep coming back to" is
+ * the question `neighborhoodMatch` is for, and `placeAffinities` — place_view
+ * counts over 30 days, already loaded for the ×1.15 engagement boost — is the
+ * only evidence of it the tree holds. Views are the weight, so ten visits to
+ * one neighbourhood beat one visit each to ten.
+ *
+ * WHAT IT CANNOT SEE, STATED RATHER THAN GLOSSED. `rank_events.item_id` carries
+ * the discovery id space, so a `db/<uuid>` resolves through `places` and an
+ * `osm/<type>/<id>` resolves through nothing — OSM neighbourhoods live in
+ * Overpass tags that are not stored per place anywhere on our side. The derived
+ * neighbourhood is therefore drawn from CURATED history only. That biases which
+ * viewers GET a neighbourhood; it does not bias which candidates can earn the
+ * credit, because both sources carry a comparable label on the candidate side
+ * (see point 2 of the note above). A viewer with no curated place-view history
+ * gets null and the feature stays 0 for their whole page.
+ *
+ * COST. Zero round trips for a viewer with no `db/` place-view history, which
+ * is every viewer today — Discovery is dark in production. One indexed
+ * primary-key read otherwise.
+ *
+ * NON-FATAL, and audibly so: a failed read records `viewer_neighborhood` in
+ * `degraded` and returns null, so "no neighbourhood" and "could not read one"
+ * are distinguishable at the caller for the same reason the three reads above
+ * now are.
+ */
+export async function loadViewerNeighborhood(
+  sc: any,
+  placeAffinities: Record<string, number> | undefined,
+  degraded: PdeReadFailure[],
+): Promise<string | null> {
+  if (!sc || !placeAffinities) return null;
+  const ids = Object.keys(placeAffinities)
+    .filter((k) => k.startsWith("db/") && (placeAffinities[k] ?? 0) > 0)
+    .map((k) => k.slice(3))
+    .slice(0, VIEWER_NEIGHBORHOOD_MAX_IDS);
+  if (ids.length === 0) return null;
+  try {
+    const { data, error } = await sc.from("places").select("id, neighborhood").in("id", ids);
+    if (readFailed(degraded, "viewer_neighborhood", error)) return null;
+    const byKey = new Map<string, { label: string; views: number }>();
+    for (const row of (data as any[]) ?? []) {
+      const label = (row?.neighborhood ?? null) as string | null;
+      const key = normaliseGeoLabel(label);
+      if (!key || !label) continue;
+      const views = placeAffinities[`db/${row.id as string}`] ?? 0;
+      if (views <= 0) continue;
+      const seen = byKey.get(key);
+      if (seen) seen.views += views; else byKey.set(key, { label, views });
+    }
+    // Deterministic: most-viewed wins, ties broken by the normalised key, so the
+    // same history never yields two different answers on two requests.
+    let best: { key: string; label: string; views: number } | null = null;
+    for (const [key, v] of byKey) {
+      if (!best || v.views > best.views || (v.views === best.views && key < best.key)) {
+        best = { key, label: v.label, views: v.views };
+      }
+    }
+    return best?.label ?? null;
+  } catch (err) {
+    readFailed(degraded, "viewer_neighborhood", err ?? true);
+    return null;
+  }
 }
