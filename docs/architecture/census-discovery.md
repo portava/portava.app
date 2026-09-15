@@ -3478,3 +3478,64 @@ unmeasured one.
   that exclusion is a judgement: it dropped the candidate count from 171 to 37.
 - **Nothing runs this measurement.** It was a one-off script, not a guard. The
   count can rise tomorrow and no check anywhere will say so.
+
+---
+
+## §24 — "None of the 33 has been read" stopped being true ten minutes after §23 said it
+
+§23.5's first bullet, written in the previous commit:
+
+> **33 candidates outside this file are unexamined.** The 37 are a MEASUREMENT,
+> not a verdict… **None of the 33 has been read.**
+
+Ten of them have now been read. The sentence is corrected here rather than
+edited, because this census is append-only and because §22 was written one day
+after §21.4 stated a verdict from stale prose — the rule is worth obeying in
+the same file that recorded the cost of breaking it.
+
+### 24.1 What ten sites look like
+
+| what was found | how many | sites |
+| --- | --- | --- |
+| CARRIES the failure out — the caller IS told | 3 | `routes/tripDecisions.ts` (twice: `failedInput`, `urgencyInputsUnread`), `routes/tripStructure.ts` (`failed`) |
+| DELIBERATE fail-closed, documented and logged, caller NOT told | 5 | `routes/discovery.ts`, `routes/tripOffline.ts`, `services/trust/TrustCapService.ts`, `lib/mapTravelers.ts`, `lib/liveClaimRead.ts` |
+| SILENT — no comment, no log | 2 | `services/media/MediaViewRequestService.ts`, `services/wall/LiveForYouService.ts` |
+
+**Not one is a fail-OPEN**, which is the opposite of what the fourteen in this
+file were. Three examples of the documentation, verbatim, because they are what
+the distinction looks like when it has been thought about:
+
+- `lib/mapTravelers.ts` — *"Fail-closed: if ANY privacy-relevant query fails,
+  show nobody."*
+- `lib/liveClaimRead.ts` — *"Fail-closed: an unreadable projection means
+  'unknown', not 'assume last known'."*
+- `services/trust/TrustCapService.ts` — *"Read-side view … stays fail-soft so a
+  Passport projection is not taken down by a caps read, but it is logged — an
+  empty list from a failed read must leave evidence. The SCORING read of the
+  same table (TrustScoreService.loadCaps) fails closed."*
+
+### 24.2 So the number 33 overstates, and the measurement says how
+
+Three of the ten CARRY the failure out in a variable the response reports, and
+the measurement cannot see that: it matches a `return` inside an error branch
+and knows nothing about what else that branch did. Those three are false
+positives BY CONSTRUCTION, and on this sample that rate is 30 %.
+
+The five documented ones are a different thing again: their DIRECTION is
+considered and stated, and what they still do not do is tell the caller. That
+is the same gap §23.2 closed in `searchCities` — where the fix was to keep the
+direction and add the saying — but these are Media, Wall, Trips and Trust
+surfaces, not Discovery's, and a census does not get to grade another census's
+code. They are named so their owners can.
+
+### 24.3 What is still true
+
+The remaining **23 are unread**, and the two SILENT sites are unfixed. Nothing
+runs the measurement, so the count can rise tomorrow and no check will say so —
+§23.5's third bullet stands unchanged and is the one that matters most, because
+it is the difference between a number and a guard.
+
+### 24.4 Row moves
+
+**None**, seventh consecutive section, and no row in this census grades any of
+the ten sites above.
