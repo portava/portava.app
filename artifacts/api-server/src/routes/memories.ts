@@ -1326,11 +1326,46 @@ router.get("/memories/:id", async (req, res) => {
     sc.from("memory_saves").select("memory_id").eq("memory_id", id).eq("user_id", user.id).maybeSingle(),
   ]);
 
+  // §28.11, on the two reads that make a CLAIM ABOUT WHAT HAPPENED.
+  //
+  // supabase-js RESOLVES on a database error, so `items.data` and `tags.data`
+  // were `null` for an unreadable table and the `?? []` below turned that into
+  // "this Memory has no photographs" and "nobody was there" — a 200 that is
+  // byte-identical to the truth. THE SIBLING PATH IN THIS FILE ALREADY REFUSED:
+  // the trip recap binds both errors and answers `degraded_unavailable` with
+  // "refusing rather than reporting a trip with no photographs" and "refusing
+  // rather than reporting a trip nobody shared". Same two tables, same
+  // question, and the single read answered it with a lie.
+  if (items.error || tags.error) {
+    const table = items.error ? "memory_items" : "memory_tags";
+    req.log.error({ err: items.error ?? tags.error, memoryId: id, table },
+      `memories: ${table} read failed — refusing rather than reporting a Memory with no photographs or no participants`);
+    sendError(res, "degraded_unavailable", "Could not load this Memory. Please try again.");
+    return;
+  }
+
   const ownerProfile = await sc
     .from("profiles")
     .select("id, name, handle, avatar_url")
     .eq("id", memory.owner_id)
     .maybeSingle();
+
+  // The ENGAGEMENT reads degrade rather than refuse, and the asymmetry is
+  // deliberate: a wrong like count is not a statement about the Memory's
+  // history, an empty item list is. What was wrong is that the failure was
+  // invisible EVERYWHERE — not in the response, not in the log. It is now in
+  // the log. `memoriesSingleReadDegraded.test.ts` asserts both halves, so
+  // neither can drift into the other by somebody copying the branch above.
+  for (const [table, r] of [
+    ["memory_likes", likeCount], ["memory_likes", likedByMe],
+    ["memory_saves", saveCount], ["memory_saves", savedByMe],
+    ["profiles", ownerProfile],
+  ] as const) {
+    if ((r as any).error) {
+      req.log.error({ err: (r as any).error, memoryId: id, table },
+        "memories: engagement read failed — serving the Memory with a degraded count");
+    }
+  }
 
   const ownerNameAllowed = memory.owner_id === user.id || await nameVisibleFor(sc, memory.owner_id);
 
