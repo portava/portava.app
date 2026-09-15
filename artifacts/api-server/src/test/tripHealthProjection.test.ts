@@ -75,6 +75,29 @@ describe("buildTripHealthProjection — health and phase from the same reads", (
     assert.deepEqual(p.counted, { conflicts: 0, openRisks: 0, activeDisruptions: 0, needsHelp: 0, hops: { infeasible: 0, unknown: 0 } });
     assert.equal(p.derivedFrom.freedomSourceTripVersion, 9);
   });
+  it("tripStatus follows the INJECTED clock, in both directions — not the wall clock", async () => {
+    // The case above asserts "active" from a `now` inside the trip's window, and
+    // it passed for three days for the wrong reason: `computeTripStatus` took no
+    // `now`, read the real date, and happened to agree. It went red in 17 places
+    // at midnight Europe/Paris on 2026-09-15 — see
+    // `src/test/tripStatusInjectedClock.test.ts` for the full account.
+    //
+    // ONE DIRECTION IS NOT A PIN. Threading the clock has to be shown to change
+    // the answer, or a hardcoded "active" would satisfy the assertion above.
+    const after = await buildTripHealthProjection(
+      makeClient(base()) as any, TRIP_ID, OWNER_ID,
+      { now: new Date("2026-09-20T12:00:00.000Z") },
+    );
+    assert.ok(after.ok, JSON.stringify(after));
+    assert.equal(after.projection.tripStatus, "completed");
+
+    const before = await buildTripHealthProjection(
+      makeClient(base()) as any, TRIP_ID, OWNER_ID,
+      { now: new Date("2026-09-01T12:00:00.000Z") },
+    );
+    assert.ok(before.ok, JSON.stringify(before));
+    assert.equal(before.projection.tripStatus, "upcoming");
+  });
   it("a conflict makes it AT_RISK with the priority order; a NEEDS_HELP member makes it DISRUPTED and the phase DISRUPTED", async () => {
     const tables = base();
     tables.trip_commitments = [commitment("A", { starts_at: T("10:00"), place_id: PLACE_A }), commitment("B", { required_arrival_at: T("10:05"), place_id: PLACE_B })];

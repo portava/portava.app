@@ -42,10 +42,30 @@ export function computeTripStatus(
   endDate: string | null,
   currentStatus: string,
   timezone?: string | null,
+  /**
+   * The clock to answer about. Additive, and defaulted to the wall clock, so
+   * every call site that does not pass one is byte-identical in behaviour.
+   *
+   * IT EXISTS BECAUSE ONE PROJECTION WAS ANSWERING FROM TWO CLOCKS.
+   * `buildTripHealthProjection` takes a `now` and threads it into
+   * `liveEnvelope`, `buildTripFreedomProjection`, `operationalState` and the
+   * phase inputs — into every clock read but this one, because this function
+   * had nowhere to put it. So the field that says whether a trip is OVER was
+   * the single field in that projection derived from the real date, and
+   * `tripHealthProjection.test.ts` went red in 17 places at once at midnight
+   * Europe/Paris on 2026-09-15 when the wall clock passed its fixture's
+   * `end_date`. The `now` it had pinned was never consulted.
+   *
+   * `todayInTimezone` above already carries the argument for this parameter,
+   * in its own words: a function whose answer depends on the wall clock cannot
+   * be tested at the boundary that matters. It got the parameter; the function
+   * that calls it did not, which is why the gap survived.
+   */
+  now?: Date,
 ): string {
   if (currentStatus === "cancelled" || currentStatus === "archived") return currentStatus;
   if (!title || !destinationCity) return "draft";
-  const today = todayInTimezone(timezone);
+  const today = todayInTimezone(timezone, now ?? new Date());
   if (startDate) {
     const start = startDate.slice(0, 10);
     const end   = endDate ? endDate.slice(0, 10) : null;

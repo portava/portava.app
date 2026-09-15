@@ -671,7 +671,7 @@ ids named in that row; each id remains individually addressable.
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
 | TR35 | Primary lifecycle IDEA → PLANNING → BOOKED → PRE_DEPARTURE → TRAVELING → IN_DESTINATION → RETURNING → COMPLETED → MEMORY, plus DISRUPTED / CANCELLED / ABANDONED / ARCHIVED | **W** | `migrations/0001_spine.sql:10` — `trip_status as enum ('planning','upcoming','active','completed','cancelled')`, extended in practice by `'draft'` and `'archived'` (`domain/trips/invariants/tripStatus.ts:38,40`). Seven states against thirteen: BOOKED, PRE_DEPARTURE, TRAVELING vs IN_DESTINATION vs RETURNING, MEMORY, DISRUPTED and ABANDONED have no representation, so the states that carry the spec's operational meaning are exactly the missing ones. |
-| TR36 | Lifecycle is computed from canonical facts plus explicit user actions | **C** | `domain/trips/invariants/tripStatus.ts:38-54#computeTripStatus` `computeTripStatus` derives the state from title/city presence and date boundaries **in the trip's own timezone**, honours terminal states, and `:1-10` records why it exists: two copies had diverged, one comparing UTC midnight, so *"the same trip could read 'upcoming' on one endpoint and 'active' on the other around the day boundary."* The header ends *"Never let clients override this."* |
+| TR36 | Lifecycle is computed from canonical facts plus explicit user actions | **C** | `domain/trips/invariants/tripStatus.ts:38-77#computeTripStatus` `computeTripStatus` derives the state from title/city presence and date boundaries **in the trip's own timezone**, honours terminal states, and `:1-10` records why it exists: two copies had diverged, one comparing UTC midnight, so *"the same trip could read 'upcoming' on one endpoint and 'active' on the other around the day boundary."* The header ends *"Never let clients override this."* |
 | TR37 | Do not store boolean soup such as isActive/isStarted/isFinished/isTraveling | **C** | `trips` has no such column (`0001_spine.sql:72-89`), and the client derives display state rather than trusting the stored one (`src/components/TripPage.tsx:58-60`, `src/domain/trips/invariants/tripStatus.ts` `deriveTripDisplayStatus`) — the prohibition is honoured on both sides. |
 | TR38–TR45 | §3.2 active operational phase: ARRIVAL_DAY · FREE_TIME · ACTIVE_PLAN · TRANSIT · NIGHTLIFE · REST · DEPARTURE_DAY · DISRUPTED, each with its own primary UI/behaviour | **N** ×8 | There is no phase concept at all: no column, no enum, no derivation, no UI switch. `grep -rli "ARRIVAL_DAY\|FREE_TIME\|ACTIVE_PLAN\|DEPARTURE_DAY"` over the whole tree returns nothing. The nearest artifact is `routes/tripReadiness.ts:344` `GET /trips/:tripId/arrival-board`, which is an arrival *list*, not an arrival-day phase, and it is behind `trip_readiness_enabled`, seeded false (`0170_trip_readiness.sql:76`). |
 | TR46 | Plan state machine DRAFT → PROPOSED → CONFIRMED → IN_PROGRESS → COMPLETED, with AT_RISK / MOVED / CANCELLED / SKIPPED | **W** | `0010_trip_plan.sql:12-13` — `'confirmed' \| 'tentative' \| 'done' \| 'cancelled'`. Four states against nine, and the three that carry operational meaning (IN_PROGRESS, AT_RISK, MOVED) are all absent, so a plan cannot be started, cannot be flagged at risk, and cannot record that it moved. |
@@ -4162,7 +4162,7 @@ to explain and no route.
   (`:81#recordTripDecision`) and `explainTripDecision`
   (`:114#explainTripDecision`) — sentences from the record. Every
   §40.3–§40.5 build records one (`domain/trips/projections/TripFreedomProjection.ts:234#recordTripDecision`,
-  `TripHealthProjection.ts:204#recordTripDecision`,
+  `TripHealthProjection.ts:207#recordTripDecision`,
   `TripTodayProjection.ts:366#recordTripDecision`) naming ids,
   versions and counts — never a coordinate or a name — and carries its
   `decisionId`. `GET /trips/:tripId/decisions/:decisionId/explain`
@@ -4556,7 +4556,7 @@ the merge, the apply, Batch C and two flags.
   modes with their orders (`domain/trips/services/TripHealth.ts:180#export const PRIORITY_BY_MODE`)
   and the suppression, carrying `TRIP_DISRUPTION_SUPPRESSED`. The health
   projection reads the register and refuses without it
-  (`domain/trips/projections/TripHealthProjection.ts:136#trip_disruptions unreadable — refusing`) and
+  (`domain/trips/projections/TripHealthProjection.ts:139#trip_disruptions unreadable — refusing`) and
   serves `attention`; Today and the pulse carry it.
 - **§21.1** — `notification_actionability_rate`: sent is counted at dispatch,
   acted at `POST /trips/:id/notifications/acted`
@@ -5863,7 +5863,7 @@ and the column §17.4 needed.
   when everyone has arrived or the checkpoint is closed the reason is not
   derived and the switch is `NORMAL` again. The route says so in words
   (`prioritySwitch`) rather than writing a priority anywhere.
-  `test/tripHealthProjection.test.ts:138#REGROUP_OPEN → SAFETY_EVENT` and
+  `test/tripHealthProjection.test.ts:161#REGROUP_OPEN → SAFETY_EVENT` and
   `test/tripTodayProjection.test.ts:238#kind === "regroup"` pin the flip and
   the flip back; `test/tripMeetingCheckpointsRoute.test.ts:82#chosenBy` pins
   the route.
