@@ -1501,3 +1501,110 @@ a reading.
       FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
      WHERE n.nspname = 'public' AND p.proname = 'erase_memory_for_user';
     -- expect a 5-column TABLE(...), ending episodes_deleted, evidence_deleted
+
+---
+
+## 2026-09-15 — PR #482 merged: 34 of 49 migrations applied to portava-ci, and the one postcondition that stopped the rest
+
+**Project: `portava-ci` (`hwokxgbmezheskbzskfr`). PRODUCTION (`ajrurzioarfkagpuxfnb`)
+WAS NOT TOUCHED BY ANY OF THIS** and is not described here.
+
+PR #482 squash-merged to `main` as `1fe72289b`. That is the ref `live-db.yml`
+gates its apply and certify steps on, so `db:apply-migrations` ran for the first
+time against this branch's 49 pending migrations.
+
+### What applied — 34, each in one transaction with its ledger row
+
+`2745`, `2778`–`2795`, `2800`–`2803`, `2810`–`2813`, `2840`, `2841`, `2850`,
+`2851`, `2860`, `2870`, `2880`. Every one reported `applied + recorded (one
+transaction)`, which is the shape that makes "applied but unrecorded"
+unreachable.
+
+The effect is visible in the audit: `audit:schema` went from **111 missing
+objects across 18 files** before the merge to **6 across 3 files** after.
+
+### What stopped it, and why the stop was correct
+
+    apply-migrations STOPPED at 2890_rank_events_behavior_engine_columns.sql (failed).
+    Management API 400: POSTCONDITION FAILED (2890): 1 row(s) carry a dwell value
+    after a migration that writes none. A dwell measurement was invented.
+
+`2890`'s own postcondition 5 is the data-preservation assertion: *"the file must
+not have invented attention data."* It counts rows where `dwell_ms IS NOT NULL OR
+dwell_kind IS NOT NULL` and refuses if any exist, because the migration adds the
+columns and writes nothing into them.
+
+**The remaining 14 (`2890`–`2970`) were NOT attempted**, deliberately — the
+applier stops at the first failure because later migrations routinely depend on
+earlier ones and continuing invents a schema state no environment has ever had.
+
+### The offending row, and what it actually was
+
+One row, found by direct query:
+
+| field | value |
+| --- | --- |
+| `id` | `0606ea7a-c899-4875-b4a5-16fdf3148f7f` |
+| `item_id` | **`node/REHEARSAL2`** |
+| `dwell_ms` | `0` |
+| `dwell_kind` | `idle` |
+| `served_at` | `2026-09-14 18:19:50.088597+00` |
+| `user_id` | the project's own `@portava` official account |
+
+**A rehearsal probe, not a traveller's data.** Three rehearsal rows exist in
+`rank_events` on this project — `node/REHEARSAL` ×2 and `node/REHEARSAL2` — all
+written in one batch at the same timestamp against the project's own account.
+This is the same class of leftover that `checkMissingLiveColumns.ts`'s allowlist
+already records as the root cause of `CI (live DB)` being red on `main`'s own sha
+across five consecutive scheduled runs.
+
+Counted before acting, so the scope was known rather than assumed:
+
+    rehearsal_rows           3
+    dwell_rows               1
+    dwell_rows_not_rehearsal 0      ← no real row carries a dwell value
+    total_rows             239
+
+### The remediation, and why this one
+
+    UPDATE public.rank_events
+       SET dwell_ms = NULL, dwell_kind = NULL
+     WHERE id = '0606ea7a-c899-4875-b4a5-16fdf3148f7f'
+       AND item_id = 'node/REHEARSAL2'
+       AND (dwell_ms IS NOT NULL OR dwell_kind IS NOT NULL);
+    -- RETURNING confirmed: 1 row, both fields now NULL
+
+**One row, addressed by primary key, with the item_id and the non-null condition
+both re-asserted in the WHERE clause** so the statement could not widen if the
+data had moved under it.
+
+Why clear the fields rather than delete the row: the postcondition's concern is
+an *invented attention measurement*, not the row's existence. Removing the
+invented datum is exactly the remedy it asks for, and it touches the minimum.
+`rank_events` carries no append-only trigger on this project (checked before the
+write), so the UPDATE was permitted rather than forced into a DELETE.
+
+`rank_events_dwell_pairing_check` — `dwell_kind IS NULL OR dwell_ms IS NOT NULL`
+— is satisfied by both being NULL.
+
+### What is still NOT done, stated rather than implied
+
+- **`2890`–`2970` are still unapplied to portava-ci.** The apply must be re-run.
+- **`certify:migrations` has not passed.** It failed at STAGE 1 for the honest
+  reason: 15 files on disk had no ledger row, which is a *symptom* of the stop,
+  not an independent defect. Its own output says so: *"If
+  check:missing-live-columns is red too, the columns it names are a SYMPTOM of
+  the files above — apply these, do not chase the column list."*
+- **`0172_trip_reservations.sql` is missing one policy**
+  (`trip_reservations_owner_delete`) and that is **pre-existing**, unrelated to
+  this merge, and untouched by it.
+- **Nothing was applied to production, and no flag was enabled anywhere.**
+
+### Re-establish any of this independently
+
+    SELECT count(*) FROM public.rank_events
+     WHERE dwell_ms IS NOT NULL OR dwell_kind IS NOT NULL;
+    -- expect 0, which is what 2890's postcondition requires
+
+    SELECT filename, applied_by, applied_at FROM public.schema_migration_ledger
+     WHERE filename LIKE '28%' OR filename LIKE '29%' ORDER BY filename;
