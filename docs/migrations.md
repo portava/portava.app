@@ -1501,3 +1501,290 @@ a reading.
       FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
      WHERE n.nspname = 'public' AND p.proname = 'erase_memory_for_user';
     -- expect a 5-column TABLE(...), ending episodes_deleted, evidence_deleted
+
+---
+
+## 2026-09-15 — PR #482 merged: 34 of 49 migrations applied to portava-ci, and the one postcondition that stopped the rest
+
+**Project: `portava-ci` (`hwokxgbmezheskbzskfr`). PRODUCTION (`ajrurzioarfkagpuxfnb`)
+WAS NOT TOUCHED BY ANY OF THIS** and is not described here.
+
+PR #482 squash-merged to `main` as `1fe72289b`. That is the ref `live-db.yml`
+gates its apply and certify steps on, so `db:apply-migrations` ran for the first
+time against this branch's 49 pending migrations.
+
+### What applied — 34, each in one transaction with its ledger row
+
+`2745`, `2778`–`2795`, `2800`–`2803`, `2810`–`2813`, `2840`, `2841`, `2850`,
+`2851`, `2860`, `2870`, `2880`. Every one reported `applied + recorded (one
+transaction)`, which is the shape that makes "applied but unrecorded"
+unreachable.
+
+The effect is visible in the audit: `audit:schema` went from **111 missing
+objects across 18 files** before the merge to **6 across 3 files** after.
+
+### What stopped it, and why the stop was correct
+
+    apply-migrations STOPPED at 2890_rank_events_behavior_engine_columns.sql (failed).
+    Management API 400: POSTCONDITION FAILED (2890): 1 row(s) carry a dwell value
+    after a migration that writes none. A dwell measurement was invented.
+
+`2890`'s own postcondition 5 is the data-preservation assertion: *"the file must
+not have invented attention data."* It counts rows where `dwell_ms IS NOT NULL OR
+dwell_kind IS NOT NULL` and refuses if any exist, because the migration adds the
+columns and writes nothing into them.
+
+**The remaining 14 (`2890`–`2970`) were NOT attempted**, deliberately — the
+applier stops at the first failure because later migrations routinely depend on
+earlier ones and continuing invents a schema state no environment has ever had.
+
+### The offending row, and what it actually was
+
+One row, found by direct query:
+
+| field | value |
+| --- | --- |
+| `id` | `0606ea7a-c899-4875-b4a5-16fdf3148f7f` |
+| `item_id` | **`node/REHEARSAL2`** |
+| `dwell_ms` | `0` |
+| `dwell_kind` | `idle` |
+| `served_at` | `2026-09-14 18:19:50.088597+00` |
+| `user_id` | the project's own `@portava` official account |
+
+**A rehearsal probe, not a traveller's data.** Three rehearsal rows exist in
+`rank_events` on this project — `node/REHEARSAL` ×2 and `node/REHEARSAL2` — all
+written in one batch at the same timestamp against the project's own account.
+This is the same class of leftover that `checkMissingLiveColumns.ts`'s allowlist
+already records as the root cause of `CI (live DB)` being red on `main`'s own sha
+across five consecutive scheduled runs.
+
+Counted before acting, so the scope was known rather than assumed:
+
+    rehearsal_rows           3
+    dwell_rows               1
+    dwell_rows_not_rehearsal 0      ← no real row carries a dwell value
+    total_rows             239
+
+### The remediation, and why this one
+
+    UPDATE public.rank_events
+       SET dwell_ms = NULL, dwell_kind = NULL
+     WHERE id = '0606ea7a-c899-4875-b4a5-16fdf3148f7f'
+       AND item_id = 'node/REHEARSAL2'
+       AND (dwell_ms IS NOT NULL OR dwell_kind IS NOT NULL);
+    -- RETURNING confirmed: 1 row, both fields now NULL
+
+**One row, addressed by primary key, with the item_id and the non-null condition
+both re-asserted in the WHERE clause** so the statement could not widen if the
+data had moved under it.
+
+Why clear the fields rather than delete the row: the postcondition's concern is
+an *invented attention measurement*, not the row's existence. Removing the
+invented datum is exactly the remedy it asks for, and it touches the minimum.
+`rank_events` carries no append-only trigger on this project (checked before the
+write), so the UPDATE was permitted rather than forced into a DELETE.
+
+`rank_events_dwell_pairing_check` — `dwell_kind IS NULL OR dwell_ms IS NOT NULL`
+— is satisfied by both being NULL.
+
+### What is still NOT done, stated rather than implied
+
+- **`2890`–`2970` are still unapplied to portava-ci.** The apply must be re-run.
+- **`certify:migrations` has not passed.** It failed at STAGE 1 for the honest
+  reason: 15 files on disk had no ledger row, which is a *symptom* of the stop,
+  not an independent defect. Its own output says so: *"If
+  check:missing-live-columns is red too, the columns it names are a SYMPTOM of
+  the files above — apply these, do not chase the column list."*
+- **`0172_trip_reservations.sql` is missing one policy**
+  (`trip_reservations_owner_delete`) and that is **pre-existing**, unrelated to
+  this merge, and untouched by it.
+- **Nothing was applied to production, and no flag was enabled anywhere.**
+
+### Re-establish any of this independently
+
+    SELECT count(*) FROM public.rank_events
+     WHERE dwell_ms IS NOT NULL OR dwell_kind IS NOT NULL;
+    -- expect 0, which is what 2890's postcondition requires
+
+    SELECT filename, applied_by, applied_at FROM public.schema_migration_ledger
+     WHERE filename LIKE '28%' OR filename LIKE '29%' ORDER BY filename;
+
+
+## 2026-09-15 — Rehearsal rows removed, 2893 reconciled, and a claim retracted (2890 → 2970)
+
+### Applied so far, read from the ledger — NOT inferred
+
+Every migration ID below comes from `public.schema_migration_ledger` on
+portava-ci and from the applier's own execution log. Nothing here is inferred
+from `audit:schema`'s missing-object count, which cannot establish apply order
+or completion and which I misread once already (see the retraction below).
+
+| filename | applied_by | applied_at (UTC) |
+| --- | --- | --- |
+| `2890_rank_events_behavior_engine_columns.sql` | `ci` | 13:16:38 |
+| `2891_rank_events_recommendation_id.sql` | `ci` | 13:32:35 |
+| `2892_place_momentum.sql` | `ci` | 13:32:36 |
+
+All three carry a real sha256. **That is the complete set in the 2890–2999
+range.** The applier's log for run 34972255308 attempt 3 says the same thing in
+its own words: `applied before the stop : 2`, `not attempted : 11`.
+
+### TWO RETRACTIONS
+
+**(1) I claimed an empty table proved a migration never ran. It does not.**
+The previous version of this section said `stamp_definitions` holding zero rows
+was "the proof" that 0081/0082/0145/0179/0189/0198 did not run on portava-ci.
+That is wrong, and wrong in the direction that matters: an empty table
+establishes **missing current data**, nothing more. Rows can be seeded by a
+migration and deleted afterwards by anything at all. The honest statement is
+that the seed data is absent NOW, which is enough to justify naming those files
+to `--apply-unproven` — their INSERTs are `ON CONFLICT (slug) DO NOTHING`, so
+re-running them is safe whether or not they ran before — but it is NOT a finding
+about history.
+
+**(2) I read an apply order out of `audit:schema` and it was fiction.**
+Seeing "6 missing objects across 3 files" I concluded 2891–2940 had all applied.
+The ledger says 2891 and 2892 applied and 2893 stopped the run. `audit:schema`
+reports only *claimed objects that are absent*; a file whose objects happen to
+exist already looks identical to one that applied. Apply order and completion
+come from the ledger and the applier log, and from nowhere else.
+
+### Why the run stopped: 2893, and the state its precondition could not name
+
+    PRECONDITION FAILED (2893): rank_events_surface_check does not permit search,
+    so this database is not on the post-2298 fifteen.
+
+The refusal was correct as written and wrong about this database. Live
+vocabularies, read at the time:
+
+| environment | `rank_events_surface_check` permits |
+| --- | --- |
+| portava-ci | the **eight** — `pulse, discovery, events, compass, live_pulse, living_page, watch_feed, wall` |
+| production | the pre-2298 **fourteen** — the fifteen minus `wall` |
+
+portava-ci is **already at 2893's finished state**. The precondition asked only
+"are you on the fifteen I narrow FROM?", so it could not distinguish a database
+already narrowed from one that never had the fifteen — and those need opposite
+answers. Production is the second case, where the refusal is right and must keep
+firing.
+
+### The fix: three states, decided explicitly
+
+`2893_rank_events_retire_writerless_surfaces.sql` now classifies the live
+constraint into exactly three states:
+
+- **(A) the expected old constraint** — the post-2298 fifteen. Narrow it. The
+  ordinary path, unchanged.
+- **(B) the exact verified target** — the eight, and nothing else. Reconcile:
+  re-assert and continue. A migration whose effect is already present is a
+  no-op, not an error.
+- **(C) anything else** — **refuse**, and say what is actually there rather than
+  asserting "apply 2298 first" about a state nobody has characterised.
+
+**Nothing is skipped in state (B).** The `DROP`/`ADD` still runs, the safety veto
+still counts live rows, and every postcondition in the file still executes. Only
+the verdict on the *starting* state changed. The live constraint was **not**
+widened to satisfy the precondition, at any point.
+
+#### A defect found in my own first draft, by rehearsing it
+
+The first version tested (B) as "all eight present AND none of the seven retired
+present". That is not the same as "the vocabulary is the eight": a constraint
+carrying the eight **plus a label from neither list** satisfies both halves.
+Rehearsed against a synthetic ninth label `quasar`, the draft classified it as
+**(B) RECONCILE** — exactly the unexpected state that must fail. Both tests are
+now exact sorted-array comparisons against the parsed label list, which an
+unexpected member cannot pass.
+
+#### Rehearsed against five vocabularies before being committed
+
+| starting vocabulary | branch |
+| --- | --- |
+| portava-ci live (the eight) | **B — reconcile** |
+| post-2298 fifteen | **A — narrow** |
+| production pre-2298 fourteen | **C — refused** |
+| half-narrowed (eight + `search`) | **C — refused** |
+| eight + unknown label `quasar` | **C — refused** |
+
+The comment-stripped precondition block — the form the applier actually
+executes, since the ledger's `notes` records that comments and the outer
+`BEGIN`/`COMMIT` are removed — was then run whole against portava-ci: it
+compiled, took branch (B), and passed the safety veto with **0** rows on all
+seven retired surfaces. Both (C) cases were re-run under an exception handler to
+confirm they genuinely raise rather than merely being expected to.
+
+2893 is **unapplied on both environments** (`0` ledger rows on each), so editing
+its bytes breaks no recorded checksum. No applied migration's bytes were changed.
+
+### Reconciled state vs. executed migration: what the ledger can and cannot carry
+
+2893 will genuinely **execute** on portava-ci — the DDL runs and the
+postconditions run — so `applied_by='ci'` with a real checksum is the truthful
+row, not a convenience.
+
+Recording *reconciled* as a state distinct from *executed* is *not* available in
+`applied_by` today: 2254 pins it with
+`schema_migration_ledger_applied_by_check` to exactly `ci | manual | backfill`,
+and `apply-migrations.ts` treats anything outside `ci|manual` as **not proof of
+an apply**, so a fourth value would make the file retry forever. The distinction
+therefore lives where the ledger does support it — the migration's own
+`RAISE NOTICE` in the execution log (`2893 RECONCILE:` vs `2893 APPLY:`) and this
+document. Widening the vocabulary would need a migration against 2254's CHECK
+**and** a matching runner change; that is a reviewed change, proposed rather
+than taken unilaterally.
+
+### The rehearsal rows, deleted at source
+
+2890 was cleared one field at a time; the re-run applied it and stopped at 2891
+on the **same three rows**, carrying `recommendation_id = 'AAAAAAAAAAAAAAAAAAAAAA'`
+— twenty-two `A`s, shaped to pass the format check rather than written by any
+writer. With 13 migrations and ~100 postconditions left, clearing one invented
+value per CI round-trip was the wrong strategy; the rows were the defect.
+
+    DELETE FROM public.rank_events
+     WHERE id IN ('826057e7-cdfc-4d27-a7ca-41bebda1137e',
+                  '2768c28e-2e28-4777-b41a-92fab8a5c199',
+                  '0606ea7a-c899-4875-b4a5-16fdf3148f7f')
+       AND item_id ILIKE '%REHEARSAL%'
+     RETURNING id, item_id;
+    -- RETURNING confirmed: exactly 3 rows, all three REHEARSAL/REHEARSAL2
+
+Explicit primary keys with the `item_id` guard re-asserted so the statement could
+not widen; a full JSON snapshot was captured first. All three belonged to the
+project's own `@portava` account, on `surface = 'discovery'`, **portava-ci only**.
+**Production was not touched.**
+
+| measure | before | after |
+| --- | --- | --- |
+| `rank_events` total | 239 | **236** |
+| `item_id ILIKE '%REHEARSAL%'` | 3 | **0** |
+| `recommendation_id IS NOT NULL` | 2 | **0** |
+| `dwell_ms IS NOT NULL` | 0 | **0** |
+
+2893's *"do NOT delete the rows to make the constraint fit"* is a different case:
+it protects rows **on a surface being retired**, which are evidence of a missed
+writer. These three sat on `discovery`, which 2893 **keeps**.
+
+### Still open
+
+- **`2893`–`2970` unapplied.** They apply only from `refs/heads/main`, so the
+  2893 fix must merge before it can run.
+- **2970 needs the stamp seeds**, named explicitly to `--apply-unproven`:
+  `0081`, `0082`, `0145`, `0179`, `0189`, `0198`. All six are idempotent
+  (`CREATE TABLE IF NOT EXISTS`, `INSERT … ON CONFLICT (slug) DO NOTHING`),
+  verified by reading them.
+- **`0172_trip_reservations.sql`** is missing `trip_reservations_owner_delete` —
+  **pre-existing**, unrelated.
+- **Nothing applied to production; no flag enabled anywhere.**
+
+### Re-establish any of this independently
+
+    SELECT filename, applied_by, applied_at FROM public.schema_migration_ledger
+     WHERE filename >= '2890' AND filename < '2999' ORDER BY filename;
+
+    SELECT pg_get_constraintdef(oid) FROM pg_constraint
+     WHERE conrelid = 'public.rank_events'::regclass
+       AND conname = 'rank_events_surface_check';
+
+    SELECT count(*) FROM public.rank_events WHERE item_id ILIKE '%REHEARSAL%';
+    -- expect 0
