@@ -230,15 +230,25 @@ describe("corrections are new rows — nothing is mutable", () => {
   });
 
   it("at most one reversal per entry and one supersession per attribution", () => {
-    assert.match(statementsOf(M2921), /CREATE UNIQUE INDEX cee_one_reversal_per_entry[\s\S]{0,160}WHERE reverses_entry_id IS NOT NULL/);
-    assert.match(statementsOf(M2920), /CREATE UNIQUE INDEX ca_one_supersede_per_row[\s\S]{0,160}WHERE supersedes_id IS NOT NULL/);
+    // `IF NOT EXISTS` is optional in these matchers because it is ORTHOGONAL to
+    // what they assert. The subject here is the index's SHAPE — that this one is
+    // PARTIAL, on the named predicate — and a guard on the CREATE cannot change
+    // that. The guards were added when 2920/2921 had to become re-runnable
+    // against a database that already carried their tables from an unrecorded
+    // rehearsal; matching the bare literal would have made an unrelated edit
+    // look like a shape regression.
+    assert.match(statementsOf(M2921), /CREATE UNIQUE INDEX (?:IF NOT EXISTS )?cee_one_reversal_per_entry[\s\S]{0,160}WHERE reverses_entry_id IS NOT NULL/);
+    assert.match(statementsOf(M2920), /CREATE UNIQUE INDEX (?:IF NOT EXISTS )?ca_one_supersede_per_row[\s\S]{0,160}WHERE supersedes_id IS NOT NULL/);
   });
 
   it("the idempotency indexes are TOTAL, so PostgREST conflict inference matches them", () => {
     for (const [f, name] of [[M2920, "ca_idempotency_key_once"], [M2921, "cee_idempotency_key_once"]] as const) {
       const sql = statementsOf(f);
-      const at = sql.indexOf(`CREATE UNIQUE INDEX ${name}`);
-      assert.notEqual(at, -1, name);
+      // Located by regex rather than indexOf so an optional `IF NOT EXISTS`
+      // guard does not read as "the index is missing" — see the note above.
+      const found = new RegExp(`CREATE UNIQUE INDEX (?:IF NOT EXISTS )?${name}\\b`).exec(sql);
+      assert.notEqual(found, null, name);
+      const at = found!.index;
       const stmt = sql.slice(at, sql.indexOf(";", at));
       assert.ok(!/WHERE/i.test(stmt), `${name} is PARTIAL; on_conflict inference will not match it`);
     }
