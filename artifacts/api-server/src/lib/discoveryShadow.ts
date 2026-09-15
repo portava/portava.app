@@ -133,25 +133,25 @@ export function compareServedOrders(legacyIds: string[], pdeIds: string[]): Shad
 // "Compare: overlap, save rate potential, diversity, creator concentration,
 // place diversity, estimated travel intent."
 //
-// `compareServedOrders` above answers the first. These answer three more, and
-// say plainly that two are not answerable from a served Discovery page:
+// `compareServedOrders` above answers the first. These answer four more, and
+// say plainly that one is not answerable from a served Discovery page:
 //
 //   creator concentration    A served row is a `DiscoveryPlace`, and a
 //                            DiscoveryPlace carries NO author — no
 //                            `submitted_by`, `authorId` or `creatorId` field
-//                            exists on it (the block filter runs where the rows
-//                            are READ, precisely because the served shape has
-//                            nobody on it). Concentration over creators cannot
-//                            be computed from a page that does not name any.
+//                            exists on it. That is a fact about the SERVED
+//                            SHAPE and it is still true. The shadow writer is
+//                            not confined to the served shape: it does its OWN
+//                            join to `discovery_places.submitted_by` (a column
+//                            since 0029_discovery_places.sql) — see
+//                            resolvePageAuthors at the foot of this file.
 //   estimated travel intent  No trip-add or itinerary-add signal is attached to
 //                            a served item (census-discovery DV-40: no
 //                            recommendation object, no per-item intent
 //                            outcome). Substituting distance would be a proxy
-//                            wearing a measurement's name.
-//
-// Both are reported as `null` and NAMED in `unmeasured`. A zero would read as
-// "measured, and it was none", which is the failure this whole census exists to
-// stop being possible.
+//                            wearing a measurement's name. Reported `null` and
+//                            NAMED in `unmeasured`, because a zero would read
+//                            as "measured, and it was none".
 
 /** The per-item facts the Phase 9 dimensions read. Structural, so the route can pass its own rows. */
 export interface ShadowPageItem {
@@ -261,8 +261,8 @@ export const UNMEASURED_PHASE9_AXES = ["creator_concentration", "estimated_trave
 export interface ShadowPhase9Comparison {
   legacy: ShadowPageDimensions;
   pde: ShadowPageDimensions;
-  /** Phase 9 "creator concentration" — NOT measurable: a served page names no author. */
-  creatorConcentration: null;
+  /** Phase 9 "creator concentration" — the writer's OWN author join. Null only on a row written before it existed. */
+  creatorConcentration: ShadowCreatorConcentration | null;
   /** Phase 9 "estimated travel intent" — NOT measurable: no per-item trip/itinerary signal. */
   estimatedTravelIntent: null;
   /** The unmeasured axes, by name, so silence cannot be read as zero. */
@@ -365,7 +365,7 @@ export async function logDiscoveryShadowServe(sc: any, p: ShadowServeParams): Pr
     // no column and no migration is added; a row written before this existed
     // simply has no `phase9` key and the reader reports it as unknown.
     const phase9 = p.legacyItems && p.pdeItems
-      ? compareShadowPages(p.legacyItems, p.pdeItems).dimensions
+      ? await compareShadowPagesWithCreators(sc, p.legacyItems, p.pdeItems)
       : null;
 
     const { error } = await sc.from("discovery_shadow_serves").insert({
@@ -410,4 +410,238 @@ export async function logDiscoveryShadowServe(sc: any, p: ShadowServeParams): Pr
   } catch (err) {
     logger.warn({ err }, "discoveryShadow: shadow observation threw — the comparison for this serve is lost");
   }
+}
+
+// ── Phase 9's FIFTH dimension: creator concentration (census-discovery DV-79) ──
+//
+// EVERYTHING BELOW THIS LINE IS THE JOIN THE SERVED SHAPE CANNOT DO
+// =================================================================
+// The census row offered two ways to reach this axis: put an author on the
+// SERVED `DiscoveryPlace`, or do "a join the shadow writer does not do". This
+// is the second. The response the user received is not touched, no field is
+// added to any served shape, and no route changes — the shadow writer, running
+// after the response has already left, reads `discovery_places.submitted_by`
+// for itself.
+//
+// `submitted_by` has existed since 0029_discovery_places.sql. The census
+// sentence "a served DiscoveryPlace carries no author" remains true, because it
+// is a statement about the SERVED SHAPE and not about the database.
+//
+// WHAT CAN AND CANNOT BE JOINED, AND WHY THAT IS COVERAGE
+// ======================================================
+// A served discovery id is either `db/<uuid>` (a row in a table) or an OSM
+// element such as `node/12345`. Only the first can be joined at all, and even
+// then only some of them: `routes/discovery.ts` mints `db/<uuid>` from BOTH
+// `discovery_places` AND the canonical `places` table, and only the former has
+// an author column. An OSM place has no author because nobody wrote it; a
+// canonical row has none here because its author lives elsewhere.
+//
+// Every one of those is COVERAGE — "this page had places whose author I could
+// not resolve" — and none of them is concentration. A page of twenty OSM
+// places is not a page with no creators concentrated; it is a page about which
+// the question was not answerable. That is why `coverage` travels with every
+// figure below and why an unresolved page reports `null`, exactly as
+// `meanSavedCount` already does for its own coverage.
+//
+// THE THREE STATES THAT MAY NEVER COLLAPSE
+// ========================================
+//   measured    the join ran. `resolved`/`coverage` say how much of the page it
+//               could speak for, and the concentration figures are real.
+//   not_joinable no id on either page is a `db/<uuid>`, so there was nothing to
+//               look up. This is deliberately NOT `measured`-with-coverage-0:
+//               `db/<uuid>` is minted from BOTH `discovery_places` AND the
+//               canonical `places` table, so "no author found" cannot be told
+//               apart from "author lives in a table this join does not read".
+//               Unknown, and the axis stays NAMED in `unmeasured`.
+//   unreadable  the join was rejected or threw. NOTHING is known: both page
+//               figures are `null`, and `creator_concentration` stays in
+//               `unmeasured`. A failed read reported as 0 would read as "this
+//               page had no concentration", and as 1 as "one author owned the
+//               page" — two different fabrications of the same failure.
+//   no_client   there was no client to read with, which is the same amount of
+//               knowledge and a different cause. It shares `ModifiersReason`'s
+//               spelling because the shadow row already carries that vocabulary
+//               in `pde_stages.modifiers`.
+
+/** How the author read went. `no_client` is spelled as `ModifiersReason` spells it. */
+export type CreatorReadReason = "measured" | "not_joinable" | "no_client" | "unreadable";
+
+/** One page's creator distribution, ALWAYS carrying the coverage it was computed over. */
+export interface ShadowPageCreators {
+  /** Items on the page. */
+  n: number;
+  /** Items whose author was resolvable. COVERAGE, never concentration. */
+  resolved: number;
+  /** `resolved / n`. Travels with every figure below it, always. */
+  coverage: number;
+  /** Distinct authors among the RESOLVED items; null when none resolved. */
+  distinctCreators: number | null;
+  /**
+   * Herfindahl–Hirschman index over the resolved items' authors, 0–1.
+   * 1 when one author holds every resolved slot, 1/k when k authors hold an
+   * equal share. Null when nothing resolved — there is no distribution, and 0
+   * would be the least concentrated value rather than the absent one.
+   */
+  hhi: number | null;
+  /** Largest single author's share of the RESOLVED items, 0–1; null when none resolved. */
+  topCreatorShare: number | null;
+}
+
+/** The axis, per page, with the reason the read answered as it did. */
+export interface ShadowCreatorConcentration {
+  reason: CreatorReadReason;
+  /** Null unless `reason` is `measured` — a read that did not happen produces no figure. */
+  legacy: ShadowPageCreators | null;
+  pde: ShadowPageCreators | null;
+}
+
+/** The result of the author join: which state it is in, and what it resolved. */
+export interface PageAuthorResolution {
+  reason: CreatorReadReason;
+  /** served id → author id. A row whose `submitted_by` is NULL is ABSENT, not mapped to null. */
+  authors: Map<string, string>;
+}
+
+/**
+ * `db/<uuid>` → the uuid, for anything else null.
+ *
+ * The `db/` prefix is the id form `routes/discovery.ts` mints and
+ * `lib/discoveryPlacePhotoStore.ts` already matches on, read out of that code
+ * rather than guessed. A bare uuid is not what the serve path produces, and an
+ * OSM element id is not a uuid at all — sending one to PostgREST would fail the
+ * whole read for the rest of the page.
+ */
+function discoveryPlaceUuid(id: string): string | null {
+  const m = /^db\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.exec(id.trim());
+  return m ? m[1]!.toLowerCase() : null;
+}
+
+/**
+ * Resolve authors for a set of served ids. One join, never a read per place.
+ *
+ * FAILS CLOSED, and the failure is LOUD in the data rather than only in a log:
+ * a rejected or throwing read returns `unreadable` with an EMPTY map, and every
+ * caller below turns that into "no figure", never into "no authors". Those are
+ * the two answers this function exists to keep apart.
+ *
+ * An id set with nothing joinable is `not_joinable`: no read was issued, and
+ * reporting that as a measured page whose coverage happened to be 0 would let
+ * "there was nothing to ask" stand in for "I asked and found nobody".
+ */
+export async function resolvePageAuthors(
+  sc: any,
+  ids: readonly string[],
+): Promise<PageAuthorResolution> {
+  const authors = new Map<string, string>();
+  if (!sc) return { reason: "no_client", authors };
+
+  const byUuid = new Map<string, string[]>();
+  for (const id of ids) {
+    const uuid = typeof id === "string" ? discoveryPlaceUuid(id) : null;
+    if (!uuid) continue;
+    const served = byUuid.get(uuid) ?? [];
+    served.push(id);
+    byUuid.set(uuid, served);
+  }
+  if (byUuid.size === 0) return { reason: "not_joinable", authors };
+
+  try {
+    const { data, error } = await sc
+      .from("discovery_places")
+      .select("id, submitted_by")
+      .in("id", [...byUuid.keys()]);
+    if (error) {
+      logger.warn({ err: error }, "discoveryShadow: author join rejected — creator concentration is UNKNOWN for this serve, not zero");
+      return { reason: "unreadable", authors };
+    }
+    for (const row of (data as any[]) ?? []) {
+      const uuid = typeof row?.id === "string" ? row.id.toLowerCase() : null;
+      const author = typeof row?.submitted_by === "string" && row.submitted_by.length > 0 ? row.submitted_by : null;
+      // A NULL submitted_by is an UNRESOLVED author, not an author called null:
+      // the column is `ON DELETE SET NULL`, so a deleted profile leaves a place
+      // with no author, and counting every such place as one shared creator
+      // would manufacture the most concentrated page this measure can report.
+      if (!uuid || !author) continue;
+      for (const served of byUuid.get(uuid) ?? []) authors.set(served, author);
+    }
+    return { reason: "measured", authors };
+  } catch (err) {
+    logger.warn({ err }, "discoveryShadow: author join threw — creator concentration is UNKNOWN for this serve, not zero");
+    return { reason: "unreadable", authors };
+  }
+}
+
+/** Pure: one page plus a resolved-author map → its creator distribution. No clock, no client, no throw. */
+export function pageCreators(
+  items: readonly ShadowPageItem[],
+  authors: ReadonlyMap<string, string>,
+): ShadowPageCreators {
+  const n = items.length;
+  const counts = new Map<string, number>();
+  let resolved = 0;
+  for (const it of items) {
+    if (!it) continue;
+    const author = authors.get(it.id);
+    if (!author) continue;          // unresolved is COVERAGE, and contributes to nothing else
+    resolved += 1;
+    counts.set(author, (counts.get(author) ?? 0) + 1);
+  }
+
+  if (resolved === 0) {
+    return { n, resolved: 0, coverage: 0, distinctCreators: null, hhi: null, topCreatorShare: null };
+  }
+
+  let hhi = 0;
+  let top = 0;
+  for (const c of counts.values()) {
+    const share = c / resolved;
+    hhi += share * share;
+    if (share > top) top = share;
+  }
+  return { n, resolved, coverage: n === 0 ? 0 : resolved / n, distinctCreators: counts.size, hhi, topCreatorShare: top };
+}
+
+/**
+ * The axes this surface cannot measure, GIVEN what the author join managed.
+ *
+ * Derived rather than declared, so the list on a row can never disagree with
+ * the figures beside it: `creator_concentration` leaves the list exactly when a
+ * concentration was actually computed, and returns to it the moment a read
+ * fails. `UNMEASURED_PHASE9_AXES` stays as the answer for a caller with no
+ * client at all, which is what `compareShadowPages` still is.
+ */
+export function unmeasuredPhase9Axes(creators: ShadowCreatorConcentration | null): readonly string[] {
+  return creators?.reason === "measured"
+    ? (["estimated_travel_intent"] as const)
+    : UNMEASURED_PHASE9_AXES;
+}
+
+/**
+ * `compareShadowPages` plus the author join — the version the WRITER uses.
+ *
+ * The pure `compareShadowPages` above is unchanged and still reports
+ * `creatorConcentration: null`, which is correct for what it is handed: a
+ * function given nothing but served rows genuinely cannot name an author. This
+ * one is given a client as well, and can.
+ */
+export async function compareShadowPagesWithCreators(
+  sc: any,
+  legacy: readonly ShadowPageItem[],
+  pde: readonly ShadowPageItem[],
+): Promise<ShadowPhase9Comparison> {
+  const base = compareShadowPages(legacy, pde).dimensions;
+  const resolution = await resolvePageAuthors(sc, [...legacy.map((i) => i.id), ...pde.map((i) => i.id)]);
+
+  const creatorConcentration: ShadowCreatorConcentration = resolution.reason === "measured"
+    ? {
+        reason: "measured",
+        legacy: pageCreators(legacy, resolution.authors),
+        pde: pageCreators(pde, resolution.authors),
+      }
+    // NOT `pageCreators(page, new Map())`. That would report coverage 0 on a
+    // read that never happened, which is the measured-but-nobody answer wearing
+    // the failed-read's clothes. The two must stay distinguishable in the row.
+    : { reason: resolution.reason, legacy: null, pde: null };
+
+  return { ...base, creatorConcentration, unmeasured: unmeasuredPhase9Axes(creatorConcentration) };
 }

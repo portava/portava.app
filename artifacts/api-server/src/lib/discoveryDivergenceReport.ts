@@ -53,7 +53,7 @@ export interface ShadowServeRow {
 export interface ShadowPhase9Blob {
   legacy: ShadowPageDimensionsBlob;
   pde: ShadowPageDimensionsBlob;
-  creatorConcentration: null;
+  creatorConcentration: ShadowCreatorConcentrationBlob | null;
   estimatedTravelIntent: null;
   unmeasured: readonly string[];
 }
@@ -184,7 +184,7 @@ export function aggregatePhase9(rows: readonly ShadowServeRow[]): Phase9Aggregat
     meanSavedCoveragePde:    mean(blobs.map((b) => b.pde.savedCountCoverage)),
     // Taken from the rows themselves rather than re-declared here, so the
     // report can never claim to have measured an axis the writer did not.
-    unmeasured: blobs[0].unmeasured ?? [],
+    unmeasured: blobs[0].unmeasured ?? [], creatorConcentration: aggregateCreatorConcentration(blobs),
   };
 }
 
@@ -263,6 +263,131 @@ export function formatPhase9(p: Phase9Aggregate | null): string[] {
     `       diversity      cats/page legacy ${n2(p.meanCategoryDistinctLegacy)} → pde ${n2(p.meanCategoryDistinctPde)}   entropy ${n2(p.meanCategoryEntropyLegacy)} → ${n2(p.meanCategoryEntropyPde)}`,
     `       place div.     hoods/page ${n2(p.meanNeighborhoodDistinctLegacy)} → ${n2(p.meanNeighborhoodDistinctPde)}   geo cells ${n2(p.meanGeoCellDistinctLegacy)} → ${n2(p.meanGeoCellDistinctPde)}`,
     `       save potential mean saves/item ${nOrDash(p.meanSavedCountLegacy)} → ${nOrDash(p.meanSavedCountPde)}   (coverage ${pct(p.meanSavedCoverageLegacy)} → ${pct(p.meanSavedCoveragePde)})`,
+    ...formatCreatorConcentration(p.creatorConcentration),
     `       NOT measured   ${p.unmeasured.join(", ") || "—"}`,
+  ];
+}
+
+// ── Phase 9's fifth axis: creator concentration (census-discovery DV-79) ──────
+//
+// The writer stopped being able to say only "not measurable" here. It now joins
+// `discovery_places.submitted_by` for itself (lib/discoveryShadow.ts), which
+// leaves the SERVED response shape untouched and puts a real figure on the row.
+//
+// Everything this reader already does for `meanSavedCount` applies again, for
+// the same reason and with one addition. Rows that did not measure the axis are
+// EXCLUDED from the mean rather than counted as zero — and, because a failed
+// author read is not the same fact as a page with no resolvable author, the
+// number of rows that could not read is reported BESIDE the mean rather than
+// folded into it. A mean over two of four hundred rows and a mean over four
+// hundred look identical if only the mean is printed.
+//
+// These declarations sit at the foot of the file, and `Phase9Aggregate` gains
+// its field by declaration merging, because every line above is the target of
+// an anchored citation in docs/architecture and docs/discovery: inserting a
+// line there silently repoints someone else's evidence.
+
+/** The shape `lib/discoveryShadow.ts` writes under `pde_stages.phase9.creatorConcentration`. */
+export interface ShadowCreatorConcentrationBlob {
+  /** `measured` · `unreadable` · `no_client`. Only the first carries page figures. */
+  reason: string;
+  legacy: ShadowPageCreatorsBlob | null;
+  pde: ShadowPageCreatorsBlob | null;
+}
+
+export interface ShadowPageCreatorsBlob {
+  n: number;
+  /** Items whose author was resolvable — COVERAGE, never concentration. */
+  resolved: number;
+  coverage: number;
+  distinctCreators: number | null;
+  hhi: number | null;
+  topCreatorShare: number | null;
+}
+
+export interface Phase9CreatorAggregate {
+  /** Rows whose author join actually RAN. The denominator of every mean here. */
+  n: number;
+  /**
+   * Rows that carried the axis but could not read it (`unreadable`/`no_client`).
+   * Never folded into the means: a read that did not happen is not a page with
+   * no creators, and a report that hid this count would let one stand for the
+   * other.
+   */
+  unreadable: number;
+  /** Mean fraction of the page whose author was resolvable. Travels with every figure below. */
+  meanCoverageLegacy: number;
+  meanCoveragePde: number;
+  /** Mean per-page Herfindahl over resolved authors; null when NO page resolved anybody. */
+  meanHhiLegacy: number | null;
+  meanHhiPde: number | null;
+  meanDistinctCreatorsLegacy: number | null;
+  meanDistinctCreatorsPde: number | null;
+  meanTopCreatorShareLegacy: number | null;
+  meanTopCreatorSharePde: number | null;
+}
+
+/** Declaration merging — see the note above. */
+export interface Phase9Aggregate {
+  /**
+   * Phase 9 "creator concentration", over the rows in this group whose author
+   * join RAN. Null when none did, which is unknown and not a concentration of
+   * zero.
+   */
+  creatorConcentration: Phase9CreatorAggregate | null;
+}
+
+/**
+ * Aggregate the creator axis over the blobs in one group.
+ *
+ * Three populations, kept apart on purpose:
+ *   • blobs with no `creatorConcentration` at all — written before the join
+ *     existed. Invisible here, exactly as a missing `phase9` is to the caller.
+ *   • blobs whose read failed — counted in `unreadable`, in no mean.
+ *   • blobs that measured — the means, each one still carrying its coverage.
+ */
+export function aggregateCreatorConcentration(
+  blobs: readonly ShadowPhase9Blob[],
+): Phase9CreatorAggregate | null {
+  const carried = blobs
+    .map((b) => b.creatorConcentration)
+    .filter((c): c is ShadowCreatorConcentrationBlob => !!c && typeof c.reason === "string");
+  const measured = carried.filter((c) => c.reason === "measured" && !!c.legacy && !!c.pde);
+  if (measured.length === 0) return null;
+
+  const meanOfKnown = (xs: Array<number | null | undefined>): number | null => {
+    const known = xs.filter((x): x is number => typeof x === "number" && Number.isFinite(x));
+    return known.length === 0 ? null : mean(known);
+  };
+  const legacy = measured.map((c) => c.legacy!);
+  const pde = measured.map((c) => c.pde!);
+
+  return {
+    n: measured.length,
+    unreadable: carried.length - measured.length,
+    meanCoverageLegacy: mean(legacy.map((p) => p.coverage)),
+    meanCoveragePde:    mean(pde.map((p) => p.coverage)),
+    // hhi / distinct / top-share are null on a page that resolved NOBODY, and
+    // meanOfKnown drops them rather than reading them as the least concentrated
+    // value a page can have.
+    meanHhiLegacy: meanOfKnown(legacy.map((p) => p.hhi)),
+    meanHhiPde:    meanOfKnown(pde.map((p) => p.hhi)),
+    meanDistinctCreatorsLegacy: meanOfKnown(legacy.map((p) => p.distinctCreators)),
+    meanDistinctCreatorsPde:    meanOfKnown(pde.map((p) => p.distinctCreators)),
+    meanTopCreatorShareLegacy: meanOfKnown(legacy.map((p) => p.topCreatorShare)),
+    meanTopCreatorSharePde:    meanOfKnown(pde.map((p) => p.topCreatorShare)),
+  };
+}
+
+/** The creator lines. An unresolved axis prints prose, never a quotable number. */
+export function formatCreatorConcentration(c: Phase9CreatorAggregate | null): string[] {
+  if (!c) {
+    return ["       creator conc. author join resolved on no row in this group"];
+  }
+  const n2 = (x: number | null) => (x == null ? "—" : x.toFixed(2));
+  const pct = (x: number) => `${(x * 100).toFixed(0)}%`;
+  return [
+    `       creator conc. hhi/page ${n2(c.meanHhiLegacy)} → ${n2(c.meanHhiPde)}   creators/page ${n2(c.meanDistinctCreatorsLegacy)} → ${n2(c.meanDistinctCreatorsPde)}   top share ${n2(c.meanTopCreatorShareLegacy)} → ${n2(c.meanTopCreatorSharePde)}`,
+    `                     (coverage ${pct(c.meanCoverageLegacy)} → ${pct(c.meanCoveragePde)}; joined on ${c.n} row(s), unreadable on ${c.unreadable})`,
   ];
 }
