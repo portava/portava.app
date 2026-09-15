@@ -409,6 +409,27 @@ export const TELEGRAPH_DYNAMIC_SHARE_PRODUCERS: readonly DynamicShareProducer[] 
       "sets live in vocabulary.ts, not here.",
   },
   {
+    file: "artifacts/api-server/src/routes/telegraphStream.ts",
+    expression: "msgType: r.msg_type ?? \"text\" | subtype: r.subtype ?? null",
+    family: "OPERATIONAL",
+    sourceDomain: null,
+    produces: [],
+    writesMessages: false,
+    note:
+      "DECLARED WHEN THE GUARD CAUGHT IT. The §17.3 reconnect resume replays " +
+      "the messages a client missed while disconnected, and each replayed frame " +
+      "echoes the msg_type and subtype it READ from `messages` back down the " +
+      "socket. It writes nothing: there is no insert, no update and no new " +
+      "value — the server is repeating a discriminator it assigned earlier, to " +
+      "the one person whose own live threads those rows are in. `produces` is " +
+      "empty for the same reason the two coordination entries above are empty: " +
+      "the value set is whatever `messages.subtype` already holds, which is " +
+      "this registry's literal list and not a second vocabulary. OPERATIONAL " +
+      "because a replay carries no NEW disclosure — the recipient was already " +
+      "entitled to every row it repeats, and the query proves it by scoping to " +
+      "threads where the caller's membership has no `left_at`.",
+  },
+  {
     file: "artifacts/api-server/src/services/telegraphReportEvidence.ts",
     expression:
       "msg_type: (msg as any).msg_type ?? null | subtype: (msg as any).subtype ?? null | " +

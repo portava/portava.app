@@ -53,29 +53,6 @@ export type TelegraphEventType =
   | "message.unsent"
   | "message.translated"
   /**
-   * Telegraph §13.2 `message.delivered`. census-telegraph T178: "No delivered
-   * concept exists to emit (T69)", and T69: "no DELIVERED concept anywhere ...
-   * State is inferred from `created_at`, `edited_at`, `deleted_at` and the
-   * thread-level `last_read_at`."
-   *
-   * WHAT IT CLAIMS, EXACTLY
-   * =======================
-   * That a recipient had an open realtime connection which ACCEPTED this
-   * message's `message.created` event. Nothing more. It does not claim the
-   * message reached the device's storage — this transport has no client
-   * acknowledgement to carry that — and it does not claim anybody read it,
-   * which is `message.seen` and has a different writer. A DELIVERED that
-   * over-claimed would be worse than no DELIVERED: a sender who believes a
-   * message landed stops re-sending it.
-   *
-   * ADDRESSED TO THE SENDER, AND ONLY THE SENDER. A delivery receipt is also a
-   * presence disclosure — it says somebody's device is online right now — so it
-   * goes to the one person who is already entitled to know the message's fate.
-   * It carries a COUNT rather than a roster for the same reason (see
-   * `emitDeliveryReceipt`).
-   */
-  | "message.delivered"
-  /**
    * Telegraph §13.2 `member.joined`. census-telegraph T185: "Not in the union;
    * only `member.left` exists. A trip-membership sync (`services/groupChatSync.ts`)
    * is silent to open clients." The payload names WHO joined and by what route
@@ -136,18 +113,7 @@ export type TelegraphEventType =
   /** Sent to the client before closing a connection whose access has been revoked. */
   | "access.revoked"
   /** Sent to the client when the maximum connection lifetime is reached — client should reconnect. */
-  | "reconnect"
-  /**
-   * Telegraph §17.3 — the outcome of a reconnect resume, emitted once per
-   * connection. Listed here with the other two per-connection frames
-   * (`reconnect`, `access.revoked`) rather than left as an undeclared string,
-   * because a client parser dispatches on this union and a frame type that is
-   * not in it is a frame nobody can register a handler for.
-   *
-   * `resumed: false` is an instruction, not a status line: it means the gap was
-   * NOT closed and a full poll is required.
-   */
-  | "stream.resumed";
+  | "reconnect" | "message.delivered" | "stream.resumed"; // last two: see TELEGRAPH_DELIVERY_EVENT_NOTES
 
 export interface TelegraphEvent {
   type: TelegraphEventType;
@@ -159,6 +125,43 @@ export interface TelegraphEvent {
   ts: string;
 }
 
+/**
+ * TELEGRAPH_DELIVERY_EVENT_NOTES — the two event types declared on one line in
+ * `TelegraphEventType` above.
+ *
+ * They are folded onto the `reconnect` line rather than given a stanza each
+ * inside the union for one reason that has nothing to do with style: three
+ * sibling censuses cite this file by `path:line`, and `census-layover.md` cites
+ * `:122` — the `payload` field's comment. Adding stanzas above it silently
+ * repoints another lane's evidence at the wrong line. The declaration stays
+ * put; the explanation moves below every cited line. If this file is ever
+ * renumbered deliberately, move these back up.
+ *
+ * `message.delivered` — Telegraph §13.2. census-telegraph T178: "No delivered
+ * concept exists to emit (T69)", and T69: "no DELIVERED concept anywhere ...
+ * State is inferred from `created_at`, `edited_at`, `deleted_at` and the
+ * thread-level `last_read_at`."
+ *
+ *   WHAT IT CLAIMS, EXACTLY. That a recipient had an open realtime connection
+ *   which ACCEPTED this message's `message.created` event. Nothing more. It
+ *   does not claim the message reached the device's storage — this transport
+ *   has no client acknowledgement to carry that — and it does not claim anybody
+ *   read it, which is `message.seen` and has a different writer. A DELIVERED
+ *   that over-claimed would be worse than no DELIVERED: a sender who believes a
+ *   message landed stops re-sending it.
+ *
+ *   ADDRESSED TO THE SENDER, AND ONLY THE SENDER. A delivery receipt is also a
+ *   presence disclosure — it says somebody's device is online right now — so it
+ *   goes to the one person already entitled to know the message's fate, and it
+ *   carries a COUNT rather than a roster. See `emitDeliveryReceipt`.
+ *
+ * `stream.resumed` — Telegraph §17.3, the outcome of a reconnect resume,
+ * emitted once per connection alongside the other two per-connection frames
+ * (`reconnect`, `access.revoked`). A client parser dispatches on this union, so
+ * a frame type absent from it is a frame nobody can register a handler for.
+ * `resumed: false` is an instruction, not a status line: the gap was NOT closed
+ * and a full poll is required. See `routes/telegraphStream.ts`.
+ */
 type Subscriber = (event: TelegraphEvent) => void;
 
 /** userId -> set of subscriber callbacks (one per open SSE connection). */
@@ -192,6 +195,10 @@ export interface TelegraphEmitterStats {
   eventsDroppedUnresolvedAudience: number;
   /** publishToThread resolved an audience of zero (everyone left / self-excluded). */
   emptyAudience: number;
+  /** §30A.12 — presence-class events not fanned out because the thread is large. */
+  presenceShedLargeConversation: number;
+  /** §30A.12 — events degraded to a poll signal because the thread is very large. */
+  fanoutDegradedLargeConversation: number;
   /** §13.2 `message.delivered` receipts addressed back to a sender. */
   deliveryReceiptsEmitted: number;
   /**
@@ -212,6 +219,8 @@ const stats: TelegraphEmitterStats = {
   audienceResolutionFailures: 0,
   eventsDroppedUnresolvedAudience: 0,
   emptyAudience: 0,
+  presenceShedLargeConversation: 0,
+  fanoutDegradedLargeConversation: 0,
   deliveryReceiptsEmitted: 0,
   messagesDeliveredNowhere: 0,
 };
@@ -567,10 +576,55 @@ export function publishToUsers(
   }
 }
 
+// ── §30A.12 bounded fan-out ───────────────────────────────────────────────────
+
+/**
+ * Above this many recipients, presence-class events are not fanned out at all.
+ *
+ * census-telegraph T416: "`publishToThread` fans out to every active member
+ * with no size bound, and the rule is unviolated only because event
+ * conversations do not exist." The bound belongs on the PATH rather than on a
+ * thread type, because the path is the same one for every thread and a rule
+ * that waits for its subject to appear is a rule that will be missing on the
+ * day it first matters.
+ *
+ * Fifty is chosen to sit above every conversation this repository can actually
+ * create — a trip crew, a circle — so nothing shipped changes behaviour, and
+ * below any plausible "Event conversation", so the bound is real rather than
+ * decorative.
+ */
+export const FANOUT_PRESENCE_MAX = 50;
+
+/**
+ * Above this many recipients, EVERY event degrades to a single poll signal.
+ *
+ * Not to silence: the member is told that the thread moved and what kind of
+ * thing moved, and pulls the rest. That keeps the work of one publish bounded
+ * by a constant payload rather than by the roster, which is the property §30A.12
+ * asks for — and it keeps the body of a message off a fan-out that large.
+ */
+export const FANOUT_HARD_MAX = 500;
+
+/**
+ * Events whose cost is O(members) per KEYSTROKE and whose loss costs a reader
+ * nothing. A typing indicator nobody receives is a typing indicator nobody
+ * misses; a message nobody receives is a lost conversation, which is why
+ * `message.created` is deliberately NOT in this set.
+ */
+const PRESENCE_CLASS_EVENTS: ReadonlySet<TelegraphEventType> = new Set([
+  "typing.started",
+  "typing.stopped",
+  "read.updated",
+  "message.seen",
+  "message.delivered",
+]);
+
 /**
  * Resolve the active members of a thread (left_at IS NULL) and publish to them,
  * optionally excluding one user (typically the actor). Best-effort: a failure
  * to resolve members is logged, counted and swallowed.
+ *
+ * §30A.12: the fan-out is BOUNDED. See FANOUT_PRESENCE_MAX / FANOUT_HARD_MAX.
  */
 export async function publishToThread(
   sc: SupabaseClient,
@@ -609,6 +663,31 @@ export async function publishToThread(
       stats.emptyAudience++;
       return;
     }
+
+    // §30A.12 — bounded strategies, applied to the resolved audience rather
+    // than to a thread type, because the audience is the thing that costs.
+    if (userIds.length > FANOUT_PRESENCE_MAX && PRESENCE_CLASS_EVENTS.has(event.type)) {
+      stats.presenceShedLargeConversation++;
+      logger.debug(
+        { threadId, type: event.type, audience: userIds.length },
+        "telegraph: presence-class event SHED — conversation above the presence fan-out bound",
+      );
+      return;
+    }
+
+    if (userIds.length > FANOUT_HARD_MAX) {
+      stats.fanoutDegradedLargeConversation++;
+      // A poll signal, not silence. The member learns that the thread moved and
+      // what kind of thing moved; the payload stays off a fan-out this wide.
+      publishToUsers(userIds, {
+        type: "thread.updated",
+        threadId,
+        payload: { threadId, degraded: "large_conversation", originalType: event.type },
+        ts: event.ts,
+      });
+      return;
+    }
+
     publishToUsers(userIds, { ...event, threadId });
   } catch (err) {
     stats.audienceResolutionFailures++;
