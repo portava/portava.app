@@ -5506,10 +5506,24 @@ ordinary progress.
 | (a) closable from code this lane owns | 5 |
 | **(a)-HAZARD — do not build** | **2** |
 | (b) unapplied migration, or a flag seeded FALSE | 21 |
-| (c) owner decision, named | 3 |
-| (d) another lane's file, named | 7 |
-| (e) absent capability | 3 |
+| (c) owner decision, named | 2 |
+| (d) another lane's file, named | 4 |
+| (e) absent capability | 6 |
 | (g) evidence only obtainable outside the code | 1 |
+| **total** | **41** |
+
+**ARITHMETIC CORRECTION.** This table first read `(c) 3 · (d) 7 · (e) 3`, which
+sums to **42** against a population of **41**. The error was an overlap, not a
+miscount of rows: **eleven of the 41 carry two buckets** — a primary blocker and
+a secondary one — and the `(d)` column counted the secondary `(d)` component of
+rows whose primary blocker is `(b)` or `(e)` (`DC-22`, `DC-33`, `DV-42`,
+`DV-46`, `DV-78`, `DV-09`), while `(e)` counted only the rows with no second
+bucket. Net `+1`.
+
+The table above now counts each row **once, by the blocker that stops it first**.
+Every row's secondary blocker is still recorded in its own line below, because a
+row with two blockers needs both cleared and a single column cannot say that.
+The population is 41, every row is classified, and the column now sums to it.
 
 **Every one of the 41 carries a bucket and a piece of evidence that was opened.**
 None is unclassified. Composed with §18.3, all 107 non-correct rows are now
