@@ -24604,7 +24604,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "artifacts/api-server/src/routes/telegraph.ts:354",
+      "handler": "artifacts/api-server/src/routes/telegraph.ts:370",
       "handlerCount": 1,
       "classification": "DEAD ENDPOINT",
       "chain": []

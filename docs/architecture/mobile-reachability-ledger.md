@@ -434,7 +434,7 @@ Full per-route detail, including the resolved chain for each wired route, is in
 | GET | `/api/shared-moments/suggestions/mine` | `artifacts/api-server/src/routes/sharedMoments.ts:91` |
 | POST | `/api/tags` | `artifacts/api-server/src/routes/tags.ts:46` |
 | GET | `/api/telegraph/commands/:commandId` | `artifacts/api-server/src/routes/telegraphCommands.ts:371` |
-| GET | `/api/telegraph/threads/:threadId/header/:userId` | `artifacts/api-server/src/routes/telegraph.ts:354` |
+| GET | `/api/telegraph/threads/:threadId/header/:userId` | `artifacts/api-server/src/routes/telegraph.ts:370` |
 | PATCH | `/api/threads/:threadId/messages/:messageId` | `artifacts/api-server/src/routes/messaging.ts:2442` |
 | GET | `/api/trips/:tripId/activity` | `artifacts/api-server/src/routes/trips-expansion.ts:2766` |
 | POST | `/api/trips/:tripId/archive` | `artifacts/api-server/src/routes/trips-expansion.ts:614` |
