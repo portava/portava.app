@@ -203,7 +203,7 @@ Twenty modules use them (PR #469's own count; 15 more bypassed them). The curren
 failure-vs-emptiness gap is what callers then do with
 `null`: most answer `200` with an empty collection —
 `rentABuddyMarketplace.ts:414,519,632,666,1139,1963`, `sharedMoments.ts:287`, `placeDays.ts:94`,
-`discoverySearch.ts:476,613,717,786,887,973,1088,1170,1502,1569,1667,1849`. That is **privacy-safe
+`discoverySearch.ts:479,616,717,786,887,973,1088,1170,1502,1569,1667,1849`. That is **privacy-safe
 and diagnostically silent**: the viewer, the client and the operator all see "nothing here".
 
 Two sites already model the answer this campaign wants. `sharedMoments.ts:122,146` refuse with
@@ -323,7 +323,7 @@ hardcoded fallback and an origin-less allowance for mobile/curl (`app.ts:31-86`)
 decision, Redis-backed when `REDIS_URL` is set and **fail-open to per-process buckets** when it
 is not, so with N instances a client gets N× the budget. Any exact cross-instance ceiling must be
 enforced against the DB; the call-start limit is the worked example. `Retry-After` is set on
-some 429s (`circle.ts:725`, `discoverySearch.ts:2028`) but is not a global property of the code.
+some 429s (`circle.ts:725`, `discoverySearch.ts:2101`) but is not a global property of the code.
 Rate-limit buckets are module-global and bleed across test files — call `_resetRateLimit()` per
 suite (`.agents/memory/api-server-testing.md`).
 
