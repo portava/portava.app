@@ -3687,7 +3687,7 @@ told whether it had happened.
 The seam is deleted there
 (`artifacts/api-server/src/routes/airport.ts:710#NO PASSPORT SEAM HERE`)
 and rebuilt on the close
-(`artifacts/api-server/src/routes/airport.ts:2928#async function writeElectedLayoverStamp`)
+(`artifacts/api-server/src/routes/airport.ts:2962#async function writeElectedLayoverStamp`)
 behind **four terms, each pinned by its own negative case**:
 
 | term | what fails without it |
@@ -3921,7 +3921,7 @@ either reads or is asked, on a path the app mounts.
 
 | id | the sentence that is false at this commit | what is true |
 | --- | --- | --- |
-| L10 | *"`status='completed'` is never written … The system cannot distinguish a safe return from an abandonment."* (the row also names a line in `routes/airport.ts` that was already stale by some 750 lines before this pass; it is quoted without it rather than repointed, for §12.4's reason) | It is written, by a traveller pressing "I made my flight" (`artifacts/api-server/src/routes/airport.ts:3049#const passportStamp = await writeElectedLayoverStamp` sits immediately after the `endSession` that writes it). The verdict does not move — see §17.6. |
+| L10 | *"`status='completed'` is never written … The system cannot distinguish a safe return from an abandonment."* (the row also names a line in `routes/airport.ts` that was already stale by some 750 lines before this pass; it is quoted without it rather than repointed, for §12.4's reason) | It is written, by a traveller pressing "I made my flight" (`artifacts/api-server/src/routes/airport.ts:3083#const passportStamp = await writeElectedLayoverStamp` sits immediately after the `endSession` that writes it). The verdict does not move — see §17.6. |
 | L19 | *"the only gate is the `passport_stamps_enabled` flag"* — and the line it named with it | There are FOUR gates (three written by this pass, the fourth added at integration) and the flag is the last of the three, not the last of the four. The row moves; the sentence is restated in §17.5 rather than left. |
 | L32 | *"Absent, and unreachable in principle: nothing ever marks a session completed."* | The second clause is false. The table is still absent, which is what the row scores, so the verdict does not move. |
 | L294 | *"Seven bare `catch { return … }` blocks remain in `LayoverSessionService.ts` (`:187, 229, 255, 367, 387, 416`)"* — already corrected to **six** by §13.5 | Still six, all still bare, at the same six lines: re-measured at this commit with `grep -n catch`, which returns exactly `187, 229, 255, 367, 387, 416` plus one comment at `289`. Nothing in this pass touched that file. Recorded because §13.5's correction is two sections above a later section that repeats the seven. |
@@ -5649,3 +5649,312 @@ CONSTRUCTED% does not move, and that is the honest reading: nothing here was
 BUILT that was not built before. Twelve rows were already `W` — constructed and
 wrong — and what this pass did was make them right. `N` is unchanged at 99,
 because not one absent thing was built.
+
+## §23 — the two /buddies reads §21.6 counted as closed, and the rung with one value
+
+This pass is a CORRECTNESS pass on the worst census in the corpus by CORRECT%
+(73 C / 124 W / 99 N of 296 — 24.7 % correct, 223 non-correct rows). It moves
+**no verdict**, and it says so in the first sentence rather than in a footnote,
+because the honest finding is that the 223 are almost entirely blocked on things
+no code in this domain can supply. What it does produce is two live defects
+closed, three census sentences disproved, and a partition of all 223 rows that
+names the blocker for every one of them.
+
+Every old verdict below was read from
+`CENSUS_INTEGRITY_DUMP=ALL node --import tsx/esm src/scripts/checkCensusIntegrity.ts`
+(§16.6), never from the prose.
+
+### 23.1 THE FINDING — `GET /:id/buddies` had two reads that answered anyway
+
+§21.6 closed §21 with this sentence about the one half of L294 it left open —
+"a read that logs its error and then returns `[]` with no degraded flag":
+
+> *"Today no such site exists: every surface that still answers after a failed
+> read publishes `degraded` with a named reason (presence, the session list, the
+> active session, airport search) or refuses with 503 (session writes, session
+> reads, **buddies**, session create)."*
+
+**`/buddies` refuses with 503 for ONE of its three reads.** The other two are
+inside the same handler, and both answered:
+
+1. **`blocks` unreadable.** The handler set `rows = []` and replied
+   `{ ok: true, city, buddies: [] }`. A traveller was told there is nobody in
+   this city when what actually happened is that their own block list could not
+   be read. Failing closed is the right SAFETY posture and it was not an answer:
+   the emptiness was never measured, and nothing on the wire said so.
+2. **`rent_buddy_availability` unreadable.** Every profile was published with
+   `availableDuringLayover: false` — a positive claim about each named person,
+   derived from a read that did not happen — and that same field is the sort key
+   that chooses which six of up to twelve are served.
+
+The first RED is the whole finding in one line. Staged against the real router,
+an outage in `blocks` and a city with no active buddies produced **byte-identical
+response bodies**:
+
+```
+not ok 1 - an unreadable block list is NOT the same answer as a city with nobody in it
+  error: 'two empty lists, one measured and one from an outage, are byte-identical to the client'
+  operator: 'notDeepStrictEqual'
+  expected: { ok: true, city: 'Taoyuan', buddies: , safetyGate: { passed: true, verdict: 'yes', … } }
+  actual:   { ok: true, city: 'Taoyuan', buddies: , safetyGate: { passed: true, verdict: 'yes', … } }
+```
+
+Four cases RED, one green (the `availableDuringLayover === false` control), then
+16 / 16 green after the fix. The shape of the fix is `cityPresence`'s, deliberately:
+a `degradedReasons` list the handler pushes to
+(`artifacts/api-server/src/routes/airport.ts:2723#const degradedReasons: string[] = [];`),
+published as
+`artifacts/api-server/src/routes/airport.ts:2833#degraded: degradedReasons.length > 0,`,
+and an availability that is `null` rather than `false` when nobody asked
+(`artifacts/api-server/src/routes/airport.ts:2815#availableDuringLayover: availabilityMeasured ? availableSet.has(b.id) : null,`).
+
+**THE ROW STILL DOES NOT MOVE, and §21.6's reason is why.** L294's C2 asks for
+degraded confidence at every such site, and it is still proved SITE BY SITE. What
+this pass shows is that site-by-site is not merely fragile in principle — it had
+already missed two sites in a handler §21.6 names by name in its own list of
+closed ones. The `DegradedAnswer<T>` §21.6 describes is still the thing that
+would move the row, and it is still not this pass's.
+
+### 23.2 Rows re-derived at this commit
+
+No verdict moves. Each row below was re-read because this pass changed code it
+cites or disproved its evidence; the verdict is restated so the dump's last
+statement is this one.
+
+| **ID** | **was** | **now** | why |
+| --- | --- | --- | --- |
+| L294 | W | W | Two more swallow sites closed on `/buddies` (23.1). The fourth half of C2 — degraded confidence that a handler cannot skip — is unchanged, and this pass is the evidence that §21.6's site-by-site proof does not hold itself up. |
+| L273 | W | W | Evidence disproved (23.4 item 2), verdict unchanged for §19.4's stated reason: `rent_buddy_profiles.categories` still has no `layover` member, so the shipped filter is a COMPATIBILITY filter and not a specialist credential. |
+| L254 | W | W | Evidence disproved (23.4 item 3), verdict unchanged for §19.4's stated reason: only the `tight`-verdict arm shipped; the night-layover arm is still blocked on a fixture in another lane's file. |
+| L9 | C | C | Re-read because this pass measures the disclosure it certified. It holds as §17.4 stated it — and 23.5 measures what it resolves to in production, which is a different question and is not a verdict. |
+| L243 | W | W | Unchanged. 23.5 supplies the measurement, and deliberately does NOT take the owner decision the row rests on. |
+| L249 | N | N | Unchanged. The maturity model classifies and states policy; nothing consults it before generating a landside recommendation. |
+
+### 23.3 The 223 non-correct rows, partitioned — every row in exactly one bucket
+
+Counted from the dump, verified exact: no row in two buckets, no row in none,
+82 + 18 + 24 + 96 + 3 + 0 = 223.
+
+| bucket | count | what it means here |
+| --- | ---: | --- |
+| (a) closable from code in files this lane owns | **0** | see below — this is the finding, not an omission |
+| (b) blocked on a migration no database has | **82** | 2700 / 2740 / 2860 are written and NOT applied; `layover_constraints`, `layover_snapshots`, `layover_time_budgets`, `layover_return_plans`, `layover_presence`, `layover_crews`, `layover_crew_members`, `layover_checkpoints`, `layover_outcomes` do not exist anywhere |
+| (c) blocked on an owner decision | **18** | the ENTRY gate (L34/L48/L230/L49/L77 — PR #463, unmerged); the Compass reachability flag (L110/L112); **should the GENERIC rung WITHHOLD landside guidance** (L243/L249/L244/L245/L246/L248); shadow-mode rollout (L242); Compass prose enforcement (L3/L101/L268); §18's refusal to manufacture a caller for `calculateCommitmentEnvelope` (L178) |
+| (d) blocked on a file another lane owns | **24** | `travel-buddy-standalone/` (the map surface L17/L67/L115–L126, the offline client L150/L156/L157, the integration cards L267/L270/L272/L275); `domain/trips/invariants/` (L13/L56/L57/L59); `lib/deletionDispositions.ts` + `AccountDeletionService.ts` (L163) |
+| (e) blocked on an absent platform capability or a device | **96** | **no routed travel-time provider** (L58/L60–L63/L65/L66/L68–L73/L219/L220 and the whole §8 family); **no flight feed** (L44/L148/L149/L169/L231); **no live-signal producer** (L80–L83/L143/L180/L181/L227/L228/L247/L276/L281–L287); **no metrics exporter of any kind** (L208/L210–L217); **no location sensing** (L155/L157/L160/L161); **no CI database for a layover schema test** (L236/L295) |
+| (f) the row's premise is already FALSE at HEAD | **3** | L254, L273, L294 — quoted in 23.4 |
+
+**WHY (a) IS ZERO, stated rather than rounded.** Three rows came closest and each
+is out for a named reason, not for lack of trying:
+
+* **L223** *"Overnight → expanded options"*. `insideAirportCandidates` is in this
+  lane's `LayoverRecommendationService.ts`, so the code is reachable — but there
+  is no airside content source for an airport, so any "expanded option" would be
+  a hand-written card. This document has spent three passes deleting invented
+  content (L293's fabricated travel times most recently). Blocked on a content
+  source, bucket (e).
+* **L249** *"Enable features per airport maturity"*. `layoverMaturity.ts` already
+  holds the classifier and `featureAllowedAt`; wiring it is one call in this
+  lane's file. That call IS the L243 owner decision — withholding landside
+  guidance at L0, which in production is EVERY airport. Bucket (c).
+* **L205** *"Service-role processing should be narrow"*. Narrowing means running
+  layover reads on the caller's JWT, and `layover_sessions` RLS is owner-only, so
+  the presence surface stops working. An architecture decision, bucket (e).
+
+**The 223 are not 223 pieces of missing layover code.** 178 of them (b + e) wait
+on a store, a provider or a feed that no amount of work in
+`routes/airport.ts` and `services/airport/` can create.
+
+### 23.4 Census sentences DISPROVED, quoted, with the disproving line
+
+1. **§21.6**, on the one half of L294 it left open:
+   > *"Today no such site exists: every surface that still answers after a failed
+   > read publishes `degraded` with a named reason … or refuses with 503 (session
+   > writes, session reads, **buddies**, session create)."*
+
+   **False when it was written.** `/buddies` had two reads that answered after
+   failing: the `blocks` read (an unreadable block list was served as an empty
+   city) and the `rent_buddy_availability` read (an unreadable table was served
+   as `availableDuringLayover: false` for every person). Disproved by the RED in
+   23.1 — two response bodies, one from an outage and one from a measured empty
+   city, asserted `notDeepStrictEqual` and found equal. Both are now closed and
+   both are guarded.
+
+2. **L273's body row**, the last parseable statement of that verdict:
+   > *"There is no safety gate, no layover-specialist category filter, and the
+   > master `rent_buddy_enabled` flag is not consulted (L255)."*
+
+   **Two of the three clauses are false at HEAD.** The master flag is consulted
+   at `artifacts/api-server/src/routes/airport.ts:2665#if (!await isFlagEnabled(sc, "rent_buddy_enabled")) {`,
+   and the safety gate runs BEFORE the profiles are read at
+   `artifacts/api-server/src/routes/airport.ts:2684#const { safetyGate, trustRequirement } = layoverBuddyDecision(airport, session);`.
+   A compatibility filter also runs
+   (`artifacts/api-server/src/routes/airport.ts:2796#rows = filterLayoverCompatible(rows);`).
+   The third clause — a *specialist* category filter — is still true, which is
+   why the verdict does not move. §19.4 argued all three in prose; the parseable
+   row never carried the correction, so the dump has been serving the stale
+   sentence since.
+
+3. **L254's body row**, likewise the last parseable statement:
+   > *"`verified` and `buddy_level` are read and returned … but nothing
+   > *requires* them — the layover buddy list is filtered only on
+   > `status='active'`, city and blocks."*
+
+   **False at HEAD.** `artifacts/api-server/src/routes/airport.ts:2797#rows = applyBuddyTrustRequirement(rows, trustRequirement);`
+   withholds an unverified or brand-new profile on a `tight` window, asserted by
+   `src/services/airport/__tests__/layoverBuddySafetyGate.test.ts`. Only one of
+   the row's two arms shipped, so the verdict stays `W`.
+
+4. **L294's last parseable statement** (the §16.7 row):
+   > *"Seven bare `catch { return … }` blocks remain in `LayoverSessionService.ts`
+   > (`:187, 229, 255, 367, 387, 416`)."*
+
+   **Zero.** `grep -n catch src/services/airport/LayoverSessionService.ts` returns
+   two lines, both inside the comment that explains why there is no try/catch.
+   §13.5 corrected the count from seven to six, §18 re-measured six, and §19.2
+   removed all six — but §19's row-move table is not in the parseable form, so
+   the DUMP still reads the seven-that-were-six sentence as current. Recorded
+   here so the parseable statement and the tree agree.
+
+5. **§21.7 item 1** — *"**ten** suites under `src/services/airport/__tests__/` and
+   `src/services/safeReturn/__tests__/` are not in the curated `test` script …
+   None of them runs in CI until it is registered."* **Now false**:
+   `check:test-registration` passes with 1246 registered, and every suite §21.7
+   named resolves `true` against `package.json`'s `test` script. Whoever
+   registered them did not retire the item.
+
+**Already corrected elsewhere, recorded so this pass is not credited with them:**
+L215's *"the fallback ladder emits nothing when it fires"* was corrected by §18.7
+item 4, and L249's *"the only tier-like signal is `airport_profiles.verified`"*
+by §17.6. Both remain the last PARSEABLE statement of their row.
+
+### 23.5 The four-rung disclosure — derived, and with one reachable value
+
+§L9/L250 built `GENERIC / AIRPORT_RECORD / VERIFIED_RECORD / LIVE`. The question
+this pass was asked is whether the rung a person actually sees is derived from
+evidence or defaulted. **It is derived**, and the derivation was read rather than
+assumed: the tier comes off `record.estimates` — the same objects the arithmetic
+was built from — and the single separating signal is
+`artifacts/api-server/src/services/airport/LayoverFeasibility.ts:509#  const rowClass: EstimateSourceClass = a.id === null ? "STATIC_DEFAULT" : "AIRPORT_PROFILE";`
+folded by `artifacts/api-server/src/services/airport/LayoverFeasibility.ts:774#  const airportAddressable = terms.every((t) => t.sourceClass === "AIRPORT_PROFILE");`.
+No literal, no default, no hand-set field.
+
+**And it has exactly one reachable value in production.**
+
+| rung | reachable today? | why |
+| --- | --- | --- |
+| `GENERIC` | **no** | every session created through `POST /airport/sessions` gets an `airport_id` — `upsertAirportProfile` WRITES a row with the 0127 defaults for an airport nobody has configured |
+| `AIRPORT_RECORD` | **yes — and it is the answer for every session** | 3,206 production rows, so `a.id !== null` always |
+| `VERIFIED_RECORD` | no | 0 of 3,206 rows carry `verified = TRUE` |
+| `LIVE` | no | `liveConditions` is `null` on every request this tree can make; there is no producer outside `src/test/` |
+
+The signal the rung reads is ADDRESSABILITY, not CURATION, and the two are the
+same thing in this database: 0127 declares the buffer columns
+`NOT NULL DEFAULT 60/90/120/180/30/15/20`, and 0 of 3,206 rows carry any
+non-default buffer. So `AIRPORT_RECORD` and `GENERIC` describe **numerically
+identical advice** — new cases in
+`artifacts/api-server/src/test/layoverAirportIntelligence.test.ts` certify the
+same session against an uncurated row and against the fallback and assert the
+four airport-supplied terms and the `hardReturnTime` are equal, with a curated
+200-minute buffer as the control that makes the equality non-vacuous.
+
+**This is a TRIPWIRE and not a fix, and no verdict moves on it.** Whether an
+uncurated row should resolve to `GENERIC`, and whether `GENERIC` should WITHHOLD
+landside guidance rather than caveat it, is the OWNER DECISION already recorded
+at L243/L249 and it is not taken here. The tripwire exists so that the day it is
+taken, a test says the disclosure's meaning changed rather than leaving it to a
+reader — mutation T2 below proves it fires.
+
+### 23.6 The mutations
+
+Every mutation was applied by a replacer that REFUSES unless the target text
+occurs exactly once, then the changed line was printed back from the file before
+the run was believed (§"a mutation that does not apply looks exactly like one the
+tests cannot catch"). Every one was restored and verified with `cmp`.
+
+| # | file | mutation | result |
+| --- | --- | --- | --- |
+| 46 | `routes/airport.ts` | drop `degradedReasons.push("blocks_unreadable")` | **2 red** |
+| 47 | `routes/airport.ts` | `degraded:` hard-coded `false` | **2 red** |
+| 48 | `routes/airport.ts` | unmeasured availability spelled `false` again | **1 red** |
+| 49 | `routes/airport.ts` | drop `degradedReasons.push("buddy_availability_unreadable")` | **1 red** |
+| 50 | `routes/airport.ts` | the `blocks` failure fails OPEN (serve the unfiltered list) | **1 red** |
+| 51 | `routes/airport.ts` | sort on availability even when unmeasured | **SURVIVOR** |
+| 52 | `LayoverFeasibility.ts` | every airport addressable (`rowClass` constant) | **4 red** |
+| 53 | `LayoverFeasibility.ts` | the rung means CURATION, not addressability | **7 red** |
+
+**SURVIVOR 51, and what it reveals.** `Number(null)` is `0`, so an unguarded sort
+over an unmeasured `availableDuringLayover` compares every pair equal and is a
+no-op — no test can distinguish the guarded form from the unguarded one. The
+`availabilityMeasured` condition on that `.sort()` is therefore **defensive
+commentary, not covered behaviour**, and it is recorded as such rather than
+counted as a tested line. What IS covered is the field's value and the disclosure
+beside it (48, 49).
+
+**A control that failed for the right reason, recorded because this session has
+paid for the opposite.** 23.5's first draft asserted on `estimate.minutes`, which
+does not exist — the field is `valueMinutes`. Both the equality and its control
+read `undefined`, and the CONTROL is what went red: `notEqual(undefined, undefined)`.
+A positive control that fails when the assertion is vacuous is the only reason
+that draft did not ship green and meaningless.
+
+### 23.7 Blocked on files this lane does not own — exact changes, not made here
+
+1. **`artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json`, the
+   `census-compass.md` and `census-highlights-memories.md` entries.** This pass
+   changes `routes/airport.ts`, which both censuses count, so
+   `check:census-freshness` now reports both STALE. Each needs
+   `"artifacts/api-server/src/routes/airport.ts"` added to its `files` list with
+   the argument that no verdict of ITS moves. This lane can state the mechanical
+   half — the edit is confined to the `/buddies` handler, lines 2723–2836, and
+   `check:doc-citations` is RESULT clean after repointing — but it has not read
+   those censuses' rows and will not write a verdict argument about them.
+2. **`docs/architecture/census-highlights-memories.md`** — three citations into
+   `routes/airport.ts` moved by this pass's 34 added lines. They **have been
+   repointed here** (2991→3025, 2965→2999, 2928→2962), mechanically: by the
+   checker's own "the WHOLE anchor is at X" answer AND by occurrence index
+   against `git show HEAD:…`, where each anchor is unique in both blobs, with
+   every proposed line read back before writing. Flagged rather than hidden
+   because the file is another lane's; no prose or verdict in it was touched.
+3. **`artifacts/api-server/src/lib/safeReturnScheduler.ts`** — unchanged from
+   §21.7 item 2 and still open.
+
+### 23.8 WHAT WOULD TURN THIS RED
+
+* **23.1's fix:** a NEW read added to the `/buddies` handler that answers after
+  failing. Nothing structural stops one — that is exactly §21.6's fourth half,
+  and this pass is the proof that the site-by-site discipline does not hold. The
+  guard is four cases in one suite over one handler; it does not generalise.
+* **23.1's `null`:** `availableDuringLayover` is now `boolean | null` on the
+  wire. No client in `travel-buddy-standalone/` was changed. If a client renders
+  it with a truthiness test, `null` and `false` look the same there and the
+  disclosure stops at the API — a REACHABILITY gap of exactly the kind this
+  census has scored `W` twenty-eight times. **Stated, not fixed:** the client is
+  another lane's file.
+* **23.5's tripwire:** it asserts an EQUALITY that holds only while
+  `airport_profiles` rows carry the 0127 defaults. The first curated airport in
+  production does not turn it red (the test stages its own rows), but the first
+  change to what `AIRPORT_RECORD` means does, and mutation 53 is the proof.
+* **The partition:** it is derived from the census's own stated blockers plus
+  this pass's reading, not from a measurement of each blocker. A row filed under
+  (e) whose provider actually exists somewhere in this monorepo would be
+  misfiled, and nothing here would catch it.
+* **`check:census-freshness`** is RED for this census until item 1 of 23.7 is
+  done — and for two other censuses because of this pass.
+* **Every `C` in this document over a path nothing reaches is still vacuous.**
+  Production has 5 layover sessions ever, 0 active, last event 2026-08-12. The
+  two defects closed here were reachable by nobody, because nobody is on this
+  surface.
+
+### 23.9 The counted files this pass changed
+
+| file | why |
+| --- | --- |
+| `artifacts/api-server/src/routes/airport.ts` | 23.1 — the two `/buddies` reads that answered after failing |
+| `artifacts/api-server/src/services/airport/__tests__/layoverBuddySafetyGate.test.ts` | 23.1 — five cases, four watched RED first |
+| `artifacts/api-server/src/test/layoverAirportIntelligence.test.ts` | 23.5 — the rung tripwire and its control |
+| `docs/architecture/census-layover.md` | this section |
+| `docs/architecture/census-highlights-memories.md` | 23.7 item 2 — three citations repointed, nothing else |
+
+**`head_commit` is NOT re-declared.** This pass re-derived six rows, not 296, and
+§1's reading rule applies unchanged to the other 290.
