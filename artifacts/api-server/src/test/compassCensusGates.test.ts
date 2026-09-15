@@ -215,7 +215,21 @@ describe("C. evaluateNotification — sender suspension comes from user_account_
     assert.equal(d.outcome, "sent");
   });
 
-  it("an unreadable user_account_states is logged and the push is still evaluated (posture matches the blocked-sender step)", async () => {
+  // This case used to assert `outcome === "sent"` — that an unreadable
+  // user_account_states is logged and the push goes out anyway — and justified
+  // it as "posture matches the blocked-sender step". The justification was
+  // sound; the posture it matched was not. Both steps read an EXCLUSION table,
+  // where a row means DENY, so an empty read and an unreadable read produce the
+  // same value and a failure reads as a clean record: the sender is not
+  // suspended, the sender has not blocked anyone. Both therefore defaulted to
+  // delivering exactly the push they exist to withhold.
+  //
+  // The blocked-sender step now refuses (see failOpenServiceReads.test.ts,
+  // `block_state_unknown:`), and parity is the reason this one must too — the
+  // same sentence, pointed the way the evidence actually goes. The trace
+  // assertion is unchanged and still load-bearing: a refusal nobody can see in
+  // the log is a silent drop.
+  it("an unreadable user_account_states SUPPRESSES the push — parity with the blocked-sender step", async () => {
     const warned: string[] = [];
     const orig = console.warn;
     console.warn = (...args: unknown[]) => { warned.push(String(args[0])); };
@@ -223,11 +237,24 @@ describe("C. evaluateNotification — sender suspension comes from user_account_
       const db = notifDb();
       const sc = makeClient(db, { user_account_states: { message: "relation does not exist", code: "42P01" } });
       const d = await evaluateNotification(sc, RECIPIENT, payload(), { nowMinutes: 12 * 60 });
-      assert.equal(d.outcome, "sent");
+      assert.equal(d.outcome, "suppressed_safety_filter");
+      assert.equal(
+        d.suppressionReason, `account_state_unknown:${SENDER}`,
+        "the ledger must say the state could not be established, not that the sender is suspended",
+      );
       assert.ok(warned.some((w) => w.includes("account-state check failed")), "the failed read must leave a trace");
     } finally {
       console.warn = orig;
     }
+  });
+
+  // The control that makes the case above mean something. A READABLE table with
+  // no row for the sender is a real answer — nobody suspended them — and must
+  // still send. Without this, suppressing unconditionally would pass.
+  it("CONTROL: a readable user_account_states with no row for the sender still sends", async () => {
+    const d = await evaluateNotification(makeClient(notifDb()), RECIPIENT, payload(), { nowMinutes: 12 * 60 });
+    assert.equal(d.outcome, "sent");
+    assert.equal(d.suppressionReason ?? null, null);
   });
 });
 
