@@ -64,6 +64,8 @@ import {
   SAFETY_CRITICAL_PERCENTILE,
 } from "../services/airport/LayoverFeasibility.js";
 import { wallTimeToUtc } from "../services/airport/AirportTime.js";
+import { airportRowToProfile } from "../services/airport/AirportProfileService.js";
+import { airportRow } from "./helpers/fakeLayoverDb.js";
 import type { AirportProfile } from "../services/airport/AirportProfileService.js";
 import type { LayoverSession } from "../services/airport/LayoverSessionService.js";
 
@@ -439,6 +441,85 @@ describe("GET /airport/sessions/:id/safety publishes the return forecast", () =>
       rush.safeEnvelope.radiusMetres < midday.safeEnvelope.radiusMetres,
       `the envelope did not contract with the return forecast: ` +
         `${rush.safeEnvelope.radiusMetres} vs ${midday.safeEnvelope.radiusMetres}`,
+    );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §6.2 PROVENANCE — a sourceRef names the code that produced the number
+//
+// Found by a mutation that SURVIVED. Neutralising the timezone inside
+// `layoverRouting.ts#returnTransportForecast` changed no certified record,
+// because that function HAS NO PRODUCTION CALLER: outside the tests, the only
+// reference to it anywhere is the sourceRef STRING below. The value is produced
+// by `LayoverSafetyEngine`'s own `returnTransportExtra`.
+//
+// That is not a naming quibble, because the two are not the same function. They
+// share the band table but not the JOINT RAMP: `returnTransportExtra` ramps the
+// time-of-day and return terms together and then subtracts `timeOfDayExtra`,
+// while `returnTransportForecast` does neither. Searched rather than assumed,
+// over 24 UTC hours x four layover lengths: they agree everywhere
+// `timeOfDayExtra` is 0 — which is why this went unnoticed — and DISAGREE at
+// 15:00Z with a 475-minute layover, where the record says 7 and the function its
+// sourceRef named says 6.
+//
+// So the estimate declared, as the origin of its number, a function that neither
+// ran nor would have returned that number. The sibling estimate directly above
+// it in LayoverFeasibility.ts already follows the right convention
+// (`["LayoverSafetyEngine.timeOfDayBand"]`); this one did not.
+
+/** A layover session pinned to an instant, for the §6.2 provenance cases below. */
+function returnSession(nowMs: number, layoverMinutes: number): LayoverSession {
+  return {
+    id: "s", userId: "u", airportId: "a", tripId: null,
+    arrivalTime: new Date(nowMs + 5 * 60_000).toISOString(),
+    departureTime: new Date(nowMs + layoverMinutes * 60_000).toISOString(),
+    boardingTime: null, layoverMinutes, flightType: "international",
+    immigrationRequired: true, checkedBags: false, loungeAccess: false, wantsToLeave: true,
+    comfortLevel: "moderate", vibeChips: ["food"], manualAirportName: null, manualCity: null,
+    manualCountry: null, manualIata: null, canonicalCityId: null, shareCityStatus: false,
+    returnReminderAt: null, status: "active",
+    createdAt: new Date(nowMs - 60_000).toISOString(),
+    updatedAt: new Date(nowMs - 60_000).toISOString(),
+  } as unknown as LayoverSession;
+}
+
+describe("§6.2 — the return-leg estimate names its real producer", () => {
+  it("cites LayoverSafetyEngine.returnTransportExtra, not the uncalled forecast helper", () => {
+    const rec = certifySessionFeasibility(
+      airportRowToProfile(airportRow({ verified: false })),
+      returnSession(Date.UTC(2026, 8, 15, 15, 0, 0), 475),
+      { nowMs: Date.UTC(2026, 8, 15, 15, 0, 0) },
+    );
+    const refs = rec.estimates.returnTransport.sourceRefs;
+    assert.ok(
+      refs.some((r) => r.includes("returnTransportExtra")),
+      `the return-leg estimate does not name its producer; it says ${JSON.stringify(refs)}`,
+    );
+    assert.ok(
+      !refs.some((r) => r.includes("returnTransportForecast")),
+      "the estimate still names `returnTransportForecast`, which no production path calls and " +
+        "which returns a different number where timeOfDayExtra is non-zero",
+    );
+  });
+
+  it("and the number it records is the JOINT-RAMP one — the disagreeing configuration, pinned", () => {
+    // If someone ever "reconciles" the two by switching the producer to the
+    // forecast helper, this fires: 7 is the joint ramp's answer, 6 is the
+    // helper's. The case exists so the provenance fix cannot be undone by
+    // changing the code to match the old label.
+    const at = Date.UTC(2026, 8, 15, 15, 0, 0);
+    const rec = certifySessionFeasibility(
+      airportRowToProfile(airportRow({ verified: false })),
+      returnSession(at, 475),
+      { nowMs: at },
+    );
+    assert.equal(rec.estimates.timeOfDayExtra.valueMinutes, 10, "the configuration that makes the two differ");
+    assert.equal(rec.estimates.returnTransport.valueMinutes, 7, "the joint ramp's answer, not the helper's 6");
+    assert.equal(
+      returnTransportForecast(rec.estimates.trafficExtra.valueMinutes, new Date(rec.deadline.cutoffMs), "Asia/Taipei").extraMinutes,
+      6,
+      "the helper the old sourceRef named — kept here as the measured contrast, not as a contract",
     );
   });
 });

@@ -534,7 +534,15 @@ function bufferEstimates(inputs: FeasibilityInputs, breakdown: SafetyAssessment[
     // row's provenance twice would launder an assumption into an airport fact.
     returnTransport: pointEstimate(
       breakdown.returnTransportExtra, "STATIC_DEFAULT", "LOW", 3,
-      ["layoverRouting.returnTransportForecast", "TripDepartureAssumptions.DEPARTURE_FACTORS"],
+      // NAMES ITS PRODUCER, and it used to name a function no production path
+      // calls. `layoverRouting.returnTransportForecast` is referenced nowhere
+      // outside the tests; this value comes from LayoverSafetyEngine's own
+      // `returnTransportExtra`, which ramps the time-of-day and return terms
+      // JOINTLY and then subtracts timeOfDayExtra. The two agree wherever
+      // timeOfDayExtra is 0 — which is why the wrong label survived — and
+      // disagree at 15:00Z on a 475-minute layover, where this records 7 and
+      // the helper returns 6. Pinned by layoverReturnConditions.test.ts §6.2.
+      ["LayoverSafetyEngine.returnTransportExtra", "TripDepartureAssumptions.DEPARTURE_FACTORS"],
     ),
     liveExtra: liveExtraEstimate(inputs.liveConditions, breakdown.liveExtra),
   };

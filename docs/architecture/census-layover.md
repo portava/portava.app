@@ -1355,7 +1355,7 @@ the end of this section.
 | id | Was | Now | Evidence at `cdfff599` |
 | --- | --- | --- | --- |
 | L1 | W | W | One canonical derivation now exists and all five surfaces consult it (`LayoverFeasibility.ts:451`; `routes/airport.ts:798, 1033, 1096, 1499, 1604`; `LayoverCompassService.ts:109`; `LayoverRecommendationService.ts:318`; `LayoverNotificationService.ts:99`). It is still not *persisted*: `2700_layover_certified_feasibility.sql` is written and NOT applied, so there is no canonical row anywhere. Code built, storage unapplied (2700). |
-| L2 | W | W | `certificationHeader` (`LayoverFeasibility.ts:671#certificationHeader`) is published on five endpoints. No client consumes it, and the client's own thresholds still exist in the tree (`travel-buddy-standalone/src/components/layover/LayoverReturnPanel.tsx` lines 113-114, still unmounted — **deleted at `a718beb5`, after this line was written**). |
+| L2 | W | W | `certificationHeader` (`LayoverFeasibility.ts:679#certificationHeader`) is published on five endpoints. No client consumes it, and the client's own thresholds still exist in the tree (`travel-buddy-standalone/src/components/layover/LayoverReturnPanel.tsx` lines 113-114, still unmounted — **deleted at `a718beb5`, after this line was written**). |
 | L4 | N | **W** | Confidence now exists and is computed: `ESTIMATE_CONFIDENCES` (`LayoverFeasibility.ts:102`), `worstConfidence` (`:182`), folded onto every record (`:493`). The fail-closed half is explicitly NOT built and the file says so (`:352-362`: "This record publishes the confidence; it does NOT forbid"). Half built. |
 | L5 | W | W | `LAYOVER_FEASIBILITY_VERSION` (`:69`), `inputHash` (`:325`) and a real `replayFeasibility` (`:520`) exist. Nothing is stored to version or replay (2700 unapplied). |
 | L6 | W | W | The duplicate-time-budget half is genuinely closed (see the table above). "All surfaces consume the same certified snapshot" is not: there is no snapshot, and the per-request record is not shared between requests. |
@@ -1746,7 +1746,7 @@ so a live signal can make a deadline earlier and never later. It is a NAMED
 INPUT of the certified record (`LayoverFeasibility.ts:331#liveConditions:`), so
 it is inside `inputHash` and inside a replay, and it produces the only §6.2
 estimate on this tree that can carry a real `observedAt`/`expiresAt`
-(`LayoverFeasibility.ts:552#liveExtraEstimate`). Both version constants moved:
+(`LayoverFeasibility.ts:560#liveExtraEstimate`). Both version constants moved:
 `LAYOVER_ENGINE_VERSION` to `2026.09.13-1` because the arithmetic gained a term,
 `LAYOVER_FEASIBILITY_VERSION` because the record shape did.
 
@@ -3613,9 +3613,9 @@ and in production it is the same boolean.
 
 So the build is a disclosure, not a measurement:
 `airportIntelligence()`
-(`artifacts/api-server/src/services/airport/LayoverFeasibility.ts:772#export function airportIntelligence`)
+(`artifacts/api-server/src/services/airport/LayoverFeasibility.ts:780#export function airportIntelligence`)
 derives four rungs
-(`artifacts/api-server/src/services/airport/LayoverFeasibility.ts:709#export const AIRPORT_INTELLIGENCE_TIERS`)
+(`artifacts/api-server/src/services/airport/LayoverFeasibility.ts:717#export const AIRPORT_INTELLIGENCE_TIERS`)
 from the record's own estimates and from `record.inputs.airport` — the named
 input set that is inside `inputHash` — and **never from a second read of the
 profile**, because a disclosure derived independently of the numbers it
@@ -3633,7 +3633,7 @@ own evidence calls *"never buried"* is where this belongs.
 
 **FOUR TERMS, AND DELIBERATELY ONLY FOUR.**
 `airportSuppliedTerms`
-(`artifacts/api-server/src/services/airport/LayoverFeasibility.ts:768#function airportSuppliedTerms`)
+(`artifacts/api-server/src/services/airport/LayoverFeasibility.ts:776#function airportSuppliedTerms`)
 folds the base buffer, the immigration extra, the bags extra and the traffic
 extra. `timeOfDayExtra` and `exitDelay` are source CONSTANTS whatever the
 airport row says — `bufferEstimates` marks them `STATIC_DEFAULT` explicitly —
@@ -5836,7 +5836,7 @@ evidence or defaulted. **It is derived**, and the derivation was read rather tha
 assumed: the tier comes off `record.estimates` — the same objects the arithmetic
 was built from — and the single separating signal is
 `artifacts/api-server/src/services/airport/LayoverFeasibility.ts:509#  const rowClass: EstimateSourceClass = a.id === null ? "STATIC_DEFAULT" : "AIRPORT_PROFILE";`
-folded by `artifacts/api-server/src/services/airport/LayoverFeasibility.ts:774#  const airportAddressable = terms.every((t) => t.sourceClass === "AIRPORT_PROFILE");`.
+folded by `artifacts/api-server/src/services/airport/LayoverFeasibility.ts:782#  const airportAddressable = terms.every((t) => t.sourceClass === "AIRPORT_PROFILE");`.
 No literal, no default, no hand-set field.
 
 **And it has exactly one reachable value in production.**
