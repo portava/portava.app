@@ -1099,6 +1099,19 @@ export async function buildPlaceAffinities(
       .eq("event_type", "place_view")
       .eq("user_id", userId)
       .gte("served_at", thirtyDaysAgo);
+    // ── D11 RULING: THE CALLER MAY ACT ON THIS EMPTINESS ────────────────────
+    // `{}` here is a failed rank_events read spelled exactly like "this viewer
+    // has viewed no place in 30 days", and that is DELIBERATE, not overlooked.
+    // Every caller (CompassFeedBuilder, lib/discoveryPde, routes/mediaFeed,
+    // routes/pulse) spends the map as one multiplicative term —
+    // PLACE_ENGAGEMENT_BOOST ×1.15 applied when a candidate's place is in it.
+    // An empty map withholds a boost; it excludes nothing, ranks nothing out,
+    // and puts no claim on the wire. The un-boosted ordering is a legitimate
+    // ordering of the same candidates, so a caller that ranks without the boost
+    // has not been told anything false — unlike `eligibleTripIds: []`, which
+    // enumerates, or a dedupe gate's `[]`, which decides.
+    // The fix for THIS site would be to give every feed caller a degraded-rank
+    // signal it has nothing to do with; that is noise, not discrimination.
     if (error || !data) return {};
     const counts: Record<string, number> = {};
     for (const row of (data as { item_id: string }[])) {

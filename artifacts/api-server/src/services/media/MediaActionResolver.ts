@@ -164,7 +164,7 @@ export interface MediaAction {
   target: MediaActionTarget;
 }
 
-export interface MediaActionSet {
+export interface MediaActionSet extends PlanGateDetermination {
   mediaId: string;
   /** The full §7 graph (see MediaGraphKind), not just the location refs. */
   entityRefs: MediaGraphRef[];
@@ -387,13 +387,13 @@ export async function resolveMediaEntities(
  * Trip" / "Do This Experience" honor §47: the rail asks the same question the
  * endpoint would, so it can never offer an add the endpoint would refuse.
  *
- * Bounded — checks at most `max` candidate trips. Empty on any failure.
+ * Bounded — checks at most `max`. Returns `null`, never `[]`, when the gate could not be DECIDED (unreadable trip_members, or a canEditPlan probe that did not run); `[]` stays the real answer "this viewer has no plan-editable trip".
  */
 export async function loadPlanEditableTripIds(
   sc: SupabaseClient,
   userId: string,
   max = 30,
-): Promise<string[]> {
+): Promise<string[] | null> {
   let candidateTripIds: string[] = [];
   try {
     const { data, error } = await (sc as any)
@@ -401,10 +401,10 @@ export async function loadPlanEditableTripIds(
       .select("trip_id, role")
       .eq("user_id", userId)
       .neq("role", "invited");
-    if (error || !Array.isArray(data)) return [];
+    if (error || !Array.isArray(data)) return null; // the read did not run — not "no trips"
     candidateTripIds = (data as any[]).map((r) => String(r.trip_id)).slice(0, max);
   } catch {
-    return [];
+    return null;
   }
   if (candidateTripIds.length === 0) return [];
 
@@ -412,8 +412,8 @@ export async function loadPlanEditableTripIds(
   for (const tripId of candidateTripIds) {
     // canEditPlan is the authoritative per-trip gate the POST plan-item routes
     // call. Using it here (not a looser re-implementation) is the point.
-    const ok = await canEditPlan(sc, tripId, userId).catch(() => null);
-    if (ok === true) editable.push(tripId);
+    const ok = await canEditPlan(sc, tripId, userId).catch(() => "unavailable" as const);
+    if (ok === "unavailable") return null; else if (ok === true) editable.push(tripId); // canEditPlan's OWN null means "trip gone" — a real exclusion
   }
   return editable;
 }
@@ -582,8 +582,8 @@ export async function resolveMediaActions(
   // trip-plan-item endpoint, whose gate is canEditPlan. Offer them ONLY when the
   // viewer actually has a plan-editable trip. Dropping this gate can only add a
   // dead action — never a privileged one — because the endpoint re-checks.
-  const editableTripIds = await loadPlanEditableTripIds(sc, viewer.viewerId);
-  if (editableTripIds.length > 0) {
+  const planEditable = await loadPlanEditableTripIds(sc, viewer.viewerId); // null ⇒ gate undecided
+  const editableTripIds = planEditable ?? []; if (editableTripIds.length > 0) {
     // Add to Trip → POST /api/trips/:tripId/plan/items (a media/place plan item).
     actions.push({
       id: "add_to_trip",
@@ -682,7 +682,7 @@ export async function resolveMediaActions(
     }
   }
 
-  return { mediaId, entityRefs: entities.graphRefs, actions };
+  return { mediaId, entityRefs: entities.graphRefs, actions, planGateDetermined: planEditable !== null };
 }
 
 // ── Do This Experience (§15.2) ────────────────────────────────────────────────
@@ -697,7 +697,7 @@ export interface ExperiencePlanStop {
   category: string;
 }
 
-export interface ExperiencePlanProposal {
+export interface ExperiencePlanProposal extends PlanGateDetermination {
   experienceId: string;
   kind: "event" | "trip";
   /** The EXISTING plan-creation endpoint each stop is submitted to (per trip). */
@@ -753,7 +753,7 @@ export async function buildDoThisExperiencePlan(
     }
   }
 
-  const eligibleTripIds = await loadPlanEditableTripIds(sc, viewer.viewerId);
+  const planEditable = await loadPlanEditableTripIds(sc, viewer.viewerId); // null ⇒ gate undecided
 
   return {
     experienceId,
@@ -761,7 +761,7 @@ export async function buildDoThisExperiencePlan(
     targetEndpoint: "/api/trips/:tripId/plan/items",
     method: "POST",
     stops,
-    eligibleTripIds,
+    eligibleTripIds: planEditable ?? [], planGateDetermined: planEditable !== null,
   };
 }
 
@@ -805,4 +805,33 @@ export async function recordMediaIntent(
     );
   if (error) return { recorded: false, reason: "db_error" };
   return { recorded: true };
+}
+
+/**
+ * Whether the trip-plan gate was DECIDED, carried on every surface that spends
+ * its answer (MediaActionSet, ExperiencePlanProposal).
+ *
+ * ── WHY IT EXISTS ───────────────────────────────────────────────────────────
+ * `loadPlanEditableTripIds` reads `trip_members` and then runs canEditPlan per
+ * candidate trip. supabase-js RESOLVES on a read failure, so `[]` was the answer
+ * for BOTH "you have no trip you may add to" and "we could not find out". The
+ * resolver spends that by withholding `add_to_trip` / `do_this_experience`, and
+ * the Do-This-Experience proposal ships it as `eligibleTripIds: []` — a positive
+ * enumeration of the trips the viewer may plan into. A viewer who owns three
+ * editable trips was shown, byte for byte, the surface of a viewer who owns
+ * none, with nothing anywhere to say which had happened.
+ *
+ * The fail-closed direction is unchanged and must stay: an action the endpoint
+ * would refuse is never offered, and an undecided gate offers nothing. What
+ * changes is that the emptiness is now LABELLED. `false` means the absence is
+ * not a decision, so a caller may retry, degrade, or say "we couldn't check"
+ * instead of silently asserting "you have nowhere to put this".
+ *
+ * Declared at the end of the file, not inline in the two interfaces, because
+ * both sit above this file's last anchored doc citation (line 795) and may only
+ * be edited one line for one line — `extends` is that one line.
+ */
+export interface PlanGateDetermination {
+  /** false ⇒ the plan-editable-trip gate could not be read; an empty result is not a "no". */
+  planGateDetermined: boolean;
 }

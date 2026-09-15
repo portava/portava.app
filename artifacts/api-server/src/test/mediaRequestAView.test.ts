@@ -42,6 +42,13 @@ function makeDb(cfg: {
   flags?: Record<string, boolean>;
   tables?: Record<string, any[]>;
   errorTables?: string[]; // return { error } on select
+  /**
+   * Fail READS on these tables only — inserts/upserts still succeed. `errorTables`
+   * fails every statement, which cannot express "the dedupe ledger could not be
+   * READ but the request could still be recorded" — the exact shape of the
+   * swallowed-read defect createViewRequest carried.
+   */
+  errorReads?: string[];
   throwTables?: string[]; // throw synchronously
 }) {
   const inserted: Record<string, any[]> = {};
@@ -79,6 +86,9 @@ function makeDb(cfg: {
         const rows = Array.isArray(st.payload) ? st.payload : [st.payload];
         (upserted[name] ??= []).push(...rows);
         return { data: null, error: null };
+      }
+      if (cfg.errorReads?.includes(name)) {
+        return { data: null, error: { message: "server closed the connection unexpectedly", code: "08006" } };
       }
       let rows = (cfg.tables?.[name] ?? []).slice();
       for (const [k, v] of Object.entries(st.filters)) {
@@ -424,6 +434,102 @@ describe("createViewRequest — gating + graceful empty", () => {
     assert.equal(out.ok, true, "pre-launch empty is normal, not an error");
     assert.equal(out.recipientCount, 0);
     assert.equal((db._inserted.intel_mission_candidates ?? []).length, 1, "the coverage task is still created");
+  });
+});
+
+describe("createViewRequest — a read that did not run is not one of the four controls passing", () => {
+  beforeEach(() => _resetRateLimit());
+
+  /**
+   * THE DEDUPE GATE WAS THE ONE THAT FAILED OPEN.
+   *
+   * `lib/mediaViewRequest`'s header states the contract for all four controls:
+   * "a missing/ambiguous input excludes a contributor or refuses a request,
+   * never the reverse". `readOpenRequests` returned `[]` on a failed read, and
+   * `isDuplicateOpenRequest([])` is `false` — so an unreadable
+   * `media_view_requests` was spent as "this is NOT a duplicate" and the request
+   * was created. That is the reverse: the only control of the four whose read
+   * failure opened it. The inventory's "not one is a fail-OPEN" does not hold
+   * here, because the restrictive answer for a DEDUPE gate is the non-empty one.
+   */
+  it("refuses when the dedupe ledger cannot be READ (the gate must not pass on a failed read)", async () => {
+    const db = makeDb({
+      ...ON,
+      tables: { media_view_requests: [], media_view_request_optins: [], blocks: [] },
+      errorReads: ["media_view_requests"],
+    });
+
+    const out = await createViewRequest(db, baseInput());
+
+    assert.equal(out.ok, false, "an unreadable dedupe ledger must not read as 'not a duplicate'");
+    assert.equal(out.reason, "db_error");
+    assert.equal(
+      (db._inserted.intel_mission_candidates ?? []).length, 0,
+      "and nothing is written: the coverage task the gate might have refused is not created",
+    );
+  });
+
+  it("a ledger that READS as empty is still a real 'not a duplicate' — the request proceeds", async () => {
+    const db = makeDb({
+      ...ON,
+      tables: { media_view_requests: [], media_view_request_optins: [], blocks: [] },
+    });
+
+    const out = await createViewRequest(db, baseInput());
+
+    assert.equal(out.ok, true, "an empty ledger that was actually read is a genuine answer");
+    assert.equal((db._inserted.intel_mission_candidates ?? []).length, 1);
+  });
+
+  /**
+   * The opt-in registry is the OTHER direction. `[]` there is already the
+   * fail-closed answer — ask nobody — and it is also the normal pre-launch
+   * answer, so refusing the whole request over it would throw away a coverage
+   * task for no safety gain. What must not happen is the RESULT claiming the
+   * graceful outcome: `recipientCount: 0` with nothing to say it was not
+   * measured. `recipientsDetermined` is that discriminator.
+   */
+  it("an unreadable opt-in registry still asks nobody, but says the count was not measured", async () => {
+    const db = makeDb({
+      ...ON,
+      tables: { media_view_requests: [], media_view_request_optins: [], blocks: [] },
+      errorReads: ["media_view_request_optins"],
+    });
+
+    const out = await createViewRequest(db, baseInput());
+
+    assert.equal(out.ok, true, "the coverage task is still worth creating");
+    assert.equal(out.recipientCount, 0, "fail-closed direction is unchanged: nobody is asked");
+    assert.equal(
+      out.recipientsDetermined, false,
+      "'0 people asked' must not read as '0 people were eligible' when the registry was unreadable",
+    );
+  });
+
+  it("a genuinely empty registry reports the SAME zero with recipientsDetermined true", async () => {
+    const db = makeDb({ ...ON, tables: { media_view_requests: [], media_view_request_optins: [], blocks: [] } });
+
+    const out = await createViewRequest(db, baseInput());
+
+    assert.equal(out.ok, true);
+    assert.equal(out.recipientCount, 0);
+    assert.equal(out.recipientsDetermined, true, "pre-launch empty is a measured zero");
+  });
+
+  it("the two zeroes are not the same value", async () => {
+    const failed = await createViewRequest(
+      makeDb({ ...ON, tables: { media_view_requests: [], media_view_request_optins: [], blocks: [] }, errorReads: ["media_view_request_optins"] }),
+      baseInput(),
+    );
+    const genuine = await createViewRequest(
+      makeDb({ ...ON, tables: { media_view_requests: [], media_view_request_optins: [], blocks: [] } }),
+      baseInput(),
+    );
+
+    assert.notEqual(
+      failed.recipientsDetermined, genuine.recipientsDetermined,
+      "the read failed and there genuinely are none must be distinguishable by the caller",
+    );
   });
 });
 

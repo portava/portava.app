@@ -52,7 +52,13 @@ interface Written {
   payload?: any;
 }
 
-function makeSc(data: Dataset, writes: Written[] = []) {
+/**
+ * `failReads` makes SELECTs on the named tables RESOLVE as `{ data: null, error }`
+ * — the way supabase-js actually reports a read failure. Writes are untouched,
+ * and nothing throws: a fake that threw would exercise a catch production never
+ * enters, and the whole defect under test is a failure that does not throw.
+ */
+function makeSc(data: Dataset, writes: Written[] = [], failReads?: (table: string) => any) {
   const resolveRows = (table: string, filters: any[]): any[] => {
     let rows = (data[table] ?? []).map((r) => ({ ...r }));
     for (const f of filters) {
@@ -93,9 +99,19 @@ function makeSc(data: Dataset, writes: Written[] = []) {
       update(payload: any) { writes.push({ table, op: "update", payload }); return b; },
       delete() { writes.push({ table, op: "delete" }); return b; },
       // ── terminals ────────────────────────────────────────────────────────
-      maybeSingle() { return Promise.resolve({ data: resolveRows(table, filters)[0] ?? null, error: null }); },
-      single() { return Promise.resolve({ data: resolveRows(table, filters)[0] ?? null, error: null }); },
+      maybeSingle() {
+        const err = failReads?.(table);
+        if (err) return Promise.resolve({ data: null, error: err });
+        return Promise.resolve({ data: resolveRows(table, filters)[0] ?? null, error: null });
+      },
+      single() {
+        const err = failReads?.(table);
+        if (err) return Promise.resolve({ data: null, error: err });
+        return Promise.resolve({ data: resolveRows(table, filters)[0] ?? null, error: null });
+      },
       then(onF: any, onR: any) {
+        const err = failReads?.(table);
+        if (err) return Promise.resolve({ data: null, error: err }).then(onF, onR);
         return Promise.resolve({ data: resolveRows(table, filters), error: null }).then(onF, onR);
       },
     };
@@ -266,6 +282,96 @@ describe("GET /media/:id/actions — resolveMediaActions", () => {
     );
     const editable = await loadPlanEditableTripIds(sc, VIEWER);
     assert.deepEqual(editable, [], "owner_only trip is not editable by a plain member — the endpoint's own rule");
+  });
+
+  /**
+   * ── THE PLAN GATE MUST SAY WHETHER IT RAN ─────────────────────────────────
+   *
+   * `loadPlanEditableTripIds` answers "which trips may this viewer add to". It
+   * returned `[]` both when the viewer has none AND when `trip_members` could
+   * not be read, and the resolver spends that as "offer no add_to_trip". The
+   * fail-closed direction is right and unchanged — a viewer is never offered an
+   * add the endpoint would refuse — but a viewer who HAS editable trips was
+   * being shown the exact UI of a viewer who has none, and `eligibleTripIds: []`
+   * went out on the Do-This-Experience proposal as a positive enumeration.
+   */
+  const DB_DOWN = { message: "server closed the connection unexpectedly", code: "08006" };
+
+  it("loadPlanEditableTripIds returns null — not [] — when trip_members cannot be read", async () => {
+    const sc = makeSc(baseData({ posts: [makePost()], ...editableTripFixture() }), [], (t) =>
+      t === "trip_members" ? DB_DOWN : null);
+
+    const editable = await loadPlanEditableTripIds(sc, VIEWER);
+
+    assert.equal(editable, null, "an unreadable membership table is not 'you belong to no trip'");
+    assert.notDeepEqual(editable, [], "the two absences must not be the same value");
+  });
+
+  it("loadPlanEditableTripIds returns null when a per-trip canEditPlan probe could not run", async () => {
+    // specific_members sends canEditPlan to plan_editors; an unreadable
+    // plan_editors makes it throw, and `.catch(() => null)` used to read that as
+    // "this trip is not editable" — a gate result invented out of an outage.
+    const sc = makeSc(
+      baseData({
+        posts: [makePost()],
+        trips: [{ id: TRIP_1, owner_id: AUTHOR_A, plan_edit_permission: "specific_members", visibility: "members" }],
+        trip_members: [{ trip_id: TRIP_1, user_id: VIEWER, role: "member", status: "accepted" }],
+        plan_editors: [{ trip_id: TRIP_1, user_id: VIEWER }],
+      }),
+      [],
+      (t) => (t === "plan_editors" ? DB_DOWN : null),
+    );
+
+    assert.equal(await loadPlanEditableTripIds(sc, VIEWER), null, "an unrun gate probe is not a 'no'");
+  });
+
+  it("a viewer who genuinely has no editable trip still gets a real [] ", async () => {
+    const sc = makeSc(baseData({ posts: [makePost()] }));
+
+    assert.deepEqual(await loadPlanEditableTripIds(sc, VIEWER), [], "read ran, answer is none");
+  });
+
+  it("resolveMediaActions carries planGateDetermined false when the gate could not be read", async () => {
+    const sc = makeSc(baseData({ posts: [makePost()], ...editableTripFixture() }), [], (t) =>
+      t === "trip_members" ? DB_DOWN : null);
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: true });
+
+    const result = await resolveMediaActions(sc, viewer, MEDIA_1, Date.now());
+
+    assert.ok(result);
+    assert.equal(
+      result!.actions.some((a) => a.id === "add_to_trip"), false,
+      "fail-closed direction unchanged: an add the endpoint might refuse is still not offered",
+    );
+    assert.equal(
+      result!.planGateDetermined, false,
+      "but the absence of add_to_trip is now labelled as unmeasured, not as a decision",
+    );
+  });
+
+  it("resolveMediaActions carries planGateDetermined true when the gate ran and said no", async () => {
+    const sc = makeSc(baseData({ posts: [makePost()] }));
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: true });
+
+    const result = await resolveMediaActions(sc, viewer, MEDIA_1, Date.now());
+
+    assert.equal(result!.actions.some((a) => a.id === "add_to_trip"), false);
+    assert.equal(result!.planGateDetermined, true, "a real 'you have no editable trip'");
+  });
+
+  it("the two absences of add_to_trip are distinguishable by the caller", async () => {
+    const down = makeSc(baseData({ posts: [makePost()], ...editableTripFixture() }), [], (t) =>
+      t === "trip_members" ? DB_DOWN : null);
+    const none = makeSc(baseData({ posts: [makePost()] }));
+
+    const a = await resolveMediaActions(down, await resolveViewer(down, VIEWER, { needFollows: true }), MEDIA_1, Date.now());
+    const b = await resolveMediaActions(none, await resolveViewer(none, VIEWER, { needFollows: true }), MEDIA_1, Date.now());
+
+    assert.deepEqual(
+      a!.actions.map((x) => x.id), b!.actions.map((x) => x.id),
+      "the action lists are identical — which is exactly why the flag has to exist",
+    );
+    assert.notEqual(a!.planGateDetermined, b!.planGateDetermined);
   });
 
   it("Meet Here is withheld when the new-event kill switch is engaged", async () => {
@@ -457,6 +563,32 @@ describe("buildDoThisExperiencePlan — converts an eligible experience into a p
     assert.ok(plan!.stops.every((s) => s.sourceType === "place" && s.sourceId), "stops are resolvable place refs");
     assert.ok(plan!.eligibleTripIds.includes(TRIP_1), "carries a plan-editable target trip");
     assert.equal(isLocationSafe(plan), true, "the plan carries no coordinate");
+  });
+
+  it("a proposal whose plan gate could not be read says so, instead of enumerating zero trips", async () => {
+    const sc = makeSc(
+      baseData({
+        trips: [{ id: TRIP_1, owner_id: AUTHOR_A, plan_edit_permission: "specific_members", visibility: "members", title: "Da Nang week" }],
+        trip_members: [{ trip_id: TRIP_1, user_id: VIEWER, role: "member", status: "accepted" }],
+        plan_editors: [{ trip_id: TRIP_1, user_id: VIEWER }],
+        posts: [
+          makePost({ trip_id: TRIP_1, canonical_place_id: PLACE_1, location_name: "An Thuong" }),
+          makePost({ id: "10000000-0000-0000-0000-000000000002", trip_id: TRIP_1, canonical_place_id: PLACE_HIDDEN, location_name: "Beach" }),
+        ],
+      }),
+      [],
+      (t) => (t === "plan_editors" ? { message: "server closed the connection unexpectedly", code: "08006" } : null),
+    );
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: true });
+
+    const plan = await buildDoThisExperiencePlan(sc, viewer, TRIP_1, Date.now());
+
+    assert.ok(plan, "the experience is still visible, so the proposal is still produced");
+    assert.deepEqual(plan!.eligibleTripIds, [], "fail-closed: the proposal still has nowhere to land");
+    assert.equal(
+      plan!.planGateDetermined, false,
+      "`eligibleTripIds: []` is a positive enumeration on the wire; this says it was never taken",
+    );
   });
 
   it("an experience the viewer cannot see → null (no plan, §47)", async () => {
