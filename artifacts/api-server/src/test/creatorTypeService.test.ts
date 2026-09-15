@@ -54,6 +54,16 @@ function fakeClient(opts: {
   entryRows?: any[];
   error?: any;
   insertError?: any;
+  /**
+   * How many rows of an ARRAY payload the upsert actually inserted.
+   *
+   * `ON CONFLICT DO NOTHING ... RETURNING` returns ONLY the rows it inserted,
+   * so a redelivered earning comes back as `data: []` with `error: null` —
+   * byte-identical, at the wire, to an upsert that had nothing to write. This
+   * option is how that wire shape is put in front of the service. Omitted, the
+   * fake echoes the whole payload, which is the first-delivery case.
+   */
+  upsertInserted?: number;
 } = {}) {
   const writes: Write[] = [];
   const flagOn = opts.flagOn !== false;
@@ -84,6 +94,12 @@ function fakeClient(opts: {
         if (this._payload !== null) {
           if (opts.insertError) return emit({ data: null, error: opts.insertError });
           const p = this._payload;
+          if (Array.isArray(p) && opts.upsertInserted !== undefined) {
+            return res({
+              data: p.slice(0, opts.upsertInserted).map((r, i) => ({ id: `row-${i}`, ...r })),
+              error: null,
+            });
+          }
           return res({
             data: Array.isArray(p) ? p.map((r, i) => ({ id: `row-${i}`, ...r })) : { id: "row-0", ...p },
             error: null,
@@ -340,7 +356,98 @@ describe("`07` §10 property 2 — earnings, and the seam refusal", () => {
     });
     assert.equal(r.ok, true);
     if (r.ok) assert.deepEqual(r.value.entries, []);
+    assert.equal(r.ok && r.value.booking, "nothing_to_book");
     assert.deepEqual(writes.filter((w) => w.table === "creator_earning_entries"), []);
+  });
+
+  /**
+   * ── THE `07` §10 PROPERTY THIS SUITE EXISTS FOR ────────────────────────────
+   *
+   * "Earnings can be recorded WITHOUT PAYING" is a claim about what a reader of
+   * the ledger can TELL, not only about what the writer refrains from doing.
+   * The settlement half is structural and holds: `cash_settled_minor = 0` is
+   * CHECK-enforced by 2921 and typed `0` in the model, so no row can assert that
+   * money moved.
+   *
+   * The RECORDED half had a hole in it. `recordCreatorEarning` upserts with
+   * `ignoreDuplicates`, and `ON CONFLICT DO NOTHING ... RETURNING` returns only
+   * the rows it actually inserted. So a redelivered earning — every leg already
+   * on the ledger, the creator's entitlement fully recorded — came back as
+   * `{ ok: true, entries: [] }`: the SAME value, field for field, that an
+   * all-zero earning returns when nothing was booked at all.
+   *
+   * A caller asking "is this creator's earning on the ledger?" therefore could
+   * not distinguish "yes, twice over" from "no, and nothing ever will be". That
+   * is a false negative about someone's money, produced by success rather than
+   * by an error — the failure mode this lane is graded on.
+   *
+   * `recordCreatorAttribution` already flags its replay (`replayed: true`); the
+   * earning path had the same field available on the result type and never set
+   * it. These three tests are the asymmetry, closed.
+   */
+  it("a REPLAYED earning is distinguishable from an earning that was never booked", async () => {
+    // Every leg already on the ledger: the upsert inserts 0 of the 4 rows.
+    const { client: replayClient } = fakeClient({ upsertInserted: 0 });
+    const replay = await recordCreatorEarning(replayClient, "row-1", attributionFor("travel_partner"), {
+      grossRevenueMinor: 1000, creatorShareMinor: 800, platformFeeMinor: 200,
+      revenueSource: "booking_commission",
+    });
+
+    // Nothing to book at all: no entitlement exists and none ever did.
+    const { client: zeroClient } = fakeClient();
+    const nothing = await recordCreatorEarning(zeroClient, "row-1", attributionFor("travel_partner"), {
+      grossRevenueMinor: 0, creatorShareMinor: 0, platformFeeMinor: 0,
+    });
+
+    assert.equal(replay.ok, true, JSON.stringify(replay));
+    assert.equal(nothing.ok, true, JSON.stringify(nothing));
+    if (!replay.ok || !nothing.ok) return;
+
+    assert.notDeepEqual(
+      replay.value, nothing.value,
+      "a fully-recorded earning and an earning that was never booked returned the same value",
+    );
+    assert.equal(replay.value.booking, "already_booked");
+    assert.equal(nothing.value.booking, "nothing_to_book");
+    // The count of entries the earning CONSISTS of survives the replay; the
+    // count this call inserted is zero, and the two are separate fields so
+    // neither can be read as the other.
+    assert.equal(replay.value.entryCount, 4);
+    assert.equal(nothing.value.entryCount, 0);
+    assert.equal(replay.replayed, true, "the replay was not flagged as one");
+    assert.equal(nothing.replayed, undefined, "nothing_to_book is not a replay");
+  });
+
+  it("a first delivery is `booked`, and carries the rows it wrote", async () => {
+    const { client } = fakeClient();
+    const r = await recordCreatorEarning(client, "row-1", attributionFor("travel_partner"), {
+      grossRevenueMinor: 1000, creatorShareMinor: 800, platformFeeMinor: 200,
+      revenueSource: "booking_commission",
+    });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    if (!r.ok) return;
+    assert.equal(r.value.booking, "booked");
+    assert.equal(r.value.entries.length, 4);
+    assert.equal(r.value.entryCount, 4);
+    assert.equal(r.replayed, undefined);
+  });
+
+  it("a PARTIAL replay is its own answer — not a clean write and not a clean replay", async () => {
+    // Two of four legs were already present. After this call the transaction is
+    // whole, but a caller reconciling what IT wrote must not be told it wrote
+    // all four, and an auditor must be able to see that the legs of one
+    // balanced transaction arrived in two deliveries.
+    const { client } = fakeClient({ upsertInserted: 2 });
+    const r = await recordCreatorEarning(client, "row-1", attributionFor("travel_partner"), {
+      grossRevenueMinor: 1000, creatorShareMinor: 800, platformFeeMinor: 200,
+      revenueSource: "booking_commission",
+    });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    if (!r.ok) return;
+    assert.equal(r.value.booking, "partially_already_booked");
+    assert.equal(r.value.entries.length, 2);
+    assert.equal(r.value.entryCount, 4);
+    assert.equal(r.replayed, true);
   });
 });
 

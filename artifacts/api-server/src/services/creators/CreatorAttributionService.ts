@@ -246,18 +246,70 @@ export async function recordCreatorAttribution(
 // ── `07` §10 property 2 — earnings recorded WITHOUT PAYING ──────────────────
 
 /**
+ * What this call did to the ledger. FOUR answers, not two.
+ *
+ * "Earnings can be recorded without paying" is a claim about what a reader can
+ * TELL. The not-paying half is structural — `cash_settled_minor` is CHECK-zero
+ * in 2921 and typed `0` in the model, so no row can assert a settlement. The
+ * RECORDED half needs this enum, because three of these four outcomes used to
+ * be reported with the same value.
+ */
+export type CreatorEarningBooking =
+  /** The earning was worth nothing. No entry exists and none is owed. */
+  | "nothing_to_book"
+  /** Every entry was written by THIS call. */
+  | "booked"
+  /** Every entry was already on the ledger. The entitlement stands, recorded. */
+  | "already_booked"
+  /** Some legs were already present and this call wrote the rest. */
+  | "partially_already_booked";
+
+export interface RecordedCreatorEarning {
+  booking: CreatorEarningBooking;
+  /**
+   * The rows THIS call inserted. Empty on `already_booked` — which is why it
+   * must never be read as "the creator earned nothing"; read `booking`.
+   */
+  entries: any[];
+  /**
+   * How many entries the earning CONSISTS of, whoever wrote them. Zero only
+   * under `nothing_to_book`.
+   */
+  entryCount: number;
+}
+
+/**
  * Book one attribution's earning. Refuses for a seam and under a fraud hold,
  * and the database refuses the same two things independently (2921's
  * `cee_requires_recorded_value_event` trigger, and the `earnable` gate in the
  * pure model). Nothing here moves money: both legs of every transaction are
  * signed minor units and `cash_settled_minor` is written as the literal 0.
+ *
+ * ── WHY THE OUTCOME IS AN ENUM AND NOT A ROW COUNT ─────────────────────────
+ * The upsert carries `ignoreDuplicates`, so PostgREST sends
+ * `Prefer: resolution=ignore-duplicates` and Postgres runs
+ * `INSERT ... ON CONFLICT DO NOTHING ... RETURNING`, which returns ONLY the
+ * rows it actually inserted. A redelivered earning therefore comes back as
+ * `data: []` with `error: null`.
+ *
+ * This function used to return that as `{ ok: true, entries: [] }` — the same
+ * value, field for field, as an all-zero earning that booked nothing. So a
+ * caller asking "is this creator's earning on the ledger?" could not tell "yes,
+ * already, in full" from "no, and nothing is owed". That is a false negative
+ * about someone's money delivered as a SUCCESS, which no error handling would
+ * have caught, and `recordCreatorAttribution` two functions up already had the
+ * `replayed` flag this path was missing.
+ *
+ * `entries` (what this call wrote) and `entryCount` (what the earning consists
+ * of) are separate fields for the same reason: one cannot be misread as the
+ * other.
  */
 export async function recordCreatorEarning(
   sc: any,
   attributionRowId: string,
   attribution: CreatorAttribution,
   input: CreatorEarningInput,
-): Promise<CreatorServiceResult<{ entries: any[] }>> {
+): Promise<CreatorServiceResult<RecordedCreatorEarning>> {
   if (!(await isFlagEnabled(sc, CREATOR_ATTRIBUTION_FLAG))) return fail("disabled");
 
   const built = buildCreatorEarningEntries(attribution, input);
@@ -265,7 +317,7 @@ export async function recordCreatorEarning(
   if (built.entries.length === 0) {
     // Every component was zero. Booking nothing is correct; saying so is better
     // than returning success over an empty write nobody notices.
-    return { ok: true, value: { entries: [] } };
+    return { ok: true, value: { booking: "nothing_to_book", entries: [], entryCount: 0 } };
   }
 
   const rows = built.entries.map((e) => toCreatorEarningEntryRow(e, attributionRowId));
@@ -276,7 +328,24 @@ export async function recordCreatorEarning(
     .upsert(rows, { onConflict: "idempotency_key", ignoreDuplicates: true })
     .select();
   if (error) return classifyDbError(error);
-  return { ok: true, value: { entries: (data ?? []) as any[] } };
+
+  const inserted = (data ?? []) as any[];
+  const entryCount = rows.length;
+  if (inserted.length >= entryCount) {
+    return { ok: true, value: { booking: "booked", entries: inserted, entryCount } };
+  }
+  // A replay, whole or partial. Both are flagged `replayed` — the caller that
+  // only wants "was this delivered before?" reads one field, and the caller
+  // reconciling legs reads `booking`.
+  return {
+    ok: true,
+    value: {
+      booking: inserted.length === 0 ? "already_booked" : "partially_already_booked",
+      entries: inserted,
+      entryCount,
+    },
+    replayed: true,
+  };
 }
 
 // ── `07` §10 property 4 — fraud holds exist ─────────────────────────────────
