@@ -2034,7 +2034,7 @@ section is the later statement. Each was re-measured here, not inherited from th
 3. **§14.6, TRV2-08** — *"`getRestrictionState` still has exactly **five** non-Trust callers"*.
    I counted them: **seven** modules — `services/interactionPermissions.ts:354`,
    `services/passport/PassportProjectionService.ts:2003`, `lib/calls/callGatewayAdapter.ts:265`,
-   `domain/telegraph/policies/conversationCapabilityPolicy.ts:181`, `routes/tripCrewLocation.ts:439`,
+   `domain/telegraph/policies/conversationCapabilityPolicy.ts:181`, `routes/tripCrewLocation.ts:484#getRestrictionState(sc, user.id)`,
    `routes/messaging.ts:691`, and `routes/trips.ts:288` and `:1335`. **TRV2-08 does not move**, and
    I checked the half that decides it rather than the half that is wrong: `grep -rn
    getRestrictionState src/compass src/routes/discovery*.ts` returns **nothing**, so *"`src/compass/`

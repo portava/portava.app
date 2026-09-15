@@ -91,6 +91,29 @@
 
 BEGIN;
 
+-- THREE STATES, NAMED EXPLICITLY. The guard this replaces asked one question --
+-- "does the table exist?" -- and treated YES as fatal with the sentence "this
+-- migration is not idempotent by design". That sentence stopped being true when
+-- every CREATE TABLE/INDEX in this file gained IF NOT EXISTS and every CREATE
+-- POLICY/TRIGGER gained a preceding DROP ... IF EXISTS: the file IS re-runnable
+-- now, and the guard contradicted the statements below it. 2910 carried the
+-- identical contradiction and it stopped the 2891-2970 apply on portava-ci at
+-- 15:34:32Z on 2026-09-15, one file after 2893 cleared. THIS FILE WAS FIXED BY
+-- PRE-FLIGHT, NOT BY A CI ROUND TRIP: the same grep that explained 2910's stop
+-- found this guard and 2921's before either was attempted.
+--
+--   (A) FRESH      the table(s) are absent -> create them. The original path.
+--   (B) RECONCILE  present AND carrying EXACTLY this file's columns
+--                  -> re-assert. Nothing is skipped: every guarded CREATE,
+--                  every DROP-then-CREATE policy and trigger, and every
+--                  postcondition below still run.
+--   (C) ANYTHING ELSE -> REFUSE and report what is actually there rather than
+--                  assert a diagnosis.
+--
+-- EXACT SET comparisons, not "all expected are present". 2893's first draft
+-- tested the subset form and classified a vocabulary carrying the eight
+-- expected labels PLUS an unexpected ninth as the reconcilable state -- exactly
+-- the case that must fail. A table with an extra column is the same mistake.
 -- ── Preconditions ────────────────────────────────────────────────────────────
 DO $pre$
 BEGIN
@@ -100,10 +123,42 @@ BEGIN
   IF to_regproc('public.intel_append_only') IS NULL THEN
     RAISE EXCEPTION '2920: PRECONDITION FAILED: public.intel_append_only() is required to block UPDATE';
   END IF;
-  IF to_regclass('public.creator_attributions') IS NOT NULL
-     OR to_regclass('public.creator_rule_versions') IS NOT NULL THEN
-    RAISE EXCEPTION '2920: creator_attributions/creator_rule_versions already exist; this migration is not idempotent by design';
-  END IF;
+  DECLARE
+    expected_ca  CONSTANT text[] := ARRAY[
+    'attribution_basis', 'beneficiary_user_id', 'computed_at', 'confidence', 'creator_type', 'currency', 'fraud_hold', 'fraud_hold_reason', 'gross_revenue_minor', 'id', 'idempotency_key', 'provisional_share_minor', 'rule_version', 'settled_minor', 'subject_id', 'subject_kind', 'supersedes_id', 'value_event', 'value_event_id', 'weight'];
+    expected_crv CONSTANT text[] := ARRAY[
+    'created_at', 'creator_type', 'effective_from', 'id', 'note', 'params', 'rule_version'];
+    has_ca  boolean := to_regclass('public.creator_attributions')  IS NOT NULL;
+    has_crv boolean := to_regclass('public.creator_rule_versions') IS NOT NULL;
+    live_ca  text[];
+    live_crv text[];
+  BEGIN
+    IF NOT has_ca AND NOT has_crv THEN
+      RAISE NOTICE '2920 APPLY: neither creator_attributions nor creator_rule_versions exists. Creating both.';
+
+    ELSIF has_ca AND has_crv THEN
+      SELECT coalesce(array_agg(column_name::text ORDER BY column_name), ARRAY[]::text[]) INTO live_ca
+        FROM information_schema.columns WHERE table_schema='public' AND table_name='creator_attributions';
+      SELECT coalesce(array_agg(column_name::text ORDER BY column_name), ARRAY[]::text[]) INTO live_crv
+        FROM information_schema.columns WHERE table_schema='public' AND table_name='creator_rule_versions';
+      IF live_ca <> expected_ca THEN
+        RAISE EXCEPTION
+          '2920: PRECONDITION FAILED: public.creator_attributions exists but is NOT the table this file creates. Expected exactly: %. Live: %. UNEXPECTED state; refusing rather than re-asserting over a different table.',
+          array_to_string(expected_ca, ', '), array_to_string(live_ca, ', ');
+      END IF;
+      IF live_crv <> expected_crv THEN
+        RAISE EXCEPTION
+          '2920: PRECONDITION FAILED: public.creator_rule_versions exists but is NOT the table this file creates. Expected exactly: %. Live: %. UNEXPECTED state; refusing rather than re-asserting over a different table.',
+          array_to_string(expected_crv, ', '), array_to_string(live_crv, ', ');
+      END IF;
+      RAISE NOTICE '2920 RECONCILE: both tables already exist with this file''s shape (no ledger row recorded them). Re-asserting every object.';
+
+    ELSE
+      RAISE EXCEPTION
+        '2920: PRECONDITION FAILED: exactly one of the two tables exists (creator_attributions: %, creator_rule_versions: %). A half-built pair is a state this file cannot safely complete; decide why before re-running it.',
+        has_ca, has_crv;
+    END IF;
+  END;
 END
 $pre$;
 

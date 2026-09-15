@@ -60,13 +60,77 @@
 BEGIN;
 
 -- ── Preconditions ────────────────────────────────────────────────────────────
+-- THREE STATES, NAMED EXPLICITLY. The guard this replaces asked one question --
+-- "does `public.trails` exist?" -- and treated YES as fatal with the sentence
+-- "this migration is not idempotent by design". That sentence stopped being
+-- true when every CREATE TABLE/INDEX in this file gained IF NOT EXISTS and
+-- every CREATE POLICY/TRIGGER gained a preceding DROP ... IF EXISTS: the file
+-- IS re-runnable now, and the guard was contradicting the statements below it.
+-- It stopped the 2891-2970 apply on portava-ci at 15:34:32Z on 2026-09-15,
+-- one file after 2893 cleared, which is the same defect 2893 had and the same
+-- fix: a precondition that can recognise only ONE state cannot tell a database
+-- that never had these tables from one that already carries exactly them, and
+-- those need OPPOSITE answers.
+--
+--   (A) FRESH      none of the six exist -> create them. The original path.
+--   (B) RECONCILE  all six exist AND `trails` carries EXACTLY this file's
+--                  twelve columns -> re-assert. Nothing is skipped: every
+--                  CREATE ... IF NOT EXISTS, every DROP-then-CREATE policy and
+--                  trigger, and every behavioural postcondition below still
+--                  run, so the objects are re-proved rather than assumed.
+--   (C) ANYTHING ELSE -> REFUSE, and report what is actually there instead of
+--                  asserting a diagnosis. A half-created tree and a `trails`
+--                  with a different column set are both (C).
+--
+-- The tests are EXACT SET comparisons, not "all expected are present". 2893's
+-- first draft tested the subset form and classified a vocabulary carrying the
+-- eight expected labels PLUS an unexpected ninth as the reconcilable state --
+-- exactly the case that must fail. A `trails` with an extra column is the same
+-- shape of mistake, so `= ARRAY[...]` is used and not `@>`.
 DO $pre$
+DECLARE
+  expected_tables CONSTANT text[] := ARRAY[
+    'content_trails','trail_edges','trail_follows','trail_health_snapshots',
+    'trail_reports','trails'];
+  expected_cols CONSTANT text[] := ARRAY[
+    'canonicalization','created_at','created_by','description','destination',
+    'id','lifecycle_status','parent_trail_id','place_scope','slug','title',
+    'updated_at'];
+  live_tables text[];
+  live_cols   text[];
+  n_present   int;
 BEGIN
   IF to_regclass('public.profiles') IS NULL THEN
     RAISE EXCEPTION '2910: PRECONDITION FAILED: public.profiles is required for contributor references';
   END IF;
-  IF to_regclass('public.trails') IS NOT NULL THEN
-    RAISE EXCEPTION '2910: public.trails already exists; this migration is not idempotent by design';
+
+  SELECT coalesce(array_agg(t ORDER BY t), ARRAY[]::text[]) INTO live_tables
+    FROM unnest(expected_tables) AS t
+   WHERE to_regclass('public.' || t) IS NOT NULL;
+  n_present := array_length(live_tables, 1);
+
+  IF n_present IS NULL THEN
+    RAISE NOTICE '2910 APPLY: none of the six Trails tables exist. Creating them.';
+
+  ELSIF live_tables = expected_tables THEN
+    SELECT coalesce(array_agg(column_name::text ORDER BY column_name), ARRAY[]::text[])
+      INTO live_cols
+      FROM information_schema.columns
+     WHERE table_schema = 'public' AND table_name = 'trails';
+
+    IF live_cols <> expected_cols THEN
+      RAISE EXCEPTION
+        '2910: PRECONDITION FAILED: all six Trails tables exist, but public.trails is NOT the table this file creates. Expected exactly these columns: %. Live columns: %. This is an UNEXPECTED state: a trails table of another shape must not be re-asserted over, and this file will not guess which one is right.',
+        array_to_string(expected_cols, ', '), array_to_string(live_cols, ', ');
+    END IF;
+
+    RAISE NOTICE '2910 RECONCILE: all six Trails tables already exist with this file''s shape (no ledger row recorded them). Re-asserting every object; the behavioural postconditions below still have to pass.';
+
+  ELSE
+    RAISE EXCEPTION
+      '2910: PRECONDITION FAILED: the Trails tables are PARTIALLY present, which is a state this file cannot safely complete. Present: %. Absent: %. Create the missing ones by hand after deciding why the tree is half-built, or drop the partial set; do not re-run this file over it.',
+      array_to_string(live_tables, ', '),
+      array_to_string(ARRAY(SELECT unnest(expected_tables) EXCEPT SELECT unnest(live_tables) ORDER BY 1), ', ');
   END IF;
 END
 $pre$;

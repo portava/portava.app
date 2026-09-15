@@ -1894,7 +1894,7 @@ screen to reach for.
 `visibility: "only_me"` and `state: "draft"` as LITERALS, not as defaults a
 caller can override, into `memories` — the canonical table — so the draft is
 readable back by its owner through the route that already exists
-(`routes/memories.ts:2797#state` applies `state = published` only when the viewer is
+(`routes/memories.ts:2851#state` applies `state = published` only when the viewer is
 NOT the owner). The save is also recorded in `saved_messages`, so the old
 affordance and the new draft agree instead of disagreeing.
 
@@ -1932,7 +1932,7 @@ the header button appears only when a completed plan came back.
 | --- | --- | --- | --- |
 | T117 | N | **C** | **`MemoryNoteShare` contract** — the type carries §10.1's eight fields and nothing else (`services/telegraph/memoryNotes.ts:46#export interface MemoryNoteShare`), validated by a schema (`services/telegraph/memoryNotes.ts:57#MemoryNoteShareSchema`) that the MEMORY_NOTE kind already routes through (T54). |
 | T118 | N `∅` | **C** | **Shareable without exposing the sender's canonical private Memory graph** — no longer an unguarded absence. `MEMORY_GRAPH_FIELDS` names every way a graph reference would travel (`services/telegraph/memoryNotes.ts:76#MEMORY_GRAPH_FIELDS`) and `assertNoMemoryGraphLeak` REFUSES rather than strips (`services/telegraph/memoryNotes.ts:90#assertNoMemoryGraphLeak`), with `parseMemoryNoteShare` checking the leak BEFORE the schema (`services/telegraph/memoryNotes.ts:105#parseMemoryNoteShare`). |
-| T119 | W | **C** | **Explicitly save a message, voice note, place share or media item as a private Memory draft** — the hole is closed. `memoryDraftRow` writes `visibility: "only_me"` and `state: "draft"` as literals into `memories` (`services/telegraph/memoryNotes.ts:144#export function memoryDraftRow`), `POST /me/memory-drafts` re-authorizes and inserts exactly one row (`routes/telegraphMemory.ts:62#/me/memory-drafts`), the owner reads it back through the route that already existed (`routes/memories.ts:2797#state", "published`), and the client action is one press per item, on the long-press sheet (`travel-buddy-standalone/app/messages/[id].tsx:253#draftSavedMessage(r.data.draft)`) — see §10.29, which deleted the unmounted component this row first cited. |
+| T119 | W | **C** | **Explicitly save a message, voice note, place share or media item as a private Memory draft** — the hole is closed. `memoryDraftRow` writes `visibility: "only_me"` and `state: "draft"` as literals into `memories` (`services/telegraph/memoryNotes.ts:144#export function memoryDraftRow`), `POST /me/memory-drafts` re-authorizes and inserts exactly one row (`routes/telegraphMemory.ts:62#/me/memory-drafts`), the owner reads it back through the route that already existed (`routes/memories.ts:2851#state", "published`), and the client action is one press per item, on the long-press sheet (`travel-buddy-standalone/app/messages/[id].tsx:253#draftSavedMessage(r.data.draft)`) — see §10.29, which deleted the unmounted component this row first cited. |
 | T120 | N `∅` | **C** | **Telegraph never automatically converts whole conversations into Memories** — now a refusal, not a vacancy. A body naming a thread or a list is rejected by name with §10.2 quoted (`routes/telegraphMemory.ts:71#for (const forbidden of`), the accepted key is singular, and the client API exports no list or thread form (`travel-buddy-standalone/src/features/telegraph/memory/memoryApi.ts:104#export async function saveMessageAsMemoryDraft`). |
 | T121 | N | **C** | **End-of-night recap surface** — `GET /threads/:id/recap` (`routes/telegraphMemory.ts:178#/threads/:threadId/recap`) over `buildRecap` (`services/telegraph/memoryNotes.ts:242#export function buildRecap`), rendered with §10.3's four actions and its headline (`travel-buddy-standalone/src/features/telegraph/memory/RecapSheet.tsx:46#export function RecapSheet`), reachable from the thread header (`travel-buddy-standalone/app/messages/[id].tsx:1947#telegraph-open-recap`). |
 | T122 | N `∅` | **C** | **Derived from confirmed session context — an invitation to curate, not automatic historical truth** — the window is the plan's own and a thread with no completed plan gets none (`routes/telegraphMemory.ts:238#no_completed_plan`), people are the plan's confirmed participants (`services/telegraph/memoryNotes.ts:242#export function buildRecap`), and the endpoint states that it created nothing (`routes/telegraphMemory.ts:291#wrote: "nothing"`). |
@@ -2867,7 +2867,7 @@ an unreadable prior roster emits NOTHING, because a burst of false "X joined"
 lines is worse than a missing one and the next poll shows the truth either way.
 
 `safety.reported` goes to the REPORTER and to nobody else
-(`lib/telegraphEvents.ts:439`, called at `routes/messaging.ts:3174` and `:3383`).
+(`lib/telegraphEvents.ts:717#export function emitSafetyReported`, called at `routes/messaging.ts:3174` and `:3383`).
 It is a dedicated emitter rather than a `publishToUsers` call at each handler
 for one reason: the audience is the load-bearing part, and a helper with no
 parameter that could carry a thread id or a second recipient makes it
@@ -2923,7 +2923,7 @@ removed from normal user search" when the flag is on, in the query.
 | --- | --- | --- | --- |
 | T182 | N | **C** | §13.2 `message.deleted`. In the union (`lib/telegraphEvents.ts:42`) and published by the delete route excluding the deleter (`routes/groupChat.ts:395`). No migration, no flag: true on every deployment of this branch. |
 | T185 | N | **C** | §13.2 `member.joined`. In the union (`:52`) and published from BOTH sync implementations (`services/groupChatSync.ts:160`, `:306`; `lib/chatSync.ts:128`, `:258`), for newcomers only, from a roster read taken before the write. |
-| T194 | N | **C** | §13.2 `safety.reported`. In the union (`:73`) and emitted to the reporter only through a dedicated emitter whose signature cannot carry a second audience (`lib/telegraphEvents.ts:439`; called at `routes/messaging.ts:3174`, `:3383`). |
+| T194 | N | **C** | §13.2 `safety.reported`. In the union (`:73`) and emitted to the reporter only through a dedicated emitter whose signature cannot carry a second audience (`lib/telegraphEvents.ts:717#export function emitSafetyReported`; called at `routes/messaging.ts:3174`, `:3383`). |
 | T154 | N | **W** | §12 `conversation_outbox`. The table exists (`migrations/2810_telegraph_message_kernel.sql:193`), with a dedupe key, an unpublished-first index and RLS enabled with zero policies. W and not C for two reasons stated in the file itself: **no database has run it**, and nothing drains it. |
 | T195 | N | **W** | §13.3 "canonical mutation and event-outbox write in the same database transaction". A trigger on `public.messages` (`:300`) gives exactly that, to every writer including the ones that forget — and a rolled-back insert was EXECUTED and proved to leave no event. W because no database has the trigger. |
 | T196 | W | **W** | §13.3 idempotent consumers. `telegraph_outbox.dedupe_key` is the handle a consumer needs and is UNIQUE (`:193`). Still W, and now for a sharper reason than before: the key exists on no database, and idempotency is a property of a consumer that does not exist. |
@@ -3473,7 +3473,7 @@ stopped sharing" makes the label more precise — and any UI that says *sharing
 stopped* while showing a narrower area than before would be telling the truth
 about the grant and the opposite of the truth about the disclosure.
 
-**2. `messages.subtype` carries a highlight's ID.** `routes/highlights.ts:1437#subtype: id,`
+**2. `messages.subtype` carries a highlight's ID.** `routes/highlights.ts:1489#subtype: id,`
 writes `subtype: id` — an identifier into the discriminator column a renderer
 dispatches on. It can never match a renderer case, and it puts a
 highlights-domain id into a messaging-domain vocabulary field, which is the
@@ -6018,7 +6018,7 @@ Read against the code, one by one, they are NOT all benign:
 | file / site | classification |
 | --- | --- |
 | `routes/telegraph.ts` — 5 sites (a `feature_flags` gate, hashtag-follow enrichment, hashtag resolution, mention-profile resolution, the follow sets) | **Fail-closed or enrichment.** An unreadable table degrades the prompt or links nobody; `friends_only` users are EXCLUDED rather than admitted. The `blocks` read in the same block already binds and logs. Nothing here makes a claim to a traveller about their own data. |
-| `routes/telegraphStream.ts:178#const { data: membership, error: membershipErr } = await client` | **Fail-closed when §19 measured; CLOSED by §22.3, and the anchor text itself changed** — the read named here WAS the defect and the line now binds the error it used to drop, exactly as §16.6 and §20.4 record for their own sites. §19's classification was right on its own terms: an unreadable membership resolved to `forbidden`, and a refusal is not a plausible empty state. It was still a false statement about the caller's own membership, and §20.7 named it. |
+| `routes/telegraphStream.ts:390#const { data: membership, error: membershipErr } = await client` | **Fail-closed when §19 measured; CLOSED by §22.3, and the anchor text itself changed** — the read named here WAS the defect and the line now binds the error it used to drop, exactly as §16.6 and §20.4 record for their own sites. §19's classification was right on its own terms: an unreadable membership resolved to `forbidden`, and a refusal is not a plausible empty state. It was still a false statement about the caller's own membership, and §20.7 named it. |
 | `artifacts/api-server/src/routes/telegraphChat.ts:80#async function verifyThreadMember` and `artifacts/api-server/src/routes/telegraphChat.ts:301#const { data: tripMembership, error: tripMembershipErr } = await client` | **Fail-closed when §19 measured; CLOSED by §22.3, and BOTH anchor texts changed** — the first is now cited by the function rather than by a line that no longer exists in that form, because `verifyThreadMember` returns three outcomes instead of a boolean. The same shape as the `telegraphStream.ts` row above and closed the same way. |
 | `routes/telegraphChat.ts:200#res.status(200).json({ suggestions: suggestions ?? [] });` | **OPEN when §19 measured; CLOSED by §20.2.** The line still exists and is cited here at its current number; a refusal now stands above it, so the sentence that follows describes the tree at `6d4327d66`, not this one. It was T363's exact shape. An unreadable `telegraph_chat_suggestions` answers `{ suggestions: [] }` — "you have none" from a read that never happened. |
 | `routes/telegraphChat.ts:340#sendError(res, "not_found", "Suggestion not found");`, `artifacts/api-server/src/routes/telegraphChat.ts:446#sendError(res, "not_found", "Suggestion not found");`, `artifacts/api-server/src/routes/telegraphChat.ts:543#sendError(res, "not_found", "Suggestion not found");` | **OPEN when §19 measured; CLOSED by §20.2** — each now sits below a bound-error refusal, and each is cited at its current number. They were §18's class — three MORE sites of the defect §18 declared closed at twelve.** Same table, same `.maybeSingle()`, same confident 404 from a dropped error. |
@@ -6083,7 +6083,19 @@ could have caught it at any point, and nothing was reading it.
 
 ### 19.6 Read against the code and deliberately NOT changed, with the reason for each
 
-1. **`artifacts/api-server/src/routes/messaging.ts:411#const { data: before } = await client` — the prior-preference read.** §17.8 classified it "neither" and
+> **CLOSED 2026-09-15 BY THE SWALLOWED-READS LANE — items 1, 2, 3 and the first half of
+> item 4.** §19's stated reason for leaving all four was a COST, not a judgement about the
+> code: *"Changing it would shift every line below it in a 3,900-line file, and this
+> section is not spending that on a log."* That cost is real — this file carries ~45
+> anchored citations from this census and four more from census-compass and census-trust —
+> and it turned out to be avoidable rather than payable: all four were repaired IN PLACE,
+> replacing lines one-for-one, so `routes/messaging.ts` is the same length at the same
+> lines and not one citation in any census moved. The three anchors below are repointed to
+> the text that is now at those lines. **Item 2 was not the small one §19 took it for** —
+> see §27. Each item keeps §19's original reasoning verbatim; the closure note follows it.
+
+
+1. **`artifacts/api-server/src/routes/messaging.ts:411#const { data: before, error: beforeErr } = await client` — the prior-preference read.** §17.8 classified it "neither" and
    the classification holds for a reason worth writing down, because it is not obvious: the gate
    it feeds already distinguishes three worlds (`lib/retranslateGate.ts:35#if (i.oldLanguage === undefined) return true;`
    — *"oldLanguage undefined means the caller cannot tell; treat as a change"*), and the call
@@ -6091,12 +6103,38 @@ could have caught it at any point, and nothing was reading it.
    `newLanguage`, so `null` and `undefined` produce the IDENTICAL decision at this call site. The
    only thing lost is a log line. Changing it would shift every line below it in a 3,900-line
    file, and this section is not spending that on a log.
-2. **`artifacts/api-server/src/routes/messaging.ts:943#const { data: current } = await sc` — the status re-read inside a lost CAS race.** The claim's
+   **CLOSED 2026-09-15, and the reasoning above is correct about the gate and wrong about
+   what it costs.** `null` and `undefined` really do produce the identical decision here —
+   which is exactly the problem, because that identical decision is *sweep*. The call site
+   now refuses on `beforeErr` (`artifacts/api-server/src/routes/messaging.ts:436#if (newLang && !beforeErr && shouldRetranslateOnLanguageChange({`),
+   so an unreadable prior language fires nothing. What was lost was never only a log line:
+   `retranslateForUser` sweeps up to `RETRANSLATE_BATCH_LIMIT` messages through the PAID
+   translation provider, so EVERY FAILING SAVE billed a ~200-message sweep for a change
+   nobody had made. The warn is there too
+   (`artifacts/api-server/src/routes/messaging.ts:415#if (beforeErr) req.log.warn`).
+2. **`artifacts/api-server/src/routes/messaging.ts:943#const { data: current, error: currentErr } = await sc` — the status re-read inside a lost CAS race.** The claim's
    substance is true: the update matched no row, so the request really is no longer pending. What
    is guessed is WHICH state (`?? 'accepted'`), so an outage can name the wrong one. Real, small,
    and the same line-shift cost. Named rather than fixed.
-3. **`artifacts/api-server/src/routes/messaging.ts:1112#const { data: previewMsg } = await sc` — the preview-message insert.** A write chain, not a read;
+   **CLOSED 2026-09-15, and "small" was the one word to argue with.** A request leaves
+   `pending` in exactly two ways, and one of them is `declined`; so the guess was wrong
+   about a REFUSAL roughly as often as it was right, and what it told the recipient was
+   that the other party had ACCEPTED them. That is not a degraded answer, it is a false
+   one, and it is a false claim about another person's decision. The error is bound; a
+   readable status is still named and still answers the same 400; an unreadable one
+   answers `degraded_unavailable` — the only code `lib/http.ts` marks retryable — because
+   the true sentence is *"this was already answered and we cannot tell you how"*, and the
+   retry re-runs the guard at the top of the handler, which names the real status once the
+   table is back. Pinned by
+   `artifacts/api-server/src/test/messagingSwallowedReadHonesty.test.ts:336#!/accepted/i.test(body),`.
+3. **`artifacts/api-server/src/routes/messaging.ts:1112#const { data: previewMsg, error: previewErr } = await sc` — the preview-message insert.** A write chain, not a read;
    `check:silent-supabase-writes` territory and out of this class by that checker's own scope.
+   **CLOSED 2026-09-15 anyway, because being outside a checker's scope is not the same as
+   being handled.** The 200 has already been sent when this insert runs, so the log is the
+   ONLY record the write can leave; with the error discarded, a preview that never landed
+   left the thread created, the accept reported, the first message missing and nothing
+   anywhere saying why. It stays best-effort — the accept is not undone — and it is now
+   logged (`artifacts/api-server/src/routes/messaging.ts:1116#if (previewErr) req.log.error`).
 4. **`GET /me/unread-counts` reports `newHighlights` and `meetups` as `0` when their inputs are
    unreadable.** The same file states the opposite rule for the inbox projection — *"undefined
    (omitted from JSON) means 'not known', which is a different statement from 0 and must stay
@@ -6111,6 +6149,15 @@ could have caught it at any point, and nothing was reading it.
    cheap: the only client consumer already reads `res.data.newHighlights ?? 0`
    (`travel-buddy-standalone/src/hooks/useMessaging.ts:638#setNewHighlights(res.data.newHighlights ?? 0);`),
    so omission would change the wire and not the badge.
+   **HALF-CLOSED 2026-09-15, on the half that was never the owner decision.** The `0` on
+   the wire is untouched and the test that pins it is untouched: this lane did not take the
+   decision §19 surfaced. What it closed is a different defect inside the same block — the
+   highlights COUNT query was the last read in there whose error was not bound at all,
+   while its two neighbours (the block set and the circle read) each already log. So the
+   badge under-reported from an unreadable `highlights` with nothing anywhere saying it
+   had (`artifacts/api-server/src/routes/messaging.ts:1564#if (hCountErr) req.log.warn`).
+   Zero-by-failure and zero-by-fact are still the same number on the wire, and are no
+   longer the same in the log. **The owner decision in the rest of this item is still open.**
 5. **`services/telegraphChatSuggestions.ts` — both sites are fail-closed and stay as they are.**
    An unreadable `message_threads` denies every context flag; an unreadable `circle_memberships`
    denies circle context. One label is imprecise — the verdict's `reason` is `"thread_not_found"`
@@ -6656,7 +6703,7 @@ name, that they are not in their own conversation, and the app will not recover 
   all four reachable handlers.
 - The trip gate beside it binds its own error
   (`routes/telegraphChat.ts:301#const { data: tripMembership, error: tripMembershipErr } = await client`).
-- The typing relay does the same (`routes/telegraphStream.ts:178#const { data: membership, error: membershipErr } = await client`).
+- The typing relay does the same (`routes/telegraphStream.ts:390#const { data: membership, error: membershipErr } = await client`).
 
 **Every case is PAIRED.** A suite asserting only "an outage is not a 200" would pass against a
 route that refuses everybody, so each outage case sits beside a control proving a genuine
@@ -7438,3 +7485,388 @@ about production. A migration file sitting in a tree applies itself to nothing.
   cover it: that check reports tables read with no writer, and this is a function.
 - **`messages.unsent_at` appearing in production.** That is the fact 26.3 rests
   on, and the snapshot it is read from is refreshed, not continuous.
+
+---
+
+## §27 — The four reads §19.6 priced and declined, closed at zero line-shift; and the one that was telling people the wrong thing
+
+**Measured at** `76698a377` (the squash of PR #484, and an ancestor of `main`). **`head_commit`
+is NOT moved and NO verdict moves.** This section re-reads four lines and their tests; it
+re-opens no row, and §1's reading rule applies to every row it does not name.
+
+### 27.1 Why this is a section and not a footnote
+
+§19.6 listed these four as *read against the code and deliberately NOT changed*, and the reason
+it gave for three of them was identical and was a COST: *"Changing it would shift every line
+below it in a 3,900-line file, and this section is not spending that on a log."* That sentence
+is the reason a real defect sat named-but-open through §20, §21, §22, §23, §24, §25 and §26, and
+it deserves to be answered rather than quietly overtaken, because **the cost was real and the
+conclusion was still wrong twice over**:
+
+1. **The cost was avoidable.** All four sites were repaired by replacing lines ONE FOR ONE —
+   `git diff --stat` on `routes/messaging.ts` reads `23 insertions(+), 23 deletions(-)` and the
+   file is the same 4,082 lines it was. Not one of the ~45 anchored citations this census holds
+   into that file moved, nor census-compass's two, nor census-trust's two. A long chained builder
+   collapsed onto one line frees the lines beneath it for the branch that was missing.
+2. **One of them was not "a log".** See 27.2.
+
+### 27.2 The accept path was telling recipients their request had been ACCEPTED when it may have been DECLINED
+
+§19.6 item 2 graded the post-CAS status re-read as *"Real, small"*. The substance of the claim it
+makes is indeed true — the swap matched no row, so the request really has left `pending`. What
+§19 did not price is **which** wrong state the fallback picks:
+
+```
+sendError(res, 'invalid_payload', `Request is already ${(current as any)?.status ?? 'accepted'}`);
+```
+
+A request leaves `pending` in exactly two ways, `accepted` and `declined`, and on a failed read
+this line asserts the first of them **by name, to the person who was refused**. supabase-js
+RESOLVES on a database failure, so there is no throw and no 500 to notice: the outage is
+delivered as a confident sentence about somebody else's decision. That is not a degraded answer
+and not a missing log; it is a false statement about another person, produced by a read that
+never happened.
+
+The repair keeps the existing contract for the case the contract was written for — a status that
+WAS read is still named and still answers `invalid_payload`'s 400 — and refuses to name one that
+was not. An unreadable status answers `degraded_unavailable`, which is 503 and the only code
+`lib/http.ts` marks retryable, because *"this was already answered and we cannot tell you how"*
+is the true sentence available, and because a retry re-runs the guard at the top of the same
+handler, which reports the real status the moment the table is back. A 500 was rejected
+deliberately: `db_error` is not retryable, so a client acts on it by giving up, which is the one
+outcome this path must not produce. A row that has VANISHED between the swap and the re-read is
+absent rather than accepted, and gets the same 404 the pre-read gives.
+
+### 27.3 The other three
+
+- **`artifacts/api-server/src/routes/messaging.ts:411#const { data: before, error: beforeErr } = await client` — the prior-language read.** §19.6's analysis of the gate is
+  correct and its conclusion does not follow from it: `null` and `undefined` do decide
+  identically here, and the decision both reach is *sweep*. `retranslateForUser` pushes up to
+  `RETRANSLATE_BATCH_LIMIT` messages through the PAID translation provider, so every save whose
+  prior-language read failed billed a ~200-message sweep for a change nobody had made. The gate
+  call now carries `!beforeErr`, and the failure is warned.
+- **`artifacts/api-server/src/routes/messaging.ts:1112#const { data: previewMsg, error: previewErr } = await sc` — the preview-message insert.** §19.6 placed it outside this class
+  as write-chain territory. Being outside a checker's scope is not being handled: the 200 is
+  already sent when this runs, so the log is the only record the write can leave, and without it
+  a preview that never landed left the thread created, the accept reported, the first message
+  missing and nothing saying why. Still best-effort; now logged.
+- **`artifacts/api-server/src/routes/messaging.ts:1563#const { count: hCount, error: hCountErr } = await q;` — the highlights count in the unread badge.** The last read in
+  that block whose error was not bound at all, while its two neighbours — the block set and the
+  circle-membership read — each already log and each already say the badge under-reports. The
+  `0` on the wire and the test that pins it are untouched: **the owner decision §19.6 item 4
+  surfaced is still open and is not taken here.** Only the silence is closed.
+
+### 27.4 Why T344 and T363 do not move
+
+Both are `W`, both stay `W`, and the reason is each row's own stated ceiling rather than an
+arithmetic convenience. T344's blocker as §19 recorded it is the FOURTEEN sites of this class in
+`routes/telegraph.ts`, `routes/telegraphChat.ts` and `routes/telegraphStream.ts` — *"those three
+files are not this lane's, and a row is closed by whoever can close all of it"* — and none of
+them is in `routes/messaging.ts`. T363's is stated even more directly: *"the open remainder is
+outside `routes/messaging.ts` entirely."* Four more closures inside that file therefore move
+neither row, and nothing here moves a row in the other direction either: every change is a
+read-path refusal or a log where there was silence, so no `C` becomes `W`.
+
+### 27.5 What would turn this red
+
+- **A line inserted into `routes/messaging.ts`.** The zero-shift property is what keeps ~49
+  citations across three censuses pointing at the right lines, and it is a property of this
+  change, not of the file. The next edit there has to choose it again or repoint.
+- **`shouldRetranslateOnLanguageChange` learning to distinguish "unreadable" itself.** The
+  `!beforeErr` term is at the CALL SITE, because the gate module lib/retranslateGate.ts is
+  shared with a second caller, routes/profile.ts, which makes the same prior-language read and
+  was NOT touched here. **That second call site is not closed and is not this section's to
+  close.** Both files are named here in plain text rather than cited: neither is a Telegraph
+  behaviour this census grades, and `check:census-scope-coverage` is right to expect a cited
+  file to be watched for staleness. Naming a neighbour is not grading it.
+- **A client switching on the exact message text of the CAS-loss refusal.** The 400's wording is
+  unchanged; the new 503 is a code that path never produced before.
+
+---
+
+
+> **RENUMBERED AT INTEGRATION, 2026-09-15.** This section was written as `§27` by the
+> TELEGRAPH lane on `claude/telegraph-lane-wave` and the SWALLOWED-READS lane wrote a
+> different `§27` on `claude/messaging-swallowed-reads` at the same time; both are above.
+> This one is now `§28` and every `§27.x` reference INSIDE it was renumbered with it.
+> Nothing else changed — no row, no verdict, no evidence. Under this census’s
+> LAST-STATEMENT-WINS rule the two sections are independent: `§27` moves NO verdict, and
+> the three rows this one moves (T178, T233, T416) are named in no other section of this
+> pass.
+
+## §28 — DELIVERED becomes a fact the bus already knew, reconnect stops starting from scratch, and the fan-out gets a size it will not exceed
+
+TELEGRAPH lane, 2026-09-15, worktree `claude/telegraph-lane-wave` off
+`claude/post-merge-census-redeclare` (`44ae0d4fe`). Three rows move. Everything
+else this section says is a BLOCKER, written down so the next lane does not
+re-derive it.
+
+**No migration was written, no database was touched, no flag was flipped.** That
+is the constraint this section worked inside and it is why it is three rows and
+not thirty: §1's closing paragraph is right that a large part of the 157 W is
+capped at 2810–2813 and at flags seeded FALSE, and nothing in a worktree moves
+that. The three rows below are the ones whose missing half was CODE, in files
+this lane holds, with no schema behind them.
+
+### 27.1 T178 — `message.delivered`, and what a delivered receipt is allowed to claim
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| T178 | N | **C** | §13.2 `message.delivered`. In the union (`artifacts/api-server/src/lib/telegraphEvents.ts:116#| "reconnect" | "message.delivered" | "stream.resumed";`) and emitted from the BUS rather than from a send handler (`artifacts/api-server/src/lib/telegraphEvents.ts:416#function emitDeliveryReceipt(`), so the four call sites that publish `message.created` cannot forget it. No migration, no flag: true on every deployment of this branch. |
+
+The row's reason was *"No delivered concept exists to emit (T69)"*, and T69's
+is *"no DELIVERED concept anywhere"*. Both were true about the SCHEMA and both
+missed the same thing: the realtime bus already observed a delivery fact on
+every fan-out and threw it away. `publishToUsers` knows whether a recipient had
+an open connection that ACCEPTED the event. That is what DELIVERED means in
+every messaging product that has one, and it needs no column.
+
+**What it claims, exactly, and what it refuses to.** That a recipient's open
+connection took the event. Not that the message reached device storage — this
+transport carries no client acknowledgement and inventing one would be a lie
+with a number attached. Not that anybody read it: that is `message.seen`, it has
+a different writer, and collapsing the two would destroy the distinction §7.4's
+unsend window is built on. A callback that THREW is not a delivery
+(`artifacts/api-server/src/test/telegraphDeliveryReceipts.test.ts:52#test("a delivered message emits message.delivered back to the sender", () => {`
+and the throwing-subscriber case beside it); counting the attempt would make
+DELIVERED mean "we tried".
+
+**It carries a count, not a roster.** A delivery receipt is also a presence
+disclosure — it says somebody's device is online right now — so `recipientUserId`
+is populated only when the audience was exactly one person
+(`artifacts/api-server/src/lib/telegraphEvents.ts:452#recipientUserId: recipients.size === 1 ? [...recipients][0] : null,`).
+In a two-party thread that names somebody the sender already knows. In a larger
+one it would turn a delivery receipt into a per-member presence feed — *who on
+this trip has their phone open* — which nobody in the thread agreed to publish.
+The rule keys off audience SIZE and not thread type, because this module does
+not know the thread type and a rule that has to ask a caller can be answered
+wrongly. The test asserts no member id appears anywhere on the wire
+(`artifacts/api-server/src/test/telegraphDeliveryReceipts.test.ts:91#test("a multi-recipient audience is counted, never named", () => {`).
+
+**`deliveredCount: 0` is a claim too, so it is scoped.** Zero means no
+connection on THIS instance took it, which is not the same as offline when a
+cross-instance broadcast hook is registered and another instance may hold the
+socket. The receipt says which world it is reporting from
+(`artifacts/api-server/src/lib/telegraphEvents.ts:454#crossInstance: _broadcastHook !== null,`)
+rather than letting a local zero read as a global one
+(`artifacts/api-server/src/test/telegraphDeliveryReceipts.test.ts:72#test("an offline audience is reported as delivered to nobody, not as silence", () => {`).
+The failure to deliver is also a counter — `messagesDeliveredNowhere`
+(`artifacts/api-server/src/lib/telegraphEvents.ts:440#if (origin === "local" && delivered.size === 0) stats.messagesDeliveredNowhere++;`)
+— because a realtime outage that reaches an operator as *"the app feels slow"*
+is unattributable, which is the same argument this file's own header already
+makes about every other thing it swallows.
+
+**An edit is not a delivery.** `message.updated` carries the same two fields a
+receipt is addressed from, and receipting one would report the same message
+delivered twice — which would make §28's duplicate-delivery SLO count this bus's
+own bookkeeping as a defect
+(`artifacts/api-server/src/test/telegraphDeliveryReceipts.test.ts:155#test("an edit is not a delivery", () => {`).
+
+**Mutation results, ten mutants.** Nine caught: suppressing the receipt (7 of 10
+tests red), naming a multi-party audience, counting a throwing callback as
+delivered, suppressing the zero-delivery receipt, counting the sender's own
+copy, emitting with no sender to address, hard-coding `crossInstance`, dropping
+the `messagesDeliveredNowhere` counter, and widening the event-type guard so any
+event could generate a receipt. **One survived and is reported rather than
+hidden:** removing `publishToUsersLocalNoReceipt` changes nothing, because the
+event-type guard already prevents recursion. That helper is defence in depth,
+not the mechanism; the mechanism is the guard, and the guard IS caught.
+
+### 27.2 T233 — reconnect resumes the conversation. It does not resume the event log, and cannot.
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| T233 | N | **W** | §17.3 reconnect resume. Every frame now carries an `id:` line (`artifacts/api-server/src/routes/telegraphStream.ts:236#const frame = (id: string | null, event: string, data: unknown) => {`), so an EventSource returns its own `Last-Event-ID` and the cursor round-trips through the transport; the messages missed while away are replayed from `messages` (`artifacts/api-server/src/routes/telegraphStream.ts:139#async function readResume(`) and `stream.resumed` states on every connection whether the gap was actually closed (`artifacts/api-server/src/routes/telegraphStream.ts:304#frame(null, "stream.resumed", { type: "stream.resumed", ...outcome, ts: new Date().toISOString() });`). **W and not C: only the CONVERSATION resumes.** |
+
+The row said *"The SSE stream carries no cursor … Gap recovery is delegated
+entirely to polling"*. It carries one now, and polling is a fallback rather than
+the mechanism.
+
+**Why W.** The requirement names a *conversation/event* sequence and only the
+first half is recoverable here. The bus is in-memory and lossy **by design** —
+T369 records that the real tree emits no durable event log and that nothing in
+production is rebuildable from events — so there is nothing to replay for
+typing, presence or receipts, and replaying a typing indicator from four minutes
+ago would be a false statement about the present rather than a recovered fact
+about the past. **EXACT BLOCKER: a durable event log. The substrate for one is
+`telegraph_outbox` in migration 2810, which no database has (T154, T195).**
+Until that is applied and drained, the event half of this row cannot move, and
+no amount of code in this file changes that.
+
+**The cursor is a timestamp, and it is inclusive.** `messages` has no sequence
+column on this tree — 2810's exists in no database (T228) — so the cursor is
+expressed in `created_at` coordinates, the same convention migration 2400 used
+for the §14.3 bound and for the same reason. The comparison is `>=`, not `>`
+(`artifacts/api-server/src/routes/telegraphStream.ts:173#.gte("created_at", since)`):
+`created_at` is not unique, an exclusive cursor drops a tied boundary row
+silently and forever, and a duplicate is something the client already absorbs
+because every replayed frame is labelled and carries a messageId
+(`artifacts/api-server/src/routes/telegraphStream.ts:288#replay: true,`).
+A gap is recoverable by nothing.
+
+**A resume that did not happen says so.** Both reads bind their error. This is
+the §20.7 class exactly: supabase-js resolves `{data: null, error}`, so an
+unchecked read would make *"nothing arrived while you were away"*
+byte-identical to *"we could not look"*, and a client that believed the first
+would stop polling and lose the conversation. An unreadable roster and an
+unreadable `messages` both resume NOTHING and report `resumed: false`
+(`artifacts/api-server/src/test/telegraphStreamResume.test.ts:258#test("an unreadable roster resumes NOTHING and says so", async () => {`).
+A malformed cursor is refused as a cursor rather than treated as the beginning
+of time, and a cursor older than the 24-hour window is refused rather than
+silently truncated
+(`artifacts/api-server/src/test/telegraphStreamResume.test.ts:297#test("a cursor older than the resume window is refused rather than silently truncated", async () => {`);
+a truncated replay reports `resumed: false` for the same reason, because a
+partial replay that claimed success leaves a hole nobody looks for.
+
+**Scope of the replay.** Live threads only — a thread the caller has LEFT is not
+replayed into their stream — and the caller's own sends are excluded, because
+their client wrote them optimistically and already holds them.
+
+**Mutation results, eleven mutants, all caught:** exclusive cursor, roster error
+swallowed, messages error swallowed, `left_at` filter dropped, own messages
+replayed, `id:` line removed, `Last-Event-ID` ignored, malformed cursor treated
+as epoch, resume window unbounded, `stream.resumed` never emitted (7 of 9 red),
+replay marker dropped.
+
+### 27.3 T416 — the fan-out gets a bound, on the path rather than on a thread type that does not exist
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| T416 | N `∅` | **W** | §30A.12 bounded fan-out. Two bounds, both exported and both proved: presence-class events are shed above 50 recipients (`artifacts/api-server/src/lib/telegraphEvents.ts:596#export const FANOUT_PRESENCE_MAX = 50;`) and every event degrades to a single poll signal above 500 (`artifacts/api-server/src/lib/telegraphEvents.ts:606#export const FANOUT_HARD_MAX = 500;`). The absence is no longer unguarded. **W and not C: §30A.12's Event conversations still do not exist (T415), so the bound has never been exercised by a real large thread.** |
+
+The row read *"Unguarded absence: `publishToThread` fans out to every active
+member with no size bound, and the rule is unviolated only because event
+conversations do not exist."* The second clause is still true and is the ceiling;
+the first is not.
+
+**The bound belongs on the PATH.** `publishToThread` is the same function for
+every thread type, so a bound attached to a thread type that does not exist yet
+is a bound that will be missing on the day it first matters. It is applied to
+the resolved audience, which is the thing that actually costs.
+
+**Two bounds, because there are two costs.** Presence-class events — typing,
+read receipts, per-message seen, and the delivery receipts §28.1 just added —
+cost O(members) per KEYSTROKE and carry nothing a reader loses by missing, so
+they stop at the smaller bound
+(`artifacts/api-server/src/test/telegraphFanoutBounds.test.ts:93#test("presence is SHED above the presence bound, and counted", async () => {`).
+Message-class events carry the conversation itself and are deliberately NOT shed
+for being popular
+(`artifacts/api-server/src/test/telegraphFanoutBounds.test.ts:119#test("a message SURVIVES the presence bound — the conversation is the payload", async () => {`);
+above the hard bound they degrade to a poll signal that names the original type,
+so one publish costs a constant payload instead of a roster and no message body
+rides a fan-out that wide
+(`artifacts/api-server/src/test/telegraphFanoutBounds.test.ts:134#test("above the hard bound a message degrades to a poll signal, never to silence", async () => {`).
+**Degrading is not silence** — the member is told the thread moved and what kind
+of thing moved — and both sheds are counters, not silent drops.
+
+**What this does NOT close, stated so it is not quoted as more than it is.** The
+shed is by conversation SIZE, not by LOAD. T259's second half asks for
+server-side shedding *under load*, and there is still no load signal here; T239's
+gap is a bandwidth signal on the device, which is a client fact this lane holds
+no file for. Neither row moves. Both thresholds also sit above every conversation
+this repository can create, which is why nothing shipped changes behaviour — and
+why this row is W: the mechanism is proved on a synthetic roster.
+
+**Mutation results, eight mutants, all caught:** presence bound removed,
+`message.created` added to the presence class, hard bound degrading to silence,
+degraded signal carrying the original payload, hard bound removed, presence shed
+applied to small threads, counters not incremented, `originalType` dropped.
+
+### 27.4 Rows examined and NOT moved, with the exact blocker
+
+Read in full from the `CENSUS_INTEGRITY_DUMP=ALL` dump — 157 W and 61 N — under
+last-statement-wins. These are the ones that looked closable and are not.
+
+| id | exact blocker |
+| --- | --- |
+| T69, T72, T139, T141, T156, T210, T228, T230, T231 | Columns that exist only in `2810`/`2811`. **No database has run them.** T69 gains DELIVERED as a concept from §28.1 — two of six becomes three of six — and still has no `lifecycleState` column and no UNSENT, so it does not move. |
+| T142, T143, T144, T147, T154, T158, T161, T163, T181, T195, T196 | Same: 2810–2813 tables and triggers, applied nowhere. |
+| T211, T313, T389, T390, T444 | Migration `2400` applied nowhere AND `telegraph_history_bound_enabled` seeded FALSE. Two independent external settings; code changes neither. |
+| T276, T278, T283, T284 | Flag seeded FALSE plus an unapplied migration. T278 additionally: five of its six origins are unverifiable in principle here. |
+| T53, T63, T225, T243, T274, T371 | Voice. Needs a migration widening `messages.media_type` and an audio MIME in the pipeline. Neither is this lane's to write. |
+| T75, T76, T77, T326, T327, T338, T348, T387 | Unsend. PR #472 is unmerged and applied to `portava-ci` only; §26.3 is the standing record. |
+| T347 | SLO-02's exact form needs the idempotency key the send path does not have (T231) — which needs 2810. |
+| T233 (event half), T369, T428 | A durable event log. Substrate is `telegraph_outbox` (2810), applied nowhere. |
+| T435 | A durable diagnostics audit needs a `record_type` `admin_access_log` does not accept — a migration, or a false label in an audit trail. |
+| T11, T123, T295, T320, T411, T413, T423, T448 | Client-side, and this lane deliberately did not take them: the client test surface here is `jest`, which this worktree's brief does not establish a command for, and a client change proved only by typecheck is a change this census would have to record as untested. |
+| T35, T319, T359, T397, T445 | Named files belong to other lanes (`routes/circle.ts`, `services/groupChatSync.ts`, `NotificationDeduplicationService.ts`). |
+| T259, T239 | See 27.3 — a LOAD signal and a BANDWIDTH signal, neither of which exists. Size is not load. |
+
+### 27.5 The swallowed reads this lane found and did NOT fix, and why
+
+§20.7's class, re-scanned across the Telegraph tree. Result:
+`src/services/telegraph/`, `src/domain/telegraph/`, `src/server/telegraph/` and
+`src/routes/telegraph*.ts` hold **no** `const { data } = await` site — the
+earlier lanes closed them. Two findings remain.
+
+**`src/routes/telegraph.ts` — five sites, ruled HARMLESS, reasoning here.** This
+file is the AI recommendation route and is not in `CENSUS_SCOPE`. Each of its
+five error-discarding reads fails CLOSED: an unreadable `feature_flags` degrades
+to no location context; an unreadable `user_hashtag_follows` or `hashtags`
+produces no span rather than a wrong one; an unreadable `profiles` empties the
+candidate set so no mention resolves; and an unreadable `user_follows` leaves
+both follow sets empty, which makes the `friends_only` and `interacted` tests
+false and therefore SUPPRESSES those mentions. None of the five can admit
+something a successful read would have refused. The one site in that file that
+could have — the `blocks` read — already binds its error and suppresses every
+mention span on failure.
+
+**`src/routes/messaging.ts` — four sites, REAL, and BLOCKED for a reason worth
+recording.** They are: the prior-`preferred_language` read whose dropped error
+makes the retranslate gate see a change that may not have happened and bill a
+200-message provider sweep; the lost-CAS-race status read that falls back to the
+literal `'accepted'` and so tells a caller their request was ACCEPTED when it may
+have been declined; the accept path's preview-message insert whose error is
+discarded, so a message that never landed leaves no record; and the highlights
+count in the unread badge, the last unbound read in a block whose two neighbours
+already log and under-report by choice. LDB-05 is still `divergent` and this is
+what is left of it.
+
+**The blocker is not the code.** A fix was written, tested and reverted. Any
+insertion in that file shifts lines, and `routes/messaging.ts` is cited by
+`census-compass.md` (three anchored citations), `census-trust.md` (one) and this
+census (roughly forty-five). `check:doc-citations` goes red on all of them, and
+repairing the first two means editing two other lanes' censuses — which this
+lane does not own — and ageing them in `check:census-freshness` besides. The
+same collision cost the union declarations in `lib/telegraphEvents.ts` their
+natural position: `census-layover.md` cites that file by the line number of its
+`payload` field comment, so the two new
+event types are declared on the existing `reconnect` line and documented below
+the interface, which is ugly and is the honest price of not silently repointing
+another lane's evidence. **Recommendation for the coordinator: the four
+`messaging.ts` sites are a single small commit plus four citation repoints
+across three censuses, and they should be done by whoever can touch all three.**
+
+### 27.6 What would turn this section red
+
+- **`message.delivered` losing its emitter.** It is emitted from the bus, so a
+  future send path cannot drop it by forgetting — but moving the emit back into
+  a handler would restore exactly the fragility it was placed there to avoid.
+- **An exclusive resume cursor.** `>` instead of `>=` reintroduces the silent
+  gap; the mutation is in the suite and goes red.
+- **Either fan-out bound rising above a real thread size, or `message.created`
+  entering `PRESENCE_CLASS_EVENTS`.** The second would shed conversations.
+- **A durable event log arriving.** Then T233's event half becomes a live
+  question and §28.2's ceiling must be re-derived rather than re-read.
+
+### 27.7 Headline, restated from the rows
+
+`check:census-integrity` parsed every one of the 451 and counts, at this commit:
+
+| Measure | Value |
+| --- | --- |
+| BUILT-AND-CORRECT | **231** |
+| BUILT-BUT-WRONG | **159** |
+| NOT-BUILT | **58** |
+| CANNOT-VERIFY | **3** |
+| **CONSTRUCTED%** = (231+159)/451 | **86.5 %** |
+| **CORRECT%** = 231/451 | **51.2 %** |
+
+This supersedes §24.2's `C 230 / W 157 / N 61 / X 3` and §1's much older
+`209 / 176 / 51`, both of which are left in place because this document is
+append-only. **The delta from §24.2 is exactly the three rows in §28.1–§28.3 and
+nothing else: T178 N→C, T233 N→W, T416 N→W.** It is the tool's count, not an
+addition sum — §24's own correction records what happens when a headline is
+arrived at by adding a pass's moves to the previous headline — and it certifies
+nothing about the other 448 rows, which were read in this pass and not
+re-measured.

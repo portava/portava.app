@@ -9,7 +9,7 @@
  *   GET /api/media/timeline                   §17   Earlier / Now rails (observed only, no forecast)
  *   GET /api/media/map                        §21   perspective counts per canonical place
  *   GET /api/media/search                     §38   media / places / people / gems / experiences
- *
+ *   GET /api/media/gems                       §16   Hidden Gems lens — derived gem state, not a feed
  * ADDITIVE. These are NEW routes and touch NO existing media serving
  * (mediaFeed.ts is unchanged). They are registered BEFORE mediaFeedRouter in
  * routes/index.ts so the specific `/media/world` etc. paths are not swallowed by
@@ -184,7 +184,7 @@ router.get(
         perspectiveCount: 0,
         contributorCount: 0,
         freshness: "none",
-        currentState: { live: false, claims: [], crowdLabel: null },
+        currentState: { live: false, claims: [], crowdLabel: null }, confidence: buildExperienceConfidence([], [], nowMs),
         heroMedia: [],
         generatedAt: new Date(nowMs).toISOString(),
       });
@@ -338,6 +338,55 @@ router.get(
     const viewer = await resolveViewer(sc, auth.user.id, { needFollows: false });
     const projection = await buildMediaMapProjection(sc, viewer, parseCity(req.query.city), nowMs);
     sendProjection(res, "map", projection);
+  }),
+);
+
+// ── GET /media/gems ──────────────────────────────────────────────────────────
+// §16 Hidden Gems lens. Registered LAST and written below every other route in
+// this file ON PURPOSE: eight `file:line` citations across census-media.md and
+// docs/architecture/mobile-reachability-ledger.json point into the seven routes
+// above (MD367's is ANCHORED at `"/media/search"`), so an addition anywhere
+// higher would silently rot them. The import sits here with the route, rather
+// than in the block at the top, for the same reason — ESM hoists it either way.
+// See census-media §12.9 on anchored-citation decay.
+//
+// This is NOT `GET /media/gems-feed`. That endpoint (routes/mediaFeed.ts) is a
+// ranked social feed whose order weights saves and visits; §16.2 forbids
+// popularity-first ranking outright. This one serves derived §16 gem STATE.
+import { buildGemStateProjection } from "../services/media/MediaGemStateService.js";
+// §23 confidence on the "not available to you" experience shape, so the field is
+// a measured ZERO rather than absent (census-media MD169). Imported here for the
+// same anchored-citation reason as the line above.
+import { buildExperienceConfidence } from "../services/media/MediaExperienceResolver.js";
+
+router.get(
+  "/media/gems",
+  asyncHandler(async (req, res) => {
+    const nowMs = Date.now();
+    const auth = await requireUser(req, res);
+    if (!auth) return;
+    const sc = getServiceClient();
+    if (!sc) {
+      sendError(res, "server_not_configured");
+      return;
+    }
+    const rl = checkRateLimit("media_gems", auth.user.id, 60, 60_000);
+    if (!rl.allowed) {
+      res.setHeader("Retry-After", Math.ceil(rl.retryAfterMs / 1000).toString());
+      sendError(res, "rate_limited", "Too many requests. Please wait.");
+      return;
+    }
+    // The lens resolves the viewer only for identity: gem disclosure turns on
+    // `mayDiscloseGemIdentity`, not on the follow graph, so `needFollows` is
+    // false and no follow read is spent.
+    const viewer = await resolveViewer(sc, auth.user.id, { needFollows: false });
+    const projection = await buildGemStateProjection(
+      sc,
+      viewer,
+      { city: parseCity(req.query.city) },
+      nowMs,
+    );
+    sendProjection(res, "gems", projection);
   }),
 );
 

@@ -158,7 +158,27 @@ export type TermAbsence =
    * A stop exists and its `duration_min` is not a figure a traveller chose
    * (the column's own CHECK is BETWEEN 5 AND 720).
    */
-  | "stop_duration_unstated";
+  | "stop_duration_unstated"
+  /**
+   * RETURN TERM ONLY. The stop is inside the terminal, so there is no landside
+   * ride back for anyone to measure. Distinct from every absence above: those
+   * are things nobody said, this is a thing that does not exist.
+   */
+  | "no_landside_leg"
+  /**
+   * RETURN TERM ONLY. The instant the traveller would START BACK is
+   * `departAt + outbound + dwell`, and one of those two terms is absent — so
+   * there is no time to ask the port about. Asking at the DEPARTURE instant
+   * instead is exactly the symmetry §12.1 forbids, dressed as an answer.
+   */
+  | "return_instant_unknown"
+  /**
+   * RETURN TERM ONLY. The start-back instant WAS derivable, the port was asked
+   * about it, and it had nothing — `NO_ROUTED_PROVIDER` on this deployment.
+   * The port's own word rides in `portReason`; this says which of the two
+   * questions went unanswered.
+   */
+  | "no_routed_return_leg";
 
 /** One term — a figure and where it came from, or an absence and which one. */
 export interface StatedTerm {
@@ -183,6 +203,19 @@ export interface StatedTerm {
 export interface StatedCandidateTiming {
   travelTimeMin: number | null;
   travelSource: StatedTimingSource;
+  /**
+   * The ride BACK, asked for at the instant the traveller would START BACK
+   * rather than at the instant they set out — §12.1's *"return (future
+   * conditions, not symmetric)"*.
+   *
+   * `null` is the COMMON answer and the honest one: only a routed, time-aware
+   * provider can say that the same road costs more at 18:40 than at 16:00, and
+   * `LAYOVER_TRAVEL_TIME_PROVIDER` is `noRoutedProvider` here. A `null` return
+   * does NOT make a candidate unmeasured — `candidateFits` falls back to the
+   * outbound doubled, which is what it charged before this term existed.
+   */
+  returnTravelTimeMin: number | null;
+  returnTravelSource: StatedTimingSource;
   activityTimeMin: number | null;
   activitySource: StatedTimingSource;
   /**
@@ -193,6 +226,7 @@ export interface StatedCandidateTiming {
    * `certifiedActionUniverse` reads.
    */
   travel: StatedTerm;
+  returnTravel: StatedTerm;
   activity: StatedTerm;
   /**
    * TRUE only when the traveller's own stop says this stop is inside the
@@ -318,8 +352,10 @@ export async function statedLayoverTimings(
     }),
   );
 
-  const byId = new Map<string, StatedCandidateTiming>();
-  candidates.forEach((c, i) => {
+  // PASS 1 — the outbound leg and the dwell, per candidate. The ride back
+  // cannot be asked for yet: the instant to ask about is `departAt + outbound +
+  // dwell`, so it does not exist until both of those are resolved.
+  const outward = candidates.map((c, i) => {
     const subject = subjects[i];
     const stop = subject !== null ? stops.get(subject) : undefined;
     const leg = legs[i];
@@ -368,18 +404,74 @@ export async function statedLayoverTimings(
       portReason: null,
     };
 
+    return { c, insideAirport, noSubject, travel, activity };
+  });
+
+  // PASS 2 — THE RIDE BACK, at the instant they would start back.
+  //
+  // `departAt + outbound + dwell` is the traveller's OWN itinerary for this
+  // place, not a second copy of `bandCandidate`'s `returnDepartAt` (which is
+  // the LATEST instant the window allows a start-back — a bound for a proof,
+  // a different question with a different answer). Where that instant is not
+  // derivable the port is NOT asked at the departure instant instead: an answer
+  // for the wrong time is the symmetry this term exists to remove, wearing a
+  // routed provider's credibility.
+  const backLegs = await Promise.all(
+    outward.map(async (r) => {
+      if (r.noSubject || r.insideAirport) return null;
+      if (r.travel.value === null || r.activity.value === null) return null;
+      const startBackAt = new Date(
+        opts.departAt.getTime() + (r.travel.value + r.activity.value) * 60_000,
+      );
+      // The legs run place → airport, which is the direction that is allowed to
+      // cost something different from airport → place.
+      return landsideLeg(
+        placePoint({ lat: r.c.lat ?? null, lng: r.c.lng ?? null }),
+        opts.centre,
+        startBackAt,
+        opts.provider,
+      );
+    }),
+  );
+
+  const byId = new Map<string, StatedCandidateTiming>();
+  outward.forEach((r, i) => {
+    const { c, insideAirport, noSubject, travel, activity } = r;
+    const back = backLegs[i];
+    const backMinutes = back && back.minutes !== null ? back.minutes : null;
+    const returnTravel: StatedTerm = {
+      value: backMinutes,
+      source: backMinutes !== null ? "routed_port" : "unmeasured",
+      // Precedence runs outward exactly as the outbound term's does: an id with
+      // no subject, then a place with no landside leg at all, then an instant
+      // that could not be derived, then a port that was asked and had nothing.
+      absence: backMinutes !== null
+        ? null
+        : noSubject ? "no_layover_subject"
+        : insideAirport ? "no_landside_leg"
+        : (travel.value === null || activity.value === null) ? "return_instant_unknown"
+        : "no_routed_return_leg",
+      // Only present when the port was actually asked. `no_landside_leg` and
+      // `return_instant_unknown` never reach it, and a reason borrowed from the
+      // OUTBOUND call would be an explanation for a question never put.
+      portReason: back && back.minutes === null ? (back.reason ?? null) : null,
+    };
+
     // ONE shape for every candidate. There is deliberately no second branch for
     // "nothing was stated": the records above already carry the absence AND why,
     // and a branch that skips them is a branch a fabricated default can hide
     // behind — which is exactly what a mutation of this file proved on
-    // 2026-09-15. The four flat fields are READ OFF the two records, never
+    // 2026-09-15. The six flat fields are READ OFF the three records, never
     // recomputed, so the two views cannot drift.
     byId.set(c.id, {
       travelTimeMin: travel.value,
       travelSource: travel.source,
+      returnTravelTimeMin: returnTravel.value,
+      returnTravelSource: returnTravel.source,
       activityTimeMin: activity.value,
       activitySource: activity.source,
       travel,
+      returnTravel,
       activity,
       insideAirport,
     });

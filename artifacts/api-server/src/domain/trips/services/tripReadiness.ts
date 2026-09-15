@@ -185,6 +185,37 @@ async function safeSelectOrNull(sc: any, run: (sc: any) => any): Promise<any[] |
   }
 }
 
+/**
+ * The maybeSingle() sibling of safeSelectOrNull. A single-row read has THREE
+ * outcomes and only two values in the supabase-js result, which is what makes
+ * the swallowed read so easy to write here: `undefined` means NOT READ (thrown,
+ * or resolved with an `error`), `null` means read and absent, and a row means
+ * read and present. Callers that would say "there is none" must check for
+ * `undefined` first, because "there is none" is a claim about the trip.
+ */
+async function safeMaybeSingleOrUndefined(sc: any, run: (sc: any) => any): Promise<any | null | undefined> {
+  try {
+    const { data, error } = await run(sc);
+    if (error) return undefined;
+    return (data as any) ?? null;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The `stay` and `transport` sentences are claims about TWO sources — a plan
+ * item AND a reservation. Naming the one that failed is the difference between
+ * "we could not tell" and a reader guessing which half is missing.
+ */
+function unreadableSourceSentence(planUnavailable: boolean, reservationsUnavailable: boolean, question: string): string {
+  const unread: string[] = [];
+  if (planUnavailable) unread.push("plan items");
+  if (reservationsUnavailable) unread.push("reservations");
+  const which = unread.length === 2 ? "plan items and its reservations" : unread[0] ?? "sources";
+  return `This trip's ${which} could not be read — so we cannot tell ${question}.`;
+}
+
 // ---------------------------------------------------------------------------
 // Optional countryCodes module (may not exist in every environment)
 // ---------------------------------------------------------------------------
@@ -489,25 +520,38 @@ export async function computeReadiness(sc: any, tripId: string, opts: { stages?:
   }
   const memberIds = memberIdsRead;
 
-  const { data: planData } = await sc
-    .from("trip_plan_items")
-    .select("id, category, status, day_date, starts_at")
-    .eq("trip_id", tripId)
-    .is("removed_at", null)
-    .neq("status", "cancelled");
-  const planItems = (((planData as any) ?? []) as any[]);
+  // SWALLOWED READS, THE SAME RULING AS trip_reservations BELOW. These three
+  // reads used to be `const { data } = await sc...` — supabase-js RESOLVES on a
+  // database error, so a failed read was byte-identical to "no rows" and every
+  // sentence derived from it asserted absence out of a query that never
+  // answered: `plan` reported every day of the trip as an OPEN DAY, `budget`
+  // said "No budget set" about a budget nobody read, and `documents` said "No
+  // documents saved" the same way. All three are claims about the trip, not
+  // about the reader, so `[]` is not an honest answer when the table was not
+  // read (the safeSelect docstring's own rule).
+  const planRead = await safeSelectOrNull(sc, (c) =>
+    c.from("trip_plan_items")
+      .select("id, category, status, day_date, starts_at")
+      .eq("trip_id", tripId)
+      .is("removed_at", null)
+      .neq("status", "cancelled"),
+  );
+  const planUnavailable = planRead === null;
+  const planItems = planRead ?? [];
 
-  const { data: budgetRow } = await sc
-    .from("trip_budget")
-    .select("*")
-    .eq("trip_id", tripId)
-    .maybeSingle();
+  // maybeSingle(), so safeSelectOrNull's array shape does not apply: read the
+  // error explicitly. `undefined` = not read; `null` = read, and absent.
+  const budgetReadRow = await safeMaybeSingleOrUndefined(sc, (c) =>
+    c.from("trip_budget").select("*").eq("trip_id", tripId).maybeSingle(),
+  );
+  const budgetUnavailable = budgetReadRow === undefined;
+  const budgetRow = budgetReadRow ?? null;
 
-  const { data: docsData } = await sc
-    .from("trip_documents")
-    .select("id")
-    .eq("trip_id", tripId);
-  const documentCount = (((docsData as any) ?? []) as any[]).length;
+  const docsRead = await safeSelectOrNull(sc, (c) =>
+    c.from("trip_documents").select("id").eq("trip_id", tripId),
+  );
+  const documentsUnavailable = docsRead === null;
+  const documentCount = (docsRead ?? []).length;
 
   // ── Defensive sources (tables may not exist yet in this environment) ───────
   // safeSelectOrNull, NOT safeSelect. An unreadable trip_reservations used to
@@ -578,7 +622,24 @@ export async function computeReadiness(sc: any, tripId: string, opts: { stages?:
         if (!covered) gapDates.push(dayStr);
       }
     }
-    if (gapDates.length > 0) {
+    if (planUnavailable) {
+      // EVERY scanned day lands in gapDates when the plan could not be read,
+      // because `covered` is false for want of rows rather than for want of a
+      // plan. "3 open days: Fri, Sat, Sun" is then a specific, actionable and
+      // entirely invented sentence. `unknown` keeps the category out of the
+      // score's denominator and names the days as unscanned, not as empty.
+      push({
+        userId: null,
+        category: "plan",
+        status: "unknown",
+        severity: "normal",
+        title: "Open days could not be checked",
+        detail: "We could not read this trip's plan items, so we cannot say which days have nothing planned.",
+        dueAt: null,
+        actionRef: null,
+        dedupeKey: "plan:gaps",
+      });
+    } else if (gapDates.length > 0) {
       const shown = gapDates.slice(0, 5).map(formatShortDate);
       const suffix = gapDates.length > shown.length ? "…" : "";
       push({
@@ -608,13 +669,13 @@ export async function computeReadiness(sc: any, tripId: string, opts: { stages?:
     // BOTH sources. With reservations unreadable, `hasStayReservation` is false
     // because nothing was read, not because nothing is there — the sentence
     // would be asserting half of itself out of a query that never answered.
-    push(reservationsUnavailable ? {
+    push(reservationsUnavailable || planUnavailable ? {
       userId: null,
       category: "stay",
       status: "unknown",
       severity,
       title: "Accommodation could not be confirmed",
-      detail: "This trip has no accommodation plan item, and its reservations could not be read — so we cannot tell whether a stay is booked.",
+      detail: unreadableSourceSentence(planUnavailable, reservationsUnavailable, "whether a stay is booked"),
       dueAt: null,
       actionRef: null,
       dedupeKey: "stay:none",
@@ -638,13 +699,13 @@ export async function computeReadiness(sc: any, tripId: string, opts: { stages?:
   );
   if (!hasTransportPlan && !hasTransportReservation) {
     // Same asymmetry as `stay` above.
-    push(reservationsUnavailable ? {
+    push(reservationsUnavailable || planUnavailable ? {
       userId: null,
       category: "transport",
       status: "unknown",
       severity: "normal",
       title: "Transport could not be confirmed",
-      detail: "This trip has no transport plan item, and its reservations could not be read — so we cannot tell whether travel is booked.",
+      detail: unreadableSourceSentence(planUnavailable, reservationsUnavailable, "whether travel is booked"),
       dueAt: null,
       actionRef: null,
       dedupeKey: "transport:none",
@@ -662,7 +723,20 @@ export async function computeReadiness(sc: any, tripId: string, opts: { stages?:
   }
 
   // budget ------------------------------------------------------------------
-  if (!budgetRow) {
+  if (budgetUnavailable) {
+    // "No budget set" invites the member to set one they may already have set.
+    push({
+      userId: null,
+      category: "budget",
+      status: "unknown",
+      severity: "normal",
+      title: "Budget could not be checked",
+      detail: "We could not read this trip's budget, so we cannot say whether one is set or whether spending is over it.",
+      dueAt: null,
+      actionRef: null,
+      dedupeKey: "budget:none",
+    });
+  } else if (!budgetRow) {
     push({
       userId: null,
       category: "budget",
@@ -822,7 +896,19 @@ export async function computeReadiness(sc: any, tripId: string, opts: { stages?:
   }
 
   // documents ---------------------------------------------------------------
-  if (documentCount === 0) {
+  if (documentsUnavailable) {
+    push({
+      userId: null,
+      category: "documents",
+      status: "unknown",
+      severity: "normal",
+      title: "Documents could not be checked",
+      detail: "We could not read this trip's documents, so we cannot say whether any are saved.",
+      dueAt: null,
+      actionRef: null,
+      dedupeKey: "documents:none",
+    });
+  } else if (documentCount === 0) {
     push({
       userId: null,
       category: "documents",

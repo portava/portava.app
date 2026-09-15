@@ -1112,7 +1112,7 @@ async function queryDbPlaces(
           lat,
           lng,
           tags: [row.category, row.tag].filter(Boolean) as string[],
-          address: (row.neighborhood ?? null) as string | null,
+          address: (row.neighborhood ?? null) as string | null, neighborhood: (row.neighborhood ?? null) as string | null, // DV-54: the same column also reaches the ranker as a geography key — see the note at the end of lib/discoveryPde.ts. `address` is unchanged; the client still reads it.
           website: null,
           phone: null,
           openingHours: null,
@@ -1188,7 +1188,7 @@ async function queryCanonicalPlaces(
   category: string,
   centerLat: number | null,
   centerLng: number | null,
-): Promise<DiscoveryPlace[]> {
+): Promise<DiscoveryPlace[] | null> {
   const sc = getServiceClient();
   if (!sc) return [];
 
@@ -1212,16 +1212,16 @@ async function queryCanonicalPlaces(
     // Deterministic order so pagination/results are stable across requests.
     const { data, error } = await q.order("normalized_name", { ascending: true }).limit(400);
 
-    // Same call as queryDbPlaces above, on the canonical `places` table: an
-    // unreadable table and a city with no canonical places are one empty array.
-    // The direction stands (the feed still merges external results, so this is
-    // never a "nothing here" claim); the silence does not.
+    // Same call as queryDbPlaces above, on the canonical `places` table, and now
+    // with the same RETURN TYPE for the same reason: `null` = "the registry could
+    // not be read", `[]` = "this city has no canonical rows". Still NON-FATAL —
+    // the merge serves what it has — but no longer SILENT, which is all of D11.
     if (error) {
       logger.warn(
         { err: error, code: "canonical_places_read_failed", city: cityBase, category },
         "discovery: places read failed — this request serves external results only",
       );
-      return [];
+      return null;
     }
     if (!data) return [];
 
@@ -1248,7 +1248,7 @@ async function queryCanonicalPlaces(
           lat,
           lng,
           tags: [row.primary_category].filter(Boolean) as string[],
-          address: (row.neighborhood ?? row.address ?? null) as string | null,
+          address: (row.neighborhood ?? row.address ?? null) as string | null, neighborhood: (row.neighborhood ?? null) as string | null, // DV-54, same as queryDbPlaces: the geography key is the `neighborhood` column, never the street `address` fallback.
           website: null,
           phone: null,
           openingHours: null,
@@ -1265,7 +1265,7 @@ async function queryCanonicalPlaces(
         };
       });
   } catch {
-    return [];
+    return null;   // a throw is a failed read; see the `error` branch above.
   }
 }
 
@@ -1290,20 +1290,20 @@ async function loadCuratedAndCanonicalPlaces(
     queryDbPlaces(destination, category, centerLat, centerLng, blockedIds),
     queryCanonicalPlaces(destination, category, centerLat, centerLng),
   ]);
-  // D11 — THE RESIDUAL, CLOSED. `queryDbPlaces` distinguishes "unreadable" (null)
-  // from "empty" ([]). This function used to absorb that distinction in a
-  // `curated ?? []` and return a bare array, so `GET /discovery`'s four serve
-  // paths each shipped a SHORT LIST with nothing on the envelope saying a source
-  // was missing — one funnel above every one of them. The merge below is
-  // untouched: same rows, same order, same dedup rule. What is new is the report
-  // travelling beside it; `sendDiscoveryPlacesEnvelope` (foot of file) serves it.
-  const curatedRows = curated ?? [];
+  // D11 — THE RESIDUAL, CLOSED FOR BOTH HALVES. `queryDbPlaces` AND
+  // `queryCanonicalPlaces` each distinguish "unreadable" (null) from "empty"
+  // ([]); this absorbed BOTH — curated in a `curated ?? []`, canonical before it
+  // was expressible at all. The merge is untouched; new is the report beside it,
+  // which `sendDiscoveryPlacesEnvelope` (foot of file) turns into failedSources.
+  const curatedRows   = curated   ?? [];
+  const canonicalRows = canonical ?? [];
   const curatedNames = new Set(curatedRows.map((p) => p.name.toLowerCase().trim()));
   return {
-    places: [...curatedRows, ...canonical.filter((p) => !curatedNames.has(p.name.toLowerCase().trim()))],
+    places: [...curatedRows, ...canonicalRows.filter((p) => !curatedNames.has(p.name.toLowerCase().trim()))],
     // `=== null`, never falsiness: `[]` is a real and trustworthy answer, and an
-    // empty city must never acquire a refusal. Pinned by its own control test.
-    failedSources: curated === null ? [DISCOVERY_CURATED_SOURCE] : [],
+    // empty city never acquires a refusal. MERGE ORDER. Controls pin both ways.
+    failedSources: [...(curated   === null ? [DISCOVERY_CURATED_SOURCE]   : []),
+                    ...(canonical === null ? [DISCOVERY_CANONICAL_SOURCE] : [])],
   };
 }
 
@@ -3794,6 +3794,42 @@ function sendGeocodeRefusal<T extends object>(
 const DISCOVERY_CURATED_SOURCE = "discovery_places";
 
 /**
+ * The name `GET /discovery` gives the CANONICAL retrieval on `failedSources`.
+ *
+ * `public.places` — the registry the FSQ backfill populates, and the source that
+ * carries essentially every row in every city outside the eight demo cities
+ * `discovery_places` covers. §30.5's third open item was that this half "cannot
+ * report failure at all — it returns `[]` for unreadable and empty alike, so
+ * `failedSources` can only ever name the curated half", and named it as the next
+ * instance of the class §30.1 closed. It is the table name, for the same reason
+ * `DISCOVERY_CURATED_SOURCE` is: the wire and the server log agree about what
+ * broke, and `queryCanonicalPlaces` already logs `canonical_places_read_failed`.
+ */
+const DISCOVERY_CANONICAL_SOURCE = "places";
+
+/**
+ * The refusal `code` for a given set of failed retrievals.
+ *
+ * ONE frozen code would have made a canonical-only failure indistinguishable on
+ * the wire from a curated-only one — the same collapse this whole block exists
+ * to undo, one level up: `failedSources` would name the difference while `code`
+ * denied it, and a consumer keying on `code` (the cheaper thing to do) would
+ * read them as the same event.
+ *
+ * The curated-only string is UNCHANGED. Four serve-path cases and one control in
+ * `src/test/discoveryCuratedSourceRefusal.test.ts` assert it, and D11's contract
+ * as shipped says `discovery_places_read_failed` for that case; broadening it to
+ * cover both halves would silently re-label every refusal already in flight.
+ */
+function discoveryPlaceSourcesCode(failedSources: readonly string[]): string {
+  const curated   = failedSources.includes(DISCOVERY_CURATED_SOURCE);
+  const canonical = failedSources.includes(DISCOVERY_CANONICAL_SOURCE);
+  if (curated && canonical) return "discovery_place_sources_read_failed";
+  if (canonical) return "canonical_places_read_failed";
+  return "discovery_places_read_failed";
+}
+
+/**
  * What `loadCuratedAndCanonicalPlaces` produced, and what it could not read.
  *
  * The second field is the reason the type exists. A bare `DiscoveryPlace[]`
@@ -3809,11 +3845,15 @@ interface CuratedAndCanonicalPlaces {
    * the healthy path AND on a genuinely empty city — an empty result is not a
    * refused one, and a `failedSources` that is always populated names nothing.
    *
-   * The curated half is the only half that can appear here: `queryCanonicalPlaces`
-   * answers `[]` for an unreadable table and an empty one alike, so a canonical
-   * failure is not representable and is deliberately NOT guessed at. Naming a
-   * source that may be perfectly healthy is the same untruth in the other
-   * direction.
+   * BOTH DB halves can appear here, in merge order. The curated half could from
+   * the start; the canonical half could not, because `queryCanonicalPlaces`
+   * answered `[]` for an unreadable table and an empty one alike — §30.5's third
+   * open item, and the reason an earlier revision of this comment said a
+   * canonical failure "is not representable and is deliberately NOT guessed at".
+   * It is representable now and is read, not guessed: `null` from the reader,
+   * never falsiness. A source that ANSWERED is still never named, including a
+   * tab whose vocabulary maps to no canonical rows, where the registry is not
+   * consulted at all — naming a healthy source is the same untruth inverted.
    */
   failedSources: string[];
 }
@@ -3830,9 +3870,10 @@ interface CuratedAndCanonicalPlaces {
  *
  * WHY THE COVERAGE IS "partial" AND NEVER "nothing". This route reads three
  * retrievals: Overpass, the canonical `places` registry, and curated
- * `discovery_places`. Only the last can report that it failed; the other two
- * ANSWERED, so their emptiness is trustworthy and whatever they produced really
- * was served. That is `GET /discovery/search`'s rule verbatim — "partial as long
+ * `discovery_places`. The two DB halves can now BOTH report that they failed —
+ * `places` could not until §30.5's third open item was closed — and Overpass
+ * cannot, so a request never reaches here knowing that every source refused.
+ * That is `GET /discovery/search`'s rule verbatim — "partial as long
  * as ANY source answered, even when this page happens to be empty". It is also
  * what keeps the second half of D11 intact: `sendDiscoveryRefusal` marks a
  * response refused, suppressing its serve log, only at coverage "nothing", and
@@ -3893,7 +3934,7 @@ function sendDiscoveryPlacesEnvelope<T extends { total: number }>(
     res,
     body,
     discoveryRefusal(
-      "transient_db", "discovery_places_read_failed", "GET /discovery", "partial", failedSources,
+      "transient_db", discoveryPlaceSourcesCode(failedSources), "GET /discovery", "partial", failedSources,
     ),
   );
 }

@@ -408,11 +408,11 @@ router.patch('/me/language-settings', async (req, res) => {
   const patch: Record<string, unknown> = { ...parsed.data, translation_updated_at: new Date().toISOString() };
 
   // Capture the current preferred_language before updating so we can detect a change.
-  const { data: before } = await client
-    .from('profiles')
-    .select('preferred_language')
-    .eq('id', user.id)
-    .single();
+  const { data: before, error: beforeErr } = await client.from('profiles').select('preferred_language').eq('id', user.id).single();
+  // T344: this error was DISCARDED. supabase-js RESOLVES on a database failure, so an unreadable `profiles` arrived as `before: null`,
+  // the retranslate gate below read `oldLanguage: null` — A CHANGE from whatever the language really was — and EVERY FAILING SAVE billed
+  // a sweep of up to 200 messages through the PAID translation provider for a change nobody had made. Bound, logged, and gated on below.
+  if (beforeErr) req.log.warn({ err: beforeErr }, 'language-settings: prior preferred_language unreadable — saving the settings, firing no retranslation sweep');
 
   const { data, error } = await client
     .from('profiles')
@@ -430,10 +430,10 @@ router.patch('/me/language-settings', async (req, res) => {
   // Fire-and-forget re-translation sweep when the translation target changes.
   const newLang = (data as any).preferred_language as string | null;
   const oldLang = (before as any)?.preferred_language as string | null;
-  // Gated on auto_translate_messages. Ungated, changing the display language
-  // fired a sweep of up to 200 messages at the translation provider for users
-  // who had never asked for message translation at all.
-  if (newLang && shouldRetranslateOnLanguageChange({
+  // Gated on auto_translate_messages — ungated, changing the DISPLAY language fired a sweep of up to 200 messages at the translation
+  // provider for users who had never asked for message translation at all — and, since T344, on the prior language having actually been
+  // READ. An unreadable prior language is not evidence of a change, and `beforeErr` is the only thing that tells it from a real null.
+  if (newLang && !beforeErr && shouldRetranslateOnLanguageChange({
     newLanguage: newLang,
     oldLanguage: oldLang,
     autoTranslateMessages: (data as any).auto_translate_messages,
@@ -939,13 +939,13 @@ router.post('/message-requests/:requestId/accept', async (req, res) => {
   }
 
   if (!casRows || (casRows as any[]).length === 0) {
-    // Lost the race — another submit already transitioned this request.
-    const { data: current } = await sc
-      .from('message_requests')
-      .select('status')
-      .eq('id', requestId)
-      .maybeSingle();
-    sendError(res, 'invalid_payload', `Request is already ${(current as any)?.status ?? 'accepted'}`);
+    // Lost the race — another submit already transitioned this request. T344/T363:
+    const { data: current, error: currentErr } = await sc.from('message_requests').select('status').eq('id', requestId).maybeSingle();
+    // supabase-js RESOLVES on a database failure, so the old `?? 'accepted'` asserted THE OTHER PARTY'S DECISION out of a read that never happened — and `declined` is one of the two ways a request leaves 'pending', so the guess was wrong about a refusal roughly as often as it was right. Telling someone their request was accepted when it was refused is not a degraded answer, it is a false one.
+    // THE 4xx CONTRACT IS DELIBERATELY KEPT for the case it was written for: the status WAS read, so it is named, and that stays a 400. An unreadable status is a different case and gets `degraded_unavailable` — the one code lib/http.ts marks retryable — because the true sentence is "this was already answered and we cannot tell you how", and a retry re-runs the guard at the top of this handler, which names the real status the moment the table is back. A 500 would be wrong for the same reason: it is not retryable and the caller would give up. A row that has VANISHED is absent rather than accepted, and gets the same 404 the pre-read above gives.
+    if (currentErr) { req.log.error({ err: currentErr, requestId }, 'message-request accept: lost the swap and the status is unreadable — refusing to name a status'); sendError(res, 'degraded_unavailable', 'This request has already been answered, but we could not read how. Please open it again in a moment.'); return; }
+    if (!current) { sendError(res, 'not_found', 'Message request not found'); return; }
+    sendError(res, 'invalid_payload', `Request is already ${(current as any).status}`);
     return;
   }
 
@@ -1109,11 +1109,11 @@ router.post('/message-requests/:requestId/accept', async (req, res) => {
     // interpreter now decides what the read actually established.
     const senderLanguage = senderLanguageFrom(senderProfile, senderProfileErr);
 
-    const { data: previewMsg } = await sc
-      .from('messages')
-      .insert({ thread_id: threadId, sender_id: req_.sender_id, body: previewBody, created_at: now })
-      .select('id')
-      .single();
+    const { data: previewMsg, error: previewErr } = await sc.from('messages').insert({ thread_id: threadId, sender_id: req_.sender_id, body: previewBody, created_at: now }).select('id').single();
+    // T344/T363 — the insert's error is BOUND. The 200 was ALREADY sent further up this handler, so this log is the only record this
+    // write can leave: with the error discarded, a preview that never landed left the thread created, the accept reported, the first
+    // message missing, and nothing anywhere saying why. It stays best-effort — the accept has succeeded and is not undone by this.
+    if (previewErr) req.log.error({ err: previewErr, threadId, requestId }, 'message-request accept: preview message insert failed — the thread exists but carries no first message');
 
     await sc
       .from('message_threads')
@@ -1560,8 +1560,8 @@ router.get('/me/unread-counts', async (req, res) => {
       if (highlightsViewedAt) {
         q = q.gt('created_at', highlightsViewedAt);
       }
-      const { count: hCount } = await q;
-      newHighlights = hCount ?? 0;
+      const { count: hCount, error: hCountErr } = await q; // T344: the last unbound read in this block; its two neighbours above already log.
+      if (hCountErr) req.log.warn({ err: hCountErr }, 'unread-counts: highlights count unreadable — newHighlights reported as 0'); else newHighlights = hCount ?? 0;
     }
   } catch (e) {
     req.log.warn({ err: e }, 'unread-counts newHighlights query failed — defaulting to 0');

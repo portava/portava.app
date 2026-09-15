@@ -220,10 +220,10 @@ export async function runMemoryDeletionLifecycle(
     return { outcome: "done", facts };
   }));
 
-  // 3. DERIVATIVES_PURGED. The §18 cleanup graph, walked. Its table is 2730 —
-  //    written, unapplied — so on today's database this is `not_applicable`
-  //    with that reason attached, once, and the deletion is not dead-lettered
-  //    for it.
+  // 3. DERIVATIVES_PURGED. The §18 cleanup graph, walked. Its table is 2730,
+  //    which was applied to production on 2026-09-15 — so this step now RUNS
+  //    rather than reporting `not_applicable`, and a failure of it is a real
+  //    retryable failure rather than a migration nobody had run.
   steps.push(await runStep("DERIVATIVES_PURGED", async () => {
     const result = await revokeDerivativesForMemory(sc, opts.memoryId, "memory_deleted", now);
     if (result.ok) return { outcome: "done", facts: { revoked: result.value.revoked, scopeKeys: result.value.scope_keys } };

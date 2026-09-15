@@ -535,6 +535,22 @@ function withLiveTerm(
 export interface ReplanCandidate {
   id: string;
   travelTimeMin: number | null;
+  /**
+   * The ride BACK, when somebody measured it separately. §12.1's ladder names
+   * the return term *"(future conditions, not symmetric)"*, and a traveller
+   * starts back an activity later than they set out — into a different hour of
+   * a different day's traffic.
+   *
+   * OPTIONAL, AND ITS ABSENCE IS NOT AN ABSENT TERM. `undefined` / `null` means
+   * nobody measured the return separately, and the charge falls back to the
+   * outbound doubled — the number every caller on this tree got before this
+   * field existed, and the only honest reading of the single self-reported
+   * figure `layover_plan_stops.travel_min` can hold. Making it REQUIRED would
+   * turn every candidate on the tree `UNMEASURED` overnight, which is the
+   * fabricated-ABSENCE mirror of the fabricated-VALUE defect census L47 exists
+   * for, so `candidateIsUnmeasured` deliberately does not consult it.
+   */
+  returnTravelTimeMin?: number | null;
   activityTimeMin: number | null;
   insideAirport: boolean;
 }
@@ -574,8 +590,31 @@ export interface ActionUniverse {
  */
 export function candidateFits(record: LayoverFeasibilityRecord, c: ReplanCandidate): boolean {
   if (candidateIsUnmeasured(c)) return false;
-  const round = c.insideAirport ? 0 : c.travelTimeMin! * 2;
+  const round = c.insideAirport ? 0 : c.travelTimeMin! + returnLegMin(c);
   return round + c.activityTimeMin! <= record.envelope.usableMinutes;
+}
+
+/**
+ * What the ride BACK costs a landside candidate, in minutes.
+ *
+ * THE OUTBOUND IS THE FALLBACK, NOT THE RULE. A stated return leg is used as
+ * stated — §12.1's *"return (future conditions, not symmetric)"* — and only
+ * when nobody stated one does this charge the outbound again, which is what
+ * every caller got before `returnTravelTimeMin` existed.
+ *
+ * A NEGATIVE OR NON-FINITE FIGURE IS NOT A STATEMENT. `Math.max(0, …)` would
+ * silently read a bad return leg as a free ride home; a caller that hands over
+ * `-30` has a bug, and charging the symmetric fallback for it keeps that bug
+ * from BUYING the traveller thirty minutes they do not have. Only a finite,
+ * non-negative figure supersedes the fallback.
+ *
+ * `travelTimeMin` is non-null at every call site: `candidateIsUnmeasured` has
+ * already refused a landside candidate without one.
+ */
+function returnLegMin(c: ReplanCandidate): number {
+  const back = c.returnTravelTimeMin;
+  if (typeof back !== "number" || !Number.isFinite(back) || back < 0) return c.travelTimeMin!;
+  return back;
 }
 
 /** A term nobody stated. Airside carries no landside leg, so only dwell can be absent. */

@@ -204,6 +204,72 @@ export const CONTROL_EFFECTS: Readonly<
   },
 });
 
+/**
+ * The controls a PROACTIVE FEED over `public.highlights` can actually enforce,
+ * derived from CONTROL_EFFECTS rather than retyped beside it.
+ *
+ * A control belongs here when it suppresses `proactive_resurfacing` AND this
+ * surface can resolve its subject. A Highlight row gives us two keys and only
+ * two: its own `id` and its `owner_id`. So `highlight`-, `person`- and
+ * `owner`-scoped controls are enforceable and `trip`-scoped ones are not —
+ * `public.highlights` carries NO trip column in production (22 columns, none
+ * of them a trip reference; asserted in
+ * src/test/highlightsMemoriesDeployedStorage.test.ts), so there is no join that
+ * would tell a feed which trip a Highlight belongs to.
+ *
+ * DERIVED, NOT LISTED, because the list it replaces was wrong. It read
+ * `["DO_NOT_RESURFACE", "KEEP_PRIVATE_FOREVER"]` and CONTROL_EFFECTS names a
+ * FOURTH control suppressing the same surface — HIDE_TRIP — which the filter
+ * therefore never asked about. Before 2720 was applied that cost nothing: the
+ * table did not exist, the set was `absent`, and no control was enforced
+ * anywhere. `production-applied-migrations.json` records 2720 applied on
+ * 2026-09-15, so a HIDE_TRIP row is now something a user can write and a feed
+ * can ignore.
+ */
+export const FEED_ENFORCEABLE_CONTROLS: readonly ResurfacingControl[] = Object.freeze(
+  RESURFACING_CONTROLS.filter(
+    (c) =>
+      (CONTROL_EFFECTS[c].suppresses as readonly SuppressibleSurface[]).includes("proactive_resurfacing") &&
+      CONTROL_EFFECTS[c].scope !== "trip",
+  ),
+) as readonly ResurfacingControl[];
+
+/** How a feed keys each enforceable control: on the Highlight, or on its owner. */
+export function feedSubjectScope(control: ResurfacingControl): "highlight" | "owner" {
+  return CONTROL_EFFECTS[control].scope === "highlight" ? "highlight" : "owner";
+}
+
+/**
+ * Which controls in this set suppress a proactive feed and CANNOT be resolved
+ * on it.
+ *
+ * Returned rather than silently dropped, and the distinction is the whole
+ * point. `readResurfacingSuppressionsForOwners` already refuses to enforce a
+ * partial policy twice — an unrecognised control downgrades the whole set, and
+ * an unreadable set suppresses everything — on the reasoning that a policy
+ * enforced in part looks exactly like a policy enforced in full. A recognised
+ * control whose subject this surface cannot resolve is the same situation with
+ * a better-behaved read layer: the row loads, the set is `ready`, and the
+ * filter has no way to apply it. Naming it lets the caller withhold and SAY
+ * WHY, instead of resurfacing something its owner asked to hide.
+ *
+ * An `absent` or `unreadable` set names nothing: neither is a set of rows, and
+ * both already have a defined answer at the caller.
+ */
+export function unenforceableControls(set: ResurfacingSuppressions): readonly ResurfacingControl[] {
+  if (set.state !== "ready") return [];
+  const enforceable = new Set<string>(FEED_ENFORCEABLE_CONTROLS);
+  const out: ResurfacingControl[] = [];
+  for (const key of set.rows) {
+    const control = key.split("\u0000")[0] as ResurfacingControl;
+    if (!isResurfacingControl(control)) continue;
+    if (!(CONTROL_EFFECTS[control].suppresses as readonly SuppressibleSurface[]).includes("proactive_resurfacing")) continue;
+    if (enforceable.has(control)) continue;
+    if (!out.includes(control)) out.push(control);
+  }
+  return out;
+}
+
 /** The union of surfaces suppressed by a set of active controls. */
 export function suppressionFor(controls: Iterable<ResurfacingControl>): Set<SuppressibleSurface> {
   const out = new Set<SuppressibleSurface>();

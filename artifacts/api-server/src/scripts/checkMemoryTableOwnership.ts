@@ -87,6 +87,15 @@ const KERNEL_SIDE = new Set([
   "test/memoryCommandKernelFake.ts",
   "test/memoryCommandRoutes.test.ts",
   "test/memoryOutbox.test.ts",
+  // ADDED 2026-09-15 by the HIGHLIGHTS & MEMORIES lane. This suite asserts that
+  // the §3 storage spine is DEPLOYED, reading the committed production snapshot
+  // rather than a census sentence, and it names `memory_domain_events`,
+  // `memory_command_receipts` and `memory_event_outbox` -- all three of them
+  // 2710's, all three KERNEL-side. It names `memory_events` NOWHERE, which is
+  // the whole content of this classification: the projection family's log is
+  // not part of the §17 command spine and a suite that measured it would be
+  // measuring a different deployment.
+  "test/highlightsMemoriesDeployedStorage.test.ts",
   // REMOVED 2026-09-15, and the removal is the point rather than tidying.
   // "test/productionDriftExtraction.test.ts" was listed here because it asserted
   // that the production-drift ratchet does NOT excuse the kernel's tables, on

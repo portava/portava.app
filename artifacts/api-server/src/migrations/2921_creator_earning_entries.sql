@@ -63,6 +63,29 @@
 
 BEGIN;
 
+-- THREE STATES, NAMED EXPLICITLY. The guard this replaces asked one question --
+-- "does the table exist?" -- and treated YES as fatal with the sentence "this
+-- migration is not idempotent by design". That sentence stopped being true when
+-- every CREATE TABLE/INDEX in this file gained IF NOT EXISTS and every CREATE
+-- POLICY/TRIGGER gained a preceding DROP ... IF EXISTS: the file IS re-runnable
+-- now, and the guard contradicted the statements below it. 2910 carried the
+-- identical contradiction and it stopped the 2891-2970 apply on portava-ci at
+-- 15:34:32Z on 2026-09-15, one file after 2893 cleared. THIS FILE WAS FIXED BY
+-- PRE-FLIGHT, NOT BY A CI ROUND TRIP: the same grep that explained 2910's stop
+-- found this guard and 2921's before either was attempted.
+--
+--   (A) FRESH      the table(s) are absent -> create them. The original path.
+--   (B) RECONCILE  present AND carrying EXACTLY this file's columns
+--                  -> re-assert. Nothing is skipped: every guarded CREATE,
+--                  every DROP-then-CREATE policy and trigger, and every
+--                  postcondition below still run.
+--   (C) ANYTHING ELSE -> REFUSE and report what is actually there rather than
+--                  assert a diagnosis.
+--
+-- EXACT SET comparisons, not "all expected are present". 2893's first draft
+-- tested the subset form and classified a vocabulary carrying the eight
+-- expected labels PLUS an unexpected ninth as the reconcilable state -- exactly
+-- the case that must fail. A table with an extra column is the same mistake.
 -- ── Preconditions ────────────────────────────────────────────────────────────
 DO $pre$
 BEGIN
@@ -75,9 +98,24 @@ BEGIN
   IF to_regproc('public.intel_append_only') IS NULL THEN
     RAISE EXCEPTION '2921: PRECONDITION FAILED: public.intel_append_only() is required to block UPDATE';
   END IF;
-  IF to_regclass('public.creator_earning_entries') IS NOT NULL THEN
-    RAISE EXCEPTION '2921: public.creator_earning_entries already exists; this migration is not idempotent by design';
-  END IF;
+  DECLARE
+    expected_cee CONSTANT text[] := ARRAY[
+    'account', 'amount_minor', 'attribution_id', 'beneficiary_user_id', 'cash_settled_minor', 'creator_type', 'currency', 'entry_reason', 'external_ref', 'id', 'idempotency_key', 'occurred_at', 'provider', 'revenue_source', 'reverses_entry_id', 'rule_version', 'transaction_key'];
+    live_cee text[];
+  BEGIN
+    IF to_regclass('public.creator_earning_entries') IS NULL THEN
+      RAISE NOTICE '2921 APPLY: creator_earning_entries does not exist. Creating it.';
+    ELSE
+      SELECT coalesce(array_agg(column_name::text ORDER BY column_name), ARRAY[]::text[]) INTO live_cee
+        FROM information_schema.columns WHERE table_schema='public' AND table_name='creator_earning_entries';
+      IF live_cee <> expected_cee THEN
+        RAISE EXCEPTION
+          '2921: PRECONDITION FAILED: public.creator_earning_entries exists but is NOT the table this file creates. Expected exactly: %. Live: %. UNEXPECTED state; refusing rather than re-asserting over a different table.',
+          array_to_string(expected_cee, ', '), array_to_string(live_cee, ', ');
+      END IF;
+      RAISE NOTICE '2921 RECONCILE: creator_earning_entries already exists with this file''s shape (no ledger row recorded it). Re-asserting every object; the zero-sum and reversal postconditions below still have to pass.';
+    END IF;
+  END;
 END
 $pre$;
 
