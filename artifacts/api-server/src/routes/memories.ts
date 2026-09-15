@@ -715,30 +715,61 @@ router.get("/memories", async (req, res) => {
   // `enrichMemories` serializes.
   const visible = visibleRaw;
 
-  const enriched = await enrichMemories(sc, visible, user.id, clampPrecision);
+  const enriched = await enrichMemories(sc, visible, user.id, clampPrecision, req.log);
+  if (!enriched.ok) {
+    // §28.11 — the helper could not read `memory_items`, so every `cover` on
+    // this page would have been `null`. It already logged with the table bound;
+    // the refusal is here because only the handler holds `res`.
+    sendError(res, "degraded_unavailable", "Could not load memories. Please try again.");
+    return;
+  }
 
-  // Batch-fetch saved state for the viewer across these memories
+  // Batch-fetch saved state for the viewer across these memories.
+  //
+  // §28.11, the DEGRADING half. This block used to be a bare
+  // `try { ... } catch { /* non-fatal */ }` with BOTH errors discarded, and
+  // supabase-js resolves on a database error — so an unreadable `collections`
+  // made every Memory on the page read `isSaved: false` and nothing anywhere
+  // recorded it. `isSaved` is a fact about the VIEWER's shelf, not about what
+  // happened on the trip, so it degrades rather than refusing (the same
+  // asymmetry `enrichMemories` and `GET /memories/:id` apply). What changes is
+  // that the outage is now bound to its table and visible in the log.
   const memoryIds = visible.map((m: any) => m.id as string);
   const savedMemoryIds = new Set<string>();
   try {
-    const { data: userCols } = await sc
+    const { data: userCols, error: colErr } = await sc
       .from("collections")
       .select("id")
       .eq("owner_id", user.id);
+    if (colErr) {
+      req.log.error({ err: colErr, table: "collections" },
+        "memories: collections read failed — serving the feed with every Memory reading as unsaved");
+    }
     const colIds = ((userCols ?? []) as any[]).map((c) => c.id as string);
     if (colIds.length > 0 && memoryIds.length > 0) {
-      const { data: savedItems } = await sc
+      const { data: savedItems, error: savedErr } = await sc
         .from("collection_items")
         .select("entity_id")
         .eq("entity_type", "memory")
         .in("collection_id", colIds)
         .in("entity_id", memoryIds);
+      if (savedErr) {
+        req.log.error({ err: savedErr, table: "collection_items" },
+          "memories: collection_items read failed — serving the feed with every Memory reading as unsaved");
+      }
       for (const s of (savedItems ?? []) as any[]) savedMemoryIds.add(s.entity_id as string);
     }
-  } catch { /* non-fatal */ }
+  } catch (err) {
+    // The `catch` is kept for a THROWN client fault (a network reset, a bad
+    // URL) — which is a different failure mode from the resolved-with-error one
+    // above, and was the only one this block ever handled. It no longer
+    // swallows: a caught throw is logged with the same table binding.
+    req.log.error({ err, table: "collections" },
+      "memories: saved-collection lookup threw — serving the feed with every Memory reading as unsaved");
+  }
 
   res.json({
-    memories: (enriched as any[]).map((m: any) => ({ ...m, isSaved: savedMemoryIds.has(m.id as string) })),
+    memories: enriched.rows.map((m: any) => ({ ...m, isSaved: savedMemoryIds.has(m.id as string) })),
     nextCursor: visible.length === limit ? (visible[visible.length - 1]?.created_at ?? null) : null,
   });
 });
@@ -970,9 +1001,9 @@ import { SIGNIFICANCE_POLICY_VERSION } from "../services/memoryProjections/signi
 // a tag, because who may be NAMED on a Memory is a separate question from who
 // may read it.
 //
-// CEILING, on the response and not only here: the registry TABLE is 2730 and
-// unapplied (H174), so these projections are built per request and NOT
-// registered. `sourceVersion` travels on the response instead of being stored.
+// CEILING, on the response and not only here: these projections are built per
+// request and NOT registered. 2730 landed 2026-09-15 so the TABLE now exists;
+// no read path writes it. `sourceVersion` travels on the response instead.
 const TIMELINE_LIMIT = 500;
 const PLACE_HISTORY_LIMIT = 500;
 const SHARED_HISTORY_LIMIT = 500;
@@ -1128,7 +1159,7 @@ router.get("/memories/timeline", async (req, res) => {
       destination: definition.destination,
       audience: definition.audience,
       sourceVersion: sourceVersionOf(sourceRows).digest,
-      // The registry table is 2730 and unapplied (H174): built, not registered.
+      // Built, not registered (H174). 2730's table exists; no read writes it.
       registered: false,
       truncated: owned.length >= TIMELINE_LIMIT,
       rows: disclosed,
@@ -1753,9 +1784,9 @@ router.delete("/memories/:id", async (req, res) => {
   // projection: a feed assembled thirty seconds ago still contains this Memory
   // and is served from `compass_feed_cache` for up to four hours.
   //
-  // TWO OF THE FIVE STORES ARE NOT DEPLOYED and report `not_applicable` with
-  // their reason rather than `done` — see services/memory/
-  // memoryDeletionLifecycle.ts for why that is three outcomes and not two.
+  // ONE OF THE FIVE STORES IS NOT DEPLOYED (`memory_evidence`, which has no
+  // migration anywhere). 2730 landed 2026-09-15, so DERIVATIVES_PURGED now runs
+  // against a real table — see memoryDeletionLifecycle.ts for the three outcomes.
   //
   // The report is LOGGED, not returned: DELETE answers 204 and changing that is
   // a client contract change. A caller is never told a deletion failed when the
@@ -2560,6 +2591,29 @@ router.get("/trips/:tripId/memory", async (req, res) => {
     sc.from("profiles").select("id, name, handle, avatar_url").eq("id", ownerId).maybeSingle(),
   ]);
 
+  // §28.11, the same rule this file applies on GET /memories/:id and inside
+  // `enrichMemories`: a failed `memory_items` read is never served as "this
+  // Memory has no photograph". `coverRow.data` is null both when the read
+  // failed and when the Memory genuinely has no position-0 item, and the
+  // `coverRow.data ? ... : null` below cannot tell those apart.
+  if (coverRow.error) {
+    req.log.error({ err: coverRow.error, memoryId, table: "memory_items" },
+      "trip-memory: memory_items read failed — refusing rather than reporting a Memory with no photograph");
+    sendError(res, "degraded_unavailable", "Could not load this memory. Please try again.");
+    return;
+  }
+
+  // The engagement and author reads degrade, bound and logged — the asymmetry
+  // stated in full at the equivalent branch in GET /memories/:id.
+  for (const [table, r] of [
+    ["memory_likes", likeCount], ["memory_likes", likedByMe], ["profiles", ownerProfile],
+  ] as const) {
+    if ((r as any).error) {
+      req.log.error({ err: (r as any).error, memoryId, table },
+        "trip-memory: engagement read failed — serving the Memory with a degraded field");
+    }
+  }
+
   const ownerNameAllowed = ownerId === user.id || await nameVisibleFor(sc, ownerId);
 
   // Location protection (fail-closed) — the stricter of the Hidden-Gem ceiling
@@ -2751,9 +2805,9 @@ router.get("/trips/:tripId/memories/recap", async (req, res) => {
       destination: definition.destination,
       audience: definition.audience,
       // §18 "every derivative is registered with source Memory version". The
-      // registry TABLE is 2730 and unapplied (H174), so the version travels on
-      // the response instead of being stored — a caller can still tell one
-      // build of this recap from another.
+      // registry TABLE exists (2730, applied 2026-09-15) and no read path
+      // writes it (H174), so the version travels on the response instead of
+      // being stored — a caller can still tell one build of this recap from another.
       sourceVersion: sourceVersionOf(sourceRows).digest,
       rows: built,
     },
@@ -2819,10 +2873,15 @@ router.get("/users/:userId/memories", async (req, res) => {
   // `GET /memories` and EXACT from here — the same row, the same viewer, two
   // disclosures decided by which handler was reached. The fix is where it is so
   // that a fifth list read cannot repeat it by omission.
-  const enriched = await enrichMemories(sc, visible, user.id, precisionEnabled);
+  const enriched = await enrichMemories(sc, visible, user.id, precisionEnabled, req.log);
+  if (!enriched.ok) {
+    // §28.11 — see the same branch on GET /memories.
+    sendError(res, "degraded_unavailable", "Could not load memories. Please try again.");
+    return;
+  }
 
   res.json({
-    memories: enriched,
+    memories: enriched.rows,
     nextCursor: visible.length === limit ? (visible[visible.length - 1]?.created_at ?? null) : null,
   });
 });
@@ -2887,6 +2946,22 @@ function mapItem(r: any) {
   };
 }
 
+/** The minimum of a pino logger this module needs. Structural, so a handler's
+ *  `req.log` and a test double satisfy it without either importing the other. */
+type RouteLog = { error: (obj: unknown, msg?: string) => void };
+
+/**
+ * What `enrichMemories` answers.
+ *
+ * It is a DISCRIMINATED result and not an array, because the failure it has to
+ * report is exactly the one §28.11 names: a `memory_items` read that failed
+ * looks, in an array of rows, identical to a page of Memories that have no
+ * photographs. A caller handed an array cannot tell those apart; a caller
+ * handed `{ ok: false }` cannot fail to.
+ */
+type EnrichedMemories =
+  | { readonly ok: true; readonly rows: any[] }
+  | { readonly ok: false; readonly table: "memory_items" };
 /**
  * Serialize a LIST of Memory rows for one viewer.
  *
@@ -2909,8 +2984,14 @@ function mapItem(r: any) {
  * note). The Hidden-Gem ceiling is NOT gated on anything: it is independent,
  * fail-closed, and it is the half that was leaking.
  */
-async function enrichMemories(sc: any, rows: any[], viewerId: string, precisionEnabled: boolean) {
-  if (rows.length === 0) return [];
+async function enrichMemories(
+  sc: any,
+  rows: any[],
+  viewerId: string,
+  precisionEnabled: boolean,
+  log?: RouteLog,
+): Promise<EnrichedMemories> {
+  if (rows.length === 0) return { ok: true, rows: [] };
 
   const gemCtx = await loadMemoryGemContext(sc, rows);
   const safeRows = rows.map((m) => protectMemoryRow(m, gemCtx, viewerId, precisionEnabled));
@@ -2928,6 +3009,39 @@ async function enrichMemories(sc: any, rows: any[], viewerId: string, precisionE
     sc.from("profiles").select("id, name, handle, avatar_url").in("id", ownerIds),
     nameVisibilitySet(sc, ownerIds),
   ]);
+
+  // §28.11, on the ONE read here that makes a CLAIM ABOUT WHAT HAPPENED.
+  //
+  // This is §M.6's rule, applied to the list paths §M.6 did not reach. An
+  // unreadable `memory_items` left `coverRows.data` null, and the `?? null`
+  // below turned that into "every Memory on this page has no photograph" — a
+  // 200 byte-identical to the truth for a Memory that really has none. The
+  // single read `GET /memories/:id` already refuses on exactly this table, and
+  // one file must not answer the same question two ways.
+  //
+  // The refusal is returned to the CALLER rather than sent from here: this is a
+  // helper with no `res`, and a helper that could only log would leave both
+  // handlers unable to tell an empty page from a broken one — which is the
+  // defect, not the fix.
+  if (coverRows.error) {
+    log?.error({ err: coverRows.error, table: "memory_items", count: ids.length },
+      "memories: memory_items read failed — refusing rather than reporting Memories with no photographs");
+    return { ok: false, table: "memory_items" };
+  }
+
+  // The ENGAGEMENT and IDENTITY reads degrade rather than refuse, and the
+  // asymmetry is the same one §M.6 asserted on the single read: a wrong like
+  // count, or a Memory that reads as unsaved, is not a statement about the
+  // Memory's history; an empty item list is. What was wrong is that the failure
+  // was invisible EVERYWHERE. It is now in the log, bound to its table.
+  for (const [table, r] of [
+    ["memory_likes", likeRows], ["memory_saves", savedRows], ["profiles", ownerRows],
+  ] as const) {
+    if ((r as any)?.error) {
+      log?.error({ err: (r as any).error, table, count: ids.length },
+        `memories: ${table} read failed — serving the page with a degraded ${table === "profiles" ? "author" : "engagement"} field`);
+    }
+  }
 
   const likeCounts: Record<string, number> = {};
   const likedByMeSet = new Set<string>();
@@ -2948,14 +3062,17 @@ async function enrichMemories(sc: any, rows: any[], viewerId: string, precisionE
     ownerMap[r.id] = { id: r.id, name: nameAllowed ? r.name : null, handle: r.handle, avatarUrl: r.avatar_url ?? null };
   }
 
-  return safeRows.map((m) => ({
-    ...mapMemory(m, viewerId),
-    likeCount: likeCounts[m.id] ?? 0,
-    likedByMe: likedByMeSet.has(m.id),
-    savedByMe: savedSet.has(m.id),
-    cover: coverMap[m.id] ?? null,
-    owner: ownerMap[m.owner_id] ?? null,
-  }));
+  return {
+    ok: true,
+    rows: safeRows.map((m) => ({
+      ...mapMemory(m, viewerId),
+      likeCount: likeCounts[m.id] ?? 0,
+      likedByMe: likedByMeSet.has(m.id),
+      savedByMe: savedSet.has(m.id),
+      cover: coverMap[m.id] ?? null,
+      owner: ownerMap[m.owner_id] ?? null,
+    })),
+  };
 }
 
 // ── GET /users/:userId/memories/highlights ────────────────────────────────────
@@ -3052,7 +3169,7 @@ router.get("/users/:userId/memories/highlights", async (req, res) => {
       destination: definition.destination,
       audience: definition.audience,
       sourceVersion: sourceVersionOf(sourceRows).digest,
-      // 2730 is unapplied (H174): built per request, not registered.
+      // Built per request, not registered (H174) — 2730's table is deployed.
       registered: false,
       truncated: owned.length >= PROFILE_HIGHLIGHT_LIMIT,
       rows: disclosed,
