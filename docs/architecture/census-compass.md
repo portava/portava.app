@@ -2817,3 +2817,53 @@ collapsed the two reasons SURVIVED the first version of the suite.
   "eleven direct `trust_profiles`/`trust_caps` reads", and `grep -c` for either
   table in this file returns **0** — F2 replaced that compare, and the row's count has been one
   too high since. The verdict stays `W` either way; the number does not.
+
+---
+
+## §22 — A correction to §21.4, and it is the same mistake this census keeps finding in others
+
+§21.4's third bullet, written one day ago, ends:
+
+> **census-trust A17's citation into this file is already dead** … and `grep -c`
+> for either table in this file returns **0** — F2 replaced that compare, and the
+> row's count has been one too high since. **The verdict stays `W` either way**;
+> the number does not.
+
+The last sentence is wrong. A17 is **`C`**, not `W`, and has been since
+`42aeac38e` on 2026-09-09 — six days before §21.4 asserted otherwise.
+`CENSUS_INTEGRITY_DUMP=ALL` reads `trust|A17|C|409`, and `census-trust.md:409#A17`
+records the move with its enforcement: *"Zero direct reads of `trust_profiles` /
+`trust_caps` / `trust_restrictions` outside `services/trust`, enforced by
+`check:trust-table-ownership`"*.
+
+### 22.1 How it happened, because that matters more than the correction
+
+§21.4 read A17's verdict from A17's ROW TEXT at `census-trust.md:116#A17`, which
+still opens `| A17 | … | **W** | Eleven direct …` because this corpus is
+APPEND-ONLY. §1's reading rule and §16.6 both say the same thing — a verdict is
+whatever the LAST statement about it says, and the way to read one is the
+integrity dump, never the prose. §21.4 quoted the first statement and called it
+the current one.
+
+So the bullet was right about the count, right that eleven is now stale, right
+that it is trust's to fix and not this census's — and wrong about the only part
+it stated as a present fact. It is also, precisely, the failure this census
+spent §18 through §21 finding in code: a stale record read as a current one
+because nothing forced the reader to check which statement was last.
+
+### 22.2 What is actually left
+
+Nothing, for this census. A17's `W`-era row text at `census-trust.md:116#A17`
+names two line numbers in `compass/CompassNotificationEngine.ts` among eleven
+direct reads — not repeated as citations here, because both lines are gone and a
+pointer at a line that no longer holds what it claimed is the rot this corpus
+keeps paying for;
+both are dead at this tree (`grep -c` for `trust_profiles` or `trust_caps` in
+that file returns 0, unchanged from §21.4's measurement), and A17's `C` at
+`census-trust.md:409#A17` already reflects that. There is no count to fix and no verdict to move —
+only §21.4's sentence to retract, which this section does.
+
+### 22.3 Row moves
+
+**None.** No row in this census grades another census's row. CC-09 is unchanged
+at `C` on the basis §21.3 gave it.
