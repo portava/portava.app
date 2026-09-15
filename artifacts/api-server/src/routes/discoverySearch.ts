@@ -81,6 +81,9 @@ import { allowDiscoveryPersonCard } from "../services/passport/PassportConsumerA
 // two copies of a privacy rule is how these two serve points drifted apart in
 // the first place.
 import { fetchBlockedSet, submitterIsVisible } from "../lib/blocks.js";
+// B05 / G277's CountryResolver. Consumed, never re-spelled — a second country
+// list inside a product surface is how two lists disagree.
+import { searchCountryRegistry, toCountryCode } from "../lib/countryCodes.js";
 import { resolvePlaceIdBridge } from "../lib/placeIdBridge.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 // Trips' projection contract (census-discovery A10 / D3, Trips spec §25) and
@@ -1992,9 +1995,79 @@ async function attachCentroids(
   }
 }
 
+/** Build one `countries` row. Shared by both legs so the shape cannot fork. */
+function countryResult(
+  name: string,
+  source: "registry" | "profile",
+  countryCode: string | null,
+): SearchResult {
+  const key = name.toLowerCase();
+  return {
+    id: `country:${key}`,
+    type: "countries",
+    title: name,
+    subtitle: null,
+    avatarUrl: null,
+    imageUrl: null,
+    fallbackInitials: initials(name),
+    locationPreview: null,
+    matchedReason: null,
+    actionState: null,
+    privacyState: null,
+    accessState: { canAccess: true },
+    destinationRoute: `/country/${encodeURIComponent(key)}`,
+    // §27's position contract: `lat`/`lng` are always PRESENT, null included, so
+    // "this row has no position" is a value rather than a missing key.
+    // `canonical_locations` models kind='country' but holds no country rows
+    // today, so in practice a country carries a null position until the registry
+    // is seeded — the honest answer rather than a centroid averaged out of
+    // whatever cities happen to exist. `attachCentroids` fills it when it can.
+    //
+    // `source` is provenance and it is load-bearing: `registry` means the row
+    // came from the ISO-3166-1 table and is the same for every viewer;
+    // `profile` means no canonical country resolved and the row exists only
+    // because somebody typed it into `home_country`.
+    metadata: { lat: null, lng: null, source, countryCode },
+    createdAt: null,
+    startsAt: null,
+  };
+}
+
 /**
- * Countries — aggregated from active, non-private, non-blocked, non-discovery-opted-out profiles.
- * Same privacy model as cities.
+ * Countries — the canonical ISO-3166-1 registry, joined with the free-text
+ * names `profiles.home_country` carries that the registry cannot resolve.
+ *
+ * WHY THE REGISTRY LEG EXISTS (census-discovery B05 / GII G277)
+ * ============================================================
+ * This function used to aggregate `profiles.home_country` and nothing else, so
+ * the set of countries that EXISTED as a suggestion was a function of who had
+ * signed up: Iceland was not a country on this surface until an Icelander was.
+ * B05 is careful to call that a CONSTRUCTION defect rather than a leak — the
+ * read was and is opt-out filtered — and its stated blocker was that the fix
+ * "needs a canonical country registry Discovery does not own".
+ *
+ * That blocker is no longer true. `lib/countryCodes.ts` is ISO-3166-1 alpha-2
+ * with canonical English names, an alias index and a diacritic-insensitive
+ * fold; it is pure data with no I/O, it is in this package, and
+ * `lib/stamps/countryLookup.ts` already consumes it. Discovery consumes the
+ * SAME module rather than growing a second country list — the rule C32 and
+ * DC-24 exist to enforce, applied to names instead of ranking.
+ *
+ * THE PROFILE LEG IS KEPT, and keeping it is the point. A traveller may have
+ * typed a home country the ISO table has no row for. Dropping that row to make
+ * the function tidy would delete a real answer, so a free-text name the
+ * registry cannot resolve still lists, carrying `source: "profile"`.
+ *
+ * WHY A FAILED PRIVACY READ STILL REFUSES THE WHOLE BUCKET
+ * =======================================================
+ * The registry leg needs no privacy read, so the obvious next move is to serve
+ * it when `profiles` or `profile_privacy_settings` could not be read. It does
+ * not, and that is deliberate: a registry-only page is missing every free-text
+ * country only `profiles` knows, and a body that is short by an unknown amount
+ * is indistinguishable from a complete one. That is exactly the masquerade D11
+ * forbids — "we did not look" served as "we looked, and this is all there is".
+ * The bucket has one answer and one refusal; making half of it answerable
+ * would need an intra-bucket partial the response envelope does not have.
  */
 async function searchCountries(
   sc: any, q: string,
@@ -2032,9 +2105,18 @@ async function searchCountries(
       ((optOutResult.data as any[]) ?? []).map((r: any) => r.user_id as string),
     );
 
-    const seen = new Set<string>();
-    const results: SearchResult[] = [];
-    let skipped = 0;
+    // ── Leg 1: the canonical registry. Pure, viewer-independent, no I/O. ──────
+    // Asked for the whole page the caller could reach, because the offset is
+    // applied to the MERGED list below and not to either leg on its own.
+    const registry = searchCountryRegistry(q, offset + fetchLimit);
+    const takenCodes = new Set<string>(registry.map((m) => m.code));
+    const takenKeys = new Set<string>(registry.map((m) => m.name.toLowerCase()));
+    const merged: SearchResult[] = registry.map((m) => countryResult(m.name, "registry", m.code));
+
+    // ── Leg 2: free-text names the registry could not resolve. ───────────────
+    // Same privacy model as before, unchanged: blocked, age-restricted and
+    // discovery-opted-out profiles contribute nothing.
+    const tail: SearchResult[] = [];
     for (const p of (profileResult.data as any[])) {
       if (
         blockedSet.has(p.id as string) ||
@@ -2043,36 +2125,25 @@ async function searchCountries(
       ) continue;
       const country = ((p.home_country as string | null) ?? "").trim();
       if (!country) continue;
+      // A typed name the registry DOES know is the same country under a
+      // different spelling ("japan", "Holland"), so it folds into the canonical
+      // row instead of appearing beside it.
+      const code = toCountryCode(country);
+      if (code !== null && takenCodes.has(code)) continue;
       const key = country.toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
-      if (skipped < offset) { skipped++; continue; }
-      results.push({
-        id: `country:${key}`,
-        type: "countries",
-        title: country,
-        subtitle: null,
-        avatarUrl: null,
-        imageUrl: null,
-        fallbackInitials: initials(country),
-        locationPreview: null,
-        matchedReason: null,
-        actionState: null,
-        privacyState: null,
-        accessState: { canAccess: true },
-        destinationRoute: `/country/${encodeURIComponent(country.toLowerCase())}`,
-        // Same contract as cities. `canonical_locations` models kind='country'
-        // (canonicalLocations.kindClass maps it to the admin class) but holds
-        // no country rows today, so in practice a country result carries a null
-        // position until the registry is seeded — a null the client reads as
-        // "not placeable", which is the honest answer rather than a centroid
-        // averaged out of whatever cities happen to exist.
-        metadata: { lat: null, lng: null, source: "profile" },
-        createdAt: null,
-        startsAt: null,
-      });
-      if (results.length >= fetchLimit) break;
+      if (takenKeys.has(key)) continue;
+      takenKeys.add(key);
+      if (code !== null) takenCodes.add(code);
+      tail.push(countryResult(country, "profile", code));
     }
+
+    // The registry head is ALREADY ranked, by rungs that know how each row was
+    // reached. The tail is not, so it is match-tier ranked here — the ordering
+    // `dispatchSearch` used to apply to the whole bucket, kept for the half it
+    // is still the right answer for.
+    merged.push(...rankByMatchTier(tail, q));
+
+    const results = merged.slice(offset, offset + fetchLimit);
     await attachCentroids(sc, results, CANONICAL_COUNTRY_KINDS);
     return results;
   } catch (err) {
@@ -2175,7 +2246,16 @@ export async function dispatchSearch(
     case "stamps":      return rankByMatchTier(await searchStamps(sc, q, offset, fetchLimit),                                          q);
     case "activities":  return rankByMatchTier(await searchActivities(sc, q, blockedSet, offset, fetchLimit),                          q);
     case "cities":      return rankByMatchTier(await searchCities(sc, q, blockedSet, ageRestrictedSet, offset, fetchLimit),            q);
-    case "countries":   return rankByMatchTier(await searchCountries(sc, q, blockedSet, ageRestrictedSet, offset, fetchLimit),         q);
+    // Countries manage their own ordering, on `searchPlaces`' precedent two
+    // lines above, and the reason is a defect a test caught rather than a
+    // preference. `rankByMatchTier` scores the TITLE against the raw query, so
+    // it cannot see that a row was reached through an ALIAS: "United Kingdom"
+    // does not contain "uk", so every country a person names colloquially —
+    // uk, holland, bali, dubai — scored tier 0 and sorted behind any country
+    // whose spelling happened to contain the letters. `searchCountries` ranks
+    // the registry head by rungs that know how each row was reached, and
+    // match-tier ranks the free-text tail itself.
+    case "countries":   return searchCountries(sc, q, blockedSet, ageRestrictedSet, offset, fetchLimit);
     case "languages":   return rankByMatchTier(searchStatic(q, COMMON_LANGUAGES, "languages", "/language", offset, fetchLimit),        q);
     case "interests":   return rankByMatchTier(searchStatic(q, COMMON_INTERESTS, "interests", "/interest", offset, fetchLimit),        q);
     case "vibes":       return rankByMatchTier(searchStatic(q, COMMON_VIBES,     "vibes",     "/vibe",     offset, fetchLimit),        q);
