@@ -2597,9 +2597,9 @@ misdescribes.
 > this is DV-20's migration, not a Discovery coding task."*
 
 **False as to the repository.** All three relations are created in one committed
-migration: `artifacts/api-server/src/migrations/2910_discovery_trails.sql:75#CREATE TABLE public.trails (`,
-`artifacts/api-server/src/migrations/2910_discovery_trails.sql:111#CREATE TABLE public.content_trails (`
-and `artifacts/api-server/src/migrations/2910_discovery_trails.sql:194#CREATE TABLE public.trail_edges (`.
+migration: `artifacts/api-server/src/migrations/2910_discovery_trails.sql:75#CREATE TABLE IF NOT EXISTS public.trails (`,
+`artifacts/api-server/src/migrations/2910_discovery_trails.sql:111#CREATE TABLE IF NOT EXISTS public.content_trails (`
+and `artifacts/api-server/src/migrations/2910_discovery_trails.sql:195#CREATE TABLE IF NOT EXISTS public.trail_edges (`.
 The clause *"and from production"* remains TRUE — §17.3 records that 2910 is
 applied to `portava-ci` only — and that half is what still holds the verdict.
 
