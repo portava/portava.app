@@ -2753,3 +2753,266 @@ over a projection service this lane owns, and it would have closed a row and
 un-blocked two more (MD15, MD33). It lost to four clusters that each closed more.
 That is a defensible prioritisation and it is still a row that should have been
 easier to finish than to explain.
+
+## 15. The Hidden Gems lens, §23 confidence, and two rows that were open on evidence that had already expired
+
+This section is the record of the 2026-09-15 Media lane pass. It closed **four**
+requirements — two by building, two by performing re-reads this census had
+already written down that it owed — and it leaves the document **STALE rather
+than acknowledged**, which is §15.5 and is the least comfortable thing here.
+
+Four is a small number and it is said plainly rather than padded. §14.4's
+falsifier register is why: it sorts the 151 open rows into fifteen families, and
+**eleven of the fifteen are settled by something this lane may not do** — enable a
+feature flag, write a migration, edit the client, decode a video, or choose a
+moderation provider. What was left inside this lane's reach was F14's MD360,
+F15's MD169, and the two rows whose stated absence had already been falsified by
+somebody else's build.
+
+### 15.1 What was built
+
+| Row | Was | Now | What was built |
+| --- | --- | --- | --- |
+| MD360 | **N** | **C** | `GET /media/gems` — the §16 Hidden Gems lens, registered as the NINTH endpoint of the §43 router at `artifacts/api-server/src/routes/mediaWorld.ts:389#sendProjection(res,` over `artifacts/api-server/src/services/media/MediaGemStateService.ts:315#buildGemStateProjection(`. |
+| MD169 | **W** | **C** | §23 `confidence` on `MediaExperienceProjection`, at `artifacts/api-server/src/services/media/MediaExperienceResolver.ts:447#buildExperienceConfidence(`, served on the event branch, the trip branch and the "not available to you" shape. |
+
+**MD360 — the lens is not a second feed, and that is the whole requirement.**
+The row said the gems lens "falls back to `GET /media/gems-feed` … a ranked
+social feed, not a §16 gem-state projection". §14.6 called it the cheapest row in
+the census and did not build it. What makes it more than a route is that
+`gems-feed`'s ordering comes from `HiddenGemDiscoveryService`, which weights
+saves and visits — and §16.2 forbids that in its own words (*"No popularity-first
+ranking"*, *"Suppress aggressive recommendations if a small place is being
+overloaded"*). So the lens serves the ten-state `HiddenGemState` **derived at read
+time**, a bounded confidence in which `save_count` is accepted and ignored, and an
+ordering from `rankGems` — reusing `lib/hiddenGemState`'s pure policy layer
+verbatim rather than writing a third scorer. A gem is NAMED only when
+`mayDiscloseGemIdentity` allows it, the same predicate `MediaSearchService` uses;
+undisclosable gems are dropped WHOLE, so no id, name or place of theirs appears
+anywhere in the payload. **No coordinate column is selected at all**, so the lens
+cannot disclose a point it never loaded.
+
+**MD360's honest debt, stated in the code as well as here.** The service gathers
+its own observation aggregates instead of calling
+`HiddenGemContributionService.batchDeriveGemProjections`, which computes the same
+two values. The reason is not taste: that module's aggregate reader logs a
+warning and returns an empty aggregate on failure, so a caller cannot tell an
+unreadable `hidden_gem_contributions` from a gem with no observations — and the
+difference is not cosmetic, because `closed` / `access_changed` / `too_crowded`
+are exactly the observations that move a gem to `temporarily_unavailable`. Losing
+that read serves a gem the community has reported CLOSED as though it were fine.
+Teaching that reader to report determinedness would move
+`HiddenGemContributionService.ts` line 186 — a line MD130–MD138 cites by number
+here and which census-sensing, census-discovery and census-trust also cite — and
+three of those four documents are not this lane's to repoint. So the POLICY is
+reused and the GATHERING is duplicated, the duplication is written into the
+file's own header as a known gap, and the right end state (one exported gatherer
+that reports determinedness, living in the file that already has the reader) is
+named there.
+
+**MD169 — the field is filled from two engines that already existed.** The row
+graded it *"a declared-but-unfilled field"*. Confidence is defined once in this
+tree, in `lib/confidenceScore`, whose header states the formula is the
+specification's and that the module *"never invents"* one; and §18's
+`buildVisualConsensus` already turns a set of perspectives into an
+**independent-source** count with `lib/intelIndependence`'s clustering applied and
+reads the canonical conflict engine's state off the gated live claims. So
+`buildExperienceConfidence` is an assembler over both, not a third scorer.
+
+The design decision worth recording is that **presence is counted in witnesses,
+not in files**. MediaPerspectiveService's header is explicit that *"a photograph
+ASSERTS NO VALUE"*; a presence term keyed on the raw perspective count would let
+one loud account out-score two witnesses, which is popularity wearing an evidence
+label. And the two components media structurally cannot supply —
+`sourceReliability` and `evidenceQuality`, both asset-provenance questions that
+family **F5** records as dark — are listed in `absentComponents` on every result
+rather than left as an invisible zero, because a zero nobody can see is how a
+structural absence becomes an apparently-measured low score.
+
+### 15.2 The mutation results, in full, including the one that survived
+
+Both tests were written FIRST and seen to fail for the right reason. Nineteen
+mutations were run. **Eighteen reddened on the first attempt; one survived and is
+reported rather than quietly fixed.**
+
+`src/test/mediaGemStateLens.test.ts` (9 cases) against `MediaGemStateService.ts`:
+
+| # | Mutation | Result |
+| --- | --- | --- |
+| M1 | remove the ranking entirely (serve input order) | RED — the §16.2 popularity and overcrowding cases |
+| M2 | order by `save_count` descending (popularity-first) | RED — both §16.2 cases |
+| M3 | drop the `mayDiscloseGemIdentity` filter | RED — the disclosure and owner-bypass cases |
+| M4 | pass `null` as the viewer (drop the owner bypass) | RED — owner bypass |
+| M5 | an unreadable `hidden_gems` reads as an empty city | RED — `determined:false` |
+| M6 | an unreadable aggregate reports `determined:true` | RED — the undetermined-state case |
+| M7 | serve the stored `status` instead of the derived state | RED — the derived-state case |
+| M8 | copy a coordinate onto a lens item | RED — proves the no-coordinates assertion is not vacuous |
+
+`src/test/mediaExperienceConfidence.test.ts` (8 cases) against
+`buildExperienceConfidence`:
+
+| # | Mutation | Result |
+| --- | --- | --- |
+| M1 | presence counts FILES (`fresh / 5`) instead of witnesses | RED |
+| M2 | stale perspectives corroborate (drop the fresh-window filter) | RED |
+| M3 | a material conflict carries no penalty | RED |
+| M4 | ANY conflict is treated as material | RED |
+| M5 | withheld places still score specificity | RED |
+| M6 | `absentComponents` reported empty | RED |
+| M7 | an empty experience floors at presence 0.5 | RED |
+| M8 | `independence = sources / SAT` instead of `(sources − 1) / (SAT − 1)` | **SURVIVED**, then killed |
+
+**M8 is the one worth reading.** It hands a lone account a positive independence
+term, and the suite stayed green because the case that was supposed to catch it —
+"eight photographs from one account do not out-score two from two accounts" —
+compares two scores, and two witnesses still beat one loud account either way.
+What M8 actually changes is the FLOOR, not the ordering. A case was added that
+pins the floor directly (`components.independence === 0` for a single source),
+the mutation now reddens, and the older case was kept because the ordering
+property is also worth holding. A mutation that fails to redden is this census's
+own warning that a test is weaker than its name, and this one was.
+
+Two existing guards were also touched, both deliberately:
+`src/test/mediaWorldBoundaryScrub.test.ts` asserts a route COUNT for the §43
+router, and its own comment says that count is *"part of the guard, not
+bookkeeping: a NEW endpoint added to this router has to come here and be looked
+at"*. It went red on the gems route, exactly as designed; it was raised from 8 to
+9 and now additionally asserts that `/media/gems` is one of them.
+
+### 15.3 Two rows that were open on expired evidence
+
+Neither of these cost a line of product code. Both are cases where the census was
+holding a row open on a sentence that had stopped being true, and §14.4 names one
+of them as a debt in so many words.
+
+| Row | Was | Now | The re-read |
+| --- | --- | --- | --- |
+| MD222 | **W** | **C** | §14.4's F15 entry says the remaining half is *"the People lens (MD216) does not carry shared-moment participants as a population. Settled by `buildPeopleProjection` emitting the `shared_moment` relation it already types."* **That falsifier was already satisfied when it was written.** §12.2 had moved MD216 `W → C` in the same squash, and the lens emits the relation at `artifacts/api-server/src/services/media/MediaProjectionService.ts:1065#affinities.sharedMomentIds.has(cid))`, fed by a viewer-scoped two-hop read of `shared_moment_memberships`. It is TESTED: `src/test/mediaPeopleLensPopulations.test.ts` "a Shared Moment participant the viewer does NOT follow reaches the lens" and "orders the populations as §27 names them". Mutations red: deleting the `shared_moment` branch from `relationOf`; un-scoping the membership read from the viewer. With MD51's graph edge (closed §14.1) and this, both halves of MD222 are delivered. |
+| MD252 | **N** | **C** | **THE RE-READ THIS CENSUS HAS OWED TWICE IS PERFORMED HERE.** The row's stated absence — *"no sequencing concept in the media→Compass context"* — is false. `artifacts/api-server/src/compass/CompassMediaContext.ts:225#export function buildSequencingAnchor` carries the anchor place, the coarse city and a `chainable` flag that is FALSE when the location/gem choke point withheld the place; the block is rendered into the real Compass ask, and when there is no anchor the prompt says the question *cannot be answered* rather than choosing a plausible city. TESTED by `src/test/compassCensusClosure.test.ts` B5/B6/B8/B9. Mutations red: `chainable` forced true with no anchor; a withheld place leaking its city; the sequencing block dropped from the prompt. The row's second clause (*"no chain (MD171)"*) was closed by §14.1. **Its third clause is still literally true — there is no time-of-evening term anywhere** — but §32 does not name one; it names the QUESTION, and the question is answered from structured truth or refused in words. |
+
+A note on why MD252 was re-read by this lane and not by the Compass lane: the
+file is Compass's and the verdict is this census's. §14.4 declined it on the
+first ground; the correcting lane at §9.5 declined it on the second. A row that
+two passes decline for opposite reasons stays open forever, so this pass read the
+file, ran the mutations against the Compass lane's own suite, and moved the
+letter — **without editing one character of a file this lane does not own.**
+
+### 15.4 Falsifier register — corrections and what stays open
+
+Corrections to §14.4, which remains otherwise in force:
+
+1. **F15/MD222's entry was stale on the day it was written.** See §15.3. The
+   remaining-open sentence named a build that already existed and was already
+   graded `C` elsewhere in this document.
+2. **F13/MD252's entry is now spent** — the re-read it asks for is §15.3.
+3. **F14/MD360's entry is spent.** MD15 and MD33 are the two rows it said this
+   would unblock; **both remain `W` and neither moved.** The blocker was never
+   only the endpoint: MD15's own cell says `MediaWorldShell.tsx` imports the
+   pre-existing `GemsFeed`, and MD33's says the mode bar is drawn over a
+   component that ignores it. Those are client changes in a tree this lane does
+   not own, and the server half existing does not close them. Saying so is the
+   point of the register.
+
+Three rows this lane could reach and did NOT close, each with the exact blocker
+rather than a note that more work is needed:
+
+| Row | Why it did not move |
+| --- | --- |
+| MD8 | The falsifier offers a cheaper settlement than the feature — *"a guard + test proving generated media cannot outrank authentic"*. It was not built, and the reason is measurable: provenance is `media_assets.source_type`, and the canonical store is family **F5** — `canonical_media` is absent on every projected row, because no SELECT in this tree produces it. A guard can be written and tested against a synthetic row, but its ordering term would read `null` on every real one, so it would be a guard over a column the projection cannot see. That is worth doing WITH F5 and misleading before it. Additionally, the row's own citation is stale: it says the World-shell ordering is at `MediaProjectionService.ts` lines 846-848; the `capturedAt` sorts are now at lines 1086 and 1452 and the World-shell zone sort is by item count. |
+| MD228 | Settled by *"a `q` parameter on `GET /media/me`"*, and the row records that this was deliberately not built because *"duplicating the matcher in a second endpoint is how the two drift apart"*. Delegation rather than duplication would answer that, but the matcher (`haystack` + `captionsById`) is module-private to `MediaSearchService`, which imports FROM `MediaProjectionService` — so exporting it and calling it from the My World builder makes an import cycle, and the honest fix is to lift it into `lib/media/`. That is a two-file refactor across files carrying eleven anchored citations between them, and it was judged too large to do well in the remainder of this pass. The blocker is scope, and it is named as scope rather than dressed as a dependency. |
+| MD369 | `POST /media/:id/attachments` is one route in this lane's own file, and §14.4 already records why it is pointless: `lib/mediaAssets.ts` returns `null` before writing whenever `media_canonical_enabled` is off, and it is off. The endpoint would accept a request, write nothing, and report success. Unchanged: blocked on F5(a), which is the integration owner's. |
+
+### 15.5 THIS CENSUS IS LEFT STALE, AND AN ACKNOWLEDGEMENT WOULD HAVE BEEN FALSE
+
+`check:census-freshness` reports `census-media.md` STALE after this pass, exit
+code **1**, naming exactly four counted files —
+`services/media/MediaGemStateService.ts` (new),
+`services/media/MediaExperienceResolver.ts`, `routes/mediaWorld.ts` and
+`src/test/mediaWorldBoundaryScrub.test.ts` — and
+`src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json` is NOT extended to cover them.
+That is deliberate and it is the correct outcome of the rule, not a lapse:
+
+- **An acknowledgement asserts the change cannot have moved a verdict.** Two
+  verdicts moved *because of* these files — MD360 and MD169 — and §15.1 is the
+  record of it. Writing an entry claiming otherwise would be false in the one
+  sentence an acknowledgement consists of. The ledger's own opening line says an
+  entry is for a counted file that changed *"WITHOUT the census being
+  re-measured"*, and this is the opposite case.
+- **`head_commit` cannot be re-declared here either.** The declaration must name
+  a commit on `main`, verified with `git merge-base --is-ancestor`. This work is
+  on `claude/media-lane-wave` and this repository squash-merges, so every commit
+  on this branch becomes an orphan the moment it lands — which is precisely the
+  failure the `1fe72289b` re-declaration at the top of this document exists to
+  record.
+
+**So the resolution belongs to the integrator, and it is one line:** re-declare
+`head_commit` at the squash commit of this branch, exactly as was done for
+`1fe72289b` at PR #482's squash. Until then the STALE reading is accurate — four
+counted files have changed since `1fe72289b` — and a green check bought with a
+false sentence would be worth less than a red one that is true.
+
+### 15.6 Guard results, verbatim
+
+| Check | Exit | Note |
+| --- | --- | --- |
+| `check:doc-citations` | 0 | RESULT clean. Every edit in this pass was made ZERO-SHIFT where an anchored citation sat below it: the gems route and the whole of §23 confidence are APPENDED at end-of-file with their imports beside them, and the two interface/return-site changes were merged onto existing lines. `"/media/search"` is still line 277 and `buildExperienceChain` is still on lines 266 and 330. |
+| `check:census-integrity` | 0 | |
+| `npx tsc --noEmit -p .` | 0 | |
+| `check:census-freshness` | **1** | STALE. §15.5 is the reason and it is intentional. |
+| `check:census-scope-coverage` | 0 | §15 cites a THIRD media proof suite by path, which dropped coverage to 95% against a 96% floor. Resolved the way the checker's own message says to — by WATCHING three of this census's own mutation-proof suites (`mediaIndependentSources`, `mediaActionsCompass`, `mediaPeopleLensPopulations`) in `CENSUS_SCOPE`, named one by one rather than by scoping all of `src/test/`, which would age this document on every unrelated surface's test work. Coverage is 131/135 = 97%. **The floor was not lowered** — the checker says that is the one response never right, and it is right about that. |
+| `check:census-row-move-labels` | 0 | |
+| `check:test-registration` | 0 | Two new suites registered. |
+| `check:media-objects` | **2** | CANNOT RUN — it needs live credentials and its production guard refuses an unset target. Exit 2 is "did not run", not "failed". No row in this census grades the ~1069 orphan `post-media` objects it reports when it does run, so that finding is not evidence for or against anything here. |
+| `check:write-path-columns` | **2** | Same reason. |
+| `check:citation-targets` | 0 | 247 unanchored citations land on nothing, against a ceiling of 248. The ratchet was **not** lowered: this is a shared file, several lanes are working concurrently against this base, and the one-citation gain could not be attributed to this lane's edits. Lowering a shared ratchet on an unattributed gain would fail the next lane for someone else's improvement. |
+
+**One context claim checked and confirmed, recorded because it was worth
+checking.** `routes/mediaFeed.ts` writes `rank_events` with `surface:
+"watch_feed"` on media impressions — the writes are at lines 1751, 1787, 2081 and
+2111 of that file — fire-and-forget, so a rejected insert surfaces only in a warn
+log. Any claim that `watch_feed` is writerless is FALSE. **No row in this census
+makes that claim**: `grep -n watch_feed docs/architecture/census-media.md` returns
+nothing. It is recorded here so the next pass does not have to check again.
+
+### 15.7 Restated headline
+
+> | Measure | Was, §14.5 | Now |
+> | --- | --- | --- |
+> | Denominator (testable requirements) | 450 | **450** |
+> | BUILT-AND-CORRECT | 297 | **301** |
+> | BUILT-BUT-WRONG | 83 | **81** |
+> | NOT-BUILT | 68 | **66** |
+> | CANNOT-VERIFY | 2 | **2** |
+> | **CONSTRUCTED%** = (C+W)/450 | 84.4 % | **382 / 450 = 84.9 %** |
+> | **CORRECT%** (raw) = C/450 | 66.0 % | **301 / 450 = 66.9 %** |
+>
+> Restated from `check:census-integrity`, not by hand. The moves are two builds
+> (MD360 `N → C`, MD169 `W → C`) and two re-reads (MD222 `W → C`, MD252
+> `N → C`). **Construction moves by 0.5 points and correctness by 0.9**, and the
+> gap between them NARROWS for the first time in three passes — from 18.4 to
+> 18.0 — for the unglamorous reason that half of what moved was already built and
+> only mis-graded.
+
+The **spec-attributable** figure rises by **two**, not four, to **228 / 450 =
+50.7 %**. MD360 and MD169 were built in this pass against named sections of this
+spec (§16/§43 and §23). MD222 and MD252 were not built here at all; re-judging
+the attribution of work an earlier pass delivered is a different measurement from
+the one §14.5 performed, and §14.5's rule — *"no pre-existing row's attribution
+was re-judged"* — is kept rather than quietly bent to make a number bigger.
+
+### 15.8 The least flattering true thing about this pass
+
+**It moved four rows and left the census red.** Both halves of that are worth
+sitting with. The four are real and mutation-proved, and two of them were free —
+the code already existed and the census was wrong about it, which means this
+document's own error rate is a live term in its numbers and nobody is measuring
+it. And the freshness check now fails on a branch that did honest work, because
+the only two ways to make it pass are a sentence that would be false and a commit
+that does not exist yet.
+
+The larger fact is unchanged from §14.6 and this pass did not touch it: the
+§46-compliant surface is still behind a flag seeded `false`, the surface users
+reach is still the full-screen autoplaying stranger-video feed §46.2 forbids
+twice, and **`GET /media/gems` — the endpoint this section is mostly about — is
+served by a router inside that same dark shell.** It is correct, it is tested,
+and today nobody can see it.
