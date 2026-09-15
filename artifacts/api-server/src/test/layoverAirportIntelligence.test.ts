@@ -117,6 +117,23 @@ function stage(airport: Record<string, any> | null, sessionOver: Record<string, 
 }
 
 /** A session shaped like the one `sessionRow` stages, for the direct calls. */
+/** The fixture at a PINNED instant, so a case can state a fact instead of sampling the clock. */
+function sessionAt(now: number): LayoverSession {
+  return {
+    id: "session-1", userId: USER_ID, airportId: "airport-tpe", tripId: null,
+    arrivalTime: new Date(now + 5 * 60_000).toISOString(),
+    departureTime: new Date(now + 8 * 3_600_000).toISOString(),
+    boardingTime: null, layoverMinutes: 475,
+    flightType: "international", immigrationRequired: true, checkedBags: false,
+    loungeAccess: false, wantsToLeave: true, comfortLevel: "moderate", vibeChips: ["food"],
+    manualAirportName: null, manualCity: null, manualCountry: null, manualIata: null,
+    canonicalCityId: null, shareCityStatus: false, returnReminderAt: null,
+    status: "active",
+    createdAt: new Date(now - 60_000).toISOString(),
+    updatedAt: new Date(now - 60_000).toISOString(),
+  } as LayoverSession;
+}
+
 function session(): LayoverSession {
   const now = Date.now();
   return {
@@ -341,9 +358,51 @@ describe("the disclosure reaches a client — GET /overview and GET /safety", ()
 // should WITHHOLD landside guidance, census L243/L249 — is an OWNER DECISION
 // recorded in the census and deliberately not taken here.
 describe("the four rungs, measured against the airports this product has", () => {
-  it("an uncurated row and a generic fallback publish DIFFERENT rungs and IDENTICAL minutes", () => {
-    const s = session();
-    const now = Date.now();
+  // WHAT THIS CASE USED TO CLAIM, AND WHY IT WAS WRONG.
+  //
+  // It asserted the two rungs publish "IDENTICAL minutes" and compared FOUR of
+  // the NINE estimate terms, then asserted identical deadlines. The fifth term
+  // it did not compare — `returnTransport` — differs, so the deadlines differ by
+  // up to twelve minutes and the assertion was false.
+  //
+  // It was also a TIME BOMB, and that is why it was reported green. The producer
+  // is `services/airport/LayoverSafetyEngine.ts:554#function returnTransportExtra`,
+  // which places the return leg in a traffic band by the airport's LOCAL hour.
+  // The uncurated row carries `Asia/Taipei`; the generic fallback has no timezone
+  // and assumes `UTC`. Whether the two land in the same band depends on the wall
+  // clock at which the suite runs. Measured across all 24 UTC hours with the
+  // fixture's own +8h departure:
+  //
+  //     PASSES at 08:00Z, 13:00Z, 14:00Z — 3 hours
+  //     FAILS  at the other 21
+  //
+  // So it was green one run in eight, and it never passed on its own merits.
+  //
+  // WHAT IS ACTUALLY TRUE, and what this case now pins. An uncurated
+  // `airport_profiles` row supplies the same four BUFFER terms as the generic
+  // fallback — that half of the original claim holds and is the tripwire worth
+  // keeping. But it is NOT vacuous: it carries the airport's TIMEZONE, and the
+  // return-leg forecast reads that timezone, so the rung does change the advice
+  // by exactly one term. The instant is PINNED so the answer cannot depend on
+  // when CI happens to run.
+  //
+  // A NOTE ON PROVENANCE, found by a mutation that SURVIVED. Naming the producer
+  // took two attempts: mutating `layoverRouting.ts#returnTransportForecast` to
+  // ignore the timezone changed nothing here, because that function has NO
+  // PRODUCTION CALLER — `grep` finds only this file's prose and two test files.
+  // The value in the record comes from `LayoverSafetyEngine`'s own
+  // `returnTransportExtra`, and mutating THAT kills this case. The two share the
+  // band helper but not the joint ramp, so they can disagree.
+  //
+  // `LayoverFeasibility.ts` nonetheless declares this estimate's provenance as
+  // `["layoverRouting.returnTransportForecast", …]` — a sourceRef naming a
+  // function no production path runs. Left as an open finding rather than
+  // silently repointed: the number is right, its stated origin is not.
+  it("an uncurated row and a generic fallback share every BUFFER term, and differ by exactly the return leg", () => {
+    // 09:00Z: Taipei is 17:00 (PEAK), UTC is 09:00 (SHOULDER). Pinned, so this
+    // case states one fact about the model rather than sampling the clock.
+    const now = Date.UTC(2026, 8, 15, 1, 0, 0);   // departure lands at 09:00Z
+    const s = sessionAt(now);
     const uncuratedRec = certifySessionFeasibility(UNCURATED, s, { nowMs: now });
     const genericRec   = certifySessionFeasibility(GENERIC,   s, { nowMs: now });
 
@@ -351,8 +410,9 @@ describe("the four rungs, measured against the airports this product has", () =>
     assert.equal(airportIntelligence(uncuratedRec).tier, "AIRPORT_RECORD");
     assert.equal(airportIntelligence(genericRec).tier, "GENERIC");
 
-    // And what it separates is not the advice. Compare the four terms the
-    // AIRPORT is said to supply, by value, rather than asserting constants.
+    // THE SURVIVING TRIPWIRE: the four terms the AIRPORT ROW itself supplies are
+    // the generic defaults. If an uncurated row ever starts carrying real buffer
+    // data, this fires and the rung has begun to mean curation.
     const terms = (r: typeof uncuratedRec) => ({
       baseBuffer:       r.estimates.baseBuffer.valueMinutes,
       immigrationExtra: r.estimates.immigrationExtra.valueMinutes,
@@ -363,10 +423,22 @@ describe("the four rungs, measured against the airports this product has", () =>
       terms(uncuratedRec), terms(genericRec),
       "an uncurated airport_profiles row no longer holds the generic defaults — the rung may now mean curation, and this tripwire is stale",
     );
+
+    // AND THE ONE THING IT DOES SUPPLY. Asserted as a value, not as an
+    // inequality: a bare `notEqual` would also pass if the gap became an hour.
+    assert.equal(uncuratedRec.estimates.returnTransport.valueMinutes, 12, "Asia/Taipei at 17:00 is PEAK: 20 x 1.6 - 20 = 12");
+    assert.equal(genericRec.estimates.returnTransport.valueMinutes, 6, "assumed UTC at 09:00 is SHOULDER: 20 x 1.3 - 20 = 6");
+
+    // The deadline gap is that term and nothing else — which is what makes the
+    // buffer-term assertion above meaningful rather than merely unfalsified.
+    const gapMs =
+      new Date(genericRec.deadline.hardReturnTime).getTime() -
+      new Date(uncuratedRec.deadline.hardReturnTime).getTime();
     assert.equal(
-      new Date(uncuratedRec.deadline.hardReturnTime).getTime(),
-      new Date(genericRec.deadline.hardReturnTime).getTime(),
-      "the two rungs now produce different deadlines — re-read the rung's contract",
+      gapMs,
+      (uncuratedRec.estimates.returnTransport.valueMinutes -
+        genericRec.estimates.returnTransport.valueMinutes) * 60_000,
+      "the deadlines now differ by something other than the return leg — a sixth term has started to depend on the rung",
     );
   });
 
