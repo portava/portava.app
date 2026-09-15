@@ -14,12 +14,17 @@
  *
  * Four things happen here and nothing else:
  *
- *   1. the flag       FALSE BY ABSENCE. `LAYOVER_DISCOVERY_MODE_FLAG` is
- *                     published by the Layover lane so two lanes cannot spell
- *                     it differently, and `isFlagEnabled` answers false for a
- *                     missing row AND for an unreadable `feature_flags`
- *                     (lib/featureFlags.ts). Off ⇒ ordinary Discovery, and this
- *                     module adds not one key to the response.
+ *   1. the flag       FALSE BY ABSENCE, REFUSED BY SILENCE.
+ *                     `LAYOVER_DISCOVERY_MODE_FLAG` is published by the Layover
+ *                     lane so two lanes cannot spell it differently, and it is
+ *                     read through `readFlagState`
+ *                     (lib/capability/schemaCapability.ts), which keeps FOUR
+ *                     answers apart where `isFlagEnabled` keeps two.
+ *                     An ABSENT row is an answer — nobody enabled this —
+ *                     so the mode is off, ordinary Discovery runs and this
+ *                     module adds not one key to the response. An UNREADABLE
+ *                     `feature_flags` is NOT an answer, and must not become
+ *                     one: see "AND WHY AN UNREADABLE FLAG MAY NOT MEAN OFF".
  *   2. the snapshot   `certifiedLayoverSnapshot`. Its refusals are TWO KINDS
  *                     and they are not interchangeable — see below.
  *   3. the terms      `lib/discoveryLayoverTiming.ts`, which is where the
@@ -66,10 +71,58 @@
  * `no_live_layover_session` are ANSWERS: the statement ran and matched nothing,
  * so there is no layover, so Layover mode does not apply and the surface serves
  * exactly what it served before.
+ *
+ * ── AND WHY AN UNREADABLE FLAG MAY NOT MEAN OFF ─────────────────────────────
+ * This module used to read the flag through `isFlagEnabled`, which answers
+ * `false` for a missing row AND for a `feature_flags` that could not be read,
+ * and treated `false` as OFF — so an unreadable flags table served the
+ * ORDINARY, UNGATED list.
+ *
+ * That is backwards for a RESTRICTION. For a flag that ADDS something,
+ * fail-closed is "off" and the two cases genuinely collapse. This flag
+ * WITHHOLDS places a traveller cannot get back from, so "we could not read the
+ * flag" turning into "the restriction does not apply" is a guard that
+ * disengages exactly when the database is least healthy — the same inversion
+ * `isKillSwitchEngaged` was written for, and the same rule the FAILED READ arm
+ * above already applies to `layover_sessions` and `layover_plan_stops`: an
+ * unreadable read must never produce a settled claim about the world.
+ *
+ * The answer is the one this module already has a shape for — the refusal
+ * envelope, `coverage: "nothing"`, `failedSources: ["feature_flags"]`. It was
+ * chosen over the other fail-closed option, serving an EMPTY gated list,
+ * because an empty list is byte-identical to "we looked and nothing fits",
+ * which is the masquerade owner ruling D11 forbids and the whole reason the
+ * three states above are given three shapes. Serving the ungated list was never
+ * on the table.
+ *
+ * AND IT IS SCOPED TO THE TRAVELLERS IT IS ABOUT. The refusal is decided AFTER
+ * the snapshot read, not at the flag read. A traveller with NO live layover is
+ * outside this restriction whatever the flag says — the snapshot's
+ * `no_live_layover_session` is an ANSWER, exactly as in the section above — so
+ * they get ordinary Discovery and an unreadable `feature_flags` costs them
+ * nothing. What is refused is precisely the set an ungated list would have been
+ * wrong for: a traveller who IS in a live layover and about whom we cannot say
+ * whether the restriction is switched on. Refusing at the flag read instead
+ * would have blanked Discovery for every signed-in caller on any hiccup of
+ * `feature_flags`, and withholding from people a rule was never about is not a
+ * stricter rule, it is a wider outage.
+ *
+ * NO NEW READER WAS WRITTEN FOR THIS. `lib/featureFlags.ts` has four shared
+ * readers and not one of them can answer the question: `isFlagEnabled` and
+ * `isLivePlacesCapabilityEnabled` collapse absent and unreadable into `false`,
+ * `getFlagRow` collapses both into `null`, and `isKillSwitchEngaged` hard-codes
+ * the opposite direction for a different kind of flag. The four-valued reader
+ * ALREADY EXISTS one directory over — `lib/capability/schemaCapability.ts`'s
+ * `readFlagState`, which answers `on` / `off` / `absent` / `unreadable` and
+ * binds the error to get there — and a second copy of it under a new name in
+ * featureFlags.ts is precisely what census L6 forbids. It is imported, not
+ * re-spelled, and `scripts/check-flag-polarity.mjs` now carries it in its
+ * reader vocabulary so the call site is VISIBLE to the polarity rule rather
+ * than unseen.
  */
-import { isFlagEnabled } from "./featureFlags.js";
+import { readFlagState } from "./capability/schemaCapability.js";
 import { discoveryRefusal, type DiscoveryRefusal } from "./discoveryRefusal.js";
-import { statedLayoverTimings, type TimeableCandidate } from "./discoveryLayoverTiming.js";
+import { statedLayoverTimings, type StatedTerm, type TimeableCandidate } from "./discoveryLayoverTiming.js";
 import {
   LAYOVER_DISCOVERY_MODE_FLAG,
   certifiedActionUniverse,
@@ -84,6 +137,11 @@ export const LAYOVER_MODE_REFUSAL_CODES = {
   snapshot: "layover_snapshot_unreadable",
   /** The traveller's own plan could not be read, so nothing could be timed. */
   timing: "layover_timing_unreadable",
+  /**
+   * `feature_flags` could not be read, so whether the restriction applies is
+   * UNKNOWN — and an unknown restriction is not a lifted one.
+   */
+  flag: "layover_flag_unreadable",
 } as const;
 
 /** One place the certified universe withheld, and the reason it gave. */
@@ -92,6 +150,22 @@ export interface WithheldAction {
   /** `BLOCKED` · `CLOSED` · `UNMEASURED` — the contract's own vocabulary. */
   state: ActionAdmission;
   reason: string;
+  /**
+   * The PROVENANCE of the two time terms, per term.
+   *
+   * ADDITIVE, and present on every withheld entry rather than only on the
+   * `UNMEASURED` ones, because the three states are decided by a contract this
+   * module does not own and a key that appears only for some of them is a key
+   * whose presence a client would have to reverse-engineer.
+   *
+   * It exists because `UNMEASURED` on its own collapses at least four different
+   * situations — no routed provider, no stop for this place, a stop whose
+   * landside travel is the column's NOT-NULL zero, and an id that has no
+   * layover subject at all — into one word. Absence of evidence must not read
+   * as evidence of absence, and two different absences must not read alike.
+   * `lib/discoveryLayoverTiming.ts` keeps them apart; this carries them out.
+   */
+  terms: { travel: StatedTerm; activity: StatedTerm };
 }
 
 /**
@@ -154,8 +228,16 @@ export async function discoveryLayoverGate(
   route: string,
 ): Promise<DiscoveryLayoverGate> {
   if (!sc || !userId) return OFF;
-  if (!(await isFlagEnabled(sc, LAYOVER_DISCOVERY_MODE_FLAG))) return OFF;
+  const flag = await readFlagState(sc, LAYOVER_DISCOVERY_MODE_FLAG);
+  // `off` and `absent` are ANSWERS — a row saying no, and nobody having said
+  // anything. Both mean the restriction does not exist, for anybody, and the
+  // surface serves exactly what it served before. `unreadable` is NOT an answer
+  // and deliberately does not return here; see below.
+  if (flag === "off" || flag === "absent") return OFF;
 
+  // Reached with the flag ON *or* UNREADABLE. In both cases the traveller has
+  // to be looked at before anything can be served, because whether the
+  // restriction could apply at all is a fact about THEM, not about the flag.
   const read = await certifiedLayoverSnapshot(sc, userId);
   if (!read.ok) {
     // The one branch that decides whether a shorter list is honest. See the
@@ -173,6 +255,30 @@ export async function discoveryLayoverGate(
     };
   }
   const snapshot = read.snapshot;
+
+  // THIS TRAVELLER IS IN A LIVE LAYOVER, and we could not read whether the
+  // restriction is switched on. NOT `return OFF`: for a restriction, an
+  // unreadable flag resolving to "it does not apply" is a guard that disengages
+  // on exactly the unhealthy database it was meant to survive.
+  //
+  // It is decided HERE, after the snapshot, and not at the flag read, ON
+  // PURPOSE. Refusing at the flag read would blank Discovery for every
+  // signed-in caller the moment `feature_flags` hiccups — including the vast
+  // majority who are not in a layover at all and whom this restriction could
+  // never have applied to. A guard that withholds from people it was never
+  // about is not a stricter guard; it is a wider outage. The set that is
+  // refused here is exactly the set an ungated list would have been wrong for.
+  if (flag === "unreadable") {
+    return {
+      ok: false,
+      active: false,
+      admittedIds: null,
+      summary: null,
+      refusal: discoveryRefusal(
+        "transient_db", LAYOVER_MODE_REFUSAL_CODES.flag, route, "nothing", ["feature_flags"],
+      ),
+    };
+  }
 
   const timing = await statedLayoverTimings(sc, snapshot.sessionId, candidates, {
     // The snapshot's OWN centre and the record's OWN instant. A second clock
@@ -232,9 +338,28 @@ export async function discoveryLayoverGate(
           // The contract's own words. A withheld card that cannot say why is
           // the same silence this census keeps catching, one layer up.
           reason: a.reason ?? a.feasibility.reason ?? a.state,
+          terms: termsFor(timing.byId.get(a.id)),
         })),
     },
   };
+}
+
+/**
+ * The per-term provenance for one withheld id.
+ *
+ * The fallback arm is reachable only if the certified universe named an id the
+ * timing map has no entry for, which the call above makes impossible — the two
+ * lists are built from the same `candidates`. It is written out anyway, and it
+ * says NOTHING it does not know: `unmeasured`, no absence reason, no port
+ * reason. An `??`-ed empty object would be a shape a client could not read, and
+ * a fabricated reason here would be the exact defect this key exists to close.
+ */
+function termsFor(t: { travel: StatedTerm; activity: StatedTerm } | undefined): {
+  travel: StatedTerm;
+  activity: StatedTerm;
+} {
+  const unknown: StatedTerm = { value: null, source: "unmeasured", absence: null, portReason: null };
+  return t ? { travel: t.travel, activity: t.activity } : { travel: unknown, activity: unknown };
 }
 
 /**

@@ -46,7 +46,7 @@ import {
   discoveryRefusal,
   sendDiscoveryRefusal,
   logServeUnlessRefused, classifyRefusal, upstreamCall, UpstreamUnavailableError,
-} from "../lib/discoveryRefusal.js";  import { discoveryLayoverGate, serveUnderLayoverGate } from "../lib/discoveryLayoverMode.js";  // A14 / census-layover §25 L269 — Discovery's Layover mode. Declared on this line, not its own, because docs/ anchors routes/discovery.ts up to :3477 and check:doc-citations re-reads every one of them.
+} from "../lib/discoveryRefusal.js";  import { discoveryLayoverGate, serveUnderLayoverGate, type DiscoveryLayoverSummary } from "../lib/discoveryLayoverMode.js";  import type { DiscoveryRefusal } from "../lib/discoveryRefusal.js";  // A14 / census-layover §25 L269 — Discovery's Layover mode. Declared on this line, not its own, because docs/ anchors routes/discovery.ts up to :3477 and check:doc-citations re-reads every one of them.
 import { resolveDiscoveryEngineMode } from "../lib/discoveryEngineMode.js";
 // The PDE ranking pipeline (D5=B, ranking half). portavaRank, the
 // DiscoveryRankingService re-rank and the assembly analytics all moved behind
@@ -1879,7 +1879,7 @@ router.get("/discovery", async (req, res) => {
     const liveRanked = await withDiscoveryLiveRank(getServiceClient(), servedFiltered, {
       mode: parseIntentMode(req.query.intentMode),
     });
-    const slice    = liveRanked.places.slice(offset, offset + PAGE_SIZE).map(toPublic);
+    const gateA = await layoverGatedPlaces(callerUserId, liveRanked.places, "GET /discovery"); if (!gateA.ok) { sendDiscoveryRefusal(res, emptyDiscoveryPlacesEnvelope(destination ?? null, ctxLabel ?? null), gateA.refusal); return; } const slice    = gateA.places.slice(offset, offset + PAGE_SIZE).map(toPublic);  // A14 — the certified action universe gates the WHOLE set before the page slice, so pagination walks the gated set and `total` counts what was served. See lib/discoveryLayoverMode.ts.
     const totalMs  = Date.now() - t0;
     req.log.info({ cacheLevel, destination, category, totalMs, pdeServed: pdeScoredById !== null }, "discovery: cache hit");
     // §7 New-to-Me annotation — additive, order-preserving, flag-gated, fail-safe.
@@ -1889,7 +1889,7 @@ router.get("/discovery", async (req, res) => {
       liveRankById: liveRanked.applied ? liveRanked.byId : null,
     });
     sendDiscoveryPlacesEnvelope(res, {
-      places: candidateSlice, total: liveRanked.places.length, destination, context: ctxLabel, cached: true, ageFilterMeta,
+      places: candidateSlice, total: gateA.places.length, destination, context: ctxLabel, cached: true, ageFilterMeta,
       sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 },
       meta: {
         cacheLevel, timings: { totalMs },
@@ -1899,7 +1899,7 @@ router.get("/discovery", async (req, res) => {
           ? { liveRank: { mode: liveRanked.mode, readable: liveRanked.readable, windowSize: liveRanked.windowSize, demoted: liveRanked.demoted } }
           : {}),
       },
-    }, dbFailedSources, offset);   // D11 serve path 1 of 4 — the cache-A serve
+    }, dbFailedSources, offset, gateA.summary);   // D11 serve path 1 of 4 — the cache-A serve. A14 — the `layover` key is attached in the send helper, beside `cursor` and for the same reason: four paths physically cannot disagree about its name or its position.
     // Stage 0 instrumentation — serve points 1/2/3. Fire-and-forget, after the
     // response. These three paths ran no ranker; before this they wrote nothing
     // at all, which is why the 'discovery' surface had no rows.
@@ -2129,7 +2129,7 @@ router.get("/discovery", async (req, res) => {
             const cCacheHit = cAcceptance.usable ? cStored : undefined;
             if (cCacheHit) {
               const cFiltered = applyFilters(cCacheHit.places);
-              const cSlice = cFiltered.slice(offset, offset + PAGE_SIZE).map(toPublic);
+              const gateB = await layoverGatedPlaces(callerUserId, cFiltered, "GET /discovery"); if (!gateB.ok) { sendDiscoveryRefusal(res, emptyDiscoveryPlacesEnvelope(destination ?? null, ctxLabel ?? null), gateB.refusal); return; } const cSlice = gateB.places.slice(offset, offset + PAGE_SIZE).map(toPublic);  // A14 — see serve path 1.
               req.log.info({ destination, cacheLevel: "compass_candidate_hit" }, "discovery: compass candidate cache hit");
               const cAnnotated = await annotateNewToMe(getServiceClient(), callerUserId, cSlice);
               // 06 §5: cachedAt is the entry's own write clock, which the TTL
@@ -2141,8 +2141,8 @@ router.get("/discovery", async (req, res) => {
                 // re-stamping it here would report a rank that never happened.
                 provenanceById: cCacheHit.provenanceById,
               });
-              sendDiscoveryPlacesEnvelope(res, { places: cCandidates, total: cFiltered.length, destination, context: ctxLabel, cached: true, ageFilterMeta,
-                sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 } }, dbFailedSources, offset);  // D11 serve path 2 of 4 — the Compass cache-B hit
+              sendDiscoveryPlacesEnvelope(res, { places: cCandidates, total: gateB.places.length, destination, context: ctxLabel, cached: true, ageFilterMeta,
+                sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 } }, dbFailedSources, offset, gateB.summary);  // D11 serve path 2 of 4 — the Compass cache-B hit
               // Stage 0 — serve point 4. Replays a stored Compass order; no
               // ranker ran in this request, so rankedInRequest is false.
               void logDiscoveryServe(compassSc, {
@@ -2224,14 +2224,14 @@ router.get("/discovery", async (req, res) => {
             // Only pipeline-passed items appear when the flag is enabled.
             const merged = compassRanked;
             const cFiltered  = applyFilters(merged);
-            const cSlice     = cFiltered.slice(offset, offset + PAGE_SIZE).map(toPublic);
+            const gateC = await layoverGatedPlaces(callerUserId, cFiltered, "GET /discovery"); if (!gateC.ok) { sendDiscoveryRefusal(res, emptyDiscoveryPlacesEnvelope(destination ?? null, ctxLabel ?? null), gateC.refusal); return; } const cSlice     = gateC.places.slice(offset, offset + PAGE_SIZE).map(toPublic);  // A14 — see serve path 1.
             const cFreshAnnotated = await annotateNewToMe(getServiceClient(), callerUserId, cSlice);
             const cFreshCandidates = await withDiscoveryCandidates(getServiceClient(), withRecommendationIds(cFreshAnnotated, exposure), {
               cacheLevel: "compass_fresh_rank", cachedAt: Date.now(), scoredById: null, rankedBy: "compass",
               provenanceById: cProvenanceById,
             });
-            sendDiscoveryPlacesEnvelope(res, { places: cFreshCandidates, total: cFiltered.length, destination, context: ctxLabel, cached: false, ageFilterMeta,
-              sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 } }, dbFailedSources, offset);  // D11 serve path 3 of 4 — the Compass fresh rank
+            sendDiscoveryPlacesEnvelope(res, { places: cFreshCandidates, total: gateC.places.length, destination, context: ctxLabel, cached: false, ageFilterMeta,
+              sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 } }, dbFailedSources, offset, gateC.summary);  // D11 serve path 3 of 4 — the Compass fresh rank
             // Stage 0 — serve point 5. The Compass ranker DID run here, but
             // this path has never written a rank_events row: it returns before
             // the logImpression call on the cold path below.
@@ -2287,7 +2287,7 @@ router.get("/discovery", async (req, res) => {
     const coldLiveRanked = await withDiscoveryLiveRank(getServiceClient(), filtered, {
       mode: parseIntentMode(req.query.intentMode),
     });
-    const slice = coldLiveRanked.places.slice(offset, offset + PAGE_SIZE).map(toPublic);
+    const gateD = await layoverGatedPlaces(callerUserId, coldLiveRanked.places, "GET /discovery"); if (!gateD.ok) { sendDiscoveryRefusal(res, emptyDiscoveryPlacesEnvelope(destination ?? null, ctxLabel ?? null), gateD.refusal); return; } const slice = gateD.places.slice(offset, offset + PAGE_SIZE).map(toPublic);  // A14 — see serve path 1.
     // Log impressions for exactly the items that were served — after filter + page slice.
     if (callerUserId && scoredByPlaceId.size > 0) {
       const servedScored = slice
@@ -2324,7 +2324,7 @@ router.get("/discovery", async (req, res) => {
       rankedBy:   scoredByPlaceId.size > 0 ? "pde" : "none",
       liveRankById: coldLiveRanked.applied ? coldLiveRanked.byId : null,
     });
-    sendDiscoveryPlacesEnvelope(res, { places: coldCandidates, total: coldLiveRanked.places.length, destination, context: ctxLabel, cached: false, ageFilterMeta,
+    sendDiscoveryPlacesEnvelope(res, { places: coldCandidates, total: gateD.places.length, destination, context: ctxLabel, cached: false, ageFilterMeta,
       sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 },
       meta: {
         cacheLevel: "miss", timings: { geocodeMs, osmMs, totalMs },
@@ -2332,7 +2332,7 @@ router.get("/discovery", async (req, res) => {
           ? { liveRank: { mode: coldLiveRanked.mode, readable: coldLiveRanked.readable, windowSize: coldLiveRanked.windowSize, demoted: coldLiveRanked.demoted } }
           : {}),
       },
-    }, dbFailedSources, offset);   // D11 serve path 4 of 4 — the cold fetch's legacy/PDE tail
+    }, dbFailedSources, offset, gateD.summary);   // D11 serve path 4 of 4 — the cold fetch's legacy/PDE tail
   } catch (err) {
     req.log.error({ err }, "discovery route failed");
     // D11 / `11` §9. `meta.cacheLevel: "error"` was already here and was ALMOST
@@ -2718,8 +2718,8 @@ router.get("/discovery/feed", async (req, res) => {
       }
     }
 
-    const total     = allPlaces.length;
-    const slice     = allPlaces.slice(offset, offset + limit).map(toPublic);
+    const gateF = await layoverGatedPlaces(viewerId, allPlaces, "GET /discovery/feed"); if (!gateF.ok) { sendDiscoveryRefusal(res, emptyFeedEnvelope(destination ?? null, feedSessionId), gateF.refusal); return; } const total     = gateF.places.length;  // A14 — the feed serves the SAME merged discovery_places + OSM rows as GET /discovery, to the same traveller; see layoverGatedPlaces for what is NOT gated here and why.
+    const slice     = gateF.places.slice(offset, offset + limit).map(toPublic);
     const nextOff   = offset + limit;
     const nextCursor = nextOff < total ? encodeOffset(nextOff) : null;
 
@@ -2740,7 +2740,7 @@ router.get("/discovery/feed", async (req, res) => {
         osmCount:         totalOsm,
         userCreatedCount: eventPosts.length,
       },
-      sessionId: feedSessionId,
+      sessionId: feedSessionId, ...(gateF.summary ? { layover: gateF.summary } : {}),
     };
     if (failedCats.length > 0) {
       // "nothing" only when the failure is the whole answer. If OSM or the event
@@ -3856,6 +3856,10 @@ function sendDiscoveryPlacesEnvelope<T extends { total: number }>(
   // NEXT one. Required rather than optional: a fifth serve path that forgot it
   // must fail to compile, not quietly answer with a cursor stuck at page 1.
   offset: number,
+  // A14 — the Layover-mode summary, or null when the mode is not active. See
+  // the note beside `cursor` below for why it is attached HERE and not in the
+  // four envelope literals.
+  layover: DiscoveryLayoverSummary | null,
 ): void {
   // `cursor` is attached HERE, above the success/refusal branch, and that
   // position is the whole design:
@@ -3869,7 +3873,18 @@ function sendDiscoveryPlacesEnvelope<T extends { total: number }>(
   //     a client could tell the two apart by a second, undesigned signal, and a
   //     walk crossing a transient PARTIAL failure would lose its place in a set
   //     it was still being served rows from.
-  const body = { ...envelope, cursor: nextDiscoveryCursor(offset, PAGE_SIZE, envelope.total) };
+  //
+  // `layover` is attached in the same place and for all three of the same
+  // reasons. It is ADDITIVE and present only when the mode is ACTIVE, so an
+  // ordinary serve — every serve on this tree while the flag is off — is
+  // byte-identical to what it was, which is what lets
+  // `src/test/discoveryCuratedSourceRefusal.test.ts` CONTROL 2 keep pinning the
+  // exact key set and the exact order without being touched.
+  const body = {
+    ...envelope,
+    cursor: nextDiscoveryCursor(offset, PAGE_SIZE, envelope.total),
+    ...(layover ? { layover } : {}),
+  };
   if (failedSources.length === 0) {
     res.json(body);
     return;
@@ -3881,6 +3896,82 @@ function sendDiscoveryPlacesEnvelope<T extends { total: number }>(
       "transient_db", "discovery_places_read_failed", "GET /discovery", "partial", failedSources,
     ),
   );
+}
+
+/**
+ * A14 / census-layover §25 L269 — the Layover gate for the two `DiscoveryPlace`
+ * surfaces, in ONE place.
+ *
+ * `GET /discovery` has four serve paths and `GET /discovery/feed` a fifth, and
+ * the rule §25 L269 states is one rule. So this is the only place any of them
+ * calls the gate, for the same reason `sendDiscoveryPlacesEnvelope` is the only
+ * place any of them serialises: five hand-written copies of "refuse, then
+ * filter" is five chances for one of them to drift into serving the ungated
+ * list, and the drift would be invisible from outside.
+ *
+ * WHY IT GATES THE WHOLE SET AND NOT THE PAGE. Each caller hands over the full
+ * ranked list and slices the RESULT. Gating the page instead would make
+ * `total`, the `cursor` arithmetic and the set actually being walked three
+ * different things, so a traveller paging through would be shown a set that
+ * shrinks unpredictably per page. The cost is one travel-time port call per
+ * candidate rather than per page; on this deployment the port is
+ * `noRoutedProvider`, which answers without leaving the process, and it is paid
+ * only by a signed-in traveller with a live layover and the flag on.
+ *
+ * WHY IT CANNOT THROW. Serve paths 2 and 3 sit inside a `try` whose `catch`
+ * DELIBERATELY falls through to the cold path (DV-07). A throw out of the gate
+ * there would degrade to a path that then served the UNGATED list — the gate
+ * failing open by way of someone else's error handler. So every failure becomes
+ * a refusal instead, which is the same answer the gate gives for a failed read.
+ *
+ * WHAT IS NOT GATED, SAID OUT LOUD. `GET /discovery/feed` also serves `posts`
+ * (`lib/eventPostsDiscovery.ts`), and those are left alone. They are not places:
+ * their ids are `posts.id`, they carry no `discovery_places` row, and
+ * `layover_plan_stops.place_id` therefore has nothing it could ever hold for
+ * one — so gating them would mean inventing a subject, not applying a rule.
+ * `events` and `memories` are `[]` on every response this route sends.
+ */
+async function layoverGatedPlaces<T extends { id: string; lat?: number | null; lng?: number | null }>(
+  userId: string | null,
+  places: T[],
+  route: string,
+): Promise<
+  | { ok: false; refusal: DiscoveryRefusal }
+  | { ok: true; places: T[]; summary: DiscoveryLayoverSummary | null }
+> {
+  // Nothing to withhold from an empty page, and nothing to refuse about it
+  // either. Mirrors what GET /discovery/community does with `items.length > 0`.
+  if (places.length === 0) return { ok: true, places, summary: null };
+  try {
+    const gate = await discoveryLayoverGate(getServiceClient(), userId, places, route);
+    if (!gate.ok) return { ok: false, refusal: gate.refusal };
+    return { ok: true, places: serveUnderLayoverGate(gate, places), summary: gate.summary };
+  } catch (err) {
+    // See the header: a throw must not reach DV-07's catch, because that arm
+    // degrades to a path which would serve the ungated list. `transient_db` and
+    // `coverage: "nothing"` are the same answer a failed read gets — this IS a
+    // failed read, arriving by a different door.
+    logger.warn({ err, route }, "discovery: layover gate threw — refusing rather than serving ungated");
+    return {
+      ok: false,
+      refusal: discoveryRefusal(
+        "transient_db", "layover_gate_failed", route, "nothing", ["layover_sessions"],
+      ),
+    };
+  }
+}
+
+/**
+ * The `GET /discovery` empty body, for the arm that refuses before any page
+ * exists. Same shape as the assembly-error arm at the foot of the handler, so a
+ * Layover refusal and an assembly refusal differ in their `refusal` and in
+ * nothing else.
+ */
+function emptyDiscoveryPlacesEnvelope(destination: string | null, context: string | null) {
+  return {
+    places: [], total: 0, destination, context, cached: false, ageFilterMeta: null,
+    sourceSummary: { seededDbCount: 0, osmCount: 0, userCreatedCount: 0 },
+  };
 }
 
 /**

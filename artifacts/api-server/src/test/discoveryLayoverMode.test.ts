@@ -39,8 +39,10 @@
  *
  * and both are read through `LayoverPlanFit`'s `statedTravelMin` /
  * `statedDurationMin`, which is what keeps the column's NOT NULL default from
- * reading back as a measurement. The last test in this file is a SOURCE GUARD
- * that fails if a default number is ever introduced to make a card appear.
+ * reading back as a measurement. The last two suites in this file are about a
+ * default number being introduced to make a card appear: the first asserts the
+ * BEHAVIOUR (a missing input must not acquire a value, however the fabrication
+ * is spelled), and the second is a narrow source guard over what is left.
  *
  * Run: SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy \
  *      node --import tsx --test src/test/discoveryLayoverMode.test.ts
@@ -53,9 +55,14 @@ import pino from "pino";
 import { readFileSync } from "node:fs";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
-import discoveryRouter from "../routes/discovery.js";
+import discoveryRouter, {
+  _setTestDbPlacesOverride, _injectTestCacheEntry, _clearTestCacheEntry,
+  _clearTestCompassCache, type DiscoveryPlace,
+} from "../routes/discovery.js";
 import { DISCOVERY_REFUSAL_CLASSES } from "../lib/discoveryRefusal.js";
 import { invalidateServeLogFlagCache } from "../lib/discoveryServeLog.js";
+import { invalidateFlagsCache } from "../compass/flags.js";
+import { invalidateDiscoveryEngineModeCache } from "../lib/discoveryEngineMode.js";
 import { LAYOVER_DISCOVERY_MODE_FLAG } from "../services/airport/LayoverSnapshot.js";
 import { airportRow, sessionRow } from "./helpers/fakeLayoverDb.js";
 
@@ -256,6 +263,73 @@ function get(path: string, auth = true): Promise<{ status: number; body: any }> 
   });
 }
 
+// ── GET /discovery — the other surface §25 L269 names ────────────────────────
+//
+// Its four serve paths all funnel through `sendDiscoveryPlacesEnvelope`, and
+// its id space is NOT the community one: curated rows are served as
+// `db/<discovery_places.id>` and live OSM elements as `<type>/<id>`. Both are
+// exercised here on purpose — the first has a layover subject behind a prefix,
+// the second has none and never can.
+const DB_UUID_FITS      = "11111111-1111-4111-8111-111111111111";
+const DB_UUID_UNMEASURED = "22222222-2222-4222-8222-222222222222";
+const DB_UUID_ZERO_TRAVEL   = "33333333-3333-4333-8333-333333333333";
+const DB_UUID_ZERO_DURATION = "44444444-4444-4444-8444-444444444444";
+const OSM_ID            = "node/4242";
+/** `cacheKey(dest, cat, radius)` — the route's own L1 key shape. */
+const DISCOVERY_CACHE_KEY = "taoyuan:food:10";
+const DISCOVERY_QS = `destination=${encodeURIComponent(CITY)}&lat=25.08&lng=121.235&radiusKm=10&category=food`;
+const DISCOVERY = `/api/discovery?${DISCOVERY_QS}`;
+
+function discoveryDbPlace(uuid: string, lat: number, lng: number): DiscoveryPlace {
+  return {
+    id: `db/${uuid}`, name: uuid, category: "food", type: "traveler_pick",
+    description: null, distanceKm: 1, lat, lng, tags: [],
+    address: CITY, website: null, phone: null, openingHours: null,
+    rating: null, isOpenNow: null, savedCount: 0,
+  } as DiscoveryPlace;
+}
+function discoveryOsmPlace(id: string, lat: number, lng: number): DiscoveryPlace {
+  return {
+    id, name: `osm ${id}`, category: "food", type: "cafe",
+    description: null, distanceKm: 2, lat, lng, tags: [],
+    address: null, website: null, phone: null, openingHours: null,
+    rating: null, isOpenNow: null, savedCount: 0,
+  } as DiscoveryPlace;
+}
+const placeIdsOf = (body: any) => ((body?.places ?? []) as any[]).map((p) => p.id).sort();
+
+/** Which of the four serve paths answered — read off the envelope, never assumed. */
+function servePathOf(body: any): string {
+  const level = body?.meta?.cacheLevel;
+  if (level === "error") return "assembly_error";
+  if (body?.cached === true) return typeof level === "string" ? "cache_a" : "compass_hit";
+  if (level === "miss") return "cold";
+  if (body?.cached === false && level === undefined) return "compass_fresh";
+  return `unrecognised(${JSON.stringify(body?.cached)}/${JSON.stringify(level)})`;
+}
+function assertServePath(body: any, expected: string): void {
+  assert.equal(
+    servePathOf(body), expected,
+    `this case did not reach the serve path it is about (it reached ${servePathOf(body)}), ` +
+    `so whatever it asserts is about a different path. Body keys: ` +
+    `${JSON.stringify(Object.keys(body ?? {}))}`,
+  );
+}
+
+/** The layover world GET /discovery runs in, with a stop for the db place only. */
+function discoveryWorld(over: { flags?: Array<Record<string, unknown>>; stops?: any[] } = {}) {
+  return {
+    feature_flags: [SERVE_LOG_ON, ...(over.flags ?? FLAG_ON)],
+    layover_sessions: [liveSession()],
+    airport_profiles: [airportRow()],
+    // The stop names the DISCOVERY UUID, not the served `db/<uuid>` id — which
+    // is exactly the mapping this surface has to do and the community one does
+    // not. A test that stated `db/<uuid>` here would pass against a route that
+    // never mapped anything.
+    layover_plan_stops: over.stops ?? [stopRow(DB_UUID_FITS, 20, 60)],
+  };
+}
+
 const COMMUNITY = `/api/discovery/community?city=${encodeURIComponent(CITY)}`;
 const idsOf = (body: any) => ((body?.items ?? []) as any[]).map((i) => i.id).sort();
 const rankInserts = () => inserts.filter((i) => i.table === "rank_events");
@@ -298,11 +372,20 @@ after(() => {
   globalThis.fetch = _originalFetch;
   _setTestClient(null as any, false);
   _setTestServiceClient(null as any);
+  _setTestDbPlacesOverride(null);
 });
 
 beforeEach(() => {
   inserts = [];
+  // Every one of these is a module-level memoisation with its own TTL. Without
+  // them the first fixture to be asked decides the answer for every case inside
+  // the window — including which of GET /discovery's four serve paths answers.
   invalidateServeLogFlagCache();
+  invalidateFlagsCache();
+  invalidateDiscoveryEngineModeCache();
+  _clearTestCompassCache();
+  _setTestDbPlacesOverride(null);
+  _clearTestCacheEntry(DISCOVERY_CACHE_KEY);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -321,16 +404,79 @@ describe("A14 — the flag is FALSE by absence, and off means byte-identical", (
     assert.equal(r.body.total, ALL_IDS.length);
   });
 
-  it("an UNREADABLE feature_flags is also off — not a refusal, and not a gate", async () => {
-    // `isFlagEnabled` returns false for a missing row AND for an unreadable
-    // table (lib/featureFlags.ts). A consuming lane must not invent a third
-    // behaviour for the second case.
+  // ── DELIBERATE CORRECTION — the owner's correction 1 ───────────────────────
+  //
+  // WHAT THIS TEST USED TO ASSERT, AND WHY IT WAS WRONG. It asserted that an
+  // UNREADABLE `feature_flags` served the ORDINARY, UNGATED list, on the
+  // grounds that `isFlagEnabled` answers false for a missing row AND for a
+  // failed read, and a consuming lane should not invent a third behaviour.
+  //
+  // That reasoning is right for a flag that ADDS a capability and backwards for
+  // one that WITHHOLDS. Here `false` does not mean "the feature stays off, no
+  // harm done"; it means "the restriction does not apply", and the restriction
+  // is what stops a traveller being sent to a place they cannot get back from.
+  // "We could not read the flag" is not a licence to drop a restriction — it is
+  // `discoveryLayoverMode.ts`'s own §33.2 rule (an unreadable read must never
+  // produce a settled claim about the world) one layer up from the two reads it
+  // already applies it to.
+  //
+  // THE ASSERTION IS STRENGTHENED, NOT RELAXED: it was one `deepEqual` that the
+  // ungated list came back; it is now the full refusal shape, plus the explicit
+  // negative that the ungated list did NOT come back.
+  it("an UNREADABLE feature_flags must NOT serve the ungated list — it refuses", async () => {
     setClient({ rows: layoverWorld(), errorTables: ["feature_flags"] });
     const r = await get(COMMUNITY);
     assert.equal(r.status, 200);
-    assert.equal(r.body.refusal, undefined);
+    assert.notDeepEqual(
+      idsOf(r.body), ALL_IDS,
+      "an unreadable feature_flags served the ORDINARY UNGATED list — a failed " +
+      "flag read silently disabled the restriction",
+    );
+    assertFailedReadRefusal(
+      r.body, "layover_flag_unreadable", "feature_flags", "unreadable feature_flags",
+    );
+  });
+
+  it("an unreadable flag costs a traveller with NO live layover nothing", async () => {
+    // THE SCOPE OF THE REFUSAL, pinned from the other side. The restriction can
+    // only ever apply to a traveller who is in a live layover, and whether they
+    // are is a fact about THEM that is read successfully here. So an unreadable
+    // `feature_flags` withholds from exactly the set an ungated list would have
+    // been wrong for, and from nobody else. Refusing at the flag read instead
+    // would blank Discovery for every signed-in caller on any hiccup of that
+    // table — a wider outage, not a stricter guard.
+    setClient({ rows: { ...layoverWorld(), layover_sessions: [] }, errorTables: ["feature_flags"] });
+    const r = await get(COMMUNITY);
+    assert.equal(r.status, 200);
+    assert.equal(
+      r.body.refusal, undefined,
+      "'you are not in a layover' is an ANSWER, and it does not depend on the flag",
+    );
     assert.deepEqual(idsOf(r.body), ALL_IDS);
     assert.equal(r.body.layover, undefined);
+  });
+
+  it("an unreadable flag DOES refuse the traveller who IS in a live layover", async () => {
+    // The same unreadable table, the same route, the opposite answer — because
+    // for THIS traveller the restriction might apply and nobody can say.
+    setClient({ rows: layoverWorld(), errorTables: ["feature_flags"] });
+    const r = await get(COMMUNITY);
+    assertFailedReadRefusal(
+      r.body, "layover_flag_unreadable", "feature_flags",
+      "unreadable feature_flags, live layover",
+    );
+  });
+
+  it("an unreadable flag is DISTINGUISHABLE from an absent one — absence is an answer", async () => {
+    // The two must not collapse: a missing row is a real statement about the
+    // world ("nobody enabled this"), and a failed read is the absence of one.
+    setClient({ rows: layoverWorld({ flags: FLAG_OFF }) });
+    const absent = await get(COMMUNITY);
+    setClient({ rows: layoverWorld(), errorTables: ["feature_flags"] });
+    const unreadable = await get(COMMUNITY);
+    assert.equal(absent.body.refusal, undefined, "an ABSENT flag row is an answer, not a failure");
+    assert.ok(unreadable.body.refusal, "an UNREADABLE feature_flags is a failure, not an answer");
+    assert.notDeepEqual(absent.body, unreadable.body);
   });
 
   it("an ANONYMOUS caller has no traveller, so there is no layover to gate on", async () => {
@@ -495,6 +641,358 @@ describe("A14 — a FAILED READ must not masquerade as an empty universe", () =>
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+//
+// CORRECTION 2 — `GET /discovery` is a Layover-mode surface too.
+//
+// §25 L269 says "Discovery", not "the community tab". The previous pass gated
+// only `GET /discovery/community` and left the larger surface serving an
+// UNGATED page to a traveller in Layover mode. All four of its serve paths
+// funnel through one helper, so the gate is one place — but each path has to be
+// reached to prove it, because every Compass branch swallows its own errors and
+// falls through to the cold path, and a case that quietly answered from a
+// DIFFERENT path would assert nothing about the path it names.
+describe("A14 — GET /discovery is gated on all four serve paths", () => {
+  it("cache-A: only the certified universe is served, and `total` counts it", async () => {
+    setClient({ rows: discoveryWorld() });
+    _setTestDbPlacesOverride(async () => [
+      discoveryDbPlace(DB_UUID_FITS, 25.08, 121.235),
+      discoveryDbPlace(DB_UUID_UNMEASURED, 25.081, 121.236),
+    ]);
+    _injectTestCacheEntry(DISCOVERY_CACHE_KEY, [discoveryOsmPlace(OSM_ID, 25.082, 121.237)]);
+    const r = await get(DISCOVERY);
+    assertServePath(r.body, "cache_a");
+    assert.equal(r.body.refusal, undefined);
+    assert.deepEqual(
+      placeIdsOf(r.body), [`db/${DB_UUID_FITS}`],
+      "an ungated GET /discovery page reached a traveller in Layover mode",
+    );
+    assert.equal(r.body.total, 1, "`total` must describe what was served, not what was read");
+    assert.equal(r.body.layover?.active, true);
+    assert.equal(r.body.layover?.sessionId, SESSION_ID);
+  });
+
+  it("cold fetch: the same gate, on the path that runs the ranker", async () => {
+    setClient({ rows: discoveryWorld() });
+    _setTestDbPlacesOverride(async () => [
+      discoveryDbPlace(DB_UUID_FITS, 25.08, 121.235),
+      discoveryDbPlace(DB_UUID_UNMEASURED, 25.081, 121.236),
+    ]);
+    const r = await get(DISCOVERY);
+    assertServePath(r.body, "cold");
+    assert.deepEqual(placeIdsOf(r.body), [`db/${DB_UUID_FITS}`]);
+    assert.equal(r.body.total, 1);
+    assert.equal(r.body.layover?.active, true);
+  });
+
+  it("Compass fresh rank and cache-B hit: gated on both", async () => {
+    const rows = { ...discoveryWorld(), };
+    (rows as any).feature_flags = [
+      SERVE_LOG_ON, ...FLAG_ON, { flag: "COMPASS_V1_RULE_BASED_ENABLED", enabled: true },
+    ];
+    setClient({ rows });
+    _setTestDbPlacesOverride(async () => [
+      discoveryDbPlace(DB_UUID_FITS, 25.08, 121.235),
+      discoveryDbPlace(DB_UUID_UNMEASURED, 25.081, 121.236),
+    ]);
+    const forYou = `/api/discovery?destination=${encodeURIComponent(CITY)}&lat=25.08&lng=121.235&radiusKm=10&category=for_you`;
+    const fresh = await get(forYou);
+    assertServePath(fresh.body, "compass_fresh");
+    assert.deepEqual(placeIdsOf(fresh.body), [`db/${DB_UUID_FITS}`]);
+    assert.equal(fresh.body.layover?.active, true);
+
+    const hit = await get(forYou);
+    assertServePath(hit.body, "compass_hit");
+    assert.deepEqual(placeIdsOf(hit.body), [`db/${DB_UUID_FITS}`]);
+    assert.equal(hit.body.layover?.active, true);
+  });
+
+  it("an OSM item is UNMEASURED and NAMED — never admitted, never silently dropped", async () => {
+    setClient({ rows: discoveryWorld() });
+    _setTestDbPlacesOverride(async () => [discoveryDbPlace(DB_UUID_FITS, 25.08, 121.235)]);
+    _injectTestCacheEntry(DISCOVERY_CACHE_KEY, [discoveryOsmPlace(OSM_ID, 25.082, 121.237)]);
+    const r = await get(DISCOVERY);
+    assertServePath(r.body, "cache_a");
+    assert.ok(
+      !placeIdsOf(r.body).includes(OSM_ID),
+      "an OSM element has no layover subject, so nothing can certify it — it must not be admitted",
+    );
+    const excluded = (r.body.layover?.excluded ?? []) as any[];
+    const osm = excluded.find((e) => e.id === OSM_ID);
+    assert.ok(osm, "the OSM item was silently dropped — a withheld place must be NAMED");
+    assert.equal(osm.state, "UNMEASURED");
+  });
+
+  it("a FAILED read refuses on GET /discovery instead of serving an ungated page", async () => {
+    setClient({ rows: discoveryWorld(), errorTables: ["layover_plan_stops"] });
+    _setTestDbPlacesOverride(async () => [discoveryDbPlace(DB_UUID_FITS, 25.08, 121.235)]);
+    const r = await get(DISCOVERY);
+    assert.equal(r.status, 200);
+    assert.ok(r.body?.refusal, "a failed timing read served a page instead of a refusal");
+    assert.equal(r.body.refusal.code, "layover_timing_unreadable");
+    assert.equal(r.body.refusal.route, "GET /discovery");
+    assert.equal(r.body.refusal.coverage, "nothing");
+    assert.deepEqual([...(r.body.refusal.failedSources ?? [])], ["layover_plan_stops"]);
+    assert.deepEqual(r.body.places, [], "a refusal must not also ship places");
+  });
+
+  it("the GET /discovery serve log records the GATED page, not everything read", async () => {
+    setClient({ rows: discoveryWorld() });
+    _setTestDbPlacesOverride(async () => [
+      discoveryDbPlace(DB_UUID_FITS, 25.08, 121.235),
+      discoveryDbPlace(DB_UUID_UNMEASURED, 25.081, 121.236),
+    ]);
+    await get(DISCOVERY);
+    await settle();
+    // EXPOSURE only. `rank_events` also carries `outcome: "analytics"` rows from
+    // the ranker's assembly pass (CreatorCapEnforcer.ts:72,82), which describe
+    // the CANDIDATE POOL and are written for everything ranked, on every page,
+    // gate or no gate. The denominator is the impression rows — what
+    // logImpression / logDiscoveryServe wrote — and those are what must be in
+    // step with the gated page.
+    const rows = (rankInserts().flatMap((i) => (Array.isArray(i.rows) ? i.rows : [i.rows])) as any[])
+      .filter((x) => x?.outcome === "impression");
+    const ids = rows.map((x) => x.item_id ?? x.place_id ?? x.entity_id ?? x.subject_id).filter(Boolean);
+    assert.ok(rows.length > 0, "POSITIVE CONTROL: a real serve must log — else the probe is blind");
+    assert.deepEqual(
+      [...new Set(ids)].sort(), [`db/${DB_UUID_FITS}`],
+      "a place the certified universe withheld was never shown, so it is not exposure",
+    );
+  });
+
+  it("a refused GET /discovery is kept out of the exposure denominator", async () => {
+    setClient({ rows: discoveryWorld() });
+    _setTestDbPlacesOverride(async () => [discoveryDbPlace(DB_UUID_FITS, 25.08, 121.235)]);
+    await get(DISCOVERY);
+    await settle();
+    const served = (rankInserts().flatMap((i) => (Array.isArray(i.rows) ? i.rows : [i.rows])) as any[])
+      .filter((x) => x?.outcome === "impression");
+    assert.ok(served.length > 0, "POSITIVE CONTROL: a real serve must log — else the probe is blind");
+
+    inserts = [];
+    setClient({ rows: discoveryWorld(), errorTables: ["layover_plan_stops"] });
+    _setTestDbPlacesOverride(async () => [discoveryDbPlace(DB_UUID_FITS, 25.08, 121.235)]);
+    await get(DISCOVERY);
+    await settle();
+    const refused = (rankInserts().flatMap((i) => (Array.isArray(i.rows) ? i.rows : [i.rows])) as any[])
+      .filter((x) => x?.outcome === "impression");
+    assert.equal(refused.length, 0, "a refused Layover-mode read was counted as exposure");
+  });
+
+  it("mode OFF leaves GET /discovery byte-identical — no key, no gate", async () => {
+    setClient({ rows: discoveryWorld({ flags: FLAG_OFF }) });
+    _setTestDbPlacesOverride(async () => [
+      discoveryDbPlace(DB_UUID_FITS, 25.08, 121.235),
+      discoveryDbPlace(DB_UUID_UNMEASURED, 25.081, 121.236),
+    ]);
+    const r = await get(DISCOVERY);
+    assertServePath(r.body, "cold");
+    assert.equal(r.body.layover, undefined, "an absent flag must not add a key to the envelope");
+    assert.deepEqual(
+      placeIdsOf(r.body), [`db/${DB_UUID_FITS}`, `db/${DB_UUID_UNMEASURED}`].sort(),
+    );
+    assert.deepEqual(
+      Object.keys(r.body),
+      ["places", "total", "destination", "context", "cached", "ageFilterMeta", "sourceSummary", "meta", "cursor"],
+      "the ordinary GET /discovery success envelope moved",
+    );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// CORRECTION 3 — an UNMEASURED term must say WHICH absence it is.
+//
+// `UNMEASURED` on its own is one word for at least four different situations,
+// and on the wire they are indistinguishable: all four produce the same missing
+// number and the same state. That is the census's standing rule one level down
+// from the three states — absence of evidence must never read as evidence of
+// absence, and two different absences must not read alike.
+//
+// This drives FOUR of them through ONE surface, in ONE response, and asserts
+// four DISTINGUISHABLE provenance records. It is deliberately not four rows
+// that merely differ in an id: the assertion is on the `terms` object of each,
+// and the four objects are pairwise unequal as a separate, explicit check.
+describe("A14 — each UNMEASURED carries WHICH absence it is, per term", () => {
+  /**
+   * Four situations, in one page:
+   *
+   *   db/<A>  a place the traveller has no stop for            → no_plan_stop
+   *   db/<B>  a stop whose landside travel is the column's
+   *           NOT-NULL zero — an ABSENCE, not a measurement    → stop_travel_unstated
+   *   db/<C>  a stop whose duration is not a stated figure     → stop_duration_unstated
+   *   node/…  a live OSM element, which has no layover
+   *           subject and never can                            → no_layover_subject
+   *
+   * and on every one of them the travel term ALSO carries the PORT's own word,
+   * because `LAYOVER_TRAVEL_TIME_PROVIDER` is `noRoutedProvider` on this tree.
+   * That is the fifth situation and it is a different fact from all four: it is
+   * true of every row here at the same time as exactly one of the four.
+   *
+   * (The sixth — the plan-stops READ failed — is not an absence at all. It
+   * refuses, and the suite above pins that it stays distinct.)
+   */
+  async function fourAbsences() {
+    setClient({
+      rows: {
+        ...discoveryWorld({
+          stops: [
+            stopRow(DB_UUID_ZERO_TRAVEL, 0, 60),
+            stopRow(DB_UUID_ZERO_DURATION, 20, 0),
+          ],
+        }),
+      },
+    });
+    _setTestDbPlacesOverride(async () => [
+      discoveryDbPlace(DB_UUID_UNMEASURED, 25.081, 121.236),
+      discoveryDbPlace(DB_UUID_ZERO_TRAVEL, 25.0805, 121.2355),
+      discoveryDbPlace(DB_UUID_ZERO_DURATION, 25.0806, 121.2356),
+    ]);
+    _injectTestCacheEntry(DISCOVERY_CACHE_KEY, [discoveryOsmPlace(OSM_ID, 25.082, 121.237)]);
+    const r = await get(DISCOVERY);
+    assertServePath(r.body, "cache_a");
+    assert.equal(r.body.refusal, undefined, "none of these four is a failure");
+    const by = new Map<string, any>(
+      ((r.body.layover?.excluded ?? []) as any[]).map((e) => [e.id, e]),
+    );
+    assert.deepEqual(
+      [...by.keys()].sort(),
+      [`db/${DB_UUID_UNMEASURED}`, `db/${DB_UUID_ZERO_DURATION}`, `db/${DB_UUID_ZERO_TRAVEL}`, OSM_ID].sort(),
+      "PRECONDITION: all four must be withheld and NAMED, or this test asserts nothing",
+    );
+    for (const e of by.values()) {
+      assert.equal(e.state, "UNMEASURED", `${e.id}: precondition — all four are the SAME state`);
+    }
+    return by;
+  }
+
+  it("names the four absences apart, per term", async () => {
+    const by = await fourAbsences();
+
+    const noStop = by.get(`db/${DB_UUID_UNMEASURED}`).terms;
+    assert.equal(noStop.travel.value, null);
+    assert.equal(noStop.travel.absence, "no_plan_stop");
+    assert.equal(noStop.activity.value, null);
+    assert.equal(noStop.activity.absence, "no_plan_stop");
+
+    const zeroTravel = by.get(`db/${DB_UUID_ZERO_TRAVEL}`).terms;
+    assert.equal(zeroTravel.travel.value, null, "the column's NOT-NULL zero was promoted to a measurement");
+    assert.equal(zeroTravel.travel.absence, "stop_travel_unstated");
+    // The OTHER term of the same row is a real figure, which is what proves the
+    // two terms are answered separately rather than as one verdict per row.
+    assert.equal(zeroTravel.activity.value, 60);
+    assert.equal(zeroTravel.activity.absence, null);
+    assert.equal(zeroTravel.activity.source, "traveller_plan_stop");
+
+    const zeroDuration = by.get(`db/${DB_UUID_ZERO_DURATION}`).terms;
+    assert.equal(zeroDuration.travel.value, 20);
+    assert.equal(zeroDuration.travel.absence, null);
+    assert.equal(zeroDuration.activity.value, null);
+    assert.equal(zeroDuration.activity.absence, "stop_duration_unstated");
+
+    const osm = by.get(OSM_ID).terms;
+    assert.equal(osm.travel.absence, "no_layover_subject");
+    assert.equal(osm.activity.absence, "no_layover_subject");
+  });
+
+  it("the PORT's own reason rides beside the absence, on every travel term", async () => {
+    // Fifth situation, and it is not a fifth VALUE of the same field: "no
+    // routed provider is configured" is true of every row at the same time as
+    // exactly one of the four above. A single slot could only have held one of
+    // the two facts, so it would have had to drop the other.
+    const by = await fourAbsences();
+    for (const e of by.values()) {
+      assert.equal(
+        e.terms.travel.portReason, "NO_ROUTED_PROVIDER",
+        `${e.id}: the port was asked and its answer was thrown away`,
+      );
+      assert.equal(
+        e.terms.activity.portReason, null,
+        `${e.id}: the port has no opinion about dwell time — a reason here would be borrowed`,
+      );
+    }
+  });
+
+  it("the four provenance records are PAIRWISE DISTINGUISHABLE, not four ids", async () => {
+    // The point of the whole correction. If any two of these serialise the
+    // same, a client reading the envelope cannot tell the two situations apart
+    // and the word UNMEASURED is doing all four jobs again.
+    const by = await fourAbsences();
+    const records = [...by.values()].map((e) => JSON.stringify(e.terms));
+    assert.equal(
+      new Set(records).size, 4,
+      "two withheld places reported the SAME provenance for DIFFERENT absences:\n" +
+      records.join("\n"),
+    );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// CORRECTION 2, the third surface — GET /discovery/feed.
+//
+// It was decided ON EVIDENCE rather than left unmentioned. The feed's `places`
+// half is the SAME merged population as GET /discovery: `queryDbPlaces` rows
+// served as `db/<uuid>` plus live OSM elements, flattened across categories
+// (routes/discovery.ts, the `allPlaces` loop). Same rows, same traveller, same
+// §25 L269 sentence — so it is gated by the same helper.
+//
+// Its `posts` half is NOT gated, and the reason is in `layoverGatedPlaces`'
+// header: a DiscoveryEventPost's id is a `posts.id`, it has no
+// `discovery_places` row, and `layover_plan_stops.place_id` has nothing it
+// could ever hold for one. `events` and `memories` are `[]` on every response
+// this route sends.
+describe("A14 — GET /discovery/feed serves the same rows, so it is gated too", () => {
+  const FEED = `/api/discovery/feed?lat=25.08&lng=121.235&city=${encodeURIComponent(CITY)}`;
+
+  it("only the certified universe reaches the feed, and `total` counts it", async () => {
+    setClient({ rows: discoveryWorld() });
+    _setTestDbPlacesOverride(async () => [
+      discoveryDbPlace(DB_UUID_FITS, 25.08, 121.235),
+      discoveryDbPlace(DB_UUID_UNMEASURED, 25.081, 121.236),
+    ]);
+    const r = await get(FEED);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.refusal, undefined);
+    assert.deepEqual(
+      placeIdsOf(r.body), [`db/${DB_UUID_FITS}`],
+      "an ungated feed page reached a traveller in Layover mode",
+    );
+    assert.equal(r.body.total, 1);
+    assert.equal(r.body.layover?.active, true);
+  });
+
+  it("a FAILED read refuses on the feed rather than serving a shorter page", async () => {
+    setClient({ rows: discoveryWorld(), errorTables: ["layover_plan_stops"] });
+    _setTestDbPlacesOverride(async () => [discoveryDbPlace(DB_UUID_FITS, 25.08, 121.235)]);
+    const r = await get(FEED);
+    assert.ok(r.body?.refusal, "a failed timing read served a feed page instead of a refusal");
+    assert.equal(r.body.refusal.code, "layover_timing_unreadable");
+    assert.equal(r.body.refusal.route, "GET /discovery/feed");
+    assert.equal(r.body.refusal.coverage, "nothing");
+    assert.deepEqual(r.body.places, []);
+  });
+
+  it("mode OFF leaves the feed byte-identical — no key, no gate", async () => {
+    setClient({ rows: discoveryWorld({ flags: FLAG_OFF }) });
+    _setTestDbPlacesOverride(async () => [
+      discoveryDbPlace(DB_UUID_FITS, 25.08, 121.235),
+      discoveryDbPlace(DB_UUID_UNMEASURED, 25.081, 121.236),
+    ]);
+    const r = await get(FEED);
+    assert.equal(r.body.layover, undefined);
+    assert.deepEqual(
+      placeIdsOf(r.body), [`db/${DB_UUID_FITS}`, `db/${DB_UUID_UNMEASURED}`].sort(),
+    );
+    assert.deepEqual(
+      Object.keys(r.body),
+      ["places", "events", "posts", "memories", "sections", "nextCursor", "total",
+       "destination", "context", "sourceSummary", "sessionId"],
+      "the ordinary GET /discovery/feed success envelope moved",
+    );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 describe("A14 — the timing resolver, directly", () => {
   it("distinguishes an unreadable plan-stop read from a plan with no stops", async () => {
     const { statedLayoverTimings } = await import("../lib/discoveryLayoverTiming.js");
@@ -553,6 +1051,144 @@ describe("A14 — the timing resolver, directly", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+//
+// CORRECTION 4 — the property, not a proxy for it.
+//
+// WHAT WAS HERE, AND WHY IT IS GONE. A test asserted that
+// `discoveryLayoverTiming.ts` contains NO DIGIT AT ALL, comments and string
+// literals stripped. It was written after a ternary mutant (`stop ?
+// stop.durationMin : 30`) evaded the `??`/`||` regex above, and it did catch
+// that one — but it is a property of the FILE'S TEXT, not of its behaviour, and
+// the two come apart in both directions:
+//
+//   FALSE POSITIVE   it already forced an unrelated rewrite of honest code
+//                    (`placeId.length === 0` had to become `placeId === ""`),
+//                    which is a test dictating spelling.
+//   FALSE NEGATIVE   it passes for `activityTimeMin ?? FALLBACK_MIN` where
+//                    FALLBACK_MIN is imported from another file, and for a
+//                    lookup table, and for anything else that puts the digit
+//                    somewhere the regex is not reading.
+//
+// What follows asserts the BEHAVIOUR it was a proxy for: a missing input must
+// not acquire a value. That holds however the fabrication is spelled, because
+// nothing here reads the source text at all.
+describe("A14 — a missing input must NOT acquire a value (the property itself)", () => {
+  /**
+   * Every number a fabricator would plausibly reach for on this tree.
+   *
+   *   30 / 90 / 60   the deleted `estimateActivityTime`'s category answers
+   *                  (LayoverRecommendationService.fetchDiscoveryPlaces).
+   *   30 / 45 / 20 / 60  the airside constants.
+   *   30, 0          `layover_plan_stops.duration_min` / `travel_min`'s own
+   *                  NOT-NULL column defaults.
+   *   30, 15         the pair the 2026-09-15 ternary mutant used.
+   *
+   * The assertions below do NOT need to know which one would be chosen — they
+   * require `null`, so every member of this list fails and so does any number
+   * not in it. The list is written out so the failure message can say what the
+   * test is about, not because the test depends on it.
+   */
+  const PLAUSIBLE_DEFAULTS = [0, 15, 20, 30, 45, 60, 90];
+
+  const NOWHERE = { centre: { lat: 25.0797, lng: 121.2342 }, departAt: new Date() };
+
+  async function timeOne(stops: any[], id = "fits") {
+    const { statedLayoverTimings } = await import("../lib/discoveryLayoverTiming.js");
+    const db = buildFakeClient({ rows: { ...layoverWorld(), layover_plan_stops: stops } });
+    const out = await statedLayoverTimings(
+      db as any, SESSION_ID, [{ id, lat: 25.08, lng: 121.235 }], NOWHERE,
+    );
+    assert.equal(out.ok, true, "PRECONDITION: the plan read must have SUCCEEDED");
+    return (out as any).byId.get(id);
+  }
+
+  function assertNoNumber(actual: unknown, what: string) {
+    assert.equal(
+      actual, null,
+      `${what}: a missing input acquired the value ${JSON.stringify(actual)}. ` +
+      `Nobody stated it and no routed provider exists on this tree, so there is ` +
+      `nothing for a number to be. (The defaults a fabricator reaches for here ` +
+      `are ${PLAUSIBLE_DEFAULTS.join(", ")} — but ANY number fails this, which is ` +
+      `the point: the test does not have to guess which one was chosen.)`,
+    );
+    assert.ok(
+      !PLAUSIBLE_DEFAULTS.includes(actual as number),
+      `${what}: the value is one of the known substituted defaults`,
+    );
+  }
+
+  it("no stated stop and no routed estimate ⇒ BOTH terms are null", async () => {
+    const t = await timeOne([]);
+    assertNoNumber(t.travelTimeMin, "travel");
+    assertNoNumber(t.activityTimeMin, "activity");
+    assertNoNumber(t.travel.value, "travel (provenance record)");
+    assertNoNumber(t.activity.value, "activity (provenance record)");
+  });
+
+  it("and the place is NOT ADMITTED — which is what a fabricated default buys", async () => {
+    // The behavioural consequence, end to end. A substituted minute count does
+    // not just put a number in a field: it makes an UNMEASURED place APPEAR on
+    // a traveller's Layover Discovery as though someone had certified it.
+    setClient({ rows: layoverWorld({ stops: [] }) });
+    const r = await get(COMMUNITY);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.refusal, undefined, "PRECONDITION: the read SUCCEEDED and found nothing");
+    assert.deepEqual(
+      idsOf(r.body), [],
+      "a place nobody has measured was ADMITTED — the only way that happens is a " +
+      "number this tree does not have",
+    );
+    for (const e of ((r.body.layover?.excluded ?? []) as any[])) {
+      assertNoNumber(e.terms.travel.value, `${e.id} travel`);
+      assertNoNumber(e.terms.activity.value, `${e.id} activity`);
+    }
+  });
+
+  it("PROVENANCE: a value that IS present tracks the stop the traveller stated", async () => {
+    // A fabricated constant does not move. Three different stated durations,
+    // three different reported values, and none of them is the one a default
+    // would have produced for all three.
+    const seen: number[] = [];
+    for (const stated of [25, 55, 115]) {
+      const t = await timeOne([stopRow("fits", 35, stated)]);
+      assert.equal(
+        t.activityTimeMin, stated,
+        `the stop stated ${stated} minutes and the surface reported ` +
+        `${JSON.stringify(t.activityTimeMin)} — a figure that does not move with ` +
+        `the traveller's own row is not the traveller's own figure`,
+      );
+      assert.equal(t.activity.source, "traveller_plan_stop");
+      assert.equal(t.travelTimeMin, 35, "the travel term must track its own column too");
+      seen.push(t.activityTimeMin);
+    }
+    assert.equal(new Set(seen).size, 3, "three different stated durations produced fewer than three answers");
+  });
+
+  it("DISCRIMINATION: a stop stating exactly a default's value is still not the absence", async () => {
+    // The case a fabricated default makes unreachable. If `duration_min` were
+    // defaulted to 30, then a traveller who REALLY stated 30 and a traveller
+    // who stated nothing would produce identical output, and the surface would
+    // have lost the ability to say which it was looking at.
+    const statedThirty = await timeOne([stopRow("fits", 35, 30)]);
+    const noStop       = await timeOne([]);
+
+    assert.equal(statedThirty.activity.value, 30);
+    assert.equal(statedThirty.activity.source, "traveller_plan_stop");
+    assert.equal(statedThirty.activity.absence, null);
+
+    assert.equal(noStop.activity.value, null);
+    assert.equal(noStop.activity.source, "unmeasured");
+    assert.equal(noStop.activity.absence, "no_plan_stop");
+
+    assert.notDeepEqual(
+      statedThirty.activity, noStop.activity,
+      "a stop stating 30 minutes and a traveller with no stop at all reported the " +
+      "SAME thing — the surface can no longer tell a measurement from its absence",
+    );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 describe("A14 — SOURCE GUARD: no timing value may be invented here", () => {
   const SRC = [
     "src/lib/discoveryLayoverTiming.ts",
@@ -577,21 +1213,6 @@ describe("A14 — SOURCE GUARD: no timing value may be invented here", () => {
         "a default minute count is the `estimateActivityTime` defect this row exists to close.",
       );
     }
-  });
-
-  it("the timing resolver contains NO NUMBER AT ALL — the strongest form of the rule", async () => {
-    // A `??`/`||` guard catches the obvious fabrication and misses the ternary
-    // (`stop ? stop.durationMin : 30`), which a mutation of this file got past
-    // it on 2026-09-15. Every minute this module handles comes from a row or
-    // from the port, so there is nothing left for a numeric literal to be.
-    const src = code("src/lib/discoveryLayoverTiming.ts");
-    const digits = src.split("\n").filter((l) => /\d/.test(l));
-    assert.deepEqual(
-      digits, [],
-      "a number appeared in discoveryLayoverTiming.ts. Every figure here is read " +
-      "off `layover_plan_stops` or off the travel-time port; a literal is a " +
-      "measurement this tree does not have.",
-    );
   });
 
   it("the terms are read through the layover domain's own classifiers and port", async () => {
