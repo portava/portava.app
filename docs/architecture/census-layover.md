@@ -6191,3 +6191,59 @@ census STALE with the reason rather than write an argument this lane does not
 believe. **Whoever merges #488 should re-declare at the squash sha** — that is
 the half a pull request cannot do for itself, and it is owed for this census as
 it was for the twelve #482 orphaned.
+
+---
+
+## §25 — §24.6's reason is FALSE at this commit; its verdict is not
+
+APPEND-ONLY CORRECTION, written by the integrating lane rather than a measuring
+pass, because the sentence it corrects was falsified by a migration this session
+merged and leaving it standing would mislead the next reader into writing a
+second one.
+
+### 25.1 The false sentence, quoted
+
+§24.6 reads, in as many words:
+
+> **There is no migration anywhere in this tree that seeds that row** —
+> `grep -rn 'layover_discovery_mode' src/migrations/` returns nothing, and the
+> only three hits in the whole repository are the constant, a test asserting its
+> spelling, and a comment in `checkCensusFreshness.ts`.
+
+That was true when §24 was written. It is false now.
+`artifacts/api-server/src/migrations/2971_layover_discovery_mode_flag.sql` seeds
+exactly that row. It was added by PR #499 and merged as `f95840075`, and it is
+APPLIED to portava-ci (`applied_by='ci'`, sha256 `bec1a4aa4d29f36c`, recorded
+2026-09-15 18:10:30 in `public.schema_migration_ledger`). The grep §24.6 quotes
+now returns a hit, and the "only three hits in the whole repository" is four.
+
+### 25.2 L269 DOES NOT MOVE, and the reason is not the one §24.6 gives
+
+The verdict §24.6 defends is still correct; only its argument has rotted. L269
+stays `W`, on evidence read at this commit rather than carried forward:
+
+* 2971 seeds the flag **FALSE**. It is a reachability fix, not an enablement: it
+  exists so the audited `toggle_feature_flag_with_audit` path has a row to act
+  on. The file carries a postcondition that RAISES if the row is ever found
+  seeded `enabled = true`.
+* Live on portava-ci at this commit: `layover_discovery_mode_enabled` is present
+  and `enabled = false`.
+* **2971 is applied to no production database.** Production
+  (`ajrurzioarfkagpuxfnb`) holds ZERO ledger rows at or above 2890.
+
+So on production the gate still reads the flag as ABSENT and
+`discoveryLayoverGate` still returns `OFF`, exactly as §24.6 concluded. The
+requirement is still not in force for any traveller. What changed is that
+"absent because nothing seeds it" has become "absent on production because the
+seeding migration is not applied there" — a different fact with a different
+remedy, and the remedy is now an apply rather than a migration nobody has
+written.
+
+### 25.3 What this section does NOT do
+
+It does not re-measure census-layover, move any row, or re-declare
+`head_commit`. §24.6's *verdict* was audited and stands; only its *evidence* is
+replaced. The next measuring pass owns everything else, including whether
+`2971_layover_discovery_mode_flag.sql` belongs in this census's CENSUS_SCOPE —
+it is deliberately NOT added there by this change, because nothing in this
+document grades it yet.

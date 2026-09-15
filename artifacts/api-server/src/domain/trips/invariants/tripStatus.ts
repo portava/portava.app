@@ -34,6 +34,19 @@ export function todayInTimezone(timezone: string | null | undefined, now: Date =
  * Compute canonical status from trip fields. Terminal states (cancelled/archived)
  * are never overwritten; missing title/city ⇒ draft; date boundaries are compared
  * in the trip's timezone against YYYY-MM-DD strings.
+ *
+ * `now` defaults to the real clock, which is what the write paths in routes/
+ * want: they are deciding the status of a trip AT THE MOMENT OF THE WRITE.
+ *
+ * It is a PARAMETER because a reader that has been handed a clock must not
+ * quietly consult a different one. `todayInTimezone` already took a `now` and
+ * this function did not thread it through, so TripHealthProjection — which
+ * receives `now` as an option and uses it for every other derivation — got its
+ * `tripStatus` from `new Date()` instead. The projection then reported a phase
+ * computed at the injected instant beside a status computed at the real one,
+ * and the two could disagree. It surfaced as a test that passed all day and
+ * failed at 22:09 UTC, when the trip's Europe/Paris date rolled past its
+ * end_date while the injected `now` sat two days earlier.
  */
 export function computeTripStatus(
   title: string | null,
@@ -61,11 +74,11 @@ export function computeTripStatus(
    * be tested at the boundary that matters. It got the parameter; the function
    * that calls it did not, which is why the gap survived.
    */
-  now?: Date,
+  now: Date = new Date(),
 ): string {
   if (currentStatus === "cancelled" || currentStatus === "archived") return currentStatus;
   if (!title || !destinationCity) return "draft";
-  const today = todayInTimezone(timezone, now ?? new Date());
+  const today = todayInTimezone(timezone, now);
   if (startDate) {
     const start = startDate.slice(0, 10);
     const end   = endDate ? endDate.slice(0, 10) : null;
