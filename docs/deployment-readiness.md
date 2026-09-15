@@ -168,6 +168,7 @@ database credentials this environment does not have.
 | 1 | API bundle builds | **VERIFIED PASS** (exit 0) | ran step 1 in this worktree |
 | 2 | Built bundle boots and serves | **VERIFIED PASS** | see §3.1 |
 | 3 | Frontend static build | **ASSUMED** — not run | `travel-buddy-standalone/scripts/build.js:518#spawnSync` |
+| 3a | ⚠ 2970 applied to production BEFORE the next deploy of `main` | **REQUIRED — NOT DONE.** `buildStats` already selects `evidences_presence`; the column is on neither database | §1.7 |
 | 4 | `SUPABASE_SERVICE_ROLE_KEY` set | **UNKNOWN — human must confirm in Replit Secrets** | `artifacts/api-server/src/lib/envValidation.ts:9#REQUIRED_KEYS` |
 | 5 | `SESSION_SECRET` set | **UNKNOWN — human must confirm in Replit Secrets** | same |
 | 6 | Replit UI build/run commands match `.replit` | **UNKNOWN — human must confirm in the Deployments UI** | `.replit:11#Best-effort` |
@@ -212,6 +213,60 @@ in this session changed that, and nothing in this session was authorised to.
 work certified against `portava-ci` (`hwokxgbmezheskbzskfr`) says nothing about
 production. The two databases are measured separately and reported separately
 throughout this document.
+
+### 1.7 ⚠ ORDERING HAZARD: a reader is merged ahead of its column
+
+**VERIFIED 2026-09-15 by reading the code on `main` and querying both databases.
+This is a DEPLOY-ORDER constraint, not a defect in either half.**
+
+`services/passport/PassportMapService.ts:444#buildStats` — on `main` since
+#482 — issues:
+
+```
+.select("country, city, visibility, is_revoked, stamp_definitions(category, slug, evidences_presence)")
+```
+
+`stamp_definitions.evidences_presence` is added by
+`2970_stamp_definitions_evidences_presence.sql`, which is applied to **neither**
+database: the column is absent on production `ajrurzioarfkagpuxfnb` and absent on
+`portava-ci` `hwokxgbmezheskbzskfr` (both queried directly).
+
+PostgREST rejects a select naming a column that does not exist, so `buildStats`
+takes its documented failure branch and returns
+`countries: 0, cities: 0, neighborhoods: 0, planStamps: 0, hostStamps: 0,
+hiddenGemStamps: 0, safeReturnStamps: 0, totalStamps: 0` with `readFailed: true`
+(`PassportMapService.ts:452`).
+
+**THE FLAG IS HONEST AND THE SCREEN IS NOT.** `routes/passportStamps.ts:557`
+spreads `stats` into the response, so `readFailed` does reach the client — and
+`readFailed` appears **zero** times anywhere in `travel-buddy-standalone/src`.
+Nothing reads it. A traveller with a full Passport is therefore shown
+**0 countries, 0 cities, 0 stamps**, with no indication that the server could not
+look.
+
+That is the exact defect 2970 was written to remove, inverted: 2970 stops the
+Passport over-claiming ("you have been to 5 countries" for trips only planned),
+and this ordering makes it under-claim everything instead. Under-claiming is the
+safer of the two — it asserts nothing untrue *about where someone has been* — but
+"0 countries" shown to someone who has travelled is still a false number on a
+screen, and it is total rather than partial.
+
+**WHAT IS NOT KNOWN FROM HERE:** whether production is *currently* serving this.
+It depends on whether the deployment has been rebuilt from `main` since #482
+landed, and `https://portava.replit.app` is unreachable from this environment
+(§3.4) while the Replit Deployments UI cannot be read. **If the deployment
+predates #482 the Passport is fine today; if it has been rebuilt since, it is
+returning zeros now.** A human with the Replit dashboard can settle it in one
+look at the deployment's commit.
+
+**THE CONSTRAINT THIS PLACES ON THE NEXT DEPLOY, and it is not optional:**
+`2970_stamp_definitions_evidences_presence.sql` must be applied to production
+**before or with** the next deploy of `main`. Deploying the code first reproduces
+the zeros; applying the migration first is harmless to the running build, because
+the old code does not select the column. **Migration first, then deploy — never
+the other way round.** 2970's own header states the coupled form of this rule
+from the reverse direction: "Revert both, or neither."
+
 
 ---
 
