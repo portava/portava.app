@@ -370,13 +370,23 @@ describe("the four rungs, measured against the airports this product has", () =>
   // which places the return leg in a traffic band by the airport's LOCAL hour.
   // The uncurated row carries `Asia/Taipei`; the generic fallback has no timezone
   // and assumes `UTC`. Whether the two land in the same band depends on the wall
-  // clock at which the suite runs. Measured across all 24 UTC hours with the
-  // fixture's own +8h departure:
+  // clock at which the suite runs.
   //
-  //     PASSES at 08:00Z, 13:00Z, 14:00Z — 3 hours
-  //     FAILS  at the other 21
+  // MEASURED BY RUNNING THIS FILE, not by reasoning about the model — and the
+  // first attempt got it wrong in exactly the way the note below describes. With
+  // `scripts/fake-clock.mjs` pinning the process clock, the PRE-FIX file at all
+  // 24 UTC hours:
   //
-  // So it was green one run in eight, and it never passed on its own merits.
+  //     PASSES at 00:00Z — ONE hour
+  //     FAILS  at the other 23
+  //
+  // One run in twenty-four. It was integrated and reported green because it was
+  // run inside that one hour.
+  //
+  // (An earlier draft of this comment said three hours, 08/13/14Z. That figure
+  // came from evaluating `layoverRouting.returnTransportForecast` — the helper
+  // the note below shows is NOT the producer. The same wrong function, twice.
+  // The sweep is what settled it.)
   //
   // WHAT IS ACTUALLY TRUE, and what this case now pins. An uncurated
   // `airport_profiles` row supplies the same four BUFFER terms as the generic
