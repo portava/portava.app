@@ -4600,3 +4600,85 @@ was built into a green here. Two rows the document filed as NOT-BUILT turned out
 by §C and never re-read, the gap widened by 0.8 points because BUILT went up while CORRECT stood
 still, and one live defect — a Memory with photographs reported as having none — was fixed on the
 one path in this file that still had it.
+
+---
+
+## §N — §M.7's second request is REFUSED, and the reason is the pin
+
+§M.7 handed the integrating lane two cross-lane requests. The first (extending this
+census's own staleness entry) was correct and is done. **The second is wrong and is
+not being applied.** It read:
+
+> `mobile-reachability-ledger.json`, `/api/users/:userId/memories` entry:
+> `"handler"` should be `artifacts/api-server/src/routes/memories.ts:2765`, not
+> `:1407`. … That line is `  }` inside the PATCH handler; the real handler is
+> `:2765#router.get`. **Wrong before I touched anything** — it resolved onto
+> real-but-wrong code.
+
+### N.1 The entry is right, and it is right at the commit it is pinned to
+
+`mobile-reachability-ledger.json` opens with
+`"pinnedCommit": "22ab17151b98adcaf81b5bc976cf1502043f535f"`, and its companion
+`mobile-reachability-ledger.md` §Provenance says why in its own words:
+
+> Derived from commit `22ab1715…`, read via `git archive` at that commit rather
+> than from the working tree: several lanes edit `artifacts/api-server/**`
+> concurrently, and the server route count moved underneath this analysis twice
+> mid-run. **Regenerate against a named commit, never a dirty tree.**
+
+Every line number in that file is relative to that tree. Checked there:
+
+```
+$ git show 22ab17151…:artifacts/api-server/src/routes/memories.ts | sed -n '1407p'
+router.get("/users/:userId/memories", async (req, res) => {
+```
+
+**Line 1407 IS the handler**, exactly as the entry says. The reading that produced
+the request resolved a pinned line number against the working tree — which is the
+one thing the pin exists to prevent, and which §M.7 itself half-noticed when it
+wrote *"The mobile-reachability ledger is pinned per §H.7 … so I would not lean on
+it"* and then leaned on a HEAD reading anyway.
+
+Applying the request would have put a single HEAD-relative number into a document
+whose other ~1,192 route shapes are pinned-commit-relative — and `2765` is itself
+already stale, because this branch inserted 35 lines above it. `.github/workflows/ci.yml`
+excludes this file from `check:citation-targets` **by name** for precisely this
+reason, so nothing would have caught it.
+
+`:1407` reading as `  }` at HEAD is not the defect. It is the pin working.
+
+### N.2 What IS true, and is worse, and is not fixed here
+
+`22ab17151b98adcaf81b5bc976cf1502043f535f` is **unreachable**. `git branch -a
+--contains` names no branch; it is an ancestor of neither `origin/main` nor this
+branch's HEAD. It survives in this container as a dangling object and will not exist
+in a fresh CI clone at all.
+
+So the ledger's 1,192 route shapes are pinned to a tree **nobody can check out**,
+which means:
+
+- no reader can verify a single one of its line numbers, and
+- the only tree a reader HAS is HEAD, against which every number is wrong by an
+  unknown amount — so the natural way to read the file is the way that produces
+  confident wrong answers. §M.7 is the demonstration, and it was a careful lane.
+
+This is not fixed here and saying so is the point. Fixing it means regenerating the
+ledger against a reachable commit, and **no generator for it exists in this
+repository** — `grep` finds only two consumers (`check-citation-targets.mjs` and
+`check-citation-symbols.mjs`, both of which exclude it) and the two ledger files
+themselves. Regenerating 1,192 route shapes by hand would be fabrication.
+
+**No verdict in this census rests on the ledger**, which is why this is recorded
+rather than graded: §M.7 declined to lean on it and that judgement was right, for a
+better reason than the one it gave.
+
+### N.3 WHAT WOULD TURN THIS RED
+
+- **The pin becoming reachable** — if `22ab1715…` turns out to be an ancestor of a
+  branch this checkout simply did not have, then N.2's "unreachable" is wrong and
+  the ledger is merely unvalidated, not unverifiable. `git branch -a --contains` is
+  the whole of my evidence and it only sees what this clone fetched.
+- **A generator turning up** under a name my grep did not match, at which point
+  N.2's "not fixed here" becomes "not fixed here, and it could have been".
+- **Any census coming to rest a verdict on a ledger row.** The moment one does, an
+  unverifiable pin stops being a documentation problem and becomes an `X`.
