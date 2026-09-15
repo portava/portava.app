@@ -239,6 +239,13 @@ router.get("/v1/discovery/trails/:id/modules", asyncHandler(async (req: Request,
       horizonMs: m.horizonMs,
       items: m.items,
       moreFromThisPlace: m.moreFromThisPlace,
+      // §9 / DV-22. Ids, never counts: §9 forbids promising a number of
+      // impressions publicly, and this names WHICH items hold the page's
+      // bounded exploration slots without saying how much exposure any of them
+      // gets. `null` means the denominators could not be read — a client that
+      // saw `[]` for that case would be told "nothing qualified", which is a
+      // claim the server cannot make when it could not measure.
+      explorationSlots: m.explorationSlots,
     })),
   });
 

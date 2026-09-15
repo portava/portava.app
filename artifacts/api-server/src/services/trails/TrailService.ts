@@ -43,7 +43,9 @@
  * census-discovery rows: DV-20, DV-21, DV-22, DV-23, DV-24, DV-25, DC-02,
  * DC-03, DC-04, DC-05, DC-20, DC-21.
  */
-import { loadLocalMomentum } from "../../lib/discoveryLocalMomentum.js";
+import {
+  loadLocalMomentum, MOMENTUM_BASELINE_WINDOW_MS,
+} from "../../lib/discoveryLocalMomentum.js";
 import {
   canonicaliseTrailProposal, capTrailLabels,
   isTrailLifecycleState, isTrailLifecycleTransitionAllowed,
@@ -178,11 +180,24 @@ async function readMembers(sc: any, trailId: string): Promise<{ refusal: TrailRe
   return { refusal: null, members: (data ?? []) as MemberRow[] };
 }
 
-async function readOpenReportCount(sc: any, trailId: string): Promise<number> {
+/**
+ * Open `trail_reports` rows for one Trail, or `null` when the read FAILED.
+ *
+ * supabase-js RESOLVES on a database error, so `{ data, error }` with the error
+ * discarded makes a failed read byte-identical to "no rows" — and `0` here is
+ * not a neutral floor, it is the claim "this Trail has no open reports", which
+ * `computeTrailHealth` turns into `report_rate: 0` and `trailHealthScale` turns
+ * into a HIGHER multiplier on served rank. An outage would have flattered
+ * exactly the Trails it could not read. A failed diagnostic must still not fail
+ * the Trail read, so the refusal is not raised — it is REPORTED, as `null`,
+ * which `computeTrailHealth` records as unmeasured rather than as clean.
+ */
+async function readOpenReportCount(sc: any, trailId: string): Promise<number | null> {
   const { data, error } = await sc.from("trail_reports").select("id").eq("trail_id", trailId).is("resolution", null);
-  // A failed report read must not fail the Trail read. 0 is the honest floor:
-  // it understates health risk rather than inventing one.
-  if (error) return 0;
+  if (error) {
+    logger.warn({ trailId, code: error?.code, message: error?.message }, "trail report count unread");
+    return null;
+  }
   return (data ?? []).length;
 }
 
@@ -266,8 +281,16 @@ export interface TrailModule {
   items: Array<{ id: string; sourceType: string; sourceId: string; contentState: string }>;
   /** §10's "more from this place" remainder for anything the diversity pass held back. */
   moreFromThisPlace: Record<string, number>;
-  /** §9's reserved exploration slots on this module, when it has any. */
-  explorationSlots: string[];
+  /**
+   * §9's reserved exploration slots on this module, or `null` when the exposure
+   * denominators could not be read.
+   *
+   * `[]` and `null` are different answers and the caller is told which: `[]` is
+   * "§9 was evaluated over real denominators and nothing qualified", `null` is
+   * "§9 could not be evaluated". A module that reported `[]` for both would let
+   * a failed `rank_events` read look like a Trail with no new content.
+   */
+  explorationSlots: string[] | null;
 }
 
 export interface TrailModulesResult {
@@ -277,6 +300,69 @@ export interface TrailModulesResult {
 }
 
 const DAY = 86_400_000;
+
+/**
+ * Rows read in ONE page when measuring §9's exposure denominators.
+ *
+ * 1000 is PostgREST's `db-max-rows`, not a preference: asking for more returns
+ * 1000 and says nothing about it (see lib/discoveryLocalMomentum.ts's own note
+ * on the same trap). A full page therefore means the window was TRUNCATED, and
+ * truncated counts are wrong counts in the one direction that matters — an item
+ * whose impressions were cut off looks new again and re-qualifies for an
+ * opportunity it has already had. `readExposureCounts` reports that as
+ * unmeasured rather than serving the smaller number.
+ */
+export const MAX_TRAIL_EXPOSURE_EVENTS = 1_000;
+
+export interface TrailExposureCount { impressions: number; positives: number }
+
+/**
+ * `02` §9 "Use exposure denominators" — the denominators, actually read.
+ *
+ * Returns `undefined` when the read failed OR when it could not be bounded, and
+ * a map (possibly empty) when it succeeded. An item MISSING from a returned map
+ * has a measured denominator of zero; an absent map means no denominator was
+ * measured at all. Those are different facts and `getTrailModules` keeps them
+ * apart, because §9's whole judgement — "has this item already had its bounded
+ * opportunity?" — is a statement about a denominator, and a fabricated zero
+ * answers it "no" for every item forever.
+ *
+ * Reads the same `rank_events` rows, on the same surface, with the same
+ * `analytics` exclusion and the same 30-day window the momentum loader uses.
+ * One impression per served row; a row whose outcome is not `impression` is
+ * also a positive response, which is §9 step 3's numerator.
+ */
+async function readExposureCounts(
+  sc: any, itemIds: readonly string[], nowMs: number,
+): Promise<Record<string, TrailExposureCount> | undefined> {
+  const ids = [...new Set(itemIds.filter((id) => typeof id === "string" && id.length > 0))];
+  if (ids.length === 0) return {};
+  try {
+    const since = new Date(nowMs - MOMENTUM_BASELINE_WINDOW_MS).toISOString();
+    const { data, error } = await sc.from("rank_events")
+      .select("item_id, outcome, served_at")
+      .eq("surface", "discovery")
+      .neq("outcome", "analytics")
+      .in("item_id", ids)
+      .gt("served_at", since)
+      .limit(MAX_TRAIL_EXPOSURE_EVENTS);
+    if (error) return undefined;
+    const rows = (data ?? []) as any[];
+    if (rows.length >= MAX_TRAIL_EXPOSURE_EVENTS) return undefined;
+
+    const out: Record<string, TrailExposureCount> = {};
+    for (const r of rows) {
+      const id = r?.item_id;
+      if (typeof id !== "string" || id.length === 0) continue;
+      const bucket = (out[id] ??= { impressions: 0, positives: 0 });
+      bucket.impressions += 1;
+      if (r.outcome !== "impression") bucket.positives += 1;
+    }
+    return out;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * `11` §3 action 3 — get Trail modules. `02` §8's spotlight model.
@@ -338,11 +424,26 @@ export async function getTrailModules(
     objective: TrailModule["objective"],
     horizonMs: number | null,
     rows: MemberRow[],
+    /**
+     * §9's reserved ids, considered FIRST so the page bound cannot drop them.
+     *
+     * Only the ORDER OF CONSIDERATION changes; `items` is still filtered out of
+     * `rows`, so the module is served in its own objective's order and a
+     * reservation moves membership, never position. The caps in
+     * `diversifyTrailPage` still run over the reordered list, so a reserved item
+     * can still be refused by §10's contributor or place cap — an exploration
+     * slot is an opportunity to be considered, not a licence to dominate
+     * (DV-13).
+     */
+    reserved?: ReadonlySet<string>,
   ): TrailModule => {
-    const d = diversifyTrailPage(rows.map(saturationItem), { pageSize });
+    const considered = reserved && reserved.size > 0
+      ? [...rows.filter((r) => reserved.has(r.id)), ...rows.filter((r) => !reserved.has(r.id))]
+      : rows;
+    const d = diversifyTrailPage(considered.map(saturationItem), { pageSize });
     const kept = new Set(d.page.map((i) => i.id));
     const items = rows.filter((r) => kept.has(r.id)).map(toItem);
-    return { key, objective, horizonMs, items, moreFromThisPlace: d.moreFromThisPlace, explorationSlots: [] };
+    return { key, objective, horizonMs, items, moreFromThisPlace: d.moreFromThisPlace, explorationSlots: null };
   };
 
   const byNewest = [...m.members].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
@@ -351,20 +452,39 @@ export async function getTrailModules(
     (a, b) => (momentum[b.source_id] ?? 0) - (momentum[a.source_id] ?? 0),
   ).filter((r) => (momentum[r.source_id] ?? 0) > 0);
 
-  const justArrived = build("just_arrived", "recency", 7 * DAY,
-    byNewest.filter((r) => r.content_state === "just_arrived" || r.content_state === "rediscovered"));
-
-  // §9 — the reserved opportunity, computed over the module's OWN candidates.
-  // The denominators come from the momentum loader's impression counts only
-  // where they exist; an unread item has denominator 0 and is `evaluating`,
-  // never "performing badly".
-  const exposure = fairExposureSlots(
-    justArrived.items.map((i) => ({
-      id: i.id, state: i.contentState, impressions: 0, positives: 0,
-    })),
-    { pageSize },
+  // §9 — the reserved opportunity, computed over the module's OWN CANDIDATES
+  // rather than over the page that survived the bound. Over the survivors it was
+  // a tautology: every id it could reserve was already being served, so nothing
+  // was reserved FOR anything. §9's point is that an item which would otherwise
+  // not be seen gets a bounded chance to be.
+  const explorationCandidates = byNewest.filter(
+    (r) => r.content_state === "just_arrived" || r.content_state === "rediscovered",
   );
-  justArrived.explorationSlots = exposure.slots;
+  const exposureCounts = await readExposureCounts(
+    sc, explorationCandidates.map((r) => r.source_id), nowMs,
+  );
+  let explorationSlots: string[] | null = null;
+  let reserved: Set<string> | undefined;
+  if (exposureCounts) {
+    const exposure = fairExposureSlots(
+      explorationCandidates.map((r) => {
+        // Present in a map that was READ ⇒ the measured count. Absent from a map
+        // that was read ⇒ a measured zero, which is a real denominator. The
+        // unread case never reaches here: it is the `undefined` branch above.
+        const c = exposureCounts[r.source_id];
+        return {
+          id: r.id, state: r.content_state,
+          impressions: c?.impressions ?? 0, positives: c?.positives ?? 0,
+        };
+      }),
+      { pageSize },
+    );
+    explorationSlots = exposure.slots;
+    reserved = new Set(exposure.slots);
+  }
+
+  const justArrived = build("just_arrived", "recency", 7 * DAY, explorationCandidates, reserved);
+  justArrived.explorationSlots = explorationSlots;
 
   return {
     refusal: null,
@@ -512,19 +632,25 @@ export const MAX_TRAIL_MEMBERS_SCANNED = 1000;
 export const MAX_TRAIL_MOMENTUM_EVENTS = 1000;
 
 /**
- * Open `trail_reports` counts for several Trails in ONE read.
+ * Open `trail_reports` counts for several Trails in ONE read, or `undefined`
+ * when the read FAILED.
  *
- * Non-fatal, and 0 is the honest floor for the same reason `readOpenReportCount`
- * gives: it understates health risk rather than inventing one, and a failed
- * diagnostic read must not change what a viewer is served.
+ * The same distinction `readOpenReportCount` makes, at the batch scale: a map
+ * that came back EMPTY means every one of these Trails is unreported, and
+ * `undefined` means none of them was measured. Returning `{}` for both would
+ * make an outage look like a page of clean Trails and quietly raise all of
+ * their affinity.
  */
 async function readOpenReportCounts(
   sc: any, trailIds: readonly string[],
-): Promise<Record<string, number>> {
+): Promise<Record<string, number> | undefined> {
   const out: Record<string, number> = {};
   const { data, error } = await sc.from("trail_reports").select("id, trail_id")
     .in("trail_id", trailIds).is("resolution", null);
-  if (error) return out;
+  if (error) {
+    logger.warn({ code: error?.code, message: error?.message }, "trail report counts unread");
+    return undefined;
+  }
   for (const r of (data ?? []) as any[]) {
     if (typeof r?.trail_id === "string") out[r.trail_id] = (out[r.trail_id] ?? 0) + 1;
   }
@@ -626,7 +752,10 @@ export async function loadViewerTrailModifier(
         source_id: r.source_id, contributor_id: r.contributor_id ?? null,
         confidence: Number(r.confidence), content_state: r.content_state, created_at: r.created_at,
       })),
-      reportCount: reportCounts[trailId] ?? 0,
+      // An absent ENTRY in a map that was read is a measured zero; an absent MAP
+      // is unmeasured. Collapsing the two is the defect this distinction exists
+      // to prevent, so the two branches are written out rather than defaulted.
+      reportCount: reportCounts ? (reportCounts[trailId] ?? 0) : null,
       nowMs,
     }));
   }

@@ -24,9 +24,13 @@ import express from "express";
 import { _setTestClient, _clearTestClient } from "../lib/http.js";
 import trailsRouter from "../routes/trails.js";
 import { _resetLocalMomentumCacheForTest } from "../lib/discoveryLocalMomentum.js";
-import { recordTrailHealthSnapshot, moveTrailLifecycle } from "../services/trails/TrailService.js";
+import {
+  recordTrailHealthSnapshot, moveTrailLifecycle, getTrail, getTrailModules,
+  MAX_TRAIL_EXPOSURE_EVENTS,
+} from "../services/trails/TrailService.js";
 import {
   computeTrailHealth, TRAIL_HEALTH_METRICS, TRAIL_HEALTH_MODEL_VERSION,
+  MAX_PER_CONTRIBUTOR_PER_PAGE,
 } from "../lib/discoveryTrailHealth.js";
 import { loadViewerTrailModifier } from "../services/trails/TrailService.js";
 import {
@@ -83,6 +87,12 @@ function makeDb(
   // 500 on every request between a migration and a schema reload — which is
   // exactly the window a deploy runs in.
   missingStyle: "postgres" | "schema-cache" | "message-only" = "postgres",
+  // A table that is PRESENT and whose read FAILS. Distinct from `missingTables`
+  // on purpose: a missing relation is "this deployment has no such object",
+  // which is a true fact about the world, while a statement timeout is "the
+  // answer is unknown". Code that cannot tell them apart turns the second into
+  // the first, and an unknown reported as an absence is a false claim.
+  erroringTables: string[] = [],
 ) {
   const tables: Record<string, Row[]> = {
     profiles: [USER, OTHER].map((id) => ({ id, account_status: "active", role: "user" })),
@@ -92,6 +102,7 @@ function makeDb(
     ...seed,
   };
   const missing = new Set(missingTables);
+  const erroring = new Set(erroringTables);
   const writes: Array<{ table: string; op: string; rows: any }> = [];
 
   function from(table: string) {
@@ -111,16 +122,23 @@ function makeDb(
       // without this case a mutation can delete that fallback unnoticed.
       return { code: "", message: `relation "public.${table}" does not exist` };
     };
-    const err = () => ({ data: null, error: missingError() });
+    const transientError = () => ({
+      code: "57014", message: "canceling statement due to statement timeout",
+    });
+    const err = () => ({
+      data: null,
+      error: erroring.has(table) ? transientError() : missingError(),
+    });
 
     const rows = () => {
       let out = store().filter((r) => filters.every((f) => f(r)));
       if (limitN !== null) out = out.slice(0, limitN);
       return out;
     };
-    const run = () => (missing.has(table) ? err() : { data: rows(), error: null });
+    const broken = () => missing.has(table) || erroring.has(table);
+    const run = () => (broken() ? err() : { data: rows(), error: null });
     const one = () => {
-      if (missing.has(table)) return Promise.resolve(err());
+      if (broken()) return Promise.resolve(err());
       const r = rows();
       return Promise.resolve({ data: r[0] ?? null, error: null });
     };
@@ -147,8 +165,8 @@ function makeDb(
       single: one,
       insert(payload: any) {
         const inserted = Array.isArray(payload) ? payload : [payload];
-        if (missing.has(table)) {
-          const r: any = { data: null, error: missingError() };
+        if (broken()) {
+          const r: any = { data: null, error: err().error };
           r.select = () => r; r.maybeSingle = () => Promise.resolve(r);
           r.then = (res: any) => Promise.resolve(r).then(res);
           return r;
@@ -170,7 +188,7 @@ function makeDb(
         const d: any = {
           eq(c: string, v: any) { filters.push((r) => r[c] === v); return d; },
           then(res: any) {
-            if (missing.has(table)) return Promise.resolve(err()).then(res);
+            if (broken()) return Promise.resolve(err()).then(res);
             const keep = store().filter((r) => !filters.every((f) => f(r)));
             const removed = store().length - keep.length;
             tables[table] = keep;
@@ -184,7 +202,7 @@ function makeDb(
         const u: any = {
           eq(c: string, v: any) { filters.push((r) => r[c] === v); return u; },
           then(res: any) {
-            if (missing.has(table)) return Promise.resolve(err()).then(res);
+            if (broken()) return Promise.resolve(err()).then(res);
             for (const r of rows()) Object.assign(r, patch);
             writes.push({ table, op: "update", rows: patch });
             return Promise.resolve({ data: null, error: null }).then(res);
@@ -280,9 +298,10 @@ async function call(
 const withDb = (
   seed: Record<string, Row[]> = SEED(), missing: string[] = [],
   style: "postgres" | "schema-cache" | "message-only" = "postgres",
+  erroring: string[] = [],
 ) => {
   _resetLocalMomentumCacheForTest();
-  const db = makeDb(seed, missing, style);
+  const db = makeDb(seed, missing, style, erroring);
   _setTestClient(db, true);
   return db;
 };
@@ -1036,5 +1055,193 @@ describe("DV-25 + §11 — momentum and health reach the affinity the ranker rec
   it("a place in NO followed Trail is absent from the map, never present at zero", async () => {
     const r = await loadViewerTrailModifier(withDb(followedSeed()), USER, [PLACE_B], { nowMs: NOWMS });
     assert.deepEqual(r.trailAffinity, {});
+  });
+});
+
+// ── DV-22 · §9 fair exposure: the denominator must be READ, and the slot must
+//    change what is served ──────────────────────────────────────────────────
+//
+// `lib/discoveryTrailHealth.fairExposureSlots` was already correct and already
+// covered by test/discoveryTrailModifier.test.ts. What it was CALLED with was
+// not: `getTrailModules` passed `impressions: 0, positives: 0` for every
+// candidate, so §9's "Use exposure denominators" was satisfied by a constant,
+// and it was called over the page that had ALREADY been built — so the reserved
+// slots could only ever name items that were being served anyway, and the route
+// dropped the field before it reached a client. A reservation that reserves
+// nothing and reaches nobody is not a fair-opportunity mechanism.
+
+const P_HOT = "33333333-3333-4333-8333-333333333303";
+const P_COLD = "33333333-3333-4333-8333-333333333304";
+const P_THIRD = "33333333-3333-4333-8333-333333333305";
+const CONTRIB_B = "11111111-1111-4111-8111-111111111113";
+const CONTRIB_C = "11111111-1111-4111-8111-111111111114";
+
+/** `n` served-item rows on `item_id`, in the window the exposure read uses. */
+const served = (itemId: string, n: number, outcome = "impression"): Row[] =>
+  Array.from({ length: n }, (_, i) => ({
+    id: `re-${itemId}-${outcome}-${i}`,
+    surface: "discovery",
+    item_id: itemId,
+    outcome,
+    served_at: iso(3_600_000 + i * 1_000),
+    outcome_at: outcome === "impression" ? null : iso(3_500_000 + i * 1_000),
+  }));
+
+describe("DV-22 — §9's exploration slot is judged on a real denominator and changes the page", () => {
+  it("an item whose MEASURED exposure is past the ceiling takes no reserved slot; an unexposed one does", async () => {
+    const db = withDb({
+      ...SEED(),
+      content_trails: [
+        // Newest first, so without a denominator the hot item wins the slot.
+        member("m-hot", { id: "m-hot", source_id: P_HOT, created_at: iso(60_000) }),
+        member("m-cold", {
+          id: "m-cold", source_id: P_COLD, contributor_id: CONTRIB_B, created_at: iso(120_000),
+        }),
+      ],
+      rank_events: served(P_HOT, 600),
+    });
+
+    const r = await getTrailModules(db as any, T_DARK, { pageSize: 8 });
+    const justArrived = r.modules.find((m) => m.key === "just_arrived")!;
+    assert.deepEqual(justArrived.explorationSlots, ["m-cold"],
+      "§9 step 1 'candidate qualifies': an item with 600 measured impressions has already had its bounded opportunity");
+  });
+
+  it("the reserved slot puts an item INTO the page that the page bound would have dropped", async () => {
+    const db = withDb({
+      ...SEED(),
+      content_trails: [
+        // Newest, and already exposed past the ceiling: recency puts it first
+        // and §9 says it has had its turn.
+        member("m-a", { id: "m-a", source_id: P_HOT, created_at: iso(60_000) }),
+        // Oldest and unexposed, so recency alone never reaches it.
+        member("m-c", {
+          id: "m-c", source_id: P_THIRD, contributor_id: CONTRIB_C,
+          content_state: "rediscovered", created_at: iso(9 * 86_400_000),
+        }),
+      ],
+      rank_events: served(P_HOT, 501),
+    });
+
+    const r = await getTrailModules(db as any, T_DARK, { pageSize: 1 });
+    const justArrived = r.modules.find((m) => m.key === "just_arrived")!;
+    assert.deepEqual(justArrived.explorationSlots, ["m-c"]);
+    assert.deepEqual(justArrived.items.map((i) => i.id), ["m-c"],
+      "§9: 'every eligible new item should receive a bounded exploration opportunity' — a slot that does not reach the page is not an opportunity");
+    assert.equal(justArrived.items.length, 1,
+      "§9's opportunity is BOUNDED — it takes a slot, it does not widen the page");
+  });
+
+  it("the reserved slot does NOT override §10's contributor cap (DV-13 survives DV-22)", async () => {
+    // FIVE unexposed items from ONE creator, on a page wide enough that §9's
+    // 20 % budget reserves FOUR of them. The reservation therefore names more
+    // of this creator's items than §10 will admit, which is the only fixture in
+    // which the two rules actually collide: a reserved id must still be able to
+    // LOSE to the cap, or an exploration slot becomes a way to buy a page.
+    const mine5 = ["m-1", "m-2", "m-3", "m-4", "m-5"];
+    const db = withDb({
+      ...SEED(),
+      content_trails: mine5.map((id, i) => member(id, {
+        id,
+        source_id: `33333333-3333-4333-8333-33333333330${i}`,
+        created_at: iso(60_000 + i * 60_000),
+      })),
+      rank_events: [],
+    });
+
+    const r = await getTrailModules(db as any, T_DARK, { pageSize: 20 });
+    const justArrived = r.modules.find((m) => m.key === "just_arrived")!;
+    assert.deepEqual(justArrived.explorationSlots, ["m-1", "m-2", "m-3", "m-4"],
+      "§9's budget is 20 % of the page, computed over the module's CANDIDATES rather than over the page it already built");
+    const fromOneCreator = justArrived.items.filter((i) => mine5.includes(i.id));
+    assert.equal(fromOneCreator.length, MAX_PER_CONTRIBUTOR_PER_PAGE,
+      "DV-13: one creator may not exceed the per-page cap, and an exploration slot is not a way around it");
+  });
+
+  // A denominator read that came back FULL is a denominator read that was cut
+  // off, and a cut-off count is wrong in the one direction that matters: an
+  // item whose impressions did not fit looks new again and re-qualifies for an
+  // opportunity it has already had. PostgREST caps a response at db-max-rows
+  // and reports nothing about it, so this is the ordinary case for a busy
+  // Trail, not a hypothetical.
+  it("a TRUNCATED exposure window is unmeasured — a partial count is not a smaller count", async () => {
+    const db = withDb({
+      ...SEED(),
+      content_trails: [
+        member("m-hot", { id: "m-hot", source_id: P_HOT, created_at: iso(60_000) }),
+        member("m-cold", {
+          id: "m-cold", source_id: P_COLD, contributor_id: CONTRIB_B, created_at: iso(120_000),
+        }),
+      ],
+      rank_events: served(P_HOT, MAX_TRAIL_EXPOSURE_EVENTS),
+    });
+
+    const r = await getTrailModules(db as any, T_DARK, { pageSize: 8 });
+    const justArrived = r.modules.find((m) => m.key === "just_arrived")!;
+    assert.equal(justArrived.explorationSlots, null,
+      "a full page means the window was truncated; reserving on truncated counts would hand a slot to an item that already had one");
+  });
+
+  it("an exposure read that FAILS reports null slots — never an empty list, which would claim nothing qualified", async () => {
+    const db = withDb({
+      ...SEED(),
+      content_trails: [member("m-cold", { id: "m-cold", source_id: P_COLD })],
+    }, [], "postgres", ["rank_events"]);
+
+    const r = await getTrailModules(db as any, T_DARK, { pageSize: 8 });
+    const justArrived = r.modules.find((m) => m.key === "just_arrived")!;
+    assert.equal(justArrived.explorationSlots, null,
+      "a denominator that could not be read is unknown; reporting [] would say `evaluated, nothing qualified`");
+    assert.ok(justArrived.items.length > 0,
+      "the module still serves — §9 failing to be evaluable is not a reason to serve nothing");
+  });
+
+  it("the slots reach a CLIENT — DV-22 is assertable at GET /v1/discovery/trails/:id/modules", async () => {
+    withDb({
+      ...SEED(),
+      content_trails: [member("m-cold", { id: "m-cold", source_id: P_COLD })],
+      rank_events: [],
+    });
+    const r = await call("GET", `/v1/discovery/trails/${T_DARK}/modules`, USER);
+    assert.equal(r.status, 200);
+    const justArrived = r.body.modules.find((m: any) => m.key === "just_arrived");
+    assert.deepEqual(justArrived.explorationSlots, ["m-cold"]);
+    // §9: "Do not promise a fixed number of impressions publicly." Ids, not counts.
+    assert.ok(!JSON.stringify(r.body).includes("denominator"));
+    assert.ok(!JSON.stringify(r.body).includes("impressions"));
+  });
+});
+
+// ── §11 report_rate over a FAILED read, at the service boundary ─────────────
+
+describe("§11 — a failed trail_reports read is unmeasured health, not a clean Trail", () => {
+  it("getTrail reports report_rate null and names it, rather than claiming zero open reports", async () => {
+    const db = withDb(SEED(), [], "postgres", ["trail_reports"]);
+    const r = await getTrail(db as any, T_DARK);
+    assert.equal(r.refusal, null, "a diagnostic read failing must not fail the Trail read");
+    assert.equal(r.health!.metrics.report_rate, null,
+      "supabase-js RESOLVES on a database error: a discarded error made the outage look like `no reports`");
+    assert.ok(r.health!.unmeasured.includes("report_rate"));
+  });
+
+  it("a SUCCESSFUL read with no open reports still measures 0 — the two are distinguishable", async () => {
+    const db = withDb();
+    const r = await getTrail(db as any, T_DARK);
+    assert.equal(r.health!.metrics.report_rate, 0);
+    assert.ok(!r.health!.unmeasured.includes("report_rate"));
+  });
+
+  it("the unreadable case scales DIFFERENTLY from the clean case, so the outage is visible in rank", async () => {
+    const seed = (): Record<string, Row[]> => ({
+      ...SEED(),
+      content_trails: [
+        member(M1, { confidence: 0.1 }),
+        member(M2, { source_id: PLACE_B, contributor_id: OTHER, confidence: 0.9, created_at: iso(10 * 86_400_000) }),
+      ],
+    });
+    const broken = await getTrail(withDb(seed(), [], "postgres", ["trail_reports"]) as any, T_DARK);
+    const clean = await getTrail(withDb(seed()) as any, T_DARK);
+    assert.ok(broken.healthScale < clean.healthScale,
+      "a clean report_rate is evidence; a failed read has none and must not be scored as if it did");
   });
 });

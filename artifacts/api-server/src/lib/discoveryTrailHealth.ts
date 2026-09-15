@@ -93,8 +93,18 @@ export interface TrailMemberForHealth {
 
 export interface TrailHealthInput {
   members: readonly TrailMemberForHealth[];
-  /** Open `trail_reports` rows for the Trail. */
-  reportCount: number;
+  /**
+   * Open `trail_reports` rows for the Trail, or `null` when that read FAILED.
+   *
+   * The two are not the same fact and must not arrive as the same number.
+   * supabase-js resolves on a database error, so a caller that discarded the
+   * error would hand 0 to this function and the Trail would measure
+   * `report_rate: 0` — a POSITIVE claim that nobody has reported it, made from
+   * no evidence, which then raises `trailHealthScale` and so raises served
+   * rank. `null` is how the caller says "unknown", and the header's rule
+   * applies: what is unmeasured is said, not defaulted.
+   */
+  reportCount: number | null;
   nowMs: number;
   /**
    * item id → coarse geographic cell. OPTIONAL, and its absence is the reason
@@ -195,8 +205,14 @@ export function computeTrailHealth(input: TrailHealthInput): TrailHealth {
   metrics.duplicate_density = share(n - distinctSubjects, n);
 
   // Reports — capped at 1: more reports than members is still "as bad as it gets".
-  const reports = Number.isFinite(input?.reportCount) ? Math.max(0, input.reportCount) : 0;
-  metrics.report_rate = Math.min(1, round3(reports / n));
+  // A `null` (or non-finite) count is UNMEASURED and stays null: it is named in
+  // `unmeasured`, excluded from `goodness`'s average, and stored as JSON null in
+  // `trail_health_snapshots.metrics`, which is what migration 2910 already says
+  // an input-less metric does.
+  const reported = input?.reportCount;
+  if (typeof reported === "number" && Number.isFinite(reported)) {
+    metrics.report_rate = Math.min(1, round3(Math.max(0, reported) / n));
+  }
 
   // Geography — only when the caller supplied cells for the members.
   const cells = input?.geoCellByItem;

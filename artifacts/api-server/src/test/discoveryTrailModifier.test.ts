@@ -623,3 +623,48 @@ describe("WIRING 4 — rankForViewer carries the Trail modifier into ViewerConte
       "an OFF flag must leave the feature vector byte-identical to the pre-Trail pipeline");
   });
 });
+
+// ── §11 report_rate: an UNREAD report count is not a count of zero ───────────
+//
+// `computeTrailHealth` is handed `reportCount` by TrailService, which gets it
+// from a `trail_reports` read that can fail. Collapsing that failure into 0
+// makes the metric say "this Trail has no open reports" — a POSITIVE claim the
+// code has no evidence for, and one that raises `trailHealthScale` and so
+// raises served rank. The module's own rule (header: "WHAT IS UNMEASURED IS
+// SAID, NOT DEFAULTED") is the fix, applied to the one input that can be
+// missing.
+
+describe("§11 report_rate — a report count that could not be read is UNMEASURED, not zero", () => {
+  it("reportCount null reports report_rate null and NAMES it in `unmeasured`", () => {
+    const h = computeTrailHealth({ ...HEALTHY, reportCount: null });
+    assert.equal(h.metrics.report_rate, null,
+      "a failed trail_reports read must not become the claim `no open reports`");
+    assert.ok(h.unmeasured.includes("report_rate"),
+      "§11's unmeasured list is how a caller learns the metric was not computed");
+  });
+
+  it("reportCount 0 is a MEASUREMENT and stays 0 — the two facts do not collapse", () => {
+    const measured = computeTrailHealth({ ...HEALTHY, reportCount: 0 });
+    assert.equal(measured.metrics.report_rate, 0);
+    assert.ok(!measured.unmeasured.includes("report_rate"));
+  });
+
+  it("the two produce DIFFERENT health scales, so an outage cannot flatter a Trail's rank", () => {
+    // Deliberately NOT the HEALTHY fixture: every one of its measurable metrics
+    // is already perfect, so its scale is 1 whether or not report_rate joins the
+    // average, and the difference this test is about would be invisible. One
+    // member below the quality floor is enough to make the average bite.
+    const mixed = {
+      ...HEALTHY,
+      members: HEALTHY.members.map((m, i) => (i === 0 ? { ...m, confidence: 0.1 } : m)),
+    };
+    const unread = trailHealthScale(computeTrailHealth({ ...mixed, reportCount: null }));
+    const clean = trailHealthScale(computeTrailHealth({ ...mixed, reportCount: 0 }));
+    assert.notEqual(unread, clean,
+      "if a failed read scored the same as a clean Trail, the failure would be invisible in rank");
+    assert.ok(unread < clean,
+      "a perfect report_rate is evidence a failed read does not have");
+    assert.ok(unread >= TRAIL_HEALTH_MIN_SCALE,
+      "§11: not measuring a metric must not erase the Trail either");
+  });
+});
