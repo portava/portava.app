@@ -2925,10 +2925,12 @@ rather than a note that more work is needed:
 ### 15.5 THIS CENSUS IS LEFT STALE, AND AN ACKNOWLEDGEMENT WOULD HAVE BEEN FALSE
 
 `check:census-freshness` reports `census-media.md` STALE after this pass, exit
-code **1**, naming exactly four counted files —
+code **1**, naming exactly six counted files —
 `services/media/MediaGemStateService.ts` (new),
-`services/media/MediaExperienceResolver.ts`, `routes/mediaWorld.ts` and
-`src/test/mediaWorldBoundaryScrub.test.ts` — and
+`services/media/MediaExperienceResolver.ts`, `routes/mediaWorld.ts` and the three
+proof suites `src/test/mediaWorldBoundaryScrub.test.ts`,
+`src/test/mediaGemStateLens.test.ts` and
+`src/test/mediaExperienceConfidence.test.ts` — and
 `src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json` is NOT extended to cover them.
 That is deliberate and it is the correct outcome of the rule, not a lapse:
 
