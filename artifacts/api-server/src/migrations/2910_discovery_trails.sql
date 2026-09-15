@@ -72,7 +72,7 @@ END
 $pre$;
 
 -- ── §18 `trails` ─────────────────────────────────────────────────────────────
-CREATE TABLE public.trails (
+CREATE TABLE IF NOT EXISTS public.trails (
   id                uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
   slug              text        NOT NULL,
   title             text        NOT NULL,
@@ -104,11 +104,11 @@ CREATE TABLE public.trails (
 );
 COMMENT ON TABLE public.trails IS
   '02_Trails.md §18: the canonical Trail — a permanent themed discovery space. NOT route_plans (that is the IG §19 trail). Identity is the UNIQUE slug plus this id; content references trail_id and never a title (DV-20). Ranking contribution is a capped modifier in lib/discoveryTrailAffinity.ts, never an ordering of its own (ROADMAP step 7).';
-CREATE INDEX idx_trails_destination_lifecycle ON public.trails (destination, lifecycle_status);
-CREATE INDEX idx_trails_parent ON public.trails (parent_trail_id) WHERE parent_trail_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_trails_destination_lifecycle ON public.trails (destination, lifecycle_status);
+CREATE INDEX IF NOT EXISTS idx_trails_parent ON public.trails (parent_trail_id) WHERE parent_trail_id IS NOT NULL;
 
 -- ── §18 `content_trails` ─────────────────────────────────────────────────────
-CREATE TABLE public.content_trails (
+CREATE TABLE IF NOT EXISTS public.content_trails (
   id             uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
   trail_id       uuid        NOT NULL REFERENCES public.trails(id) ON DELETE CASCADE,
   source_type    text        NOT NULL,
@@ -140,10 +140,10 @@ COMMENT ON TABLE public.content_trails IS
   '02_Trails.md §18: membership of content in a Trail. relationship is §4''s primary | supporting | signal; signal carries §4''s closed eight-word vocabulary. NOT a behaviour store — no impression or outcome is ever written here (04 §2); Trail momentum is folded from rank_events in lib/discoveryTrailAffinity.ts.';
 -- Uniqueness with a nullable column: COALESCE, because NULLs are DISTINCT by
 -- default and a plain UNIQUE would admit unlimited duplicate primary rows.
-CREATE UNIQUE INDEX uq_content_trails_label
+CREATE UNIQUE INDEX IF NOT EXISTS uq_content_trails_label
   ON public.content_trails (trail_id, source_type, source_id, relationship, COALESCE(signal, ''));
-CREATE INDEX idx_content_trails_trail ON public.content_trails (trail_id, created_at DESC);
-CREATE INDEX idx_content_trails_source ON public.content_trails (source_type, source_id);
+CREATE INDEX IF NOT EXISTS idx_content_trails_trail ON public.content_trails (trail_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_content_trails_source ON public.content_trails (source_type, source_id);
 
 -- ── §4's label cap, enforced in the DATABASE as well as in code (DC-02) ──────
 --
@@ -186,12 +186,13 @@ REVOKE ALL ON FUNCTION public.content_trails_label_cap() FROM PUBLIC, anon, auth
 COMMENT ON FUNCTION public.content_trails_label_cap() IS
   '02_Trails.md §4 "Do not let creators attach unlimited discovery labels": one primary Trail, three supporting, five Signals — three separate budgets per piece of content. Mirrored by MAX_PRIMARY_TRAILS / MAX_SUPPORTING_TRAILS / MAX_SIGNALS in lib/discoveryTrailObject.ts.';
 
+DROP TRIGGER IF EXISTS content_trails_label_cap_trg ON public.content_trails;
 CREATE TRIGGER content_trails_label_cap_trg
   BEFORE INSERT OR UPDATE OF relationship, source_type, source_id ON public.content_trails
   FOR EACH ROW EXECUTE FUNCTION public.content_trails_label_cap();
 
 -- ── §18 `trail_edges` (§6 relationships — DV-24) ─────────────────────────────
-CREATE TABLE public.trail_edges (
+CREATE TABLE IF NOT EXISTS public.trail_edges (
   from_trail_id uuid        NOT NULL REFERENCES public.trails(id) ON DELETE CASCADE,
   to_trail_id   uuid        NOT NULL REFERENCES public.trails(id) ON DELETE CASCADE,
   edge_type     text        NOT NULL,
@@ -207,10 +208,10 @@ CREATE TABLE public.trail_edges (
 );
 COMMENT ON TABLE public.trail_edges IS
   '02_Trails.md §18/§6: navigable relationships between Trails (DV-24). Six edge types. Separate from compass_graph_edges by design — migration 2290 refuses a trail node kind and this table is why that refusal costs nothing.';
-CREATE INDEX idx_trail_edges_to ON public.trail_edges (to_trail_id, edge_type);
+CREATE INDEX IF NOT EXISTS idx_trail_edges_to ON public.trail_edges (to_trail_id, edge_type);
 
 -- ── §18 `trail_health_snapshots` (§11 — DC-05) ───────────────────────────────
-CREATE TABLE public.trail_health_snapshots (
+CREATE TABLE IF NOT EXISTS public.trail_health_snapshots (
   id            uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
   trail_id      uuid        NOT NULL REFERENCES public.trails(id) ON DELETE CASCADE,
   -- §11's nine metrics. A metric with no input is stored as JSON null and named
@@ -223,10 +224,10 @@ CREATE TABLE public.trail_health_snapshots (
 );
 COMMENT ON TABLE public.trail_health_snapshots IS
   '02_Trails.md §11 health metrics with the model version that produced them (10 §5). Health influences ranking through lib/discoveryTrailHealth.trailHealthScale, which is floored at 0.85 — §11: health must not silently erase legitimate content.';
-CREATE INDEX idx_trail_health_recent ON public.trail_health_snapshots (trail_id, captured_at DESC);
+CREATE INDEX IF NOT EXISTS idx_trail_health_recent ON public.trail_health_snapshots (trail_id, captured_at DESC);
 
 -- ── `trail_follows` — §3 contributors/followers, and the affinity input ──────
-CREATE TABLE public.trail_follows (
+CREATE TABLE IF NOT EXISTS public.trail_follows (
   trail_id   uuid        NOT NULL REFERENCES public.trails(id) ON DELETE CASCADE,
   user_id    uuid        NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -234,10 +235,10 @@ CREATE TABLE public.trail_follows (
 );
 COMMENT ON TABLE public.trail_follows IS
   '11 §3 follow/unfollow Trail. A SUBSCRIPTION, not a behaviour record: no impression, outcome or engagement is written here (04 §2 / DC-08). Read by lib/discoveryTrailAffinity.ts to decide which Trails a viewer''s modifier map is built from.';
-CREATE INDEX idx_trail_follows_user ON public.trail_follows (user_id);
+CREATE INDEX IF NOT EXISTS idx_trail_follows_user ON public.trail_follows (user_id);
 
 -- ── `trail_reports` — §15 moderation intake ──────────────────────────────────
-CREATE TABLE public.trail_reports (
+CREATE TABLE IF NOT EXISTS public.trail_reports (
   id               uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
   trail_id         uuid        NOT NULL REFERENCES public.trails(id) ON DELETE CASCADE,
   content_trail_id uuid        NULL REFERENCES public.content_trails(id) ON DELETE CASCADE,
@@ -253,7 +254,7 @@ CREATE TABLE public.trail_reports (
 );
 COMMENT ON TABLE public.trail_reports IS
   '02_Trails.md §15 moderation intake for 11 §3 "report Trail/content mismatch". Feeds §11''s report_rate metric. Resolution is an admin action and is never written by the reporting route.';
-CREATE INDEX idx_trail_reports_open ON public.trail_reports (trail_id) WHERE resolution IS NULL;
+CREATE INDEX IF NOT EXISTS idx_trail_reports_open ON public.trail_reports (trail_id) WHERE resolution IS NULL;
 
 -- ── RLS ──────────────────────────────────────────────────────────────────────
 --
@@ -277,12 +278,26 @@ ALTER TABLE public.trail_follows          ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.trail_reports          ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.trail_health_snapshots ENABLE ROW LEVEL SECURITY;
 
+-- DROP-then-CREATE rather than bare CREATE, for the same reason the CREATE
+-- TABLEs above carry IF NOT EXISTS: this file's objects are already present on
+-- portava-ci from a rehearsal that recorded no ledger row, and a migration whose
+-- effect is already there must be a no-op rather than a 42P07/42710 failure.
+-- Re-asserting the policy is safer than IF NOT EXISTS would be here: a policy
+-- left over with a DIFFERENT predicate would silently survive "if not exists",
+-- whereas dropping and recreating guarantees the predicate below is the one in
+-- force. Nothing downstream is skipped — the $post$ block re-proves the label
+-- cap and the signal vocabulary BEHAVIOURALLY, by inserting probe rows and
+-- requiring the refusals, so a wrong-shaped leftover still fails this file.
+DROP POLICY IF EXISTS trails_public_select ON public.trails;
 CREATE POLICY trails_public_select ON public.trails
   FOR SELECT TO authenticated USING (lifecycle_status <> 'archived');
+DROP POLICY IF EXISTS content_trails_public_select ON public.content_trails;
 CREATE POLICY content_trails_public_select ON public.content_trails
   FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS trail_edges_public_select ON public.trail_edges;
 CREATE POLICY trail_edges_public_select ON public.trail_edges
   FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS trail_follows_own_select ON public.trail_follows;
 CREATE POLICY trail_follows_own_select ON public.trail_follows
   FOR SELECT TO authenticated USING (user_id = auth.uid());
 

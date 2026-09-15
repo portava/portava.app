@@ -108,7 +108,7 @@ END
 $pre$;
 
 -- ── `07` §8/§10 — versioned, configurable rules, one lineage per creator type ─
-CREATE TABLE public.creator_rule_versions (
+CREATE TABLE IF NOT EXISTS public.creator_rule_versions (
   id             uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
   creator_type   text        NOT NULL,
   rule_version   text        NOT NULL,
@@ -138,11 +138,11 @@ COMMENT ON TABLE public.creator_rule_versions IS
 COMMENT ON COLUMN public.creator_rule_versions.params IS
   '07 §8 "Actual percentages must remain configurable" — the whole point of this column. Seeded empty: no percentage has been decided, and inventing one would be the hard-coding §8 forbids.';
 
-CREATE INDEX crv_type_effective_idx
+CREATE INDEX IF NOT EXISTS crv_type_effective_idx
   ON public.creator_rule_versions (creator_type, effective_from DESC);
 
 -- ── `07` §7/§8/§10 — the multi-party attribution record ──────────────────────
-CREATE TABLE public.creator_attributions (
+CREATE TABLE IF NOT EXISTS public.creator_attributions (
   id                  uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
 
   -- THE DIMENSION THAT DID NOT EXIST. `07` §2.
@@ -255,18 +255,18 @@ COMMENT ON COLUMN public.creator_attributions.subject_id IS
 COMMENT ON COLUMN public.creator_attributions.settled_minor IS
   '09 §1 "Portava moves no money". CHECK-constrained to 0 — the code-side twin is the refusal in lib/creatorTypeAttribution.ts. Present so a reader can ASSERT the boundary rather than assume it.';
 
-CREATE UNIQUE INDEX ca_idempotency_key_once
+CREATE UNIQUE INDEX IF NOT EXISTS ca_idempotency_key_once
   ON public.creator_attributions (idempotency_key);
 -- At most one supersession per row: superseding twice forks history into two
 -- incompatible "current" answers.
-CREATE UNIQUE INDEX ca_one_supersede_per_row
+CREATE UNIQUE INDEX IF NOT EXISTS ca_one_supersede_per_row
   ON public.creator_attributions (supersedes_id) WHERE supersedes_id IS NOT NULL;
-CREATE INDEX ca_type_subject_idx      ON public.creator_attributions (creator_type, subject_kind, subject_id);
-CREATE INDEX ca_beneficiary_idx       ON public.creator_attributions (beneficiary_user_id, computed_at DESC);
-CREATE INDEX ca_value_event_idx       ON public.creator_attributions (value_event, value_event_id)
+CREATE INDEX IF NOT EXISTS ca_type_subject_idx      ON public.creator_attributions (creator_type, subject_kind, subject_id);
+CREATE INDEX IF NOT EXISTS ca_beneficiary_idx       ON public.creator_attributions (beneficiary_user_id, computed_at DESC);
+CREATE INDEX IF NOT EXISTS ca_value_event_idx       ON public.creator_attributions (value_event, value_event_id)
   WHERE value_event_id IS NOT NULL;
-CREATE INDEX ca_rule_version_idx      ON public.creator_attributions (creator_type, rule_version);
-CREATE INDEX ca_fraud_hold_idx        ON public.creator_attributions (creator_type, computed_at DESC)
+CREATE INDEX IF NOT EXISTS ca_rule_version_idx      ON public.creator_attributions (creator_type, rule_version);
+CREATE INDEX IF NOT EXISTS ca_fraud_hold_idx        ON public.creator_attributions (creator_type, computed_at DESC)
   WHERE fraud_hold;
 
 -- ── Corrections are new rows ────────────────────────────────────────────────
