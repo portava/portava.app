@@ -185,7 +185,10 @@ export interface RankEventsRejection {
 const _rejections = new Map<string, RankEventsRejection>();
 
 function keyOf(writer: string, constraint: string | null, code: string): string {
-  return `${writer} ${constraint ?? ""} ${code}`;
+  // Joined with a character that appears in none of the three parts: a writer is a
+  // repository path, a constraint name is [A-Za-z0-9_], and a SQLSTATE is alphanumeric.
+  // An earlier draft used a NUL, which made git treat this file as binary.
+  return `${writer} | ${constraint ?? "—"} | ${code}`;
 }
 
 /**
