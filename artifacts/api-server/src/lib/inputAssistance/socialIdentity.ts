@@ -211,7 +211,7 @@ export async function resolveRecipientSuggestions(
     .select('id, handle, username, name, account_status')
     .in('id', pool)
     .in('account_status', ['active']);
-  if (error) return [];
+  if (error) return [buildRecipientsUnreadable(context, policyVersion)]; // D11: fail-closed AND said out loud
 
   const needle = q.toLowerCase();
   const matched = ((data ?? []) as RecipientProfile[]).filter((p) => matchesNeedle(p, needle));
@@ -372,7 +372,7 @@ export async function resolveHashtagRefSuggestions(
 
   // Existing canonical hashtags (usage-ranked), reusing the hashtags search.
   const existing = await searchExistingHashtags(sc, slug, Math.max(1, max));
-  for (const h of existing) {
+  for (const h of existing ?? []) { // D11: null = registry unreadable, [] = no such tag
     if (seenSlugs.has(h.slug)) continue;
     seenSlugs.add(h.slug);
     out.push(projectHashtagRef(h.slug, context, policyVersion, { id: h.id, usageCount: h.usageCount }));
@@ -381,7 +381,7 @@ export async function resolveHashtagRefSuggestions(
   // The exact canonical slug the user typed — always resolvable, even brand-new.
   if (!seenSlugs.has(slug)) {
     seenSlugs.add(slug);
-    out.push(projectHashtagRef(slug, context, policyVersion, { isNew: true }));
+    out.push(projectHashtagRef(slug, context, policyVersion, existing === null ? { registryUnreadable: true } : { isNew: true }));
   }
 
   return out.slice(0, Math.max(0, max));
@@ -389,7 +389,7 @@ export async function resolveHashtagRefSuggestions(
 
 interface ExistingHashtag { id: string; slug: string; usageCount: number | null }
 
-async function searchExistingHashtags(sc: any, slug: string, limit: number): Promise<ExistingHashtag[]> {
+async function searchExistingHashtags(sc: any, slug: string, limit: number): Promise<ExistingHashtag[] | null> {
   try {
     const pat = `%${slug.replace(/[%_]/g, '\\$&')}%`;
     const { data, error } = await sc
@@ -399,14 +399,14 @@ async function searchExistingHashtags(sc: any, slug: string, limit: number): Pro
       .eq('is_blocked', false)
       .order('usage_count', { ascending: false })
       .range(0, Math.max(0, limit - 1));
-    if (error || !data) return [];
-    return (data as any[]).map((h) => ({
+    if (error) return null; // D11: null = UNREADABLE registry, [] = no matching tag
+    return ((data ?? []) as any[]).map((h) => ({
       id: h.id as string,
       slug: (h.slug as string) ?? '',
       usageCount: (h.usage_count as number | null) ?? null,
     })).filter((h) => h.slug.length > 0);
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -414,7 +414,7 @@ function projectHashtagRef(
   slug: string,
   context: InputContext,
   policyVersion: string,
-  opts: { id?: string; usageCount?: number | null; isNew?: boolean } = {},
+  opts: { id?: string; usageCount?: number | null; isNew?: boolean; registryUnreadable?: boolean } = {},
 ): InputSuggestion {
   const suggestion: InputSuggestion = {
     id: `${context}:hashtag:${slug}`,
@@ -427,14 +427,14 @@ function projectHashtagRef(
     // §26: a hashtag resolves to its CANONICAL slug as a structured reference.
     action: { type: 'set_structured_value', value: { kind: 'hashtag', slug } },
     structuredValue: { kind: 'hashtag', slug },
-    confidence: opts.isNew ? 0.55 : 0.85,
+    confidence: opts.registryUnreadable ? 0.4 : opts.isNew ? 0.55 : 0.85,
     source: 'canonical',
     destination: { route: `/hashtag/${slug}`, entityType: 'hashtag' },
     canonicalUri: `portava:/hashtag/${slug}`,
     policyVersion,
   };
   if (typeof opts.usageCount === 'number') suggestion.subtitle = `${opts.usageCount} posts`;
-  else if (opts.isNew) suggestion.subtitle = 'New tag';
+  else if (opts.registryUnreadable) { suggestion.subtitle = 'Existing tags could not be checked'; suggestion.reason = 'hashtag_registry_unreadable'; } else if (opts.isNew) suggestion.subtitle = 'New tag';
   return suggestion;
 }
 
@@ -505,6 +505,41 @@ export function buildUsernameValidation(
     confidence: result.available ? 0.9 : 0.2,
     source: 'local',
     reason: result.available ? undefined : result.reason,
+    policyVersion,
+  };
+}
+
+// ── D11: an unreadable recipient pool is not an empty one ─────────────────────
+//
+// docs/architecture/swallowed-read-inventory.md, SILENT column,
+// socialIdentity.ts:214. The `profiles` read of the viewer's own candidate pool
+// answered a failure with the same `[]` "nobody matches what you typed"
+// returns, and gateway.ts:302 hands that straight to the /input-assistance
+// response — an empty recipient picker that reads as "there is nobody here".
+//
+// The caller may NOT act on that as an answer, and this file already knew the
+// remedy: §10 at :52-66 names this exact defect ("the user saw an empty list
+// and could not tell an unsupported character from a network failure") and
+// answers it with a non-blocking `validation` row. This is that row.
+//
+// FAIL-CLOSED IS UNCHANGED — still zero recipients, and the row carries no
+// account information, so §47 enumeration protection is untouched. It is
+// resolvable (§13) so `dropDeadRows` cannot silently discard it.
+function buildRecipientsUnreadable(
+  context: InputContext,
+  policyVersion: string,
+): InputSuggestion {
+  const value = { kind: 'recipient_search_status', available: false, reason: 'recipients_unreadable' };
+  return {
+    id: `${context}:validation:recipients`,
+    type: 'validation',
+    context,
+    label: 'Your contacts could not be loaded — try again in a moment.',
+    action: { type: 'set_structured_value', value },
+    structuredValue: value,
+    confidence: 0.2,
+    source: 'local',
+    reason: 'recipients_unreadable',
     policyVersion,
   };
 }

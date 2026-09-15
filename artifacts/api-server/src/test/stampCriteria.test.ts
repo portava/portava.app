@@ -12,7 +12,7 @@ import assert from "node:assert/strict";
 import { referencedMetrics, CRITERIA_SCHEMA_VERSION } from "../lib/stamps/criteria/schema.js";
 import { resolveMetric, isKnownMetric } from "../lib/stamps/criteria/metrics.js";
 import { evaluateCriteria } from "../lib/stamps/criteria/evaluator.js";
-import { criteriaGate, evaluateAndAwardCriteria } from "../lib/stamps/criteria/index.js";
+import { criteriaGate, evaluateAndAwardCriteria, CriteriaDefinitionsUnavailableError } from "../lib/stamps/criteria/index.js";
 
 // ── Fake Supabase: count-head queries + jsonb-not-null + flag ─────────────────
 
@@ -243,4 +243,81 @@ describe("evaluateAndAwardCriteria", () => {
 
 describe("schema version constant", () => {
   it("is 1", () => assert.equal(CRITERIA_SCHEMA_VERSION, 1));
+});
+
+// ── D11 / swallowed-read inventory: stamps/criteria/index.ts:109 ─────────────
+//
+// The site: `if (error || !Array.isArray(data)) return [];` on the
+// `stamp_definitions` read inside evaluateAndAwardCriteria (SILENT column of
+// docs/architecture/swallowed-read-inventory.md).
+//
+// Owner's question — may the caller act on this emptiness as if it were an
+// answer? NO. `[]` already carries the legitimate meanings "the engine flag is
+// off" and "no active automatic definition has authored criteria", and
+// routes/stampCatalog.ts:1472 serialises the result straight into the admin
+// response as `{ dryRun: false, outcomes: [] }` — an operator reads that as
+// "there was nothing to award" and stops looking. routes/events.ts:2954 and
+// routes/posts.ts:771 use it to decide which stamps to award and notify.
+//
+// Fail-closed direction kept: nothing is awarded and nothing is claimed
+// awarded. Both event/post call sites already run inside `try { … } catch {}`,
+// so their behaviour is byte-identical to today; the admin route's
+// asyncHandler turns the rejection into an error response, which is the
+// caller being told rather than an operator maybe seeing a log.
+//
+// NOT part of this ruling: `flagOn`'s `if (error) return false` (:37). That
+// returns a boolean (outside the inventory's []/{}-only classifier) and
+// "flag unreadable ⇒ engine off" is the deliberate, tree-wide fail-closed
+// reading of a feature flag. It is left exactly as it is.
+
+function defsFake(opts: { flagOn: boolean; defsError?: unknown; defs?: any[] }) {
+  return {
+    from(table: string) {
+      const b: any = {};
+      for (const fn of ["select", "eq", "in", "not", "is", "order", "limit"]) b[fn] = () => b;
+      b.maybeSingle = async () =>
+        table === "feature_flags"
+          ? { data: { enabled: opts.flagOn }, error: null }
+          : { data: null, error: null };
+      b.then = (resolve: any) => {
+        if (table === "stamp_definitions" && opts.defsError) {
+          resolve({ data: null, error: opts.defsError });
+          return;
+        }
+        resolve({ data: table === "stamp_definitions" ? (opts.defs ?? []) : [], error: null });
+      };
+      return b;
+    },
+  } as any;
+}
+
+describe("D11 — an unreadable stamp_definitions is not 'nothing to award'", () => {
+  it("a genuine empty definition set is still an answer", async () => {
+    const out = await evaluateAndAwardCriteria(defsFake({ flagOn: true, defs: [] }), U, {});
+    assert.deepEqual(out, [], "no criteria-bearing definitions is a real, reportable emptiness");
+  });
+
+  it("the flag being off is still an answer", async () => {
+    const out = await evaluateAndAwardCriteria(defsFake({ flagOn: false, defs: [] }), U, {});
+    assert.deepEqual(out, [], "engine disabled keeps its existing no-op contract");
+  });
+
+  it("a failed definitions read is NOT byte-identical to either of them", async () => {
+    await assert.rejects(
+      () => evaluateAndAwardCriteria(
+        defsFake({ flagOn: true, defsError: { code: "57014", message: "statement timeout" } }), U, {},
+      ),
+      (e: unknown) => e instanceof CriteriaDefinitionsUnavailableError,
+      "an unread definition table must not answer 'nothing to award'",
+    );
+  });
+
+  it("nothing is claimed awarded when the definitions could not be read (fail-closed)", async () => {
+    const awarded: string[] = [];
+    await assert.rejects(() => evaluateAndAwardCriteria(
+      defsFake({ flagOn: true, defsError: { message: "boom" } }), U,
+      { awardFn: async ({ definitionSlug }) => { awarded.push(definitionSlug); return { awarded: true, reason: "x" }; } },
+    ));
+    assert.deepEqual(awarded, [], "a failed read must not become an award");
+  });
 });

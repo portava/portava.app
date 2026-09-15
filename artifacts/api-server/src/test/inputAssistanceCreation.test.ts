@@ -42,6 +42,10 @@ import {
   scoreGemDuplicate,
   findDuplicateGems,
   findDuplicatePlaces,
+  findDuplicateEvents,
+  scanDuplicateGems,
+  scanDuplicatePlaces,
+  scanDuplicateEvents,
   DUPLICATE_THRESHOLD,
   type DedupEntity,
 } from "../lib/inputAssistance/duplicateDetection.js";
@@ -548,5 +552,95 @@ describe("creation context registry", () => {
     assert.ok(ctxs.includes("hidden_gem_name"));
     assert.ok(ctxs.includes("event_title"));
     assert.ok(ctxs.includes("trip_title"));
+  });
+});
+
+// ── D11 / swallowed-read inventory: the three duplicate-candidate reads ───────
+//
+// Sites (docs/architecture/swallowed-read-inventory.md):
+//   duplicateDetection.ts:215  fetchGemCandidates      — COMMENTED
+//   duplicateDetection.ts:306  findDuplicatePlaces     — SILENT
+//   duplicateDetection.ts:411  findDuplicateEvents     — SILENT
+// All three were `if (error || !data) return []`, byte-identical to the [] a
+// genuinely empty candidate pool returns.
+//
+// Owner's question — may the caller act on this emptiness as if it were an
+// answer? NO. creation.ts:286/294/301 turns these matches into `disambiguation`
+// rows; NO rows is rendered to a traveller as "nothing like this exists yet",
+// and they act on it by creating the duplicate. duplicateDetection.ts's own
+// comments record two production outages of exactly that (a 22P02 on
+// `status:'approved'`, a PGRST100 on a `country` column) in which "a traveller
+// submitting a Hidden Gem was never shown 'this may already exist' — not even
+// for an identical name at identical coordinates".
+//
+// The FIX keeps the fail-closed direction and every existing contract: the
+// legacy `findDuplicate*` entry points still resolve to [] and still never
+// throw (the guards above depend on that), and the honest answer is available
+// through `scanDuplicate*`, which returns the tree's local discriminated shape
+// { ok: true; matches } | { ok: false; reason }. Two absences no longer read
+// alike for a caller that asks.
+
+describe("D11: a duplicate-candidate pool that could not be read is not an empty one", () => {
+  it("scanDuplicateGems distinguishes an unreadable hidden_gems from a genuinely empty one", async () => {
+    const empty = await scanDuplicateGems(
+      makeFakeClient(baseTables()) as any, { name: "Sky Cafe", city: "Da Nang" },
+    );
+    assert.deepEqual(empty, { ok: true, matches: [] }, "a genuine miss is an answer");
+
+    const unread = await scanDuplicateGems(
+      makeFakeClient(baseTables(), new Set(["hidden_gems"])) as any,
+      { name: "Sky Cafe", city: "Da Nang" },
+    );
+    assert.equal(unread.ok, false, "an unreadable candidate pool must not answer 'no duplicates'");
+    assert.notDeepEqual(unread, empty, "the two absences must not read alike");
+    if (!unread.ok) {
+      assert.equal(unread.reason, "candidate_pool_unreadable");
+      assert.equal(unread.table, "hidden_gems");
+    }
+  });
+
+  it("scanDuplicatePlaces distinguishes an unreadable places from a genuinely empty one", async () => {
+    const empty = await scanDuplicatePlaces(
+      makeFakeClient(baseTables()) as any, { name: "Sky Bar", city: "Da Nang" },
+    );
+    assert.deepEqual(empty, { ok: true, matches: [] });
+
+    const unread = await scanDuplicatePlaces(
+      makeFakeClient(baseTables(), new Set(["places"])) as any, { name: "Sky Bar", city: "Da Nang" },
+    );
+    assert.equal(unread.ok, false);
+    assert.notDeepEqual(unread, empty, "the two absences must not read alike");
+    if (!unread.ok) assert.equal(unread.table, "places");
+  });
+
+  it("scanDuplicateEvents distinguishes an unreadable events from a genuinely empty one", async () => {
+    const empty = await scanDuplicateEvents(
+      makeFakeClient(baseTables()) as any, { name: "Full Moon Party", city: "Da Nang" },
+    );
+    assert.deepEqual(empty, { ok: true, matches: [] });
+
+    const unread = await scanDuplicateEvents(
+      makeFakeClient(baseTables(), new Set(["events"])) as any,
+      { name: "Full Moon Party", city: "Da Nang" },
+    );
+    assert.equal(unread.ok, false);
+    assert.notDeepEqual(unread, empty, "the two absences must not read alike");
+    if (!unread.ok) assert.equal(unread.table, "events");
+  });
+
+  it("a healthy read still scans and scores normally", async () => {
+    const scan = await scanDuplicateGems(
+      makeFakeClient(baseTables({ hidden_gems: [gemRow("g1", "Sky Cafe")] })) as any,
+      { name: "Sky Cafe", city: "Da Nang", lat: 16.0678, lng: 108.221, category: "cafe" },
+    );
+    assert.equal(scan.ok, true);
+    if (scan.ok) assert.equal(scan.matches.length, 1, "the real matcher still runs through the scan path");
+  });
+
+  it("the legacy fail-soft adapters keep their contract (still [], still never throw)", async () => {
+    const sc = makeFakeClient(baseTables(), new Set(["hidden_gems", "places", "events"]));
+    assert.deepEqual(await findDuplicateGems(sc as any, { name: "Sky Cafe", city: "Da Nang" }), []);
+    assert.deepEqual(await findDuplicatePlaces(sc as any, { name: "Sky Bar", city: "Da Nang" }), []);
+    assert.deepEqual(await findDuplicateEvents(sc as any, { name: "Full Moon", city: "Da Nang" }), []);
   });
 });

@@ -1091,3 +1091,146 @@ describe("§8 readiness explained, never scored", () => {
     assert.equal(none.score, null);
   });
 });
+
+// ---------------------------------------------------------------------------
+// D11 — swallowed-read inventory, tripReadiness.ts `safeSelect` (:156)
+//
+// Kept in its own suite at the END of the file on purpose: docs/architecture/
+// census-trips.md:6476 cites `src/test/tripReadiness.test.ts:1030#§8 readiness
+// explained, never scored` by line, and inserting these cases higher up shifted
+// that anchor. New declarations go below every cited line.
+// ---------------------------------------------------------------------------
+describe("trip readiness — an unread entry source is not an answer (D11)", () => {
+  let server: Server;
+  let port: number;
+
+  beforeEach(async () => {
+    if (server) server.close();
+    ({ server, port } = await startServer());
+  });
+
+  after(async () => {
+    if (server) server.close();
+  });
+
+// ── D11 / swallowed-read inventory: tripReadiness.ts `safeSelect` ──────────
+//
+// The site is `safeSelect` (tripReadiness.ts:156, SILENT column of
+// docs/architecture/swallowed-read-inventory.md): `if (error) return []`.
+//
+// The helper itself is not the defect — `[]` is an honest answer for a caller
+// that may act on "no rows", and this module already ships the discriminating
+// sibling `safeSelectOrNull` for callers that may not. The defect is realised
+// at the two entry-category call sites, and the test below is what the
+// inventory's question resolves to for each:
+//
+//   passports (:523, trip_traveler_passports) — a failed read made every
+//     accepted crew member look like they had not picked a passport, so the
+//     response asserted `action_needed` "Select your travel passport" for a
+//     whole crew out of a query that never answered.
+//
+//   passportRows (:701, traveler_passports) — worse. A failed join left
+//     `passportCountry` null, the loop `continue`d, and a category with NO
+//     items reads READY (tripReadiness.ts:143, :783). The entry category
+//     said "ready" — nobody's corridor was checked.
+//
+// The fix uses this module's own wire vocabulary, exactly as the
+// reservations test above pins it: status `unknown` + `critical` severity,
+// which keeps the category OUT of the score denominator and names it in
+// `unmeasuredCategories`.
+
+it("reports entry as UNKNOWN — never action_needed — when trip_traveler_passports cannot be read", async () => {
+  const { client } = makeFakeClient(
+    {
+      trips: { rows: [baseTrip()] },
+      trip_members: { rows: [ownerMemberRow()] },
+      feature_flags: flagOn(),
+    },
+    { errorOnTables: ["trip_traveler_passports"] },
+  );
+  _setTestClient(client, true);
+
+  const r = await req(port, "GET", `/trips/${TRIP_ID}/readiness`, { token: "owner-token" });
+  assert.equal(r.status, 200);
+
+  assert.equal(r.body.categories.entry, "unknown");
+  assert.notEqual(r.body.categories.entry, "action_needed");
+
+  const unreadable = findItem(r.body.items, "entry:unreadable");
+  assert.ok(unreadable, "the unreadable passports item must be present");
+  assert.equal(unreadable.status, "unknown");
+  assert.ok(
+    r.body.criticalItems.some((i: any) => /passport/i.test(i.title) && /could not/i.test(i.title)),
+    "an unreadable passport source must ride in criticalItems",
+  );
+
+  // The false per-member claim is gone: nobody is told to "select your travel
+  // passport" on the strength of a read that failed.
+  assert.equal(
+    findItem(r.body.items, `entry:${OWNER_ID}:passport`), undefined,
+    "a failed read must not become a per-member action_needed",
+  );
+  assert.ok(
+    [...r.body.unmeasuredCategories].includes("entry"),
+    "an unmeasured entry category must be named",
+  );
+
+  // Control: the SAME trip with a readable-but-empty table still tells the
+  // member to pick a passport — the fail-closed prompt is not weakened.
+  const { client: healthy } = makeFakeClient({
+    trips: { rows: [baseTrip()] },
+    trip_members: { rows: [ownerMemberRow()] },
+    feature_flags: flagOn(),
+    trip_traveler_passports: { rows: [] },
+  });
+  _setTestClient(healthy, true);
+  const h = await req(port, "GET", `/trips/${TRIP_ID}/readiness`, { token: "owner-token" });
+  const prompt = findItem(h.body.items, `entry:${OWNER_ID}:passport`);
+  assert.ok(prompt, "a genuinely empty passport table still prompts the member");
+  assert.equal(prompt.status, "action_needed");
+  assert.equal(h.body.categories.entry, "action_needed");
+  assert.ok(!h.body.unmeasuredCategories.includes("entry"), "a read table is measured");
+  // The score's denominator shrank rather than counting the unread category
+  // as ready: entry moved out of the measured set entirely.
+  assert.ok(
+    r.body.counts.unknown > h.body.counts.unknown,
+    `the unread run must carry one more unknown category (${r.body.counts.unknown} vs ${h.body.counts.unknown})`,
+  );
+  assert.equal(r.body.counts.actionNeeded, h.body.counts.actionNeeded - 1,
+    "the false per-member action_needed is gone, not merely relabelled");
+});
+
+it("entry never reads READY when the traveler_passports join cannot be read", async () => {
+  // The sharpest form of the site: a member HAS chosen a passport, but its
+  // issuing country lives in `traveler_passports` (canonical 0169 schema).
+  // With that join unread the corridor check was skipped per member, and a
+  // category with no items reads "ready".
+  const tables = () => ({
+    trips: { rows: [baseTrip()] },
+    trip_members: { rows: [ownerMemberRow()] },
+    feature_flags: flagOn(),
+    trip_traveler_passports: { rows: [{ trip_id: TRIP_ID, user_id: OWNER_ID, passport_id: PASS_ID }] },
+    traveler_passports: { rows: [{ id: PASS_ID, issuing_country: "US" }] },
+    entry_requirements: { rows: [{ destination_country: "JP", passport_country: "US", status: "visa_free" }] },
+  });
+
+  const { client } = makeFakeClient(tables(), { errorOnTables: ["traveler_passports"] });
+  _setTestClient(client, true);
+  const r = await req(port, "GET", `/trips/${TRIP_ID}/readiness`, { token: "owner-token" });
+  assert.equal(r.status, 200);
+  assert.notEqual(
+    r.body.categories.entry, "ready",
+    "an unread passport-country join must never produce a clean bill of health",
+  );
+  assert.equal(r.body.categories.entry, "unknown");
+  assert.ok(findItem(r.body.items, "entry:unreadable"), "the failure must be said, not merely absent");
+  assert.ok([...r.body.unmeasuredCategories].includes("entry"));
+
+  // Control: readable join → the corridor IS checked and entry is genuinely ready.
+  const { client: healthy } = makeFakeClient(tables());
+  _setTestClient(healthy, true);
+  const h = await req(port, "GET", `/trips/${TRIP_ID}/readiness`, { token: "owner-token" });
+  assert.equal(h.body.categories.entry, "ready", "visa_free with a readable join is genuinely ready");
+  assert.deepEqual([...h.body.unmeasuredCategories].filter((c: string) => c === "entry"), []);
+});
+});

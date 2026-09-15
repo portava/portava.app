@@ -149,7 +149,7 @@ export interface ReadinessSummary {
 // Defensive query helpers
 // ---------------------------------------------------------------------------
 
-/** Run a query builder; return [] on thrown errors or DB error results. */
+/** Run a query builder; [] on thrown errors or DB error results. D11: that [] is honest ONLY where the caller may act on "no rows" as an answer — where it may not, use safeSelectOrNull (see the entry category below). */
 export async function safeSelect(sc: any, run: (sc: any) => any): Promise<any[]> {
   try {
     const { data, error } = await run(sc);
@@ -264,7 +264,7 @@ export async function loadAcceptedMemberIds(
   return [...ids];
 }
 
-/** Pending Trip Autopilot proposals — defensive (table may not exist). */
+/** Pending Trip Autopilot proposals — defensive (table may not exist). D11: safeSelect is RIGHT here — the caller (routes/tripReadiness.ts:341) turns these into ADDITIVE next-best-action nudges appended after the readiness items, so [] asserts nothing about the trip and is honestly equivalent for every caller. Ruled harmless; left alone. */
 export async function fetchPendingAutopilotProposals(sc: any, tripId: string): Promise<any[]> {
   return safeSelect(sc, (c) =>
     c
@@ -520,9 +520,17 @@ export async function computeReadiness(sc: any, tripId: string, opts: { stages?:
   );
   const reservationsUnavailable = reservationsRead === null;
   const reservations = reservationsRead ?? [];
-  const passports = await safeSelect(sc, (c) =>
+  // D11 (swallowed-read inventory, `safeSelect` at :156): safeSelectOrNull,
+  // NOT safeSelect — same ruling as trip_reservations above. An unreadable
+  // trip_traveler_passports used to come back as [], so `passports.find(...)`
+  // missed for EVERY accepted member and the response asserted `action_needed`
+  // "Select your travel passport" for a whole crew out of a query that never
+  // answered. `[]` is an honest answer here only when the table was read.
+  const passportsRead = await safeSelectOrNull(sc, (c) =>
     c.from("trip_traveler_passports").select("*").eq("trip_id", tripId),
   );
+  const passportsUnavailable = passportsRead === null;
+  const passports = passportsRead ?? [];
 
   const destIso2 = await resolveDestinationIso2((trip as any).destination_country ?? null);
   // null = corridor data unavailable (table absent / destination unresolvable)
@@ -697,17 +705,47 @@ export async function computeReadiness(sc: any, tripId: string, opts: { stages?:
     .filter((p) => !inlineCountry(p) && (p as any).passport_id)
     .map((p) => (p as any).passport_id as string);
   const passportCountryById = new Map<string, string>();
+  // D11: safeSelectOrNull again. With this join unread, `passportCountry` came
+  // back null, the loop below `continue`d — and a category with NO items reads
+  // READY (see the ReadinessSummary contract at :143 and the visa_free comment
+  // at the end of this loop). The entry category gave a clean bill of health on
+  // a corridor nobody looked at. That is the trip_members defect at :245-248
+  // one table further down.
+  let passportJoinUnavailable = false;
   if (missingPassportIds.length > 0) {
-    const passportRows = await safeSelect(sc, (c) =>
+    const passportRowsRead = await safeSelectOrNull(sc, (c) =>
       c.from("traveler_passports").select("id, issuing_country").in("id", missingPassportIds),
     );
-    for (const r of passportRows) {
+    passportJoinUnavailable = passportRowsRead === null;
+    for (const r of passportRowsRead ?? []) {
       const cc = inlineCountry({ issuing_country: (r as any).issuing_country });
       if ((r as any).id && cc) passportCountryById.set((r as any).id as string, cc);
     }
   }
 
+  // One honest item for the whole category, shaped exactly like
+  // `reservations:unreadable` below: `unknown` (not action_needed — that would
+  // claim there is something to DO, and this does not know that), `critical`
+  // severity so it rides in criticalItems rather than being buried, and out of
+  // the score's denominator via summarizeReadiness + unmeasuredCategories.
+  const entryUnreadable = passportsUnavailable || passportJoinUnavailable;
+  if (entryUnreadable) {
+    push({
+      userId: null,
+      category: "entry",
+      status: "unknown",
+      severity: "critical",
+      title: "Travel passports could not be checked",
+      detail: "We could not read this trip's travel passports, so we cannot say whether the crew's entry requirements are met.",
+      dueAt: null,
+      actionRef: null,
+      dedupeKey: "entry:unreadable",
+    });
+  }
+
   for (const uid of memberIds) {
+    // No per-member claim — in either direction — out of a read that failed.
+    if (entryUnreadable) continue;
     const passport = passports.find((p) => (p as any).user_id === uid);
     if (!passport) {
       push({
