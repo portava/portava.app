@@ -199,8 +199,45 @@ import {
  * NOT repaired, deliberately: census-trips:2894 cites `SafeReturnService.ts:17`
  * and its own row says the symbol is at `:18`. That row is a RECORD OF THE
  * DRIFT, not a live pointer — the same class as census-layover §L5, and
- * repointing it would destroy the only thing it exists to say. */
-export const MAX_DEAD_TARGETS = 248;
+ * repointing it would destroy the only thing it exists to say.
+ *
+ * LOWERED AGAIN 2026-09-15, 248 -> 244, by the integration owner, on a gain
+ * this branch can account for rather than one it merely observed. Merging
+ * twelve lanes moved lines under eleven unanchored pointers and the count went
+ * 247 (at the merge base 76698a377) -> 255. All eleven were repaired, and the
+ * split is the same one this file keeps making:
+ *
+ *   SEVEN WERE LIVE POINTERS, repaired by reading the claim and anchored while
+ *   repointing, so doc-citations owns them now and this checker no longer
+ *   judges them:
+ *     census-highlights-memories:767,821  `routes/highlights.ts` :945 -> :952,
+ *       the DELETE the row actually names (:945 was `if (error) {` even at the
+ *       base -- it resolved, onto the wrong thing);
+ *     census-highlights-memories:812      :112 -> :148#function applyResurfacingControls;
+ *     census-telegraph:2870,2926          `lib/telegraphEvents.ts` :439 ->
+ *       :717#export function emitSafetyReported, the emitter T194's claim is about;
+ *     census-trust:2037                   `routes/tripCrewLocation.ts` :439 -> :484,
+ *       the getRestrictionState call site -- a drift the Trips lane reported and
+ *       correctly declined to fix in a document it does not own;
+ *     manual-production-migration-runbook:1275  `routes/rankEvents.ts` :68 -> :75.
+ *
+ *   FOUR WERE RECORDS OF DRIFT, given the treatment this file already
+ *   prescribes: the parseable `file:NNN` removed, every digit left where it
+ *   was, the prose saying exactly what it said.
+ *     census-trips §37.2 is a dated measurement table -- column 1 is the stale
+ *     citation, column 3 is where it was on the day it was measured. Two of its
+ *     column-3 cells (`:400`, `:45`) were being PAIRED with column 1's filename
+ *     and judged as live pointers. Rendering only: `| :400 |` -> `| line 400 |`.
+ *     census-highlights-memories:4392,4558 quote a WRONG `"handler"` value in
+ *     mobile-reachability-ledger.json (memories.ts:1407) in order to report that
+ *     it is wrong. The merge also falsified the census's own sentence about that
+ *     line -- it said the line "is `  }`", and it is now blank -- so the sentence
+ *     was corrected to say so, which is a repair of a claim, not of a pointer.
+ *     The correct handler it names, :2819#router.get, still holds and was checked.
+ *
+ * 255 -> 244, which is three below the base's own 247, so the ceiling moves to
+ * 244 rather than back to 248. */
+export const MAX_DEAD_TARGETS = 244;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);
