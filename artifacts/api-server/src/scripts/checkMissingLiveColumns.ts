@@ -211,6 +211,39 @@ const ALLOWLIST = new Set<string>([
   "message_requests.origin_type",            // 2813 — §22 how this request reached you
   "message_requests.origin_id",              // 2813 — the referent, when there is one
   "message_requests.origin_verified",        // 2813 — whether the server checked it
+
+  // ── Pending live apply: 2745_layover_recommendation_travel_provenance.sql ──
+  // Added by this branch for Discovery A14 / the Layover travel-provenance
+  // obligation, and absent from BOTH databases: it is not on main, and
+  // live-db.yml applies only from main.
+  //
+  // NOT hand-applied to portava-ci, for the reason the 2970 entry above states
+  // in full — hand-applying an unmerged branch's migrations to the shared CI
+  // database is the recorded root cause of `CI (live DB)` being red on main's
+  // own sha across five consecutive scheduled runs, and trading this visible
+  // red for that invisible one is not a fix.
+  //
+  // WHAT IS AND IS NOT BROKEN WHILE THIS IS ALLOWLISTED, stated rather than
+  // implied — and here the honest answer is NOTHING, which is unusual enough to
+  // show rather than assert. `travelTimeProvenanceColumn`
+  // (services/airport/LayoverTravelTime.ts) returns the key ONLY for a
+  // provenance the row cannot reconstruct from its own columns. On this tree
+  // every landside leg is `unmeasured` and every airside one is
+  // `inside_airport`, both of which ROW_FACTS_RECOVER marks recoverable, so it
+  // returns `{}` for every row written today and no insert carries the key.
+  // That matters because supabase-js sends every key in the payload, so a
+  // column the database lacks fails the WHOLE insert — the hazard 2410's header
+  // documents. The read side is equally tolerant:
+  // LayoverRecommendationService reads `row.travel_time_source ?? null`.
+  //
+  // The day a routed provider is assigned, the key starts appearing — and on a
+  // database that still lags 2745 the insert would begin failing. So this entry
+  // is not merely paperwork: it is safe because no routed provider is
+  // configured, which is the same missing measurement that keeps A14 at `W`.
+  //
+  // Remove this entry once the merge-to-main apply is certified in
+  // docs/migrations.md — NOT when the migration merges.
+  "layover_recommendations.travel_time_source",  // 2745 — where the row's travel figure came from
 ]);
 
 // ── Superseded / known-drifted migration files ────────────────────────────────
