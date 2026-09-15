@@ -68,7 +68,7 @@ const MIGRATIONS_DIR = join(API_SERVER_ROOT, "src", "migrations");
 const BASELINE_DIR = join(API_SERVER_ROOT, "baseline");
 
 /** The snapshot filename. Bump this when an operator captures a fresher one. */
-const PRODUCTION_SNAPSHOT = "20260915_production_tables.txt";
+const PRODUCTION_SNAPSHOT = "20260915b_production_tables.txt";
 
 type Classification =
   /** Declared in the tree, never applied to production. MUST reach zero. */
@@ -271,76 +271,52 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
   //    what it says here: the file exists in src/migrations and no database
   //    outside portava-ci has ever run it.
 
-  // Highlights / Memories, migrations 2720-2724.
-  highlight_resurfacing_preferences: {
-    classification: "unapplied",
-    note:
-      "Migration 2720. Per-user control over what may resurface. Queued behind the " +
-      "STORY_HIGHLIGHT_VISIBILITY owner decision, which fixes who a resurfaced " +
-      "highlight may be shown TO; applying the preference table before that is " +
-      "decided would build the control surface for a rule nobody has picked.",
-  },
-  highlight_projection_policies: {
-    classification: "unapplied",
-    note:
-      "Migration 2721. The projection policy rows the Highlights/Memories spec " +
-      "s18 requires. Same gate as 2720: it encodes visibility policy, and " +
-      "STORY_HIGHLIGHT_VISIBILITY is open.",
-  },
-  highlight_sources: {
-    classification: "unapplied",
-    note:
-      "Migration 2722. Provenance for a highlight (which memory, which version). " +
-      "Ordered after 2720/2721 because it references the policy identity they " +
-      "establish; not independently applicable.",
-  },
-  highlight_revocation_log: {
-    classification: "unapplied",
-    note:
-      "Migration 2724. Append-only record of revoked derivatives. Depends on " +
-      "2722's source identity — a revocation of nothing is not storable — so it " +
-      "cannot lead the family in.",
-  },
-
-  // Memory command kernel, migrations 2710/2711/2730.
-  memory_domain_events: {
-    classification: "unapplied",
-    note:
-      "Migration 2710, RENAMED from memory_events on this branch: production " +
-      "already holds a DIFFERENT public.memory_events (12 columns, the s4/s15 " +
-      "projection ledger) that ten migrations and the deletion cascade build on. " +
-      "2710's original name would have collided, and CREATE TABLE IF NOT EXISTS " +
-      "would have skipped SILENTLY, leaving the kernel writing into a table with " +
-      "the wrong shape. Unapplied anywhere but portava-ci while the outbox lane " +
-      "certifies it.",
-  },
-  memory_event_outbox: {
-    classification: "unapplied",
-    note:
-      "Migration 2710. Transactional outbox for memory domain events. No worker " +
-      "consumes it yet, so applying it to production would create a table that " +
-      "accumulates nothing — the same shape as trip_outbox above, and held for " +
-      "the same reason.",
-  },
-  memory_command_receipts: {
-    classification: "unapplied",
-    note:
-      "Migration 2710. Idempotency receipts for the memory command bus. Meaningless " +
-      "without the kernel that writes them; applied only with 2710 as a whole.",
-  },
-  memory_command_audit: {
-    classification: "unapplied",
-    note:
-      "Migration 2710. Audit trail for accepted and refused memory commands. Same " +
-      "family, same apply.",
-  },
-  memory_derivative_registry: {
-    classification: "unapplied",
-    note:
-      "Migration 2730. One row per built derivative of the Memory domain " +
-      "(spec s18). Ordered strictly after 2710: a derivative registry keyed on " +
-      "domain-event identity cannot precede the events.",
-  },
+  // ── STRUCK OFF 2026-09-15: nine tables from 2710/2720/2721/2722/2724/2730 ──
+  //    now EXIST in production, applied by the operator under explicit
+  //    authorization. This ratchet fails in BOTH directions — "a listed table
+  //    that has since reached production and was not struck off also fails,
+  //    because a ratchet that silently stays full stops being read" — so the
+  //    entries are removed rather than left standing.
+  //
+  //    Each was run verbatim from its version-controlled file and recorded in
+  //    public.schema_migration_ledger with applied_by = 'manual' and the file's
+  //    real sha256, then verified by reading the catalog: tables, indexes,
+  //    relrowsecurity, policy counts and the anon/authenticated grant boundary.
+  //
+  //    THE HAZARD memory_domain_events' entry NAMED WAS CHECKED, NOT ASSUMED.
+  //    It warned that 2710 was renamed from memory_events because production
+  //    already holds a DIFFERENT public.memory_events, and that the original
+  //    name would have made CREATE TABLE IF NOT EXISTS skip SILENTLY, leaving
+  //    the kernel writing into a table with the wrong shape. Measured after the
+  //    apply: memory_domain_events has 11 columns, memory_events still has 12,
+  //    and they are distinct relations. The rename did its job.
+  //
+  //    WHAT THE STRIKE-OFF MUST NOT ERASE — two reasons these entries gave for
+  //    being held are still true, and are carried forward here rather than
+  //    deleted with the rows that stated them:
+  //
+  //      * STORY_HIGHLIGHT_VISIBILITY IS STILL AN OPEN OWNER DECISION. 2720 and
+  //        2721 were explicitly "queued behind" it, on the grounds that applying
+  //        a preference table before the rule is picked "would build the control
+  //        surface for a rule nobody has picked". The tables now exist. The rule
+  //        is still not picked. What makes that survivable rather than the
+  //        mistake the note feared is that every capability is seeded FALSE
+  //        (highlights_feed_bounded_enabled, memory_kernel_enabled,
+  //        memory_location_precision_enabled,
+  //        memory_public_feed_projection_enabled), the tables are empty, RLS is
+  //        on and owner-scoped, and no user-visible behaviour changed. The
+  //        decision gates ENABLEMENT now, not existence.
+  //      * memory_event_outbox STILL HAS NO CONSUMER. Its entry said applying it
+  //        "would create a table that accumulates nothing". That is exactly what
+  //        it now is, deliberately: nothing writes to it while the kernel flag is
+  //        FALSE, and no worker drains it. A §18 projection worker is still
+  //        unbuilt.
+  //
+  //    NOT APPLIED, and the tenth of this family: 2711_memory_kernel_execute.
+  //    See baseline/20260915b_production_tables.txt for why the mechanism, not
+  //    the authorization, is what stopped it. Until it lands, memory_kernel_execute
+  //    exists in portava-ci and in no production database, so the four kernel
+  //    tables above have no writer there at all.
 
   // Layover, migration 2700.
   layover_certified_computations: {
