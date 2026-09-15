@@ -241,6 +241,51 @@ describe("DC-09 — loadSequenceFeatures fails closed", () => {
     assert.equal(f.reason, "no_client");
     assert.equal(f.chains[0].steps[0].reached, null);
   });
+
+  // MUTATION GUARD, added by the integrating lane after a surviving mutant.
+  //
+  // `fullyRepresentable` is the ONE field that stops a reader quoting
+  // `observedConversion` as the chain's conversion. On the DERIVED path two
+  // tests pin it. On the fail-closed path nothing did: forcing `unknownChains`
+  // to return `fullyRepresentable: true` passed all seventeen tests, so a
+  // refusal could have described a DIFFERENT chain from the one the derivation
+  // describes — every step `null`, and the single flag saying the whole chain
+  // is on file. A degraded answer must not be shaped better than a healthy one.
+  //
+  // The claim is structural, not about traffic: whether a step has a
+  // `rank_events.outcome` standing for it cannot depend on whether a read
+  // succeeded, so the refusal must report the SAME representability the
+  // derivation does.
+  for (const [label, load] of [
+    ["a rejected read", () => loadSequenceFeatures(eventClient({ error: { message: "denied" } }).client, "u-1")],
+    ["a throwing read", () => loadSequenceFeatures(eventClient({ throws: true }).client, "u-1")],
+    ["no client at all", () => loadSequenceFeatures(null, "u-1")],
+  ] as const) {
+    it(`MUTATION GUARD: ${label} reports the SAME representability as the derivation, never a better one`, async () => {
+      const refused = await loadSequenceFeatures(eventClient({ rows: [] }).client, "u-1");
+      assert.equal(refused.reason, "derived", "control: an empty corpus is derived, not refused");
+      const f = await load();
+      assert.notEqual(f.reason, "derived");
+      assert.equal(f.chains.length, refused.chains.length);
+      for (const [i, c] of f.chains.entries()) {
+        const d = refused.chains[i]!;
+        assert.equal(c.id, d.id);
+        assert.equal(
+          c.fullyRepresentable, d.fullyRepresentable,
+          `${c.id}: a refusal claimed representability the derivation does not`,
+        );
+        assert.deepEqual(
+          c.unrepresentableSteps, d.unrepresentableSteps,
+          `${c.id}: a refusal named a different set of unrepresentable steps`,
+        );
+      }
+      // And the stronger fact this pins in its own right: on THIS schema not one
+      // of 04 §8's four chains is fully representable, so a `true` anywhere here
+      // is wrong on the merits and not merely inconsistent.
+      assert.ok(f.chains.every((c) => c.fullyRepresentable === false));
+      assert.ok(f.chains.every((c) => c.unrepresentableSteps.length > 0));
+    });
+  }
 });
 
 describe("DC-09 — discoveryPde consumes it behind its existing surface", () => {
