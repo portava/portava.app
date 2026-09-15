@@ -468,7 +468,7 @@ of the field→mode table.
 | G70 | Trip / Event / Plan: viewer eligibility before result exposure | C ᵖ | `discoverySearch.ts:736#visibility` (`.eq("visibility","public")` on events), `:917#visibility` + `:918#show_in_discovery` (trips), `:1078-1081#admitted:` (plans, gated by the parent trip's visibility and owner status). Proven end-to-end through the gateway by `test/inputAssistanceCertification.test.ts:330-366`. |
 | G71 | Buddy: service category, availability, launch/safety/payment eligibility | W | The only gate is `discoverySearch.ts:584#buddy_verified_at` — `.not("buddy_verified_at","is",null)`. No service-category filter, no availability check, and no safety or payment eligibility gate reaches the suggestion path. |
 | G72 | Hashtag: canonical normalized hashtag plus visibility rules | C | `socialIdentity.ts:46-50` `canonicalizeHashtag`; the `is_blocked = false` filter at `:319-390` is mutation-proven in `test/inputAssistanceInvariants.test.ts` (item 2). |
-| G73 | Language / Interest: controlled dictionaries where possible | C ᵖ | `discoverySearch.ts:2161-2162#COMMON_LANGUAGES` — `searchStatic(q, COMMON_LANGUAGES …)` / `COMMON_INTERESTS`, server-side static lists. Pre-existing. |
+| G73 | Language / Interest: controlled dictionaries where possible | C ᵖ | `discoverySearch.ts:2179-2180#COMMON_LANGUAGES` — `searchStatic(q, COMMON_LANGUAGES …)` / `COMMON_INTERESTS`, server-side static lists. Pre-existing. |
 
 ### §12 City and Destination Autocomplete
 
@@ -706,7 +706,7 @@ declared and read by nothing (G30). What follows is what actually exists.
 
 | id | Requirement | V | Evidence / divergence |
 | --- | --- | --- | --- |
-| G197 | Countries / languages / interests → local static dictionary | **N** | The dictionaries are **server-side** (`discoverySearch.ts:2161-2162#COMMON_LANGUAGES`, `COMMON_LANGUAGES` / `COMMON_INTERESTS` behind `searchStatic`). The client ships none: `platform/input-assistance/` contains no country, language or interest list, so an offline country picker returns nothing. |
+| G197 | Countries / languages / interests → local static dictionary | **N** | The dictionaries are **server-side** (`discoverySearch.ts:2179-2180#COMMON_LANGUAGES`, `COMMON_LANGUAGES` / `COMMON_INTERESTS` behind `searchStatic`). The client ships none: `platform/input-assistance/` contains no country, language or interest list, so an offline country picker returns nothing. |
 | G198 | Cities → cached / local compact city index | W | Only the 60-entry, 60-second in-memory SWR cache (`services/suggestionCache.ts:18-33`). There is no local city index, and the cache is not persisted, so a cold app start offline has nothing. (`lib/cityCentroids.ts` exists but is a map-camera helper, not consumed by this layer.) |
 | G199 | Recent selections → device-local where allowed | W | `services/suggestionHistory.ts:31-32` is an in-memory `Map`, and its own header says the AsyncStorage-backed store is "a LATER PHASE". Recents do not survive an app restart on either side (server table absent, client store in memory). |
 | G200 | Saved / Trip entities → cached subset where permitted | **N** | No saved-entity cache and no Trip-entity cache in the layer. |
@@ -739,7 +739,7 @@ declared and read by nothing (G30). What follows is what actually exists.
 | G217 | Prefer local: request cancellation / state | C | `services/raceGuard.ts`; `useInputAssistance.ts:212`, `:288`. |
 | G218 | Prefer server: canonical entity lookup requiring current DB state | C ᵖ | `gateway.ts:343-404` → `dispatchSearch`. |
 | G219 | Prefer server: privacy/eligibility filtering | C | `gateway.ts:373-378`, `:614-619` — server-side and fail-closed; the client explicitly does no re-filtering (`hooks/useTelegraphRecipients.ts:15-18`). |
-| G220 | Prefer server: cross-entity search | C ᵖ | `entityMap.ts:16-33#DispatchSearchType` (17 types) → `dispatchSearch` (`discoverySearch.ts:2105#dispatchSearch`, switch at `:2020-2057#"travelers":`). Still 17 after the §27 `saved` lane landed: `DispatchSearchType` is an EXPLICIT union and `ENTITY_TO_SEARCH` is `Record<EntityType, DispatchSearchType>`, so `SEARCH_TYPES`' eighteenth member (`:2152#searchSaved`) has no `EntityType` that reaches it. |
+| G220 | Prefer server: cross-entity search | C ᵖ | `entityMap.ts:16-33#DispatchSearchType` (17 types) → `dispatchSearch` (`discoverySearch.ts:2123#dispatchSearch`, switch at `:2020-2057#"travelers":`). Still 17 after the §27 `saved` lane landed: `DispatchSearchType` is an EXPLICIT union and `ENTITY_TO_SEARCH` is `Record<EntityType, DispatchSearchType>`, so `SEARCH_TYPES`' eighteenth member (`:2170#searchSaved`) has no `EntityType` that reaches it. |
 | G221 | Prefer server: Live Intelligence suggestions | C | `liveSuggestions.ts:250-317`. ☠prod |
 | G222 | Prefer server: provider federation | **N** | No provider lane exists in the gateway; `external_places_enabled` is dormant and no provider candidate is ever projected. |
 | G223 | Prefer server: personalized ranking requiring server-owned context | C | `personalization.ts:243-268` runs server-side over server-held memory. ☠prod |
@@ -833,13 +833,13 @@ narrow resolver extension rather than a new architecture).
 | G274 | QueryNormalizer | C | The service now exists: `lib/inputAssistance/queryNormalizer.ts:553#export function normalizeQuery` is the single entry point, and `lib/inputAssistance/gateway.ts:175#const norm: NormalizedQuery` is its only caller in the suggest path. It COMPOSES rather than replaces — `applyAliases` and `sanitizeQuery` are still Discovery's, and the canonical fold is still `canonicalLocations` — and adds the three §10 clauses that had no implementation anywhere (transliteration G61, context-appropriate emoji handling G62, keyboard-weighted typo tolerance with a confidence measure G63). The pipeline order is fixed and documented in the file header: trim → sigil → transliterate → emoji → alias → typo → sanitize → clamp. It returns `aliased` unchanged for the §18 temporal extractor and the semantic parser, so those two consumers see byte-identical input to what they saw before this file existed. The client comment this row quoted — *"Real alias resolution belongs to the server's QueryNormalizer (§40)"* — now names something real; the client mirror itself is still local-only, which is G340/G344's problem, not this row's. |
 | G275 | EntitySuggestionService | C | `gateway.ts:601-640` `dispatchAndProject`. |
 | G276 | CityResolver | C | `geoResolver.ts:120-145`. |
-| G277 | CountryResolver | W | No canonical country resolver: `entityMap.ts:37` maps `country → 'countries'`, and `discoverySearch.ts:1990#searchCountries` **aggregates `profiles.home_country`** (`:1895-1896#home_country")`) (`.from("profiles").select("id, home_country").ilike("home_country", pat)`). A country picker therefore resolves against the user table, not a canonical country registry, so a country with no users in it does not exist. |
-| G278 | PlaceResolver | C ᵖ | `discoverySearch.ts:2149#searchPlaces`. |
-| G279 | HiddenGemResolver | C ᵖ | `discoverySearch.ts:2153#searchHiddenGems` + `:286-300#gemSearchPosition`. |
+| G277 | CountryResolver | W | No canonical country resolver: `entityMap.ts:37` maps `country → 'countries'`, and `discoverySearch.ts:1999#searchCountries` **aggregates `profiles.home_country`** (`:1895-1896#home_country")`) (`.from("profiles").select("id, home_country").ilike("home_country", pat)`). A country picker therefore resolves against the user table, not a canonical country registry, so a country with no users in it does not exist. |
+| G278 | PlaceResolver | C ᵖ | `discoverySearch.ts:2167#searchPlaces`. |
+| G279 | HiddenGemResolver | C ᵖ | `discoverySearch.ts:2171#searchHiddenGems` + `:286-300#gemSearchPosition`. |
 | G280 | UserResolver | C | `socialIdentity.ts:146-229`. |
-| G281 | TripResolver | C ᵖ | `discoverySearch.ts:2142#searchTrips`. |
-| G282 | EventResolver | C ᵖ | `discoverySearch.ts:2135#searchEvents`. |
-| G283 | BuddyResolver | W | `discoverySearch.ts:2131#searchTravelers` is `searchTravelers` with `isBuddy`, whose only buddy-specific predicate is `:584#buddy_verified_at` `.not("buddy_verified_at","is",null)`. No category, availability or eligibility resolution (G71, G127). |
+| G281 | TripResolver | C ᵖ | `discoverySearch.ts:2160#searchTrips`. |
+| G282 | EventResolver | C ᵖ | `discoverySearch.ts:2153#searchEvents`. |
+| G283 | BuddyResolver | W | `discoverySearch.ts:2149#searchTravelers` is `searchTravelers` with `isBuddy`, whose only buddy-specific predicate is `:584#buddy_verified_at` `.not("buddy_verified_at","is",null)`. No category, availability or eligibility resolution (G71, G127). |
 | G284 | IntentSuggestionService | C | `semanticIntent.ts:336-379`. |
 | G285 | SemanticQueryParser | C | `semanticParser.ts:525-589`. |
 | G286 | PersonalSuggestionService | C | `personalization.ts:159-436`. ☠prod |
@@ -1368,7 +1368,7 @@ sensitivity_level" now lands 224 lines short of the select it names.
 | G59 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearchHelpers.ts:70#SEARCH_ALIASES` plus `lib/canonicalLocations.ts:162#siargoa` and `:186#qouc` (the spec's own example misspelling). |
 | G68 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearch.ts:1486#sensitivity_level,` selects the approximate pair and never the exact one; `:286#gemSearchPosition` fails closed to `hidden`. **The old pointer, lines 960–962, is stale by 224.** |
 | G70 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearch.ts:736#visibility` (events), `:917#visibility` + `:918#show_in_discovery` (trips). Proven through the gateway by `src/test/inputAssistanceCertification.test.ts:350#PUBLIC`. |
-| G73 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearch.ts:2161#COMMON_LANGUAGES` — server-side static lists behind `searchStatic`. **The old pointer, lines 1577–1578, is stale by 225.** |
+| G73 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearch.ts:2179#COMMON_LANGUAGES` — server-side static lists behind `searchStatic`. **The old pointer, lines 1577–1578, is stale by 225.** |
 | G92 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/projection.ts:42#tierConfidence` — `tierConfidence(3) = 0.99` over `matchTier`. |
 | G93 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/projection.ts:42#tierConfidence` — `tierConfidence(2) = 0.85`, over `routes/discoverySearchHelpers.ts:170#matchTier`. |
 | G95 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/gateway.ts:463#SearchQueryContext` passes `{lat, lng, userCity}` into the city boost. **The old pointer, line 380, is stale by 16 — this pass moved it.** |
@@ -1380,13 +1380,13 @@ sensitivity_level" now lands 224 lines short of the select it names.
 | G184 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/gateway.ts:456#ageRestrictedSet` and `:757#fetchBlockedSet`; the null-set refusal is the mutation-proven case in `src/test/inputAssistanceGateway.test.ts:384#suppresses`. |
 | G185 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearch.ts:736#visibility`, `:917#visibility`, `:918#show_in_discovery`; proven through the gateway by `src/test/inputAssistanceCertification.test.ts:350#PUBLIC`. |
 | G186 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/projection.ts:135#display-safe` — a fixed whitelist that still drops `metadata`, `privacyState`, `accessState`, owner/host ids and counts. **Phase 9 added three fields to that whitelist; none is private (§8.4).** |
-| G218 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/gateway.ts:420#dispatchTypes` → `routes/discoverySearch.ts:2105#dispatchSearch`. |
-| G220 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/entityMap.ts:35#ENTITY_TO_SEARCH` → `routes/discoverySearch.ts:2105#dispatchSearch`. |
+| G218 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/gateway.ts:420#dispatchTypes` → `routes/discoverySearch.ts:2123#dispatchSearch`. |
+| G220 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/entityMap.ts:35#ENTITY_TO_SEARCH` → `routes/discoverySearch.ts:2123#dispatchSearch`. |
 | G235 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/inputAssistance.ts:153#input_assist_suggest` (90/min) and `:275#input_assist_select` (60/min). Both still resolve exactly. |
-| G278 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearch.ts:2149#searchPlaces`. **The old pointer, line 1568, is stale by 225.** |
-| G279 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearch.ts:2153#searchHiddenGems` + `:286#gemSearchPosition`. |
-| G281 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearch.ts:2142#searchTrips`. |
-| G282 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearch.ts:2135#searchEvents`. |
+| G278 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearch.ts:2167#searchPlaces`. **The old pointer, line 1568, is stale by 225.** |
+| G279 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearch.ts:2171#searchHiddenGems` + `:286#gemSearchPosition`. |
+| G281 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearch.ts:2160#searchTrips`. |
+| G282 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearch.ts:2153#searchEvents`. |
 
 `ᵖ` still means "correct, but earned by pre-existing work". The spec-attributable
 CORRECT is still C minus the count of `ᵖ` rows, which is still 23.
@@ -2000,8 +2000,8 @@ whole output is a correction to *pointers*, plus one count in §2's inventory.
 | 3 | `discoverySearch.ts:401-405#chunkIds` | new `chunkIds` paging helper (PostgREST `.in()` URL length) | none |
 | 4 | `discoverySearch.ts:661#buildListIdentityProjections` | `searchTravelers`' inline identity assembly moved into `services/passport/PassportConsumerProjections.ts:1153#buildListIdentityProjections`; hunk is net zero lines | G101, G180 |
 | 5 | `discoverySearch.ts:1314-1469#searchSaved` | a new viewer-scoped `searchSaved` lane, ~238 lines, reading `wishlist_places` + `discovery_place_saves` | G128, G129, G186 |
-| 6 | `discoverySearch.ts:2152#searchSaved` | `dispatchSearch` gains `case "saved"` | G218, G220 |
-| 7 | `discoverySearch.ts:2170#FAN_LIMIT` + `:2172#deliberately` | the `type=all` fan-out comment: 17 of 18 types fan out, `saved` deliberately excluded | G220 |
+| 6 | `discoverySearch.ts:2170#searchSaved` | `dispatchSearch` gains `case "saved"` | G218, G220 |
+| 7 | `discoverySearch.ts:2188#FAN_LIMIT` + `:2190#deliberately` | the `type=all` fan-out comment: 17 of 18 types fan out, `saved` deliberately excluded | G220 |
 
 Nothing else in the file changed. No gem predicate, no `visibility` gate, no
 `sanitizeQuery`, no static dictionary, no `searchCountries` aggregation, no
@@ -2029,7 +2029,7 @@ had one arrived, it would change nothing: `metadata` is not in the §42 whitelis
 (`lib/inputAssistance/projection.ts:135#display-safe`), which is G186's entire
 content, and `searchPlaces` (`discoverySearch.ts:1192#lat:`), `searchEvents`
 (`discoverySearch.ts:816#metadata:`) and `searchCities`
-(`discoverySearch.ts:1954#metadata:`) already carried the same keys before this
+(`discoverySearch.ts:1960#metadata:`) already carried the same keys before this
 diff. G129's structural claim — `InputSuggestion` has no
 coordinate field — is about `lib/inputAssistance/types.ts`, which this diff does
 not touch.
@@ -2084,7 +2084,7 @@ were wrong.** After it, every citation into the file is anchored and holds.
 | G68 | lines 978-980, and `gemSearchPosition` "241-255" | `routes/discoverySearch.ts:1486#sensitivity_level,` + `:286-300#gemSearchPosition` | the hidden-gem blocked/age filter, not the select |
 | G70 | lines 622, 724-725, 806-826 | `routes/discoverySearch.ts:736#visibility`, `:917#visibility`, `:918#show_in_discovery`, `:1078-1081#admitted:` | a friendship predicate; a comment; a `tripFit` metadata bag |
 | G71 | line 488 | `routes/discoverySearch.ts:584#buddy_verified_at` | a JSDoc line about a cache |
-| G73 | lines 1827-1828 | `routes/discoverySearch.ts:2161-2162#COMMON_LANGUAGES` | the city-dedupe loop in `searchCities` |
+| G73 | lines 1827-1828 | `routes/discoverySearch.ts:2179-2180#COMMON_LANGUAGES` | the city-dedupe loop in `searchCities` |
 | G95 | line 1800, in the wrong file | `routes/discoverySearchHelpers.ts:257-262#userCity` | `.eq("is_private", false)` — and see below |
 | G101 | line 481 | `routes/discoverySearch.ts:577#is_official,` | a comment about the `type=all` fan-out |
 | G126 | lines 806-826, 724-725 | `routes/discoverySearch.ts:1078-1081#admitted:`, `:917#visibility` + `:918#show_in_discovery` | as G70 |
@@ -2092,14 +2092,14 @@ were wrong.** After it, every citation into the file is anchored and holds.
 | G180 | line 481 | `routes/discoverySearch.ts:577#is_official,` | as G101 |
 | G185 | lines 622, 724-725, 806-826 | `routes/discoverySearch.ts:736#visibility`, `:917#visibility`, `:918#show_in_discovery`, `:1078-1081#admitted:` | as G70 |
 | G190 | line 980, and `gemSearchPosition` "241-255" | `routes/discoverySearch.ts:1486#sensitivity_level,` + `:286-300#gemSearchPosition` | as G68 |
-| G197 | lines 1827-1828 | `routes/discoverySearch.ts:2161-2162#COMMON_LANGUAGES` | as G73 |
-| G220 | lines 1797-1830 | `routes/discoverySearch.ts:2105#dispatchSearch` + `:2020-2057#"travelers":` | the `searchCities` profile select |
-| G277 | lines 1664-1685 | `routes/discoverySearch.ts:1990#searchCountries` + `:1895-1896#home_country")` | a `catch { return []; }` |
-| G278 | line 1818 | `routes/discoverySearch.ts:2149#searchPlaces` | `let skipped = 0;` |
-| G279 | line 1819 | `routes/discoverySearch.ts:2153#searchHiddenGems` + `:286-300#gemSearchPosition` | a `for` header |
-| G281 | line 1810 | `routes/discoverySearch.ts:2142#searchTrips` | a fail-closed comment |
-| G282 | line 1806 | `routes/discoverySearch.ts:2135#searchEvents` | `.eq("allow_profile_discovery", false)` |
-| G283 | lines 1802 and 488 | `routes/discoverySearch.ts:2131#searchTravelers` + `:584#buddy_verified_at` | a `.limit(...)`; a cache JSDoc |
+| G197 | lines 1827-1828 | `routes/discoverySearch.ts:2179-2180#COMMON_LANGUAGES` | as G73 |
+| G220 | lines 1797-1830 | `routes/discoverySearch.ts:2123#dispatchSearch` + `:2020-2057#"travelers":` | the `searchCities` profile select |
+| G277 | lines 1664-1685 | `routes/discoverySearch.ts:1999#searchCountries` + `:1895-1896#home_country")` | a `catch { return []; }` |
+| G278 | line 1818 | `routes/discoverySearch.ts:2167#searchPlaces` | `let skipped = 0;` |
+| G279 | line 1819 | `routes/discoverySearch.ts:2171#searchHiddenGems` + `:286-300#gemSearchPosition` | a `for` header |
+| G281 | line 1810 | `routes/discoverySearch.ts:2160#searchTrips` | a fail-closed comment |
+| G282 | line 1806 | `routes/discoverySearch.ts:2153#searchEvents` | `.eq("allow_profile_discovery", false)` |
+| G283 | lines 1802 and 488 | `routes/discoverySearch.ts:2149#searchTravelers` + `:584#buddy_verified_at` | a `.limit(...)`; a cache JSDoc |
 | G337 | lines 107-109 | `routes/discoverySearch.ts:151-153#sanitizeQuery` | as G62 |
 | G363 | line 980 | `routes/discoverySearch.ts:1486#sensitivity_level,` | a bare `);` |
 

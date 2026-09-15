@@ -48,6 +48,7 @@ import {
   DISCOVERY_REFUSAL_CLASSES, discoveryRefusal, sendDiscoveryRefusal, logServeUnlessRefused,
 } from "../lib/discoveryRefusal.js";
 import { invalidateServeLogFlagCache, DiscoveryServePoint } from "../lib/discoveryServeLog.js";
+import { _resetRateLimit } from "../lib/rateLimit.js";
 
 // ── No network. Overpass/Nominatim throw immediately rather than hanging 25s.
 //
@@ -264,6 +265,12 @@ beforeEach(() => {
   // The flag read is memoised for 30s; without this the first fixture to be
   // asked would decide the answer for the whole file.
   invalidateServeLogFlagCache();
+  // `discovery_search` and `discovery_suggest` are per-user budgets, and every
+  // case in this file is the SAME user. Without this the file has a hidden
+  // capacity: the Nth case gets 429 and fails on an assertion about refusals,
+  // and which case that is depends on how many ran before it. It was already
+  // close enough that adding cases tipped two unrelated controls over.
+  _resetRateLimit();
 });
 afterEach(() => { _setTestDbPlacesOverride(null); nominatimHandler = null; });
 
@@ -740,6 +747,47 @@ describe("GET /discovery/search", () => {
         r.body.refusal, undefined,
         `a ${type} search that genuinely matches nothing must NOT be stamped with a refusal`,
       );
+    });
+  }
+
+  // ── P9 — the last two swallows in this file, found by measuring the CLASS.
+  //
+  // §22.5 said the grep that found eleven of the twelve matched ONE exact line
+  // and was "not a census of the file". It was not. `searchCities` and
+  // `searchCountries` each read `profiles` and `profile_privacy_settings` under
+  // one `Promise.all`, and each discards BOTH errors into `return []`:
+  //
+  //     if (profileResult.error || !profileResult.data) return [];
+  //     // Fail-closed: unknown opt-out state → return nothing (location signals must not leak)
+  //     if (optOutResult.error) return [];
+  //
+  // The second one's DIRECTION is right and its comment says why. That is not
+  // the defect D11 names. The defect is that the answer is byte-identical to
+  // "no city matched", so a caller cannot tell a privacy-preserving refusal
+  // from a search result — and a refusal states the same emptiness while
+  // SAYING it did not look, which keeps the fail-closed direction intact.
+  //
+  // `profile_privacy_settings` is the testable half: `profiles` is also what
+  // `requireUser` reads, so erroring it answers 503 before the route, the same
+  // gap §22.3 records for `type=travelers`.
+  for (const type of ["cities", "countries"]) {
+    it(`P9 — type=${type} refuses when the opt-out read fails, instead of \`results: []\``, async () => {
+      setClient({ errorTables: ["profile_privacy_settings"] });
+      const r = await get(`/api/discovery/search?q=kopitiam&type=${type}`, true);
+      assert.equal(r.status, 200);
+      assert.deepEqual(r.body.results, []);
+      assertRefusal(r.body, {
+        class: "transient_db", code: "search_failed", route: "GET /discovery/search",
+      }, `/discovery/search?type=${type} with an unreadable \`profile_privacy_settings\``);
+      assertNoExposure(`/discovery/search?type=${type} with an unreadable opt-out table`);
+    });
+
+    it(`P9 CONTROL — type=${type} over a readable empty opt-out table carries NO refusal`, async () => {
+      setClient({ rows: { profile_privacy_settings: [], profiles: [] } });
+      const r = await get(`/api/discovery/search?q=kopitiam&type=${type}`, true);
+      assert.equal(r.status, 200);
+      assert.deepEqual(r.body.results, []);
+      assert.equal(r.body.refusal, undefined);
     });
   }
 

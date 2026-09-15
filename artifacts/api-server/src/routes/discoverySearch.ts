@@ -1912,9 +1912,15 @@ async function searchCities(
         .eq("allow_profile_discovery", false),
     ]);
 
-    if (profileResult.error || !profileResult.data) return [];
-    // Fail-closed: unknown opt-out state → return nothing (location signals must not leak)
-    if (optOutResult.error) return [];
+    if (profileResult.error) throw new DiscoverySearchReadError("profiles", profileResult.error);
+    if (!profileResult.data) return [];
+    // Fail-closed: unknown opt-out state → return nothing (location signals must
+    // not leak). The DIRECTION was right and stays right — a refusal serves the
+    // same empty collection. What changes is that it SAYS so: `return []` alone
+    // was byte-identical to "no city matched", so a caller could not tell a
+    // privacy-preserving refusal from a search result, which is the masquerade
+    // D11 forbids whichever way the default leans.
+    if (optOutResult.error) throw new DiscoverySearchReadError("profile_privacy_settings", optOutResult.error);
     const optOutSet = new Set<string>(
       ((optOutResult.data as any[]) ?? []).map((r: any) => r.user_id as string),
     );
@@ -1959,7 +1965,10 @@ async function searchCities(
     }
     await attachCentroids(sc, results, CANONICAL_CITY_KINDS);
     return results;
-  } catch {
+  } catch (err) {
+    // Everything this function already swallowed, it keeps swallowing. Only
+    // the named read error re-enters the route's catch arm and refuses.
+    if (err instanceof DiscoverySearchReadError) throw err;
     return [];
   }
 }
@@ -2010,9 +2019,15 @@ async function searchCountries(
         .eq("allow_profile_discovery", false),
     ]);
 
-    if (profileResult.error || !profileResult.data) return [];
-    // Fail-closed: unknown opt-out state → return nothing (location signals must not leak)
-    if (optOutResult.error) return [];
+    if (profileResult.error) throw new DiscoverySearchReadError("profiles", profileResult.error);
+    if (!profileResult.data) return [];
+    // Fail-closed: unknown opt-out state → return nothing (location signals must
+    // not leak). The DIRECTION was right and stays right — a refusal serves the
+    // same empty collection. What changes is that it SAYS so: `return []` alone
+    // was byte-identical to "no city matched", so a caller could not tell a
+    // privacy-preserving refusal from a search result, which is the masquerade
+    // D11 forbids whichever way the default leans.
+    if (optOutResult.error) throw new DiscoverySearchReadError("profile_privacy_settings", optOutResult.error);
     const optOutSet = new Set<string>(
       ((optOutResult.data as any[]) ?? []).map((r: any) => r.user_id as string),
     );
@@ -2060,7 +2075,10 @@ async function searchCountries(
     }
     await attachCentroids(sc, results, CANONICAL_COUNTRY_KINDS);
     return results;
-  } catch {
+  } catch (err) {
+    // Everything this function already swallowed, it keeps swallowing. Only
+    // the named read error re-enters the route's catch arm and refuses.
+    if (err instanceof DiscoverySearchReadError) throw err;
     return [];
   }
 }
