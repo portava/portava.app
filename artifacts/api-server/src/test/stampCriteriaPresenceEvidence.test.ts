@@ -41,6 +41,9 @@ import assert from "node:assert/strict";
 import { resolveMetric } from "../lib/stamps/criteria/metrics.js";
 import { evaluateCriteria } from "../lib/stamps/criteria/evaluator.js";
 import { makePassportDb } from "./helpers/fakePassportDb.js";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const USER = "criteria-presence-user-1";
 
@@ -133,6 +136,45 @@ describe("countries_visited / cities_visited count only stamps that evidence pre
     const rows = fiveCompleted().map((r) => ({ ...r, is_revoked: true }));
     const db = makePassportDb({ user_stamps: rows });
     assert.equal(await resolveMetric(db, USER, "countries_visited", ctx), 0);
+  });
+});
+
+// ── §L.5's survivor G, applied to both sites this suite covers ──────────────
+//
+// census-highlights-memories §L.5 records a mutation that SURVIVED every
+// behavioural test of `buildStats`: removing `evidences_presence` from its
+// SELECT. The fixtures embed `stamp_definitions` whatever the select string
+// says, so the double keeps returning it — while against a real database an
+// unselected column reads `undefined`, every stamp reads non-presence, and the
+// numbers silently become 0 for everyone. Only an assertion about the select
+// string itself catches that, so the two sites this suite covers get one.
+//
+// §L.5 also records that a typo (`evidences_presenc`) survived
+// `check:schema-references` unchanged — that checker does not parse columns
+// inside embedded resources — so its passing is not evidence either.
+describe("both readers ASK for the column, not just filter on it", () => {
+  const SRC = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  const embed = /stamp_definitions\s*\(\s*[^)]*\bevidences_presence\b/;
+
+  it("distinctStampField selects stamp_definitions(evidences_presence)", () => {
+    const src = fs.readFileSync(path.join(SRC, "lib/stamps/criteria/metrics.ts"), "utf8");
+    const fn = src.slice(src.indexOf("async function distinctStampField"));
+    assert.match(
+      fn.slice(0, fn.indexOf("\n}")), embed,
+      "the presence filter reads a column this select does not ask for: against a real " +
+      "database it is undefined, every stamp reads non-presence, and cities_visited / " +
+      "countries_visited become 0 for everyone",
+    );
+  });
+
+  it("buildGraphFromSources selects it on its user_stamps read", () => {
+    const src = fs.readFileSync(path.join(SRC, "compass/CompassGraphEngine.ts"), "utf8");
+    const i = src.indexOf('.from("user_stamps")');
+    assert.ok(i > 0, "the graph builder no longer reads user_stamps");
+    assert.match(
+      src.slice(i, i + 400), embed,
+      "the visited-edge gate reads a column this select does not ask for",
+    );
   });
 });
 

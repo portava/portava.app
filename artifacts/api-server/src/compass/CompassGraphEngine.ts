@@ -568,7 +568,7 @@ export async function buildGraphFromSources(
   try {
     const { data } = await db
       .from("user_stamps")
-      .select("user_id, city, country, earned_at, is_revoked, lat, lng")
+      .select("user_id, city, country, earned_at, is_revoked, lat, lng, stamp_definitions(evidences_presence)")
       .eq("is_revoked", false)
       .limit(BUILD_LIMIT);
     for (const r of (data as any[]) ?? []) {
@@ -577,8 +577,26 @@ export async function buildGraphFromSources(
       const at = r.earned_at ? String(r.earned_at) : null;
       batch.node("person", String(r.user_id));            // no profile attrs — privacy
       batch.node("city", city, city, { country: r.country ?? null });
-      batch.edge({ src_type: "person", src_key: String(r.user_id), dst_type: "city", dst_key: city, edge_type: "visited", at });
+      // The city NODE and its coordinates are facts about a PLACE and are kept
+      // for every row. Everything below is a factual claim about a PERSON —
+      // that they were in this city, and that they were active there at this
+      // hour — so it may only be made for a stamp whose definition evidences
+      // presence (`stamp_definitions.evidences_presence`, migration 2970).
+      //
+      // `POST /api/trips` awards `first_trip_created` and `trip_planner` AT
+      // CREATION with the destination attached and nothing having occurred, so
+      // without this a trip somebody planned and never took wrote them a
+      // `visited` edge and an `active_in` time slice for a city they have never
+      // been to. 2970 closed the Passport's Countries/Cities numbers against
+      // exactly those rows and named this writer as a surface it did not fix.
+      //
+      // `!== true` and not falsiness: a row read through a path that did not
+      // select the column arrives `undefined`, and a missing join is not
+      // evidence of a visit.
+      const def = Array.isArray(r.stamp_definitions) ? r.stamp_definitions[0] : r.stamp_definitions;
       registerCityCoordinates(city, r.lat, r.lng);
+      if (def?.evidences_presence !== true) continue;
+      batch.edge({ src_type: "person", src_key: String(r.user_id), dst_type: "city", dst_key: city, edge_type: "visited", at });
       if (at) {
         const slice = timeSliceKey(new Date(at), city, { lat: r.lat, lng: r.lng });
         batch.node("time_slice", `${city}|${slice}`, city, { slice });

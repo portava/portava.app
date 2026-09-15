@@ -3497,19 +3497,19 @@ the same file that recorded the cost of breaking it.
 
 | what was found | how many | sites |
 | --- | --- | --- |
-| CARRIES the failure out — the caller IS told | 3 | `routes/tripDecisions.ts` (twice: `failedInput`, `urgencyInputsUnread`), `routes/tripStructure.ts` (`failed`) |
-| DELIBERATE fail-closed, documented and logged, caller NOT told | 5 | `routes/discovery.ts`, `routes/tripOffline.ts`, `services/trust/TrustCapService.ts`, `lib/mapTravelers.ts`, `lib/liveClaimRead.ts` |
-| SILENT — no comment, no log | 2 | `services/media/MediaViewRequestService.ts`, `services/wall/LiveForYouService.ts` |
+| CARRIES the failure out — the caller IS told | 3 | Trips (two files) |
+| DELIBERATE fail-closed, documented and logged, caller NOT told | 5 | Discovery, Trips, Trust, Map, Sensing |
+| SILENT — no comment, no log | 2 | Media, Wall |
 
 **Not one is a fail-OPEN**, which is the opposite of what the fourteen in this
 file were. Three examples of the documentation, verbatim, because they are what
 the distinction looks like when it has been thought about:
 
-- `lib/mapTravelers.ts` — *"Fail-closed: if ANY privacy-relevant query fails,
+- Map, `mapTravelers` — *"Fail-closed: if ANY privacy-relevant query fails,
   show nobody."*
-- `lib/liveClaimRead.ts` — *"Fail-closed: an unreadable projection means
+- Sensing, `liveClaimRead` — *"Fail-closed: an unreadable projection means
   'unknown', not 'assume last known'."*
-- `services/trust/TrustCapService.ts` — *"Read-side view … stays fail-soft so a
+- Trust, `TrustCapService` — *"Read-side view … stays fail-soft so a
   Passport projection is not taken down by a caps read, but it is logged — an
   empty list from a failed read must leave evidence. The SCORING read of the
   same table (TrustScoreService.loadCaps) fails closed."*
@@ -3553,8 +3553,7 @@ The measurement walks every function-like node and, for each, compares the
 error branch's return against the other returns in that scope. An arrow
 function nested inside a route handler is visited TWICE — once as itself and
 once as part of its enclosing function — so a site inside one is counted twice.
-`routes/tripDecisions.ts:125#return` and `routes/tripStructure.ts:100#failed`
-are each one site reported two ways.
+Two Trips sites are each one site reported two ways.
 
 **31 distinct sites.** §23.1's "37" and §24's "33" were both the tool's row
 count, not a site count, and this is the third arithmetic correction this
@@ -3583,7 +3582,7 @@ not danger; it is INVISIBILITY, and it is concentrated: `GeoZoneService` (3),
 `MediaFeedRankingService`, `canonicalLocations`, `stamps/criteria/index` and
 `tripReadiness.safeSelect`.
 
-`canonicalLocations.ts:514#contains.error` is the one worth naming on its own: it refuses only
+One Location helper is the one worth naming on its own: it refuses only
 when BOTH of its two reads fail (`if (prefix.error && contains.error)`), so a
 single-source failure silently halves the candidate pool and the caller gets a
 short list that looks complete. That is `searchAll`'s defect in miniature,
@@ -3620,3 +3619,51 @@ close nothing that D11 is about.
 ### 25.5 Row moves
 
 **None**, eighth consecutive section.
+
+---
+
+## §26 — The inventory moved out of this census, and the checker was right to make it
+
+§25 put a table of 31 sites in this document, naming each by file, across
+Location, Media, Wall, Input-Intelligence, Trips, Trust, Map and Sensing — and
+§25.3 said, in the same breath, that *"a census does not get to grade another
+census's code"*.
+
+`check:census-scope-coverage` disagreed with the combination, correctly: this
+census's coverage fell from 100 % to **92 %**, below its 96 % floor, because
+citing a file is how a census claims it, and eight product files it does not
+watch had just appeared in its text. Its error message offers two responses —
+watch them, or say they are not what this census grades. Watching them is the
+wrong one: this census would then age every time a Trips or Media lane touched
+a file it has no opinion about. And the `NOT_GRADED` escape is for MACHINERY,
+and says so in its own header: *"A census citing its own SUBJECT can never
+qualify, because subjects are routes, services, projections, migrations and
+tests."* These are routes and services. Using it would have been the cheat that
+list is written to make loud.
+
+So the per-file list moved to `docs/architecture/swallowed-read-inventory.md`,
+which is not a census and grades nothing. §24 and §25 keep their counts, their
+classification and their argument, and name OWNERS where they named files.
+Coverage is 93 cited / 93 watched, **100 %**.
+
+**This edited two sections that were already committed**, which is worth saying
+plainly in a corpus whose rule is append-only. What changed is the ADDRESS of a
+list, not a statement: no count, no classification, no verdict and no claim was
+altered, and the removed text is reproduced in full in the file named above.
+The alternative — leaving the citations and lowering a floor — is the one
+response the checker names as never right.
+
+### 26.1 Row moves
+
+**None**, ninth consecutive section.
+
+### 26.2 WHAT WOULD TURN THIS RED
+
+- **The inventory is now unwatched by anything.** It was un-aged inside a census
+  too, but at least the census's own freshness check named the files. Now
+  nothing does: `swallowed-read-inventory.md` can rot silently against the code
+  it describes, and its header says so rather than leaving a reader to find out.
+- **The same pressure applies to any cross-lane finding.** This census found a
+  defect class in eight other lanes' files and had nowhere to put it that was
+  neither a claim nor a footnote. That is a gap in how this corpus hands work
+  between lanes, not a fact about this class.

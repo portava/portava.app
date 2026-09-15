@@ -481,7 +481,7 @@ recording that is the point of §6's rule about reasons that decay.
 **Everything else in §2's V2-13…V2-24 was re-executed at this commit and holds**, including the two
 whose citations had drifted: `SWITCHING_COST` is still at `artifacts/api-server/src/lib/compassDecision.ts:92#export const SWITCHING_COST = 0.25;`
 behind `artifacts/api-server/src/routes/compassDecision.ts:78#if (!(await isFlagEnabled(sc, "compass_decision_enabled"))) {`,
-and `CPV2-12`'s duplicate store is still upserted at `artifacts/api-server/src/compass/CompassGraphEngine.ts:1153#const { error } = await db.from("compass_city_confidence").upsert(`.
+and `CPV2-12`'s duplicate store is still upserted at `artifacts/api-server/src/compass/CompassGraphEngine.ts:1171#const { error } = await db.from("compass_city_confidence").upsert(`.
 
 **Headline: unchanged at 43 / 74 SATISFIED.** No bucket moves. A pass that re-executes twelve
 requirements and moves nothing has either confirmed the document or not looked; the difference is

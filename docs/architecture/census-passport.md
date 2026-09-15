@@ -1098,7 +1098,7 @@ are not.
 | P132 | Confirmed unmoved: no blue or teal token exists in the passport palette at all; availability and shared-context surfaces run on paper/ink/seal. D-DESIGN. **MOVED W→C 2026-09-14, and this finding was FALSE — it read one palette file and the screens use the other (§15.4).** | W |
 | P133 | Confirmed unmoved: two of four. Rounded cards and a cover exist; the portrait sits in `:671#leftCol:` of a document card rather than over a hero, and there is no glass treatment. D-DESIGN. **Still unmoved 2026-09-14: never a palette row (§15.2).** | W |
 | P154 | Confirmed: it is P45 and P50 under a phase number and moves when they do. Nothing in this row is separately buildable. D-WORD. | W |
-| P159 | Confirmed, and §13.4's restatement re-measured exactly: `artifacts/api-server/src/compass/CompassGraphEngine.ts:781#batch.node("experience", key, city, {` writes person —`experienced`→ experience —`at_place` / `during_trip` / `at_event` / `in_city` (`:785`–`:797`), admitted by `artifacts/api-server/src/migrations/2290_intelligence_graph_node_kinds.sql:63#'circle','experience'`. **30** files reference the graph tables and **0** are under `src/services/passport/` or `src/routes/passport*.ts`. The Experience Graph is built and has no Passport reader. | W |
+| P159 | Confirmed, and §13.4's restatement re-measured exactly: `artifacts/api-server/src/compass/CompassGraphEngine.ts:799#batch.node("experience", key, city, {` writes person —`experienced`→ experience —`at_place` / `during_trip` / `at_event` / `in_city` (`:785`–`:797`), admitted by `artifacts/api-server/src/migrations/2290_intelligence_graph_node_kinds.sql:63#'circle','experience'`. **30** files reference the graph tables and **0** are under `src/services/passport/` or `src/routes/passport*.ts`. The Experience Graph is built and has no Passport reader. | W |
 
 ### 14.4 WHAT WOULD TURN EACH OF THESE RED — the deliverable for a row that cannot close
 
@@ -1422,7 +1422,7 @@ must not become a second route to a memory the memory surface would not show."*
 **That sentence is wrong about the code, and the correction removes the harder question
 entirely.** The experience-node feed is not "published and not `only_me`" — it is
 `published` **AND** `visibility = 'public'`, filtered twice: once in the query
-(`artifacts/api-server/src/compass/CompassGraphEngine.ts:768#.eq("visibility", "public")`)
+(`artifacts/api-server/src/compass/CompassGraphEngine.ts:786#.eq("visibility", "public")`)
 and again per row, belt-and-braces, against a client that might ignore a predicate
 (`artifacts/api-server/src/compass/CompassGraphEngine.ts:550#row.state === "published" && row.visibility === "public"`).
 Every `experience` node in the graph therefore came from a memory whose audience is

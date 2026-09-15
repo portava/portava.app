@@ -263,10 +263,10 @@ function seedTravelData(store: Record<string, Row[]>) {
   const monMorning = "2026-07-20T00:00:00Z"; // Mon 08:00 in Cebu
 
   store.user_stamps = [
-    { user_id: USER_ID, city: "Cebu", country: "Philippines", earned_at: friEvening, is_revoked: false },
-    { user_id: USER_ID, city: "Cebu", country: "Philippines", earned_at: monMorning, is_revoked: false },
-    { user_id: USER_B,  city: "Cebu", country: "Philippines", earned_at: friEvening, is_revoked: false },
-    { user_id: USER_B,  city: "Baguio", country: "Philippines", earned_at: monMorning, is_revoked: false },
+    { user_id: USER_ID, city: "Cebu", country: "Philippines", earned_at: friEvening, is_revoked: false, stamp_definitions: { slug: "first_trip_completed", evidences_presence: true } },
+    { user_id: USER_ID, city: "Cebu", country: "Philippines", earned_at: monMorning, is_revoked: false, stamp_definitions: { slug: "first_trip_completed", evidences_presence: true } },
+    { user_id: USER_B,  city: "Cebu", country: "Philippines", earned_at: friEvening, is_revoked: false, stamp_definitions: { slug: "first_trip_completed", evidences_presence: true } },
+    { user_id: USER_B,  city: "Baguio", country: "Philippines", earned_at: monMorning, is_revoked: false, stamp_definitions: { slug: "first_trip_completed", evidences_presence: true } },
   ];
   store.trips = [
     { id: "trip-1", owner_id: USER_ID, destination_city: "Cebu", start_date: "2026-05-01" },
@@ -483,14 +483,79 @@ describe("graph substrate — batch builders persist typed nodes/edges", () => {
     assert.equal(visited!.observed_count, 2);
   });
 
+  // ── A planned trip is not a city you have visited ──────────────────────────
+  //
+  // `POST /api/trips` awards `first_trip_created` and `trip_planner` AT
+  // CREATION with the destination attached and nothing having occurred.
+  // Migration 2970 put the occurrence property on
+  // `stamp_definitions.evidences_presence` and closed the Passport's
+  // Countries/Cities numbers against those rows; its header named this graph
+  // writer as a surface it did not fix. A `person —visited→ city` edge is the
+  // same factual claim about a person, and so are the `active_in` /
+  // `active_during:exploring` time-slice edges beneath it: somebody who only
+  // planned a trip was not in that city, at that hour or any other.
+  it("PLANNED-NEVER-TAKEN: a planning stamp writes NO visited edge", async () => {
+    const friEvening = "2026-07-24T11:00:00Z";
+    fake.store.user_stamps = [
+      { user_id: USER_ID, city: "Kyoto", country: "Japan", earned_at: friEvening, is_revoked: false,
+        stamp_definitions: { slug: "first_trip_created", evidences_presence: false } },
+      { user_id: USER_ID, city: "Kyoto", country: "Japan", earned_at: friEvening, is_revoked: false,
+        stamp_definitions: { slug: "trip_planner", evidences_presence: false } },
+    ];
+    await buildGraphFromSources(fake.fakeClient);
+
+    const edges = fake.store.compass_graph_edges ?? [];
+    const visited = edges.filter((e: any) => e.edge_type === "visited" && e.dst_key === "kyoto");
+    assert.equal(
+      visited.length, 0,
+      `a trip planned and never taken wrote ${visited.length} visited edge(s) to Kyoto`,
+    );
+    const active = edges.filter(
+      (e: any) => String(e.dst_key ?? "").startsWith("kyoto|") || String(e.src_key ?? "") === "kyoto",
+    );
+    assert.equal(active.length, 0, "no time-slice activity may be claimed for a city nobody went to");
+  });
+
+  it("POSITIVE CONTROL: a presence-evidencing stamp still writes the visited edge", async () => {
+    // Without this, "writes no edge" is satisfied by a builder that stopped
+    // reading user_stamps at all.
+    const friEvening = "2026-07-24T11:00:00Z";
+    fake.store.user_stamps = [
+      { user_id: USER_ID, city: "Kyoto", country: "Japan", earned_at: friEvening, is_revoked: false,
+        stamp_definitions: { slug: "first_trip_completed", evidences_presence: true } },
+    ];
+    await buildGraphFromSources(fake.fakeClient);
+
+    const edges = fake.store.compass_graph_edges ?? [];
+    assert.equal(
+      edges.filter((e: any) => e.edge_type === "visited" && e.dst_key === "kyoto").length, 1,
+      "a completed journey must still be a visit",
+    );
+  });
+
+  it("FAIL-CLOSED: a stamp whose definition did not load writes no visited edge", async () => {
+    const friEvening = "2026-07-24T11:00:00Z";
+    fake.store.user_stamps = [
+      // Deliberately BARE: this case is about a row whose definition did not load.
+      { user_id: USER_ID, city: "Lisbon", country: "Portugal", earned_at: friEvening, is_revoked: false },
+    ];
+    await buildGraphFromSources(fake.fakeClient);
+
+    const edges = fake.store.compass_graph_edges ?? [];
+    assert.equal(
+      edges.filter((e: any) => e.edge_type === "visited" && e.dst_key === "lisbon").length, 0,
+      "a missing join is not evidence of a visit",
+    );
+  });
+
   it("merges misspelled/variant city names into one canonical city node", async () => {
     const friEvening = "2026-07-24T11:00:00Z";
     fake.store.user_stamps = [
-      { user_id: USER_ID, city: "Siargao",  country: "Philippines", earned_at: friEvening, is_revoked: false },
-      { user_id: USER_B,  city: "Siargoa",  country: "Philippines", earned_at: friEvening, is_revoked: false }, // misspelling
-      { user_id: USER_ID, city: "Cebu City", country: "Philippines", earned_at: friEvening, is_revoked: false },
-      { user_id: USER_B,  city: "Cebu",      country: "Philippines", earned_at: friEvening, is_revoked: false },
-      { user_id: USER_ID, city: "san",       country: "Philippines", earned_at: friEvening, is_revoked: false }, // junk fragment
+      { user_id: USER_ID, city: "Siargao",  country: "Philippines", earned_at: friEvening, is_revoked: false, stamp_definitions: { slug: "first_trip_completed", evidences_presence: true } },
+      { user_id: USER_B,  city: "Siargoa",  country: "Philippines", earned_at: friEvening, is_revoked: false, stamp_definitions: { slug: "first_trip_completed", evidences_presence: true } }, // misspelling
+      { user_id: USER_ID, city: "Cebu City", country: "Philippines", earned_at: friEvening, is_revoked: false, stamp_definitions: { slug: "first_trip_completed", evidences_presence: true } },
+      { user_id: USER_B,  city: "Cebu",      country: "Philippines", earned_at: friEvening, is_revoked: false, stamp_definitions: { slug: "first_trip_completed", evidences_presence: true } },
+      { user_id: USER_ID, city: "san",       country: "Philippines", earned_at: friEvening, is_revoked: false, stamp_definitions: { slug: "first_trip_completed", evidences_presence: true } }, // junk fragment
     ];
     await buildGraphFromSources(fake.fakeClient);
 
@@ -1460,7 +1525,7 @@ describe("cleanup — leftover non-canonical city rows", () => {
     seedTravelData(fake.store);
     // A stamp under a misspelled city — the rebuild must fold it into "siargao".
     (fake.store.user_stamps ?? []).push(
-      { user_id: USER_B, city: "Siargoa", country: "Philippines", earned_at: "2026-07-24T11:00:00Z", is_revoked: false },
+      { user_id: USER_B, city: "Siargoa", country: "Philippines", earned_at: "2026-07-24T11:00:00Z", is_revoked: false, stamp_definitions: { slug: "first_trip_completed", evidences_presence: true } },
     );
 
     await cleanupNonCanonicalCityRows(fake.fakeClient);

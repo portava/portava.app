@@ -2032,7 +2032,7 @@ censuses were looking at the same file and only one of them could see it. What t
 to CH-03 is the fix and the §28.10 half beside it; the observation was not its own, and claiming
 it would be the exact overclaim this corpus exists to catch.
 
-`artifacts/api-server/src/compass/CompassGraphEngine.ts:720#Experiences` builds the Travel Intelligence
+`artifacts/api-server/src/compass/CompassGraphEngine.ts:738#Experiences` builds the Travel Intelligence
 Graph from `public.memories`. Its output lands in `compass_graph_nodes` and
 `compass_graph_edges`; `buildCityWorldModels` and `computeCityConfidenceIndex` fold those into
 per-city Destination World Models and the city-confidence index, which reach **every** user
@@ -2081,12 +2081,12 @@ below says so in those words rather than quietly repointing the citation.
 ADDS an experience node and the sweep that REMOVES one must agree; when they disagree the
 graph either keeps a row it would no longer admit or deletes one it just wrote, and neither
 failure announces itself. The query now asks the database for it
-(`artifacts/api-server/src/compass/CompassGraphEngine.ts:768#visibility`) **and** the
-loop re-asserts it (`artifacts/api-server/src/compass/CompassGraphEngine.ts:775#isPublicWorldMemory`). Both are
+(`artifacts/api-server/src/compass/CompassGraphEngine.ts:786#visibility`) **and** the
+loop re-asserts it (`artifacts/api-server/src/compass/CompassGraphEngine.ts:793#isPublicWorldMemory`). Both are
 separately mutation-covered, because defence in depth that nothing exercises is a comment.
 
 **2. §28.8 revocation.**
-`artifacts/api-server/src/compass/CompassGraphEngine.ts:1478#reconcileExperienceNodes` is
+`artifacts/api-server/src/compass/CompassGraphEngine.ts:1496#reconcileExperienceNodes` is
 `reconcileExperienceNodes`: it reads the persisted `experience` node keys, asks `memories`
 about **those ids**, and deletes the nodes — and every edge touching them — whose Memory is
 gone or no longer eligible. Three design choices, each load-bearing:
@@ -2103,7 +2103,7 @@ gone or no longer eligible. Three design choices, each load-bearing:
   - **Edges first, and before the aggregates are folded.** A node deleted before its edges
     leaves orphan `in_city` edges, and those are what `buildCityWorldModels` counts; a sweep
     run after the fold would let a revoked experience into today's score anyway.
-    `artifacts/api-server/src/compass/CompassGraphEngine.ts:1574#experienceRevocations` places it.
+    `artifacts/api-server/src/compass/CompassGraphEngine.ts:1592#experienceRevocations` places it.
 
 **3. §1 in the Memory domain, not only on the Compass surface.**
 `artifacts/api-server/src/services/memory/historicalTruth.ts:275#asHistoricalMemoryPayload` is
@@ -2127,12 +2127,12 @@ already runs, so `check:test-registration` covers them:
 
 | what it asserts | file |
 |---|---|
-| the §28.10 gate, stated once and used by both halves | `artifacts/api-server/src/test/compass-intelligence-graph.test.ts:718#eligibility` |
-| the gate runs in the QUERY, not only in the loop | `artifacts/api-server/src/test/compass-intelligence-graph.test.ts:673#eligibility` |
-| a client that ignores the predicate still gets nothing private in | `artifacts/api-server/src/test/compass-intelligence-graph.test.ts:639#IGNORES` |
-| a rebuild revokes deleted / archived / narrowed / vanished experiences | `artifacts/api-server/src/test/compass-intelligence-graph.test.ts:734#REVOKES` |
-| an unreadable `memories` read deletes nothing and says so | `artifacts/api-server/src/test/compass-intelligence-graph.test.ts:777#unreadable` |
-| the sweep runs before the aggregates are folded | `artifacts/api-server/src/test/compass-intelligence-graph.test.ts:899#rebuildIntelligenceGraph` |
+| the §28.10 gate, stated once and used by both halves | `artifacts/api-server/src/test/compass-intelligence-graph.test.ts:783#eligibility` |
+| the gate runs in the QUERY, not only in the loop | `artifacts/api-server/src/test/compass-intelligence-graph.test.ts:738#eligibility` |
+| a client that ignores the predicate still gets nothing private in | `artifacts/api-server/src/test/compass-intelligence-graph.test.ts:704#IGNORES` |
+| a rebuild revokes deleted / archived / narrowed / vanished experiences | `artifacts/api-server/src/test/compass-intelligence-graph.test.ts:799#REVOKES` |
+| an unreadable `memories` read deletes nothing and says so | `artifacts/api-server/src/test/compass-intelligence-graph.test.ts:842#unreadable` |
+| the sweep runs before the aggregates are folded | `artifacts/api-server/src/test/compass-intelligence-graph.test.ts:964#rebuildIntelligenceGraph` |
 | §1's truth class on every Memory the REST domain serves | `artifacts/api-server/src/test/memories.test.ts:851#historical` |
 | §24's source version, from the route rather than from a hand-built record | `artifacts/api-server/src/test/memories.test.ts:937#source` |
 | §24's failure class, and the audit LINE that has to carry it | `artifacts/api-server/src/test/memoryCommandBus.test.ts:359#failure` |
@@ -2142,7 +2142,7 @@ already runs, so `check:test-registration` covers them:
 | id | was | now | why |
 |---|---|---|---|
 | H5 | W | **C** | §1's separation is now a property of the Memory DOMAIN, which is exactly what section C said was missing: "*`routes/memories.ts` still serializes Memory rows with no truth class on them.*" Every canonical Memory the REST domain serves — single read, discovery feed, profile listing, trip recap, create and patch responses — carries `truthClass: "historical"` and `establishesCurrentStatus: false`, applied by `artifacts/api-server/src/routes/memories.ts:2845#asHistoricalMemoryPayload` rather than written into each handler. **CEILING: this is a declaration on the datum, not an enforcement on the reader.** What is mechanical is that the caveat cannot be dropped without dropping a field, that a payload claiming `current_world` has the claim removed, and that `currentWorldReading` still refuses a historical source class |
-| H237 | W | **C** | "Deleted memory cannot remain in Compass retrieval." It now holds on the only Compass projection of Memories **production actually has**: `artifacts/api-server/src/compass/CompassGraphEngine.ts:1478#reconcileExperienceNodes` revokes the experience node and every edge touching it when the Memory is deleted, archived, hard-deleted with its owner's account, or narrowed below `public`. **PART OF THIS MOVE IS A RE-READ, NOT A BUILD, AND IS LABELLED AS SUCH:** the §16 accessors section C built already excluded deleted Memories (`canCompassReadMemory` requires `published`; every tool query filters `state <> 'deleted'`) and this row did not account for them. The BUILD half is the graph sweep. **CEILING: the revocation is bounded by the rebuild's daily cadence**, so a deleted Memory can sit in the aggregate substrate for up to 24 hours, and §24's `privacy_revocation_latency` — the metric that would measure exactly that — does not exist |
+| H237 | W | **C** | "Deleted memory cannot remain in Compass retrieval." It now holds on the only Compass projection of Memories **production actually has**: `artifacts/api-server/src/compass/CompassGraphEngine.ts:1496#reconcileExperienceNodes` revokes the experience node and every edge touching it when the Memory is deleted, archived, hard-deleted with its owner's account, or narrowed below `public`. **PART OF THIS MOVE IS A RE-READ, NOT A BUILD, AND IS LABELLED AS SUCH:** the §16 accessors section C built already excluded deleted Memories (`canCompassReadMemory` requires `published`; every tool query filters `state <> 'deleted'`) and this row did not account for them. The BUILD half is the graph sweep. **CEILING: the revocation is bounded by the rebuild's daily cadence**, so a deleted Memory can sit in the aggregate substrate for up to 24 hours, and §24's `privacy_revocation_latency` — the metric that would measure exactly that — does not exist |
 | H263 | C | **C** | **NO NET MOVE, AND THAT IS THE WORST WAY TO READ THIS ROW.** Its C was a FALSE GREEN at `f8384ea5b`: its stated evidence was "*the only path from derived memory to any shared surface is `memoryProducer.ts` … Nothing feeds memory into world intelligence*", and `CompassGraphEngine` was a second path, running daily, carrying `friends_only`, `trip_crew`, `circle_only` and `custom` Memories into the Destination World Model. The row ends green because the gate was narrowed to `public` (D.3), not because the sentence was rewritten. Evidence replaced: the rule now holds on **both** paths, and both are named |
 | H189 | W | **W** | Evidence corrected, verdict unmoved. The row read "*revokes nothing — there are no derivatives or indexes to revoke, and no cache invalidation on the memories path*". Half of that is now false: there IS a public derivative of a Memory in production — its experience node and edges in the Compass graph — and narrowing a Memory's audience now revokes it. **Still W for two reasons, both stated rather than implied:** the revocation is asynchronous with a daily ceiling, and `compass_feed_cache` is still never invalidated on a memory visibility change |
 | H190 | W | **W** | Same correction, same verdict. A soft delete now revokes the graph derivative on the same cadence. The media bytes stay publicly served, §21's five-step deletion lifecycle still does not exist, and neither moves |
@@ -2396,35 +2396,35 @@ D.3's second bullet under **2. §28.8 revocation** reads, and stays on the recor
 
 **Restated at `75cc31d9e`: it fails closed PER BATCH, and the pass no longer abandons itself.**
 The sweep asks `memories` about the node keys it holds in chunks of 200
-(`artifacts/api-server/src/compass/CompassGraphEngine.ts:1274#DELETE_CHUNK`). Before the merge,
+(`artifacts/api-server/src/compass/CompassGraphEngine.ts:1292#DELETE_CHUNK`). Before the merge,
 the first chunk whose read errored or threw set `unresolved` and **returned** — every later
 chunk's revocations waited a day. Now a failed chunk sets `unresolved`, counts its keys into a
 new field, and the loop **carries on**
-(`artifacts/api-server/src/compass/CompassGraphEngine.ts:1535#undecided`).
+(`artifacts/api-server/src/compass/CompassGraphEngine.ts:1553#undecided`).
 
 Three corrections, each mechanical:
 
 1. **"deletes nothing" is now a statement about the FAILED BATCH, not about the pass.** Nothing
    in a batch that failed can be deleted, because the dooming decision is a pure helper,
-   `artifacts/api-server/src/compass/CompassGraphEngine.ts:1427#deadExperienceKeys`, which
+   `artifacts/api-server/src/compass/CompassGraphEngine.ts:1445#deadExperienceKeys`, which
    returns `[]` on `ok === false` and is called with the batch's own `ok`
-   (`artifacts/api-server/src/compass/CompassGraphEngine.ts:1534#deadExperienceKeys`). A failed
+   (`artifacts/api-server/src/compass/CompassGraphEngine.ts:1552#deadExperienceKeys`). A failed
    batch therefore contributes no dead keys and cannot widen a revocation. The batches that
    answered are acted on.
 2. **"reporting zero twice" is now three states, not two.** `ExperienceReconcileReport` gained
-   `artifacts/api-server/src/compass/CompassGraphEngine.ts:1410#undecided` — the node keys the
+   `artifacts/api-server/src/compass/CompassGraphEngine.ts:1428#undecided` — the node keys the
    pass refused to judge. A clean sweep reports `undecided: 0, unresolved: false`; a partial one
    reports a non-zero `undecided`; a sweep that could not read the node table at all reports
    `examined: 0, unresolved: true`. D.3's sentence covered the first and the third and had no
    word for the second, because before the merge the second did not exist.
 3. **The whole-pass fail-closed claim survives in one place, and only there.** An unreadable
    `compass_graph_nodes` read still returns immediately and decides nothing
-   (`artifacts/api-server/src/compass/CompassGraphEngine.ts:1491#report.unresolved`). That is
+   (`artifacts/api-server/src/compass/CompassGraphEngine.ts:1509#report.unresolved`). That is
    the read D.3's third design choice depends on, and it is untouched.
 
 **The evidence-table line in D.3 is restated the same way.** It reads "an unreadable `memories`
 read deletes nothing and says so", citing
-`artifacts/api-server/src/test/compass-intelligence-graph.test.ts:777#unreadable`. That test
+`artifacts/api-server/src/test/compass-intelligence-graph.test.ts:842#unreadable`. That test
 blinds **every** `memories` read, so what it pins is the all-batches-fail case — where the
 statement is still exactly true — and it still passes unchanged. So does
 `artifacts/api-server/src/test/compassCensusCorrectness.test.ts:251#B3`, which asserts the same
@@ -2442,7 +2442,7 @@ is recorded here as a ceiling rather than counted as a build.
 
 | row | verdict at `d3b19fa9d` | at `75cc31d9e` | the mechanical reason it does not move |
 |---|---|---|---|
-| H237 | C | **C** | The sweep still revokes the experience node and every edge touching it, and still runs before the aggregates are folded (`artifacts/api-server/src/compass/CompassGraphEngine.ts:1574#experienceRevocations`, re-read at the new line). The per-batch change moves the ceiling in the SAFE direction: a transient read failure no longer defers every other batch's revocation for a day. The stated ceiling — daily cadence, no `privacy_revocation_latency` — is unchanged |
+| H237 | C | **C** | The sweep still revokes the experience node and every edge touching it, and still runs before the aggregates are folded (`artifacts/api-server/src/compass/CompassGraphEngine.ts:1592#experienceRevocations`, re-read at the new line). The per-batch change moves the ceiling in the SAFE direction: a transient read failure no longer defers every other batch's revocation for a day. The stated ceiling — daily cadence, no `privacy_revocation_latency` — is unchanged |
 | H263 | C | **C** | The §28.10 gate is byte-identical: `:548`, `:768` and `:775` are untouched by the merge. What the merge decided is which sweep AGREES with that gate, and it kept the one that does |
 | H189 | W | **W** | Unchanged. `compass_feed_cache` is still never invalidated on a Memory visibility change, which is the half the W rests on |
 | H190 | W | **W** | Unchanged. The media bytes stay publicly served and §21's five-step deletion lifecycle still does not exist |
@@ -2574,7 +2574,7 @@ and that is now honoured.
 D.11 recorded, as a ceiling rather than a build, that the merged sweep's carry-on path — one
 batch fails, another succeeds, **the successful one's revocations are applied anyway** — was
 "asserted by construction and by nothing else", because `DELETE_CHUNK` is 200
-(`artifacts/api-server/src/compass/CompassGraphEngine.ts:1274#DELETE_CHUNK`) and no fixture in
+(`artifacts/api-server/src/compass/CompassGraphEngine.ts:1292#DELETE_CHUNK`) and no fixture in
 this repository seeded more than 200 experience nodes.
 
 **That was checked before it was believed, and it is exactly true.** Restoring the pre-merge
@@ -2584,7 +2584,7 @@ single-batch reports are byte-identical — left **all 72 tests** of
 restoration does go red, but on `compassCensusCorrectness.test.ts`'s `undecided: 2` assertion,
 which the early return skips past — it catches the missing field assignment, not the carry-on.
 
-`artifacts/api-server/src/test/compass-intelligence-graph.test.ts:795#BATCH` seeds 250
+`artifacts/api-server/src/test/compass-intelligence-graph.test.ts:860#BATCH` seeds 250
 experience nodes, fails the first batch's `memories` read and answers the second, and asserts
 **both** halves, because a sweep that carries on wrongly is worse than one that stops: the batch
 that answered has its 17 revocations applied, and the 200 keys of the batch that did not are
@@ -2602,7 +2602,7 @@ to that script at the end.
 | the error BINDING refuses, not the null it happens to arrive with | `artifacts/api-server/src/test/memoryParticipantLadder.test.ts:334#BINDING` |
 | a pending participant's id does not reach a third party, and a count does | `artifacts/api-server/src/test/memories.test.ts:1011#consented` |
 | the tags route applies the same ladder, not a second copy of the old rule | `artifacts/api-server/src/test/memories.test.ts:1079#ladder` |
-| one batch fails, another succeeds, and the successful one still revokes | `artifacts/api-server/src/test/compass-intelligence-graph.test.ts:795#BATCH` |
+| one batch fails, another succeeds, and the successful one still revokes | `artifacts/api-server/src/test/compass-intelligence-graph.test.ts:860#BATCH` |
 
 ### E.3 Row moves
 
@@ -2610,7 +2610,7 @@ to that script at the end.
 |---|---|---|---|
 | H77 | W | **C** | "Person visibility ladder (NAMED → PROFILE_LINKED → CREW_ONLY → ANONYMOUS_COUNT → HIDDEN)." The row's evidence was "`lib/publicIdentity.ts` implements 2 of the 5 rungs … No CREW_ONLY, ANONYMOUS_COUNT or HIDDEN". All five are now reached on a live Memory surface, per viewer and per participant, by `artifacts/api-server/src/services/memory/memoryParticipantVisibility.ts:163#participantRungFor`, and a test asserts that no rung §10 declares is unreachable rather than asserting a list. **CEILING, stated in the row rather than implied: the rung is DERIVED — from consent, audience, crew, blocks and the name opt-in — and is not owner- or participant-SELECTED, because no Memory carries a person-visibility column; that column is 2721 and stays unapplied.** Two narrower limits: the ladder governs the PARTICIPANT list, not the Memory OWNER's own identity, which is still the two-rung universal display-name rule; and `POST /memories/:id/share` and the feed surfaces return no participant list to apply it to |
 | H209 | W | **C** | §23 `canSeeParticipant(userId, memoryId, participantId)`. The row read "Tag rows are returned to any permitted viewer", and at section B "not wired to `memory_tags`; no per-memory policy row". `artifacts/api-server/src/services/memory/memoryParticipantVisibility.ts:356#canSeeParticipant` is the predicate at the spec's own signature, loading its own subject and failing closed on `memories`, `memory_tags`, `blocks` and `trip_members` independently. Both routes that return participants decide through the same function. **THE SECOND HALF OF THE OLD EVIDENCE IS ANSWERED, NOT SATISFIED: there is still no per-memory policy row, and there does not need to be** — §23's other four predicates have none either. That is the re-grouping argument of E.1, and the row moves on it |
-| H237 | C | **C** | **NO MOVE. A CEILING CLOSED, NOT A VERDICT CHANGED.** D.11 named the mixed-batch carry-on as "the half of this change that is new behaviour, and the half with no red-first evidence behind it". It has evidence now (`artifacts/api-server/src/test/compass-intelligence-graph.test.ts:795#BATCH`), and D.11's statement that no test pinned it was verified by restoring the pre-merge behaviour and watching 72 tests stay green. The row's OTHER stated ceiling — daily cadence, no `privacy_revocation_latency` — is untouched |
+| H237 | C | **C** | **NO MOVE. A CEILING CLOSED, NOT A VERDICT CHANGED.** D.11 named the mixed-batch carry-on as "the half of this change that is new behaviour, and the half with no red-first evidence behind it". It has evidence now (`artifacts/api-server/src/test/compass-intelligence-graph.test.ts:860#BATCH`), and D.11's statement that no test pinned it was verified by restoring the pre-merge behaviour and watching 72 tests stay green. The row's OTHER stated ceiling — daily cadence, no `privacy_revocation_latency` — is untouched |
 | H10 | W | **W** | **Evidence corrected, verdict unmoved, and the group placement contested.** The row says "no audience/precision/resurfacing/personalization/publication policy service". Two of those five now exist as a service on this surface — audience, through the participant ladder, and the §23 predicate that answers it. The other three do not and cannot here: resurfacing and personalization are `highlight_resurfacing_preferences` (2720, unapplied) and publication policy is 2721. **D.1 files H10 in (a), "fixable in code". Three-fifths of it is not** — it is (c) wearing (a)'s label, and the next lane should not spend a pass on it expecting a close |
 | H83 | C | **C** | **Evidence extended, verdict unmoved.** D.4 already corrected this row once. What is added: "being tagged does not make another user a co-owner" now has a second, stronger reading on the same surface — being tagged no longer grants the tagged person's identity to third parties either, until they say so. The row's claim was about rights accruing TO the tagged user; the new code is about rights accruing to everyone else ABOUT them, and it holds in the same direction |
 | H198 | W | **W** | **Evidence corrected, verdict unmoved.** The row's ceiling is "every read still runs on the service client — the default is TypeScript, not RLS", and that is unchanged: the two routes above still read `memory_tags` through `getServiceClient()`. What changed is that the TypeScript default is now one function with a fixed branch order instead of an unfiltered `SELECT`. A narrower bypass is still a bypass and the row does not move |
@@ -4682,3 +4682,96 @@ better reason than the one it gave.
   N.2's "not fixed here" becomes "not fixed here, and it could have been".
 - **Any census coming to rest a verdict on a ledger row.** The moment one does, an
   unverifiable pin stops being a documentation problem and becomes an `X`.
+
+---
+
+## N. §L.4's two remaining writers-side gaps are still open, and its two remaining READER gaps are closed — 2026-09-15, the INTEGRATION OWNER
+
+§L named four surfaces that make the same claim from the same rows and fixed
+two. This section closes the other two. **H4 and H239 do not move, and §L.4 is
+the reason** — restated below rather than quietly dropped.
+
+### N.1 The criteria engine was minting the stamp the Passport then counted
+
+§L.2's list, verbatim: *"`criteria/metrics.ts` counts distinct
+`user_stamps.country` over the SAME unfiltered rows… Plan five trips and the
+criteria engine MINTS the Globe Trotter stamp."*
+
+It is worse than a wrong number, and worse than §L.2 says. Migration 0192 seeds
+`globe_trotter_5` as `{"metric":"countries_visited","gte":5}` — *"Visit 5
+different countries"* — and 2970 marks `globe_trotter_5` and `globe_trotter_10`
+`evidences_presence = true`, because the GPS-verified postcard path was supposed
+to be the only thing awarding them. So five planned trips minted a stamp, and
+that stamp was then **admitted by the very filter 2970 added**, and its city and
+country counted toward Countries after all. The reader fix went around itself
+through the writer.
+
+`distinctStampField` now joins the definition and counts only presence
+(`lib/stamps/criteria/metrics.ts:96#if (error || !Array.isArray(data)) return 0;`
+is unchanged; the filter is four lines below it). Both of its callers —
+`cities_visited` and `countries_visited` — are been-there claims, so one join
+fixes both.
+
+### N.2 The Compass graph was writing `person —visited→ city` for a plan
+
+§L.2, verbatim: *"`compass/CompassGraphEngine.ts` writes `person —visited→ city`
+edges for every non-revoked `user_stamps` row with a city."*
+
+Closed, and slightly wider than §L.2 framed it: the same loop also writes the
+`active_in` and `active_during:exploring` time-slice edges, which claim the
+person was in that city **at that hour**. Somebody who only planned a trip was
+not. The city NODE and its coordinates are kept for every row — those are facts
+about a PLACE — and every person-level edge below them is now gated
+(`compass/CompassGraphEngine.ts:596#const def = Array.isArray(r.stamp_definitions)`).
+
+### N.3 §L.5's survivor G, closed at both new sites
+
+§L.5 records a mutation that survived every behavioural test of `buildStats`:
+removing `evidences_presence` from its SELECT. The fixtures embed
+`stamp_definitions` whatever the select string says, so the double keeps
+returning it — while against a real database an unselected column reads
+`undefined`, every stamp reads non-presence, and the numbers silently become 0
+for everyone.
+
+Both sites added here carry a select-string assertion for that reason
+(`test/stampCriteriaPresenceEvidence.test.ts:155#describe("both readers ASK for the column, not just filter on it"`).
+Measured: dropping the embed from the graph's select is caught by **that
+assertion alone** — the exact survivor §L.5 describes, now killed. Dropping it
+from the metrics select is caught by three cases, because `makePassportDb`
+honours projection when no embed is present.
+
+### N.4 Row moves
+
+**None.** Denominator 266, BUILT-AND-CORRECT 61, BUILT-BUT-WRONG 129, NOT-BUILT
+74, CANNOT-VERIFY 2 — unchanged from §L.7.
+
+H4 stays `W` and H239 stays `W`, on §L.4's stated criterion and not on a new
+one:
+
+> **The fixes are at the READER, not the WRITER.** … H4 is a **prohibition**; a
+> prohibition whose violation is filtered out downstream is not satisfied.
+> **What would move them:** 2970 applied, and the two writers stopping rather
+> than the readers filtering.
+
+Both conditions still fail. **2970 has been applied nowhere** — not production,
+not `portava-ci` — so against a real database every stamp still reads
+`undefined` at all four readers. And this section adds two more READER filters
+rather than stopping a writer: `POST /api/trips` still attaches a destination to
+a stamp awarded before anything happened, and `routes/hiddenGems.ts` still
+attaches a gem's city to the submitter on admin approval. Four readers now
+filter what two writers should not be writing.
+
+### N.5 WHAT WOULD TURN THIS RED
+
+- **The fifth reader nobody has found.** §K.4 counted 26 non-test read sites of
+  `user_stamps` across 20 files. Four of them are now gated. The other 22 were
+  not re-read by this section, and the two closed here were found by a migration
+  header rather than by a sweep — which is not a method that terminates.
+- **`evidences_presence` is `false` for every row in every database**, because
+  2970 is applied nowhere. Every assertion in this section holds against a
+  fixture. The direction of that failure is safe — under-claiming, Countries
+  reading 0 — but "safe" is not "measured".
+- **The presence classification is 2970's, and it is arguable.** Nine of the
+  thirteen TRUE slugs rest on trip completion, which is the owner PATCHing
+  `status='completed'` — self-attested, not GPS. §L.3 says so; this section
+  inherits that judgement without re-opening it.
