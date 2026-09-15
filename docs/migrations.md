@@ -1788,3 +1788,153 @@ writer. These three sat on `discovery`, which 2893 **keeps**.
 
     SELECT count(*) FROM public.rank_events WHERE item_id ILIKE '%REHEARSAL%';
     -- expect 0
+
+---
+
+## 2026-09-15 — PR #504 merged: 2972 applied and CERTIFIED, and the stamp write boundary closed
+
+Run [35028484083](https://github.com/portava/portava.app/actions/runs/35028484083),
+`push` on `main` at `0bea333b4`. **No `workflow_dispatch` was used and none was
+needed** — see "Why no dispatch" below.
+
+### What applied
+
+One file. Read from `public.schema_migration_ledger`, not from `audit:schema`:
+
+```
+2972_stamp_family_write_boundary.sql   applied_by=ci   2026-09-15 22:01:48Z   sha256 619402663c61…
+```
+
+`applied_by='ci'` together with a real sha256 is the applier's own definition of
+proof. (For contrast, the 388 rows 2254 seeded carry `applied_by='backfill'` and
+no comparable checksum; they assert only that the filename existed.)
+
+### certify:migrations — all five stages, quoted from the run
+
+```
+certify:migrations PASSED — every stage reached a verdict and every verdict was a pass:
+  ✔ 1 ledger
+  ✔ 2 schema objects
+  ✔ 3 grants and RLS
+  ✔ 4 critical postconditions
+  ✔ 5 app checks
+```
+
+- **1 ledger** — `check:migration-ledger exited 0 — ledger and disk agree.`
+- **2 schema objects** — `1 migration(s) in scope (ledger rows tagged
+  run=35028484083): 2972_stamp_family_write_boundary.sql`. The scope is exactly
+  one file, so this run is **not** the vacuous case where nothing applied and
+  certify certifies nothing. `0 declared object(s) present` is correct and
+  expected: 2972 declares no objects — it revokes privileges.
+- **3 grants and RLS** — passed. **Read the caveat below before quoting this one.**
+- **4 critical postconditions** — `2 assertion block(s) re-run against the
+  committed database`, i.e. 2972's own precondition and postcondition blocks,
+  re-executed after the commit rather than trusted from apply time.
+- **5 app checks** — `audit:schema exited 0` (548 files, 6372 claimed objects,
+  *"Live schema contains every object claimed by the migrations"*) and
+  `check:missing-live-columns PASSED` (551 files, 3779 column declarations).
+
+### CAVEAT — what STAGE 3 does and does not establish here
+
+STAGE 3's verdict sentence is scoped to *"a table these migrations **created**"*.
+2972 creates no tables, so on this scope the stage has almost nothing to look at.
+**STAGE 3's green is not the evidence that the revoke worked**, and citing it as
+such would repeat the very scope illusion that hid this finding for as long as it
+was hidden: STAGE 3 only ever saw the problem because a dispatch replayed 0081,
+the migration that *created* the seven tables.
+
+What does establish it is STAGE 4 — which re-ran 2972's postcondition against the
+committed database, and that block asserts zero remaining client write grants, at
+least one surviving client SELECT grant, and at least one surviving service_role
+write grant — together with the direct measurement below.
+
+### The live state, measured directly after the apply
+
+```
+client write grants remaining (anon/authenticated/public × I/U/D/T × 7 tables) : 0
+client SELECT grants kept                                                      : 14
+service_role write grants                                                      : 28
+tables with RLS enabled                                                        : 7
+admin_all policies kept (stamp_definitions, stamp_campaigns)                   : 2
+stamp_definitions rows                                                         : 56  (unchanged)
+```
+
+### The four access cases, re-verified against the APPLIED state
+
+Not the pre-merge rehearsal — re-run after the apply, in a `DO` block that rolled
+itself back, using `SET LOCAL ROLE` and a synthetic `request.jwt.claims`, with one
+profile transiently promoted to admin:
+
+```
+1 anon INSERT                   : DENIED (42501)
+2 ordinary authenticated INSERT : DENIED (42501)
+3 AUTHENTICATED ADMIN INSERT    : DENIED (42501)   <- was PERMITTED before 2972
+4 service_role INSERT           : PERMITTED
+5 admin SELECT (read must live) : PERMITTED
+6 ordinary user self-promote to role='admin' : DENIED (42501)
+```
+
+The rollback was **verified afterwards, not assumed**: 56 rows, zero probe rows,
+zero admin profiles remaining.
+
+Line 3 is the behaviour change, and it is the intended one. Said precisely: an
+authenticated administrator **is** a client, and what 2972 removes is their
+DIRECT write path. Their capability is untouched, because it runs through the
+server's service-role client — line 4 — which is the only path the application
+actually uses, and `service_role` carries `rolbypassrls`.
+
+### Why no dispatch
+
+`live-db.yml` already fires on `push: branches: [main]`, and its apply steps are
+gated on `github.ref == 'refs/heads/main'`. The merge's own push run therefore
+applies and certifies. A `workflow_dispatch` exists only to pass
+`apply_unproven`, which nothing here needed — and it would have created a NEWER
+run in concurrency group `live-db-refs/heads/main`, which is
+`cancel-in-progress: true`, and so could have cancelled the push run **while it
+held the database**. That is not hypothetical: on 2026-09-15 at 18:01, push run
+`35004922223` was cancelled by dispatch `35004957171` in exactly this way.
+
+### CORRECTIONS to the previous section's "Still open"
+
+Two claims recorded above are now false, and are retracted here rather than
+edited in place:
+
+1. *"**`2893`–`2970` unapplied**"* — **false as of 2026-09-15 18:10**. 2970 and
+   2971 both carry `applied_by='ci'` with real checksums.
+2. *"**2970 needs the stamp seeds**, named explicitly to `--apply-unproven`:
+   `0081`, `0082`, `0145`, `0179`, `0189`, `0198`"* — the apply that actually ran
+   (run 35004957171) named **four**, not six: `0081`, `0082`, `0145`, `0189`.
+   `0179` and `0198` were never replayed.
+
+That second correction also settles a number that was misreported elsewhere:
+`stamp_definitions` holds **56** rows, not 63. The missing seven are exactly
+0179's four and 0198's three — the two seed files that were not in the
+`--apply-unproven` list. The ledger, the document and the row count are
+consistent once that is noticed; the 63 was a prediction, and the prediction was
+what was wrong.
+
+### Still open
+
+- **Production is untouched.** Zero ledger rows at or above 2890 there. 2972 has
+  been applied to **portava-ci only**.
+- The `authz`-vs-`public` name-keying notes `audit:schema` prints on every run
+  (9 function claims resolving in `authz`; `is_accepted_trip_member` existing in
+  both) remain as stated — pre-existing, unrelated to this apply.
+
+### Re-establish any of this independently
+
+    SELECT filename, applied_by, applied_at, left(checksum, 12)
+      FROM public.schema_migration_ledger WHERE filename >= '2970' ORDER BY filename;
+
+    SELECT grantee, privilege_type, table_name
+      FROM information_schema.role_table_grants
+     WHERE table_schema = 'public'
+       AND grantee IN ('anon','authenticated','public')
+       AND privilege_type IN ('INSERT','UPDATE','DELETE','TRUNCATE')
+       AND table_name IN ('stamp_definitions','user_stamps','stamp_award_events',
+                          'stamp_progress','stamp_collections','stamp_collection_items',
+                          'stamp_campaigns');
+    -- expect 0 rows
+
+    SELECT rolname, rolbypassrls FROM pg_roles WHERE rolname = 'service_role';
+    -- expect rolbypassrls = true — this is why the server path is unaffected
