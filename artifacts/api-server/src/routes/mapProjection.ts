@@ -115,10 +115,10 @@ import { fetchBlockedSet } from "../lib/blocks.js";
 import { listMapTravelers } from "../lib/mapTravelers.js";
 import { readCircleLocations } from "../lib/circleLocationsRead.js";
 import { readBuddyMapPins } from "../lib/buddyMapRead.js";
-import {
-  readTripStopLayer,
-  type TripLayerReport,
-} from "../lib/mapProjectionTripRead.js";
+import { readTripStopLayer, type TripLayerReport } from "../lib/mapProjectionTripRead.js";
+// Map §20 / census-discovery D10 — Discovery's owner reader, and the Map's own fold.
+import { DISCOVERY_CANDIDATE_PROJECTION_FLAG, readDiscoveryCandidatesForViewer } from "../lib/discoveryCandidate.js";
+import { foldDiscoveryCandidates, refusedDiscoveryCandidates, selectDiscoveryCandidateRows, type DiscoveryCandidateReport } from "../lib/mapDiscoveryCandidates.js";
 import { findNearbyGems } from "../services/hiddenGems/HiddenGemDiscoveryService.js";
 import { applyGemPrivacyBatch } from "../services/hiddenGems/HiddenGemPrivacyGuard.js";
 import { readLiveClaims, toLiveClaimEnvelope } from "../lib/liveClaimRead.js";
@@ -506,7 +506,7 @@ router.get(
         liveEnrichment: null,
         crowdFlow: null,
         producers: null,
-        places: null,
+        places: null, discoveryCandidates: null,
         trips: null,
         worldIntelligence: null,
         display: null,
@@ -596,7 +596,7 @@ router.get(
         liveEnrichment: null,
         crowdFlow: null,
         producers: null,
-        places: null,
+        places: null, discoveryCandidates: null,
         trips: null,
         worldIntelligence: null,
         display: null,
@@ -1034,7 +1034,7 @@ router.get(
         liveEnrichment: null,
         crowdFlow: null,
         producers: null,
-        places: null,
+        places: null, discoveryCandidates: null,
         trips: null,
         worldIntelligence: null,
         display: null,
@@ -1328,6 +1328,89 @@ router.get(
 
     const { page, nextCursor } = paginate(servable, cursor, limit);
 
+    // ── Map §20 candidate relevance — census-discovery A25 / decision D10 ────
+    //
+    // §20 gives Discovery ownership of "Candidate relevance" and says the Map
+    // CONSUMES the owner's projection instead of re-deriving place data.
+    // Discovery's half — lib/discoveryCandidate.readDiscoveryCandidatesForViewer
+    // — was built and had no caller anywhere but its own test, which is why the
+    // census graded A25 "a reader nobody reads" and filed the call site here.
+    // This is that call, and it is IN THIS FILE on purpose: D10 names the
+    // gateway, and a reader consumed only through a Map helper would leave the
+    // gateway's own source still not naming it.
+    //
+    // WHY IT RUNS HERE, LAST. The reader produces no objects; it ANNOTATES
+    // place objects that have already been through servable → enrich → §24 →
+    // aggregation → §31 ranking → display → paging. Running it over the page
+    // means it can neither resurrect an object a gate removed nor add one, and
+    // it ranks only what the viewer is actually being shown. Which objects may
+    // be asked about — `place` kind, still at PLACE_PRIVACY_CLASS, still
+    // carrying the Discovery served id — is lib/mapDiscoveryCandidates's rule;
+    // a §24-COARSENED place is excluded there, because hanging a projection
+    // carrying truthClass + confidence + freshness off it would restate inside
+    // `payload` exactly the fields coarsenForZone just deleted at the top.
+    //
+    // THE GATE IS DISCOVERY'S OWN, NOT A SECOND ONE. This projection is
+    // Discovery's to publish, and `discovery_candidate_projection_enabled`
+    // (migration 2361, seeded FALSE, fail-closed through isFlagEnabled) is the
+    // switch that says whether it may be served at all. Minting a Map-side flag
+    // for the same behaviour would let this gateway serve a projection while
+    // its owner's gate was shut — routing around the gate rather than
+    // respecting it. So the Map adds no switch of its own: this layer is dark
+    // until Discovery's row is flipped, and dark twice over while
+    // `map_projection_enabled` is off.
+    //
+    // NEVER FATAL, AND NEVER SILENT. A throwing reader is caught and reported
+    // as `read_threw` with `coverage: "nothing"`, and the page is served
+    // unchanged — an empty candidate set caused by a failure must not be
+    // byte-identical to one the reader produced on purpose (`11` §9, via
+    // lib/discoveryRefusal, whose `coverage` vocabulary this report reuses).
+    let discoveryCandidates: DiscoveryCandidateReport | null = null;
+    let served: MapObject[] = page;
+    if (wantKind("place")) {
+      const selection = selectDiscoveryCandidateRows(page);
+      let candidateFlagOn = false;
+      try {
+        // LITERAL, like every other flag read in this handler, so
+        // check:flag-polarity can resolve which flag is read and confirm it is
+        // a capability rather than a stop. DISCOVERY_CANDIDATE_FLAG_PIN at the
+        // foot of this file makes a rename in Discovery's module a TYPE ERROR
+        // here rather than a silently-diverging second spelling.
+        candidateFlagOn = await isFlagEnabled(sc, "discovery_candidate_projection_enabled");
+      } catch {
+        candidateFlagOn = false;
+      }
+      if (!candidateFlagOn) {
+        discoveryCandidates = refusedDiscoveryCandidates("flag_off", selection);
+      } else if (selection.rows.length === 0) {
+        // Nothing eligible is not a refusal: the layer looked and there was
+        // nothing to ask about, so `refusal` and `coverage` are both null and
+        // the counts (`servedPlaces` vs `eligible: 0`) say why.
+        discoveryCandidates = foldDiscoveryCandidates(page, selection, {
+          candidates: [], rankedBy: "none", suppressedWrites: 0,
+        }).report;
+      } else {
+        // `served: false` inside the reader hands the ranker a client that
+        // cannot write: a Map read must never leave a rank_events impression
+        // for a Discovery page the user never saw. The count comes back in the
+        // report as the proof of it.
+        let outcome = null;
+        try {
+          outcome = await readDiscoveryCandidatesForViewer(
+            sc,
+            selection.rows,
+            user.id,
+            selection.city,
+          );
+        } catch {
+          outcome = null;
+        }
+        const folded = foldDiscoveryCandidates(page, selection, outcome);
+        served = folded.objects;
+        discoveryCandidates = folded.report;
+      }
+    }
+
     // WHICH BRANCH RAN, as a header as well as a body field: an operator
     // watching the edge must be able to see the trip layer flip from the
     // canonical `trips` read to the §19.4 projection without parsing a body.
@@ -1344,7 +1427,7 @@ router.get(
 
     res.json({
       enabled: true,
-      objects: page,
+      objects: served,
       viewport: { bbox, zoom, center: { lat, lng }, radiusKm },
       total: servable.length,
       nextCursor,
@@ -1377,6 +1460,12 @@ router.get(
       // also absent from `sources`). Otherwise the row count and whether the
       // bounded read was a SAMPLE of the viewport — see lib/mapProjectPlace.
       places: placesReport.report,
+      // Map §20 candidate relevance, from Discovery's own reader. Null when the
+      // `place` kind was not requested. Otherwise counts + a named refusal +
+      // lib/discoveryRefusal's `coverage`, so a page carrying no `candidate` is
+      // never ambiguous between "Discovery's gate is shut", "the read failed"
+      // and "the reader ran and had nothing to add". See lib/mapDiscoveryCandidates.
+      discoveryCandidates,
       // Null when the trip_stop layer was not requested. Otherwise WHICH
       // BRANCH RAN (`path`), the capability verdict that chose it, the named
       // refusal when the layer could not be read, and the fold counters — so
@@ -1398,3 +1487,22 @@ router.get(
 );
 
 export default router;
+
+/**
+ * Compile-time pin for the flag literal read at the Map §20 candidate-relevance
+ * call site, exactly as CROWD_FLOW_FLAG_PIN and WORLD_INTELLIGENCE_FLAG_PIN pin
+ * theirs: the literal exists so check:flag-polarity can resolve the read, and
+ * renaming the constant becomes a TYPE ERROR rather than a silently-diverging
+ * second spelling of a flag Discovery owns.
+ *
+ * IT LIVES DOWN HERE, below `export default router`, and that is not style.
+ * This file is cited from docs/ with ANCHORED citations (`path:line#symbol`)
+ * that check:doc-citations re-reads at the cited line; the last of them sits at
+ * the display-resolver call inside the handler. A declaration inserted above it
+ * would move every anchor below the insertion point and break citations this
+ * lane may not edit. So the whole layer was added line-neutrally above that
+ * line and everything new is declared after it.
+ */
+const DISCOVERY_CANDIDATE_FLAG_PIN: "discovery_candidate_projection_enabled" =
+  DISCOVERY_CANDIDATE_PROJECTION_FLAG;
+void DISCOVERY_CANDIDATE_FLAG_PIN;
