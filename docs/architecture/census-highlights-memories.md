@@ -1531,7 +1531,7 @@ named exactly which files to look at; this is what was found.
 from `014a25d5`. It was merged into `claude/sweet-fermat-fmx7up` at `d4be8e952` — 141 commits
 further on. `head_commit` stays `254e1876`, which is legitimate under the checker's stated
 rule ("ANCESTOR-OF-HEAD, not ancestor-of-main") because the merge commit makes it one, and
-`live-db.yml:392#fetch-depth` clones deep enough for CI to resolve it. **It is still
+`live-db.yml:421#fetch-depth` clones deep enough for CI to resolve it. **It is still
 pre-squash**, so the owner follow-up B.1 already records — re-declare at the squash when this
 lands — is unchanged and still owed.
 

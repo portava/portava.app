@@ -2257,6 +2257,181 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/lib/discoveryCacheEligibility.ts",
     "artifacts/api-server/src/test/discoveryCacheBEligibility.test.ts",
   ],
+  // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
+  //
+  // For as long as this table has existed, census-passport.md had NO entry
+  // here, and the omission was deliberate and self-documenting: §13.7 of that
+  // document names this very file, and says a head_commit declared without a
+  // scope would move the census from "no head_commit declared — CANNOT BE
+  // CHECKED" to "declares one but has no scope — CANNOT BE CHECKED". Both are
+  // reported by name and neither is a pass. So the two halves had to land
+  // together, and they do: the declaration is in census-passport.md §18 and the
+  // scope is here.
+  //
+  // HOW THIS LIST WAS DERIVED, because a hand-picked scope is the defect
+  // checkCensusScopeCoverage.ts exists to catch. It is the set of repo files
+  // census-passport.md CITES, extracted with that checker's own CITE_RE and
+  // resolved with its own resolution rule, minus the machinery
+  // NOT_GRADED excludes (its guard scripts and package.json). Nothing was added
+  // because it felt in scope and nothing was dropped because it was
+  // inconvenient. Two deliberate additions on top of the mechanical set, both
+  // stated so they can be argued with:
+  //
+  //   (1) SIX AMBIGUOUS BASENAMES, resolved by hand. `routes/passport.ts`,
+  //       `UnifiedStampService.ts`, `StampAwardEngine.ts`, `routes/follows.ts`
+  //       and `PassportHero.tsx` each match TWO files, because this repository
+  //       carries stray staging copies under `files/`, `follows-backend/` and
+  //       `portava-stamp-wave3-files/`. checkCensusScopeCoverage refuses to
+  //       guess and counts them as neither covered nor uncovered, so they cost
+  //       no coverage either way — but leaving the LIVE `routes/passport.ts`
+  //       unwatched would be a Passport census that does not watch the Passport
+  //       route, which is the §12.5 hole in miniature. The live path is the one
+  //       under artifacts/api-server/ or travel-buddy-standalone/; the staging
+  //       copies are not listed.
+  //   (2) `travel-buddy-standalone/src/components/PassportStamps.tsx` and
+  //       `PassportStampCard.tsx`, the copies §16 re-cites for P66 after line
+  //       302 cited the repo-root pair. Both pairs are watched — see the note
+  //       on the root pair at the foot of this entry.
+  //
+  // NEVER THE ACKNOWLEDGEMENT LEDGER, and never a guard script: the regress at
+  // the head of this table, and the NOT_GRADED convention in
+  // checkCensusScopeCoverage.ts. census-passport.md cites
+  // checkCensusFreshness.ts and checkWriterlessReads.ts as the things that
+  // MEASURED it; scoping either would age this census on every unrelated lane's
+  // guard work, and this very commit edits one of them.
+  //
+  // WHAT THIS DOES NOT DO: it does not re-grade anything, and it does not make
+  // any verdict more likely to be right. It makes a change to a graded file
+  // AUDIBLE. §18.4 of the census records what is still not certified.
+  "census-passport.md": [
+    // The Passport services themselves — the supply side every C verdict cites.
+    "artifacts/api-server/src/services/passport/EventPassportService.ts",
+    "artifacts/api-server/src/services/passport/OpenToPlansService.ts",
+    "artifacts/api-server/src/services/passport/PassportConsumerProjections.ts",
+    "artifacts/api-server/src/services/passport/PassportJourneyService.ts",
+    "artifacts/api-server/src/services/passport/PassportMapService.ts",
+    "artifacts/api-server/src/services/passport/PassportMemoryService.ts",
+    "artifacts/api-server/src/services/passport/PassportPrivacyGuard.ts",
+    "artifacts/api-server/src/services/passport/PassportProjectionService.ts",
+    "artifacts/api-server/src/services/passport/PassportReputationService.ts",
+    "artifacts/api-server/src/services/passport/PassportStampService.ts",
+    "artifacts/api-server/src/services/passport/PassportTravelIdentityService.ts",
+    "artifacts/api-server/src/services/passport/PassportYearbookService.ts",
+    "artifacts/api-server/src/services/passport/SharedContextService.ts",
+    "artifacts/api-server/src/services/passport/StampAwardEngine.ts",
+    "artifacts/api-server/src/services/passport/UnifiedStampService.ts",
+    // Trust: §9/§10 are graded here, and the neutral-50 defect P-rows rest on lives in these three.
+    "artifacts/api-server/src/services/trust/TrustAdminService.ts",
+    "artifacts/api-server/src/services/trust/TrustEventService.ts",
+    "artifacts/api-server/src/services/trust/TrustPrivacyGuard.ts",
+    "artifacts/api-server/src/services/trust/TrustScoreService.ts",
+    // Server routes and libs the rows cite as consumers, producers or counter-examples.
+    "artifacts/api-server/src/compass/CompassTools.ts",
+    "artifacts/api-server/src/lib/discoveryModifiers.ts",
+    "artifacts/api-server/src/lib/discoveryPde.ts",
+    "artifacts/api-server/src/lib/mapTravelers.ts",
+    "artifacts/api-server/src/lib/passportTelemetry.ts",
+    "artifacts/api-server/src/routes/adminStamps.ts",
+    "artifacts/api-server/src/routes/airport.ts",
+    "artifacts/api-server/src/routes/availability.ts",
+    "artifacts/api-server/src/routes/compass.ts",
+    "artifacts/api-server/src/routes/discovery.ts",
+    "artifacts/api-server/src/routes/discoverySearch.ts",
+    "artifacts/api-server/src/routes/follows.ts",
+    "artifacts/api-server/src/routes/geofence.ts",
+    "artifacts/api-server/src/routes/hiddenGems.ts",
+    "artifacts/api-server/src/routes/location.ts",
+    "artifacts/api-server/src/routes/mapProjection.ts",
+    "artifacts/api-server/src/routes/mapTravelers.ts",
+    "artifacts/api-server/src/routes/passport.ts",
+    "artifacts/api-server/src/routes/rentABuddy.ts",
+    "artifacts/api-server/src/routes/safeReturn.ts",
+    "artifacts/api-server/src/routes/sharedMoments.ts",
+    "artifacts/api-server/src/routes/telegraph.ts",
+    "artifacts/api-server/src/routes/trips.ts",
+    // Other server surfaces a row grades: memory participant visibility (P77's blocker), telegraph and appeals shared context, interaction permissions, the airport engine P-rows cite for contrast.
+    "artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts",
+    "artifacts/api-server/src/services/appeals/resolveAppeal.ts",
+    "artifacts/api-server/src/services/interactionPermissions.ts",
+    "artifacts/api-server/src/services/memory/memoryParticipantVisibility.ts",
+    "artifacts/api-server/src/services/telegraph/sharedContext.ts",
+    // Migrations a row cites as the storage its verdict turns on.
+    "artifacts/api-server/src/migrations/0166_feature_flags_reconcile.sql",
+    "artifacts/api-server/src/migrations/0198_place_contributor_stamps.sql",
+    "artifacts/api-server/src/migrations/20260730_compass_intelligence_graph.sql",
+    "artifacts/api-server/src/migrations/2290_intelligence_graph_node_kinds.sql",
+    "artifacts/api-server/src/migrations/2309_passport_stamp_type_vocabulary.sql",
+    // The server suites that PIN the C verdicts.
+    "artifacts/api-server/src/test/compass-social.test.ts",
+    "artifacts/api-server/src/test/mapTravelers.test.ts",
+    "artifacts/api-server/src/test/passportMapPresence.test.ts",
+    "artifacts/api-server/src/test/passportProjection.test.ts",
+    "artifacts/api-server/src/test/passportTrustConfidenceBasis.test.ts",
+    "artifacts/api-server/src/test/trustEventCoverage.test.ts",
+    "artifacts/api-server/src/test/trustStampVerified.test.ts",
+    // The client half. A route with no screen is not a built requirement, and more than half of this census's rows are graded on a component.
+    "travel-buddy-standalone/app/passport/journeys.tsx",
+    "travel-buddy-standalone/app/passport/my-world.tsx",
+    "travel-buddy-standalone/app/passport/plans.tsx",
+    "travel-buddy-standalone/app/passport/shared-context.tsx",
+    "travel-buddy-standalone/app/passport/travel-identity.tsx",
+    "travel-buddy-standalone/app/passport/yearbook.tsx",
+    "travel-buddy-standalone/scripts/check-test-mocks.mjs",
+    "travel-buddy-standalone/src/components/MemoriesTab.tsx",
+    "travel-buddy-standalone/src/components/PassportHero.tsx",
+    "travel-buddy-standalone/src/components/PassportStampCard.tsx",
+    "travel-buddy-standalone/src/components/PassportStamps.tsx",
+    "travel-buddy-standalone/src/components/PassportVerificationStamp.tsx",
+    "travel-buddy-standalone/src/components/StampCard.tsx",
+    "travel-buddy-standalone/src/components/StampDetailArtwork.tsx",
+    "travel-buddy-standalone/src/components/passport/AvailabilityChip.tsx",
+    "travel-buddy-standalone/src/components/passport/PassportHomePreviews.tsx",
+    "travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx",
+    "travel-buddy-standalone/src/components/passport/PassportQuickLinks.tsx",
+    "travel-buddy-standalone/src/components/passport/PassportStampCollection.tsx",
+    "travel-buddy-standalone/src/components/passport/TravelerStateChip.tsx",
+    "travel-buddy-standalone/src/components/passport/__tests__/PassportRatifiedIdentity.decision.component.test.ts",
+    "travel-buddy-standalone/src/components/stamps/StampDetailModal.tsx",
+    "travel-buddy-standalone/src/components/ui/VerifiedStamp.tsx",
+    "travel-buddy-standalone/src/features/passport/AvailabilityScreen.tsx",
+    "travel-buddy-standalone/src/features/passport/ContributionCard.tsx",
+    "travel-buddy-standalone/src/features/passport/EventPassportScreen.tsx",
+    "travel-buddy-standalone/src/features/passport/JourneysScreen.tsx",
+    "travel-buddy-standalone/src/features/passport/MyWorldScreen.tsx",
+    "travel-buddy-standalone/src/features/passport/PassportQrSheet.tsx",
+    "travel-buddy-standalone/src/features/passport/PlansScreen.tsx",
+    "travel-buddy-standalone/src/features/passport/SharedContextScreen.tsx",
+    "travel-buddy-standalone/src/features/passport/TravelIdentityScreen.tsx",
+    "travel-buddy-standalone/src/features/passport/TripInvitePickerSheet.tsx",
+    "travel-buddy-standalone/src/features/passport/TrustScreen.tsx",
+    "travel-buddy-standalone/src/features/passport/YearbookScreen.tsx",
+    "travel-buddy-standalone/src/features/passport/__tests__/JourneysScreen.component.test.tsx",
+    "travel-buddy-standalone/src/features/passport/__tests__/MyWorldScreen.component.test.tsx",
+    "travel-buddy-standalone/src/features/passport/__tests__/TrustDomainsFromServer.component.test.tsx",
+    "travel-buddy-standalone/src/features/passport/installPassportTelemetry.ts",
+    "travel-buddy-standalone/src/features/passport/passportNav.ts",
+    "travel-buddy-standalone/src/features/passport/passportQrProjection.ts",
+    "travel-buddy-standalone/src/features/passport/passportTelemetry.ts",
+    "travel-buddy-standalone/src/features/passport/stampVerificationPresentation.ts",
+    "travel-buddy-standalone/src/features/passport/useAvailabilityEditor.ts",
+    "travel-buddy-standalone/src/features/passport/useContributions.ts",
+    "travel-buddy-standalone/src/features/passport/usePassportPlans.ts",
+    "travel-buddy-standalone/src/features/passport/usePassportWorld.ts",
+    "travel-buddy-standalone/src/features/passport/useTravelIdentity.ts",
+    "travel-buddy-standalone/src/features/passport/useTrustProjection.ts",
+    "travel-buddy-standalone/src/features/passport/viewerActions.ts",
+    "travel-buddy-standalone/src/hooks/usePassportProjection.ts",
+    "travel-buddy-standalone/src/navigation/portavaRoutes.ts",
+    "travel-buddy-standalone/src/services/passportProjection.ts",
+    "travel-buddy-standalone/src/services/passportSharedContext.ts",
+    "travel-buddy-standalone/src/services/passportStampMappers.ts",
+    "travel-buddy-standalone/src/services/passportStamps.ts",
+    "travel-buddy-standalone/src/theme/passportTokens.ts",
+    "travel-buddy-standalone/src/utils/destinationGrouping.ts",
+    // Repo-root staging copies of two stamp components. P66 cites these paths BY NAME (census-passport.md line 302) and they resolve, so they are what check:census-scope-coverage counts; §16 later re-cites the standalone copies, which are listed above. Both are watched rather than one chosen, because choosing would be this entry deciding which citation §16 superseded.
+    "src/components/PassportStampCard.tsx",
+    "src/components/PassportStamps.tsx",
+  ],
 };
 
 interface Ack {
