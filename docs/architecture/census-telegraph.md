@@ -6018,7 +6018,7 @@ Read against the code, one by one, they are NOT all benign:
 | file / site | classification |
 | --- | --- |
 | `routes/telegraph.ts` — 5 sites (a `feature_flags` gate, hashtag-follow enrichment, hashtag resolution, mention-profile resolution, the follow sets) | **Fail-closed or enrichment.** An unreadable table degrades the prompt or links nobody; `friends_only` users are EXCLUDED rather than admitted. The `blocks` read in the same block already binds and logs. Nothing here makes a claim to a traveller about their own data. |
-| `routes/telegraphStream.ts:178#const { data: membership, error: membershipErr } = await client` | **Fail-closed when §19 measured; CLOSED by §22.3, and the anchor text itself changed** — the read named here WAS the defect and the line now binds the error it used to drop, exactly as §16.6 and §20.4 record for their own sites. §19's classification was right on its own terms: an unreadable membership resolved to `forbidden`, and a refusal is not a plausible empty state. It was still a false statement about the caller's own membership, and §20.7 named it. |
+| `routes/telegraphStream.ts:390#const { data: membership, error: membershipErr } = await client` | **Fail-closed when §19 measured; CLOSED by §22.3, and the anchor text itself changed** — the read named here WAS the defect and the line now binds the error it used to drop, exactly as §16.6 and §20.4 record for their own sites. §19's classification was right on its own terms: an unreadable membership resolved to `forbidden`, and a refusal is not a plausible empty state. It was still a false statement about the caller's own membership, and §20.7 named it. |
 | `artifacts/api-server/src/routes/telegraphChat.ts:80#async function verifyThreadMember` and `artifacts/api-server/src/routes/telegraphChat.ts:301#const { data: tripMembership, error: tripMembershipErr } = await client` | **Fail-closed when §19 measured; CLOSED by §22.3, and BOTH anchor texts changed** — the first is now cited by the function rather than by a line that no longer exists in that form, because `verifyThreadMember` returns three outcomes instead of a boolean. The same shape as the `telegraphStream.ts` row above and closed the same way. |
 | `routes/telegraphChat.ts:200#res.status(200).json({ suggestions: suggestions ?? [] });` | **OPEN when §19 measured; CLOSED by §20.2.** The line still exists and is cited here at its current number; a refusal now stands above it, so the sentence that follows describes the tree at `6d4327d66`, not this one. It was T363's exact shape. An unreadable `telegraph_chat_suggestions` answers `{ suggestions: [] }` — "you have none" from a read that never happened. |
 | `routes/telegraphChat.ts:340#sendError(res, "not_found", "Suggestion not found");`, `artifacts/api-server/src/routes/telegraphChat.ts:446#sendError(res, "not_found", "Suggestion not found");`, `artifacts/api-server/src/routes/telegraphChat.ts:543#sendError(res, "not_found", "Suggestion not found");` | **OPEN when §19 measured; CLOSED by §20.2** — each now sits below a bound-error refusal, and each is cited at its current number. They were §18's class — three MORE sites of the defect §18 declared closed at twelve.** Same table, same `.maybeSingle()`, same confident 404 from a dropped error. |
@@ -6703,7 +6703,7 @@ name, that they are not in their own conversation, and the app will not recover 
   all four reachable handlers.
 - The trip gate beside it binds its own error
   (`routes/telegraphChat.ts:301#const { data: tripMembership, error: tripMembershipErr } = await client`).
-- The typing relay does the same (`routes/telegraphStream.ts:178#const { data: membership, error: membershipErr } = await client`).
+- The typing relay does the same (`routes/telegraphStream.ts:390#const { data: membership, error: membershipErr } = await client`).
 
 **Every case is PAIRED.** A suite asserting only "an outage is not a 200" would pass against a
 route that refuses everybody, so each outage case sits beside a control proving a genuine
@@ -7581,3 +7581,292 @@ read-path refusal or a log where there was silence, so no `C` becomes `W`.
   file to be watched for staleness. Naming a neighbour is not grading it.
 - **A client switching on the exact message text of the CAS-loss refusal.** The 400's wording is
   unchanged; the new 503 is a code that path never produced before.
+
+---
+
+
+> **RENUMBERED AT INTEGRATION, 2026-09-15.** This section was written as `§27` by the
+> TELEGRAPH lane on `claude/telegraph-lane-wave` and the SWALLOWED-READS lane wrote a
+> different `§27` on `claude/messaging-swallowed-reads` at the same time; both are above.
+> This one is now `§28` and every `§27.x` reference INSIDE it was renumbered with it.
+> Nothing else changed — no row, no verdict, no evidence. Under this census’s
+> LAST-STATEMENT-WINS rule the two sections are independent: `§27` moves NO verdict, and
+> the three rows this one moves (T178, T233, T416) are named in no other section of this
+> pass.
+
+## §28 — DELIVERED becomes a fact the bus already knew, reconnect stops starting from scratch, and the fan-out gets a size it will not exceed
+
+TELEGRAPH lane, 2026-09-15, worktree `claude/telegraph-lane-wave` off
+`claude/post-merge-census-redeclare` (`44ae0d4fe`). Three rows move. Everything
+else this section says is a BLOCKER, written down so the next lane does not
+re-derive it.
+
+**No migration was written, no database was touched, no flag was flipped.** That
+is the constraint this section worked inside and it is why it is three rows and
+not thirty: §1's closing paragraph is right that a large part of the 157 W is
+capped at 2810–2813 and at flags seeded FALSE, and nothing in a worktree moves
+that. The three rows below are the ones whose missing half was CODE, in files
+this lane holds, with no schema behind them.
+
+### 27.1 T178 — `message.delivered`, and what a delivered receipt is allowed to claim
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| T178 | N | **C** | §13.2 `message.delivered`. In the union (`artifacts/api-server/src/lib/telegraphEvents.ts:116#| "reconnect" | "message.delivered" | "stream.resumed";`) and emitted from the BUS rather than from a send handler (`artifacts/api-server/src/lib/telegraphEvents.ts:416#function emitDeliveryReceipt(`), so the four call sites that publish `message.created` cannot forget it. No migration, no flag: true on every deployment of this branch. |
+
+The row's reason was *"No delivered concept exists to emit (T69)"*, and T69's
+is *"no DELIVERED concept anywhere"*. Both were true about the SCHEMA and both
+missed the same thing: the realtime bus already observed a delivery fact on
+every fan-out and threw it away. `publishToUsers` knows whether a recipient had
+an open connection that ACCEPTED the event. That is what DELIVERED means in
+every messaging product that has one, and it needs no column.
+
+**What it claims, exactly, and what it refuses to.** That a recipient's open
+connection took the event. Not that the message reached device storage — this
+transport carries no client acknowledgement and inventing one would be a lie
+with a number attached. Not that anybody read it: that is `message.seen`, it has
+a different writer, and collapsing the two would destroy the distinction §7.4's
+unsend window is built on. A callback that THREW is not a delivery
+(`artifacts/api-server/src/test/telegraphDeliveryReceipts.test.ts:52#test("a delivered message emits message.delivered back to the sender", () => {`
+and the throwing-subscriber case beside it); counting the attempt would make
+DELIVERED mean "we tried".
+
+**It carries a count, not a roster.** A delivery receipt is also a presence
+disclosure — it says somebody's device is online right now — so `recipientUserId`
+is populated only when the audience was exactly one person
+(`artifacts/api-server/src/lib/telegraphEvents.ts:452#recipientUserId: recipients.size === 1 ? [...recipients][0] : null,`).
+In a two-party thread that names somebody the sender already knows. In a larger
+one it would turn a delivery receipt into a per-member presence feed — *who on
+this trip has their phone open* — which nobody in the thread agreed to publish.
+The rule keys off audience SIZE and not thread type, because this module does
+not know the thread type and a rule that has to ask a caller can be answered
+wrongly. The test asserts no member id appears anywhere on the wire
+(`artifacts/api-server/src/test/telegraphDeliveryReceipts.test.ts:91#test("a multi-recipient audience is counted, never named", () => {`).
+
+**`deliveredCount: 0` is a claim too, so it is scoped.** Zero means no
+connection on THIS instance took it, which is not the same as offline when a
+cross-instance broadcast hook is registered and another instance may hold the
+socket. The receipt says which world it is reporting from
+(`artifacts/api-server/src/lib/telegraphEvents.ts:454#crossInstance: _broadcastHook !== null,`)
+rather than letting a local zero read as a global one
+(`artifacts/api-server/src/test/telegraphDeliveryReceipts.test.ts:72#test("an offline audience is reported as delivered to nobody, not as silence", () => {`).
+The failure to deliver is also a counter — `messagesDeliveredNowhere`
+(`artifacts/api-server/src/lib/telegraphEvents.ts:440#if (origin === "local" && delivered.size === 0) stats.messagesDeliveredNowhere++;`)
+— because a realtime outage that reaches an operator as *"the app feels slow"*
+is unattributable, which is the same argument this file's own header already
+makes about every other thing it swallows.
+
+**An edit is not a delivery.** `message.updated` carries the same two fields a
+receipt is addressed from, and receipting one would report the same message
+delivered twice — which would make §28's duplicate-delivery SLO count this bus's
+own bookkeeping as a defect
+(`artifacts/api-server/src/test/telegraphDeliveryReceipts.test.ts:155#test("an edit is not a delivery", () => {`).
+
+**Mutation results, ten mutants.** Nine caught: suppressing the receipt (7 of 10
+tests red), naming a multi-party audience, counting a throwing callback as
+delivered, suppressing the zero-delivery receipt, counting the sender's own
+copy, emitting with no sender to address, hard-coding `crossInstance`, dropping
+the `messagesDeliveredNowhere` counter, and widening the event-type guard so any
+event could generate a receipt. **One survived and is reported rather than
+hidden:** removing `publishToUsersLocalNoReceipt` changes nothing, because the
+event-type guard already prevents recursion. That helper is defence in depth,
+not the mechanism; the mechanism is the guard, and the guard IS caught.
+
+### 27.2 T233 — reconnect resumes the conversation. It does not resume the event log, and cannot.
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| T233 | N | **W** | §17.3 reconnect resume. Every frame now carries an `id:` line (`artifacts/api-server/src/routes/telegraphStream.ts:236#const frame = (id: string | null, event: string, data: unknown) => {`), so an EventSource returns its own `Last-Event-ID` and the cursor round-trips through the transport; the messages missed while away are replayed from `messages` (`artifacts/api-server/src/routes/telegraphStream.ts:139#async function readResume(`) and `stream.resumed` states on every connection whether the gap was actually closed (`artifacts/api-server/src/routes/telegraphStream.ts:304#frame(null, "stream.resumed", { type: "stream.resumed", ...outcome, ts: new Date().toISOString() });`). **W and not C: only the CONVERSATION resumes.** |
+
+The row said *"The SSE stream carries no cursor … Gap recovery is delegated
+entirely to polling"*. It carries one now, and polling is a fallback rather than
+the mechanism.
+
+**Why W.** The requirement names a *conversation/event* sequence and only the
+first half is recoverable here. The bus is in-memory and lossy **by design** —
+T369 records that the real tree emits no durable event log and that nothing in
+production is rebuildable from events — so there is nothing to replay for
+typing, presence or receipts, and replaying a typing indicator from four minutes
+ago would be a false statement about the present rather than a recovered fact
+about the past. **EXACT BLOCKER: a durable event log. The substrate for one is
+`telegraph_outbox` in migration 2810, which no database has (T154, T195).**
+Until that is applied and drained, the event half of this row cannot move, and
+no amount of code in this file changes that.
+
+**The cursor is a timestamp, and it is inclusive.** `messages` has no sequence
+column on this tree — 2810's exists in no database (T228) — so the cursor is
+expressed in `created_at` coordinates, the same convention migration 2400 used
+for the §14.3 bound and for the same reason. The comparison is `>=`, not `>`
+(`artifacts/api-server/src/routes/telegraphStream.ts:173#.gte("created_at", since)`):
+`created_at` is not unique, an exclusive cursor drops a tied boundary row
+silently and forever, and a duplicate is something the client already absorbs
+because every replayed frame is labelled and carries a messageId
+(`artifacts/api-server/src/routes/telegraphStream.ts:288#replay: true,`).
+A gap is recoverable by nothing.
+
+**A resume that did not happen says so.** Both reads bind their error. This is
+the §20.7 class exactly: supabase-js resolves `{data: null, error}`, so an
+unchecked read would make *"nothing arrived while you were away"*
+byte-identical to *"we could not look"*, and a client that believed the first
+would stop polling and lose the conversation. An unreadable roster and an
+unreadable `messages` both resume NOTHING and report `resumed: false`
+(`artifacts/api-server/src/test/telegraphStreamResume.test.ts:258#test("an unreadable roster resumes NOTHING and says so", async () => {`).
+A malformed cursor is refused as a cursor rather than treated as the beginning
+of time, and a cursor older than the 24-hour window is refused rather than
+silently truncated
+(`artifacts/api-server/src/test/telegraphStreamResume.test.ts:297#test("a cursor older than the resume window is refused rather than silently truncated", async () => {`);
+a truncated replay reports `resumed: false` for the same reason, because a
+partial replay that claimed success leaves a hole nobody looks for.
+
+**Scope of the replay.** Live threads only — a thread the caller has LEFT is not
+replayed into their stream — and the caller's own sends are excluded, because
+their client wrote them optimistically and already holds them.
+
+**Mutation results, eleven mutants, all caught:** exclusive cursor, roster error
+swallowed, messages error swallowed, `left_at` filter dropped, own messages
+replayed, `id:` line removed, `Last-Event-ID` ignored, malformed cursor treated
+as epoch, resume window unbounded, `stream.resumed` never emitted (7 of 9 red),
+replay marker dropped.
+
+### 27.3 T416 — the fan-out gets a bound, on the path rather than on a thread type that does not exist
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| T416 | N `∅` | **W** | §30A.12 bounded fan-out. Two bounds, both exported and both proved: presence-class events are shed above 50 recipients (`artifacts/api-server/src/lib/telegraphEvents.ts:596#export const FANOUT_PRESENCE_MAX = 50;`) and every event degrades to a single poll signal above 500 (`artifacts/api-server/src/lib/telegraphEvents.ts:606#export const FANOUT_HARD_MAX = 500;`). The absence is no longer unguarded. **W and not C: §30A.12's Event conversations still do not exist (T415), so the bound has never been exercised by a real large thread.** |
+
+The row read *"Unguarded absence: `publishToThread` fans out to every active
+member with no size bound, and the rule is unviolated only because event
+conversations do not exist."* The second clause is still true and is the ceiling;
+the first is not.
+
+**The bound belongs on the PATH.** `publishToThread` is the same function for
+every thread type, so a bound attached to a thread type that does not exist yet
+is a bound that will be missing on the day it first matters. It is applied to
+the resolved audience, which is the thing that actually costs.
+
+**Two bounds, because there are two costs.** Presence-class events — typing,
+read receipts, per-message seen, and the delivery receipts §28.1 just added —
+cost O(members) per KEYSTROKE and carry nothing a reader loses by missing, so
+they stop at the smaller bound
+(`artifacts/api-server/src/test/telegraphFanoutBounds.test.ts:93#test("presence is SHED above the presence bound, and counted", async () => {`).
+Message-class events carry the conversation itself and are deliberately NOT shed
+for being popular
+(`artifacts/api-server/src/test/telegraphFanoutBounds.test.ts:119#test("a message SURVIVES the presence bound — the conversation is the payload", async () => {`);
+above the hard bound they degrade to a poll signal that names the original type,
+so one publish costs a constant payload instead of a roster and no message body
+rides a fan-out that wide
+(`artifacts/api-server/src/test/telegraphFanoutBounds.test.ts:134#test("above the hard bound a message degrades to a poll signal, never to silence", async () => {`).
+**Degrading is not silence** — the member is told the thread moved and what kind
+of thing moved — and both sheds are counters, not silent drops.
+
+**What this does NOT close, stated so it is not quoted as more than it is.** The
+shed is by conversation SIZE, not by LOAD. T259's second half asks for
+server-side shedding *under load*, and there is still no load signal here; T239's
+gap is a bandwidth signal on the device, which is a client fact this lane holds
+no file for. Neither row moves. Both thresholds also sit above every conversation
+this repository can create, which is why nothing shipped changes behaviour — and
+why this row is W: the mechanism is proved on a synthetic roster.
+
+**Mutation results, eight mutants, all caught:** presence bound removed,
+`message.created` added to the presence class, hard bound degrading to silence,
+degraded signal carrying the original payload, hard bound removed, presence shed
+applied to small threads, counters not incremented, `originalType` dropped.
+
+### 27.4 Rows examined and NOT moved, with the exact blocker
+
+Read in full from the `CENSUS_INTEGRITY_DUMP=ALL` dump — 157 W and 61 N — under
+last-statement-wins. These are the ones that looked closable and are not.
+
+| id | exact blocker |
+| --- | --- |
+| T69, T72, T139, T141, T156, T210, T228, T230, T231 | Columns that exist only in `2810`/`2811`. **No database has run them.** T69 gains DELIVERED as a concept from §28.1 — two of six becomes three of six — and still has no `lifecycleState` column and no UNSENT, so it does not move. |
+| T142, T143, T144, T147, T154, T158, T161, T163, T181, T195, T196 | Same: 2810–2813 tables and triggers, applied nowhere. |
+| T211, T313, T389, T390, T444 | Migration `2400` applied nowhere AND `telegraph_history_bound_enabled` seeded FALSE. Two independent external settings; code changes neither. |
+| T276, T278, T283, T284 | Flag seeded FALSE plus an unapplied migration. T278 additionally: five of its six origins are unverifiable in principle here. |
+| T53, T63, T225, T243, T274, T371 | Voice. Needs a migration widening `messages.media_type` and an audio MIME in the pipeline. Neither is this lane's to write. |
+| T75, T76, T77, T326, T327, T338, T348, T387 | Unsend. PR #472 is unmerged and applied to `portava-ci` only; §26.3 is the standing record. |
+| T347 | SLO-02's exact form needs the idempotency key the send path does not have (T231) — which needs 2810. |
+| T233 (event half), T369, T428 | A durable event log. Substrate is `telegraph_outbox` (2810), applied nowhere. |
+| T435 | A durable diagnostics audit needs a `record_type` `admin_access_log` does not accept — a migration, or a false label in an audit trail. |
+| T11, T123, T295, T320, T411, T413, T423, T448 | Client-side, and this lane deliberately did not take them: the client test surface here is `jest`, which this worktree's brief does not establish a command for, and a client change proved only by typecheck is a change this census would have to record as untested. |
+| T35, T319, T359, T397, T445 | Named files belong to other lanes (`routes/circle.ts`, `services/groupChatSync.ts`, `NotificationDeduplicationService.ts`). |
+| T259, T239 | See 27.3 — a LOAD signal and a BANDWIDTH signal, neither of which exists. Size is not load. |
+
+### 27.5 The swallowed reads this lane found and did NOT fix, and why
+
+§20.7's class, re-scanned across the Telegraph tree. Result:
+`src/services/telegraph/`, `src/domain/telegraph/`, `src/server/telegraph/` and
+`src/routes/telegraph*.ts` hold **no** `const { data } = await` site — the
+earlier lanes closed them. Two findings remain.
+
+**`src/routes/telegraph.ts` — five sites, ruled HARMLESS, reasoning here.** This
+file is the AI recommendation route and is not in `CENSUS_SCOPE`. Each of its
+five error-discarding reads fails CLOSED: an unreadable `feature_flags` degrades
+to no location context; an unreadable `user_hashtag_follows` or `hashtags`
+produces no span rather than a wrong one; an unreadable `profiles` empties the
+candidate set so no mention resolves; and an unreadable `user_follows` leaves
+both follow sets empty, which makes the `friends_only` and `interacted` tests
+false and therefore SUPPRESSES those mentions. None of the five can admit
+something a successful read would have refused. The one site in that file that
+could have — the `blocks` read — already binds its error and suppresses every
+mention span on failure.
+
+**`src/routes/messaging.ts` — four sites, REAL, and BLOCKED for a reason worth
+recording.** They are: the prior-`preferred_language` read whose dropped error
+makes the retranslate gate see a change that may not have happened and bill a
+200-message provider sweep; the lost-CAS-race status read that falls back to the
+literal `'accepted'` and so tells a caller their request was ACCEPTED when it may
+have been declined; the accept path's preview-message insert whose error is
+discarded, so a message that never landed leaves no record; and the highlights
+count in the unread badge, the last unbound read in a block whose two neighbours
+already log and under-report by choice. LDB-05 is still `divergent` and this is
+what is left of it.
+
+**The blocker is not the code.** A fix was written, tested and reverted. Any
+insertion in that file shifts lines, and `routes/messaging.ts` is cited by
+`census-compass.md` (three anchored citations), `census-trust.md` (one) and this
+census (roughly forty-five). `check:doc-citations` goes red on all of them, and
+repairing the first two means editing two other lanes' censuses — which this
+lane does not own — and ageing them in `check:census-freshness` besides. The
+same collision cost the union declarations in `lib/telegraphEvents.ts` their
+natural position: `census-layover.md` cites that file by the line number of its
+`payload` field comment, so the two new
+event types are declared on the existing `reconnect` line and documented below
+the interface, which is ugly and is the honest price of not silently repointing
+another lane's evidence. **Recommendation for the coordinator: the four
+`messaging.ts` sites are a single small commit plus four citation repoints
+across three censuses, and they should be done by whoever can touch all three.**
+
+### 27.6 What would turn this section red
+
+- **`message.delivered` losing its emitter.** It is emitted from the bus, so a
+  future send path cannot drop it by forgetting — but moving the emit back into
+  a handler would restore exactly the fragility it was placed there to avoid.
+- **An exclusive resume cursor.** `>` instead of `>=` reintroduces the silent
+  gap; the mutation is in the suite and goes red.
+- **Either fan-out bound rising above a real thread size, or `message.created`
+  entering `PRESENCE_CLASS_EVENTS`.** The second would shed conversations.
+- **A durable event log arriving.** Then T233's event half becomes a live
+  question and §28.2's ceiling must be re-derived rather than re-read.
+
+### 27.7 Headline, restated from the rows
+
+`check:census-integrity` parsed every one of the 451 and counts, at this commit:
+
+| Measure | Value |
+| --- | --- |
+| BUILT-AND-CORRECT | **231** |
+| BUILT-BUT-WRONG | **159** |
+| NOT-BUILT | **58** |
+| CANNOT-VERIFY | **3** |
+| **CONSTRUCTED%** = (231+159)/451 | **86.5 %** |
+| **CORRECT%** = 231/451 | **51.2 %** |
+
+This supersedes §24.2's `C 230 / W 157 / N 61 / X 3` and §1's much older
+`209 / 176 / 51`, both of which are left in place because this document is
+append-only. **The delta from §24.2 is exactly the three rows in §28.1–§28.3 and
+nothing else: T178 N→C, T233 N→W, T416 N→W.** It is the tool's count, not an
+addition sum — §24's own correction records what happens when a headline is
+arrived at by adding a pass's moves to the previous headline — and it certifies
+nothing about the other 448 rows, which were read in this pass and not
+re-measured.
