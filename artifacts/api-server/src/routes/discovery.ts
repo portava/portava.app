@@ -9,7 +9,7 @@
  *   category     string  for_you | places | food | nightlife | activities |
  *                        events | beaches | transport   (default: for_you)
  *   radiusKm     number  search radius 1–100 km  (default: 10)
- *   page         number  1-based page (default: 1); PAGE_SIZE=20.  cursor  string  base64url offset — GET /discovery/feed's spelling, decoded by decodeOffset — selecting the same window without the page arithmetic. Additive: `page` is untouched when it is absent, and it takes precedence when both are sent.
+ *   page         number  1-based page (default: 1); PAGE_SIZE=20.  cursor  string  base64url offset — GET /discovery/feed's spelling, decoded by decodeOffset — selecting the same window without the page arithmetic. Additive: `page` is untouched when it is absent, and it takes precedence when both are sent.  RESPONSE (`11` §5 Outputs): `cursor` — base64url offset of the NEXT window, or null at the end of the set; the key is always present, and its value feeds straight back into the `cursor` input above.
  *
  * Response: { places: DiscoveryPlace[], destination: string, total: number }
  *
@@ -1899,7 +1899,7 @@ router.get("/discovery", async (req, res) => {
           ? { liveRank: { mode: liveRanked.mode, readable: liveRanked.readable, windowSize: liveRanked.windowSize, demoted: liveRanked.demoted } }
           : {}),
       },
-    }, dbFailedSources);   // D11 serve path 1 of 4 — the cache-A serve
+    }, dbFailedSources, offset);   // D11 serve path 1 of 4 — the cache-A serve
     // Stage 0 instrumentation — serve points 1/2/3. Fire-and-forget, after the
     // response. These three paths ran no ranker; before this they wrote nothing
     // at all, which is why the 'discovery' surface had no rows.
@@ -2052,7 +2052,7 @@ router.get("/discovery", async (req, res) => {
     const geocodeMs = clientCoords ? 0 : Date.now() - geocodeT0;
     if (!coords) {
       res.json({ places: [], total: 0, destination, context: ctxLabel, cached: false, ageFilterMeta,
-        sourceSummary: { seededDbCount: 0, osmCount: 0, userCreatedCount: 0 } });
+        sourceSummary: { seededDbCount: 0, osmCount: 0, userCreatedCount: 0 }, cursor: nextDiscoveryCursor(offset, PAGE_SIZE, 0) });  // DC-22 — not one of the four serve paths, but one envelope shape: an un-geocodable destination answers with `cursor: null`, not a missing key.
       return;
     }
 
@@ -2142,7 +2142,7 @@ router.get("/discovery", async (req, res) => {
                 provenanceById: cCacheHit.provenanceById,
               });
               sendDiscoveryPlacesEnvelope(res, { places: cCandidates, total: cFiltered.length, destination, context: ctxLabel, cached: true, ageFilterMeta,
-                sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 } }, dbFailedSources);  // D11 serve path 2 of 4 — the Compass cache-B hit
+                sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 } }, dbFailedSources, offset);  // D11 serve path 2 of 4 — the Compass cache-B hit
               // Stage 0 — serve point 4. Replays a stored Compass order; no
               // ranker ran in this request, so rankedInRequest is false.
               void logDiscoveryServe(compassSc, {
@@ -2231,7 +2231,7 @@ router.get("/discovery", async (req, res) => {
               provenanceById: cProvenanceById,
             });
             sendDiscoveryPlacesEnvelope(res, { places: cFreshCandidates, total: cFiltered.length, destination, context: ctxLabel, cached: false, ageFilterMeta,
-              sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 } }, dbFailedSources);  // D11 serve path 3 of 4 — the Compass fresh rank
+              sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 } }, dbFailedSources, offset);  // D11 serve path 3 of 4 — the Compass fresh rank
             // Stage 0 — serve point 5. The Compass ranker DID run here, but
             // this path has never written a rank_events row: it returns before
             // the logImpression call on the cold path below.
@@ -2332,7 +2332,7 @@ router.get("/discovery", async (req, res) => {
           ? { liveRank: { mode: coldLiveRanked.mode, readable: coldLiveRanked.readable, windowSize: coldLiveRanked.windowSize, demoted: coldLiveRanked.demoted } }
           : {}),
       },
-    }, dbFailedSources);   // D11 serve path 4 of 4 — the cold fetch's legacy/PDE tail
+    }, dbFailedSources, offset);   // D11 serve path 4 of 4 — the cold fetch's legacy/PDE tail
   } catch (err) {
     req.log.error({ err }, "discovery route failed");
     // D11 / `11` §9. `meta.cacheLevel: "error"` was already here and was ALMOST
@@ -3845,25 +3845,61 @@ interface CuratedAndCanonicalPlaces {
  * response moves, and the `refusal` key an existing client has never seen is
  * simply ignored by it.
  */
-function sendDiscoveryPlacesEnvelope<T extends object>(
+function sendDiscoveryPlacesEnvelope<T extends { total: number }>(
   // `Response` is the fetch Response in this module (see fetchWithTimeout), so
   // the express one is taken from the function this forwards to — the same
   // spelling `sendGeocodeRefusal` above uses, for the same reason.
   res: Parameters<typeof sendDiscoveryRefusal>[0],
   envelope: T,
   failedSources: readonly string[],
+  // DC-22 leg 2 — the window this response served, so the envelope can name the
+  // NEXT one. Required rather than optional: a fifth serve path that forgot it
+  // must fail to compile, not quietly answer with a cursor stuck at page 1.
+  offset: number,
 ): void {
+  // `cursor` is attached HERE, above the success/refusal branch, and that
+  // position is the whole design:
+  //
+  //   - ONE place. The four paths physically cannot disagree about the key's
+  //     name, its value, or where it sits in the key order — which is the same
+  //     reason this helper exists at all.
+  //   - BEFORE the branch. `sendDiscoveryRefusal` ships `{ ...envelope, refusal }`,
+  //     so a refused body is the successful body plus exactly one key. Adding
+  //     the cursor only on the healthy branch would have broken that invariant:
+  //     a client could tell the two apart by a second, undesigned signal, and a
+  //     walk crossing a transient PARTIAL failure would lose its place in a set
+  //     it was still being served rows from.
+  const body = { ...envelope, cursor: nextDiscoveryCursor(offset, PAGE_SIZE, envelope.total) };
   if (failedSources.length === 0) {
-    res.json(envelope);
+    res.json(body);
     return;
   }
   sendDiscoveryRefusal(
     res,
-    envelope,
+    body,
     discoveryRefusal(
       "transient_db", "discovery_places_read_failed", "GET /discovery", "partial", failedSources,
     ),
   );
+}
+
+/**
+ * The `cursor` `11` §5 lists under **Outputs** — the token for the NEXT window.
+ *
+ * `null` once this window reaches the end of the set; the KEY is always present.
+ * Absence would make the envelope's key list depend on which window was asked
+ * for, and `src/test/discoveryCuratedSourceRefusal.test.ts` CONTROL 2 pins that
+ * list exactly. `null` is the terminator a client tests for; a missing key is
+ * a shape change.
+ *
+ * Same rule and same alphabet as `GET /discovery/feed`'s `nextCursor`
+ * (`nextOff < total ? encodeOffset(nextOff) : null`), so both Discovery routes
+ * mint cursors `decodeOffset` reads — and this route's OUTPUT round-trips
+ * straight back into its own `cursor` INPUT with no arithmetic in between.
+ */
+function nextDiscoveryCursor(offset: number, pageSize: number, total: number): string | null {
+  const next = offset + pageSize;
+  return next < total ? encodeOffset(next) : null;
 }
 
 /**
@@ -4001,25 +4037,36 @@ function resolveDiscoveryPaging(
   return { page: Math.floor(offset / pageSize) + 1, offset };
 }
 
-/* WHY THERE IS NO `nextCursor` KEY ON THIS ROUTE'S ENVELOPE.
+/* THE `cursor` KEY ON THIS ROUTE'S ENVELOPE — what it is called, and why.
  *
- * `GET /discovery/feed` answers with one, and the obvious completion of the
- * above is to do the same here. It is deliberately NOT done, and the reason is
- * an existing, deliberate contract: `src/test/discoveryCuratedSourceRefusal.test.ts`
- * CONTROL 2 asserts that a healthy `GET /discovery` answers with EXACTLY the
- * keys it answered with before, in exactly that order, on all four serve paths
- * — the pin the D11 refusal work put down so that a distinguishable FAILURE
- * could be added without a different SUCCESS. A `nextCursor` key breaks that
- * pin on every one of the four.
+ * `11` §5 "Recommendation API" lists `cursor` under BOTH Inputs
+ * ("pagination/cursor") and **Outputs**. An earlier pass shipped only the input
+ * half and recorded the reason here: `src/test/discoveryCuratedSourceRefusal.test.ts`
+ * CONTROL 2 pins this envelope's exact key list on all four serve paths, and
+ * emitting a key breaks that pin. That was a compromise against the spec rather
+ * than a reading of it — the pin exists to catch ACCIDENTAL shape drift, and an
+ * argued, spec-mandated key is not drift. CONTROL 2 has been updated to include
+ * `cursor`, with the reasoning written at the assertion, and it is still an
+ * exact set-and-order `deepEqual`: no future accident gets through it either.
  *
- * `cursor` is therefore an INPUT vocabulary here: it selects the window, the
- * `page` arithmetic is untouched, and the response shape does not move. A
- * client walks with `total` (already in the envelope) and the documented
- * PAGE_SIZE at the head of this file, exactly as a `page` client does today.
+ * NAME: `cursor`, which is the word `11` §5 uses. `GET /discovery/feed` in this
+ * same file emits `nextCursor` for the identical value, so the two routes do
+ * differ by a word — but on THIS route the input is already spelled `cursor`,
+ * so one word covers both directions and `?cursor=<body.cursor>` is the whole
+ * walk. `src/test/discoveryServeExposureCursor.test.ts` C4 also pins, from
+ * DC-22 leg 1's side, that no `nextCursor` key appears here.
  *
- * Emitting the key is the remaining half, and it belongs to whoever owns that
- * envelope contract — changing a shape another census pinned is not a thing to
- * do from inside this one.
+ * SEMANTICS: the base64url offset of the NEXT window (`encodeOffset`, the same
+ * alphabet `decodeOffset` reads), or `null` once the served window reaches the
+ * end of the set. The KEY IS ALWAYS PRESENT — `null` terminates a walk, and a
+ * key that came and went would make the pinned key list depend on which window
+ * was requested. Minted once, in `sendDiscoveryPlacesEnvelope`, so the four
+ * serve paths cannot disagree; attached above the refusal branch, so a PARTIAL
+ * refusal still tells a paging client where it is.
+ *
+ * `page` is untouched. With no `cursor` in the query the arithmetic above is
+ * character-for-character what it always was, and a `page` client that ignores
+ * the new key reads exactly the body it read before plus one field.
  */
 
 export default router;

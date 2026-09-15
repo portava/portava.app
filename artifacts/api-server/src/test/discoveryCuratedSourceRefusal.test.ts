@@ -280,6 +280,54 @@ const MIAMI = "destination=Miami&lat=25.77&lng=-80.19&radiusKm=10";
 /** `cacheKey(dest, cat, radius)` — the route's own L1 key shape. */
 const CACHE_A_FOOD = "miami:food:10";
 
+// ── DC-22 leg 2 — the cursor the envelope now OWES the client ────────────────
+//
+// `docs/specs/discovery-v1/11_API_Specification.md` §5 "Recommendation API"
+// lists `cursor` under **Outputs**. These helpers spell the contract out once,
+// independently of the route, so a wrong cursor is as fatal as a missing one.
+
+/** `routes/discovery.ts` `PAGE_SIZE`, and `encodeOffset`'s alphabet. */
+const PAGE_SIZE  = 20;
+const cursorFor  = (offset: number) => Buffer.from(String(offset)).toString("base64url");
+
+/**
+ * The cursor a window at `offset` in a set of `total` must carry: the token for
+ * the NEXT window, or `null` once this window reaches the end of the set. The
+ * key is always PRESENT — `null` is the terminator, absence is not, because a
+ * key that comes and goes is a key set that moves and CONTROL 2 pins it.
+ */
+const expectedCursor = (offset: number, total: number): string | null =>
+  offset + PAGE_SIZE < total ? cursorFor(offset + PAGE_SIZE) : null;
+
+/** 45 curated rows — more than two windows, with a SHORT final one. */
+const WALK_TOTAL = 45;
+const walkPlaces = (): DiscoveryPlace[] =>
+  Array.from({ length: WALK_TOTAL }, (_, i) =>
+    curatedPlace(`w${String(i).padStart(2, "0")}`, WALK_TOTAL - i));
+const walkIds  = Array.from({ length: WALK_TOTAL }, (_, i) => `db/w${String(i).padStart(2, "0")}`);
+const osmWalk  = (): DiscoveryPlace[] =>
+  Array.from({ length: WALK_TOTAL }, (_, i) => osmPlace(`node/${5000 + i}`));
+
+/** The cursor assertion every path shares: present, typed, and the RIGHT value. */
+function assertCursor(body: any, offset: number, what: string): void {
+  assert.ok(
+    Object.prototype.hasOwnProperty.call(body ?? {}, "cursor"),
+    `${what}: no \`cursor\` key — \`11\` §5 lists it as an OUTPUT, so a client ` +
+    `must not have to rebuild the offset arithmetic to walk this route`,
+  );
+  assert.ok(
+    typeof body.total === "number" && body.total > PAGE_SIZE,
+    `${what}: precondition — this fixture must serve more than one window ` +
+    `(total=${JSON.stringify(body?.total)}), or the cursor assertion below is vacuously null===null`,
+  );
+  assert.equal(
+    body.cursor, expectedCursor(offset, body.total),
+    `${what}: the cursor names the wrong window. A cursor that is emitted but ` +
+    `off by even one page silently drops or repeats items on every walk — worse ` +
+    `than emitting none at all`,
+  );
+}
+
 before(async () => {
   const app = express();
   app.use(express.json());
@@ -407,8 +455,29 @@ describe("GET /discovery — the curated half of the merge (D11's last residual)
     setClient({ rows: { feature_flags: COMPASS_ON_FLAGS } });
     _setTestDbPlacesOverride(async () => [curatedPlace("p1", 10)]);
 
-    const WITH_META = ["places", "total", "destination", "context", "cached", "ageFilterMeta", "sourceSummary", "meta"];
-    const NO_META   = ["places", "total", "destination", "context", "cached", "ageFilterMeta", "sourceSummary"];
+    // ── DELIBERATE CONTRACT CHANGE — DC-22 leg 2, `cursor` joins the pin ────
+    //
+    // WHAT CHANGED: one key, `cursor`, appended to both expected lists (and so
+    // to the envelope of all four serve paths).
+    //
+    // WHICH SPEC LINE REQUIRES IT: `docs/specs/discovery-v1/11_API_Specification.md`
+    // §5 "Recommendation API" lists, under **Outputs**: recommendation_id,
+    // items, reason labels where user-facing, `cursor`, model/version metadata.
+    // `cursor` appears under Inputs AND under Outputs. An earlier pass shipped
+    // it as an input only and recorded the reason as THIS pin (see the closing
+    // comment of `routes/discovery.ts`, now rewritten). That was a compromise
+    // against the spec, not a reading of it; this is the correction.
+    //
+    // THE PIN'S STRENGTH IS UNCHANGED. Still `assert.deepEqual` over
+    // `Object.keys(...)`: the EXACT key set in the EXACT order, on each of the
+    // four paths. It was not relaxed to a subset check, `toMatchObject`, or a
+    // "contains" assertion. Any further shape drift — an accidental key, a
+    // reordering, a key lost on one path only — still fails here, exactly as
+    // loudly as it did before. `cursor` is last because it is appended to the
+    // envelope at the single send helper, which is also what keeps the four
+    // paths from disagreeing about where it sits.
+    const WITH_META = ["places", "total", "destination", "context", "cached", "ageFilterMeta", "sourceSummary", "meta", "cursor"];
+    const NO_META   = ["places", "total", "destination", "context", "cached", "ageFilterMeta", "sourceSummary", "cursor"];
 
     _injectTestCacheEntry(CACHE_A_FOOD, [osmPlace("node/4242")]);
     const cacheA = await get(`/api/discovery?${MIAMI}&category=food`);
@@ -456,6 +525,121 @@ describe("GET /discovery — the curated half of the merge (D11's last residual)
       `a PARTIAL serve wrote ${rank.length} rank_events batches, not 1 — the items ` +
       `on this page WERE served, and dropping them under-counts the exposure ` +
       `denominator just as surely as counting a failure over-counts it`,
+    );
+  });
+
+  // ── CURSOR 1 — the walk a client actually performs ────────────────────────
+  //
+  // CONTROL 2 above proves the KEY is there on all four paths. It cannot prove
+  // the VALUE is right, and an emitted-but-wrong cursor is worse than none: it
+  // looks walkable and silently drops or repeats items. So this walks the set
+  // the only way that can fail for the real reason — by FOLLOWING the token the
+  // envelope hands back, never by rebuilding the offset the route used.
+  it("CURSOR: following the emitted cursor covers the result set exactly once and terminates", async () => {
+    setClient();
+    _setTestDbPlacesOverride(async () => walkPlaces());
+
+    const seen: string[] = [];
+    const cursors: Array<string | null> = [];
+    let cursor: string | null = null;
+    let windows = 0;
+
+    for (;;) {
+      // The cold path re-populates cache A after it serves, so each window is
+      // taken cold deliberately — otherwise window 2 would silently be testing
+      // a different serve path from window 1.
+      _clearTestCacheEntry(CACHE_A_FOOD);
+      const q = cursor === null && windows === 0 ? "" : `&cursor=${cursor}`;
+      const r = await get(`/api/discovery?${MIAMI}&category=food${q}`);
+      assertServePath(r.body, "cold");
+      assert.equal(r.body.total, WALK_TOTAL, "`total` is the whole set in every window");
+      assert.equal(r.body.refusal, undefined, "precondition: a healthy read");
+      assert.ok(
+        Object.prototype.hasOwnProperty.call(r.body, "cursor"),
+        `window ${windows}: no \`cursor\` key — \`11\` §5 lists it as an OUTPUT, ` +
+        `so the walk has nothing to follow`,
+      );
+      seen.push(...r.body.places.map((pl: any) => pl.id));
+      cursor = r.body.cursor;
+      cursors.push(cursor);
+      windows += 1;
+      assert.ok(windows <= 8, "the walk never terminated — the cursor is not advancing");
+      if (cursor === null) break;
+    }
+
+    assert.equal(windows, 3, "45 rows at PAGE_SIZE 20 is exactly three windows, the last short");
+    assert.deepEqual(
+      cursors, [cursorFor(PAGE_SIZE), cursorFor(2 * PAGE_SIZE), null],
+      "the emitted tokens must be base64url(20), base64url(40), then null — a cursor " +
+      "off by one page is a walk that skips or repeats twenty items",
+    );
+    assert.deepEqual(
+      [...seen].sort(), [...walkIds].sort(),
+      "a cursor walk must cover the result set exactly once — no gap, no repeat",
+    );
+    assert.equal(new Set(seen).size, WALK_TOTAL, "no item may be served twice by one walk");
+  });
+
+  // ── CURSOR 2 — one answer, not four ───────────────────────────────────────
+  //
+  // Recognised by the envelope discriminator, exactly as the four refusal cases
+  // above are, so a Compass case that silently fell through to the cold path
+  // cannot pass wearing a Compass name.
+  it("CURSOR: all four serve paths emit the same cursor for the same window", async () => {
+    setClient({ rows: { feature_flags: COMPASS_ON_FLAGS } });
+    _setTestDbPlacesOverride(async () => walkPlaces());
+    const AT_20 = `&cursor=${cursorFor(PAGE_SIZE)}`;
+
+    _injectTestCacheEntry(CACHE_A_FOOD, osmWalk());
+    const cacheA = await get(`/api/discovery?${MIAMI}&category=food${AT_20}`);
+    assertServePath(cacheA.body, "cache_a");
+    assertCursor(cacheA.body, PAGE_SIZE, "cache-A serve");
+    _clearTestCacheEntry(CACHE_A_FOOD);
+
+    const cold = await get(`/api/discovery?${MIAMI}&category=food${AT_20}`);
+    assertServePath(cold.body, "cold");
+    assertCursor(cold.body, PAGE_SIZE, "cold fetch");
+
+    const fresh = await get(`/api/discovery?${MIAMI}&category=for_you${AT_20}`, true);
+    assertServePath(fresh.body, "compass_fresh");
+    assertCursor(fresh.body, PAGE_SIZE, "Compass fresh rank");
+
+    const hit = await get(`/api/discovery?${MIAMI}&category=for_you${AT_20}`, true);
+    assertServePath(hit.body, "compass_hit");
+    assertCursor(hit.body, PAGE_SIZE, "Compass cache-B hit");
+
+    // And the terminator is the same fact on the same paths: the LAST window
+    // says null rather than dropping the key, so the key set never moves.
+    const END = `&cursor=${cursorFor(2 * PAGE_SIZE)}`;
+    const coldEnd = await get(`/api/discovery?${MIAMI}&category=food${END}`);
+    assertServePath(coldEnd.body, "cold");
+    assert.equal(coldEnd.body.cursor, null, "the final window terminates the walk with null");
+    assert.ok(
+      Object.prototype.hasOwnProperty.call(coldEnd.body, "cursor"),
+      "null is the terminator; DROPPING the key would make the key set CONTROL 2 pins depend on the window",
+    );
+  });
+
+  // ── CURSOR 3 — the refusal is untouched ───────────────────────────────────
+  //
+  // `sendDiscoveryRefusal` ships `{ ...envelope, refusal }`, and the whole point
+  // of that shape is that a refused body is the successful body plus ONE key.
+  // Emitting the cursor only on the healthy branch would have broken that: a
+  // client could then tell the two apart by a second, undesigned signal, and a
+  // walk that crossed a transient partial failure would lose its place.
+  it("CURSOR: a refusal response is unaffected — same refusal, same envelope plus one key", async () => {
+    setClient({ errorTables: ["discovery_places"] });
+    _injectTestCacheEntry(CACHE_A_FOOD, osmWalk());
+    const r = await get(`/api/discovery?${MIAMI}&category=food&cursor=${cursorFor(PAGE_SIZE)}`);
+
+    assert.equal(r.status, 200, "additive shape: the status stays 200");
+    assertServePath(r.body, "cache_a");
+    assertCuratedPartial(r.body, "cache-A partial while paging");
+    assertCursor(r.body, PAGE_SIZE, "cache-A partial refusal");
+    assert.deepEqual(
+      Object.keys(r.body),
+      ["places", "total", "destination", "context", "cached", "ageFilterMeta", "sourceSummary", "meta", "cursor", "refusal"],
+      "a refused body is the successful body plus `refusal`, and nothing else moved",
     );
   });
 });
