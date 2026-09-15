@@ -171,11 +171,47 @@ database credentials this environment does not have.
 | 4 | `SUPABASE_SERVICE_ROLE_KEY` set | **UNKNOWN — human must confirm in Replit Secrets** | `artifacts/api-server/src/lib/envValidation.ts:9#REQUIRED_KEYS` |
 | 5 | `SESSION_SECRET` set | **UNKNOWN — human must confirm in Replit Secrets** | same |
 | 6 | Replit UI build/run commands match `.replit` | **UNKNOWN — human must confirm in the Deployments UI** | `.replit:11#Best-effort` |
-| 7 | Migrations on production match this branch | **UNKNOWN — needs credentials** | `docs/migrations.md:49#Nothing` |
+| 7 | Migrations on production match this branch | **MEASURED — NO. 156 of 549 migration files have no production ledger row** | §1.6, read from `public.schema_migration_ledger` on `ajrurzioarfkagpuxfnb` |
 | 8 | Repo typecheck / census checks | **VERIFIED PASS** | §4 |
 
-Items 4, 5, 6 and 7 cannot be closed from this environment by any means. They
-are not "probably fine"; they are unmeasured.
+Items 4, 5 and 6 cannot be closed from this environment by any means. They are
+not "probably fine"; they are unmeasured, and each needs a human in the Replit
+UI. **Item 7 is now measured — see §1.6 — and the answer is no.**
+
+### 1.6 Production migration gap, MEASURED
+
+**VERIFIED 2026-09-15, read directly from `public.schema_migration_ledger` on the
+production project `ajrurzioarfkagpuxfnb`.** This closes checklist item 7, which
+this document previously recorded as UNKNOWN for want of credentials. It is a
+READ; nothing was applied.
+
+| | |
+|---|---|
+| migration files in `artifacts/api-server/src/migrations` | **549** |
+| distinct filenames with a production ledger row | **393** |
+| **files with NO production ledger row** | **156** |
+| rows with `applied_by='backfill'` | 382 (`0010_trip_plan.sql` … `2254_schema_migration_ledger.sql`) |
+| rows with `applied_by='manual'` | 11 (`2338_memory_location_precision.sql` … `2730_memory_derivative_registry.sql`) |
+| rows at or above `2890` | **zero** |
+
+**WHAT THE 393 DOES AND DOES NOT PROVE.** 382 of those rows carry
+`applied_by='backfill'` with the literal string `backfill` as their checksum.
+That is a row asserting parity, not evidence of an apply — the same distinction
+migration 2298 made concrete, where a ledger row existed and the migration's
+effects were provably absent. So 393 is an UPPER bound on what production has
+actually run, and 156 is a LOWER bound on the gap. The honest statement is:
+**at least 156 migrations in this branch have never been recorded against
+production, and an unknown further number have a row that proves nothing.**
+
+**THE WHOLE 2890-2971 BAND IS ABSENT.** Production carries zero ledger rows at
+or above 2890. Every migration this session has worked on — 2890 through 2971,
+including 2910, 2920, 2921, 2970 and 2971 — is unapplied to production. Nothing
+in this session changed that, and nothing in this session was authorised to.
+
+**THIS IS A TEST-DATABASE-VS-PRODUCTION DISTINCTION, NOT PROGRESS.** Migration
+work certified against `portava-ci` (`hwokxgbmezheskbzskfr`) says nothing about
+production. The two databases are measured separately and reported separately
+throughout this document.
 
 ---
 
