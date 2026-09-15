@@ -179,11 +179,15 @@ BEGIN;
 -- ── Preconditions ────────────────────────────────────────────────────────────
 DO $$
 DECLARE
-  def      TEXT;
-  label    TEXT;
-  n        BIGINT;
+  def       TEXT;
+  label     TEXT;
+  n         BIGINT;
   offenders TEXT := '';
-  total    BIGINT := 0;
+  total     BIGINT := 0;
+  at_target   BOOLEAN;
+  at_fifteen  BOOLEAN;
+  missing     TEXT := '';
+  live_labels TEXT[];
 BEGIN
   IF to_regclass('public.rank_events') IS NULL THEN
     RAISE EXCEPTION 'PRECONDITION FAILED (2893): public.rank_events does not exist.';
@@ -200,16 +204,85 @@ BEGIN
     RAISE EXCEPTION 'PRECONDITION FAILED (2893): rank_events_surface_check is absent. This file narrows a vocabulary it expects to find; it must not be used to create one.';
   END IF;
 
-  -- The exact post-2298 fifteen. See the header: a database on the pre-2298
-  -- fourteen must apply 2298 first rather than receive 'wall' as a side effect.
-  FOREACH label IN ARRAY ARRAY[
-    'pulse','discovery','events','compass','search','nearby','story','event',
-    'trip','profile','explore','live_pulse','living_page','watch_feed','wall'
-  ] LOOP
-    IF position('''' || label || '''' IN def) = 0 THEN
-      RAISE EXCEPTION 'PRECONDITION FAILED (2893): rank_events_surface_check does not permit %, so this database is not on the post-2298 fifteen. Apply 2298_dead_check_vocabularies.sql first — 2893 narrows that vocabulary and must not be used to deliver it.', label;
-    END IF;
-  END LOOP;
+  -- ── IS THE CONSTRAINT ALREADY THIS FILE'S TARGET? ──────────────────────────
+  --
+  -- A migration that has already taken effect must be a no-op, not a failure.
+  -- The vocabulary check below asks "are you on the fifteen I narrow FROM?",
+  -- and on a database that is already on the eight it narrows TO, the honest
+  -- answer is "no" — so the check fired and refused a file that had nothing
+  -- left to do. It could not tell a database that had ALREADY been narrowed
+  -- from one that never had the fifteen at all, and those need opposite
+  -- answers: the first is finished, the second must apply 2298 first.
+  --
+  -- Observed, not hypothesised: portava-ci (hwokxgbmezheskbzskfr) carries
+  -- exactly the eight and stopped the whole 2891-2970 apply here, while
+  -- production carries the pre-2298 FOURTEEN — no 'wall' — where the refusal
+  -- below is correct and must keep firing.
+  --
+  -- BOTH STATES ARE MATCHED AS AN EXACT SET, NOT AS PRESENCE AND ABSENCE.
+  --
+  -- The first draft of this block asked two substring questions — are all eight
+  -- kept labels present, and are all seven retired labels absent — and that is
+  -- NOT the same as "the vocabulary is the eight". A constraint carrying the
+  -- eight plus some label belonging to neither list answers yes to both and is
+  -- an unrecognised state; rehearsed against a synthetic ninth label, the draft
+  -- classified it as "already the target" and would have silently re-asserted a
+  -- vocabulary over it. Parsing the labels out and comparing sorted arrays
+  -- cannot make that mistake: an unexpected member changes the array, so it
+  -- falls to state (C) and fails.
+  SELECT array_agg(m[1] ORDER BY m[1])
+    INTO live_labels
+    FROM regexp_matches(def, '''([a-z_]+)''', 'g') AS m;
+
+  at_target := live_labels = (
+    SELECT array_agg(x ORDER BY x) FROM unnest(ARRAY[
+      'pulse','discovery','events','compass','live_pulse','living_page',
+      'watch_feed','wall'
+    ]) x);
+
+  -- STATE (A): the EXPECTED OLD CONSTRAINT — the exact post-2298 fifteen, which
+  -- is the vocabulary this file was written to narrow FROM.
+  at_fifteen := live_labels = (
+    SELECT array_agg(x ORDER BY x) FROM unnest(ARRAY[
+      'pulse','discovery','events','compass','search','nearby','story','event',
+      'trip','profile','explore','live_pulse','living_page','watch_feed','wall'
+    ]) x);
+
+  SELECT coalesce(string_agg(f, ' '), '')
+    INTO missing
+    FROM unnest(ARRAY[
+      'pulse','discovery','events','compass','search','nearby','story','event',
+      'trip','profile','explore','live_pulse','living_page','watch_feed','wall'
+    ]) f
+   WHERE NOT (f = ANY (coalesce(live_labels, ARRAY[]::TEXT[])));
+
+  -- THREE STATES, DECIDED EXPLICITLY. (A) and (B) are each pinned to an exact
+  -- vocabulary; everything else is (C) and still fails. The failure is what
+  -- protects a database nobody has characterised — a half-narrowed constraint,
+  -- one carrying a label from neither list, or the pre-2298 fourteen — and it
+  -- is deliberately NOT reachable by "not (A) and not (B), so assume 2298".
+  IF at_target AND NOT at_fifteen THEN
+    -- STATE (B): ALREADY THE TARGET. Reconciliation, not execution.
+    --
+    -- Nothing below is skipped. The DROP/ADD re-asserts the same eight labels,
+    -- every postcondition in this file still runs and is still counted against
+    -- live rows, and the safety veto still executes — it is merely vacuous
+    -- here, because the constraint it protects already forbids every surface
+    -- it counts. This branch changes only the verdict on the STARTING state.
+    RAISE NOTICE '2893 RECONCILE: rank_events_surface_check already permits exactly the eight surfaces this file targets and none of the seven it retires. That is this migration''s finished state, so it is re-asserted rather than refused — a migration whose effect is already present is a no-op, not an error. This branch is entered ONLY on that exact vocabulary; it does not relax the check for a database on the pre-2298 fourteen, nor for any partially-narrowed state.';
+  ELSIF at_fifteen THEN
+    -- STATE (A): the expected old constraint. Narrow it, which is the whole
+    -- point of the file. Nothing to report — this is the ordinary path.
+    RAISE NOTICE '2893 APPLY: rank_events_surface_check carries the post-2298 fifteen. Narrowing to the eight with proven writers.';
+  ELSE
+    -- STATE (C): UNEXPECTED. Refused, and described rather than guessed at.
+    --
+    -- The old message asserted "apply 2298 first" for every non-fifteen state,
+    -- which is right for the pre-2298 fourteen and wrong — actively
+    -- misleading — for a constraint that is half-narrowed or carries a label
+    -- from neither list. It now reports what is actually there.
+    RAISE EXCEPTION 'PRECONDITION FAILED (2893): rank_events_surface_check is in a state this file does not recognise, so nothing has been changed. It is neither the post-2298 fifteen this file narrows FROM (missing: %) nor the eight it narrows TO. If this database is on the pre-2298 fourteen, apply 2298_dead_check_vocabularies.sql first — 2893 narrows that vocabulary and must not be used to deliver it. If it is something else, characterise it before applying anything: the live definition is % .', btrim(missing), def;
+  END IF;
 
   -- ── THE SAFETY VETO ────────────────────────────────────────────────────────
   -- Counted on THIS database, at apply time, rather than trusted from a reading
