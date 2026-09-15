@@ -2880,10 +2880,10 @@ a line with no identifier on it at all were read one at a time against the tree.
 | `routes/trips.ts:1509,1573` | `canEditPlanItem` call sites | `:1878,1946` | **369** |
 | `routes/trips.ts:1443` | `canEditPlan` before plan create | `:1662` | **219** |
 | `domain/trips/services/tripCrewLocation.ts:104-146` | `resolveExactCoords` | `:239` | **135** |
-| `routes/tripCrewLocation.ts:313` | `POST …/crew/live-share/start` | `:400` | **87** |
+| `routes/tripCrewLocation.ts:313` | `POST …/crew/live-share/start` | line 400 | **87** |
 | `routes/tripCrewLocation.ts:156` | `GET …/crew/map` | `:233` | **77** |
 | `domain/trips/services/tripCrewLocation.ts:119-122` | ghost mode checked first | `:163-164` | **44** |
-| `domain/trips/invariants/tripMembership.ts:23` | `isAcceptedTripMember` | `:45` | **22** |
+| `domain/trips/invariants/tripMembership.ts:23` | `isAcceptedTripMember` | line 45 | **22** |
 | `SafeReturnPrivacyGuard.ts:128` | refuses an expired session | `:144` | **16** |
 | `lib/http.ts:534` / `:594` | `canEditPlan` / `canEditPlanItem` | `:544` / `:604` | **10** |
 | `TripPage.tsx:203-208` | `openTripChat` call site | `:211` | **8** |
