@@ -2711,6 +2711,17 @@ router.get("/airport/sessions/:id/buddies", async (req, res) => {
     let rows = (buddies ?? []) as any[];
     rows = rows.filter((b) => b.user_id !== user.id);
 
+    // L294/C2, the half §21.6 of docs/architecture/census-layover.md recorded as
+    // already closed on this endpoint. Two of this handler's three reads answer
+    // AFTER failing rather than refusing, and until now both answered with a
+    // confident sentence: an unreadable `blocks` served `buddies: []`, which is
+    // "there is nobody in this city", and an unreadable
+    // `rent_buddy_availability` published `availableDuringLayover: false` for
+    // every person, which is a claim about each of them. Failing closed is the
+    // right SAFETY posture and it is not an answer; these reasons are what make
+    // the emptiness readable as unmeasured. Same shape as `cityPresence` above.
+    const degradedReasons: string[] = [];
+
     // Exclude blocked users in both directions — fail CLOSED. supabase-js
     // resolves `{ data: null, error }` on a failed read; `?? []` on that turned
     // an outage into "nobody is blocked" and recommended meeting a blocked
@@ -2723,6 +2734,7 @@ router.get("/airport/sessions/:id/buddies", async (req, res) => {
       if (blockErr) {
         logger.warn({ err: blockErr, userId: user.id }, "layover buddies: blocks unreadable — serving none");
         rows = [];
+        degradedReasons.push("blocks_unreadable");
       } else {
         const excluded = new Set<string>();
         for (const b of (blockRows ?? []) as any[]) {
@@ -2733,6 +2745,7 @@ router.get("/airport/sessions/:id/buddies", async (req, res) => {
     } catch (err) {
       logger.warn({ err, userId: user.id }, "layover buddies: blocks read threw — serving none");
       rows = [];
+      degradedReasons.push("blocks_unreadable");
     }
 
     // Availability during the layover's airport-local day(s).
@@ -2748,21 +2761,33 @@ router.get("/airport/sessions/:id/buddies", async (req, res) => {
     if (!days.includes(lastDay)) days.push(lastDay);
 
     const availableSet = new Set<string>();
+    // FALSE and UNKNOWN are different sentences about a person. A successful
+    // read that found no row means this buddy is not marked available during
+    // the layover; a failed read means nobody asked. The old code spelled both
+    // `false`, so an outage in `rent_buddy_availability` published a negative
+    // fact about every profile on the list — and `availableDuringLayover` is
+    // also the sort key that chooses which six of up to twelve are served.
+    let availabilityMeasured = true;
     if (rows.length > 0) {
       try {
-        // An unreadable availability table leaves every buddy marked "not
-        // known to be available during your layover" — which is what an
-        // unknown IS. The list is still served; only the ordering hint is
-        // lost. Bound so the degradation is in the log.
+        // An unreadable availability table leaves every buddy's availability
+        // UNKNOWN. The list is still served; only the ordering hint is lost.
+        // Bound so the degradation is in the log AND on the wire.
         const { data: avail, error: availErr } = await sc
           .from("rent_buddy_availability")
           .select("buddy_id, date")
           .in("buddy_id", rows.map((b) => b.id))
           .in("date", days);
-        if (availErr) logger.warn({ err: availErr, city }, "layover buddies: availability unreadable — nobody marked available");
+        if (availErr) {
+          logger.warn({ err: availErr, city }, "layover buddies: availability unreadable — availability published as unknown");
+          availabilityMeasured = false;
+          degradedReasons.push("buddy_availability_unreadable");
+        }
         for (const a of (avail ?? []) as any[]) availableSet.add(a.buddy_id);
       } catch (err) {
-        logger.warn({ err, city }, "layover buddies: availability read threw — nobody marked available");
+        logger.warn({ err, city }, "layover buddies: availability read threw — availability published as unknown");
+        availabilityMeasured = false;
+        degradedReasons.push("buddy_availability_unreadable");
       }
     }
 
@@ -2787,7 +2812,7 @@ router.get("/airport/sessions/:id/buddies", async (req, res) => {
         coverPhotoUrl:         b.cover_photo_url ?? null,
         buddyLevel:            b.buddy_level ?? null,
         availableNow:          Boolean(b.available_now),
-        availableDuringLayover: availableSet.has(b.id),
+        availableDuringLayover: availabilityMeasured ? availableSet.has(b.id) : null,
         /**
          * TRUE when the profile positively declares a service a layover can
          * use. FALSE for a profile that declared nothing — an unknown, served
@@ -2795,10 +2820,19 @@ router.get("/airport/sessions/:id/buddies", async (req, res) => {
          */
         layoverCompatible:     isLayoverCompatibleBuddy(b),
       }))
-      .sort((a, b) => Number(b.availableDuringLayover) - Number(a.availableDuringLayover))
+      // Order on the availability hint ONLY when it was measured. `Number(null)`
+      // is 0, so an unmeasured field would sort every buddy equal anyway — this
+      // says so rather than relying on that coincidence surviving an edit.
+      .sort((a, b) => (availabilityMeasured
+        ? Number(b.availableDuringLayover) - Number(a.availableDuringLayover)
+        : 0))
       .slice(0, 6);
 
-    res.json({ ok: true, city, buddies: result, safetyGate, trustRequirement });
+    res.json({
+      ok: true, city, buddies: result, safetyGate, trustRequirement,
+      degraded: degradedReasons.length > 0,
+      degradedReasons,
+    });
   }
 });
 

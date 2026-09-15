@@ -295,3 +295,111 @@ describe("L294 — an unreadable rent_buddy_profiles is not 'nobody is here'", (
     assert.equal(r.body.error, "degraded_unavailable");
   });
 });
+
+// ── L294/C2, the HALF §21.6 CLAIMED WAS ALREADY CLOSED ───────────────────────
+//
+// §21.6 of docs/architecture/census-layover.md says of the remaining C2 half —
+// "a read that logs its error and then returns `[]` with no degraded flag" —
+// *"Today no such site exists: every surface that still answers after a failed
+// read publishes `degraded` with a named reason (presence, the session list,
+// the active session, airport search) or refuses with 503 (session writes,
+// session reads, **buddies**, session create)."*
+//
+// `/buddies` refuses with 503 for ONE of its three reads. The other two are
+// inside the same handler and answer anyway:
+//
+//   * `blocks` unreadable  → `rows = []` → `{ ok: true, city, buddies: [] }`.
+//     A traveller is told there is nobody in this city when what actually
+//     happened is that we could not read their own block list. Serving nobody
+//     is the right SAFETY posture and a wrong ANSWER: the emptiness was never
+//     measured.
+//   * `rent_buddy_availability` unreadable → every buddy is published with
+//     `availableDuringLayover: false`, a positive claim about each person
+//     derived from a read that did not happen, and the same field is the sort
+//     key that picks which six of twelve are served.
+//
+// These cases assert on SHAPE — that the two empty answers are distinguishable
+// from each other — before they bind the field that distinguishes them, so a
+// rename of the reason string cannot make them vacuously green.
+describe("L294 — the /buddies reads that answer anyway say that they are degraded", () => {
+  function stageWithFailures(buddies: any[], failures: Record<string, { message: string }>) {
+    const now = Date.now();
+    _setTestClient(makeLayoverDb({
+      feature_flags: [
+        { flag: "airport_mode_enabled", enabled: true },
+        { flag: "rent_buddy_enabled", enabled: true },
+      ],
+      airport_profiles: [airportRow()],
+      layover_sessions: [sessionRow({
+        user_id: USER_ID,
+        arrival_time: new Date(now - 3_600_000).toISOString(),
+        departure_time: new Date(now + 12 * 3_600_000).toISOString(),
+        boarding_time: null,
+        flight_type: "international",
+        immigration_required: true,
+        wants_to_leave: true,
+      })],
+      layover_events: [],
+      rent_buddy_profiles: buddies,
+      rent_buddy_availability: [],
+      blocks: [],
+    }, { users: { [TOKEN]: USER_ID }, failures }), true);
+  }
+
+  it("an unreadable block list is NOT the same answer as a city with nobody in it", async () => {
+    stageWithFailures([], {});
+    const measuredEmpty = await req(URL_);
+    stageWithFailures([buddy()], { "blocks:select": { message: "blocks unavailable" } });
+    const unreadEmpty = await req(URL_);
+
+    assert.equal(measuredEmpty.status, 200, JSON.stringify(measuredEmpty.body));
+    assert.equal(unreadEmpty.status, 200, JSON.stringify(unreadEmpty.body));
+    assert.deepEqual(measuredEmpty.body.buddies, [], "control: a city with no active buddies serves none");
+    assert.deepEqual(unreadEmpty.body.buddies, [], "an unreadable block list must still serve nobody — fail closed");
+
+    assert.notDeepEqual(
+      unreadEmpty.body, measuredEmpty.body,
+      "two empty lists, one measured and one from an outage, are byte-identical to the client",
+    );
+  });
+
+  it("…and the thing that distinguishes them is a named degraded reason", async () => {
+    stageWithFailures([buddy()], { "blocks:select": { message: "blocks unavailable" } });
+    const r = await req(URL_);
+    assert.equal(r.body.degraded, true);
+    assert.ok(
+      Array.isArray(r.body.degradedReasons) && r.body.degradedReasons.includes("blocks_unreadable"),
+      JSON.stringify(r.body.degradedReasons),
+    );
+  });
+
+  it("positive control: a readable surface is NOT degraded", async () => {
+    stageWithFailures([buddy()], {});
+    const r = await req(URL_);
+    assert.equal(r.body.buddies.length, 1, JSON.stringify(r.body));
+    assert.equal(r.body.degraded, false);
+    assert.deepEqual(r.body.degradedReasons, []);
+  });
+
+  it("an unreadable availability table still serves the list, and does not publish 'not available' as a fact", async () => {
+    stageWithFailures([buddy()], { "rent_buddy_availability:select": { message: "availability unavailable" } });
+    const r = await req(URL_);
+    assert.equal(r.body.buddies.length, 1, "availability is an ordering hint; losing it must not empty the list");
+    assert.equal(r.body.degraded, true);
+    assert.ok(
+      Array.isArray(r.body.degradedReasons) && r.body.degradedReasons.includes("buddy_availability_unreadable"),
+      JSON.stringify(r.body.degradedReasons),
+    );
+    assert.equal(
+      r.body.buddies[0].availableDuringLayover, null,
+      "an unmeasured availability is an unknown, not a false",
+    );
+  });
+
+  it("a measured availability is still a real false, not an unknown", async () => {
+    stageWithFailures([buddy()], {});
+    const r = await req(URL_);
+    assert.equal(r.body.buddies[0].availableDuringLayover, false,
+      "the control that stops `null` from becoming the answer for everyone");
+  });
+});
