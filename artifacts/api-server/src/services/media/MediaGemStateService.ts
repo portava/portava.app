@@ -238,14 +238,15 @@ async function loadGemAggregates(
   if (gemIds.length === 0) return { aggregates: out, determined: true };
 
   let determined = true;
-  const read = async (
-    table: string,
-    columns: string,
-    tighten?: (q: any) => any,
-  ): Promise<any[]> => {
+  // The query is built AT the call site, not from a `table` parameter, so each
+  // read is a literal `.from("…").select("…")` chain that the AST extractor in
+  // scripts/lib/schemaReferenceExtract.ts can read. Passing the table by name
+  // made all three of these blind spots — three tables and nine columns that
+  // neither check:write-path-columns (live schema) nor check:schema-references
+  // (canonical schema) could verify. `table` survives only as the log field.
+  const read = async (table: string, build: () => any): Promise<any[]> => {
     try {
-      const base = (sc as any).from(table).select(columns).in("gem_id", gemIds);
-      const { data, error } = await (tighten ? tighten(base) : base);
+      const { data, error } = await build();
       if (error || !Array.isArray(data)) {
         determined = false;
         logger.warn(
@@ -263,11 +264,25 @@ async function loadGemAggregates(
   };
 
   const [verifications, visits, contributions] = await Promise.all([
-    read("hidden_gem_verifications", "gem_id, user_id, result, created_at", (q) =>
-      q.eq("result", "approved"),
+    read("hidden_gem_verifications", () =>
+      (sc as any)
+        .from("hidden_gem_verifications")
+        .select("gem_id, user_id, result, created_at")
+        .in("gem_id", gemIds)
+        .eq("result", "approved"),
     ),
-    read("hidden_gem_visits", "gem_id, is_suspicious"),
-    read("hidden_gem_contributions", "gem_id, user_id, contribution_type, updated_at"),
+    read("hidden_gem_visits", () =>
+      (sc as any)
+        .from("hidden_gem_visits")
+        .select("gem_id, is_suspicious")
+        .in("gem_id", gemIds),
+    ),
+    read("hidden_gem_contributions", () =>
+      (sc as any)
+        .from("hidden_gem_contributions")
+        .select("gem_id, user_id, contribution_type, updated_at")
+        .in("gem_id", gemIds),
+    ),
   ]);
 
   for (const row of verifications) {

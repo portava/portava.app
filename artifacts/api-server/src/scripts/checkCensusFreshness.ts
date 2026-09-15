@@ -378,6 +378,61 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/tripCloseout.test.ts",
   ],
   "census-layover.md": [
+    // ── ADDED 2026-09-15: §24's own two modules, which §24.9 says are covered ──
+    // by an acknowledgement and which NOTHING was watching, so they could not be.
+    //
+    // §24.9 lists five counted files that pass changed and states that
+    // `head_commit` stays `1fe72289b` because "the five files above are covered
+    // by an acknowledgement instead". Only THREE of the five were in this scope,
+    // so only three reached the acknowledgement ledger; the other two changed
+    // under the census in silence. That is not an acknowledgement gap, it is a
+    // scope gap wearing one — a file outside CENSUS_SCOPE cannot be reported
+    // stale, so it cannot be acknowledged either, and check:census-freshness
+    // said FRESH about the half it could see.
+    //   discoveryLayoverTiming.ts — the PRODUCER of the return term. §24.2
+    //     grades it on two anchors (`:419#const backLegs = await Promise.all`
+    //     and `:181#no_routed_return_leg`), and §24.8's first red flag is that
+    //     the symmetric fallback inside it is load-bearing and exercised only by
+    //     an injected port. A row resting on a fallback has to age when the
+    //     fallback's file moves.
+    //   discoveryLayoverMode.ts — the GATE that carries the term into the
+    //     certified action universe and publishes it on every withheld card
+    //     (§24.2, `:327#returnTravelTimeMin: t ? t.returnTravelTimeMin`).
+    //     §24.8's second and third red flags are both about this file: the fifth
+    //     parameter is a seam into the gate, and `terms` grew a member no client
+    //     has a label for.
+    "artifacts/api-server/src/lib/discoveryLayoverTiming.ts",
+    "artifacts/api-server/src/lib/discoveryLayoverMode.ts",
+    // ── ADDED 2026-09-15: three files a §24 claim is a statement ABOUT ─────────
+    //   routes/discovery.ts — §24.1's finding is not "the safety engine doubles
+    //     the ride back", it is that the doubling is now reached from ANOTHER
+    //     ARCHITECTURE's six serve paths, cited at `:3975#layoverGatedPlaces`.
+    //     §24.8 then rests a red flag on the negative: "no call site in
+    //     routes/discovery.ts passes it, so the production answer is unchanged".
+    //     That sentence is a claim about the contents of this file, and a caller
+    //     that started passing a lenient provider would falsify it while
+    //     changing nothing this scope watched. Another lane's file, watched here
+    //     for the reason census-highlights-memories gives about its five
+    //     consumers: watching is not ownership, it is noticing.
+    //   compass/TelegraphConversationTools.ts — L102 stays `N` on a grep that
+    //     "returns 0 and 0" over CompassTools.ts and this file. Its co-grepped
+    //     sibling has been in this scope since the 2026-09-11 widening; leaving
+    //     this one out watched half of a two-file measurement.
+    //   routes/rentABuddyRollout.ts — L273's non-move rests on there being no
+    //     `layover` member in `MVP_ALLOWED_CATEGORIES` (`:41`). Same shape: a
+    //     verdict held in place by an absence in a named file.
+    "artifacts/api-server/src/routes/discovery.ts",
+    "artifacts/api-server/src/compass/TelegraphConversationTools.ts",
+    "artifacts/api-server/src/routes/rentABuddyRollout.ts",
+    // NOT ADDED, and said rather than left silent, per the guard's own second
+    // remedy. `routes/messaging.ts` is cited once, for a `message.created`
+    // payload divergence §20 found and explicitly declined: "The media path is
+    // census-telegraph's to answer for; copying it here would have made it two
+    // places instead of one." A defect this census hands to another census is
+    // not a thing this census grades. `2795_trip_kernel_write_guards.sql` is
+    // cited once as the STYLE a future layover migration should follow — the
+    // guard's own header names "a migration quoted for contrast" as the
+    // legitimate case for an unwatched citation, and this is it.
     // WIDENED 2026-09-14. The Layover lane's §21 work: the safe-return live-share
     // service whose `expireShare` swallow it closed, its expiry-honesty suite, the
     // notification service beside it, and the SCHEDULER — which is the caller that
@@ -513,6 +568,80 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/2462_meetup_time_votes_write_boundary.sql",
   ],
   "census-highlights-memories.md": [
+    // ── ADDED 2026-09-15: §M and §O's OWN suites, which the ledger could not ──
+    // name because this scope did not.
+    //
+    // §O says its staleness entry names "all eight counted files this section
+    // changed". It names eight, and the section changed eleven: the three suites
+    // below were written BY §M/§O as the red-first evidence for the rows those
+    // sections moved, and none was in this scope, so none was ever a "counted
+    // file" and none could reach the ledger. The freshness check reported this
+    // census green about a set that excluded its own new evidence.
+    //   highlightsMemoriesDeployedStorage.test.ts — §O.1's whole argument. It
+    //     re-derives the ten applied migrations from `production-applied-
+    //     migrations.json` and the 2026-09-15 snapshot on every run, asserts
+    //     every column `probeHighlightObject` reads (a rename would silently
+    //     return an enforced §11 control to a no-op), asserts `highlights` still
+    //     carries no trip reference (H90) and asserts all four gating flags are
+    //     still `false` — which §O.3 makes the whole blocker of roughly thirty
+    //     rows. §O.10 names the flags flipping as the thing that turns the
+    //     section red, and says it is "the point of writing it as a test".
+    //   memoriesListReadDegraded.test.ts — §M.6's red-first evidence for the
+    //     `memory_items` refusal, and the POSITIVE CONTROLS this census's own
+    //     acknowledgement already leans on when it argues that a database which
+    //     answers returns byte-identical responses. The ledger cited the file
+    //     while the scope did not watch it.
+    //   highlightsUnenforceableControls.test.ts — §O.6's red-first evidence for
+    //     the derived `FEED_ENFORCEABLE_CONTROLS` list, and the seven mutations
+    //     H90 and H92's restatements rest on.
+    "artifacts/api-server/src/test/highlightsMemoriesDeployedStorage.test.ts",
+    "artifacts/api-server/src/test/memoriesListReadDegraded.test.ts",
+    "artifacts/api-server/src/test/highlightsUnenforceableControls.test.ts",
+    // ── ADDED 2026-09-15: four more subjects, same argument, unchanged since ──
+    // `1fe72289b` and listed on their merits rather than to pad a ratio.
+    //   memoriesSingleReadDegraded.test.ts — §M.6's FIRST red, the sibling of
+    //     the list suite above on `GET /memories/:id`. H264 is graded on it.
+    //   highlightConsentPolicy.test.ts — H92's evidence in as many words: "the
+    //     live feed serves a Highlight carrying the first (asserted in
+    //     `highlightConsentPolicy.test.ts`)", and the control that §O.6's
+    //     mutation 3 is killed in. Deleting it would not change the code and
+    //     would change what this census can claim — the same argument that put
+    //     storyHighlightVisibility and memoryParticipantLadder in this list.
+    //   snapshots/20260915-production-schema.json — the generated capture of
+    //     `information_schema.columns` on production at watermark 20260915083533.
+    //     This census's largest single class of verdict is "the table §3.6 names
+    //     is not in production", and §O.3 moves ten rows by reading table and
+    //     column anchors straight out of this file (H29 on
+    //     `:2753#memory_command_receipts`, H90 on `:1918#highlights`, and the
+    //     rest). Its 2026-09-08 predecessor has been watched since the
+    //     2026-09-11 widening for exactly this reason; the newer capture is the
+    //     one the current verdicts are read from.
+    //   docs/architecture/mobile-reachability-ledger.json — §N exists to rule on
+    //     this file's `/api/users/:userId/memories` entry, and REFUSES §M.7's
+    //     repoint request on the ground that the entry is right at its own
+    //     `pinnedCommit`. That verdict is a statement about this file's bytes: a
+    //     regeneration moves `pinnedCommit` and every line number under it, and
+    //     §N's refusal would have to be re-derived. Being pinned is why the
+    //     census can rule on it, not a reason not to watch it.
+    "artifacts/api-server/src/test/memoriesSingleReadDegraded.test.ts",
+    "artifacts/api-server/src/test/highlightConsentPolicy.test.ts",
+    "artifacts/api-server/src/lib/capability/snapshots/20260915-production-schema.json",
+    "docs/architecture/mobile-reachability-ledger.json",
+    // NOT ADDED, and said rather than left silent, per the guard's own second
+    // remedy. TWO citations stay uncovered on purpose:
+    //   `2320_memory_episode_provenance_spine.sql` — §3 row 2 cites it as
+    //     `git show pr/470:artifacts/.../2320_...sql:102`, a blob in an UNMERGED
+    //     pull request. The coverage guard resolves the basename onto the
+    //     working-tree path, which is a different object from the one the row
+    //     reads; watching the tree file would claim to watch the PR and would
+    //     not.
+    //   `0179_stamp_criteria_engine.sql` — cited bare, and it resolves onto a
+    //     STRAY COPY AT THE REPOSITORY ROOT rather than
+    //     `src/migrations/0179_stamp_criteria_engine.sql`, because the guard
+    //     tries `existsSync(REPO/<cited>)` before the basename index. Scoping
+    //     the root copy would watch a duplicate nobody runs. This is a citation
+    //     defect owed to the next highlights pass, recorded here rather than
+    //     papered over with a scope entry.
     // ── ADDED 2026-09-14 by the scope-coverage finding ──────────────────────
     // §K.4 and §L.1 grade the been-there claim across this whole chain, and
     // every link was cited while none was watched. The client card is listed

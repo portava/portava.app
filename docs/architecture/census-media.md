@@ -2773,7 +2773,7 @@ somebody else's build.
 
 | Row | Was | Now | What was built |
 | --- | --- | --- | --- |
-| MD360 | **N** | **C** | `GET /media/gems` — the §16 Hidden Gems lens, registered as the NINTH endpoint of the §43 router at `artifacts/api-server/src/routes/mediaWorld.ts:389#sendProjection(res,` over `artifacts/api-server/src/services/media/MediaGemStateService.ts:315#buildGemStateProjection(`. |
+| MD360 | **N** | **C** | `GET /media/gems` — the §16 Hidden Gems lens, registered as the NINTH endpoint of the §43 router at `artifacts/api-server/src/routes/mediaWorld.ts:389#sendProjection(res,` over `artifacts/api-server/src/services/media/MediaGemStateService.ts:330#buildGemStateProjection(`. |
 | MD169 | **W** | **C** | §23 `confidence` on `MediaExperienceProjection`, at `artifacts/api-server/src/services/media/MediaExperienceResolver.ts:447#buildExperienceConfidence(`, served on the event branch, the trip branch and the "not available to you" shape. |
 
 **MD360 — the lens is not a second feed, and that is the whole requirement.**

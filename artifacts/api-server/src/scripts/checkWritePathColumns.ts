@@ -245,12 +245,18 @@ const SKIP_TABLES = new Set<string>([
 //   pnpm run check:write-path-columns -- --print-unresolved-allowlist
 //
 // Burn this list down — every entry is a hole in the check.
+//
+// 2026-09-15: twenty-two entries LEFT this list at once, and none of them by
+// being excused. `resolvePayload` in lib/schemaReferenceExtract.ts learned to
+// read a `.map(cb)` / `.flatMap(cb)` callback's returned object literal, which
+// is how every batch writer in this tree builds its rows: the array is
+// variable-length so it can never BE a literal, but the row SHAPE always is,
+// and the columns a batch insert writes are exactly that shape's keys. 31 more
+// write/read sites are now checked against the live schema, and the entries
+// that described them as unreadable were deleted because they stopped being
+// true — not trimmed to make a count line up. The extension is pinned by
+// src/test/schemaReferenceMapPayloads.test.ts.
 const UNRESOLVED_ALLOWLIST = new Map<string, number>([
-  // census-trips §61 moved src/lib/tripReadiness.ts (never scanned here) to
-  // src/domain/trips/services/ (scanned since §61): the trip_readiness_items
-  // upsert at its line ~893 builds `rows` by map, so the payload is a name,
-  // not a literal. One site, unchanged by the move.
-  ["src/domain/trips/services/tripReadiness.ts|upsert|payload not statically resolvable", 1],
   // ── Telegraph §1–§11 and §12–§22: the typed-envelope shape ────────────────
   // These lanes route every write through a validated envelope, so the payload
   // handed to supabase is a NAME (`validated.payload`, `row`, `patch`) rather
@@ -345,65 +351,37 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   ["src/routes/rentABuddyMarketplace.ts|select|select list not statically resolvable", 3],
 
   // ── Insert/upsert payloads built at runtime ───────────────────────────────
-  ["src/routes/circle.ts|upsert|payload not statically resolvable", 1],
   // 3 sites: feed-section registration + the two /compass/ask uiBlock
   // registration upserts (chat recommendation tokens) — row arrays built
   // dynamically from RecommendationRow; columns verified by the feed paths.
   ["src/routes/compass.ts|upsert|payload not statically resolvable", 3],
   ["src/routes/compass.ts|upsert|payload partially resolvable", 2],
-  // E2EE key-package upload — payload built from a dynamic array of base64 strings.
-  ["src/routes/keyPackages.ts|insert|payload not statically resolvable", 1],
-  // mediaFeed impression logging — upsert row array built at runtime.
-  ["src/routes/mediaFeed.ts|insert|payload not statically resolvable", 1],
   // ── DC-19's batch POST /rank-events (routes/rankEvents.ts) ────────────────
   //
-  // ONE site, and the ONLY one of that file's five that could not be rewritten.
-  // The other four were: the outcome-lookup `.select` (now two whole chains,
-  // each with a const-string list), the two outcome `.update`s (now object
-  // literals with a conditional spread) and the analytics `.insert` (now a
-  // spelled-out literal instead of `{ ...row }` minus a key).
+  // This entry USED to read "the only one of that file's five that could not be
+  // rewritten", and explained that a `.map` result is a call expression so there
+  // is no literal form of "one row per element of a variable-length array".
+  // The first half was a fair description of the site. The second was a
+  // description of the EXTRACTOR, stated as if it were a property of the code,
+  // and it stopped being true on 2026-09-15: resolvePayload now reads the map
+  // callback's row literal. The site did not change; what could see it did.
   //
-  // This one is a MULTI-ROW insert of a runtime-length array:
-  //
-  //     const rows = parsed.data.events.map((e) => ({ ... }));
-  //     await sc.from("rank_events").insert(rows);
-  //
-  // `resolvePayload` follows object and array LITERALS and same-file consts; a
-  // `.map` result is a call expression and there is no literal form of "one row
-  // per element of a variable-length array". Rewriting it would mean abandoning
-  // the single-statement insert, and that statement is load-bearing: the batch
-  // is all-or-nothing precisely because PostgREST executes a multi-row insert as
-  // one statement, and a half-landed batch leaves the exposure denominator
-  // holding a number nobody will correct.
-  //
-  // WHAT THIS COSTS, and what covers it: the six columns this site writes —
-  // event_type, item_id, surface, user_id, served_at, outcome — are EXACTLY the
-  // six the single-event insert in the same file writes, and that site IS a
-  // literal and IS column-checked on every run. A column added to one and not
-  // the other is a code review away, not a schema drift; a column added to both
-  // is checked at the resolved one.
-  ["src/routes/rankEvents.ts|insert|payload not statically resolvable", 1],
-  ["src/routes/meetups.ts|insert|payload not statically resolvable", 2],
-  ["src/routes/memories.ts|insert|payload not statically resolvable", 2],
+  // So the batch's two `insert(bare)` statements — the pre-2891 shape and its
+  // retry — are now fully resolved and column-checked. What remains is the ONE
+  // `insert(rows)`, where rows is `bare.map((r, idx) => ({ ...r, recommendation_id }))`:
+  // `recommendation_id` is visible and checked, `...r` spreads a callback
+  // PARAMETER, which no same-file lookup can reach. Hence `partially
+  // resolvable`, not unresolvable — and the hidden half is `bare`, which the
+  // two sites beside it check in full.
+  ["src/routes/rankEvents.ts|insert|payload partially resolvable", 1],
   // Bumped 1 -> 2 on 2026-09-09: a second runtime-built insert payload.
-  ["src/routes/rentABuddy.ts|insert|payload not statically resolvable", 2],
-  ["src/routes/rentABuddyMarketplace.ts|insert|payload not statically resolvable", 1],
-  ["src/routes/rentABuddyMarketplace.ts|upsert|payload not statically resolvable", 1],
-  ["src/routes/rentABuddySpec.ts|upsert|payload not statically resolvable", 2],
-  // Dynamic array built from AI extraction output — columns verified by the surrounding route logic.
-  ["src/routes/tripReservations.ts|insert|payload not statically resolvable", 1],
-  ["src/routes/routePlan.ts|insert|payload not statically resolvable", 2],
-  ["src/routes/stampShowcase.ts|insert|payload not statically resolvable", 1],
-  ["src/routes/telegraphChat.ts|insert|payload not statically resolvable", 1],
+  // Back to 1 on 2026-09-15: that second payload was the `.map` one, and it
+  // resolves now. The survivor is the payload built by a helper call.
+  ["src/routes/rentABuddy.ts|insert|payload not statically resolvable", 1],
+  // 2 -> 1 on 2026-09-15: the map-built leg insert resolves now.
+  ["src/routes/routePlan.ts|insert|payload not statically resolvable", 1],
   ["src/routes/telegraphChat.ts|update|payload not statically resolvable", 1],
-  ["src/routes/trips-expansion.ts|insert|payload not statically resolvable", 1],
-  ["src/routes/trips.ts|insert|payload not statically resolvable", 1],
-  ["src/services/groupChatSync.ts|upsert|payload not statically resolvable", 2],
   ["src/services/hiddenGems/HiddenGemService.ts|update|payload not statically resolvable", 2],
-  // MediaFeedRankingService: storeRankingSnapshots builds the upsert row array dynamically.
-  // Columns: viewer_id, item_id, surface, session_id, position, final_score, reason_codes, served_at.
-  ["src/services/ranking/MediaFeedRankingService.ts|upsert|payload not statically resolvable", 1],
-  ["src/services/safeReturn/SafeReturnService.ts|insert|payload not statically resolvable", 1],
 
   // ── Partially-resolvable payloads (static keys + dynamic spread/computed) ─
   ["src/routes/messaging.ts|update|payload partially resolvable", 1],
@@ -538,15 +516,13 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   // parameter by design — folding it into three copies of the same paging
   // loop to satisfy a static extractor would be the worse trade.
   ["src/services/ledger/CanonicalShareReader.ts|select|dynamic table name", 1],
-  // The insert payload is built by a `.map()` over the accepted labels, so
-  // the column set is not a literal. The columns it writes are pinned by
-  // 2910's schema-contract suite instead.
-  ["src/services/trails/TrailService.ts|insert|payload not statically resolvable", 1],
   ["src/routes/adminFeatured.ts|select|select list not statically resolvable", 1],
   //
   // Payloads built at runtime.
   ["src/routes/admin.ts|insert|payload not statically resolvable", 1],
-  ["src/services/airport/LayoverRecommendationService.ts|upsert|payload not statically resolvable", 1],
+  // The upsert rows come from a `.map`, so the row literal resolves; one
+  // spread inside it does not, which is what "partially" names.
+  ["src/services/airport/LayoverRecommendationService.ts|upsert|payload partially resolvable", 1],
   ["src/routes/adminFeatured.ts|update|payload partially resolvable", 1],
   ["src/routes/events.ts|update|payload partially resolvable", 2],
 ]);
