@@ -121,22 +121,23 @@ const ALLOWLIST = new Set<string>([
   "tags.tagged_at",                     // does not exist live
   "hashtags.normalized_name",           // live: slug
 
-  // ── Pending live apply: 2970_stamp_definitions_evidences_presence.sql ─────
-  // One column on a table portava-ci already carries. This branch is not on
-  // main and live-db.yml applies ONLY from main, so the column is absent from
-  // both databases until the merge.
+  // 2970_stamp_definitions_evidences_presence.sql USED TO BE ALLOWLISTED HERE.
+  // It was removed on 2026-09-15: 2970 applied to portava-ci at 18:10:28Z with
+  // `applied_by='ci'` and a real sha256, and `stamp_definitions.evidences_presence`
+  // is now a live column. This check passes on that entry because the column is
+  // PRESENT, not because it is excused — which is the only reason to remove an
+  // entry from this list.
   //
-  // NOT hand-applied to portava-ci, deliberately. Hand-applying migrations to
-  // the CI project from unmerged branches is the exact root cause recorded for
-  // `CI (live DB)` being red on main's own sha across five consecutive
-  // scheduled runs — portava-ci carries 2900/2901/2910/2930 under `rehearsal_*`
-  // names, and the certification stage cannot reconcile that with the ledger.
-  // Turning this check green by repeating the thing that broke the other one
-  // would be trading a visible red for an invisible one.
-  //
-  // Remove this entry once the merge-to-main apply is certified in
-  // docs/migrations.md.
-  "stamp_definitions.evidences_presence",   // 2970 — §11 presence-evidence stamps
+  // Said exactly: the removal condition written here was "once the merge-to-main
+  // apply is certified in docs/migrations.md". The apply is recorded there under
+  // 2026-09-15 / PR #504, and `audit:schema` — which reads ALL 548 migration
+  // files against the live schema, not just a run's scope — reports "Live schema
+  // contains every object claimed by the migrations". What is NOT true, and is
+  // worth saying so nobody later reads more into this than it holds, is that a
+  // `certify:migrations` run ever had 2970 in its per-run scope: 2970's own apply
+  // run failed at STAGE 3 on 0081's grants, and the run that passed all five
+  // stages scoped only 2972. The evidence for this removal is the live column
+  // plus audit:schema, not a certify stage naming 2970.
 
   // ── Pending live apply: 2273_intel_replayable_projection.sql (IG unit I1) ──
   // Table-17 lineage columns on the current-state snapshot. Applied to the CI

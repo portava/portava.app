@@ -76,7 +76,10 @@ export async function buildTripHealthProjection(
   if (!trip) return { ok: false, reason: "TRIP_NOT_FOUND", message: "Trip not found" };
   const t = trip as any;
   const envelope = liveEnvelope(typeof t.version === "number" ? t.version : null, now);
-  const tripStatus = computeTripStatus(t.title ?? null, t.destination_city ?? null, t.start_date ?? null, t.end_date ?? null, String(t.status ?? "planning"), t.timezone ?? null);
+  // `now` is threaded in deliberately: every other derivation in this projection
+  // uses the injected clock, and a status read from the real one could contradict
+  // the phase sitting next to it in the same response.
+  const tripStatus = computeTripStatus(t.title ?? null, t.destination_city ?? null, t.start_date ?? null, t.end_date ?? null, String(t.status ?? "planning"), t.timezone ?? null, now);
 
   const freedom = await buildTripFreedomProjection(sc, tripId, { now });
   if (!freedom.ok) return freedom.reason === "TRIP_PROJECTION_UNAVAILABLE" ? { ok: false, reason: "TRIP_PROJECTION_UNAVAILABLE", message: `Freedom windows: ${freedom.message}` } : freedom;
