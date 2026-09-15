@@ -101,8 +101,22 @@ export const MAX_ABSENT_SYMBOLS = 0;
 
 /** Measured 2026-09-14. CEILING — may only fall. Contains a known false-positive
  *  class (collection cited, member pointed at), which is why it is a ceiling and
- *  not a gate, and why it is not called a defect count. */
-export const MAX_MISPLACED_SYMBOLS = 46;
+ *  not a gate, and why it is not called a defect count.
+ *
+ *  LOWERED 2026-09-15, 46 -> 39, by the integration owner. Nothing was repaired
+ *  to earn this: the count fell to 39 as a SIDE EFFECT of the citation work in
+ *  the media, trust-admin and CompassTools passes, where 48 citations were
+ *  repointed and many gained an `#anchor` — and an anchored citation is judged
+ *  by check:doc-citations instead of here, so it leaves this population
+ *  entirely. Claiming it is the whole point of a shrink-only ratchet: slack
+ *  that is not claimed is slack the next change spends without anyone deciding
+ *  to.
+ *
+ *  LOWERED WITH FOUR LANES IN FLIGHT, deliberately. Holding 46 until they land
+ *  would have let them add up to seven misplaced symbol citations invisibly.
+ *  If one of them pushes this red, that is the ratchet working and the finding
+ *  is real — not noise to be absorbed by a ceiling nobody chose. */
+export const MAX_MISPLACED_SYMBOLS = 39;
 
 /** How far from the cited line the symbol may be and still count as "there". */
 const WINDOW = 2;
