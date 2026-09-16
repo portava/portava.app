@@ -1290,3 +1290,74 @@ describe("logServeUnlessRefused — the guard, exercised directly", () => {
     assert.equal((rank[0]!.rows as unknown[]).length, ITEMS.length, "one impression row per served item");
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P9 — `type=saved`, the eighteenth searcher and the one P8 could not name.
+//
+// P8 above enumerates TEN swallowed reads, "one per searchable type". It is not
+// ten any more. `saved` landed after that sweep (census-map M201), so it was
+// never in the table and never got the treatment: it read `wishlist_places` and
+// `discovery_place_saves` without binding `error`, `continue`d past a failed
+// `discovery_places` page, and wrapped the lot in `catch { return []; }`.
+//
+// It is also the ONE viewer-scoped type — a person's own saves. Every other
+// heading going quiet in an outage is a claim about a corpus the user cannot
+// check. This one asserts that THEIR shelf is empty, to the person who put
+// things on it, and `components/map/MapSearchSheet.tsx` asks for it by name.
+//
+// APPENDED AT THE END OF THE FILE DELIBERATELY: census rows cite tests in this
+// file by line number (`:629`, `:837` among them). Inserting into the
+// `GET /discovery/search` describe above would shift every one of them for a
+// reason no reader could see.
+//
+// The lane-level cases, including the two controls that keep this fix from
+// swallowing the deliberate half-answer, are in
+// `src/test/discoverySavedRefusal.test.ts`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("GET /discovery/search?type=saved — a viewer's own shelf", () => {
+  it("P9 — refuses when BOTH save tables cannot be read, instead of reporting an empty shelf", async () => {
+    setClient({ errorTables: ["wishlist_places", "discovery_place_saves"] });
+    const r = await get("/api/discovery/search?q=lumina&type=saved", true);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.results, []);
+    assertRefusal(r.body, {
+      class: "transient_db", code: "search_failed", route: "GET /discovery/search",
+    }, "/discovery/search?type=saved with both save tables unreadable");
+    assertNoExposure("/discovery/search?type=saved with both save tables unreadable");
+  });
+
+  it("P9 — refuses when `discovery_places` cannot be read behind a save that exists", async () => {
+    // The authoritative venue row for a save that IS there. Skipping the failed
+    // page dropped it with no signal; there is no second source for this table.
+    setClient({
+      rows: {
+        discovery_place_saves: [
+          { user_id: VIEWER_ID, place_id: "d11cccc0-0000-0000-0000-0000000000c1", saved_at: "2026-03-01T00:00:00Z" },
+        ],
+      },
+      errorTables: ["discovery_places"],
+    });
+    const r = await get("/api/discovery/search?q=lumina&type=saved", true);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.results, []);
+    assertRefusal(r.body, {
+      class: "transient_db", code: "search_failed", route: "GET /discovery/search",
+    }, "/discovery/search?type=saved with an unreadable `discovery_places`");
+    assertNoExposure("/discovery/search?type=saved with an unreadable `discovery_places`");
+  });
+
+  it("P9 CONTROL — a readable but genuinely empty shelf carries NO refusal", async () => {
+    // Without this, "refuse on an unreadable table" is satisfied by refusing on
+    // every empty answer — which would make the refusal key distinguish nothing,
+    // the exact failure mode this whole file exists to prevent.
+    setClient({ rows: { wishlist_places: [], discovery_place_saves: [] } });
+    const r = await get("/api/discovery/search?q=lumina&type=saved", true);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.results, []);
+    assert.equal(
+      r.body.refusal, undefined,
+      "a person who has genuinely saved nothing must NOT be told the search failed",
+    );
+  });
+});

@@ -1337,6 +1337,31 @@ async function searchSaved(
     // supabase-js RESOLVES on a DB error, so an unreadable table and an empty
     // one arrive identically. Read each independently: one table being
     // unreadable must not silently turn the other's saves into "no saves".
+    //
+    // READING THEM INDEPENDENTLY WAS ONLY HALF OF IT. The comment above was
+    // true of the DIRECTION and false of the mechanism: `error` was never
+    // bound, so an unreadable table was not detected at all — it was treated
+    // as empty. When BOTH were unreadable the lane answered `[]`, which the
+    // route serves as `200 { results: [] }` with no `refusal`: a claim that
+    // this person has saved nothing, made without reading either table that
+    // holds their saves. `saved` is the one VIEWER-SCOPED search type, so it is
+    // the heading whose emptiness the user knows for a fact is wrong.
+    //
+    // A total outage rejects. ONE unreadable table still serves the other's
+    // rows, which is a real half-answer rather than a lie — the two tables are
+    // written by paths that never write each other's. That partial is still
+    // SILENT, because `dispatchSearch` returns a bare array with no channel to
+    // carry `coverage: "partial"`; saying "nothing was readable" instead would
+    // be a second untruth in the other direction. Pinned both ways by
+    // `src/test/discoverySavedRefusal.test.ts` (R1 and R5).
+    const wishUnreadable = !!wishRes?.error;
+    const dpsUnreadable = !!dpsRes?.error;
+    if (wishUnreadable && dpsUnreadable) {
+      throw new DiscoverySearchReadError(
+        "wishlist_places+discovery_place_saves",
+        wishRes?.error ?? dpsRes?.error,
+      );
+    }
     const wishRows: WishlistSaveRow[] = Array.isArray(wishRes?.data) ? wishRes.data : [];
     const dpsRows: DiscoverySaveRow[] = Array.isArray(dpsRes?.data) ? dpsRes.data : [];
 
@@ -1389,7 +1414,13 @@ async function searchSaved(
         .in("id", page)
         .eq("status", "active")
         .or(`name.ilike.${pat},city.ilike.${pat},blurb.ilike.${pat}`);
-      if (error || !Array.isArray(data)) continue;
+      // `discovery_places` is the authoritative row behind every venue save, and
+      // there is no second source for it. `continue` dropped every save in a
+      // failed page with no signal at all — the same masquerade, one level down.
+      // Every OTHER reader of this table in this file throws here: `searchPlaces`
+      // and `searchActivities` both do. `searchSaved` was the one that did not.
+      if (error) throw new DiscoverySearchReadError("discovery_places", error);
+      if (!Array.isArray(data)) continue;
       venues.push(...data);
     }
 
@@ -1466,7 +1497,13 @@ async function searchSaved(
     // applied by dispatchSearch, as it is for every other non-place lane.
     out.sort((a, b) => String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? "")));
     return out.slice(offset, offset + fetchLimit);
-  } catch {
+  } catch (err) {
+    // Re-raise ONLY the named read error, on `searchPlans`' precedent: the arm
+    // keeps swallowing everything it already swallowed, and lets the one thing
+    // that means "a table could not be read" reach the route's catch arm and
+    // become a refusal. A bare `catch { return []; }` here undid both throws
+    // above without leaving a trace.
+    if (err instanceof DiscoverySearchReadError) throw err;
     return [];
   }
 }
