@@ -362,7 +362,7 @@ async function resolveTrip(
 //
 // EVERYTHING BELOW IS APPENDED AT THE END OF THE FILE ON PURPOSE. Four ANCHORED
 // census citations point into this file above (`:110`, `:112`, `:76`, and
-// `buildExperienceChain` at `:266` and `:330`), and census-media §12.9 records
+// `buildExperienceChain` at `:281` and `:356`), and census-media §12.9 records
 // what happens when a lane adds a declaration next to its use: the anchors decay
 // and every citing document has to be repointed by a lane that may not edit it.
 // So the type, its imports and its builder live here, where nothing follows
