@@ -5363,7 +5363,7 @@ mutations are named with the rows.
   (`lib/privacy/tripSerializers.ts:78#preview.datesWithheld`;
   `lib/privacy/dtos.ts:242#datesWithheld?:`). 2790 seeds the flag FALSE
   (`migrations/2790_trip_absence_guard_flag.sql:36#trip_absence_guard_enabled`).
-  `test/tripAbsenceGuard.test.ts:73#future_absence` exercises the decision on
+  `test/tripAbsenceGuard.test.ts:101#future_absence` exercises the decision on
   both sides of today, the serializer both ways, and the route through the
   app with the flag on, off and absent; `tripPrivacy.test.ts` passes
   unmodified. Mutations: the route not passing the decision (1 red), the

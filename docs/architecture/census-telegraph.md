@@ -7710,11 +7710,11 @@ unchecked read would make *"nothing arrived while you were away"*
 byte-identical to *"we could not look"*, and a client that believed the first
 would stop polling and lose the conversation. An unreadable roster and an
 unreadable `messages` both resume NOTHING and report `resumed: false`
-(`artifacts/api-server/src/test/telegraphStreamResume.test.ts:258#test("an unreadable roster resumes NOTHING and says so", async () => {`).
+(`artifacts/api-server/src/test/telegraphStreamResume.test.ts:293#test("an unreadable roster resumes NOTHING and says so", async () => {`).
 A malformed cursor is refused as a cursor rather than treated as the beginning
 of time, and a cursor older than the 24-hour window is refused rather than
 silently truncated
-(`artifacts/api-server/src/test/telegraphStreamResume.test.ts:297#test("a cursor older than the resume window is refused rather than silently truncated", async () => {`);
+(`artifacts/api-server/src/test/telegraphStreamResume.test.ts:332#test("a cursor older than the resume window is refused rather than silently truncated", async () => {`);
 a truncated replay reports `resumed: false` for the same reason, because a
 partial replay that claimed success leaves a hole nobody looks for.
 
