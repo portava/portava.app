@@ -1,33 +1,35 @@
 /**
- * Telegraph §6.2 — the thirteen message kinds, as sendable, validated
- * envelopes.
+ * Telegraph §6.2 — the thirteen message kinds, as validated envelopes.
  *
  * Spec §6.2, verbatim:
  *   TEXT · IMAGE · VIDEO · MEDIA_ALBUM · GIF · VOICE · MEMORY_NOTE ·
  *   PORTAVA_OBJECT · LOCATION · ACTION · ANNOUNCEMENT · SYSTEM · SAFETY
  *
  * ── WHY AN ENVELOPE AND NOT COLUMNS ─────────────────────────────────────────
- * `messages` carries four nullable media columns and a `media_type` CHECK of
- * exactly `('image','video')` (`baseline/20260819_baseline_structure.sql:7573`).
- * `msg_type`, by contrast, is `text NOT NULL DEFAULT 'text'` with NO CHECK
- * (`:7565`). So a kind costs nothing; an ASSET TYPE costs a migration.
+ * `messages` carries four nullable media columns; `msg_type` is
+ * `text NOT NULL DEFAULT 'text'` with NO CHECK
+ * (`baseline/20260819_baseline_structure.sql:7565`). So a kind whose payload is
+ * pure structured data costs no DDL and is true on every deployment of this
+ * tree. An ASSET TYPE costs a migration.
  *
- * That asymmetry decides the shape here. A kind whose payload is structured
- * data — a place, a status, an announcement, a list of already-uploaded asset
- * URLs — is carried as a JSON envelope in `body`, needs no DDL, and is
- * therefore true on every deployment of this tree. A kind that needs a NEW
- * asset type in `media_type` is REFUSED by name, with the reason, rather than
- * accepted into a message nothing can play. See `VOICE` below.
+ * ── VOICE HAS ITS OWN DOOR, AND THAT IS A PROPERTY OF THE KIND ──────────────
+ * VOICE was refused outright here until `2989_messages_audio_media_type.sql`
+ * widened `messages.media_type` to admit `audio`. It is now a real envelope: it
+ * validates, PARSES back out of a stored row, indexes into §6.4's VOICE drawer
+ * tab, and renders.
  *
- * ── WHY REFUSAL RATHER THAN SILENCE ─────────────────────────────────────────
- * The alternative — accept a VOICE message, store an audio URL in the body and
- * render a player — would look built and would be a trap: the asset has
- * nowhere to be uploaded, because `lib/mediaPipeline.ts:74` admits image and
- * video MIME types only. A kind that cannot carry its asset is not a kind. It
- * is named in `UNSENDABLE_KINDS` with the exact reason, and the send route
- * returns that reason.
+ * It is still not sent through `POST /threads/:id/typed-messages`, and that is
+ * now a property of the kind. That route writes `body`, `msg_type` and
+ * `subtype` and nothing else; a voice note also OWNS AN AUDIO OBJECT IN OUR
+ * STORAGE and must write the media columns every consumer of message-owned
+ * assets reads. So it has `routes/telegraphVoice.ts`, exactly as IMAGE, VIDEO
+ * and PORTAVA_OBJECT have theirs, and `UNSENDABLE_KINDS` names it the same way.
+ * `SENDABLE_ENVELOPE_KINDS` therefore means "sendable THROUGH THE TYPED ROUTE",
+ * never "sendable at all"; `ENVELOPE_KINDS`, the parseable set, is larger.
  */
 import { z } from "zod";
+
+import { VoicePayload } from "./voice.js";
 import {
   isTelegraphMessageKind,
   kindOfMsgType,
@@ -128,24 +130,23 @@ const PAYLOADS = {
   ANNOUNCEMENT: AnnouncementPayload,
   SAFETY: SafetyPayload,
   MEMORY_NOTE: MemoryNotePayload,
+  VOICE: VoicePayload,
 } as const;
 
 export type EnvelopeKind = keyof typeof PAYLOADS;
 
-/** The kinds this route can send today. */
-export const SENDABLE_ENVELOPE_KINDS = Object.keys(PAYLOADS) as EnvelopeKind[];
+/** The kinds the TYPED-MESSAGE route sends. VOICE has its own route — see the header. */
+export const SENDABLE_ENVELOPE_KINDS = (Object.keys(PAYLOADS) as EnvelopeKind[]).filter((k) => k !== "VOICE");
 
-/**
- * Kinds §6.2 names that this tree cannot send, each with the reason. Naming
- * them is the point: a reader must be able to tell "not built" from "built and
- * broken", and a caller must get the reason rather than a generic 400.
- */
+/** Every kind carried as a stored envelope — what `parseKindEnvelope` reads back. LARGER than the sendable set. */
+export const ENVELOPE_KINDS = Object.keys(PAYLOADS) as EnvelopeKind[];
+
+/** Kinds §6.2 names that the TYPED-MESSAGE route does not send, each with the reason: a reader must be
+ *  able to tell "not built" from "sent elsewhere", and a caller gets the reason, not a generic 400. */
 export const UNSENDABLE_KINDS: Readonly<Record<string, string>> = {
   VOICE:
-    "VOICE needs an audio asset, and messages.media_type is constrained to " +
-    "('image','video') while lib/mediaPipeline.ts admits image and video MIME " +
-    "types only. Sending a voice envelope with nowhere to upload the audio " +
-    "would be a kind that cannot carry its asset. Requires a migration.",
+    "VOICE is sent through POST /api/threads/:threadId/voice, after uploading the recording to " +
+    "POST /api/telegraph/voice/upload. Not here: a voice note owns an audio object in our storage and must write messages.media_url / media_type / media_duration_seconds, which this route does not write.",
   TEXT: "TEXT is sent through POST /threads/:id/messages.",
   IMAGE: "IMAGE is sent through the media upload path.",
   VIDEO: "VIDEO is sent through the media upload path.",
@@ -155,6 +156,10 @@ export const UNSENDABLE_KINDS: Readonly<Record<string, string>> = {
 
 export function isSendableEnvelopeKind(kind: unknown): kind is EnvelopeKind {
   return typeof kind === "string" && (SENDABLE_ENVELOPE_KINDS as string[]).includes(kind);
+}
+/** True for any kind carried as an envelope, whichever route wrote it. */
+export function isEnvelopeKind(k: unknown): k is EnvelopeKind {
+  return typeof k === "string" && (ENVELOPE_KINDS as string[]).includes(k);
 }
 
 // ── the envelope ─────────────────────────────────────────────────────────────
@@ -219,7 +224,7 @@ export function parseKindEnvelope(
   body: string | null | undefined,
 ): { kind: TelegraphMessageKind; payload: unknown } | null {
   const kind = kindOfMsgType(msgType);
-  if (!isSendableEnvelopeKind(kind)) return null;
+  if (!isEnvelopeKind(kind)) return null; // PARSEABLE, not typed-route-sendable: isSendableEnvelopeKind here degraded every stored VOICE row to TEXT.
   if (typeof body !== "string" || body.length === 0) return null;
   let parsed: any;
   try {

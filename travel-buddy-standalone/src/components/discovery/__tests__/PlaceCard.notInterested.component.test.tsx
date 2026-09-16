@@ -103,6 +103,7 @@ jest.mock('../../../hooks/useFsqPhoto.ts', () => ({ useFsqPhoto: () => null }));
  */
 const mockReportDismiss = jest.fn();
 jest.mock('../../../hooks/useRankOutcome.ts', () => ({
+  ...jest.requireActual('../../../hooks/useRankOutcome.ts'),
   useRankOutcome: () => ({
     reportTap: jest.fn(),
     reportSave: jest.fn(),

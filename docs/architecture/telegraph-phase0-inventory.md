@@ -32,7 +32,7 @@ are files, tables, routes, event types and literals, each re-derived on every ru
 
 ### 2. Migrations that touch a messaging table
 
-31 of 559 migration files reference at least one messaging table.
+32 of 560 migration files reference at least one messaging table.
 
 - `src/migrations/0011_message_type.sql`
 - `src/migrations/0016_thread_reads.sql`
@@ -65,6 +65,7 @@ are files, tables, routes, event types and literals, each re-derived on every ru
 - `src/migrations/2811_telegraph_message_side_tables.sql`
 - `src/migrations/2812_telegraph_report_evidence.sql`
 - `src/migrations/2813_telegraph_request_origin.sql`
+- `src/migrations/2989_messages_audio_media_type.sql`
 
 ### 3. Server routes that read or write a messaging table
 
@@ -90,6 +91,7 @@ are files, tables, routes, event types and literals, each re-derived on every ru
 | `src/routes/telegraphShare.ts` | 2 | message_thread_members, message_threads, messages |
 | `src/routes/telegraphSharedContext.ts` | 3 | message_thread_members, message_threads |
 | `src/routes/telegraphStream.ts` | 2 | message_thread_members, messages |
+| `src/routes/telegraphVoice.ts` | 2 | message_threads, messages |
 
 ### 4. Direct client reads of a messaging table (§24's closing rule)
 

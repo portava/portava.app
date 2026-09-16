@@ -1524,6 +1524,13 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/routes/telegraphCoordination.ts",
     "artifacts/api-server/src/routes/telegraphLifecycle.ts",
     "artifacts/api-server/src/routes/telegraphMemory.ts",
+    // WIDENED 2026-09-16 by the integrating lane at the telegraph merge. VOICE
+    // is built (see census-telegraph §30) and its two new paths are cited by
+    // that section, so they belong in the scope that ages this census. The
+    // client half, `features/telegraph/voice/`, is already covered by the
+    // `features/telegraph/` prefix above.
+    "artifacts/api-server/src/routes/telegraphVoice.ts",
+    "artifacts/api-server/src/migrations/2989_messages_audio_media_type.sql",
     "artifacts/api-server/src/routes/memories.ts",
     "artifacts/api-server/src/routes/index.ts",
     "artifacts/api-server/src/test/telegraphSharedContext.test.ts",

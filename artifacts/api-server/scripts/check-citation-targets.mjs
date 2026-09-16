@@ -236,8 +236,18 @@ import {
  *     The correct handler it names, :2819#router.get, still holds and was checked.
  *
  * 255 -> 244, which is three below the base's own 247, so the ceiling moves to
- * 244 rather than back to 248. */
-export const MAX_DEAD_TARGETS = 244;
+ * 244 rather than back to 248.
+ *
+ * LOWERED AGAIN 2026-09-16, 244 -> 239, by the integrating lane at the telegraph
+ * merge. The five came from repairs made while integrating that lane, not from a
+ * dead-target sweep: eighteen `routes/index.ts` and eight `messageKinds.ts`
+ * anchors were repointed by a diff line-map after two new lines and three
+ * formatting reversals moved them, three unanchored `lib/mediaPipeline.ts`
+ * references were repointed by hand, and census-trips TR436's
+ * `lib/mediaPipeline.ts:44` -- which pointed at an import while its own sentence
+ * described the kill-switch consumption -- was corrected to `:112`. The ceiling
+ * follows the measurement down so the gain cannot be spent again. */
+export const MAX_DEAD_TARGETS = 239;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);

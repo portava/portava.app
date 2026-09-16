@@ -10,18 +10,19 @@
  *
  *   "The composer remains visually calm; rich actions live behind the + menu."
  *
- * WHY THIS IS DATA AND NOT JSX. §6.1 names EIGHT entries. Four of them are
- * wired to a real flow, three are wired to a §6.2 typed kind, and ONE — Voice —
- * cannot work in this tree, because `messages.media_type` is constrained to
- * ('image','video') and `lib/mediaPipeline.ts` admits image and video MIME
- * types only. An entry that opens a picker whose result cannot be sent is
- * worse than an entry that says why: the traveler records thirty seconds of
- * audio and then loses it.
+ * WHY THIS IS DATA AND NOT JSX. §6.1 names EIGHT entries, not all in the same state. An
+ * entry that opens a picker whose result cannot be sent is worse than one that says why:
+ * the traveler records thirty seconds of audio and loses it. So each entry carries its OWN
+ * availability and its OWN reason, and a census row can cite this list rather than a shot.
  *
- * So each entry carries its OWN availability and its OWN reason, the menu
- * renders a disabled entry with that reason, and the census row can cite this
- * list rather than a screenshot. When the audio migration lands, one field
- * changes here.
+ * VOICE WAS THAT ENTRY AND IS NOT ANY MORE. It read "Voice messages need an audio asset
+ * type. messages.media_type allows only image and video, so there is nowhere to store the
+ * recording yet", and promised "when the audio migration lands, one field changes here".
+ * `2989_messages_audio_media_type.sql` is that migration, `lib/mediaPipeline.ts` carries a
+ * voice-only upload policy, `routes/telegraphVoice.ts` is the door. The field changed. ONE
+ * CAVEAT, recorded rather than hidden behind the `true`: a voice note is refused by the
+ * DATABASE until 2989 is APPLIED, and the send route says so by name rather than failing
+ * opaquely — a deployment state, and the one unavailability this list cannot express.
  */
 export type ComposerEntryId =
   | 'CAMERA'
@@ -44,8 +45,7 @@ export interface ComposerEntry {
   unavailableReason: string | null;
 }
 
-/** §6.1's eight, in the spec's two-column reading order. */
-export const COMPOSER_ENTRIES: readonly ComposerEntry[] = [
+export const COMPOSER_ENTRIES: readonly ComposerEntry[] = [ // §6.1's eight, in the spec's two-column reading order.
   { id: 'CAMERA', label: 'Camera', kind: 'IMAGE', available: true, unavailableReason: null },
   { id: 'PHOTOS', label: 'Photos', kind: 'IMAGE', available: true, unavailableReason: null },
   { id: 'VIDEO', label: 'Video', kind: 'VIDEO', available: true, unavailableReason: null },
@@ -57,14 +57,7 @@ export const COMPOSER_ENTRIES: readonly ComposerEntry[] = [
     unavailableReason:
       'No GIF provider is configured in this build. The GIF message kind exists and renders (with a still frame under reduced motion or data saver); what is missing is a picker to choose one from.',
   },
-  {
-    id: 'VOICE',
-    label: 'Voice',
-    kind: 'VOICE',
-    available: false,
-    unavailableReason:
-      'Voice messages need an audio asset type. messages.media_type allows only image and video, so there is nowhere to store the recording yet.',
-  },
+  { id: 'VOICE', label: 'Voice', kind: 'VOICE', available: true, unavailableReason: null },
   { id: 'MEMORY_NOTE', label: 'Memory Note', kind: 'MEMORY_NOTE', available: true, unavailableReason: null },
   { id: 'LOCATION', label: 'Location', kind: 'LOCATION', available: true, unavailableReason: null },
   {

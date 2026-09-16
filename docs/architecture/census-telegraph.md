@@ -513,7 +513,7 @@ Backend paths relative to `artifacts/api-server/src/`; client paths to
 | T50 | Message kind **VIDEO** | C | Same path; `media_type` CHECK `('image','video')` (`baseline:7573`). |
 | T51 | Message kind **MEDIA_ALBUM** | N | One asset per message; `messages` carries a single `media_url` (`baseline:7568`). No album concept. |
 | T52 | Message kind **GIF** | N | No GIF kind, provider or picker anywhere. |
-| T53 | Message kind **VOICE** | N | No voice message, no `media_duration_seconds` writer for audio, no waveform, no audio MIME in `lib/mediaPipeline.ts:74` (`ALLOWED_MEDIA_MIME` is image/video only). |
+| T53 | Message kind **VOICE** | N | No voice message, no `media_duration_seconds` writer for audio, no waveform, no audio MIME in `lib/mediaPipeline.ts:75` (`ALLOWED_MEDIA_MIME` is image/video only). |
 | T54 | Message kind **MEMORY_NOTE** | N | No Memory Note kind. |
 | T55 | Message kind **PORTAVA_OBJECT** | W | Implemented as `msg_type:'system'` plus a bespoke `subtype` per object family rather than a typed kind (`app/messages/[id].tsx:718-763`). The capability exists; the envelope the spec asks for does not. |
 | T56 | Message kind **LOCATION** | N | No location message kind. |
@@ -738,8 +738,8 @@ Backend paths relative to `artifacts/api-server/src/`; client paths to
 | T222 | Progressive ladder: local preview → thumbnail/poster → streamable rendition → original | W | Two rungs. The client shows a local preview through its upload states (`hooks/useMessageMediaPicker.ts:30` `idle\|picking\|previewing\|uploading\|done\|failed`) and a thumbnail is stored (`messages.media_thumbnail_url`). There is no streamable rendition and no original/derivative distinction for message media. |
 | T223 | Resumable / chunked upload for poor travel connectivity | N | `hooks/useMessageMediaPicker.ts:60,66` offers upload progress, cancel and retry — but retry restarts the transfer. No range, no chunking, no resume token. |
 | T224 | Poster/frame generation and adaptive renditions for video | W | Poster/thumbnail generation exists in the shared processor (`lib/mediaProcessing.ts:154-210`, sharp re-encode with full metadata strip); adaptive renditions do not exist for any surface. |
-| T225 | Waveform generation for voice as derived metadata | N | No voice (T53); `lib/mediaPipeline.ts:74` `ALLOWED_MEDIA_MIME` admits no audio type. |
-| T226 | Media scanning/moderation must not block basic text delivery | C | Structurally impossible to block it: text and media are separate endpoints (`routes/messaging.ts:1732` vs `:2067`), and the sniff/size/rate policy runs at *upload* time in `lib/mediaPipeline.ts:186-226` — a path a text send never enters. |
+| T225 | Waveform generation for voice as derived metadata | N | No voice (T53); `lib/mediaPipeline.ts:75` `ALLOWED_MEDIA_MIME` admits no audio type. |
+| T226 | Media scanning/moderation must not block basic text delivery | C | Structurally impossible to block it: text and media are separate endpoints (`routes/messaging.ts:1732` vs `:2067`), and the sniff/size/rate policy runs at *upload* time in `lib/mediaPipeline.ts:187-227` — a path a text send never enters. |
 | T227 | Data-saver mode prioritizes text/status/coordinates over media/AI | N | No data-saver setting exists in the client. |
 
 ### §17 Offline, Realtime & Multi-Device
@@ -1009,7 +1009,7 @@ and it is the part of the specification the tree is furthest from.
 | T399 | **§30A.7** `TelegraphDevice` registry: platform, push, voice/video, proximity, background-location capability, trust state, last activity | W | A registry exists for a different purpose and carries one of the seven fields: `routes/devices.ts:1-16` registers `platform` and an Ed25519 MLS identity key per install. No capability flags, no trust state, no last-activity. |
 | T400 | Precise location sharing is device-specific and must not silently transfer to a newly authenticated device | N | Both location stores are keyed by `user_id` with no device column (`baseline:7109`, `:10509`), so a live share follows the account (T235). The device registry that exists is never consulted by a location path. |
 | T401 | Device revocation terminates realtime sessions, invalidates location capabilities and proximity identities, stops push, rotates credentials — without destroying conversation history | W | **One fifth is genuinely well built.** Realtime termination exists end-to-end: `lib/telegraphEvents.ts:47` `access.revoked`, `registerTerminator` / `terminateUserConnectionsLocal`, a cross-instance terminate hook in `lib/telegraphBroadcast.ts:33`, and a 30-minute max connection age so *"revoked sessions … cannot hold open an indefinite connection"* (`routes/telegraphStream.ts:35-40`). Location capabilities and push are not device-scoped, credentials are not rotated, and there is no device-revocation endpoint. |
-| T402 | **§30A.8** Uploads pass quarantine, file-type verification, security scanning, metadata policy, transcoding and approved-asset publication; **never trust a client-provided MIME type** | W | Four of six, and the emphasized clause is **fully and unusually well satisfied**. `lib/mediaPipeline.ts:186-226`: `sniffMedia(buf)` reads magic bytes; the size ceiling comes from the **sniffed** kind, not the declared one (`:199`); a declared/actual mismatch is refused outright (`:216-222`); and the module states the rule as policy — *"A declared type is a hint, never a fact"* (`:71`) — with a documented history of the drift that made it necessary (`:20-38`). Metadata policy and transcoding: `lib/mediaProcessing.ts:154-166`. **Quarantine and security scanning do not exist.** |
+| T402 | **§30A.8** Uploads pass quarantine, file-type verification, security scanning, metadata policy, transcoding and approved-asset publication; **never trust a client-provided MIME type** | W | Four of six, and the emphasized clause is **fully and unusually well satisfied**. `lib/mediaPipeline.ts:187-227`: `sniffMedia(buf)` reads magic bytes; the size ceiling comes from the **sniffed** kind, not the declared one (`:200`); a declared/actual mismatch is refused outright (`:217-223`); and the module states the rule as policy — *"A declared type is a hint, never a fact"* (`:71`) — with a documented history of the drift that made it necessary (`:20-38`). Metadata policy and transcoding: `lib/mediaProcessing.ts:154-166`. **Quarantine and security scanning do not exist.** |
 | T403 | EXIF handling defined explicitly — GPS, capture time, device metadata — so forwarding a photo does not disclose where it was captured | C | Three layers. Strip: `lib/mediaProcessing.ts:154,165-166` re-encodes through sharp, `.rotate()` first *"to auto-orient from EXIF before the EXIF is stripped"*, then a full EXIF/GPS/XMP strip. Deliberate retention of the one non-location fact: capture time is extracted server-side before the strip and stored as a field, bounded by a plausibility window (`lib/mediaAssets.ts:37-80`). Audit: `scripts/auditStorageExif.ts:1-30` enumerates the **bucket**, not rows, because *"an object nothing references … is invisible to a row walk"*, distinguishes "carries EXIF" from "carries a GPS IFD", and **never dereferences a coordinate**. |
 | T404 | External URL previews are fetched through a controlled server-side preview service; recipients must not silently contact arbitrary sender-provided domains | N `∅` | Unguarded absence. There are **no link previews at all** — a URL renders as plain text through `components/RichText.tsx` — so no recipient-side fetch occurs today, and nothing implements or guards the rule for when one is added. |
 | T405 | GIF and other external media providers use the same isolation and attribution boundary | N `∅` | No GIF provider exists (T52). |
@@ -1280,7 +1280,7 @@ depends on DDL no database has would stay W however good the code was.
   (`routes/telegraphSharedContext.ts:223#/threads/:threadId/conversation-header`)
   is §2.2's other two thirds. Both are mounted:
   `routes/index.ts:26#telegraphSharedContextRouter` imports and
-  `routes/index.ts:187#telegraphSharedContextRouter` uses.
+  `routes/index.ts:188#telegraphSharedContextRouter` uses.
   A failed membership read is a 500 and a failed RESOLVER read sets
   `incomplete: true` rather than returning an empty rail — "we could not tell"
   and "you share nothing with this person" are different statements and the
@@ -1330,7 +1330,7 @@ depends on DDL no database has would stay W however good the code was.
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| T13 | N | **C** | **Rail at the top of each conversation showing mutually relevant objects** — The component exists and is mounted on BOTH conversation surfaces — `travel-buddy-standalone/app/messages/[id].tsx:2089#SharedContextRail` and `travel-buddy-standalone/src/components/GroupChatScreen.tsx:815#SharedContextRail` — between the header and the message list, fed by a mounted route (`routes/index.ts:187#telegraphSharedContextRouter`). What would turn this red (P24): a third conversation surface appearing without it; nothing pins that. |
+| T13 | N | **C** | **Rail at the top of each conversation showing mutually relevant objects** — The component exists and is mounted on BOTH conversation surfaces — `travel-buddy-standalone/app/messages/[id].tsx:2089#SharedContextRail` and `travel-buddy-standalone/src/components/GroupChatScreen.tsx:815#SharedContextRail` — between the header and the message list, fed by a mounted route (`routes/index.ts:188#telegraphSharedContextRouter`). What would turn this red (P24): a third conversation surface appearing without it; nothing pins that. |
 | T14 | N | **C** | **Eligibility: created by me, joined/saved/attended by them** — `relationshipFor` reads the source object's own owner column and returns `CREATED_BY_ME_JOINED_BY_THEM` when the viewer created it and a conversation counterpart joined (`services/telegraph/sharedContext.ts:344#resolveSharedTrips`, `:405#resolveSharedMeetups`, `:467#resolveSharedEvents`). Asserted against a trip Alice owns and Bob joined, `test/telegraphSharedContext.test.ts:498`. |
 | T15 | N | **C** | **Eligibility: created by them, joined/saved/attended by me** — Same resolver, the other branch — asserted against a meetup Bob created and Alice accepted, `test/telegraphSharedContext.test.ts:498`. |
 | T16 | N | **C** | **Eligibility: both members of the same Trip, Plan, Crew, Event or booking** — Four resolvers, four canonical membership tables: `trip_members` (the crew table — a trip's crew IS `trip_members`; `circle_memberships` is a personal address book, not a shared crew, and is deliberately not read), `meetup_invites` (Plan), `event_attendees` (Event), `rent_buddy_bookings` (booking). `services/telegraph/sharedContext.ts:521#resolveSharedBookings` is the booking one. |
@@ -1467,7 +1467,7 @@ and it was being violated on every thread that had ever carried a card.
   not a way to launder a reference to something you were never authorized to
   see. `POST /threads/:threadId/share-projections`
   (`routes/telegraphShare.ts:190#/threads/:threadId/share-projections`) is the
-  batch resolve. Both mounted at `routes/index.ts:188#telegraphShareRouter`.
+  batch resolve. Both mounted at `routes/index.ts:189#telegraphShareRouter`.
 - **The client half, including the cards that were already wrong.**
   `travel-buddy-standalone/src/features/telegraph/sharing/useShareRevocation.ts:50#useShareRevocation`
   is a THREE-state hook — available / unavailable / unknown — and the third
@@ -1570,12 +1570,12 @@ is **refused by name, with the reason**, because a kind that cannot carry its
 asset is not a kind.
 
 - **`services/telegraph/messageKinds.ts`** declares a zod payload per kind and
-  `validateKindMessage` (`services/telegraph/messageKinds.ts:181#validateKindMessage`)
+  `validateKindMessage` (`services/telegraph/messageKinds.ts:186#validateKindMessage`)
   turns a (kind, payload) pair into the row that will be written — `msg_type`
   from the kind, `subtype` from the kind's own discriminator (SAFETY's four
   classes, LOCATION's precision, ACTION's action name).
   `SENDABLE_ENVELOPE_KINDS` (`:136#SENDABLE_ENVELOPE_KINDS`) is the seven;
-  `UNSENDABLE_KINDS` (`:143#UNSENDABLE_KINDS`) is every other §6.2 kind with
+  `UNSENDABLE_KINDS` (`:146#UNSENDABLE_KINDS`) is every other §6.2 kind with
   the reason it is not here, so a reader can tell "not built" from "built and
   broken". A test asserts every one of §6.2's thirteen is in one list or the
   other — none is silently missing (`test/telegraphKinds.test.ts:279`).
@@ -1588,13 +1588,13 @@ asset is not a kind.
   `z.literal(true)`, so a caller cannot send an already-confirmed action; the
   forged value is a 400 (`test/telegraphKinds.test.ts:318`).
 - **§6.4's drawer is a CLASSIFIER over rows the thread already has.**
-  `drawerTabFor` (`services/telegraph/messageKinds.ts:253#drawerTabFor`) routes
+  `drawerTabFor` (`services/telegraph/messageKinds.ts:258#drawerTabFor`) routes
   each row to one of §6.4's seven tabs
-  (`services/telegraph/messageKinds.ts:240#DRAWER_TABS`), including the legacy
+  (`services/telegraph/messageKinds.ts:245#DRAWER_TABS`), including the legacy
   `discovery_card` / `post_card` producers, so an OLD card is indexed too. The
   route writes nothing and says so in its own response (`indexOnly: true`).
 - **§6.4's search is object-aware, and its authorization is not new law.**
-  `searchableTextOf` (`services/telegraph/messageKinds.ts:308#searchableTextOf`)
+  `searchableTextOf` (`services/telegraph/messageKinds.ts:313#searchableTextOf`)
   returns null for a deleted row and for an unsent one (on a database that has
   the column), which is §7.4's "remove from normal retrieval, search and
   projections"; and it searches a typed envelope's HUMAN fields — label, title,
@@ -1613,7 +1613,7 @@ asset is not a kind.
   block guard, E2EE refusal — and the §5 share route and the §6.2 typed-kind
   route both call it. A second write endpoint that skipped one of them would be
   a weaker door into the same table.
-- **The routes are mounted** at `routes/index.ts:189#telegraphKindsRouter`.
+- **The routes are mounted** at `routes/index.ts:190#telegraphKindsRouter`.
 - **The client.** `TypedMessageRenderer`
   (`travel-buddy-standalone/src/features/telegraph/kinds/TypedMessageRenderer.tsx:65#TypedMessageRenderer`)
   renders all seven, dispatched from the conversation at
@@ -1628,20 +1628,20 @@ asset is not a kind.
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| T51 | N | **C** | **Message kind MEDIA_ALBUM** — a validated kind with at least two independent asset references in one message (`services/telegraph/messageKinds.ts:181#validateKindMessage`), sent, stored and rendered (`travel-buddy-standalone/src/features/telegraph/kinds/TypedMessageRenderer.tsx:65#TypedMessageRenderer`). One asset is refused — that is an IMAGE or a VIDEO, not an album (`test/telegraphKinds.test.ts:302`). |
+| T51 | N | **C** | **Message kind MEDIA_ALBUM** — a validated kind with at least two independent asset references in one message (`services/telegraph/messageKinds.ts:186#validateKindMessage`), sent, stored and rendered (`travel-buddy-standalone/src/features/telegraph/kinds/TypedMessageRenderer.tsx:65#TypedMessageRenderer`). One asset is refused — that is an IMAGE or a VIDEO, not an album (`test/telegraphKinds.test.ts:302`). |
 | T65 | N | **C** | **Mixed-media albums: one reply target and one seen lifecycle, independent asset references** — true by construction: an album is ONE `messages` row, so it has exactly one `reply_to_id` and one position in the single thread-level receipt, and its assets are separate entries in the payload. Rendered as one bubble with N cells (`travel-buddy-standalone/src/features/telegraph/__tests__/kinds.component.test.tsx:106`). |
 | T56 | N | **C** | **Message kind LOCATION** — a kind with a precision ladder whose default is COARSE (§4.3), a subtype that records which precision the sender chose, and a renderer that shows the precision in words (`travel-buddy-standalone/src/features/telegraph/kinds/TypedMessageRenderer.tsx:65#TypedMessageRenderer`). |
 | T57 | N | **C** | **Message kind ACTION** — actions are no longer inferred from card subtypes: `ACTION` is a kind carrying a §8.1 action name and a `requiresConfirmation` literal `true`, rendered as a proposal with a Confirm control (`travel-buddy-standalone/src/features/telegraph/__tests__/kinds.component.test.tsx:70`). |
 | T58 | N | **C** | **Message kind ANNOUNCEMENT** — a kind with a title, an optional body and an optional acknowledgement requirement, rendered with the acknowledge control only when it asks for one. |
-| T54 | N | **C** | **Message kind MEMORY_NOTE** — the kind exists and carries §10.1's `MemoryNoteShare` field set (`services/telegraph/messageKinds.ts:181#validateKindMessage`), with an authoring sheet (`travel-buddy-standalone/src/features/telegraph/__tests__/typedComposeMemoryNote.component.test.tsx:41`). What is NOT claimed is T117's contract row — see below. |
+| T54 | N | **C** | **Message kind MEMORY_NOTE** — the kind exists and carries §10.1's `MemoryNoteShare` field set (`services/telegraph/messageKinds.ts:186#validateKindMessage`), with an authoring sheet (`travel-buddy-standalone/src/features/telegraph/__tests__/typedComposeMemoryNote.component.test.tsx:41`). What is NOT claimed is T117's contract row — see below. |
 | T52 | N | **C** | **Message kind GIF** — a distinct kind with its own payload (url, still frame, provider, alt text) and its own renderer, separate from IMAGE/VIDEO. No provider is configured to pick one FROM, which is T64's row and the composer entry's stated reason, not this one's: the kind exists, validates, sends, stores and renders. |
 | T64 | N | **W** | **GIFs are distinct lightweight looping content with data-saver / accessibility controls** — the CONTROLS are built: `isGifAnimated` (`travel-buddy-standalone/src/features/telegraph/kinds/TypedMessageRenderer.tsx:33#isGifAnimated`) is a pure rule — animate only when neither reduced motion nor data saver is on — and the still frame carries the reason in words. It stays W because `dataSaver` is a prop with no app-level setting behind it yet, and because no provider exists to obtain a GIF from. |
 | T60 | W | **C** | **Message kind SAFETY** — SAFETY is now a message KIND, not only a thread affordance: four classes (`check_in`, `heads_up`, `need_help`, `all_clear`), each landing in `subtype`, rendered with the class as a WORD and the §11.1 attention colour reserved for it (`travel-buddy-standalone/src/features/telegraph/__tests__/kinds.component.test.tsx:98`). |
 | T66 | N | **C** | **Content drawer: MEDIA / PLACES / PORTAVA / VOICE / GIFS / LINKS / FILES** — the seven tabs exist with counts, served by `GET /threads/:id/drawer` (`routes/telegraphKinds.ts:262`) and rendered by `travel-buddy-standalone/src/features/telegraph/drawer/ContentDrawerSheet.tsx:52#ContentDrawerSheet`. The dead-coded entry point is now a real control (`travel-buddy-standalone/app/messages/[id].tsx:1958#telegraph-open-content-drawer`). |
-| T67 | N `∅` | **C** | **The drawer is a structured index, not a second storage copy** — no longer an unguarded absence. The drawer exists and stores nothing: it classifies `messages` rows in memory (`services/telegraph/messageKinds.ts:253#drawerTabFor`), every id it returns is a `messages.id` that already existed, and the route writes nothing and declares `indexOnly: true` in its own response. |
-| T68 | N | **C** | **Object-aware search respects current authorization and unsent/deleted state** — `GET /threads/:id/search` (`routes/telegraphKinds.ts:327`) is member-gated, §14.3-bounded and tombstone-excluding, and matches on a typed object's HUMAN fields rather than on raw JSON (`services/telegraph/messageKinds.ts:308#searchableTextOf`). A deleted message is not findable by its exact text (`test/telegraphKinds.test.ts:531`). |
+| T67 | N `∅` | **C** | **The drawer is a structured index, not a second storage copy** — no longer an unguarded absence. The drawer exists and stores nothing: it classifies `messages` rows in memory (`services/telegraph/messageKinds.ts:258#drawerTabFor`), every id it returns is a `messages.id` that already existed, and the route writes nothing and declares `indexOnly: true` in its own response. |
+| T68 | N | **C** | **Object-aware search respects current authorization and unsent/deleted state** — `GET /threads/:id/search` (`routes/telegraphKinds.ts:327`) is member-gated, §14.3-bounded and tombstone-excluding, and matches on a typed object's HUMAN fields rather than on raw JSON (`services/telegraph/messageKinds.ts:313#searchableTextOf`). A deleted message is not findable by its exact text (`test/telegraphKinds.test.ts:531`). |
 | T47 | W | **W** | **Composer stays visually calm; rich actions live behind a `+` menu** — the menu now names all EIGHT of §6.1's entries instead of two (`travel-buddy-standalone/src/features/telegraph/composer/composerMenu.ts:48#COMPOSER_ENTRIES`), and an entry that cannot complete states its reason INLINE rather than being hidden. Five of eight are operable (Camera, Photos, Video, Location, Memory Note); GIF has no provider, Voice has no audio asset type, and Portava has no in-composer object picker. Two of eight became five of eight — better, not done. |
-| T53 | N | **N** | **Message kind VOICE** — deliberately NOT moved. It is now REFUSED by name with the constraint that blocks it (`services/telegraph/messageKinds.ts:143#UNSENDABLE_KINDS`), which is honest, but a refusal is not a kind. It needs a migration widening `messages.media_type` and an audio MIME in `lib/mediaPipeline.ts:74`. |
+| T53 | N | **N** | **Message kind VOICE** — deliberately NOT moved. It is now REFUSED by name with the constraint that blocks it (`services/telegraph/messageKinds.ts:146#UNSENDABLE_KINDS`), which is honest, but a refusal is not a kind. It needs a migration widening `messages.media_type` and an audio MIME in `lib/mediaPipeline.ts:75`. |
 | T63 | N | **N** | **Voice: waveform, seek, playback speed, optional transcript/translation** — unchanged. There are no voice messages to play. |
 | T2 | W | **W** | **Pillar Talk — text, rich media, voice, GIFs, replies, reactions, seen states, safe message lifecycle** — six of eight now: text, media, GIFs (the kind), replies, seen, and the album/location/safety additions. **Voice, reactions and the safe lifecycle are still absent** — `message_reactions` does not exist and unsend does not exist on this branch. |
 | T11 | W | **W** | **Semantic layer PLAN** — ACTION and ANNOUNCEMENT give the stream a genuinely different class of item with its own renderer and its own confirm/acknowledge affordance, which is more than "ordinary stream items". It stays W because there is still no LAYER: unresolved actions are interleaved with conversation rather than separated, which is what §2.3 asks for. |
@@ -1773,7 +1773,7 @@ easy to get wrong become testable without a database.
   (`routes/telegraphCoordination.ts:212`) returns the derived state, the legal
   next states, the latest declared status per member, the arrival counts and
   the three projections, and inherits §14.3's history bound. Mounted at
-  `routes/index.ts:190#telegraphCoordinationRouter`.
+  `routes/index.ts:192#telegraphCoordinationRouter`.
 - **The client panel** is §2.2's "OPTIONAL COORDINATION PANEL", between the
   rail and the stream
   (`travel-buddy-standalone/app/messages/[id].tsx:2094#CoordinationPanel`,
@@ -1803,7 +1803,7 @@ easy to get wrong become testable without a database.
 | T97 | N | **C** | **Action `SPLIT_RIDE`** — a coordination action proposal; no canonical domain owns ride-splitting, so the proposal IS the object. |
 | T99 | N | **C** | **Action `RETURN_TO_GROUP`** — a coordination action, alongside the HEADING_BACK quick state. |
 | T100 | N | **C** | **Action `DO_THIS_NOW`** — a coordination action, and the §3 rail offers it on a WANT_TO_DO item (`services/telegraph/sharedContext.ts:287#availableActionsFor`). |
-| T98 | W | **C** | **Action `CHECK_IN_SAFE`** — no longer circle-only: the §6.2 SAFETY kind carries a check-in from any thread, with four classes and a coarse label (`services/telegraph/messageKinds.ts:181#validateKindMessage`). The circle check-in path is untouched. |
+| T98 | W | **C** | **Action `CHECK_IN_SAFE`** — no longer circle-only: the §6.2 SAFETY kind carries a check-in from any thread, with four classes and a coarse label (`services/telegraph/messageKinds.ts:186#validateKindMessage`). The circle check-in path is untouched. |
 | T105 | W | **C** | **Assembling UI: on my way, running late, meet here, ETA, pickup, arrival counts** — five of six are real: the three quick states, MEET_HERE/RENDEZVOUS, and arrival counts derived from declared states (`routes/telegraphCoordination.ts:212`). **ETA and pickup are not built**, and this row is graded C on the five the surface offers; a reader who requires all six should read it as W. |
 | T104 | W | **W** | **Preparing UI: plan card, attendance, leave-by, route, availability conflicts** — leave-by is now real and the plan card and attendance were already. Route and availability-conflict detection in-thread are still absent, so three of five. |
 | T106 | W | **W** | **Active UI: minimal conversation, next step, crew state, optional location scope** — the panel now IS a thread mode rather than a separate screen, and crew state is the declared-status list. There is no next-step surface and the location scope is still the separate trip-crew screen. |
@@ -1937,7 +1937,7 @@ the header button appears only when a completed plan came back.
 | T121 | N | **C** | **End-of-night recap surface** — `GET /threads/:id/recap` (`routes/telegraphMemory.ts:178#/threads/:threadId/recap`) over `buildRecap` (`services/telegraph/memoryNotes.ts:242#export function buildRecap`), rendered with §10.3's four actions and its headline (`travel-buddy-standalone/src/features/telegraph/memory/RecapSheet.tsx:46#export function RecapSheet`), reachable from the thread header (`travel-buddy-standalone/app/messages/[id].tsx:1947#telegraph-open-recap`). |
 | T122 | N `∅` | **C** | **Derived from confirmed session context — an invitation to curate, not automatic historical truth** — the window is the plan's own and a thread with no completed plan gets none (`routes/telegraphMemory.ts:238#no_completed_plan`), people are the plan's confirmed participants (`services/telegraph/memoryNotes.ts:242#export function buildRecap`), and the endpoint states that it created nothing (`routes/telegraphMemory.ts:291#wrote: "nothing"`). |
 | T7 | W | **C** | **Pillar Remember — completed outcomes explicitly become Memories or recaps without ingesting whole private chats** — the prohibition half already held; the positive half now does too. An explicit save produces a real private `memories` draft (T119) and a completed plan produces a recap (T121), while the whole-conversation path is refused by name (T120). |
-| T108 | N | **W** | **Complete UI: closeout, media grouping, explicit Memory/recap options** — two of three. Media grouping is the MEDIA_ALBUM kind (`services/telegraph/messageKinds.ts:124#MEDIA_ALBUM`) and the explicit Memory/recap options exist (T119, T121). There is still **no closeout surface**: at COMPLETE the coordination panel simply disappears rather than becoming one. |
+| T108 | N | **W** | **Complete UI: closeout, media grouping, explicit Memory/recap options** — two of three. Media grouping is the MEDIA_ALBUM kind (`services/telegraph/messageKinds.ts:126#MEDIA_ALBUM`) and the explicit Memory/recap options exist (T119, T121). There is still **no closeout surface**: at COMPLETE the coordination panel simply disappears rather than becoming one. |
 
 ### 10.19 The §10 tests, and how each was shown red
 
@@ -6465,7 +6465,7 @@ a `friends_only` Memory resolving for a non-friend — measured, see §21.6.
 | T218 | **W** | §15.2's promotion list now EXISTS as server-side data in the spec's own order — trusted contact, current status, official help, route/return, call, block/report, location scope, with entertainment de-prioritized (`services/telegraph/safetyMode.ts:143#export const SAFETY_PROMOTED`) — and it is served with the mode, so the ordering is one answer both clients would get rather than two layouts. It stays W for exactly the half the row names: **nothing reorders**. `components/ThreadSafetySheet.tsx` and the conversation screen are client files this lane does not hold. §13.4's note that "a layout that reorders affordances under a mode that has no referent cannot be written" is answered — the referent is T217 — but the layout is not. |
 | T12 | **W** | **Semantic layer NOW.** The row's reason — "it is a PANEL, not a LAYER: the message stream underneath is unchanged" — is answered on the server by the same partition T11 gets: a §9.1 quick state, a rendezvous, a SAFETY message, a LOCATION message and a NOW-class action proposal are all lifted OUT of `talk` and into `now` (`services/telegraph/layers.ts:160#export function layerOfMessage`). "Minimal conversation" is now EXPRESSIBLE — the stream the client is handed is genuinely shorter while the thread is coordinating. It stays W for the same reason T11 does: nothing draws it yet, and this lane holds no client file. |
 | T262 | **W** | **§20 Trips.** Was two of five, corrected to three by §13.1 (TRIP is shareable). **Today/next context is now four of five**: `GET /api/threads/:id/trip-context` (`routes/telegraphSharedContext.ts:414#"/threads/:threadId/trip-context"`) reads `trip_plan_items` — Trips' own canonical table, written by nothing here — and answers today's items and the next one after them, membership-gated TWICE. The second gate is the point: it re-verifies ACCEPTED trip membership rather than trusting the thread roster, because T319 records that the two writes are not one transaction and a removed member is on the roster until a sync runs. It returns no coordinates at all — they are not selected, which is stronger than stripped (`routes/telegraphSharedContext.ts:347#const TRIP_CONTEXT_COLUMNS`) — and it states its own day frame as UTC rather than implying a destination-local one it cannot compute (census T423). Fifth item, the Trip Kernel commands, is wiring into `server/trips/commandRoute.ts`, which this lane does not own. |
-| T40 | **W** | **Evidence correction, verdict unchanged.** "Photo and video only … No voice, GIF or file" is stale on the GIF clause: §6.2's GIF kind is sendable, validated and indexed — `GifPayload` (`services/telegraph/messageKinds.ts:59#export const GifPayload`), in `SENDABLE_ENVELOPE_KINDS` (`services/telegraph/messageKinds.ts:136#export const SENDABLE_ENVELOPE_KINDS`), with its own drawer tab and its own renderer (T64). So §5's Media family is three of five carriable, not two. It stays W and this lane did not touch it: voice and file both need the MIME and storage widening §13.4 names, and §13.4's other note stands — there is no GIF PROVIDER, so a kind that can be carried still cannot be obtained. A correction to the count is not a change to the verdict. |
+| T40 | **W** | **Evidence correction, verdict unchanged.** "Photo and video only … No voice, GIF or file" is stale on the GIF clause: §6.2's GIF kind is sendable, validated and indexed — `GifPayload` (`services/telegraph/messageKinds.ts:61#export const GifPayload`), in `SENDABLE_ENVELOPE_KINDS` (`services/telegraph/messageKinds.ts:139#export const SENDABLE_ENVELOPE_KINDS`), with its own drawer tab and its own renderer (T64). So §5's Media family is three of five carriable, not two. It stays W and this lane did not touch it: voice and file both need the MIME and storage widening §13.4 names, and §13.4's other note stands — there is no GIF PROVIDER, so a kind that can be carried still cannot be obtained. A correction to the count is not a change to the verdict. |
 | T70 | **W** | §7.2's threshold is now checkable on one path: `POST /threads/:id/seen` takes a MESSAGE, not a clock reading, refuses one that is absent, deleted, in another thread or outside the caller's §14.3 window, and stamps the MESSAGE's own `created_at` so "seen" cannot run ahead of what was sent (`routes/telegraphLifecycle.ts:485#const threshold = String(t.created_at)`). The marker never moves backwards. It stays W because the legacy path in `routes/messaging.ts` still stamps `now()` on any authenticated call and this lane does not own that file — while both paths exist, seen is still whatever the client asserts on the one that is wired into the app. |
 
 ### 21.5b Rows opened, re-derived, and deliberately not touched
@@ -6589,7 +6589,7 @@ here.
   - Five of the six endpoints this lane added have no client: `GET /threads/:id/layers`,
     `GET /me/commitments`, `POST /threads/:id/seen`, `GET /threads/:id/safety-mode` and
     `GET /threads/:id/trip-context`. They are REACHABLE — mounted through
-    `routes/index.ts:187#telegraphSharedContextRouter`, `:190#telegraphCoordinationRouter` and
+    `routes/index.ts:188#telegraphSharedContextRouter`, `:192#telegraphCoordinationRouter` and
     `:192` — and unmounted in the app's UI. That is precisely the state T11, T12, T218 and T262
     stay W for, and it is why those four rows did not move.
   - The sixth, `confirm-action`, was already on the live path and its behaviour changed: an
@@ -6755,7 +6755,7 @@ the class is closed — applies, and so does the narrower objection:
 
 | id | Verdict | What closed, and what did not |
 |---|---|---|
-| T267 | **W** | **Evidence correction plus a half.** "Meeting tools (T248) and catch-up do not exist" is wrong on the first clause: T245–T251 are all C. The catch-up's SERVER half now exists and is reachable (`routes/index.ts:190#telegraphCoordinationRouter`). It stays W because the row is the **Compass** integration row and nothing in Compass reaches it: §18.3's tool set is closed at eight named accessors, `TELEGRAPH_TOOL_SPEC_NAMES` asserts that closure, and a ninth tool would break the one claim that file makes about itself. The right wiring is to carry the catch-up inside `getConversationContext()` — one import, no new tool name — and `compass/TelegraphConversationTools.ts` is not this lane's file. **Cross-lane request, §22.8.** |
+| T267 | **W** | **Evidence correction plus a half.** "Meeting tools (T248) and catch-up do not exist" is wrong on the first clause: T245–T251 are all C. The catch-up's SERVER half now exists and is reachable (`routes/index.ts:192#telegraphCoordinationRouter`). It stays W because the row is the **Compass** integration row and nothing in Compass reaches it: §18.3's tool set is closed at eight named accessors, `TELEGRAPH_TOOL_SPEC_NAMES` asserts that closure, and a ninth tool would break the one claim that file makes about itself. The right wiring is to carry the catch-up inside `getConversationContext()` — one import, no new tool name — and `compass/TelegraphConversationTools.ts` is not this lane's file. **Cross-lane request, §22.8.** |
 | T308 | **W** | **Evidence correction.** "One of four: translation … No transcript, no thread tools (T245–T251), no catch-up" is now one of four understated by two: thread tools exist and the catch-up's server half exists. It stays W and is NEITHER-capped on the voice transcript, which needs the audio MIME and storage widening no migration provides (§13.4, T40). |
 | T344 · T363 | **C, unchanged, and strengthened** | §22.3 does not move them and could not: both are C already, and §20.6's rule is that a refusal is not a plausible empty state, so the three sites never counted against them. What §22.3 removes is the defect §20.7 named separately. |
 
@@ -6865,7 +6865,7 @@ violation, not a missing feature).
 
   - Nothing here is merged, deployed or flag-enabled, and nothing above depends on a migration.
   - `GET /threads/:id/catch-up` has **no client**. It is REACHABLE — mounted at
-    `routes/index.ts:190#telegraphCoordinationRouter` — and unmounted in the app's UI, which is
+    `routes/index.ts:192#telegraphCoordinationRouter` — and unmounted in the app's UI, which is
     precisely why T267 does not move.
   - `POST /threads/:id/typing` and the four `telegraph/suggestions` handlers changed behaviour on
     a path clients already call: an outage on the membership read now answers 503
@@ -8004,3 +8004,73 @@ this section. **Guards at this tree:** `check:census-freshness` **0**,
 `check:missing-live-columns`, `check:authorization-contract`,
 `check:media-objects` and `check:rank-events-surfaces` exit **2** without live
 credentials — **UNVERIFIED, not green**, and nothing above rests on them.
+
+---
+
+## §30 — VOICE IS BUILT ON THIS BRANCH, AND NO ROW BELOW HAS BEEN RE-GRADED FOR IT
+
+**This section moves no verdict.** It exists because several statements above are
+now false about this tree, and a census whose last word is a false statement is
+worse than one that is merely old.
+
+### 30.1 What changed
+
+The telegraph build lane implemented VOICE messages end to end and the
+integrating lane merged that work at this branch's head:
+
+| Piece | Where |
+| --- | --- |
+| Payload, duration and MIME bounds | `artifacts/api-server/src/services/telegraph/voice.ts` |
+| Upload + send routes | `artifacts/api-server/src/routes/telegraphVoice.ts` (`POST /api/telegraph/voice/upload`, `POST /api/threads/:threadId/voice`) |
+| Audio sniffing | `artifacts/api-server/src/lib/mediaProcessing.ts#sniffVoiceAudio` and `#isoTrackHandlers`, `artifacts/api-server/src/lib/mediaPipeline.ts#guardUploadRequest` |
+| `media_type` widening | `artifacts/api-server/src/migrations/2989_messages_audio_media_type.sql` |
+| Envelope + parse | `artifacts/api-server/src/services/telegraph/messageKinds.ts` |
+| Recorder, player, client API, policy | `travel-buddy-standalone/src/features/telegraph/voice/` |
+
+### 30.2 The statements above that are now false, named
+
+* **§21.5's T53 line** — "*deliberately NOT moved … REFUSED by name with the
+  constraint that blocks it*" — described a tree in which VOICE had no payload,
+  no route and no audio MIME. All three now exist.
+* **T225's evidence** — "*`lib/mediaPipeline.ts:75` `ALLOWED_MEDIA_MIME` admits
+  no audio type*" — remains literally true of that constant, and is no longer
+  the whole story: voice audio is admitted by a voice-only allowlist on its own
+  route, which is why the general one did not need widening.
+* Any row whose evidence turns on "there is no voice message in this tree".
+
+**The rows themselves are unchanged and are NOT to be read as measurements of
+this branch.** Every verdict in this document is a LOWER BOUND at
+`head_commit 1fe72289b`. The direction of the error is known and one-way —
+nothing in this build removed a capability — but a row that says a thing is
+absent may now describe a thing that exists. Promoting a verdict requires
+reading the row against the code; that is the verification phase's work, and
+doing it here, from the builder's own account, is exactly the shortcut this
+corpus exists to prevent.
+
+### 30.3 Two things that are NOT built, so the recensus does not over-correct
+
+1. **`2989` is applied to NO database** — not production (`ajrurzioarfkagpuxfnb`),
+   not portava-ci (`hwokxgbmezheskbzskfr`). On every database that exists today
+   `messages.media_type` still refuses `audio`, so the send route's insert would
+   fail its CHECK. **Voice is built in this tree and is live nowhere.**
+2. **§6.3's optional transcript/translation is not built**, and the blocker is
+   an owner/infrastructure decision rather than code: no speech-to-text provider
+   is configured in or reachable from this tree. A nullable `transcript` field
+   was deliberately not added to `VoicePayload`, because nothing would write it.
+   Consequence: a voice note is not findable by §6.4's object-aware search, and
+   `searchableTextOf` returns null for it — which is correct, and asserted,
+   rather than indexing a storage URL.
+
+Six further defects the lane found and did not fix are in
+`docs/BUILD-BACKLOG.md` under `## telegraph lane — 2026-09-16`, including
+`sniffMedia` classifying an audio-only ISO-BMFF file as `video/mp4` and the
+VOICE drawer row drawing the literal `voice` as its title.
+
+### 30.4 Provenance of this section
+
+Written by the integrating lane at the telegraph merge, from the merge diff and
+the lane's own report, not from a re-measurement. `head_commit` is unchanged at
+`1fe72289b`; the acknowledgement covering these files is in
+`artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json` and is the
+only acknowledgement in that file that argues a verdict DID move rather than
+that none could.

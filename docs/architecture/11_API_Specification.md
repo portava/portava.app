@@ -20,7 +20,7 @@ below follows from that one fact, including both of the defect classes that keep
 |---|---|
 | Files in `src/routes/` | **143** |
 | …that register at least one path | **140** (`index.ts`, `callsWebhook.ts`, `discoverySearchHelpers.ts` register none) |
-| Routers mounted under `/api` | **139** (`routes/index.ts:144-306`) |
+| Routers mounted under `/api` | **139** (`routes/index.ts:145-308`) |
 | Routers mounted at the site root | **1** — `wellKnownShare.ts` (`app.ts:144`) |
 | Path registrations | **1382** — 583 POST, 559 GET, 110 PATCH, 106 DELETE, 24 PUT |
 | Distinct top-level URL families | **71** |
@@ -125,11 +125,11 @@ The guard is per-file and text-level, so the residual risk is **cross-router** s
 - `stampShowcaseRouter` and `stampAdmireRouter` must precede `stampsRouter`, because
   `stamps.ts` registers `GET /stamps/:stampId` and answers `400` for a non-UUID **without
   calling `next()`** — so any literal `/stamps/*` in a later router is unreachable
-  (`routes/index.ts:221-231`).
+  (`routes/index.ts:223-233`).
 - `mediaWorldRouter` and `mediaActionsRouter` must precede `mediaFeedRouter`, or
   `/media/world`, `/media/people`, `/media/me`, `/media/timeline`, `/media/map`,
   `/media/:id/actions` and `/media/:id/intent` are swallowed by `mediaFeed`'s `/media/:id`
-  (`routes/index.ts:268-276`).
+  (`routes/index.ts:270-278`).
 
 Those comments are the whole enforcement mechanism for cross-router order. Nothing tests it.
 
