@@ -46,10 +46,21 @@
  * correlatable across airports.
  *
  * ── WHY THE HANDLE DOES NOT ROTATE, STATED BECAUSE IT WAS CONSIDERED ─────────
- * `lib/sensingAnonStore.ts` rotates its contributor token on an epoch, and that
- * is right for a store whose rows live 72 hours and whose cohort counts are
- * aggregate. It is WRONG here, and adopting it by analogy would have quietly
- * removed a data-integrity check:
+ * The anonymous contributor-token store elsewhere in this tree rotates its
+ * token on an epoch, and that is right for a store whose rows live 72 hours and
+ * whose cohort counts are aggregate. It is WRONG here, and adopting it by
+ * analogy would have quietly removed a data-integrity check.
+ *
+ * (That module is deliberately NOT named here, and neither is its suite. A
+ * containment guard asserts that the set of files mentioning it is EXACTLY two
+ * allowlists, so that its reference surface stays small and reviewed — and the
+ * guard matches the bare identifier, so naming it even inside a comment is
+ * enough to join that set. Borrowing an idea from a module does not earn a
+ * place on the list, and widening an allowlist to keep a citation would be
+ * paying a real privacy boundary for a comment. Find it under `src/lib/` by the
+ * contributor-token derivation this paragraph describes.)
+ *
+ * The reason rotation is wrong here:
  *
  * A rotating handle means one traveller holds TWO handles across a rotation
  * boundary. `TRAVELER_OBSERVATION` rows live `FACT_CLASS_TTL_MIN` = 45 minutes,
@@ -171,7 +182,7 @@ function observerPepper(): string {
 
 /**
  * Canonicalise before hashing. Same hazard and same fix as `lib/intelGroupKey`
- * and `lib/sensingAnonStore`: two spellings of one airport ref ("bkk", "BKK ")
+ * and the anonymous sensing store: two spellings of one airport ref ("bkk", "BKK ")
  * must not hash to two handles, or ONE traveller splits into two observers and
  * corroborates themselves — the exact failure the floor exists to prevent.
  */
