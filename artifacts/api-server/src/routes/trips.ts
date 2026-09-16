@@ -363,9 +363,9 @@ router.post("/trips", async (req, res) => {
   }
 });
 
-/* ===========================================================================
+/* ---------------------------------------------------------------------------
  * GET /trips/:tripId/members  — list accepted trip members (for invite picker)
- * ===========================================================================
+ * ---------------------------------------------------------------------------
  * Returns profiles of all accepted members (role = owner|member), excluding
  * the caller. Caller must be an accepted trip member themselves.
  */
@@ -437,9 +437,9 @@ router.get("/trips/:tripId/members", async (req, res) => {
   });
 });
 
-/* ===========================================================================
+/* ---------------------------------------------------------------------------
  * GET /trips/:tripId/invitable-users  — grouped invite picker data
- * ===========================================================================
+ * ---------------------------------------------------------------------------
  * Returns trip members (groupMembers) + caller's friends not in the trip
  * (otherFollowers), so the invite picker can render two labelled sections.
  * Caller must be an accepted trip member.
@@ -501,9 +501,9 @@ router.get("/trips/:tripId/invitable-users", async (req, res) => {
   });
 });
 
-/* ===========================================================================
+/* ---------------------------------------------------------------------------
  * GET /me/trip-invites/pending  — list pending trip invitations for the caller
- * ===========================================================================
+ * ---------------------------------------------------------------------------
  * Returns every trip_members row where role = 'invited' for the current user,
  * enriched with trip details (name, destination, dates) and inviter profile.
  */
@@ -596,9 +596,9 @@ router.get("/me/trip-invites/pending", async (req, res) => {
   res.status(200).json({ invites });
 });
 
-/* ===========================================================================
+/* ---------------------------------------------------------------------------
  * PATCH /trips/:tripId  — update trip plan-edit permission (owner only)
- * ===========================================================================
+ * ---------------------------------------------------------------------------
  * Accepts: { planEditPermission, planEditors? }
  * planEditors is the full replacement list of user IDs for specific_members mode.
  */
@@ -827,9 +827,9 @@ router.patch("/trips/:tripId", async (req, res) => {
 });
 
 
-/* ===========================================================================
+/* ---------------------------------------------------------------------------
  * GET /trips/:tripId/plan-permission  — get current plan permission for caller
- * ===========================================================================
+ * ---------------------------------------------------------------------------
  * Returns { planEditPermission, planEditors, canEdit } for the calling user.
  */
 router.get("/trips/:tripId/plan-permission", async (req, res) => {
@@ -873,9 +873,9 @@ router.get("/trips/:tripId/plan-permission", async (req, res) => {
   res.json({ planEditPermission: perm, planEditors: editorIds, canEdit, isOwner: user.id === ownerId });
 });
 
-/* ===========================================================================
+/* ---------------------------------------------------------------------------
  * POST /trips/:tripId/invite  — trip owner invites a user
- * ===========================================================================
+ * ---------------------------------------------------------------------------
  * Reuses the existing trip_members table with role='invited'.
  * Friendship alone NEVER creates this row — only explicit owner invitation.
  */
@@ -960,9 +960,9 @@ router.post("/trips/:tripId/invite", async (req, res) => {
   res.status(201).json({ status: "invited", tripId, userId });
 });
 
-/* ===========================================================================
+/* ---------------------------------------------------------------------------
  * POST /trips/:tripId/accept-invite  — invitee accepts their trip invitation
- * ===========================================================================
+ * ---------------------------------------------------------------------------
  */
 router.post("/trips/:tripId/accept-invite", async (req, res) => {
   // requireUser (lib/http.ts) is the ONLY place the ban/suspend gate is applied,
@@ -1015,9 +1015,9 @@ router.post("/trips/:tripId/accept-invite", async (req, res) => {
   res.status(200).json({ status: "accepted", tripId, role: "member" });
 });
 
-/* ===========================================================================
+/* ---------------------------------------------------------------------------
  * POST /trips/:tripId/decline-invite  — invitee declines their trip invitation
- * ===========================================================================
+ * ---------------------------------------------------------------------------
  */
 router.post("/trips/:tripId/decline-invite", async (req, res) => {
   // requireUser (lib/http.ts) is the ONLY place the ban/suspend gate is applied,
@@ -1065,9 +1065,9 @@ router.post("/trips/:tripId/decline-invite", async (req, res) => {
   res.status(200).json({ status: "declined", tripId });
 });
 
-/* ===========================================================================
+/* ---------------------------------------------------------------------------
  * GET /me/plan-editable-trips  — trips where caller has plan-edit permission
- * ===========================================================================
+ * ---------------------------------------------------------------------------
  * Returns only trips where the calling user can add/edit plan items.
  * Respects plan_edit_permission: owner_only | all_members | specific_members.
  */
@@ -1539,9 +1539,9 @@ router.delete("/trips/:tripId/plan/items/:itemId", async (req, res) => {
 
 // ── POST /trips/:tripId/plan/items/:itemId/reorder — plan-edit permission ─────
 
-/* ===========================================================================
+/* ---------------------------------------------------------------------------
  * POST /trips/:tripId/members  — owner directly adds a user as a member
- * ===========================================================================
+ * ---------------------------------------------------------------------------
  * Body: { userId: string, role?: "member" | "invited" }
  * Only the trip owner may call this. Idempotent if the user already has the
  * requested role.
@@ -1597,9 +1597,9 @@ router.post("/trips/:tripId/members", async (req, res) => {
   res.status(201).json({ status: "added", tripId, userId, role });
 });
 
-/* ===========================================================================
+/* ---------------------------------------------------------------------------
  * DELETE /trips/:tripId/members/:userId  — owner removes a member from a trip
- * ===========================================================================
+ * ---------------------------------------------------------------------------
  * Only the trip owner may call this. The owner cannot remove themselves.
  */
 router.delete("/trips/:tripId/members/:userId", async (req, res) => {

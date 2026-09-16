@@ -372,6 +372,16 @@ const REASON_CODE: Readonly<Record<string, ApiErrorCode>> = {
   invalid_value: "invalid_payload",
   unknown_subject: "not_found",
   db_error: "db_error",
+  credential_required: "forbidden",
+  credential_malformed: "invalid_payload",
+  credential_expired: "forbidden",
+  credential_revoked: "forbidden",
+  credential_purpose_mismatch: "forbidden",
+  credential_version_mismatch: "invalid_payload",
+  credential_replay: "conflict",
+  credential_infrastructure_error: "db_error",
+  precision_exceeded: "invalid_payload",
+  sensitive_subject: "forbidden",
 };
 
 export type MapIngestResult =
@@ -393,7 +403,7 @@ export async function ingestMapContribution(
   sc: any,
   actorId: string,
   body: unknown,
-  opts: { idempotencyKey?: string | null } = {},
+  opts: { idempotencyKey?: string | null; sensingCredential?: string | null; sensingNonce?: string | null; sensingDeviceId?: string | null } = {},
 ): Promise<MapIngestResult> {
   // Flag arg is a LITERAL so check-flag-polarity can resolve this stop statically.
   if (!(await isFlagEnabled(sc, "map_contributions_enabled"))) return reject("feature_disabled");
@@ -440,6 +450,9 @@ export async function ingestMapContribution(
     //   partySize/partyId → absent ⇒ group_key null ⇒ counts as a person, never
     //                       as an independent group in the k-anonymity gate.
     captureSurface: "quick_signal",
+    sensingCredential: opts.sensingCredential ?? undefined,
+    sensingNonce: opts.sensingNonce ?? undefined,
+    sensingDeviceId: opts.sensingDeviceId ?? undefined,
   };
 
   const result = await writeObservation(sc, actorId, input);
@@ -513,7 +526,12 @@ router.post(
     }
 
     const headerKey = req.header("Idempotency-Key") ?? req.header("idempotency-key") ?? null;
-    const result = await ingestMapContribution(sc, user.id, req.body ?? {}, { idempotencyKey: headerKey });
+    const sensingCredential = req.header("X-Sensing-Credential") ?? null;
+    const sensingNonce = req.header("X-Sensing-Nonce") ?? null;
+    const sensingDeviceId = req.header("X-Sensing-Device") ?? null;
+    const result = await ingestMapContribution(sc, user.id, req.body ?? {}, {
+      idempotencyKey: headerKey, sensingCredential, sensingNonce, sensingDeviceId,
+    });
 
     if (!result.ok) {
       // Fail-soft on the flag only, in the sibling's idiom: the capture sheet

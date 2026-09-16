@@ -78,6 +78,9 @@ export const ALLOWED_PAYLOAD_KEYS = [
   "reason",
   "position",
   "result_count",
+  "fromZoneId",
+  "toZoneId",
+  "groupKey",
 ] as const;
 
 const ALLOWED_SET = new Set<string>(ALLOWED_PAYLOAD_KEYS);
@@ -156,21 +159,38 @@ export function projectEvent(input: CanonicalEventInput): CanonicalEventRow | nu
  * path. Non-canonical verbs are dropped by the projection. Insert failures are
  * logged.
  */
-export async function recordEvents(sc: any, inputs: readonly CanonicalEventInput[]): Promise<void> {
+export async function recordEvents(sc: any, inputs: readonly CanonicalEventInput[]): Promise<boolean> {
   try {
-    if (!sc || !inputs || inputs.length === 0) return;
+    if (!sc || !inputs || inputs.length === 0) return false;
     const rows = inputs.map(projectEvent).filter((r): r is CanonicalEventRow => r !== null);
-    if (rows.length === 0) return;
+    if (rows.length === 0) return false;
     const { error } = await sc.from("canonical_events").insert(rows);
     if (error) {
       logger.warn({ err: error, count: rows.length }, "canonicalEvents: insert rejected");
+      return false;
     }
+    return true;
   } catch (err) {
     logger.warn({ err }, "canonicalEvents: insert threw");
+    return false;
   }
 }
 
 /** Record a single event. Fire-and-forget; see recordEvents. */
-export async function recordEvent(sc: any, input: CanonicalEventInput): Promise<void> {
+export async function recordEvent(sc: any, input: CanonicalEventInput): Promise<boolean> {
   return recordEvents(sc, [input]);
+}
+
+/** Authenticated, consented navigation producer. Only coarse canonical zone
+ * ids are accepted; the correlation token is server-derived and never the
+ * caller's stable account id. */
+export async function recordNavigationStart(
+  sc: any,
+  input: { actorId: string; fromZoneId: string; toZoneId: string; groupKey?: string | null; expiresAt: string },
+): Promise<void> {
+  const ok = await recordEvent(sc, {
+    verb: "direction", actorId: input.actorId, privacyEligible: true,
+    expiresAt: input.expiresAt, payload: { fromZoneId: input.fromZoneId, toZoneId: input.toZoneId, groupKey: input.groupKey ?? null },
+  });
+  if (!ok) throw new Error("canonical navigation event insert failed");
 }

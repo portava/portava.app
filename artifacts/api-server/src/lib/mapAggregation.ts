@@ -987,6 +987,8 @@ export interface ZoneTransition {
   confidence?: ConfidenceState;
   privacyClass?: PrivacyClass;
   sensitiveSubject?: boolean;
+  /** Server-resolved policy marker for routes too rare to publish. */
+  rarePath?: boolean;
   /** Explicitly-flagged dispersal / anomaly; never inferred here. */
   dispersing?: boolean;
   unusual?: boolean;
@@ -1021,6 +1023,7 @@ export type CrowdFlowRejectionReason =
   | "not_fresh"
   | "invalid_geometry"
   | "privacy_class_none"
+  | "rare_path"
   | "invalid_input";
 
 export interface CrowdFlowRejection {
@@ -1107,6 +1110,12 @@ export function deriveCrowdFlow(
     const id = { fromZoneId: t?.fromZoneId ?? "", toZoneId: t?.toZoneId ?? "" };
     if (!t || !t.fromZoneId || !t.toZoneId) {
       rejected.push({ ...id, reason: "invalid_input" });
+      continue;
+    }
+    // Rare or policy-sensitive routes are never made public merely because
+    // they happened to clear an actor count in one window.
+    if (t.rarePath === true) {
+      rejected.push({ ...id, reason: "rare_path" });
       continue;
     }
 

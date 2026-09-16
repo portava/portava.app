@@ -27,6 +27,12 @@ import {
   type CaptureResult, type CaptureInput,
 } from "../services/intel/IntelCaptureService.js";
 import { getIntelConsentState, setIntelConsent } from "../lib/intelConsent.js";
+import { isFlagEnabled } from "../lib/featureFlags.js";
+import { issueSensingCredential } from "../lib/deviceContributionCredential.js";
+import { authorizeSensingCredential } from "../lib/deviceContributionCredential.js";
+import { recordNavigationStart } from "../lib/canonicalEvents.js";
+import { resolveSensitiveSubject, resolveSensitiveCanonicalZone } from "../lib/protectedLocations.js";
+import { resolveActiveCrewId } from "../lib/activeCrew.js";
 
 const router = Router();
 
@@ -35,6 +41,12 @@ const REASON_CODE: Record<string, ApiErrorCode> = {
   disabled: "feature_disabled",
   // No valid Intelligence Contributions consent → 403, the D4 lawful-basis refusal.
   consent_required: "forbidden",
+  credential_unauthorized: "forbidden",
+  credential_required: "forbidden",
+  credential_expired: "forbidden",
+  credential_revoked: "forbidden",
+  credential_replay: "conflict",
+  credential_infrastructure_error: "db_error",
   invalid_idempotency_key: "invalid_payload",
   invalid_observed_at: "invalid_payload",
   invalid_claim_type: "invalid_payload",
@@ -128,6 +140,103 @@ router.put("/v1/intel/consent", asyncHandler(async (req, res) => {
   res.json(out.state);
 }));
 
+router.post("/v1/intel/sensing-credentials", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const sc = getServiceClient();
+  if (!sc || !(await isFlagEnabled(sc, "intel_sensing_credentials_enabled"))) {
+    return sendError(res, "feature_disabled", "Sensing credentials are not enabled");
+  }
+  const consent = await getIntelConsentState(sc, auth.user.id);
+  if (!consent.enabled) return sendError(res, "forbidden", "Intelligence Contributions consent is required");
+  const deviceId = req.header("X-Sensing-Device");
+  if (!deviceId || deviceId.length < 32) return sendError(res, "invalid_payload", "An eligible device is required");
+  const eligibility = await sc.rpc("is_sensing_device_eligible", { p_actor_id: auth.user.id, p_device_id: deviceId });
+  if (eligibility.error || eligibility.data !== true) return sendError(res, "forbidden", "Device is not eligible for sensing");
+  const issued = await issueSensingCredential(sc, auth.user.id, { deviceId });
+  if (!issued.ok) return sendError(res, "db_error", issued.detail ?? issued.reason);
+  res.status(201).json(issued.credential);
+}));
+
+router.post("/v1/intel/sensing-devices", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const sc = getServiceClient();
+  if (!sc || !(await isFlagEnabled(sc, "intel_sensing_device_enrollment_enabled"))) {
+    return sendError(res, "feature_disabled", "Device enrollment is not enabled");
+  }
+  const consent = await getIntelConsentState(sc, auth.user.id);
+  if (!consent.enabled) return sendError(res, "forbidden", "Intelligence Contributions consent is required");
+  const deviceId = req.header("X-Sensing-Device");
+  if (!deviceId || deviceId.length < 32 || deviceId.length > 256 || !/^[A-Za-z0-9._:-]+$/.test(deviceId)) {
+    return sendError(res, "invalid_payload", "An opaque locally generated device id is required");
+  }
+  const { error } = await sc.from("intel_sensing_device_eligibility").upsert({
+    actor_id: auth.user.id, device_id: deviceId, eligible: true, unlinked_at: null,
+  });
+  if (error) return sendError(res, "db_error", error.message);
+  res.status(201).json({ enrolled: true, deviceId });
+}));
+
+router.delete("/v1/intel/sensing-devices", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const sc = getServiceClient();
+  if (!sc) return sendError(res, "server_not_configured", "Service client not configured");
+  const deviceId = req.header("X-Sensing-Device");
+  if (!deviceId) return sendError(res, "invalid_payload", "device id is required");
+  const { data, error } = await sc.rpc("unlink_intel_sensing_device", {
+    p_actor_id: auth.user.id, p_device_id: deviceId,
+  });
+  if (error) return sendError(res, "db_error", error.message);
+  if (data !== "unlinked") return sendError(res, "not_found", "device is not linked");
+  res.json({ unlinked: true });
+}));
+
+router.post("/v1/intel/navigation-start", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const nowMs = Date.now();
+  const sc = getServiceClient();
+  if (!sc || !(await isFlagEnabled(sc, "intel_sensing_credentials_enabled"))) return sendError(res, "feature_disabled", "Sensing credentials are not enabled");
+  const consent = await getIntelConsentState(sc, auth.user.id);
+  if (!consent.enabled) return sendError(res, "forbidden", "Intelligence Contributions consent is required");
+  const body = z.object({
+    fromZoneId: z.string().min(1).max(120), toZoneId: z.string().min(1).max(120),
+  }).safeParse(req.body ?? {});
+  if (!body.success) return sendError(res, "invalid_payload", "coarse zone endpoints and correlation seed are required");
+  if (await resolveSensitiveCanonicalZone(sc, body.data.fromZoneId) || await resolveSensitiveCanonicalZone(sc, body.data.toZoneId)) {
+    return sendError(res, "forbidden", "sensitive endpoint");
+  }
+  const authz = await authorizeSensingCredential(sc, req.header("X-Sensing-Credential"), req.header("X-Sensing-Nonce"), {
+    actorId: auth.user.id, deviceId: req.header("X-Sensing-Device") ?? undefined,
+  });
+  if (!authz.ok) return sendError(res, "forbidden", authz.reason);
+  const crewId = await resolveActiveCrewId(sc, auth.user.id, new Date(nowMs));
+  try {
+    await recordNavigationStart(sc, {
+      actorId: auth.user.id, ...body.data, groupKey: crewId,
+      expiresAt: new Date(nowMs + 30 * 60_000).toISOString(),
+    });
+  } catch (error) {
+    return sendError(res, "db_error", "navigation event could not be recorded");
+  }
+  res.status(201).json({ recorded: true });
+}));
+
+router.delete("/v1/intel/sensing-credentials", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const sc = getServiceClient();
+  if (!sc) return sendError(res, "server_not_configured", "Service client not configured");
+  const deviceId = req.header("X-Sensing-Device") ?? null;
+  const { data, error } = await sc.rpc("revoke_intel_sensing_credentials", {
+    p_actor_id: auth.user.id, p_device_id: deviceId,
+  });
+  if (error) return sendError(res, "db_error", error.message);
+  res.json({ revoked: Number(data ?? 0) });
+}));
+
 // ── Capture ─────────────────────────────────────────────────────────────────
 router.post("/v1/intel/observations", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
@@ -166,6 +275,9 @@ router.post("/v1/intel/observations", asyncHandler(async (req, res) => {
     presenceLevel: b.presenceLevel,
     partySize: b.partySize,
     partyId: b.partyId ?? null,
+    sensingCredential: req.header("X-Sensing-Credential") ?? undefined,
+    sensingNonce: req.header("X-Sensing-Nonce") ?? undefined,
+    sensingDeviceId: req.header("X-Sensing-Device") ?? undefined,
   };
   const result = await writeObservation(getServiceClient()!, auth.user.id, input);
   sendCaptureResult(res, result);

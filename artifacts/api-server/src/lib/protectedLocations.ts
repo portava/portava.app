@@ -75,6 +75,62 @@ import {
   type PrivacyClass,
 } from "./mapObjects.js";
 
+/**
+ * Authoritative subject sensitivity lookup for ingest paths. A missing policy
+ * read is treated as sensitive (not as "probably public"), preventing a
+ * caller-supplied boolean from laundering a protected place.
+ */
+export async function resolveSensitiveSubject(sc: any, subjectId: string): Promise<boolean> {
+  if (!sc || !subjectId) return true;
+  try {
+    const { data, error } = await sc
+      .from("places")
+      .select("latitude,longitude")
+      .eq("id", subjectId)
+      .maybeSingle();
+    if (error || !data) return true;
+    // A subject without a canonical coordinate cannot be associated with a
+    // protected zone. It remains an ordinary non-location subject; malformed
+    // policy rows below still fail closed.
+    if (!finite(data.latitude) || !finite(data.longitude)) return true;
+    const zones = await sc.from("protected_zones")
+      .select("category,action,privacy_floor,shape,center_lat,center_lng,radius_meters,ring")
+      .eq("active", true);
+    if (zones.error) return true;
+    return ((zones.data ?? []) as any[]).some((row) => zoneCovers({
+      category: row.category,
+      action: row.action ?? undefined,
+      privacyFloor: row.privacy_floor ?? undefined,
+      shape: row.shape,
+      ...(row.shape === "circle"
+        ? { center: { lat: row.center_lat, lng: row.center_lng }, radiusMeters: row.radius_meters }
+        : { ring: row.ring }),
+    } as ProtectedZone, [[Number(data.longitude), Number(data.latitude)]]) !== false);
+  } catch {
+    return true;
+  }
+}
+
+/** Same authoritative policy for a coarse canonical zone id. */
+export async function resolveSensitiveCanonicalZone(sc: any, zoneId: string): Promise<boolean> {
+  if (!sc || !zoneId) return true;
+  try {
+    const { data, error } = await sc.from("canonical_locations")
+      .select("lat,lng").eq("id", zoneId).maybeSingle();
+    if (error || !data || !finite(data.lat) || !finite(data.lng)) return true;
+    const zones = await sc.from("protected_zones")
+      .select("category,action,privacy_floor,shape,center_lat,center_lng,radius_meters,ring").eq("active", true);
+    if (zones.error) return true;
+    return ((zones.data ?? []) as any[]).some((row) => zoneCovers({
+      category: row.category, action: row.action ?? undefined,
+      privacyFloor: row.privacy_floor ?? undefined, shape: row.shape,
+      ...(row.shape === "circle"
+        ? { center: { lat: row.center_lat, lng: row.center_lng }, radiusMeters: row.radius_meters }
+        : { ring: row.ring }),
+    } as ProtectedZone, [[Number(data.lng), Number(data.lat)]]) !== false);
+  } catch { return true; }
+}
+
 // ── Categories (spec §24's named examples + the escape hatch) ─────────────────
 
 export const PROTECTED_CATEGORIES = [

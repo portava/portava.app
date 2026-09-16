@@ -18,7 +18,7 @@
 import { getServiceClient } from "./supabase.js";
 import { logger } from "./logger.js";
 import { isFlagEnabled } from "./featureFlags.js";
-import { computeCoverageScore } from "./coverageScore.js";
+import { computeCoverageScore, coverageState, type CoverageState } from "./coverageScore.js";
 import { MISSION_TRIGGER_THRESHOLDS } from "./missionGeneration.js";
 import { generateMissions } from "../services/intel/CoverageService.js";
 import {
@@ -53,6 +53,7 @@ export interface CoveragePassResult {
   cells: number;
   snapshots: number;
   missionsCreated: number;
+  coverageStates?: Record<CoverageState, number>;
 }
 
 const FAMILY_QUESTION: Record<string, string> = {
@@ -94,7 +95,7 @@ export async function runIntelCoveragePass(opts: { client?: any; now?: Date } = 
   // Explicit null means "no client"; undefined means "use the service client"
   // (the house pattern — see intelPromotionScheduler / intelRetentionScheduler).
   const db = "client" in opts && opts.client !== undefined ? opts.client : getServiceClient();
-  const empty: CoveragePassResult = { skipped: true, reason: null, zones: 0, cells: 0, snapshots: 0, missionsCreated: 0 };
+  const empty: CoveragePassResult = { skipped: true, reason: null, zones: 0, cells: 0, snapshots: 0, missionsCreated: 0, coverageStates: { covered: 0, no_coverage: 0, unknown: 0 } };
   if (!db) return { ...empty, reason: "no_client" };
   if (!(await isFlagEnabled(db, COVERAGE_FLAG))) return { ...empty, reason: "disabled" };
 
@@ -173,15 +174,18 @@ export async function runIntelCoveragePass(opts: { client?: any; now?: Date } = 
     // 3. assemble + score cells; persist only real gaps (score > 0)
     const cells = buildCoverageCells({ zones, claims, observations, demand, city, nowMs });
     const scored = cells.map((cell) => ({ cell, breakdown: computeCoverageScore(cell) }));
+    const states = { covered: 0, no_coverage: 0, unknown: 0 } as Record<CoverageState, number>;
+    for (const { cell } of scored) states[coverageState(cell)] += 1;
     const gaps = scored.filter((s) => s.breakdown.score > 0);
 
-    if (gaps.length > 0) {
-      const rows = gaps.map(({ cell, breakdown }) => ({
+    if (scored.length > 0) {
+      const rows = scored.map(({ cell, breakdown }) => ({
         city: cell.city,
         zone_id: cell.zoneId,
         claim_family: cell.claimFamily,
         demand_events: cell.demandEvents,
         claim_missing: cell.claimMissing,
+        coverage_state: coverageState(cell),
         freshest_age_ratio: cell.freshestAgeRatio ?? null,
         current_confidence: cell.currentConfidence,
         required_confidence: cell.requiredConfidence ?? null,
@@ -252,7 +256,7 @@ export async function runIntelCoveragePass(opts: { client?: any; now?: Date } = 
     if (gaps.length > 0 || missionsCreated > 0) {
       logger.info({ zones: zones.length, cells: cells.length, snapshots: gaps.length, missionsCreated }, "coverage pass complete");
     }
-    return { skipped: false, reason: null, zones: zones.length, cells: cells.length, snapshots: gaps.length, missionsCreated };
+    return { skipped: false, reason: null, zones: zones.length, cells: cells.length, snapshots: scored.length, missionsCreated, coverageStates: states };
   } catch (err) {
     logger.warn({ err }, "coverage pass threw");
     return { ...empty, reason: "error" };

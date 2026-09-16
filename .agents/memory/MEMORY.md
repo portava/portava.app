@@ -103,3 +103,4 @@
 - [OSM-only Discovery photos never exercise the live chain](osm-only-photo-path-untested.md) — DB-backed seeded cities ship baked-in headerImageUrl, so testing only those cities never touches the live FSQ→Google photo fallback every other destination depends on.
 - [Publishing blocked by Orval package firewall](publish-orval-package-firewall.md) — a 403 fetching the locked Orval tarball stops pnpm install before the app build; local missing-module errors may be secondary.
 - [Deterministic API background work](api-background-work-tracking.md) — tests use scoped tracking sessions and await real completion; production stays non-blocking and logs failures.
+- [Independent-group denominator](independent-group-denominator.md) — dominant-group share must divide by the distinct grouped-actor union; summed memberships let overlapping groups fake independence.

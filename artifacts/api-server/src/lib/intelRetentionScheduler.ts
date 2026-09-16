@@ -83,6 +83,80 @@ export interface ContributionSweepResult {
   reason: "disabled" | "no_client" | "error" | null;
 }
 
+export interface PresenceCleanupResult {
+  markedStale: number;
+  deleted: number;
+  skipped: boolean;
+  reason: "disabled" | "no_client" | "error" | null;
+}
+
+export async function runSensingCredentialCleanup(opts: { client?: any; now?: Date } = {}) {
+  const db = "client" in opts && opts.client !== undefined ? opts.client : getServiceClient();
+  if (!db) return { deleted: 0, skipped: true, reason: "no_client" as const };
+  const now = (opts.now ?? new Date()).toISOString();
+  try {
+    const found = await db.from("intel_sensing_credentials").select("id").lt("expires_at", now).limit(1000);
+    if (found.error) return { deleted: 0, skipped: true, reason: "error" as const };
+    const ids = (found.data ?? []).map((row: any) => row.id).filter(Boolean);
+    if (!ids.length) return { deleted: 0, skipped: false, reason: null };
+    const deleted = await db.from("intel_sensing_credentials").delete().in("id", ids);
+    if (deleted.error) return { deleted: 0, skipped: true, reason: "error" as const };
+    return { deleted: ids.length, skipped: false, reason: null };
+  } catch {
+    return { deleted: 0, skipped: true, reason: "error" as const };
+  }
+}
+
+/** Operational owner for the presence_in_context retention bound. */
+export async function runPresenceCleanup(opts: { client?: any; now?: Date } = {}): Promise<PresenceCleanupResult> {
+  const empty = { markedStale: 0, deleted: 0 };
+  const db = "client" in opts && opts.client !== undefined ? opts.client : getServiceClient();
+  if (!db) return { ...empty, skipped: true, reason: "no_client" };
+  if (!(await isFlagEnabled(db, "presence_cleanup_enabled"))) {
+    return { ...empty, skipped: true, reason: "disabled" };
+  }
+  const now = opts.now ?? new Date();
+  try {
+    const rows: any[] = [];
+    let cursor: string | null = null;
+    for (;;) {
+      let query = db.from("circle_presence")
+        .select("id,last_seen_at,stale_after_secs,expires_at")
+        .order("id", { ascending: true })
+        .limit(1000);
+      // Keyset continuation is applied by the database query builder where
+      // supported; keeping the cursor explicit avoids a permanent first-page
+      // starvation loop as rows are updated/deleted.
+      if (cursor) query = query.gt("id", cursor);
+      const result = await query;
+      if (result.error) return { ...empty, skipped: true, reason: "error" };
+      rows.push(...(result.data ?? []));
+      if ((result.data ?? []).length < 1000) break;
+      cursor = (result.data ?? []).at(-1)?.id ?? null;
+      if (!cursor) break;
+    }
+    const stale: string[] = [];
+    const expired: string[] = [];
+    for (const row of (rows ?? []) as any[]) {
+      const last = new Date(row.last_seen_at).getTime();
+      if (Number.isFinite(last) && last + Number(row.stale_after_secs) * 1000 < now.getTime()) stale.push(row.id);
+      const expiry = row.expires_at ? new Date(row.expires_at).getTime() : NaN;
+      if (Number.isFinite(expiry) && expiry < now.getTime()) expired.push(row.id);
+    }
+    if (stale.length) {
+      const { error } = await db.from("circle_presence").update({ is_stale: true }).in("id", stale);
+      if (error) return { ...empty, skipped: true, reason: "error" };
+    }
+    if (expired.length) {
+      const { error } = await db.from("circle_presence").delete().in("id", expired);
+      if (error) return { ...empty, skipped: true, reason: "error" };
+    }
+    return { markedStale: stale.length, deleted: expired.length, skipped: false, reason: null };
+  } catch {
+    return { ...empty, skipped: true, reason: "error" };
+  }
+}
+
 /**
  * Enforces the ruled 180-day identifiable retention for the intel_claim purpose by
  * DELETING actor-linked contributions older than the cutoff (now - 180 days) via
@@ -138,7 +212,7 @@ export function startIntelRetentionScheduler(): void {
   _timer = setTimeout(function tick() {
     // Snapshot hygiene and contribution retention run each pass, each behind its
     // own flag. allSettled so one failing never blocks the other or the reschedule.
-    void Promise.allSettled([runIntelRetentionSweep(), runIntelContributionRetentionSweep()])
+    void Promise.allSettled([runIntelRetentionSweep(), runIntelContributionRetentionSweep(), runPresenceCleanup(), runSensingCredentialCleanup()])
       .finally(() => { _timer = setTimeout(tick, INTERVAL_MS); });
   }, STARTUP_DELAY_MS);
 }

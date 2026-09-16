@@ -46,7 +46,7 @@ function makeDb(flags: Record<string, boolean>, opts: { places?: string[]; conse
       }
       if (table === "places") {
         const id = filters.find(([c]) => c === "id")?.[1];
-        return { data: places.has(id) ? { id } : null, error: null };
+        return { data: places.has(id) ? { id, latitude: 0, longitude: 0 } : null, error: null };
       }
       if (table === "intel_contribution_consent") {
         if (consent === false) return { data: null, error: null };            // no consent row

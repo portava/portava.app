@@ -32,7 +32,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const pkgRoot = path.resolve(__dirname, "..");
 
 const pkg = JSON.parse(readFileSync(path.join(pkgRoot, "package.json"), "utf8"));
-const testScript = pkg.scripts?.test ?? "";
+// npm/pnpm runs pretest immediately before test, so both lifecycle commands are
+// part of the main test run. Focused test:* scripts are deliberately excluded:
+// a file is registered only when `pnpm test` actually executes it.
+const testScript = [pkg.scripts?.pretest, pkg.scripts?.test].filter(Boolean).join(" ");
 const registered = new Set(
   (testScript.match(/src\/[^\s'"]+\.test\.ts/g) ?? []).map((p) => p.trim()),
 );

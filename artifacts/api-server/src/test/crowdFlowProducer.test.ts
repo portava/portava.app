@@ -90,13 +90,10 @@ const derive = (signals: readonly MovementSignal[], extra: Record<string, unknow
 // ── §10 source honesty ────────────────────────────────────────────────────────
 
 describe("§10 signal families — what this repository actually feeds", () => {
-  it("only ONE observed family is wired, so no flow can be published today", () => {
-    assert.deepEqual([...WIRED_SIGNAL_SOURCES], ["next_stop_contribution"]);
-    assert.ok(
-      WIRED_SIGNAL_SOURCES.length < MIN_SIGNAL_FAMILIES,
-      "if a second family has been wired, update this test AND the module header audit",
-    );
-    assert.equal(canProduceFlow(), false);
+  it("two legitimate observed families are wired, so flow can be produced when gates pass", () => {
+    assert.deepEqual([...WIRED_SIGNAL_SOURCES], ["next_stop_contribution", "navigation_start"]);
+    assert.ok(WIRED_SIGNAL_SOURCES.length >= MIN_SIGNAL_FAMILIES);
+    assert.equal(canProduceFlow(), true);
   });
 
   it("the unfed register names every family §10 lists but nothing produces", () => {
@@ -105,7 +102,6 @@ describe("§10 signal families — what this repository actually feeds", () => {
       "aggregate_presence",
       "arrival",
       "coarse_transition",
-      "navigation_start",
     ]);
   });
 
@@ -481,6 +477,7 @@ function fakeClient(opts: {
       in: () => self,
       is: () => self,
       gte: () => self,
+      or: () => self,
       maybeSingle: async () => ({ data: rows[0] ?? null, error: null }),
       then: (res: any) => res({ data: rows, error: null }),
     };
@@ -507,7 +504,9 @@ function fakeClient(opts: {
 
 describe("readCrowdFlowSignals — the single I/O seam", () => {
   it("REFUSES BEFORE READING when too few families are wired", async () => {
-    const r = await readCrowdFlowSignals(forbiddenClient() as any, { now: NOW });
+    const r = await readCrowdFlowSignals(forbiddenClient() as any, {
+      now: NOW, wired: ["next_stop_contribution"],
+    });
     assert.equal(r.refusal, "insufficient_wired_families");
     assert.deepEqual(r.signals, []);
     assert.deepEqual([...r.unfedFamilies], [...DECLARED_BUT_UNFED_FAMILIES]);
@@ -549,15 +548,45 @@ describe("readCrowdFlowSignals — the single I/O seam", () => {
   });
 
   it("produceZoneTransitions surfaces the refusal instead of an unexplained empty layer", async () => {
-    const r = await produceZoneTransitions(forbiddenClient() as any, { now: NOW });
+    const r = await produceZoneTransitions(forbiddenClient() as any, {
+      now: NOW, wired: ["next_stop_contribution"],
+    });
     assert.equal(r.refusal, "insufficient_wired_families");
     assert.deepEqual(r.transitions, []);
+  });
+
+  it("historical support uses the distinct grouped-actor union, not summed memberships", async () => {
+    const observations = Array.from({ length: 10 }, (_, i) => [0, 1].map((group) => ({
+      actor_id: ACTOR(i), subject_id: "zone-A", zone_id: "zone-A",
+      value: { destinationArea: "An Thuong" }, group_key: GROUP(group),
+      observed_at: OBSERVED, expires_at: null,
+    }))).flat();
+    const result = await readCrowdFlowSignals(
+      fakeClient({ flagOn: true, observations, consented: observations.map((r) => r.actor_id) }) as any,
+      {
+        now: NOW,
+        resolveZoneId: (kind: string) => kind === "destination_area" ? "zone-B" : "zone-A",
+      } as any,
+    );
+    assert.equal(result.edgeSupport["zone-A\u0000zone-B"], "rare");
   });
 });
 
 // ── The k floor is not re-invented here ───────────────────────────────────────
 
 describe("the producer publishes nothing the shared gate would not", () => {
+  it("suppresses a server-marked rare path before publication", () => {
+    const signals = publishableCohort();
+    const { transitions } = derive(signals);
+    assert.ok(transitions.length > 0);
+    const result = deriveCrowdFlow(
+      transitions.map((transition) => ({ ...transition, rarePath: true })),
+      { now: NOW },
+    );
+    assert.equal(result.flows.length, 0);
+    assert.ok(result.rejected.some((row) => row.reason === "rare_path"));
+  });
+
   it("a cohort one person below PRIVACY_THRESHOLD_V1 does not publish", () => {
     const k = PRIVACY_THRESHOLD_V1.minUniqueActors;
     const signals = publishableCohort().slice(0, k - 1);

@@ -157,7 +157,13 @@ export const CAUSE_ONLY_SIGNAL_FAMILIES: readonly CrowdFlowSignalFamily[] = ["ev
  * `readCrowdFlowSignals` declines to read rather than gathering a cohort it
  * cannot use.
  */
-export const WIRED_SIGNAL_SOURCES: readonly CrowdFlowSignalFamily[] = ["next_stop_contribution"];
+// Coarse navigation intent is read from canonical_events.direction only when
+// its server-written payload carries aggregate-safe zone endpoints and group
+// evidence. This never mines social/private location tables.
+export const WIRED_SIGNAL_SOURCES: readonly CrowdFlowSignalFamily[] = [
+  "next_stop_contribution",
+  "navigation_start",
+];
 
 /**
  * Families §10 names that this repository declares but does not feed. Kept as
@@ -247,6 +253,7 @@ export interface DeriveZoneTransitionsOptions {
   bucketMinutes?: number;
   /** Defaults to SIGNAL_MAX_AGE_MINUTES. */
   maxSignalAgeMinutes?: number;
+  edgeSupport?: Readonly<Record<string, "known" | "rare" | "unknown">>;
 }
 
 export interface DeriveZoneTransitionsResult {
@@ -469,6 +476,7 @@ export function deriveZoneTransitions(
       confidence: observedConfidence(families.length),
       privacyClass: "aggregate_only",
       sensitiveSubject: b.sensitive,
+      ...(opts.edgeSupport ? { rarePath: opts.edgeSupport[`${b.fromZoneId}\u0000${b.toZoneId}`] !== "known" } : {}),
       // inferredCause is deliberately ABSENT. Only attachCauseHypotheses sets it.
     });
   }
@@ -552,6 +560,8 @@ export interface ReadCrowdFlowSignalsResult {
   refusal: SignalReadRefusal | null;
   /** Families §10 names that this repository does not feed. */
   unfedFamilies: readonly CrowdFlowSignalFamily[];
+  historicalEdgeSupport: "known" | "insufficient" | "unknown";
+  edgeSupport: Record<string, "known" | "rare" | "unknown">;
 }
 
 export interface ReadCrowdFlowSignalsOptions {
@@ -592,6 +602,8 @@ export async function readCrowdFlowSignals(
     signals: [],
     refusal,
     unfedFamilies: DECLARED_BUT_UNFED_FAMILIES,
+    historicalEdgeSupport: refusal ? "unknown" : "insufficient",
+    edgeSupport: {},
   });
 
   const wired = opts.wired ?? WIRED_SIGNAL_SOURCES;
@@ -663,10 +675,97 @@ export async function readCrowdFlowSignals(
         observedAt: o.observed_at,
       });
     }
-    return { signals, refusal: null, unfedFamilies: DECLARED_BUT_UNFED_FAMILIES };
+    let navigation: any = { data: [], error: null };
+    try {
+      navigation = await sc.from("canonical_events")
+        .select("actor_id, occurred_at, expires_at, privacy_eligible, payload")
+        .eq("verb", "direction")
+        .eq("privacy_eligible", true)
+        .gte("occurred_at", sinceIso);
+    } catch (err) {
+      // Older deployments may not yet expose canonical_events. The intel
+      // family remains usable; migration/schema audits surface the omission.
+      logger.warn({ err }, "crowdFlowProducer: navigation family unavailable");
+    }
+    if (navigation.error) {
+      logger.warn({ err: navigation.error }, "crowdFlowProducer: navigation event read failed");
+      return empty("read_failed");
+    }
+    const navigationActors = [...new Set(((navigation.data ?? []) as any[]).map((e) => e.actor_id).filter(Boolean))];
+    let navigationConsented = new Set<string>();
+    if (navigationActors.length) {
+      const consentRead = await sc.from("intel_contribution_consent").select("user_id")
+        .in("user_id", navigationActors).eq("enabled", true).is("withdrawn_at", null);
+      if (consentRead.error) return empty("read_failed");
+      navigationConsented = new Set((consentRead.data ?? []).map((r: any) => r.user_id));
+    }
+    for (const event of (navigation.data ?? []) as any[]) {
+      const payload = event.payload;
+      if (!event.actor_id || !navigationConsented.has(event.actor_id) || !payload || typeof payload !== "object") continue;
+      const fromZoneId = typeof payload.fromZoneId === "string" ? payload.fromZoneId : null;
+      const toZoneId = typeof payload.toZoneId === "string" ? payload.toZoneId : null;
+      if (!fromZoneId || !toZoneId || typeof payload.groupKey !== "string" || payload.groupKey === "") continue;
+      if (event.expires_at && event.expires_at <= nowIso) continue;
+      signals.push({
+        actorId: String(event.actor_id),
+        groupKey: payload.groupKey,
+        family: "navigation_start",
+        fromZoneId,
+        toZoneId,
+        observedAt: event.occurred_at,
+      });
+    }
+    const historical = await sc.from("intel_observations").select("actor_id,group_key,zone_id,value,subject_id,moderation_state,expires_at,observed_at")
+      .eq("claim_type", "experience.next_move")
+      .in("moderation_state", PILOT_CLAIMABLE_MODERATION_STATES as unknown as string[])
+      .gte("observed_at", new Date(nowMs - 24 * 60 * 60_000).toISOString())
+      .or(`expires_at.is.null,expires_at.gt.${nowIso}`);
+    if (historical.error) return { signals, refusal: null, unfedFamilies: DECLARED_BUT_UNFED_FAMILIES, historicalEdgeSupport: "unknown", edgeSupport: Object.fromEntries(new Set(signals.map((s) => [`${s.fromZoneId}\u0000${s.toZoneId}`, "unknown"]))) as any };
+    const historicalRows = (historical.data ?? []) as any[];
+    const historicalActorIds = [...new Set(historicalRows.map((r) => r.actor_id).filter(Boolean))];
+    const consentRead = historicalActorIds.length
+      ? await sc.from("intel_contribution_consent").select("user_id").in("user_id", historicalActorIds).eq("enabled", true).is("withdrawn_at", null)
+      : { data: [], error: null };
+    if (consentRead.error) return { signals, refusal: null, unfedFamilies: DECLARED_BUT_UNFED_FAMILIES, historicalEdgeSupport: "unknown", edgeSupport: {} };
+    const historicalConsented = new Set((consentRead.data ?? []).map((r: any) => r.user_id));
+    const edgeActors = new Map<string, Set<string>>();
+    const edgeGroups = new Map<string, Set<string>>();
+    const edgeGroupActors = new Map<string, Map<string, Set<string>>>();
+    const edgeGroupedUnion = new Map<string, Set<string>>();
+    for (const row of historicalRows) {
+      if (!row.actor_id || !historicalConsented.has(row.actor_id)) continue;
+      const destination = row.value?.destinationArea;
+      const from = row.zone_id ?? row.subject_id;
+      if (typeof from === "string" && typeof destination === "string") {
+        const to = resolveZoneId("destination_area", destination);
+        if (to) {
+          const edge = `${from}\u0000${to}`;
+          if (!edgeActors.has(edge)) edgeActors.set(edge, new Set());
+          edgeActors.get(edge)!.add(row.actor_id);
+          if (row.group_key) {
+            if (!edgeGroups.has(edge)) edgeGroups.set(edge, new Set());
+            edgeGroups.get(edge)!.add(row.group_key);
+            if (!edgeGroupActors.has(edge)) edgeGroupActors.set(edge, new Map());
+            if (!edgeGroupActors.get(edge)!.has(row.group_key)) edgeGroupActors.get(edge)!.set(row.group_key, new Set());
+            edgeGroupActors.get(edge)!.get(row.group_key)!.add(row.actor_id);
+            if (!edgeGroupedUnion.has(edge)) edgeGroupedUnion.set(edge, new Set());
+            edgeGroupedUnion.get(edge)!.add(row.actor_id);
+          }
+        }
+      }
+    }
+    const edgeSupport: Record<string, "known" | "rare" | "unknown"> = {};
+    for (const edge of new Set(signals.map((s) => `${s.fromZoneId}\u0000${s.toZoneId}`))) {
+      const actors = edgeActors.get(edge)?.size ?? 0;
+      const groups = edgeGroups.get(edge)?.size ?? 0;
+      const groupedActors = edgeGroupedUnion.get(edge)?.size ?? 0;
+      const maxShare = groupedActors ? Math.max(...[...(edgeGroupActors.get(edge)?.values() ?? [])].map((s) => s.size)) / groupedActors : 1;
+      edgeSupport[edge] = actors >= 10 && groups >= 2 && maxShare <= 0.5 ? "known" : "rare";
+    }
+    return { signals, refusal: null, unfedFamilies: DECLARED_BUT_UNFED_FAMILIES, historicalEdgeSupport: "known", edgeSupport };
   } catch (err) {
     logger.warn({ err }, "crowdFlowProducer: next_move read threw");
-    return empty("read_failed");
+    return { signals: [], refusal: null, unfedFamilies: DECLARED_BUT_UNFED_FAMILIES, historicalEdgeSupport: "unknown", edgeSupport: {} };
   }
 }
 
@@ -683,7 +782,8 @@ export async function produceZoneTransitions(
 ): Promise<DeriveZoneTransitionsResult & { refusal: SignalReadRefusal | null }> {
   const read = await readCrowdFlowSignals(sc, opts);
   if (read.refusal !== null) return { transitions: [], rejected: [], refusal: read.refusal };
-  const derived = deriveZoneTransitions(read.signals, opts);
+  if (read.historicalEdgeSupport !== "known") return { transitions: [], rejected: [], refusal: "read_failed" };
+  const derived = deriveZoneTransitions(read.signals, { ...opts, edgeSupport: read.edgeSupport });
   return {
     transitions: attachCauseHypotheses(derived.transitions, opts.causeHypotheses ?? []),
     rejected: derived.rejected,

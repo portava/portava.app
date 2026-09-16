@@ -122,6 +122,11 @@ function must<T extends { error?: any }>(res: T, what: string): T {
   return res;
 }
 
+function isMissingSensingRelation(err: any): boolean {
+  const code = err?.code ?? err?.details?.code;
+  return code === "42P01" || code === "PGRST205";
+}
+
 /**
  * Execute a deletion request end to end.
  *
@@ -557,6 +562,21 @@ export async function executeAccountDeletion(
 
   if (opts.contentOnly) {
     return { ok: steps.every((s) => s.ok), userId, executedAt, steps, warnings, deletedCounts, tombstonedCounts };
+  }
+
+  // Profile deletion is a tombstone, so FK cascades cannot clean capability
+  // state. Explicitly revoke and erase both credentials and enrolled devices.
+  const sensingOk = await step(steps, "erase_sensing_credentials_and_devices", async () => {
+    for (const table of ["intel_sensing_credentials", "intel_sensing_device_eligibility"]) {
+      const result = await sc.from(table).delete().eq("actor_id", userId);
+      if (result?.error && !isMissingSensingRelation(result.error)) {
+        must(result, `delete ${table}`);
+      }
+    }
+  });
+  if (!sensingOk) {
+    warnings.push("sensing capability state may remain — deletion aborted before profile anonymisation");
+    return { ok: false, userId, executedAt, steps, warnings, deletedCounts, tombstonedCounts };
   }
 
   // ── 4. Anonymise the tombstone profile (FATAL on failure) ─────────────────

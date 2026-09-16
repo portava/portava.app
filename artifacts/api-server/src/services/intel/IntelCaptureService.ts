@@ -38,6 +38,11 @@ import { deriveGroupKey, type GroupIdentity } from "../../lib/intelGroupKey.js";
 import { isSharedCrewMember } from "../../lib/tripMembership.js";
 import { resolveActiveCrewId } from "../../lib/activeCrew.js";
 import { hasValidIntelConsent } from "../../lib/intelConsent.js";
+import { resolveSensitiveSubject } from "../../lib/protectedLocations.js";
+import {
+  authorizeSensingCredential,
+  SENSING_PRECISION_CEILING,
+} from "../../lib/deviceContributionCredential.js";
 
 /**
  * Capture surfaces, each gated by its own flag (spec §26 flag registry):
@@ -102,11 +107,20 @@ export interface CaptureInput {
   // Both optional → group_key resolves to null (fail-closed) for older clients.
   partySize?: PartySizeBucket;
   partyId?: string | null;
+  /** Optional short-lived sensing capability. Required when the credential
+   * capability flag is enabled; legacy authenticated capture remains shadowed
+   * behind the existing feature flags until staged rollout. */
+  sensingCredential?: string;
+  sensingNonce?: string;
+  sensingDeviceId?: string;
+  /** Resolved by the caller from the protected-location policy. Never accept
+   * client-supplied sensitivity as authoritative; true always suppresses. */
+  sensitiveSubject?: boolean;
 }
 
 export type CaptureResult =
   | { ok: true; observation: any; deduped: boolean }
-  | { ok: false; reason: "disabled" | "consent_required" | "invalid_idempotency_key" | "invalid_observed_at" | "unknown_subject" | "invalid_claim_type" | "invalid_value" | "db_error"; detail?: string };
+  | { ok: false; reason: "disabled" | "consent_required" | "credential_required" | "credential_malformed" | "credential_expired" | "credential_revoked" | "credential_purpose_mismatch" | "credential_version_mismatch" | "credential_replay" | "credential_unauthorized" | "credential_infrastructure_error" | "precision_exceeded" | "sensitive_subject" | "invalid_idempotency_key" | "invalid_observed_at" | "unknown_subject" | "invalid_claim_type" | "invalid_value" | "db_error"; detail?: string };
 
 function ttlFor(claimType: string): { ttlSeconds: number; hardExpirySeconds: number } | null {
   const spec = CLAIM_TYPES.find((c) => c.claimType === claimType);
@@ -207,6 +221,28 @@ export async function writeObservation(sc: any, actorId: string, input: CaptureI
   // service-role-owned intel_contribution_consent row can.
   if (!(await hasValidIntelConsent(sc, actorId))) return { ok: false, reason: "consent_required" };
 
+  // The credential switch is separate from capture so rollout can first shadow
+  // the capability and then require it without changing the claim contract.
+  // Legacy intel capture surfaces remain backward compatible. The sensing
+  // credential boundary applies only when the caller opts into the designated
+  // sensing capability (the sensing headers are present); enabling the rollout
+  // flag must not retroactively change ordinary group captures.
+  if (input.sensingCredential || input.sensingNonce || input.sensingDeviceId) {
+    if (!(await isFlagEnabled(sc, "intel_sensing_credentials_enabled"))) {
+      return { ok: false, reason: "disabled" };
+    }
+    if (!input.sensingCredential || !input.sensingNonce) return { ok: false, reason: "credential_required" };
+    const authorized = await authorizeSensingCredential(sc, input.sensingCredential, input.sensingNonce, {
+      actorId, deviceId: input.sensingDeviceId,
+    });
+    if (!authorized.ok) return { ok: false, reason: authorized.reason, detail: authorized.detail };
+    // The reduced sensing capability cannot carry an intra-venue zone. This is
+    // a precision ceiling, not a client hint.
+    if (input.zoneId !== undefined && input.zoneId !== null) {
+      return { ok: false, reason: "precision_exceeded", detail: SENSING_PRECISION_CEILING };
+    }
+  }
+
   if (!isValidIdempotencyKey(input.idempotencyKey)) return { ok: false, reason: "invalid_idempotency_key" };
 
   const clamped = clampObservedAt(input.observedAt);
@@ -225,6 +261,11 @@ export async function writeObservation(sc: any, actorId: string, input: CaptureI
   const { data: subj, error: subjErr } = await sc.from("places").select("id").eq("id", input.subjectId).maybeSingle();
   if (subjErr) return { ok: false, reason: "db_error", detail: "subject lookup" };
   if (!subj) return { ok: false, reason: "unknown_subject", detail: input.subjectId };
+  if (input.sensitiveSubject === true || (
+    input.subjectKind === "place" && await resolveSensitiveSubject(sc, input.subjectId)
+  )) {
+    return { ok: false, reason: "sensitive_subject" };
+  }
 
   const ttl = ttlFor(input.claimType);
   const expiresAt = ttl ? new Date(new Date(clamped.observedAt).getTime() + ttl.ttlSeconds * 1000).toISOString() : null;
