@@ -566,11 +566,38 @@ describe("§15 Diversity (G102) — repeats within one type are spread", () => {
 const TRIP_ID = "ee000000-0000-4000-a000-000000000009";
 const BKK_ID = "canon-bangkok";
 
+/**
+ * THE TRIP WINDOW IS AHEAD OF THE CLOCK, ALWAYS.
+ *
+ * This Trip is "upcoming" and the suggestion pipeline serves only events that
+ * have not started, so the window and the two events have to be ahead of
+ * whatever clock the suite runs on. Pinned to 2026-12-01..10 they were, until
+ * 2026-12-10 — after which the event search returns nothing, `events.length`
+ * is 0 instead of 2, and the failure reads as "the G124 demotion stopped
+ * demoting" rather than "the fixture expired". Same failure mode as the three
+ * bombs of 2026-09-15, in a file carrying no `2026-09-1x` date.
+ *
+ * Derived from the clock the assertions are judged against, keeping the only
+ * structure they depend on: the OUT-of-window event is EARLIER than the
+ * in-window one (the underlying search orders by `starts_at` ascending, so the
+ * wrong row leads on its own and the demotion is a reordering the test can
+ * see), and both are still in the future.
+ */
+const DAY_MS = 24 * 60 * 60 * 1_000;
+const tripDay = (offsetDays: number) =>
+  new Date(Date.now() + offsetDays * DAY_MS).toISOString().slice(0, 10);
+/** The Trip's window: opens in 90 days, closes in 99. */
+const TRIP_WINDOW_START = tripDay(90);
+const TRIP_WINDOW_END = tripDay(99);
+/** Inside the window; and outside it but still ahead of the clock. */
+const EVENT_INSIDE_ISO = `${tripDay(94)}T12:00:00.000Z`;
+const EVENT_OUTSIDE_ISO = `${tripDay(30)}T12:00:00.000Z`;
+
 function bkkTripState(extra: FakeState = {}): FakeState {
   return {
     trips: [{
       id: TRIP_ID, destination_city: "Bangkok", destination_country: "Thailand",
-      start_date: "2026-12-01", end_date: "2026-12-10", status: "upcoming",
+      start_date: TRIP_WINDOW_START, end_date: TRIP_WINDOW_END, status: "upcoming",
       destination_lat: 13.7563, destination_lng: 100.5018,
     }],
     canonical_locations: [{
@@ -589,8 +616,8 @@ describe("§16/§18 task constraint (G107/G122/G125) — the pure resolver", () 
     const sc = makeFakeClient(bkkTripState()) as any;
     const c = await resolveTaskConstraint(sc, { tripId: TRIP_ID });
     assert.equal(c.city, "Bangkok");
-    assert.equal(c.windowStart, "2026-12-01");
-    assert.equal(c.windowEnd, "2026-12-10T23:59:59.999Z", "the Trip's LAST evening is inside the window");
+    assert.equal(c.windowStart, TRIP_WINDOW_START);
+    assert.equal(c.windowEnd, `${TRIP_WINDOW_END}T23:59:59.999Z`, "the Trip's LAST evening is inside the window");
     assert.ok(!isEmptyConstraint(c));
   });
 
@@ -695,9 +722,9 @@ describe("§18 task feasibility end-to-end (G122/G124/G125/G96/G107)", () => {
         // Seeded first AND earliest, so the underlying event search (which orders
         // by starts_at ascending) puts the OUT-OF-WINDOW row first on its own.
         { id: "evt-outside", title: "Riverside Bazaar Autumn", host_id: HOST, city: "Bangkok", country: "Thailand",
-          starts_at: "2026-10-01T12:00:00.000Z", visibility: "public", state: "published", created_at: "2026-01-01T00:00:00Z" },
+          starts_at: EVENT_OUTSIDE_ISO, visibility: "public", state: "published", created_at: "2026-01-01T00:00:00Z" },
         { id: "evt-inside", title: "Riverside Bazaar Winter", host_id: HOST, city: "Bangkok", country: "Thailand",
-          starts_at: "2026-12-05T12:00:00.000Z", visibility: "public", state: "published", created_at: "2026-01-01T00:00:00Z" },
+          starts_at: EVENT_INSIDE_ISO, visibility: "public", state: "published", created_at: "2026-01-01T00:00:00Z" },
       ],
     }));
     const r = await suggest({

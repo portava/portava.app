@@ -198,12 +198,25 @@ export interface MediaCandidate {
  * @param viewerCtx — viewer context including feedType and followed ids
  * @param sc — Supabase service client (for blocks + mutes lookup)
  * @param mutedCreatorIds — optional pre-fetched muted set (pass null to load from DB)
+ * @param nowMs
+ *   The instant the DELAYED-PUBLISH gate below is judged at. Additive, and
+ *   defaulted to the wall clock, so every call site that does not pass one is
+ *   byte-identical in behaviour.
+ *
+ *   IT EXISTS BECAUSE THIS WAS THE SECOND CLOCK IN AN INJECTED-CLOCK ANSWER.
+ *   Every media projection builder takes a `nowMs`, stamps its envelope's
+ *   `generatedAt` from it, and then reached this filter — which had nowhere to
+ *   put it — so `publish_at <= now` was the one gate in those answers decided
+ *   by the real date. It is the `computeTripStatus` defect in the media lane,
+ *   and the only reason no suite went red at midnight is that no test pins a
+ *   `nowMs` on this path; that is luck, not safety.
  */
 export async function filterEligibleMediaCandidates(
   candidates: MediaCandidate[],
   viewerCtx: ViewerCtx,
   sc: SupabaseClient,
   mutedCreatorIds?: Set<string> | null,
+  nowMs: number = Date.now(),
 ): Promise<EligibilityResult> {
   if (candidates.length === 0) {
     return { eligible: [], blockFetchFailed: false };
@@ -344,7 +357,8 @@ export async function filterEligibleMediaCandidates(
   }
 
   // ── Step 4: Per-item eligibility gates ────────────────────────────────────
-  const now = Date.now();
+  // ONE clock for this call, and it is the caller's whenever the caller has one.
+  const now = nowMs;
   const eligible = candidates.filter((c) => {
     const authorId = c.author_id;
 

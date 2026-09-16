@@ -168,6 +168,20 @@ export interface CandidateFilter {
    */
   category?: string | null;
   limit?: number;
+  /**
+   * The clock the DELAYED-PUBLISH gate is judged on. Optional, and defaulted to
+   * the wall clock inside `filterEligibleMediaCandidates`, so a caller that
+   * omits it is byte-identical in behaviour.
+   *
+   * IT EXISTS BECAUSE EVERY BUILDER BELOW ALREADY HAS ONE. The six World-shell
+   * builders, the experience resolver, the action rail and the search service
+   * each take a `nowMs`, stamp `generatedAt` from it, and then reached this
+   * loader with no way to say which instant the answer is about — so
+   * `publish_at > now` was decided by the real date while the envelope around
+   * it said otherwise. Same shape as `computeTripStatus`: one field of an
+   * injected-clock answer coming from a second clock.
+   */
+  nowMs?: number;
 }
 
 /**
@@ -332,6 +346,8 @@ export async function loadEligibleCandidatesOrRefuse(
     viewerCtx,
     sc,
     null,
+    // The caller's clock when it has one; the wall clock only when nobody said.
+    filter.nowMs ?? Date.now(),
   );
   // A block-fetch failure means we cannot prove nothing is from a blocked user.
   // Surfacing nothing was the safe half of the answer and the dishonest half of
@@ -697,6 +713,7 @@ export async function buildWorldProjection(
     feedType: "for_you",
     city: city ?? undefined,
     limit: DEFAULT_CANDIDATE_LIMIT,
+    nowMs,
   });
   const media = await projectCandidatesProtected(sc, viewer, candidates, nowMs);
 
@@ -829,6 +846,7 @@ export async function buildPlaceProjection(
     feedType: "for_you",
     placeId,
     limit: DEFAULT_CANDIDATE_LIMIT,
+    nowMs,
   });
   const media = await projectCandidatesProtected(sc, viewer, candidates, nowMs);
   if (!placeCity) placeCity = media.find((m) => m.city)?.city ?? null;
@@ -1038,6 +1056,7 @@ export async function buildPeopleProjection(
     loadEligibleCandidatesOrRefuse(sc, viewer, {
       feedType: "following",
       limit: DEFAULT_CANDIDATE_LIMIT,
+      nowMs,
     }),
     affinityIds.length === 0
       ? Promise.resolve([] as MediaCandidateRow[])
@@ -1045,6 +1064,7 @@ export async function buildPeopleProjection(
           feedType: "for_you",
           authorIds: affinityIds,
           limit: DEFAULT_CANDIDATE_LIMIT,
+          nowMs,
         }),
   ]);
 
@@ -1378,6 +1398,7 @@ export async function loadTaggedMedia(
     feedType: "for_you",
     postIds: ids,
     limit: DEFAULT_CANDIDATE_LIMIT,
+    nowMs,
   });
   if (rows.length === 0) return [];
   return projectCandidatesProtected(sc, viewer, rows, nowMs);
@@ -1447,6 +1468,7 @@ export async function buildTimelineProjection(
     feedType: opts.placeId ? "for_you" : "following",
     placeId: opts.placeId ?? undefined,
     limit: DEFAULT_CANDIDATE_LIMIT,
+    nowMs,
   });
   const media = (await projectCandidatesProtected(sc, viewer, candidates, nowMs)).sort(
     (a, b) => new Date(b.capturedAt).getTime() - new Date(a.capturedAt).getTime(),
@@ -1529,6 +1551,7 @@ export async function buildMediaMapProjection(
     feedType: "for_you",
     city: city ?? undefined,
     limit: DEFAULT_CANDIDATE_LIMIT,
+    nowMs,
   });
   const media = await projectCandidatesProtected(sc, viewer, candidates, nowMs);
 

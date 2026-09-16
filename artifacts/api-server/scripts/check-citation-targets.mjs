@@ -256,8 +256,37 @@ import {
  * far as either checker is concerned, so it rots in silence. Repointing them by
  * attribution (scan the line left to right, track the current file, shift only
  * the refs inheriting a file that moved) also corrected one that had been dead
- * before this branch, which is where the extra 1 comes from. */
-export const MAX_DEAD_TARGETS = 238;
+ * before this branch, which is where the extra 1 comes from.
+ *
+ * LOWERED AGAIN 2026-09-16, 239 -> 235, by the fixed-date sweep lane. The four
+ * are not a dead-target sweep either: adding an injected-clock parameter to
+ * `getCrewMap` and to the media candidate loader moved lines under
+ * `docs/architecture/census-media.md`, and five citations that had been landing
+ * on real code by accident landed on comment text instead. They were repointed
+ * by READING the claim, not by offset -- four `MediaProjectionService.ts:916`
+ * references whose sentences are all about the §21 map projection now point at
+ * `buildMediaMapProjection` where it actually is, and MD412's
+ * `MediaActionResolver.ts:413` now points at the `ask_compass` action it
+ * describes. All five gained an anchor, so doc-citations keeps them honest from
+ * here and this cannot silently rot back.
+ *
+ * MERGED 2026-09-16. Two lanes lowered this independently in the same day —
+ * 239 -> 238 at the branch-3c ownership fix, and 239 -> 235 at the date sweep,
+ * which repointed five already-stale unanchored citations by reading the claim.
+ * Neither number describes the merged tree, so the ceiling below is RE-MEASURED
+ * after the merge rather than chosen between them. Both lanes' reasoning is
+ * preserved above and below this note.
+ *
+ * RE-MEASURED 2026-09-16 at the V2 merge: 234. Neither lane's number described
+ * the merged tree, and the merge itself was not neutral — comparing the dead
+ * list at 42a63bd40 against the merged tree named FIVE new entries at three
+ * sites, four from the date lane's `nowMs` threading through
+ * MediaActionResolver and one from a test this lane added. All three were
+ * repaired by reading the claim (the gem disclosure at :274, `add_to_trip` at
+ * :592, the thread-rollback case at :502) and given anchors, so doc-citations
+ * now holds them. The ceiling is the measurement, not a choice between 235 and
+ * 238. */
+export const MAX_DEAD_TARGETS = 234;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);

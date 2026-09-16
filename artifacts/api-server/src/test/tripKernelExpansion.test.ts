@@ -69,12 +69,37 @@ interface State {
   claimAnswer: "claimed" | "already_attempted" | "limit_reached" | "trip_full";
 }
 
+/**
+ * A TRIP THAT IS STILL UPCOMING ON THE DAY THE SUITE RUNS.
+ *
+ * `computeTripStatus` re-derives a trip's status from its dates against the
+ * clock it is given, defaulting to the wall clock — and the settings route
+ * echoes what it derives. So a fixture pinned to `start_date 2026-10-01 /
+ * end_date 2026-10-05, status "upcoming"` asserts `status: "upcoming"` only
+ * until the real date passes the 5th, and then reads `"completed"` and the
+ * failure looks like the kernel writing a status it never wrote.
+ *
+ * That is `computeTripStatus` claiming a fourth suite, nineteen days after it
+ * claimed `tripHealthProjection`. This file carried no `2026-09-1x` date, so
+ * the grep that went looking for the first three could not see it.
+ *
+ * The window is a function of the clock the assertion is judged against: it
+ * opens tomorrow and closes five days out, which is "upcoming" on every day,
+ * in every timezone. Never a newer constant — that is green tomorrow and armed
+ * for the day after.
+ */
+const DAY_MS = 24 * 60 * 60 * 1_000;
+/** Read ONCE so the two bounds cannot straddle a UTC midnight between calls. */
+const NOW_MS = Date.now();
+const dayOffset = (days: number): string =>
+  new Date(NOW_MS + days * DAY_MS).toISOString().slice(0, 10);
+
 function baseState(kernelOn: boolean): State {
   return {
     users: { "alice-tok": { id: ALICE }, "bob-tok": { id: BOB }, "carol-tok": { id: CAROL }, "dave-tok": { id: DAVE }, "erin-tok": { id: ERIN } },
     tables: {
       trips: [{ id: TRIP, owner_id: ALICE, version: 0, title: "Lisbon", destination_city: "Lisbon", destination_country: "PT",
-        start_date: "2026-10-01", end_date: "2026-10-05", status: "upcoming", visibility: "private", timezone: "Europe/Lisbon",
+        start_date: dayOffset(1), end_date: dayOffset(5), status: "upcoming", visibility: "private", timezone: "Europe/Lisbon",
         trip_type: "leisure", open_to_meet: false, cover_url: null, trip_notes: null, show_in_discovery: false, max_members: null,
         show_header_publicly: false, internal_notes: "NEVER", created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z" }],
       trip_members: [

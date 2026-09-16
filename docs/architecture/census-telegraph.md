@@ -123,7 +123,7 @@ the entire v1.1 production-completion addendum. The messenger is a solid
    route. §10.2's "save as a private Memory draft" persists into a hole.
 3. **`message_reports` and `thread_reports` are dead tables.** The ground-truth
    scan was right and this census can say why: both report handlers write to the
-   **unified `reports` table** instead (`artifacts/api-server/src/routes/messaging.ts:3842#router.post('/threads/:threadId/report', async (req, res) => {` for threads,
+   **unified `reports` table** instead (`artifacts/api-server/src/routes/messaging.ts:3855#router.post('/threads/:threadId/report', async (req, res) => {` for threads,
    `:2708` for messages). The two legacy tables have no writer *and no reader*
    anywhere in application code — their only appearances are the RLS disposition
    ledger (`scripts/rlsDispositions.ts:310,456`), the frozen-migration list
@@ -298,7 +298,7 @@ check errs toward silence. A `from("table")` grep also misses variable and RPC
 access. **Every "nothing writes/reads X" claim in this census was settled by
 reading the call sites**, and the two dynamic `.from(table)` sites in the tree
 (`services/media/MyWorldMemoryService.ts:614`,
-`services/media/MediaProjectionService.ts:1399#const { data } = await (sc as any).from(table).select("*").eq(ownerCol, ownerId).limit(1000);`) were opened and confirmed to be
+`services/media/MediaProjectionService.ts:1420#const { data } = await (sc as any).from(table).select("*").eq(ownerCol, ownerId).limit(1000);`) were opened and confirmed to be
 gem- and media-scoped helpers whose callers cannot pass a messaging table name.
 
 ---
@@ -490,7 +490,7 @@ Backend paths relative to `artifacts/api-server/src/`; client paths to
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| T35 | One consistent share contract for all eligible Portava content | W | Sharing exists but there is **no contract**: each source builds its own JSON and posts it as a `msg_type:'system'` message with a bespoke `subtype`. `DiscoveryShareSheet` → `subtype:'discovery_card'`, `app/messages/[id].tsx:2269` → `'compass_card'`, `routes/circle.ts:300` → `msg_type:'circle_status_card'`, `services/media/MediaActionResolver.ts:340` → `share_telegraph`. Four producers, four shapes, no shared interface. |
+| T35 | One consistent share contract for all eligible Portava content | W | Sharing exists but there is **no contract**: each source builds its own JSON and posts it as a `msg_type:'system'` message with a bespoke `subtype`. `DiscoveryShareSheet` → `subtype:'discovery_card'`, `app/messages/[id].tsx:2269` → `'compass_card'`, `routes/circle.ts:300` → `msg_type:'circle_status_card'`, `services/media/MediaActionResolver.ts:343` → `share_telegraph`. Four producers, four shapes, no shared interface. |
 | T36 | Object family **Social** — profile, post, Highlight, public Memory derivative, Memory Note, Stamp | W | Post only (`components/PostCardMessage.tsx`). No profile, Highlight, Memory derivative, Memory Note or Stamp share. |
 | T37 | Object family **Travel** — Trip, Trip stage, plan, event, route, reservation-safe derivative, layover plan | N | None of the seven is shareable into a thread. |
 | T38 | Object family **Places** — place, Hidden Gem, map pin, neighborhood, meetup point | W | Place/gem via `discovery_card` (`components/DiscoveryCardMessage.tsx:26-35`) and meeting point via `circle_status_card` (`components/CircleStatusCardMessage.logic.ts:15`). No map pin, no neighborhood. |
@@ -643,7 +643,7 @@ Backend paths relative to `artifacts/api-server/src/`; client paths to
 | T150 | `coordination_sessions` | N | No table, service or route. |
 | T151 | `presence_sessions` — ephemeral online/recent activity | W | `circle_presence` (`baseline:4458-4473`) is a genuine ephemeral presence store with `stale_after_secs`, `is_stale` and `expires_at` — but it is **circle-scoped, not conversation-scoped**, so a DM has no presence at all. |
 | T152 | `call_sessions` / `call_participants` | C | Both exist (`baseline:1`, confirmed present). `routes/calls.ts:1-12` authorizes *exclusively* through `canUserStartCall`/`canUserStartGroupCall`/`canUserJoinCall` with no inline authorization, mints LiveKit tokens only after that passes, and `migrations/2199_call_participants_rls_recursion.sql` hardens their RLS. |
-| T153 | `conversation_reports` / `blocks` | W | `blocks` is real and cascading (T30). Reporting is real but writes to the **unified `reports` table** (`artifacts/api-server/src/routes/messaging.ts:3842#router.post('/threads/:threadId/report', async (req, res) => {` threads, `:2720` messages) — while the two dedicated tables production actually holds, `message_reports` and `thread_reports`, have **no writer and no reader** anywhere in application code. Settled by reading both handlers; their only other appearances are `scripts/rlsDispositions.ts:310,456`, `scripts/frozenLegacyFiles.ts:45-46` and `lib/deletionDispositions.ts:370,441`. |
+| T153 | `conversation_reports` / `blocks` | W | `blocks` is real and cascading (T30). Reporting is real but writes to the **unified `reports` table** (`artifacts/api-server/src/routes/messaging.ts:3855#router.post('/threads/:threadId/report', async (req, res) => {` threads, `:2720` messages) — while the two dedicated tables production actually holds, `message_reports` and `thread_reports`, have **no writer and no reader** anywhere in application code. Settled by reading both handlers; their only other appearances are `scripts/rlsDispositions.ts:310,456`, `scripts/frozenLegacyFiles.ts:45-46` and `lib/deletionDispositions.ts:370,441`. |
 | T154 | `conversation_outbox` — transactional domain-event outbox | N | No outbox table and no outbox worker. Events are published **after the HTTP response** and outside any transaction (`routes/messaging.ts:1998` responds, `:2020` publishes). |
 | T155 | `conversation_snapshots` — rebuild/replay checkpoints | N | Absent. |
 | T156 | §12.1 `Message` envelope contract | W | Ten of sixteen fields exist (`id`, `thread_id`, `sender_id`, `msg_type`, `body`, `reply_to_id`, `created_at`, `edited_at`, `deleted_at`, `original_language` — `baseline:7553-7574`). The six that are absent are the six that carry the guarantees: **`sequence`, `contentRef`, `unsentAt`, `clientMessageId`, `idempotencyKey`, `lifecycleState`**. |
@@ -858,7 +858,7 @@ Backend paths relative to `artifacts/api-server/src/`; client paths to
 | T297 | Compare production and CI schemas before writing migrations | C | Four standing lanes do exactly this: `scripts/auditMigrationsVsLive.ts`, `scripts/checkProductionDrift.ts`, `scripts/checkMissingLiveColumns.ts`, `scripts/auditLiveVsCanonical.ts`. Built by the migration programme, not this spec. |
 | T298 | Identify direct client writes and legacy JSON fields; create ratchets before introducing new paths | C | `scripts/checkAuthorizationContract.ts:1-18` fails CI when a protected table regains broad `anon`/`authenticated` mutation privileges or a server-derived column becomes client-writable — *"a migration that reopens one of these must update the contract IN THE SAME PR or CI goes red."* Plus `scripts/checkSilentSupabaseWrites.ts`, `scripts/checkWritePathColumns.ts`, `scripts/frozenLegacyFiles.ts`. |
 | T299 | Inventory source-domain FK identities; never substitute semantically similar IDs | C | `scripts/checkSchemaReferences.ts` and `scripts/checkEnumLiterals.ts` are the standing guards; the routes enforce it locally too (`routes/messaging.ts:1836-1846` refuses a reply reference from another thread; `:2680-2689` refuses a cross-thread save). |
-| T300 | Capture baseline tests and message delivery behaviour before mutation | C | The baseline exists: `test/messaging.test.ts` (22 cases incl. thread-creation rollback at `:501`), `test/messagingOffApp.test.ts`, `test/telegraphChat.test.ts`, `test/telegraphRealtime.test.ts`, `test/telegraphStreamEndpoints.test.ts`, `test/callSystem.test.ts`. |
+| T300 | Capture baseline tests and message delivery behaviour before mutation | C | The baseline exists: `test/messaging.test.ts` (22 cases incl. thread-creation rollback at `test/messaging.test.ts:502#rolls back the thread`), `test/messagingOffApp.test.ts`, `test/telegraphChat.test.ts`, `test/telegraphRealtime.test.ts`, `test/telegraphStreamEndpoints.test.ts`, `test/callSystem.test.ts`. |
 | T301 | Repository safety rule — do not invent schema fields; no semantically-close substitution; unknown stays null/unresolved | C | Enforced by ratchet rather than convention: `scripts/checkMissingLiveColumns.ts`, `scripts/checkWritePathColumns.ts`, `scripts/checkNotNullWrites.ts`, `scripts/checkEnumLiterals.ts`. The discipline is visible in the migrations themselves — `2325:88-110` refuses to run unless `messages`, `message_thread_members`, `last_read_at` and `deleted_at` all exist. |
 | T302 | Phase 1 — Conversation Kernel, member visibility bounds, message envelope, outbox, policy service | W | Two of five: the kernel (`message_threads` + `message_thread_members`) and a partial envelope (T156). No visibility bounds (T210), no outbox (T154), no policy service (T207). |
 | T303 | Phase 2 — Reliable DM/group, requests, blocking, seen/delivery, unseen-unsend, offline/idempotency | W | Three of six: DM/group, requests and blocking are the strongest built area. Seen is thread-level (T70), delivery is absent (T69), unsend is absent (T75), idempotency is absent (T231). |
@@ -943,7 +943,7 @@ Backend paths relative to `artifacts/api-server/src/`; client paths to
 | T356 | No exact location without explicit purpose / audience / precision / expiry authorization | W | Three of four are enforced (audience `allowed_member_ids`, precision `visibility_level`, expiry `expires_at NOT NULL`, `baseline:10511-10521`) and exact coordinates never leave the API at all (`routes/safeReturn.ts:22`). **Purpose is not bound to a share row** (T215) — the registry exists separately and nothing joins them. |
 | T357 | No stale location labeled live | C | Staleness is a stored, enforced property: `circle_presence.stale_after_secs` / `is_stale` / `expires_at` (`baseline:4468-4471`), recomputed on read (`routes/circle.ts:920`, `:936` `const isStale = Boolean(effectivePresence?.is_stale)`), and `trip_crew_location_sessions.status` has `expired` as a terminal CHECK value. |
 | T358 | No private canonical Memory exposed through a Telegraph share | N `∅` | Unguarded absence — no Memory share path exists to leak through, and nothing would refuse one (T117). |
-| T359 | No source-object revocation bypass via a cached Telegraph card, search or Compass | W | **Violated at the card.** Shared cards are frozen JSON re-rendered forever with no re-authorization (`components/DiscoveryCardMessage.tsx:37-45`, `PostCardMessage.tsx` — no fetch at all). It holds for Compass, where a report invalidates the reporter's cache (`artifacts/api-server/src/routes/messaging.ts:3842#router.post('/threads/:threadId/report', async (req, res) => {`, `:2735`), and vacuously for search (T272). |
+| T359 | No source-object revocation bypass via a cached Telegraph card, search or Compass | W | **Violated at the card.** Shared cards are frozen JSON re-rendered forever with no re-authorization (`components/DiscoveryCardMessage.tsx:37-45`, `PostCardMessage.tsx` — no fetch at all). It holds for Compass, where a report invalidates the reporter's cache (`artifacts/api-server/src/routes/messaging.ts:3855#router.post('/threads/:threadId/report', async (req, res) => {`, `:2735`), and vacuously for search (T272). |
 | T360 | No direct mutation of canonical Trip/Plan/Event/Buddy terms from message prose — **the spec's Primary Invariant** | C | Enforced three ways, not merely unviolated. (a) Structural: `routes/messaging.ts` writes only messaging tables plus `reports`; no domain write exists in the messaging tree (T288). (b) Type-level: `routes/telegraphCommands.ts:57` makes an unconfirmed `ProposedAction` unrepresentable, and `:390` re-verifies trip membership at execution rather than trusting the proposal. (c) Active policing of prose that tries: the off-app solicitation detector (`routes/messaging.ts:1875-1942`) treats term renegotiation in chat as an abuse signal with auto-suspension. |
 | T361 | No semantic ID substitution across domains | C | Guarded by standing ratchets (`scripts/checkSchemaReferences.ts`, `scripts/checkEnumLiterals.ts`, `scripts/checkMissingLiveColumns.ts`) and locally by the routes: `routes/messaging.ts:1836-1846` refuses a `replyToId` that belongs to a different thread *"(prevents cross-thread metadata exposure)"*, and `:2680-2689` refuses a cross-thread save. |
 | T362 | No group-add operation that leaks prior DM history | W | Violated for the group case that exists (T211: a trip/circle member added by `groupChatSync` reads the whole back history) and vacuous for the DM case, which has no operation (T212). |
@@ -1097,7 +1097,7 @@ whether the built code can do anything.
    confirmed by `baseline/20260907_production_tables.txt`. `message_reports`
    and `thread_reports` have no writer and no reader in application code —
    settled by reading both report handlers, which write the unified `reports`
-   table instead (`artifacts/api-server/src/routes/messaging.ts:3842#router.post('/threads/:threadId/report', async (req, res) => {`, `:2720`). Their migrations are
+   table instead (`artifacts/api-server/src/routes/messaging.ts:3855#router.post('/threads/:threadId/report', async (req, res) => {`, `:2720`). Their migrations are
    hash-frozen (`scripts/frozenLegacyFiles.ts:45-46`), so they will persist.
 3. **`saved_messages` is written and never read** (T119). The Save affordance is
    live on two client surfaces today and does nothing observable.
@@ -1116,7 +1116,7 @@ whether the built code can do anything.
    INCOMPLETE and that the check errs toward silence. Every "nothing
    writes/reads X" claim above was settled by reading call sites, and the tree's
    two dynamic `.from(table)` sites (`services/media/MyWorldMemoryService.ts:614`,
-   `services/media/MediaProjectionService.ts:1399#const { data } = await (sc as any).from(table).select("*").eq(ownerCol, ownerId).limit(1000);`) were opened and confirmed to be
+   `services/media/MediaProjectionService.ts:1420#const { data } = await (sc as any).from(table).select("*").eq(ownerCol, ownerId).limit(1000);`) were opened and confirmed to be
    gem- and media-scoped helpers whose callers cannot pass a messaging table name.
 
 ---
@@ -3893,7 +3893,7 @@ with an erratum, and the correction is recorded here rather than made silently,
 because a document that edits its own prose without saying so is the failure this
 census exists to make harder.
 
-`GET /api/me/saved-messages` exists at `artifacts/api-server/src/routes/messaging.ts:3938#router.get('/me/saved-messages', async (req, res) => {` and reads
+`GET /api/me/saved-messages` exists at `artifacts/api-server/src/routes/messaging.ts:3951#router.get('/me/saved-messages', async (req, res) => {` and reads
 `saved_messages`, re-authorizing at read: it excludes saves in threads the caller
 has left and messages that have been deleted, and a failed read is a 500 rather
 than an empty list. So §8's third deployment fact — "`saved_messages` is written
@@ -4997,7 +4997,7 @@ Named so the next lane does not re-derive them.
      `routes/groupChat.ts:328` is a fifth instance of the same line.
    - **An unreadable `profiles` becomes a confident 404.** "Circle owner not
      found" is produced by a read whose error was discarded
-     (`artifacts/api-server/src/routes/messaging.ts:3725#const { data: ownerProfile, error: ownerProfileErr } = await sc`
+     (`artifacts/api-server/src/routes/messaging.ts:3738#const { data: ownerProfile, error: ownerProfileErr } = await sc`
      — the SECOND citation in this document whose anchor text had to change,
      for the same reason as the one above: the read named here was the defect,
      and the line now binds the error it used to drop. §16.6.)
@@ -5201,7 +5201,7 @@ closed two of them: the five language call sites plus the pipeline that consumed
 them, and the confident 404. `GET /circles/:id/chat` now refuses retryably when
 the owner's profile CANNOT BE READ and still returns 404 when the owner is
 genuinely absent
-(`artifacts/api-server/src/routes/messaging.ts:3725#const { data: ownerProfile, error: ownerProfileErr } = await sc`).
+(`artifacts/api-server/src/routes/messaging.ts:3738#const { data: ownerProfile, error: ownerProfileErr } = await sc`).
 Consequences that remain open in the same file:
 
 - a mention notification that names `@someone`
@@ -5637,12 +5637,12 @@ test that reads the counter back. Both do.
    | `artifacts/api-server/src/routes/messaging.ts:903#.select('id, sender_id, recipient_id, status, preview_text')` | "Message request not found" (accept) |
    | `artifacts/api-server/src/routes/messaging.ts:1155#.select('id, sender_id, recipient_id, status')` | the same, on decline |
    | `artifacts/api-server/src/routes/messaging.ts:1255#.select('id, sender_id, status')` | the same, on cancel |
-   | `artifacts/api-server/src/routes/messaging.ts:3783#if (memberErr) { refuseUnreadableAccess(req, res, 'message_thread_members', { err: memberErr, threadId, userId: user.id }); return; }` | "Thread not found" |
+   | `artifacts/api-server/src/routes/messaging.ts:3796#if (memberErr) { refuseUnreadableAccess(req, res, 'message_thread_members', { err: memberErr, threadId, userId: user.id }); return; }` | "Thread not found" |
    | `artifacts/api-server/src/routes/messaging.ts:1824#.select('id, thread_type, is_e2ee')` | the same, one read later |
-   | `artifacts/api-server/src/routes/messaging.ts:3401#.select('id, thread_id, sender_id, body, deleted_at, original_language')` | "Message not found" (translate retry) |
-   | `artifacts/api-server/src/routes/messaging.ts:3533#.select('id, thread_id, sender_id, body, deleted_at')` | the same, on edit |
-   | `artifacts/api-server/src/routes/messaging.ts:3643#.select('id, title, destination_city')` | "Trip not found" |
-   | `artifacts/api-server/src/routes/messaging.ts:4052#.select('id')` | "Message not found in this thread" (save) |
+   | `artifacts/api-server/src/routes/messaging.ts:3414#.select('id, thread_id, sender_id, body, deleted_at, original_language')` | "Message not found" (translate retry) |
+   | `artifacts/api-server/src/routes/messaging.ts:3546#.select('id, thread_id, sender_id, body, deleted_at')` | the same, on edit |
+   | `artifacts/api-server/src/routes/messaging.ts:3656#.select('id, title, destination_city')` | "Trip not found" |
+   | `artifacts/api-server/src/routes/messaging.ts:136#.select('id')` | "Message not found in this thread" (save) |
    | `artifacts/api-server/src/routes/groupChat.ts:438#.select('id, thread_id, sender_id, body, deleted_at')` | "Message not found" (edit) |
    | `artifacts/api-server/src/routes/groupChat.ts:524#.select('id, thread_id, sender_id, deleted_at')` | the same, on delete |
 
@@ -6023,7 +6023,7 @@ Read against the code, one by one, they are NOT all benign:
 | `routes/telegraphChat.ts:200#res.status(200).json({ suggestions: suggestions ?? [] });` | **OPEN when §19 measured; CLOSED by §20.2.** The line still exists and is cited here at its current number; a refusal now stands above it, so the sentence that follows describes the tree at `6d4327d66`, not this one. It was T363's exact shape. An unreadable `telegraph_chat_suggestions` answers `{ suggestions: [] }` — "you have none" from a read that never happened. |
 | `routes/telegraphChat.ts:340#sendError(res, "not_found", "Suggestion not found");`, `artifacts/api-server/src/routes/telegraphChat.ts:446#sendError(res, "not_found", "Suggestion not found");`, `artifacts/api-server/src/routes/telegraphChat.ts:543#sendError(res, "not_found", "Suggestion not found");` | **OPEN when §19 measured; CLOSED by §20.2** — each now sits below a bound-error refusal, and each is cited at its current number. They were §18's class — three MORE sites of the defect §18 declared closed at twelve.** Same table, same `.maybeSingle()`, same confident 404 from a dropped error. |
 | `routes/telegraphChat.ts:225#const { data: suggestion, error: suggestionErr } = await client` | **OPEN when §19 measured; CLOSED by §20.2, and the anchor text itself changed** — the error is bound now, so the line §19 quoted no longer exists in that form. Small. The dismiss handler reads the suggestion only to write a preference event; an unreadable read silently writes no event and says nothing. |
-| `routes/telegraphChat.ts:516#if ((threadMeta as any)?.is_e2ee === true) {` | **OPEN when §19 measured; CLOSED by §20.1–§20.3, which re-derived it from the file before accepting the lane's report. It was the worst site in this document's class — a FAIL-OPEN on the E2EE invariant.** The read above it drops its error, so an unreadable `message_threads` arrives as `null`, `undefined === true` is false, and a poll body — JSON **plaintext** — is written into a thread that may be end-to-end encrypted. The route's own comment names the invariant it is failing (*"Never write server-readable plaintext into an end-to-end encrypted thread … audit MSG-3"*). `routes/messaging.ts` fixed its own equivalents: the media handler's is `artifacts/api-server/src/routes/messaging.ts:3283#const { data: threadMetaForMedia, error: threadMetaForMediaErr } = await client`. This is a divergence between two files that make the same decision, not an open design question. |
+| `routes/telegraphChat.ts:516#if ((threadMeta as any)?.is_e2ee === true) {` | **OPEN when §19 measured; CLOSED by §20.1–§20.3, which re-derived it from the file before accepting the lane's report. It was the worst site in this document's class — a FAIL-OPEN on the E2EE invariant.** The read above it drops its error, so an unreadable `message_threads` arrives as `null`, `undefined === true` is false, and a poll body — JSON **plaintext** — is written into a thread that may be end-to-end encrypted. The route's own comment names the invariant it is failing (*"Never write server-readable plaintext into an end-to-end encrypted thread … audit MSG-3"*). `routes/messaging.ts` fixed its own equivalents: the media handler's is `artifacts/api-server/src/routes/messaging.ts:3296#const { data: threadMetaForMedia, error: threadMetaForMediaErr } = await client`. This is a divergence between two files that make the same decision, not an open design question. |
 
 **Thirteen of the fourteen are invisible to `check:unchecked-supabase-reads`** — verified by
 running it with `--all` on this tree, which prints every out-of-scope and ledgered site it knows

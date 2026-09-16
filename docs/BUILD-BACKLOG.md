@@ -168,7 +168,7 @@ Format: `- [lane] file:line — what is wrong, and what the user sees.`
   confirmed here by reading both halves rather than on report.
 
   The contradiction is structural, not a typo.
-  `TripCrewLocationService.ts:127` builds `allUserIds` with
+  `TripCrewLocationService.ts:151` builds `allUserIds` with
   `.filter((id) => id !== viewerId && ...)` and every subsequent query is
   `.in("user_id", allUserIds)`, so `map.members` CANNOT contain the viewer, by
   design — it is a map of other people. `readCrewPresenceForPulse` then does
