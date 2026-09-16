@@ -5,7 +5,10 @@
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import {
-  runIntelRetentionSweep, startIntelRetentionScheduler, stopIntelRetentionScheduler,
+  runIntelRetentionSweep,
+  runMapTelemetryRetentionSweep,
+  startIntelRetentionScheduler,
+  stopIntelRetentionScheduler,
 } from "../lib/intelRetentionScheduler.js";
 
 function client(opts: { flag: boolean | null; purged?: number | string; rpcError?: boolean }) {
@@ -92,5 +95,28 @@ describe("intel retention scheduler — lifecycle", () => {
     startIntelRetentionScheduler();
     stopIntelRetentionScheduler();
     stopIntelRetentionScheduler();
+  });
+});
+
+describe("map telemetry retention — enforced expiry", () => {
+  it("is independently flag-gated and uses the declared purge function", async () => {
+    const c = client({ flag: true, purged: "12" });
+    const result = await runMapTelemetryRetentionSweep({ client: c });
+    assert.equal(result.purged, 12);
+    assert.equal(result.skipped, false);
+    assert.equal(c.state.rpcName, "purge_expired_map_telemetry");
+  });
+
+  it("fails closed when disabled or the purge fails", async () => {
+    const disabledClient = client({ flag: false, purged: 99 });
+    const disabled = await runMapTelemetryRetentionSweep({ client: disabledClient });
+    assert.equal(disabled.reason, "disabled");
+    assert.equal(disabledClient.state.rpcCalled, false);
+
+    const failed = await runMapTelemetryRetentionSweep({
+      client: client({ flag: true, rpcError: true }),
+    });
+    assert.equal(failed.reason, "error");
+    assert.equal(failed.purged, 0);
   });
 });

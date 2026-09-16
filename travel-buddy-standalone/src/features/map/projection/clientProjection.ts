@@ -32,6 +32,42 @@ import {
   type MapObject,
   type PrivacyClass,
 } from '../../../types/mapObjects.ts';
+import type { ToggleableEntityType } from '../../../types/mapTypes.ts';
+
+/**
+ * Stable cache identity for one projected viewport. Coordinate-only deep links
+ * must not all share an "unknown" cache, and different layer/zoom requests must
+ * never rehydrate each other's object sets.
+ */
+export function mapProjectionCacheScope(input: {
+  accountId: string | null;
+  city: string | null;
+  lat: number | null;
+  lng: number | null;
+  zoom: number;
+  radiusKm: number;
+  enabledLayers: readonly ToggleableEntityType[];
+}): string {
+  const account = input.accountId?.trim() || 'anonymous';
+  const place =
+    input.lat != null && input.lng != null
+      ? `${input.lat.toFixed(3)},${input.lng.toFixed(3)}`
+      : (input.city?.trim().toLowerCase() || 'unknown');
+  const layers = [...input.enabledLayers].sort().join(',');
+  return `account:${account}|${place}|z${input.zoom.toFixed(1)}|r${input.radiusKm.toFixed(1)}|${layers}`;
+}
+
+/** Only shared place/world intelligence may enter the cross-session cache. */
+export function isPlaceIntelCacheSafe(object: MapObject): boolean {
+  return ![
+    'crew_member',
+    'social_zone',
+    'buddy_zone',
+    'trip_stop',
+    'meeting_point',
+    'memory',
+  ].includes(object.kind);
+}
 
 // ── Buddies (Rent-a-Buddy availability) ───────────────────────────────────────
 

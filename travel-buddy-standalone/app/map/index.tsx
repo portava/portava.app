@@ -1430,10 +1430,14 @@ function FullScreenMapScreenInner() {
           onDeepLink={(deepLink) => {
             if (deepLink.mode) dispatchMapEvent({ type: 'ENTER_MODE', mode: deepLink.mode });
             if (deepLink.selectedObjectId) {
+              const selectedKind =
+                deepLink.cameraTarget.subject.kind ??
+                defaultObjects.find((object) => object.id === deepLink.selectedObjectId)?.kind;
+              if (!selectedKind) return;
               dispatchMapEvent({
                 type: 'SELECT_OBJECT',
                 objectId: deepLink.selectedObjectId,
-                objectKind: 'place',
+                objectKind: selectedKind,
               });
             }
             const target = deepLink.cameraTarget;
@@ -1454,9 +1458,13 @@ function FullScreenMapScreenInner() {
           "Clearly label stale cached intelligence with last-updated time."
           rehydrate() has already downgraded each object's freshness, so nothing
           on screen is claiming to be live — this says WHY it looks quiet. */}
-      {staleness ? (
+      {staleness || (liveEnrichment?.skipped ?? 0) > 0 ? (
         <View style={[s2.cacheBanner, { top: insets.top + 116 }]} pointerEvents="none">
-          <Text style={s2.cacheBannerText}>{staleness.label} · showing saved data</Text>
+          <Text style={s2.cacheBannerText}>
+            {staleness
+              ? `${staleness.label} · showing saved data`
+              : `Live coverage is partial · ${liveEnrichment!.skipped} places not checked`}
+          </Text>
         </View>
       ) : null}
 

@@ -220,15 +220,20 @@ router.get(
     if (wantKind("social_zone")) {
       tasks.push(
         (async () => {
-          const travelers = await listMapTravelers(sc, {
-            viewerId: user.id,
-            lat,
-            lng,
-            radiusKm,
-            blockedSet,
-          }).catch(() => []);
-          for (const t of travelers) collected.push(projectTraveler(t));
-          sources.push("travelers");
+          try {
+            const travelers = await listMapTravelers(sc, {
+              viewerId: user.id,
+              lat,
+              lng,
+              radiusKm,
+              blockedSet,
+            });
+            for (const t of travelers) collected.push(projectTraveler(t));
+            sources.push("travelers");
+          } catch {
+            // Omit the source: clients use this list to decide which legacy
+            // layer must remain visible during a partial gateway outage.
+          }
         })(),
       );
     }
@@ -236,19 +241,23 @@ router.get(
     if (wantKind("hidden_gem")) {
       tasks.push(
         (async () => {
-          const ranked = await findNearbyGems(sc, lat, lng, radiusKm, { limit: 100 }).catch(() => []);
-          const notBlocked = ranked.filter(
-            (r: any) => !r.gem?.submitted_by || !blockedSet.has(r.gem.submitted_by),
-          );
-          const safe = await applyGemPrivacyBatch(
-            notBlocked.map((r: any) => r.gem),
-            sc,
-            user.id,
-          ).catch(() => []);
-          safe.forEach((g: any, i: number) =>
-            collected.push(projectGem(g, notBlocked[i]?.distanceKm ?? null)),
-          );
-          sources.push("gems");
+          try {
+            const ranked = await findNearbyGems(sc, lat, lng, radiusKm, { limit: 100 });
+            const notBlocked = ranked.filter(
+              (r: any) => !r.gem?.submitted_by || !blockedSet.has(r.gem.submitted_by),
+            );
+            const safe = await applyGemPrivacyBatch(
+              notBlocked.map((r: any) => r.gem),
+              sc,
+              user.id,
+            );
+            safe.forEach((g: any, i: number) =>
+              collected.push(projectGem(g, notBlocked[i]?.distanceKm ?? null)),
+            );
+            sources.push("gems");
+          } catch {
+            // Source intentionally absent; the mobile client falls back.
+          }
         })(),
       );
     }
@@ -256,11 +265,13 @@ router.get(
     if (wantKind("event")) {
       tasks.push(
         (async () => {
-          const events = await loadNearbyEvents(sc, user.id, lat, lng, radiusKm, blockedSet).catch(
-            () => [],
-          );
-          for (const ev of events) collected.push(projectEvent(ev, nowMs));
-          sources.push("events");
+          try {
+            const events = await loadNearbyEvents(sc, user.id, lat, lng, radiusKm, blockedSet);
+            for (const ev of events) collected.push(projectEvent(ev, nowMs));
+            sources.push("events");
+          } catch {
+            // Source intentionally absent; the mobile client falls back.
+          }
         })(),
       );
     }

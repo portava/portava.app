@@ -63,11 +63,14 @@ import {
   projectFriend,
   projectGemLocal,
   projectTrip,
+  mapProjectionCacheScope,
+  isPlaceIntelCacheSafe,
 } from '../features/map/projection/clientProjection.ts';
 import { coarsenForFriend, isMapVisibleEvent, isMapVisibleTrip } from './mapEntityFilters.ts';
 import { mapCache } from '../features/map/cache/mapCache.ts';
 import type { Staleness } from '../features/map/cache/mapCache.ts';
 import { advanceStage, type LoadingStage } from '../features/map/cache/loadingStrategy.ts';
+import { useSession } from '../context/SessionContext.tsx';
 
 /** Which contract kinds the gateway is asked for, per legacy layer toggle. */
 const GATEWAY_KIND_FOR_LAYER: Partial<Record<ToggleableEntityType, MapObjectKind>> = {
@@ -211,6 +214,11 @@ export interface UseMapEntitiesResult {
   staleness: Staleness | null;
 }
 
+/**
+ * Cache identity must describe the viewport that produced the projection.
+ * A city label alone is not sufficient: coordinate-only deep links have no
+ * city, and two cameras in the same city can request different layers/zoom.
+ */
 export function useMapEntities(opts: {
   enabledLayers: ToggleableEntityType[];
   city: string | null;
@@ -222,6 +230,7 @@ export function useMapEntities(opts: {
   radiusKm?: number;
 }): UseMapEntitiesResult {
   const { enabledLayers, city, lat, lng, zoom = 12, radiusKm = DEFAULT_VIEWPORT_RADIUS_KM } = opts;
+  const { userId } = useSession();
 
   const [objects, setObjects] = useState<MapObject[]>([]);
   const [entities, setEntities] = useState<MapEntity[]>([]);
@@ -235,11 +244,23 @@ export function useMapEntities(opts: {
 
   const inFlight = useRef(false);
   const hasLoaded = useRef(false);
+  const loadedScopeRef = useRef<string | null>(null);
+  const requestGenerationRef = useRef(0);
+  const latestFetchRef = useRef<() => void>(() => {});
 
   // Tracks whether another fetch was requested while one was in-flight, so the
   // hook re-runs once the active fetch resolves rather than silently dropping
   // the update (e.g. when persisted layer prefs load mid-fetch). Unchanged.
   const pendingRefetch = useRef(false);
+  const cacheScope = mapProjectionCacheScope({
+    accountId: userId,
+    city,
+    lat,
+    lng,
+    zoom,
+    radiusKm,
+    enabledLayers,
+  });
 
   // ── §33 cache-first seed ────────────────────────────────────────────────────
   // "The map should progressively improve; it should not blank while live
@@ -247,24 +268,24 @@ export function useMapEntities(opts: {
   // never overwrites objects that have already arrived from the network.
   const seededRef = useRef<string | null>(null);
   useEffect(() => {
-    const scope = city ?? 'unknown';
-    if (seededRef.current === scope) return;
-    seededRef.current = scope;
+    if (seededRef.current === cacheScope) return;
+    seededRef.current = cacheScope;
     let cancelled = false;
     void (async () => {
-      const cached = await mapCache.read('place_intel', scope).catch(() => null);
+      const cached = await mapCache.read('place_intel', cacheScope).catch(() => null);
       if (cancelled || !cached || cached.objects.length === 0) return;
       // A later network result always wins; a cache seed must never clobber it.
-      if (hasLoaded.current) return;
+      if (loadedScopeRef.current === cacheScope) return;
       setObjects(cached.objects as MapObject[]);
       setEntities(mapObjectsToEntities(cached.objects as MapObject[]));
       setStaleness(cached.staleness);
       setStage((prev) => advanceStage(prev, 'cached_geography'));
     })();
     return () => { cancelled = true; };
-  }, [city]);
+  }, [cacheScope]);
 
   const doFetch = useCallback(async () => {
+    const generation = ++requestGenerationRef.current;
     if (inFlight.current) {
       pendingRefetch.current = true;
       return;
@@ -288,6 +309,7 @@ export function useMapEntities(opts: {
     try {
       // ── 1. Try the gateway ────────────────────────────────────────────────
       let gatewayObjects: MapObject[] | null = null;
+      let gatewaySources = new Set<string>();
       let enrichment: UseMapEntitiesResult['liveEnrichment'] = null;
 
       if (wantedKinds.length > 0 && lat != null && lng != null) {
@@ -301,6 +323,7 @@ export function useMapEntities(opts: {
         // as an empty world.
         if (res.ok && res.data.enabled) {
           gatewayObjects = res.data.objects;
+          gatewaySources = new Set(res.data.sources);
           enrichment = res.data.liveEnrichment;
         }
       }
@@ -309,10 +332,19 @@ export function useMapEntities(opts: {
       const usedGateway = gatewayObjects !== null;
       const fetches: Promise<MapObject[]>[] = [];
 
-      if (!usedGateway && enabledLayers.includes('events') && lat != null && lng != null) {
+      if (
+        enabledLayers.includes('events') &&
+        lat != null &&
+        lng != null &&
+        (!usedGateway || !gatewaySources.has('events'))
+      ) {
         fetches.push(fetchEvents(lat, lng, now).catch(() => []));
       }
-      if (!usedGateway && enabledLayers.includes('gems') && city) {
+      if (
+        enabledLayers.includes('gems') &&
+        city &&
+        (!usedGateway || !gatewaySources.has('gems'))
+      ) {
         fetches.push(fetchGems(city).catch(() => []));
       }
       // These three never come from the gateway yet — see the header.
@@ -333,12 +365,17 @@ export function useMapEntities(opts: {
       // per-layer object compete on the same ladder rather than by arrival order.
       merged.sort(compareByRenderingPriority);
 
+      // A camera/layer change requested another generation while this one was
+      // in flight. Never paint or cache the stale viewport.
+      if (generation !== requestGenerationRef.current) return;
+
       setObjects(merged);
       setEntities(mapObjectsToEntities(merged));
       setSource(usedGateway ? (perLayer.length > 0 ? 'mixed' : 'gateway') : 'legacy');
       setLiveEnrichment(enrichment);
       setError(null);
       hasLoaded.current = true;
+      loadedScopeRef.current = cacheScope;
 
       // Network data is current, so the cache banner must go away.
       setStaleness(null);
@@ -354,8 +391,9 @@ export function useMapEntities(opts: {
 
       // §28 write-through. Fire-and-forget: a cache write must never delay or
       // fail a render.
-      if (city && merged.length > 0) {
-        void mapCache.write('place_intel', city, merged).catch(() => {});
+      const cacheable = (gatewayObjects ?? []).filter(isPlaceIntelCacheSafe);
+      if (cacheable.length > 0) {
+        void mapCache.write('place_intel', cacheScope, cacheable).catch(() => {});
       }
     } catch (err: any) {
       if (!hasLoaded.current) setError(err?.message ?? 'Failed to load map entities');
@@ -364,10 +402,11 @@ export function useMapEntities(opts: {
       setLoading(false);
       if (pendingRefetch.current) {
         pendingRefetch.current = false;
-        void doFetch();
+        latestFetchRef.current();
       }
     }
-  }, [enabledLayers, city, lat, lng, zoom, radiusKm]);
+  }, [enabledLayers, city, lat, lng, zoom, radiusKm, cacheScope]);
+  latestFetchRef.current = () => { void doFetch(); };
 
   const refresh = useCallback(() => {
     void doFetch();

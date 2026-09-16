@@ -25,6 +25,8 @@ import {
   projectFriend,
   projectGemLocal,
   projectTrip,
+  mapProjectionCacheScope,
+  isPlaceIntelCacheSafe,
 } from '../clientProjection.ts';
 import {
   KIND_DEFAULT_PRIORITY,
@@ -297,5 +299,57 @@ describe('identity of the object itself', () => {
 
   test('a trip with only one date still renders a legible range', () => {
     assert.match(projectTrip({ ...TRIP, endDate: null })!.subtitle!, /2026-04-12 → \?/);
+  });
+});
+
+describe('projection cache scope', () => {
+  const base = {
+    accountId: 'account-a',
+    city: 'Da Nang',
+    lat: 16.0544,
+    lng: 108.2022,
+    zoom: 12,
+    radiusKm: 50,
+    enabledLayers: ['events', 'gems'] as const,
+  };
+
+  test('is stable when layer order changes', () => {
+    assert.equal(
+      mapProjectionCacheScope(base),
+      mapProjectionCacheScope({ ...base, enabledLayers: ['gems', 'events'] }),
+    );
+  });
+
+  test('separates different cameras, zooms, and layer sets', () => {
+    const scope = mapProjectionCacheScope(base);
+    assert.notEqual(scope, mapProjectionCacheScope({ ...base, lat: 16.2 }));
+    assert.notEqual(scope, mapProjectionCacheScope({ ...base, zoom: 14 }));
+    assert.notEqual(scope, mapProjectionCacheScope({ ...base, enabledLayers: ['events'] }));
+  });
+
+  test('coordinate-only deep links get a reusable non-unknown scope', () => {
+    const scope = mapProjectionCacheScope({ ...base, city: null });
+    assert.match(scope, /^account:account-a\|16\.054,108\.202\|/);
+    assert.ok(!scope.includes('unknown'));
+  });
+
+  test('never shares a viewer-scoped projection across accounts', () => {
+    assert.notEqual(
+      mapProjectionCacheScope(base),
+      mapProjectionCacheScope({ ...base, accountId: 'account-b' }),
+    );
+  });
+});
+
+describe('place-intelligence cache privacy', () => {
+  test('refuses account-specific trip and social objects', () => {
+    assert.equal(isPlaceIntelCacheSafe(projectTrip(TRIP)!), false);
+    assert.equal(isPlaceIntelCacheSafe(projectFriend(FRIEND)!), false);
+    assert.equal(isPlaceIntelCacheSafe(projectBuddy(BUDDY)!), false);
+  });
+
+  test('allows fixed public place/event intelligence', () => {
+    assert.equal(isPlaceIntelCacheSafe(projectGemLocal(GEM)!), true);
+    assert.equal(isPlaceIntelCacheSafe(projectEventLocal(EVENT, NOW)!), true);
   });
 });

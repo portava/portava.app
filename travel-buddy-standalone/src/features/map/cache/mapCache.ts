@@ -77,7 +77,9 @@ export interface StorageLike {
  * intelligence is by definition re-fetchable, so a migration would be all risk
  * and no benefit.
  */
-export const MAP_CACHE_VERSION = 'v1';
+// v2 invalidates v1 entries because place_intel previously stored merged
+// account-specific trip/friend/buddy objects without an account namespace.
+export const MAP_CACHE_VERSION = 'v2';
 
 export const MAP_CACHE_KEY_PREFIX = `map:cache:${MAP_CACHE_VERSION}`;
 

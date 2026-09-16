@@ -37,6 +37,33 @@ export interface SweepResult {
   reason: "disabled" | "no_client" | "error" | null;
 }
 
+/**
+ * Enforces Map telemetry's 90-day expiry. This is deliberately a separate flag
+ * from collection: disabling new telemetry must not leave old rows accumulating.
+ */
+export async function runMapTelemetryRetentionSweep(
+  opts: { client?: any } = {},
+): Promise<SweepResult> {
+  const db = "client" in opts && opts.client !== undefined ? opts.client : getServiceClient();
+  if (!db) return { purged: 0, skipped: true, reason: "no_client" };
+  if (!(await isFlagEnabled(db, "map_telemetry_retention_enabled"))) {
+    return { purged: 0, skipped: true, reason: "disabled" };
+  }
+  try {
+    const { data, error } = await db.rpc("purge_expired_map_telemetry");
+    if (error) {
+      logger.warn({ err: error }, "map telemetry retention sweep failed");
+      return { purged: 0, skipped: true, reason: "error" };
+    }
+    const purged = Number(data) || 0;
+    if (purged > 0) logger.info({ purged }, "map telemetry retention removed expired rows");
+    return { purged, skipped: false, reason: null };
+  } catch (err) {
+    logger.warn({ err }, "map telemetry retention sweep threw");
+    return { purged: 0, skipped: true, reason: "error" };
+  }
+}
+
 export async function runIntelRetentionSweep(opts: { client?: any } = {}): Promise<SweepResult> {
   // Explicit null means "no client"; undefined means "use the service client if
   // available" — the house pattern (dailyBriefCleanup, inviteSlotSweeper).
@@ -205,14 +232,24 @@ export function startIntelRetentionScheduler(): void {
     {
       startupDelayMs: STARTUP_DELAY_MS,
       intervalMs: INTERVAL_MS,
-      flags: ["intel_retention_sweep_enabled", "intel_contribution_retention_enabled"],
+      flags: [
+        "intel_retention_sweep_enabled",
+        "intel_contribution_retention_enabled",
+        "map_telemetry_retention_enabled",
+      ],
     },
     "IntelRetentionScheduler scheduled (no-op until the flags are enabled)",
   );
   _timer = setTimeout(function tick() {
     // Snapshot hygiene and contribution retention run each pass, each behind its
     // own flag. allSettled so one failing never blocks the other or the reschedule.
-    void Promise.allSettled([runIntelRetentionSweep(), runIntelContributionRetentionSweep(), runPresenceCleanup(), runSensingCredentialCleanup()])
+    void Promise.allSettled([
+      runIntelRetentionSweep(),
+      runIntelContributionRetentionSweep(),
+      runMapTelemetryRetentionSweep(),
+      runPresenceCleanup(),
+      runSensingCredentialCleanup(),
+    ])
       .finally(() => { _timer = setTimeout(tick, INTERVAL_MS); });
   }, STARTUP_DELAY_MS);
 }
