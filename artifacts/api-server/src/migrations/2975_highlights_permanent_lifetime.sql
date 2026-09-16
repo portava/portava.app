@@ -131,6 +131,8 @@ DECLARE
   v_has_check     boolean;
   v_null_refused  boolean;
   v_perm_accepted boolean;
+  v_probe_rows    integer;
+  v_has_subject   boolean;
 BEGIN
   -- 1. The column is nullable. Read from the catalog, not inferred from the
   --    statement having run without error.
@@ -164,6 +166,40 @@ BEGIN
     RAISE EXCEPTION '2975 postcondition 2 FAILED: constraint highlights_permanent_has_no_expiry is missing or NOT VALID. Without it, DROP NOT NULL lets any Highlight never expire by accident on a 24-hour surface.';
   END IF;
 
+  -- 3 AND 4 NEED A SUBJECT ROW, AND A DATABASE THAT HAS NONE IS NOT A FAILURE.
+  --
+  -- Both probes insert `SELECT … FROM public.profiles LIMIT 1`, so on a database
+  -- whose `profiles` table is EMPTY the INSERT matches nothing, inserts ZERO
+  -- ROWS, and raises nothing at all. The original code read that silence as the
+  -- row having been ACCEPTED and failed postcondition 3 — on a database where
+  -- the constraint is present, validated and perfectly correct.
+  --
+  -- That is not a hypothetical. It is exactly what happens on a fresh database,
+  -- which is what `api-server · kernel SQL executed on a throwaway database`
+  -- builds, and this file could not be applied to one. Reproduced before fixing:
+  -- with the source emptied, `GET DIAGNOSTICS ROW_COUNT` is 0 and
+  -- `v_null_refused` is false, which is the reported failure exactly.
+  --
+  -- THE FIX IS NOT TO LOOSEN THE ASSERTION. `IS DISTINCT FROM true` stays, and a
+  -- zero-row probe is never read as a pass OR as a refusal — it is read as
+  -- "this probe did not run", which is the truth. Two things enforce that:
+  --
+  --   * the probes are guarded on a subject row EXISTING, and are SKIPPED WITH A
+  --     LOUD WARNING when there is none. 2921 sets this precedent in this
+  --     repository for the same reason ("seam-refusal probe SKIPPED — profiles
+  --     is empty on this database"), and postconditions 1, 2 and 5 still run
+  --     everywhere: 2 is the one that proves the constraint exists AND is
+  --     VALIDATED, so an empty database still refuses a broken migration.
+  --   * ROW_COUNT is checked INSIDE each probe anyway, so if the guard is ever
+  --     removed or the source changes, a vacuous probe raises rather than
+  --     quietly reporting whatever the uninitialised path happens to say. A
+  --     silent vacuous pass is the failure mode worth spending four lines on.
+  SELECT EXISTS (SELECT 1 FROM public.profiles) INTO v_has_subject;
+
+  IF NOT v_has_subject THEN
+    RAISE WARNING '2975: postconditions 3 and 4 SKIPPED — public.profiles is empty on this database, so the probe INSERT would match no row and prove nothing. 1, 2 and 5 ran: expires_at is nullable and highlights_permanent_has_no_expiry exists and is VALIDATED. The refusal and acceptance behaviour is unproven HERE and is proven on any database carrying a profile.';
+  ELSE
+
   -- 3. THE CONSTRAINT ACTUALLY REFUSES. Asserting that a CHECK exists is worth
   --    little — the question is whether a NULL expiry without a PERMANENT class
   --    is turned away. So this INSERTS one and requires the failure. The whole
@@ -181,6 +217,10 @@ BEGIN
       'DAY'
     FROM public.profiles p
     LIMIT 1;
+    GET DIAGNOSTICS v_probe_rows = ROW_COUNT;
+    IF v_probe_rows = 0 THEN
+      RAISE EXCEPTION '2975 postcondition 3 COULD NOT RUN: the probe insert matched no source row, so nothing was offered to the constraint. This is not an acceptance and must never be reported as one.';
+    END IF;
     v_null_refused := false;   -- it was accepted: the constraint is not effective
     RAISE EXCEPTION 'rollback_2975_negative' USING ERRCODE = 'P0001';
   EXCEPTION
@@ -211,6 +251,10 @@ BEGIN
       'PERMANENT'
     FROM public.profiles p
     LIMIT 1;
+    GET DIAGNOSTICS v_probe_rows = ROW_COUNT;
+    IF v_probe_rows = 0 THEN
+      RAISE EXCEPTION '2975 postcondition 4 COULD NOT RUN: the positive control matched no source row, so it proved nothing. Reporting it as an acceptance would make postcondition 3 worthless, which is the whole reason this control exists.';
+    END IF;
     v_perm_accepted := true;
     RAISE EXCEPTION 'rollback_2975_positive' USING ERRCODE = 'P0001';
   EXCEPTION
@@ -223,6 +267,8 @@ BEGIN
   IF v_perm_accepted IS DISTINCT FROM true THEN
     RAISE EXCEPTION '2975 postcondition 4 FAILED: a PERMANENT Highlight with no expiry was REFUSED. The constraint is too strict and PERMANENT is still unrepresentable, which is the state this migration exists to end.';
   END IF;
+
+  END IF;  -- v_has_subject
 
   -- 5. Nothing was left behind by either probe. Both raised inside their own
   --    block so the inserts are rolled back, but a future edit that removed a
