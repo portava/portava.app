@@ -143,20 +143,21 @@ Format: `- [lane] file:line — what is wrong, and what the user sees.`
 
 ## integrating lane — 2026-09-16
 
-- [integration] `artifacts/api-server/src/routes/messaging.ts:2400-2418` — a quoted
-  reply can quote a message from a DIFFERENT thread, and the quote is rendered
-  WITH ITS ORIGINAL SENDER'S NAME. `reply_to_id` is accepted on every send path
-  without checking that the target lives in the thread being written to
-  (`messaging.ts:3065-3067`, `routes/telegraphKinds.ts:72` — `z.string().max(64)`,
-  `routes/telegraphVoice.ts` — a UUID shape test and nothing more), and the read
-  side resolves it with the SERVICE CLIENT filtered only by id and by §14.3's
-  `visibleFrom` timestamp, never by `thread_id`. What a person sees: someone who
-  is in thread B pastes a message id from B into a reply in thread A, and every
-  member of A is shown that message's body attributed to its original author,
-  who never posted it there. The confidentiality loss is bounded — the sender
-  could already read what they quoted — but the ATTRIBUTION is not: the quote
-  asserts that a named third party said this here. The fix is one predicate,
-  `.eq("thread_id", threadId)`, on the quoted-context query, plus rejecting an
-  out-of-thread `reply_to_id` at write time on all three send paths. Not fixed
-  in this merge: it is pre-existing on the main send path, spans three routes
-  the telegraph lane does not own, and needs its own red-first test.
+- [integration] `artifacts/api-server/src/routes/telegraphKinds.ts:72` — the
+  typed-message route ACCEPTS `replyToId` in its request schema and never writes
+  it. A client that sends a typed kind as a reply gets a 201 and a message that
+  is not a reply; the quote it drew in the composer is simply gone on reload.
+  Silent acceptance of a field with no effect is the failure mode here, not the
+  missing feature: either write `reply_to_id` (behind the same in-thread check
+  the other two send paths now apply) or reject the field by name. Not fixed in
+  this merge because writing it means deciding what a reply to a typed kind
+  renders as in the drawer, which is a §6.4 question this lane did not own.
+
+  SUPERSEDES an earlier entry here that claimed `routes/messaging.ts` accepted
+  `reply_to_id` without checking the thread. IT DOES CHECK — `messaging.ts:2749`,
+  fail-closed, 503 when the check cannot run and 400 when the reference is
+  genuinely cross-thread — and has since it was built. The real gap was the
+  voice route, which was added without it and is FIXED in this merge
+  (`routes/telegraphVoice.ts`, red-first in `src/test/telegraphVoice.test.ts`),
+  together with a defence-in-depth `thread_id` predicate on the quoted-context
+  read in `messaging.ts`.

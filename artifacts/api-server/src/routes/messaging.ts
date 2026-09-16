@@ -2402,9 +2402,21 @@ router.get('/threads/:threadId/messages', async (req, res) => {
         if (replyIds.length > 0) {
           // A reply to a message outside the caller's §14.3 window must not
           // quote it back in — the quoted body is retrieval by another name.
+          //
+          // `thread_id` is the SECOND lock on the same door and it is here
+          // deliberately. Every send path checks that a reply reference lives in
+          // the thread being written to, so a foreign `reply_to_id` should not be
+          // storable at all — but this query runs on `sc`, the service client,
+          // which is BYPASSRLS, and what it returns is a message BODY attributed
+          // to its ORIGINAL AUTHOR. A single missed write-side check, now or in
+          // a send path written later, would turn that into a way to make a named
+          // third party appear to have spoken in a room they never wrote in.
+          // The predicate costs nothing and makes the read incapable of it
+          // regardless of what is in the column.
           let quotedQuery = sc
             .from('messages')
             .select(`id, body, sender_id, profile:profiles!messages_sender_id_fkey(name, handle, username, full_name)`)
+            .eq('thread_id', threadId)
             .in('id', replyIds);
           if (visibleFrom) quotedQuery = quotedQuery.gte('created_at', visibleFrom);
           const { data: quotedRows, error: quotedErr } = await quotedQuery;

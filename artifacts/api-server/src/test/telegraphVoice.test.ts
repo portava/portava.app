@@ -67,6 +67,11 @@ const THREAD = "dddddddd-0000-4000-8000-00000000000d";
 const THREAD_E2EE = "dddddddd-0000-4000-8000-00000000000e";
 const THREAD_NONE = "dddddddd-0000-4000-8000-00000000000f";
 
+/** A message Alice CAN reply to: it is in the thread she is writing to. */
+const MSG_IN_THREAD = "eeeeeeee-0000-4000-8000-000000000001";
+/** A message in a thread Alice is not writing to — the cross-thread case. */
+const MSG_OTHER_THREAD = "eeeeeeee-0000-4000-8000-000000000002";
+
 const GOOD_URL = "post-media/aaaaaaaa-0000-4000-8000-000000000001/voice/1700000000000.m4a";
 
 function goodPayload(over: Record<string, unknown> = {}) {
@@ -188,7 +193,10 @@ function fixture(state: State): Record<string, any[]> {
     blocks: state.blocked
       ? [{ blocker_id: BOB, blocked_id: ALICE }]
       : [],
-    messages: [],
+    messages: [
+      { id: MSG_IN_THREAD, thread_id: THREAD, sender_id: BOB, body: "in this thread" },
+      { id: MSG_OTHER_THREAD, thread_id: THREAD_NONE, sender_id: CAROL, body: "Carol's private line" },
+    ],
   };
 }
 
@@ -578,6 +586,67 @@ describe("POST /threads/:id/voice applies the same write gates as every other se
     const r = await post(`/threads/${THREAD}/voice`, ALICE, { payload: goodPayload() });
     assert.equal(r.body.error, "degraded_unavailable");
     assert.equal((c as any)._inserted.length, 0);
+  });
+});
+
+describe("a voice note may only reply to a message IN THE THREAD IT IS SENT TO", () => {
+  /**
+   * The disclosure this closes, concretely. `reply_to_id` is rendered by the
+   * thread read as `replyToBody` + `replyToSenderName` — the quoted message's
+   * TEXT, attributed to its ORIGINAL AUTHOR. The quoted-context query in
+   * `routes/messaging.ts` resolves it with the SERVICE client, which is
+   * BYPASSRLS. So a reply reference the write path accepts without checking the
+   * thread is a way to make a named third party appear to have said something in
+   * a room they never wrote in.
+   *
+   * `POST /threads/:id/messages` has checked this since it was built
+   * (`routes/messaging.ts:2749`, fail-closed, 503 when the check itself cannot
+   * run and 400 when the reference is genuinely wrong). The voice route was
+   * added without it and is the only send path that lacked it.
+   */
+  it("REFUSES a replyToId belonging to another thread, and writes nothing", async () => {
+    const c = useState({});
+    const before = c._db.messages.length;
+    const r = await post(`/threads/${THREAD}/voice`, ALICE, {
+      payload: goodPayload(),
+      replyToId: MSG_OTHER_THREAD,
+    });
+    assert.equal(r.status, 400);
+    assert.match(String(r.body?.error?.message ?? r.body?.message ?? ""), /does not belong to this thread/i);
+    assert.equal(c._db.messages.length, before, "a refused reply reference must not have written a message");
+  });
+
+  it("ACCEPTS a replyToId in the same thread, and persists it", async () => {
+    const c = useState({});
+    const r = await post(`/threads/${THREAD}/voice`, ALICE, {
+      payload: goodPayload(),
+      replyToId: MSG_IN_THREAD,
+    });
+    assert.equal(r.status, 201);
+    assert.equal(r.body.replyToId, MSG_IN_THREAD);
+    const row = c._inserted.find((i: any) => i.table === "messages");
+    assert.equal(row.row.reply_to_id, MSG_IN_THREAD);
+  });
+
+  it("is FAIL-CLOSED: an unreadable messages table refuses with a retryable code, not a 400", async () => {
+    // The two must not wear the same clothes. Telling a traveller their reply
+    // reference is invalid, when in truth the check could not run, makes them
+    // edit a message that was fine.
+    const c = useState({ errorTable: "messages" });
+    const before = c._db.messages.length;
+    const r = await post(`/threads/${THREAD}/voice`, ALICE, {
+      payload: goodPayload(),
+      replyToId: MSG_IN_THREAD,
+    });
+    assert.equal(r.status, 503);
+    assert.equal(c._db.messages.length, before);
+  });
+
+  it("accepts no replyToId at all — a voice note need not be a reply", async () => {
+    useState({});
+    const r = await post(`/threads/${THREAD}/voice`, ALICE, { payload: goodPayload() });
+    assert.equal(r.status, 201);
+    assert.equal(r.body.replyToId, null);
   });
 });
 

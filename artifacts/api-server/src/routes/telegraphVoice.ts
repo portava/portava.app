@@ -234,6 +234,45 @@ router.post(
 
     const replyToIdRaw = req.body?.replyToId;
     const replyToId = typeof replyToIdRaw === "string" && UUID.test(replyToIdRaw) ? replyToIdRaw : null;
+
+    // A reply reference must name a message IN THIS THREAD, and the check is
+    // the same one `POST /threads/:id/messages` has applied since it was built
+    // (`routes/messaging.ts:2749`).
+    //
+    // WHY IT MATTERS MORE THAN A DANGLING POINTER. `reply_to_id` is rendered by
+    // the thread read as `replyToBody` + `replyToSenderName` — the quoted
+    // message's TEXT, attributed to its ORIGINAL AUTHOR — and that read resolves
+    // it with the SERVICE client, which is BYPASSRLS. An unchecked reference is
+    // therefore a way to make a named third party appear to have said something
+    // in a room they never wrote in. Bounded in confidentiality, because the
+    // sender could already read what they quoted; unbounded in ATTRIBUTION.
+    //
+    // FAIL-CLOSED, and the two failures wear different clothes: an unreadable
+    // `messages` and a genuinely cross-thread id both resolve as `data: null`,
+    // but telling a traveller their reference is invalid when the check could
+    // not run makes them edit a message that was fine. 503 says "try again";
+    // 400 says "this is wrong".
+    if (replyToId) {
+      const { data: refMsg, error: refErr } = await client
+        .from("messages")
+        .select("id")
+        .eq("id", replyToId)
+        .eq("thread_id", threadId)
+        .maybeSingle();
+      if (refErr) {
+        log.error({ err: refErr, threadId, replyToId }, "voice reply-reference check unavailable");
+        sendError(
+          res,
+          "degraded_unavailable",
+          "We could not verify the message you are replying to. Please try again shortly.",
+        );
+        return;
+      }
+      if (!refMsg) {
+        sendError(res, "invalid_payload", "Referenced message does not belong to this thread");
+        return;
+      }
+    }
     const clientId = typeof req.body?.clientId === "string" ? req.body.clientId.slice(0, 64) : null;
 
     const now = new Date().toISOString();
