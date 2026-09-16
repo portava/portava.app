@@ -84,24 +84,42 @@ export interface SweepResult {
  * not want kept. `map_telemetry_retention_enabled` is therefore independent of
  * every collection flag.
  *
- * ── THIS PASS IS REGISTERED AND CANNOT YET DO ANYTHING. SAID PLAINLY. ────────
- * It is on RETENTION_PASSES and runs on every tick, but as of this port THREE
- * of its preconditions are missing and it therefore no-ops on both live
- * databases:
+ * ── WHAT THIS CALLS, AND WHO CREATES IT ─────────────────────────────────────
+ * `purge_expired_map_telemetry()` and the `map_telemetry_retention_enabled` row
+ * are created by 2960_map_telemetry_retention.sql, which is NOT this module's to
+ * write — this function is the caller, that migration is the definition. Until
+ * 2960 lands, isFlagEnabled resolves the unseeded flag false and every pass
+ * returns `{skipped: true, reason: "disabled"}`; check:flag-polarity reports the
+ * name as a PHANTOM FLAG for exactly that window, which is the check doing its
+ * job rather than a defect to suppress.
  *
- *   1. `map_telemetry_retention_enabled` is seeded by NO migration in
- *      src/migrations, so isFlagEnabled resolves it false and un-flippable.
- *      check:flag-polarity reports it as a PHANTOM FLAG, correctly.
- *   2. `purge_expired_map_telemetry()` does not exist in either database.
- *   3. map_telemetry_events and map_telemetry_drops do not exist in PRODUCTION
- *      at all — migration 2202 is unapplied there. Verified against the
- *      2026-09-16 full production capture (lib/capability/snapshots): 460
- *      tables, the only `map*` one is map_pins, and there is no
- *      map_telemetry_enabled flag row either.
+ * ── THE STORAGE THIS SWEEPS DOES NOW EXIST, AND DID NOT USED TO ──────────────
+ * 2202 carried a schema_migration_ledger row with applied_by='backfill', which
+ * asserts only that the FILENAME existed when 2254 ran — never that the file
+ * ran. It had not. routes/mapTelemetry.ts:225 inserted into an absent table,
+ * caught the failure, logged a warn and still returned 200 `accepted:0`, so
+ * every production map telemetry event was silently discarded. 2202 and 2222
+ * have since been applied to production and the object fingerprint matches CI.
  *
- * All three are fixed by ONE migration, which this port could not write because
- * migration numbering is owned elsewhere. Until it lands, the correct reading of
- * this function is "wired, inert" — not "enforcing a 90-day policy".
+ * MEASURED against both live databases rather than inferred from the snapshot
+ * files, which predate that apply:
+ *
+ *   production (ajrurzioarfkagpuxfnb) .. both tables present, `expires_at` on
+ *                                        each, 0 rows, map_telemetry_enabled
+ *                                        FALSE, purge function not yet created
+ *   CI         (hwokxgbmezheskbzskfr) .. identical on every one of those
+ *
+ * ── WHY 2960 SHOULD SEED THIS FLAG **TRUE** ─────────────────────────────────
+ * The usual house instinct — ship an irreversible DELETE switched off — is the
+ * wrong polarity for a RETENTION control, and the numbers above are why. A
+ * collection flag shipped off withholds a capability; a retention flag shipped
+ * off declares a 90-day privacy promise and then does not keep it, which is
+ * precisely the "off => data retained" hazard this flag's CLASSIFIED entry in
+ * scripts/check-flag-polarity.mjs exists to name. There is also nothing to be
+ * careful about yet: collection is FALSE and both tables hold 0 rows in both
+ * environments, so an enabled purger deletes nothing today and is ALREADY
+ * enforcing on the day collection is switched on — rather than becoming one
+ * more thing someone has to remember to turn on afterwards.
  */
 export async function runMapTelemetryRetentionSweep(
   opts: { client?: any } = {},
