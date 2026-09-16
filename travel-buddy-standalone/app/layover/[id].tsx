@@ -57,6 +57,7 @@ import { LayoverPlanSection } from '../../src/components/layover/LayoverPlanSect
 import { LayoverRecsSection } from '../../src/components/layover/LayoverRecsSection';
 import { LayoverMapCard } from '../../src/components/layover/LayoverMapCard';
 import { LayoverPeopleSection } from '../../src/components/layover/LayoverPeopleSection';
+import { LayoverCrewSection } from '../../src/components/layover/LayoverCrewSection';
 import { LayoverSafeReturnCard } from '../../src/components/layover/LayoverSafeReturnCard';
 import { LayoverEndSheet } from '../../src/components/layover/LayoverEndSheet';
 import { useSafeReturnAbort } from '../../src/components/layover/useSafeReturnAbort';
@@ -594,6 +595,17 @@ export default function LayoverDashboardScreen() {
               canEdit={!!canEdit}
               onToggleShare={handleToggleShare}
               onOpenBuddy={(b) => router.push(`/(rent-a-buddy)/buddy/${b.id}` as any)}
+            />
+
+            {/* §14 L28/L29/L131 — the crew. Placed with the other people, and
+                therefore inside the exploration block, which means it collapses
+                with it at RETURN_NOW. That is the certified posture doing its
+                job: at RETURN_NOW the default answer is the airport, and
+                "collapsed" is one press from open, not hidden. */}
+            <LayoverCrewSection
+              sessionId={session.id}
+              timezone={airport.timezone}
+              refreshKey={dataEpoch}
             />
           </View>
         )}

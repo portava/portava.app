@@ -1304,3 +1304,141 @@ export async function submitAirportObservation(
     fact: body.fact as AirportObservedFact,
   };
 }
+
+// ── §14 Layover Crew (census L28/L29/L131/L185/L186/L188) ─────────────────────
+
+export interface CrewSummary {
+  id: string;
+  title: string;
+  city: string;
+  meetingPointLabel: string | null;
+  status: 'open' | 'closed' | 'disbanded';
+  maxMembers: number;
+  expiresAt: string;
+  youAreOwner: boolean;
+  /**
+   * From the MEMBERSHIP rows, not from `members` below. The two differ whenever
+   * a crewmate has blocked you, paused sharing or gone into ghost mode: they
+   * are still in the crew and still bind the shared deadline, they just have no
+   * card. Rendering `members.length` as the size of the crew would quietly
+   * un-count them.
+   */
+  memberCount: number;
+}
+
+/** One member's certified constraint, as §14.1 folds it into the minimum. */
+export interface CrewMemberConstraint {
+  userId: string;
+  /** ISO. Null = this member's feasibility could not be certified. */
+  requiredReturnBy: string | null;
+  usableMinutes: number | null;
+  returnState: LayoverReturnState | null;
+}
+
+export type CrewInfeasibilityReason =
+  | 'no_members'
+  | 'member_without_certified_feasibility'
+  | 'member_unassigned'
+  | 'member_assigned_twice'
+  | 'unknown_member_in_branch'
+  | 'empty_branch'
+  | 'plan_exceeds_usable_minutes'
+  | 'plan_ends_after_shared_return';
+
+/**
+ * §14.1, server-certified. Transcribed from `certifyCrewPlan` in
+ * `artifacts/api-server/src/services/airport/LayoverCrewService.ts`.
+ *
+ * `sharedReturnBy` is `min(member.required_return_by)` over the WHOLE crew and
+ * is NULL whenever any member is uncertified — not because the server is being
+ * fussy, but because a minimum over the subset it could read is a LATER
+ * deadline than the truth. The client must render null as "not certified", and
+ * must never substitute its own earliest time: that is the duplicate
+ * time-budget derivation L2/L6 exist to forbid.
+ */
+export interface CrewSolution {
+  crewVersion: string;
+  sharedReturnBy: string | null;
+  bindingMemberIds: string[];
+  feasible: boolean;
+  reasons: CrewInfeasibilityReason[];
+  split: boolean;
+  members: CrewMemberConstraint[];
+}
+
+export interface CrewMemberCard {
+  id: string;
+  handle: string | null;
+  name: string | null;
+  avatarUrl: string | null;
+}
+
+export interface CrewOpening {
+  id: string;
+  title: string;
+  meetingPointLabel: string | null;
+  maxMembers: number;
+  expiresAt: string;
+}
+
+export type CrewState =
+  | {
+      inCrew: true;
+      crew: CrewSummary;
+      solution: CrewSolution;
+      members: CrewMemberCard[];
+      degraded: boolean;
+      degradedReasons: string[];
+    }
+  | { inCrew: false; city: string | null; crews: CrewOpening[]; reason?: string };
+
+/**
+ * The crew for this layover, or the open crews in this city.
+ *
+ * `null` is a FAILED READ and the caller must render it as one. "You are in no
+ * crew" and "we could not read your crew" produce the same screen if they are
+ * collapsed, and a traveller who believes the first walks away from people who
+ * are waiting for them.
+ */
+export async function getLayoverCrew(sessionId: string): Promise<CrewState | null> {
+  const res = await authedFetch(airportUrl('sessions', sessionId, 'crew'));
+  if (!res.ok) return null;
+  return res.json();
+}
+
+export type CrewActionOutcome =
+  | { ok: true; state: CrewState }
+  | { ok: false; message: string };
+
+async function crewAction(url: string, body?: unknown): Promise<CrewActionOutcome> {
+  let res: Response;
+  try {
+    res = await authedFetch(url, { method: 'POST', ...(body ? { body: JSON.stringify(body) } : {}) });
+  } catch {
+    return { ok: false, message: 'That could not be sent. Please try again.' };
+  }
+  let parsed: Record<string, unknown> = {};
+  try { parsed = await res.json(); } catch { /* falls through to the status check */ }
+  if (!res.ok) {
+    return {
+      ok: false,
+      message: typeof parsed.message === 'string' ? parsed.message : 'That did not work. Please try again.',
+    };
+  }
+  return { ok: true, state: parsed as unknown as CrewState };
+}
+
+export function createLayoverCrew(
+  sessionId: string,
+  input: { title: string; meetingPointLabel?: string | null; maxMembers?: number },
+): Promise<CrewActionOutcome> {
+  return crewAction(airportUrl('sessions', sessionId, 'crew'), input);
+}
+
+export function joinLayoverCrew(sessionId: string, crewId: string): Promise<CrewActionOutcome> {
+  return crewAction(airportUrl('sessions', sessionId, 'crew', crewId, 'join'));
+}
+
+export function leaveLayoverCrew(sessionId: string): Promise<CrewActionOutcome> {
+  return crewAction(airportUrl('sessions', sessionId, 'crew', 'leave'));
+}

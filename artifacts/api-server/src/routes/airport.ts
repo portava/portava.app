@@ -78,9 +78,31 @@ import {
   expireOldSessions,
   expirySweepDisclosure,
   emitLayoverEvent,
+  // §14 crew: the first reader that needs OTHER travellers' sessions, because
+  // `shared_return_by` is a minimum over the whole crew. Not an authorization
+  // decision — see that function's own comment.
+  readSessionsByIds,
+  LAYOVER_LIVE_SESSION_STATUSES,
   type LayoverSession,
   LAYOVER_RETURNING_READERS_WIDENED,
 } from "../services/airport/LayoverSessionService.js";
+// §14 / §14.1 Layover Crew. The constraint solver is pure and already existed
+// (census L28/L29/L131/L185/L186/L188 were never about the arithmetic); these
+// two imports are the storage and the routes that finally give it members.
+import {
+  certifyCrewPlan,
+  unsplitPlan,
+  type CrewMember,
+} from "../services/airport/LayoverCrewService.js";
+import {
+  CREW_TTL_MINUTES,
+  activeCrewForUser,
+  crewMembers,
+  createCrew,
+  joinCrew,
+  leaveCrew,
+  openCrewsInCity,
+} from "../services/layover/LayoverCrewStore.js";
 import { safetyLabel, type TravelTimeSource } from "../services/airport/LayoverSafetyEngine.js";
 // §10 the traveller observation channel (census L82). The DECISION rules live
 // in services/airport/LayoverAirportTruth.ts and are pure; this import is the
@@ -2798,6 +2820,403 @@ router.post("/airport/sessions/:id/observations", async (req, res) => {
     duplicate: result.duplicate,
     fact: observationFactPayload(result.outcome),
   });
+});
+
+// ── §14 LAYOVER CREW ──────────────────────────────────────────────────────────
+//
+// GET  /api/airport/sessions/:id/crew             — my crew + certified plan, or open crews here
+// POST /api/airport/sessions/:id/crew             — form a crew
+// POST /api/airport/sessions/:id/crew/:crewId/join
+// POST /api/airport/sessions/:id/crew/leave
+//
+// census-layover L28/L29 (`layover_crews`, `layover_crew_members`) read
+// "Absent."; L185/L186/L188 score `LayoverCrewService.create/join/leave`
+// NOT-BUILT with the one-word reason "No crew."; L131 (§14 "L3 crew formed")
+// likewise. The §14.1 CONSTRAINT SOLVER was never the missing part —
+// `services/airport/LayoverCrewService.ts` has implemented `sharedReturnBy`,
+// `certifyCrewPlan`, per-branch feasibility and split plans for a year of
+// census passes, purely, with members as an argument. These routes give it
+// members. Storage is migration 2984; the store is
+// `services/layover/LayoverCrewStore.ts`.
+//
+// ── THE SHARED DEADLINE IS A MINIMUM, AND IT IS NOT COMPUTED HERE ────────────
+// §14.1: `shared_return_by = min(member.required_return_by)`. Each member's
+// `required_return_by` comes from `certifySessionFeasibility` over THEIR OWN
+// session and airport — the same single canonical derivation every other
+// surface in this file uses. This route assembles records and hands them to
+// `certifyCrewPlan`; it does not compare a time to another time anywhere.
+//
+// A member whose record could not be produced is passed as `record: null`, NOT
+// dropped. `sharedReturnBy` then returns null for the whole crew, deliberately:
+// a minimum taken over the members we happened to be able to read is a LATER
+// deadline than the truth, and that is the one direction a safety minimum must
+// never move. Absent is refusable; a wrong later time is not.
+//
+// ── WHO A MEMBER MAY SEE ─────────────────────────────────────────────────────
+// Membership is the FIRST of three gates, not the only one. Names and avatars
+// go through exactly the pipeline `cityPresence` uses — blocks in both
+// directions, `publishableUserIds` (sharing paused / ghost mode), and
+// `nameVisibilitySet` — so a crewmate who has since paused sharing is a
+// participant in the arithmetic and not a face on a card. The crew tables
+// themselves carry no policy and no client grant (2984), so this route layer is
+// the only answer to the question rather than the stricter of two.
+//
+// ── WHAT IS NOT HERE ─────────────────────────────────────────────────────────
+// No chat: §14's "shared chat" belongs to Telegraph's threads, which exist and
+// already handle E2EE. No location of any precision: L124 gates a crew member's
+// position on an explicit temporary permission whose grant store does not
+// exist, and `meeting_point_label` is a label ("Terminal 2 food court"), not a
+// position. Neither table has a coordinate column and 2984 asserts it.
+
+const crewCreateSchema = z.object({
+  title: z.string().min(1).max(120),
+  meetingPointLabel: z.string().min(1).max(200).optional().nullable(),
+  maxMembers: z.number().int().min(2).max(12).optional(),
+});
+
+/** The crew's own life, bounded by the founder's layover. */
+function crewExpiryFor(record: ReturnType<typeof certifySessionFeasibility>, nowMs: number): string {
+  // The founder's hard return, not `nowMs + TTL`: a crew that outlives the
+  // layover that created it is discoverable by travellers who would be
+  // certifying against a deadline that has passed. The TTL is only a ceiling.
+  const hard = record.deadline.hardReturnTime.getTime();
+  return new Date(Math.min(hard, nowMs + CREW_TTL_MINUTES * 60_000)).toISOString();
+}
+
+/**
+ * Turn crew membership rows into the §14.1 solver's input.
+ *
+ * Returns `ok: false` when the SESSIONS could not be read at all — an
+ * unreadable `layover_sessions` must not become "a crew of members with no
+ * deadlines", which certifies as infeasible for a reason that is not true.
+ * A session that is simply MISSING (ended, expired, deleted) is a real
+ * `record: null` and is passed through as one.
+ */
+async function crewSolverMembers(
+  sc: any,
+  members: Array<{ userId: string; sessionId: string }>,
+  nowMs: number,
+): Promise<{ ok: true; members: CrewMember[] } | { ok: false }> {
+  const read = await readSessionsByIds(sc, members.map((m) => m.sessionId));
+  if (!read.ok) return { ok: false };
+  const byId = new Map(read.sessions.map((s) => [s.id, s]));
+
+  const out: CrewMember[] = [];
+  for (const m of members) {
+    const session = byId.get(m.sessionId);
+    if (!session || !LAYOVER_LIVE_SESSION_STATUSES.includes(session.status as any)) {
+      out.push({ userId: m.userId, sessionId: m.sessionId, record: null });
+      continue;
+    }
+    const resolved = await resolveAirportForSession(sc, session);
+    if (!resolved.ok) {
+      // Fail closed, per member. `certifyCrewPlan` turns one null record into
+      // an infeasible plan for everybody, which is the conservative answer.
+      out.push({ userId: m.userId, sessionId: m.sessionId, record: null });
+      continue;
+    }
+    out.push({
+      userId: m.userId,
+      sessionId: m.sessionId,
+      record: certifySessionFeasibility(resolved.airport, session, { nowMs }),
+    });
+  }
+  return { ok: true, members: out };
+}
+
+/**
+ * The crew, as a traveller may see it: the certified §14.1 solution plus the
+ * members they are actually entitled to see a face for.
+ */
+async function crewPayload(
+  sc: any,
+  viewerId: string,
+  crew: { id: string; title: string; city: string; meetingPointLabel: string | null; status: string; maxMembers: number; expiresAt: string; createdBy: string },
+  members: Array<{ userId: string; sessionId: string; role: string }>,
+  nowMs: number,
+): Promise<{ ok: true; body: Record<string, unknown> } | { ok: false }> {
+  const solver = await crewSolverMembers(sc, members, nowMs);
+  if (!solver.ok) return { ok: false };
+
+  // The crew has no itinerary of its own yet, so the plan certified here is the
+  // EMPTY unsplit plan: one branch, everybody, no stops. That is not a
+  // placeholder — it is the question "can this group be together at all and
+  // when must they be back", which is exactly `sharedReturnBy` plus a
+  // zero-minute branch, and it is the honest thing to publish before anyone has
+  // proposed a stop. A crew itinerary is a further build; see BUILD-BACKLOG.
+  const solution = certifyCrewPlan(unsplitPlan(solver.members, []), solver.members, { nowMs });
+
+  const otherIds = members.map((m) => m.userId).filter((id) => id !== viewerId);
+  const cards = await crewMemberCards(sc, viewerId, otherIds);
+
+  return {
+    ok: true,
+    body: {
+      crew: {
+        id: crew.id,
+        title: crew.title,
+        city: crew.city,
+        meetingPointLabel: crew.meetingPointLabel,
+        status: crew.status,
+        maxMembers: crew.maxMembers,
+        expiresAt: crew.expiresAt,
+        youAreOwner: crew.createdBy === viewerId,
+        memberCount: members.length,
+      },
+      // §14.1, server-certified. Every field here is `certifyCrewPlan`'s.
+      solution: {
+        crewVersion: solution.crewVersion,
+        sharedReturnBy: solution.sharedReturnBy,
+        bindingMemberIds: solution.bindingMemberIds,
+        feasible: solution.feasible,
+        reasons: solution.reasons,
+        split: solution.split,
+        members: solution.members.map((m) => ({
+          userId: m.userId,
+          requiredReturnBy: m.requiredReturnBy,
+          usableMinutes: m.usableMinutes,
+          returnState: m.returnState,
+        })),
+      },
+      members: cards.cards,
+      degraded: cards.degraded,
+      degradedReasons: cards.degradedReasons,
+    },
+  };
+}
+
+/**
+ * Names and avatars for the people in a crew, through the SAME three gates
+ * `cityPresence` uses. Membership alone is not entitlement.
+ *
+ * A card that cannot be shown is DROPPED, and the drop is reported as degraded
+ * rather than passed off as a smaller crew — `memberCount` above is taken from
+ * the membership rows, so the count stays true even when the faces do not.
+ */
+async function crewMemberCards(
+  sc: any,
+  viewerId: string,
+  otherIds: string[],
+): Promise<{ cards: Array<Record<string, unknown>>; degraded: boolean; degradedReasons: string[] }> {
+  if (otherIds.length === 0) return { cards: [], degraded: false, degradedReasons: [] };
+  const reasons: string[] = [];
+  try {
+    const { data: blockRows, error: blockErr } = await sc
+      .from("blocks")
+      .select("blocker_id, blocked_id")
+      .or(`blocker_id.eq.${viewerId},blocked_id.eq.${viewerId}`);
+    if (blockErr) {
+      // FAIL CLOSED. An unreadable block list served as "nobody is blocked" is
+      // precisely the defect census §23.1 found on /buddies.
+      logger.warn({ err: blockErr }, "layover crew: blocks unreadable — no member cards published");
+      return { cards: [], degraded: true, degradedReasons: ["blocks_unreadable"] };
+    }
+    const excluded = new Set<string>();
+    for (const b of (blockRows ?? []) as any[]) {
+      excluded.add(b.blocker_id === viewerId ? b.blocked_id : b.blocker_id);
+    }
+    const notBlocked = otherIds.filter((id) => !excluded.has(id));
+
+    const publishable = await publishableUserIds(sc, notBlocked);
+    if (publishable.degraded) reasons.push("sharing_preferences_unreadable");
+    const visible = publishable.allowed;
+    if (visible.length === 0) return { cards: [], degraded: reasons.length > 0, degradedReasons: reasons };
+
+    const { data: profiles, error: profErr } = await sc
+      .from("profiles")
+      .select("id, handle, name, avatar_url")
+      .in("id", visible);
+    if (profErr) {
+      logger.warn({ err: profErr }, "layover crew: profiles unreadable — crew served without member cards");
+      return { cards: [], degraded: true, degradedReasons: [...reasons, "member_cards_unreadable"] };
+    }
+    const allowedNames = await nameVisibilitySet(sc, visible);
+    return {
+      cards: ((profiles ?? []) as any[]).map((p) => ({
+        id: p.id,
+        handle: p.handle ?? null,
+        name: allowedNames.has(p.id as string) ? (p.name ?? null) : null,
+        avatarUrl: p.avatar_url ?? null,
+      })),
+      degraded: reasons.length > 0,
+      degradedReasons: reasons,
+    };
+  } catch (err) {
+    logger.warn({ err, viewerId }, "layover crew member cards threw — crew served without them");
+    return { cards: [], degraded: true, degradedReasons: ["member_cards_unreadable"] };
+  }
+}
+
+/** The city a crew at this session is scoped to, or null when unknown. */
+function crewCityFor(airport: AirportProfile, session: LayoverSession): string | null {
+  const city = airport.city && airport.city !== "Unknown" ? airport.city : session.manualCity ?? null;
+  return city && city.trim() ? city : null;
+}
+
+router.get("/airport/sessions/:id/crew", async (req, res) => {
+  const ctx = await requireOwnedSession(req, res);
+  if (!ctx) return;
+  const { sc, user, session } = ctx;
+
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+
+  const mine = await activeCrewForUser(sc, user.id, nowIso);
+  // A failed read is NOT "you are in no crew". A traveller told that walks away
+  // from people who are waiting for them.
+  if (!mine.ok) { sendError(res, "degraded_unavailable", "Your crew could not be loaded. Please try again."); return; }
+
+  if (mine.value) {
+    const members = await crewMembers(sc, mine.value.crew.id);
+    if (!members.ok) { sendError(res, "degraded_unavailable", "Your crew could not be loaded. Please try again."); return; }
+    const payload = await crewPayload(sc, user.id, mine.value.crew, members.value, nowMs);
+    if (!payload.ok) { sendError(res, "degraded_unavailable", "Your crew could not be certified just now. Please try again."); return; }
+    res.json({ ok: true, inCrew: true, ...payload.body });
+    return;
+  }
+
+  const airport = await airportOr503(sc, res, session);
+  if (!airport) return;
+  const city = crewCityFor(airport, session);
+  if (!city) {
+    // Not an error: a crew is a CITY-level thing and we do not know the city.
+    res.json({ ok: true, inCrew: false, city: null, crews: [], reason: "city_unknown" });
+    return;
+  }
+
+  const open = await openCrewsInCity(sc, city, nowIso);
+  if (!open.ok) { sendError(res, "degraded_unavailable", "Crews here could not be loaded. Please try again."); return; }
+
+  res.json({
+    ok: true,
+    inCrew: false,
+    city,
+    crews: open.value.map((c) => ({
+      id: c.id,
+      title: c.title,
+      meetingPointLabel: c.meetingPointLabel,
+      maxMembers: c.maxMembers,
+      expiresAt: c.expiresAt,
+    })),
+  });
+});
+
+router.post("/airport/sessions/:id/crew", async (req, res) => {
+  const ctx = await requireOwnedSession(req, res);
+  if (!ctx) return;
+  const { sc, user, session } = ctx;
+
+  const parsed = crewCreateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid crew"); return;
+  }
+  // A crew is formed by a traveller who is still on their layover. A completed
+  // or cancelled session has no deadline to certify anyone against.
+  if (!LAYOVER_LIVE_SESSION_STATUSES.includes(session.status as any)) {
+    sendError(res, "invalid_payload", "This layover has ended, so a crew cannot be formed for it."); return;
+  }
+
+  const airport = await airportOr503(sc, res, session);
+  if (!airport) return;
+  const city = crewCityFor(airport, session);
+  if (!city) {
+    sendError(res, "invalid_payload", "We do not know which city this layover is in, so a crew cannot be formed for it.");
+    return;
+  }
+
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const record = certifySessionFeasibility(airport, session, { nowMs });
+
+  const created = await createCrew(sc, {
+    userId: user.id,
+    sessionId: session.id,
+    city,
+    airportRef: airport.iataCode && airport.iataCode !== "UNK" ? airport.iataCode : null,
+    title: parsed.data.title,
+    meetingPointLabel: parsed.data.meetingPointLabel ?? null,
+    maxMembers: parsed.data.maxMembers ?? 6,
+    expiresAt: crewExpiryFor(record, nowMs),
+  }, nowIso);
+
+  if (!created.ok) {
+    if (created.reason === "already_in_a_crew") {
+      sendError(res, "invalid_payload", "You are already in a crew for this layover."); return;
+    }
+    if (created.reason === "read_failed") {
+      sendError(res, "degraded_unavailable", "Your crew could not be created just now. Please try again."); return;
+    }
+    sendError(res, "db_error", "Your crew could not be saved."); return;
+  }
+
+  await emitLayoverEvent(sc, session.id, user.id, "crew_created", {
+    crewId: created.value.crew.id, city, title: parsed.data.title,
+  });
+
+  const payload = await crewPayload(sc, user.id, created.value.crew, created.value.members, nowMs);
+  if (!payload.ok) { sendError(res, "degraded_unavailable", "Your crew was created but could not be certified. Please refresh."); return; }
+  res.json({ ok: true, inCrew: true, ...payload.body });
+});
+
+router.post("/airport/sessions/:id/crew/:crewId/join", async (req, res) => {
+  const ctx = await requireOwnedSession(req, res);
+  if (!ctx) return;
+  const { sc, user, session } = ctx;
+
+  if (!LAYOVER_LIVE_SESSION_STATUSES.includes(session.status as any)) {
+    sendError(res, "invalid_payload", "This layover has ended, so you cannot join a crew from it."); return;
+  }
+
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+
+  const joined = await joinCrew(sc, { userId: user.id, sessionId: session.id, crewId: req.params.crewId }, nowIso);
+  if (!joined.ok) {
+    if (joined.reason === "already_in_a_crew") {
+      sendError(res, "invalid_payload", "You are already in another crew. Leave it first."); return;
+    }
+    if (joined.reason === "crew_full") {
+      sendError(res, "invalid_payload", "That crew is full."); return;
+    }
+    if (joined.reason === "crew_unavailable") {
+      sendError(res, "not_found", "That crew is no longer open."); return;
+    }
+    if (joined.reason === "read_failed") {
+      // The capacity limit is enforced from a READ, so an unreadable member
+      // list is an unenforced limit. Refusing is the only safe answer.
+      sendError(res, "degraded_unavailable", "That crew could not be checked just now. Please try again."); return;
+    }
+    sendError(res, "db_error", "You could not be added to that crew."); return;
+  }
+
+  await emitLayoverEvent(sc, session.id, user.id, "crew_joined", { crewId: joined.value.crew.id });
+
+  const payload = await crewPayload(sc, user.id, joined.value.crew, joined.value.members, nowMs);
+  if (!payload.ok) { sendError(res, "degraded_unavailable", "You joined, but the crew could not be certified. Please refresh."); return; }
+  res.json({ ok: true, inCrew: true, ...payload.body });
+});
+
+router.post("/airport/sessions/:id/crew/leave", async (req, res) => {
+  const ctx = await requireOwnedSession(req, res);
+  if (!ctx) return;
+  const { sc, user, session } = ctx;
+
+  const nowIso = new Date().toISOString();
+  const mine = await activeCrewForUser(sc, user.id, nowIso);
+  if (!mine.ok) { sendError(res, "degraded_unavailable", "Your crew could not be loaded. Please try again."); return; }
+  if (!mine.value) { sendError(res, "not_found", "You are not in a crew."); return; }
+
+  const left = await leaveCrew(sc, { userId: user.id, crewId: mine.value.crew.id }, nowIso);
+  if (!left.ok) {
+    if (left.reason === "crew_unavailable") { sendError(res, "not_found", "You are not in a crew."); return; }
+    if (left.reason === "read_failed") { sendError(res, "degraded_unavailable", "Your crew could not be loaded. Please try again."); return; }
+    sendError(res, "db_error", "You could not be removed from that crew."); return;
+  }
+
+  await emitLayoverEvent(sc, session.id, user.id, "crew_left", {
+    crewId: mine.value.crew.id, disbanded: left.value.disbanded,
+  });
+  res.json({ ok: true, inCrew: false, disbanded: left.value.disbanded });
 });
 
 // ── PATCH /api/airport/sessions/:id/share ─────────────────────────────────────
