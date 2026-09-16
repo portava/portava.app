@@ -276,11 +276,43 @@ describe("authorizeMediaAccess — bare-key column values (post-2081)", () => {
   });
 
   it("3c messages.media_url — bare key authorizes a thread member", async () => {
+    // `sender_id` is OWNER because `path` is OWNER's key and `messages.sender_id`
+    // is NOT NULL: a row where the sender did not own the object it carries is the
+    // attack below, not a shape this fixture should have modelled.
     const sc = makeClient({
-      messages: [{ thread_id: THREAD, media_url: bare, media_thumbnail_url: null }],
+      messages: [{ thread_id: THREAD, sender_id: OWNER, media_url: bare, media_thumbnail_url: null }],
       threadMembers: [{ thread_id: THREAD, user_id: VIEWER, left_at: null }],
     });
     assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", path), true);
+  });
+
+  it("3c a message carrying ANOTHER user's object does NOT authorize the thread (MEDIA-2)", async () => {
+    // The last of the four branches to get the ownership test 3b/3d/3e carry.
+    // ATTACKER writes a message into a thread they are in, whose media_url is
+    // OWNER's private storage key, then asks for the object. `post-media` is a
+    // PRIVATE bucket, so what is at stake is the BYTES, not a preview.
+    const ATTACKER = "99999999-9999-4999-8999-999999999999";
+    const sc = makeClient({
+      messages: [{ thread_id: THREAD, sender_id: ATTACKER, media_url: bare, media_thumbnail_url: null }],
+      threadMembers: [
+        { thread_id: THREAD, user_id: ATTACKER, left_at: null },
+        { thread_id: THREAD, user_id: VIEWER, left_at: null },
+      ],
+    });
+    assert.equal(await authorizeMediaAccess(sc, ATTACKER, "post-media", path), false);
+    _clearMediaAccessCache();
+    assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", path), false);
+  });
+
+  it("3c an UNATTRIBUTABLE object is denied rather than given the benefit of the doubt", async () => {
+    // No media_assets row and a path whose first segment is not a uuid, so
+    // `owner` is null. 3d and 3e already deny that; 3c now agrees.
+    const orphan = "misc/no-owner-here.jpg";
+    const sc = makeClient({
+      messages: [{ thread_id: THREAD, sender_id: OWNER, media_url: `${SB}/storage/v1/object/public/post-media/${orphan}`, media_thumbnail_url: null }],
+      threadMembers: [{ thread_id: THREAD, user_id: VIEWER, left_at: null }],
+    });
+    assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", orphan), false);
   });
 
   it("an object referenced by nothing is still denied in either encoding", async () => {
@@ -466,7 +498,7 @@ describe("authorizeMediaAccess — the matrix", () => {
   it("message media: thread member allowed, outsider denied", async () => {
     const path = `${OWNER}/dm1.jpg`;
     const mk = (members: any[]) => makeClient({
-      messages: [{ thread_id: THREAD, media_url: pub(path), media_thumbnail_url: null }],
+      messages: [{ thread_id: THREAD, sender_id: OWNER, media_url: pub(path), media_thumbnail_url: null }],
       threadMembers: members,
     });
     assert.equal(await authorizeMediaAccess(mk([{ thread_id: THREAD, user_id: VIEWER, left_at: null }]), VIEWER, "post-media", path), true);

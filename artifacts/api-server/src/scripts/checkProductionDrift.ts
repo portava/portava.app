@@ -443,6 +443,60 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
       "observations as an argument, so nothing degrades while this is absent. " +
       "Apply, confirm the postconditions, THEN land an ingest route behind a flag.",
   },
+  // Layover, migration 2984 — §14 LAYOVER CREW.
+  //
+  // THESE TWO ARE NOT LIKE THE REST OF THIS SECTION, AND THE DIFFERENCE IS THE
+  // WHOLE ENTRY. 2700's and 2860's tables are unapplied AND WRITERLESS: nothing
+  // names their columns, so their absence costs nothing anywhere. These two have
+  // a writer that shipped in the same branch — `routes/airport.ts`'s four §14
+  // crew routes over `services/layover/LayoverCrewStore.ts` — and the flag that
+  // gates that router, `airport_mode_enabled`, is ALREADY TRUE IN PRODUCTION
+  // (read from ajrurzioarfkagpuxfnb's feature_flags on 2026-09-16).
+  //
+  // So the ordering rule the 2860 entry states — apply the table, confirm the
+  // postconditions, THEN land the writer — was inverted here, and this ratchet
+  // is the thing that noticed. DEPLOYING THIS BRANCH'S CODE TO PRODUCTION
+  // BEFORE APPLYING 2984 MAKES ALL FOUR CREW ROUTES FAIL FOR EVERY TRAVELLER.
+  //
+  // What that failure looks like, measured from the store rather than assumed:
+  // it is FAIL-CLOSED, not silent. `LayoverCrewStore` logs "refusing rather than
+  // serving an empty crew" / "...an empty city" and returns an error on an
+  // unreadable read, so a traveller sees the crew surface fail rather than an
+  // empty crew that looks like nobody is there. That is the right direction for
+  // a safety-adjacent surface — §14.1's shared deadline is a MINIMUM, and a
+  // minimum taken over the members we happened to read is a LATER deadline than
+  // the truth — but it is still a broken surface, not a degraded one.
+  //
+  // THE REMEDY IS TO APPLY 2984, NOT TO CARRY THIS ENTRY. It is recorded here
+  // because the ratchet requires a classification and a reason for a declared
+  // table that production lacks, and because an unrecorded gap is how this
+  // becomes invisible. It should be STRUCK OFF the moment 2984 lands, and the
+  // apply must precede or accompany the code deploy rather than follow it.
+  //
+  // Neither table carries a policy or a client grant (2984 asserts both), so the
+  // route layer is the only answer to who may see a crewmate — membership, then
+  // blocks in both directions, then `publishableUserIds`, then
+  // `nameVisibilitySet`. Neither table has a coordinate column, deliberately.
+  layover_crews: {
+    classification: "unapplied",
+    note:
+      "Migration 2984, §14 Layover Crew. HAS A LIVE WRITER AND A FLAG THAT IS " +
+      "ALREADY ON IN PRODUCTION (airport_mode_enabled = true, read 2026-09-16), " +
+      "unlike every other entry in this Layover block, which are writerless. " +
+      "Apply 2984 BEFORE or WITH the code deploy: without it the four crew " +
+      "routes in routes/airport.ts fail for every traveller. The failure is " +
+      "fail-closed (LayoverCrewStore refuses rather than serving an empty crew), " +
+      "which is correct but is still a broken surface. Strike this off when 2984 " +
+      "lands.",
+  },
+  layover_crew_members: {
+    classification: "unapplied",
+    note:
+      "Migration 2984, same file — crew membership with meeting_point_label and " +
+      "no coordinate column. Same live writer, same already-on flag, same " +
+      "remedy: apply 2984 before or with the deploy, then strike both off.",
+  },
+
   layover_external_events: {
     classification: "unapplied",
     note:

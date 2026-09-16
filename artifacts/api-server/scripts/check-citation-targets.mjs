@@ -246,8 +246,18 @@ import {
  * references were repointed by hand, and census-trips TR436's
  * `lib/mediaPipeline.ts:44` -- which pointed at an import while its own sentence
  * described the kill-switch consumption -- was corrected to `:112`. The ceiling
- * follows the measurement down so the gain cannot be spent again. */
-export const MAX_DEAD_TARGETS = 239;
+ * follows the measurement down so the gain cannot be spent again.
+ *
+ * LOWERED AGAIN 2026-09-16, 239 -> 238, at the branch-3c ownership fix. The
+ * gain is not a sweep: closing MEDIA-2 added lines to routes/messaging.ts and
+ * lib/mediaAccess.ts, which moved 113 line-anchored citations and 83 BARE
+ * INHERITED ones. The inherited class is the interesting half — a `:NNN` that
+ * takes its file from an earlier citation on the same line binds to no file as
+ * far as either checker is concerned, so it rots in silence. Repointing them by
+ * attribution (scan the line left to right, track the current file, shift only
+ * the refs inheriting a file that moved) also corrected one that had been dead
+ * before this branch, which is where the extra 1 comes from. */
+export const MAX_DEAD_TARGETS = 238;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);

@@ -87,7 +87,7 @@ that is armed and one that is not.
 | `RETURNING_USER_BOOST_ENABLED` | false | `api:services/ranking/DiscoveryRankingService.ts:355` (+1) |
 | `UNDEREXPOSED_CONTENT_BOOST_ENABLED` | false | `api:services/ranking/DiscoveryRankingService.ts:356` (+1) |
 | `city_launch_mode` | false | `app:src/screens/admin/featureFlags.machine.ts:23` |
-| `disable_messaging` | false | `api:routes/messaging.ts:1682` (+2) |
+| `disable_messaging` | false | `api:routes/messaging.ts:1683` (+2) |
 | `disable_posting` | false | `api:routes/posts.ts:396` (+1) |
 | `disable_rent_buddy_booking` | false | `api:lib/rentBuddyKycGate.ts:13` (+2) |
 | `invite_only_beta` | false | `api:routes/auth.ts:128` (+2) |

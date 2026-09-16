@@ -58,6 +58,7 @@ import { getServiceClient } from '../lib/supabase';
 import { resolveInteractionPermissions } from '../services/interactionPermissions.js';
 import { isKillSwitchEngaged } from '../lib/featureFlags.js';
 import { appStorageUrlInfo } from '../lib/mediaUrl.js';
+import { classifyMemoryMediaUrl } from '../services/memory/memoryMediaOrigin.js';
 import { isUuid } from '../lib/followDecisions';
 import {
   translateMessageForThread,
@@ -3176,6 +3177,41 @@ router.post('/threads/:threadId/media', async (req, res) => {
   if (thumbnailUrl && !appStorageUrlInfo(thumbnailUrl)) {
     sendError(res, 'invalid_payload', 'thumbnailUrl must be an uploaded app media URL');
     return;
+  }
+
+  // OUR HOST IS NOT YOUR OBJECT. `appStorageUrlInfo` answers only the first
+  // question, and the comment above named "other-user-object injection" as
+  // something it had closed — it had not. A sender could store ANOTHER user's
+  // private storage key here, and `lib/mediaAccess.ts` branch 3c then resolved
+  // the object BY media_url and authorised every member of this thread. Since
+  // `post-media` is a PRIVATE bucket, that composed into a read of someone
+  // else's bytes, not merely a misleading preview.
+  //
+  // `accountDeletionOrphanedMedia.test.ts` has described this write in exactly
+  // those terms for as long as the deletion collector has had to defend against
+  // it: "a sender can store a key belonging to somebody else and the row is
+  // entirely legitimate". It is no longer legitimate.
+  //
+  // THREE VERDICTS, and only one of them refuses.
+  //   foreign_storage        — a uuid segment that is not the sender. REFUSED.
+  //   unattributable_storage — no uuid segment at all (`dm/photo.jpg` and every
+  //                            other non-uuid prefix). ACCEPTED: it names no
+  //                            victim, and refusing it would break objects this
+  //                            product has always written.
+  //   own_storage / external — accepted; `external` cannot reach here because
+  //                            appStorageUrlInfo has refused it above.
+  // The refusal names no other user's id, so it is not an ownership oracle.
+  for (const [field, url] of [['mediaUrl', mediaUrl], ['thumbnailUrl', thumbnailUrl]] as const) {
+    if (!url) continue;
+    const origin = classifyMemoryMediaUrl(url, user.id);
+    if (origin.verdict === 'foreign_storage') {
+      req.log.warn(
+        { field, threadId, senderId: user.id, bucket: origin.bucket },
+        'thread media send refused: the storage key belongs to another user',
+      );
+      sendError(res, 'invalid_payload', `${field} is someone else's upload. Upload your own file first.`);
+      return;
+    }
   }
 
   // Verify thread membership

@@ -227,7 +227,7 @@ export async function sendMessage(
 ): Promise<MsgResult<Message>>
 ```
 
-Server-side (`artifacts/api-server/src/routes/messaging.ts:1595-1671`):
+Server-side (`artifacts/api-server/src/routes/messaging.ts:1596-1672`):
 
 ```ts
 const msgTypeRaw = typeof req.body?.msgType === 'string' ? req.body.msgType : 'text';

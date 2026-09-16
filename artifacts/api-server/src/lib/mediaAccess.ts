@@ -413,27 +413,47 @@ async function decide(
     }
   } catch { /* fall through */ }
 
-  // 3c. Message media → thread membership.
+  // 3c. Message media → the SENDER owns the object, AND the viewer is in the thread.
   try {
     const { data: msgs, error: msgsErr } = await sc
       .from("messages")
-      .select("thread_id")
+      .select("thread_id, sender_id")
       .or(`media_url.in.${inList},media_thumbnail_url.in.${inList}`)
       .limit(1);
     noteLookupFailure("3c messages", msgsErr, { bucket, path });
     const msg = (msgs as any[])?.[0];
     if (msg) {
-      const { data: member, error: memberErr } = await sc
-        .from("message_thread_members")
-        .select("user_id")
-        .eq("thread_id", msg.thread_id)
-        .eq("user_id", viewerId)
-        .is("left_at", null)
-        .maybeSingle();
-      // Returned directly: an unreadable membership table denies a member's own
-      // thread media exactly as it denies a non-member's.
-      noteLookupFailure("3c thread membership", memberErr, { bucket, path, threadId: msg.thread_id });
-      return Boolean(member);
+      // OWNERSHIP FIRST — this branch was the last of the four to get it, and it
+      // is the same trap 3b, 3d and 3e each carry a comment about. The message is
+      // found BY its media_url, so the row claiming "this is my media" is the same
+      // row asking for it to be served. Without this test, anyone who can write a
+      // `messages` row carrying somebody else's storage key turns a thread they
+      // control into a reader for that person's private object: `post-media` is a
+      // PRIVATE bucket, so branch 3c is not merely deciding whether to show a
+      // thumbnail, it is deciding whether to hand over bytes.
+      //
+      // `owner` is the canonical media_assets owner where that layer is lit,
+      // falling back to the path owner (§1 above). Null means the object cannot be
+      // attributed at all, and an unattributable object is denied here exactly as
+      // it is in 3d and 3e rather than being given the benefit of the doubt.
+      //
+      // FALL THROUGH rather than return false on a mismatch: the object may still
+      // be legitimately reachable through a later branch, and if it is not, §4
+      // denies it. Returning false here would let a forged message row SUPPRESS an
+      // object its real owner is entitled to publish elsewhere.
+      if (owner && owner === (msg as any).sender_id) {
+        const { data: member, error: memberErr } = await sc
+          .from("message_thread_members")
+          .select("user_id")
+          .eq("thread_id", msg.thread_id)
+          .eq("user_id", viewerId)
+          .is("left_at", null)
+          .maybeSingle();
+        // Returned directly: an unreadable membership table denies a member's own
+        // thread media exactly as it denies a non-member's.
+        noteLookupFailure("3c thread membership", memberErr, { bucket, path, threadId: msg.thread_id });
+        return Boolean(member);
+      }
     }
   } catch { /* fall through */ }
 
