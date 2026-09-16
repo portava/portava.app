@@ -2874,8 +2874,33 @@ const crewCreateSchema = z.object({
   maxMembers: z.number().int().min(2).max(12).optional(),
 });
 
+/**
+ * THE CREW FEATURE'S ONE CERTIFICATION SITE.
+ *
+ * Both crew paths need a certified record — the founder's, to bound the crew's
+ * life by their layover, and every member's, to take §14.1's minimum — and both
+ * go through here rather than each calling `certifySessionFeasibility`
+ * directly.
+ *
+ * That is not tidiness. `src/test/layoverFeasibilityRecord.test.ts` pins the
+ * number of certification call sites in this file to a NAMED list of handlers,
+ * and its comment says why a bare count was not enough: "it cannot tell a NEW
+ * handler that certifies once from an OLD handler that started certifying
+ * twice". A crew is the first thing in this file that legitimately certifies
+ * more than one session in one request — once per member — so it is given ONE
+ * site that the ratchet can name, instead of scattering call sites that would
+ * each have to be argued for separately.
+ */
+function certifyCrewMemberRecord(
+  airport: AirportProfile,
+  session: LayoverSession,
+  nowMs: number,
+): LayoverFeasibilityRecord {
+  return certifySessionFeasibility(airport, session, { nowMs });
+}
+
 /** The crew's own life, bounded by the founder's layover. */
-function crewExpiryFor(record: ReturnType<typeof certifySessionFeasibility>, nowMs: number): string {
+function crewExpiryFor(record: LayoverFeasibilityRecord, nowMs: number): string {
   // The founder's hard return, not `nowMs + TTL`: a crew that outlives the
   // layover that created it is discoverable by travellers who would be
   // certifying against a deadline that has passed. The TTL is only a ceiling.
@@ -2918,7 +2943,7 @@ async function crewSolverMembers(
     out.push({
       userId: m.userId,
       sessionId: m.sessionId,
-      record: certifySessionFeasibility(resolved.airport, session, { nowMs }),
+      record: certifyCrewMemberRecord(resolved.airport, session, nowMs),
     });
   }
   return { ok: true, members: out };
@@ -3126,7 +3151,7 @@ router.post("/airport/sessions/:id/crew", async (req, res) => {
 
   const nowMs = Date.now();
   const nowIso = new Date(nowMs).toISOString();
-  const record = certifySessionFeasibility(airport, session, { nowMs });
+  const record = certifyCrewMemberRecord(airport, session, nowMs);
 
   const created = await createCrew(sc, {
     userId: user.id,
