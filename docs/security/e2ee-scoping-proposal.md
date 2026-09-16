@@ -23,16 +23,16 @@ does not argue with that.
 >
 > 1. **"the only production import of `mlsSession` anywhere is `SafetyNumberScreen`
 >    … written, tested, and never called"** (§1.3a) — **false.**
->    `src/services/messaging.ts:200` imports `realCryptoPort` and calls through it
+>    `src/services/messaging.ts:201` imports `realCryptoPort` and calls through it
 >    at `:456`, `:466`, `:500` and `:709`. The funnel is `openDirectThread`
 >    (`:644`), which **awaits** `negotiateE2eeForNewThread` at `:675`. The client
 >    encrypts today.
 > 2. **"Nothing ever sets `is_e2ee = true` … written nowhere"** (§1.3b) —
->    **false.** `artifacts/api-server/src/routes/messaging.ts:1283` does
+>    **false.** `artifacts/api-server/src/routes/messaging.ts:1284` does
 >    `.update({ is_e2ee: true })` inside `POST /api/threads/:threadId/e2ee`
 >    (`:1224`), gated on membership, `thread_type = 'direct'` and a delivered
 >    `e2ee_welcome`. The client half is `markThreadE2ee`
->    (`src/services/messaging.ts:532`), wired at `:725`.
+>    (`src/services/messaging.ts:533`), wired at `:726`.
 >
 > **Neither the client encryption path nor the `is_e2ee` write is dead code.**
 >
@@ -123,7 +123,7 @@ confirming, I say so.
 | Server: devices | `migrations/20260801_e2ee_devices.sql` | **Live** |
 | Server: KeyPackage pool | `migrations/20260802_e2ee_key_packages.sql` + `routes/keyPackages.ts` | **Live.** 3 endpoints: publish, inventory, one-shot consume |
 | Server: ciphertext | `migrations/20260803_messages_ciphertext.sql` | **Live** — confirmed in `database.types.ts`, which was regenerated against the live schema in `1c0cfdaea` |
-| Server: send path | `routes/messaging.ts:1581-1672` | **Implemented.** Accepts `ciphertext`, enforces `body=null` on E2EE threads, rejects plaintext into an E2EE thread, 64 KB cap — ⚠️ **line numbers stale 2026-08-29:** `1580` now lands inside the *GET*-messages translation block. The send path is `POST /threads/:threadId/messages` at **`1698-2009`**, ciphertext logic at **`1707-1813`**. The behaviour described is unchanged |
+| Server: send path | `routes/messaging.ts:1582-1673` | **Implemented.** Accepts `ciphertext`, enforces `body=null` on E2EE threads, rejects plaintext into an E2EE thread, 64 KB cap — ⚠️ **line numbers stale 2026-08-29:** `1580` now lands inside the *GET*-messages translation block. The send path is `POST /threads/:threadId/messages` at **`1698-2009`**, ciphertext logic at **`1707-1813`**. The behaviour described is unchanged |
 | Tests | `src/lib/__tests__/{secureStore.e0,localMessageDb.e0,cryptoIdentity.e1,mlsSession.e2}.test.ts` | **CORRECTED 2026-08-08: present but NOT running anywhere.** All four are in the EXCLUDE array in `scripts/run-node-tests.mjs`; they do not match `test:component`'s `\.component\.test\.` filter; and under jest they fail at module resolution. An earlier revision of this table claimed they were part of the green 3696 — that was read off a grep hit inside an exclude list. ⚠️ **The 2026-08-08 correction is itself wrong on two counts, re-checked 2026-08-29.** *(a) The set is wrong.* `secureStore.e0.test.ts` no longer exists — it was repaired, renamed `secureStore.e0.component.test.ts`, removed from the exclude list, and now runs under jest (13 cases passing); and `e0Migration.test.ts`, which this row never named, is orphaned. The orphan set is `cryptoIdentity.e1` (7), `e0Migration` (7), `localMessageDb.e0` (9), `mlsSession.e2` (10) = **33 cases**. *(b) Nothing fails at module resolution under jest.* `cryptoIdentity.e1`, `e0Migration` and `mlsSession.e2` all die at `TypeError: (0, _expoSecureStore._reset) is not a function` — a missing mock, not a resolution failure — and `localMessageDb.e0` never reaches a test: the suite fails to run with `SyntaxError: Cannot use import statement outside a module`, a transform failure. (Run directly under the node:test runner they die inside `expo-modules-core` instead, which is a third failure again.) The array is spelled `KNOWN_BROKEN`, not `EXCLUDE`. |
 
 > ⚠️ **Line counts in the table are the `494e4d3bc` counts — re-measured
@@ -156,7 +156,7 @@ threads where `is_e2ee = true`.
 
 ### 1.3 Why it is inert — the two missing joins
 
-**(a) The client never encrypts.** `src/services/messaging.ts:414`:
+**(a) The client never encrypts.** `src/services/messaging.ts:415`:
 
 ```ts
 export async function sendMessage(threadId, body, opts) {
@@ -170,7 +170,7 @@ Plaintext `body`, always. Nothing in `src/services/` or `app/` imports
 written, tested, and never called.
 
 > ⚠️ **FALSE as of 2026-08-29 — this gap was closed.** `sendMessage` now lives at
-> `src/services/messaging.ts:478` and its body is
+> `src/services/messaging.ts:479` and its body is
 > `const payload = await buildOutgoingPayload(realCryptoPort, threadId, body, isE2ee === true)`
 > (`:500`); on an E2EE thread it throws `E2eeSendBlockedError` rather than falling
 > back to plaintext. `realCryptoPort` is imported at `:200`, and
@@ -185,11 +185,11 @@ path that negotiates E2EE, consumes the peer's KeyPackage, or calls
 take the plaintext branch.
 
 > ⚠️ **FALSE as of 2026-08-29.** `POST /api/threads/:threadId/e2ee`
-> (`artifacts/api-server/src/routes/messaging.ts:1225`) writes the flag at `:1283`,
+> (`artifacts/api-server/src/routes/messaging.ts:1226`) writes the flag at `:1284`,
 > after checking membership, `thread_type = 'direct'`, and that an `e2ee_welcome`
 > system message has already been delivered — no Welcome, no flag. The
 > thread-creation path this paragraph says does not exist is
-> `negotiateE2eeForNewThread` (`src/services/messaging.ts:705`), awaited from
+> `negotiateE2eeForNewThread` (`src/services/messaging.ts:706`), awaited from
 > `openDirectThread` at `:675` for **newly created** threads only: it consumes the
 > peer's KeyPackage, calls `initGroupAsInitiator` through `realCryptoPort`, sends
 > the Welcome, then calls `markThreadE2ee` (`:532`, wired at `:724`).
@@ -210,10 +210,10 @@ current code rather than assuming.
 | **Unread counts** (`/me/unread-counts`) | **No** — compares `last_message_at` against `lastReadAt` timestamps | **Survives unchanged.** The single most reassuring finding here. |
 | Delivery / SSE fanout | No — routes opaque rows | Survives |
 | Thread ordering | No — `last_message_at` | Survives |
-| **Thread-list preview** (`messaging.ts:1340`) | **Yes** — `lm.body.slice(0,80)` | **Breaks.** Needs a client-side preview from the local store. |
+| **Thread-list preview** (`messaging.ts:1341`) | **Yes** — `lm.body.slice(0,80)` | **Breaks.** Needs a client-side preview from the local store. |
 | **Push notification body** (`NotificationTemplateService.ts:220`) | **Yes** — `body: ({preview}) => preview ?? 'New message'` | **Degrades gracefully already.** With no preview it falls back to "New message". Acceptable day one; §3 has the better fix. |
-| **Server-side translation** (`messaging.ts:2045`) | Yes | **Already handled** — explicitly refuses on `is_e2ee` threads |
-| **Off-app-contact detection** (`OFF_APP_PATTERNS`, `messaging.ts:1695`) | Yes | **Already handled** — explicitly skipped for E2EE |
+| **Server-side translation** (`messaging.ts:2046`) | Yes | **Already handled** — explicitly refuses on `is_e2ee` threads |
+| **Off-app-contact detection** (`OFF_APP_PATTERNS`, `messaging.ts:1696`) | Yes | **Already handled** — explicitly skipped for E2EE |
 | **Moderation of reported DMs** (`routes/moderation.ts`) | Reads `sender_id` only, not body | **Partially ready.** Header already says "For E2EE message reports: subject_id=messageId, thread_id stored for future attachment flow" — the attachment flow does not exist yet. §3. |
 | **Message search** | **No server-side DM search exists.** No `ilike`/`tsvector`/`to_tsquery` in `messaging.ts` | **Nothing to break.** Search is already intended to be local (FTS5 in `localMessageDb`). |
 | **DM attachments** (`media_url`) | Yes — media stays a plain URL | **Designed but unimplemented.** Envelope encryption is specified in `e2ee-design.md` §3.2 (design-phase E-4); not built, not in the first increment. See §1.7. |
@@ -465,7 +465,7 @@ and that is a worse outcome than losing history.
 Ordered by how much it will actually hurt. Items marked ✅ are already handled
 in the existing code.
 
-1. **Thread-list previews** — `messaging.ts:1340` slices `body` for every
+1. **Thread-list previews** — `messaging.ts:1341` slices `body` for every
    thread row. Under E2EE there is no body. *Fix:* client renders previews
    from the local decrypted store. Moderate work; touches a hot list path.
 2. **Push notification content** — degrades to "New message" automatically ✅.
@@ -501,7 +501,7 @@ in the existing code.
    in the first increment. Encrypted text beside server-readable photos is
    **defensible as v1 but not as a marketing claim.**
 10. **OPEN QUESTION — message edit/delete.** `messages` has `edited_at` and
-    there is an edit path that touches `body` (`messaging.ts:2164` notifies
+    there is an edit path that touches `body` (`messaging.ts:2165` notifies
     that "the message body changed"). Edits of encrypted messages need the same
     ciphertext treatment as sends. **I have not traced this path, and it is
     absent from `e2ee-design.md` as well** — searching that document for
@@ -658,7 +658,7 @@ This is the question I expected to be hardest and it is close to solved
 already.
 
 **DM thumbnails are already client-generated today.** In the DM attach route
-(`messaging.ts:1891`), `thumbnailUrl` and `durationSeconds` arrive **from the
+(`messaging.ts:1892`), `thumbnailUrl` and `durationSeconds` arrive **from the
 client** in the request body and are merely validated as app-storage URLs. The
 server-side `makeThumbnail` path is used by posts/postcards/profile — **not by
 DMs**. `messaging.ts` does not import `mediaProcessing` at all.
@@ -877,7 +877,7 @@ migration files (I did not query production).
 Added for §6 (Decision 2), verified at `61007b897`: `/media/upload` performs
 `sniffMedia` + `processImage` + `makeThumbnail` (`routes/posts.ts:76-185`) with
 15 MB / 100 MB caps; `messaging.ts` does **not** import `mediaProcessing`, and
-DM `thumbnailUrl`/`durationSeconds` are client-supplied (`messaging.ts:1891`);
+DM `thumbnailUrl`/`durationSeconds` are client-supplied (`messaging.ts:1892`);
 `ALLOWED_BUCKETS` is `{post-media, profile-media}` (`lib/mediaUrl.ts:11`);
 `expo-video-thumbnails ~10.0.8` and `expo-image-manipulator ~14.0.8` are
 installed while `expo-file-system`, `expo-crypto` and `react-native-quick-crypto`

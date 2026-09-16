@@ -154,7 +154,7 @@ Format: `- [lane] file:line — what is wrong, and what the user sees.`
   renders as in the drawer, which is a §6.4 question this lane did not own.
 
   SUPERSEDES an earlier entry here that claimed `routes/messaging.ts` accepted
-  `reply_to_id` without checking the thread. IT DOES CHECK — `messaging.ts:2750`,
+  `reply_to_id` without checking the thread. IT DOES CHECK — `messaging.ts:2761`,
   fail-closed, 503 when the check cannot run and 400 when the reference is
   genuinely cross-thread — and has since it was built. The real gap was the
   voice route, which was added without it and is FIXED in this merge

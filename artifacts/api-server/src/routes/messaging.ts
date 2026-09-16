@@ -59,6 +59,7 @@ import { resolveInteractionPermissions } from '../services/interactionPermission
 import { isKillSwitchEngaged } from '../lib/featureFlags.js';
 import { appStorageUrlInfo } from '../lib/mediaUrl.js';
 import { classifyMemoryMediaUrl } from '../services/memory/memoryMediaOrigin.js';
+import { messagingStopUnknownRefusal } from '../lib/telegraphThreadWrite.js';
 import { isUuid } from '../lib/followDecisions';
 import {
   translateMessageForThread,
@@ -2619,9 +2620,19 @@ router.post('/threads/:threadId/messages', async (req, res) => {
   // body assignment deferred — E2EE threads force body=null (resolved after is_e2ee check below)
   let body = bodyRaw;
 
-  // Emergency kill switch: disable_messaging — fail-CLOSED on DB error
+  // Emergency kill switch: disable_messaging — fail-CLOSED on DB error AND on
+  // an absent service client. Guarding the stop read behind a truthiness test on
+  // the client READ as fail-closed and was not: both operands of that `&&` are the same
+  // fact — the stop's state could not be established — and only one was treated
+  // that way. An unreadable feature_flags engaged the stop; a null client
+  // skipped the check and WROTE THE MESSAGE, returning 201, with nothing logged
+  // and nothing returned. This is the highest-traffic door in Telegraph.
   const flagSc = getServiceClient();
-  if (flagSc && await isKillSwitchEngaged(flagSc, 'disable_messaging')) {
+  {
+    const unknown = messagingStopUnknownRefusal(flagSc);
+    if (unknown) { sendError(res, unknown.code, unknown.message); return; }
+  }
+  if (await isKillSwitchEngaged(flagSc!, 'disable_messaging')) {
     sendError(res, 'feature_disabled', 'Messaging is temporarily disabled');
     return;
   }
@@ -3157,13 +3168,20 @@ router.post('/threads/:threadId/media', async (req, res) => {
   const clientId = typeof req.body?.clientId === 'string' ? req.body.clientId.slice(0, 64) : null;
 
   // Emergency kill switches (media one previously ignored here — audit).
-  // Fail-CLOSED: an unreadable stop engages.
+  // Fail-CLOSED: an unreadable stop engages, AND a service client we do not have
+  // is the same unknown rather than a pass. See the note on the text-send door
+  // above; `degraded_unavailable` and not `feature_disabled`, because nobody
+  // engaged a stop — we could not look.
   const flagSc = getServiceClient();
-  if (flagSc && await isKillSwitchEngaged(flagSc, 'disable_messaging')) {
+  {
+    const unknown = messagingStopUnknownRefusal(flagSc);
+    if (unknown) { sendError(res, unknown.code, unknown.message); return; }
+  }
+  if (await isKillSwitchEngaged(flagSc!, 'disable_messaging')) {
     sendError(res, 'feature_disabled', 'Messaging is temporarily disabled');
     return;
   }
-  if (flagSc && await isKillSwitchEngaged(flagSc, 'disable_media_uploads')) {
+  if (await isKillSwitchEngaged(flagSc!, 'disable_media_uploads')) {
     sendError(res, 'feature_disabled', 'Media uploads are temporarily disabled');
     return;
   }

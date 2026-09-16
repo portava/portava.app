@@ -207,13 +207,40 @@ function ThreadRow({ item, userId }: { item: ThreadSummary; userId: string | nul
         <View style={s.nameRow}>
           <View style={s.nameLeft}>
             <Text style={[s.name, unread > 0 && s.nameBold]} numberOfLines={1}>{displayName}</Text>
-            {isMuted && <BellOff size={12} color={color.faint} style={{ marginLeft: 4 }} />}
+            {isMuted && (
+              // Muting decides whether a conversation can reach you at all, and
+              // the whole of that was a 12px glyph.
+              <View
+                accessible
+                accessibilityLabel="Muted"
+                style={{ marginLeft: 4 }}
+                testID="telegraph-row-muted"
+              >
+                <BellOff size={12} color={color.faint} />
+              </View>
+            )}
             <TypeBadge threadType={item.threadType} />
           </View>
           <View style={s.nameMeta}>
             {unread > 0 && (
-              <View style={s.unreadBubble}>
-                <Text style={s.unreadText}>{unread > 99 ? '99+' : unread}</Text>
+              // The row read "mira, 3, 2h ago". The 3 is the most important
+              // thing on it and was the one thing that did not say what it was.
+              // The LABEL is not capped at 99+ — the bubble caps because the
+              // digits do not fit, which is not a reason to throw away a number
+              // we are holding.
+              <View
+                style={s.unreadBubble}
+                accessible
+                accessibilityLabel={`${unread} unread ${unread === 1 ? 'message' : 'messages'}`}
+                testID="telegraph-row-unread"
+              >
+                <Text
+                  style={s.unreadText}
+                  accessibilityElementsHidden
+                  importantForAccessibility="no-hide-descendants"
+                >
+                  {unread > 99 ? '99+' : unread}
+                </Text>
               </View>
             )}
             {lastAt ? <Text style={s.time}>{timeAgo(lastAt)}</Text> : null}
@@ -512,10 +539,28 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
                   key={f.key}
                   style={[s.chip, active && s.chipActive]}
                   onPress={() => setFilter(f.key)}
+                  accessibilityRole="button"
+                  // ACTIVE was a background fill and nothing else, so the screen
+                  // could name the six filters and could not say which one you
+                  // were on — the one fact you need to read every row below.
+                  accessibilityState={{ selected: active }}
+                  // The badge is a separate node reading as a naked number
+                  // beside a word; "Requests" then "3" is as likely to be heard
+                  // as an ordinal as a count.
+                  accessibilityLabel={
+                    badge > 0
+                      ? `${f.label}, ${badge} pending ${badge === 1 ? 'request' : 'requests'}`
+                      : f.label
+                  }
+                  testID={`telegraph-filter-${f.key}`}
                 >
                   <Text style={[s.chipText, active && s.chipTextActive]}>{f.label}</Text>
                   {badge > 0 && (
-                    <View style={s.chipBadge}>
+                    <View
+                      style={s.chipBadge}
+                      accessibilityElementsHidden
+                      importantForAccessibility="no-hide-descendants"
+                    >
                       <Text style={s.chipBadgeText}>{badge > 99 ? '99+' : badge}</Text>
                     </View>
                   )}

@@ -205,6 +205,12 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
     <Pressable
       style={({ pressed }) => [styles.card, pressed && { opacity: layout.pressedOpacity }]}
       onPress={() => { reportTap(place.id); onPress(); }}
+      // The whole card opens the place. Without the role it announced as a
+      // group of text a reader could walk but not obviously act on. NO
+      // accessibilityLabel on purpose: `accessible` already derives the name
+      // from the card's own text (name, category, distance, rating), and a
+      // hand-written label would REPLACE all of it with just the name.
+      accessibilityRole="button"
       testID={`place-card-${place.id}`}
     >
       {/* Header image — category fallback when no real image available */}
@@ -416,6 +422,11 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
               onPress={alreadyAdded ? undefined : onAddToPlan}
               disabled={alreadyAdded}
               hitSlop={6}
+              accessibilityRole="button"
+              // "Added ✓" is the only signal that the press already happened,
+              // and the tick is a glyph inside a Text. The state says it too.
+              accessibilityState={{ disabled: alreadyAdded, selected: alreadyAdded }}
+              testID={`place-card-plan-${place.id}`}
             >
               {alreadyAdded
                 ? <Check size={14} color={color.deep} />
@@ -439,6 +450,8 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
                   category:   place.category ?? null,
                 })}
                 hitSlop={6}
+                accessibilityRole="button"
+                testID={`place-card-route-${place.id}`}
               >
                 <Route size={14} color={color.deep} />
                 <Text style={[styles.actionText, { color: color.deep }]}>Route</Text>
@@ -450,6 +463,7 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
                 style={({ pressed }) => [styles.actionBtn, pressed && { opacity: 0.7 }]}
                 onPress={openDirections}
                 hitSlop={6}
+                accessibilityRole="button"
                 testID={`place-card-directions-${place.id}`}
               >
                 <Navigation size={14} color={color.deep} />
@@ -457,6 +471,12 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
               </Pressable>
             )}
 
+            {/*
+              A TOGGLE whose only visual state was the glyph's fill colour, and
+              which announced as an unnamed button in both states. Role, a label
+              that names the place (the card is one of many identical rows) and
+              `selected` so the saved state is not carried by colour alone.
+            */}
             <Pressable
               style={({ pressed }) => [styles.saveBtn, saved && styles.saveBtnActive, pressed && { opacity: 0.7 }]}
               onPress={() => {
@@ -471,15 +491,22 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
                   .catch(() => setSaved(!next));
               }}
               hitSlop={6}
+              accessibilityRole="button"
+              accessibilityLabel={saved ? `Remove ${place.name} from saved` : `Save ${place.name}`}
+              accessibilityState={{ selected: saved }}
               testID={`place-card-save-${place.id}`}
             >
               <Bookmark size={14} color={saved ? color.signal : color.faint} fill={saved ? color.signal : 'none'} />
             </Pressable>
 
+            {/* Unnamed until V4's sweep, and it writes to a trip. */}
             <Pressable
               style={({ pressed }) => [styles.wishlistBtn, pressed && { opacity: 0.7 }]}
               onPress={() => setPickerVisible(true)}
               hitSlop={6}
+              accessibilityRole="button"
+              accessibilityLabel={`Add ${place.name} to a trip wishlist`}
+              testID={`place-card-wishlist-${place.id}`}
             >
               <ListPlus size={14} color={color.deep} />
             </Pressable>
@@ -516,6 +543,9 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
                 hitSlop={6}
                 accessibilityRole="button"
                 accessibilityLabel={`Not interested in ${place.name}`}
+                // `disabled` already stops the second press and told nobody: the
+                // control still announced as pressable while the request ran.
+                accessibilityState={{ disabled: dismissing, busy: dismissing }}
                 testID={`place-card-dismiss-${place.id}`}
               >
                 <ThumbsDown size={14} color={dismissFailed ? color.signal : color.faint} />
@@ -523,7 +553,18 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
             ) : null}
           </View>
           {dismissFailed ? (
-            <Text style={styles.dismissFailedText}>
+            /*
+              The card deliberately stays put, so this sentence is the WHOLE of
+              the outcome. Drawn and unannounced it was indistinguishable from a
+              tap that did nothing — the failure mode this control was written to
+              avoid, surviving in the one channel nobody checked.
+            */
+            <Text
+              style={styles.dismissFailedText}
+              accessibilityRole="alert"
+              accessibilityLiveRegion="assertive"
+              testID={`place-card-dismiss-failed`}
+            >
               Couldn’t hide this just now — tap again to retry.
             </Text>
           ) : null}

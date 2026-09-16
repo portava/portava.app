@@ -775,7 +775,7 @@ directly via `isFlagEnabled` **does not** get this resolution. **[CLONE 13dcfe3]
 
 **6.6 Eleven distinct emergency-stop flags are read through `isFlagEnabled`, at
 18 call sites.** **[CLONE 13dcfe3]** —
-`disable_unknown_message_requests` (`routes/messaging.ts:427`),
+`disable_unknown_message_requests` (`routes/messaging.ts:428`),
 `disable_messaging` (`:1682`, `:1996`),
 `disable_media_uploads` (`:2000`, `routes/postcards.ts:381`, `routes/posts.ts:92`,
 `routes/profile.ts:1019`, `:1092`, `routes/events.ts:5285`),
@@ -1264,7 +1264,7 @@ and `profile-media` (`:11`); a full URL must match the `SUPABASE_URL` origin
 rejected (`:44`, `:68`). **No check ties the path to the calling user.** The
 module header names "other users' objects by guessed URL" among the holes it was
 written to close (`:5-8`). Three reference endpoints depend on it:
-`routes/messaging.ts:2008`, `routes/events.ts:5299`, and the `appMediaRef` zod
+`routes/messaging.ts:2009`, `routes/events.ts:5299`, and the `appMediaRef` zod
 refinement at `lib/postSchemas.ts:58-71`, whose comment at `:48-56` records three
 legacy reference shapes accepted "during migration". **[CLONE 13dcfe3]**
 
