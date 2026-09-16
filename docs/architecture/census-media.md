@@ -1901,7 +1901,7 @@ wrong sentence:
 - **MD106.** The row says the intent signal is *"written only through the
   service-role endpoint at `routes/mediaActions.ts` line 161, read at
   `MediaActionResolver.ts` line 612."* The two are **the wrong way round**:
-  `artifacts/api-server/src/routes/mediaActions.ts:391#.from("media_intent_signals")`
+  `artifacts/api-server/src/routes/mediaActions.ts:429#.from("media_intent_signals")`
   is the DELETE, and
   `artifacts/api-server/src/services/media/MediaActionResolver.ts:798#.from("media_intent_signals")`
   is the upsert — the writer. Enumerated exhaustively, `media_intent_signals`
@@ -3069,3 +3069,54 @@ pill whose own comment states the tab's default behaviour is unchanged, and a
 a product/IA decision about whether the World shell replaces the Media tab or
 sits beside it, and it is an owner's to make, not a merge's. Until it is made,
 MD87's reasoning holds exactly as written.
+
+## 16. MD106's missing consumer is no longer missing, and the table it reads is no longer absent from production
+
+| | |
+|---|---|
+| **Measured at** | The Replit port integration branch. The document's `head_commit` row (§0) is **not** moved: this section re-reads ONE row, not 450. |
+
+§11 enumerated `media_intent_signals` exhaustively and concluded: *"`media_intent_signals`
+has **no reader anywhere in either tree**, so the asserted read does not exist… The
+missing consumer is a real gap."* That was true when written. It is not true now, and
+because this census is read last-statement-wins, saying so here is what keeps §11
+readable rather than misleading.
+
+**The consumer exists.** The port added
+`artifacts/api-server/src/services/media/MediaProjectionService.ts:427#.from("media_intent_signals")`
+— `loadViewerIntent`, one bulk read per candidate page, run after eligibility so the ids
+it asks about are ids the viewer was already proved entitled to see. It feeds
+`MediaRankingService`. So the trio §11 could not complete is complete: the upsert at
+`MediaActionResolver.ts:798`, the delete at `mediaActions.ts:429`, and now a read.
+
+**MD106 stays `C`, and for the same reason as before.** Its requirement is that a want is
+an intent signal and not a Like. The separate table, the separate grant posture and the
+separate write path carried that on their own, which is why §11 kept the `C` while
+recording the gap. A consumer arriving does not change what MD106 asserts — it closes the
+gap §11 filed *next to* the verdict. The distinction is the whole point of §11's ruling
+and it survives intact.
+
+**What DOES move is a fact about production, and it moved because this row's evidence was
+checked rather than assumed.** `2256_media_intent_signals.sql` had been applied on the CI
+project since 2026-09-03 and had **never reached production**: no table, and no
+`schema_migration_ledger` row of any kind. `COMPASS_ENABLED` is ON in production, so the
+live consequence was not theoretical — `POST` and `DELETE /api/media/:id/intent` were
+answering `db_error` on **every** call, and every "I Want This" signal in production was
+being refused. The new ranking read is fail-soft by design (a lost ranking input reorders
+a page, it never widens one), so it would have scored every row intent 0 **in silence**
+for as long as nobody looked.
+
+`check:flag-schema-prerequisites` is what looked. It refused the port on exactly this
+ground, and the remedy taken was the one that makes the refusal go away *truthfully*:
+2256 was applied to production 2026-09-16 15:13:21 UTC, with a ledger row, and the
+resulting table is the CI shape digest-for-digest (`963b2eec6268209a385f546d8be5db75`),
+`authenticated=SELECT` only, anon nothing, RLS on, one owner-scoped SELECT policy, 0 rows.
+The alternative remedy the check also offers — a `KNOWN` entry explaining why the absence
+is tolerable — would have turned a live production defect into a documented one.
+
+**Recorded because it generalises:** the reason this was found at all is that a new read
+was added to a flag that is ON. The endpoints that had been failing for two weeks
+surfaced their error to callers and still nobody noticed, because nothing compared the
+flag's *code* against production's *schema*. MD106 is one row; `media_intent_signals` was
+one of **68 tables that 41 migrations declare and production does not have**. That
+inventory is reported, not repaired, and it is not this census's to close.

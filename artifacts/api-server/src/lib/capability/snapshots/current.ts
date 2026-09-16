@@ -21,8 +21,16 @@
  * historical statements and are not supposed to move.
  */
 
+/**
+ * REFRESH OF 2026-09-16 15:13 UTC. There are now TWO captures dated 09-16 and the
+ * `b` one is current. The 12:14 capture was NOT overwritten: it is a counted
+ * subject of census-highlights-memories and §O.3 reads column anchors out of its
+ * bytes, so replacing it in place would move the evidence under verdicts already
+ * derived from it. A capture describes one instant; a new instant gets a new file
+ * and this constant moves. That is the whole refresh.
+ */
 /** The capture every reader should grade against. Change this on a refresh. */
-export const PRODUCTION_SNAPSHOT_FILENAME = "20260916-production-schema.json";
+export const PRODUCTION_SNAPSHOT_FILENAME = "20260916b-production-schema.json";
 
 /** Resolved against this directory, which is where the captures live. */
 export const PRODUCTION_SNAPSHOT_URL = new URL(
