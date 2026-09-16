@@ -46,6 +46,27 @@ type Surface = 'pulse' | 'discovery' | 'events' | 'live_pulse';
 type Outcome = 'tap' | 'save' | 'join' | 'rsvp' | 'attended' | 'trip_add';
 
 /**
+ * The NEGATIVE outcome, admitted to `rank_events.outcome` by migration 2297 and
+ * accepted by `POST /api/rank-events/outcome` against `surface: 'discovery'`.
+ *
+ * Kept OUT of `Outcome` deliberately, because it is not a funnel rung and must
+ * not be reportable through the fire-and-forget `report` path above. The server
+ * models the same distinction: `upgradableOutcomesFor('dismiss')` returns
+ * `['impression']` alone, so a dismiss may only be recorded against a row still
+ * at impression, it is terminal, and no later tap or save can overwrite it.
+ *
+ * It also cannot be fire-and-forget, and that is the real reason for a separate
+ * type rather than a tidier union. A dismiss is the one outcome whose SUCCESS
+ * the interface promises something about: the card goes away and stays away. If
+ * the POST failed and the card vanished anyway, the person was told something
+ * untrue and will meet the place again on the next refresh with no explanation
+ * — the control would be decorative, and worse than absent, because it also
+ * teaches them their input is ignored. So `reportDismiss` is awaited and
+ * answers.
+ */
+type NegativeOutcome = 'dismiss';
+
+/**
  * The surface an impression was WRITTEN under — the value a component must be
  * handed by whoever served the item, never the screen the user is looking at.
  * Exported so shared components (PlaceCard, PlaceDetailSheet) can take it as a
@@ -133,5 +154,56 @@ export function useRankOutcome({
   // would upgrade nothing.
   const reportTripAdd = useCallback((itemId: string) => report(itemId, 'trip_add'), [report]);
 
-  return { reportTap, reportSave, reportJoin, reportRsvp, reportTripAdd };
+  /**
+   * "Not interested" — AWAITED, and it answers.
+   *
+   * Resolves TRUE only when the server accepted the dismissal, which is the only
+   * condition under which the caller may remove the card. Every other path —
+   * no surface, no API base, signed out, a non-2xx, a network failure — resolves
+   * FALSE, so the caller keeps the card and can say so.
+   *
+   * NOT DEDUPED through `sent`. The dedup set exists to stop a double-tap
+   * writing two funnel rows, and it is right for those because a repeat carries
+   * no new information. Here a repeat means the person is trying again after a
+   * failure, and swallowing the retry would make the control permanently dead
+   * for that item until the screen remounted.
+   *
+   * A 404 is reported as failure, deliberately, even though it is the server
+   * working correctly: it means no impression row was found to dismiss — the
+   * item was never served to this person under this surface, or it has already
+   * moved past `impression`. The suppression list is built from dismiss rows, so
+   * a dismissal with no row will not suppress anything, and hiding the card on a
+   * 404 would be exactly the lie this function exists to avoid.
+   */
+  const reportDismiss = useCallback(
+    async (itemId: string): Promise<boolean> => {
+      if (!surface) return false;
+      const base = API_BASE();
+      if (!base) return false;
+      try {
+        const token = await freshToken();
+        if (!token) return false;
+        const body: Record<string, string> = {
+          item_id: itemId,
+          surface,
+          outcome: 'dismiss' satisfies NegativeOutcome,
+        };
+        if (sessionId) body.session_id = sessionId;
+        const res = await fetch(`${base}/api/rank-events/outcome`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(body),
+        });
+        return res.ok;
+      } catch {
+        return false;
+      }
+    },
+    [surface, sessionId],
+  );
+
+  return { reportTap, reportSave, reportJoin, reportRsvp, reportTripAdd, reportDismiss };
 }

@@ -821,3 +821,159 @@ describe("GET /discovery — the canonical half of the merge (§30.5's third ope
       "curated-only failure");
   });
 });
+
+// ── "Not interested", applied on every serve path ────────────────────────────
+//
+// WHY THIS LIVES IN THIS FILE. It needs exactly what this file already built: a
+// real `GET /discovery` over a fake client, and `assertServePath` to prove which
+// of the four paths actually answered. A dismissal honoured on the cold path and
+// forgotten on a cache hit is worse than one never honoured at all — the place
+// disappears, the person believes the control works, and it returns on a request
+// that differs only in which cache answered. So each path is asserted
+// separately, and each case first proves it reached the path it is about.
+//
+// `rank_events.outcome` has admitted 'dismiss' since migration 2297 and
+// `POST /api/rank-events/outcome` has accepted it against surface 'discovery'
+// since then. Nothing read the rows back, so the outcome moved a cross-viewer
+// ranking statistic and changed nothing about what the person who sent it saw.
+// `lib/discoveryDismissed.ts` is the reader and `dismissGatedPlaces` applies it.
+
+/** A dismissal row as `POST /api/rank-events/outcome` leaves it. */
+function dismissRow(itemId: string, userId = VIEWER_ID) {
+  return { user_id: userId, surface: "discovery", outcome: "dismiss", item_id: itemId, served_at: "2026-09-16T00:00:00Z" };
+}
+
+const OTHER_VIEWER_ID = "dddd0000-0000-0000-0000-000000000002";
+
+describe("GET /discovery — a dismissed place does not come back", () => {
+  it("1/4 cache-A serve: the dismissed place is absent from the served page", async () => {
+    setClient({ rows: { rank_events: [dismissRow("node/4242")] } });
+    _injectTestCacheEntry(CACHE_A_FOOD, [osmPlace("node/4242"), osmPlace("node/4243")]);
+    const r = await get(`/api/discovery?${MIAMI}&category=food`, true);
+    assert.equal(r.status, 200);
+    assertServePath(r.body, "cache_a");
+    const ids = r.body.places.map((p: any) => p.id);
+    assert.ok(!ids.includes("node/4242"), `the dismissed place was served anyway: ${JSON.stringify(ids)}`);
+    assert.ok(ids.includes("node/4243"), "the filter removed more than the dismissal — the page must otherwise be intact");
+  });
+
+  it("2/4 Compass cache-B hit: a replayed page is still filtered", async () => {
+    // The most load-bearing of the four. The ranked page is REPLAYED from cache
+    // B, so a suppression applied only where ranking runs would miss it, and the
+    // dismissed place would reappear on precisely the requests the person cannot
+    // distinguish from the ones where it worked.
+    setClient({ rows: { feature_flags: COMPASS_ON_FLAGS } });
+    _setTestDbPlacesOverride(async () => [curatedPlace("d1", 10), curatedPlace("d2", 5)]);
+    const first = await get(`/api/discovery?${MIAMI}&category=for_you`, true);
+    assertServePath(first.body, "compass_fresh");
+    const seeded = first.body.places.map((p: any) => p.id);
+    assert.ok(seeded.includes("db/d1") && seeded.includes("db/d2"), `precondition: both rows seeded the cache: ${JSON.stringify(seeded)}`);
+
+    setClient({ rows: { feature_flags: COMPASS_ON_FLAGS, rank_events: [dismissRow("db/d1")] } });
+    const r = await get(`/api/discovery?${MIAMI}&category=for_you`, true);
+    assertServePath(r.body, "compass_hit");
+    const ids = r.body.places.map((p: any) => p.id);
+    assert.ok(!ids.includes("db/d1"), `a cache-B replay served the dismissed place: ${JSON.stringify(ids)}`);
+    assert.ok(ids.includes("db/d2"), "the rest of the replayed page must survive");
+  });
+
+  it("3/4 Compass fresh rank: the dismissed place is absent", async () => {
+    setClient({ rows: { feature_flags: COMPASS_ON_FLAGS, rank_events: [dismissRow("db/d3")] } });
+    _setTestDbPlacesOverride(async () => [curatedPlace("d3", 10), curatedPlace("d4", 5)]);
+    const r = await get(`/api/discovery?${MIAMI}&category=for_you`, true);
+    assertServePath(r.body, "compass_fresh");
+    const ids = r.body.places.map((p: any) => p.id);
+    assert.ok(!ids.includes("db/d3"), `the fresh rank served the dismissed place: ${JSON.stringify(ids)}`);
+    assert.ok(ids.includes("db/d4"));
+  });
+
+  it("4/4 cold fetch: the dismissed place is absent", async () => {
+    setClient({ rows: { rank_events: [dismissRow("db/d5")] } });
+    _setTestDbPlacesOverride(async () => [curatedPlace("d5", 10), curatedPlace("d6", 5)]);
+    const r = await get(`/api/discovery?${MIAMI}&category=for_you`, true);
+    assertServePath(r.body, "cold");
+    const ids = r.body.places.map((p: any) => p.id);
+    assert.ok(!ids.includes("db/d5"), `the cold fetch served the dismissed place: ${JSON.stringify(ids)}`);
+    assert.ok(ids.includes("db/d6"));
+  });
+
+  it("`total` counts the page that was actually served, not the one before filtering", async () => {
+    // `total` drives the cursor arithmetic and the client's "N places found".
+    // Counting the unfiltered set would make a walk skip a slot per dismissal
+    // and the footer disagree with the list.
+    setClient({ rows: { rank_events: [dismissRow("db/d7")] } });
+    _setTestDbPlacesOverride(async () => [curatedPlace("d7", 10), curatedPlace("d8", 5), curatedPlace("d9", 1)]);
+    const r = await get(`/api/discovery?${MIAMI}&category=for_you`, true);
+    assertServePath(r.body, "cold");
+    assert.equal(r.body.places.length, 2, "precondition: one of the three was dismissed");
+    assert.equal(r.body.total, 2, "`total` must count the served set, or the cursor walks a set that does not exist");
+  });
+
+  it("PRIVACY: one person's dismissal never shrinks another person's results", async () => {
+    // The dismissal set is viewer-scoped. A leak here would be both a privacy
+    // defect and a suppression primitive handed to anyone who wanted one.
+    setClient({ rows: { rank_events: [dismissRow("db/e1", OTHER_VIEWER_ID)] } });
+    _setTestDbPlacesOverride(async () => [curatedPlace("e1", 10), curatedPlace("e2", 5)]);
+    const r = await get(`/api/discovery?${MIAMI}&category=for_you`, true);
+    assertServePath(r.body, "cold");
+    const ids = r.body.places.map((p: any) => p.id);
+    assert.ok(
+      ids.includes("db/e1"),
+      `another viewer's dismissal suppressed this viewer's result: ${JSON.stringify(ids)}`,
+    );
+  });
+
+  it("a dismissal on ANOTHER surface does not suppress here", async () => {
+    setClient({ rows: { rank_events: [{ ...dismissRow("db/e3"), surface: "pulse" }] } });
+    _setTestDbPlacesOverride(async () => [curatedPlace("e3", 10)]);
+    const r = await get(`/api/discovery?${MIAMI}&category=for_you`, true);
+    const ids = r.body.places.map((p: any) => p.id);
+    assert.ok(ids.includes("db/e3"), "a Pulse dismissal must not remove a Discovery result");
+  });
+
+  it("a POSITIVE outcome never suppresses — only a dismiss does", async () => {
+    // Without this, "filters rank_events rows for this user and surface" is
+    // satisfied by a reader that filters on nothing else, which would make every
+    // place a person ever tapped disappear from Discovery.
+    setClient({ rows: { rank_events: [{ ...dismissRow("db/e4"), outcome: "save" }] } });
+    _setTestDbPlacesOverride(async () => [curatedPlace("e4", 10)]);
+    const r = await get(`/api/discovery?${MIAMI}&category=for_you`, true);
+    const ids = r.body.places.map((p: any) => p.id);
+    assert.ok(ids.includes("db/e4"), "a SAVE was read as a dismissal — the outcome predicate is missing or wrong");
+  });
+
+  it("CONTROL: with no dismissals the response is unchanged and carries NO refusal", async () => {
+    // The vacuity guard for the whole block. A gate that filtered or refused
+    // unconditionally would satisfy every case above.
+    setClient({});
+    _setTestDbPlacesOverride(async () => [curatedPlace("e5", 10), curatedPlace("e6", 5)]);
+    const r = await get(`/api/discovery?${MIAMI}&category=for_you`, true);
+    assertServePath(r.body, "cold");
+    const ids = r.body.places.map((p: any) => p.id);
+    assert.deepEqual(ids.sort(), ["db/e5", "db/e6"], "a viewer with no dismissals must see the whole page");
+    assert.equal(r.body.refusal, undefined, "a healthy dismissal read must not put a refusal on the envelope");
+  });
+
+  it("an UNREADABLE dismissal list is NAMED on the envelope, and the feed is still served", async () => {
+    // Both available answers are bad in different directions, so the response
+    // says which one happened instead of choosing silently. Failing closed here
+    // would empty the Discovery tab because a preference list was briefly
+    // unreadable — a much larger failure than the one it avoids.
+    setClient({ errorTables: ["rank_events"] });
+    _setTestDbPlacesOverride(async () => [curatedPlace("e7", 10), curatedPlace("e8", 5)]);
+    const r = await get(`/api/discovery?${MIAMI}&category=for_you`, true);
+    assert.equal(r.status, 200, "a failed preference read must not take the feed down");
+    assert.equal(r.body.places.length, 2, "the places really were read and are still served");
+    assert.ok(r.body.refusal, "an unapplied suppression must be stated, not inferred from its absence");
+    assert.equal(r.body.refusal.coverage, "partial", "rows were served — `nothing` would be false");
+    assert.deepEqual(
+      [...(r.body.refusal.failedSources ?? [])], ["rank_events"],
+      "the refusal must NAME the list that could not be applied",
+    );
+    assert.equal(
+      r.body.refusal.code, "dismissed_set_read_failed",
+      "a dismissal-only failure must not be reported as a failed curated retrieval — that is a false " +
+      "statement about a healthy read",
+    );
+  });
+});

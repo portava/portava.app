@@ -1314,12 +1314,24 @@ function matchesQuery(q: string, ...fields: Array<string | null>): boolean {
   return fields.some((f) => typeof f === "string" && f.toLowerCase().includes(needle));
 }
 
+/**
+ * What `searchSaved` could not read, named. Empty means the shelf is COMPLETE
+ * and its emptiness is trustworthy; non-empty means the rows returned are real
+ * but are not all of them.
+ *
+ * These strings ride out on `refusal.failedSources` exactly as `searchAll`'s do,
+ * so a client has one vocabulary for "part of this answer is missing" whether
+ * the missing part is a whole search type or one table inside a type.
+ */
+type SavedCoverage = { results: SearchResult[]; degradedSources: string[] };
+
 async function searchSaved(
   sc: any, q: string, userId: string,
   blockedSet: Set<string> | null,
   offset: number, fetchLimit: number,
-): Promise<SearchResult[]> {
-  if (blockedSet === null) return [];
+): Promise<SavedCoverage> {
+  const degradedSources: string[] = [];
+  if (blockedSet === null) return { results: [], degradedSources };
   try {
     const [wishRes, dpsRes] = await Promise.all([
       sc.from("wishlist_places")
@@ -1349,11 +1361,22 @@ async function searchSaved(
     //
     // A total outage rejects. ONE unreadable table still serves the other's
     // rows, which is a real half-answer rather than a lie — the two tables are
-    // written by paths that never write each other's. That partial is still
-    // SILENT, because `dispatchSearch` returns a bare array with no channel to
-    // carry `coverage: "partial"`; saying "nothing was readable" instead would
-    // be a second untruth in the other direction. Pinned both ways by
-    // `src/test/discoverySavedRefusal.test.ts` (R1 and R5).
+    // written by paths that never write each other's.
+    //
+    // THAT HALF-ANSWER IS NO LONGER SILENT. It used to be, and the reason was
+    // structural rather than chosen: `dispatchSearch` returned a bare array
+    // with no channel to carry `coverage: "partial"`, so the lane's only two
+    // vocabulary words were "here are some rows" and "nothing was readable" —
+    // and the second is an untruth in the other direction when one table DID
+    // answer. The channel exists now (`SavedCoverage` above,
+    // `dispatchSearchWithCoverage` below), so the lane says which table it
+    // could not read and the route turns that into `coverage: "partial"` with
+    // `failedSources`. The user is told their shelf is incomplete instead of
+    // being shown a short one that looks whole.
+    //
+    // The REFUSAL is unchanged and deliberately not relaxed: both tables
+    // unreadable still throws, because then there is no half to serve. Pinned
+    // both ways by `src/test/discoverySavedRefusal.test.ts` (R1 and R5).
     const wishUnreadable = !!wishRes?.error;
     const dpsUnreadable = !!dpsRes?.error;
     if (wishUnreadable && dpsUnreadable) {
@@ -1362,6 +1385,8 @@ async function searchSaved(
         wishRes?.error ?? dpsRes?.error,
       );
     }
+    if (wishUnreadable) degradedSources.push("wishlist_places");
+    if (dpsUnreadable) degradedSources.push("discovery_place_saves");
     const wishRows: WishlistSaveRow[] = Array.isArray(wishRes?.data) ? wishRes.data : [];
     const dpsRows: DiscoverySaveRow[] = Array.isArray(dpsRes?.data) ? dpsRes.data : [];
 
@@ -1390,7 +1415,18 @@ async function searchSaved(
     for (const page of chunkIds(servedIds, SAVED_ID_CHUNK)) {
       // noCache: an OSM venue's discovery_places row is created lazily on first
       // save, so a cached known-empty from before that save would drop it.
-      const { toCanonical } = await resolvePlaceIdBridge(sc, page, { noCache: true });
+      const { toCanonical, degraded } = await resolvePlaceIdBridge(sc, page, { noCache: true });
+      // A degraded bridge does not lose the save — an unbridged wishlist row
+      // falls through to `snapshotOnly` below and still lists from the snapshot
+      // the save itself recorded. What it loses is the AUTHORITATIVE row: the
+      // venue's current name, category, photo and coordinates. That is a real
+      // degradation of this shelf and it is reported rather than absorbed,
+      // because before `lib/placeIdBridge.ts` bound its error there was nothing
+      // here that could tell "this place has no discovery_places row" from
+      // "we could not find out".
+      if (degraded && !degradedSources.includes("discovery_places")) {
+        degradedSources.push("discovery_places");
+      }
       for (const [served, ids] of toCanonical) bridged.set(served, ids);
     }
 
@@ -1496,7 +1532,7 @@ async function searchSaved(
     // Most recently saved first, then the caller's page. Match-tier ranking is
     // applied by dispatchSearch, as it is for every other non-place lane.
     out.sort((a, b) => String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? "")));
-    return out.slice(offset, offset + fetchLimit);
+    return { results: out.slice(offset, offset + fetchLimit), degradedSources };
   } catch (err) {
     // Re-raise ONLY the named read error, on `searchPlans`' precedent: the arm
     // keeps swallowing everything it already swallowed, and lets the one thing
@@ -1504,7 +1540,7 @@ async function searchSaved(
     // become a refusal. A bare `catch { return []; }` here undid both throws
     // above without leaving a trace.
     if (err instanceof DiscoverySearchReadError) throw err;
-    return [];
+    return { results: [], degradedSources };
   }
 }
 
@@ -2224,10 +2260,35 @@ function searchStatic<T extends Exclude<SearchType, "all">>(
 
 // ── Single-type dispatch ───────────────────────────────────────────────────────
 
-// Exported (additive) as the single per-type candidate generator. The
-// input-assistance gateway calls INTO this (same per-type query + privacy +
-// ranking code paths) rather than forking a parallel search implementation.
-// The existing /discovery/search and /discovery/suggest handlers are unchanged.
+/**
+ * A single-type search plus what it could not read.
+ *
+ * `results` are REAL rows in every case — a degraded source removes rows from
+ * the answer, it never fabricates them. `degradedSources` empty means the
+ * answer is complete and its emptiness is trustworthy.
+ */
+export interface DispatchCoverage {
+  results: SearchResult[];
+  degradedSources: string[];
+}
+
+/**
+ * Exported (additive) as the single per-type candidate generator. The
+ * input-assistance gateway calls INTO this (same per-type query + privacy +
+ * ranking code paths) rather than forking a parallel search implementation.
+ *
+ * SIGNATURE DELIBERATELY UNCHANGED. This is now a thin projection of
+ * `dispatchSearchWithCoverage` onto its `results`, because the alternative —
+ * widening the return type — is a change across eighteen call sites and four
+ * censuses' citations for the benefit of the one caller that can act on the
+ * extra field. A caller that only wants rows keeps getting rows.
+ *
+ * WHAT THIS WRAPPER DROPS, SAID PLAINLY: the coverage. A caller of
+ * `dispatchSearch` cannot distinguish a complete answer from a partial one, and
+ * that is a real limitation of this form rather than an absence of the
+ * information. `GET /discovery/search` uses the coverage form below for exactly
+ * that reason. Anything that renders results to a person should too.
+ */
 export async function dispatchSearch(
   sc: any,
   q: string,
@@ -2237,6 +2298,57 @@ export async function dispatchSearch(
   type: Exclude<SearchType, "all">,
   offset: number,
   fetchLimit: number,
+  ctx?: SearchQueryContext,
+): Promise<SearchResult[]> {
+  const { results } = await dispatchSearchWithCoverage(
+    sc, q, userId, blockedSet, ageRestrictedSet, type, offset, fetchLimit, ctx,
+  );
+  return results;
+}
+
+/**
+ * The coverage-bearing form. Same search, same privacy gate, same ranking —
+ * it additionally reports which of the type's underlying tables could not be
+ * read, so a route can answer `coverage: "partial"` instead of serving a short
+ * list that looks whole.
+ *
+ * Only `saved` can be intra-type partial today, and that is a property of the
+ * data rather than of this function: it is the one type whose rows come from
+ * two independently-written tables, either of which can fail while the other
+ * answers. Every other type reads one corpus, so its failure is total and
+ * arrives as a `DiscoverySearchReadError` that the route turns into
+ * `coverage: "nothing"`. The `sink` is threaded through the switch rather than
+ * special-cased above it so that a second multi-source type acquires the
+ * behaviour by pushing into it, not by growing a second mechanism.
+ */
+export async function dispatchSearchWithCoverage(
+  sc: any,
+  q: string,
+  userId: string,
+  blockedSet: Set<string> | null,
+  ageRestrictedSet: Set<string> | null,
+  type: Exclude<SearchType, "all">,
+  offset: number,
+  fetchLimit: number,
+  ctx?: SearchQueryContext,
+): Promise<DispatchCoverage> {
+  const degradedSources: string[] = [];
+  const results = await dispatchOne(
+    sc, q, userId, blockedSet, ageRestrictedSet, type, offset, fetchLimit, degradedSources, ctx,
+  );
+  return { results, degradedSources };
+}
+
+async function dispatchOne(
+  sc: any,
+  q: string,
+  userId: string,
+  blockedSet: Set<string> | null,
+  ageRestrictedSet: Set<string> | null,
+  type: Exclude<SearchType, "all">,
+  offset: number,
+  fetchLimit: number,
+  degradedSink: string[],
   ctx?: SearchQueryContext,
 ): Promise<SearchResult[]> {
   // For location-aware types (travelers, events, trips, plans, buddies):
@@ -2275,7 +2387,11 @@ export async function dispatchSearch(
     case "places":      return searchPlaces(sc, q, blockedSet, offset, fetchLimit, ctx);
     // Already ordered most-recently-saved-first inside the lane; rankByMatchTier
     // is a stable sort, so an exact-name save still leads without losing that.
-    case "saved":       return rankByMatchTier(await searchSaved(sc, q, userId, blockedSet, offset, fetchLimit),       q);
+    case "saved": {
+      const saved = await searchSaved(sc, q, userId, blockedSet, offset, fetchLimit);
+      for (const s of saved.degradedSources) if (!degradedSink.includes(s)) degradedSink.push(s);
+      return rankByMatchTier(saved.results, q);
+    }
     case "hidden_gems": return rankByMatchTier(await searchHiddenGems(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit), q);
     case "hashtags":    return rankByMatchTier(await searchHashtags(sc, q, offset, fetchLimit),                                         q);
     case "posts":       return rankByMatchTier(await searchPosts(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit),      q);
@@ -2620,11 +2736,44 @@ router.get("/discovery/search", async (req, res) => {
     } else {
       // Fetch limit+1 to detect hasMore without false positives
       const fetchLimit = limit + 1;
-      const raw = await dispatchSearch(sc, effectiveQ, user.id, blockedSet, ageRestrictedSet, type, offset, fetchLimit, ctx);
+      const { results: raw, degradedSources } =
+        await dispatchSearchWithCoverage(sc, effectiveQ, user.id, blockedSet, ageRestrictedSet, type, offset, fetchLimit, ctx);
       const hasMore = raw.length > limit;
       const results = raw.slice(0, limit);
       const nextCursor = hasMore ? encodeCursor(offset + limit) : null;
-      res.status(200).json({ results, nextCursor, hasMore, query: effectiveQ, type, timeLabel: ctx.timeLabel });
+      const body = { results, nextCursor, hasMore, query: effectiveQ, type, timeLabel: ctx.timeLabel };
+      if (degradedSources.length > 0) {
+        // INTRA-TYPE PARTIAL. The `type=all` branch above has carried this since
+        // 2026-09-14 for a whole bucket that failed; this is the same statement
+        // one level down, for a table that failed INSIDE a bucket.
+        //
+        // `saved` is why it exists and is the only type that can reach it today:
+        // its rows come from `wishlist_places` and `discovery_place_saves`, two
+        // tables written by two paths that never write each other's, so one can
+        // fail while the other answers. Before this, that answered
+        // `200 { results: [...] }` with no `refusal` — a SHORT shelf presented
+        // as a WHOLE one, on the single search heading whose contents the person
+        // knows for a fact, because they are their own saves. Silence there is
+        // not a small defect: it is the `11` §9 masquerade with some rows in
+        // front of it, which is harder to notice than the empty version.
+        //
+        // "partial", never "nothing": rows WERE served and they are real.
+        // Refusing whole here would be the untruth in the opposite direction,
+        // and the total-outage case already has its own throw in `searchSaved`.
+        sendDiscoveryRefusal(
+          res,
+          body,
+          discoveryRefusal(
+            "transient_db", "search_sources_unreadable", "GET /discovery/search",
+            "partial", degradedSources,
+          ),
+        );
+      } else {
+        res.status(200).json(body);
+      }
+      // Not suppressed on a partial, for the same reason the `all` branch is
+      // not: those items really were served, and dropping them from the serve
+      // log would under-count exposure.
       logSearchServe(results);
     }
   } catch (err) {

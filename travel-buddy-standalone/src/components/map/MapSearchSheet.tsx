@@ -88,16 +88,35 @@ const NOTICE_ALL_REFUSED =
 const NOTICE_PARTIAL = 'These results are incomplete — part of the search couldn’t be run.';
 const NOTICE_SAVED_REFUSED =
   'Your saved items couldn’t be read, so they are missing from these results.';
+/**
+ * The saved shelf answered, but not from everything it is made of.
+ *
+ * Saves land in TWO tables — the wishlist and the Discovery bookmark — written
+ * by two paths that never write each other's, so one can fail while the other
+ * answers. The server used to serve the survivor's rows with no `refusal` at
+ * all, and this sheet showed them under "Saved items" as if that were the whole
+ * shelf. A person looking at their OWN saves and not finding one they made is
+ * not looking at a search result; they are looking at a wrong answer they have
+ * no way to identify. Distinct from NOTICE_SAVED_REFUSED because the facts are
+ * different: there, none of the shelf was read; here, some of it was, and what
+ * is on screen is real.
+ */
+const NOTICE_SAVED_PARTIAL =
+  'Some of your saved items couldn’t be loaded, so this list may be missing a few.';
 
 /** Join the lane notices into one line, dropping the absent ones. */
 function noticeFor(
   allRefusedEverything: boolean,
   allPartial: boolean,
   savedFailed: boolean,
+  savedPartial: boolean,
 ): SearchNotice | null {
   const parts = [
     allRefusedEverything ? NOTICE_ALL_REFUSED : allPartial ? NOTICE_PARTIAL : null,
-    savedFailed ? NOTICE_SAVED_REFUSED : null,
+    // `savedFailed` wins when both are somehow set: "none of it was read" is the
+    // stronger and more urgent statement, and stacking both would say two
+    // different things about one shelf in one line.
+    savedFailed ? NOTICE_SAVED_REFUSED : savedPartial ? NOTICE_SAVED_PARTIAL : null,
   ].filter((p): p is string => p !== null);
   if (parts.length === 0) return null;
   return { text: parts.join(' '), nothingServed: allRefusedEverything };
@@ -190,12 +209,22 @@ export function MapSearchSheet({
       // screen.
       const savedFailed =
         !savedRes || !savedRes.ok || savedRes.data.refusal?.coverage === 'nothing';
+      // The saved shelf can now be INCOMPLETE as well as absent: one of its two
+      // source tables unreadable while the other answers. Its rows are real and
+      // are kept — discarding them would be the opposite defect, the same one
+      // the `all` lane's `partial` handling above exists to avoid — but the
+      // person is told the list may be short. Before the server grew this
+      // channel a single-table outage reached here as a plain 200 and was
+      // indistinguishable from a complete shelf.
+      const savedPartial =
+        !savedFailed && savedRes !== null && savedRes.ok &&
+        savedRes.data.refusal?.coverage === 'partial';
       const savedResults =
         savedRes && savedRes.ok && savedRes.data.refusal?.coverage !== 'nothing'
           ? savedRes.data.results
           : [];
 
-      setNotice(noticeFor(allRefusedEverything, allPartial, savedFailed));
+      setNotice(noticeFor(allRefusedEverything, allPartial, savedFailed, savedPartial));
       // A `coverage: "nothing"` body carries no served results, so there is
       // nothing to keep; `partial` does, and they are kept.
       setResults(
