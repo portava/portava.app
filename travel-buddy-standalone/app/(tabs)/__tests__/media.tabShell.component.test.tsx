@@ -25,8 +25,9 @@ import { screen, render, act, fireEvent } from '@testing-library/react-native';
 
 // ── expo-router ───────────────────────────────────────────────────────────────
 // NOTE: intentional stub — navigation context unavailable in Jest.
+const mockRouter = { push: jest.fn(), back: jest.fn(), replace: jest.fn() };
 jest.mock('expo-router', () => ({
-  router: { push: jest.fn(), back: jest.fn() },
+  router: mockRouter,
   useFocusEffect: (_cb: () => void) => {},
 }));
 

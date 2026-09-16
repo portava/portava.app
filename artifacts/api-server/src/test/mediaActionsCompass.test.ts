@@ -39,6 +39,7 @@ import {
   filterPermittedIntelRefs,
   formatMediaContextLines,
 } from "../compass/CompassMediaContext.js";
+import mediaActionsRouter from "../routes/mediaActions.js";
 import { invalidateFlagsCache } from "../compass/flags.js";
 import { _clearPromotedScopeCache } from "../lib/liveClaimRead.js";
 
@@ -304,6 +305,16 @@ describe("GET /media/:id/actions — resolveMediaActions", () => {
     const result = await resolveMediaActions(sc, viewer, MEDIA_1, Date.now());
     assert.ok(result!.entityRefs.some((r) => r.kind === "gem" && r.id === GEM_1), "gem ref present");
     assert.equal(isLocationSafe(result), true, "gem ref carries no coordinate");
+  });
+});
+
+describe("Media lifecycle routes", () => {
+  it("exposes authenticated owner delete and processing retry routes", () => {
+    const routes = (mediaActionsRouter as any).stack
+      .filter((layer: any) => layer.route)
+      .map((layer: any) => `${Object.keys(layer.route.methods)[0].toUpperCase()} ${layer.route.path}`);
+    assert.ok(routes.includes("DELETE /media/:id"));
+    assert.ok(routes.includes("POST /media/:id/retry"));
   });
 });
 

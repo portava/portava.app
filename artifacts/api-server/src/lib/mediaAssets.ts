@@ -42,6 +42,16 @@ export interface RecordAssetInput {
   capturedAt?: string | null;
   /** True when the asset carries a trustworthy location binding (§10). */
   hasLocation?: boolean;
+  /**
+   * Optional entity binding for upload callers that already know the owning
+   * object. Plain byte-upload endpoints intentionally omit this because the
+   * post/entity row may not exist until after the upload response.
+   */
+  entityType?: AttachmentEntityType;
+  entityId?: string;
+  position?: number;
+  isCover?: boolean;
+  visibilityOverride?: string | null;
 }
 
 /**
@@ -106,7 +116,21 @@ export async function recordMediaAsset(
       .select("id")
       .single();
     if (error) return null;
-    return (data as any)?.id ?? null;
+    const assetId = (data as any)?.id ?? null;
+    if (assetId && input.entityType && input.entityId) {
+      // The attachment uses the same idempotent conflict key as all other
+      // canonical writers. Failure remains fail-soft: the asset itself is
+      // still recorded and the legacy upload path is unaffected.
+      await recordMediaAttachment(sc, {
+        mediaAssetId: assetId,
+        entityType: input.entityType,
+        entityId: input.entityId,
+        position: input.position,
+        isCover: input.isCover,
+        visibilityOverride: input.visibilityOverride,
+      });
+    }
+    return assetId;
   } catch {
     return null;
   }

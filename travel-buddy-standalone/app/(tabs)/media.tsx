@@ -14,7 +14,7 @@
  * player instances pause automatically on tab switch.
  */
 
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -72,6 +72,18 @@ function MediaScreenInner() {
     () => ALL_MODES.filter(({ flagKey }) => isEnabled(flagKey)),
     [isEnabled],
   );
+
+  // Media v2 is the primary Media IA only when its server flag is explicitly
+  // enabled.  This keeps the legacy Watch/Grid/Gems surface intact by default,
+  // while making the World shell genuinely reachable when the coordinating
+  // rollout enables it (MD1, MD3).
+  const worldRedirectedRef = useRef(false);
+  useEffect(() => {
+    if (!worldRedirectedRef.current && isEnabled('MEDIA_WORLD_SHELL_ENABLED')) {
+      worldRedirectedRef.current = true;
+      router.replace('/media-world');
+    }
+  }, [isEnabled]);
 
   // Emit MEDIA_PAUSE_ALL when the tab loses focus so future players pause cleanly.
   useFocusEffect(
@@ -153,7 +165,7 @@ function MediaScreenInner() {
           style={[styles.gridCreateBtn, { top: insets.top + 8 }]}
           onPress={() => router.push('/create')}
           accessibilityRole="button"
-          accessibilityLabel="Create a post"
+          accessibilityLabel="Create post from Grid"
           hitSlop={8}
         >
           <Camera size={18} color={color.ink} strokeWidth={2} />
@@ -233,7 +245,12 @@ export default function MediaScreen() {
   );
 
   // Resolve default mode: first enabled mode after flags load.
-  const defaultMode: MediaMode = flagsLoading ? 'watch' : (enabledModes[0] ?? 'watch');
+  // Do not make the prohibited fullscreen autoplay feed the default IA. Grid
+  // remains the compatibility fallback when World is dark; Watch is still
+  // available through the existing mode flag and retains its behavior (MD3).
+  const defaultMode: MediaMode = flagsLoading
+    ? 'grid'
+    : (enabledModes.includes('grid') ? 'grid' : (enabledModes[0] ?? 'grid'));
 
   return (
     <MediaStoreProvider

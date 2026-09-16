@@ -22,7 +22,7 @@
  * Additive: the existing generic media viewer (app/media-viewer/[id]) and the
  * media tab are untouched; this is a separate, shell-only surface.
  */
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -33,8 +33,24 @@ import {
   FlatList,
   type ViewToken,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Video, ResizeMode, type AVPlaybackStatus } from 'expo-av';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ChevronLeft, MoreHorizontal, Play, MapPin, Compass, Check } from 'lucide-react-native';
+import {
+  ChevronLeft,
+  MoreHorizontal,
+  Play,
+  Pause,
+  MapPin,
+  Compass,
+  Check,
+  Volume2,
+  VolumeX,
+  Captions,
+  RotateCcw,
+  Rewind,
+  FastForward,
+} from 'lucide-react-native';
 
 import { color, space, radius, avatar, icon, dot } from '../../../theme/tokens.ts';
 import { CachedImage } from '../../../components/CachedImage.tsx';
@@ -246,17 +262,168 @@ function TopBar({
 
 function PerspectiveFrame({ media }: { media: MediaProjection }) {
   const uri = media.url ?? media.thumbnailUrl ?? null;
+  const videoRef = useRef<Video>(null);
+  const [isMuted, setIsMuted] = useState(true);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [isBuffering, setIsBuffering] = useState(false);
+  const [hasPlaybackError, setHasPlaybackError] = useState(false);
+  const [showCaptions, setShowCaptions] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const durationRef = useRef(media.durationMs ?? 0);
+
+  useEffect(() => {
+    AsyncStorage.getItem('media:muted')
+      .then((value) => {
+        if (value !== null) setIsMuted(value === 'true');
+      })
+      .catch(() => {});
+  }, []);
+
+  const togglePlay = useCallback(() => {
+    if (!videoRef.current) return;
+    setHasPlaybackError(false);
+    if (isPlaying) {
+      videoRef.current.pauseAsync().catch(() => {});
+    } else {
+      videoRef.current.playAsync().catch(() => setHasPlaybackError(true));
+    }
+    setIsPlaying((playing) => !playing);
+  }, [isPlaying]);
+
+  const seekBy = useCallback((deltaMs: number) => {
+    const video = videoRef.current;
+    if (!video || durationRef.current <= 0) return;
+    video.getStatusAsync().then((status) => {
+      if (!status.isLoaded) return;
+      const next = Math.max(0, Math.min(durationRef.current, status.positionMillis + deltaMs));
+      video.setPositionAsync(next).catch(() => {});
+    }).catch(() => {});
+  }, []);
+
+  const retryPlayback = useCallback(() => {
+    setHasPlaybackError(false);
+    setIsBuffering(true);
+    videoRef.current?.replayAsync().then(() => {
+      setIsPlaying(true);
+    }).catch(() => setHasPlaybackError(true));
+  }, []);
+
+  const toggleMute = useCallback(() => {
+    setIsMuted((muted) => {
+      const next = !muted;
+      AsyncStorage.setItem('media:muted', String(next)).catch(() => {});
+      return next;
+    });
+  }, []);
+
+  const handleStatus = useCallback((status: AVPlaybackStatus) => {
+    if (!status.isLoaded) {
+      if (status.error) setHasPlaybackError(true);
+      return;
+    }
+    durationRef.current = status.durationMillis ?? durationRef.current;
+    setProgress(status.durationMillis ? status.positionMillis / status.durationMillis : 0);
+    setIsBuffering(status.isBuffering);
+    setIsPlaying(status.isPlaying);
+  }, []);
+
   return (
     <View style={styles.frame}>
       {uri ? (
-        <CachedImage source={{ uri }} style={StyleSheet.absoluteFill} resizeMode="cover" fallbackLabel="" />
+        media.mediaType === 'video' && media.url ? (
+          <Video
+            ref={videoRef}
+            source={{ uri: media.url }}
+            style={StyleSheet.absoluteFill}
+            resizeMode={ResizeMode.CONTAIN}
+            shouldPlay={false}
+            isLooping={false}
+            isMuted={isMuted}
+            useNativeControls={false}
+            onPlaybackStatusUpdate={handleStatus}
+          />
+        ) : (
+          <CachedImage source={{ uri }} style={StyleSheet.absoluteFill} resizeMode="cover" fallbackLabel="" />
+        )
       ) : (
         <View style={[StyleSheet.absoluteFill, styles.frameFallback]} />
       )}
       {media.mediaType === 'video' ? (
-        <View style={styles.playBadge} pointerEvents="none">
-          <Play size={16} color={color.onInk} strokeWidth={2.2} fill={color.onInk} />
-        </View>
+        <>
+          {hasPlaybackError ? (
+            <Pressable
+              style={styles.playBadge}
+              onPress={retryPlayback}
+              accessibilityRole="button"
+              accessibilityLabel="Retry video playback"
+            >
+              <RotateCcw size={18} color={color.onInk} strokeWidth={2.2} />
+              <Text style={styles.controlLabel}>Retry</Text>
+            </Pressable>
+          ) : (
+            <Pressable
+              style={styles.playBadge}
+              onPress={togglePlay}
+              accessibilityRole="button"
+              accessibilityLabel={isPlaying ? 'Pause video' : 'Play video'}
+            >
+              {isPlaying
+                ? <Pause size={18} color={color.onInk} strokeWidth={2.2} />
+                : <Play size={18} color={color.onInk} strokeWidth={2.2} fill={color.onInk} />}
+            </Pressable>
+          )}
+          <View style={styles.videoControls} accessibilityLabel="Video controls">
+            <Pressable
+              style={styles.controlButton}
+              onPress={() => seekBy(-10_000)}
+              accessibilityRole="button"
+              accessibilityLabel="Rewind 10 seconds"
+            >
+              <Rewind size={16} color={color.onInk} />
+            </Pressable>
+            <Pressable
+              style={styles.controlButton}
+              onPress={toggleMute}
+              accessibilityRole="button"
+              accessibilityLabel={isMuted ? 'Unmute video' : 'Mute video'}
+            >
+              {isMuted ? <VolumeX size={16} color={color.onInk} /> : <Volume2 size={16} color={color.onInk} />}
+            </Pressable>
+            <Pressable
+              style={styles.controlButton}
+              onPress={() => seekBy(10_000)}
+              accessibilityRole="button"
+              accessibilityLabel="Forward 10 seconds"
+            >
+              <FastForward size={16} color={color.onInk} />
+            </Pressable>
+            {media.note ? (
+              <Pressable
+                style={[styles.controlButton, showCaptions && styles.controlButtonActive]}
+                onPress={() => setShowCaptions((visible) => !visible)}
+                accessibilityRole="button"
+                accessibilityLabel={showCaptions ? 'Hide captions' : 'Show captions'}
+                accessibilityState={{ selected: showCaptions }}
+              >
+                <Captions size={16} color={color.onInk} />
+              </Pressable>
+            ) : null}
+          </View>
+          <View
+            style={styles.videoProgressTrack}
+            accessibilityRole="progressbar"
+            accessibilityLabel="Video progress"
+            accessibilityValue={{ min: 0, max: 1, now: progress }}
+          >
+            <View style={[styles.videoProgressFill, { width: `${Math.round(progress * 100)}%` }]} />
+          </View>
+          {showCaptions && media.note ? (
+            <View style={styles.captionBox} accessibilityRole="text">
+              <Text style={styles.captionText}>{media.note}</Text>
+            </View>
+          ) : null}
+          {isBuffering ? <Text style={styles.bufferingLabel}>Loading video…</Text> : null}
+        </>
       ) : null}
     </View>
   );
@@ -437,6 +604,57 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(17,17,15,0.5)',
+  },
+  controlLabel: { color: color.onInk, fontSize: 11, fontWeight: '700' },
+  videoControls: {
+    position: 'absolute',
+    bottom: 14,
+    right: 14,
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+  },
+  controlButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(17,17,15,0.7)',
+  },
+  controlButtonActive: { backgroundColor: 'rgba(250,249,246,0.32)' },
+  videoProgressTrack: {
+    position: 'absolute',
+    left: 14,
+    right: 14,
+    bottom: 6,
+    height: 3,
+    borderRadius: 2,
+    backgroundColor: 'rgba(250,249,246,0.26)',
+  },
+  videoProgressFill: {
+    height: 3,
+    borderRadius: 2,
+    backgroundColor: color.signal,
+  },
+  captionBox: {
+    position: 'absolute',
+    left: 20,
+    right: 20,
+    bottom: 70,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: 'rgba(17,17,15,0.74)',
+  },
+  captionText: { color: color.onInk, fontSize: 14, lineHeight: 20, textAlign: 'center' },
+  bufferingLabel: {
+    position: 'absolute',
+    top: '52%',
+    alignSelf: 'center',
+    color: color.onInkMute,
+    fontSize: 12,
+    fontWeight: '700',
   },
 
   // Bottom overlay

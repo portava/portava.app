@@ -19,6 +19,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { fetchBlockedSet } from "./blocks.js";
 import { resolveProfileVisibility } from "./profileVisibility.js";
+import {
+  authorizeMediaAttachment,
+  authorizeMediaContext,
+} from "./mediaVisibility.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -106,10 +110,12 @@ export async function authorizeMediaAccess(
 ): Promise<boolean> {
   const cacheKey = `${viewerId}:${bucket}/${path}`;
   const hit = allowCache.get(cacheKey);
-  if (hit && Date.now() - hit < ALLOW_TTL_MS) return true;
+  // Contextual attachment/circle overrides can change independently of this
+  // process. Do not let the short allow-cache bypass those checks.
+  if (bucket === "profile-media" && hit && Date.now() - hit < ALLOW_TTL_MS) return true;
 
   const allow = await decide(sc, viewerId, bucket, path);
-  if (allow) allowCache.set(cacheKey, Date.now());
+  if (allow && bucket === "profile-media") allowCache.set(cacheKey, Date.now());
   if (allowCache.size > 5000) {
     const oldest = allowCache.keys().next().value as string | undefined;
     if (oldest) allowCache.delete(oldest);
@@ -194,14 +200,16 @@ async function decide(
   if (pathOwner === viewerId) return true;
 
   let owner = pathOwner;
+  let canonicalAssetId: string | null = null;
   try {
     const { data: asset } = await sc
       .from("media_assets")
-      .select("owner_user_id")
+      .select("id, owner_user_id")
       .eq("storage_bucket", bucket)
       .eq("storage_path", path)
       .maybeSingle();
     if ((asset as any)?.owner_user_id) {
+      canonicalAssetId = (asset as any).id ?? null;
       owner = (asset as any).owner_user_id;
       if (owner === viewerId) return true;
     }
@@ -254,7 +262,7 @@ async function decide(
   try {
     const { data: pm } = await sc
       .from("post_media")
-      .select("post_id, moderation_status, processing_status")
+      .select("post_id, media_asset_id, moderation_status, processing_status")
       .eq("storage_path", path)
       .maybeSingle();
     if (pm) {
@@ -277,9 +285,26 @@ async function decide(
       // already guard against.
       if (owner && owner === (post as any).author_id) {
         const v = postVisible(post, viewerId);
-        if (v === "allow") return true;
-        if (v === "trip") return isTripMember(sc, (post as any).trip_id, viewerId);
-        return false;
+        if (v === "allow") {
+          return authorizeMediaAttachment(
+            sc, viewerId, owner, (pm as any).media_asset_id ?? canonicalAssetId,
+            { entityType: "post", entityId: String((pm as any).post_id) },
+          );
+        }
+        if (v === "trip") {
+          const member = await isTripMember(sc, (post as any).trip_id, viewerId);
+          if (!member) return false;
+          if (!(await authorizeMediaContext(sc, viewerId, owner, {
+            contextType: "trip",
+            contextId: (post as any).trip_id,
+          }))) return false;
+        }
+        if (!(await authorizeMediaAttachment(
+          sc, viewerId, owner, (pm as any).media_asset_id ?? canonicalAssetId,
+          { entityType: "post", entityId: String((pm as any).post_id) },
+          { contextType: "trip", contextId: (post as any).trip_id },
+        ))) return false;
+        return true;
       }
     }
   } catch { /* fall through */ }
@@ -288,7 +313,7 @@ async function decide(
   try {
     const { data: posts } = await sc
       .from("posts")
-      .select("author_id, visibility, status, post_status, trip_id")
+      .select("id, author_id, visibility, status, post_status, trip_id")
       .overlaps("media_urls", urlForms)
       .limit(1);
     const post = (posts as any[])?.[0];
@@ -300,8 +325,24 @@ async function decide(
     // object may be legitimately reachable via a later branch, else §4 denies.
     if (post && owner && owner === post.author_id) {
       const v = postVisible(post, viewerId);
-      if (v === "allow") return true;
-      if (v === "trip") return isTripMember(sc, post.trip_id, viewerId);
+      if (v === "allow") {
+        return authorizeMediaAttachment(
+          sc, viewerId, owner, canonicalAssetId,
+          { entityType: "post", entityId: String((post as any).id ?? "") },
+        );
+      }
+      if (v === "trip") {
+        const member = await isTripMember(sc, post.trip_id, viewerId);
+        if (!member) return false;
+        if (!(await authorizeMediaContext(sc, viewerId, owner, {
+          contextType: "trip", contextId: post.trip_id,
+        }))) return false;
+        return authorizeMediaAttachment(
+          sc, viewerId, owner, canonicalAssetId,
+          { entityType: "post", entityId: String((post as any).id ?? "") },
+          { contextType: "trip", contextId: post.trip_id },
+        );
+      }
       return false;
     }
   } catch { /* fall through */ }
@@ -456,7 +497,11 @@ async function decide(
             .in("role", ["host", "co_host", "moderator"])
             .maybeSingle(),
         ]);
-        return !!(rsvp as any).data || !!(role as any).data;
+        if (!(rsvp as any).data && !(role as any).data) return false;
+        return authorizeMediaContext(sc, viewerId, hostId, {
+          contextType: "event",
+          contextId: String(gv.entity_id),
+        });
       }
       if (gv.entity_type === "trip") {
         // Fetch owner for block check — ownerFromPath() returns null for
@@ -472,7 +517,12 @@ async function decide(
         const trBlocked = await fetchBlockedSet(sc, viewerId);
         if (trBlocked === null) return false;
         if (trBlocked.has(tripOwnerId)) return false;
-        return isTripMember(sc, gv.entity_id, viewerId);
+        const member = await isTripMember(sc, gv.entity_id, viewerId);
+        if (!member) return false;
+        return authorizeMediaContext(sc, viewerId, tripOwnerId, {
+          contextType: "trip",
+          contextId: String(gv.entity_id),
+        });
       }
       return false;
     }

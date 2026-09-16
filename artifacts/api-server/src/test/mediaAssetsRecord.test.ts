@@ -14,6 +14,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { recordMediaAsset, completeVideoTranscode, type RecordAssetInput } from "../lib/mediaAssets.js";
+import { claimMediaProcessing } from "../services/media/MediaLifecycleService.js";
 
 // ── Minimal fake Supabase client ──────────────────────────────────────────────
 
@@ -352,5 +353,27 @@ describe("migration-2089 constraint simulation", () => {
     assert.equal(calls[0].row.processing_status, "ready");
     assert.equal(calls[0].row.width, null);
     assert.equal(calls[0].row.height, null);
+  });
+});
+
+describe("MediaLifecycleService — lost processing claim", () => {
+  it("does not return a claim when the conditional update returns zero rows", async () => {
+    const client = {
+      from(table: string) {
+        if (table !== "media_assets") return {
+          upsert: async () => ({ error: null }),
+        };
+        const state: any = {};
+        const builder: any = {
+          select: () => builder,
+          eq: () => builder,
+          maybeSingle: async () => ({ data: { id: "asset-race", processing_status: "processing", processing_attempt_count: 0, processing_terminal: false }, error: null }),
+          update: (row: any) => { state.row = row; return builder; },
+          then: (resolve: any) => Promise.resolve({ data: null, error: null }).then(resolve),
+        };
+        return builder;
+      },
+    };
+    assert.equal(await claimMediaProcessing(client as any, "asset-race"), null);
   });
 });

@@ -9,6 +9,7 @@ import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import { authorizeMediaAccess, ownerFromPath, _clearMediaAccessCache } from "../lib/mediaAccess.js";
+import { authorizeMediaAttachment, authorizeMediaContext } from "../lib/mediaVisibility.js";
 import mediaFileRouter from "../routes/mediaFile.js";
 
 const SB = "http://sb.example.test";
@@ -46,6 +47,8 @@ interface FakeState {
   events?: any[];
   eventRsvps?: any[];
   eventRoles?: any[];
+  visibilityOverrides?: any[];
+  attachments?: any[];
 }
 
 function makeClient(state: FakeState = {}) {
@@ -72,7 +75,9 @@ function makeClient(state: FakeState = {}) {
       table === "generated_visuals" ? state.generatedVisuals ?? [] :
       table === "events" ? state.events ?? [] :
       table === "event_rsvps" ? state.eventRsvps ?? [] :
-      table === "event_roles" ? state.eventRoles ?? [] : [];
+      table === "event_roles" ? state.eventRoles ?? [] :
+      table === "circle_member_visibility_overrides" ? state.visibilityOverrides ?? [] :
+      table === "media_attachments" ? state.attachments ?? [] : [];
     // Column projection for "profiles" only: the avatar-gating tests below
     // must actually exercise the SELECT string in mediaAccess.ts, not just
     // the row data — a mock that ignores select() and always returns full
@@ -542,6 +547,67 @@ describe("authorizeMediaAccess — the matrix", () => {
       blocks: [{ blocker_id: OWNER, blocked_id: VIEWER }],
     });
     assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", gvTripPath), false);
+  });
+});
+
+describe("MD43 — attachment and circle visibility overrides", () => {
+  it("honors hide_from_me and hide_me_from in either direction", async () => {
+    const context = { contextType: "trip" as const, contextId: TRIP };
+    assert.equal(await authorizeMediaContext(makeClient({
+      visibilityOverrides: [{
+        user_id: VIEWER, target_user_id: OWNER, context_type: "trip", context_id: TRIP,
+        direction: "hide_from_me", hidden: true,
+      }],
+    }) as any, VIEWER, OWNER, context), false);
+    assert.equal(await authorizeMediaContext(makeClient({
+      visibilityOverrides: [{
+        user_id: OWNER, target_user_id: VIEWER, context_type: "trip", context_id: TRIP,
+        direction: "hide_me_from", hidden: true,
+      }],
+    }) as any, VIEWER, OWNER, context), false);
+    assert.equal(await authorizeMediaContext(makeClient({
+      visibilityOverrides: [{
+        user_id: VIEWER, target_user_id: OWNER, context_type: "trip", context_id: TRIP,
+        direction: "hide_from_me", hidden: false,
+      }],
+    }) as any, VIEWER, OWNER, context), true);
+  });
+
+  it("applies attachment private/public overrides while preserving owner access", async () => {
+    const sc = makeClient({
+      attachments: [{
+        media_asset_id: "d1000000-0000-4000-a000-000000000001",
+        entity_type: "post", entity_id: "e1000000-0000-4000-a000-000000000001",
+        visibility_override: "private",
+      }],
+    }) as any;
+    assert.equal(await authorizeMediaAttachment(
+      sc, VIEWER, OWNER, "d1000000-0000-4000-a000-000000000001",
+      { entityType: "post", entityId: "e1000000-0000-4000-a000-000000000001" },
+    ), false);
+    assert.equal(await authorizeMediaAttachment(
+      sc, OWNER, OWNER, "d1000000-0000-4000-a000-000000000001",
+      { entityType: "post", entityId: "e1000000-0000-4000-a000-000000000001" },
+    ), true);
+  });
+
+  it("fails closed when override resolution errors and never treats a storage key as ownership", async () => {
+    const errorClient = {
+      from() {
+        const b: any = {
+          select() { return b; }, eq() { return b; }, maybeSingle() {
+            return Promise.resolve({ data: null, error: new Error("db unavailable") });
+          },
+        };
+        return b;
+      },
+    } as any;
+    assert.equal(await authorizeMediaContext(errorClient, VIEWER, OWNER, {
+      contextType: "event", contextId: TRIP,
+    }), false);
+    assert.equal(await authorizeMediaAttachment(errorClient, VIEWER, OWNER, "asset", {
+      entityType: "post", entityId: TRIP,
+    }), false);
   });
 });
 

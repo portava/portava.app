@@ -34,10 +34,70 @@ import {
   MEDIA_INTENT_KINDS,
   type MediaIntentKind,
 } from "../services/media/MediaActionResolver.js";
+import { authorizeMediaContext } from "../lib/mediaVisibility.js";
+import {
+  softDeleteMediaAsset,
+  retryMediaProcessing,
+} from "../services/media/MediaLifecycleService.js";
 
 const router = Router();
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// ── Owner lifecycle actions ───────────────────────────────────────────────────
+// These routes intentionally return probe-safe not_found for missing and
+// unauthorized assets; ownership-sensitive details never cross the boundary.
+router.delete(
+  "/media/:id",
+  asyncHandler(async (req, res) => {
+    const auth = await requireUser(req, res);
+    if (!auth) return;
+    const sc = getServiceClient();
+    if (!sc) {
+      sendError(res, "server_not_configured");
+      return;
+    }
+    const id = String(req.params.id ?? "");
+    if (!UUID_RE.test(id)) {
+      sendError(res, "invalid_payload", "Invalid media id");
+      return;
+    }
+    const result = await softDeleteMediaAsset(sc, id, auth.user.id, { logger: req.log });
+    if (!result.ok) {
+      sendError(res, "not_found", "Media item not found");
+      return;
+    }
+    res.status(202).json({
+      deleted: true,
+      alreadyDeleted: result.alreadyDeleted,
+      purge: result.purgeScheduled ? "pending" : "completed",
+    });
+  }),
+);
+
+router.post(
+  "/media/:id/retry",
+  asyncHandler(async (req, res) => {
+    const auth = await requireUser(req, res);
+    if (!auth) return;
+    const sc = getServiceClient();
+    if (!sc) {
+      sendError(res, "server_not_configured");
+      return;
+    }
+    const id = String(req.params.id ?? "");
+    if (!UUID_RE.test(id)) {
+      sendError(res, "invalid_payload", "Invalid media id");
+      return;
+    }
+    const result = await retryMediaProcessing(sc, id, auth.user.id);
+    if (!result.ok) {
+      sendError(res, "not_found", "Media item not found");
+      return;
+    }
+    res.status(202).json({ retryQueued: true, alreadyQueued: result.alreadyQueued });
+  }),
+);
 
 // ── GET /media/:id/actions ────────────────────────────────────────────────────
 router.get(
@@ -113,6 +173,14 @@ router.post(
     const viewer = await resolveViewer(sc, auth.user.id, { needFollows: true });
     const row = await loadEligibleMediaRow(sc, viewer, id);
     if (!row) {
+      sendError(res, "not_found", "Media item not found");
+      return;
+    }
+    if ((row as any).trip_id && (row as any).author_id &&
+      !(await authorizeMediaContext(sc, auth.user.id, String((row as any).author_id), {
+        contextType: "trip",
+        contextId: String((row as any).trip_id),
+      }))) {
       sendError(res, "not_found", "Media item not found");
       return;
     }

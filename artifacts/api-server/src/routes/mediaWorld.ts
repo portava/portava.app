@@ -45,6 +45,7 @@ import {
   buildMediaMapProjection,
 } from "../services/media/MediaProjectionService.js";
 import { resolveExperience } from "../services/media/MediaExperienceResolver.js";
+import { filterMediaProjectionVisibility } from "../lib/mediaVisibility.js";
 
 const router = Router();
 
@@ -63,7 +64,14 @@ function parseCity(raw: unknown): string | null {
  * In the healthy case nothing is removed; if anything ever is, it is logged so
  * the leak is visible rather than silent.
  */
-function sendProjection(res: any, route: string, payload: unknown): void {
+async function sendProjection(res: any, route: string, payload: unknown, sc?: any, viewerId?: string): Promise<void> {
+  if (sc && viewerId) {
+    payload = await filterMediaProjectionVisibility(sc, viewerId, payload);
+    if (payload === null) {
+      sendError(res, "db_error", "Media visibility could not be resolved.");
+      return;
+    }
+  }
   const { value, removed } = scrubPreciseLocation(payload);
   if (removed > 0) {
     logger.error(
@@ -94,7 +102,7 @@ router.get(
     }
     const viewer = await resolveViewer(sc, auth.user.id, { needFollows: false });
     const projection = await buildWorldProjection(sc, viewer, parseCity(req.query.city), nowMs);
-    sendProjection(res, "world", projection);
+    await sendProjection(res, "world", projection, sc, auth.user.id);
   }),
 );
 
@@ -123,7 +131,7 @@ router.get(
     }
     const viewer = await resolveViewer(sc, auth.user.id, { needFollows: false });
     const projection = await buildPlaceProjection(sc, viewer, placeId, nowMs);
-    sendProjection(res, "place", projection);
+    await sendProjection(res, "place", projection, sc, auth.user.id);
   }),
 );
 
@@ -155,7 +163,7 @@ router.get(
     if (!projection) {
       // Not visible to this viewer (private / blocked / ineligible) or not found.
       // A well-formed empty shape rather than a probe-able 404.
-      sendProjection(res, "experience", {
+      await sendProjection(res, "experience", {
         id: experienceId,
         kind: null,
         title: null,
@@ -166,11 +174,11 @@ router.get(
         freshness: "none",
         currentState: { live: false, claims: [], crowdLabel: null },
         heroMedia: [],
-        generatedAt: new Date(nowMs).toISOString(),
-      });
+         generatedAt: new Date(nowMs).toISOString(),
+       }, sc, auth.user.id);
       return;
     }
-    sendProjection(res, "experience", { ...projection, available: true, generatedAt: new Date(nowMs).toISOString() });
+    await sendProjection(res, "experience", { ...projection, available: true, generatedAt: new Date(nowMs).toISOString() }, sc, auth.user.id);
   }),
 );
 
@@ -195,7 +203,7 @@ router.get(
     // The People lens is explicitly social — it needs the follow graph.
     const viewer = await resolveViewer(sc, auth.user.id, { needFollows: true });
     const projection = await buildPeopleProjection(sc, viewer, nowMs);
-    sendProjection(res, "people", projection);
+    await sendProjection(res, "people", projection, sc, auth.user.id);
   }),
 );
 
@@ -219,7 +227,7 @@ router.get(
     }
     const viewer = await resolveViewer(sc, auth.user.id, { needFollows: false });
     const projection = await buildMyWorldProjection(sc, viewer, nowMs);
-    sendProjection(res, "me", projection);
+    await sendProjection(res, "me", projection, sc, auth.user.id);
   }),
 );
 
@@ -245,7 +253,7 @@ router.get(
     }
     const viewer = await resolveViewer(sc, auth.user.id, { needFollows: !placeId });
     const projection = await buildTimelineProjection(sc, viewer, { placeId, nowMs });
-    sendProjection(res, "timeline", projection);
+    await sendProjection(res, "timeline", projection, sc, auth.user.id);
   }),
 );
 
@@ -269,7 +277,7 @@ router.get(
     }
     const viewer = await resolveViewer(sc, auth.user.id, { needFollows: false });
     const projection = await buildMediaMapProjection(sc, viewer, parseCity(req.query.city), nowMs);
-    sendProjection(res, "map", projection);
+    await sendProjection(res, "map", projection, sc, auth.user.id);
   }),
 );
 
