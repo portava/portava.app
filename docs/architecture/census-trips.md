@@ -8803,3 +8803,115 @@ differently-wrong one.
 Guards at the end of this pass: `check:doc-citations` **0**, `check:census-freshness`
 **0**, `check:census-integrity` **0**, `check:trip-policy-callsites` **0**,
 `npx tsc --noEmit -p .` **0**.
+
+---
+
+## §74 An INDEPENDENT check of §73 at `a97bfdac0`: the `W` column holds, and the discriminating crew read is not consumed by the one caller it was built for
+
+*Written 2026-09-16 by an independent reviewer with no lane in this tree, sent to
+check §73 and this census's ledger entries against the code rather than to inherit
+them. Measured against `a97bfdac0`. **NO VERDICT MOVES.** `head_commit` is NOT
+re-declared here and `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json`
+is NOT edited; §74.4 says what this licenses.*
+
+### §74.1 §73's central claim, re-derived
+
+§73.1 was sent to test §70.5's sentence *"No `W` row in census-trips can reach
+`C` by code alone"* and reported it holds. Re-checked here at the one point that
+is mechanical: `artifacts/api-server/src/lib/capability/production-applied-migrations.json:47#2420_trip_kernel_foundation`
+is the production ledger, and **not one of 2760-2795 appears in it**. So the
+OWNER/BOTH classification of the `W` column is not a judgement call for the
+majority of those rows — it is a fact about what is deployed. **§73's refusal to
+claim any closure is confirmed**, and this reviewer reached it independently.
+
+### §74.2 The injected clock — a real defect closed, and no row rests on the defect
+
+`artifacts/api-server/src/domain/trips/invariants/tripStatus.ts:51#export function computeTripStatus`
+gained a trailing `now` parameter defaulted to the wall clock, and
+`artifacts/api-server/src/domain/trips/projections/TripHealthProjection.ts:82#t.timezone ?? null, now)`
+now threads its injected instant into it. Before, the projection derived every
+other field from `now` and this one from `new Date()`, so the field saying whether
+a trip is OVER could disagree with the phase beside it.
+
+**Checked for verdict impact and there is none, in either direction.**
+The parameter is additive with a wall-clock default, so every other call site is
+byte-identical in behaviour — verified by reading all four
+(`artifacts/api-server/src/routes/trips.ts:317#computeTripStatus`,
+`artifacts/api-server/src/routes/trips.ts:925#computeTripStatus`,
+`artifacts/api-server/src/routes/trips-expansion.ts:520#computeTripStatus` and
+`artifacts/api-server/src/routes/trips-expansion.ts:3287#computeTripStatus`), none
+of which passes one. `TR36` stays `C` — the lifecycle is still computed from
+canonical facts — and `TR429`'s purity claim is untouched. **No row in this census
+asserted the single-clock property**, which is why closing the defect closes no
+row: the projection was wrong in a way nothing here graded.
+
+### §74.3 A FINDING §73 does not name: the discriminating crew read has no consumer, and the interim behaviour moved the wrong way
+
+§73.2 built a discriminating membership API that keeps DENY and UNKNOWN apart, and
+§73.5 records the remaining work honestly — *"`isAcceptedTripMember`'s two callers
+… the conversion is the remaining work"*. **That entry names one function. There
+is a second, and it is the one whose own header states the cost of getting it
+wrong.**
+
+`artifacts/api-server/src/domain/trips/invariants/tripMembership.ts:76#export async function readAcceptedTripMembership`
+and its crew sibling return
+`artifacts/api-server/src/domain/trips/invariants/tripMembership.ts:53#export interface MembershipRead`.
+The crew form exists precisely because a wrong `false` on the crew signal is not a
+safe default: the module states that an unreadable roster makes *"15 people each
+asserting their own solo trip … read as 15 independent groups — a SPLIT, i.e. the
+exact leak the crew signal exists to prevent"*. **Its only caller in the tree is
+services/intel/IntelCaptureService.ts, and that caller still calls the DISCARDING
+wrapper** — grep at this tree returns exactly one non-test call site, and it is
+the wrapper, not the discriminating read. So the API built to stop the split is
+reached by nobody.
+
+**And the wrapper's behaviour on that path moved, in the direction that makes the
+split MORE likely rather than less.** Read at both commits:
+
+| an unreadable `trips` row, 3-person crew | at `1fe72289b` | at `a97bfdac0` |
+|---|---|---|
+| `acceptedCrewSize` | the owner is dropped but `trip_members` is still counted — returns **2** | `tripErr` short-circuits the whole function — returns **0** |
+| `isSharedCrewMember` for an accepted member | `true` — the crew token is honoured | **`false`** — the crew splits |
+
+This is a narrowing, and for AUTHORIZATION a narrowing is always safe — nothing is
+granted on an unread roster, and that property is intact and is the reason the
+change is right in general. For THIS consumer the module's own header says the
+`false` is the defect. **The code did not become wrong; the wrapper's wrong
+answer simply became unconditional where it used to be occasional, while the
+right answer sits one function away unconsumed.**
+
+**NO VERDICT MOVES ON THIS.** Every census was searched: no row in `census-trips`,
+`census-map`, `census-sensing`, `census-telegraph` or `census-trust` grades the
+intel crew token or the party-grouping behaviour — the four censuses that name
+that service grade observation, claim, correction and trust context, none of
+which is this path. **It is reported as an open product finding, not as a row**,
+and no id is invented for it, on §42.3's rule in `census-discovery.md`. The
+remedy is the one §73.5 already describes for the sibling function: convert the
+caller to the discriminating read and decide what a crew that cannot be read
+should do — which is a retry, not a split.
+
+### §74.4 What this licenses
+
+Re-measured here: §73.1's production-ledger derivation; the injected clock and all
+four other `computeTripStatus` call sites; the trip-membership module at both
+commits and its consumer. Not re-measured: the six swallowed-read sites §73.2
+built beyond the membership module, `routes/tripCrewLocation.ts`'s seven
+endpoints, `domain/trips/services/tripReadiness.ts`, `TripCrewLiveShareService.ts`,
+`TripFreedomConsumers.ts`, `server/trips/readRoutes/tripProjections.ts`,
+`scripts/auditMigrationsVsLive.ts` and the five test suites the ledger entry names
+— nor the other 451 rows.
+
+**This census's `head_commit` should NOT advance to `a97bfdac0` on this section
+alone.** Fourteen counted files are named in its ledger entry; four were re-read
+here. §73 measured the rest and says so in its own terms; if the coordinator
+advances the declaration the licence comes from §73 together with this check, and
+the declaration should name both rather than letting either imply the other.
+
+**Headline unchanged** — no row moves in this section. **Guards at this tree:**
+`check:census-freshness` **0**, `check:census-scope-coverage` **0**,
+`check:census-integrity` **0**, `check:census-row-move-labels` **0**,
+`check:doc-citations` **0**, `check:citation-targets` **0**.
+`check:write-path-columns`, `check:missing-live-columns`,
+`check:authorization-contract`, `check:media-objects` and
+`check:rank-events-surfaces` exit **2** without live credentials — **UNVERIFIED,
+not green**; nothing above rests on them.

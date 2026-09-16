@@ -2105,3 +2105,99 @@ The headline table, restated from the rows under LAST-STATEMENT-WINS:
 BUILT-BUT-WRONG. §18's own note records the integration lead being caught by this same guard for
 leaving a headline behind a row move; leaving it behind again would be worse for having been
 warned.*
+
+---
+
+## §20 — An INDEPENDENT check of this census's ledger arguments at `a97bfdac0`. NO ROW MOVES; one sibling census's statement is corrected and one pre-existing measurement defect is brought out of the JSON
+
+*Written 2026-09-16 by an independent reviewer with no lane in this tree, sent to
+check the arguments in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json`
+rather than to inherit them. Measured against `a97bfdac0`. **`head_commit` is NOT
+re-declared here and the ledger is NOT edited.** §20.4 says what this licenses.*
+
+### 20.1 The five counted files, and the claims checked rather than read
+
+This census's ledger entries cover `routes/messaging.ts`, `routes/discovery.ts`,
+`routes/tripCrewLocation.ts`, `routes/profile.ts` and `routes/discoverySearch.ts`,
+and each argues per ROW that no Trust verdict can move. **The falsifiable claims
+were re-derived at both commits.** Every one holds:
+
+| the claim | how it was checked | result |
+|---|---|---|
+| `routes/messaging.ts` lines 498-514 — A12's `msgPerms` seam — are byte-identical | `diff` of that range at `1fe72289b` and `a97bfdac0` | **identical** |
+| `artifacts/api-server/src/routes/messaging.ts:691#const senderRestrictions = await getRestrictionState(sc, user.id);` — §16's `getRestrictionState` caller — is byte-identical | same | **identical** |
+| `routes/messaging.ts` is the same length, so ~49 citations keep their lines | `wc -l` at both commits | **4,081 = 4,081**. (The entry prints "4,082"; the PROPERTY it asserts is true, the number is off by one.) |
+| `routes/discovery.ts` gains no `date_of_birth` read and no `loadTravelerIdentity` call | `grep -c` at both commits | **0 and 0 at both** |
+| `routes/profile.ts`'s five cited lines are byte-identical | `sed`+compare at both commits for 117, 445, 504, 595, 600 | **all five identical** |
+| `routes/profile.ts`'s `date_of_birth` count is unchanged | `grep -c` at both commits | **4 = 4** (file grew 2,176 → 2,330 lines) |
+
+**No Trust verdict moves**, and this reviewer reached that independently rather
+than by accepting it. `A12`, `TV-P2`, `TV-5b`, `TV-0e`/`TV-2c` and `TRV2-08` all
+stand exactly where §16-§19 left them. The headline is unchanged.
+
+### 20.2 The `routes/profile.ts` retranslation site, cited — and `census-telegraph.md` §27.5 corrected
+
+`census-telegraph.md` §27.5 records, as a live open item, that the second caller
+of the shared retranslation gate *"makes the same prior-language read"* as
+`routes/messaging.ts` and *"is not closed"*. **Both halves are false at
+`a97bfdac0`**, and the cited evidence belongs here because this census is the one
+that counts the file.
+
+- **It is not a prior-language read and never was.** The handler performs no
+  change detection: the write has already run, so no prior value is in scope —
+  `artifacts/api-server/src/routes/profile.ts:954#this branch has no change`
+  says so in the file itself. What it reads is the PREFERENCE:
+  `artifacts/api-server/src/routes/profile.ts:979#const { data: prefRow, error: prefErr } = await sc`.
+- **The blast radius is the OPPOSITE of `messaging.ts`'s.** There, a swallowed
+  read looked like a language CHANGE and billed a ~200-message sweep to a paid
+  provider on every failing save. Here, a swallowed read looked like "preference
+  unknown", which the gate correctly fails closed on — so it SUPPRESSED a sweep
+  the user was entitled to, and a user with auto-translate ON silently kept
+  old-language translations, permanently, because the sweep is fire-and-forget.
+- **It is closed.** The error is bound and the loss reported at
+  `artifacts/api-server/src/routes/profile.ts:987#auto_translate_messages unreadable`,
+  and the gate call carries an explicit non-error term so the property survives a
+  later permissive default. **The ANSWER deliberately does not move**: the write
+  has committed, so a 503 would tell a client to retry a save that succeeded.
+
+**This moves no verdict in either census.** It is an ACCOUNTING correction, and
+it is recorded because §27.5 hands the next reader a to-do that is done and a
+description that would send them hunting the wrong defect.
+
+### 20.3 `§12`/`§14.6`'s "4 `date_of_birth` reads" in `routes/discovery.ts` is ZERO, and has been since before `1fe72289b`
+
+The ledger entry for this census names this and it should not live only in a JSON
+file, so it is restated in the document it is about. §12's per-file table scores
+`routes/discovery.ts` at **four** `date_of_birth` reads. A literal `grep -c` of
+that file returns **zero** — at `a97bfdac0` and at this census's own declared
+`head_commit` `1fe72289b`. Discovery reaches the age signal through
+`resolveGateAge`, not by naming the column.
+
+**`TV-5b` does not move**, because the load-bearing column of that same table row
+is `loadTravelerIdentity: 0`, which is confirmed **0** at both commits. This is an
+ACCOUNTING correction to a measurement, owed to the next `census-trust` pass, and
+it is **not** caused by anything that changed since `1fe72289b`.
+
+### 20.4 What this licenses
+
+Re-measured here: the six claims in §20.1, the `routes/profile.ts` retranslation
+site, and §12's `date_of_birth` count. Not re-measured: the other 108 rows, and
+in particular the `routes/tripCrewLocation.ts` membership change, whose Trust-side
+argument (it is upstream of the restriction gate, not in it) was read but not
+re-derived here.
+
+**This census's `head_commit` CAN truthfully advance to `a97bfdac0`.** Five
+counted files changed; four of the five had every Trust claim resting on them
+re-derived at both commits, and the fifth — `routes/discoverySearch.ts` — is
+covered by the five-hunk enumeration checked independently in
+`census-discovery.md` §44. That is a statement about the files that moved, not a
+certification of the 108 rows: the declaration starts a clock and certifies no
+past.
+
+**Guards at this tree:** `check:census-freshness` **0**,
+`check:census-scope-coverage` **0**, `check:census-integrity` **0**,
+`check:census-row-move-labels` **0**, `check:doc-citations` **0**,
+`check:citation-targets` **0**. `check:write-path-columns`,
+`check:missing-live-columns`, `check:authorization-contract`,
+`check:media-objects` and `check:rank-events-surfaces` exit **2** without live
+credentials — **UNVERIFIED, not green**; no claim above rests on them.

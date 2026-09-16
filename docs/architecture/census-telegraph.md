@@ -7870,3 +7870,137 @@ addition sum — §24's own correction records what happens when a headline is
 arrived at by adding a pass's moves to the previous headline — and it certifies
 nothing about the other 448 rows, which were read in this pass and not
 re-measured.
+
+---
+
+## §29 — An INDEPENDENT check of §27 and §28's ledger arguments at `a97bfdac0`: both hold, and §27.5 says two things about routes/profile.ts that are false
+
+*Written 2026-09-16 by an independent reviewer with no lane in this tree, sent to
+check the arguments in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json`
+rather than to inherit them. Measured against `a97bfdac0`. **No verdict of this
+census moves.** `head_commit` is NOT re-declared here and the ledger is NOT
+edited; §29.4 states what this licenses.*
+
+### 29.1 §27's zero-shift claim, re-derived
+
+§27 and its ledger entry both rest on a property rather than on a promise: that
+`artifacts/api-server/src/routes/messaging.ts` changed `+23/-23` with **no line
+moving**, so ~49 citations across three censuses kept pointing at the right code.
+Re-derived at both commits by this reviewer:
+
+- `git diff --stat 1fe72289b..a97bfdac0` on that path reads **23 insertions, 23
+  deletions**.
+- The file is **4,081 lines** at `1fe72289b` and **4,081 lines** at `a97bfdac0`.
+  (§27's entry and the `census-trust.md` entry both say "4,082"; `wc -l` says
+  4,081 at both commits. The PROPERTY they are asserting — that the count is the
+  same — is true; the number they print is off by one, a final-newline artefact
+  and nothing else. Recorded because a number in an argument should be right.)
+- `check:doc-citations` reports **0** unresolvable citations and **0** broken
+  anchors at this tree.
+
+**The claim holds.** `T344` and `T363` stay `W` on their own stated ceilings —
+§19's fourteen sites in `routes/telegraph.ts`, `routes/telegraphChat.ts` and
+`routes/telegraphStream.ts`, none of which is in `routes/messaging.ts`.
+
+### 29.2 §27.5 is FALSE in two places about profile.ts, and the second is now stale as well as wrong
+
+*File names in this subsection are written in PLAIN TEXT, without line pointers,
+for the reason §27.5 itself gives: neither file is a Telegraph behaviour this
+census grades, and check:census-scope-coverage is right to expect a cited file to
+be a watched one. **The cited evidence for everything below is in
+`census-trust.md` §20**, which is the census that counts routes/profile.ts.*
+
+§27.5's second red-flag bullet reads, of the shared gate module
+lib/retranslateGate.ts:
+
+> *"the gate module lib/retranslateGate.ts is shared with a second caller,
+> routes/profile.ts, **which makes the same prior-language read** and was NOT
+> touched here. **That second call site is not closed and is not this section's
+> to close.**"*
+
+Both emphasised clauses are false at `a97bfdac0`, and the first was false when it
+was written.
+
+**(1) routes/profile.ts does not make a prior-language read, and never did.** It
+performs no change detection at all: the PATCH handler has already written the
+new language by the time it reaches the gate, so no prior value is in scope, and
+the file's own comment says exactly that. What it reads is the
+auto_translate_messages PREFERENCE, which feeds the same gate through a different
+argument. **The blast radius is the OPPOSITE of the one §27 describes for
+routes/messaging.ts.** There, a swallowed read bound the prior language to null,
+the gate read that as A CHANGE, and every failing save billed a ~200-message
+sweep to a PAID provider. Here, a swallowed read handed the gate an undefined
+preference, which it correctly reads as "unknown, fail closed" — so the failure
+SUPPRESSED a sweep the user was entitled to, and a user with auto-translate ON
+kept their old-language translations permanently and silently, because the sweep
+is fire-and-forget and is never retried. Same module, same swallow, opposite
+direction. §27.5 called it "the same read"; it is not, and that distinction is
+precisely why the discrimination belongs at each call site rather than inside the
+gate — which is the ruling §27 itself made and then mis-stated the evidence for.
+
+**(2) That call site IS closed, at `a97bfdac0`.** The error is bound and the loss
+is logged, and the gate call carries an explicit non-error term so the property
+survives anyone later giving the preference a permissive default. Four further
+sites in the same file were bound in the same change. The ANSWER does not move,
+on purpose: "could not read the preference" must keep meaning "do not spend", and
+the profile write has already committed, so a 503 would tell a client to retry a
+save that succeeded.
+
+**Neither correction moves a Telegraph verdict**, and neither is a verdict at
+all: §27.5 is a "WHAT WOULD TURN THIS RED" register, routes/profile.ts is in no
+Telegraph row's evidence, and §27.5 itself says — correctly — that naming a
+neighbour is not grading it. **This is an ACCOUNTING correction.** It is recorded
+here rather than edited into §27.5 because the corpus is append-only, and it is
+recorded at all because §27.5 hands the next reader a live to-do item that has
+been done, and a characterisation of it that would send them looking for the
+wrong defect in the wrong direction.
+
+### 29.3 A file this census's verdicts rest on changed, and nothing aged
+
+*Plain text again, and for the same reason; the cited evidence is in
+`census-trips.md` §74.*
+
+The trip-membership invariant module under domain/trips/invariants/ gained 121
+lines between `1fe72289b` and `a97bfdac0`, and **four of its reads left** the
+repository's unchecked-reads allowlist. It is not in this census's CENSUS_SCOPE
+and it is named in no acknowledgement for this census — so
+`check:census-freshness` reported this document ACKNOWLEDGED while a file two of
+its statements rest on moved underneath it. **That is the shape of the gap, and
+it is structural: the freshness model ages a census on the files it CITES, and a
+verdict can rest on a file that a cited file CALLS.** Stated as a finding about
+the instrument, not as a complaint about any lane.
+
+**Checked, and nothing moves.** §11.11's `T278` ceiling paragraph states that
+*"the `catch` in `resolveRequestOrigin` is currently unreachable, because
+`isAcceptedTripMember` has its own try/catch"*. At `a97bfdac0` that is still
+exactly true, and it is true BY DESIGN rather than by luck: a new discriminating
+read that keeps DENY and UNKNOWN apart was added beside it, and
+`isAcceptedTripMember` was deliberately left as a NON-THROWING wrapper over that
+read — because, in the module's own words, its two callers are outside its lane
+and neither has a catch for it. One of those two callers is this census's own
+`artifacts/api-server/src/domain/telegraph/policies/requestOrigin.ts:49#import { isAcceptedTripMember }`.
+An unreadable roster still answers `false`, so a failed membership read still
+cannot resolve to `verified`, which is `P24`'s named attack. `T278` stays `W`
+for the two reasons §11.11 gives: no database has 2813, and five of six origins
+are unverifiable in principle.
+
+### 29.4 What this licenses, and what it does not
+
+Re-measured here: §27's zero-shift property; `T344`/`T363`'s stated ceiling;
+`T278`'s unreachable-catch claim and the trip-membership hop behind it. Not
+re-measured: everything else, including the three moves §28 records
+(`T178` `N`→`C`, `T233` `N`→`W`, `T416` `N`→`W`) and the other 448 rows.
+
+**This census's `head_commit` should NOT advance to `a97bfdac0` on this section
+alone.** Eleven counted files are named in its ledger entries; four were re-read
+here. The licence, if the coordinator grants one, has to come from §27 and §28's
+own measurements together with this check, and the declaration should say so.
+
+**Headline unchanged**, at §28.7's C 231 / W 159 / N 58 / X 3 — no row moves in
+this section. **Guards at this tree:** `check:census-freshness` **0**,
+`check:census-scope-coverage` **0**, `check:census-integrity` **0**,
+`check:census-row-move-labels` **0**, `check:doc-citations` **0**,
+`check:citation-targets` **0**. `check:write-path-columns`,
+`check:missing-live-columns`, `check:authorization-contract`,
+`check:media-objects` and `check:rank-events-surfaces` exit **2** without live
+credentials — **UNVERIFIED, not green**, and nothing above rests on them.
