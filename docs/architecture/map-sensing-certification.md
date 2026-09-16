@@ -181,6 +181,79 @@ No acceptance denominator was changed and no test was skipped or disabled.
    fully-enabled timestamps. This report establishes only merged construction
    and offline verification.
 
+## Physical-device verification ledger
+
+**Attempt date:** 2026-09-16
+**Availability result:** **BLOCKED — no physical iOS or Android devices were
+available.**
+**Evidence collected:** Operator confirmation that neither platform was
+available. No screenshots, recordings, OS diagnostics, battery measurements,
+network-condition traces, or native MapLibre observations were produced.
+
+This is a failed prerequisite, not a product pass or failure. Simulator, web,
+unit, and component evidence must not be entered in this ledger as a substitute
+for a physical-device result.
+
+| Scenario | iOS | Android | Required evidence |
+|---|---|---|---|
+| Enrollment and permission grant/denial | **NOT RUN** | **NOT RUN** | Screen recording plus OS permission state |
+| Background contribution while app is backgrounded and suspended | **NOT RUN** | **NOT RUN** | Timestamped client/server audit events with identifiers redacted |
+| Credential expiry and replay refusal | **NOT RUN** | **NOT RUN** | Device-visible refusal and redacted server response/audit event |
+| Consent revocation stops contribution | **NOT RUN** | **NOT RUN** | Before/after recording and absence of post-revocation writes |
+| Device unlink revokes its credential | **NOT RUN** | **NOT RUN** | Unlink recording and subsequent refused contribution |
+| Semantic zoom bands from world through venue | **NOT RUN** | **NOT RUN** | Recording showing each band and its zoom level |
+| Observed flow is solid; inferred cause is dashed | **NOT RUN** | **NOT RUN** | Native MapLibre screenshots at the same viewport |
+| LineString, direction/arrow, collision and pan/zoom stability | **NOT RUN** | **NOT RUN** | Recording across rotate, pitch, zoom and pan |
+| Object select, long press, action row and canonical handoff | **NOT RUN** | **NOT RUN** | Recording ending on the canonical destination |
+| Warm-cache airplane-mode hydration | **NOT RUN** | **NOT RUN** | Before/offline/after recording with cached timestamp visible |
+| Expired cached objects never appear live | **NOT RUN** | **NOT RUN** | Clock/timestamp evidence and resulting stale/removed UI |
+| Degraded network and recovery | **NOT RUN** | **NOT RUN** | Network conditioning settings and recovery recording |
+| Partial rollout and legacy fallback | **NOT RUN** | **NOT RUN** | Flag/cohort state plus resulting Map recording |
+| VoiceOver/TalkBack order, labels and actions | **NOT RUN** | **NOT RUN** | Screen-reader recording |
+| Dynamic Type/font scaling and reduced motion | **NOT RUN** | **NOT RUN** | OS settings and resulting Map screenshots |
+| Battery impact during background sensing | **NOT RUN** | **NOT RUN** | Device model, OS, duration, start/end battery and OS energy view |
+
+### Required execution protocol
+
+Run the matrix on one currently supported physical iPhone and one currently
+supported physical Android phone using the same candidate build and sanctioned
+non-production target.
+
+1. Record build identifier, app version, device model, OS version, MapLibre
+   native version, account/cohort, target environment and test start time.
+2. Begin from a clean install. Exercise permission denial, later enrollment,
+   foreground contribution, background contribution, credential expiry,
+   consent revocation and device unlink. Confirm server-side effects only
+   through redacted audit evidence.
+3. Load a fixture viewport containing observed and inferred flow plus
+   interactive canonical objects. Record every semantic zoom transition,
+   geometry style, directional marker, collision result, object action and
+   handoff.
+4. Warm the cache online, record its freshness label, enable airplane mode,
+   force-stop and reopen the app, and verify cached geography hydrates without
+   cached intelligence being labelled live. Repeat after the object expiry
+   boundary.
+5. Repeat with high latency and packet loss, then restore connectivity. Verify
+   there is no blank Map, fabricated live state, duplicate interaction, or
+   broken recovery.
+6. Exercise disabled, partial-cohort and legacy envelopes. Capture the exact
+   flag/cohort state and verify unsupported snapshots do not become full World
+   projections.
+7. Run VoiceOver or TalkBack through Map controls and selected-object actions;
+   repeat with the largest supported font size and reduced motion enabled.
+8. Measure an agreed background-sensing interval with the screen off and no
+   unrelated foreground use. Record OS battery/energy diagnostics and thermal
+   warnings; do not infer a battery pass from a short foreground session.
+9. Attach evidence references to each row and replace **NOT RUN** only with
+   **PASS** or **FAIL**. Any missing evidence remains **NOT RUN**.
+
+### Device certification rule
+
+Physical-device certification requires every row to have evidence-backed
+results on both platforms. Any **NOT RUN** or unresolved **FAIL** keeps the
+client Map and sensing verdict blocked. As of 2026-09-16, the physical-device
+verdict remains **NOT CERTIFIED**.
+
 ## Certification statement
 
 The previously committed Map and Sensing upgrade is **built, merged, and
