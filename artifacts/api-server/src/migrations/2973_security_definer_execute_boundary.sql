@@ -64,12 +64,28 @@
 -- hands production the same twenty. This migration is therefore a PREREQUISITE
 -- for that apply, not a cleanup after it.
 --
--- REHEARSED against portava-ci 2026-09-16, in a transaction that was rolled
--- back: 73 application SECURITY DEFINER functions examined, 48 matched the
--- sweep predicate, 23 of those were client-reachable and were closed, and all
--- six postconditions below passed. The sweep is deliberately unconditional over
--- its predicate rather than filtered to the currently-reachable ones, so it is
--- idempotent and re-running it re-asserts the boundary on all 48.
+-- REHEARSED against portava-ci, in a transaction that ended in a deliberate
+-- RAISE so nothing persisted. The sweep is deliberately unconditional over its
+-- predicate rather than filtered to the currently-reachable ones, so it is
+-- idempotent and re-running it re-asserts the boundary on every match.
+--
+--   2026-09-16, at the schema this file was written against:
+--     73 application SECURITY DEFINER functions examined, 48 matched the sweep
+--     predicate, 23 of those were client-reachable and were closed.
+--
+--   RE-REHEARSED 2026-09-16 at the post-integration schema (verification lane
+--   V1), same method, same rollback:
+--     REHEARSAL-2973-ROLLBACK :: A pass (swept=52); B pass; C pass;
+--       P1 pass (examined=77); P2 pass; P3 pass; P4 pass;
+--     and portava-ci still measured 23 reachable volatile writers afterwards,
+--     which is the check that the rollback actually rolled back.
+--
+-- The population grew (73 -> 77 functions, 48 -> 52 matches) and the DEFECT did
+-- not (23 -> 23). That is the useful reading of the second measurement: the
+-- four migrations integrated since added SECURITY DEFINER functions, none of
+-- them a newly-reachable volatile writer. The numbers below that are stated as
+-- of a date are left as they were measured on that date rather than silently
+-- refreshed; where a figure is also an assertion, the assertion is what moves.
 --
 -- ── PROVED, NOT INFERRED ─────────────────────────────────────────────────────
 -- Zero-write probes on portava-ci (SET LOCAL ROLE anon; call; roll back). Each
@@ -176,10 +192,31 @@
 -- error.
 --
 -- Trading a loud, bounded exposure for a silent, unbounded outage is the wrong
--- trade. The drift this file cannot prevent is caught instead by
+-- trade.
+--
+-- ── WHAT ACTUALLY CATCHES THE DRIFT, CORRECTED ──────────────────────────────
+-- An earlier draft of this paragraph said the drift is "caught instead by
 -- `checkSecurityDefinerExposure.ts`, which fails the build the day a new
--- volatile SECURITY DEFINER function becomes client-reachable. A guard that
--- names the offender beats a default that breaks the innocent.
+-- volatile SECURITY DEFINER function becomes client-reachable". NO SUCH FILE
+-- EXISTS -- `grep -rn checkSecurityDefinerExposure` over the whole repository
+-- matched this line and nothing else -- and no script in `src/scripts/` does
+-- that job. `checkSecurityDefinerOracles.ts` is the nearest thing and is a
+-- DIFFERENT check: it is offline, it asks "does anything reference this
+-- function", it never reads a live EXECUTE grant, and its own header concludes
+-- that for the referenced case "there is nothing to remedy at this layer".
+--
+-- So the only thing standing between this boundary and the next Supabase
+-- default grant is postcondition 2 below. That is a real guard and it names
+-- the offender, but its reach is narrower than "the build": certify
+-- STAGE 4 re-runs a migration's assertions only for THE MIGRATIONS THAT RUN
+-- APPLIED (certifyMigrations.ts scopes stages 2-4 by the ledger's run id), or
+-- for a set named explicitly with `--files`. A CI run that applies nothing
+-- re-runs nothing here.
+--
+-- The honest statement is therefore: this file closes the boundary and asserts
+-- it on apply; a standing live check that fails the build on drift is NOT yet
+-- written, and writing one is a separate piece of work rather than something
+-- this header may claim is done.
 --
 -- ══════════════════════════════════════════════════════════════════════════════
 -- ROLLBACK
@@ -212,11 +249,16 @@
 --
 --   $post$   Absolute, re-runnable invariants only. No temp tables, no
 --            before/after. This is the block STAGE 4 collects, so it is the one
---            that keeps paying: every certify run re-asserts that no volatile
---            SECURITY DEFINER function in `public` is client-reachable. That
---            turns this migration from a one-time sweep into a standing ratchet,
---            which is the whole reason the invariants are written absolutely
---            rather than as a diff.
+--            that keeps paying: whenever this migration is in certify's scope,
+--            the run re-asserts that no volatile SECURITY DEFINER function in
+--            `public` is client-reachable. That turns this migration from a
+--            one-time sweep into a ratchet, which is the whole reason the
+--            invariants are written absolutely rather than as a diff.
+--
+--            "Whenever it is in scope" and not "on every run", because STAGE 4
+--            certifies the migrations THAT RUN APPLIED (or a `--files` set).
+--            Writing the invariants absolutely is still what makes re-running
+--            them meaningful at all; it is not by itself a schedule.
 --
 -- The first draft of this file put the before/after checks in the collected
 -- block. It passed on apply and would have failed every certify run afterwards
@@ -381,9 +423,13 @@ DECLARE
   v_names    text;
 BEGIN
   -- 1. VACUITY GUARD on the population. An assertion that examines nothing must
-  --    fail, not pass. Production measured 90 application SECURITY DEFINER
-  --    functions in `public` and portava-ci 73; a schema with fewer than 40 is
-  --    neither of this project's databases.
+  --    fail, not pass. Re-measured 2026-09-16: production has 94 application
+  --    SECURITY DEFINER functions in `public` and portava-ci 77 (they were 90
+  --    and 73 when this file was written). A schema with fewer than 40 is
+  --    neither of this project's databases. The floor stays at 40 rather than
+  --    tracking the count: it exists to catch an EMPTY population, and a floor
+  --    that must be edited every time a migration adds a function is a floor
+  --    somebody eventually raises past a real regression.
   SELECT count(*) INTO v_examined
     FROM pg_proc p
     JOIN pg_namespace n ON n.oid = p.pronamespace
@@ -391,7 +437,7 @@ BEGIN
    WHERE n.nspname = 'public' AND p.prosecdef AND d.objid IS NULL;
   IF v_examined < 40 THEN
     RAISE EXCEPTION
-      '2973 postcondition 1 VACUOUS: only % application SECURITY DEFINER function(s) in schema public; expected 40+ (production 90, portava-ci 73).',
+      '2973 postcondition 1 VACUOUS: only % application SECURITY DEFINER function(s) in schema public; expected 40+ (measured 2026-09-16: production 94, portava-ci 77).',
       v_examined;
   END IF;
 

@@ -4,9 +4,11 @@
 --
 -- POST-CUTOVER CANONICAL FORWARD MIGRATION (2100-2999 band). Lane 2974.
 --
--- Adds one helper function and replaces one function body. Creates no table,
--- drops nothing, writes no row, flips no flag, changes no privilege and adds no
--- RLS policy. Idempotent (CREATE OR REPLACE both).
+-- Adds one helper function, grants EXECUTE on that ONE new function, and
+-- replaces one function body. Creates no table, drops nothing, writes no row,
+-- flips no flag, revokes nothing, and adds no RLS policy. The single GRANT is
+-- on the new STABLE predicate only and is explained where it is written.
+-- Idempotent (CREATE OR REPLACE both; GRANT is a no-op when already held).
 --
 -- ══════════════════════════════════════════════════════════════════════════════
 -- WHY: THE BELT WITHOUT THE BRACES
@@ -69,6 +71,44 @@
 -- So `caller_is_privileged_service()` is a deliberate duplicate of that logic
 -- under a general name. The duplication is the cheaper of the two risks, and it
 -- is recorded here rather than left for someone to discover.
+--
+-- ══════════════════════════════════════════════════════════════════════════════
+-- POSTCONDITION 2 WAS VACUOUS UNDER THE ONLY ORDER THESE TWO EVER APPLY IN
+-- ══════════════════════════════════════════════════════════════════════════════
+-- MEASURED on portava-ci 2026-09-16, in a transaction that was rolled back.
+-- The first version of postcondition 2 assumed `anon`, called the toggle with a
+-- flag name that cannot exist, and passed on SQLSTATE 42501. Two DIFFERENT
+-- events produce 42501 on that call:
+--
+--   42501 :: toggle_feature_flag_with_audit: caller is not privileged
+--                                              <- THIS file's guard fired
+--   42501 :: permission denied for function toggle_feature_flag_with_audit
+--                                              <- 2973's REVOKE fired
+--
+-- 2973 applies first — it has the lower number, and its header calls itself a
+-- PREREQUISITE — so by the time this file's postcondition runs, `anon` no
+-- longer holds EXECUTE and the second message is the one that comes back. The
+-- probe, run with 2973 applied and this file's guard DELIBERATELY NOT
+-- installed, reported:
+--
+--   ORDERING-PROBE-ROLLBACK :: body_actually_has_guard=f ;
+--     2974_postcondition2_verdict=t ; sqlstate=42501 ;
+--     msg=permission denied for function toggle_feature_flag_with_audit
+--
+-- A postcondition that says "the guard is effective" when the guard is not
+-- there. That is worse than no postcondition, and it is permanent rather than
+-- an apply-day quirk: certify STAGE 4 re-runs this block against the COMMITTED
+-- database, where 2973 is always already applied, so the vacuity is the steady
+-- state. The day someone CREATE OR REPLACEs this body and drops the guard,
+-- STAGE 4 would have gone on reporting green.
+--
+-- What replaces it, below, distinguishes the two 42501s by MESSAGE and then
+-- says honestly which evidence it had. In the world where the end-to-end call
+-- can no longer reach the guard, two further checks carry the claim: the
+-- predicate is exercised live as `anon` (2b), and the body is required to
+-- consult it BEFORE its first write (2c). 2c is textual and is labelled as
+-- such — it is the only evidence available once EXECUTE is gone, and naming
+-- that limit is the point of this section.
 -- ══════════════════════════════════════════════════════════════════════════════
 
 BEGIN;
@@ -95,6 +135,17 @@ $function$;
 
 COMMENT ON FUNCTION public.caller_is_privileged_service() IS
   'True when the caller is the server itself (service_role/postgres/supabase_admin) rather than a client role. Deliberate duplicate of caller_may_write_profile_role() under a general name; see 2974.';
+
+-- Stated rather than inherited. Supabase's ALTER DEFAULT PRIVILEGES would grant
+-- this anyway, and 2973 does not touch it (its sweep predicate requires
+-- prosecdef AND provolatile='v'; this function is neither) -- but postcondition
+-- 2b below RUNS this predicate as `anon`, and a postcondition that depends on a
+-- default nobody wrote down is a postcondition that breaks on the day the
+-- default changes. Granting EXECUTE on it discloses nothing: it reads
+-- `current_setting('role')` and `session_user` and returns a boolean the caller
+-- already knows about itself.
+GRANT EXECUTE ON FUNCTION public.caller_is_privileged_service()
+  TO PUBLIC, anon, authenticated, service_role;
 
 -- Replaces 0119/2198's body. Everything below the guard is that body unchanged:
 -- same FOR UPDATE lock, same P0002 on a missing flag, same audit row, same
@@ -155,8 +206,17 @@ $function$;
 -- ═══════════════════════════════════════════════════════════════════════════
 DO $post$
 DECLARE
-  v_guard_reached     boolean;
+  v_anon_state        text;
+  v_anon_msg          text;
+  v_evidence          text;
   v_privileged_passed boolean;
+  v_priv_state        text;
+  v_anon_predicate    boolean;
+  v_priv_predicate    boolean;
+  v_src               text;
+  v_gate_at           int;
+  v_update_at         int;
+  v_insert_at         int;
 BEGIN
   -- 1. Both functions exist and the toggle kept its shape. A CREATE OR REPLACE
   --    that changed the return type would have failed outright, so this asserts
@@ -177,24 +237,32 @@ BEGIN
     RAISE EXCEPTION '2974 postcondition 1 FAILED: toggle_feature_flag_with_audit is missing or no longer SECURITY DEFINER';
   END IF;
 
-  -- 2. THE GUARD ACTUALLY REFUSES. Asserting that the text contains an IF is
-  --    worthless -- the question is whether a client role is turned away. So
-  --    this RUNS it: assume `anon`, call with a flag name that cannot exist, and
-  --    require 42501 (the guard) rather than P0002 (flag not found, i.e. the
-  --    guard was not reached) and rather than success.
+  -- 2. A CLIENT ROLE IS TURNED AWAY, AND THE REASON IS RECORDED RATHER THAN
+  --    ASSUMED. Assume `anon`, call with a flag name that cannot exist, and
+  --    require a refusal. Two different mechanisms can refuse, they are
+  --    distinguished HERE by message, and the distinction is the whole repair:
   --
-  --    Nothing is written on any of the three outcomes: 42501 and P0002 both
-  --    raise before the UPDATE, and the flag does not exist so there is no row
-  --    to change. The inner block restores the role on every path.
+  --      'caller is not privileged'     -> this file's guard fired. End to end.
+  --      'permission denied for function' -> 2973's REVOKE fired FIRST, so the
+  --                                        guard was never reached and this
+  --                                        call proves nothing about it. 2b and
+  --                                        2c below carry the claim instead.
+  --      P0002 / a returned row         -> the body was ENTERED by `anon` with
+  --                                        no guard in front of it. FAIL.
+  --
+  --    Nothing is written on any path: both refusals raise before the UPDATE,
+  --    and the flag does not exist so there is no row to change. The inner
+  --    block restores the role on every path.
   BEGIN
     SET LOCAL ROLE anon;
     BEGIN
       PERFORM public.toggle_feature_flag_with_audit(
         '__2974_postcondition_flag_that_cannot_exist__', true, NULL);
-      v_guard_reached := false;   -- returned at all: the guard did not fire
-    EXCEPTION
-      WHEN insufficient_privilege THEN v_guard_reached := true;   -- 42501
-      WHEN OTHERS THEN v_guard_reached := false;                  -- P0002 etc.
+      v_anon_state := 'RETURNED';
+      v_anon_msg   := '(the call returned)';
+    EXCEPTION WHEN OTHERS THEN
+      v_anon_state := SQLSTATE;
+      v_anon_msg   := SQLERRM;
     END;
     RESET ROLE;
   EXCEPTION WHEN OTHERS THEN
@@ -202,31 +270,102 @@ BEGIN
     RAISE;
   END;
 
-  IF NOT v_guard_reached THEN
+  IF v_anon_state = '42501' AND position('caller is not privileged' in v_anon_msg) > 0 THEN
+    v_evidence := 'end-to-end: the guard itself refused anon';
+  ELSIF v_anon_state = '42501' THEN
+    v_evidence := 'indirect: EXECUTE is revoked (2973), so the guard could not be exercised end to end; 2b and 2c below are the evidence';
+  ELSE
     RAISE EXCEPTION
-      '2974 postcondition 2 FAILED: as `anon`, toggle_feature_flag_with_audit did not raise 42501. The caller guard is not effective, which is the entire point of this migration.';
+      '2974 postcondition 2 FAILED: as `anon`, toggle_feature_flag_with_audit answered % :: %. Neither the caller guard nor the EXECUTE boundary refused it, which means an unauthenticated caller reaches the body.',
+      v_anon_state, v_anon_msg;
   END IF;
 
-  -- 3. THE POSITIVE CONTROL, without which postcondition 2 is worth nothing.
-  --    A guard that refuses EVERY caller satisfies 2 perfectly and breaks every
-  --    admin flag toggle in the product. So the same call is made again as the
-  --    migration's own (privileged) role, and this time 42501 is the FAILURE and
-  --    P0002 is the pass -- P0002 means the guard let us through and the flag
-  --    lookup ran, which is exactly as far as a call with a nonexistent flag
-  --    should get. Still writes nothing, for the same reason as above.
+  -- 2b. THE PREDICATE, RUN LIVE, BOTH WAYS. This is what stops 2 from being
+  --     vacuous in the `indirect` world: it does not matter that the toggle is
+  --     unreachable, because the thing the toggle consults is reachable and is
+  --     exercised here. A predicate that answered true for `anon` would be a
+  --     guard that admits everyone, and a predicate that answered false for the
+  --     server would be a guard that admits no one.
+  BEGIN
+    SET LOCAL ROLE anon;
+    SELECT public.caller_is_privileged_service() INTO v_anon_predicate;
+    RESET ROLE;
+  EXCEPTION WHEN OTHERS THEN
+    RESET ROLE;
+    RAISE;
+  END;
+  SELECT public.caller_is_privileged_service() INTO v_priv_predicate;
+
+  IF v_anon_predicate IS DISTINCT FROM false THEN
+    RAISE EXCEPTION
+      '2974 postcondition 2b FAILED: caller_is_privileged_service() answered % for `anon`; the guard built on it admits an unauthenticated caller.',
+      coalesce(v_anon_predicate::text, 'NULL');
+  END IF;
+  IF v_priv_predicate IS DISTINCT FROM true THEN
+    RAISE EXCEPTION
+      '2974 postcondition 2b FAILED: caller_is_privileged_service() answered % for this migration''s own (privileged) role; the guard built on it would refuse the server and break every administrator flag toggle.',
+      coalesce(v_priv_predicate::text, 'NULL');
+  END IF;
+
+  -- 2c. THE BODY CONSULTS IT, AND DOES SO BEFORE IT WRITES. Textual, and said
+  --     to be textual: once EXECUTE is revoked there is no client role left
+  --     that can reach the guard, so no runtime probe can observe the ORDER of
+  --     the two. What this catches is the realistic regression — a future
+  --     CREATE OR REPLACE that keeps the function and loses the gate, which 2
+  --     alone could not see. `prosrc` is the body as the database holds it, not
+  --     a file on disk, so this is still a fact about the live schema.
+  SELECT prosrc INTO v_src FROM pg_proc
+   WHERE proname = 'toggle_feature_flag_with_audit'
+     AND pronamespace = 'public'::regnamespace;
+
+  v_gate_at   := strpos(v_src, 'caller_is_privileged_service');
+  v_update_at := strpos(v_src, 'UPDATE feature_flags');
+  v_insert_at := strpos(v_src, 'INSERT INTO feature_flag_audit_log');
+
+  IF v_gate_at = 0 THEN
+    RAISE EXCEPTION
+      '2974 postcondition 2c FAILED: the body of toggle_feature_flag_with_audit does not consult caller_is_privileged_service(). Something replaced it and dropped the guard.';
+  END IF;
+  IF v_update_at = 0 OR v_insert_at = 0 THEN
+    RAISE EXCEPTION
+      '2974 postcondition 2c FAILED: the body no longer contains the flag update and the audit insert this migration preserved (update at %, insert at %). The shape this postcondition reads has changed, so it cannot answer, and it refuses rather than passing.',
+      v_update_at, v_insert_at;
+  END IF;
+  IF v_gate_at > v_update_at OR v_gate_at > v_insert_at THEN
+    RAISE EXCEPTION
+      '2974 postcondition 2c FAILED: the caller guard appears AFTER a write (guard at %, update at %, audit insert at %). A guard that runs after the row has changed is not a guard.',
+      v_gate_at, v_update_at, v_insert_at;
+  END IF;
+
+  -- 3. THE POSITIVE CONTROL, without which everything above is worth nothing.
+  --    A guard that refuses EVERY caller satisfies 2, 2b's first half and 2c
+  --    perfectly and breaks every admin flag toggle in the product. So the same
+  --    call is made again as the migration's own (privileged) role, and this
+  --    time 42501 is the FAILURE and P0002 is the pass -- P0002 means the guard
+  --    let us through and the flag lookup ran, which is exactly as far as a
+  --    call with a nonexistent flag should get. Still writes nothing, for the
+  --    same reason as above.
   BEGIN
     PERFORM public.toggle_feature_flag_with_audit(
       '__2974_postcondition_flag_that_cannot_exist__', true, NULL);
     v_privileged_passed := false;   -- cannot happen: the flag does not exist
+    v_priv_state := 'RETURNED';
   EXCEPTION
-    WHEN insufficient_privilege THEN v_privileged_passed := false;  -- guard refused us
-    WHEN OTHERS THEN v_privileged_passed := (SQLSTATE = 'P0002');   -- reached the lookup
+    WHEN insufficient_privilege THEN
+      v_privileged_passed := false;  -- guard refused us
+      v_priv_state := SQLSTATE;
+    WHEN OTHERS THEN
+      v_privileged_passed := (SQLSTATE = 'P0002');   -- reached the lookup
+      v_priv_state := SQLSTATE;
   END;
 
   IF NOT v_privileged_passed THEN
     RAISE EXCEPTION
-      '2974 postcondition 3 FAILED: the privileged caller was ALSO refused. A guard that turns everyone away passes postcondition 2 and breaks every administrator flag toggle in the product.';
+      '2974 postcondition 3 FAILED: the privileged caller was ALSO refused (%). A guard that turns everyone away passes postcondition 2 and breaks every administrator flag toggle in the product.',
+      v_priv_state;
   END IF;
+
+  RAISE NOTICE '2974: caller guard asserted. anon refusal = % :: % (%).', v_anon_state, v_anon_msg, v_evidence;
 END $post$;
 
 COMMIT;
