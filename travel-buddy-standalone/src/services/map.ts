@@ -44,7 +44,12 @@ export interface LocationPrivacy {
   hotelBlurEnabled: boolean;
 }
 
-const LOCATION_PRIVACY_FALLBACK: LocationPrivacy = {
+/**
+ * Shape used only to fill fields the server omitted from an OTHERWISE SUCCESSFUL
+ * response. It is deliberately NOT returned when the read itself fails — see
+ * getMyLocationPrivacy.
+ */
+const LOCATION_PRIVACY_FIELD_DEFAULTS: LocationPrivacy = {
   locationMode: 'city_only',
   sharingPaused: false,
   pulseVisibility: null,
@@ -54,20 +59,29 @@ const LOCATION_PRIVACY_FALLBACK: LocationPrivacy = {
   hotelBlurEnabled: true,
 };
 
-/** Loads the viewer's location-privacy settings from the API. */
-export async function getMyLocationPrivacy(): Promise<LocationPrivacy> {
-  if (!isSupabaseConfigured) return LOCATION_PRIVACY_FALLBACK;
+/**
+ * Loads the viewer's location-privacy settings from the API.
+ *
+ * Returns `null` when the settings COULD NOT BE READ — not signed in, no API
+ * token, a non-2xx response, or a network failure. Callers must render an
+ * explicit "couldn't load" state for `null`; they must never substitute
+ * defaults, because doing so tells the user their location sharing is set to
+ * "City only" when it may actually be "Off", and shows Safe Return / stay-blur
+ * / trusted-circle switches in positions the server never asserted.
+ */
+export async function getMyLocationPrivacy(): Promise<LocationPrivacy | null> {
+  if (!isSupabaseConfigured) return null;
   const token = await authToken();
-  if (!token) return LOCATION_PRIVACY_FALLBACK;
+  if (!token) return null;
 
   try {
     const res = await fetch(`${apiBase()}/api/me/location-preferences`, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    if (!res.ok) return LOCATION_PRIVACY_FALLBACK;
+    if (!res.ok) return null;
     const json = await res.json();
     return {
-      locationMode:        json.locationMode        ?? LOCATION_PRIVACY_FALLBACK.locationMode,
+      locationMode:        json.locationMode        ?? LOCATION_PRIVACY_FIELD_DEFAULTS.locationMode,
       sharingPaused:       Boolean(json.sharingPaused),
       pulseVisibility:     json.pulseVisibility     ?? null,
       discoveryVisibility: json.discoveryVisibility ?? null,
@@ -76,7 +90,7 @@ export async function getMyLocationPrivacy(): Promise<LocationPrivacy> {
       hotelBlurEnabled:    json.hotelBlurEnabled    !== false,
     };
   } catch {
-    return LOCATION_PRIVACY_FALLBACK;
+    return null;
   }
 }
 
