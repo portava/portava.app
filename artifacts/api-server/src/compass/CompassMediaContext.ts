@@ -250,7 +250,7 @@ export async function buildCompassMediaContext(
   mediaId: string,
   nowMs: number,
 ): Promise<CompassMediaContext | null> {
-  const row = await loadEligibleMediaRow(sc, viewer, mediaId);
+  const row = await loadEligibleMediaRow(sc, viewer, mediaId, nowMs);
   if (!row) return null; // not visible to this viewer → no context.
 
   const entities = await resolveMediaEntities(sc, viewer, row, nowMs);

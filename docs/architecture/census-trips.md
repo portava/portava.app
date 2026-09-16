@@ -4088,7 +4088,7 @@ forwarded them.
   coordinates AND the attempt is counted —
   `stale_presence_render_attempt_total` (`:260#stale_presence_render_attempt_total`)
   — so TR399's regression is measurable where it is refused.
-  `domain/trips/services/TripCrewLocationService.ts:169#last_known_at`
+  `domain/trips/services/TripCrewLocationService.ts:193#last_known_at`
   forwards the three columns (`:297#lastKnownAt`). The legacy
   `freshness` bucket stays on the card, computed on the same instant.
 - **Tests.** `src/test/tripPresenceFreshnessClass.test.ts` (8): the classes at
@@ -4163,7 +4163,7 @@ to explain and no route.
   (`:114#explainTripDecision`) — sentences from the record. Every
   §40.3–§40.5 build records one (`domain/trips/projections/TripFreedomProjection.ts:234#recordTripDecision`,
   `TripHealthProjection.ts:207#recordTripDecision`,
-  `TripTodayProjection.ts:366#recordTripDecision`) naming ids,
+  `TripTodayProjection.ts:369#recordTripDecision`) naming ids,
   versions and counts — never a coordinate or a name — and carries its
   `decisionId`. `GET /trips/:tripId/decisions/:decisionId/explain`
   (`server/trips/readRoutes/tripProjections.ts:662#explain`) and Compass
@@ -4332,7 +4332,7 @@ order: 217 files, 35 database tests, 0 skipped.
   `plan_scope = 'subgroup'` must name a subgroup (`:93#trip_plan_items_subgroup_scope_named`)
   and the kernel requires an ACTIVE one the actor is in; a live-share scoped
   to a subgroup (`:100#subgroup_id`) reaches its current members only
-  (`domain/trips/services/TripCrewLocationService.ts:250#subgroupScoped`,
+  (`domain/trips/services/TripCrewLocationService.ts:274#subgroupScoped`,
   `:277#subgroup_id`); `DISSOLVE_SUBGROUP` (`:267#DISSOLVE_SUBGROUP`) is the
   creator's or a host's and stops those shares; a named member who is not
   crew is `TRIP_SUBGROUP_MEMBER_NOT_CREW` (`:220#TRIP_SUBGROUP_MEMBER_NOT_CREW`).
@@ -4527,7 +4527,7 @@ the merge, the apply, Batch C and two flags.
   (`server/trips/readRoutes/tripProjections.ts:321#/trips/:tripId/pulse`), to Compass as
   `get_live_conditions` (`compass/CompassTools.ts:299#name: "get_live_conditions"`), and
   into Today's `pulseSignals` layer, which was `no_source` since §40.3
-  (`domain/trips/projections/TripTodayProjection.ts:220#pulseSignals = okLayer`). Ledgered as
+  (`domain/trips/projections/TripTodayProjection.ts:223#pulseSignals = okLayer`). Ledgered as
   `pulse_projection`.
 - **§11.4 the attention model** — `domain/trips/policies/TripAttentionPolicy.ts:27#export const ATTENTION_LEVELS`
   is the spec's five, read as a COST ladder, and `decideAttention`
@@ -4702,7 +4702,7 @@ production baseline through the chain: 39 database tests, 0 skipped.
   `get_opportunities` — §11.3's "Where next?"
   (`compass/CompassTools.ts:338#name: "get_opportunities"`) — as Today's
   `opportunities` layer, `no_source` since §40.3
-  (`domain/trips/projections/TripTodayProjection.ts:239#opportunities = okLayer`), and as the map's
+  (`domain/trips/projections/TripTodayProjection.ts:242#opportunities = okLayer`), and as the map's
   `liveOpportunities` layer, `no_source` since §40.4
   (`server/trips/readRoutes/tripMapProjection.ts:376#§14.1 live opportunities`).
 - **2786 `RECORD_OPPORTUNITY_CHANGE` → `trip.opportunities_changed`** —
@@ -4856,7 +4856,7 @@ route writes goes through the kernel as a command that already exists
   on a weather-bound plan; late check-in is an arrival estimate past the
   desk's deadline; crew transport mismatch is the party over the vehicle's
   seats (`domain/trips/services/TripRiskTriggers.ts:94#DEFAULT_VEHICLE_CAPACITY`).
-  On Today as `riskTriggers` (`domain/trips/projections/TripTodayProjection.ts:402#riskTriggers,`),
+  On Today as `riskTriggers` (`domain/trips/projections/TripTodayProjection.ts:405#riskTriggers,`),
   reading 2782's segments under the same gate for the party-size row.
 - **§9.4 the impact preview, §15.3 the booking side effects** —
   `domain/trips/services/TripImpactPreview.ts:119#previewImpact` over a typed
@@ -5632,7 +5632,7 @@ under a mutation before its commit.
   and this commitment's prep, a lower bound like every travel term here,
   null when the hop could not be estimated (`domain/trips/projections/TripFreedomProjection.ts:205#arrivalEstimates.push(`);
   Today takes that as `estimatedArrivalAt` and a lodging's required arrival
-  as its desk deadline (`domain/trips/projections/TripTodayProjection.ts:340#checkInDeadlineAt:`).
+  as its desk deadline (`domain/trips/projections/TripTodayProjection.ts:343#checkInDeadlineAt:`).
   `test/tripTodayProjection.test.ts:104#late_check_in`: a hotel whose desk
   closes ten minutes after the traveller leaves the previous commitment,
   ten kilometres away, fires with the minutes over the desk; the same
@@ -7652,9 +7652,9 @@ one line red-fails both tests, which is the proof that they share it.
 so a fired `tight_arrival` returned an empty participant list: the mitigation said
 "alert affected participants" and named nobody, on every trip, always.
 
-`artifacts/api-server/src/domain/trips/projections/TripTodayProjection.ts:323#acceptedCrewIds`
+`artifacts/api-server/src/domain/trips/projections/TripTodayProjection.ts:326#acceptedCrewIds`
 now derives the accepted crew once — the same set `crewSize` already counted — and
-`artifacts/api-server/src/domain/trips/projections/TripTodayProjection.ts:341#participantIds: acceptedCrewIds`
+`artifacts/api-server/src/domain/trips/projections/TripTodayProjection.ts:344#participantIds: acceptedCrewIds`
 hands it to the trigger. **Why the crew and not something finer, stated rather than
 assumed:** §5.1 gives PLANS a participant relation (`trip_plan_participants`, 2771)
 and gives COMMITMENTS none, so the accepted crew is the finest relation a commitment

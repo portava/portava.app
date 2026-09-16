@@ -246,8 +246,20 @@ import {
  * references were repointed by hand, and census-trips TR436's
  * `lib/mediaPipeline.ts:44` -- which pointed at an import while its own sentence
  * described the kill-switch consumption -- was corrected to `:112`. The ceiling
- * follows the measurement down so the gain cannot be spent again. */
-export const MAX_DEAD_TARGETS = 239;
+ * follows the measurement down so the gain cannot be spent again.
+ *
+ * LOWERED AGAIN 2026-09-16, 239 -> 235, by the fixed-date sweep lane. The four
+ * are not a dead-target sweep either: adding an injected-clock parameter to
+ * `getCrewMap` and to the media candidate loader moved lines under
+ * `docs/architecture/census-media.md`, and five citations that had been landing
+ * on real code by accident landed on comment text instead. They were repointed
+ * by READING the claim, not by offset -- four `MediaProjectionService.ts:916`
+ * references whose sentences are all about the §21 map projection now point at
+ * `buildMediaMapProjection` where it actually is, and MD412's
+ * `MediaActionResolver.ts:413` now points at the `ask_compass` action it
+ * describes. All five gained an anchor, so doc-citations keeps them honest from
+ * here and this cannot silently rot back. */
+export const MAX_DEAD_TARGETS = 235;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);

@@ -73,11 +73,35 @@ export interface CrewMapResult {
  * @param db        Service-role Supabase client
  * @param tripId    Target trip
  * @param viewerId  The user requesting the map (must be an accepted member)
+ * @param nowMs
+ *   The clock this map is about. Additive, and defaulted to the wall clock, so
+ *   every call site that does not pass one is byte-identical in behaviour.
+ *
+ *   IT EXISTS BECAUSE TWO PROJECTIONS WERE ANSWERING FROM TWO CLOCKS.
+ *   `buildTripPulseProjection` and `buildTripTodayProjection` each take a `now`
+ *   and thread it into every clock read they own — and then reached this
+ *   function, through `readCrewPresenceForPulse` and `readCrewSummary`, which
+ *   had nowhere to put it. So the live-share window below (`expires_at > now`)
+ *   and every card's freshness class were the only parts of those projections
+ *   derived from the real date. It is the `computeTripStatus` defect one
+ *   directory over: a function whose answer depends on the wall clock cannot be
+ *   tested at the boundary that matters.
+ *
+ *   `readCrewPresenceLayer` (the map projection's crew layer) is deliberately
+ *   NOT in that list: its only caller is the HTTP route, which has no injected
+ *   clock, so the default below is the right answer there and stays.
+ *
+ *   `buildCrewCard` already carries this parameter, and its own comment makes
+ *   the argument for it — "A guard whose contract is enforced somewhere else is
+ *   not a guard" — about the very `.gt("expires_at", …)` below. It got the
+ *   parameter; the function that calls it did not, which is why the gap
+ *   survived.
  */
 export async function getCrewMap(
   db: SupabaseClient,
   tripId: string,
   viewerId: string,
+  nowMs: number = Date.now(),
 ): Promise<CrewMapResult> {
   // 1. Load trip owner + accepted members
   const [ownerRes, membersRes] = await Promise.all([
@@ -242,7 +266,7 @@ export async function getCrewMap(
   );
 
   // 7. Load active live-share sessions visible to this viewer
-  const now = new Date().toISOString();
+  const now = new Date(nowMs).toISOString();
   // §9.2 (2780): a live-share scoped to a temporary subgroup is served to that
   // subgroup's current members only. subgroup_id is kernel-era schema, so it is
   // read only under trip_operational_projections_enabled (whose probe covers
@@ -336,7 +360,10 @@ export async function getCrewMap(
       } : null,
     };
 
-    return buildCrewCard(raw);
+    // The same instant the live-share window above was read at. Two clock reads
+    // in one map is how a card came back LIVE under a grant this function had
+    // already called expired.
+    return buildCrewCard(raw, nowMs);
   });
 
   return { members: cards, totalCount: cards.length, checkInsUnreadable };

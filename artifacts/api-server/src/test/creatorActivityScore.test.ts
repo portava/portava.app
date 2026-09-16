@@ -734,6 +734,27 @@ function makeUrlLimitedDb(tableData: Record<string, any[]>, maxInSize: number) {
   return { db: { from: (t: string) => buildChain(t) }, rejections: () => rejections };
 }
 
+/**
+ * INSIDE THE AGGREGATOR'S WINDOWS, ALWAYS — never a calendar constant.
+ *
+ * `CreatorSignalAggregator.aggregate` derives `ago24h` / `ago7d` / `ago30d` /
+ * `ago90d` from `Date.now()` (`services/ranking/CreatorActivityScoreService.ts`)
+ * and every signal below is counted inside one of them. A fixture pinned to a
+ * fixed date is therefore a bomb with a known fuse: `2026-09-01T00:00:00Z` sat
+ * inside the 90-day window when it was written and leaves it on 2026-11-30, at
+ * which point every count in this file reads 0 and the assertions read as "the
+ * chunking regressed" rather than "the fixture expired". That is the same
+ * failure mode as the three of 2026-09-15, and this file was outside the
+ * `2026-09-1x` grep that went looking for them.
+ *
+ * Judged against the same clock the aggregator judges on, minutes back, so the
+ * row is inside the NARROWEST window (24h) on any day the suite runs. Bumping
+ * the constant to a newer date would only re-arm it.
+ */
+function recentlyIso(minutesAgo = 60): string {
+  return new Date(Date.now() - minutesAgo * 60_000).toISOString();
+}
+
 describe("CreatorSignalAggregator — owner lookup survives a large id set", () => {
   const CREATOR = "22222222-2222-4222-8222-222222222222";
   const uuid = (n: number) => `33333333-3333-4333-8333-${String(n).padStart(12, "0")}`;
@@ -744,7 +765,7 @@ describe("CreatorSignalAggregator — owner lookup survives a large id set", () 
     const { db, rejections } = makeUrlLimitedDb({
       blocks: [],
       posts_comments: authors.map((_, i) => ({
-        user_id: CREATOR, post_id: `post-${i}`, deleted_at: null, created_at: "2026-09-01T00:00:00Z",
+        user_id: CREATOR, post_id: `post-${i}`, deleted_at: null, created_at: recentlyIso(),
       })),
       posts: authors.map((a, i) => ({ id: `post-${i}`, author_id: a })),
       event_rsvps: [],
@@ -784,10 +805,10 @@ describe("CreatorSignalAggregator — no unbounded .in() reaches the database", 
   it("counts engagement for a prolific creator instead of silently reading zero", async () => {
     const posts = Array.from({ length: N }, (_, i) => ({
       id: post(i), author_id: CREATOR, status: "active",
-      post_status: "published", created_at: "2026-09-01T00:00:00Z",
+      post_status: "published", created_at: recentlyIso(120),
     }));
     const savers = Array.from({ length: N }, (_, i) => ({
-      user_id: actor(i), post_id: post(i), created_at: "2026-09-02T00:00:00Z",
+      user_id: actor(i), post_id: post(i), created_at: recentlyIso(60),
     }));
 
     const { db, rejections } = makeUrlLimitedDb({

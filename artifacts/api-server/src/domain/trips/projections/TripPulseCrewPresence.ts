@@ -41,7 +41,9 @@ export async function readCrewPresenceForPulse(sc: any, tripId: string, viewerId
   }
   const nowIso = new Date(nowMs).toISOString();
   try {
-    const map = await getCrewMap(sc, tripId, viewerId);
+    // `nowMs` is this projection's clock; the crew map is read at it, not at
+    // the wall clock, or the grant window and the freshness below disagree.
+    const map = await getCrewMap(sc, tripId, viewerId, nowMs);
     const me = map.members.find((m) => m.userId === viewerId) ?? null;
     const viewerPoint: GeoPoint | null = me?.exactCoords ?? null;
     const viewerSharing = me?.liveShareActive === true;
