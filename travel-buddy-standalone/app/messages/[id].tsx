@@ -74,7 +74,7 @@ import {
 } from '../../src/features/telegraph/lifecycle/lifecycleApi.ts';
 import { headerSubtitle } from '../../src/features/telegraph/header/headerAxes.ts';
 import { useConversationHeader } from '../../src/features/telegraph/header/useConversationHeader.ts';
-import { ComposerPlusMenu } from '../../src/features/telegraph/composer/ComposerPlusMenu.tsx';
+import { ComposerPlusMenu } from '../../src/features/telegraph/composer/ComposerPlusMenu.tsx'; import { VoiceRecorderSheet } from '../../src/features/telegraph/voice/VoiceRecorderSheet.tsx'; // one line: census-telegraph cites this file at :253, :270, :844, :869, :1624, :1831, :1947, :1958, :2089, :2094, :2114, :2172, :2227, :2269 and :2376.
 import { TypedComposePrompt, type TypedComposeKind } from '../../src/features/telegraph/composer/TypedComposePrompt.tsx';
 import { sendTypedMessage, type SendableKind } from '../../src/features/telegraph/kinds/kindsApi.ts';
 import { TelegraphRecommendationCard } from '../../src/components/TelegraphRecommendationCard';
@@ -839,8 +839,8 @@ function MessageBubble({
     );
   }
 
-  // Telegraph §6.2 typed kinds — LOCATION, ACTION, ANNOUNCEMENT, SAFETY, GIF,
-  // MEDIA_ALBUM, MEMORY_NOTE. Each carries a validated envelope in the body.
+  // Telegraph §6.2 typed kinds — LOCATION, ACTION, ANNOUNCEMENT, SAFETY, GIF, MEDIA_ALBUM,
+  // MEMORY_NOTE and VOICE. Each carries a validated envelope in the body; VOICE renders here although it is sent through its own route, because a bubble follows the STORED envelope.
   if (rendersTypedKind(item.msgType)) {
     return (
       <Pressable onLongPress={onLongPress} delayLongPress={300}>
@@ -1583,7 +1583,7 @@ export default function TelegraphThread() {
   const telegraphHeader = useConversationHeader(id ?? null);
   // Telegraph §6.1: the composer's + menu, and the two typed-compose sheets.
   const [showPlusMenu, setShowPlusMenu] = useState(false);
-  const [typedCompose, setTypedCompose] = useState<TypedComposeKind | null>(null);
+  const [typedCompose, setTypedCompose] = useState<TypedComposeKind | null>(null); const [showVoiceRecorder, setShowVoiceRecorder] = useState(false); // §6.2 VOICE — the sheet the + menu's Voice entry opens. Shares a line because census-telegraph cites every line below it.
 
   // Send button springs in/out with input content
   const hasInput = input.trim().length > 0 || mediaPicker.media !== null;
@@ -2381,7 +2381,18 @@ export default function TelegraphThread() {
           if (entryId === 'VIDEO') { await mediaPicker.pickVideo(); return; }
           if (entryId === 'LOCATION') { setTypedCompose('LOCATION'); return; }
           if (entryId === 'MEMORY_NOTE') { setTypedCompose('MEMORY_NOTE'); return; }
+          if (entryId === 'VOICE') { setShowVoiceRecorder(true); return; } // §6.1's Voice entry; the recorder owns permission, the ceiling and the upload.
         }}
+      />
+
+      {/* §6.2 VOICE. Mounted beside the + menu because it IS a composer
+          affordance; it writes through its own route (see voiceApi.ts). */}
+      <VoiceRecorderSheet
+        visible={showVoiceRecorder}
+        threadId={id ?? ''}
+        replyToId={replyingTo?.id ?? null}
+        onClose={() => setShowVoiceRecorder(false)}
+        onSent={() => { setReplyingTo(null); void reload(); }}
       />
 
       <TypedComposePrompt

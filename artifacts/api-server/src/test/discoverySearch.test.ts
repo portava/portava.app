@@ -1691,16 +1691,45 @@ describe("GET /api/discovery/search — events carry tripFit when a trip is in c
   const PLACE_B  = "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbb2";
   const FITS_ID  = "fe000000-0000-4000-a000-0000000000f1";
   const CLASH_ID = "fe000000-0000-4000-a000-0000000000f2";
-  // A Paris trip a year out: commitment A at 10:00Z on the 13th, B due 16:00Z ~10 km north.
+  /**
+   * A Paris trip A YEAR OUT — and "a year out" has to mean a year out from the
+   * clock the search filters on, not from the day this was written.
+   *
+   * `/discovery/search?type=events` serves only events that have not started,
+   * so this constellation was pinned to 2027-09-12..15 and would have returned
+   * an EMPTY result set from 2027-09-13 onwards. The assertions below never
+   * name a date, so the failure would have read as "tripFit stopped being
+   * attached" — the same misdiagnosis the three bombs of 2026-09-15 produced,
+   * armed for a day almost a year further out and invisible to a `2026-09-1x`
+   * grep.
+   *
+   * Every instant is now derived from `Date.now()` and keeps the SAME relative
+   * structure, which is the only part any assertion depends on: day 2 of a
+   * four-day trip, commitment A at 10:00Z, B due 16:00Z ~10 km north, the
+   * clashing event at 15:50Z inside the travel reserved before B, the fitting
+   * one at 18:00Z in the after-last window.
+   */
+  const DAY_MS = 24 * 60 * 60 * 1_000;
+  /**
+   * The trip's second day, a year ahead of whatever clock the suite runs on.
+   * Read ONCE, at module load, so the five instants below cannot straddle a
+   * UTC midnight that falls between two of the calls.
+   */
+  const ANCHOR_MS = Date.now() + 366 * DAY_MS;
+  const day = (offsetDays: number) =>
+    new Date(ANCHOR_MS + offsetDays * DAY_MS).toISOString().slice(0, 10);
+  /** `hh:mm`Z on the trip's second day. */
+  const at = (hhmm: string) => `${day(0)}T${hhmm}:00.000Z`;
+
   const tripTables = (gate = true) => ({
     profiles: [{ id: ALICE, handle: "alice", name: "Alice", avatar_url: null, is_private: false, home_city: null, home_country: null, account_status: "active" }],
     blocks: [],
     feature_flags: [{ flag: "trip_operational_projections_enabled", enabled: gate }],
-    trips: [{ id: TRIP_ID, owner_id: ME, version: 1, title: "Paris", start_date: "2027-09-12", end_date: "2027-09-15", status: "active", timezone: "Europe/Paris" }],
+    trips: [{ id: TRIP_ID, owner_id: ME, version: 1, title: "Paris", start_date: day(-1), end_date: day(2), status: "active", timezone: "Europe/Paris" }],
     trip_members: [{ trip_id: TRIP_ID, user_id: ME, role: "owner", status: "accepted" }],
     trip_commitments: [
-      { id: "A", trip_id: TRIP_ID, type: "event", starts_at: "2027-09-13T10:00:00.000Z", required_arrival_at: null, place_id: PLACE_A, lateness_tolerance: null, prep_duration: null, flexibility: "flexible" },
-      { id: "B", trip_id: TRIP_ID, type: "event", starts_at: null, required_arrival_at: "2027-09-13T16:00:00.000Z", place_id: PLACE_B, lateness_tolerance: null, prep_duration: null, flexibility: "flexible" },
+      { id: "A", trip_id: TRIP_ID, type: "event", starts_at: at("10:00"), required_arrival_at: null, place_id: PLACE_A, lateness_tolerance: null, prep_duration: null, flexibility: "flexible" },
+      { id: "B", trip_id: TRIP_ID, type: "event", starts_at: null, required_arrival_at: at("16:00"), place_id: PLACE_B, lateness_tolerance: null, prep_duration: null, flexibility: "flexible" },
     ],
     places: [{ id: PLACE_A, latitude: 48.8566, longitude: 2.3522 }, { id: PLACE_B, latitude: 48.9466, longitude: 2.3522 }],
     events: [
@@ -1708,8 +1737,8 @@ describe("GET /api/discovery/search — events carry tripFit when a trip is in c
       // its own (15:50Z, in the travel reserved before B) and the fitting one
       // second (18:00Z, in the after-last window): "fits lead" is then a
       // reordering the test can see.
-      { id: CLASH_ID, title: "Paris rooftop hour", host_id: ALICE, cover_url: null, city: "Paris", country: "France", starts_at: "2027-09-13T15:50:00.000Z", visibility: "public", state: "open", created_at: "2026-07-01T00:00:00Z" },
-      { id: FITS_ID,  title: "Paris evening walk", host_id: ALICE, cover_url: null, city: "Paris", country: "France", starts_at: "2027-09-13T18:00:00.000Z", visibility: "public", state: "open", created_at: "2026-07-01T00:00:00Z" },
+      { id: CLASH_ID, title: "Paris rooftop hour", host_id: ALICE, cover_url: null, city: "Paris", country: "France", starts_at: at("15:50"), visibility: "public", state: "open", created_at: "2026-07-01T00:00:00Z" },
+      { id: FITS_ID,  title: "Paris evening walk", host_id: ALICE, cover_url: null, city: "Paris", country: "France", starts_at: at("18:00"), visibility: "public", state: "open", created_at: "2026-07-01T00:00:00Z" },
     ],
     event_rsvps: [],
     profile_privacy_settings: [],

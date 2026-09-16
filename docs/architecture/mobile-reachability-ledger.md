@@ -314,7 +314,7 @@ Full per-route detail, including the resolved chain for each wired route, is in
 | POST | `/api/compass/sense/check` | `artifacts/api-server/src/routes/compassSense.ts:101` |
 | GET | `/api/compass/sense/nudges` | `artifacts/api-server/src/routes/compassSense.ts:122` |
 | GET | `/api/compass/value-delivered` | `artifacts/api-server/src/routes/compassOutcomes.ts:67` |
-| GET | `/api/discovery/people/:userId/passport` | `artifacts/api-server/src/routes/discoverySearch.ts:2590` |
+| GET | `/api/discovery/people/:userId/passport` | `artifacts/api-server/src/routes/discoverySearch.ts:2627` |
 | GET | `/api/events/:id/activity` | `artifacts/api-server/src/routes/events.ts:5956` |
 | GET | `/api/events/:id/attendees` | `artifacts/api-server/src/routes/events.ts:3710` |
 | DELETE | `/api/events/:id/attendees/:userId` | `artifacts/api-server/src/routes/events.ts:4930` |
@@ -348,7 +348,7 @@ Full per-route detail, including the resolved chain for each wired route, is in
 | GET | `/api/healthz/delayed-publish` | `artifacts/api-server/src/routes/health.ts:50` |
 | POST | `/api/input-assistance/select` | `artifacts/api-server/src/routes/inputAssistance.ts:216` |
 | POST | `/api/input-assistance/suggest` | `artifacts/api-server/src/routes/inputAssistance.ts:97` |
-| POST | `/api/location/reverse-geocode` | `artifacts/api-server/src/routes/location.ts:187` |
+| POST | `/api/location/reverse-geocode` | `artifacts/api-server/src/routes/location.ts:195` |
 | POST | `/api/map/compass-command` | `artifacts/api-server/src/routes/mapSearch.ts:230` |
 | GET | `/api/map/search` | `artifacts/api-server/src/routes/mapSearch.ts:132` |
 | PATCH | `/api/me/buddy-availability` | `artifacts/api-server/src/routes/rentABuddySpec.ts:2082` |
@@ -362,7 +362,7 @@ Full per-route detail, including the resolved chain for each wired route, is in
 | DELETE | `/api/me/crypto-devices/:id` | `artifacts/api-server/src/routes/devices.ts:128` |
 | GET | `/api/me/devices/:deviceId/key-packages/inventory` | `artifacts/api-server/src/routes/keyPackages.ts:91` |
 | GET | `/api/me/hashtag-follows` | `artifacts/api-server/src/routes/hashtags.ts:715` |
-| GET, POST | `/api/me/passport-stamps/gps` | `artifacts/api-server/src/routes/location.ts:210` |
+| GET, POST | `/api/me/passport-stamps/gps` | `artifacts/api-server/src/routes/location.ts:218` |
 | GET | `/api/me/passport/map` | `artifacts/api-server/src/routes/passportStamps.ts:471` |
 | GET, POST | `/api/me/passport/memories` | `artifacts/api-server/src/routes/passportStamps.ts:238` |
 | PATCH | `/api/me/passport/memories/:id` | `artifacts/api-server/src/routes/passportStamps.ts:327` |
@@ -382,7 +382,7 @@ Full per-route detail, including the resolved chain for each wired route, is in
 | GET | `/api/me/reports` | `artifacts/api-server/src/routes/reports.ts:239` |
 | GET | `/api/me/safe-return/contacts/:userId/passport` | `artifacts/api-server/src/routes/safeReturn.ts:1124` |
 | POST | `/api/me/safe-return/sessions/:id/trigger-missed` | `artifacts/api-server/src/routes/safeReturn.ts:638` |
-| GET | `/api/me/saved-messages` | `artifacts/api-server/src/routes/messaging.ts:2786` |
+| GET | `/api/me/saved-messages` | `artifacts/api-server/src/routes/messaging.ts:2798` |
 | GET | `/api/me/saves` | `artifacts/api-server/src/routes/saves.ts:124` |
 | GET | `/api/me/stamps` | `artifacts/api-server/src/routes/passport.ts:1393` |
 | GET | `/api/media/:id/comments` | `artifacts/api-server/src/routes/mediaFeed.ts:2305` |
@@ -410,7 +410,7 @@ Full per-route detail, including the resolved chain for each wired route, is in
 | GET | `/api/places/photo/media` | `artifacts/api-server/src/routes/places.ts:739` |
 | PUT | `/api/postcards/:id/event-link` | `artifacts/api-server/src/routes/postcards.ts:1225` |
 | POST | `/api/postcards/sweep-orphans` | `artifacts/api-server/src/routes/postcards.ts:1337` |
-| POST | `/api/posts/:postId/location-event` | `artifacts/api-server/src/routes/posts.ts:2191` |
+| POST | `/api/posts/:postId/location-event` | `artifacts/api-server/src/routes/posts.ts:2199` |
 | POST | `/api/rent-a-buddy/bookings/:bookingId/change-request` | `artifacts/api-server/src/routes/rentABuddy.ts:7338` |
 | POST | `/api/rent-a-buddy/bookings/:bookingId/pay-deposit` | `artifacts/api-server/src/routes/rentABuddy.ts:2151` |
 | POST | `/api/rent-a-buddy/bookings/:bookingId/pay-full` | `artifacts/api-server/src/routes/rentABuddy.ts:2161` |
@@ -435,7 +435,7 @@ Full per-route detail, including the resolved chain for each wired route, is in
 | POST | `/api/tags` | `artifacts/api-server/src/routes/tags.ts:46` |
 | GET | `/api/telegraph/commands/:commandId` | `artifacts/api-server/src/routes/telegraphCommands.ts:371` |
 | GET | `/api/telegraph/threads/:threadId/header/:userId` | `artifacts/api-server/src/routes/telegraph.ts:370` |
-| PATCH | `/api/threads/:threadId/messages/:messageId` | `artifacts/api-server/src/routes/messaging.ts:2442` |
+| PATCH | `/api/threads/:threadId/messages/:messageId` | `artifacts/api-server/src/routes/messaging.ts:2444` |
 | GET | `/api/trips/:tripId/activity` | `artifacts/api-server/src/routes/trips-expansion.ts:2766` |
 | POST | `/api/trips/:tripId/archive` | `artifacts/api-server/src/routes/trips-expansion.ts:614` |
 | POST | `/api/trips/:tripId/cancel` | `artifacts/api-server/src/routes/trips-expansion.ts:491` |

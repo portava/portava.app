@@ -26,7 +26,7 @@ import { circleCardInboxPreview } from './CircleStatusCardMessage.logic';
 import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity.ts';
 import { originLabel } from '../features/telegraph/lib/requestOriginLabel.ts';
 import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
-import { errorCopy } from '../lib/errorCopy.ts';
+import { errorCopy } from '../lib/errorCopy.ts'; import { typedKindPreviewLabel } from '../features/telegraph/inbox/typedPreviewLabels.ts'; // one line, on purpose: census-telegraph cites this file at :33, :222, :226 and :457.
 // Telegraph §21 — object-aware, authorization-scoped message search. A
 // different question from this screen's own thread filter; see the row that
 // opens it.
@@ -54,20 +54,20 @@ const SYSTEM_MESSAGE_LABELS: Record<string, string> = {
 };
 
 /**
- * Resolves the inbox row preview text for a thread's last message. System
- * message types (post_card, discovery_card, compass_card, meetup,
- * meetup_confirmed, ai_recommendation, circle_status_card) carry a
+ * Resolves the inbox row preview text for a thread's last message. Shared cards
+ * (post_card, discovery_card, compass_card, meetup, meetup_confirmed,
+ * ai_recommendation, circle_status_card) AND Telegraph §6.2's typed kinds carry a
  * structured JSON `body` — showing it raw leaks `{"postId":"..."}` into the
  * conversation list, so each gets a short human-readable label instead.
  */
-function systemMessageInboxPreview(
+export function systemMessageInboxPreview(
   lmp: NonNullable<ThreadSummary['lastMessagePreview']>,
   isMine: boolean,
 ): string {
-  // Shared cards are stored with msgType 'system' and the real card kind in
-  // `subtype` (e.g. post_card, discovery_card, meetup). A few older/simple
-  // system messages key off msgType directly (circle_status_card,
-  // ai_recommendation), so check subtype first, then fall back to msgType.
+  // §6.2's typed kinds FIRST, keyed on msgType: their `subtype` is a discriminator WITHIN the kind and
+  // COLLIDES with this table's keys — an ACTION proposing a meetup would otherwise read "Created a
+  // meetup". Argument in features/telegraph/inbox/typedPreviewLabels.ts. Shared cards below store msgType 'system' with the card kind in `subtype`; a few older ones key off msgType instead.
+  const typed = typedKindPreviewLabel(lmp.msgType, lmp.subtype); if (typed) return isMine ? `You: ${typed}` : typed;
   const kind = lmp.subtype ?? lmp.msgType;
   if (kind === 'circle_status_card') {
     return circleCardInboxPreview(lmp.body);
@@ -207,13 +207,40 @@ function ThreadRow({ item, userId }: { item: ThreadSummary; userId: string | nul
         <View style={s.nameRow}>
           <View style={s.nameLeft}>
             <Text style={[s.name, unread > 0 && s.nameBold]} numberOfLines={1}>{displayName}</Text>
-            {isMuted && <BellOff size={12} color={color.faint} style={{ marginLeft: 4 }} />}
+            {isMuted && (
+              // Muting decides whether a conversation can reach you at all, and
+              // the whole of that was a 12px glyph.
+              <View
+                accessible
+                accessibilityLabel="Muted"
+                style={{ marginLeft: 4 }}
+                testID="telegraph-row-muted"
+              >
+                <BellOff size={12} color={color.faint} />
+              </View>
+            )}
             <TypeBadge threadType={item.threadType} />
           </View>
           <View style={s.nameMeta}>
             {unread > 0 && (
-              <View style={s.unreadBubble}>
-                <Text style={s.unreadText}>{unread > 99 ? '99+' : unread}</Text>
+              // The row read "mira, 3, 2h ago". The 3 is the most important
+              // thing on it and was the one thing that did not say what it was.
+              // The LABEL is not capped at 99+ — the bubble caps because the
+              // digits do not fit, which is not a reason to throw away a number
+              // we are holding.
+              <View
+                style={s.unreadBubble}
+                accessible
+                accessibilityLabel={`${unread} unread ${unread === 1 ? 'message' : 'messages'}`}
+                testID="telegraph-row-unread"
+              >
+                <Text
+                  style={s.unreadText}
+                  accessibilityElementsHidden
+                  importantForAccessibility="no-hide-descendants"
+                >
+                  {unread > 99 ? '99+' : unread}
+                </Text>
               </View>
             )}
             {lastAt ? <Text style={s.time}>{timeAgo(lastAt)}</Text> : null}
@@ -512,10 +539,28 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
                   key={f.key}
                   style={[s.chip, active && s.chipActive]}
                   onPress={() => setFilter(f.key)}
+                  accessibilityRole="button"
+                  // ACTIVE was a background fill and nothing else, so the screen
+                  // could name the six filters and could not say which one you
+                  // were on — the one fact you need to read every row below.
+                  accessibilityState={{ selected: active }}
+                  // The badge is a separate node reading as a naked number
+                  // beside a word; "Requests" then "3" is as likely to be heard
+                  // as an ordinal as a count.
+                  accessibilityLabel={
+                    badge > 0
+                      ? `${f.label}, ${badge} pending ${badge === 1 ? 'request' : 'requests'}`
+                      : f.label
+                  }
+                  testID={`telegraph-filter-${f.key}`}
                 >
                   <Text style={[s.chipText, active && s.chipTextActive]}>{f.label}</Text>
                   {badge > 0 && (
-                    <View style={s.chipBadge}>
+                    <View
+                      style={s.chipBadge}
+                      accessibilityElementsHidden
+                      importantForAccessibility="no-hide-descendants"
+                    >
                       <Text style={s.chipBadgeText}>{badge > 99 ? '99+' : badge}</Text>
                     </View>
                   )}

@@ -189,6 +189,8 @@ export async function loadEligibleMediaRow(
   sc: SupabaseClient,
   viewer: ViewerResolved,
   mediaId: string,
+  /** The instant eligibility is judged at; see `CandidateFilter.nowMs`. */
+  nowMs: number = Date.now(),
 ): Promise<MediaCandidateRow | null> {
   if (!UUID_RE.test(mediaId)) return null;
 
@@ -212,6 +214,7 @@ export async function loadEligibleMediaRow(
     authorId: ownedOrFollowed ? authorId : null,
     postIds: [mediaId],
     limit: 1,
+    nowMs,
   });
   return rows[0] ?? null;
 }
@@ -430,7 +433,7 @@ export async function resolveMediaActions(
   mediaId: string,
   nowMs: number,
 ): Promise<MediaActionSet | null> {
-  const row = await loadEligibleMediaRow(sc, viewer, mediaId);
+  const row = await loadEligibleMediaRow(sc, viewer, mediaId, nowMs);
   if (!row) return null;
 
   const entities = await resolveMediaEntities(sc, viewer, row, nowMs);

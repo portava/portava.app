@@ -21,7 +21,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireUser, isAcceptedTripMember, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
-import { isKillSwitchEngaged } from "../lib/featureFlags.js";
+import { isKillSwitchEngaged, killSwitchStateUnknown, KILL_SWITCH_UNKNOWN_MESSAGE } from '../lib/featureFlags.js';
 import { enrichSpans } from "../lib/enrichSpans.js";
 import { sendPushWithRetry } from "../lib/pushWithRetry.js";
 import {
@@ -136,7 +136,15 @@ router.post("/meetups", async (req, res) => {
 
   // Emergency stop: disable_new_event_creation — fail-CLOSED on DB error
   const flagSc = getServiceClient();
-  if (flagSc && await isKillSwitchEngaged(flagSc, 'disable_new_event_creation')) {
+  // An ABSENT service client is the same unknown as an unreadable
+  // feature_flags, and until this line it was not treated as one: the stop
+  // was skipped and the write went through with a 2xx. degraded_unavailable
+  // rather than feature_disabled, because nobody engaged a stop.
+  if (killSwitchStateUnknown(flagSc)) {
+    sendError(res, 'degraded_unavailable', KILL_SWITCH_UNKNOWN_MESSAGE);
+    return;
+  }
+  if (await isKillSwitchEngaged(flagSc!, 'disable_new_event_creation')) {
     sendError(res, 'feature_disabled', 'New event creation is temporarily disabled');
     return;
   }

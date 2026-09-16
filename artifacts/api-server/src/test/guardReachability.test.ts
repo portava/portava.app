@@ -43,6 +43,34 @@ let tmp = "";
 before(() => { tmp = mkdtempSync(join(tmpdir(), "guardreach-")); });
 after(() => { if (tmp) rmSync(tmp, { recursive: true, force: true }); });
 
+/**
+ * A spawn that was KILLED is not a spawn that FAILED, and the difference has cost
+ * this project hours.
+ *
+ * `spawnSync` reports a timeout as `status: null` with `signal: 'SIGTERM'`. An
+ * assertion of `status === 0` against that produces `null !== 0` — which reads as
+ * a flat assertion failure and says nothing about the clock. Three lanes have now
+ * chased that message; one recorded `duration_ms: 180254` beside it and still had
+ * to re-run alone to learn what it meant.
+ *
+ * This changes NO verdict: a killed run is still a failure, because a checker that
+ * cannot finish has not passed. It only makes the failure say what happened, and
+ * say what to do about it.
+ */
+const SPAWN_TIMEOUT_MS = 180_000;
+
+function describeSpawn(r: { status: number | null; signal: NodeJS.Signals | null }, ms: number = SPAWN_TIMEOUT_MS): string {
+  if (r.status !== null) return "";
+  return (
+    `\n\nTHE CHECKER WAS KILLED, NOT FAILED: spawnSync returned status=null` +
+    `${r.signal ? ` signal=${r.signal}` : ""} after the ${ms / 1000}s timeout.\n` +
+    `That is a clock result, not an assertion result. This suite spawns the real ` +
+    `checker over the real tree, so it is the slowest thing in the suite and the ` +
+    `first to be starved when several test runs share the machine.\n` +
+    `RE-RUN THIS FILE ALONE before believing it: it passes 25/25 on an idle box.`
+  );
+}
+
 /** Run the checker with a crafted registry (and optionally a crafted run-all / workflow dir). */
 function withRegistry(name: string, entries: unknown[], extra: Record<string, string> = {}) {
   const p = join(tmp, `${name}.json`);
@@ -55,18 +83,18 @@ function withRegistry(name: string, entries: unknown[], extra: Record<string, st
     // invocation, so fixtures that are not about the manual rule skip it — and
     // the two that ARE about it pass GUARD_SKIP_MANUAL_RUN: "" to opt back in.
     env: { ...process.env, GUARD_SKIP_MANUAL_RUN: "1", GUARD_REGISTRY: p, ...extra },
-    timeout: 180_000,
+    timeout: SPAWN_TIMEOUT_MS,
     maxBuffer: 64 * 1024 * 1024,
   });
-  return { code: r.status, out: `${r.stdout ?? ""}${r.stderr ?? ""}` };
+  return { code: r.status, out: `${r.stdout ?? ""}${r.stderr ?? ""}${describeSpawn(r)}` };
 }
 
 describe("guard reachability ratchet", () => {
   it("CONTROL — the real tree and the real registry pass", () => {
     const r = spawnSync(process.execPath, ["--import", "tsx/esm", CHECKER], {
-      cwd: API_ROOT, encoding: "utf8", timeout: 180_000, maxBuffer: 64 * 1024 * 1024,
+      cwd: API_ROOT, encoding: "utf8", timeout: SPAWN_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024,
     });
-    assert.equal(r.status, 0, `${r.stdout ?? ""}${r.stderr ?? ""}`);
+    assert.equal(r.status, 0, `${r.stdout ?? ""}${r.stderr ?? ""}${describeSpawn(r)}`);
     // A silent pass proves nothing: the inventory must actually be printed, and
     // the unenforced count must be stated rather than rounded away.
     assert.match(r.stdout, /guard\(s\) on disk/);

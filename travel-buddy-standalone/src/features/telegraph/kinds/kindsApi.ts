@@ -13,7 +13,14 @@ import { freshToken } from '../../../services/apiToken.ts';
 export const DRAWER_TABS = ['MEDIA', 'PLACES', 'PORTAVA', 'VOICE', 'GIFS', 'LINKS', 'FILES'] as const;
 export type DrawerTab = (typeof DRAWER_TABS)[number];
 
-/** §6.2's kinds this client can send. VOICE is deliberately absent — see the menu. */
+/**
+ * §6.2's kinds this client sends through `POST /threads/:id/typed-messages`.
+ *
+ * VOICE is deliberately absent and that is NOT "voice is missing": a voice note
+ * owns an audio object in our storage and must write the media columns, so it
+ * has its own route (`features/telegraph/voice/voiceApi.ts`). The server draws
+ * the same distinction, in `services/telegraph/messageKinds.ts`.
+ */
 export const SENDABLE_KINDS = [
   'MEDIA_ALBUM',
   'GIF',
@@ -24,6 +31,17 @@ export const SENDABLE_KINDS = [
   'MEMORY_NOTE',
 ] as const;
 export type SendableKind = (typeof SENDABLE_KINDS)[number];
+
+/**
+ * Every kind carried as a stored envelope — the set `parseKindEnvelope` must
+ * understand when it reads a row back out of the thread.
+ *
+ * LARGER than SENDABLE_KINDS, for the same reason the server's `ENVELOPE_KINDS`
+ * is: asking "can I send this" when the question is "can I read this" made a
+ * stored VOICE row parse as nothing and render as a blank bubble.
+ */
+export const ENVELOPE_KINDS = [...SENDABLE_KINDS, 'VOICE'] as const;
+export type EnvelopeKind = (typeof ENVELOPE_KINDS)[number];
 
 export interface DrawerItem {
   id: string;
@@ -129,7 +147,7 @@ export async function searchThread(
  * `artifacts/api-server/src/services/telegraph/messageKinds.ts`.
  */
 export interface KindEnvelope {
-  kind: SendableKind;
+  kind: EnvelopeKind;
   envelopeVersion: '1';
   payload: any;
 }
@@ -139,8 +157,8 @@ export function parseKindEnvelope(
   body: string | null | undefined,
 ): KindEnvelope | null {
   if (typeof msgType !== 'string' || typeof body !== 'string' || body.length === 0) return null;
-  const kind = msgType.toUpperCase() as SendableKind;
-  if (!(SENDABLE_KINDS as readonly string[]).includes(kind)) return null;
+  const kind = msgType.toUpperCase() as EnvelopeKind;
+  if (!(ENVELOPE_KINDS as readonly string[]).includes(kind)) return null;
   let parsed: any;
   try {
     parsed = JSON.parse(body);

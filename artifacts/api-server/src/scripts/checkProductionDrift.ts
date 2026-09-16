@@ -75,7 +75,7 @@ const BASELINE_DIR = join(API_SERVER_ROOT, "baseline");
  * stale silently on the next refresh, which is how two cases in
  * productionDriftExtraction.test.ts came to assert the opposite of the truth.
  */
-export const PRODUCTION_SNAPSHOT = "20260915b_production_tables.txt";
+export const PRODUCTION_SNAPSHOT = "20260916_production_tables.txt";
 
 /**
  * `unmerged-pr` HAS NO MEMBERS AS OF 2026-09-15, AND IS KEPT — ruling, with the
@@ -428,33 +428,14 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
       "one table and alters nothing. Queued behind 2741, which landed in " +
       "production 2026-09-08; not yet certified through its own gate.",
   },
+  // Layover, migration 2860 — layover_external_events — STRUCK OFF, APPLIED.
+  //
+  // Applied by the same file in the same pass. It remains WRITERLESS and
+  // EMPTY: there is still no flight or airport feed anywhere in this tree, and
+  // LayoverEventReplanner is pure. Striking it off says the table exists, not
+  // that anything fills it — and the entry is removed rather than reclassified
+  // because a gap that has been closed is not a gap.
 
-  // Layover, migration 2860.
-  airport_fact_observations: {
-    classification: "unapplied",
-    note:
-      "Migration 2860. The spec s10 observation channel: one airport operational " +
-      "fact per row with the provenance and TTL census L14/L86 record as absent " +
-      "from every existing layover table. Creates one table, alters nothing, " +
-      "SELECT-only for authenticated and nothing for anon. UNAPPLIED ON PURPOSE " +
-      "and with NO WRITER, following 2700's ordering rule — a writer that names a " +
-      "column of an unapplied table fails outright on every database. The reader " +
-      "(src/services/airport/LayoverAirportTruth.ts) is pure and takes its " +
-      "observations as an argument, so nothing degrades while this is absent. " +
-      "Apply, confirm the postconditions, THEN land an ingest route behind a flag.",
-  },
-  layover_external_events: {
-    classification: "unapplied",
-    note:
-      "Migration 2860, same file. The spec s11 canonical event envelope with the " +
-      "UNIQUE dedup key s24 requires and census L194/L263 score as missing. Not a " +
-      "widening of layover_events: that table is an in-app audit trail with a NOT " +
-      "NULL profiles FK on every row, and an external event has no user. " +
-      "Unapplied with no writer and no producer — there is no flight or airport " +
-      "feed on this tree at all, so the table would be empty even if applied. " +
-      "The pipeline that would read it " +
-      "(src/services/airport/LayoverEventReplanner.ts) is pure.",
-  },
 
   // Sensing, migration 2480.
   sensing_contribution_sessions: {

@@ -108,7 +108,7 @@ post-repair for files this pass edited.
 | A9 | Non-stigmatizing copy for low-evidence accounts (§10:116) | C | `LEVEL_LABELS` "New Traveler" (`TrustPrivacyGuard.ts:43-50`), `publicTrustLabel:57-59`; `presentationWord` avoids "low/poor/weak" (Passport's, P51). |
 | A10 | Trust changes internally replayable from evidence/events (§10:117) | C | Recalculation reads only applied/confirmed events (`loadEvents:112-125`) and active caps (`loadCaps:128-149`); admin mutations are audited (`TrustAdminService.logAdminAction:23-42`, called at `:87,184,200,214,247,282,311`); `adminOverrideScore` also writes the row directly (`:238-244`) but pins it with a cap that recalculation honours. census-passport P52. |
 | A11 | Capabilities derive from Trust Evidence + Domain Policy: `canJoinPublicTrip … canBecomeBuddy` (§11:119) | C | Trust supplies the two inputs: `public_level` (rank) and live restriction state. Passport's `buildOwnerCapabilities:566-577` consumes exactly those (`LEVEL_RANK:553-560`, `ownerRestrictionsFromState:543-550`, `getRestrictionState` at `:1525`). `canProvideVisaBuddyService` is Passport's NB (census-passport). |
-| A12 | Authorization is server-side: restrictions are enforced at the action seam, not inferred by the client (§11:120, §30:286) — hosting and messaging | C | `routes/trips.ts:216-230` (canHost, with the degraded-read distinction), `routes/messaging.ts:501-514#msgPerms` (the open-thread seam's primary, fail-closed `resolveInteractionPermissions` gate, plus the catch that refuses rather than allowing on a failed check), `lib/calls/callGatewayAdapter.ts:265`, `services/interactionPermissions.ts:325-337` (throws `DegradedPermissionCheckError` rather than mis-labelling a failed check as a restriction). *(The messaging evidence was cited as `routes/messaging.ts` line 483 until 2026-09-13. That line is the tenth line of a comment paragraph about a `left_at` rejoin write — prose describing a 403, not a seam enforcing one. It was ALREADY wrong at this census's own head_commit 3ca68cb06: that file is unchanged above line 762 between 3ca68cb06 and HEAD, so the messaging diff acknowledged on 2026-09-13 did not move it. Repointed by reading the handler, not by offset, and anchored so the next move is loud. Verdict unmoved — the gate it should have named all along is real, primary and fail-closed.)* |
+| A12 | Authorization is server-side: restrictions are enforced at the action seam, not inferred by the client (§11:120, §30:286) — hosting and messaging | C | `routes/trips.ts:216-230` (canHost, with the degraded-read distinction), `routes/messaging.ts:503-516#msgPerms` (the open-thread seam's primary, fail-closed `resolveInteractionPermissions` gate, plus the catch that refuses rather than allowing on a failed check), `lib/calls/callGatewayAdapter.ts:265`, `services/interactionPermissions.ts:325-337` (throws `DegradedPermissionCheckError` rather than mis-labelling a failed check as a restriction). *(The messaging evidence was cited as `routes/messaging.ts` line 483 until 2026-09-13. That line is the tenth line of a comment paragraph about a `left_at` rejoin write — prose describing a 403, not a seam enforcing one. It was ALREADY wrong at this census's own head_commit 3ca68cb06: that file is unchanged above line 762 between 3ca68cb06 and HEAD, so the messaging diff acknowledged on 2026-09-13 did not move it. Repointed by reading the handler, not by offset, and anchored so the next move is loud. Verdict unmoved — the gate it should have named all along is real, primary and fail-closed.)* |
 | A13 | The same for the other two restriction types the service declares — `private_plan_access`, `location_plan_join` (`TrustRestrictionService.ts:1-9`) | **W** | No route calls `canJoinPrivatePlans` / `canJoinLocationPlans` as a gate (grep: the only consumers of `getRestrictionState` are the four in A12 plus Passport). They reach the client only as `buildOwnerCapabilities` chips (`canJoinPublicTrip`, `canUseCrewLocation`), which §30 says the client must not treat as authorization. An admin applying either restriction changes a chip and blocks nothing. **Owner: Trips / Events / geofence join seams.** |
 | A14 | TABLE 22 projections: permitted trust summary (Discovery, Compass), trust eligibility (Trips), completion/reputation (Buddy), restricted purpose-specific context (Safety) (§21:207-221) | C | Trust provides exactly the privacy-safe shapes: badge without number, summary without counts, restriction state as four booleans. All seven consumer variants derive from the one `PassportProjection.buildTrust` (`PassportConsumerProjections.ts:614-620` discovery_card, `:666-672` buddy, `:770-773` trips; telegraph/safety carry no trust at all). census-passport P117. |
 | A15 | No numeric score to non-owners; the client must not infer authorization from a displayed score (§30:286) | C | `PublicTrustBadge` has no score field (`TrustPrivacyGuard.ts:124-130`); the number is self-only (`buildTrust:1013-1017`); `DiscoveryCardTrust` omits it by design (`PassportConsumerProjections.ts:192-197, :612`). census-passport P60. |
@@ -227,7 +227,7 @@ an ABSENT profile a non-buddy's Buddy row reads "Not yet rated" rather than "Not
 There is one `buildTrust`; every consumer variant is projected from the one `PassportProjection`
 (`PassportConsumerProjections.buildConsumerProjection`). So the seven call sites —
 `routes/trips.ts:467`, `routes/rentABuddy.ts:1248`, `services/passport/EventPassportService.ts:423`,
-`routes/discoverySearch.ts:2908#buildConsumerProjection(sc,`, `routes/compass.ts:4572#buildConsumerProjection(sc,`, `routes/telegraph.ts:386#buildConsumerProjection(sc,`,
+`routes/discoverySearch.ts:3094#buildConsumerProjection(sc,`, `routes/compass.ts:4572#buildConsumerProjection(sc,`, `routes/telegraph.ts:386#buildConsumerProjection(sc,`,
 `routes/safeReturn.ts:1185#buildConsumerProjection` — all inherit the fix. *(Cited `:852` until 2026-09-12; that line was never the call, which is at the `buildConsumerProjection(db, "safety", …)` site — a range-only citation that stayed green while wrong, the §37 class. Anchored now.)* *(Three more repointed 2026-09-13 while acknowledging this census's staleness on `routes/discoverySearch.ts` and `routes/messaging.ts`, each re-derived by SEARCHING FOR THE CALL rather than by adding the diff's offset. Discovery search was cited at line 2087, then at line 2350 after a merge re-derived it by offset; the call is at line 2578 and has been the file's only `buildConsumerProjection(sc, "discovery_card", …)` throughout. Compass was cited at line 4225, then at line 4276 by the same offset re-derivation — and `routes/compass.ts` was BYTE-IDENTICAL between 3ca68cb06 and 75cc31d9e, the tree this sentence was measured in, so no offset was owed at all; line 4276 is a bare closing brace, a line that occurs 38 times in that file, which is not a citation. The call was at line 4393 there. **UPDATED 2026-09-13, because this sentence stopped being true four commits later and a census must not keep asserting it:** the Compass lane's `fa5d7c25d` added 184 lines to this file (census-compass §12's CP-01/CT-13 pass), so the byte-identical claim no longer reaches HEAD and is narrowed here to the window it was actually measured over. The call was re-resolved by SEARCHING FOR IT again rather than by adding that diff's offset, and is at line 4559 — still the file's only `buildConsumerProjection(sc, "discovery_card", …)`, which the anchored citation in the list above names and which resolves line-exact at HEAD. No verdict moves; the `fa5d7c25d` diff is argued hunk by hunk in this census's entry in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json`. Both were already wrong at 3ca68cb06, so neither was broken by the diff being acknowledged; both, and Telegraph's, now carry a whitespace-free anchor that appears on exactly ONE line of the file it names. NOT repaired here, and still wrong, in files this census's scope shows UNCHANGED since 3ca68cb06 — so outside this acknowledgement's reach and owed a repointing pass of their own: Trips is cited at line 467, a route comment banner, for a call at line 590; Rent-a-Buddy at line 1248, a `.select()` chain, for a call at line 1386; and the variant ranges in the table below (PassportConsumerProjections 607-613, 666-672 and 770-773, plus computeTrustScore at rentABuddy line 1237) name unrelated code. No verdict rests on the numbers — every one of the seven is the same call it always was.)* But note what each actually ships:
 
 | Consumer | Variant | Carries `domains`? | Reached by the constant-50 "Established" defect? | Changed by #467? |
@@ -352,7 +352,7 @@ on `src/test/tripCrewRlsMembershipConvergence.test.ts`, a sibling's Trips file, 
 ## 7. What could not be established
 
 1. **Why August's three non-official posts produced no `pulse_post_created` event when July's
-   four did.** `routes/posts.ts:1010-1019` is reached for every post created through that route
+   four did.** `routes/posts.ts:1018-1027` is reached for every post created through that route
    (no early return between the insert at `:611` and the emit; the response is sent at `:940`);
    the only other `posts` inserters are `routes/hiddenGems.ts:1026` (gem posts; all six gems are
    from June) and `routes/adminPortavaPosts.ts:148` (official; correctly silent). Production's
@@ -396,7 +396,7 @@ commit.** Rows not restated keep the verdict the body left them with.
 
 | Field | Value |
 | --- | --- |
-| `head_commit` | `1fe72289b` — RE-DECLARED 2026-09-15 at the squash merge of PR #482. The previous value was `f9d0b9a07`, a commit on the pre-merge branch. **The squash made it an orphan**: it still exists in a clone that fetched the branch, but it is on no line of history leading to `main`, and `check:census-freshness` refuses an orphan because the check would pass locally and fail in a fresh clone. Nothing about this census was re-measured and NO verdict moves — `1fe72289b` is the commit its previous declaration's tree became, so zero counted files have changed since it. The prior declaration and its reasoning follow. — RE-DECLARED 2026-09-13 by **§13**, which built phase V-7 (TV-7a, TV-7b) and moved both rows to `C`; §12's citations into `routes/verification.ts` and `routes/admin.ts` are unaffected. The previous declaration read: `983cfaf75` — RE-DECLARED 2026-09-13 by **§12**, replacing `3ca68cb06`. §12 re-measured the whole census against the verified-foundation plan and the v2 upgrade, corrected the denominator from 52 to 93, re-executed nine of the fifty `C` rows and both `W` rows, and repaired four rows in `routes/verification.ts` and `routes/admin.ts` — so the declaration moves to the commit those repairs landed in, and every §12 citation into those two files is post-repair. The 52 original verdicts are unchanged; see §12.8 for what was re-executed and §12.2 for the arithmetic. The previous declaration read: `3ca68cb06` — RE-DECLARED 2026-09-13 by §5, replacing `42aeac38`. §5 re-executed **all six** of the rows this census could not previously be parsed on (A3, A8, C5, C13, C17, C27) and both remaining BUILT-BUT-WRONG rows at this commit, and edited no Trust source file. It does **not** certify the other 44 `C` rows. The previous declaration read: `42aeac38` — RE-DECLARED 2026-09-09 from `7bca4b0d0e19d29ea0a96982f74b35d26402fa52`, the working-tree commit that addendum was measured at. The move is a measurement, not a judgement: `git diff --name-only 7bca4b0d 42aeac38` over this census's 15 scoped paths returns **0 files**, so all 52 verdicts are exactly as true at one as at the other. It was necessary because `7bca4b0d` is PRE-SQUASH — this repository squash-merges, so it is an ancestor of nothing, is on no remote branch, and `check:census-freshness` could resolve it only on the clone that wrote it (`CENSUS_HEAD_COMMITS_UNREACHABLE_IN_CI`). `42aeac38` is #476's squash, where this document's content reached `main`. |
+| `head_commit` | `a97bfdac0` — RE-DECLARED 2026-09-16 by **§20**, replacing `1fe72289b`. A MEASUREMENT by an independent reviewer, not a field edit. §20 re-derived every Trust claim resting on the counted files that changed in the acknowledged range: four of the five (`routes/messaging.ts`, `routes/discovery.ts`, `routes/tripCrewLocation.ts`, `routes/profile.ts`) had each falsifiable claim re-checked at BOTH commits and all held, and the fifth (`routes/discoverySearch.ts`) is covered by the same five-hunk enumeration §13 of census-input-intelligence gives. **NO Trust verdict moves** — A12, TV-P2, TV-5b, TV-0e/TV-2c and TRV2-08 were all re-derived and all stand. §20 also records two ACCOUNTING CORRECTIONS that move nothing: §12/§14.6 score `routes/discovery.ts` at "4 `date_of_birth` reads" when the true count is **zero**, at this commit and at `1fe72289b` alike (TV-5b is unaffected — its load-bearing column, `loadTravelerIdentity: 0`, is confirmed 0 at both); and census-telegraph §27.5's two false statements about `routes/profile.ts` are corrected here, in §20.2, because this is the census that watches that file. The acknowledgement written against `1fe72289b` is SPENT and has been moved to the `retired` array; zero counted files have changed between `a97bfdac0` and HEAD, so no replacement entry is written. It does **not** re-certify the other rows. The previous declaration read: `1fe72289b` — RE-DECLARED 2026-09-15 at the squash merge of PR #482. The previous value was `f9d0b9a07`, a commit on the pre-merge branch. **The squash made it an orphan**: it still exists in a clone that fetched the branch, but it is on no line of history leading to `main`, and `check:census-freshness` refuses an orphan because the check would pass locally and fail in a fresh clone. Nothing about this census was re-measured and NO verdict moves — `1fe72289b` is the commit its previous declaration's tree became, so zero counted files have changed since it. The prior declaration and its reasoning follow. — RE-DECLARED 2026-09-13 by **§13**, which built phase V-7 (TV-7a, TV-7b) and moved both rows to `C`; §12's citations into `routes/verification.ts` and `routes/admin.ts` are unaffected. The previous declaration read: `983cfaf75` — RE-DECLARED 2026-09-13 by **§12**, replacing `3ca68cb06`. §12 re-measured the whole census against the verified-foundation plan and the v2 upgrade, corrected the denominator from 52 to 93, re-executed nine of the fifty `C` rows and both `W` rows, and repaired four rows in `routes/verification.ts` and `routes/admin.ts` — so the declaration moves to the commit those repairs landed in, and every §12 citation into those two files is post-repair. The 52 original verdicts are unchanged; see §12.8 for what was re-executed and §12.2 for the arithmetic. The previous declaration read: `3ca68cb06` — RE-DECLARED 2026-09-13 by §5, replacing `42aeac38`. §5 re-executed **all six** of the rows this census could not previously be parsed on (A3, A8, C5, C13, C17, C27) and both remaining BUILT-BUT-WRONG rows at this commit, and edited no Trust source file. It does **not** certify the other 44 `C` rows. The previous declaration read: `42aeac38` — RE-DECLARED 2026-09-09 from `7bca4b0d0e19d29ea0a96982f74b35d26402fa52`, the working-tree commit that addendum was measured at. The move is a measurement, not a judgement: `git diff --name-only 7bca4b0d 42aeac38` over this census's 15 scoped paths returns **0 files**, so all 52 verdicts are exactly as true at one as at the other. It was necessary because `7bca4b0d` is PRE-SQUASH — this repository squash-merges, so it is an ancestor of nothing, is on no remote branch, and `check:census-freshness` could resolve it only on the clone that wrote it (`CENSUS_HEAD_COMMITS_UNREACHABLE_IN_CI`). `42aeac38` is #476's squash, where this document's content reached `main`. |
 | `generated_at` | 2026-09-08 |
 | **Denominator (testable requirements)** | **52** |
 | Scanned | `services/trust/` (8 services), `lib/trustScore.ts`, `lib/trustMaintenanceScheduler.ts`, `routes/trust-admin.ts`, plus every file the eight open rows named: `routes/events.ts`, `routes/pulse.ts`, `routes/rentABuddyMarketplace.ts`, `routes/admin.ts`, `routes/trips.ts`, `routes/tripCrewLocation.ts`, `compass/*`, `services/ranking/CreatorActivityScoreService.ts`, `services/passport/*`, `services/hiddenGems/*` |
@@ -735,7 +735,7 @@ not exist anywhere in this repository.
 | TV-4b | Suspension enforcement middleware on auth: suspended users get a read-only state with an appeal contact; banned users are signed out | **W** | Three criteria, one passes. **Middleware on auth ✓** — `artifacts/api-server/src/lib/http.ts:370-375#if (accountStatus === "banned") {`, inside `requireUser`, so it covers every authenticated route, and `artifacts/api-server/src/lib/http.ts:352-364#if (statusRead.state === "unavailable") {` refuses outright when `account_status` is unreadable rather than serving an unchecked request. **Read-only state with an appeal contact ✗** — a suspended user gets a blanket 403 `"Your account is temporarily suspended"` on every authenticated request: not read-only, and naming no appeal contact, although `routes/appeals.ts` and `travel-buddy-standalone/app/appeals.tsx` both exist and nothing points at them from here. **Banned users signed out ✗** — also a 403 (`artifacts/api-server/src/lib/http.ts:371#sendError(res, "forbidden", "Your account has been banned");`); `src/components/AccountStatusGate.tsx` has branches for `deactivated` and pending deletion and none for suspended or banned, so the client has no state to render either. Owner decision **D-SUSPENSION-UX**. |
 | TV-4c | `verification_revoked` action clears `profiles.verification_level` | **C** | **Built this pass.** `POST /admin/users/:userId/unverify` is the platform's revoke action and cleared `verified`, `verification_status` and `verified_at` — the exact inverse of what `/verify` sets, which is why it looked complete. A fourth column carries the same claim and is written by a different path: `profiles.verification_level` has exactly ONE writer in the server (`routes/verification.ts:71#verification_level: level,`), and `lib/travelerVerification.ts:85-88#(typeof row["verification_level"] === "string" && row["verification_level"] !== "none")` reads it as a **sufficient** id-verified signal, ORed with the other two rather than ANDed. Clearing two of three disjuncts revoked nothing: an admin unverifying a user after a disputed document left them passing every gate that calls `loadTravelerIdentity`, including the Rent-a-Buddy MVP booking gate. And nothing else could clear it — the single writer only ever sets a verified level — so no code path in the product could take ID-verified standing away. Now cleared at `routes/admin.ts:1646#verification_level: "none",`. RED 5 tests/3 pass/2 fail → GREEN 5/5 (`test/adminUnverifyRevokesIdLevel.test.ts`); reverting the single added field returns it to 3/2. The test asserts the OUTCOME — it applies the patch the route actually sent and asks `travelerIdentityFromProfile` — plus a premise test, an audit assertion and a control. Reversing derived TRUST effects is deliberately not done here: that is **D-REVERSAL** and is `TRV2-10`'s CANNOT-VERIFY. |
 | TV-5a | Safety Center screen: links to Safe Return, SOS, verification status, blocked-users list, community guidelines, report history | **W** | Four of six. The hub exists at `travel-buddy-standalone/app/profile/edit/safety.tsx` ("Safety & Verification"): verification status ✓ `travel-buddy-standalone/app/profile/edit/safety.tsx:72-80#<SettingsSection title="Identity Verification">` (read-only cards from `getMyProfile`), blocked-users ✓ `travel-buddy-standalone/app/profile/edit/safety.tsx:102-104#title="Blocked Users"`, report history ✓ `travel-buddy-standalone/app/profile/edit/safety.tsx:126-128#title="Your Reports"` → `/profile/edit/reports`, Safe Return ✓ `travel-buddy-standalone/app/profile/edit/safety.tsx:143-145#title="Safe Return"` (linked to Location & Availability rather than duplicated). **SOS ✗** and **community guidelines ✗** — neither appears on the screen, and a repository-wide search for a community-guidelines surface returns none. |
-| TV-5b | Age gating: 18+ features (nightlife-tagged events, Rent a Buddy) check `is_over_18` from the latest verified row; unverified users see a "verify to access" gate, not silent hiding | **NB** | `is_over_18` is written at `routes/verification.ts:150#is_over_18:     result.isOver18   ?? null,` and read by **no gate**. Every age gate in the product reads `profiles.date_of_birth` instead — `lib/travelerVerification.ts:66#const dateOfBirth = (row["date_of_birth"] as string`, `routes/meetups.ts:660#resolveGateAges(sc,` and `routes/meetups.ts:738#resolveGateAge(sc,`, `routes/requests.ts:454#.select("date_of_birth")` and `routes/requests.ts:485#const dob = (profileRes.data as any)?.date_of_birth ?? null;`, `routes/profile.ts:445#gateAgeFrom(`, `services/media/MediaProjectionService.ts:101#.select("location_country")`, `routes/mediaFeed.ts:1328#.select("location_country")` — which is TV-P2's violation seen from the consumer side. No nightlife-tagged-event gate exists at all, and there is no "verify to access" surface: `AgeGate.tsx` asks for a birthdate, which is the opposite mechanism. |
+| TV-5b | Age gating: 18+ features (nightlife-tagged events, Rent a Buddy) check `is_over_18` from the latest verified row; unverified users see a "verify to access" gate, not silent hiding | **NB** | `is_over_18` is written at `routes/verification.ts:150#is_over_18:     result.isOver18   ?? null,` and read by **no gate**. Every age gate in the product reads `profiles.date_of_birth` instead — `lib/travelerVerification.ts:66#const dateOfBirth = (row["date_of_birth"] as string`, `routes/meetups.ts:668#resolveGateAges(sc,` and `routes/meetups.ts:746#resolveGateAge(sc,`, `routes/requests.ts:454#.select("date_of_birth")` and `routes/requests.ts:485#const dob = (profileRes.data as any)?.date_of_birth ?? null;`, `routes/profile.ts:445#gateAgeFrom(`, `services/media/MediaProjectionService.ts:101#.select("location_country")`, `routes/mediaFeed.ts:1328#.select("location_country")` — which is TV-P2's violation seen from the consumer side. No nightlife-tagged-event gate exists at all, and there is no "verify to access" surface: `AgeGate.tsx` asks for a birthdate, which is the opposite mechanism. |
 | TV-6a | **OWNER:** choose Stripe Identity or Persona; create the account; obtain API keys; configure the webhook endpoint + signing secret; set Replit Secrets (`IDENTITY_PROVIDER`, provider keys, `IDENTITY_WEBHOOK_SECRET`) | **NB** (OWNER-BLOCKED) | Not started and not startable by a lane. `services/identityVerification/readiness.ts:53#const IMPLEMENTED_PROVIDERS = new Set<string>(["mock"]);` declares `IMPLEMENTED_PROVIDERS = new Set(["mock"])`; `services/identityVerification/readiness.ts:56#const REQUIRED_ENV: Record<string, string> = {` names the env vars that would have to exist (`STRIPE_IDENTITY_SECRET_KEY`, `PERSONA_API_KEY`). **Exactly what is needed, so the owner can act without reading code:** (1) a decision between Stripe Identity and Persona; (2) an account with that vendor; (3) the API key(s) — `STRIPE_IDENTITY_SECRET_KEY`, or `PERSONA_API_KEY` + `PERSONA_TEMPLATE_ID`; (4) a webhook endpoint registered at `POST https://<api-host>/api/verification/webhook`; (5) the signing secret from that registration, as `IDENTITY_WEBHOOK_SECRET`; (6) all of it in Replit Secrets, plus `IDENTITY_PROVIDER` set to the chosen name **in staging first**. Costs ~$1.50–3.00 per attempt at both vendors (plan, "Cost checkpoints"). Owner decision **D-PROVIDER**. |
 | TV-6b | **AGENT:** implement the chosen adapter per the mapped TODOs; sandbox-mode end-to-end test; then flip `IDENTITY_PROVIDER` staging → production *(the signature-verification criterion is counted once, at TV-P5)* | **NB** | Nothing implemented: both adapters throw from every method (`providers.ts:87#const stripeProvider: IdentityVerificationProvider = {`, `providers.ts:119#const personaProvider: IdentityVerificationProvider = {`). Genuinely blocked on TV-6a for the account-dependent half, and **that is not a reason this row is untouched** — the integration is mapped line by line in the file (`services/identityVerification/stripeIdentity.ts:28# *   createSession            -> POST /v1/identity/verification_sessions` Stripe, `services/identityVerification/persona.ts:14# *   createSession            -> POST /api/v1/inquiries   (+ one-time link)` Persona) and the normalization notes are written, so the remaining agent work is real and specified. It was not done here because implementing an adapter that cannot be sandbox-tested would produce exactly the mock-counted-as-complete this census forbids: `services/identityVerification/readiness.ts:41#* ── ADD YOUR PROVIDER HERE WHEN A SANDBOX RUN HAS CERTIFIED IT ──────────────` states the rule in the file itself — a provider joins `IMPLEMENTED_PROVIDERS` when its adapter stops throwing, and *"leaving a stub out of this set is what keeps the Rent-a-Buddy booking gate closed."* |
 | TV-7a | Account-deletion flow calls `provider.requestProviderDeletion()` **then** deletes the user's `identity_verifications` rows | **W** | Two criteria; the second passes and the first does not. Deletion ✓ `services/accountDeletion/AccountDeletionService.ts:1006-1011#const verOk = await step(steps, "delete_identity_verifications", async () => {` (`delete().eq("user_id", userId)`, as a named, checked step). **`requestProviderDeletion` ✗** — declared at `services/identityVerification/types.ts:101#requestProviderDeletion(providerVerificationRef: string): Promise<void>;`, implemented as a no-op by the mock (`mockProvider.ts:139-141#async requestProviderDeletion(): Promise<void> {`), mapped for both real vendors in comments (`services/identityVerification/stripeIdentity.ts:33# *   requestProviderDeletion  -> POST /v1/identity/verification_sessions/:id/redact` `verificationSessions.redact`, `services/identityVerification/persona.ts:19# *   requestProviderDeletion  -> POST /api/v1/inquiries/:id/redact` `POST /inquiries/:id/redact`), and **called from nowhere**: a repository-wide search returns only the declaration, the two stubs, the mock and the comments. So erasure deletes Portava's opaque reference and leaves the provider's copy of the government ID in place — the one direction of GDPR erasure that is not Portava's to keep. The ordering the plan specifies ("then") is also lost: once the row is deleted, `provider_verification_ref` is gone and the deletion can no longer be requested. |
@@ -1866,7 +1866,7 @@ Implementation's own report was deliberately withheld from that role.
 Both halves are now true, and neither is taken on the builder's word:
 
 - The route is `artifacts/api-server/src/routes/trust-admin.ts:391#router.post(` — behind
-  `requireAdmin`, mounted at `artifacts/api-server/src/routes/index.ts:220#trustAdminRouter`,
+  `requireAdmin`, mounted at `artifacts/api-server/src/routes/index.ts:222#trustAdminRouter`,
   **awaiting** `adminOverrideScore` and returning the read-back `persistedScore` and
   `ceilingBinding` rather than a bare `ok`.
 - Verification re-ran all four of §15.4's named mutations. **All four go red**, including P4
@@ -1882,7 +1882,7 @@ hold; the spelling difference is recorded rather than smoothed over.
 
 | id | was | now | evidence |
 |---|---|---|---|
-| C22 | W | **C** | **The row's own settlement condition, met and independently re-derived.** §15 wrote it in: *"a `POST /admin/trust/users/:userId/score-override` on `routes/trust-admin.ts` behind `requireAdmin`, plus a route test asserting the ceiling on the row."* The route is `artifacts/api-server/src/routes/trust-admin.ts:391#router.post(`, behind `requireAdmin`, mounted at `artifacts/api-server/src/routes/index.ts:220#trustAdminRouter`; it **awaits** `adminOverrideScore` and returns the read-back `persistedScore` and `ceilingBinding` instead of a bare `ok`, so a ceiling that did not persist cannot be reported as one that did. An independent Verification role — given the checklist and the code but **not** the builder's report — re-ran all four of §15.4's named mutations and **all four go red**; P4, inverting the ceiling comparison at `artifacts/api-server/src/services/trust/TrustScoreService.ts:186#Math.min`, reddens 16 cases across six describe blocks, so CAP semantics are pinned by behaviour rather than by a comment. The built path spells `/score/override` where the row wrote `/score-override`; the capability and its test are what the criterion names, and the spelling difference is recorded rather than smoothed over. **Turns red if** any of §14.4's four characterization assertions starts failing, if the route loses `requireAdmin`, if `adminOverrideScore` stops being awaited, or if `ceilingBinding` is reported unconditionally. |
+| C22 | W | **C** | **The row's own settlement condition, met and independently re-derived.** §15 wrote it in: *"a `POST /admin/trust/users/:userId/score-override` on `routes/trust-admin.ts` behind `requireAdmin`, plus a route test asserting the ceiling on the row."* The route is `artifacts/api-server/src/routes/trust-admin.ts:391#router.post(`, behind `requireAdmin`, mounted at `artifacts/api-server/src/routes/index.ts:222#trustAdminRouter`; it **awaits** `adminOverrideScore` and returns the read-back `persistedScore` and `ceilingBinding` instead of a bare `ok`, so a ceiling that did not persist cannot be reported as one that did. An independent Verification role — given the checklist and the code but **not** the builder's report — re-ran all four of §15.4's named mutations and **all four go red**; P4, inverting the ceiling comparison at `artifacts/api-server/src/services/trust/TrustScoreService.ts:186#Math.min`, reddens 16 cases across six describe blocks, so CAP semantics are pinned by behaviour rather than by a comment. The built path spells `/score/override` where the row wrote `/score-override`; the capability and its test are what the criterion names, and the spelling difference is recorded rather than smoothed over. **Turns red if** any of §14.4's four characterization assertions starts failing, if the route loses `requireAdmin`, if `adminOverrideScore` stops being awaited, or if `ceilingBinding` is reported unconditionally. |
 
 > **Trust, at this tree: 108 requirements · 85 BUILT-AND-CORRECT · 15 BUILT-BUT-WRONG ·
 > 6 NOT-BUILT · 2 CANNOT-VERIFY → CONSTRUCTED 100 / 108 = 92.6 % · CORRECT 85 / 108 = 78.7 %.**
@@ -2035,7 +2035,7 @@ section is the later statement. Each was re-measured here, not inherited from th
    I counted them: **seven** modules — `services/interactionPermissions.ts:354`,
    `services/passport/PassportProjectionService.ts:2003`, `lib/calls/callGatewayAdapter.ts:265`,
    `domain/telegraph/policies/conversationCapabilityPolicy.ts:181`, `routes/tripCrewLocation.ts:484#getRestrictionState(sc, user.id)`,
-   `routes/messaging.ts:691`, and `routes/trips.ts:288` and `:1335`. **TRV2-08 does not move**, and
+   `routes/messaging.ts:693`, and `routes/trips.ts:288` and `:1335`. **TRV2-08 does not move**, and
    I checked the half that decides it rather than the half that is wrong: `grep -rn
    getRestrictionState src/compass src/routes/discovery*.ts` returns **nothing**, so *"`src/compass/`
    and `routes/discovery*.ts` contain no call"* still holds and the row is still `N`.
@@ -2105,3 +2105,215 @@ The headline table, restated from the rows under LAST-STATEMENT-WINS:
 BUILT-BUT-WRONG. §18's own note records the integration lead being caught by this same guard for
 leaving a headline behind a row move; leaving it behind again would be worse for having been
 warned.*
+
+---
+
+## §20 — An INDEPENDENT check of this census's ledger arguments at `a97bfdac0`. NO ROW MOVES; one sibling census's statement is corrected and one pre-existing measurement defect is brought out of the JSON
+
+*Written 2026-09-16 by an independent reviewer with no lane in this tree, sent to
+check the arguments in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json`
+rather than to inherit them. Measured against `a97bfdac0`. **`head_commit` is NOT
+re-declared here and the ledger is NOT edited.** §20.4 says what this licenses.*
+
+### 20.1 The five counted files, and the claims checked rather than read
+
+This census's ledger entries cover `routes/messaging.ts`, `routes/discovery.ts`,
+`routes/tripCrewLocation.ts`, `routes/profile.ts` and `routes/discoverySearch.ts`,
+and each argues per ROW that no Trust verdict can move. **The falsifiable claims
+were re-derived at both commits.** Every one holds:
+
+| the claim | how it was checked | result |
+|---|---|---|
+| `routes/messaging.ts` lines 498-514 — A12's `msgPerms` seam — are byte-identical | `diff` of that range at `1fe72289b` and `a97bfdac0` | **identical** |
+| `artifacts/api-server/src/routes/messaging.ts:693#const senderRestrictions = await getRestrictionState(sc, user.id);` — §16's `getRestrictionState` caller — is byte-identical | same | **identical** |
+| `routes/messaging.ts` is the same length, so ~49 citations keep their lines | `wc -l` at both commits | **4,081 = 4,081**. (The entry prints "4,082"; the PROPERTY it asserts is true, the number is off by one.) |
+| `routes/discovery.ts` gains no `date_of_birth` read and no `loadTravelerIdentity` call | `grep -c` at both commits | **0 and 0 at both** |
+| `routes/profile.ts`'s five cited lines are byte-identical | `sed`+compare at both commits for 117, 445, 504, 595, 600 | **all five identical** |
+| `routes/profile.ts`'s `date_of_birth` count is unchanged | `grep -c` at both commits | **4 = 4** (file grew 2,176 → 2,330 lines) |
+
+**No Trust verdict moves**, and this reviewer reached that independently rather
+than by accepting it. `A12`, `TV-P2`, `TV-5b`, `TV-0e`/`TV-2c` and `TRV2-08` all
+stand exactly where §16-§19 left them. The headline is unchanged.
+
+### 20.2 The `routes/profile.ts` retranslation site, cited — and `census-telegraph.md` §27.5 corrected
+
+`census-telegraph.md` §27.5 records, as a live open item, that the second caller
+of the shared retranslation gate *"makes the same prior-language read"* as
+`routes/messaging.ts` and *"is not closed"*. **Both halves are false at
+`a97bfdac0`**, and the cited evidence belongs here because this census is the one
+that counts the file.
+
+- **It is not a prior-language read and never was.** The handler performs no
+  change detection: the write has already run, so no prior value is in scope —
+  `artifacts/api-server/src/routes/profile.ts:954#this branch has no change`
+  says so in the file itself. What it reads is the PREFERENCE:
+  `artifacts/api-server/src/routes/profile.ts:979#const { data: prefRow, error: prefErr } = await sc`.
+- **The blast radius is the OPPOSITE of `messaging.ts`'s.** There, a swallowed
+  read looked like a language CHANGE and billed a ~200-message sweep to a paid
+  provider on every failing save. Here, a swallowed read looked like "preference
+  unknown", which the gate correctly fails closed on — so it SUPPRESSED a sweep
+  the user was entitled to, and a user with auto-translate ON silently kept
+  old-language translations, permanently, because the sweep is fire-and-forget.
+- **It is closed.** The error is bound and the loss reported at
+  `artifacts/api-server/src/routes/profile.ts:987#auto_translate_messages unreadable`,
+  and the gate call carries an explicit non-error term so the property survives a
+  later permissive default. **The ANSWER deliberately does not move**: the write
+  has committed, so a 503 would tell a client to retry a save that succeeded.
+
+**This moves no verdict in either census.** It is an ACCOUNTING correction, and
+it is recorded because §27.5 hands the next reader a to-do that is done and a
+description that would send them hunting the wrong defect.
+
+### 20.3 `§12`/`§14.6`'s "4 `date_of_birth` reads" in `routes/discovery.ts` is ZERO, and has been since before `1fe72289b`
+
+The ledger entry for this census names this and it should not live only in a JSON
+file, so it is restated in the document it is about. §12's per-file table scores
+`routes/discovery.ts` at **four** `date_of_birth` reads. A literal `grep -c` of
+that file returns **zero** — at `a97bfdac0` and at this census's own declared
+`head_commit` `1fe72289b`. Discovery reaches the age signal through
+`resolveGateAge`, not by naming the column.
+
+**`TV-5b` does not move**, because the load-bearing column of that same table row
+is `loadTravelerIdentity: 0`, which is confirmed **0** at both commits. This is an
+ACCOUNTING correction to a measurement, owed to the next `census-trust` pass, and
+it is **not** caused by anything that changed since `1fe72289b`.
+
+### 20.4 What this licenses
+
+Re-measured here: the six claims in §20.1, the `routes/profile.ts` retranslation
+site, and §12's `date_of_birth` count. Not re-measured: the other 108 rows, and
+in particular the `routes/tripCrewLocation.ts` membership change, whose Trust-side
+argument (it is upstream of the restriction gate, not in it) was read but not
+re-derived here.
+
+**This census's `head_commit` CAN truthfully advance to `a97bfdac0`.** Five
+counted files changed; four of the five had every Trust claim resting on them
+re-derived at both commits, and the fifth — `routes/discoverySearch.ts` — is
+covered by the five-hunk enumeration checked independently in
+`census-discovery.md` §44. That is a statement about the files that moved, not a
+certification of the 108 rows: the declaration starts a clock and certifies no
+past.
+
+**Guards at this tree:** `check:census-freshness` **0**,
+`check:census-scope-coverage` **0**, `check:census-integrity` **0**,
+`check:census-row-move-labels` **0**, `check:doc-citations` **0**,
+`check:citation-targets` **0**. `check:write-path-columns`,
+`check:missing-live-columns`, `check:authorization-contract`,
+`check:media-objects` and `check:rank-events-surfaces` exit **2** without live
+credentials — **UNVERIFIED, not green**; no claim above rests on them.
+
+## §21 — The Rent-a-Buddy gate got a door. ONE ROW MOVES, and the refusal it made stops blaming the server
+
+**2026-09-16, product lane.** `head_commit` is **NOT** re-declared here, for §19's reason
+unchanged: this section grades one row. It is not a re-measurement of 108 requirements.
+
+### §21.1 What TV-2a asked for, and what the tree answered
+
+TV-2a wants two entry points into identity verification: the Passport profile, and the
+Rent-a-Buddy gate. §13's client-lane table settled the second in one sentence — *"Settled by a
+screen under `app/(rent-a-buddy)/` linking to `/profile/verification`, so a user the server-side
+gate refuses is given a way to satisfy it."*
+
+The gate itself was never in doubt.
+`artifacts/api-server/src/routes/rentABuddyRollout.ts:372#verification_required` refuses an
+MVP-mode booking from a traveller whose ID is not verified, with an HTTP 403 and that code.
+
+**What the row did not record is that the refusal was worse than a dead end — it was a
+misattribution.** `verification_required` appeared in NEITHER map in
+`travel-buddy-standalone/src/services/rentABuddyBookingErrors.ts`: not in the feature-closed
+set, not in the copy table. So `bookingErrorCopy` fell all the way through to
+`GENERIC_BOOKING_ERROR`, and a traveller who had just filled in the entire checkout form — date,
+duration, group size, meetup zone, safety preferences, policy acceptance — was shown an alert
+reading:
+
+> "Something went wrong on our side and we couldn't complete that. Please try again."
+
+Every clause of which is false. Nothing went wrong. It was not on our side. And trying again
+does the same thing forever, because the gate is a fact about the account rather than a transient
+failure. The one sentence the person needed — *your ID is not verified, and there is a screen for
+that* — was the sentence the mapping could not produce. Meanwhile
+`travel-buddy-standalone/app/profile/verification.tsx` had existed the whole time, registered at
+`travel-buddy-standalone/src/navigation/portavaRoutes.ts:352#path: 'profile/verification',`,
+which is the route TV-2a's Passport half already reaches.
+
+The two `become/apply.tsx` refusals were the same shape in a politer register: one told the
+applicant to *"complete your verification first"* and the other to *"contact support to begin the
+verification process"*. Support was never the way in. The screen was.
+
+### §21.2 What is built
+
+A THIRD class of refusal, beside the two `rentABuddyBookingErrors.ts` already had:
+
+| class | meaning | treatment |
+|---|---|---|
+| feature-closed | `isBookingUnavailable` — nothing to do but wait | persistent banner, Book button disabled, "Not available yet" |
+| **actionable** | the person can clear this themselves | **persistent banner carrying the route, Book button LEFT ENABLED** |
+| genuine failure | something really broke | `Alert`, and "try again" is honest advice |
+
+- The registry: `travel-buddy-standalone/src/services/rentABuddyBookingErrors.ts:91#route: '/profile/verification'`,
+  read through `travel-buddy-standalone/src/services/rentABuddyBookingErrors.ts:102#export function bookingRefusalAction(`.
+- The three-way decision, which used to be two `if`s inside a screen and is now one function:
+  `travel-buddy-standalone/src/services/rentABuddyBookingErrors.ts:165#export function classifyBookingRefusal(`.
+  Its ORDER is the behaviour — actionable must beat both of the others — and while it lived in a
+  screen nothing could see that.
+- The checkout door: `travel-buddy-standalone/app/(rent-a-buddy)/checkout.tsx:336#router.push(actionableRefusal.action.route`,
+  a "Verify my ID" button inside the banner, which does **not** disable Booking, because a person
+  who verifies and comes back must be able to press Confirm without rebuilding the form.
+- The two application doors:
+  `travel-buddy-standalone/app/(rent-a-buddy)/become/apply.tsx:32#VERIFY_ACTION.route`,
+  which turns both alerts into "Not now" / "Verify my ID" and takes the path from the same registry
+  rather than from a literal, so there is one place a wrong route can be.
+
+Executed: `travel-buddy-standalone/src/services/__tests__/rentABuddy.verificationRoute.test.ts:114#V5`
+is the case that checks the route against `PORTAVA_ROUTES` rather than against a string in the test —
+a path no screen answers is the same dead end, spelled more confidently.
+
+Nine cases, written before the code in two rounds, and each round watched red first: V1, V2, V3 and
+V5 against the missing registry, then V6-V9 against the missing classifier. **V4 was green
+throughout** and is the one that matters most — it asserts `verification_required` stays OUT of the
+feature-closed class, so it was already true and is there to stop the cheap fix. Four mutations, no
+survivors: deleting the registry entry kills V2/V5/V6; pointing it at an unregistered route kills
+the same three; folding the code into `BOOKING_UNAVAILABLE_CODES` kills V4 **and** the pre-existing
+`rentABuddy.bookingUnavailable.test.ts` case that says the set contains exactly five; dropping the
+copy lookup kills V1 alone.
+
+### §21.3 Row move
+
+| id | was | now | why |
+|---|---|---|---|
+| TV-2a | W | **C** | **Entry points: Passport profile, Rent-a-Buddy gate.** The Passport half was already C in the row's own evidence. The Rent-a-Buddy half is now three doors under `app/(rent-a-buddy)/` — the checkout banner and both `become/apply.tsx` refusals — all pointing at `/profile/verification` through one registry, which is exactly what §13's client-lane table said would settle it. |
+
+### §21.4 Headline, restated from the rows
+
+One requirement moves from BUILT-BUT-WRONG to BUILT-AND-CORRECT. CONSTRUCTED does not move at all —
+the row was already built — and CORRECT rises by one.
+
+> **Trust, at this tree: 108 requirements · 86 BUILT-AND-CORRECT · 15 BUILT-BUT-WRONG ·
+> 5 NOT-BUILT · 2 CANNOT-VERIFY → CONSTRUCTED 101 / 108 = 93.5 % · CORRECT 86 / 108 = 79.6 %.**
+>
+> Against §19.6's 108 · 85 / 16 / 5 / 2 → CONSTRUCTED 93.5 % · CORRECT 78.7 %:
+> **CONSTRUCTED UNCHANGED, CORRECT +0.9 points.**
+
+| BUILT-AND-CORRECT | **86** |
+|---|---|
+| BUILT-BUT-WRONG | **15** |
+| NOT-BUILT | **5** |
+| CANNOT-VERIFY | **2** |
+
+*This supersedes §19.6's table and supersedes nothing else. The denominator is unchanged at 108.*
+
+### §21.5 What this does NOT claim
+
+- **TV-2b, TV-2d, TV-5a and TV-7c are untouched.** §13 files them in the same client lane and this
+  pass grades none of them.
+- **TV-5b is still `W`, and for the reason §19.5 gave.** The `verified_minor` refusal still has no
+  client surface; a grep for that vocabulary across `travel-buddy-standalone/` still returns zero.
+  Giving one gate a door does not give another one.
+- **Nothing here is rendered-tested.** The classification, the copy, the route and the registry
+  check are all executed under `node:test`. The BANNER itself — that pressing "Verify my ID"
+  navigates — is verified by the typechecker and by reading, not by a rendering test: driving
+  `checkout.tsx` to a submitted booking needs the date picker, the zone picker and the policy
+  checkbox, and this lane did not build that harness. The decision the screen makes is pinned; the
+  pixels it draws are not.
+- **The server still answers 403 `verification_required` with no route in the payload.** The route
+  lives on the client, in the registry. A second client would have to know it independently.

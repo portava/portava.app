@@ -6,7 +6,7 @@
 | **`.docx` reconciliation** | The `.txt` and the `.docx` are **identical** after whitespace/Unicode normalisation. I extracted `word/document.xml`, stripped tags, NFC-normalised and collapsed whitespace on both sides: 508 non-empty lines each, `difflib` diff length **0**. The "`.docx` is authoritative" clause never had to be exercised, and no verdict here rests on a transcription difference. |
 | **Section count** | The brief said 59. **It is 58** (`§1 Product Definition` … `§58 Final Architecture Principle`; verified by `grep -nE '^[0-9]+\. '`, which returns 58 headings plus one false positive at line 101 — §9's inline "1. Exact canonical Portava entity…" ranked list). Four sibling censuses found their briefed section counts wrong; this is a fifth. |
 | **Tree censused** | `claude/portava-continuation-uqta94`, HEAD `68ed59d9`. |
-| `head_commit` | `1fe72289b` — RE-DECLARED 2026-09-15 at the squash merge of PR #482. The previous value was `80a8d655a`, a commit on the pre-merge branch. **The squash made it an orphan**: it still exists in a clone that fetched the branch, but it is on no line of history leading to `main`, and `check:census-freshness` refuses an orphan because the check would pass locally and fail in a fresh clone. Nothing about this census was re-measured and NO verdict moves — `1fe72289b` is the commit its previous declaration's tree became, so zero counted files have changed since it. The prior declaration and its reasoning follow. — RE-DECLARED 2026-09-14 by §12, replacing `90a515a6`. §12 re-derived the rows this branch's Input changes bear on — G292, G372 and G351 moved `N → W`, and §12.2 refuses the `C` the lane proposed for G292 on the grounds the lane itself stated. §12.3 answers §25/G163 (voice) from a re-run grep rather than inheriting it, and §12.4 names four sentences this document had been contradicting itself with. The 22 counted files that changed are that work. It does **NOT** certify the other 259 `C` rows, and §1's reading rule applies unchanged. The previous declaration read: `90a515a6` — RE-DECLARED 2026-09-13 by §9, replacing `579694d6` (itself a §8 re-declaration of `42aeac38`). It **starts a clock; it does not certify a past.** Read the next row before quoting it, and read §9.9 for what this re-declaration is and is not worth. `579694d6` carried no acknowledgement of its own, so nothing was spent to replace it — the only ledger edit §9 makes is to **census-discovery**, whose entry is extended with an argument for the one `lib/inputAssistance/` file this pass changed. |
+| `head_commit` | `a97bfdac0` — RE-DECLARED 2026-09-16 by **§13**, replacing `1fe72289b`. This is a MEASUREMENT, not a field edit, and it is the first re-declaration in this census made by someone who did not write the work being graded. §13 re-read this census's requirements affected by everything that landed between `1fe72289b` and `a97bfdac0` and moved exactly one: **G277 `W` → `C`**, clause by clause, three of its five clauses being false at this commit and the two that survive not being defects. The headline is restated from the LAST STATED headline (§12.7) rather than the stale top block — C 262→263 · W 58→57 · N 49 · X 4 — and §13 names that top-block drift as an accounting correction rather than quietly fixing it. ONE counted file changed in the acknowledged range (`routes/discoverySearch.ts`) and §13 enumerates its diff as exactly five hunks, all confined to the countries path, which is why this declaration is licensed: the only requirement those hunks could move is the one that was measured. The acknowledgement written against `1fe72289b` is therefore SPENT and has been moved to the `retired` array of CENSUS_STALENESS_ACKNOWLEDGED.json; zero counted files have changed between `a97bfdac0` and HEAD, so no replacement entry is written. It does **NOT** certify the other 262 `C` rows, and §1's reading rule applies unchanged. The previous declaration read: `1fe72289b` — RE-DECLARED 2026-09-15 at the squash merge of PR #482. The previous value was `80a8d655a`, a commit on the pre-merge branch. **The squash made it an orphan**: it still exists in a clone that fetched the branch, but it is on no line of history leading to `main`, and `check:census-freshness` refuses an orphan because the check would pass locally and fail in a fresh clone. Nothing about this census was re-measured and NO verdict moves — `1fe72289b` is the commit its previous declaration's tree became, so zero counted files have changed since it. The prior declaration and its reasoning follow. — RE-DECLARED 2026-09-14 by §12, replacing `90a515a6`. §12 re-derived the rows this branch's Input changes bear on — G292, G372 and G351 moved `N → W`, and §12.2 refuses the `C` the lane proposed for G292 on the grounds the lane itself stated. §12.3 answers §25/G163 (voice) from a re-run grep rather than inheriting it, and §12.4 names four sentences this document had been contradicting itself with. The 22 counted files that changed are that work. It does **NOT** certify the other 259 `C` rows, and §1's reading rule applies unchanged. The previous declaration read: `90a515a6` — RE-DECLARED 2026-09-13 by §9, replacing `579694d6` (itself a §8 re-declaration of `42aeac38`). It **starts a clock; it does not certify a past.** Read the next row before quoting it, and read §9.9 for what this re-declaration is and is not worth. `579694d6` carried no acknowledgement of its own, so nothing was spent to replace it — the only ledger edit §9 makes is to **census-discovery**, whose entry is extended with an argument for the one `lib/inputAssistance/` file this pass changed. |
 | **What that declaration does and does not say** | `42aeac38` is #476's squash — the commit where this document itself reached `main`. Its verdicts were taken at a pre-squash working tree that **exists nowhere**: verified against FULL history (`git fetch --unshallow`, 4,300 commits, then `git cat-file -e`), not assumed — a shallow clone had made every such commit look unresolvable for the wrong reason. So `nobody` can diff that tree against `42aeac38`, and this declaration **does not claim that interval was empty**. What it claims is mechanically checked: `git diff --name-only 42aeac38..HEAD` over the paths in `CENSUS_SCOPE` returns **0 files**, and from here any change to one of them ages this census. Before it, `check:census-freshness` reported this document as CANNOT BE CHECKED — the weakest of the three states, not the safest. FRESH means *no counted file has moved since `42aeac38`*; it does **not** mean the rows were re-read, and none has been. Declared by the Trips lane while recounting the sibling census; if this lane disagrees, reverting costs only the check. |
 | **Method** | Requirement-level, four buckets, exactly one bucket per requirement. Every BUILT verdict cites a `file:line` I opened and read. |
 | **Database** | Not queried. Every production fact below comes from the supplied ground truth, from `src/scripts/checkProductionDrift.ts` (which records a direct CI-vs-production comparison), or from a commit message whose author did measure it. |
@@ -401,7 +401,7 @@ of the field→mode table.
 | G28 | `maxSuggestions` caps the response | C | `routes/inputAssistance.ts:144` (`Math.min(requestedLimit, policy.maxSuggestions)`); `gateway.ts:586`. |
 | G29 | `debounceMs` | C | `policyRegistry.ts:86` defaults to 120 ms; consumed at `useInputAssistance.ts:277`. |
 | G30 | `offlinePolicy` declares per-field offline degradation | **N** | Declared at `policyRegistry.ts:87` with five values and set deliberately per context (`static_dictionary` on country/language/interest, `cached_local` on the geo pickers) — and **read by nothing on either side**. The client re-declares a *different* taxonomy that is also unread. This is the mechanism §32 depends on, and it is inert. |
-| G31 | `privacyClass` classifies the field's privacy posture | **N** | Declared at `policyRegistry.ts:88` and set to `sensitive_location` / `viewer_scoped` / `private_message` on nine contexts (`:203`, `:210`, `:230`, `:236`, `:256`, `:265`, `:272`) — and **read by nothing**. `test/inputPolicyContractParity.test.ts:139` inspects it, but no production path branches on it; the actual sensitive-location protection comes from `discoverySearch.ts:1489#sensitivity_level,` and would be identical if this field were deleted. |
+| G31 | `privacyClass` classifies the field's privacy posture | **N** | Declared at `policyRegistry.ts:88` and set to `sensitive_location` / `viewer_scoped` / `private_message` on nine contexts (`:203`, `:210`, `:230`, `:236`, `:256`, `:265`, `:272`) — and **read by nothing**. `test/inputPolicyContractParity.test.ts:139` inspects it, but no production path branches on it; the actual sensitive-location protection comes from `discoverySearch.ts:1562#sensitivity_level,` and would be identical if this field were deleted. |
 | G32 | `validationRules` declares the field's non-blocking checks | **N** | Declared optional at `types.ts:189`; **no registry entry sets it**, and `hooks/useInputValidation.ts:61` marks the resolver an unbuilt "Phase 5 extension point". The §23 validations that do exist are hard-wired by context in `creation.ts:298-322`, not driven by this field. |
 | G33 | `telemetryPolicy` governs event emission and raw-text capture | W | The enforcement is real on the client (`services/inputTelemetry.ts:48-62` drops `text`/`query`/`rawText`/`message`; allowlist at `:66-72`). But the two sides declare **different shapes** — server `{logRawText: boolean; events: string[]}` (`types.ts:161-166`) vs client `{captureRawText: boolean; events: 'all' \| names[]}` (`types/fieldPolicy.ts:64-68`) — so the "implemented verbatim … matches byte-for-byte" claim at `types.ts:5-7` is false for this member, and a server policy change to it cannot reach the client. |
 | G34 | `discovery.search` → `search` | C | `policyRegistry.ts:97-107`. |
@@ -463,12 +463,12 @@ of the field→mode table.
 | G65 | Resolve to canonical entities, not just strings | C | `projection.ts:63-67` (`open_entity` + `entityId`), `:130` (`set_structured_value` + full binding). |
 | G66 | City / Country / Neighborhood: aliases, transliterations, geocoding reconciliation, canonical geographic ID | W | Aliases and canonical id are right (`geoResolver.ts:120-145`). **Neighborhood is not resolved at all**: `entityMap.ts:38` maps `neighborhood → 'cities'` with the comment "Phase 1: neighborhoods resolve through the city path", so a `neighborhood_picker` returns cities. Provider/geocoding reconciliation has no implementation in this layer. |
 | G67 | Place: canonical Place first, duplicate/alias handling, current operating state where available | W | Canonical-first and duplicate handling are real (`duplicateDetection.ts:281-370`, reusing `isSamePlace`). **Current operating state is absent**: `InputSuggestion` has no open/closed field (`types.ts:206-244`) and nothing computes one. |
-| G68 | Hidden Gem: separate identity, protection and approximate-location rules | C ᵖ | `discoverySearch.ts:1489#sensitivity_level,` selects `sensitivity_level, approx_latitude, approx_longitude` and the exact pair is "deliberately absent"; `:289-303#gemSearchPosition` returns `hidden` for a denied or unparseable sensitivity level. Pre-existing Discovery work that the gateway inherits. |
+| G68 | Hidden Gem: separate identity, protection and approximate-location rules | C ᵖ | `discoverySearch.ts:1562#sensitivity_level,` selects `sensitivity_level, approx_latitude, approx_longitude` and the exact pair is "deliberately absent"; `:289-303#gemSearchPosition` returns `hidden` for a denied or unparseable sensitivity level. Pre-existing Discovery work that the gateway inherits. |
 | G69 | User: username/display name, block/privacy filtering, relationship context | C | `socialIdentity.ts:63-116` builds the candidate pool from the viewer's own follows/friends/threads/trip-crew and returns `null` (⇒ no recipients) on any read error; `:154-229` block-filters and account-status-filters on top. |
 | G70 | Trip / Event / Plan: viewer eligibility before result exposure | C ᵖ | `discoverySearch.ts:739#visibility` (`.eq("visibility","public")` on events), `:920#visibility` + `:921#show_in_discovery` (trips), `:1081-1084#admitted:` (plans, gated by the parent trip's visibility and owner status). Proven end-to-end through the gateway by `test/inputAssistanceCertification.test.ts:330-366`. |
 | G71 | Buddy: service category, availability, launch/safety/payment eligibility | W | The only gate is `discoverySearch.ts:587#buddy_verified_at` — `.not("buddy_verified_at","is",null)`. No service-category filter, no availability check, and no safety or payment eligibility gate reaches the suggestion path. |
 | G72 | Hashtag: canonical normalized hashtag plus visibility rules | C | `socialIdentity.ts:46-50` `canonicalizeHashtag`; the `is_blocked = false` filter at `:319-390` is mutation-proven in `test/inputAssistanceInvariants.test.ts` (item 2). |
-| G73 | Language / Interest: controlled dictionaries where possible | C ᵖ | `discoverySearch.ts:2259-2260#COMMON_LANGUAGES` — `searchStatic(q, COMMON_LANGUAGES …)` / `COMMON_INTERESTS`, server-side static lists. Pre-existing. |
+| G73 | Language / Interest: controlled dictionaries where possible | C ᵖ | `discoverySearch.ts:2412-2413#COMMON_LANGUAGES` — `searchStatic(q, COMMON_LANGUAGES …)` / `COMMON_INTERESTS`, server-side static lists. Pre-existing. |
 
 ### §12 City and Destination Autocomplete
 
@@ -569,7 +569,7 @@ of the field→mode table.
 | G126 | Age, trust, membership, role or invite restrictions | C ᵖ | Age: `fetchAgeRestrictedSet` fail-closed (`gateway.ts:374-378`). Membership/role: `discoverySearch.ts:1081-1084#admitted:` (plans via parent-trip ownership), `:920#visibility` + `:921#show_in_discovery` (trips). Trust/invite have no separate gate but no path exposes an invite-scoped object either. Pre-existing. |
 | G127 | Unavailable Buddy category or required safety/payment gate | **N** | See G71 — only `buddy_verified_at IS NOT NULL`; there is no category, availability, safety or payment gate in the suggestion path. |
 | G128 | Blocked / private / ineligible people or content | C ᵖ | `gateway.ts:373-378` and `:614-619`, both fail-closed on a null set. Pre-existing `fetchBlockedSet`. |
-| G129 | Protected or sensitive locations whose exact position cannot be surfaced | C ᵖ | Structural: `InputSuggestion` has **no coordinate field at all** (`types.ts:206-244`) and `discoverySearch.ts:1489#sensitivity_level,` never selects a gem's exact pair. Deep-scanned by `test/inputAssistanceCertification.test.ts:265-327`. |
+| G129 | Protected or sensitive locations whose exact position cannot be surfaced | C ᵖ | Structural: `InputSuggestion` has **no coordinate field at all** (`types.ts:206-244`) and `discoverySearch.ts:1562#sensitivity_level,` never selects a gem's exact pair. Deep-scanned by `test/inputAssistanceCertification.test.ts:265-327`. |
 | G130 | Stale live states beyond allowed freshness | C | `liveSuggestions.ts:293` — the only live input is `readLiveClaimEnvelopes`, which owns the not-expired filter; an empty result attaches nothing (`:306`). |
 | G131 | Duplicate Place/Gem/Event candidates when creation mode should resolve existing records first | C | `duplicateDetection.ts:241-370` (gems, places), `:383+` (events); `gateway.ts:534-546` then drops the redundant plain entity row for a duplicated id so the flow shows one unambiguous choice. |
 
@@ -681,7 +681,7 @@ uses are share/copy affordances (`components/ShareSheet.tsx`,
 | G187 | Precise private location never leaked through autocomplete | C | Structural — `InputSuggestion` declares no coordinate field (`types.ts:206-244`); the one place a coordinate legitimately travels is the **public city-centre** inside a picker binding (`geoResolver.ts:70-81`). Deep-scanned adversarially at `test/inputAssistanceCertification.test.ts:265-327`. |
 | G188 | Presence/location inference cannot be exposed beyond current authorization | C | The only inference path is the live lane, and it consumes nothing but `readLiveClaimEnvelopes` behind `liveLabelsServable` (`liveSuggestions.ts:271-279`), which owns the full IG gate chain. No presence or location-inference source is wired into the gateway at all. |
 | G189 | Memory-based suggestions remain owner-scoped unless deliberately shared | C | `personalization.ts:159-180` filters `.eq('user_id', …)` from a session-derived id, never a parameter; `SURFACEABLE_GEO_TYPES` (`:83`) restricts injection to public geo entities so a remembered **person** can never be re-published around the privacy gate — mutation-proven (`test/inputAssistanceInvariants.test.ts`, item 5). ☠prod. |
-| G190 | Sensitive-location and protected-place rules applied before projection | W | The **gem** sensitivity rule is applied at source and is real (`discoverySearch.ts:1489#sensitivity_level,`, `:289-303#gemSearchPosition`). The repo's actual protected-place gate — `lib/protectedLocations.ts`, built for the Map spec §24 — is **never consulted by this path**, and `protected_zones` is absent from production anyway (`scripts/checkProductionDrift.ts:104-117`). A protected zone that is not a hidden gem has no effect on a suggestion. |
+| G190 | Sensitive-location and protected-place rules applied before projection | W | The **gem** sensitivity rule is applied at source and is real (`discoverySearch.ts:1562#sensitivity_level,`, `:289-303#gemSearchPosition`). The repo's actual protected-place gate — `lib/protectedLocations.ts`, built for the Map spec §24 — is **never consulted by this path**, and `protected_zones` is absent from production anyway (`scripts/checkProductionDrift.ts:104-117`). A protected zone that is not a hidden gem has no effect on a suggestion. |
 | G191 | AI receives only the minimum permitted structured context | C | `aiWriting.ts:107-130` `buildPermittedWritingContext` emits coarse city/country/category/dates only, wraps the user's text with `wrapUgc` (data-not-instructions) and runs `stripCoordinateFields` as a backstop. (`d4db6009` records honestly that the backstop has no reachable path today.) |
 
 ### §30 Conflict Resolution Precedence
@@ -706,7 +706,7 @@ declared and read by nothing (G30). What follows is what actually exists.
 
 | id | Requirement | V | Evidence / divergence |
 | --- | --- | --- | --- |
-| G197 | Countries / languages / interests → local static dictionary | **N** | The dictionaries are **server-side** (`discoverySearch.ts:2259-2260#COMMON_LANGUAGES`, `COMMON_LANGUAGES` / `COMMON_INTERESTS` behind `searchStatic`). The client ships none: `platform/input-assistance/` contains no country, language or interest list, so an offline country picker returns nothing. |
+| G197 | Countries / languages / interests → local static dictionary | **N** | The dictionaries are **server-side** (`discoverySearch.ts:2412-2413#COMMON_LANGUAGES`, `COMMON_LANGUAGES` / `COMMON_INTERESTS` behind `searchStatic`). The client ships none: `platform/input-assistance/` contains no country, language or interest list, so an offline country picker returns nothing. |
 | G198 | Cities → cached / local compact city index | W | Only the 60-entry, 60-second in-memory SWR cache (`services/suggestionCache.ts:18-33`). There is no local city index, and the cache is not persisted, so a cold app start offline has nothing. (`lib/cityCentroids.ts` exists but is a map-camera helper, not consumed by this layer.) |
 | G199 | Recent selections → device-local where allowed | W | `services/suggestionHistory.ts:31-32` is an in-memory `Map`, and its own header says the AsyncStorage-backed store is "a LATER PHASE". Recents do not survive an app restart on either side (server table absent, client store in memory). |
 | G200 | Saved / Trip entities → cached subset where permitted | **N** | No saved-entity cache and no Trip-entity cache in the layer. |
@@ -739,7 +739,7 @@ declared and read by nothing (G30). What follows is what actually exists.
 | G217 | Prefer local: request cancellation / state | C | `services/raceGuard.ts`; `useInputAssistance.ts:212`, `:288`. |
 | G218 | Prefer server: canonical entity lookup requiring current DB state | C ᵖ | `gateway.ts:343-404` → `dispatchSearch`. |
 | G219 | Prefer server: privacy/eligibility filtering | C | `gateway.ts:373-378`, `:614-619` — server-side and fail-closed; the client explicitly does no re-filtering (`hooks/useTelegraphRecipients.ts:15-18`). |
-| G220 | Prefer server: cross-entity search | C ᵖ | `entityMap.ts:16-33#DispatchSearchType` (17 types) → `dispatchSearch` (`discoverySearch.ts:2194#dispatchSearch`, switch at `:2020-2057#"travelers":`). Still 17 after the §27 `saved` lane landed: `DispatchSearchType` is an EXPLICIT union and `ENTITY_TO_SEARCH` is `Record<EntityType, DispatchSearchType>`, so `SEARCH_TYPES`' eighteenth member (`:2241#searchSaved`) has no `EntityType` that reaches it. |
+| G220 | Prefer server: cross-entity search | C ᵖ | `entityMap.ts:16-33#DispatchSearchType` (17 types) → `dispatchSearch` (`discoverySearch.ts:2292#dispatchSearch`, switch at `artifacts/api-server/src/routes/discoverySearch.ts:2364#case "travelers":`). Still 17 after the §27 `saved` lane landed: `DispatchSearchType` is an EXPLICIT union and `ENTITY_TO_SEARCH` is `Record<EntityType, DispatchSearchType>`, so `SEARCH_TYPES`' eighteenth member (`:2391#searchSaved`) has no `EntityType` that reaches it. |
 | G221 | Prefer server: Live Intelligence suggestions | C | `liveSuggestions.ts:250-317`. ☠prod |
 | G222 | Prefer server: provider federation | **N** | No provider lane exists in the gateway; `external_places_enabled` is dormant and no provider candidate is ever projected. |
 | G223 | Prefer server: personalized ranking requiring server-owned context | C | `personalization.ts:243-268` runs server-side over server-held memory. ☠prod |
@@ -833,13 +833,13 @@ narrow resolver extension rather than a new architecture).
 | G274 | QueryNormalizer | C | The service now exists: `lib/inputAssistance/queryNormalizer.ts:553#export function normalizeQuery` is the single entry point, and `lib/inputAssistance/gateway.ts:175#const norm: NormalizedQuery` is its only caller in the suggest path. It COMPOSES rather than replaces — `applyAliases` and `sanitizeQuery` are still Discovery's, and the canonical fold is still `canonicalLocations` — and adds the three §10 clauses that had no implementation anywhere (transliteration G61, context-appropriate emoji handling G62, keyboard-weighted typo tolerance with a confidence measure G63). The pipeline order is fixed and documented in the file header: trim → sigil → transliterate → emoji → alias → typo → sanitize → clamp. It returns `aliased` unchanged for the §18 temporal extractor and the semantic parser, so those two consumers see byte-identical input to what they saw before this file existed. The client comment this row quoted — *"Real alias resolution belongs to the server's QueryNormalizer (§40)"* — now names something real; the client mirror itself is still local-only, which is G340/G344's problem, not this row's. |
 | G275 | EntitySuggestionService | C | `gateway.ts:601-640` `dispatchAndProject`. |
 | G276 | CityResolver | C | `geoResolver.ts:120-145`. |
-| G277 | CountryResolver | W | No canonical country resolver: `entityMap.ts:37` maps `country → 'countries'`, and `discoverySearch.ts:2072#searchCountries` **aggregates `profiles.home_country`** (`:1895-1896#home_country")`) (`.from("profiles").select("id, home_country").ilike("home_country", pat)`). A country picker therefore resolves against the user table, not a canonical country registry, so a country with no users in it does not exist. |
-| G278 | PlaceResolver | C ᵖ | `discoverySearch.ts:2238#searchPlaces`. |
-| G279 | HiddenGemResolver | C ᵖ | `discoverySearch.ts:2242#searchHiddenGems` + `:289-303#gemSearchPosition`. |
+| G277 | CountryResolver | W | No canonical country resolver: `entityMap.ts:37` maps `country → 'countries'`, and `discoverySearch.ts:2145#searchCountries` **aggregates `profiles.home_country`** (`artifacts/api-server/src/routes/discoverySearch.ts:2157#.ilike("home_country", pat)`) (`.from("profiles").select("id, home_country").ilike("home_country", pat)`). A country picker therefore resolves against the user table, not a canonical country registry, so a country with no users in it does not exist. |
+| G278 | PlaceResolver | C ᵖ | `discoverySearch.ts:2387#searchPlaces`. |
+| G279 | HiddenGemResolver | C ᵖ | `discoverySearch.ts:2395#searchHiddenGems` + `:289-303#gemSearchPosition`. |
 | G280 | UserResolver | C | `socialIdentity.ts:146-229`. |
-| G281 | TripResolver | C ᵖ | `discoverySearch.ts:2231#searchTrips`. |
-| G282 | EventResolver | C ᵖ | `discoverySearch.ts:2224#searchEvents`. |
-| G283 | BuddyResolver | W | `discoverySearch.ts:2220#searchTravelers` is `searchTravelers` with `isBuddy`, whose only buddy-specific predicate is `:587#buddy_verified_at` `.not("buddy_verified_at","is",null)`. No category, availability or eligibility resolution (G71, G127). |
+| G281 | TripResolver | C ᵖ | `discoverySearch.ts:2380#searchTrips`. |
+| G282 | EventResolver | C ᵖ | `discoverySearch.ts:2373#searchEvents`. |
+| G283 | BuddyResolver | W | `discoverySearch.ts:2365#searchTravelers` is `searchTravelers` with `isBuddy`, whose only buddy-specific predicate is `:587#buddy_verified_at` `.not("buddy_verified_at","is",null)`. No category, availability or eligibility resolution (G71, G127). |
 | G284 | IntentSuggestionService | C | `semanticIntent.ts:336-379`. |
 | G285 | SemanticQueryParser | C | `semanticParser.ts:525-589`. |
 | G286 | PersonalSuggestionService | C | `personalization.ts:159-436`. ☠prod |
@@ -990,7 +990,7 @@ this area? (The underlying behaviours are scored in their own sections.)
 | --- | --- | --- | --- |
 | G361 | §53 Trip Destination: 0-char defaults → local prefix cache → server canonical resolver → choose → store city_id+country+timezone → prefetch → next fields inherit | W | Four of seven steps work: 0-char defaults (`geoResolver.ts:180-257`), the canonical resolver (`:120-145`), the stored binding (`:70-81`), and the field wiring (`components/selectors/GlobalPlacePicker.tsx` → `app/trip/new.tsx`). **Local prefix cache does not exist** (G204/G214), **prefetch does not exist** (G209), and "next fields inherit Bangkok context" is only the exact-`cityId` reorder of G107. |
 | G362 | §54 Telegraph Message: type "meet at" → action candidates (share meeting point / Trip stop / current Place) → eligibility → tap → structured entity share inserted | **N** | The context has a policy (`policyRegistry.ts:267-274`) and **no registered field**, `share_entity` has **no producer** (G303), and no Telegraph composer imports the platform. Only the *recipient picker* half of Telegraph is wired (`app/telegraph/new.tsx` via `hooks/useTelegraphRecipients.ts`), which is §14/§54's other half. |
-| G363 | §55 Hidden Gem Creation: name/location → entity + duplicate search → existing candidates → sensitive-location policy → exact/approximate/pin → confirm → canonical reference | C | Wired end-to-end: `app/gems/submit.tsx:242-244` registers `hidden_gem_name` through `hooks/useCreationAssistance.ts` and renders `CreationAssist` at `app/gems/submit.tsx:274#CreationAssist`; the backend chain is `duplicateDetection.ts:241-370` → `creation.ts:258-296` (constraint filter) → `projectDuplicate:191-215` (`resolve_existing`), with the sensitive-location rule at `discoverySearch.ts:1489#sensitivity_level,` and the pin fallback at `validationSuite.ts:305-315`. |
+| G363 | §55 Hidden Gem Creation: name/location → entity + duplicate search → existing candidates → sensitive-location policy → exact/approximate/pin → confirm → canonical reference | C | Wired end-to-end: `app/gems/submit.tsx:242-244` registers `hidden_gem_name` through `hooks/useCreationAssistance.ts` and renders `CreationAssist` at `app/gems/submit.tsx:274#CreationAssist`; the backend chain is `duplicateDetection.ts:241-370` → `creation.ts:258-296` (constraint filter) → `projectDuplicate:191-215` (`resolve_existing`), with the sensitive-location rule at `discoverySearch.ts:1562#sensitivity_level,` and the pin fallback at `validationSuite.ts:305-315`. |
 | G364 | §56 Compass Prompt: type "where should" → suggested prompts → current surface + Trip context attached as structured refs → submit → Compass receives intent + permitted entities | C | `app/(tabs)/ai.tsx:60`, `:398-410` wires `compass_prompt` through `useAiWritingAssist` and renders `CompassStarters` + `AiWritingAssist`; the structured refs are attached at `projection.ts:283-303` and `semanticIntent.ts:231-268` (`open_compass` carrying the parse). |
 
 ### §57 Product Success Metrics
@@ -1366,27 +1366,27 @@ sensitivity_level" now lands 224 lines short of the select it names.
 | --- | --- | --- | --- | --- |
 | G56 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearchHelpers.ts:170#matchTier` lowercases both sides; every DB predicate is `ilike`. **The old pointer, lines 163–179, is stale by 7.** |
 | G59 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearchHelpers.ts:70#SEARCH_ALIASES` plus `lib/canonicalLocations.ts:162#siargoa` and `:186#qouc` (the spec's own example misspelling). |
-| G68 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearch.ts:1489#sensitivity_level,` selects the approximate pair and never the exact one; `:289#gemSearchPosition` fails closed to `hidden`. **The old pointer, lines 960–962, is stale by 224.** |
+| G68 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearch.ts:1562#sensitivity_level,` selects the approximate pair and never the exact one; `:289#gemSearchPosition` fails closed to `hidden`. **The old pointer, lines 960–962, is stale by 224.** |
 | G70 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearch.ts:739#visibility` (events), `:920#visibility` + `:921#show_in_discovery` (trips). Proven through the gateway by `src/test/inputAssistanceCertification.test.ts:350#PUBLIC`. |
-| G73 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearch.ts:2259#COMMON_LANGUAGES` — server-side static lists behind `searchStatic`. **The old pointer, lines 1577–1578, is stale by 225.** |
+| G73 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearch.ts:2412#COMMON_LANGUAGES` — server-side static lists behind `searchStatic`. **The old pointer, lines 1577–1578, is stale by 225.** |
 | G92 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/projection.ts:42#tierConfidence` — `tierConfidence(3) = 0.99` over `matchTier`. |
 | G93 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/projection.ts:42#tierConfidence` — `tierConfidence(2) = 0.85`, over `routes/discoverySearchHelpers.ts:170#matchTier`. |
 | G95 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/gateway.ts:463#SearchQueryContext` passes `{lat, lng, userCity}` into the city boost. **The old pointer, line 380, is stale by 16 — this pass moved it.** |
 | G126 | `C ᵖ` (unreadable) | **C** | ᵖ | Age: `lib/inputAssistance/gateway.ts:456#ageRestrictedSet`, fail-closed at `:461#blockedSet`. Membership/role: `routes/discoverySearch.ts:921#show_in_discovery`. Trust/invite have no separate gate and no path exposes an invite-scoped object. |
 | G128 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/gateway.ts:456#ageRestrictedSet` and `:461#blockedSet` — a null set from either suppresses every entity row; the picker branch repeats it at `:757#fetchBlockedSet`. |
-| G129 | `C ᵖ` (unreadable) | **C** | ᵖ | Structural: `lib/inputAssistance/types.ts:230#InputSuggestion` has no coordinate field, and `routes/discoverySearch.ts:1489#sensitivity_level,` never selects a gem's exact pair. Deep-scanned by `src/test/inputAssistanceCertification.test.ts:289#findCoordLeaks`. **Phase 9 widened the projection by three fields and this deep scan still passes** (§8.4). |
+| G129 | `C ᵖ` (unreadable) | **C** | ᵖ | Structural: `lib/inputAssistance/types.ts:230#InputSuggestion` has no coordinate field, and `routes/discoverySearch.ts:1562#sensitivity_level,` never selects a gem's exact pair. Deep-scanned by `src/test/inputAssistanceCertification.test.ts:289#findCoordLeaks`. **Phase 9 widened the projection by three fields and this deep scan still passes** (§8.4). |
 | G152 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/validationSuite.ts:172#normalization` for hashtag validity, `:264#correction` for the row it produces; handles reuse the pre-existing `lib/usernameRules.ts`. |
 | G165 | `C ᵖ` (unreadable) | **C** | ᵖ | Realised in production by the pre-existing `travel-buddy-standalone/src/components/MentionInput.tsx:145#insertTag`, which keeps display text while recording structured tag spans. The platform's own version is still unconsumed. |
 | G184 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/gateway.ts:456#ageRestrictedSet` and `:757#fetchBlockedSet`; the null-set refusal is the mutation-proven case in `src/test/inputAssistanceGateway.test.ts:384#suppresses`. |
 | G185 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearch.ts:739#visibility`, `:920#visibility`, `:921#show_in_discovery`; proven through the gateway by `src/test/inputAssistanceCertification.test.ts:350#PUBLIC`. |
 | G186 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/projection.ts:135#display-safe` — a fixed whitelist that still drops `metadata`, `privacyState`, `accessState`, owner/host ids and counts. **Phase 9 added three fields to that whitelist; none is private (§8.4).** |
-| G218 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/gateway.ts:420#dispatchTypes` → `routes/discoverySearch.ts:2194#dispatchSearch`. |
-| G220 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/entityMap.ts:35#ENTITY_TO_SEARCH` → `routes/discoverySearch.ts:2194#dispatchSearch`. |
+| G218 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/gateway.ts:420#dispatchTypes` → `routes/discoverySearch.ts:2292#dispatchSearch`. |
+| G220 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/entityMap.ts:35#ENTITY_TO_SEARCH` → `routes/discoverySearch.ts:2292#dispatchSearch`. |
 | G235 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/inputAssistance.ts:153#input_assist_suggest` (90/min) and `:275#input_assist_select` (60/min). Both still resolve exactly. |
-| G278 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearch.ts:2238#searchPlaces`. **The old pointer, line 1568, is stale by 225.** |
-| G279 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearch.ts:2242#searchHiddenGems` + `:289#gemSearchPosition`. |
-| G281 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearch.ts:2231#searchTrips`. |
-| G282 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearch.ts:2224#searchEvents`. |
+| G278 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearch.ts:2387#searchPlaces`. **The old pointer, line 1568, is stale by 225.** |
+| G279 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearch.ts:2395#searchHiddenGems` + `:289#gemSearchPosition`. |
+| G281 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearch.ts:2380#searchTrips`. |
+| G282 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearch.ts:2373#searchEvents`. |
 
 `ᵖ` still means "correct, but earned by pre-existing work". The spec-attributable
 CORRECT is still C minus the count of `ᵖ` rows, which is still 23.
@@ -1999,9 +1999,9 @@ whole output is a correction to *pointers*, plus one count in §2's inventory.
 | 2 | `discoverySearch.ts:129-140#SEARCH_TYPES` | `SEARCH_TYPES` gains a ninth Map-spec §27 heading, `"saved"` — 17 wire types become 18 | G218, G220 |
 | 3 | `discoverySearch.ts:404-408#chunkIds` | new `chunkIds` paging helper (PostgREST `.in()` URL length) | none |
 | 4 | `discoverySearch.ts:664#buildListIdentityProjections` | `searchTravelers`' inline identity assembly moved into `services/passport/PassportConsumerProjections.ts:1153#buildListIdentityProjections`; hunk is net zero lines | G101, G180 |
-| 5 | `discoverySearch.ts:1317-1472#searchSaved` | a new viewer-scoped `searchSaved` lane, ~238 lines, reading `wishlist_places` + `discovery_place_saves` | G128, G129, G186 |
-| 6 | `discoverySearch.ts:2241#searchSaved` | `dispatchSearch` gains `case "saved"` | G218, G220 |
-| 7 | `discoverySearch.ts:2268#FAN_LIMIT` + `:2270#deliberately` | the `type=all` fan-out comment: 17 of 18 types fan out, `saved` deliberately excluded | G220 |
+| 5 | `discoverySearch.ts:1328-1520#searchSaved` | a new viewer-scoped `searchSaved` lane, ~238 lines, reading `wishlist_places` + `discovery_place_saves` | G128, G129, G186 |
+| 6 | `discoverySearch.ts:2391#searchSaved` | `dispatchSearch` gains `case "saved"` | G218, G220 |
+| 7 | `discoverySearch.ts:2436#FAN_LIMIT` + `:2423#deliberately` | the `type=all` fan-out comment: 17 of 18 types fan out, `saved` deliberately excluded | G220 |
 
 Nothing else in the file changed. No gem predicate, no `visibility` gate, no
 `sanitizeQuery`, no static dictionary, no `searchCountries` aggregation, no
@@ -2022,14 +2022,14 @@ this is a property of the merged tree and not an inherited claim. G218 and G220
 therefore still describe a seventeen-type dispatch, and their `ᵖ` still holds.
 
 That also disposes of G129 and G186 without needing the whitelist argument:
-`searchSaved` does put `lat` / `lng` on `metadata` (`discoverySearch.ts:1421#lat:`
-and `discoverySearch.ts:1455#lat:`), but no `saved` row can arrive at
+`searchSaved` does put `lat` / `lng` on `metadata` (`discoverySearch.ts:1488#lat:`
+and `discoverySearch.ts:1488#lat:`), but no `saved` row can arrive at
 `projectSearchResult`. And
 had one arrived, it would change nothing: `metadata` is not in the §42 whitelist
 (`lib/inputAssistance/projection.ts:135#display-safe`), which is G186's entire
 content, and `searchPlaces` (`discoverySearch.ts:1195#lat:`), `searchEvents`
 (`discoverySearch.ts:819#metadata:`) and `searchCities`
-(`discoverySearch.ts:1963#metadata:`) already carried the same keys before this
+(`discoverySearch.ts:2036#metadata:`) already carried the same keys before this
 diff. G129's structural claim — `InputSuggestion` has no
 coordinate field — is about `lib/inputAssistance/types.ts`, which this diff does
 not touch.
@@ -2079,29 +2079,29 @@ were wrong.** After it, every citation into the file is anchored and holds.
 
 | cited row | old pointer (dead) | now | what the old pointer actually named at HEAD |
 | --- | --- | --- | --- |
-| G31 | line 980 | `routes/discoverySearch.ts:1489#sensitivity_level,` | a bare `);` |
+| G31 | line 980 | `routes/discoverySearch.ts:1562#sensitivity_level,` | a bare `);` |
 | G62 | lines 107-109 | `routes/discoverySearch.ts:154-156#sanitizeQuery` | three import specifiers |
-| G68 | lines 978-980, and `gemSearchPosition` "241-255" | `routes/discoverySearch.ts:1489#sensitivity_level,` + `:289-303#gemSearchPosition` | the hidden-gem blocked/age filter, not the select |
+| G68 | lines 978-980, and `gemSearchPosition` "241-255" | `routes/discoverySearch.ts:1562#sensitivity_level,` + `:289-303#gemSearchPosition` | the hidden-gem blocked/age filter, not the select |
 | G70 | lines 622, 724-725, 806-826 | `routes/discoverySearch.ts:739#visibility`, `:920#visibility`, `:921#show_in_discovery`, `:1081-1084#admitted:` | a friendship predicate; a comment; a `tripFit` metadata bag |
 | G71 | line 488 | `routes/discoverySearch.ts:587#buddy_verified_at` | a JSDoc line about a cache |
-| G73 | lines 1827-1828 | `routes/discoverySearch.ts:2259-2260#COMMON_LANGUAGES` | the city-dedupe loop in `searchCities` |
+| G73 | lines 1827-1828 | `routes/discoverySearch.ts:2412-2413#COMMON_LANGUAGES` | the city-dedupe loop in `searchCities` |
 | G95 | line 1800, in the wrong file | `routes/discoverySearchHelpers.ts:257-262#userCity` | `.eq("is_private", false)` — and see below |
 | G101 | line 481 | `routes/discoverySearch.ts:580#is_official,` | a comment about the `type=all` fan-out |
 | G126 | lines 806-826, 724-725 | `routes/discoverySearch.ts:1081-1084#admitted:`, `:920#visibility` + `:921#show_in_discovery` | as G70 |
-| G129 | line 980 | `routes/discoverySearch.ts:1489#sensitivity_level,` | a bare `);` |
+| G129 | line 980 | `routes/discoverySearch.ts:1562#sensitivity_level,` | a bare `);` |
 | G180 | line 481 | `routes/discoverySearch.ts:580#is_official,` | as G101 |
 | G185 | lines 622, 724-725, 806-826 | `routes/discoverySearch.ts:739#visibility`, `:920#visibility`, `:921#show_in_discovery`, `:1081-1084#admitted:` | as G70 |
-| G190 | line 980, and `gemSearchPosition` "241-255" | `routes/discoverySearch.ts:1489#sensitivity_level,` + `:289-303#gemSearchPosition` | as G68 |
-| G197 | lines 1827-1828 | `routes/discoverySearch.ts:2259-2260#COMMON_LANGUAGES` | as G73 |
-| G220 | lines 1797-1830 | `routes/discoverySearch.ts:2194#dispatchSearch` + `:2020-2057#"travelers":` | the `searchCities` profile select |
-| G277 | lines 1664-1685 | `routes/discoverySearch.ts:2072#searchCountries` + `:1895-1896#home_country")` | a `catch { return []; }` |
-| G278 | line 1818 | `routes/discoverySearch.ts:2238#searchPlaces` | `let skipped = 0;` |
-| G279 | line 1819 | `routes/discoverySearch.ts:2242#searchHiddenGems` + `:289-303#gemSearchPosition` | a `for` header |
-| G281 | line 1810 | `routes/discoverySearch.ts:2231#searchTrips` | a fail-closed comment |
-| G282 | line 1806 | `routes/discoverySearch.ts:2224#searchEvents` | `.eq("allow_profile_discovery", false)` |
-| G283 | lines 1802 and 488 | `routes/discoverySearch.ts:2220#searchTravelers` + `:587#buddy_verified_at` | a `.limit(...)`; a cache JSDoc |
+| G190 | line 980, and `gemSearchPosition` "241-255" | `routes/discoverySearch.ts:1562#sensitivity_level,` + `:289-303#gemSearchPosition` | as G68 |
+| G197 | lines 1827-1828 | `routes/discoverySearch.ts:2412-2413#COMMON_LANGUAGES` | as G73 |
+| G220 | lines 1797-1830 | `routes/discoverySearch.ts:2292#dispatchSearch` + `artifacts/api-server/src/routes/discoverySearch.ts:2364#case "travelers":` | the `searchCities` profile select |
+| G277 | lines 1664-1685 | `routes/discoverySearch.ts:2145#searchCountries` + `artifacts/api-server/src/routes/discoverySearch.ts:2157#.ilike("home_country", pat)` | a `catch { return []; }` |
+| G278 | line 1818 | `routes/discoverySearch.ts:2387#searchPlaces` | `let skipped = 0;` |
+| G279 | line 1819 | `routes/discoverySearch.ts:2395#searchHiddenGems` + `:289-303#gemSearchPosition` | a `for` header |
+| G281 | line 1810 | `routes/discoverySearch.ts:2380#searchTrips` | a fail-closed comment |
+| G282 | line 1806 | `routes/discoverySearch.ts:2373#searchEvents` | `.eq("allow_profile_discovery", false)` |
+| G283 | lines 1802 and 488 | `routes/discoverySearch.ts:2365#searchTravelers` + `:587#buddy_verified_at` | a `.limit(...)`; a cache JSDoc |
 | G337 | lines 107-109 | `routes/discoverySearch.ts:154-156#sanitizeQuery` | as G62 |
-| G363 | line 980 | `routes/discoverySearch.ts:1489#sensitivity_level,` | a bare `);` |
+| G363 | line 980 | `routes/discoverySearch.ts:1562#sensitivity_level,` | a bare `);` |
 
 **One of those was wrong about the file, not the line.** G95 cited
 `discoverySearch.ts` for "applies the city boost in `rankCombined`".
@@ -2587,3 +2587,176 @@ Three things that did not exist now do, so they left `N` — and not one of them
 reaches a database, a metric, or a screen reader's full complement, so none
 reaches `C`. A pass that built real things and moved the correct-percentage by
 zero is what this document looks like when it is not scoring.
+
+---
+
+## 13. Independent re-measurement at `a97bfdac0` — `G277` closes, and two citations no checker can see
+
+*Written 2026-09-16 by an INDEPENDENT REVIEWER, not by a building lane. Measured
+against `a97bfdac0` (the merge of PR #506), which is three squash merges past
+this document's declared `head_commit` `1fe72289b`. **`head_commit` is NOT
+re-declared here and no acknowledgement was edited** — the declaration is the
+coordinator's to move, and §13.5 says exactly what this section does and does
+not license.*
+
+**Why this section exists.** Since `1fe72289b` three PRs merged (`0bea333b4`,
+`54ba9fd85`, `a97bfdac0`) and, rather than remeasure, every counted-file change
+was recorded in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json`
+with an argument for why no verdict moved. This census's entry names ONE counted
+file, `artifacts/api-server/src/routes/discoverySearch.ts`, and says the change is
+confined to the `countries` bucket. **That argument had never been checked
+against the code by anyone but its author. It is checked here, and it is wrong in
+the only direction that matters: a verdict DOES move, and the entry's sibling in
+`census-discovery.md` §43.6 said so and correctly declined to move it.**
+
+### 13.1 `G277` — the COMPLETE acceptance criteria, clause by clause
+
+The §40 row is judged as a RESPONSIBILITY, not a filename — §40's own preamble,
+which §52 backs by permitting *"configuration or a narrow resolver extension
+rather than a new architecture"*. The row's cell at §836 states five clauses.
+Each is graded here against `a97bfdac0` by reading the code, not the argument.
+
+| # | the clause, as the row states it | at `a97bfdac0` | evidence |
+|---:|---|---|---|
+| 1 | *"No canonical country resolver"* | **FALSE — a resolver exists** | `artifacts/api-server/src/lib/countryCodes.ts:286#export function searchCountryRegistry(` — 216 ISO-3166-1 alpha-2 codes with canonical English names over seven ranked rungs (code · exact name · exact alias · name prefix · alias prefix · name substring · alias substring), then alphabetical by canonical name so a cursor is stable. Pure data, no I/O, and the module `artifacts/api-server/src/lib/stamps/countryLookup.ts` already consumed it — Discovery CONSUMES it rather than growing a second list. |
+| 2 | *"`entityMap.ts:37` maps `country → 'countries'`"* | **TRUE, and it is not a defect** | `artifacts/api-server/src/lib/inputAssistance/entityMap.ts:37#country:` still reads `country: 'countries',`. This clause is the DELEGATION CHAIN, not the complaint — unlike `G66`, where `neighborhood → 'cities'` is the mis-mapping itself. A correct mapping into a now-correct resolver withholds nothing. |
+| 3 | *"`searchCountries` aggregates `profiles.home_country`"* | **TRUE but no longer EXHAUSTIVE** | The profile leg survives on purpose at `artifacts/api-server/src/routes/discoverySearch.ts:2156#.select("id, home_country")` and `artifacts/api-server/src/routes/discoverySearch.ts:2157#.ilike("home_country", pat)`, because a traveller may have typed a country the ISO table has no row for and dropping it would delete a real answer. It is now the SECOND leg: the registry head is read first at `artifacts/api-server/src/routes/discoverySearch.ts:2184#const registry = searchCountryRegistry(q, offset + fetchLimit);`, and a typed spelling the registry resolves folds into the canonical row by ISO code rather than appearing beside it. The row's word "aggregates" carried the force of "and nothing else"; that is what stopped being true. |
+| 4 | *"A country picker therefore resolves against the user table, not a canonical country registry"* | **FALSE** | The country picker is `country_picker` (`artifacts/api-server/src/lib/inputAssistance/policyRegistry.ts:147#country_picker: policy(`, `entityTypes` at `artifacts/api-server/src/lib/inputAssistance/policyRegistry.ts:150#entityTypes: ['country'],`). It is a geo picker (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:109#'country_picker',` inside `GEO_PICKER_CONTEXTS`, consulted at `artifacts/api-server/src/lib/inputAssistance/gateway.ts:200#const isGeoPicker`), so `countries` falls into the non-city branch `artifacts/api-server/src/lib/inputAssistance/gateway.ts:439#if (otherTypes.length > 0) {` and is dispatched at `artifacts/api-server/src/lib/inputAssistance/gateway.ts:440#let other = await dispatchAndProject(sc, otherTypes, {` into `dispatchSearch`, whose `countries` arm is `artifacts/api-server/src/routes/discoverySearch.ts:2411#return searchCountries(sc, q, blockedSet`. **The whole path was walked, not assumed** — this is the clause on which a "logic right, nothing reaches it" withholding would have rested, and it does not: `city_picker`, `trip_destination` and `global_search` reach the same resolver too. |
+| 5 | *"so a country with no users in it does not exist"* | **FALSE** | `artifacts/api-server/src/test/discoveryCountryRegistry.test.ts:237#R2` — *"a country with no users in it still exists as a suggestion"* — plus `R1` at `artifacts/api-server/src/test/discoveryCountryRegistry.test.ts:231#R1`, which resolves a country with ZERO profiles in the database. Run at this tree by this reviewer: **20 tests, 20 pass, 0 fail.** |
+
+**Two clauses that would have withheld it, checked and found not to apply.**
+(a) The registry leg is viewer-independent and needs no privacy read, so the
+obvious next defect is letting it ANSWER when the privacy reads refused —
+a registry-only page is short by an unknown amount and indistinguishable from a
+complete one. It does not: `R8` and `R9` pin the refusal in both directions and
+both pass. (b) The gateway gates entity dispatch on `q.length >= 2`
+(`artifacts/api-server/src/lib/inputAssistance/gateway.ts:420#if (wantsEntities && dispatchTypes.length > 0 && q.length >= 2) {`), so a
+one-character query never reaches the resolver — but a two-letter ISO code does,
+which is the shortest input this requirement is about, and the row states no
+clause about single characters.
+
+### 13.2 The row move
+
+| id | was | now | evidence |
+|---|---|---|---|
+| G277 | W | **C** | CountryResolver. Three of the row's five clauses are false at `a97bfdac0` and the two that survive are not defects — §13.1 grades each. The responsibility exists (`artifacts/api-server/src/lib/countryCodes.ts:286#export function searchCountryRegistry(`), it is CONSUMED rather than duplicated, and it is REACHED from `country_picker` through `dispatchSearch`. |
+
+**It is graded `C` and deliberately NOT `C ᵖ`.** The `ᵖ` marker means the work
+was pre-existing and is not attributable to this specification; §836's siblings
+`G278`, `G279`, `G281` and `G282` carry it for exactly that reason. This resolver
+was not pre-existing — it was written to close this requirement and names it:
+`artifacts/api-server/src/test/discoveryCountryRegistry.test.ts:2#GII G277 "CountryResolver"`.
+So the `23ᵖ` subtrahend in the headline is UNCHANGED at 23, and if a later pass
+judges the work Discovery-attributable rather than spec-attributable it should
+say so and move the subtrahend, not this verdict.
+
+### 13.3 Headline, restated from the rows
+
+**Restated from `check:census-integrity`'s own parse, not by adding this move to
+a previous headline.** The last stated headline before this section is §12.7's
+(C 262 / W 58 / N 49 / X 4), not the block at the top of this document.
+
+| Measure | Value |
+| --- | --- |
+| **Denominator — testable requirements** | **373** |
+| BUILT-AND-CORRECT | **263** |
+| BUILT-BUT-WRONG | **57** |
+| NOT-BUILT | **49** |
+| CANNOT-VERIFY | **4** |
+| **CONSTRUCTED%** = (C+W)/373 | **320 / 373 = 85.8 %** |
+| **CORRECT%** (raw) = C/373 | **263 / 373 = 70.5 %** |
+| **CORRECT% (spec-attributable)** = (C-23<sup>p</sup>)/373 | **240 / 373 = 64.3 %** |
+| **THE GAP** = W/373 | **57 / 373 = 15.3 %** |
+| CANNOT-VERIFY share | **4 / 373 = 1.1 %** |
+
+`G277` moved WITHIN the built set, so CONSTRUCTED does not move at all and only
+CORRECT does, which is the shape a defect closure has.
+
+**THE TOP-OF-DOCUMENT HEADLINE IS STALE AGAIN, AND IT HAS BEEN SINCE §12.** It
+reads `262 / 55 / 52 / 4`. §12.7 moved three rows `N` to `W` and restated the
+tally **only inside §12.7**, so the block a reader meets first has been
+contradicted by the body ever since. That is the exact failure §11 documented in
+the note printed under that same block — *"a reader who read the top of this
+document got a number the body had already contradicted twice"* — together with
+the instruction *"every later pass should do the same"*, meaning restate it at the
+top as well as in place. §12 did not, and this section cannot: the corpus is
+append-only and §11's block may not be edited. **So the top block is superseded
+here, for the second time, by this table.** `check:census-integrity` reads the
+LAST stated headline and therefore never saw the drift — it passed at
+`1fe72289b` against §12.7 and would have gone on passing. This is an ACCOUNTING
+correction: no verdict of the three §12 moved is questioned, and none is re-read
+here.
+
+§9.1's group **(a) logic wrong in code** names `G277` first among *"the nine left
+... in rough order of how wrong they are"*, describing it as *"`searchCountries`
+aggregating `profiles.home_country` so a country with no users in it does not
+exist"*. **That sentence is falsified by §13.1 and `G277` leaves group (a).** No
+new total is asserted for the group: it is a §9-era partition that later passes
+moved rows across without restating, and re-deriving it would need all 54 `W`
+rows re-read, which this section did not do.
+
+### 13.4 Two citations that are stale, and that NO check can see
+
+`G277`'s second pointer is `` `artifacts/api-server/src/routes/discoverySearch.ts:2157#.ilike("home_country", pat)` `` — a BARE inherited
+citation, which takes its file from `discoverySearch.ts` named earlier in the same
+row. **It does not resolve at `a97bfdac0`, it did not resolve at `1fe72289b`
+either, and neither pass can tell you so.** `INHERITED_RE` in
+`artifacts/api-server/scripts/check-doc-citations.mjs:399#export const INHERITED_RE` requires a
+closing backtick immediately after the anchor, and `ANCHOR` at
+`artifacts/api-server/scripts/check-doc-citations.mjs:391#const ANCHOR` stops at
+the first `"` — so the citation matches NOTHING and is not counted, not checked
+and not reported. `UNBINDABLE_INHERITED_RE` catches the SPACE form of this
+hazard and only that form; a double quote falls through it. `FULL_ANCHOR_RE`
+would have caught it had the path been spelled.
+
+The proof that this is a live hole and not a theoretical one: the Discovery
+closing lane repointed this row's OTHER pointer in the same change —
+`:1999#searchCountries` became `:2072#searchCountries`, correct at
+`a97bfdac0` — *because the checker showed it*, and left the quote-anchored one
+untouched *because the checker did not*. The same thing happened to `G220`.
+
+| row | the invisible pointer | what it lands on at `a97bfdac0` | what it should name |
+|---|---|---|---|
+| G277 (§836, §2097) | `` `artifacts/api-server/src/routes/discoverySearch.ts:2157#.ilike("home_country", pat)` `` | the `searchCities` signature — the anchor text is absent from both lines | `artifacts/api-server/src/routes/discoverySearch.ts:2156#.select("id, home_country")` and `artifacts/api-server/src/routes/discoverySearch.ts:2157#.ilike("home_country", pat)` |
+| G220 (§742, §2096) | `` `artifacts/api-server/src/routes/discoverySearch.ts:2364#case "travelers":` `` | a comment about `canonical_locations` and a JSDoc line — `dispatchSearch`'s switch is nowhere near | `artifacts/api-server/src/routes/discoverySearch.ts:2364#case "travelers": {` — the switch runs 2215-2262 |
+
+Both were already wrong at `1fe72289b` (`searchCountries` was at line 1999 and
+`case "travelers":` at 2144 there), so this is a PRE-EXISTING defect the recent
+changes widened rather than caused. **The rows' VERDICTS are unaffected by it**
+— `G220` stays `C ᵖ` and `G277` moves for the reasons in §13.1, not for a line
+number. Corrected pointers are stated above rather than edited into §836 and
+§742, because this corpus is append-only and the last statement wins.
+
+Measured across all thirteen censuses: **nine** bare inherited citations carry a
+double quote in the anchor and are therefore unchecked by both passes. Seven are
+in `census-input-intelligence.md` and `census-discovery.md` and are named here
+and in `census-discovery.md` §44; the other two — `census-map.md` M282's
+`personal_city` pointer and `census-telegraph.md`'s two `vocabulary.ts` pointers —
+were read at this tree and ARE correct, so they are reported as a guard gap and
+not as an error.
+
+### 13.5 What this licenses, and what it does not
+
+This section measured **one requirement** — `G277` — plus the two citations
+§13.4 names. The single counted file this census's acknowledgement covers is
+`artifacts/api-server/src/routes/discoverySearch.ts`, and the five hunks in it
+touch the `countries` bucket and one line of `dispatchSearch`'s switch; every
+other row this census rests on in that file (`G31`, `G62`, `G68`, `G70`, `G71`,
+`G73`, `G95`, `G101`, `G126`, `G129`, `G180`, `G185`, `G190`, `G197`, `G220`,
+`G278`-`G283`, `G337`, `G363`) sits outside those hunks and is not re-read here.
+
+**So: this census's `head_commit` CAN truthfully advance to `a97bfdac0`** —
+because the one counted file that changed has had the one requirement its change
+could move re-measured, and the hunks are enumerable and do not reach the others.
+That is a statement about the ONE file that moved, not about the 373 rows. The
+declaration starts a clock; it certifies no past, and §1's reading rule applies to
+every row this section does not name.
+
+**Guards run at this tree by this reviewer**, after the edit:
+`check:census-freshness` **0**, `check:census-scope-coverage` **0**,
+`check:census-integrity` **0**, `check:census-row-move-labels` **0**,
+`check:doc-citations` **0**, `check:citation-targets` **0**. Five checks exit
+**2** without live credentials — `check:write-path-columns`,
+`check:missing-live-columns`, `check:authorization-contract`,
+`check:media-objects`, `check:rank-events-surfaces`. **Exit 2 is UNVERIFIED, not
+green**, and nothing in this section rests on any of them.

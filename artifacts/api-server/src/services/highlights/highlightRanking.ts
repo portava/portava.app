@@ -301,3 +301,51 @@ export function rankHighlights<T extends RankableHighlight>(
 
   return [...pinned, ...(applyDiversity(automatic, dims, maxConsecutive) as RankedHighlight<T>[])];
 }
+
+/* ============================================================================
+ * The partition rule, applied on a surface that has PINS and does not have the
+ * six automatic factors.
+ *
+ * §12: "Pinned/manual order always outranks automatic ordering."
+ *
+ * WHY THIS IS NOT `rankHighlights`. `rankHighlights` is the full §12 model and
+ * needs six measured factors — recency, significance, current_relevance,
+ * audience_relevance, presentation_quality — of which `public.highlights`
+ * carries a witness for exactly one. Calling it from a route would mean
+ * inventing five, and this module's own header says what a factor that cannot
+ * be measured is: `null`, not `0`. A ranker fed five nulls does not rank.
+ *
+ * So the routes get the half of §12 that IS measurable, and only that half.
+ * `pinned_at` is a real column with a real writer (POST /highlights/:id/pin),
+ * so the PARTITION is enforceable today: pinned items ahead of unpinned ones,
+ * pinned ordered among themselves by when the owner pinned them, and the
+ * automatic partition left in whatever order its query produced. Nothing here
+ * claims to have scored anything, and census H100 stays BUILT-BUT-WRONG on the
+ * five factors — this is the evidence for the grade, not an argument against
+ * it.
+ *
+ * STABLE. Two unpinned items keep the order they arrived in, so a caller's
+ * `ORDER BY created_at` survives. A partition that reordered the automatic half
+ * would silently replace the surface's chosen ordering with nothing.
+ * ==========================================================================*/
+
+export interface PinnablyOrdered {
+  /** §3.5 `pinned_at`. NULL / absent = not pinned. */
+  readonly pinned_at?: string | null;
+  readonly id?: string;
+}
+
+export function pinnedFirst<T extends PinnablyOrdered>(rows: readonly T[]): T[] {
+  const pinned: T[] = [];
+  const automatic: T[] = [];
+  for (const r of rows) (r?.pinned_at != null ? pinned : automatic).push(r);
+  pinned.sort((a, b) => {
+    // Earliest pin first: the owner's pin order is the order they pinned in,
+    // which is the only manual order this schema records. Ties fall back to id
+    // so the result is deterministic rather than dependent on the query plan.
+    const at = String(a.pinned_at ?? "");
+    const bt = String(b.pinned_at ?? "");
+    return at.localeCompare(bt) || String(a.id ?? "").localeCompare(String(b.id ?? ""));
+  });
+  return [...pinned, ...automatic];
+}

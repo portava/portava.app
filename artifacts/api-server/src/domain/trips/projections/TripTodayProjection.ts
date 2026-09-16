@@ -145,7 +145,7 @@ export const TODAY_ANSWERS = {
  * is a gate boundary, so the crew map's schema belongs to that flag and the
  * Today builder's kernel-era reads do not.
  */
-async function readCrewSummary(sc: any, tripId: string, viewerId: string, memberRows: any[]): Promise<TodayCrewSummary> {
+async function readCrewSummary(sc: any, tripId: string, viewerId: string, memberRows: any[], nowMs: number): Promise<TodayCrewSummary> {
   const crewSummary: TodayCrewSummary = {
     total: memberRows.length,
     accepted: memberRows.filter((m) => m.status == null || m.status === "accepted").length,
@@ -155,7 +155,10 @@ async function readCrewSummary(sc: any, tripId: string, viewerId: string, member
   if (await isFlagEnabled(sc, "trip_crew_map_enabled")) {
     crewSummary.featureEnabled = true;
     try {
-      const map = await getCrewMap(sc, tripId, viewerId);
+      // The builder's own clock, not the wall clock: this summary counts who
+      // is live-sharing AS OF `nowMs`, and the crew map decides that with a
+      // window on `expires_at`.
+      const map = await getCrewMap(sc, tripId, viewerId, nowMs);
       crewSummary.liveSharing = map.members.filter((m) => m.liveShareActive).length;
       crewSummary.safeReturnActive = map.members.filter((m) => m.safeReturnActive).length;
       crewSummary.withLocation = map.members.filter((m) => m.areaLabel !== null).length;
@@ -295,7 +298,7 @@ export async function buildTripTodayProjection(
     return { ok: false, reason: "TRIP_PROJECTION_UNAVAILABLE", message: "The crew could not be read" };
   }
   const memberRows = ((members ?? []) as any[]);
-  const crewSummary = await readCrewSummary(sc, tripId, viewerId, memberRows);
+  const crewSummary = await readCrewSummary(sc, tripId, viewerId, memberRows, nowMs);
 
   const { data: riskRows, error: rErr } = await sc.from("trip_risks").select("id, likelihood, impact, status").eq("trip_id", tripId).in("status", ["open", "realised"]);
   if (rErr) {

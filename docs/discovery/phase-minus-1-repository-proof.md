@@ -113,7 +113,7 @@ content at HEAD and **none of them ranks or logs**:
 | `GET /discovery/feed` | `routes/discovery.ts:1560` | **No** | **No** | **No** — calls `queryOverpass` directly (`:1640`) |
 | `GET /discovery/counts` | `routes/discovery.ts:1503` | No | No | **Writes it** — see §1e |
 | `GET /discovery/search` | `routes/discoverySearch.ts:1324` | **No** | **No** | No |
-| `GET /discovery/suggest` | `routes/discoverySearch.ts:1573` | **No** | **No** | No |
+| `GET /discovery/suggest` | `routes/discoverySearch.ts:1610` | **No** | **No** | No |
 
 `grep` for `rankCandidates|rankItemsForDiscovery|drsRankItems|logImpression` over
 `routes/discoverySearch.ts` returns **nothing**. `/discovery/feed` bypasses the

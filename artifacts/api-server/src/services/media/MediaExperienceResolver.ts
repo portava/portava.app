@@ -239,6 +239,7 @@ async function resolveEvent(
       feedType: "for_you",
       postIds: linkedPostIds,
       limit: 200,
+      nowMs,
     });
     media = await projectCandidatesProtected(sc, viewer, candidates as MediaCandidateRow[], nowMs);
   }
@@ -310,6 +311,7 @@ async function resolveTrip(
     feedType: "for_you",
     tripId,
     limit: 200,
+    nowMs,
   });
   const media = await projectCandidatesProtected(sc, viewer, candidates as MediaCandidateRow[], nowMs);
 

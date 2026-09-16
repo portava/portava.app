@@ -1,15 +1,15 @@
 /**
  * Telegraph §6.2 — renderers for the typed kinds this tree can carry.
  *
- * LOCATION · ACTION · ANNOUNCEMENT · SAFETY · GIF · MEDIA_ALBUM · MEMORY_NOTE
+ * LOCATION · ACTION · ANNOUNCEMENT · SAFETY · GIF · MEDIA_ALBUM · MEMORY_NOTE · VOICE
+ * (VOICE renders here although it is sent through its own route: rendering follows the STORED ENVELOPE, not the send path.)
  *
  * §11.3 is enforced here rather than assumed:
  *   - "Do not encode delivery/availability solely by color": every kind
  *     renders its own WORD (a label), so the colour is reinforcement.
  *   - "Provide reduced-motion behavior for media, GIFs and animations": a GIF
- *     shows its still frame when the viewer has asked for reduced motion, or
- *     when data-saver is on. `isGifAnimated` is the one predicate that decides
- *     it, and it is pure.
+ *     shows its still frame under reduced motion or data saver. `isGifAnimated`
+ *     is the one predicate that decides it, and it is pure.
  *   - "Captions/transcripts must be optional derivatives; original media
  *     remains accessible": a GIF's `altText` is an accessibility label, never a
  *     replacement for the asset.
@@ -20,9 +20,9 @@ import { DisplayMediaImage } from '../../../components/ui/DisplayMediaImage.tsx'
 import { space, radius, type as t } from '../../../theme/tokens.ts';
 import { useReducedMotionSetting } from '../../wall/hooks/useReducedMotionSetting.ts';
 import { useTelegraphPalette, type TelegraphPalette } from '../theme/telegraphTheme.ts';
-import { parseKindEnvelope, type SendableKind } from './kindsApi.ts';
-
-const CARD_MAX_WIDTH = 280;
+import { parseKindEnvelope, type EnvelopeKind } from './kindsApi.ts';
+import { VoiceMessagePlayer } from '../voice/VoiceMessagePlayer.tsx';
+const CARD_MAX_WIDTH = 280; // census-telegraph cites :33/:65/:129/:164 — the blank line that was here paid for the import above, so nothing below shifts.
 
 /**
  * §6.3 / §11.3 — whether a GIF may animate.
@@ -57,9 +57,9 @@ export interface TypedMessageRendererProps {
 /** True when this renderer knows the kind — the dispatcher asks first. */
 export function rendersTypedKind(msgType: string | null | undefined): boolean {
   if (typeof msgType !== 'string') return false;
-  return ['media_album', 'gif', 'location', 'action', 'announcement', 'safety', 'memory_note'].includes(
-    msgType.toLowerCase(),
-  );
+  return [
+    'media_album', 'gif', 'location', 'action', 'announcement', 'safety', 'memory_note', 'voice',
+  ].includes(msgType.toLowerCase());
 }
 
 export function TypedMessageRenderer({
@@ -86,7 +86,7 @@ export function TypedMessageRenderer({
 
   const p = envelope.payload ?? {};
 
-  switch (envelope.kind as SendableKind) {
+  switch (envelope.kind as EnvelopeKind) {
     case 'LOCATION':
       return (
         <View style={styles.wrap} testID="telegraph-kind-location">
@@ -201,6 +201,18 @@ export function TypedMessageRenderer({
         </View>
       );
     }
+
+    // §6.3 — waveform, seek, playback speed. The player owns its own state and
+    // its own signed-URL hydration; this switch only hands it the payload.
+    case 'VOICE':
+      return (
+        <VoiceMessagePlayer
+          url={p.url}
+          durationSeconds={p.durationSeconds}
+          waveform={p.waveform}
+          mine={mine}
+        />
+      );
 
     case 'MEDIA_ALBUM': {
       const assets: any[] = Array.isArray(p.assets) ? p.assets : [];

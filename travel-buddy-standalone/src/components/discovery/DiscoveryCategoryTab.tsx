@@ -652,6 +652,24 @@ export function DiscoveryCategoryTab({
               // Served by GET /discovery, whose impression rows are written
               // under surface 'discovery' (lib/rankLog.ts, lib/discoveryServeLog.ts).
               rankSurface="discovery"
+              // "Not interested". Reached only after the server ACCEPTED the
+              // dismissal, so this removes a card that the next GET /discovery
+              // will also leave out — `dismissGatedPlaces` applies the same
+              // suppression on all four of that route's serve paths, including
+              // the cached ones. Removing it here is the list catching up with
+              // a decision already recorded, not a local hide.
+              //
+              // `total` is decremented with it. It is the count this screen
+              // prints ("N places found") and the one the cursor arithmetic
+              // walks; leaving it alone would make the footer disagree with the
+              // list by one for every dismissal.
+              onDismissed={(placeId) => {
+                setPlaces((prev) => {
+                  const next = prev.filter((p) => p.id !== placeId);
+                  if (next.length !== prev.length) setTotal((n) => Math.max(0, n - 1));
+                  return next;
+                });
+              }}
             />
           )}
           contentContainerStyle={listTopInset > 0 ? [styles.list, { paddingTop: listTopInset }] : styles.list}

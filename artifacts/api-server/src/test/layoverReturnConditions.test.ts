@@ -71,6 +71,28 @@ import type { LayoverSession } from "../services/airport/LayoverSessionService.j
 
 const TZ = "Asia/Taipei";
 
+/**
+ * The next Monday at least a fortnight out, as `YYYY-MM-DD` in TZ's OWN
+ * calendar.
+ *
+ * The airport's day is the one the traffic bands are read in, and it is not the
+ * runner's — so the weekday is resolved in `TZ` rather than by the host's local
+ * `Date`, and the result is fed straight back to `wallTimeToUtc(TZ, ...)`.
+ * Fourteen through twenty-one days out is an eight-day span, which always
+ * contains exactly one Monday.
+ */
+function mondayAhead(): string {
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: TZ, weekday: "short", year: "numeric", month: "2-digit", day: "2-digit",
+  });
+  for (let d = 14; d < 22; d++) {
+    const parts = fmt.formatToParts(new Date(Date.now() + d * 24 * 60 * 60 * 1000));
+    const part = (t: string) => parts.find((x) => x.type === t)!.value;
+    if (part("weekday") === "Mon") return `${part("year")}-${part("month")}-${part("day")}`;
+  }
+  throw new Error("unreachable: an eight-day span always contains a Monday");
+}
+
 function airport(over: Partial<AirportProfile> = {}): AirportProfile {
   return {
     id: "airport-tpe",
@@ -400,14 +422,31 @@ async function safetyBody(departureIso: string, trafficExtraMin: number) {
 
 describe("GET /airport/sessions/:id/safety publishes the return forecast", () => {
   /**
-   * Both flights leave on a Monday well inside the day-band (`timeOfDayExtra`
-   * is 0 for each), so the only difference the response can show is the new
-   * term. The instants are absolute so the case does not depend on when it runs
-   * — except that the session must not already be in the past, which is why the
-   * year is fixed ahead.
+   * Both flights leave on the SAME Monday, well inside the day-band
+   * (`timeOfDayExtra` is 0 for each), so the only difference the response can
+   * show is the new term.
+   *
+   * THE DAY IS COMPUTED, NOT WRITTEN DOWN. This case is reached over HTTP, and
+   * the route hands `Date.now()` to the engine (`routes/airport.ts`). A session
+   * whose departure has already passed has no window left, so `usableMinutes`
+   * clamps to zero for BOTH sessions — `Math.max(0, ...)` in
+   * `LayoverSafetyEngine` — and `rush.usableMinutes < midday.usableMinutes`
+   * becomes `0 < 0`, which is false. The envelope test next to it fails the
+   * same way.
+   *
+   * The old fixture said the quiet part out loud: the instants "do not depend
+   * on when it runs — except that the session must not already be in the past,
+   * which is why the year is fixed ahead". A year fixed ahead is a fuse, not a
+   * fix. Pinned to 2027-09-13 both tests were green until that date and armed
+   * after it, and the next reader would have moved the year again.
+   *
+   * `mondayAhead` keeps the two properties the comparison actually needs — a
+   * WEEKDAY, because the PEAK factor is weekday-dependent, and a departure
+   * comfortably in the future — without naming a day that can expire.
    */
-  const RUSH = wallTimeToUtc(TZ, "2027-09-13T17:00")!.toISOString();
-  const MIDDAY = wallTimeToUtc(TZ, "2027-09-13T12:00")!.toISOString();
+  const DAY = mondayAhead();
+  const RUSH = wallTimeToUtc(TZ, `${DAY}T17:00`)!.toISOString();
+  const MIDDAY = wallTimeToUtc(TZ, `${DAY}T12:00`)!.toISOString();
 
   it("the buffer breakdown names the term and the peak session loses usable minutes", async () => {
     const rush = await safetyBody(RUSH, 20);

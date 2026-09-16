@@ -53,6 +53,7 @@ import { resolveDiscoveryEngineMode } from "../lib/discoveryEngineMode.js";
 // this module; the route no longer imports them directly, which is what keeps
 // "one ranking pipeline in the tree" checkable rather than aspirational.
 import { loadPdeViewer, rankForViewer } from "../lib/discoveryPde.js";
+import { loadDismissedPlaceIds, withoutDismissed } from "../lib/discoveryDismissed.js";
 import { logDiscoveryShadowServe } from "../lib/discoveryShadow.js";
 import { isInDiscoveryCohort } from "../lib/discoveryCohort.js";
 import { fetchBlockedSet, submitterIsVisible } from "../lib/blocks.js";
@@ -1879,7 +1880,8 @@ router.get("/discovery", async (req, res) => {
     const liveRanked = await withDiscoveryLiveRank(getServiceClient(), servedFiltered, {
       mode: parseIntentMode(req.query.intentMode),
     });
-    const gateA = await layoverGatedPlaces(callerUserId, liveRanked.places, "GET /discovery"); if (!gateA.ok) { sendDiscoveryRefusal(res, emptyDiscoveryPlacesEnvelope(destination ?? null, ctxLabel ?? null), gateA.refusal); return; } const slice    = gateA.places.slice(offset, offset + PAGE_SIZE).map(toPublic);  // A14 — the certified action universe gates the WHOLE set before the page slice, so pagination walks the gated set and `total` counts what was served. See lib/discoveryLayoverMode.ts.
+    const dismA = await dismissGatedPlaces(callerUserId, liveRanked.places, dbFailedSources);  // "Not interested" — serve path 1 of 4.
+    const gateA = await layoverGatedPlaces(callerUserId, dismA.places, "GET /discovery"); if (!gateA.ok) { sendDiscoveryRefusal(res, emptyDiscoveryPlacesEnvelope(destination ?? null, ctxLabel ?? null), gateA.refusal); return; } const slice    = gateA.places.slice(offset, offset + PAGE_SIZE).map(toPublic);  // A14 — the certified action universe gates the WHOLE set before the page slice, so pagination walks the gated set and `total` counts what was served. See lib/discoveryLayoverMode.ts.
     const totalMs  = Date.now() - t0;
     req.log.info({ cacheLevel, destination, category, totalMs, pdeServed: pdeScoredById !== null }, "discovery: cache hit");
     // §7 New-to-Me annotation — additive, order-preserving, flag-gated, fail-safe.
@@ -1899,7 +1901,7 @@ router.get("/discovery", async (req, res) => {
           ? { liveRank: { mode: liveRanked.mode, readable: liveRanked.readable, windowSize: liveRanked.windowSize, demoted: liveRanked.demoted } }
           : {}),
       },
-    }, dbFailedSources, offset, gateA.summary);   // D11 serve path 1 of 4 — the cache-A serve. A14 — the `layover` key is attached in the send helper, beside `cursor` and for the same reason: four paths physically cannot disagree about its name or its position.
+    }, dismA.failedSources, offset, gateA.summary);   // D11 serve path 1 of 4 — the cache-A serve. A14 — the `layover` key is attached in the send helper, beside `cursor` and for the same reason: four paths physically cannot disagree about its name or its position.
     // Stage 0 instrumentation — serve points 1/2/3. Fire-and-forget, after the
     // response. These three paths ran no ranker; before this they wrote nothing
     // at all, which is why the 'discovery' surface had no rows.
@@ -2129,7 +2131,8 @@ router.get("/discovery", async (req, res) => {
             const cCacheHit = cAcceptance.usable ? cStored : undefined;
             if (cCacheHit) {
               const cFiltered = applyFilters(cCacheHit.places);
-              const gateB = await layoverGatedPlaces(callerUserId, cFiltered, "GET /discovery"); if (!gateB.ok) { sendDiscoveryRefusal(res, emptyDiscoveryPlacesEnvelope(destination ?? null, ctxLabel ?? null), gateB.refusal); return; } const cSlice = gateB.places.slice(offset, offset + PAGE_SIZE).map(toPublic);  // A14 — see serve path 1.
+              const dismB = await dismissGatedPlaces(callerUserId, cFiltered, dbFailedSources);  // "Not interested" — serve path 2 of 4.
+              const gateB = await layoverGatedPlaces(callerUserId, dismB.places, "GET /discovery"); if (!gateB.ok) { sendDiscoveryRefusal(res, emptyDiscoveryPlacesEnvelope(destination ?? null, ctxLabel ?? null), gateB.refusal); return; } const cSlice = gateB.places.slice(offset, offset + PAGE_SIZE).map(toPublic);  // A14 — see serve path 1.
               req.log.info({ destination, cacheLevel: "compass_candidate_hit" }, "discovery: compass candidate cache hit");
               const cAnnotated = await annotateNewToMe(getServiceClient(), callerUserId, cSlice);
               // 06 §5: cachedAt is the entry's own write clock, which the TTL
@@ -2142,7 +2145,7 @@ router.get("/discovery", async (req, res) => {
                 provenanceById: cCacheHit.provenanceById,
               });
               sendDiscoveryPlacesEnvelope(res, { places: cCandidates, total: gateB.places.length, destination, context: ctxLabel, cached: true, ageFilterMeta,
-                sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 } }, dbFailedSources, offset, gateB.summary);  // D11 serve path 2 of 4 — the Compass cache-B hit
+                sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 } }, dismB.failedSources, offset, gateB.summary);  // D11 serve path 2 of 4 — the Compass cache-B hit
               // Stage 0 — serve point 4. Replays a stored Compass order; no
               // ranker ran in this request, so rankedInRequest is false.
               void logDiscoveryServe(compassSc, {
@@ -2224,14 +2227,15 @@ router.get("/discovery", async (req, res) => {
             // Only pipeline-passed items appear when the flag is enabled.
             const merged = compassRanked;
             const cFiltered  = applyFilters(merged);
-            const gateC = await layoverGatedPlaces(callerUserId, cFiltered, "GET /discovery"); if (!gateC.ok) { sendDiscoveryRefusal(res, emptyDiscoveryPlacesEnvelope(destination ?? null, ctxLabel ?? null), gateC.refusal); return; } const cSlice     = gateC.places.slice(offset, offset + PAGE_SIZE).map(toPublic);  // A14 — see serve path 1.
+            const dismC = await dismissGatedPlaces(callerUserId, cFiltered, dbFailedSources);  // "Not interested" — serve path 3 of 4.
+            const gateC = await layoverGatedPlaces(callerUserId, dismC.places, "GET /discovery"); if (!gateC.ok) { sendDiscoveryRefusal(res, emptyDiscoveryPlacesEnvelope(destination ?? null, ctxLabel ?? null), gateC.refusal); return; } const cSlice     = gateC.places.slice(offset, offset + PAGE_SIZE).map(toPublic);  // A14 — see serve path 1.
             const cFreshAnnotated = await annotateNewToMe(getServiceClient(), callerUserId, cSlice);
             const cFreshCandidates = await withDiscoveryCandidates(getServiceClient(), withRecommendationIds(cFreshAnnotated, exposure), {
               cacheLevel: "compass_fresh_rank", cachedAt: Date.now(), scoredById: null, rankedBy: "compass",
               provenanceById: cProvenanceById,
             });
             sendDiscoveryPlacesEnvelope(res, { places: cFreshCandidates, total: gateC.places.length, destination, context: ctxLabel, cached: false, ageFilterMeta,
-              sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 } }, dbFailedSources, offset, gateC.summary);  // D11 serve path 3 of 4 — the Compass fresh rank
+              sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 } }, dismC.failedSources, offset, gateC.summary);  // D11 serve path 3 of 4 — the Compass fresh rank
             // Stage 0 — serve point 5. The Compass ranker DID run here, but
             // this path has never written a rank_events row: it returns before
             // the logImpression call on the cold path below.
@@ -2287,7 +2291,8 @@ router.get("/discovery", async (req, res) => {
     const coldLiveRanked = await withDiscoveryLiveRank(getServiceClient(), filtered, {
       mode: parseIntentMode(req.query.intentMode),
     });
-    const gateD = await layoverGatedPlaces(callerUserId, coldLiveRanked.places, "GET /discovery"); if (!gateD.ok) { sendDiscoveryRefusal(res, emptyDiscoveryPlacesEnvelope(destination ?? null, ctxLabel ?? null), gateD.refusal); return; } const slice = gateD.places.slice(offset, offset + PAGE_SIZE).map(toPublic);  // A14 — see serve path 1.
+    const dismD = await dismissGatedPlaces(callerUserId, coldLiveRanked.places, dbFailedSources);  // "Not interested" — serve path 4 of 4.
+    const gateD = await layoverGatedPlaces(callerUserId, dismD.places, "GET /discovery"); if (!gateD.ok) { sendDiscoveryRefusal(res, emptyDiscoveryPlacesEnvelope(destination ?? null, ctxLabel ?? null), gateD.refusal); return; } const slice = gateD.places.slice(offset, offset + PAGE_SIZE).map(toPublic);  // A14 — see serve path 1.
     // Log impressions for exactly the items that were served — after filter + page slice.
     if (callerUserId && scoredByPlaceId.size > 0) {
       const servedScored = slice
@@ -2332,7 +2337,7 @@ router.get("/discovery", async (req, res) => {
           ? { liveRank: { mode: coldLiveRanked.mode, readable: coldLiveRanked.readable, windowSize: coldLiveRanked.windowSize, demoted: coldLiveRanked.demoted } }
           : {}),
       },
-    }, dbFailedSources, offset, gateD.summary);   // D11 serve path 4 of 4 — the cold fetch's legacy/PDE tail
+    }, dismD.failedSources, offset, gateD.summary);   // D11 serve path 4 of 4 — the cold fetch's legacy/PDE tail
   } catch (err) {
     req.log.error({ err }, "discovery route failed");
     // D11 / `11` §9. `meta.cacheLevel: "error"` was already here and was ALMOST
@@ -3808,6 +3813,23 @@ const DISCOVERY_CURATED_SOURCE = "discovery_places";
 const DISCOVERY_CANONICAL_SOURCE = "places";
 
 /**
+ * The name `GET /discovery` gives the viewer's dismissal list on `failedSources`.
+ *
+ * NOT a retrieval like the two above — no place ever came from it. It names a
+ * FILTER that could not be applied, and it is on the same wire key because the
+ * question a client asks of `failedSources` is the same in both cases: which
+ * part of this answer is not what it should be. The DIRECTION of the error
+ * differs, and that is worth stating rather than leaving to be discovered: a
+ * failed retrieval means the page may be MISSING places; a failed dismissal read
+ * means the page may CONTAIN places the viewer asked to be rid of. Both are
+ * "this page is not right", and neither is a reason to serve nothing.
+ *
+ * `rank_events` is the table, on the same principle as the other two: the server
+ * log and the wire agree about what broke.
+ */
+const DISCOVERY_DISMISSED_SOURCE = "rank_events";
+
+/**
  * The refusal `code` for a given set of failed retrievals.
  *
  * ONE frozen code would have made a canonical-only failure indistinguishable on
@@ -3826,6 +3848,15 @@ function discoveryPlaceSourcesCode(failedSources: readonly string[]): string {
   const canonical = failedSources.includes(DISCOVERY_CANONICAL_SOURCE);
   if (curated && canonical) return "discovery_place_sources_read_failed";
   if (canonical) return "canonical_places_read_failed";
+  // The dismissal list failing ALONE. Previously unreachable — this function is
+  // only called with a non-empty `failedSources`, and the only two members were
+  // the two retrievals — so nothing that works today changes. Without this
+  // branch a dismissal-only failure would fall through to
+  // `discovery_places_read_failed` and tell a client the curated retrieval
+  // broke, which is a false statement about a healthy read.
+  if (!curated && failedSources.includes(DISCOVERY_DISMISSED_SOURCE)) {
+    return "dismissed_set_read_failed";
+  }
   return "discovery_places_read_failed";
 }
 
@@ -4000,6 +4031,54 @@ async function layoverGatedPlaces<T extends { id: string; lat?: number | null; l
       ),
     };
   }
+}
+
+/**
+ * "Not interested", applied — the viewer's dismissals removed from a page, in
+ * ONE place, for the same reason `layoverGatedPlaces` and
+ * `sendDiscoveryPlacesEnvelope` are each one place.
+ *
+ * `GET /discovery` has four serve paths. A dismissal that is honoured on the
+ * cold path and forgotten on a cache hit is worse than one that is never
+ * honoured at all: the place disappears, the person believes the control works,
+ * and then it comes back on a request that differs only in which cache answered
+ * — behaviour they cannot predict, reproduce or report. So all four call this,
+ * and a fifth that forgot would be visible as a missing call rather than as an
+ * intermittent bug.
+ *
+ * WHY IT GATES THE WHOLE SET AND NOT THE PAGE — the same reason the Layover gate
+ * does, quoted there: each caller hands over the full ranked list and slices the
+ * RESULT, so filtering the page instead would make `total`, the cursor
+ * arithmetic and the set being walked three different things.
+ *
+ * WHY IT CANNOT REFUSE. Unlike the Layover gate, a failure here is NOT a reason
+ * to serve nothing. The Layover gate withholds places a traveller must not be
+ * shown, so failing open there would breach the rule it exists to enforce. This
+ * gate applies a personal preference: failing open shows places the viewer did
+ * not want, which is a bad page, while failing closed shows an EMPTY Discovery
+ * tab because a preference list was briefly unreadable, which is a broken app.
+ * The failure is carried out on `failedSources` instead, so the response says
+ * the page may contain dismissed places rather than pretending it cannot.
+ *
+ * ANONYMOUS CALLERS pass straight through: no viewer, no dismissals, nothing to
+ * read and nothing to report.
+ */
+async function dismissGatedPlaces<T extends { id: string }>(
+  userId: string | null,
+  places: T[],
+  failedSources: readonly string[],
+): Promise<{ places: T[]; failedSources: string[] }> {
+  // Nothing to remove from an empty page, and no reason to spend a read on it.
+  if (!userId || places.length === 0) return { places, failedSources: [...failedSources] };
+  const dismissed = await loadDismissedPlaceIds(getServiceClient(), userId);
+  return {
+    places: withoutDismissed(places, dismissed.ids),
+    // Appended, never replacing: a retrieval that failed AND a dismissal read
+    // that failed are two facts, and the envelope names both.
+    failedSources: dismissed.degraded
+      ? [...failedSources, DISCOVERY_DISMISSED_SOURCE]
+      : [...failedSources],
+  };
 }
 
 /**

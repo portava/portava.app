@@ -30,6 +30,10 @@ import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
+import {
+  runMemorySearch,
+  searchCapabilities,
+} from "../services/memory/memorySearchService.js";
 import { sendPushWithRetry } from "../lib/pushWithRetry.js";
 import { nameVisibilitySet, nameVisibleFor } from "../lib/publicIdentity.js";
 import {
@@ -862,6 +866,146 @@ function chunkIds<T>(ids: readonly T[], size = IN_LIST_CHUNK): T[][] {
 
 /** One page of a life. A person with more Memories than this gets the most recent. */
 const GRAPH_MEMORY_LIMIT = 2000;
+
+/* ============================================================================
+ * POST /memories/search — §15 Memory Retrieval and Search.
+ *
+ * Highlights/Memories Development Architecture Spec v1 §15, §18, §28.6.
+ *
+ * THE BLOCKER THIS CLOSES, quoted from the census (§15, H110–H114): the whole
+ * retrieval engine is built — the §15 signature, deterministic filters ahead of
+ * any reranking, the seven ranking dimensions, hard namespace isolation on the
+ * way IN, and refusal-by-name for a revoked derivative — and "NO ROUTE IMPORTS
+ * THE MODULE". Its only callers were the certification harness's in-memory
+ * world. This handler is the first production caller.
+ *
+ * WHAT THE WIRE CARRIES, AND WHAT IT DOES NOT. A caller sends an INTENT —
+ * "mine", "mine_place", "public" — never a namespace, an owner for a private
+ * namespace, or a projection id. `resolveTarget` derives all three server-side
+ * from the AUTHENTICATED viewer. `searchMemories` would refuse a
+ * PRIVATE_PERSONAL request whose viewer is not the owner, and that check is
+ * correct, but a route that passed a client-supplied triple through would make
+ * that single equality the only thing between a stranger and somebody's private
+ * timeline. See services/memory/memorySearchService.ts.
+ *
+ * WHY A `public` SEARCH STILL CHECKS THE BLOCK. The public derivative is
+ * already filtered to published, public Memories by its builder, so nothing
+ * private can come out of it. A block is not about privacy of the row, it is
+ * about two people not reaching each other at all — §11 / §21, the same rule
+ * GET /memories/people/:personId applies one screen over.
+ * ============================================================================ */
+router.post("/memories/search", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const parsed = z
+    .object({
+      intent: z.object({
+        kind: z.enum(["mine", "mine_place", "public"]),
+        placeId: z.string().optional(),
+        ownerId: z.string().optional(),
+      }),
+      query: z.string().max(400).nullable().optional(),
+      people: z.array(z.string()).max(50).optional(),
+      place: z.string().nullable().optional(),
+      trip: z.string().nullable().optional(),
+      event: z.string().nullable().optional(),
+      dateRange: z.object({ from: z.string().nullable().optional(), to: z.string().nullable().optional() }).nullable().optional(),
+      memoryType: z.string().nullable().optional(),
+      limit: z.number().int().positive().max(100).optional(),
+    })
+    .safeParse(req.body ?? {});
+  if (!parsed.success) { sendError(res, "invalid_payload", "Invalid search request"); return; }
+  const body = parsed.data;
+
+  if (body.intent.kind === "public") {
+    if (!body.intent.ownerId || !isUuid(body.intent.ownerId)) {
+      sendError(res, "invalid_payload", "ownerId must be a UUID");
+      return;
+    }
+    if (body.intent.ownerId !== user.id && (await isBlocked(sc, user.id, body.intent.ownerId))) {
+      // The same answer a blocked viewer gets everywhere else on this surface:
+      // an empty result, not a 403. A 403 tells them a block exists.
+      res.status(200).json({
+        hits: [], deterministicMatchCount: 0, semanticRerankApplied: false,
+        namespace: "PUBLIC", projectionId: "PublicMemoryProjection",
+        engineVersion: searchCapabilities().engineVersion,
+        capabilities: searchCapabilities(),
+      });
+      return;
+    }
+  }
+
+  const result = await runMemorySearch(sc as any, user.id, {
+    intent: body.intent as any,
+    query: body.query ?? null,
+    people: body.people,
+    place: body.place ?? null,
+    trip: body.trip ?? null,
+    event: body.event ?? null,
+    dateRange: body.dateRange ?? null,
+    memoryType: body.memoryType ?? null,
+    limit: body.limit,
+  });
+
+  if (!result.ok) {
+    switch (result.reason) {
+      case "invalid_intent":
+      case "filter_unsupported":
+        // A filter the derivative cannot answer is REFUSED by the engine rather
+        // than dropped, and that refusal is passed through with its detail:
+        // silently ignoring a predicate answers a different question than the
+        // one asked and looks like a complete result.
+        sendError(res, "invalid_payload", result.detail);
+        return;
+      case "derivative_revoked":
+        // §18 / H114. "This index was revoked" is not "nothing matched", and a
+        // person is told which. `gone` is the one status that says the thing
+        // existed and deliberately does not any more.
+        req.log.error({ detail: result.detail, viewerId: user.id }, "memories: search read a REVOKED derivative — refusing rather than returning an empty page");
+        sendError(res, "gone", "Those memories are no longer searchable.");
+        return;
+      case "namespace_violation":
+        // Unreachable through resolveTarget. Logged loudly if it ever happens,
+        // because it would mean the intent-to-target mapping produced a pairing
+        // the isolation check refused.
+        req.log.error({ detail: result.detail, viewerId: user.id }, "memories: search produced a cross-namespace target — refusing");
+        sendError(res, "forbidden", "That search is not permitted.");
+        return;
+      default:
+        req.log.error({ detail: result.detail, viewerId: user.id, reason: result.reason }, "memories: search could not read its derivative — refusing rather than reporting an empty result");
+        sendError(res, "degraded_unavailable", "We could not search your memories right now. Please try again.");
+        return;
+    }
+  }
+
+  res.status(200).json({
+    hits: result.value.hits.map((h) => ({
+      memoryId: h.memory_id,
+      score: h.score,
+      // §15 asks for named ranking dimensions, and a rank with no derivation is
+      // not a rank. The per-dimension contributions travel with each hit so a
+      // reader can see WHY a Memory ranked where it did.
+      dimensions: h.dimensions,
+      row: h.row,
+    })),
+    // How many the DETERMINISTIC filters selected, before ranking or limit.
+    // §15 / H111: the structured filters decide membership and a semantic query
+    // may only reorder what they already selected. This number is what makes
+    // that visible — if it ever exceeds what the filters could have selected,
+    // something added rows after the fact.
+    deterministicMatchCount: result.value.deterministic_match_count,
+    semanticRerankApplied: result.value.semantic_rerank_applied,
+    namespace: result.value.namespace,
+    projectionId: result.value.projection_id,
+    engineVersion: result.value.engine_version,
+    capabilities: searchCapabilities(),
+  });
+});
 
 router.get("/memories/graph", async (req, res) => {
   const auth = await requireUser(req, res);

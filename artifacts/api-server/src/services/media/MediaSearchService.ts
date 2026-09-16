@@ -360,6 +360,7 @@ export async function searchMedia(
     tripId,
     postIds: mediaId ? [mediaId] : null,
     limit: 200,
+    nowMs,
   });
   if (candidates.length === 0) return emptyResults(nowMs, criteriaUsed);
 

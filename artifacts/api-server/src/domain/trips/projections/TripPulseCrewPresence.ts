@@ -15,7 +15,7 @@
  * projection: the crew flag lives with the crew read, and only there.
  */
 import { isFlagEnabled } from "../../../lib/featureFlags.js";
-import { getCrewMap, CrewMapUnavailableError } from "../services/TripCrewLocationService.js";
+import { getCrewMap, getViewerOwnPresence, CrewMapUnavailableError } from "../services/TripCrewLocationService.js";
 import { metresBetween, type FriendNearbyValue, type GeoPoint, type SignalObservation } from "../services/TripSignals.js";
 import type { PulseSourceReport } from "./TripPulseProjection.js";
 
@@ -41,12 +41,25 @@ export async function readCrewPresenceForPulse(sc: any, tripId: string, viewerId
   }
   const nowIso = new Date(nowMs).toISOString();
   try {
-    const map = await getCrewMap(sc, tripId, viewerId);
-    const me = map.members.find((m) => m.userId === viewerId) ?? null;
-    const viewerPoint: GeoPoint | null = me?.exactCoords ?? null;
-    const viewerSharing = me?.liveShareActive === true;
+    // `nowMs` is this projection's clock; the crew map is read at it, not at
+    // the wall clock, or the grant window and the freshness below disagree.
+    const map = await getCrewMap(sc, tripId, viewerId, nowMs);
+    // THE VIEWER IS NOT IN `map.members`, BY DESIGN. getCrewMap filters them out
+    // of `allUserIds` and every read after that is scoped to that list, so this
+    // used to be `map.members.find((m) => m.userId === viewerId)` and was
+    // structurally always null — which made `viewerPoint` always null, which
+    // made the loop below `continue` on every member, which meant this source
+    // reported `status: "ok", observations: 0` on every trip, forever. The
+    // viewer's own position comes from their own rows instead, at the same
+    // `nowMs`; see getViewerOwnPresence.
+    const me = await getViewerOwnPresence(sc, tripId, viewerId, nowMs);
+    const viewerPoint: GeoPoint | null = me.point;
+    const viewerSharing = me.liveShareActive;
     let n = 0;
     for (const m of map.members) {
+      // The viewerId check is belt-and-braces: getCrewMap already excludes the
+      // viewer. It stays so this loop is correct on its own terms rather than on
+      // a contract enforced in another file.
       if (m.userId === viewerId || !m.exactCoords || !viewerPoint) continue;
       const d = metresBetween(viewerPoint, m.exactCoords);
       const band = FRIEND_NEARBY_BANDS.find((b) => d <= b.withinM)?.band;

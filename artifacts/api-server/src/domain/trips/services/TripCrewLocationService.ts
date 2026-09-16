@@ -73,11 +73,35 @@ export interface CrewMapResult {
  * @param db        Service-role Supabase client
  * @param tripId    Target trip
  * @param viewerId  The user requesting the map (must be an accepted member)
+ * @param nowMs
+ *   The clock this map is about. Additive, and defaulted to the wall clock, so
+ *   every call site that does not pass one is byte-identical in behaviour.
+ *
+ *   IT EXISTS BECAUSE TWO PROJECTIONS WERE ANSWERING FROM TWO CLOCKS.
+ *   `buildTripPulseProjection` and `buildTripTodayProjection` each take a `now`
+ *   and thread it into every clock read they own — and then reached this
+ *   function, through `readCrewPresenceForPulse` and `readCrewSummary`, which
+ *   had nowhere to put it. So the live-share window below (`expires_at > now`)
+ *   and every card's freshness class were the only parts of those projections
+ *   derived from the real date. It is the `computeTripStatus` defect one
+ *   directory over: a function whose answer depends on the wall clock cannot be
+ *   tested at the boundary that matters.
+ *
+ *   `readCrewPresenceLayer` (the map projection's crew layer) is deliberately
+ *   NOT in that list: its only caller is the HTTP route, which has no injected
+ *   clock, so the default below is the right answer there and stays.
+ *
+ *   `buildCrewCard` already carries this parameter, and its own comment makes
+ *   the argument for it — "A guard whose contract is enforced somewhere else is
+ *   not a guard" — about the very `.gt("expires_at", …)` below. It got the
+ *   parameter; the function that calls it did not, which is why the gap
+ *   survived.
  */
 export async function getCrewMap(
   db: SupabaseClient,
   tripId: string,
   viewerId: string,
+  nowMs: number = Date.now(),
 ): Promise<CrewMapResult> {
   // 1. Load trip owner + accepted members
   const [ownerRes, membersRes] = await Promise.all([
@@ -242,7 +266,7 @@ export async function getCrewMap(
   );
 
   // 7. Load active live-share sessions visible to this viewer
-  const now = new Date().toISOString();
+  const now = new Date(nowMs).toISOString();
   // §9.2 (2780): a live-share scoped to a temporary subgroup is served to that
   // subgroup's current members only. subgroup_id is kernel-era schema, so it is
   // read only under trip_operational_projections_enabled (whose probe covers
@@ -336,7 +360,10 @@ export async function getCrewMap(
       } : null,
     };
 
-    return buildCrewCard(raw);
+    // The same instant the live-share window above was read at. Two clock reads
+    // in one map is how a card came back LIVE under a grant this function had
+    // already called expired.
+    return buildCrewCard(raw, nowMs);
   });
 
   return { members: cards, totalCount: cards.length, checkInsUnreadable };
@@ -435,4 +462,82 @@ export async function setGhostMode(
   enabled: boolean,
 ): Promise<{ ok: boolean; error?: string }> {
   return upsertCrewPreferences(db, tripId, userId, { ghostModeEnabled: enabled });
+}
+
+/**
+ * The VIEWER'S OWN position and live-share state on a trip.
+ *
+ * ── WHY THIS EXISTS SEPARATELY FROM getCrewMap ──────────────────────────────
+ * `getCrewMap` is a map of OTHER people. It filters the viewer out of
+ * `allUserIds` deliberately — `.filter((id) => id !== viewerId && ...)` — and
+ * every read after that point is `.in("user_id", allUserIds)`, so the viewer can
+ * never appear in `members`. That is the right contract for every caller it has:
+ * a crew map containing yourself would hand each of them a self-entry they do
+ * not expect and do not filter.
+ *
+ * `readCrewPresenceForPulse` is the one caller that also needs the viewer's own
+ * point, to measure distance FROM. It had been asking `getCrewMap` for it —
+ * `map.members.find((m) => m.userId === viewerId)` — which is structurally
+ * always null, so `viewerPoint` was always null, so the §16 "friend nearby"
+ * signal could never fire for anybody. That is the defect this closes, and it is
+ * closed WITHOUT widening `getCrewMap`, because widening it would change what
+ * every other caller receives to fix one caller's need.
+ *
+ * ── WHY THIS NEEDS NO GRANT, AND WHAT IT STILL REFUSES ──────────────────────
+ * Both rows read here are the viewer's OWN. A person is entitled to their own
+ * position unconditionally: there is no block to check (you cannot block
+ * yourself), no ghost mode to honour (ghost mode hides you from OTHERS), and no
+ * live-share window to satisfy (that window governs who may see you, not
+ * whether you may see yourself). So this deliberately does NOT re-run the §10
+ * disclosure ladder — applying a ladder built to decide what others may see to
+ * the viewer's own row would be a category error, and would reintroduce the same
+ * always-null result by a longer route.
+ *
+ * What it does keep is this module's fail-closed posture: an unreadable table
+ * THROWS `CrewMapUnavailableError` exactly as the crew reads do, so the caller
+ * reports the source as `unread` rather than serving "you have no position",
+ * which is indistinguishable from a traveller who has genuinely shared nothing.
+ *
+ * `liveShareActive` is the viewer's own live-share session on THIS trip, read at
+ * the same `nowMs` the caller judges everything else on — one clock, per the
+ * note on `getCrewMap`'s own `expires_at` window above.
+ */
+export async function getViewerOwnPresence(
+  db: SupabaseClient,
+  tripId: string,
+  viewerId: string,
+  nowMs: number = Date.now(),
+): Promise<{ point: { lat: number; lng: number } | null; liveShareActive: boolean }> {
+  const nowIso = new Date(nowMs).toISOString();
+
+  const [locRes, shareRes] = await Promise.all([
+    db.from("user_location_state")
+      .select("lat, lng")
+      .eq("user_id", viewerId)
+      .maybeSingle(),
+    db.from("trip_crew_location_sessions")
+      .select("id")
+      .eq("trip_id", tripId)
+      .eq("user_id", viewerId)
+      // The SAME two predicates getCrewMap applies to everybody else's session
+      // (`status = 'active'` AND an unexpired window). Omitting `status` here
+      // counted an ended or cancelled session as an active share, which would
+      // have made `bothSharing` claim reciprocity the viewer had revoked.
+      .eq("status", "active")
+      .gt("expires_at", nowIso)
+      .limit(1),
+  ]);
+
+  if (locRes.error) throw crewMapUnavailable("user_location_state", locRes.error);
+  if (shareRes.error) throw crewMapUnavailable("trip_crew_location_sessions", shareRes.error);
+
+  const row: any = locRes.data ?? null;
+  const lat = typeof row?.lat === "number" ? row.lat : null;
+  const lng = typeof row?.lng === "number" ? row.lng : null;
+
+  return {
+    // BOTH or neither. A half-populated row is not half a position.
+    point: lat !== null && lng !== null ? { lat, lng } : null,
+    liveShareActive: (((shareRes.data as any[]) ?? []).length > 0),
+  };
 }

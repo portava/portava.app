@@ -210,6 +210,19 @@ export const TELEGRAPH_SHARE_PRODUCERS: readonly ShareProducerDeclaration[] = [
     note: "Sender's own upload, authorized by thread membership and the media pipeline, not by a source domain." },
   { literal: "system", column: "msg_type", family: "OPERATIONAL", sourceDomain: null, authorizedBy: null,
     note: "Telegraph's own notices. The card SHAPE is carried by subtype, which is declared separately below." },
+  { literal: "voice", column: "msg_type", family: "OPERATIONAL", sourceDomain: null, authorizedBy: null,
+    note:
+      "§6.2 voice note. The SENDER'S OWN RECORDING, made in the composer and uploaded by them, " +
+      "so it is the `media` case and is declared the same way. THE PRIVATE_SOURCE QUESTION WAS ASKED " +
+      "AND ANSWERED, not skipped: the audio DOES live in a private bucket, but PRIVATE_SOURCE is for a " +
+      "canonical object owned by ANOTHER domain — a Memory, a private trip — where the sharer may not be " +
+      "entitled to disclose it and a source-domain grant is the only thing that can say. A voice note has " +
+      "no such owner and no such grant to check: the sender authored it seconds earlier. Its privacy is " +
+      "enforced by the media pipeline (private bucket, and mediaAccess.ts authorizing a read by thread " +
+      "membership AND sender_id), and its write by the same three refusals every other message takes — " +
+      "the disable_messaging kill switch fail-closed, ACTIVE membership, and the 1:1 block check. " +
+      "Declaring it PRIVATE_SOURCE would demand a grant from a domain that does not exist, and the only " +
+      "way to satisfy that is to invent one, which is worse than the honest OPERATIONAL." },
   // ── Source-object cards ────────────────────────────────────────────────────
   { literal: "card", column: "msg_type", family: "PUBLIC", sourceDomain: "discovery", authorizedBy: null,
     note: "Hidden-gem card written by routes/hiddenGems.ts. The gem is already publicly listable." },

@@ -48,7 +48,7 @@ import { recordActivityEvent } from "../compass/CompassActiveUserRewardEngine.js
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
 import { NotificationService } from "../services/notifications/NotificationService.js";
 import { NotificationRouter } from "../services/notifications/NotificationRouter.js";
-import { isKillSwitchEngaged } from "../lib/featureFlags.js";
+import { isKillSwitchEngaged, killSwitchStateUnknown, KILL_SWITCH_UNKNOWN_MESSAGE } from '../lib/featureFlags.js';
 import { processImage, makeThumbnail, makeFeedVariant, computePHash } from "../lib/mediaProcessing.js";
 import { stripVideoLocationMetadata } from "../lib/videoMetadata.js";
 import { hidePostForViewer } from "../lib/postHide.js";
@@ -545,7 +545,15 @@ router.post("/posts", async (req, res) => {
 
   // Emergency kill switch: disable_posting — fail-CLOSED on DB error
   const flagSc = getServiceClient();
-  if (flagSc && await isKillSwitchEngaged(flagSc, 'disable_posting')) {
+  // An ABSENT service client is the same unknown as an unreadable
+  // feature_flags, and until this line it was not treated as one: the stop
+  // was skipped and the write went through with a 2xx. degraded_unavailable
+  // rather than feature_disabled, because nobody engaged a stop.
+  if (killSwitchStateUnknown(flagSc)) {
+    sendError(res, 'degraded_unavailable', KILL_SWITCH_UNKNOWN_MESSAGE);
+    return;
+  }
+  if (await isKillSwitchEngaged(flagSc!, 'disable_posting')) {
     sendError(res, 'feature_disabled', 'Posting is temporarily disabled');
     return;
   }

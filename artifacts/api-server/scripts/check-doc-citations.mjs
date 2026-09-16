@@ -424,8 +424,45 @@ const FULL_ANCHOR_RE = new RegExp(
 // was found: 310 inherited `:spec#anchor` citations, ZERO of them multi-word.
 // So this refuses a shape nothing currently uses, which is the cheapest moment
 // to refuse it. The fix for an author is one word: spell the path.
+//
+// ── EXTENDED 2026-09-16: A QUOTE IN THE ANCHOR DOES THE SAME THING ──────────
+// The space form was refused above; the QUOTE form was not, and it fails for
+// the same reason by a different route. ANCHOR excludes `"` and `'` (it has to:
+// it reads unbackticked prose, where a quote ends the anchor), so for
+//
+//     `:1895-1896#home_country")`
+//
+// INHERITED_RE's ANCHOR matches `home_country`, stops at the `"`, and then the
+// pattern demands a closing backtick that is two characters away. No match.
+// FULL_ANCHOR_RE needs the path spelled. UNBINDABLE_INHERITED_RE wanted
+// whitespace and there is none. So the citation was matched by NOTHING: not
+// counted, not checked, not reported — the same silent hole the space form had.
+//
+// A FULL citation whose anchor contains a quote is FINE and stays fine:
+// FULL_ANCHOR_RE's `#([^\x60]+)` takes everything up to the backtick, so
+// `lib/mapObjects.ts:105#"world_pulse",` binds and is checked. Only the BARE
+// inherited form is affected, which is why the fix for an author is the same
+// one word: spell the path.
+//
+// UNLIKE the space form, this shape WAS in use when it was refused — eight
+// distinct citations across four censuses, fifteen occurrences. FOUR of the
+// eight were STALE, and had been since before this census corpus's own
+// head_commit:
+//
+//   census-input-intelligence  `:2020-2057#"travelers":`  landed on a comment
+//                              and a JSDoc line; the switch is at :2215
+//   census-input-intelligence  `:1895-1896#home_country")` landed on the
+//                              searchCities SIGNATURE; the reads are :2083/:2084
+//   census-discovery           `:1896#.ilike("home_country",`   -> :2084
+//   census-discovery           `:1904#.eq("allow_profile_discovery",` -> :2092
+//
+// The proof that this is a grammar hole and not author carelessness is in
+// census-discovery: the SAME TABLE CELL had its visible pointer repaired
+// (`:1999#searchCountries` -> `:2072#searchCountries`, correct today) while the
+// quote-anchored one beside it was left — because the checker showed one and
+// not the other. All eight are repaired in the commit that adds this line.
 const UNBINDABLE_INHERITED_RE = new RegExp(
-  String.raw`\x60:(${SPEC})#([^\x60]*\s[^\x60]*)\x60`,
+  String.raw`\x60:(${SPEC})#([^\x60]*[\s"'][^\x60]*)\x60`,
   'g',
 );
 
@@ -735,7 +772,7 @@ export function evaluateCitations({ coveredFiles, readFile, byBasename }) {
         doc: docRel,
         line: text.slice(0, m.index).split('\n').length,
         cited: `:${m[1]}#${m[2]}`,
-        reason: 'a bare `:NNN#anchor` with a SPACE in the anchor is matched by no pass — ' +
+        reason: 'a bare `:NNN#anchor` whose anchor contains a SPACE or a QUOTE is matched by no pass — ' +
           'spell the file path so the whole-anchor pass can read it',
       });
     }

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Linking } from 'react-native';
-import { MapPin, Plus, Check, ChevronRight, Bookmark, Navigation, Route, ListPlus, ThumbsUp } from 'lucide-react-native';
+import { MapPin, Plus, Check, ChevronRight, Bookmark, Navigation, Route, ListPlus, ThumbsUp, ThumbsDown } from 'lucide-react-native';
 import { StampIcon } from '../stamps/StampIcon.tsx';
 import type { DiscoveryPlace, PlaceLiveStatus } from '../../services/discovery.ts';
 import { getPlaceLiveStatusCached } from '../../services/discovery.ts';
@@ -48,9 +48,23 @@ interface PlaceCardProps {
    * impression has nothing to close the predicted→realized loop against.
    */
   rankSurface?: RankSurface | null;
+  /**
+   * "Not interested" — called with this place's id AFTER the server has
+   * ACCEPTED the dismissal, so the owner can drop it from the list it is
+   * rendering.
+   *
+   * ABSENT ⇒ NO CONTROL IS RENDERED, and that is the point of making it a prop
+   * rather than something this card decides for itself. The suppression is
+   * viewer-scoped and lives on the `discovery` surface's `rank_events` rows, so
+   * it only means anything where those rows exist. A card rendered somewhere
+   * that served no impression would offer a button that cannot work, and the
+   * owner of the screen is the only thing that knows which case it is in — the
+   * same rule `rankSurface` already follows.
+   */
+  onDismissed?: (placeId: string) => void;
 }
 
-export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDistance = true, city, rankSurface }: PlaceCardProps) {
+export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDistance = true, city, rankSurface, onDismissed }: PlaceCardProps) {
   const [saved, setSaved]               = useState(false);
   const [pickerVisible, setPickerVisible] = useState(false);
   const [savedCount, setSavedCount]     = useState(0);
@@ -63,7 +77,18 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
   //   save — a bookmark / stamp that the API confirmed, or a trip-wishlist add.
   //   Plan / Route open pickers in the parent and are intent, not outcomes —
   //   deliberately not emitted (see useEventRsvp.ts for the same rule).
-  const { reportTap, reportSave } = useRankOutcome({ surface: rankSurface ?? null });
+  const { reportTap, reportSave, reportDismiss } = useRankOutcome({ surface: rankSurface ?? null });
+
+  /**
+   * Set when a dismissal was attempted and the server did NOT accept it.
+   *
+   * The card deliberately does NOT disappear in that case. An optimistic hide
+   * would be a claim — "this is gone" — that the next refresh contradicts, on
+   * the one control whose entire meaning is that it sticks. Saying so costs one
+   * line of text and keeps the control honest about what it did.
+   */
+  const [dismissFailed, setDismissFailed] = useState(false);
+  const [dismissing, setDismissing]       = useState(false);
 
   const { isAdded } = usePlanPicker();
   const alreadyAdded = isAdded(place.id);
@@ -180,6 +205,12 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
     <Pressable
       style={({ pressed }) => [styles.card, pressed && { opacity: layout.pressedOpacity }]}
       onPress={() => { reportTap(place.id); onPress(); }}
+      // The whole card opens the place. Without the role it announced as a
+      // group of text a reader could walk but not obviously act on. NO
+      // accessibilityLabel on purpose: `accessible` already derives the name
+      // from the card's own text (name, category, distance, rating), and a
+      // hand-written label would REPLACE all of it with just the name.
+      accessibilityRole="button"
       testID={`place-card-${place.id}`}
     >
       {/* Header image — category fallback when no real image available */}
@@ -391,6 +422,11 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
               onPress={alreadyAdded ? undefined : onAddToPlan}
               disabled={alreadyAdded}
               hitSlop={6}
+              accessibilityRole="button"
+              // "Added ✓" is the only signal that the press already happened,
+              // and the tick is a glyph inside a Text. The state says it too.
+              accessibilityState={{ disabled: alreadyAdded, selected: alreadyAdded }}
+              testID={`place-card-plan-${place.id}`}
             >
               {alreadyAdded
                 ? <Check size={14} color={color.deep} />
@@ -414,6 +450,8 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
                   category:   place.category ?? null,
                 })}
                 hitSlop={6}
+                accessibilityRole="button"
+                testID={`place-card-route-${place.id}`}
               >
                 <Route size={14} color={color.deep} />
                 <Text style={[styles.actionText, { color: color.deep }]}>Route</Text>
@@ -425,6 +463,7 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
                 style={({ pressed }) => [styles.actionBtn, pressed && { opacity: 0.7 }]}
                 onPress={openDirections}
                 hitSlop={6}
+                accessibilityRole="button"
                 testID={`place-card-directions-${place.id}`}
               >
                 <Navigation size={14} color={color.deep} />
@@ -432,6 +471,12 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
               </Pressable>
             )}
 
+            {/*
+              A TOGGLE whose only visual state was the glyph's fill colour, and
+              which announced as an unnamed button in both states. Role, a label
+              that names the place (the card is one of many identical rows) and
+              `selected` so the saved state is not carried by colour alone.
+            */}
             <Pressable
               style={({ pressed }) => [styles.saveBtn, saved && styles.saveBtnActive, pressed && { opacity: 0.7 }]}
               onPress={() => {
@@ -446,19 +491,83 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
                   .catch(() => setSaved(!next));
               }}
               hitSlop={6}
+              accessibilityRole="button"
+              accessibilityLabel={saved ? `Remove ${place.name} from saved` : `Save ${place.name}`}
+              accessibilityState={{ selected: saved }}
               testID={`place-card-save-${place.id}`}
             >
               <Bookmark size={14} color={saved ? color.signal : color.faint} fill={saved ? color.signal : 'none'} />
             </Pressable>
 
+            {/* Unnamed until V4's sweep, and it writes to a trip. */}
             <Pressable
               style={({ pressed }) => [styles.wishlistBtn, pressed && { opacity: 0.7 }]}
               onPress={() => setPickerVisible(true)}
               hitSlop={6}
+              accessibilityRole="button"
+              accessibilityLabel={`Add ${place.name} to a trip wishlist`}
+              testID={`place-card-wishlist-${place.id}`}
             >
               <ListPlus size={14} color={color.deep} />
             </Pressable>
+
+            {/*
+              "Not interested". Rendered only when the owner passed BOTH a
+              rank surface (so an impression row exists to dismiss against) and
+              an `onDismissed` handler (so something will act on it). Either
+              missing means the control could not do what it says, and a button
+              that cannot work should not be drawn.
+
+              The card is removed by the OWNER, and only after the server
+              accepted the dismissal — never optimistically. See `dismissFailed`.
+            */}
+            {rankSurface && onDismissed ? (
+              <Pressable
+                style={({ pressed }) => [styles.wishlistBtn, pressed && { opacity: 0.7 }]}
+                onPress={() => {
+                  if (dismissing) return;
+                  setDismissing(true);
+                  setDismissFailed(false);
+                  void reportDismiss(place.id)
+                    .then((ok) => {
+                      setDismissing(false);
+                      if (ok) onDismissed(place.id);
+                      else setDismissFailed(true);
+                    })
+                    .catch(() => {
+                      setDismissing(false);
+                      setDismissFailed(true);
+                    });
+                }}
+                disabled={dismissing}
+                hitSlop={6}
+                accessibilityRole="button"
+                accessibilityLabel={`Not interested in ${place.name}`}
+                // `disabled` already stops the second press and told nobody: the
+                // control still announced as pressable while the request ran.
+                accessibilityState={{ disabled: dismissing, busy: dismissing }}
+                testID={`place-card-dismiss-${place.id}`}
+              >
+                <ThumbsDown size={14} color={dismissFailed ? color.signal : color.faint} />
+              </Pressable>
+            ) : null}
           </View>
+          {dismissFailed ? (
+            /*
+              The card deliberately stays put, so this sentence is the WHOLE of
+              the outcome. Drawn and unannounced it was indistinguishable from a
+              tap that did nothing — the failure mode this control was written to
+              avoid, surviving in the one channel nobody checked.
+            */
+            <Text
+              style={styles.dismissFailedText}
+              accessibilityRole="alert"
+              accessibilityLiveRegion="assertive"
+              testID={`place-card-dismiss-failed`}
+            >
+              Couldn’t hide this just now — tap again to retry.
+            </Text>
+          ) : null}
         </View>
       </View>
 
@@ -685,6 +794,11 @@ const styles = StyleSheet.create({
     color: color.mute,
     fontSize: 10,
     textTransform: 'capitalize',
+  },
+  dismissFailedText: {
+    ...t.small,
+    color: color.signal,
+    marginTop: space.xs,
   },
   actionRow: {
     flexDirection: 'row',

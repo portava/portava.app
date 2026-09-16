@@ -47,8 +47,11 @@ import { RESURFACING_TABLE, RESURFACING_COLUMNS } from "../services/highlights/h
 import { PROJECTION_POLICY_TABLE, PROJECTION_POLICY_COLUMNS } from "../services/highlights/highlightProjectionPolicy.js";
 import { MEMORY_OUTBOX_TABLE, MEMORY_EVENT_TABLE } from "../lib/memoryOutbox.js";
 import { DERIVATIVE_REGISTRY_TABLE } from "../services/memoryProjections/derivativeRegistry.js";
+import { PRODUCTION_SNAPSHOT_URL } from "../lib/capability/snapshots/current.js";
 
-const SNAPSHOT = new URL("../lib/capability/snapshots/20260915-production-schema.json", import.meta.url);
+// The CURRENT capture, named in one place so a refresh cannot leave this file
+// reading a stale one — which is exactly how this test went red on 2026-09-16.
+const SNAPSHOT = PRODUCTION_SNAPSHOT_URL;
 const APPLIED = new URL("../lib/capability/production-applied-migrations.json", import.meta.url);
 
 const snapshot = JSON.parse(readFileSync(SNAPSHOT, "utf8")) as {

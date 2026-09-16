@@ -40,7 +40,7 @@ import { PHASE1_CAPTURE_CLAIM_TYPES, validateClaimValue } from "../../lib/quickS
 import { projectClaimValue } from "../../lib/intelValueProjection.js";
 import { PHASE1_TRAIL_CAPTURE_CLAIM_TYPES, validateTrailClaimValue, mustAggregate } from "../../lib/trailFollowup.js";
 import { deriveGroupKey, type GroupIdentity } from "../../lib/intelGroupKey.js";
-import { isSharedCrewMember } from "../../domain/trips/invariants/tripMembership.js";
+import { readSharedCrewMembership } from "../../domain/trips/invariants/tripMembership.js";
 import { resolveActiveCrewId } from "../../lib/activeCrew.js";
 import { hasValidIntelConsent } from "../../lib/intelConsent.js";
 import { logger } from "../../lib/logger.js";
@@ -395,8 +395,31 @@ export async function writeObservation(sc: any, actorId: string, input: CaptureI
   let partySizeBucket: PartySizeBucket | null = null;
   if (surface === "quick_signal") {
     partySizeBucket = input.partySize ?? null;
-    if (input.partyId && (await isSharedCrewMember(sc, input.partyId, actorId))) {
-      groupIdentity = { kind: "crew", crewId: input.partyId };
+    // DISCRIMINATING read, not the discarding wrapper. `isSharedCrewMember`
+    // collapses "not on this trip" and "nobody could read this trip" into the
+    // same `false`, and the two demand opposite treatments here. Collapsing them
+    // is safe for AUTHORIZATION — nothing is granted on an unread roster — but
+    // this is not an authorization question. It asks whether three observations
+    // are one group or three, and a fail-closed `false` answers that about data
+    // nobody looked at: every member of a real crew falls through to the solo/
+    // none branch and the crew enters the corpus as N independent reports of one
+    // fact. `tripMembership.ts`'s own header calls that "a SPLIT, i.e. the exact
+    // leak the crew signal exists to prevent (NOT a harmless merge)", and its
+    // doc comment records converting this caller as owed work. census-trips
+    // §74.3; pinned by `src/test/intelCrewSplitOnDegradedRead.test.ts`.
+    const asserted = input.partyId
+      ? await readSharedCrewMembership(sc, input.partyId, actorId)
+      : null;
+    if (asserted && !asserted.readable) {
+      // Neither available answer is true. The token cannot be GRANTED, because
+      // nothing verified the actor is on that trip; and it cannot be silently
+      // downgraded, because that is the split. So the capture is refused the way
+      // the subject lookup above is refused — retryable, and nothing enters the
+      // corpus carrying an independence claim that was never established.
+      return { ok: false, reason: "db_error", detail: "crew membership" };
+    }
+    if (asserted?.member) {
+      groupIdentity = { kind: "crew", crewId: input.partyId! };
     } else {
       const activeCrewId = await resolveActiveCrewId(sc, actorId, new Date());
       if (activeCrewId) {

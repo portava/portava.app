@@ -16,10 +16,14 @@
  * over the shipped query.
  *
  * THE HONEST PART. §6.2 names thirteen kinds and this route sends seven. VOICE
- * is REFUSED BY NAME with its reason — `messages.media_type` is constrained to
- * ('image','video') and the media pipeline admits image/video MIME only — and
- * that refusal is asserted below, because a kind that cannot carry its asset
- * must not look built.
+ * is REFUSED BY NAME here and that refusal is asserted below — but the reason
+ * CHANGED when migration 2989 and `routes/telegraphVoice.ts` landed. It is no
+ * longer "the asset type does not exist"; it is "a voice note owns an audio
+ * object and must write the media columns, which this route does not write",
+ * so it has its own door. The assertion below therefore checks that the
+ * refusal NAMES that door, which is the thing a caller can act on. A refusal
+ * that still cited the old migration would be a lie with a test holding it in
+ * place.
  *
  * SHOWN RED before commit, each reverted:
  *   • `searchableTextOf`'s deleted/unsent guards disabled → pass 34 / fail 2.
@@ -284,11 +288,36 @@ describe("§6.2 — thirteen kinds, and an honest account of which are sendable"
     }
   });
 
-  it("VOICE is refused BY NAME, with the migration it needs", () => {
-    const r = validateKindMessage("VOICE", { url: "https://x/a.m4a" });
+  it("VOICE is refused BY NAME, and the refusal names the route that DOES send it", () => {
+    const r = validateKindMessage("VOICE", { url: "post-media/a/voice/1.m4a" });
     assert.equal(r.ok, false);
-    assert.ok(String(r.ok === false && r.error).includes("media_type"));
-    assert.ok(String(r.ok === false && r.error).includes("migration"));
+    const msg = String(r.ok === false && r.error);
+    // The actionable half: a caller that gets this must be able to find the
+    // door without reading the source.
+    assert.ok(msg.includes("/voice"), msg);
+    assert.ok(msg.includes("media_url"), msg);
+  });
+
+  it("VOICE still PARSES back out of a stored row — the parseable set is larger than the sendable one", () => {
+    // The bug this pins: `parseKindEnvelope` once asked `isSendableEnvelopeKind`,
+    // so a VOICE row written by its own route would have read back as TEXT and
+    // vanished from the drawer, from search and from the renderer.
+    const body = JSON.stringify({
+      kind: "VOICE",
+      envelopeVersion: "1",
+      payload: {
+        url: "post-media/a/voice/1.m4a",
+        durationSeconds: 7,
+        waveform: [0.1, 0.9],
+        mimeType: "audio/mp4",
+      },
+    });
+    const parsed = parseKindEnvelope("voice", body);
+    assert.ok(parsed, "a stored VOICE row must parse as VOICE");
+    assert.equal(parsed!.kind, "VOICE");
+    assert.equal((parsed!.payload as any).durationSeconds, 7);
+    // and it is NOT in the typed route's sendable list
+    assert.ok(!(SENDABLE_ENVELOPE_KINDS as string[]).includes("VOICE"));
   });
 
   it("an unknown kind is refused with the list of what IS accepted", () => {
@@ -417,11 +446,13 @@ describe("POST /threads/:id/typed-messages", () => {
     assert.equal(stored.envelopeVersion, "1");
   });
 
-  it("refuses VOICE with the reason rather than writing an unplayable row", async () => {
+  it("refuses VOICE and writes nothing — a voice note is not a body-only row", async () => {
     const c = useState({});
     const r = await post(`/threads/${THREAD}/typed-messages`, ALICE, { kind: "VOICE", payload: {} });
     assert.equal(r.status, 400);
-    assert.ok(String(r.body.message).includes("media_type"));
+    assert.ok(String(r.body.message).includes("/voice"), r.body.message);
+    // The load-bearing assertion: this route does not write the media columns,
+    // so it must not write the row at all.
     assert.equal((c as any)._inserted.length, 0);
   });
 

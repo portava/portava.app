@@ -13,7 +13,7 @@ import { affectedRows } from "../lib/affectedRows.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { readCircleLocations } from "../lib/circleLocationsRead.js";
 import { nameVisibilitySet } from "../lib/publicIdentity.js";
-import { isKillSwitchEngaged } from "../lib/featureFlags.js";
+import { isKillSwitchEngaged, killSwitchStateUnknown, KILL_SWITCH_UNKNOWN_MESSAGE } from '../lib/featureFlags.js';
 import { coarsenPosition, effectiveDiscoveryVisibility } from "../lib/mapTravelers.js";
 import { fetchBlockedSet } from "../lib/blocks.js";
 import { reverseGeocode } from "../services/geocodingService";
@@ -105,7 +105,15 @@ router.post("/me/location-state", async (req, res) => {
 
   // Emergency stop: disable_location_sharing — fail-CLOSED on DB error
   const flagSc = getServiceClient();
-  if (flagSc && await isKillSwitchEngaged(flagSc, 'disable_location_sharing')) {
+  // An ABSENT service client is the same unknown as an unreadable
+  // feature_flags, and until this line it was not treated as one: the stop
+  // was skipped and the write went through with a 2xx. degraded_unavailable
+  // rather than feature_disabled, because nobody engaged a stop.
+  if (killSwitchStateUnknown(flagSc)) {
+    sendError(res, 'degraded_unavailable', KILL_SWITCH_UNKNOWN_MESSAGE);
+    return;
+  }
+  if (await isKillSwitchEngaged(flagSc!, 'disable_location_sharing')) {
     sendError(res, 'feature_disabled', 'Location sharing is temporarily disabled');
     return;
   }

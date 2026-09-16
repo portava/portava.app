@@ -626,6 +626,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/memoriesSingleReadDegraded.test.ts",
     "artifacts/api-server/src/test/highlightConsentPolicy.test.ts",
     "artifacts/api-server/src/lib/capability/snapshots/20260915-production-schema.json",
+    "artifacts/api-server/src/lib/capability/snapshots/20260916-production-schema.json",
     "docs/architecture/mobile-reachability-ledger.json",
     // NOT ADDED, and said rather than left silent, per the guard's own second
     // remedy. TWO citations stay uncovered on purpose:
@@ -889,6 +890,21 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   // not by services/trust. Listing only the service would have made this census
   // look fresh while the reads it grades moved underneath it.
   "census-trust.md": [
+    // ── ADDED 2026-09-16 by the PRODUCT lane, with §20 ─────────────────────
+    // TV-2a's Rent-a-Buddy half now RESTS on these. The row was W because
+    // no screen under `app/(rent-a-buddy)/` routed to `/profile/verification`;
+    // it is C because three of them do, through one registry. Until this entry
+    // a change to any of them aged no census, so the row could have been
+    // falsified by a deleted button and nothing would have said so — which is
+    // the failure `gateAge.ts` was added for, one census section earlier.
+    "travel-buddy-standalone/src/services/rentABuddyBookingErrors.ts",
+    "travel-buddy-standalone/app/(rent-a-buddy)/checkout.tsx",
+    "travel-buddy-standalone/app/(rent-a-buddy)/become/apply.tsx",
+    "travel-buddy-standalone/src/services/__tests__/rentABuddy.verificationRoute.test.ts",
+    // §20.2 cites this one as the PRE-EXISTING suite a mutation reddens: it is
+    // what stops `verification_required` being folded into the feature-closed
+    // set, so TV-2a's evidence rests on it staying as it is.
+    "travel-buddy-standalone/src/services/__tests__/rentABuddy.bookingUnavailable.test.ts",
     // ── ADDED 2026-09-14 round 4, by the INTEGRATION OWNER after §19 ───────
     // `lib/gateAge.ts` is the one that matters, and the Sensing/Trust lane
     // flagged its absence as a scope gap before I found it here: it is the
@@ -1509,6 +1525,13 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/routes/telegraphCoordination.ts",
     "artifacts/api-server/src/routes/telegraphLifecycle.ts",
     "artifacts/api-server/src/routes/telegraphMemory.ts",
+    // WIDENED 2026-09-16 by the integrating lane at the telegraph merge. VOICE
+    // is built (see census-telegraph §30) and its two new paths are cited by
+    // that section, so they belong in the scope that ages this census. The
+    // client half, `features/telegraph/voice/`, is already covered by the
+    // `features/telegraph/` prefix above.
+    "artifacts/api-server/src/routes/telegraphVoice.ts",
+    "artifacts/api-server/src/migrations/2989_messages_audio_media_type.sql",
     "artifacts/api-server/src/routes/memories.ts",
     "artifacts/api-server/src/routes/index.ts",
     "artifacts/api-server/src/test/telegraphSharedContext.test.ts",
