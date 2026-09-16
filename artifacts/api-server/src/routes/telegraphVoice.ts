@@ -38,6 +38,13 @@
  * as `/api/media/upload` is not. Binding the object to a thread at upload time
  * would prove nothing — the send call re-checks membership at write time, which
  * is the moment that matters, and is the check a caller cannot skip.
+ *
+ * The send path ALSO checks that the object is the caller's own, which is a
+ * different question from membership and from origin. See the comment above
+ * `classifyMemoryMediaUrl` in the send handler: `post-media` is private, and
+ * `lib/mediaAccess.ts` branch 3c turns "a message references this object"
+ * into read access for every member of that message's thread without ever
+ * asking who owned it.
  */
 import { Router } from "express";
 import { requireUser, sendError } from "../lib/http.js";
@@ -46,6 +53,7 @@ import { logger as rootLogger } from "../lib/logger.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { appStorageUrlInfo } from "../lib/mediaUrl.js";
 import { guardTelegraphThreadWrite } from "../lib/telegraphThreadWrite.js";
+import { classifyMemoryMediaUrl } from "../services/memory/memoryMediaOrigin.js";
 import { publishToThread } from "../lib/telegraphEvents.js";
 import {
   ALLOWED_VOICE_MIME,
@@ -68,6 +76,15 @@ const router = Router();
 
 const UUID = /^[0-9a-f-]{36}$/i;
 const STORAGE_BUCKET = "post-media";
+
+/**
+ * The refusal shown when a voice note names an object belonging to someone
+ * else. Deliberately in this file rather than reused from the memories surface:
+ * `FOREIGN_MEDIA_REFUSAL` tells the user to add a photo to a Memory, which is
+ * the wrong instruction here. The CHECK is shared; the sentence is not.
+ */
+const FOREIGN_VOICE_REFUSAL =
+  "That recording belongs to someone else's upload. Record your own voice note and send that instead.";
 
 /**
  * Collect the raw request body.
@@ -211,6 +228,40 @@ router.post(
         "url must be an uploaded app storage path (use POST /api/telegraph/voice/upload first)",
       );
       return;
+    }
+
+    // ...AND it must be the CALLER'S object. `appStorageUrlInfo` answers
+    // "whose HOST", never "whose OBJECT" (`lib/intelEvidenceCapture.ts` says so
+    // in those words), and `post-media` is a PRIVATE bucket. Without this,
+    // `lib/mediaAccess.ts` branch 3c — which authorises message media on
+    // "some message references this object AND the viewer is in that message's
+    // thread", never on who owned it — would serve any object whose key a
+    // member could name to every member of a thread they control. Branches 3b,
+    // 3d and 3e were each hardened against exactly that composition; 3c was
+    // not, so the refusal has to happen here, at the write.
+    //
+    // Same classifier, same three verdicts, as `POST /memories/:id/items`:
+    // only `foreign_storage` is refused. An `external` URL is out of scope for
+    // this route (the `appStorageUrlInfo` check above already refused it), and
+    // `unattributable_storage` — one of our objects whose path names no owner —
+    // is accepted and logged, because refusing on an inability to attribute
+    // turns a naming convention into an outage.
+    const origin = classifyMemoryMediaUrl(payload.url, user.id);
+    if (origin.verdict === "foreign_storage") {
+      log.error(
+        { threadId, actorUserId: user.id, bucket: origin.bucket, path: origin.path },
+        "voice: refused a note whose storage path belongs to another user",
+      );
+      // Names no other user's id: a refusal that echoed it would turn this
+      // guard into the ownership oracle it exists to remove.
+      sendError(res, "invalid_payload", FOREIGN_VOICE_REFUSAL);
+      return;
+    }
+    if (origin.verdict === "unattributable_storage") {
+      log.warn(
+        { threadId, actorUserId: user.id, bucket: origin.bucket, path: origin.path },
+        "voice: note points at one of our objects whose owner cannot be derived from its path — accepted, unattributed",
+      );
     }
 
     // The declared container must be one this server would have stored. A row
