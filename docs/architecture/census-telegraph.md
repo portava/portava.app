@@ -3452,7 +3452,7 @@ because it is the source wearing a grant. What travels is the derivative id.
 `msg_type`/`subtype` literal in both trees must be declared, orphan declarations
 fail, and — the rule with teeth — a producer whose `sourceDomain` is
 private-by-default may ONLY be declared `PRIVATE_SOURCE`
-(`domain/telegraph/policies/shareAuthorizationPolicy.ts:468`). The registration rule alone would have been
+(`domain/telegraph/policies/shareAuthorizationPolicy.ts:481`). The registration rule alone would have been
 satisfiable by declaring a Memory card `PUBLIC`; this closes that route for
 exactly the domains the case is about. It does not close it for a private domain
 nobody has named yet, and the checker says so on every run rather than implying
@@ -3480,7 +3480,7 @@ highlights-domain id into a messaging-domain vocabulary field, which is the
 shape §29's *"No semantic ID substitution across domains"* forbids. Nothing is
 visibly broken, because `msg_type: "highlight_reply"` is the real discriminator
 there — which is why it has survived. Declared at
-`domain/telegraph/policies/shareAuthorizationPolicy.ts:352` so it is a
+`domain/telegraph/policies/shareAuthorizationPolicy.ts:365` so it is a
 decision rather than an accident.
 
 **3. `POST /threads/:threadId/messages` accepts any `subtype` the client sends.**
@@ -3490,7 +3490,7 @@ vocabulary constraint anywhere on that handler is that `msgType` collapses to
 a message. It cannot forge the payload's authorization — every card's data comes
 from the same client-authored body — so this is a rendering-shape hole rather
 than an access-control one, but it is exactly the seam §30A.10's capability
-registry exists to close. Recorded at `domain/telegraph/policies/shareAuthorizationPolicy.ts:319`.
+registry exists to close. Recorded at `domain/telegraph/policies/shareAuthorizationPolicy.ts:332`.
 
 **4. Two of the six §27.3 lanes are not in `check:all`, and both are still
 reached.** `check:enum-literals` runs as its own static `ci.yml` step —
@@ -3542,7 +3542,7 @@ for that reason.
 | T314 | W | **C** | The fail-open is closed in the tree. `routes/messaging.ts:2080-2084` now REFUSES the send when the roster read fails ("cannot determine whether this is a blocked 1:1 thread") instead of inferring an empty roster and skipping the guard. RLS-04 drives five configurations at `test/telegraphRlsAuthorizationMatrix.test.ts:261` — recipient-blocked, sender-blocked, mutual (the two-row state that used to make the guard raise), blocks-table unreadable, roster unreadable — and all five deny. Shown red by deleting that refusal. |
 | T315 | C | C | RLS-05, `test/telegraphRlsAuthorizationMatrix.test.ts:309`. Expiry, status and recipient identity are each refused by `services/safeReturn/SafeReturnPrivacyGuard.ts:142-157` before the handler runs, and exact coordinates cannot leave the API at all — `stripGPS` (`:24#stripGPS`) is proved to delete `latitude`/`longitude` at depth. Two independent artifacts, so neither is a single point of failure. |
 | T316 | C | C | RLS-06, `test/telegraphRlsAuthorizationMatrix.test.ts:377`, driving the real predicate `services/passport/OpenToPlansService.ts:168` over the cross-product of five visibility policies, both sources and five viewer relationships: a private window is invisible to every non-self viewer, an INFERRED window is invisible whatever visibility it carries, and an expired one is invisible even to an admitted viewer. |
-| T317 | N `∅` | **C** | The unguarded absence is now a refusal. `domain/telegraph/policies/shareAuthorizationPolicy.ts:122` refuses a private source with no derivative grant, a grant from the wrong domain, a grant for the wrong scope, an expired or unparseable-expiry grant, and a "derivative" that names the source's own id — six refusal branches, exercised at `test/telegraphRlsAuthorizationMatrix.test.ts:425`. `scripts/checkTelegraphShareProducers.ts` makes it unavoidable, and its private-by-default rule (`domain/telegraph/policies/shareAuthorizationPolicy.ts:468`) closes the misdeclaration route for exactly the domains this case names. NO producer is `PRIVATE_SOURCE` today — the gate is the guarantee, not a live path, and the row says so. |
+| T317 | N `∅` | **C** | The unguarded absence is now a refusal. `domain/telegraph/policies/shareAuthorizationPolicy.ts:122` refuses a private source with no derivative grant, a grant from the wrong domain, a grant for the wrong scope, an expired or unparseable-expiry grant, and a "derivative" that names the source's own id — six refusal branches, exercised at `test/telegraphRlsAuthorizationMatrix.test.ts:425`. `scripts/checkTelegraphShareProducers.ts` makes it unavoidable, and its private-by-default rule (`domain/telegraph/policies/shareAuthorizationPolicy.ts:481`) closes the misdeclaration route for exactly the domains this case names. NO producer is `PRIVATE_SOURCE` today — the gate is the guarantee, not a live path, and the row says so. |
 | T318 | N | N | Unmoved, and now mechanically so. The authorization half answers (`test/telegraphRlsAuthorizationMatrix.test.ts:483`) and there is no *current safe share projection* for it to authorize: no producer resolves a source object's present state. An empty audience is also refused, so the positive case cannot be satisfied vacuously. |
 | T319 | W | W | RLS-09, `test/telegraphRlsAuthorizationMatrix.test.ts:510`, drives both halves: BEFORE `syncTripChatMembers` runs, a removed trip member still reads the thread (200 — the divergence, asserted); AFTER the real sync runs, read and send both deny and the row carries `left_at`. **Ceiling: the trip-membership write and the thread-membership write are not one transaction, and the sync is invoked fire-and-forget from Trips-owned routes.** Closing it is a Trips change, not a Telegraph one. |
 | T320 | W | W | RLS-10, `test/telegraphRlsAuthorizationMatrix.test.ts:544`. The one action that re-derives is correct across the whole status vocabulary (`lib/calls/callGatewayAdapter.ts:73`): cancelled and refunded are refused, disputed and completed-with-both-parties stay callable. The divergence is asserted against the component: `travel-buddy-standalone/src/components/rentabuddy/BookingMilestoneMessage.tsx` contains no `fetch` and no effect, so its buttons outlive the booking state they were rendered from. **Ceiling: §30A.10's action capability registry (T410).** |
@@ -3850,7 +3850,7 @@ census reading the read path alone would not see.
 | T391 | W | W | Unchanged. `role` is still CHECK `member\|admin` — two of the five roles §30A.4 names — and no capability-based authorization keys off it for invitations, removals, pins, announcements or group settings. 2400 did not touch it. |
 | T444 | W | W | Same substrate as T390, from §30A.20's side, and 2400 cites this clause by number. The window is enforced in the QUERY (`routes/messaging.ts:1863`) rather than filtered after the fact, so pagination cannot walk past it — which is the difference between a bound and a display rule. **Ceiling: the flag is seeded FALSE.** |
 | T409 | N | **W** | Was "No registry and no contract; each producer hand-rolls a payload." One of §30A.10's six dimensions now has both. `domain/telegraph/policies/shareAuthorizationPolicy.ts:205` is a registry of every shareable message type with its object family and source domain, and `:113` is the AUTHORIZATION contract those families resolve against, made unavoidable by `scripts/checkTelegraphShareProducers.ts`. The other five dimensions — preview, current state, actions, search behaviour, revocation — have nothing, which is why this is one sixth and not more. |
-| T429 | N | N | Unchanged, and now precisely bounded. There are no versioned structured-message schemas; what exists is a registry of eighteen unversioned literals plus ten sites that COMPUTE a message type, one of which takes the discriminator straight from the client's request body (`domain/telegraph/policies/shareAuthorizationPolicy.ts:319`). A versioned schema is exactly what would close that, so the registry's finding and this row's absence are the same fact seen twice. |
+| T429 | N | N | Unchanged, and now precisely bounded. There are no versioned structured-message schemas; what exists is a registry of eighteen unversioned literals plus ten sites that COMPUTE a message type, one of which takes the discriminator straight from the client's request body (`domain/telegraph/policies/shareAuthorizationPolicy.ts:332`). A versioned schema is exactly what would close that, so the registry's finding and this row's absence are the same fact seen twice. |
 
 **The external-preview prohibitions were left unguarded, deliberately.** T404,
 T405 and T446 are unguarded absences — there are no link previews and no GIF
@@ -4363,7 +4363,7 @@ that this lane does not hold.
 
 1. **The object-share route spans `memories`, a private-by-default domain.** It is
    declared PRIVATE_SOURCE in
-   `artifacts/api-server/src/domain/telegraph/policies/shareAuthorizationPolicy.ts:285#TELEGRAPH_DYNAMIC_SHARE_PRODUCERS`
+   `artifacts/api-server/src/domain/telegraph/policies/shareAuthorizationPolicy.ts:298#TELEGRAPH_DYNAMIC_SHARE_PRODUCERS`
    with a note that it does NOT call `authorizeTelegraphShare`; its real gate is
    the per-object loader refusing a memory the viewer cannot already see. Wiring
    the policy in would refuse EVERY memory share, because no derivative grant
