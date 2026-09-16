@@ -279,7 +279,13 @@ describe('VoiceMessagePlayer — §6.3s three affordances over a PRIVATE bucket'
     );
     // A derivative may not gate the original: the bars degrade to a flat band
     // and the transport is unaffected.
-    expect(screen.getByTestId('telegraph-voice-bar-0')).toBeTruthy();
+    //
+    // `includeHiddenElements` since V4's accessibility sweep: the bars are
+    // DECORATION and are now hidden from the accessibility tree, which RNTL's
+    // default queries walk. The claim is unchanged — the flat band is rendered —
+    // and `verifyA11yTelegraphVoice.component.test.tsx` W1 asserts the hiding
+    // itself, so neither fact can be lost by the other changing.
+    expect(screen.getByTestId('telegraph-voice-bar-0', { includeHiddenElements: true })).toBeTruthy();
     expect(screen.getByTestId('telegraph-voice-duration')).toHaveTextContent('0:07');
     await act(async () => { fireEvent.press(screen.getByTestId('telegraph-voice-toggle')); });
     expect(sound.calls).toContain('play');

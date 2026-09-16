@@ -20,6 +20,16 @@
  * a WORD and an icon, never a colour alone: the duration is always shown, the
  * speed control shows "1x"/"1.5x"/"2x" as text, and a failure says so in words.
  *
+ * ── §11.3 AND THE SEEK THAT WAS REACHABLE ONLY BY POINTING AT A PIXEL ───────
+ * The waveform reads `locationX` from a tap. That is the whole of the seek, and
+ * a person using VoiceOver, TalkBack or Switch Control cannot produce one — so
+ * the control announced itself `adjustable`, promising an adjustment gesture,
+ * and implemented none. It now carries a real `accessibilityValue`, real
+ * increment/decrement actions and a handler that performs the same seek the tap
+ * does. The BARS themselves are decoration and are hidden from the reader:
+ * unhidden they were 48 unlabelled stops between the play button and the
+ * duration, each announcing nothing.
+ *
  * ── WHAT THIS DOES NOT DO ───────────────────────────────────────────────────
  * It does not auto-play, it does not continue into the next voice note, and it
  * releases the sound when it unmounts. A conversation that started playing
@@ -32,11 +42,13 @@ import { useHydratedMedia } from '../../../services/mediaUrl.ts';
 import { space, radius, type as t } from '../../../theme/tokens.ts';
 import { useTelegraphPalette, type TelegraphPalette } from '../theme/telegraphTheme.ts';
 import {
+  ACCESSIBILITY_SEEK_STEP_SECONDS,
   WAVEFORM_BARS,
   downsampleWaveform,
   formatDuration,
   nextPlaybackSpeed,
   playedFraction,
+  seekMillisForStep,
   seekMillisForTap,
 } from './voicePolicy.ts';
 
@@ -199,9 +211,44 @@ export function VoiceMessagePlayer({
     [barWidth, bars.length, durationSeconds, ensureSound],
   );
 
+  /**
+   * The same seek, reached without a gesture.
+   *
+   * Shares `ensureSound` and `setPositionMillis` with `onSeek` on purpose: two
+   * code paths to the playhead is how one of them drifts, and the one that
+   * drifts is always the one nobody can see.
+   */
+  const onAccessibilitySeek = React.useCallback(
+    async (actionName: string) => {
+      if (actionName !== 'increment' && actionName !== 'decrement') return;
+      const millis = seekMillisForStep(
+        positionMillis,
+        durationSeconds,
+        actionName === 'increment' ? 1 : -1,
+      );
+      setPositionMillis(millis);
+      const sound = await ensureSound();
+      if (!sound) return;
+      try {
+        await sound.setPositionAsync(millis);
+      } catch {
+        /* same posture as the tap: the playhead stays where the person put it */
+      }
+    },
+    [positionMillis, durationSeconds, ensureSound],
+  );
+
   const fraction = playedFraction(positionMillis, durationSeconds);
   const playedBars = Math.round(fraction * bars.length);
   const remaining = Math.max(0, durationSeconds - Math.floor(positionMillis / 1000));
+  const positionSeconds = Math.floor(positionMillis / 1000);
+  // The duration field changes MEANING when playback starts — total before,
+  // remaining during — and "0:12" does not say which it is. Sighted readers have
+  // the play/pause icon beside it; the label is that icon, in words.
+  const showingRemaining = playing || positionMillis > 0;
+  const durationLabel = showingRemaining
+    ? `${formatDuration(remaining)} remaining`
+    : `Length ${formatDuration(durationSeconds)}`;
 
   return (
     <View style={[styles.wrap, mine ? styles.wrapMine : null]} testID="telegraph-kind-voice">
@@ -231,27 +278,57 @@ export function VoiceMessagePlayer({
           style={styles.waveWrap}
           onLayout={(e) => setBarWidth(e.nativeEvent.layout.width)}
           onPress={(e) => void onSeek(e.nativeEvent.locationX)}
+          accessible
           accessibilityRole="adjustable"
-          accessibilityLabel={`Voice message, ${formatDuration(durationSeconds)}. Tap to seek.`}
+          accessibilityLabel="Seek within voice message"
+          // `adjustable` PROMISES a swipe-up/swipe-down adjustment. These three
+          // props are that promise kept; without them the role was a lie and the
+          // seek was reachable only by tapping a chosen pixel.
+          accessibilityValue={{
+            min: 0,
+            max: Math.max(0, Math.round(durationSeconds)),
+            now: positionSeconds,
+            text: `${formatDuration(positionSeconds)} of ${formatDuration(durationSeconds)}`,
+          }}
+          accessibilityActions={[
+            { name: 'increment', label: `Forward ${ACCESSIBILITY_SEEK_STEP_SECONDS} seconds` },
+            { name: 'decrement', label: `Back ${ACCESSIBILITY_SEEK_STEP_SECONDS} seconds` },
+          ]}
+          onAccessibilityAction={(e) => void onAccessibilitySeek(e.nativeEvent.actionName)}
           testID="telegraph-voice-wave"
         >
-          {bars.map((amp, i) => (
-            <View
-              key={i}
-              testID={`telegraph-voice-bar-${i}`}
-              style={[
-                styles.bar,
-                {
-                  height: 4 + amp * 22,
-                  backgroundColor: i < playedBars ? palette.operational : palette.hairline,
-                },
-              ]}
-            />
-          ))}
+          {/*
+            DECORATION. The bars carry nothing the value above does not, and
+            unhidden they are 48 unlabelled nodes a reader stops at one by one.
+          */}
+          <View
+            style={styles.waveBars}
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants"
+            testID="telegraph-voice-bars"
+          >
+            {bars.map((amp, i) => (
+              <View
+                key={i}
+                testID={`telegraph-voice-bar-${i}`}
+                style={[
+                  styles.bar,
+                  {
+                    height: 4 + amp * 22,
+                    backgroundColor: i < playedBars ? palette.operational : palette.hairline,
+                  },
+                ]}
+              />
+            ))}
+          </View>
         </Pressable>
 
-        <Text style={styles.duration} testID="telegraph-voice-duration">
-          {formatDuration(playing || positionMillis > 0 ? remaining : durationSeconds)}
+        <Text
+          style={styles.duration}
+          accessibilityLabel={durationLabel}
+          testID="telegraph-voice-duration"
+        >
+          {formatDuration(showingRemaining ? remaining : durationSeconds)}
         </Text>
 
         <Pressable
@@ -268,7 +345,14 @@ export function VoiceMessagePlayer({
       </View>
 
       {failed ? (
-        <View style={styles.errorRow} testID="telegraph-voice-error">
+        <View
+          style={styles.errorRow}
+          // Drawn is not announced. Pressing Play and hearing nothing is
+          // indistinguishable from a missed tap unless this speaks.
+          accessibilityRole="alert"
+          accessibilityLiveRegion="assertive"
+          testID="telegraph-voice-error"
+        >
           <AlertCircle size={13} color={palette.attention} />
           <Text style={styles.errorText}>This voice message could not be played.</Text>
         </View>
@@ -293,8 +377,8 @@ function makeStyles(p: TelegraphPalette) {
     kindWord: { ...t.small, color: p.mute, letterSpacing: 0.5 },
     row: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
     playButton: { width: 30, alignItems: 'center', justifyContent: 'center' },
-    waveWrap: {
-      flex: 1,
+    waveWrap: { flex: 1, height: 28, justifyContent: 'center' },
+    waveBars: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',

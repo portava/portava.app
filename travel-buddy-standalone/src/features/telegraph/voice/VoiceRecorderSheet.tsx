@@ -246,8 +246,18 @@ export function VoiceRecorderSheet({
         <View style={styles.sheet} testID="telegraph-voice-recorder">
           <Text style={styles.title}>Voice message</Text>
 
-          {/* §11.3 — the state is a WORD, never a colour alone. */}
-          <Text style={styles.phase} testID="telegraph-voice-recorder-phase">
+          {/*
+            §11.3 — the state is a WORD, never a colour alone. And a LIVE
+            REGION: "Recording" is the most consequential state this surface
+            has (a microphone is open), and the press that starts it leaves
+            focus on a button, so nothing was ever spoken. Drawn is not
+            announced.
+          */}
+          <Text
+            style={styles.phase}
+            accessibilityLiveRegion="polite"
+            testID="telegraph-voice-recorder-phase"
+          >
             {phase === 'idle'
               ? 'Ready'
               : phase === 'recording'
@@ -258,7 +268,16 @@ export function VoiceRecorderSheet({
           </Text>
 
           {error ? (
-            <Text style={styles.error} testID="telegraph-voice-recorder-error">
+            <Text
+              style={styles.error}
+              // The header says a denied permission "is stated, once, in words".
+              // It is — and until this it was never spoken, so the one statement
+              // the flow makes was inaudible to the people most likely to need
+              // it repeated.
+              accessibilityRole="alert"
+              accessibilityLiveRegion="assertive"
+              testID="telegraph-voice-recorder-error"
+            >
               {error}
             </Text>
           ) : null}
@@ -316,7 +335,16 @@ export function VoiceRecorderSheet({
             ) : null}
 
             {phase === 'sending' ? (
-              <ActivityIndicator size="small" color={palette.operational} testID="telegraph-voice-sending" />
+              // The phase line above already says "Sending…" and is a live
+              // region. A second, unlabelled node saying the same nothing is
+              // noise, so the spinner is decoration.
+              <ActivityIndicator
+                size="small"
+                color={palette.operational}
+                accessibilityElementsHidden
+                importantForAccessibility="no-hide-descendants"
+                testID="telegraph-voice-sending"
+              />
             ) : null}
           </View>
 

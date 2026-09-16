@@ -175,3 +175,47 @@ export function isSendableRecording(durationSeconds: number): boolean {
     durationSeconds <= VOICE_MAX_DURATION_SECONDS
   );
 }
+
+/**
+ * §11.3 / WCAG 2.1.1 — how far ONE screen-reader adjustment moves the playhead.
+ *
+ * WHY THIS EXISTS AT ALL. The player draws its seek as a waveform and reads the
+ * tap's `locationX`, which is a position in PIXELS. That is a perfectly good
+ * affordance for a finger and it is the ONLY one there was: a person using
+ * VoiceOver, TalkBack or Switch Control cannot land a tap on a chosen pixel, so
+ * the entire seek was unreachable for them. The control even announced itself as
+ * `adjustable`, which promises a swipe-up / swipe-down adjustment that nothing
+ * implemented — an audible promise that was false.
+ *
+ * WHY FIVE SECONDS. It is the step every podcast and voice-note player uses, it
+ * is coarse enough that traversing a five-minute note (the ceiling) takes a
+ * bounded number of adjustments rather than hundreds, and it is fine enough to
+ * find a sentence again. A PERCENTAGE step would move 3 s in a one-minute note
+ * and 15 s in a five-minute one, so the same gesture would mean two things.
+ */
+export const ACCESSIBILITY_SEEK_STEP_SECONDS = 5;
+
+/**
+ * The position one increment/decrement asks for, in milliseconds.
+ *
+ * Clamped at BOTH ends for the same reason `barIndexForTap` is: a decrement at
+ * the start is a request for the START, not a negative position, and an
+ * increment at the end is a request for the END. Unclamped, either would hand
+ * `setPositionAsync` a value the native player rejects, and the playhead the
+ * person just moved would silently stay where it was.
+ *
+ * A zero or unreadable duration returns 0 rather than NaN — the same guard
+ * `playedFraction` carries, for the same reason.
+ */
+export function seekMillisForStep(
+  positionMillis: number,
+  durationSeconds: number,
+  direction: 1 | -1,
+): number {
+  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) return 0;
+  const from = Number.isFinite(positionMillis) && positionMillis > 0 ? positionMillis : 0;
+  const next = from + direction * ACCESSIBILITY_SEEK_STEP_SECONDS * 1000;
+  const max = durationSeconds * 1000;
+  if (next <= 0) return 0;
+  return next > max ? max : Math.round(next);
+}

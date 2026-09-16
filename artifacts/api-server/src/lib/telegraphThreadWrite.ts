@@ -9,7 +9,9 @@
  * existing thread and is re-checked per send instead.
  *
  * The four, in order:
- *   1. `disable_messaging` kill switch — fail CLOSED on a read error.
+ *   1. `disable_messaging` kill switch — fail CLOSED on a read error AND on
+ *      an absent service client, which is the same fact (see
+ *      `messagingStopUnknownRefusal`).
  *   2. ACTIVE membership (`left_at IS NULL`).
  *   3. 1:1 block guard. An unreadable roster must NOT read as "this is a group
  *      thread, skip the check": that is how a fail-closed guard becomes
@@ -33,13 +35,57 @@ export type ThreadWriteGuard =
   | { ok: true; otherMemberIds: string[] }
   | { ok: false; code: ThreadWriteRefusal; message: string };
 
+/**
+ * The refusal for a flag client we do not have.
+ *
+ * `if (flagSc && await isKillSwitchEngaged(...))` READS as fail-closed and is
+ * not. Both operands of that `&&` are the same fact — the stop's state could not
+ * be established — and only one of them was treated that way: an unreadable
+ * `feature_flags` table engages the stop, while an absent service client
+ * short-circuits the entire gate away and the write proceeds. That is the stop
+ * disengaging at exactly the moment an operator is reaching for it.
+ *
+ * The upload door on `routes/telegraphVoice.ts` already refused this case with
+ * `server_not_configured`; the send door did not, so a deployment missing
+ * `SUPABASE_SERVICE_ROLE_KEY` could not upload a voice note but could write
+ * every other typed message past a stop nobody could read.
+ *
+ * WHY `degraded_unavailable` AND NOT `feature_disabled`. "Messaging is
+ * temporarily disabled" is a claim that an operator engaged a stop. Nobody did;
+ * we could not look. The two are different sentences to the person holding the
+ * phone — one is policy, the other is retryable — and this file's whole subject
+ * is not collapsing sentences like that into one.
+ *
+ * THE COST, SAID OUT LOUD: a deployment with no service role key now refuses
+ * every Telegraph typed / voice / share / coordination write instead of serving
+ * them past an unreadable stop. That is a misconfiguration and not a supported
+ * mode — but it is a behaviour change, and it belongs in the open rather than in
+ * a changelog nobody reads.
+ *
+ * Exported as a predicate rather than inlined because it is a RULE, and a rule
+ * that only exists inside an `if` cannot be asserted without standing up a
+ * process with the environment stripped.
+ */
+export function messagingStopUnknownRefusal(
+  flagSc: unknown,
+): { ok: false; code: ThreadWriteRefusal; message: string } | null {
+  if (flagSc) return null;
+  return {
+    ok: false,
+    code: "degraded_unavailable",
+    message: "We could not check whether messaging is available right now. Please try again shortly.",
+  };
+}
+
 export async function guardTelegraphThreadWrite(
   client: SupabaseClient,
   threadId: string,
   userId: string,
 ): Promise<ThreadWriteGuard> {
   const flagSc = getServiceClient();
-  if (flagSc && (await isKillSwitchEngaged(flagSc, "disable_messaging"))) {
+  const stopUnknown = messagingStopUnknownRefusal(flagSc);
+  if (stopUnknown) return stopUnknown;
+  if (await isKillSwitchEngaged(flagSc, "disable_messaging")) {
     return { ok: false, code: "feature_disabled", message: "Messaging is temporarily disabled" };
   }
 

@@ -219,10 +219,17 @@ describe('Telegraph inbox — the needs-action badge', () => {
   });
 
   it('a thread with unread traffic AND an action shows both', async () => {
-    const { queryByText } = await renderInbox([
+    const { queryByText, queryByLabelText } = await renderInbox([
       thread({ unreadCount: 12, needsActionCount: 1, needsActionReasons: ['time_vote_pending'] }),
     ]);
-    expect(queryByText('12')).toBeTruthy();          // the unread bubble
+    // The unread bubble. Since V4's accessibility sweep the DIGITS inside it are
+    // hidden from the accessibility tree and the count is carried by the
+    // bubble's label instead, so a reader says "12 unread messages" once rather
+    // than that and then "12". The claim here is unchanged — the bubble is
+    // rendered and carries 12 — and it is now made through the name a person
+    // actually receives.
+    expect(queryByLabelText('12 unread messages')).toBeTruthy();
+    expect(queryByText('12', { includeHiddenElements: true })).toBeTruthy();
     expect(queryByText('1 needs action')).toBeTruthy();
   });
 });

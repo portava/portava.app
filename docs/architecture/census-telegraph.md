@@ -1608,7 +1608,7 @@ asset is not a kind.
   reach last month's photos through the drawer or find them by searching
   (`test/telegraphKinds.test.ts:489`, `:515`).
 - **The write gates are shared, not re-implemented.**
-  `lib/telegraphThreadWrite.ts:36#guardTelegraphThreadWrite` holds the four
+  `lib/telegraphThreadWrite.ts:80#guardTelegraphThreadWrite` holds the four
   checks the ordinary send path applies — kill switch, active membership, 1:1
   block guard, E2EE refusal — and the §5 share route and the §6.2 typed-kind
   route both call it. A second write endpoint that skipped one of them would be
@@ -3194,7 +3194,7 @@ zero both render nothing and neither prints a reassurance nobody verified.
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| T260 | W | **C** | §19's inbox line. The unread half was already real; the other half now exists end to end and is measured end to end: `domain/telegraph/policies/needsAction.ts:80` computes it from pending RSVPs and unvoted time options, `routes/messaging.ts:1770` calls it inside `GET /me/threads` and `:1830` puts `needsActionCount` + `needsActionReasons` on every row, and `components/TelegraphInboxScreen.tsx:226#needsAction` renders "1 needs action" / "N need action". `telegraphNeedsAction.test.ts` drives the REAL Express route, not just the policy, so "wired" is a measured fact. C rather than W because it needs no migration and no flag — every table it reads is from migration 0013 and has had live writers for the whole life of the meetups feature. |
+| T260 | W | **C** | §19's inbox line. The unread half was already real; the other half now exists end to end and is measured end to end: `domain/telegraph/policies/needsAction.ts:80` computes it from pending RSVPs and unvoted time options, `routes/messaging.ts:1770` calls it inside `GET /me/threads` and `:1830` puts `needsActionCount` + `needsActionReasons` on every row, and `components/TelegraphInboxScreen.tsx:250#needsAction` renders "1 needs action" / "N need action". `telegraphNeedsAction.test.ts` drives the REAL Express route, not just the policy, so "wired" is a measured fact. C rather than W because it needs no migration and no flag — every table it reads is from migration 0013 and has had live writers for the whole life of the meetups feature. |
 
 **Rows looked at that did not move.** T261 stays N. An acknowledgement
 primitive distinct from Seen needs a row per (message, actor, acknowledged_at)

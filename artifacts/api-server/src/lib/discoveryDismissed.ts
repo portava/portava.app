@@ -106,13 +106,23 @@ export const DISMISSED_OUTCOME = "dismiss";
  * Returns an EMPTY, non-degraded set for an anonymous caller: there is no viewer
  * to have dismissed anything, and that is a complete answer rather than a failed
  * one.
+ *
+ * A MISSING CLIENT IS THE OPPOSITE ANSWER, and the two were the same expression
+ * (`if (!sc || !userId)`) until V4's sweep. Anonymity means there was nothing to
+ * read. No client means there is a viewer, they may well have dismissals, and we
+ * cannot see them — which is the degraded case this module exists to name. Left
+ * merged, a deployment whose `getServiceClient()` is null served every Discovery
+ * page unfiltered under `coverage: "full"`: the rejected place comes back and
+ * the envelope states positively that nothing went wrong.
  */
 export async function loadDismissedPlaceIds(
   sc: any,
   userId: string | null | undefined,
 ): Promise<DismissedSet> {
   const ids = new Set<string>();
-  if (!sc || !userId) return { ids, degraded: false };
+  // No viewer: complete. No client: unreadable. See the note above.
+  if (!userId) return { ids, degraded: false };
+  if (!sc) return { ids, degraded: true };
 
   try {
     const { data, error } = await sc
