@@ -288,7 +288,7 @@ describe("L82 — the surface does not weaken the channel", () => {
       submissionToken: "tok-queue-0004",
     });
     assert.equal(post.status, 429, JSON.stringify(post.body));
-    assert.equal(post.body.rejection, "rate_limited");
+    assert.equal(post.body.error, "rate_limited", JSON.stringify(post.body));
   });
 
   it("a traveller may not file a fact class that is not theirs", async () => {

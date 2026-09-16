@@ -2791,11 +2791,11 @@ router.post("/airport/sessions/:id/observations", async (req, res) => {
       rate_limited: `You have reported this recently. This channel accepts ${OBSERVATION_RATE_LIMIT.maxPerWindow} reports of the same kind every ${OBSERVATION_RATE_LIMIT.windowMinutes} minutes.`,
     };
     const message = REJECTION_MESSAGE[result.reason] ?? "That report could not be accepted.";
-    if (result.reason === "rate_limited") {
-      res.status(429).json({ error: "rate_limited", message, rejection: result.reason });
-      return;
-    }
-    sendError(res, "invalid_payload", message);
+    // `rate_limited` is a first-class code in lib/http (429); everything else
+    // here is the client having sent something this channel will not hold.
+    // Routed through sendError rather than a hand-built body so the refusal
+    // envelope is the same one every other route in this file emits.
+    sendError(res, result.reason === "rate_limited" ? "rate_limited" : "invalid_payload", message);
     return;
   }
 
