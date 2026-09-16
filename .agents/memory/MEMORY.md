@@ -105,3 +105,4 @@
 - [Deterministic API background work](api-background-work-tracking.md) — tests use scoped tracking sessions and await real completion; production stays non-blocking and logs failures.
 - [Independent-group denominator](independent-group-denominator.md) — dominant-group share must divide by the distinct grouped-actor union; summed memberships let overlapping groups fake independence.
 - [World safety authority boundary](world-safety-authority.md) — user-owned recommendation rows must never become authoritative shared safety; only trusted service-written constraints may clear or hold.
+- [Canonical media backfill safety](canonical-media-backfill-safety.md) — the legacy canonical backfill overwrites metadata; reconcile existing assets with attachment-only writes.
