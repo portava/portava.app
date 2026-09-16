@@ -25,6 +25,10 @@ import { _setTestServiceClient } from "../lib/supabase.js";
 import stampsRouter from "../routes/stamps.js";
 import adminStampsRouter from "../routes/adminStamps.js";
 import { TEMPLATES, renderTemplate } from "../services/notifications/NotificationTemplateService.js";
+import {
+  awaitBackgroundWork,
+  enableBackgroundWorkTrackingForTests,
+} from "../lib/backgroundWork.js";
 
 // ── Fixed IDs ─────────────────────────────────────────────────────────────────
 
@@ -253,18 +257,6 @@ function makeServer(state: FakeState, routerType: "stamps" | "admin") {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function waitForNotification(state: FakeState, timeoutMs = 500): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const deadline = Date.now() + timeoutMs;
-    const check = () => {
-      if ((state.inserted["notifications"] ?? []).length > 0) return resolve();
-      if (Date.now() > deadline) return reject(new Error("timed out waiting for notification insert"));
-      setTimeout(check, 20);
-    };
-    check();
-  });
-}
-
 // ── Suite 1: Template unit tests ──────────────────────────────────────────────
 
 describe("passport.stamp_earned template", () => {
@@ -318,6 +310,7 @@ describe("POST /api/stamps/award (internal) — notification dispatch", () => {
   let state: FakeState;
 
   before(async () => {
+    enableBackgroundWorkTrackingForTests();
     process.env.INTERNAL_API_SECRET = INT_SECRET;
     state = { awardSucceeds: true, inserted: {} };
     server = await makeServer(state, "stamps");
@@ -346,25 +339,25 @@ describe("POST /api/stamps/award (internal) — notification dispatch", () => {
   });
 
   it("inserts a notification row into the notifications table", async () => {
-    await waitForNotification(state);
+    await awaitBackgroundWork();
     const rows = state.inserted["notifications"] ?? [];
     assert.ok(rows.length > 0, "no notification row inserted");
   });
 
   it("notification has eventType 'passport.stamp_earned'", async () => {
-    await waitForNotification(state);
+    await awaitBackgroundWork();
     const row = (state.inserted["notifications"] ?? [])[0];
     assert.equal(row.event_type, "passport.stamp_earned");
   });
 
   it("notification has correct user_id", async () => {
-    await waitForNotification(state);
+    await awaitBackgroundWork();
     const row = (state.inserted["notifications"] ?? [])[0];
     assert.equal(row.user_id, USER_ID);
   });
 
   it("notification actionUrl deep-links to the specific stamp", async () => {
-    await waitForNotification(state);
+    await awaitBackgroundWork();
     const row = (state.inserted["notifications"] ?? [])[0];
     assert.equal(row.action_url, `/stamp/${STAMP_ID}`);
   });
@@ -404,7 +397,7 @@ describe("POST /api/stamps/award — already awarded does NOT fire notification"
   });
 
   it("does NOT insert a notification row", async () => {
-    await new Promise((r) => setTimeout(r, 200));
+    await awaitBackgroundWork();
     const rows = state.inserted["notifications"] ?? [];
     assert.equal(rows.length, 0, `unexpected notification rows: ${rows.length}`);
   });
@@ -441,25 +434,25 @@ describe("POST /api/admin/stamps/award — notification dispatch", () => {
   });
 
   it("inserts a notification row after admin award", async () => {
-    await waitForNotification(state);
+    await awaitBackgroundWork();
     const rows = state.inserted["notifications"] ?? [];
     assert.ok(rows.length > 0, "no notification row inserted");
   });
 
   it("admin award notification has eventType 'passport.stamp_earned'", async () => {
-    await waitForNotification(state);
+    await awaitBackgroundWork();
     const row = (state.inserted["notifications"] ?? [])[0];
     assert.equal(row.event_type, "passport.stamp_earned");
   });
 
   it("admin award notification has correct user_id (recipient, not admin)", async () => {
-    await waitForNotification(state);
+    await awaitBackgroundWork();
     const row = (state.inserted["notifications"] ?? [])[0];
     assert.equal(row.user_id, USER_ID);
   });
 
   it("admin award notification actionUrl deep-links to the specific stamp", async () => {
-    await waitForNotification(state);
+    await awaitBackgroundWork();
     const row = (state.inserted["notifications"] ?? [])[0];
     assert.equal(row.action_url, `/stamp/${STAMP_ID}`);
   });
@@ -495,7 +488,7 @@ describe("POST /api/admin/stamps/award — already awarded skips notification", 
   });
 
   it("does NOT insert a notification row for duplicate award", async () => {
-    await new Promise((r) => setTimeout(r, 200));
+    await awaitBackgroundWork();
     const rows = state.inserted["notifications"] ?? [];
     assert.equal(rows.length, 0, `unexpected notification rows: ${rows.length}`);
   });
@@ -536,7 +529,7 @@ describe("POST /api/stamps/award — feature flag disabled fails closed", () => 
   });
 
   it("does NOT insert a notification row when gated", async () => {
-    await new Promise((r) => setTimeout(r, 200));
+    await awaitBackgroundWork();
     const rows = state.inserted["notifications"] ?? [];
     assert.equal(rows.length, 0, `unexpected notification rows: ${rows.length}`);
   });

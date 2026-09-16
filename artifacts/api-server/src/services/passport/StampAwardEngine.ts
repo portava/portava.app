@@ -17,6 +17,10 @@ import { resolveCountry } from "../../lib/stamps/countryLookup.js";
 import { resolveCountryWithGeocoding } from "../../lib/stamps/countryGeocoder.js";
 import { criteriaGate } from "../../lib/stamps/criteria/index.js";
 import { isFlagEnabled } from "../../lib/featureFlags.js";
+import { trackBackgroundWork } from "../../lib/backgroundWork.js";
+import { logger as rootLogger } from "../../lib/logger.js";
+
+const logger = rootLogger.child({ service: "StampAwardEngine" });
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -366,7 +370,7 @@ async function _awardStampCore(
 
   // 7b. Fire-and-forget: resolve universal catalog entry for this stamp location.
   // This never blocks the award or throws — any failure is logged and ignored.
-  Promise.resolve().then(async () => {
+  trackBackgroundWork(Promise.resolve().then(async () => {
     try {
       // Real ISO code only — never abbreviated from the country's spelling.
       // When the static lookup can't resolve the city, fall back to geocoding
@@ -442,13 +446,13 @@ async function _awardStampCore(
         error:    e?.message ?? String(e),
       }));
     }
-  }).catch(() => {});
+  }), { label: "passport.stamp_award.catalog_link", logger });
 
   // 8. Update stamp_progress for repeatable stamps (fire-and-forget, non-fatal)
   if (definition.is_repeatable) {
     // Atomic DB-side increment (migration 2071) — the previous read-modify-write
     // lost increments under concurrency. Wrapped in a real Promise so .catch() is valid.
-    Promise.resolve().then(async () => {
+    trackBackgroundWork(Promise.resolve().then(async () => {
       const { error: rpcErr } = await sc.rpc("increment_stamp_progress", {
         p_user_id:        userId,
         p_definition_id:  definition.id,
@@ -490,14 +494,14 @@ async function _awardStampCore(
           },
           { onConflict: "user_id,stamp_definition_id" },
         );
-    }).catch(() => {});
+    }), { label: "passport.stamp_award.progress", logger });
   }
 
   // 9. Fire-and-forget: check stamp milestones (100 / 1,000 / 10,000).
   // Inserts a stamp_milestones row and sends a push notification when a new
   // threshold is crossed.  Never blocks the award — all errors are logged then
   // swallowed so a DB hiccup never prevents the stamp from being recorded.
-  Promise.resolve().then(async () => {
+  trackBackgroundWork(Promise.resolve().then(async () => {
     let activeLevel: number | undefined;
     try {
       const MILESTONE_LEVELS = [10000, 1000, 100] as const;
@@ -572,7 +576,7 @@ async function _awardStampCore(
         error:           e?.message ?? String(e),
       }));
     }
-  }).catch(() => {});
+  }), { label: "passport.stamp_award.milestone", logger });
 
   return {
     awarded: true,

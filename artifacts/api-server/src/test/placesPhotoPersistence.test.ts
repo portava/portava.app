@@ -29,6 +29,7 @@ import placesRouter from "../routes/places.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import { PHOTO_TTL_MS } from "../lib/discoveryPlacePhotoStore.js";
 import { FOURSQUARE_KEY_VARS, snapshotKeyEnv, restoreKeyEnv, setKeyEnv } from "./helpers/apiKeyEnv.js";
+import { awaitBackgroundWork, enableBackgroundWorkTrackingForTests, disableBackgroundWorkTrackingForTests } from "../lib/backgroundWork.js";
 
 // ── Upstream stubs ────────────────────────────────────────────────────────────
 
@@ -52,6 +53,7 @@ let server: Server;
 let port = 0;
 
 before(async () => {
+  enableBackgroundWorkTrackingForTests();
   globalThis.fetch = (async (url: unknown, init?: any) => {
     const u = String(typeof url === "string" ? url : (url as any)?.href ?? url);
 
@@ -86,6 +88,7 @@ before(async () => {
 });
 
 after(async () => {
+  disableBackgroundWorkTrackingForTests();
   globalThis.fetch = originalFetch;
   if (originalGoogleKey === undefined) delete process.env.GOOGLE_MAPS_API_KEY;
   else process.env.GOOGLE_MAPS_API_KEY = originalGoogleKey;
@@ -158,8 +161,8 @@ async function get(path: string) {
   return { status: res.status, body: (await res.json()) as any };
 }
 
-/** Persistence is fire-and-forget, so let the microtask queue drain. */
-const settle = () => new Promise((r) => setTimeout(r, 10));
+/** Persistence is fire-and-forget, so await the tracked operation. */
+const settle = () => awaitBackgroundWork();
 
 const GOOGLE_PHOTO_NAME = "places/ChIJabc123/photos/AUGGfXnDef";
 

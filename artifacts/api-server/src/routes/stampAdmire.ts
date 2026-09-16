@@ -23,6 +23,7 @@ import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
+import { trackBackgroundWork } from "../lib/backgroundWork.js";
 
 const FLAG = "stamp_admire_enabled";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -99,24 +100,22 @@ router.post("/stamps/:userStampId/admire", asyncHandler(async (req, res) => {
   if (insErr) { sendError(res, "db_error", insErr.message); return; }
 
   // Notify the owner — fire-and-forget.
-  void (async () => {
-    try {
-      const { NotificationService } = await import("../services/notifications/NotificationService.js");
-      const { NotificationRouter } = await import("../services/notifications/NotificationRouter.js");
-      const label = stamp.title_override ?? stamp.city ?? stamp.country ?? "travel";
-      const notifSvc = new NotificationService(sc);
-      const notifRouter = new NotificationRouter(sc);
-      const row = await notifSvc.create({
-        userId: stamp.user_id,
-        eventType: "passport.stamp_admired",
-        actorId: user.id,
-        sourceType: "stamp_admire",
-        sourceId: id,
-        params: { stamp: String(label), stampId: id },
-      });
-      if (row) await notifRouter.route(row);
-    } catch {}
-  })();
+  trackBackgroundWork(Promise.resolve().then(async () => {
+    const { NotificationService } = await import("../services/notifications/NotificationService.js");
+    const { NotificationRouter } = await import("../services/notifications/NotificationRouter.js");
+    const label = stamp.title_override ?? stamp.city ?? stamp.country ?? "travel";
+    const notifSvc = new NotificationService(sc);
+    const notifRouter = new NotificationRouter(sc);
+    const row = await notifSvc.create({
+      userId: stamp.user_id,
+      eventType: "passport.stamp_admired",
+      actorId: user.id,
+      sourceType: "stamp_admire",
+      sourceId: id,
+      params: { stamp: String(label), stampId: id },
+    });
+    if (row) await notifRouter.route(row);
+  }), { label: "passport.stamp_admire.notification", logger: req.log });
 
   res.status(201).json({ admired: true });
 }));

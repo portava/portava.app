@@ -33,6 +33,7 @@ import {
   photoProxyUrl,
 } from "../lib/discoveryPlacePhotoStore.js";
 import { namespaceGooglePlaceId, denamespaceGooglePlaceId } from "../lib/googlePlaceId";
+import { trackBackgroundWork } from "../lib/backgroundWork.js";
 
 const router = Router();
 const logger = rootLogger.child({ route: "places" });
@@ -871,11 +872,11 @@ router.get("/places/photo", async (req, res) => {
     // Persist the REFERENCE, never this URL: it carries the API key, and a
     // stored key-bearing URL becomes a dead link the day the key rotates.
     if (placeKey) {
-      void writeStoredPlacePhoto(placeKey, {
+      trackBackgroundWork(writeStoredPlacePhoto(placeKey, {
         source: "google",
         photoUrl: null,
         photoRef: photoName,
-      });
+      }), { label: "places photo persistence (google)", logger });
     }
 
     res.json({ photoUrl, source: "google" });
@@ -1174,11 +1175,11 @@ router.get("/places/fsq-photo", async (req, res) => {
   // the existing liveness check was added to prevent, so the same gate governs
   // both, and the durable store never gets a weaker guarantee than the L1 one.
   if (placeKey && result.cacheable && result.photoUrl) {
-    void writeStoredPlacePhoto(placeKey, {
+    trackBackgroundWork(writeStoredPlacePhoto(placeKey, {
       source: "foursquare",
       photoUrl: result.photoUrl,
       photoRef: null,
-    });
+    }), { label: "places photo persistence (foursquare)", logger });
   }
 
   const { cacheable: _c, ...responseBody } = result;

@@ -23,6 +23,7 @@ import { checkItemEligibility } from "./EligibilityChecker.js";
 import { getActivityParams, getWeights, getPenalties } from "./rankingConfig.js";
 import { RankingEvent } from "./rankingAnalytics.js";
 import { logger } from "../../lib/logger.js";
+import { trackBackgroundWork } from "../../lib/backgroundWork.js";
 
 // ── Surface names ─────────────────────────────────────────────────────────────
 
@@ -584,7 +585,7 @@ function writeRankAnalyticAsync(
 ): void {
   if (!db) return;
   try {
-    void db
+    trackBackgroundWork(db
       .from("rank_events")
       .insert({
         event_type:   eventType,
@@ -616,7 +617,7 @@ function writeRankAnalyticAsync(
           // Non-fatal: analytics must never affect feed latency or correctness.
           logger.warn({ err, eventType, surface }, "rankingAnalytics: rank_events insert threw");
         },
-      );
+      ), { label: `ranking analytics ${eventType}`, logger });
   } catch { /* non-fatal */ }
 }
 

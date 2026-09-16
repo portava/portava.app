@@ -30,6 +30,7 @@ import { getTrustProfile, recalculateTrustScore } from "../services/trust/TrustS
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
 import { getActiveCaps, liftCap } from "../services/trust/TrustCapService.js";
 import type { RestrictionType } from "../services/trust/TrustRestrictionService.js";
+import { trackBackgroundWork } from "../lib/backgroundWork.js";
 
 import { requireAdmin } from "../lib/requireAdmin.js";
 
@@ -78,7 +79,10 @@ router.get("/admin/trust/reviews", async (req, res) => {
 
   const { data, error, count } = await query;
   if (error) { sendError(res, "db_error", error.message); return; }
-  void logAdminAccess(sc, admin.userId, "profile", "list", "view", accessReason(req));
+  trackBackgroundWork(
+    logAdminAccess(sc, admin.userId, "profile", "list", "view", accessReason(req)),
+    { label: "trust.admin.audit.profile_list", logger: req.log },
+  );
   res.json({ reviews: data ?? [], total: count ?? 0, page });
 });
 
@@ -115,7 +119,10 @@ router.get("/admin/trust/users/:userId", async (req, res) => {
       .limit(20),
   ]);
 
-  void logAdminAccess(sc, admin.userId, "profile", userId, "expand", accessReason(req));
+  trackBackgroundWork(
+    logAdminAccess(sc, admin.userId, "profile", userId, "expand", accessReason(req)),
+    { label: "trust.admin.audit.profile_expand", logger: req.log },
+  );
   res.json({
     userId,
     profile:      profile ?? null,
@@ -290,7 +297,10 @@ router.get("/admin/trust/gaming-flags", async (req, res) => {
     .limit(limit);
 
   if (error) { sendError(res, "db_error", error.message); return; }
-  void logAdminAccess(sc, admin.userId, "profile", "list", "view", accessReason(req));
+  trackBackgroundWork(
+    logAdminAccess(sc, admin.userId, "profile", "list", "view", accessReason(req)),
+    { label: "trust.admin.audit.profile_list", logger: req.log },
+  );
   res.json({ flags: data ?? [], total: (data ?? []).length });
 });
 
@@ -358,32 +368,29 @@ router.put("/admin/trust/settings/:key", async (req, res) => {
   if (error) { sendError(res, "db_error", error.message); return; }
 
   // Audit log (fire-and-forget — wrap in real Promise so .catch() is available)
-  Promise.resolve().then(() =>
-    sc.from("trust_admin_actions").insert({
+  trackBackgroundWork(
+    Promise.resolve(sc.from("trust_admin_actions").insert({
       admin_id:    adminId,
       target_user: adminId,
       action_type: "score_override",
       reason:      `Updated trust setting ${key} to ${parsed.data.value}`,
       metadata:    { key, value: parsed.data.value },
-    }),
-  ).catch(() => {});
+    })),
+    { label: "trust.admin.audit.setting_update", logger: req.log },
+  );
 
   // Fire-and-forget: recalculate all users' scores so the new weights/decay take effect.
   // Read all user_ids from trust_profiles in one query, then recalc each sequentially.
-  setImmediate(() => {
-    sc.from("trust_profiles")
+  trackBackgroundWork(Promise.resolve().then(async () => {
+    const { data: profiles } = await sc
+      .from("trust_profiles")
       .select("user_id")
-      .limit(1000)
-      .then(({ data: profiles }: { data: any[] | null }) => {
-        if (!profiles?.length) return;
-        const ids: string[] = profiles.map((p: any) => p.user_id);
-        ids.reduce((chain: Promise<void>, uid: string) =>
-          chain.then(() => recalculateTrustScore(sc, uid).then(() => {}).catch(() => {})),
-          Promise.resolve(),
-        );
-      })
-      .catch(() => {});
-  });
+      .limit(1000);
+    if (!profiles?.length) return;
+    for (const profile of profiles as any[]) {
+      await recalculateTrustScore(sc, profile.user_id);
+    }
+  }), { label: "trust.admin.recalculate_scores", logger: req.log });
 
   res.json({ settings: data ?? {}, updated: { key, value: parsed.data.value } });
 });

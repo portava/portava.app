@@ -90,6 +90,7 @@ import express, { type Express } from "express";
 import { _setTestClient } from "../lib/http.js";
 import { livePulseItemKind, buildLivePulseServeRows } from "../lib/rankLog.js";
 import adminRankingMetricsRouter from "../routes/adminRankingMetrics.js";
+import { enableBackgroundWorkTrackingForTests, disableBackgroundWorkTrackingForTests } from "../lib/backgroundWork.js";
 
 // ── IDs — canonical entity ids never contain ':' ──────────────────────────────
 
@@ -569,6 +570,8 @@ const DUPLICATE_TRIP_RAIL: FakeState = {
 let app: Express;
 let captured: any[] = [];
 let violations: string[] = [];
+
+enableBackgroundWorkTrackingForTests();
 
 /** Reset capture, inject the fake, issue one request, wait for the async write. */
 async function serve(

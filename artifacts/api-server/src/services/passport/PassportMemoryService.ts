@@ -14,6 +14,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { VisibilityTier } from "./PassportPrivacyGuard.js";
 import { logger as rootLogger } from "../../lib/logger.js";
 import { recordEntityMedia } from "../../lib/mediaAssets.js";
+import { trackBackgroundWork } from "../../lib/backgroundWork.js";
 
 const logger = rootLogger.child({ service: "PassportMemoryService" });
 
@@ -134,13 +135,16 @@ export async function createMemory(
   // rows so the memory's photo participates in the §6.1 "one asset, many
   // entities" model once media_canonical_enabled is lit.
   if (input.photoUrl) {
-    void recordEntityMedia(db, {
-      ownerUserId: input.userId,
-      publicUrl: input.photoUrl,
-      entityType: "memory",
-      entityId: memoryId,
-      isCover: true,
-    });
+    trackBackgroundWork(
+      recordEntityMedia(db, {
+        ownerUserId: input.userId,
+        publicUrl: input.photoUrl,
+        entityType: "memory",
+        entityId: memoryId,
+        isCover: true,
+      }),
+      { label: "passport.memory.media_attachment", logger },
+    );
   }
 
   return memoryId;

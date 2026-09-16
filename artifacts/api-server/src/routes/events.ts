@@ -196,6 +196,7 @@ import { recordTrustEvent } from "../services/trust/TrustEventService.js";
 import { rankCandidates } from "../lib/portavaRank.js";
 import type { RankCandidate, ViewerContext } from "../lib/portavaRank.js";
 import { logImpression } from "../lib/rankLog.js";
+import { trackBackgroundWork } from "../lib/backgroundWork.js";
 import {
   toPrivateEventPreview,
   toAuthorizedEventView,
@@ -641,7 +642,10 @@ router.post("/events", async (req, res) => {
     const _sc = getServiceClient();
     if (_sc) {
       const textToDetect = b.description ? `${b.title} ${b.description}` : b.title;
-      detectAndStoreLanguage(_sc, 'event', (ev as any).id, textToDetect, req.log).catch(() => {});
+      trackBackgroundWork(
+        detectAndStoreLanguage(_sc, 'event', (ev as any).id, textToDetect, req.log),
+        { label: "event-created-language-detection", logger: req.log },
+      );
     }
   }
 
@@ -948,7 +952,10 @@ router.get("/events", async (req, res) => {
 
   // Paginate the ranked result — log only what is actually served
   const pagedEvents = rankedEvents.slice(offset, offset + limit);
-  void logImpression(rankedScored.slice(offset, offset + limit), user.id, "events", sessionId);
+  trackBackgroundWork(
+    logImpression(rankedScored.slice(offset, offset + limit), user.id, "events", sessionId),
+    { label: "event-feed-impression", logger: req.log },
+  );
 
   res.json({
     events: pagedEvents.map((ev: any) => ({
@@ -1821,7 +1828,10 @@ router.post("/events/drafts/:draftId/publish", async (req, res) => {
   // Language detection — fire-and-forget; sets events.original_language for translation.
   if (b.title?.trim()) {
     const textToDetect = b.description ? `${b.title} ${b.description}` : b.title;
-    detectAndStoreLanguage(sc, 'event', (ev as any).id, textToDetect, req.log).catch(() => {});
+    trackBackgroundWork(
+      detectAndStoreLanguage(sc, 'event', (ev as any).id, textToDetect, req.log),
+      { label: "event-created-language-detection", logger: req.log },
+    );
   }
 
   // Publisher is always the host → participant view
@@ -2220,8 +2230,7 @@ router.patch("/events/:id", async (req, res) => {
   const isPublished = !["draft", "cancelled", "archived"].includes((current as any).state);
 
   if (changed && isPublished) {
-    void (async () => {
-      try {
+    trackBackgroundWork((async () => {
         const recipients = await getAttendeeRecipients(sc, id);
         if (recipients.length > 0) {
           await sendPushWithRetry(sc, recipients, {
@@ -2230,8 +2239,7 @@ router.patch("/events/:id", async (req, res) => {
             data: { eventId: id, type: "event_updated" },
           });
         }
-      } catch {}
-    })();
+    })(), { label: "event-update-attendee-notifications", logger: req.log });
   }
 
   // If event just opened and chat is enabled, create chat thread
@@ -2241,8 +2249,7 @@ router.patch("/events/:id", async (req, res) => {
 
   // Post-attendance review notification — fire-and-forget
   if (b.state === "completed" && (current as any).state !== "completed") {
-    void (async () => {
-      try {
+    trackBackgroundWork((async () => {
         const { data: confirmed } = await sc
           .from("event_attendee_states")
           .select("user_id, profiles!user_id(expo_push_token)")
@@ -2288,19 +2295,24 @@ router.patch("/events/:id", async (req, res) => {
             ),
           );
         }
-      } catch {}
-    })();
+    })(), { label: "event-completion-review-notifications", logger: req.log });
   }
 
   // Translation: invalidate + re-detect when title/description change.
   if (b.title !== undefined || b.description !== undefined) {
     const scTx = getServiceClient();
     if (scTx) {
-      invalidateContentTranslations(scTx, 'event', id).catch(() => {});
+      trackBackgroundWork(
+        invalidateContentTranslations(scTx, 'event', id),
+        { label: "event-translation-invalidation", logger: req.log },
+      );
       const textForDetect = [b.title ?? (current as any).title, b.description ?? (current as any).description]
         .filter(Boolean).join(' ');
       if (textForDetect.trim()) {
-        detectAndStoreLanguage(scTx, 'event', id, textForDetect, req.log).catch(() => {});
+        trackBackgroundWork(
+          detectAndStoreLanguage(scTx, 'event', id, textForDetect, req.log),
+          { label: "event-language-detection", logger: req.log },
+        );
       }
     }
   }
@@ -2334,8 +2346,7 @@ router.delete("/events/:id", async (req, res) => {
   if (cancelErr) { sendError(res, "db_error", cancelErr.message); return; }
 
   // Notify all Going/Maybe attendees (fire-and-forget)
-  void (async () => {
-    try {
+  trackBackgroundWork((async () => {
       const recipients = await getAttendeeRecipients(sc, id);
       if (recipients.length > 0) {
         await sendPushWithRetry(sc, recipients, {
@@ -2344,11 +2355,7 @@ router.delete("/events/:id", async (req, res) => {
           data: { eventId: id, type: "event_cancelled" },
         });
       }
-    } catch (err) {
-      // resolves-not-throws-ok: fire-and-forget push — best-effort, logged.
-      req.log?.warn({ err, eventId: id }, "event-cancelled push notify failed");
-    }
-  })();
+  })(), { label: "event-cancellation-notifications", logger: req.log });
 
   res.json({ ok: true });
 });
@@ -2468,8 +2475,7 @@ router.post("/events/:id/rsvp", async (req, res) => {
 
   // Fire-and-forget: award first_event_joined stamp on a user's very first Going RSVP
   if (status === "going") {
-    void (async () => {
-      try {
+    trackBackgroundWork((async () => {
         const { data: prior } = await sc
           .from("event_rsvps")
           .select("event_id")
@@ -2489,15 +2495,17 @@ router.post("/events/:id/rsvp", async (req, res) => {
             sourceId: user.id,
             dedupWindowHours: 99999,
             metadata: { event_id: id },
-          }).catch(() => {});
+          });
         }
-      } catch {}
-    })();
+    })(), { label: "first-event-joined-trust-event", logger: req.log });
   }
 
   // Phase 14 — link RSVP back to the originating Compass recommendation.
   if (status === "going") {
-    void linkOutcomeSignal(sc, user.id, id, "went", "route:event_rsvp");
+    trackBackgroundWork(
+      linkOutcomeSignal(sc, user.id, id, "went", "route:event_rsvp"),
+      { label: "event-rsvp-outcome-signal", logger: req.log },
+    );
   }
 
   // Stamp Wave 2 (closes Task #1041 for RSVPs): first_event_joined on a
@@ -2510,8 +2518,7 @@ router.post("/events/:id/rsvp", async (req, res) => {
   // stamp_criteria_engine_enabled is on AND those definitions are active, so
   // this stays inert until you deliberately turn the engine on.
   if (status === "going") {
-    void (async () => {
-      try {
+    trackBackgroundWork((async () => {
         const { awardStamp } = await import("../services/passport/StampAwardEngine.js");
         const { NotificationService } = await import("../services/notifications/NotificationService.js");
         const { NotificationRouter } = await import("../services/notifications/NotificationRouter.js");
@@ -2558,8 +2565,7 @@ router.post("/events/:id/rsvp", async (req, res) => {
             await notifyEarned(o.userStampId, label);
           }
         }
-      } catch {}
-    })();
+    })(), { label: "event-rsvp-stamp-awards", logger: req.log });
   }
 
   res.json({ status, eventId: id });
@@ -2704,7 +2710,10 @@ router.post("/events/:id/join", async (req, res) => {
   await logEventActivity(sc, id, user.id, "joined", {});
 
   // Phase 14 — link join back to the originating Compass recommendation.
-  void linkOutcomeSignal(sc, user.id, id, "went", "route:event_join");
+  trackBackgroundWork(
+    linkOutcomeSignal(sc, user.id, id, "went", "route:event_join"),
+    { label: "event-join-outcome-signal", logger: req.log },
+  );
 
   res.json({ ok: true });
 });
@@ -3082,8 +3091,7 @@ router.post("/events/:id/requests", async (req, res) => {
   if (error) { sendError(res, "db_error", error.message); return; }
 
   // Notify host (fire-and-forget)
-  void (async () => {
-    try {
+  trackBackgroundWork((async () => {
       const { data: hp } = await sc.from("profiles").select("expo_push_token").eq("id", (ev as any).host_id).maybeSingle();
       if ((hp as any)?.expo_push_token) {
         await sendPushWithRetry(sc, { userId: (ev as any).host_id, tokens: [(hp as any).expo_push_token] }, {
@@ -3092,11 +3100,7 @@ router.post("/events/:id/requests", async (req, res) => {
           data: { eventId: id, type: "event_join_request" },
         });
       }
-    } catch (err) {
-      // resolves-not-throws-ok: fire-and-forget push — best-effort, logged.
-      req.log?.warn({ err, eventId: id }, "join-request push notify failed");
-    }
-  })();
+  })(), { label: "event-join-request-notification", logger: req.log });
 
   res.status(201).json({ ok: true, status: "pending" });
 });
@@ -3240,8 +3244,7 @@ router.patch("/events/:id/requests/:userId", async (req, res) => {
   }
 
   // Notify the requester (fire-and-forget)
-  void (async () => {
-    try {
+  trackBackgroundWork((async () => {
       const { data: evData } = await sc.from("events").select("title").eq("id", id).maybeSingle();
       const { data: hp } = await sc.from("profiles").select("expo_push_token").eq("id", userId).maybeSingle();
       if ((hp as any)?.expo_push_token) {
@@ -3253,11 +3256,7 @@ router.patch("/events/:id/requests/:userId", async (req, res) => {
           data: { eventId: id, type: "event_request_decision", decision: action },
         });
       }
-    } catch (err) {
-      // resolves-not-throws-ok: fire-and-forget push — best-effort, logged.
-      req.log?.warn({ err, eventId: id }, "request-decision push notify failed");
-    }
-  })();
+  })(), { label: "event-request-decision-notification", logger: req.log });
 
   res.json({ ok: true, action });
 });
@@ -3405,8 +3404,7 @@ router.post("/events/:id/attendance/:userId", async (req, res) => {
   if (confirmErr) { sendError(res, "db_error", confirmErr.message); return; }
 
   // Trust Score event (fire-and-forget)
-  void (async () => {
-    try {
+  trackBackgroundWork((async () => {
       await recordTrustEvent(sc, {
         userId,
         eventType: "event_attendance_confirmed",
@@ -3416,12 +3414,7 @@ router.post("/events/:id/attendance/:userId", async (req, res) => {
         sourceType: "event",
         sourceId: id,
       });
-    } catch (err) {
-      // recordTrustEvent THROWS on a DB error — a swallowed throw here means the
-      // attendee's trust credit was silently lost, so log it (still non-fatal).
-      req.log?.warn({ err, eventId: id, userId }, "attendance-confirmed trust event failed");
-    }
-  })();
+  })(), { label: "event-attendance-confirmed-trust-event", logger: req.log });
 
   res.json({ ok: true, confirmedAt: now });
 });
@@ -3466,8 +3459,7 @@ router.post("/events/:id/noshow/:userId", async (req, res) => {
   if (noShowErr) { sendError(res, "db_error", noShowErr.message); return; }
 
   // Trust Score penalty (fire-and-forget)
-  void (async () => {
-    try {
+  trackBackgroundWork((async () => {
       await recordTrustEvent(sc, {
         userId,
         eventType: "event_no_show",
@@ -3478,12 +3470,7 @@ router.post("/events/:id/noshow/:userId", async (req, res) => {
         sourceId: id,
         dedupWindowHours: 48,
       });
-    } catch (err) {
-      // recordTrustEvent THROWS on a DB error — a swallowed throw here means the
-      // no-show penalty was silently lost, so log it (still non-fatal).
-      req.log?.warn({ err, eventId: id, userId }, "no-show trust penalty failed");
-    }
-  })();
+  })(), { label: "event-no-show-trust-penalty", logger: req.log });
 
   res.json({ ok: true, noShowAt: now });
 });
@@ -3724,8 +3711,7 @@ router.post("/events/:id/updates", async (req, res) => {
 
   // Notify attendees (fire-and-forget)
   if (pinned) {
-    void (async () => {
-      try {
+    trackBackgroundWork((async () => {
         const recipients = await getAttendeeRecipients(sc, id);
         if (recipients.length > 0) {
           const { data: ev } = await sc.from("events").select("title").eq("id", id).maybeSingle();
@@ -3735,11 +3721,7 @@ router.post("/events/:id/updates", async (req, res) => {
             data: { eventId: id, type: "event_update" },
           });
         }
-      } catch (err) {
-        // resolves-not-throws-ok: fire-and-forget push — best-effort, logged.
-        req.log?.warn({ err, eventId: id }, "event-update push notify failed");
-      }
-    })();
+    })(), { label: "event-pinned-update-notification", logger: req.log });
   }
 
   res.status(201).json(update);
@@ -4243,8 +4225,7 @@ router.post("/events/:id/publish", async (req, res) => {
   await logEventActivity(sc, id, user.id, "published", {});
 
   // Fire-and-forget: award first_event_hosted stamp on a user's very first published event
-  void (async () => {
-    try {
+  trackBackgroundWork((async () => {
       const { data: prior } = await sc
         .from("events")
         .select("id")
@@ -4264,17 +4245,15 @@ router.post("/events/:id/publish", async (req, res) => {
           sourceId: user.id,
           dedupWindowHours: 99999,
           metadata: { event_id: id },
-        }).catch(() => {});
+        });
       }
-    } catch {}
-  })();
+  })(), { label: "first-event-hosted-trust-event", logger: req.log });
 
   // Stamp Wave 2 (closes Task #1041 for hosting): first_event_hosted on
   // publish. Fire-and-forget; idempotent via (user:def:events:eventId).
   // (first_event_joined is wired at the RSVP-going site. Event-category
   // variants — food/music/outdoor — wait for the criteria engine wave.)
-  void (async () => {
-    try {
+  trackBackgroundWork((async () => {
       const { awardStamp } = await import("../services/passport/StampAwardEngine.js");
       const r = await awardStamp(sc, {
         userId: user.id,
@@ -4296,8 +4275,7 @@ router.post("/events/:id/publish", async (req, res) => {
         });
         if (row) await notifRouter.route(row);
       }
-    } catch {}
-  })();
+  })(), { label: "event-publish-stamp-award", logger: req.log });
 
   // Viewer is the host → always participant view
   res.json(formatEvent(updated as any, user.id, { goingRsvp: true }));
@@ -4333,8 +4311,7 @@ router.post("/events/:id/cancel", async (req, res) => {
 
   await logEventActivity(sc, id, user.id, "cancelled", { reason: reason ?? null });
 
-  void (async () => {
-    try {
+  trackBackgroundWork((async () => {
       const recipients = await getAttendeeRecipients(sc, id);
       if (recipients.length > 0) {
         await sendPushWithRetry(sc, recipients, {
@@ -4343,11 +4320,7 @@ router.post("/events/:id/cancel", async (req, res) => {
           data: { eventId: id, type: "event_cancelled" },
         });
       }
-    } catch (err) {
-      // resolves-not-throws-ok: fire-and-forget push — best-effort, logged.
-      req.log?.warn({ err, eventId: id }, "admin-cancel push notify failed");
-    }
-  })();
+  })(), { label: "event-admin-cancellation-notification", logger: req.log });
 
   res.json({ ok: true });
 });
@@ -4382,8 +4355,7 @@ router.post("/events/:id/postpone", async (req, res) => {
   if (postponeErr) { sendError(res, "db_error", postponeErr.message); return; }
   await logEventActivity(sc, id, user.id, "postponed", { reason: reason ?? null });
 
-  void (async () => {
-    try {
+  trackBackgroundWork((async () => {
       const recipients = await getAttendeeRecipients(sc, id);
       if (recipients.length > 0) {
         await sendPushWithRetry(sc, recipients, {
@@ -4392,11 +4364,7 @@ router.post("/events/:id/postpone", async (req, res) => {
           data: { eventId: id, type: "event_postponed" },
         });
       }
-    } catch (err) {
-      // resolves-not-throws-ok: fire-and-forget push — best-effort, logged.
-      req.log?.warn({ err, eventId: id }, "event-postponed push notify failed");
-    }
-  })();
+  })(), { label: "event-postponement-notification", logger: req.log });
 
   res.json({ ok: true });
 });
@@ -4430,20 +4398,24 @@ router.post("/events/:id/complete", async (req, res) => {
   await logEventActivity(sc, id, user.id, "completed", {});
 
   // Fire-and-forget: award trust signals + send review-prompt push notifications + stamps
-  void (async () => {
-    try {
+  trackBackgroundWork((async () => {
       const evData = ev as any;
+      const failures: unknown[] = [];
       // Award host plan_attendance signal for completing an event
-      await recordTrustEvent(sc, {
-        userId: evData.host_id,
-        eventType: "event_hosted",
-        category: "host_quality",
-        delta: 5,
-        severity: "minor",
-        sourceType: "event",
-        sourceId: id,
-        metadata: { title: evData.title },
-      }).catch(() => {});
+      try {
+        await recordTrustEvent(sc, {
+          userId: evData.host_id,
+          eventType: "event_hosted",
+          category: "host_quality",
+          delta: 5,
+          severity: "minor",
+          sourceType: "event",
+          sourceId: id,
+          metadata: { title: evData.title },
+        });
+      } catch (error) {
+        failures.push(error);
+      }
 
       // Find all checked-in attendees via event_attendee_states (the canonical check-in table)
       const { data: checkins } = await sc
@@ -4455,7 +4427,7 @@ router.post("/events/:id/complete", async (req, res) => {
 
       if (checkinUserIds.length > 0) {
         // Award trust signal to each checked-in attendee
-        await Promise.all(checkinUserIds.map((uid) =>
+        const attendeeTrustSettled = await Promise.allSettled(checkinUserIds.map((uid) =>
           recordTrustEvent(sc, {
             userId: uid,
             eventType: "event_attended",
@@ -4465,8 +4437,11 @@ router.post("/events/:id/complete", async (req, res) => {
             sourceType: "event",
             sourceId: id,
             metadata: { title: evData.title },
-          }).catch(() => {}),
+          }),
         ));
+        for (const result of attendeeTrustSettled) {
+          if (result.status === "rejected") failures.push(result.reason);
+        }
 
         // Send review-prompt push notifications to checked-in attendees (excluding host)
         const attendeeIds = checkinUserIds.filter((uid) => uid !== evData.host_id);
@@ -4514,13 +4489,15 @@ router.post("/events/:id/complete", async (req, res) => {
       // Batch one notification per user for any stamps awarded
       const stampsByUser = new Map<string, string[]>();
       for (const r of stampSettled) {
-        if (r.status === "fulfilled" && (r as any).value.awarded) {
+        if (r.status === "rejected") {
+          failures.push(r.reason);
+        } else if ((r as any).value.awarded) {
           const { userId, slug } = (r as any).value;
           if (!stampsByUser.has(userId)) stampsByUser.set(userId, []);
           stampsByUser.get(userId)!.push(slug);
         }
       }
-      await Promise.allSettled(
+      const notificationSettled = await Promise.allSettled(
         [...stampsByUser.entries()].map(async ([uid, slugs]) => {
           const notifSvc    = new NotificationService(sc);
           const notifRouter = new NotificationRouter(sc);
@@ -4534,8 +4511,14 @@ router.post("/events/:id/complete", async (req, res) => {
           if (row) await notifRouter.route(row);
         }),
       );
-    } catch { /* non-fatal */ }
-  })();
+      for (const result of notificationSettled) {
+        if (result.status === "rejected") failures.push(result.reason);
+      }
+
+      if (failures.length > 0) {
+        throw new AggregateError(failures, "One or more event-completion background operations failed");
+      }
+  })(), { label: "event-completion-trust-stamps-notifications", logger: req.log });
 
   res.json({ ok: true });
 });
@@ -4714,8 +4697,7 @@ router.post("/events/:id/join-request", async (req, res) => {
   );
   if (error) { sendError(res, "db_error", error.message); return; }
 
-  void (async () => {
-    try {
+  trackBackgroundWork((async () => {
       const { data: hp } = await sc.from("profiles").select("expo_push_token").eq("id", (ev as any).host_id).maybeSingle();
       if ((hp as any)?.expo_push_token) {
         await sendPushWithRetry(sc, { userId: (ev as any).host_id, tokens: [(hp as any).expo_push_token] }, {
@@ -4724,11 +4706,7 @@ router.post("/events/:id/join-request", async (req, res) => {
           data: { eventId: id, type: "event_join_request" },
         });
       }
-    } catch (err) {
-      // resolves-not-throws-ok: fire-and-forget push — best-effort, logged.
-      req.log?.warn({ err, eventId: id }, "join-request push notify failed");
-    }
-  })();
+  })(), { label: "event-join-request-notification", logger: req.log });
 
   res.status(201).json({ ok: true, status: "pending" });
 });
@@ -4895,8 +4873,7 @@ router.post("/events/:id/invite", async (req, res) => {
 
   if (error) { req.log.error({ err: error }, "invite user"); sendError(res, "db_error", error.message); return; }
 
-  void (async () => {
-    try {
+  trackBackgroundWork((async () => {
       const [evData, inviteeProfile, inviterProfile] = await Promise.all([
         sc.from("events").select("title").eq("id", id).maybeSingle(),
         sc.from("profiles").select("expo_push_token").eq("id", inviteeId).maybeSingle(),
@@ -4928,8 +4905,7 @@ router.post("/events/:id/invite", async (req, res) => {
         // Privacy: params deliberately contain NO event title.
         params: { actor: actorName, eventId: id },
       });
-    } catch {}
-  })();
+  })(), { label: "event-invite-notification", logger: req.log });
 
   await logEventActivity(sc, id, user.id, "user_invited", { inviteeId });
 
@@ -6049,8 +6025,7 @@ router.post("/events/:id/telegraph-thread", async (req, res) => {
   if (!threadId) { sendError(res, "db_error", "Failed to create event chat thread", { exposeDetail: true }); return; }
 
   // Sync all current Going attendees into the thread, skipping blocked users (fire-and-forget)
-  void (async () => {
-    try {
+  trackBackgroundWork((async () => {
       const { data: goingRsvps } = await sc.from("event_rsvps").select("user_id")
         .eq("event_id", id).eq("status", "going");
       for (const r of (goingRsvps as any[]) ?? []) {
@@ -6059,16 +6034,10 @@ router.post("/events/:id/telegraph-thread", async (req, res) => {
         if (await isBlocked(sc, (ev as any).host_id ?? user.id, uid)) continue;
         await addUserToChatThread(sc, threadId, uid);
       }
-    } catch (err) {
-      // Best-effort sync, but a silent failure leaves Going attendees out of the
-      // event chat — log it (re-synced on the next open).
-      req.log?.warn({ err, eventId: id, threadId }, "event chat attendee sync failed");
-    }
-  })();
+  })(), { label: "event-chat-attendee-sync", logger: req.log });
 
   // Post a pinned context card if this thread was freshly created
-  void (async () => {
-    try {
+  trackBackgroundWork((async () => {
       const { data: existing } = await sc.from("messages").select("id")
         .eq("thread_id", threadId).eq("msg_type", "system").eq("subtype", "event_context_card").limit(1).maybeSingle();
       if (!existing) {
@@ -6101,11 +6070,7 @@ router.post("/events/:id/telegraph-thread", async (req, res) => {
           req.log?.warn({ err: cardErr, eventId: id, threadId }, "event context card insert failed");
         }
       }
-    } catch (err) {
-      // resolves-not-throws-ok: cosmetic system card — best-effort, logged.
-      req.log?.warn({ err, eventId: id, threadId }, "event context card post failed");
-    }
-  })();
+  })(), { label: "event-chat-context-card", logger: req.log });
 
   await logEventActivity(sc, id, user.id, "telegraph_thread_ensured", { threadId });
 

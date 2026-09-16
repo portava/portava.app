@@ -34,6 +34,7 @@ import tzLookup from "tz-lookup";
 import type { CompassItem } from "./types.js";
 import type { RankingFactor } from "./CompassRecommendationEngine.js";
 import { canonicalCityKey } from "../lib/canonicalLocations.js";
+import { trackBackgroundWork } from "../lib/backgroundWork.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { mayPublishRhythm } from "../lib/compassRhythmGate.js";
 
@@ -242,12 +243,12 @@ function persistLearnedTimezone(key: string, tz: string): void {
   const db = tzPersistDb;
   if (!db) return;
   try {
-    void Promise.resolve(
+    trackBackgroundWork(Promise.resolve(
       db.from(CITY_TZ_TABLE).upsert(
         { city_key: key, timezone: tz, updated_at: new Date().toISOString() },
         { onConflict: "city_key" },
       ),
-    ).catch(() => { /* fail-soft */ });
+    ).catch(() => { /* fail-soft */ }), { label: `compass timezone persistence ${key}` });
   } catch { /* fail-soft */ }
 }
 

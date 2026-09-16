@@ -8,6 +8,7 @@ import { executeAccountDeletion } from "../services/accountDeletion/AccountDelet
 import { retranslateForUser } from "../services/messageTranslation";
 import { shouldRetranslateOnLanguageChange } from "../lib/retranslateGate";
 import { detectAndStoreLanguage, invalidateContentTranslations } from "../services/contentTranslation.js";
+import { trackBackgroundWork } from "../lib/backgroundWork.js";
 import { isFlagEnabled, isKillSwitchEngaged } from "../lib/featureFlags";
 import { invalidateCompassHomeCache } from "./compassHome";
 import { sniffMedia, processImage, type ProcessedImage, type SniffResult } from "../lib/mediaProcessing";
@@ -901,7 +902,10 @@ router.patch("/me/profile", async (req, res) => {
         newLanguage: p.preferredLanguage,
         autoTranslateMessages: (prefRow as any)?.auto_translate_messages,
       })) {
-        retranslateForUser(sc, user.id, p.preferredLanguage, req.log).catch(() => {});
+        trackBackgroundWork(
+          retranslateForUser(sc, user.id, p.preferredLanguage, req.log),
+          { label: "profile-language-retranslation", logger: req.log },
+        );
       }
     }
   }
@@ -912,10 +916,16 @@ router.patch("/me/profile", async (req, res) => {
     const sc = getServiceClient();
     if (sc) {
       if (p.bio && p.bio.trim()) {
-        detectAndStoreLanguage(sc, 'bio', user.id, p.bio, req.log).catch(() => {});
+        trackBackgroundWork(
+          detectAndStoreLanguage(sc, 'bio', user.id, p.bio, req.log),
+          { label: "profile-bio-language-detection", logger: req.log },
+        );
       }
       // Bio changed — purge stale cached translations.
-      invalidateContentTranslations(sc, 'bio', user.id).catch(() => {});
+      trackBackgroundWork(
+        invalidateContentTranslations(sc, 'bio', user.id),
+        { label: "profile-bio-translation-invalidation", logger: req.log },
+      );
     }
   }
 

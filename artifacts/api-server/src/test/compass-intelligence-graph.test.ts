@@ -55,6 +55,7 @@ import { SEED_CITIES, getPopularCities } from "../lib/popularCities.js";
 import { canonicalCityKey } from "../lib/canonicalLocations.js";
 import { runPipeline } from "../compass/CompassPipeline.js";
 import type { CompassItem, CompassProfile, CompassContext } from "../compass/types.js";
+import { awaitBackgroundWork, enableBackgroundWorkTrackingForTests, disableBackgroundWorkTrackingForTests } from "../lib/backgroundWork.js";
 
 const USER_ID  = "00000000-0000-0000-0000-000000000001";
 const ADMIN_ID = "00000000-0000-0000-0000-000000000002";
@@ -198,6 +199,7 @@ let server: Server;
 let base: string;
 
 before(async () => {
+  enableBackgroundWorkTrackingForTests();
   server = createServer(testApp);
   await new Promise<void>((res) => server.listen(0, "127.0.0.1", res));
   const addr = server.address() as { port: number };
@@ -205,6 +207,7 @@ before(async () => {
 });
 
 after(async () => {
+  disableBackgroundWorkTrackingForTests();
   _setTestServiceClient(null);
   await new Promise<void>((res, rej) => server.close((e) => (e ? rej(e) : res())));
 });
@@ -776,7 +779,7 @@ describe("city timezone persistence", () => {
 
     // Learn Tbilisi from coordinates — not in the static map.
     registerCityCoordinates("Tbilisi", 41.7151, 44.8271);
-    await new Promise((r) => setTimeout(r, 0)); // flush fire-and-forget upsert
+    await awaitBackgroundWork();
 
     assert.equal(store.city_timezones!.length, 1);
     assert.equal(store.city_timezones![0]!.city_key, "tbilisi");
@@ -796,7 +799,7 @@ describe("city timezone persistence", () => {
     await initCityTimezonePersistence(makeFakeClient(store).fakeClient);
 
     assert.equal(cityTimezone("Reykjavik", { lat: 64.1466, lng: -21.9426 }), "Atlantic/Reykjavik");
-    await new Promise((r) => setTimeout(r, 0));
+    await awaitBackgroundWork();
     assert.equal(store.city_timezones!.length, 1);
     assert.equal(store.city_timezones![0]!.city_key, "reykjavik");
   });

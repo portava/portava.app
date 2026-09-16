@@ -12,6 +12,7 @@ import { recordTrustEvent } from "../trust/TrustEventService.js";
 import { resolveOrEnqueue } from "../../lib/stamps/StampCatalogService.js";
 import { countryCodeFromName } from "../../lib/stamps/countryLookup.js";
 import { logger as rootLogger } from "../../lib/logger.js";
+import { trackBackgroundWork } from "../../lib/backgroundWork.js";
 
 const logger = rootLogger.child({ service: "PassportStampService" });
 
@@ -144,7 +145,7 @@ export async function createStamp(
   const stampId = (data as any).id;
 
   // Fire-and-forget: resolve universal catalog entry for v1 passport_stamps path
-  Promise.resolve().then(async () => {
+  trackBackgroundWork(Promise.resolve().then(async () => {
     try {
       // Resolve the country NAME to its real ISO code. Slicing the first two
       // letters fabricated codes — "Vietnam" → "VI" (US Virgin Islands),
@@ -174,10 +175,10 @@ export async function createStamp(
     } catch {
       // Never block the v1 award path
     }
-  }).catch(() => {});
+  }), { label: "passport.stamp.catalog_link", logger });
 
   // Feed new passport stamp into Trust Engine (fire-and-forget; flag-gated internally)
-  void recordTrustEvent(db, {
+  trackBackgroundWork(recordTrustEvent(db, {
     userId,
     eventType: "passport_stamp_earned",
     category: "passport_authenticity",
@@ -186,7 +187,7 @@ export async function createStamp(
     sourceType: "passport",
     sourceId: stampId,
     dedupWindowHours: 48,
-  });
+  }), { label: "passport.stamp.trust_event", logger });
 
   return { id: stampId, isNew: true };
 }

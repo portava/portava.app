@@ -13,6 +13,7 @@ import { sendPushWithRetry } from "../lib/pushWithRetry.js";
 import { awardStamp, type StampLogger } from "../services/passport/StampAwardEngine.js";
 import { nameVisibilitySet, sanitizeIdentity, nameVisibleFor } from "../lib/publicIdentity";
 import { truncateDisplayName } from "../lib/displayName.js";
+import { trackBackgroundWork } from "../lib/backgroundWork.js";
 
 const router = Router();
 
@@ -156,6 +157,9 @@ async function awardTripCompletionStamps(
       }, log).then((result) => ({ userId, slug, ...result })),
     ),
   );
+  const failures = settled
+    .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+    .map((result) => result.reason);
 
   // Group awarded slugs by userId — send ONE notification per user, not one per stamp.
   const awardedByUser = new Map<string, string[]>();
@@ -170,7 +174,7 @@ async function awardTripCompletionStamps(
   if (awardedByUser.size > 0) {
     const { NotificationService } = await import("../services/notifications/NotificationService.js");
     const { NotificationRouter }  = await import("../services/notifications/NotificationRouter.js");
-    await Promise.allSettled(
+    const notificationSettled = await Promise.allSettled(
       [...awardedByUser.entries()].map(async ([userId, slugs]) => {
         const notifSvc    = new NotificationService(sc);
         const notifRouter = new NotificationRouter(sc);
@@ -188,6 +192,13 @@ async function awardTripCompletionStamps(
         if (row) await notifRouter.route(row);
       }),
     );
+    for (const result of notificationSettled) {
+      if (result.status === "rejected") failures.push(result.reason);
+    }
+  }
+
+  if (failures.length > 0) {
+    throw new AggregateError(failures, "One or more trip-completion background operations failed");
   }
 }
 
@@ -276,21 +287,27 @@ router.post("/trips", async (req, res) => {
     const _sc = getServiceClient();
     if (_sc) {
       const textToDetect = tripNotes ? `${title} ${tripNotes}` : title;
-      detectAndStoreLanguage(_sc, 'trip', newTripIdForLang, textToDetect, req.log).catch(() => {});
+      trackBackgroundWork(
+        detectAndStoreLanguage(_sc, 'trip', newTripIdForLang, textToDetect, req.log),
+        { label: "trip-created-language-detection", logger: req.log },
+      );
     }
   }
 
   // Wire chat sync: ensure trip chat thread exists with the owner as first member.
   const newTripId = (data as any)?.id;
   if (newTripId) {
-    syncTripChatMembers(newTripId, client).catch(() => {});
+    trackBackgroundWork(
+      syncTripChatMembers(newTripId, client),
+      { label: "trip-created-chat-sync", logger: req.log },
+    );
   }
 
   // Fire-and-forget: award first_trip_created + trip_planner stamps when a user creates
   // their first non-draft trip. Fully idempotent via awardStamp's (user:def:source) key.
   if (newTripId && computedStatus !== "draft") {
-    void (async () => {
-      try {
+    trackBackgroundWork(
+      (async () => {
         const { NotificationService } = await import("../services/notifications/NotificationService.js");
         const { NotificationRouter }  = await import("../services/notifications/NotificationRouter.js");
 
@@ -317,6 +334,9 @@ router.post("/trips", async (req, res) => {
         const awardedSlugs = settled
           .filter((r) => r.status === "fulfilled" && (r as any).value.awarded)
           .map((r) => (r as any).value.slug as string);
+        const failures = settled
+          .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+          .map((result) => result.reason);
 
         if (awardedSlugs.length > 0) {
           const notifSvc    = new NotificationService(client);
@@ -334,8 +354,12 @@ router.post("/trips", async (req, res) => {
           });
           if (row) await notifRouter.route(row);
         }
-      } catch {}
-    })();
+        if (failures.length > 0) {
+          throw new AggregateError(failures, "One or more trip-creation stamp awards failed");
+        }
+      })(),
+      { label: "trip-created-stamp-awards", logger: req.log },
+    );
   }
 });
 
@@ -716,8 +740,7 @@ router.patch("/trips/:tripId", async (req, res) => {
 
   // Post-attendance review prompt — fire-and-forget when trip transitions to completed
   if (patch.status === "completed" && t.status !== "completed") {
-    void (async () => {
-      try {
+    trackBackgroundWork((async () => {
         // Only accepted participants get the review prompt — exclude pending
         // invitees and removed members (mirrors awardTripCompletionStamps).
         const { data: members } = await sc
@@ -733,7 +756,7 @@ router.patch("/trips/:tripId", async (req, res) => {
           // below via sendPushWithRetry to avoid double-delivery.
           const { NotificationService } = await import("../services/notifications/NotificationService.js");
           const notifSvc = new NotificationService(sc);
-          await Promise.allSettled(
+          const notificationSettled = await Promise.allSettled(
             memberIds.map((uid) =>
               notifSvc.create({
                 userId: uid,
@@ -749,6 +772,9 @@ router.patch("/trips/:tripId", async (req, res) => {
               }),
             ),
           );
+          const failures = notificationSettled
+            .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+            .map((result) => result.reason);
           // Push tokens live on profiles.expo_push_token (notification_devices is empty)
           const { data: devices } = await sc.from("profiles").select("id, expo_push_token").in("id", memberIds);
           const tokensByUser = new Map<string, (string | null | undefined)[]>();
@@ -765,23 +791,34 @@ router.patch("/trips/:tripId", async (req, res) => {
               data: { type: "review_prompt", entityType: "trip", entityId: tripId, entityName: tripTitle },
             });
           }
+          if (failures.length > 0) {
+            throw new AggregateError(failures, "One or more trip review notifications failed");
+          }
         }
-      } catch {}
-    })();
+    })(), { label: "trip-completion-review-notifications", logger: req.log });
 
     // Passport stamp awards — fire-and-forget, fully idempotent
-    void awardTripCompletionStamps(sc, tripId, user.id, updated as Record<string, any>, req.log).catch(() => {});
+    trackBackgroundWork(
+      awardTripCompletionStamps(sc, tripId, user.id, updated as Record<string, any>, req.log),
+      { label: "trip-completion-stamp-awards", logger: req.log },
+    );
   }
 
   // Translation: invalidate + re-detect when title/trip_notes change.
   if (b.title !== undefined || b.tripNotes !== undefined) {
     const scTx = getServiceClient();
     if (scTx) {
-      invalidateContentTranslations(scTx, 'trip', tripId).catch(() => {});
+      trackBackgroundWork(
+        invalidateContentTranslations(scTx, 'trip', tripId),
+        { label: "trip-translation-invalidation", logger: req.log },
+      );
       const textForDetect = [b.title ?? t.title, b.tripNotes ?? t.trip_notes]
         .filter(Boolean).join(' ');
       if (textForDetect.trim()) {
-        detectAndStoreLanguage(scTx, 'trip', tripId, textForDetect, req.log).catch(() => {});
+        trackBackgroundWork(
+          detectAndStoreLanguage(scTx, 'trip', tripId, textForDetect, req.log),
+          { label: "trip-language-detection", logger: req.log },
+        );
       }
     }
   }
@@ -883,8 +920,7 @@ router.post("/trips/:tripId/invite", async (req, res) => {
   if (error) { req.log.error({ err: error }, "trip invite: insert failed"); sendError(res, "db_error", error.message); return; }
 
   // Fire-and-forget: notify the invitee they've been invited.
-  (async () => {
-    try {
+  trackBackgroundWork((async () => {
       const sc2 = getServiceClient();
       if (!sc2) return;
       const [{ data: tripRow }, { data: inviterRow }, { data: inviteeRow }] = await Promise.all([
@@ -919,8 +955,7 @@ router.post("/trips/:tripId/invite", async (req, res) => {
         // Privacy: params deliberately contain NO trip title or destination.
         params: { actor: inviterName, tripId },
       });
-    } catch { /* best-effort */ }
-  })();
+  })(), { label: "trip-invite-accepted-notification", logger: req.log });
 
   res.status(201).json({ status: "invited", tripId, userId });
 });
@@ -951,11 +986,13 @@ router.post("/trips/:tripId/accept-invite", async (req, res) => {
   if (error) { req.log.error({ err: error }, "trip invite accept: update failed"); sendError(res, "db_error", error.message); return; }
 
   // Fire-and-forget: sync group chat membership for this trip.
-  syncTripChatMembers(tripId, client).catch((e) => req.log?.error({ err: e }, "syncTripChatMembers failed"));
+  trackBackgroundWork(
+    syncTripChatMembers(tripId, client),
+    { label: "trip-invite-accepted-chat-sync", logger: req.log },
+  );
 
   // Fire-and-forget: notify trip owner their invite was accepted (#129).
-  (async () => {
-    try {
+  trackBackgroundWork((async () => {
       const sc2 = getServiceClient();
       if (!sc2) return;
       const { data: tripRow } = await sc2.from("trips").select("title, owner_id").eq("id", tripId).maybeSingle();
@@ -973,8 +1010,7 @@ router.post("/trips/:tripId/accept-invite", async (req, res) => {
         body: `${acceptorName} joined your trip!`,
         data: { type: "trip_invite_accepted", tripId },
       });
-    } catch { /* best-effort */ }
-  })();
+  })(), { label: "trip-invite-accepted-notification", logger: req.log });
 
   res.status(200).json({ status: "accepted", tripId, role: "member" });
 });
@@ -1005,8 +1041,7 @@ router.post("/trips/:tripId/decline-invite", async (req, res) => {
   if (error) { req.log.error({ err: error }, "trip invite decline: delete failed"); sendError(res, "db_error", error.message); return; }
 
   // Fire-and-forget: notify trip owner that their invitation was declined.
-  (async () => {
-    try {
+  trackBackgroundWork((async () => {
       const sc2 = getServiceClient();
       if (!sc2) return;
       const [{ data: tripRow }, { data: declinerRow }] = await Promise.all([
@@ -1025,8 +1060,7 @@ router.post("/trips/:tripId/decline-invite", async (req, res) => {
         body:  `${declinerName} declined your invitation to ${(tripRow as any)?.title ?? "your trip"}`,
         data:  { type: "trip_invite_declined", tripId },
       });
-    } catch { /* best-effort */ }
-  })();
+  })(), { label: "trip-invite-declined-notification", logger: req.log });
 
   res.status(200).json({ status: "declined", tripId });
 });
@@ -1539,7 +1573,10 @@ router.post("/trips/:tripId/members", async (req, res) => {
   if (existing) {
     const { error } = await client.from("trip_members").update({ role }).eq("trip_id", tripId).eq("user_id", userId);
     if (error) { req.log.error({ err: error }, "trip member role update failed"); sendError(res, "db_error", error.message); return; }
-    syncTripChatMembers(tripId, client).catch((e) => req.log?.error({ err: e }, "syncTripChatMembers failed"));
+    trackBackgroundWork(
+      syncTripChatMembers(tripId, client),
+      { label: "trip-invite-declined-chat-sync", logger: req.log },
+    );
     res.status(200).json({ status: "updated", tripId, userId, role });
     return;
   }
@@ -1547,7 +1584,15 @@ router.post("/trips/:tripId/members", async (req, res) => {
   const { error } = await client.from("trip_members").insert({ trip_id: tripId, user_id: userId, role });
   if (error) { req.log.error({ err: error }, "trip member add: insert failed"); sendError(res, "db_error", error.message); return; }
 
-  syncTripChatMembers(tripId, client).catch((e) => req.log?.error({ err: e }, "syncTripChatMembers failed"));
+  trackBackgroundWork(
+    syncTripChatMembers(tripId, client),
+    {
+      label: "trip-member-chat-sync",
+      logger: req.log,
+      logMessage: "syncTripChatMembers failed",
+      context: { tripId },
+    },
+  );
 
   res.status(201).json({ status: "added", tripId, userId, role });
 });
@@ -1583,10 +1628,21 @@ router.delete("/trips/:tripId/members/:userId", async (req, res) => {
   const { error } = await client.from("trip_members").delete().eq("trip_id", tripId).eq("user_id", userId);
   if (error) { req.log.error({ err: error }, "trip member remove: delete failed"); sendError(res, "db_error", error.message); return; }
 
-  syncTripChatMembers(tripId, client).catch((e) => req.log?.error({ err: e }, "syncTripChatMembers failed"));
+  trackBackgroundWork(
+    syncTripChatMembers(tripId, client),
+    {
+      label: "trip-member-removal-chat-sync",
+      logger: req.log,
+      logMessage: "syncTripChatMembers failed",
+      context: { tripId },
+    },
+  );
 
   const { revokeAccessForMember } = await import("../services/tripCrew/TripCrewLiveShareService.js");
-  revokeAccessForMember(client, tripId, userId).catch((e: unknown) => req.log?.error({ err: e }, "revokeAccessForMember failed"));
+  trackBackgroundWork(
+    revokeAccessForMember(client, tripId, userId),
+    { label: "trip-member-access-revocation", logger: req.log },
+  );
 
   res.status(200).json({ status: "removed", tripId, userId });
 });

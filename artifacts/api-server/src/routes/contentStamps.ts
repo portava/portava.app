@@ -18,6 +18,7 @@
  */
 
 import { Router } from "express";
+import { trackBackgroundWork } from "../lib/backgroundWork.js";
 import { z } from "zod";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireUser, sendError, isAcceptedTripMember } from "../lib/http.js";
@@ -641,7 +642,10 @@ router.post(
       // Fire the outcome signal only for new stamps — not re-stamps or
       // migrated legacy-like rows.
       if (!priorStamp) {
-        void linkOutcomeSignal(sc, user.id, entityId, "liked", "route:content_stamp");
+        trackBackgroundWork(
+          linkOutcomeSignal(sc, user.id, entityId, "liked", "route:content_stamp"),
+          { label: "stamp.content.outcome_signal", logger: req.log },
+        );
       }
 
       res.status(200).json(result);

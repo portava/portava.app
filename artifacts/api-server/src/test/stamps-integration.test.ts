@@ -20,6 +20,12 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
+import {
+  awaitBackgroundWork,
+  enableBackgroundWorkTrackingForTests,
+} from "../lib/backgroundWork.js";
+
+enableBackgroundWorkTrackingForTests();
 
 // ── Fixed test IDs ─────────────────────────────────────────────────────────────
 
@@ -283,9 +289,6 @@ describe("Stamp award integration: POST /api/trips + PATCH + idempotency", async
     return { "Content-Type": "application/json", Authorization: `Bearer token-${OWNER_ID}` };
   }
 
-  // Fire-and-forget stamp awards settle asynchronously — allow enough time.
-  const SETTLE_MS = 250;
-
   // ── A. POST /api/trips → first_trip_created + trip_planner ─────────────────
 
   describe("A. POST /api/trips awards first_trip_created and trip_planner stamps", () => {
@@ -310,8 +313,7 @@ describe("Stamp award integration: POST /api/trips + PATCH + idempotency", async
       });
       status = res.status;
 
-      // Stamp awards fire in the background — wait for them to settle
-      await new Promise((r) => setTimeout(r, SETTLE_MS));
+      await awaitBackgroundWork();
     });
 
     it("POST returns 201 Created", () => {
@@ -395,7 +397,7 @@ describe("Stamp award integration: POST /api/trips + PATCH + idempotency", async
       });
       assert.equal(res.status, 200, `PATCH failed: ${JSON.stringify(await res.json())}`);
 
-      await new Promise((r) => setTimeout(r, SETTLE_MS));
+      await awaitBackgroundWork();
     });
 
     it("PATCH computes status = completed from past dates", () => {
@@ -440,7 +442,7 @@ describe("Stamp award integration: POST /api/trips + PATCH + idempotency", async
           visibility:         "public",
         }),
       });
-      await new Promise((r) => setTimeout(r, SETTLE_MS));
+      await awaitBackgroundWork();
       stampsAfterFirstPost = userStampsWithSlug(db, OWNER_ID, "first_trip_created").length;
 
       // Second POST — new trip, same user
@@ -456,7 +458,7 @@ describe("Stamp award integration: POST /api/trips + PATCH + idempotency", async
           visibility:         "public",
         }),
       });
-      await new Promise((r) => setTimeout(r, SETTLE_MS));
+      await awaitBackgroundWork();
     });
 
     it("first POST awards exactly one first_trip_created stamp", () => {
@@ -511,7 +513,7 @@ describe("Stamp award integration: POST /api/trips + PATCH + idempotency", async
       });
       status = res.status;
 
-      await new Promise((r) => setTimeout(r, SETTLE_MS));
+      await awaitBackgroundWork();
     });
 
     it("POST still returns 201 even when stamp flag is disabled", () => {

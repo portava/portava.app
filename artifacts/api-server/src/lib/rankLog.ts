@@ -13,6 +13,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { trackBackgroundWork } from "./backgroundWork.js";
 import { getServiceClient } from "./supabase";
 import { logger } from "./logger.js";
 import { LIVE_PULSE_SERVE_EVENT } from "../services/ranking/rankingAnalytics.js";
@@ -486,8 +487,15 @@ export async function logLivePulseServe(
     const rows = buildLivePulseServeRows(items, userId, sessionId, new Date().toISOString());
     if (rows.length === 0) return;
 
-    const { error } = await sc.from("rank_events").insert(rows);
-    if (error) onError?.(error);
+    trackBackgroundWork(
+      sc.from("rank_events").insert(rows).then(({ error }: { error?: unknown }) => {
+        if (error) {
+          onError?.(error);
+          throw error;
+        }
+      }),
+      { label: "live pulse impression persistence", logger },
+    );
   } catch (err) {
     // Never rethrow — a logging failure must not surface as an unhandled
     // rejection on the response path.

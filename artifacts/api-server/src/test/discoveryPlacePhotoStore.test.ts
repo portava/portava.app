@@ -27,6 +27,7 @@ import {
   type StoredPlacePhoto,
 } from "../lib/discoveryPlacePhotoStore.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
+import { awaitBackgroundWork, enableBackgroundWorkTrackingForTests, disableBackgroundWorkTrackingForTests } from "../lib/backgroundWork.js";
 
 // ── A Supabase double that answers the exact query shapes the store issues ───
 //
@@ -220,6 +221,9 @@ describe("Reading a stored photo — and the four ways it must refuse", () => {
   let log: { upserts: any[]; deletes: string[]; updates: any[] };
   const ORIGINAL_KEY = process.env.GOOGLE_MAPS_API_KEY;
 
+  beforeEach(() => enableBackgroundWorkTrackingForTests());
+  afterEach(() => disableBackgroundWorkTrackingForTests());
+
   beforeEach(() => {
     log = { upserts: [], deletes: [], updates: [] };
     process.env.GOOGLE_MAPS_API_KEY = "test-key-1";
@@ -270,7 +274,7 @@ describe("Reading a stored photo — and the four ways it must refuse", () => {
 
     assert.equal(await readStoredPlacePhoto(KEY), null);
     // Marked rather than silently dropped — a broken row stays observable.
-    await new Promise((r) => setTimeout(r, 0));
+    await awaitBackgroundWork();
     assert.equal(log.updates.length, 1);
     assert.equal(log.updates[0].key, KEY);
     assert.ok(log.updates[0].patch.invalid_at);

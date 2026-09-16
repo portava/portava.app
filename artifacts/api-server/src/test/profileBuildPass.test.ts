@@ -20,8 +20,15 @@ import type { Server } from "node:http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
+import {
+  awaitBackgroundWork,
+  enableBackgroundWorkTrackingForTests,
+} from "../lib/backgroundWork.js";
 import profileRouter from "../routes/profile.js";
 import reportsRouter from "../routes/reports.js";
+
+enableBackgroundWorkTrackingForTests();
+process.env.TRANSLATION_PROVIDER = "mock";
 
 // ── Stable UUIDs ──────────────────────────────────────────────────────────────
 
@@ -140,29 +147,6 @@ function freshState(): FakeState {
     inserts:  [],
     updates:  [],
   };
-}
-
-/**
- * Poll until `probe` returns a value, or fail after `timeoutMs`.
- *
- * For assertions on writes the route fires WITHOUT awaiting. Sleeping a fixed
- * amount would trade one race for a slower one; this settles on the event
- * actually happening and still fails loudly if it never does.
- */
-async function waitFor<T>(
-  probe: () => T | undefined,
-  what: string,
-  timeoutMs = 2000,
-): Promise<T> {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    const v = probe();
-    if (v !== undefined) return v;
-    if (Date.now() > deadline) {
-      throw new Error(`timed out after ${timeoutMs}ms waiting for ${what}`);
-    }
-    await new Promise((r) => setTimeout(r, 10));
-  }
 }
 
 // ── HTTP helper ───────────────────────────────────────────────────────────────
@@ -292,18 +276,13 @@ describe("PATCH /api/me/profile — allowed fields", () => {
     });
     assert.equal(res.status, 200, `Expected 200: ${JSON.stringify(res.body)}`);
 
-    // The route does not await this write, so settle it explicitly rather than
-    // asserting into the same race the test above used to lose. Bounded: if it
-    // never lands, that is a failure, not a silent pass.
-    const langWrite = await waitFor(
-      () =>
-        state.updates.find(
-          (u) =>
-            u.table === "profiles" &&
-            (u.data as any)?.bio_original_language !== undefined,
-        ),
-      "a profiles update carrying bio_original_language",
+    await awaitBackgroundWork();
+    const langWrite = state.updates.find(
+      (u) =>
+        u.table === "profiles" &&
+        (u.data as any)?.bio_original_language !== undefined,
     );
+    assert.ok(langWrite, "expected a profiles update carrying bio_original_language");
 
     // MockTranslationProvider maps 'hola' -> 'es' (src/lib/translation.ts).
     // TRANSLATION_PROVIDER defaults to 'mock' and TRANSLATION_ENABLED defaults

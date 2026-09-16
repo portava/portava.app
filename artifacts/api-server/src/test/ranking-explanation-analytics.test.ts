@@ -11,9 +11,24 @@
  *
  * Runtime: node:test + node:assert (no vitest, no real DB)
  */
-import { describe, it } from "node:test";
+import { afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { rankItems } from "../services/ranking/DiscoveryRankingService.js";
+import {
+  awaitBackgroundWork,
+  disableBackgroundWorkTrackingForTests,
+  enableBackgroundWorkTrackingForTests,
+  trackBackgroundWork,
+} from "../lib/backgroundWork.js";
+
+beforeEach(() => enableBackgroundWorkTrackingForTests());
+afterEach(async () => {
+  try {
+    await awaitBackgroundWork();
+  } finally {
+    disableBackgroundWorkTrackingForTests();
+  }
+});
 
 import {
   resolveExplanation,
@@ -332,7 +347,7 @@ describe("F. Analytics write payloads contain only safe fields", () => {
         experimentEnabled: false, shadowMode: false,
       } } as any,
     );
-    await new Promise((r) => setTimeout(r, 10)); // fire-and-forget writes
+    await awaitBackgroundWork();
     return rows;
   }
 
@@ -385,5 +400,49 @@ describe("F. Analytics write payloads contain only safe fields", () => {
         `Analytics payload must not contain forbidden field '${forbidden}'`,
       );
     }
+  });
+});
+
+describe("G. Background work tracker isolation", () => {
+  it("surfaces a rejected job even when its logger throws", async () => {
+    const failure = new Error("job failed");
+    trackBackgroundWork(Promise.reject(failure), {
+      label: "throwing-logger-job",
+      logger: {
+        error() {
+          throw new Error("logger failed");
+        },
+      },
+    });
+
+    await assert.rejects(
+      awaitBackgroundWork(),
+      (error: unknown) =>
+        error instanceof AggregateError &&
+        error.errors.includes(failure) &&
+        error.message.includes("throwing-logger-job"),
+    );
+  });
+
+  it("does not leak a disabled session's late rejection into a new session", async () => {
+    let rejectOld!: (error: Error) => void;
+    const oldWork = new Promise<void>((_resolve, reject) => {
+      rejectOld = reject;
+    });
+    trackBackgroundWork(oldWork, {
+      label: "old-session-job",
+      logger: { error() {} },
+    });
+
+    disableBackgroundWorkTrackingForTests();
+    enableBackgroundWorkTrackingForTests();
+    rejectOld(new Error("late old-session failure"));
+    await Promise.resolve();
+
+    trackBackgroundWork(Promise.resolve(), {
+      label: "new-session-job",
+      logger: { error() {} },
+    });
+    await awaitBackgroundWork();
   });
 });

@@ -33,6 +33,11 @@ import { rankItems } from "../services/ranking/DiscoveryRankingService.js";
 import type { RankingInput, RankingViewerContext } from "../services/ranking/DiscoveryRankingService.js";
 import { RankingEvent } from "../services/ranking/rankingAnalytics.js";
 import { logger } from "../lib/logger.js";
+import {
+  awaitBackgroundWork,
+  enableBackgroundWorkTrackingForTests,
+  disableBackgroundWorkTrackingForTests,
+} from "../lib/backgroundWork.js";
 
 const VIEWER_ID = "aaaaaaaa-aaaa-aaaa-aaaa-000000000001";
 
@@ -120,17 +125,21 @@ function tally(inserts: Recorded[]): Record<string, number> {
   return out;
 }
 
-/** Analytics writes are fire-and-forget; let the microtask queue drain. */
-const settle = () => new Promise((r) => setTimeout(r, 10));
+/** Analytics writes are fire-and-forget; await the tracked operation. */
+const settle = () => awaitBackgroundWork();
 
 let warnings: string[];
 let originalWarn: typeof logger.warn;
 beforeEach(() => {
+  enableBackgroundWorkTrackingForTests();
   warnings = [];
   originalWarn = logger.warn.bind(logger);
   (logger as any).warn = (ctx: any, msg?: string) => { warnings.push(msg ?? String(ctx)); };
 });
-afterEach(() => { (logger as any).warn = originalWarn; });
+afterEach(() => {
+  (logger as any).warn = originalWarn;
+  disableBackgroundWorkTrackingForTests();
+});
 
 describe("rank_events writes per candidate", () => {
   it("writes ONE analytics row per scored candidate, not two", async () => {

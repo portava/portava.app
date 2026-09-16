@@ -20,6 +20,12 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
+import {
+  awaitBackgroundWork,
+  enableBackgroundWorkTrackingForTests,
+} from "../lib/backgroundWork.js";
+
+enableBackgroundWorkTrackingForTests();
 
 // ── Fixed test IDs ─────────────────────────────────────────────────────────────
 
@@ -275,9 +281,6 @@ describe("PATCH /api/trips/:tripId → stamp award integration", async () => {
     return { "Content-Type": "application/json", Authorization: `Bearer token-${OWNER_ID}` };
   }
 
-  // Allow enough time for the fire-and-forget awardTripCompletionStamps to settle
-  const SETTLE_MS = 250;
-
   // ── V. PATCH → completed → stamps awarded ──────────────────────────────────
 
   describe("V. PATCH with past dates awards trip-completion stamps", () => {
@@ -295,8 +298,7 @@ describe("PATCH /api/trips/:tripId → stamp award integration", async () => {
       // Verify the HTTP call succeeded before proceeding
       assert.equal(res.status, 200, `PATCH failed: ${JSON.stringify(await res.json())}`);
 
-      // awardTripCompletionStamps fires in the background — wait for it
-      await new Promise((r) => setTimeout(r, SETTLE_MS));
+      await awaitBackgroundWork();
     });
 
     it("PATCH computes status = completed from past dates", async () => {
@@ -360,14 +362,14 @@ describe("PATCH /api/trips/:tripId → stamp award integration", async () => {
       await fetch(`${base()}/trips/${TRIP_ID}`, {
         method: "PATCH", headers: authHeaders(), body: JSON.stringify({}),
       });
-      await new Promise((r) => setTimeout(r, SETTLE_MS));
+      await awaitBackgroundWork();
       stampsAfterFirst = db.user_stamps.length;
 
       // Second PATCH
       await fetch(`${base()}/trips/${TRIP_ID}`, {
         method: "PATCH", headers: authHeaders(), body: JSON.stringify({}),
       });
-      await new Promise((r) => setTimeout(r, SETTLE_MS));
+      await awaitBackgroundWork();
     });
 
     it("first PATCH awards at least one stamp", () => {
@@ -409,7 +411,7 @@ describe("PATCH /api/trips/:tripId → stamp award integration", async () => {
       await fetch(`${base()}/trips/${TRIP_ID}`, {
         method: "PATCH", headers: authHeaders(), body: JSON.stringify({}),
       });
-      await new Promise((r) => setTimeout(r, SETTLE_MS));
+      await awaitBackgroundWork();
     });
 
     it("PATCH still returns 200", async () => {
@@ -457,7 +459,7 @@ describe("PATCH /api/trips/:tripId → stamp award integration", async () => {
     });
 
     it("no stamps are inserted for a rejected PATCH", async () => {
-      await new Promise((r) => setTimeout(r, SETTLE_MS));
+      await awaitBackgroundWork();
       assert.equal(db.user_stamps.length, 0, "No stamps after a forbidden PATCH");
     });
   });
