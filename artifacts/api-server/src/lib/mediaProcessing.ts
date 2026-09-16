@@ -255,3 +255,147 @@ export async function computePHash(input: Buffer): Promise<string | null> {
     return null;
   }
 }
+
+/**
+ * VOICE SNIFF — a SEPARATE, DELIBERATELY NARROWER sniffer for Telegraph §6.2
+ * voice notes. It is not a widening of `sniffMedia`, and `sniffMedia` is
+ * unchanged by its arrival.
+ *
+ * IT IS AT THE BOTTOM OF THE FILE, not beside `sniffMedia` where it reads more
+ * naturally, and that is deliberate: four censuses cite this module by line
+ * number, and lines inserted at line 73 silently repoint every citation below
+ * them. Appending costs nothing and moves nothing.
+ *
+ * WHY IT IS SEPARATE. `sniffMedia` answers "may these bytes be stored as post,
+ * memory, story or postcard media", and its answer feeds `MEDIA_SIZE_LIMITS`,
+ * `ALLOWED_MEDIA_MIME` and every surface that has ever called them. Adding a
+ * third `SniffedKind` there would have widened what every one of those surfaces
+ * accepts — in a module that exists BECAUSE two transports drifted apart on
+ * exactly that kind of change. A voice note is admitted by one route, so its
+ * sniffer is reachable from one route.
+ *
+ * ── HOW IT DECIDES, AND WHY NOT BY THE `ftyp` BRAND ─────────────────────────
+ * The obvious test is the major brand: iOS writes `M4A ` for an AAC voice memo,
+ * so admit `M4A `/`M4B ` and nothing else. That test is WRONG IN BOTH
+ * DIRECTIONS and this module made it before measuring:
+ *
+ *   * It refuses real voice notes. Android's `MediaMuxer` writes an MPEG-4
+ *     container with the brand `mp42` (or `isom`) for audio-only output just as
+ *     it does for video. `expo-av`'s recorder produces `.m4a` on Android
+ *     through that muxer, so a brand allowlist admits iOS recordings and
+ *     refuses every Android one — half the product, failing at upload.
+ *   * It admits videos. A brand is four bytes of self-description in the first
+ *     box of the file. Anyone can write `M4A ` at offset 8 of an MP4 that
+ *     carries a video track, and a brand check would then hand a video to the
+ *     audio path — which is exactly the bypass of `stripVideoLocationMetadata`
+ *     that a brand check was supposed to prevent.
+ *
+ * So the decision is made on the TRACKS, which are what the file actually
+ * contains: every `trak`'s `hdlr` handler type must be `soun`, and there must
+ * be at least one. A video track makes the answer no whatever the brand says;
+ * an audio-only Android recording is admitted whatever its brand says. A file
+ * whose `moov` cannot be walked is refused rather than guessed at, which is the
+ * same fail-closed posture the video scrub takes two functions away.
+ *
+ * The caller must still run the ISO-BMFF location scrub over the result: an
+ * `.m4a` IS an MP4 container and can carry the same `©xyz` / `loci` / Apple
+ * location boxes a phone video carries. See
+ * `mediaPipeline.ts#verifyUploadedVoiceBytes`, which does it rather than
+ * trusting that a voice recorder would not have written one.
+ */
+export interface VoiceSniffResult {
+  kind: "audio";
+  mime: string;
+  ext: string;
+  /** The ISO-BMFF major brand, lower-cased and trimmed — recorded for logs. */
+  brand: string;
+  /** Every track handler found, in file order. Always all `soun` on success. */
+  handlers: string[];
+}
+
+/** One ISO-BMFF box header. `end` is exclusive. */
+interface IsoBox {
+  type: string;
+  /** Payload start, after the 8- or 16-byte header. */
+  body: number;
+  end: number;
+}
+
+/**
+ * Walk the boxes in `[start, end)`.
+ *
+ * Bounded and total: a box that claims a size smaller than its own header, or
+ * one that claims to run past `end`, ends the walk rather than looping or
+ * reading out of bounds. A truncated upload therefore yields the boxes that
+ * are wholly present and nothing else — never an exception, and never a box
+ * whose contents are off the end of the buffer.
+ */
+function isoBoxes(buf: Buffer, start: number, end: number): IsoBox[] {
+  const out: IsoBox[] = [];
+  let p = start;
+  while (p + 8 <= end) {
+    let size = buf.readUInt32BE(p);
+    const type = buf.toString("latin1", p + 4, p + 8);
+    let body = p + 8;
+    if (size === 1) {
+      // 64-bit largesize. Anything above 2^31 is refused rather than truncated.
+      if (p + 16 > end) break;
+      const hi = buf.readUInt32BE(p + 8);
+      const lo = buf.readUInt32BE(p + 12);
+      if (hi !== 0 || lo > 0x7fffffff) break;
+      size = lo;
+      body = p + 16;
+    } else if (size === 0) {
+      // "to end of file"
+      size = end - p;
+    }
+    const boxEnd = p + size;
+    if (size < body - p || boxEnd > end) break;
+    out.push({ type, body, end: boxEnd });
+    p = boxEnd;
+  }
+  return out;
+}
+
+function findBox(buf: Buffer, start: number, end: number, type: string): IsoBox | null {
+  for (const b of isoBoxes(buf, start, end)) if (b.type === type) return b;
+  return null;
+}
+
+/**
+ * Every track's `hdlr` handler type, in file order — `soun` for audio, `vide`
+ * for video, and whatever else a container carries.
+ *
+ * Returns null when `moov` is absent or no track yields a handler, which the
+ * caller treats as "this file did not answer" and refuses. An empty array is
+ * never returned as a success: a file with no tracks is not a voice note.
+ */
+export function isoTrackHandlers(buf: Buffer): string[] | null {
+  if (!buf || buf.length < 8) return null;
+  const moov = findBox(buf, 0, buf.length, "moov");
+  if (!moov) return null;
+  const handlers: string[] = [];
+  for (const trak of isoBoxes(buf, moov.body, moov.end)) {
+    if (trak.type !== "trak") continue;
+    const mdia = findBox(buf, trak.body, trak.end, "mdia");
+    if (!mdia) continue;
+    const hdlr = findBox(buf, mdia.body, mdia.end, "hdlr");
+    // `hdlr` payload: version+flags (4), pre_defined (4), handler_type (4).
+    if (!hdlr || hdlr.body + 12 > hdlr.end) continue;
+    handlers.push(buf.toString("latin1", hdlr.body + 8, hdlr.body + 12));
+  }
+  return handlers.length > 0 ? handlers : null;
+}
+
+export function sniffVoiceAudio(buf: Buffer): VoiceSniffResult | null {
+  if (!buf || buf.length < 12) return null;
+  if (buf.toString("ascii", 4, 8) !== "ftyp") return null;
+  // The major brand is the 4 bytes at offset 8. It is RECORDED, not trusted —
+  // see the header for why it decides nothing.
+  const brand = buf.toString("ascii", 8, 12).toLowerCase().trim();
+  const handlers = isoTrackHandlers(buf);
+  if (!handlers) return null;
+  // Every track must be audio. One `vide` track is enough to make this a video.
+  if (handlers.some((h) => h !== "soun")) return null;
+  return { kind: "audio", mime: "audio/mp4", ext: "m4a", brand, handlers };
+}
