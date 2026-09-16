@@ -12,6 +12,8 @@
  * POST   /api/airport/sessions/:id/plan              — create a layover plan (stub)
  * POST   /api/airport/sessions/:id/return-deadline   — set return deadline reminder
  * POST   /api/airport/sessions/:id/telegraph         — send Telegraph layover suggestion
+ * GET    /api/airport/sessions/:id/observations      — §10 reconciled traveller reports for this airport
+ * POST   /api/airport/sessions/:id/observations      — §10 report a queue / checkpoint / closure
  * GET    /api/airport/pulse                          — Airport Pulse feed
  * DELETE /api/airport/sessions/:id                   — end session (body/query outcome: completed|cancelled, default cancelled)
  *
@@ -80,6 +82,18 @@ import {
   LAYOVER_RETURNING_READERS_WIDENED,
 } from "../services/airport/LayoverSessionService.js";
 import { safetyLabel, type TravelTimeSource } from "../services/airport/LayoverSafetyEngine.js";
+// §10 the traveller observation channel (census L82). The DECISION rules live
+// in services/airport/LayoverAirportTruth.ts and are pure; this import is the
+// persistence half — the handle derivation, the corpus read and the screened
+// write — which is what that module deliberately does not own.
+import {
+  OBSERVATION_RATE_LIMIT,
+  TRAVELLER_SUBMITTABLE_FACT_TYPES,
+  isTravellerSubmittableFactType,
+  reconcileAirportFact,
+  submitTravellerObservation,
+} from "../services/layover/LayoverObservationService.js";
+import type { ReconciliationOutcome } from "../services/airport/LayoverAirportTruth.js";
 // §8's outer envelope edge. Published beside the window because it is the one
 // piece of envelope GEOMETRY this tree can certify, and because it is what
 // `generateRecommendations` blocks landside cards on — a traveller who loses a
@@ -2556,6 +2570,234 @@ router.post("/airport/sessions/:id/stops/reorder", async (req, res) => {
 
   await emitLayoverEvent(sc, session.id, user.id, "plan_reordered", { count: orderedIds.length });
   await respondWithStops(res, sc, session);
+});
+
+// ── §10 TRAVELLER OBSERVATIONS ────────────────────────────────────────────────
+//
+// GET  /api/airport/sessions/:id/observations  — reconciled truth for this airport
+// POST /api/airport/sessions/:id/observations  — report what you can see
+//
+// Census-layover L82 ("Traveler observation — checkpoint timing, queue report,
+// closure; confidence-weighted") has read, every pass: "The class exists and is
+// confidence-weighted the way the spec asks (trust × decay), with a
+// corroboration floor above it. There is NO SUBMISSION SURFACE — no route, no
+// screen, nothing a traveller can report from." These two routes are that
+// surface, and `services/layover/LayoverObservationService.ts` is the writer
+// migration 2860's ORDERING section said would come after it.
+//
+// ── WHY THESE HANG OFF A SESSION AND NOT OFF A BARE AIRPORT ──────────────────
+// An observation is a claim about a place, and the cheapest way to make a false
+// one is from an armchair. Scoping the write to the reporter's OWN LAYOVER
+// SESSION means the server already knows, without asking and without a location
+// permission, that this person told us they are at this airport inside this
+// window. It is not proof of presence — nothing here is — but it raises the
+// cost of a fabricated queue report from "send a POST" to "run a layover", and
+// it costs the honest traveller nothing, because the only surface that shows
+// these reports is the layover dashboard they are already on.
+//
+// It also supplies the airport ref without a second lookup, and it reuses
+// `requireOwnedSession`, so the authorization story is the one every other
+// session-scoped route in this file already has.
+//
+// ── WHAT A TRAVELLER MAY WRITE, AND WHAT THEY MAY NOT ────────────────────────
+// `TRAVELLER_SUBMITTABLE_FACT_TYPES` is derived from the fact vocabulary as
+// exactly the TRAVELER_OBSERVATION class — checkpoint timing, queue report,
+// closure. A traveller cannot write a FAST_LIVE or OPERATIONAL_SEMI_LIVE fact:
+// those carry a shorter TTL and a place in `liveConditionsFrom` that were
+// designed for an instrumented feed, and a community reading filed under one
+// would reach the safety buffer with a freshness it has not earned.
+//
+// `observerKind` is forced to "community" by the service and is NOT a request
+// field. A client that could name its own observer kind could claim to be an
+// official feed, whose trust weight is 1.0 against community's 0.3.
+//
+// ── WHAT THIS DELIBERATELY DOES NOT DO ───────────────────────────────────────
+// It does not feed `liveConditionsFrom`, so no reported queue moves a return
+// deadline today. That wiring is L81's ("Fast live … no producer"), it changes
+// a SAFETY number, and it is an owner decision rather than a side effect of
+// giving travellers somewhere to report. Recorded in docs/BUILD-BACKLOG.md.
+
+const observationSubmitSchema = z.object({
+  factType: z.string().min(1).max(64),
+  // No `.default(...)` anywhere in here. Every field is a measurement the
+  // traveller makes; a default would be this route inventing one, which is the
+  // defect census L47 and L293 were both opened for.
+  value: z.number().finite(),
+  // The idempotency key of migration 2982. Client-supplied and REQUIRED: a
+  // server-minted one would be a fresh value on every retry and would dedupe
+  // nothing, which is the whole reason the column exists.
+  submissionToken: z.string().min(8).max(128),
+});
+
+/**
+ * The string an observation about this airport is filed under.
+ *
+ * 2860: "IATA code, or a profile id. Whatever it is, it must be the same
+ * string." IATA first because it is the readable one and the one a second
+ * producer (an operator feed) would naturally use; the profile id is the
+ * fallback for a row without a code.
+ *
+ * `null` when the airport is the generic fallback profile — `UNK` is not an
+ * airport, it is the absence of one, and pooling every unidentified airport's
+ * reports under a single ref would let a queue reported in one country
+ * corroborate a queue in another.
+ */
+function observationAirportRef(airport: AirportProfile): string | null {
+  if (airport.iataCode && airport.iataCode !== "UNK") return airport.iataCode;
+  if (airport.id) return airport.id;
+  return null;
+}
+
+/** The shape both routes publish, so the client has one thing to parse. */
+function observationFactPayload(outcome: ReconciliationOutcome) {
+  return {
+    factType: outcome.factType,
+    factClass: outcome.factClass,
+    truthVersion: outcome.truthVersion,
+    // null is an HONEST ABSENCE and is rendered as one. It means either that
+    // nothing unexpired exists, or that what exists sits below the
+    // corroboration floor — `reconcile` does not publish a value it will not
+    // stand behind, and this route does not invent one.
+    truth: outcome.truth,
+    corroboration: outcome.corroboration,
+    conflictBetween: outcome.conflictBetween,
+    rulesApplied: outcome.rulesApplied,
+  };
+}
+
+router.get("/airport/sessions/:id/observations", async (req, res) => {
+  const ctx = await requireOwnedSession(req, res);
+  if (!ctx) return;
+  const { sc, session } = ctx;
+
+  const airport = await airportOr503(sc, res, session);
+  if (!airport) return;
+  const airportRef = observationAirportRef(airport);
+  if (!airportRef) {
+    sendError(res, "degraded_unavailable", "We do not have this airport on file yet, so reports cannot be grouped for it.");
+    return;
+  }
+
+  const nowMs = Date.now();
+  const facts = [];
+  for (const factType of TRAVELLER_SUBMITTABLE_FACT_TYPES) {
+    const read = await reconcileAirportFact(sc, airportRef, factType, nowMs);
+    // A FAILED READ IS A REFUSAL, NOT AN EMPTY LIST. Serving `truth: null` here
+    // would tell a traveller "nobody has reported anything" on the strength of
+    // an outage — the exact defect §21.4 and §23.1 of the census found four
+    // times over on this domain.
+    if (!read.ok) {
+      sendError(res, "degraded_unavailable", "Live reports for this airport could not be loaded. Please try again.");
+      return;
+    }
+    facts.push(observationFactPayload(read.outcome));
+  }
+
+  res.json({
+    ok: true,
+    airportRef,
+    submittableFactTypes: TRAVELLER_SUBMITTABLE_FACT_TYPES,
+    rateLimit: OBSERVATION_RATE_LIMIT,
+    facts,
+  });
+});
+
+router.post("/airport/sessions/:id/observations", async (req, res) => {
+  const ctx = await requireOwnedSession(req, res);
+  if (!ctx) return;
+  const { sc, user, session } = ctx;
+
+  const parsed = observationSubmitSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid report");
+    return;
+  }
+  // Checked here rather than in the zod schema so the refusal can name the
+  // types that ARE allowed; a bare enum mismatch tells the client nothing.
+  if (!isTravellerSubmittableFactType(parsed.data.factType)) {
+    sendError(
+      res,
+      "invalid_payload",
+      `factType must be one of: ${TRAVELLER_SUBMITTABLE_FACT_TYPES.join(", ")}`,
+    );
+    return;
+  }
+
+  const airport = await airportOr503(sc, res, session);
+  if (!airport) return;
+  const airportRef = observationAirportRef(airport);
+  if (!airportRef) {
+    sendError(res, "degraded_unavailable", "We do not have this airport on file yet, so reports cannot be grouped for it.");
+    return;
+  }
+
+  const result = await submitTravellerObservation(
+    sc,
+    {
+      userId: user.id,
+      airportRef,
+      factType: parsed.data.factType,
+      value: parsed.data.value,
+      submissionToken: parsed.data.submissionToken,
+    },
+    Date.now(),
+  );
+
+  if (!result.ok) {
+    if (result.kind === "unavailable") {
+      // Retryable and said so. The report was NOT stored — in particular it was
+      // not stored unscreened, because the rate limit is a property of the
+      // corpus and a write without the corpus is a write without the limit.
+      sendError(res, "degraded_unavailable", "Your report could not be checked just now. Please try again.");
+      return;
+    }
+    if (result.kind === "write_failed") {
+      sendError(res, "db_error", result.message);
+      return;
+    }
+    // A screening rejection is the traveller's answer, not a server fault, so
+    // each one gets a sentence rather than a code. `rate_limited` is 429; the
+    // rest are the client having sent something the channel will not hold.
+    const REJECTION_MESSAGE: Record<string, string> = {
+      implausible_value: "That reading is outside the range this channel accepts.",
+      not_finite: "That reading is not a number.",
+      unknown_fact_type: "That is not something travellers can report here.",
+      bad_timestamp: "Your report could not be timed.",
+      future_dated: "Your report is dated in the future.",
+      expired: "Your report is older than this kind of fact stays useful for.",
+      duplicate_id: "That report has already been recorded.",
+      rate_limited: `You have reported this recently. This channel accepts ${OBSERVATION_RATE_LIMIT.maxPerWindow} reports of the same kind every ${OBSERVATION_RATE_LIMIT.windowMinutes} minutes.`,
+    };
+    const message = REJECTION_MESSAGE[result.reason] ?? "That report could not be accepted.";
+    if (result.reason === "rate_limited") {
+      res.status(429).json({ error: "rate_limited", message, rejection: result.reason });
+      return;
+    }
+    sendError(res, "invalid_payload", message);
+    return;
+  }
+
+  // The audit trail this file keeps for every consequential layover action. The
+  // VALUE is recorded; the observer handle is NOT, because layover_events
+  // carries `user_id NOT NULL` and writing the handle beside the user id would
+  // reconstruct, in a second table, exactly the link migration 2860 keeps out
+  // of the first one.
+  await emitLayoverEvent(sc, session.id, user.id, "airport_observation_reported", {
+    airportRef,
+    factType: parsed.data.factType,
+    value: parsed.data.value,
+    duplicate: result.duplicate,
+  });
+
+  res.json({
+    ok: true,
+    airportRef,
+    // TRUE when migration 2982's idempotency key caught a retry. The report was
+    // already stored, so this is a success, not an error — a client shown an
+    // error here would retry a write that had already succeeded.
+    duplicate: result.duplicate,
+    fact: observationFactPayload(result.outcome),
+  });
 });
 
 // ── PATCH /api/airport/sessions/:id/share ─────────────────────────────────────

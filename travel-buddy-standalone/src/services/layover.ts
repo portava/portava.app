@@ -1177,3 +1177,130 @@ export async function sendLayoverTelegraph(sessionId: string, message: string): 
   if (!res.ok) return null;
   return res.json();
 }
+
+// ── §10 traveller observations (census L82) ───────────────────────────────────
+
+/**
+ * The three facts a traveller may report. Exactly the `TRAVELER_OBSERVATION`
+ * class of `AIRPORT_FACT_TYPES` — §10's own row reads "checkpoint timing, queue
+ * report, closure".
+ *
+ * The server publishes this list on every GET (`submittableFactTypes`) and
+ * validates against its own copy, so this type is a convenience for rendering
+ * and NEVER the authority. A client that guessed a fourth type would be refused
+ * by name.
+ */
+export type TravellerFactType =
+  | 'checkpoint_timing_minutes'
+  | 'queue_report_minutes'
+  | 'closure_reported';
+
+export type EstimateSourceClass = 'STATIC' | 'HISTORICAL' | 'LIVE' | 'USER_DECLARED';
+export type EstimateFallbackLevel = 'NONE' | 'REGIONAL' | 'GLOBAL';
+
+/**
+ * §10 `TruthValue<T>`, transcribed from
+ * `artifacts/api-server/src/services/airport/LayoverAirportTruth.ts`.
+ *
+ * `conflict` is not decoration: when it is true the server took the
+ * CONSERVATIVE reading rather than an average, dropped the confidence, and kept
+ * BOTH sides in `sourceRefs`. A surface that renders the value and hides the
+ * flag is averaging the disagreement away on the server's behalf.
+ */
+export interface AirportTruthValue {
+  value: number;
+  confidence: EstimateConfidence;
+  conflict: boolean;
+  sourceClass: EstimateSourceClass;
+  sourceRefs: string[];
+  observedAt: string | null;
+  expiresAt: string | null;
+  fallbackLevel: EstimateFallbackLevel;
+}
+
+export interface AirportObservedFact {
+  factType: TravellerFactType;
+  factClass: string;
+  truthVersion: string;
+  /**
+   * NULL IS AN ANSWER, not a loading state and not a zero. It means either that
+   * nothing unexpired has been reported, or that what has been reported sits
+   * below the corroboration floor — one stranger cannot move a deadline. The
+   * screen must render it as "no reading", never as 0 minutes.
+   */
+  truth: AirportTruthValue | null;
+  corroboration: Record<string, number>;
+  conflictBetween: { low: number; high: number } | null;
+  rulesApplied: string[];
+}
+
+export interface AirportObservationsResult {
+  airportRef: string;
+  submittableFactTypes: TravellerFactType[];
+  rateLimit: { maxPerWindow: number; windowMinutes: number };
+  facts: AirportObservedFact[];
+}
+
+/**
+ * The reconciled traveller reports for this session's airport.
+ *
+ * Returns `null` on ANY non-ok response, and the caller must render that as
+ * "could not load" rather than as "nothing reported". The server refuses with
+ * `degraded_unavailable` when the corpus read fails precisely so that an outage
+ * is distinguishable from an empty airport; collapsing the two here would throw
+ * that away on the client side instead.
+ */
+export async function getAirportObservations(
+  sessionId: string,
+): Promise<AirportObservationsResult | null> {
+  const res = await authedFetch(airportUrl('sessions', sessionId, 'observations'));
+  if (!res.ok) return null;
+  return res.json();
+}
+
+export type ObservationSubmitOutcome =
+  | { ok: true; duplicate: boolean; fact: AirportObservedFact }
+  /** Screened out, rate-limited or refused. `message` is the server's sentence. */
+  | { ok: false; message: string; rateLimited: boolean };
+
+/**
+ * Report a queue, a checkpoint timing or a closure.
+ *
+ * `submissionToken` is the caller's idempotency key (migration 2982) and is
+ * REQUIRED. It must be stable across retries of the SAME report and different
+ * for a genuinely new one — a token minted inside this function would be fresh
+ * on every retry and would dedupe nothing, which is why it is a parameter.
+ *
+ * Failure carries the server's own sentence rather than a code. The route
+ * writes one per screening verdict (implausible value, rate limited, …) because
+ * a rejection here is the traveller's answer, not a server fault.
+ */
+export async function submitAirportObservation(
+  sessionId: string,
+  input: { factType: TravellerFactType; value: number; submissionToken: string },
+): Promise<ObservationSubmitOutcome> {
+  let res: Response;
+  try {
+    res = await authedFetch(airportUrl('sessions', sessionId, 'observations'), {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+  } catch {
+    return { ok: false, message: 'Your report could not be sent. Please try again.', rateLimited: false };
+  }
+
+  let body: Record<string, unknown> = {};
+  try { body = await res.json(); } catch { /* falls through to the status check */ }
+
+  if (!res.ok) {
+    const message = typeof body.message === 'string'
+      ? body.message
+      : 'That report could not be accepted.';
+    return { ok: false, message, rateLimited: res.status === 429 };
+  }
+  return {
+    ok: true,
+    duplicate: body.duplicate === true,
+    fact: body.fact as AirportObservedFact,
+  };
+}

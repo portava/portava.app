@@ -50,6 +50,7 @@ import {
   scheduleLocalNotificationAt,
 } from '../../src/lib/safeNotifications';
 import { AirportEssentialsCard } from '../../src/components/layover/AirportEssentialsCard';
+import { AirportConditionsCard } from '../../src/components/layover/AirportConditionsCard';
 import { LayoverHero } from '../../src/components/layover/LayoverHero';
 import { CanILeaveCard } from '../../src/components/layover/CanILeaveCard';
 import { LayoverPlanSection } from '../../src/components/layover/LayoverPlanSection';
@@ -75,6 +76,11 @@ export default function LayoverDashboardScreen() {
   const [recsLoading, setRecsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState(false);
+  // Bumped once per completed load so cards that own their own fetch
+  // (AirportConditionsCard) re-read on the same pull-to-refresh as the
+  // rest of the screen, rather than holding a reading the traveller has
+  // just asked to refresh.
+  const [dataEpoch, setDataEpoch] = useState(0);
 
   const [presence, setPresence] = useState<{ count: number; travelers: PresenceTraveler[] }>({ count: 0, travelers: [] });
   const [buddies, setBuddies] = useState<LayoverBuddy[]>([]);
@@ -145,6 +151,7 @@ export default function LayoverDashboardScreen() {
     setRecs(recList);
     setLoading(false);
     setRefreshing(false);
+    setDataEpoch((n) => n + 1);
   }, [id, loadPresence]);
 
   useEffect(() => { load(); }, [load]);
@@ -498,6 +505,12 @@ export default function LayoverDashboardScreen() {
           onError={showToast}
         />
         <AirportEssentialsCard countryCode={airport.countryCode} countryName={airport.country !== 'Unknown' ? airport.country : undefined} />
+
+        {/* §10 L82 — the traveller observation channel's submission surface.
+            Placed directly under the essentials because it answers the same
+            question ("what is this airport like right now") with the one kind
+            of evidence no feed in this tree carries: somebody standing in it. */}
+        <AirportConditionsCard sessionId={session.id} refreshKey={dataEpoch} />
 
         {/* §15.1 "every active landside plan must expose RETURN TO AIRPORT" —
             directly above the plan it cancels. */}
