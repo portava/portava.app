@@ -121,3 +121,72 @@ deployed for as long as it did, and `routes/mapTelemetry.ts` returning 200 with
 `accepted: 0` on a failed insert is what kept it invisible from the outside. Any
 audit of what is deployed must treat a backfill row as *no information* and go to
 the live schema instead.
+
+## Revised apply set, after the lanes landed
+
+The table near the top of this file said the production apply set was two
+migrations. The lanes added two more, and one prerequisite was completed along
+the way, so the set is now FOUR. Recorded here rather than by editing the earlier
+table, so the change is visible rather than silent.
+
+| file | CI | production | note |
+|---|---|---|---|
+| 2955 media write boundary | APPLIED | pending | rehearsed 2026-09-16 |
+| 2961 safety.constraint | APPLIED | pending | rehearsed 2026-09-16 |
+| **2960** map telemetry retention | **APPLIED** | pending | created by the map/sensing lane |
+| **2962** retire unread sensing flags | **APPLIED** | pending | created at integration |
+
+2960 is NO LONGER CI-ONLY. The earlier table said its target tables do not exist
+in production, which was true then and is not now: 2202 and 2222 were applied to
+production on 2026-09-16, so `map_telemetry_events` and `map_telemetry_drops`
+exist there with their `expires_at` columns and both expiry indexes, and 2960's
+own precondition — which refuses if either table is absent — will pass.
+
+### What the CI rehearsal established
+
+CI's schema-drift job is what caught that 2960 and 2962 were committed but
+unapplied: `audit:schema` reported `missing function purge_expired_map_telemetry`.
+That is the audit working, not a defect in the migration.
+
+The same job also confirmed the import from the other direction. Its dry run
+reported:
+
+    Proven applied, skipped: 185
+    Ledger row present but NOT proof of an apply (2254 backfill): 384
+    Would apply 2 migration(s): 2960, 2962
+
+Exactly two pending, both genuinely new. The seven imported records are among the
+185 skipped — the same result `planApply` gave locally, now reproduced by CI
+against the real database rather than a fixture.
+
+After applying both to CI:
+
+    purge_expired_map_telemetry exists .................. yes
+    anon / authenticated may EXECUTE it ................. no (postcondition asserts it)
+    service_role may EXECUTE it ........................ yes
+    map_telemetry_retention_enabled .................... TRUE
+    intel_sensing_credentials_enabled row .............. gone
+    intel_sensing_device_enrollment_enabled row ........ gone
+    SELECT purge_expired_map_telemetry() ............... 0
+
+That last line is worth more than the existence check: the function was actually
+CALLED and returned a count. It runs, and it deletes nothing today because both
+tables hold zero rows and collection is off — which is the state the flag=TRUE
+argument rests on.
+
+### Production rollback for the two new ones
+
+2960:
+
+    DROP FUNCTION IF EXISTS public.purge_expired_map_telemetry();
+    DELETE FROM public.feature_flags WHERE flag = 'map_telemetry_retention_enabled';
+
+2962 (restores the two rows exactly as 2956 seeded them, FALSE):
+
+    INSERT INTO public.feature_flags (flag, enabled, description) VALUES
+      ('intel_sensing_credentials_enabled', false, 'Sensing credential issuance and redemption.'),
+      ('intel_sensing_device_enrollment_enabled', false, 'Sensing device enrollment.')
+    ON CONFLICT (flag) DO NOTHING;
+
+Neither rollback restores data, because neither migration destroys any: 2960 only
+adds, and the two rows 2962 deletes were seeded FALSE and read by nothing.
