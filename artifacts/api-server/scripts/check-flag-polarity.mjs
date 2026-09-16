@@ -257,6 +257,19 @@ const isTestPath = (rel) => rel.includes('__tests__/') || /(^|\/)test\//.test(re
 const CLASSIFIED = [
   // ── The ones that matter most: names whose polarity the conventions miss ──
   {
+    flag: 'map_telemetry_retention_enabled',
+    kind: 'CAPABILITY',
+    reason:
+      'Map telemetry RETENTION ENFORCEMENT, and its off-state is the unusual one. ' +
+      'For an ordinary capability an unreadable flag means the feature does not happen; ' +
+      'here it means expired behavioural rows are KEPT — migration 2202 gives ' +
+      'map_telemetry_events/map_telemetry_drops a 90-day `expires_at` that nothing else ' +
+      'enforces. It is still a CAPABILITY and still fail-closed, because the thing it ' +
+      'gates is an irreversible DELETE and defaulting a DELETE to on is worse. Kept ' +
+      'DELIBERATELY SEPARATE from every collection flag: switching collection off must ' +
+      'not strand the rows someone just decided they did not want kept.',
+  },
+  {
     flag: 'invite_only_beta',
     kind: 'CAPABILITY',
     reason:
