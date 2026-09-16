@@ -162,7 +162,7 @@ export async function listResurfacingControls(
 
   try {
     const { data, error } = await sc
-      .from(RESURFACING_TABLE)
+      .from("highlight_resurfacing_preferences")
       .select([...RESURFACING_COLUMNS, "created_at"].join(", "))
       .eq("owner_id", ownerId);
     if (error) return fail("unavailable", `${RESURFACING_TABLE} read failed: ${String(error?.message ?? error)}`);
@@ -265,7 +265,7 @@ export async function setResurfacingControl(
   const row = { owner_id: ownerId, control, subject_type: subjectType, subject_id: subjectId };
   try {
     const { data, error } = await sc
-      .from(RESURFACING_TABLE)
+      .from("highlight_resurfacing_preferences")
       .upsert(row, { onConflict: "owner_id,control,subject_type,subject_id" })
       .select([...RESURFACING_COLUMNS, "created_at"].join(", "));
     if (error) return fail("unavailable", `${RESURFACING_TABLE} write failed: ${String(error?.message ?? error)}`);
@@ -329,7 +329,7 @@ export async function clearResurfacingControl(
 
   try {
     const { data, error } = await sc
-      .from(RESURFACING_TABLE)
+      .from("highlight_resurfacing_preferences")
       .delete()
       .eq("owner_id", ownerId)
       .eq("control", control)
@@ -412,7 +412,7 @@ export async function readProjectionPolicyForOwner(
 
   try {
     const { data, error } = await sc
-      .from(PROJECTION_POLICY_TABLE)
+      .from("highlight_projection_policies")
       .select(PROJECTION_POLICY_COLUMNS.join(", "))
       .eq("highlight_id", highlightId)
       .eq("owner_id", ownerId)
@@ -505,7 +505,7 @@ export async function setProjectionPolicy(
 
   try {
     const { data, error } = await sc
-      .from(PROJECTION_POLICY_TABLE)
+      .from("highlight_projection_policies")
       .upsert(merged, { onConflict: "highlight_id" })
       .select(PROJECTION_POLICY_COLUMNS.join(", "));
     if (error) return fail("unavailable", `${PROJECTION_POLICY_TABLE} write failed: ${String(error?.message ?? error)}`);

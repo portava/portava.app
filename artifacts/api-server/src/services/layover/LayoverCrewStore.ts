@@ -44,6 +44,20 @@ import { logger as rootLogger } from "../../lib/logger.js";
 
 const logger = rootLogger.child({ service: "LayoverCrewStore" });
 
+/**
+ * NOTE FOR ANYONE TIDYING THIS UP: the `.from(...)` call sites in this file
+ * deliberately write the table name as a STRING LITERAL rather than using this
+ * constant, and replacing them with the constant would be a regression.
+ *
+ * `check:write-path-columns` resolves a write/read site only when it can see
+ * `.from("<literal>")` in the AST. `.from(CONSTANT)` is a `dynamic table name`
+ * blind spot: the check cannot tell which table the payload belongs to, so it
+ * cannot diff those columns against the live schema at all — which is the whole
+ * failure class it exists to catch (a route writing a column before its
+ * migration is applied live). This constant stays exported because the tests
+ * import it; the call sites use the literal because that is what makes them
+ * checkable.
+ */
 export const CREW_TABLE = "layover_crews";
 export const CREW_MEMBER_TABLE = "layover_crew_members";
 
@@ -136,7 +150,7 @@ export async function activeCrewForUser(
   nowIso: string,
 ): Promise<CrewRead<{ crew: CrewRow; membership: CrewMemberRow } | null>> {
   const { data: mem, error: memErr } = await db
-    .from(CREW_MEMBER_TABLE)
+    .from("layover_crew_members")
     .select("crew_id,user_id,session_id,role,joined_at")
     .eq("user_id", userId)
     .is("left_at", null)
@@ -149,7 +163,7 @@ export async function activeCrewForUser(
   if (memberships.length === 0) return { ok: true, value: null };
 
   const { data: crews, error: crewErr } = await db
-    .from(CREW_TABLE)
+    .from("layover_crews")
     .select("id,city,airport_ref,created_by,created_session_id,title,meeting_point_label,status,max_members,expires_at,created_at")
     .in("id", memberships.map((m) => m.crewId))
     .gt("expires_at", nowIso)
@@ -176,7 +190,7 @@ export async function crewMembers(
   crewId: string,
 ): Promise<CrewRead<CrewMemberRow[]>> {
   const { data, error } = await db
-    .from(CREW_MEMBER_TABLE)
+    .from("layover_crew_members")
     .select("crew_id,user_id,session_id,role,joined_at")
     .eq("crew_id", crewId)
     .is("left_at", null)
@@ -197,7 +211,7 @@ export async function openCrewsInCity(
   limit = 20,
 ): Promise<CrewRead<CrewRow[]>> {
   const { data, error } = await db
-    .from(CREW_TABLE)
+    .from("layover_crews")
     .select("id,city,airport_ref,created_by,created_session_id,title,meeting_point_label,status,max_members,expires_at,created_at")
     .eq("city", canonCity(city))
     .eq("status", "open")
@@ -253,7 +267,7 @@ export async function createCrew(
   if (existing.value) return { ok: false, reason: "already_in_a_crew" };
 
   const { data: crewData, error: crewErr } = await db
-    .from(CREW_TABLE)
+    .from("layover_crews")
     .insert({
       city: canonCity(input.city),
       airport_ref: input.airportRef,
@@ -273,7 +287,7 @@ export async function createCrew(
   }
   const crew = toCrew(crewData as Record<string, any>);
 
-  const { error: memErr } = await db.from(CREW_MEMBER_TABLE).insert({
+  const { error: memErr } = await db.from("layover_crew_members").insert({
     crew_id: crew.id,
     user_id: input.userId,
     session_id: input.sessionId,
@@ -285,7 +299,7 @@ export async function createCrew(
     // also fails the crew is open with no members, which `certifyCrewPlan`
     // reports as `no_members` and therefore infeasible — visible, not silent.
     const { error: undoErr } = await db
-      .from(CREW_TABLE)
+      .from("layover_crews")
       .update({ status: "disbanded", updated_at: nowIso })
       .eq("id", crew.id);
     if (undoErr) logger.error({ err: undoErr.message, crewId: crew.id }, "could not disband ownerless crew");
@@ -320,7 +334,7 @@ export async function joinCrew(
   }
 
   const { data: crewData, error: crewErr } = await db
-    .from(CREW_TABLE)
+    .from("layover_crews")
     .select("id,city,airport_ref,created_by,created_session_id,title,meeting_point_label,status,max_members,expires_at,created_at")
     .eq("id", input.crewId)
     .eq("status", "open")
@@ -341,7 +355,7 @@ export async function joinCrew(
   }
 
   if (!alreadyIn) {
-    const { error } = await db.from(CREW_MEMBER_TABLE).insert({
+    const { error } = await db.from("layover_crew_members").insert({
       crew_id: crew.id,
       user_id: input.userId,
       session_id: input.sessionId,
@@ -378,7 +392,7 @@ export async function leaveCrew(
   nowIso: string,
 ): Promise<CrewWrite<{ disbanded: boolean }>> {
   const { data: memData, error: memErr } = await db
-    .from(CREW_MEMBER_TABLE)
+    .from("layover_crew_members")
     .select("crew_id,user_id,session_id,role,joined_at")
     .eq("crew_id", input.crewId)
     .eq("user_id", input.userId)
@@ -392,7 +406,7 @@ export async function leaveCrew(
   const membership = toMember(memData as Record<string, any>);
 
   const { error: leaveErr } = await db
-    .from(CREW_MEMBER_TABLE)
+    .from("layover_crew_members")
     .update({ left_at: nowIso })
     .eq("crew_id", input.crewId)
     .eq("user_id", input.userId)
@@ -405,7 +419,7 @@ export async function leaveCrew(
   if (membership.role !== "owner") return { ok: true, value: { disbanded: false } };
 
   const { error: disbandErr } = await db
-    .from(CREW_TABLE)
+    .from("layover_crews")
     .update({ status: "disbanded", updated_at: nowIso })
     .eq("id", input.crewId);
   if (disbandErr) {

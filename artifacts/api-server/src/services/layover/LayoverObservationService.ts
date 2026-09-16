@@ -121,6 +121,20 @@ import {
 const logger = rootLogger.child({ service: "LayoverObservationService" });
 
 /** The store. Created by migration 2860. */
+/**
+ * NOTE FOR ANYONE TIDYING THIS UP: the `.from(...)` call sites in this file
+ * deliberately write the table name as a STRING LITERAL rather than using this
+ * constant, and replacing them with the constant would be a regression.
+ *
+ * `check:write-path-columns` resolves a write/read site only when it can see
+ * `.from("<literal>")` in the AST. `.from(CONSTANT)` is a `dynamic table name`
+ * blind spot: the check cannot tell which table the payload belongs to, so it
+ * cannot diff those columns against the live schema at all — which is the whole
+ * failure class it exists to catch (a route writing a column before its
+ * migration is applied live). This constant stays exported because the tests
+ * import it; the call sites use the literal because that is what makes them
+ * checkable.
+ */
 export const OBSERVATION_TABLE = "airport_fact_observations";
 
 /**
@@ -262,7 +276,7 @@ export async function readObservationCorpus(
   nowMs: number,
 ): Promise<CorpusRead> {
   const { data, error } = await db
-    .from(OBSERVATION_TABLE)
+    .from("airport_fact_observations")
     .select("id,airport_ref,fact_type,value,observer_kind,observer_id,observer_trust,source_ref,observed_at")
     .eq("airport_ref", airportRef)
     .eq("fact_type", factType)
@@ -398,7 +412,7 @@ export async function submitTravellerObservation(
   }
 
   const { data, error } = await db
-    .from(OBSERVATION_TABLE)
+    .from("airport_fact_observations")
     .insert({
       airport_ref: airportRef,
       fact_type: factType,
