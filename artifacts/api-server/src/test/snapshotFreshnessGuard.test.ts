@@ -34,11 +34,14 @@ import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { PRODUCTION_SNAPSHOT_FILENAME } from "../lib/capability/snapshots/current.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const API_ROOT = resolve(HERE, "..", "..");
 const CHECKER = join(API_ROOT, "src", "scripts", "checkFlagSchemaPrerequisites.ts");
-const SNAPSHOT = join(API_ROOT, "src", "lib", "capability", "snapshots", "20260915-production-schema.json");
+// The CURRENT capture. This guard mutates a COPY of it, so pointing it at a
+// stale file would prove the guard works on a document nothing reads.
+const SNAPSHOT = join(API_ROOT, "src", "lib", "capability", "snapshots", PRODUCTION_SNAPSHOT_FILENAME);
 const APPLIED = join(API_ROOT, "src", "lib", "capability", "production-applied-migrations.json");
 
 let tmp = "";

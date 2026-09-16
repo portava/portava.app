@@ -626,6 +626,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/memoriesSingleReadDegraded.test.ts",
     "artifacts/api-server/src/test/highlightConsentPolicy.test.ts",
     "artifacts/api-server/src/lib/capability/snapshots/20260915-production-schema.json",
+    "artifacts/api-server/src/lib/capability/snapshots/20260916-production-schema.json",
     "docs/architecture/mobile-reachability-ledger.json",
     // NOT ADDED, and said rather than left silent, per the guard's own second
     // remedy. TWO citations stay uncovered on purpose:

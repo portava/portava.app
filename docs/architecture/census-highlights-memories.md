@@ -4812,7 +4812,7 @@ read-only capture of `information_schema.columns` on `travel-buddy (PRODUCTION)`
 `:1904#highlight_sources`, `:2753#memory_command_receipts`, `:2764#memory_derivative_registry`,
 `:2798#memory_event_outbox`, and `:1936#lifetime_class` inside `artifacts/api-server/src/lib/capability/snapshots/20260915-production-schema.json:1918#highlights`.
 
-**Asserted, not narrated.** `artifacts/api-server/src/test/highlightsMemoriesDeployedStorage.test.ts:90#the §3 / §12 storage spine is DEPLOYED`
+**Asserted, not narrated.** `artifacts/api-server/src/test/highlightsMemoriesDeployedStorage.test.ts:93#the §3 / §12 storage spine is DEPLOYED`
 re-derives all of the above from those two files on every run, and additionally checks that every
 column `highlightResurfacing.ts` and `highlightProjectionPolicy.ts` PROBE for is present — because
 `probeHighlightObject` classifies a missing column as `absent`, which reads as *"this control is not
@@ -4860,7 +4860,7 @@ that nothing here is read as a row move. Every row below keeps the verdict the d
 | H175, H130–H141, H147–H154, H160 | BUILT-BUT-WRONG | blocker CORRECTED: 2710 and 2711 are applied; `memory_kernel_enabled` reads `false`, so the legacy path still serves and no receipt, event or outbox row is written |
 
 **Four flags, not one migration, are now what stands between this census and its next tranche of
-greens**, and `artifacts/api-server/src/test/highlightsMemoriesDeployedStorage.test.ts:171#still carries NO trip reference`
+greens**, and `artifacts/api-server/src/test/highlightsMemoriesDeployedStorage.test.ts:174#still carries NO trip reference`
 sits in the same suite as an assertion that all four are still `false`, so the day one flips, a
 build says so.
 

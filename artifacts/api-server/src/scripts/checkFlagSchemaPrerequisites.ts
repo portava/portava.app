@@ -74,6 +74,7 @@ import {
   type SchemaRef,
 } from "../lib/capability/prerequisitesCore.js";
 import { CAPABILITIES } from "../lib/capability/registry.js";
+import { PRODUCTION_SNAPSHOT_FILENAME } from "../lib/capability/snapshots/current.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const API_ROOT = resolve(HERE, "..", "..");
@@ -112,7 +113,7 @@ const SNAPSHOT = process.env.FLAG_SCHEMA_SNAPSHOT
   // its migration chain at 07:56 UTC. They are carried in the snapshot because a
   // snapshot that hid them would misdescribe production; read that file's
   // $comment for what they are and why they are inert rather than resolved.
-  : join(SRC, "lib", "capability", "snapshots", "20260916-production-schema.json");
+  : join(SRC, "lib", "capability", "snapshots", PRODUCTION_SNAPSHOT_FILENAME);
 /**
  * The repository's record of what has been applied to PRODUCTION. See the file's
  * own $comment. FLAG_SCHEMA_APPLIED overrides it for the staleness test.
