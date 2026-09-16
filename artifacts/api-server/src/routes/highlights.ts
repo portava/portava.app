@@ -17,14 +17,37 @@ import {
   unenforceableControls,
   FEED_ENFORCEABLE_CONTROLS,
   feedSubjectScope,
+  RESURFACING_CONTROLS,
+  CONTROL_EFFECTS,
   type ResurfacingSuppressions,
 } from "../services/highlights/highlightResurfacing.js";
 import {
   readProjectionPolicies,
   resolveLocationDisclosure,
+  LOCATION_PRECISION_LADDER,
+  PERSON_VISIBILITY_LADDER,
+  MEMORY_CONSENT_DIMENSIONS,
   type ProjectionPolicyRead,
 } from "../services/highlights/highlightProjectionPolicy.js";
+import {
+  listResurfacingControls,
+  setResurfacingControl,
+  clearResurfacingControl,
+  readProjectionPolicyForOwner,
+  setProjectionPolicy,
+  type ControlWriteFailure,
+} from "../services/highlights/highlightControlWrites.js";
 import { executeRevocation } from "../services/highlights/highlightRevocation.js";
+import { probeHighlightObject } from "../services/highlights/highlightSchemaAvailability.js";
+import {
+  HIGHLIGHT_LIFETIME_CLASSES,
+  HIGHLIGHT_CLASS_DEFAULTS,
+  isHighlightLifetimeClass,
+  describeHighlightLifetime,
+  describeHighlightLifecycle,
+  type HighlightLifetimeClass,
+} from "../services/highlights/highlightLifecycle.js";
+import { pinnedFirst } from "../services/highlights/highlightRanking.js";
 import { canMessage } from "../lib/messagingPermissions";
 import { isFlagEnabled } from "../lib/featureFlags";
 import { nameVisibilitySet, presentedName } from "../lib/publicIdentity";
@@ -53,6 +76,78 @@ const UUID = /^[0-9a-f-]{36}$/i;
  * ============================================================================ */
 const HIGHLIGHT_COLUMNS =
   "id, owner_id, media_url, media_type, video_duration_seconds, caption, location_name, location_city, location_country, visibility, expires_at, created_at, deleted_at, archived_at";
+
+/* ----------------------------------------------------------------------------
+ * §12 / §5 — the three columns migration 2723 added, projected.
+ *
+ * `lifetime_class`, `lifecycle_state` and `pinned_at` have existed on
+ * `public.highlights` since 2723 was applied to production on 2026-09-15, and
+ * census §O.3 records exactly what was missing after that: "nothing writes the
+ * column and HIGHLIGHT_COLUMNS does not project it, so `describeHighlightLifetime`
+ * still answers `unavailable` on every live read".
+ *
+ * PROJECTED THROUGH A PROBE, NOT APPENDED TO THE CONSTANT. One unknown column
+ * fails the WHOLE PostgREST select (PGRST204), so appending these three to
+ * HIGHLIGHT_COLUMNS would take every Highlight read on any deployment without
+ * 2723 from working to 500. `probeHighlightObject` already answers exactly this
+ * question in three states, is memoized for five minutes, and is the mechanism
+ * this lane uses for the two control tables. A deployment without the columns
+ * therefore keeps the reads it has and gets `unavailable` from
+ * `describeHighlightLifetime` — which is the truth, and is the state that
+ * function was written to report.
+ * -------------------------------------------------------------------------- */
+const HIGHLIGHT_CLASS_COLUMNS = ["lifetime_class", "lifecycle_state", "pinned_at"] as const;
+const HIGHLIGHT_COLUMNS_WITH_CLASS = `${HIGHLIGHT_COLUMNS}, ${HIGHLIGHT_CLASS_COLUMNS.join(", ")}`;
+
+async function highlightColumns(sc: SupabaseClient | any): Promise<{ columns: string; classProjected: boolean }> {
+  const availability = await probeHighlightObject(sc, "highlights", HIGHLIGHT_CLASS_COLUMNS);
+  // `unreadable` gets the NARROW set on purpose. The wide one would fail the
+  // read outright, and a §12 badge is not worth turning a transient probe
+  // failure into an empty profile.
+  return availability.state === "ready"
+    ? { columns: HIGHLIGHT_COLUMNS_WITH_CLASS, classProjected: true }
+    : { columns: HIGHLIGHT_COLUMNS, classProjected: false };
+}
+
+/**
+ * The expiry predicate, in one place.
+ *
+ * A NULL `expires_at` is a §4 PERMANENT Highlight — migration 2975 makes the
+ * column nullable and constrains NULL to mean exactly that. `gt("expires_at",
+ * now)` is NULL-blind: in SQL, `NULL > now` is NULL, which is not TRUE, so a
+ * PERMANENT Highlight would silently vanish from every feed the moment the
+ * migration landed. That is the failure mode of adding nullability to a column
+ * three queries filter on, and it is why this is a named helper rather than
+ * three copies of an `.or()`.
+ */
+const NOT_EXPIRED = (now = new Date()) => `expires_at.is.null,expires_at.gt.${now.toISOString()}`;
+
+/**
+ * The §4 class and §5 state of a row, for the wire.
+ *
+ * Both come from `highlightLifecycle.ts`, which is emphatic that a class is
+ * STORED or UNKNOWN and is never inferred from `expires_at - created_at`. The
+ * `provenance` travels with the value for exactly that reason: a client can
+ * tell "the owner chose DAY" from "nobody has assigned a class" from "this
+ * deployment cannot hold one", and those are three different things to render.
+ *
+ * When the columns were not projected, `describeHighlightLifetime` answers
+ * `unavailable` with the reason — which is why this passes the ROW rather than
+ * a pre-decided value, and why `classProjected` only decides whether to include
+ * the fields at all.
+ */
+function describeLifetimeFields(row: any, classProjected: boolean): Record<string, unknown> {
+  if (!classProjected) return {};
+  const lifetime = describeHighlightLifetime(row);
+  const lifecycle = describeHighlightLifecycle(row);
+  return {
+    lifetimeClass: lifetime.provenance === "stored" ? lifetime.cls : null,
+    lifetimeProvenance: lifetime.provenance,
+    lifecycleState: lifecycle.provenance === "stored" || lifecycle.provenance === "derived" ? lifecycle.state : null,
+    lifecycleProvenance: lifecycle.provenance,
+    pinnedAt: row.pinned_at ?? null,
+  };
+}
 
 /* ============================================================================
  * §10 / §11 — the projection policy pass.
@@ -515,6 +610,15 @@ const createHighlightSchema = z.object({
   filterIntensity: z.number().int().min(0).max(100).optional().default(100),
   mediaThumbnailUrl: z.string().min(1).nullable().optional(),
   mediaDurationSeconds: z.number().int().min(0).max(10).nullable().optional(),
+  /**
+   * §4 HighlightLifetime. OPTIONAL, and absent means absent: a Highlight
+   * created without one has NO class, which `describeHighlightLifetime` reports
+   * as "no class has been assigned". It is deliberately NOT defaulted to DAY —
+   * nothing in §12 assigns hour boundaries to the classes, so a default would
+   * be invented product policy wearing the spec's vocabulary, which is exactly
+   * what `highlightLifecycle.ts`'s header refuses to do.
+   */
+  lifetimeClass: z.enum(HIGHLIGHT_LIFETIME_CLASSES).optional(),
 });
 
 /* ============================================================================
@@ -544,7 +648,15 @@ router.post("/highlights", async (req, res) => {
     }
   }
 
-  const expiresAt = new Date(Date.now() + d.expiresInHours * 60 * 60 * 1000).toISOString();
+  // §4 PERMANENT is the one class whose STORAGE differs: a permanent Highlight
+  // is one with no expiry, so `expires_at` is NULL and migration 2975's CHECK
+  // constrains NULL to mean exactly that. Every other class keeps the expiry the
+  // caller chose — §12 gives the classes behaviour, not durations, and bucketing
+  // `expiresInHours` into them would be invented policy.
+  const permanent = d.lifetimeClass === "PERMANENT";
+  const expiresAt = permanent
+    ? null
+    : new Date(Date.now() + d.expiresInHours * 60 * 60 * 1000).toISOString();
 
   const { data, error } = await client
     .from("highlights")
@@ -559,6 +671,10 @@ router.post("/highlights", async (req, res) => {
       location_country: d.locationCountry ?? null,
       visibility: d.visibility,
       expires_at: expiresAt,
+      // Omitted entirely when the caller named no class, so a row without one
+      // is NULL rather than a value nobody chose. `undefined` is dropped from a
+      // PostgREST insert body; `null` would be written.
+      ...(d.lifetimeClass ? { lifetime_class: d.lifetimeClass } : {}),
       // filter_id / filter_intensity DO exist on the live highlights table.
       //
       // The comment that used to sit here said they did not, and it was wrong —
@@ -582,6 +698,28 @@ router.post("/highlights", async (req, res) => {
     .single();
 
   if (error) {
+    // A PERMANENT Highlight on a database that has not run 2975 fails on the
+    // NOT NULL, and on one that has 2723 but not 2975 it would fail the CHECK.
+    // Both are REFUSED BY NAME rather than quietly retried with a 24-hour
+    // expiry: a Highlight the user asked to keep forever, stored with an
+    // expiry, is a promise broken silently — and `describeHighlightLifetime`
+    // would grade the row `invalid` anyway.
+    const code = String((error as any)?.code ?? "");
+    if (permanent && (code === "23502" || code === "23514")) {
+      req.log.error(
+        { err: error, ownerId: user.id },
+        "highlights: PERMANENT refused — highlights.expires_at is still NOT NULL or the 2975 constraint is absent; migration 2975_highlights_permanent_lifetime.sql is not applied on this database",
+      );
+      sendError(res, "feature_disabled", "Permanent highlights are not available on this deployment yet.");
+      return;
+    }
+    // A class this database cannot hold at all (2723 not applied) is the same
+    // shape of answer, and PGRST204 is how PostgREST says so.
+    if (d.lifetimeClass && code === "PGRST204") {
+      req.log.error({ err: error, ownerId: user.id }, "highlights: lifetime_class column is absent — migration 2723 is not applied on this database");
+      sendError(res, "feature_disabled", "Highlight lifetimes are not available on this deployment yet.");
+      return;
+    }
     req.log.error({ err: error }, "Failed to create highlight");
     sendError(res, "db_error", error.message);
     return;
@@ -634,16 +772,17 @@ router.get("/users/:userId/highlights", async (req, res) => {
   const isOwnProfile = user.id === targetId;
 
   // Load active (non-expired, non-deleted) highlights for target user
+  const profileProjection = await highlightColumns(client);
   const { data: rows, error } = await client
     .from("highlights")
-    .select(HIGHLIGHT_COLUMNS)
+    .select(profileProjection.columns)
     .eq("owner_id", targetId)
     .is("deleted_at", null)
     // §21 Archive: "remove from normal browsing unless explicitly requested".
     // A profile view is browsing. The owner reaches archived Highlights through
     // GET /highlights/archived, which is the explicit request.
     .is("archived_at", null)
-    .gt("expires_at", new Date().toISOString())
+    .or(NOT_EXPIRED())
     .order("created_at", { ascending: true });
 
   if (error) {
@@ -652,7 +791,11 @@ router.get("/users/:userId/highlights", async (req, res) => {
     return;
   }
 
-  const highlights = (rows ?? []) as any[];
+  // §12: "Pinned/manual order always outranks automatic ordering." Applied
+  // BEFORE any permission filtering below reorders nothing and after the query
+  // has chosen its own order, so an unpinned page keeps `ORDER BY created_at`
+  // exactly as it was. See pinnedFirst for what this deliberately does NOT do.
+  const highlights = pinnedFirst((rows ?? []) as any[]);
 
   // For non-owners, check circle (follows) + trip membership to filter restricted visibility
   let viewerFollowsOwner = false;
@@ -744,6 +887,7 @@ router.get("/users/:userId/highlights", async (req, res) => {
     likeCount: likeCountMap[h.id] ?? 0,
     viewedByMe: viewedSet.has(h.id),
     likedByMe: likedSet.has(h.id),
+    ...describeLifetimeFields(h, profileProjection.classProjected),
   }));
 
   res.status(200).json({ highlights: result });
@@ -813,12 +957,13 @@ router.get("/highlights/active", async (req, res) => {
   ]);
 
   // Build query — include trip_only so trip members can see them
+  const activeProjection = await highlightColumns(sc);
   let q = sc
     .from("highlights")
-    .select(HIGHLIGHT_COLUMNS)
+    .select(activeProjection.columns)
     .is("deleted_at", null)
     .is("archived_at", null) // §21 Archive — see GET /users/:id/highlights
-    .gt("expires_at", new Date().toISOString())
+    .or(NOT_EXPIRED())
     .in("visibility", ["public", "travelers_nearby", "circle_only", "trip_only"])
     .order("created_at", { ascending: false })
     .limit(limit * 5); // over-fetch to account for permission filtering
@@ -941,9 +1086,396 @@ router.get("/highlights/active", async (req, res) => {
     likeCount: likeCountMap[h.id] ?? 0,
     viewedByMe: viewedSet.has(h.id),
     likedByMe: likedSet.has(h.id),
+    ...describeLifetimeFields(h, activeProjection.classProjected),
   }));
 
   res.status(200).json({ highlights: result });
+});
+
+/* ============================================================================
+ * §5 / §12 — PIN and UNPIN.
+ *
+ * Highlights/Memories Development Architecture Spec v1 §12: "Pinned/manual
+ * order always outranks automatic ordering", and §5's lifecycle, which puts
+ * PINNED on the diagram.
+ *
+ * Census H142 (PIN_HIGHLIGHT) and H143 (UNPIN_HIGHLIGHT) are NOT-BUILT with the
+ * evidence "no pin column in production, no pin route, no pin in the client.
+ * migrations/2723_highlight_class_lifecycle_and_pin.sql:7 pinned_at would add
+ * one and is unapplied." The first clause is STALE: 2723 was applied to
+ * production on 2026-09-15 and `pinned_at` is in the 20260915 snapshot. The
+ * other two clauses were true until this handler and the client action next to
+ * it.
+ *
+ * WHAT THIS WRITES, AND WHAT IT DELIBERATELY DOES NOT.
+ * It writes `pinned_at` and NOTHING ELSE. It does not set
+ * `lifecycle_state = 'PINNED'`, and the reason is §5's own diagram: the
+ * transitions are DRAFT→ACTIVE, ACTIVE→EXPIRED, ACTIVE→PINNED, PINNED→HIDDEN,
+ * HIDDEN→EXPIRED. There is no PINNED→ACTIVE edge, so a stored PINNED state
+ * could never be undone without making an illegal transition — while §17's
+ * command list names UNPIN_HIGHLIGHT, which says it must be undoable. Those two
+ * halves of the spec disagree, and resolving a spec disagreement is not this
+ * lane's to do. Writing only the column means unpin is a reversal of a fact
+ * rather than an illegal move in a state machine, and
+ * `describeHighlightLifecycle` DERIVES PINNED from the column, which is the
+ * same answer without the claim.
+ * ============================================================================ */
+router.post("/highlights/:id/pin", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const { id } = req.params;
+  if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid highlight id"); return; }
+
+  const { data: updated, error } = await client
+    .from("highlights")
+    .update({ pinned_at: new Date().toISOString() })
+    .eq("id", id)
+    .eq("owner_id", user.id)
+    .is("deleted_at", null)
+    .select("id, pinned_at");
+
+  if (error) {
+    if (String((error as any)?.code ?? "") === "PGRST204") {
+      req.log.error({ err: error, highlightId: id }, "highlights: pinned_at column is absent — migration 2723 is not applied on this database");
+      sendError(res, "feature_disabled", "Pinning is not available on this deployment yet.");
+      return;
+    }
+    req.log.error({ err: error, highlightId: id }, "highlights: pin failed");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+  // Zero rows: not yours, not there, or already deleted — one answer to this
+  // caller, for the same reason the archive handlers give one.
+  if (!updated || (updated as any[]).length === 0) {
+    sendError(res, "not_found", "Highlight not found");
+    return;
+  }
+  res.status(200).json({ id, pinnedAt: (updated as any[])[0].pinned_at });
+});
+
+/** §17 UNPIN_HIGHLIGHT. A pin a user cannot undo is a trap, not curation. */
+router.delete("/highlights/:id/pin", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const { id } = req.params;
+  if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid highlight id"); return; }
+
+  const { data: updated, error } = await client
+    .from("highlights")
+    .update({ pinned_at: null })
+    .eq("id", id)
+    .eq("owner_id", user.id)
+    .is("deleted_at", null)
+    .select("id");
+
+  if (error) {
+    if (String((error as any)?.code ?? "") === "PGRST204") {
+      sendError(res, "feature_disabled", "Pinning is not available on this deployment yet.");
+      return;
+    }
+    req.log.error({ err: error, highlightId: id }, "highlights: unpin failed");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+  if (!updated || (updated as any[]).length === 0) {
+    sendError(res, "not_found", "Highlight not found");
+    return;
+  }
+  res.status(200).json({ id, pinnedAt: null });
+});
+
+/* ============================================================================
+ * §4 / §12 — which lifetime classes this DEPLOYMENT can actually hold.
+ *
+ * A client that offered PERMANENT on a database whose `expires_at` is still
+ * NOT NULL would offer a choice that fails on save. `representableLifetimeClasses`
+ * is the function that answers this and it has never had a caller;
+ * `highlightLifecycle.ts`'s header is entirely about why the answer must be
+ * measured rather than assumed.
+ *
+ * WHAT IT CAN AND CANNOT MEASURE. Column EXISTENCE is probeable through
+ * PostgREST; column NULLABILITY is not. So this endpoint answers the half it
+ * can — whether 2723 landed, which decides whether any class is storable — and
+ * marks PERMANENT `mayNotBeStorable`, because that one additionally needs
+ * 2975's nullable `expires_at` and no read on this connection can see it. The
+ * create path then refuses PERMANENT BY NAME when the database says no. A
+ * client that shows the option and reports the refusal is honest in both
+ * directions; one that claimed an availability nothing here verified would not
+ * be.
+ * ============================================================================ */
+router.get("/highlights/lifetime-classes", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client } = auth;
+
+  const availability = await probeHighlightObject(client, "highlights", HIGHLIGHT_CLASS_COLUMNS);
+  const deployed = availability.state === "ready";
+
+  res.status(200).json({
+    deployed,
+    classes: HIGHLIGHT_LIFETIME_CLASSES.map((cls) => ({
+      cls,
+      example: HIGHLIGHT_CLASS_DEFAULTS[cls].example,
+      defaultBehavior: HIGHLIGHT_CLASS_DEFAULTS[cls].defaultBehavior,
+      // PERMANENT needs a nullable `expires_at`, which migration 2975 provides
+      // and which no probe on this connection can see. Named rather than
+      // silently offered or silently withheld.
+      mayNotBeStorable: cls === "PERMANENT",
+    })),
+    reason: deployed ? null : (availability as any).reason,
+  });
+});
+
+/* ============================================================================
+ * §10 / §11 — THE CONTROL SURFACE. The half that was missing.
+ *
+ * Highlights/Memories Development Architecture Spec v1 §10 (an owner's
+ * SELECTED location precision, person visibility and consent) and §11 (the six
+ * resurfacing controls).
+ *
+ * Both tables were applied to production on 2026-09-15 and the enforcement
+ * that reads them is live, correct and route-tested — `applyResurfacingControls`
+ * above and `resolveLocationDisclosure` on all three read paths. Census §O.2
+ * then recorded what remained: "There is no route, no service and no script by
+ * which a user can set a §11 resurfacing control or a §10 precision rung. Both
+ * tables are deployed and EMPTY, and they will stay empty." These five handlers
+ * are the writer, and with them every control this repository enforces is a
+ * control somebody can actually set.
+ *
+ * THE PATH ORDER IS LOAD-BEARING. `/highlights/resurfacing-controls` is
+ * registered BEFORE `DELETE /highlights/:id`, because Express matches in
+ * declaration order and `:id` would otherwise capture the literal segment and
+ * refuse it as a malformed UUID — a 400 on a route that exists.
+ *
+ * AUTHORIZATION IS APP-SIDE, NOT RLS. `requireUser` returns the SERVICE client,
+ * which bypasses every policy migrations 2720 and 2721 install. Every check
+ * that matters is in `services/highlights/highlightControlWrites.ts` and is
+ * exercised by src/test/highlightControlWrites.test.ts.
+ * ============================================================================ */
+
+/** One refusal mapping for all five handlers, so no two disagree. */
+function sendControlFailure(
+  res: Response,
+  reason: ControlWriteFailure,
+  detail: string,
+  log: (obj: any, msg: string) => void,
+): void {
+  switch (reason) {
+    case "invalid":
+      sendError(res, "invalid_payload", detail);
+      return;
+    case "not_owned":
+      // 404, not 403: see ownsHighlight. Telling a caller "that exists but is
+      // not yours" makes this endpoint an existence oracle for other people's
+      // Highlight ids.
+      sendError(res, "not_found", "Highlight not found");
+      return;
+    case "not_deployed":
+      // The control does not exist on this database. It is NOT an error the
+      // user caused and it is NOT a stored preference — reporting 200 here
+      // would tell somebody their Memory is protected when nothing was written.
+      log({ detail }, "highlights: §10/§11 control table is not deployed — refusing rather than reporting a stored preference");
+      sendError(res, "feature_disabled", "This privacy control is not available on this deployment.");
+      return;
+    case "unavailable":
+    case "write_unconfirmed":
+      log({ detail, reason }, "highlights: §10/§11 control write could not be confirmed — refusing rather than reporting success");
+      sendError(res, "degraded_unavailable", "We could not save that privacy setting. Please try again.");
+      return;
+  }
+}
+
+/** Every §11 control this user has set, with what each one suppresses. */
+router.get("/highlights/resurfacing-controls", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const listed = await listResurfacingControls(client, user.id);
+  if (!listed.ok) {
+    sendControlFailure(res, listed.reason, listed.detail, (o, m) => req.log.error(o, m));
+    return;
+  }
+
+  res.status(200).json({
+    controls: listed.value.map((c) => ({
+      control: c.control,
+      subjectType: c.subjectType,
+      subjectId: c.subjectId,
+      createdAt: c.createdAt,
+      // The surfaces the control acts on travel WITH it, derived from
+      // CONTROL_EFFECTS rather than retyped in the client. §21 insists these
+      // stay separate operations in the UX as well as the data model, and a
+      // client that has to hard-code "do-not-resurface means the feed" is one
+      // release away from disagreeing with the server about what it means.
+      suppresses: CONTROL_EFFECTS[c.control].suppresses,
+      retainsRecord: CONTROL_EFFECTS[c.control].retainsRecord,
+    })),
+    // Named so a client can render the controls it cannot yet enforce
+    // differently, rather than promising an effect the feed does not deliver.
+    // This is census H90's ceiling, stated on the wire.
+    unenforceableOnFeed: RESURFACING_CONTROLS.filter(
+      (c) =>
+        (CONTROL_EFFECTS[c].suppresses as readonly string[]).includes("proactive_resurfacing") &&
+        !(FEED_ENFORCEABLE_CONTROLS as readonly string[]).includes(c),
+    ),
+    catalogue: RESURFACING_CONTROLS.map((c) => ({
+      control: c,
+      scope: CONTROL_EFFECTS[c].scope,
+      suppresses: CONTROL_EFFECTS[c].suppresses,
+      note: CONTROL_EFFECTS[c].note,
+    })),
+  });
+});
+
+/** Set one §11 control. Idempotent on (owner, control, subject). */
+router.put("/highlights/resurfacing-controls", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const parsed = z
+    .object({ control: z.string(), subjectId: z.string() })
+    .safeParse(req.body ?? {});
+  if (!parsed.success) { sendError(res, "invalid_payload", "control and subjectId are required"); return; }
+
+  const set = await setResurfacingControl(client, user.id, parsed.data.control, parsed.data.subjectId);
+  if (!set.ok) {
+    sendControlFailure(res, set.reason, set.detail, (o, m) => req.log.error(o, m));
+    return;
+  }
+
+  // Fire-and-forget by contract: CompassCacheEngine.invalidate "logs but never
+  // throws". A privacy control that was STORED must not be reported as failed
+  // because a cache eviction did not land, so this does not gate the 200.
+  // CEILING, recorded rather than hidden: this evicts the SETTER's cache. A
+  // control that suppresses `public_projection` on somebody else's cached view
+  // is not reached by it — see docs/BUILD-BACKLOG.md.
+  await invalidateCompassCache(getServiceClient(), user.id, "highlight_privacy_control_changed");
+  res.status(200).json({
+    control: set.value.control,
+    subjectType: set.value.subjectType,
+    subjectId: set.value.subjectId,
+    createdAt: set.value.createdAt,
+    suppresses: CONTROL_EFFECTS[set.value.control].suppresses,
+  });
+});
+
+/** Clear one §11 control. Idempotent: clearing what is not set is a 200. */
+router.delete("/highlights/resurfacing-controls", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  // A DELETE carries its selector in the query string as well as the body,
+  // because a fetch() DELETE with a body is awkward on React Native and a
+  // control nobody can clear is the trap the service header names.
+  const control = (req.body?.control ?? req.query.control) as unknown;
+  const subjectId = (req.body?.subjectId ?? req.query.subjectId) as unknown;
+  const confirmed = req.body?.confirm === true || req.query.confirm === "true";
+
+  const cleared = await clearResurfacingControl(client, user.id, control, subjectId, { confirmed });
+  if (!cleared.ok) {
+    sendControlFailure(res, cleared.reason, cleared.detail, (o, m) => req.log.error(o, m));
+    return;
+  }
+
+  // Fire-and-forget by contract: CompassCacheEngine.invalidate "logs but never
+  // throws". A privacy control that was STORED must not be reported as failed
+  // because a cache eviction did not land, so this does not gate the 200.
+  // CEILING, recorded rather than hidden: this evicts the SETTER's cache. A
+  // control that suppresses `public_projection` on somebody else's cached view
+  // is not reached by it — see docs/BUILD-BACKLOG.md.
+  await invalidateCompassCache(getServiceClient(), user.id, "highlight_privacy_control_changed");
+  res.status(200).json({ cleared: cleared.value.cleared });
+});
+
+/** Read one Highlight's §10 projection policy. Owner-only. */
+router.get("/highlights/:id/projection-policy", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const { id } = req.params;
+  if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid highlight id"); return; }
+
+  const read = await readProjectionPolicyForOwner(client, user.id, id);
+  if (!read.ok) {
+    sendControlFailure(res, read.reason, read.detail, (o, m) => req.log.error(o, m));
+    return;
+  }
+
+  res.status(200).json({
+    highlightId: read.value.highlightId,
+    locationPrecision: read.value.locationPrecision,
+    personVisibility: read.value.personVisibility,
+    consent: read.value.consent,
+    // The ladders travel with the policy for the same reason the control
+    // catalogue does: §10's rungs COARSEN left to right and a client that
+    // reorders them renders a tightening as a loosening.
+    locationPrecisionLadder: LOCATION_PRECISION_LADDER,
+    personVisibilityLadder: PERSON_VISIBILITY_LADDER,
+    consentDimensions: MEMORY_CONSENT_DIMENSIONS,
+  });
+});
+
+/**
+ * Set one Highlight's §10 projection policy. PARTIAL — only named fields move.
+ *
+ * `location_precision` here is the OWNER'S SELECTED RUNG, which is exactly the
+ * value `resolveLocationDisclosure` combines with the visibility-implied rung
+ * through `strictestPrecision`. Because that combination can only TIGHTEN, an
+ * owner selecting a looser rung than their visibility implies does not loosen
+ * anything — which is the §10 invariant, and it is enforced on the read path
+ * rather than by refusing the write here.
+ */
+router.put("/highlights/:id/projection-policy", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const { id } = req.params;
+  if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid highlight id"); return; }
+
+  const parsed = z
+    .object({
+      // `.optional()` and a null value are DIFFERENT and both are legal: absent
+      // means "leave it alone", null means "unset it". Collapsing them would
+      // make it impossible to clear a rung once chosen.
+      locationPrecision: z.string().nullable().optional(),
+      personVisibility: z.string().nullable().optional(),
+      consent: z.record(z.string(), z.union([z.boolean(), z.null()])).optional(),
+    })
+    .safeParse(req.body ?? {});
+  if (!parsed.success) { sendError(res, "invalid_payload", "Invalid projection policy payload"); return; }
+
+  const saved = await setProjectionPolicy(client, user.id, id, {
+    locationPrecision: parsed.data.locationPrecision as any,
+    personVisibility: parsed.data.personVisibility as any,
+    consent: parsed.data.consent as any,
+  });
+  if (!saved.ok) {
+    sendControlFailure(res, saved.reason, saved.detail, (o, m) => req.log.error(o, m));
+    return;
+  }
+
+  // Fire-and-forget by contract: CompassCacheEngine.invalidate "logs but never
+  // throws". A privacy control that was STORED must not be reported as failed
+  // because a cache eviction did not land, so this does not gate the 200.
+  // CEILING, recorded rather than hidden: this evicts the SETTER's cache. A
+  // control that suppresses `public_projection` on somebody else's cached view
+  // is not reached by it — see docs/BUILD-BACKLOG.md.
+  await invalidateCompassCache(getServiceClient(), user.id, "highlight_privacy_control_changed");
+  res.status(200).json({
+    highlightId: saved.value.highlightId,
+    locationPrecision: saved.value.locationPrecision,
+    personVisibility: saved.value.personVisibility,
+    consent: saved.value.consent,
+  });
 });
 
 /* ============================================================================
@@ -1159,9 +1691,10 @@ router.get("/highlights/archived", async (req, res) => {
   if (!auth) return;
   const { client, user } = auth;
 
+  const archivedProjection = await highlightColumns(client);
   const { data: rows, error } = await client
     .from("highlights")
-    .select(HIGHLIGHT_COLUMNS)
+    .select(archivedProjection.columns)
     .eq("owner_id", user.id)
     .is("deleted_at", null)
     .not("archived_at", "is", null)
@@ -1670,13 +2203,14 @@ router.get("/highlights/following-feed", async (req, res) => {
     : null;
   const feedCursor = bounded && typeof req.query.cursor === "string" ? req.query.cursor : null;
 
+  const feedProjection = await highlightColumns(sc);
   let feedQuery = sc
     .from("highlights")
-    .select(HIGHLIGHT_COLUMNS)
+    .select(feedProjection.columns)
     .in("owner_id", eligibleIds)
     .is("deleted_at", null)
     .is("archived_at", null) // §21 Archive — see GET /users/:id/highlights
-    .gt("expires_at", new Date().toISOString())
+    .or(NOT_EXPIRED())
     .neq("visibility", "private")
     .order("created_at", { ascending: true });
 

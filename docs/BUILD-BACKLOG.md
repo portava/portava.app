@@ -24,3 +24,63 @@ Format: `- [lane] file:line — what is wrong, and what the user sees.`
 - [layover] SHIFT TABLE for the lead, superseding the "compute it yourself" half of this lane's earlier citation entry. Base `c8862df2c` -> head. Per file: base lines, head lines, net, then each moved region as `@<base line>:<delta>` (a citation at or after that base line moves by the cumulative delta at that point). `artifacts/api-server/src/routes/airport.ts` 3422->4108 net +686: @15:+2, @79:+5, @82:+17, @83:+12, @2561:+650. `artifacts/api-server/src/services/airport/LayoverSessionService.ts` 527->570 net +43: @396:+43. `travel-buddy-standalone/app/layover/[id].tsx` 734->759 net +25: @53:+1, @59:+1, @78:+5, @148:+1, @502:+6, @584:+11. `artifacts/api-server/src/test/layoverFeasibilityRecord.test.ts` 622->636 net +14: @416:+14. No layout was contorted to protect a pointer: the observation routes and the crew routes sit together at the natural seam before `PATCH /sessions/:id/share`, and `readSessionsByIds` sits beside `listSessions`, which is where a session reader belongs. 58 citations in `census-layover.md` and `census-highlights-memories.md` are affected; repointing them took `docCitations.test.ts` from RED to 43/43 on this tree before being reverted.
 - [layover] artifacts/api-server/src/services/layover/LayoverObservationService.ts:49 — a comment citing the anonymous sensing store by name broke `src/test/sensingAnonStore.test.ts` ("the files that mention the store are EXACTLY the two allowlists"). The guard matches the BARE IDENTIFIER, so naming that module inside a comment is enough to join the set it contains — a reference-surface guard cannot tell a comment from an import. FIXED BY REWORDING, NOT BY ALLOWLISTING: adding this file to `PERMITTED_MENTIONS` would have widened a privacy-containment allowlist to keep a citation, which is the trade the build contract forbids. The argument the comment makes (why the observation handle does NOT rotate on an epoch) survives without the name. Worth knowing for any lane that cites a contained module as precedent — and note the first repair still failed, because the replacement paragraph named the guard's own test file, which contains the same identifier.
 - [layover] artifacts/api-server/src/test/wallPerformance.test.ts:549 — SECOND load-trap casualty, and a far more deceptive one than the guardReachability timeout. In a full-suite run under contention it fails with `the first page now waits on ~140 serialized database round trips, over the recorded ratchet of 110. Something new is awaited in a loop.` That message reads as a STRUCTURAL finding — it names a cause, points at a loop, and invites a hunt for the await someone just added. It is not structural: run alone the same test passes 6/6 with **~92** and **~88** round trips (two independent runs) against the same ratchet of 110, with 0 `not ok` at any depth. The counter observes real await ordering, so work that normally overlaps gets serialized under load and inflates the count by ~50%. Nothing in this lane touches the Wall first page. Recorded because the failure text is actively misleading: a lane that trusts it will go looking for a loop that does not exist, and the honest check is to re-run the file alone and read the round-trip number rather than the sentence.
+- [hm] `artifacts/api-server/src/routes/highlights.ts:1081` — a §11 control that
+  suppresses `public_projection` (KEEP_PRIVATE_FOREVER) evicts only the SETTER's
+  Compass cache. Another viewer holding a cached page still sees the Highlight
+  until their own entry expires. The user sets the control, gets a 200, and the
+  person they were hiding it from can still see it for the life of that cache.
+  Not fixed here: evicting every follower's cache is a fan-out design, not a
+  one-line change.
+- [hm] `artifacts/api-server/src/services/highlights/highlightResurfacing.ts:229`
+  — `HIDE_TRIP` is storable and UNENFORCEABLE. `public.highlights` carries no
+  trip reference (22 columns, snapshot `20260915`), so the feed withholds the
+  owner's WHOLE proactive surface rather than one trip. `GET
+  /highlights/resurfacing-controls` now names it in `unenforceableOnFeed` and the
+  client renders the warning, so nobody is misled — but a user who turns it on
+  loses more than they asked for. Census H90. Fixing it needs a trip column on
+  `highlights` or a join table; both are owner decisions.
+- [hm] `artifacts/api-server/src/services/memory/memorySearchService.ts:110` —
+  SHARED_CREW is unreachable from `POST /memories/search`. `TripMemoryProjection`
+  and `PeopleMemoryProjection` are derived per OWNER, so a crew-wide search must
+  union one derivative per member and decide what a revoked or departed member's
+  derivative means. Product decision; census H113's remaining ceiling.
+- [hm] `artifacts/api-server/src/routes/highlights.ts` — the SQL expiry
+  predicate is defence in depth only. Mutation C (replace `NOT_EXPIRED` with a
+  predicate that matches everything) SURVIVED all 26 assertions in
+  `highlightLifetimeAndPin.test.ts`, because `isHighlightActive` filters expired
+  rows app-side on all three surfaces. The SQL filter is kept and is worth
+  keeping — it bounds the fetched set and is the only guard a future read that
+  forgets the app-side check would have — but no test currently fails if it
+  regresses.
+- [hm] `artifacts/api-server/src/services/memoryProjections/projectionRegistry.ts:443`
+  and `:457` — `SearchEmbedding` and `NarrativeDerivative` are `NOT_CONFIGURED`
+  with honest reasons (no embedding backend, no narrator). `POST /memories/search`
+  reports `semanticIndex: "none"` on every response so no client can imply
+  otherwise. Census H171/H172; needs a backend decision, not code.
+- [hm] `artifacts/api-server/src/routes/memories.ts:2599` — `GET
+  /memories/:id`'s sibling reads in `routes/highlights.ts` still discard
+  `viewedRows`, `avatar_url` and `profileRows` on the two proactive feeds
+  (census §O.4's own "what this did NOT find"). Engagement and identity, not
+  history, so they degrade rather than refuse — but the failure is still
+  unlogged.
+- [hm] §5 and §17 disagree about UNPIN. §5's lifecycle has no `PINNED → ACTIVE`
+  edge, so a stored `lifecycle_state = 'PINNED'` could never be undone; §17's
+  command list names `UNPIN_HIGHLIGHT`, which says it must be. `POST/DELETE
+  /highlights/:id/pin` writes only `pinned_at` and derives PINNED from it, which
+  sidesteps the contradiction without resolving it. An owner should say which
+  half of the spec wins.
+- [hm] `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json` —
+  `check:census-freshness` reports `census-highlights-memories.md` STALE. Four
+  counted files this lane created or changed are unnamed in the acknowledgement:
+  `lib/highlightPermissions.ts`, `services/highlights/highlightControlWrites.ts`,
+  `services/highlights/highlightRanking.ts`,
+  `services/memory/memorySearchService.ts`. LEAD DECISION, deliberately not
+  silenced here: an acknowledgement must argue the change cannot have moved a
+  verdict, and these changes move verdicts — that is what the lane was for. The
+  census wants re-measuring, which the build phase pauses.
+- [hm] `docs/architecture/trust-unproduced-vocabulary.md:145` — pre-existing and
+  NOT this lane's: the citation `routes/events.ts:3473` resolves ambiguously
+  across three copies of that file in the tree
+  (`artifacts/…`, `files/artifacts/…`, `portava-stamp-wave2-files/artifacts/…`),
+  so `check:doc-citations` exits 1 with `total findings 1` even at
+  `broken anchors 0`. Neither file is in this lane's diff.

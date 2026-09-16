@@ -60,7 +60,14 @@ export interface HighlightRecord {
   id: string;
   owner_id: string;
   visibility: HighlightVisibility;
-  expires_at: string;
+  /**
+   * §3.5 / §4. NULLABLE since migration 2975: a §4 PERMANENT Highlight is one
+   * with no expiry, and 2975's CHECK makes NULL mean that and nothing else.
+   * Every reader of this field must treat NULL as "does not expire" rather than
+   * as a missing value — see `isHighlightActive`, where the JavaScript default
+   * (`new Date(null)` is the epoch) gets it silently wrong.
+   */
+  expires_at: string | null;
   deleted_at: string | null;
   /**
    * §21 Archive. Present on `public.highlights` since migration 0026 and, until
@@ -95,6 +102,16 @@ export interface HighlightRecord {
 export function isHighlightActive(h: HighlightRecord, now: Date = new Date()): boolean {
   if (h.deleted_at != null) return false;
   if (h.archived_at != null) return false;
+  // A NULL `expires_at` is a §4 PERMANENT Highlight and is NOT expired.
+  //
+  // `new Date(null) > now` is `false` in JavaScript — silently, because
+  // `new Date(null)` is the epoch. So before this line existed, the day
+  // migration 2975 made the column nullable, every PERMANENT Highlight would
+  // have been treated as expired by this predicate and by nothing else,
+  // disappearing from every feed and every engagement action with no error
+  // anywhere. Migration 2975's CHECK constrains a NULL expiry to mean exactly
+  // one thing, so there is no other case to consider here.
+  if (h.expires_at == null) return true;
   return new Date(h.expires_at) > now;
 }
 
