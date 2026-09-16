@@ -61,8 +61,35 @@
 -- No client write to these tables can succeed today — the probe above is the
 -- proof, and it is exhaustive over (anon, authenticated) x (INSERT, UPDATE,
 -- DELETE). Revoking a grant whose every use is already refused cannot change
--- behaviour. service_role and postgres keep the full set and are unaffected;
--- the api-server writes with the service-role client.
+-- behaviour.
+--
+-- The server side was ENUMERATED rather than asserted. Every write site on the
+-- three tables, across all of src/ outside tests, and the client each uses:
+--
+--   lib/mediaAssets.ts:501 ................... sc  media_assets  upsert
+--   lib/mediaAssets.ts:554 ................... sc  media_assets  update
+--   lib/mediaAssets.ts:668 ................... sc  media_assets  update
+--   scripts/backfill-media-assets.ts:37 ...... sc  media_assets  upsert
+--   services/accountDeletion/
+--     AccountDeletionService.ts:1017 ......... sc  media_assets  delete
+--
+-- Five sites, all of them `sc`, the service-role client. Not one uses the
+-- caller's RLS-scoped client. The account-deletion delete matters most and is on
+-- that list: erasure keeps working. media_processing_attempts and
+-- media_asset_lifecycle_events have no write site in this repository at all —
+-- they are written by the out-of-band worker, also as service_role.
+--
+-- The CLIENT APPLICATION never references any of the three: zero matches for all
+-- three table names across travel-buddy-standalone/src.
+--
+-- service_role and postgres keep the full privilege set and are unaffected.
+--
+-- REHEARSED ON CI (hwokxgbmezheskbzskfr) before being written down. After the
+-- revoke, re-probed: the owner still reads their own asset (assets=1,
+-- lifecycle=1), an authenticated user inserting their OWN media_assets row is
+-- still refused with the same 42501 it got before (RLS then, the grant now —
+-- identical from the caller's side), anon still sees 0, and the counts land at
+-- 0 client write grants and 6 surviving client SELECT grants.
 BEGIN;
 
 DO $$

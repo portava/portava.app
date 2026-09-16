@@ -134,3 +134,32 @@ remains is that `anon` and `authenticated` still hold table-level INSERT, UPDATE
 and DELETE on all three tables (identical on prod and CI) — unnecessary, and one
 `FOR ALL` policy away from being live. That is the 2972 pattern, and 3010 revokes
 them.
+
+## Rehearsal record (CI only, so far)
+
+`2961` and `2955` are the only two of the eleven that had not already run
+somewhere. Both were rehearsed on portava-ci (`hwokxgbmezheskbzskfr`) on
+2026-09-16, each first as a dry run with `COMMIT` swapped for `ROLLBACK` to
+exercise the postconditions without persisting, then for real:
+
+    2961  safety.constraint row ......... inserted; postconditions passed
+    2955  client write grants revoked ... 18 -> 0; 6 client SELECT grants survive;
+                                          9 service_role write grants untouched
+
+Re-probed after 2955, to show it changed no behaviour:
+
+    owner reads own asset .................. assets=1 lifecycle=1  (unchanged)
+    authenticated inserts own media_assets . DENIED 42501          (unchanged;
+                                             RLS refused it before, the grant
+                                             refuses it now — identical caller-side)
+    anon reads ............................. 0                     (unchanged)
+
+NOT YET APPLIED TO PRODUCTION. Deployment is a separate step from merge, and the
+ledger rows are deliberately deferred: they record a CHECKSUM, and the files can
+still change while the three lanes are running. All ledger writes happen against
+the fixed final checkout, not now.
+
+`applied_by` is CHECK-constrained to ('ci','manual','backfill'), so the seven
+imported already-applied files take `manual` with the full provenance — original
+filename, out-of-band writer, and the supabase_migrations version each ran as —
+in `notes`. No constraint is widened to accommodate them.
