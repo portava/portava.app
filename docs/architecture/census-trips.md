@@ -3993,7 +3993,7 @@ nothing to get.
   reads makes a sub-projection AHEAD and the Today projection is refused
   `TRIP_PROJECTION_VERSION_AHEAD` rather than assembled from two states. The
   test drives it with a stateful fake
-  (`src/test/tripTodayProjection.test.ts:124#LIVE`) and a
+  (`src/test/tripTodayProjection.test.ts:144#LIVE`) and a
   mutation that stops handing the version over went red.
 - `GET /trips/:tripId/today` (`server/trips/readRoutes/tripProjections.ts:301#today`);
   one refusal mapping for the three gated builders
@@ -5283,7 +5283,7 @@ with every database suite green; no new flag, no new table.
 - **Two rows the tree had already earned.** TR186: Today's
   `opportunities` has been a layer with a producer since §43
   (`domain/trips/projections/TripTodayProjection.ts:114#opportunities:`;
-  `src/test/tripTodayProjection.test.ts:64#opportunities.status`). TR221:
+  `src/test/tripTodayProjection.test.ts:84#opportunities.status`). TR221:
   uncertainty is a value in four places now — a signal's confidence, a
   window's `certified`, an experience's UNCERTAIN verdict, and §12.3's
   `representedAsUncertainty` on `get_opportunities`, which is the row's
@@ -5633,7 +5633,7 @@ under a mutation before its commit.
   null when the hop could not be estimated (`domain/trips/projections/TripFreedomProjection.ts:205#arrivalEstimates.push(`);
   Today takes that as `estimatedArrivalAt` and a lodging's required arrival
   as its desk deadline (`domain/trips/projections/TripTodayProjection.ts:340#checkInDeadlineAt:`).
-  `test/tripTodayProjection.test.ts:84#late_check_in`: a hotel whose desk
+  `test/tripTodayProjection.test.ts:104#late_check_in`: a hotel whose desk
   closes ten minutes after the traveller leaves the previous commitment,
   ten kilometres away, fires with the minutes over the desk; the same
   commitment as an event does not. Mutation: the desk deadline dropped
@@ -5864,7 +5864,7 @@ and the column §17.4 needed.
   derived and the switch is `NORMAL` again. The route says so in words
   (`prioritySwitch`) rather than writing a priority anywhere.
   `test/tripHealthProjection.test.ts:224#REGROUP_OPEN → SAFETY_EVENT` and
-  `test/tripTodayProjection.test.ts:238#kind === "regroup"` pin the flip and
+  `test/tripTodayProjection.test.ts:258#kind === "regroup"` pin the flip and
   the flip back; `test/tripMeetingCheckpointsRoute.test.ts:82#chosenBy` pins
   the route.
 - **The map's meetup layer (TR262)** — `server/trips/readRoutes/tripMapProjection.ts:247#kind: "meeting_checkpoint"`:
@@ -7662,7 +7662,7 @@ has. An `invited`, `declined`, `removed` or `left` member is not on the trip and
 not alerted. Naming a finer set for the downstream PLANS is TR150's, and TR150 stays
 W — see §68.2, where it is BOTH.
 
-`artifacts/api-server/src/test/tripTodayProjection.test.ts:95#tight arrival (TR144)`
+`artifacts/api-server/src/test/tripTodayProjection.test.ts:115#tight arrival (TR144)`
 drives it through the real projection: a commitment due at 10:05 whose hop from the
 previous commitment puts the traveller there ninety minutes later fires
 `tight_arrival` with the downstream named, the §8.4 mitigation verbatim, a magnitude
