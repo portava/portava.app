@@ -22,7 +22,11 @@
  */
 
 /**
- * REFRESH OF 2026-09-16 15:13 UTC. There are now TWO captures dated 09-16 and the
+ * REFRESH OF 2026-09-16 15:43 UTC, the THIRD capture dated 09-16 and the current
+ * one, taken right after the port's four-migration production apply set. The
+ * note below is kept as written because its argument is what produced `c` too.
+ *
+ * REFRESH OF 2026-09-16 15:13 UTC. There were then TWO captures dated 09-16 and the
  * `b` one is current. The 12:14 capture was NOT overwritten: it is a counted
  * subject of census-highlights-memories and §O.3 reads column anchors out of its
  * bytes, so replacing it in place would move the evidence under verdicts already
@@ -30,7 +34,7 @@
  * and this constant moves. That is the whole refresh.
  */
 /** The capture every reader should grade against. Change this on a refresh. */
-export const PRODUCTION_SNAPSHOT_FILENAME = "20260916b-production-schema.json";
+export const PRODUCTION_SNAPSHOT_FILENAME = "20260916c-production-schema.json";
 
 /** Resolved against this directory, which is where the captures live. */
 export const PRODUCTION_SNAPSHOT_URL = new URL(
