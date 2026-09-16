@@ -153,7 +153,7 @@ Processing and EXIF policy: `src/lib/mediaProcessing.ts`. Access: `src/lib/media
 
 ### 9. Current enum literals
 
-`msg_type`: `booking_card`, `card`, `circle_status_card`, `highlight_reply`, `media`, `system`, `text`
+`msg_type`: `booking_card`, `card`, `circle_status_card`, `highlight_reply`, `media`, `system`, `text`, `voice`
 
 `subtype` (static literals): `call_ended`, `call_started`, `compass_card`, `discovery_card`, `e2ee_welcome`, `event_context_card`, `hidden_gem`, `layover_suggestion`, `meetup`, `meetup_cancelled`, `meetup_confirmed`, `post_card`
 
