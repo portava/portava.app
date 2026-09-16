@@ -78,6 +78,13 @@ export interface SweepResult {
  * ever deleted a row past it — the location_snapshots defect in this module's
  * own header, repeated).
  *
+ * 2202's own header named this gap and left it open: "Rows carry `expires_at`
+ * (default 90 days) so this cannot become indefinite behavioural history by
+ * accident. The existing retention sweeps can adopt it; until one does, the
+ * column is the record of intent, and the index makes the sweep cheap when it
+ * lands." This is that adoption, and 2202 built map_telemetry_events_expiry_idx
+ * and map_telemetry_drops_expiry_idx for exactly this DELETE.
+ *
  * COLLECTION AND RETENTION HAVE SEPARATE FLAGS ON PURPOSE. Turning telemetry
  * collection off is the reaction to a privacy concern, and if that also switched
  * the purge off it would strand exactly the rows someone just decided they did
@@ -124,20 +131,27 @@ export interface SweepResult {
 export async function runMapTelemetryRetentionSweep(
   opts: { client?: any } = {},
 ): Promise<SweepResult> {
+  // Explicit null means "no client"; undefined means "use the service client".
+  // NOT `opts.client ?? getServiceClient()` — see runIntelRetentionSweep's note
+  // on why `??` opened a socket in CI.
   const db = "client" in opts && opts.client !== undefined ? opts.client : getServiceClient();
   if (!db) return { purged: 0, skipped: true, reason: "no_client" };
   if (!(await isFlagEnabled(db, "map_telemetry_retention_enabled"))) {
     return { purged: 0, skipped: true, reason: "disabled" };
   }
+
   try {
     const { data, error } = await db.rpc("purge_expired_map_telemetry");
     if (error) {
       logger.warn({ err: error }, "map telemetry retention sweep failed");
       return { purged: 0, skipped: true, reason: "error" };
     }
-    // int8 comes back from PostgREST as a STRING; `typeof data === "number"`
-    // reported 0 for every successful purge in the shape this replaced.
+    // bigint over PostgREST can arrive as a STRING — int8 exceeds JS safe-integer
+    // range, so it is not always emitted as a JSON number. A
+    // `typeof data === "number"` guard silently reported 0 for every successful
+    // purge here once already; coerce instead.
     const purged = Number(data) || 0;
+    // A count and nothing else. WHICH events expired is a fact about viewers.
     if (purged > 0) logger.info({ purged }, "map telemetry retention removed expired rows");
     return { purged, skipped: false, reason: null };
   } catch (err) {
@@ -163,6 +177,21 @@ export interface SensingCredentialCleanupResult {
  * database forever. A flag here would only be a way to retain dead personal
  * data. Seeding a flag row is also an owner decision in this lane and 2956 seeds
  * none.
+ *
+ * ── NOTHING WRITES THIS TABLE TODAY, AND THAT IS NOT A REASON TO DELETE THIS ──
+ * Read this before concluding the sweep proves credential issuance is live. It
+ * does not. The map/sensing lane raised exactly that objection during the port
+ * and it was checked rather than argued: across the whole api-server tree the
+ * ONLY non-test references to `intel_sensing_credentials` are this pass and
+ * AccountDeletionService's erasure step — both DELETERS. There is no INSERT
+ * anywhere, because the issuance route that would write one was rejected during
+ * the port (it authorises against an actor id, which is precisely what
+ * lib/sensingAuthPosture's "undecided" posture forbids). Production holds 0 rows.
+ *
+ * It is kept for the same reason 2960 seeds its retention flag TRUE: a retention
+ * bound that is only wired on the day a writer lands is a bound somebody has to
+ * remember, and that is the failure this whole module exists to stop. The cost
+ * while there is no writer is one bounded SELECT per tick returning nothing.
  */
 export async function runSensingCredentialCleanup(
   opts: { client?: any; now?: Date } = {},
