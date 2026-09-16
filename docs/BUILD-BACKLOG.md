@@ -161,3 +161,39 @@ Format: `- [lane] file:line — what is wrong, and what the user sees.`
   (`routes/telegraphVoice.ts`, red-first in `src/test/telegraphVoice.test.ts`),
   together with a defence-in-depth `thread_id` predicate on the quoted-context
   read in `messaging.ts`.
+
+- [integration] `artifacts/api-server/src/domain/trips/projections/TripPulseCrewPresence.ts:45`
+  — the Pulse's `crew_presence` source can NEVER produce an observation, on any
+  trip, and reports `status: "ok"` while doing so. Found by the date-sweep lane,
+  confirmed here by reading both halves rather than on report.
+
+  The contradiction is structural, not a typo.
+  `TripCrewLocationService.ts:127` builds `allUserIds` with
+  `.filter((id) => id !== viewerId && ...)` and every subsequent query is
+  `.in("user_id", allUserIds)`, so `map.members` CANNOT contain the viewer, by
+  design — it is a map of other people. `readCrewPresenceForPulse` then does
+  `map.members.find((m) => m.userId === viewerId)`, which is therefore always
+  null, so `viewerPoint` is always null, so `if (... || !viewerPoint) continue`
+  skips every member and `n` stays 0.
+
+  Two details make it clear this is a misread contract rather than dead code the
+  author knew about: the loop carries an `if (m.userId === viewerId) continue`
+  guard, which only makes sense if the viewer were expected IN `members`; and
+  the return already carries `detail: "the viewer has no position; distance to
+  crew cannot be judged"` for a case the author evidently thought occasional.
+
+  What a person sees: the Pulse's "friend nearby" signal never fires, for
+  anyone, ever. Nothing is wrong on screen — the signal is simply absent, which
+  is indistinguishable from "no crewmate is near you right now".
+
+  NOT FIXED HERE, and the reason is that the cheap fix is the wrong one.
+  Reporting `status: "no_source"` instead of `"ok"` would make the wire honest
+  in one line, but it would also freeze the feature as permanently unavailable
+  and retire a signal the Pulse is supposed to carry. The real fix is to source
+  the viewer's own position — the same `trip_crew_location_sessions` read
+  `getCrewMap` already performs for everybody else — and that is a Trips-lane
+  decision about where a viewer's own point belongs, not an integration call to
+  make inside a verification pass. Whoever takes it should note that
+  `readCrewPresenceForPulse` is the ONLY caller that needs the viewer included;
+  widening `getCrewMap` itself would hand every other caller a self-entry they
+  currently rely on not having.
