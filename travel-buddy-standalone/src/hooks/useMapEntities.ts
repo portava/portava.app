@@ -95,11 +95,14 @@ import {
   projectFriend,
   projectGemLocal,
   projectTrip,
+  mapProjectionCacheScope,
+  isPlaceIntelCacheSafe,
 } from '../features/map/projection/clientProjection.ts';
 import { coarsenForFriend, isMapVisibleEvent, isMapVisibleTrip } from './mapEntityFilters.ts';
 import { mapCache } from '../features/map/cache/mapCache.ts';
 import type { Staleness } from '../features/map/cache/mapCache.ts';
 import { advanceStage, type LoadingStage } from '../features/map/cache/loadingStrategy.ts';
+import { useSession } from '../context/SessionContext.tsx';
 
 /**
  * Which contract kind the gateway is asked for, per legacy layer toggle.
@@ -520,6 +523,10 @@ export function useMapEntities(opts: {
     settleDebounceMs = DEFAULT_SETTLE_DEBOUNCE_MS,
   } = opts;
 
+  // The account this projection belongs to. It is a CACHE KEY INPUT, not a
+  // filter: see the `cacheScope` note below.
+  const { userId } = useSession();
+
   const [objects, setObjects] = useState<MapObject[]>([]);
   const [entities, setEntities] = useState<MapEntity[]>([]);
   const [loading, setLoading] = useState(false);
@@ -584,28 +591,84 @@ export function useMapEntities(opts: {
   const effectiveLng = settledCamera?.lng ?? lng;
   const effectiveZoom = settledCamera?.zoom ?? zoom;
 
+  // ── The place_intel cache identity ──────────────────────────────────────
+  //
+  // THIS USED TO BE THE CITY NAME, AND THAT WAS A CROSS-ACCOUNT LEAK.
+  //
+  // The seed read `mapCache.read('place_intel', city ?? 'unknown')` and the
+  // write-through did `mapCache.write('place_intel', city, merged)`. `merged`
+  // is the viewer's own trips, their crew, the buddies and travelers the
+  // gateway resolved against THEIR block list, and their memory pins; the key
+  // named none of that. AsyncStorage is not cleared on sign-out, so the next
+  // account to open the map in the same city was seeded straight from the
+  // previous account's private objects. On a shared device it never needed a
+  // sign-out at all.
+  //
+  // A city label also fails as a VIEWPORT identity even within one account:
+  // every coordinate-only deep link collapsed onto the literal scope
+  // `'unknown'`, and two cameras in the same city asking for different layers
+  // or zooms rehydrated each other's object sets.
+  //
+  // So the scope names everything that decides the answer — account, camera,
+  // zoom, radius, and BOTH layer lists. The camera passed is the effective
+  // (settled, quantised) one, i.e. the viewport actually fetched, so a pan
+  // inside one grid cell still hits its own entry.
+  //
+  // `isPlaceIntelCacheSafe` on the write is the second half: even correctly
+  // keyed, a cross-session store holds only objects that describe a place.
+  const cacheScope = mapProjectionCacheScope({
+    accountId: userId,
+    city,
+    lat: effectiveLat,
+    lng: effectiveLng,
+    zoom: effectiveZoom,
+    radiusKm,
+    enabledLayers,
+    // Every §16 option that changes which kinds are requested. Kept in step
+    // with doFetch's own dependency list below — an option that steers the
+    // fetch but not the key would let two different answers share one entry.
+    optionalLayers: [
+      crowdFlow ? 'crowd_flow' : null,
+      places ? 'places' : null,
+      saved ? 'saved' : null,
+      memories ? 'memories' : null,
+      safety ? 'safety' : null,
+      meetingPoints ? 'meeting_points' : null,
+      worldIntelligence ? 'world_intelligence' : null,
+      myCities ? 'my_cities' : null,
+    ].filter((v): v is string => v !== null),
+  });
+
   // ── §33 cache-first seed ────────────────────────────────────────────────────
   // "The map should progressively improve; it should not blank while live
   // intelligence is loading." Runs once per scope, before any network call, and
   // never overwrites objects that have already arrived from the network.
   const seededRef = useRef<string | null>(null);
+  // WHICH scope the network has already answered for, not merely THAT it has
+  // answered once. `hasLoaded` is a single latch for the lifetime of the hook,
+  // so once any viewport had loaded, a seed for a DIFFERENT scope the user had
+  // since panned or signed in to was suppressed forever — the map blanked on
+  // every subsequent camera change instead of showing cached geography (§33).
+  const loadedScopeRef = useRef<string | null>(null);
   useEffect(() => {
-    const scope = city ?? 'unknown';
-    if (seededRef.current === scope) return;
-    seededRef.current = scope;
+    if (seededRef.current === cacheScope) return;
+    seededRef.current = cacheScope;
+    // No account resolved yet (or none at all): there is no key to read, and
+    // inventing a shared one is the defect. Paint from the network instead.
+    if (cacheScope === null) return;
     let cancelled = false;
     void (async () => {
-      const cached = await mapCache.read('place_intel', scope).catch(() => null);
+      const cached = await mapCache.read('place_intel', cacheScope).catch(() => null);
       if (cancelled || !cached || cached.objects.length === 0) return;
       // A later network result always wins; a cache seed must never clobber it.
-      if (hasLoaded.current) return;
+      if (loadedScopeRef.current === cacheScope) return;
       setObjects(cached.objects as MapObject[]);
       setEntities(mapObjectsToEntities(cached.objects as MapObject[]));
       setStaleness(cached.staleness);
       setStage((prev) => advanceStage(prev, 'cached_geography'));
     })();
     return () => { cancelled = true; };
-  }, [city]);
+  }, [cacheScope]);
 
   const doFetch = useCallback(async () => {
     // The optional §16 layers (Crowd Flow, Relevant Places, Saved, Memories,
@@ -773,6 +836,7 @@ export function useMapEntities(opts: {
       setLiveEnrichment(enrichment);
       setError(null);
       hasLoaded.current = true;
+      loadedScopeRef.current = cacheScope;
 
       // Network data is current, so the cache banner must go away.
       setStaleness(null);
@@ -788,8 +852,23 @@ export function useMapEntities(opts: {
 
       // §28 write-through. Fire-and-forget: a cache write must never delay or
       // fail a render.
-      if (city && merged.length > 0) {
-        void mapCache.write('place_intel', city, merged).catch(() => {});
+      //
+      // Only place intelligence is written, and only under the account-scoped
+      // viewport key. The viewer's trips, crew, buddies, travelers, memories,
+      // saved places and personal-city objects are dropped here rather than
+      // stored and filtered on read: an object that was never written cannot be
+      // rehydrated into the wrong session by a later keying mistake.
+      //
+      // The key is `cacheScope`, NOT `city`, so a coordinate-only deep link
+      // (no city at all) now caches under its own coordinates instead of being
+      // silently skipped.
+      //
+      // A null scope means no account is resolved. Writing anyway — under any
+      // shared fallback key — is what this change exists to prevent, so the
+      // write is simply skipped.
+      const cacheable = merged.filter(isPlaceIntelCacheSafe);
+      if (cacheScope !== null && cacheable.length > 0) {
+        void mapCache.write('place_intel', cacheScope, cacheable).catch(() => {});
       }
     } catch (err: any) {
       // Only the newest fetch may surface an error; a superseded one's failure
@@ -822,6 +901,9 @@ export function useMapEntities(opts: {
     enabledLayers, city, effectiveLat, effectiveLng, effectiveZoom, radiusKm,
     crowdFlow, places, saved, memories, safety, meetingPoints,
     worldIntelligence, myCities,
+    // Derived from every value above, but READ inside the callback (the cache
+    // write-through), so the mechanical rule stated above applies to it too.
+    cacheScope,
   ]);
 
   const refresh = useCallback(() => {

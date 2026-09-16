@@ -39,7 +39,7 @@
  *
  * STORAGE
  * =======
- * AsyncStorage, keyed `map:cache:v1:<class>:<scope>` — the same
+ * AsyncStorage, keyed `map:cache:v2:<class>:<scope>` — the same
  * version-prefixed namespace idiom as src/services/discoveryLocalCache.ts, and
  * the same "never throw, a cache miss is not an error" contract. The storage
  * API is injected (`StorageLike`, identical to the interface in
@@ -77,7 +77,15 @@ export interface StorageLike {
  * intelligence is by definition re-fetchable, so a migration would be all risk
  * and no benefit.
  */
-export const MAP_CACHE_VERSION = 'v1';
+// v2 invalidates every v1 entry on every device, and that is the POINT of the
+// bump rather than a side effect. v1 `place_intel` entries were written under a
+// bare city name with no account in the key, and they hold the writing
+// account's own trip stops, crew members and memory pins (see
+// features/map/projection/clientProjection.ts). Re-reading one under the new
+// account-scoped key would hand those objects to whoever is signed in now.
+// Discarding them costs a single re-fetch of data that is re-fetchable by
+// definition.
+export const MAP_CACHE_VERSION = 'v2';
 
 export const MAP_CACHE_KEY_PREFIX = `map:cache:${MAP_CACHE_VERSION}`;
 
@@ -187,7 +195,7 @@ export function isCacheClass(value: string): value is MapCacheClass {
   return (MAP_CACHE_CLASSES as readonly string[]).includes(value);
 }
 
-/** `map:cache:v1:<class>:<scope>` — scope is a city, trip id, event id, … */
+/** `map:cache:v2:<class>:<scope>` — scope is a city, trip id, event id, … */
 export function cacheKey(cacheClass: MapCacheClass, scope: string): string {
   return `${MAP_CACHE_KEY_PREFIX}:${cacheClass}:${normalizeScope(scope)}`;
 }
