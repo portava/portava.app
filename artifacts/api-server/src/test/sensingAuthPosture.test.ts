@@ -27,14 +27,23 @@ const ATTESTED = { profileId: null, deviceAttested: true };
 const NOBODY = { profileId: null, deviceAttested: false };
 
 describe("undecided is fail-closed", () => {
-  it("the shipped posture is `undecided`, and it is a constant — no env var, no flag", () => {
-    assert.equal(SENSING_AUTH_POSTURE, "undecided");
-    assert.match(MODULE_TS, /export const SENSING_AUTH_POSTURE: SensingAuthPosture = "undecided";/);
+  // UPDATED 2026-09-16. These two assertions used to read the SHIPPED constant and
+  // require it to be `undecided`. The owner has since taken the decision the
+  // constant was holding open (Option B, staged — `anonymous_capable`), so pinning
+  // the shipped value to `undecided` would now assert that the decision had not
+  // been taken. What is actually worth guarding survives, and is strengthened:
+  // `undecided` must STILL refuse everyone, so the fail-closed branch cannot rot
+  // now that nothing ships on it — which is exactly when a dead branch breaks
+  // unnoticed. It is therefore passed EXPLICITLY rather than read from the module.
+  it("the shipped posture is DECIDED, and it is still a constant — no env var, no flag", () => {
+    assert.equal(SENSING_AUTH_POSTURE, "anonymous_capable");
+    assert.match(MODULE_TS, /export const SENSING_AUTH_POSTURE: SensingAuthPosture = "anonymous_capable";/);
+    // The real guard, unchanged: nothing may flip the posture at runtime.
     assert.doesNotMatch(MODULE_TS, /process\.env|isFlagEnabled|feature_flags/);
   });
   it("nobody is eligible while undecided — a profile, an attested device, or neither", () => {
     for (const ctx of [PROFILE, ATTESTED, NOBODY]) {
-      assert.deepEqual(sensingEligibility(ctx), { eligible: false, reason: "posture_undecided" });
+      assert.deepEqual(sensingEligibility(ctx, "undecided"), { eligible: false, reason: "posture_undecided" });
     }
   });
   it("an unrecognised posture value is treated as undecided", () => {

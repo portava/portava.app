@@ -14,6 +14,7 @@ import {
   RETENTION_PASSES,
   runPresenceCleanup,
   runSensingCredentialCleanup,
+  runSensingSessionCleanup,
   runMapTelemetryRetentionSweep,
   runIntelRetentionSweep,
   runIntelContributionRetentionSweep,
@@ -29,11 +30,18 @@ test("every retention pass is registered on the scheduler's timer", () => {
     map_telemetry_retention: runMapTelemetryRetentionSweep,
     presence_cleanup: runPresenceCleanup,
     sensing_credential_cleanup: runSensingCredentialCleanup,
+    // ADDED 2026-09-16 with SENSING_AUTH_POSTURE = anonymous_capable. The Option B
+    // decision doc named this sweep as the one piece of the posture with no code
+    // written; 2480's sessions now exist in production, so expired and revoked
+    // credentials need removing on the same timer as everything else.
+    sensing_session_cleanup: runSensingSessionCleanup,
   })) {
     assert.ok(registered.has(name), `${name} is exported but nothing on the timer calls it`);
     assert.equal(RETENTION_PASSES.find((p) => p.name === name)!.run, fn);
   }
-  assert.equal(RETENTION_PASSES.length, 5);
+  // The count is asserted so a pass cannot be added or dropped silently; the map
+  // above is what says WHICH, so bumping this number alone will not satisfy it.
+  assert.equal(RETENTION_PASSES.length, 6);
 });
 
 test("a registered pass survives its own rejection — one broken sweep cannot starve the others", async () => {

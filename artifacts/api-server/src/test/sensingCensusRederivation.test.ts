@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 
 import { deriveContributorToken, deriveEpochSecret, deriveGroupToken, revocationCommitment } from "../lib/sensingAnonStore.js";
 import { buildExperienceState } from "../lib/mapExperienceState.js";
-import { SENSING_AUTH_POSTURE, sensingEligibility } from "../lib/sensingAuthPosture.js";
+import { SENSING_AUTH_POSTURE, SENSING_ALLOW_UNATTESTED_DEVICES, sensingEligibility } from "../lib/sensingAuthPosture.js";
 import { inferVibe, type SensingVibeState, type VibeFeatureInput } from "../lib/vibeInference.js";
 import { TRUTH_CLASSES } from "../lib/truthClass.js";
 import { CONFIDENCE_BANDS, MIN_BAND_FOR_LIVE_STATE } from "../lib/intelContracts.js";
@@ -164,17 +164,45 @@ describe("§9.1 — the sensing contribution stack is imported by its own siblin
     assert.deepEqual(callers.map(([f]) => f), [], "sensingSubjectReconciliation acquired a caller; re-derive S111");
   });
 
-  it("the posture that blocks the thirteen still reads `undecided`, and refuses every context", () => {
-    assert.equal(SENSING_AUTH_POSTURE, "undecided", "the owner decided the posture — re-derive S18, S20, S24, S25, S30, S33, S35, S39, S42, S51, S52, S111, S112");
-    for (const ctx of [
-      { profileId: null, deviceAttested: false },
-      { profileId: "11111111-1111-4111-8111-111111111111", deviceAttested: false },
-      { profileId: null, deviceAttested: true },
-    ]) {
-      const e = sensingEligibility(ctx);
-      assert.equal(e.eligible, false);
-      assert.equal((e as { reason: string }).reason, "posture_undecided");
-    }
+  // ── THIS TRIPWIRE FIRED, AND THAT IS WHAT IT WAS FOR ───────────────────────
+  // It used to assert the posture still read `undecided`, with a failure message
+  // naming the thirteen rows to re-derive when the owner decided. On 2026-09-16
+  // the owner decided (Option B, staged), so it went red exactly as designed.
+  //
+  // It is NOT retired. The posture is no longer what blocks the thirteen, so the
+  // assertion moves to what blocks them NOW — and being explicit about that is
+  // the whole point, because "the posture is decided" could otherwise be read as
+  // "Sensing observes something", which remains false.
+  //
+  // RE-DERIVATION DEBT, recorded rather than silently absorbed: S18, S20, S24,
+  // S25, S30, S33, S35, S39, S42, S51, S52, S111 and S112 were all graded against
+  // `posture_undecided` refusing every caller. That premise is gone. Several of
+  // them (S20, S30, S33, S35, S25) are the rows the decision doc's own table says
+  // Option B moves to BC — the credential, its budget, its staleness reasons and
+  // its purpose scopes now exist and are exercised against production. They are
+  // NOT re-graded here: this file re-derives nothing, it detects when a premise
+  // moved, and census-sensing is where a verdict changes.
+  it("the posture is DECIDED, and what blocks the thirteen is now ingest, not eligibility", () => {
+    assert.equal(SENSING_AUTH_POSTURE, "anonymous_capable");
+
+    // Stage one admits a profile — this is the premise change the thirteen were
+    // graded against, stated as an assertion so it cannot regress quietly.
+    const profile = sensingEligibility({ profileId: "11111111-1111-4111-8111-111111111111", deviceAttested: false });
+    assert.equal(profile.eligible, true);
+    assert.equal((profile as { issuanceClass: string }).issuanceClass, "authenticated_profile");
+
+    // Stage two stays shut until the attestation primitive exists AND the owner
+    // accepts unattested exposure separately. Both device paths are still refused
+    // for an unattested caller, so "staged" is enforced, not promised.
+    const nobody = sensingEligibility({ profileId: null, deviceAttested: false });
+    assert.equal(nobody.eligible, false);
+    assert.equal((nobody as { reason: string }).reason, "device_attestation_required");
+
+    // And the real remaining blocker: there is still NO ingest route. Eligibility
+    // returning `true` admits nobody while nothing calls it. `sensingAnonStore`'s
+    // own no-route tripwire is the authority on that and is asserted there; this
+    // line records that the two are load-bearing together.
+    assert.equal(SENSING_ALLOW_UNATTESTED_DEVICES, false);
   });
 });
 

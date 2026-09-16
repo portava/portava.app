@@ -46,12 +46,40 @@ export const SENSING_AUTH_POSTURES = ["undecided", "authenticated_only", "anonym
 export type SensingAuthPosture = (typeof SENSING_AUTH_POSTURES)[number];
 
 /**
- * OWNER DECISION — SENSING_AUTH_POSTURE. Seeded `undecided`, which makes every
- * eligibility check refuse. Set by the owner, in a reviewed diff, to one of the
- * other two values; there is deliberately no environment variable or flag that
- * can flip it at runtime.
+ * OWNER DECISION — SENSING_AUTH_POSTURE. **DECIDED 2026-09-16: `anonymous_capable`**
+ * (Option B, staged), which is the recommendation
+ * `docs/architecture/sensing-auth-posture-decision.md` reached and the owner took.
+ * It was seeded `undecided`, which refused every caller; there is still deliberately
+ * no environment variable or flag that can flip it at runtime, so this constant in a
+ * reviewed diff remains the only way it moves.
+ *
+ * STAGED IS THE WHOLE POINT, and it is enforced below rather than promised here.
+ * With `SENSING_ALLOW_UNATTESTED_DEVICES` false (it is, and it stays false until the
+ * owner accepts the abuse exposure separately), `sensingEligibility` under this
+ * posture admits exactly:
+ *
+ *   authenticated profile  -> `authenticated_profile`, budget keyed `profile:<id>`
+ *   attested device        -> `attested_device`,       budget keyed `credential`
+ *   anything else          -> REFUSED `device_attestation_required`
+ *
+ * The attestation primitive (App Attest / Play Integrity) does not exist yet, so in
+ * practice today only the first line can be reached: profiles first, while the
+ * attestation verifier is built. That makes Option A's behaviour the FIRST STAGE of
+ * B rather than a competing schema, which is why 2481 is not applied anywhere this
+ * posture governs — see below.
+ *
+ * WHY 2481 MUST NOT BE APPLIED UNDER THIS POSTURE. 2481 adds
+ * `issued_to_profile_id` plus a CHECK whose second conjunct is
+ * `issuance_class = 'authenticated_profile'`, which makes an attested- or
+ * unattested-device session UNREPRESENTABLE. Applying it would hard-block stage two
+ * at the schema level and put a profiles FK on a sensing table that Option B exists
+ * to avoid. Production (2026-09-16) carries 2315 + 2340 + 2480 and NOT 2481, and a
+ * functional probe there accepted all three issuance classes. portava-ci still
+ * carries 2481 from an earlier Option A rehearsal and therefore still refuses the
+ * two device classes; that divergence is recorded rather than papered over, and it
+ * is CI that is wrong for this posture, not production.
  */
-export const SENSING_AUTH_POSTURE: SensingAuthPosture = "undecided";
+export const SENSING_AUTH_POSTURE: SensingAuthPosture = "anonymous_capable";
 
 /**
  * Under `anonymous_capable`, whether a device that cannot present an integrity

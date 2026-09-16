@@ -111,12 +111,23 @@ Paths are relative to `artifacts/api-server/` unless prefixed `travel-buddy-stan
 | Measure | Value |
 |---|---|
 | **Denominator — testable requirements** | **127** |
-| BUILT-AND-CORRECT | **98** |
-| BUILT-BUT-WRONG | **26** |
+| BUILT-AND-CORRECT | **103** |
+| BUILT-BUT-WRONG | **21** |
 | NOT-BUILT | **2** |
 | CANNOT-VERIFY | **1** |
 | **CONSTRUCTED%** = (C+W)/127 | **124 / 127 = 97.6 %** |
-| **CORRECT%** (raw) = C/127 | **98 / 127 = 77.2 %** |
+| **CORRECT%** (raw) = C/127 | **103 / 127 = 81.1 %** |
+
+> **HEADLINE RESTATED 2026-09-16 FROM THE ROWS, not the other way round.** It read
+> C 98 / W 26 until §11 moved S20, S25, S30, S33 and S35 from W to BC on the owner's
+> Option B posture decision. `check:census-integrity` caught the drift the moment it
+> appeared — *"a headline that stopped describing the table underneath it"* — which is
+> the failure mode that check exists to make harder, and four of thirteen censuses
+> already carry a correction header for having missed it. CONSTRUCTED% is unchanged
+> because C+W is unchanged: these five rows moved WITHIN the built population, they
+> were not newly built. **81.1 % correct is not a claim that Sensing observes
+> anything** — §11's closing list names the four things that still block it, three of
+> which are not code.
 | **CORRECT% (spec-attributable)** | **UNSUPPORTED — see the note below; read the body's figures instead** |
 
 > **ATTRIBUTION ROW WITHDRAWN 2026-09-14 — it had no method and it was arithmetically the
@@ -856,8 +867,8 @@ portava-ci and never on production.
 ### 1.2 What was re-derived, row by row
 
 **(a) The anonymous path — built end to end, proven on the database, reached by nothing until the owner decides.**
-`lib/sensingAuthPosture.ts:54#undecided` is the owner's switch and
-`lib/sensingAuthPosture.ts:90#sensingEligibility(` refuses every caller while
+`lib/sensingAuthPosture.ts:45#undecided` is the owner's switch (it read `undecided` when this was written; **it reads `anonymous_capable` since 2026-09-16 — see §17**) and
+`lib/sensingAuthPosture.ts:118#sensingEligibility(` refuses every caller while
 it reads that; `test/sensingAnonStore.test.ts:501#route` asserts no route
 touches the store. So: **S18** (rotating identifiers, N → W): the derivation
 exists at two layers and is executed on the database; no writer is registered.
@@ -2992,7 +3003,7 @@ claim a lane can be told and cannot check — and it is checkable.
 ### §9.1 The blockage, stated as a fact about the tree
 
 `SENSING_AUTH_POSTURE` is a source constant, not a flag and not a database row —
-`` `artifacts/api-server/src/lib/sensingAuthPosture.ts:54#export const SENSING_AUTH_POSTURE: SensingAuthPosture = "undecided";` ``
+`` `artifacts/api-server/src/lib/sensingAuthPosture.ts:82#export const SENSING_AUTH_POSTURE: SensingAuthPosture = "anonymous_capable";` ``
 — and the module says in its own header that there is *"deliberately no
 environment variable or flag that can flip it at runtime."* So no deploy and no
 flag flip can move any row that waits on it: only a reviewed diff can, which is
@@ -3005,7 +3016,7 @@ exhaustively across both trees (every reference to `sensingEligibility`,
 `postureAdmitsAnonymous` and `SENSING_ISSUANCE_CLASSES`, opened one at a time,
 with no `head -N` applied to any search asserted here as an absence):
 
-- `` `artifacts/api-server/src/lib/sensingAuthPosture.ts:90#export function sensingEligibility(` `` has **two** referrers. One is
+- `` `artifacts/api-server/src/lib/sensingAuthPosture.ts:118#export function sensingEligibility(` `` has **two** referrers. One is
   `src/test/sensingAuthPosture.test.ts`. The other is
   `src/lib/sensingContributionSession.ts`, which imports the issuance-class
   vocabulary and not the function.
@@ -3313,7 +3324,7 @@ decision no diff can substitute for.
 | --- | --- | --- | --- |
 | S3 | W | **W** | Four presence models still coexist and `presence/domain` still has *"no store, no fusion layer"* (`` `artifacts/api-server/src/lib/crowdFlowProducer.ts:388#      "src/presence/domain/** — Phase-0 types and a transport selector; no store, no fusion layer",` ``). **RED WHEN** one `PresenceEstimate` store and fusion layer exists behind the ladder and all four of `circle_presence`, `trip_crew_location_sessions`, `locateFriendsSession` and the map's `social_zone`/`buddy_zone`/`crew_member` kinds read through it — proven by a test that a second presence write path is unrepresentable, not by the store's existence. **WHO**: a commissioned build across `src/presence/**`, `lib/crowdFlowProducer.ts`, `services/tripCrew/` and `lib/mapAggregation.ts`; the crew half is in trees this lane may not enter. |
 | S17 | X | **X** | Half is code-answerable and already built (helmet/HSTS in `app.ts`; the store's at-rest control is application-level — peppered HMAC tokens, the device secret never stored). The other half is not in any tree. **RED WHEN** the operator supplies two artifacts: the served response headers of the deployed origin showing TLS termination and an HSTS `max-age`, and Supabase's at-rest encryption attestation for the production project. Neither is a diff. **WHO**: the operator. An honest X until then; no code change can move it. |
-| S18 | W | **W** | Two-layer rotation built, executed, mutation-proven (M1/M1b); `sensing_anon_contributions` has no writer. **RED WHEN** `SENSING_AUTH_POSTURE` leaves `undecided` (`` `artifacts/api-server/src/lib/sensingAuthPosture.ts:54#export const SENSING_AUTH_POSTURE: SensingAuthPosture = "undecided";` ``) **and** a writer is registered. Note the second gate is not only the posture: `src/test/sensingAnonStore.test.ts` asserts *"no route touches the store — a transport is an owner decision, not an implementation detail"*, so a lane that wired one today would turn that test red by design. **WHO**: the owner, then a lane. |
+| S18 | W | **W** | Two-layer rotation built, executed, mutation-proven (M1/M1b); `sensing_anon_contributions` has no writer. **RED WHEN** `SENSING_AUTH_POSTURE` leaves `undecided` (`` `artifacts/api-server/src/lib/sensingAuthPosture.ts:82#export const SENSING_AUTH_POSTURE: SensingAuthPosture = "anonymous_capable";` ``) **and** a writer is registered. Note the second gate is not only the posture: `src/test/sensingAnonStore.test.ts` asserts *"no route touches the store — a transport is an owner decision, not an implementation detail"*, so a lane that wired one today would turn that test red by design. **WHO**: the owner, then a lane. |
 | S19 | W | **W** | `` `artifacts/api-server/src/migrations/2130_intel_storage.sql:142#  actor_id           uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,` `` stands, and so do its two siblings — **repointed**: `` `artifacts/api-server/src/migrations/2130_intel_storage.sql:244#  actor_id       uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,` `` on `intel_evidence` and `` `artifacts/api-server/src/migrations/2130_intel_storage.sql:266#  actor_id   uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,` `` on `intel_confirmations` (the row said 236 and 265; both were in range and wrong). **RED WHEN** a reviewed migration drops or nulls the FK on the table that has a writer. **WHO**: the owner rules, the integration owner numbers the migration. **NOT** by reclassifying `intel_observations` as a non-anonymous store — that shrinks the population and §5 forbids it. |
 | S20 | W | **W** | Eligibility, credential and session are three modules and a table with no identity column; eligibility refuses everyone. **RED WHEN** the posture is decided **and** an ingest exists that receives only the opaque credential — the separation is only observable when something crosses it. **WHO**: the owner, then a lane. |
 | S21 | W | **W** | The store is right; the boundary is narrow and coordinate-free and still entered **by profile id** from the personal-location branch (§10.4). **RED WHEN** `travel-buddy-standalone/` reduces on device — bucketed features, no coordinate leaving the handset — **and** a server path accepts them without reading `location_snapshots` by `actor_id`. Half of that is a client capture change this lane cannot make; half is `services/intel/PresenceVerifier.ts`, which it can. **WHO**: a client build, then this lane. |
@@ -3628,3 +3639,104 @@ All mutations in §10.8 and §10.9 were applied to files outside this lane's
 ownership as a single mutate/run/restore command, with each file's `md5sum`
 checked back to its pristine value and `git diff` empty for it afterwards. No
 other lane sharing `wt-483` ever saw a changed file.
+
+---
+
+## §11 — 2026-09-16: the owner decided the posture, and what that does and does not move
+
+| | |
+|---|---|
+| **Measured at** | The Sensing Option B integration. The document's `head_commit` row is **not** moved: this section re-derives the rows that turned on ONE premise, not the census. |
+
+**The premise every §9 and §10 verdict rested on is gone.** `SENSING_AUTH_POSTURE`
+shipped `undecided`, and `sensingEligibility` refused every caller with
+`posture_undecided`. On 2026-09-16 the owner took the decision
+`sensing-auth-posture-decision.md` had held open since 2026-09-07, choosing that
+document's own recommendation: **Option B, staged** — the constant now reads
+`anonymous_capable`.
+
+Three counted files changed with it (`lib/sensingAuthPosture.ts`,
+`test/sensingAuthPosture.test.ts`, `test/sensingCensusRederivation.test.ts`), and
+**no staleness acknowledgement is written for them**, deliberately. An
+acknowledgement asserts that a change moved no verdict. This one moved several,
+and saying otherwise to keep a guard green would be exactly the failure the
+acknowledgement mechanism exists to prevent.
+
+### What is now true in production, measured rather than asserted
+
+`2315_sensing_anon_contributions`, `2340_sensing_anon_replay_and_time_bounds` and
+`2480_sensing_contribution_sessions` were applied to production the same day, in
+dependency order, each with its postconditions. A functional probe run there
+inside a **rolled-back** transaction returned the full ladder: budget 2 → `ok`,
+`ok`, `budget_exhausted`; unknown hash → `unknown`; past expiry → `expired`;
+revoked → `revoked`; purge → 2. All three issuance classes were accepted.
+
+**`2481` was NOT applied and must not be.** It is Option A only: its CHECK's
+second conjunct is `issuance_class = 'authenticated_profile'`, which makes an
+attested- or unattested-device session unrepresentable, and it puts a `profiles`
+FK on a sensing table. `portava-ci` still carries it from an earlier Option A
+rehearsal, so **CI currently refuses two issuance classes production accepts**.
+For this posture CI is the database that is wrong. Reverting 2481 there is owed
+before stage-two attestation can be tested.
+
+### Rows that move
+
+| Row | Was | Now | Why |
+|---|---|---|---|
+| S20 separate eligibility from ingest; opaque credential | W | **BC** | `sensingEligibility` + `sensing_contribution_sessions` exist and are exercised against production. Built and Correct as a mechanism; it serves no traffic, which is the next row's problem, not this one's. |
+| S30 IntelligenceContributionSession (issued half) | W | **BC** | The 2480 row *is* the issued session; the policy half was already BC. |
+| S33 replay / rate-limit per credential | W | **BC** | `sensing_session_consume` decrements under `FOR UPDATE` and returns `budget_exhausted`; 2340's UNIQUE replay key makes a duplicate contribution a no-op, so a replay costs no budget. Both probed. |
+| S35 stale credentials rejected | W | **BC** | `expired`, `revoked`, `not_started` and `unknown` are each returned by name, and each was observed. |
+| S25 purpose scopes | W | **BC** | The session carries `purpose_scopes` and the CHECK admits only the §3 vocabulary. |
+
+### Rows that explicitly DO NOT move, and why
+
+- **S13 / S23 gate reachability stay W.** The k = 15 privacy gate needs ≥ 15
+  distinct contributors from ≥ 5 independent groups in one zone-bucket.
+  Production's contributor population is zero and its profile population cannot
+  reach k for the foreseeable term. Deciding the posture did not add a person.
+- **S18 stays W, and its RED WHEN has only HALF fired.** The row reads *"RED WHEN
+  `SENSING_AUTH_POSTURE` leaves `undecided` **and** a writer is registered."* The
+  first conjunct is now satisfied and the second is not: `sensing_anon_contributions`
+  still has no writer, and `test/sensingAnonStore.test.ts` still asserts no route
+  touches the store. A half-fired condition is not a verdict move.
+- **S24, S39, S42, S51, S52, S111, S112 stay as graded.** Each turns on a
+  producer, a consumer or a truth-class question the posture never gated.
+
+### What still blocks Sensing from observing anything
+
+Stated because "the posture is decided" reads like "Sensing works", and it does not:
+
+1. **No ingest route.** Eligibility returning `true` admits nobody while nothing
+   calls it. The no-route tripwire is correct and stays.
+2. **No `SENSING_CONTRIBUTOR_PEPPER`.** Without it no contributor token can be
+   derived. This is an operator action in the deployment's secret manager.
+3. **No attestation primitive.** App Attest / Play Integrity exists in neither
+   tree, so stage two admits nobody; `SENSING_ALLOW_UNATTESTED_DEVICES` stays
+   `false` until the owner accepts that exposure separately.
+4. **The k-gate**, above.
+
+Three of those four are not code this lane can write.
+
+### §11 headline — restated from the rows
+
+Stated as a table because `check:census-integrity` reads the LAST such block in the
+file as the document's current claim, and because every recount in this census states
+its own. §8's table two thousand lines above still reads C 98 / W 26; that is left
+exactly as it was, because it is a correct record of what §8 counted and rewriting a
+historical recount to match a later one is how a census stops being a history.
+
+| | |
+|---|---|
+| **Denominator — testable requirements** | **127** |
+| BUILT-AND-CORRECT | **103** |
+| BUILT-BUT-WRONG | **21** |
+| NOT-BUILT | **2** |
+| CANNOT-VERIFY | **1** |
+| **CONSTRUCTED%** = (C+W)/127 | **124 / 127 = 97.6 %** |
+| **CORRECT%** (raw) = C/127 | **103 / 127 = 81.1 %** |
+
+CONSTRUCTED% is unchanged from §8 because C+W is unchanged: the five rows moved
+WITHIN the built population on a posture decision, nothing was newly built. And
+**81.1 % is not a claim that Sensing observes anything** — the four blockers listed
+above still stand, three of which are not code.
