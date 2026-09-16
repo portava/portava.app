@@ -54,6 +54,7 @@ import {
   buildMediaMapProjection,
 } from "../services/media/MediaProjectionService.js";
 import { resolveExperience } from "../services/media/MediaExperienceResolver.js";
+import { filterMediaProjectionVisibility } from "../lib/mediaVisibility.js";
 import { searchMedia, type MediaSearchScope } from "../services/media/MediaSearchService.js";
 
 const router = Router();
@@ -82,8 +83,38 @@ function parseCity(raw: unknown): string | null {
  * `src/test/mediaWorldBoundaryScrub.test.ts` now drives this function directly
  * with a payload that DOES carry coordinates, and separately asserts that every
  * response in this router still leaves through it.
+ *
+ * TWO BOUNDARIES, IN THIS ORDER. `ctx` adds the directional circle-override
+ * filter (lib/mediaVisibility) BEFORE the scrub. The projectors resolve
+ * eligibility, blocks, mutes and private accounts; what they have never known
+ * is that one crew member asked not to be seen by another INSIDE a specific
+ * trip. That is not a property of the post — a PUBLIC post attached to that
+ * trip carries it too — so it cannot be answered by the candidate filter and is
+ * answered here, on the assembled response, where every lens passes through one
+ * function.
+ *
+ * A `null` from the filter means the ownership read could not be completed. It
+ * becomes an ERROR, never a partially-filtered body: a projection this router
+ * could not decide about is not one it may serve.
+ *
+ * `ctx` is optional ONLY so the scrub half stays drivable from a unit test with
+ * no database. Every route in this file passes it.
  */
-export function sendProjection(res: any, route: string, payload: unknown): void {
+export async function sendProjection(
+  res: any,
+  route: string,
+  payload: unknown,
+  ctx?: { sc: any; viewerId: string },
+): Promise<void> {
+  if (ctx) {
+    const filtered = await filterMediaProjectionVisibility(ctx.sc, ctx.viewerId, payload);
+    if (filtered === null) {
+      logger.error({ route }, "mediaWorld: media visibility could not be resolved — refusing to serve");
+      sendError(res, "db_error", "Media visibility could not be resolved.");
+      return;
+    }
+    payload = filtered;
+  }
   const { value, removed } = scrubPreciseLocation(payload);
   if (removed > 0) {
     logger.error(
@@ -114,7 +145,7 @@ router.get(
     }
     const viewer = await resolveViewer(sc, auth.user.id, { needFollows: false });
     const projection = await buildWorldProjection(sc, viewer, parseCity(req.query.city), nowMs);
-    sendProjection(res, "world", projection);
+    await sendProjection(res, "world", projection, { sc, viewerId: auth.user.id });
   }),
 );
 
@@ -143,7 +174,7 @@ router.get(
     }
     const viewer = await resolveViewer(sc, auth.user.id, { needFollows: false });
     const projection = await buildPlaceProjection(sc, viewer, placeId, nowMs);
-    sendProjection(res, "place", projection);
+    await sendProjection(res, "place", projection, { sc, viewerId: auth.user.id });
   }),
 );
 
@@ -175,7 +206,7 @@ router.get(
     if (!projection) {
       // Not visible to this viewer (private / blocked / ineligible) or not found.
       // A well-formed empty shape rather than a probe-able 404.
-      sendProjection(res, "experience", {
+      await sendProjection(res, "experience", {
         id: experienceId,
         kind: null,
         title: null,
@@ -187,10 +218,10 @@ router.get(
         currentState: { live: false, claims: [], crowdLabel: null }, confidence: buildExperienceConfidence([], [], nowMs),
         heroMedia: [],
         generatedAt: new Date(nowMs).toISOString(),
-      });
+      }, { sc, viewerId: auth.user.id });
       return;
     }
-    sendProjection(res, "experience", { ...projection, available: true, generatedAt: new Date(nowMs).toISOString() });
+    await sendProjection(res, "experience", { ...projection, available: true, generatedAt: new Date(nowMs).toISOString() }, { sc, viewerId: auth.user.id });
   }),
 );
 
@@ -215,7 +246,7 @@ router.get(
     // The People lens is explicitly social — it needs the follow graph.
     const viewer = await resolveViewer(sc, auth.user.id, { needFollows: true });
     const projection = await buildPeopleProjection(sc, viewer, nowMs);
-    sendProjection(res, "people", projection);
+    await sendProjection(res, "people", projection, { sc, viewerId: auth.user.id });
   }),
 );
 
@@ -239,7 +270,7 @@ router.get(
     }
     const viewer = await resolveViewer(sc, auth.user.id, { needFollows: false });
     const projection = await buildMyWorldProjection(sc, viewer, nowMs);
-    sendProjection(res, "me", projection);
+    await sendProjection(res, "me", projection, { sc, viewerId: auth.user.id });
   }),
 );
 
@@ -265,7 +296,7 @@ router.get(
     }
     const viewer = await resolveViewer(sc, auth.user.id, { needFollows: !placeId });
     const projection = await buildTimelineProjection(sc, viewer, { placeId, nowMs });
-    sendProjection(res, "timeline", projection);
+    await sendProjection(res, "timeline", projection, { sc, viewerId: auth.user.id });
   }),
 );
 
@@ -313,7 +344,7 @@ router.get(
       },
       nowMs,
     );
-    sendProjection(res, "search", results);
+    await sendProjection(res, "search", results, { sc, viewerId: auth.user.id });
   }),
 );
 
@@ -337,7 +368,7 @@ router.get(
     }
     const viewer = await resolveViewer(sc, auth.user.id, { needFollows: false });
     const projection = await buildMediaMapProjection(sc, viewer, parseCity(req.query.city), nowMs);
-    sendProjection(res, "map", projection);
+    await sendProjection(res, "map", projection, { sc, viewerId: auth.user.id });
   }),
 );
 
@@ -386,7 +417,7 @@ router.get(
       { city: parseCity(req.query.city) },
       nowMs,
     );
-    sendProjection(res, "gems", projection);
+    await sendProjection(res, "gems", projection, { sc, viewerId: auth.user.id });
   }),
 );
 

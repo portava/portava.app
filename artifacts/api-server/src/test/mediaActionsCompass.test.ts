@@ -39,6 +39,11 @@ import {
   filterPermittedIntelRefs,
   formatMediaContextLines,
 } from "../compass/CompassMediaContext.js";
+import mediaActionsRouter, {
+  ownsAttachmentEntity,
+  validateMediaAttachmentBody,
+} from "../routes/mediaActions.js";
+import { recordMediaAttachment } from "../lib/mediaAssets.js";
 import { invalidateFlagsCache } from "../compass/flags.js";
 import { _clearPromotedScopeCache } from "../lib/liveClaimRead.js";
 
@@ -423,6 +428,154 @@ describe("GET /media/:id/actions — resolveMediaActions", () => {
     const result = await resolveMediaActions(sc, viewer, MEDIA_1, Date.now());
     assert.ok(result!.entityRefs.some((r) => r.kind === "gem" && r.id === GEM_1), "gem ref present");
     assert.equal(isLocationSafe(result), true, "gem ref carries no coordinate");
+  });
+});
+
+describe("Media lifecycle routes", () => {
+  const routes = () => (mediaActionsRouter as any).stack
+    .filter((layer: any) => layer.route)
+    .map((layer: any) => `${Object.keys(layer.route.methods)[0].toUpperCase()} ${layer.route.path}`);
+
+  it("exposes the authenticated owner processing-retry and attachment routes", () => {
+    assert.ok(routes().includes("POST /media/:id/retry"));
+    assert.ok(routes().includes("POST /media/:id/attachments"));
+  });
+
+  /**
+   * MUTATION-PROOF, and the reason this router does NOT carry the owner-delete
+   * route the upstream branch put here.
+   *
+   * `routes/mediaFeed.ts` already registers `DELETE /media/:id`, and
+   * `routes/index.ts` mounts THIS router BEFORE mediaFeedRouter precisely so the
+   * specific `/media/:id/...` paths win. A `DELETE /media/:id` added here would
+   * therefore not sit alongside mediaFeed's handler — it would SHADOW it
+   * completely, and on a different id space (media_assets.id versus the post id
+   * mediaFeed takes). Owner deletion of a canonical asset needs its own path, or
+   * mediaFeed's handler has to move; neither is decided here.
+   */
+  it("does NOT register a bare DELETE /media/:id, which would shadow mediaFeed's", () => {
+    assert.ok(
+      !routes().includes("DELETE /media/:id"),
+      "a bare DELETE /media/:id here silently replaces routes/mediaFeed.ts's handler",
+    );
+  });
+});
+
+describe("POST /media/:id/attachments entity authorization", () => {
+  const OWNER = AUTHOR_A;
+  const MEMBER = VIEWER;
+  const ENTITY = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+
+  it("accepts the owner mappings for every supported entity table", async () => {
+    const sc = makeSc({
+      posts: [{ id: ENTITY, author_id: OWNER }],
+      passport_postcards: [{ id: ENTITY, user_id: OWNER }],
+      passport_memories: [{ id: ENTITY, user_id: OWNER }],
+      events: [{ id: ENTITY, host_id: OWNER }],
+      hidden_gems: [{ id: ENTITY, submitted_by: OWNER }],
+      shared_moments: [{ id: ENTITY, owner_id: OWNER }],
+      trips: [{ id: ENTITY, owner_id: OWNER }],
+    });
+    for (const type of ["post", "postcard", "memory", "event", "hidden_gem", "shared_moment", "trip"]) {
+      assert.equal(await ownsAttachmentEntity(sc, OWNER, type, ENTITY), true, `${type} owner`);
+    }
+  });
+
+  it("rejects a wrong owner, missing entity, and unsupported entity without guessing a table", async () => {
+    const sc = makeSc({
+      posts: [{ id: ENTITY, author_id: OWNER }],
+      trips: [{ id: ENTITY, owner_id: OWNER }],
+      trip_members: [{ trip_id: ENTITY, user_id: MEMBER, status: "pending" }],
+    });
+    assert.equal(await ownsAttachmentEntity(sc, MEMBER, "post", ENTITY), false);
+    assert.equal(await ownsAttachmentEntity(sc, OWNER, "post", "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"), false);
+    // `place` and `observation` ARE §6.1 entity types, but neither has a single
+    // owning user, so this route rejects them rather than reaching for a table.
+    assert.equal(await ownsAttachmentEntity(sc, OWNER, "place", ENTITY), false);
+    assert.equal(await ownsAttachmentEntity(sc, OWNER, "observation", ENTITY), false);
+  });
+
+  it("allows an accepted trip member, but not a pending member", async () => {
+    const pending = makeSc({
+      trips: [{ id: ENTITY, owner_id: OWNER }],
+      trip_members: [{ trip_id: ENTITY, user_id: MEMBER, status: "pending" }],
+    });
+    assert.equal(await ownsAttachmentEntity(pending, MEMBER, "trip", ENTITY), false);
+    const accepted = makeSc({
+      trips: [{ id: ENTITY, owner_id: OWNER }],
+      trip_members: [{ trip_id: ENTITY, user_id: MEMBER, status: "accepted" }],
+    });
+    assert.equal(await ownsAttachmentEntity(accepted, MEMBER, "trip", ENTITY), true);
+  });
+
+  it("rejects an unmodelled visibility and an unsupported entity type at validation", () => {
+    const invalidVisibility = validateMediaAttachmentBody({
+      entity_type: "post",
+      entity_id: ENTITY,
+      visibility_override: "friends_only",
+    });
+    assert.equal(invalidVisibility.success, false);
+    const unsupported = validateMediaAttachmentBody({
+      entity_type: "place",
+      entity_id: ENTITY,
+    });
+    assert.equal(unsupported.success, false);
+    // `.strict()`: an unknown key is rejected rather than ignored, so a client
+    // cannot smuggle a field a later version might start honouring.
+    assert.equal(
+      validateMediaAttachmentBody({ entity_type: "post", entity_id: ENTITY, owner_user_id: VIEWER }).success,
+      false,
+    );
+    assert.equal(
+      validateMediaAttachmentBody({ entity_type: "post", entity_id: "not-a-uuid" }).success,
+      false,
+    );
+    assert.equal(
+      validateMediaAttachmentBody({ entity_type: "post", entity_id: ENTITY, visibility_override: "trip_crew" }).success,
+      true,
+    );
+  });
+
+  it("uses the same canonical writer payload on repeated attachment requests", async () => {
+    const writes: any[] = [];
+    const sc: any = {
+      from(table: string) {
+        if (table === "feature_flags") {
+          const b: any = {
+            eq() { return b; },
+            maybeSingle: async () => ({ data: { enabled: true }, error: null }),
+          };
+          return { select: () => b };
+        }
+        const b: any = {
+          upsert(payload: any) {
+            writes.push({ table, payload });
+            return {
+              select: () => ({
+                single: async () => ({ data: { id: "attachment-1" }, error: null }),
+              }),
+            };
+          },
+        };
+        return b;
+      },
+    };
+    const input = {
+      mediaAssetId: MEDIA_1,
+      entityType: "post" as const,
+      entityId: ENTITY,
+      position: 0,
+      isCover: true,
+      visibilityOverride: "private",
+    };
+    const first = await recordMediaAttachment(sc, input);
+    const second = await recordMediaAttachment(sc, input);
+    assert.equal(first, "attachment-1");
+    assert.equal(second, "attachment-1");
+    assert.equal(writes.length, 2);
+    assert.deepEqual(writes[0].payload, writes[1].payload);
+    assert.equal(writes[0].table, "media_attachments");
+    assert.equal(writes[0].payload.visibility_override, "private");
   });
 });
 

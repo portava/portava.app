@@ -27,6 +27,7 @@ import {
   type CurrentState,
   type ViewerResolved,
 } from "./MediaProjectionService.js";
+import { rankMediaCandidates } from "./MediaRankingService.js";
 import { aggregateFreshness, type FreshnessState } from "../../lib/media/mediaFreshness.js";
 
 /**
@@ -241,7 +242,20 @@ async function resolveEvent(
       limit: 200,
       nowMs,
     });
-    media = await projectCandidatesProtected(sc, viewer, candidates as MediaCandidateRow[], nowMs);
+    // Ranked BEFORE the choke point, not after: see MediaProjectionService's
+    // rankAndProject — the ranker reads raw-row signals the projection coarsens,
+    // and it only reorders, so the projected SET is identical either way.
+    media = await projectCandidatesProtected(
+      sc,
+      viewer,
+      rankMediaCandidates(candidates as MediaCandidateRow[], {
+        viewerId: viewer.viewerId,
+        viewerTripIds: viewer.viewerTripIds,
+        intentMediaIds: viewer.intentMediaIds,
+        nowMs,
+      }),
+      nowMs,
+    );
   }
 
   const placeIds = typeof ev.place_id === "string" && ev.place_id ? [ev.place_id] : [];
@@ -313,7 +327,17 @@ async function resolveTrip(
     limit: 200,
     nowMs,
   });
-  const media = await projectCandidatesProtected(sc, viewer, candidates as MediaCandidateRow[], nowMs);
+  const media = await projectCandidatesProtected(
+    sc,
+    viewer,
+    rankMediaCandidates(candidates as MediaCandidateRow[], {
+      viewerId: viewer.viewerId,
+      viewerTripIds: viewer.viewerTripIds,
+      intentMediaIds: viewer.intentMediaIds,
+      nowMs,
+    }),
+    nowMs,
+  );
 
   const placeIds = Array.from(new Set(media.map((m) => m.placeId).filter((x): x is string => Boolean(x))));
   const contributors = new Set(media.map((m) => m.contributor?.id).filter(Boolean));
