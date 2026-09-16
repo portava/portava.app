@@ -889,6 +889,21 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   // not by services/trust. Listing only the service would have made this census
   // look fresh while the reads it grades moved underneath it.
   "census-trust.md": [
+    // ── ADDED 2026-09-16 by the PRODUCT lane, with §20 ─────────────────────
+    // TV-2a's Rent-a-Buddy half now RESTS on these. The row was W because
+    // no screen under `app/(rent-a-buddy)/` routed to `/profile/verification`;
+    // it is C because three of them do, through one registry. Until this entry
+    // a change to any of them aged no census, so the row could have been
+    // falsified by a deleted button and nothing would have said so — which is
+    // the failure `gateAge.ts` was added for, one census section earlier.
+    "travel-buddy-standalone/src/services/rentABuddyBookingErrors.ts",
+    "travel-buddy-standalone/app/(rent-a-buddy)/checkout.tsx",
+    "travel-buddy-standalone/app/(rent-a-buddy)/become/apply.tsx",
+    "travel-buddy-standalone/src/services/__tests__/rentABuddy.verificationRoute.test.ts",
+    // §20.2 cites this one as the PRE-EXISTING suite a mutation reddens: it is
+    // what stops `verification_required` being folded into the feature-closed
+    // set, so TV-2a's evidence rests on it staying as it is.
+    "travel-buddy-standalone/src/services/__tests__/rentABuddy.bookingUnavailable.test.ts",
     // ── ADDED 2026-09-14 round 4, by the INTEGRATION OWNER after §19 ───────
     // `lib/gateAge.ts` is the one that matters, and the Sensing/Trust lane
     // flagged its absence as a scope gap before I found it here: it is the

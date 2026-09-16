@@ -314,7 +314,7 @@ Full per-route detail, including the resolved chain for each wired route, is in
 | POST | `/api/compass/sense/check` | `artifacts/api-server/src/routes/compassSense.ts:101` |
 | GET | `/api/compass/sense/nudges` | `artifacts/api-server/src/routes/compassSense.ts:122` |
 | GET | `/api/compass/value-delivered` | `artifacts/api-server/src/routes/compassOutcomes.ts:67` |
-| GET | `/api/discovery/people/:userId/passport` | `artifacts/api-server/src/routes/discoverySearch.ts:2590` |
+| GET | `/api/discovery/people/:userId/passport` | `artifacts/api-server/src/routes/discoverySearch.ts:2627` |
 | GET | `/api/events/:id/activity` | `artifacts/api-server/src/routes/events.ts:5956` |
 | GET | `/api/events/:id/attendees` | `artifacts/api-server/src/routes/events.ts:3710` |
 | DELETE | `/api/events/:id/attendees/:userId` | `artifacts/api-server/src/routes/events.ts:4930` |

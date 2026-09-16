@@ -227,7 +227,7 @@ an ABSENT profile a non-buddy's Buddy row reads "Not yet rated" rather than "Not
 There is one `buildTrust`; every consumer variant is projected from the one `PassportProjection`
 (`PassportConsumerProjections.buildConsumerProjection`). So the seven call sites —
 `routes/trips.ts:467`, `routes/rentABuddy.ts:1248`, `services/passport/EventPassportService.ts:423`,
-`routes/discoverySearch.ts:2908#buildConsumerProjection(sc,`, `routes/compass.ts:4572#buildConsumerProjection(sc,`, `routes/telegraph.ts:386#buildConsumerProjection(sc,`,
+`routes/discoverySearch.ts:2945#buildConsumerProjection(sc,`, `routes/compass.ts:4572#buildConsumerProjection(sc,`, `routes/telegraph.ts:386#buildConsumerProjection(sc,`,
 `routes/safeReturn.ts:1185#buildConsumerProjection` — all inherit the fix. *(Cited `:852` until 2026-09-12; that line was never the call, which is at the `buildConsumerProjection(db, "safety", …)` site — a range-only citation that stayed green while wrong, the §37 class. Anchored now.)* *(Three more repointed 2026-09-13 while acknowledging this census's staleness on `routes/discoverySearch.ts` and `routes/messaging.ts`, each re-derived by SEARCHING FOR THE CALL rather than by adding the diff's offset. Discovery search was cited at line 2087, then at line 2350 after a merge re-derived it by offset; the call is at line 2578 and has been the file's only `buildConsumerProjection(sc, "discovery_card", …)` throughout. Compass was cited at line 4225, then at line 4276 by the same offset re-derivation — and `routes/compass.ts` was BYTE-IDENTICAL between 3ca68cb06 and 75cc31d9e, the tree this sentence was measured in, so no offset was owed at all; line 4276 is a bare closing brace, a line that occurs 38 times in that file, which is not a citation. The call was at line 4393 there. **UPDATED 2026-09-13, because this sentence stopped being true four commits later and a census must not keep asserting it:** the Compass lane's `fa5d7c25d` added 184 lines to this file (census-compass §12's CP-01/CT-13 pass), so the byte-identical claim no longer reaches HEAD and is narrowed here to the window it was actually measured over. The call was re-resolved by SEARCHING FOR IT again rather than by adding that diff's offset, and is at line 4559 — still the file's only `buildConsumerProjection(sc, "discovery_card", …)`, which the anchored citation in the list above names and which resolves line-exact at HEAD. No verdict moves; the `fa5d7c25d` diff is argued hunk by hunk in this census's entry in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json`. Both were already wrong at 3ca68cb06, so neither was broken by the diff being acknowledged; both, and Telegraph's, now carry a whitespace-free anchor that appears on exactly ONE line of the file it names. NOT repaired here, and still wrong, in files this census's scope shows UNCHANGED since 3ca68cb06 — so outside this acknowledgement's reach and owed a repointing pass of their own: Trips is cited at line 467, a route comment banner, for a call at line 590; Rent-a-Buddy at line 1248, a `.select()` chain, for a call at line 1386; and the variant ranges in the table below (PassportConsumerProjections 607-613, 666-672 and 770-773, plus computeTrustScore at rentABuddy line 1237) name unrelated code. No verdict rests on the numbers — every one of the seven is the same call it always was.)* But note what each actually ships:
 
 | Consumer | Variant | Carries `domains`? | Reached by the constant-50 "Established" defect? | Changed by #467? |
@@ -2105,3 +2105,121 @@ The headline table, restated from the rows under LAST-STATEMENT-WINS:
 BUILT-BUT-WRONG. §18's own note records the integration lead being caught by this same guard for
 leaving a headline behind a row move; leaving it behind again would be worse for having been
 warned.*
+
+---
+
+## §20 — The Rent-a-Buddy gate got a door. ONE ROW MOVES, and the refusal it made stops blaming the server
+
+**2026-09-16, product lane.** `head_commit` is **NOT** re-declared here, for §19's reason
+unchanged: this section grades one row. It is not a re-measurement of 108 requirements.
+
+### §20.1 What TV-2a asked for, and what the tree answered
+
+TV-2a wants two entry points into identity verification: the Passport profile, and the
+Rent-a-Buddy gate. §13's client-lane table settled the second in one sentence — *"Settled by a
+screen under `app/(rent-a-buddy)/` linking to `/profile/verification`, so a user the server-side
+gate refuses is given a way to satisfy it."*
+
+The gate itself was never in doubt.
+`artifacts/api-server/src/routes/rentABuddyRollout.ts:372#verification_required` refuses an
+MVP-mode booking from a traveller whose ID is not verified, with an HTTP 403 and that code.
+
+**What the row did not record is that the refusal was worse than a dead end — it was a
+misattribution.** `verification_required` appeared in NEITHER map in
+`travel-buddy-standalone/src/services/rentABuddyBookingErrors.ts`: not in the feature-closed
+set, not in the copy table. So `bookingErrorCopy` fell all the way through to
+`GENERIC_BOOKING_ERROR`, and a traveller who had just filled in the entire checkout form — date,
+duration, group size, meetup zone, safety preferences, policy acceptance — was shown an alert
+reading:
+
+> "Something went wrong on our side and we couldn't complete that. Please try again."
+
+Every clause of which is false. Nothing went wrong. It was not on our side. And trying again
+does the same thing forever, because the gate is a fact about the account rather than a transient
+failure. The one sentence the person needed — *your ID is not verified, and there is a screen for
+that* — was the sentence the mapping could not produce. Meanwhile
+`travel-buddy-standalone/app/profile/verification.tsx` had existed the whole time, registered at
+`travel-buddy-standalone/src/navigation/portavaRoutes.ts:352#path: 'profile/verification',`,
+which is the route TV-2a's Passport half already reaches.
+
+The two `become/apply.tsx` refusals were the same shape in a politer register: one told the
+applicant to *"complete your verification first"* and the other to *"contact support to begin the
+verification process"*. Support was never the way in. The screen was.
+
+### §20.2 What is built
+
+A THIRD class of refusal, beside the two `rentABuddyBookingErrors.ts` already had:
+
+| class | meaning | treatment |
+|---|---|---|
+| feature-closed | `isBookingUnavailable` — nothing to do but wait | persistent banner, Book button disabled, "Not available yet" |
+| **actionable** | the person can clear this themselves | **persistent banner carrying the route, Book button LEFT ENABLED** |
+| genuine failure | something really broke | `Alert`, and "try again" is honest advice |
+
+- The registry: `travel-buddy-standalone/src/services/rentABuddyBookingErrors.ts:91#route: '/profile/verification'`,
+  read through `travel-buddy-standalone/src/services/rentABuddyBookingErrors.ts:102#export function bookingRefusalAction(`.
+- The three-way decision, which used to be two `if`s inside a screen and is now one function:
+  `travel-buddy-standalone/src/services/rentABuddyBookingErrors.ts:165#export function classifyBookingRefusal(`.
+  Its ORDER is the behaviour — actionable must beat both of the others — and while it lived in a
+  screen nothing could see that.
+- The checkout door: `travel-buddy-standalone/app/(rent-a-buddy)/checkout.tsx:336#router.push(actionableRefusal.action.route`,
+  a "Verify my ID" button inside the banner, which does **not** disable Booking, because a person
+  who verifies and comes back must be able to press Confirm without rebuilding the form.
+- The two application doors:
+  `travel-buddy-standalone/app/(rent-a-buddy)/become/apply.tsx:32#VERIFY_ACTION.route`,
+  which turns both alerts into "Not now" / "Verify my ID" and takes the path from the same registry
+  rather than from a literal, so there is one place a wrong route can be.
+
+Executed: `travel-buddy-standalone/src/services/__tests__/rentABuddy.verificationRoute.test.ts:114#V5`
+is the case that checks the route against `PORTAVA_ROUTES` rather than against a string in the test —
+a path no screen answers is the same dead end, spelled more confidently.
+
+Nine cases, written before the code in two rounds, and each round watched red first: V1, V2, V3 and
+V5 against the missing registry, then V6-V9 against the missing classifier. **V4 was green
+throughout** and is the one that matters most — it asserts `verification_required` stays OUT of the
+feature-closed class, so it was already true and is there to stop the cheap fix. Four mutations, no
+survivors: deleting the registry entry kills V2/V5/V6; pointing it at an unregistered route kills
+the same three; folding the code into `BOOKING_UNAVAILABLE_CODES` kills V4 **and** the pre-existing
+`rentABuddy.bookingUnavailable.test.ts` case that says the set contains exactly five; dropping the
+copy lookup kills V1 alone.
+
+### §20.3 Row move
+
+| id | was | now | why |
+|---|---|---|---|
+| TV-2a | W | **C** | **Entry points: Passport profile, Rent-a-Buddy gate.** The Passport half was already C in the row's own evidence. The Rent-a-Buddy half is now three doors under `app/(rent-a-buddy)/` — the checkout banner and both `become/apply.tsx` refusals — all pointing at `/profile/verification` through one registry, which is exactly what §13's client-lane table said would settle it. |
+
+### §20.4 Headline, restated from the rows
+
+One requirement moves from BUILT-BUT-WRONG to BUILT-AND-CORRECT. CONSTRUCTED does not move at all —
+the row was already built — and CORRECT rises by one.
+
+> **Trust, at this tree: 108 requirements · 86 BUILT-AND-CORRECT · 15 BUILT-BUT-WRONG ·
+> 5 NOT-BUILT · 2 CANNOT-VERIFY → CONSTRUCTED 101 / 108 = 93.5 % · CORRECT 86 / 108 = 79.6 %.**
+>
+> Against §19.6's 108 · 85 / 16 / 5 / 2 → CONSTRUCTED 93.5 % · CORRECT 78.7 %:
+> **CONSTRUCTED UNCHANGED, CORRECT +0.9 points.**
+
+| BUILT-AND-CORRECT | **86** |
+|---|---|
+| BUILT-BUT-WRONG | **15** |
+| NOT-BUILT | **5** |
+| CANNOT-VERIFY | **2** |
+
+*This supersedes §19.6's table and supersedes nothing else. The denominator is unchanged at 108.*
+
+### §20.5 What this does NOT claim
+
+- **TV-2b, TV-2d, TV-5a and TV-7c are untouched.** §13 files them in the same client lane and this
+  pass grades none of them.
+- **TV-5b is still `W`, and for the reason §19.5 gave.** The `verified_minor` refusal still has no
+  client surface; a grep for that vocabulary across `travel-buddy-standalone/` still returns zero.
+  Giving one gate a door does not give another one.
+- **Nothing here is rendered-tested.** The classification, the copy, the route and the registry
+  check are all executed under `node:test`. The BANNER itself — that pressing "Verify my ID"
+  navigates — is verified by the typechecker and by reading, not by a rendering test: driving
+  `checkout.tsx` to a submitted booking needs the date picker, the zone picker and the policy
+  checkbox, and this lane did not build that harness. The decision the screen makes is pinned; the
+  pixels it draws are not.
+- **The server still answers 403 `verification_required` with no route in the payload.** The route
+  lives on the client, in the registry. A second client would have to know it independently.

@@ -323,7 +323,7 @@ hardcoded fallback and an origin-less allowance for mobile/curl (`app.ts:31-86`)
 decision, Redis-backed when `REDIS_URL` is set and **fail-open to per-process buckets** when it
 is not, so with N instances a client gets N× the budget. Any exact cross-instance ceiling must be
 enforced against the DB; the call-start limit is the worked example. `Retry-After` is set on
-some 429s (`circle.ts:725`, `discoverySearch.ts:2101`) but is not a global property of the code.
+some 429s (`circle.ts:725`, `discoverySearch.ts:2138`) but is not a global property of the code.
 Rate-limit buckets are module-global and bleed across test files — call `_resetRateLimit()` per
 suite (`.agents/memory/api-server-testing.md`).
 
