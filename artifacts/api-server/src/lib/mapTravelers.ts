@@ -173,12 +173,27 @@ export function _clearMapTravelersCache(): void {
 
 // ── Candidate loading ─────────────────────────────────────────────────────────
 
+/**
+ * Candidate travelers for a viewport, or `null` when a read this function
+ * depends on FAILED.
+ *
+ * The null is the point. Every failure path here used to `return []`, which
+ * told the caller "there is nobody in this viewport" — a claim the function had
+ * no basis for. Callers then published that as an answer: routes/mapProjection
+ * named `travelers` in `sources`, so the client treated an outage as an
+ * authoritatively empty map and did NOT fall back; routes/mapSearch recorded
+ * the gap in a KNOWN GAP comment because it could not close it from outside.
+ *
+ * Failing CLOSED (show nobody) and failing HONESTLY (say the read failed) are
+ * different properties and both are required. Returning null does both: there
+ * is nothing to render, and nothing claims otherwise.
+ */
 async function loadCandidates(
   db: SupabaseClient,
   lat: number,
   lng: number,
   radiusKm: number,
-): Promise<MapTravelerPayload[]> {
+): Promise<MapTravelerPayload[] | null> {
   const cutoff = new Date(Date.now() - FRESH_MAX_MS).toISOString();
   const dLat = radiusKm / 111.32;
   const dLng = radiusKm / (111.32 * Math.max(0.2, Math.cos((lat * Math.PI) / 180)));
@@ -200,7 +215,9 @@ async function loadCandidates(
     .gte("lng", lng - dLng)
     .lte("lng", lng + dLng)
     .limit(SCAN_LIMIT);
-  if (locErr || !locsRaw || locsRaw.length === 0) return [];
+  // A failed read and an empty viewport are different answers.
+  if (locErr) return null;
+  if (!locsRaw || locsRaw.length === 0) return [];
   const locs = locsRaw as LocStateRow[];
 
   const ids = locs.map((l) => l.user_id);
@@ -221,8 +238,9 @@ async function loadCandidates(
       .in("user_id", ids),
   ]);
 
-  // Fail-closed: if ANY privacy-relevant query fails, show nobody.
-  if (prefsQ.error || profsQ.error || noDiscQ.error || upsQ.error) return [];
+  // Fail-closed: if ANY privacy-relevant query fails, show nobody — and say so,
+  // rather than presenting the refusal as an empty neighbourhood.
+  if (prefsQ.error || profsQ.error || noDiscQ.error || upsQ.error) return null;
 
   const prefsById = new Map<string, LocationPrefsRow>(
     (prefsQ.data ?? []).map((p: any) => [p.user_id as string, p as LocationPrefsRow]),
@@ -334,11 +352,14 @@ export async function listMapTravelers(
     lat: number;
     lng: number;
     radiusKm: number;
-    /** null = block state unknown → fail-closed empty result. */
+    /** null = block state unknown → the layer is REFUSED, not empty. */
     blockedSet: Set<string> | null;
   },
-): Promise<MapTravelerPayload[]> {
-  if (opts.blockedSet === null) return [];
+): Promise<MapTravelerPayload[] | null> {
+  // Without the block set this function cannot honour blocking, so it cannot
+  // answer at all. It previously returned [], which a caller could not tell
+  // from "nobody is here".
+  if (opts.blockedSet === null) return null;
 
   const key = cacheKey(opts.lat, opts.lng, opts.radiusKm);
   const hit = candCache.get(key);
@@ -346,7 +367,12 @@ export async function listMapTravelers(
   if (hit && Date.now() - hit.at < CAND_TTL_MS) {
     rows = hit.rows;
   } else {
-    rows = await loadCandidates(db, opts.lat, opts.lng, opts.radiusKm);
+    const loaded = await loadCandidates(db, opts.lat, opts.lng, opts.radiusKm);
+    // A failed read is NOT cached. Caching it would turn one transient database
+    // error into CAND_TTL_MS of "nobody is anywhere near you" for every viewer
+    // sharing the viewport key.
+    if (loaded === null) return null;
+    rows = loaded;
     candCache.set(key, { at: Date.now(), rows });
     if (candCache.size > 80) {
       const oldest = [...candCache.entries()].sort((a, b) => a[1].at - b[1].at)[0];

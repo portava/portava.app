@@ -56,6 +56,62 @@ export interface SweepResult {
   reason: "disabled" | "no_client" | "error" | null;
 }
 
+/**
+ * Enforces the 90-day Map telemetry expiry that migration 2202 DECLARED and
+ * nothing kept.
+ *
+ * 2202's header: "Rows carry `expires_at` (default 90 days) so this cannot
+ * become indefinite behavioural history by accident. The existing retention
+ * sweeps can adopt it; until one does, the column is the record of intent, and
+ * the index makes the sweep cheap when it lands." This is that adoption; 2960
+ * supplies purge_expired_map_telemetry() and the two expiry indexes were built
+ * by 2202 for exactly this DELETE.
+ *
+ * SEPARATE FLAG FROM COLLECTION, deliberately. `map_telemetry_enabled` governs
+ * whether new events are gathered; `map_telemetry_retention_enabled` governs
+ * whether expired ones are removed. Folding them into one would mean that
+ * switching collection OFF strands every already-expired behavioural row —
+ * turning the kill switch into a way to make old data permanent.
+ *
+ * Fail-closed and reason-bearing, following runIntelRetentionSweep: a
+ * persistently failing sweep must not be indistinguishable from one nobody
+ * switched on, because that indistinguishability IS the original defect.
+ *
+ * NOT REGISTERED ON A TICK HERE. Scheduler registration is the background-work
+ * lane's; this module only supplies the sweep.
+ */
+export async function runMapTelemetryRetentionSweep(
+  opts: { client?: any } = {},
+): Promise<SweepResult> {
+  // Explicit null means "no client"; undefined means "use the service client".
+  // NOT `opts.client ?? getServiceClient()` — see runIntelRetentionSweep's note
+  // on why `??` opened a socket in CI.
+  const db = "client" in opts && opts.client !== undefined ? opts.client : getServiceClient();
+  if (!db) return { purged: 0, skipped: true, reason: "no_client" };
+  if (!(await isFlagEnabled(db, "map_telemetry_retention_enabled"))) {
+    return { purged: 0, skipped: true, reason: "disabled" };
+  }
+
+  try {
+    const { data, error } = await db.rpc("purge_expired_map_telemetry");
+    if (error) {
+      logger.warn({ err: error }, "map telemetry retention sweep failed");
+      return { purged: 0, skipped: true, reason: "error" };
+    }
+    // bigint over PostgREST can arrive as a STRING — int8 exceeds JS safe-integer
+    // range, so it is not always emitted as a JSON number. A
+    // `typeof data === "number"` guard silently reported 0 for every successful
+    // purge here once already; coerce instead.
+    const purged = Number(data) || 0;
+    // A count and nothing else. WHICH events expired is a fact about viewers.
+    if (purged > 0) logger.info({ purged }, "map telemetry retention removed expired rows");
+    return { purged, skipped: false, reason: null };
+  } catch (err) {
+    logger.warn({ err }, "map telemetry retention sweep threw");
+    return { purged: 0, skipped: true, reason: "error" };
+  }
+}
+
 export async function runIntelRetentionSweep(opts: { client?: any } = {}): Promise<SweepResult> {
   // Explicit null means "no client"; undefined means "use the service client if
   // available" — the house pattern (dailyBriefCleanup, inviteSlotSweeper).

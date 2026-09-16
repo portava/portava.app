@@ -217,16 +217,16 @@ router.get("/map/search", asyncHandler(async (req, res) => {
   const sources: Record<string, SourceReport | null> = { traveler: null, gem: null, event: null };
 
   if (want("traveler")) tasks.push((async () => {
-    // KNOWN GAP: listMapTravelers returns a bare array and has no failure
-    // channel, so a failed read inside it is already indistinguishable from an
-    // empty one before this route sees it. `threw` is the only failure signal
-    // available here, and it is NOT how supabase-js reports a database error —
-    // so a null refusal from this source means "nothing was thrown", not
-    // "the read succeeded". Closing that needs listMapTravelers' signature to
-    // change; it is recorded rather than papered over.
+    // GAP CLOSED. This used to read: "listMapTravelers returns a bare array and
+    // has no failure channel, so a failed read inside it is already
+    // indistinguishable from an empty one before this route sees it … closing
+    // that needs listMapTravelers' signature to change". It has changed — the
+    // function now returns null for a failed read, a failed privacy query, or
+    // an unknown block state — so a null here is a genuine refusal and not
+    // merely "nothing was thrown".
     const travelers = await listMapTravelers(sc, { viewerId: user.id, lat, lng, radiusKm, blockedSet })
       .catch(() => null);
-    if (travelers === null) { sources.traveler = { refusal: "travelers_threw", collected: 0 }; return; }
+    if (travelers === null) { sources.traveler = { refusal: "travelers_unreadable", collected: 0 }; return; }
     for (const t of travelers) results.push(normalizeTraveler(t));
     sources.traveler = { refusal: null, collected: travelers.length };
   })());
