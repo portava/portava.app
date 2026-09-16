@@ -199,3 +199,116 @@ test('coordinate-only deep links no longer collide on a single "unknown" entry',
   // write guard never did for a link that carried no city.
   assert.equal((await cache.read('place_intel', daNang))?.objects.length, 1);
 });
+
+// ── Entries already on the device ────────────────────────────────────────────
+//
+// Bumping MAP_CACHE_VERSION makes v1 entries unreachable, because no code path
+// constructs a `map:cache:v1:…` key any more. Unreachable is not gone: every
+// device that has used the map is still holding a v1 `place_intel` entry keyed
+// by city alone, containing whichever account wrote it last. These pin the
+// erasure.
+
+/** Storage that can also enumerate, as AsyncStorage can. */
+class EnumerableStorage extends MemoryStorage {
+  async getAllKeys(): Promise<readonly string[]> {
+    return [...this.map.keys()];
+  }
+}
+
+/** What a v1 install actually left behind: entries plus their v1 index. */
+function seedV1(storage: MemoryStorage, scopes: string[]): string[] {
+  const keys = scopes.map((s) => `map:cache:v1:place_intel:${s}`);
+  for (const key of keys) {
+    storage.map.set(key, JSON.stringify({
+      version: 'v1',
+      cacheClass: 'place_intel',
+      scope: key.split(':').pop(),
+      cachedAt: T0,
+      objects: [ALICE_TRIP],
+    }));
+  }
+  storage.map.set('map:cache:v1:__index', JSON.stringify({
+    version: 'v1',
+    rows: keys.map((key) => ({
+      key, cacheClass: 'place_intel', scope: key.split(':').pop(),
+      bytes: 100, cachedAt: T0, lastAccessedAt: T0,
+    })),
+  }));
+  return keys;
+}
+
+test('v1 entries are erased from the device, not merely orphaned', async () => {
+  const storage = new EnumerableStorage();
+  const keys = seedV1(storage, ['da nang', 'hoi an']);
+  const cache = new MapCache({ storage, now: () => T0 });
+
+  const removed = await cache.purgeSupersededVersions();
+
+  for (const key of keys) {
+    assert.equal(storage.map.get(key), undefined, `${key} survived the purge`);
+  }
+  assert.equal(storage.map.get('map:cache:v1:__index'), undefined);
+  assert.equal(removed, keys.length + 1);
+});
+
+test('the purge also catches v1 entries whose index row was lost', async () => {
+  const storage = new EnumerableStorage();
+  seedV1(storage, ['da nang']);
+  // An entry the index never recorded — an index write that failed after the
+  // entry write. Only the getAllKeys pass can see this one.
+  storage.map.set('map:cache:v1:place_intel:orphan', JSON.stringify({ version: 'v1', objects: [] }));
+
+  const cache = new MapCache({ storage, now: () => T0 });
+  await cache.purgeSupersededVersions();
+
+  assert.equal(storage.map.get('map:cache:v1:place_intel:orphan'), undefined);
+  assert.deepEqual([...storage.map.keys()], []);
+});
+
+test('the purge works on storage that cannot enumerate, via the v1 index', async () => {
+  // MemoryStorage has no getAllKeys, like a minimal StorageLike.
+  const storage = new MemoryStorage();
+  const keys = seedV1(storage, ['da nang', 'hoi an']);
+  const cache = new MapCache({ storage, now: () => T0 });
+
+  await cache.purgeSupersededVersions();
+
+  for (const key of keys) assert.equal(storage.map.get(key), undefined);
+  assert.equal(storage.map.get('map:cache:v1:__index'), undefined);
+});
+
+test('the purge leaves current-version entries completely alone', async () => {
+  const storage = new EnumerableStorage();
+  seedV1(storage, ['da nang']);
+  const cache = new MapCache({ storage, now: () => T0 });
+  const scope = mapProjectionCacheScope({ accountId: 'alice', ...VIEWPORT })!;
+  await cache.write('place_intel', scope, [PUBLIC_GEM]);
+
+  await cache.purgeSupersededVersions();
+
+  assert.equal((await cache.read('place_intel', scope))?.objects.length, 1);
+  assert.ok([...storage.map.keys()].every((k) => !k.startsWith('map:cache:v1:')));
+});
+
+test('the purge is one-shot per session and idempotent', async () => {
+  const storage = new EnumerableStorage();
+  seedV1(storage, ['da nang']);
+  const cache = new MapCache({ storage, now: () => T0 });
+
+  const first = await cache.purgeSupersededVersions();
+  assert.ok(first > 0);
+  // A second call does no storage work at all — it is an upgrade step, not a
+  // sweep that should run on every read.
+  assert.equal(await cache.purgeSupersededVersions(), 0);
+});
+
+test('a storage that throws leaves the entries in place rather than breaking the map', async () => {
+  const storage = new EnumerableStorage();
+  const keys = seedV1(storage, ['da nang']);
+  storage.removeItem = async () => { throw new Error('storage refused'); };
+  const cache = new MapCache({ storage, now: () => T0 });
+
+  assert.equal(await cache.purgeSupersededVersions(), 0);
+  // Still there, and nothing threw out to the caller.
+  assert.ok(storage.map.get(keys[0]) !== undefined);
+});

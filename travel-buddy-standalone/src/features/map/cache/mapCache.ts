@@ -67,6 +67,15 @@ export interface StorageLike {
   getItem(key: string): Promise<string | null>;
   setItem(key: string, value: string): Promise<void>;
   removeItem(key: string): Promise<void>;
+  /**
+   * OPTIONAL, and only `purgeSupersededVersions` uses it. AsyncStorage has it;
+   * the in-memory doubles in the tests may or may not. When it is absent the
+   * purge falls back to the superseded version's own INDEX, which lists every
+   * key that version wrote — so the purge is complete either way for entries
+   * this module created, and `getAllKeys` additionally catches orphans whose
+   * index row was lost.
+   */
+  getAllKeys?(): Promise<readonly string[]>;
 }
 
 // ── Versioning + key namespace ────────────────────────────────────────────────
@@ -88,6 +97,24 @@ export interface StorageLike {
 export const MAP_CACHE_VERSION = 'v2';
 
 export const MAP_CACHE_KEY_PREFIX = `map:cache:${MAP_CACHE_VERSION}`;
+
+/**
+ * Versions whose entries must be ERASED from the device, not merely left
+ * unreachable.
+ *
+ * Bumping MAP_CACHE_VERSION makes old entries unreadable — no code path
+ * constructs a `map:cache:v1:…` key any more — but unreadable is not gone.
+ * Real devices are carrying `map:cache:v1:place_intel:<city>` entries RIGHT NOW
+ * that hold whichever account last used the map: their trip stops, crew
+ * members, saved places and memory pins, written under a key with no account in
+ * it (see features/map/projection/clientProjection.ts). Leaving one account's
+ * private objects sitting in another account's device storage indefinitely is
+ * not an acceptable end state just because this module no longer reads them.
+ *
+ * So the version bump handles correctness and this list handles the data at
+ * rest. Add a version here when you bump past it.
+ */
+export const SUPERSEDED_CACHE_VERSIONS: readonly string[] = ['v1'];
 
 /** The index lives alongside the entries and is versioned with them. */
 export const MAP_CACHE_INDEX_KEY = `${MAP_CACHE_KEY_PREFIX}:__index`;
@@ -608,6 +635,8 @@ export class MapCache {
   private readonly maxBytes: number;
   private readonly clock: () => number;
   private evictions = 0;
+  /** One purge probe per instance per session; see purgeSupersededVersions. */
+  private purgedSuperseded = false;
 
   constructor(options: MapCacheOptions) {
     this.storage = options.storage;
@@ -899,6 +928,75 @@ export class MapCache {
     }
     return { entries: index.rows.length, bytes, maxBytes: this.maxBytes, byClass, evictions: this.evictions };
   }
+
+  /**
+   * Erase every entry written under a SUPERSEDED cache version.
+   *
+   * Idempotent, self-guarding (one probe per instance per session) and
+   * fail-soft: a storage error leaves the entries in place and is swallowed
+   * like every other storage error in this module, because a failed purge must
+   * degrade the cache, never break the map.
+   *
+   * Two passes, because neither alone is complete:
+   *
+   *   1. the superseded version's own INDEX lists the full storage key of every
+   *      entry that version wrote, so this removes exactly those;
+   *   2. `getAllKeys`, where the storage provides it (AsyncStorage does),
+   *      catches anything whose index row was lost — an index write that
+   *      failed after the entry write, a partially cleared store.
+   *
+   * Returns the number of keys removed, for the tests and for nothing else.
+   */
+  async purgeSupersededVersions(): Promise<number> {
+    if (this.purgedSuperseded) return 0;
+    this.purgedSuperseded = true;
+
+    let removed = 0;
+    const doomed = new Set<string>();
+
+    for (const version of SUPERSEDED_CACHE_VERSIONS) {
+      if (version === MAP_CACHE_VERSION) continue;
+      const prefix = `map:cache:${version}`;
+      const indexKey = `${prefix}:__index`;
+      doomed.add(indexKey);
+      try {
+        const raw = await this.storage.getItem(indexKey);
+        if (raw) {
+          const parsed = JSON.parse(raw) as { rows?: { key?: unknown }[] };
+          for (const row of parsed?.rows ?? []) {
+            if (typeof row?.key === 'string' && row.key.startsWith(`${prefix}:`)) {
+              doomed.add(row.key);
+            }
+          }
+        }
+      } catch {
+        // An unreadable index is not a reason to skip the getAllKeys pass.
+      }
+    }
+
+    try {
+      const all = (await this.storage.getAllKeys?.()) ?? [];
+      for (const key of all) {
+        for (const version of SUPERSEDED_CACHE_VERSIONS) {
+          if (version === MAP_CACHE_VERSION) continue;
+          if (key.startsWith(`map:cache:${version}:`)) doomed.add(key);
+        }
+      }
+    } catch {
+      // Storage without getAllKeys, or a store that refused: pass 1 stands.
+    }
+
+    for (const key of doomed) {
+      try {
+        await this.storage.removeItem(key);
+        removed += 1;
+      } catch {
+        // Leave it; the next session tries again.
+      }
+    }
+    return removed;
+  }
+
 }
 
 // ── App-bound singleton ───────────────────────────────────────────────────────
@@ -927,6 +1025,16 @@ export const asyncStorageAdapter: StorageLike = {
       await AsyncStorage.removeItem(key);
     } catch {
       // silent
+    }
+  },
+  // Used only by purgeSupersededVersions, to catch entries from a superseded
+  // cache version whose index row was lost. Silent on failure like the rest:
+  // the purge then falls back to the superseded index alone.
+  async getAllKeys() {
+    try {
+      return await AsyncStorage.getAllKeys();
+    } catch {
+      return [];
     }
   },
 };

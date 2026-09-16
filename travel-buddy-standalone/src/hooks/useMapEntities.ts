@@ -526,6 +526,12 @@ export function useMapEntities(opts: {
   // The account this projection belongs to. It is a CACHE KEY INPUT, not a
   // filter: see the `cacheScope` note below.
   const { userId } = useSession();
+  // Read after every await by `current()` below, so an in-flight fetch that
+  // belonged to the PREVIOUS account is discarded rather than painted or
+  // cached. A ref, not the closed-over value, because the point is to compare
+  // the identity a request STARTED under against the identity NOW.
+  const accountIdRef = useRef<string | null>(userId);
+  accountIdRef.current = userId;
 
   const [objects, setObjects] = useState<MapObject[]>([]);
   const [entities, setEntities] = useState<MapEntity[]>([]);
@@ -650,6 +656,15 @@ export function useMapEntities(opts: {
   // since panned or signed in to was suppressed forever — the map blanked on
   // every subsequent camera change instead of showing cached geography (§33).
   const loadedScopeRef = useRef<string | null>(null);
+  // One-shot, fire-and-forget: erase entries written under a SUPERSEDED cache
+  // version. Bumping MAP_CACHE_VERSION already makes them unreachable, but
+  // every device that has used the map is still holding v1 `place_intel`
+  // entries keyed by city alone, containing whichever account wrote them last.
+  // Unreachable is not gone; this is what removes them.
+  useEffect(() => {
+    void mapCache.purgeSupersededVersions().catch(() => {});
+  }, []);
+
   useEffect(() => {
     if (seededRef.current === cacheScope) return;
     seededRef.current = cacheScope;
@@ -703,8 +718,16 @@ export function useMapEntities(opts: {
     const controller = new AbortController();
     abortRef.current = controller;
     const seq = (seqRef.current += 1);
-    /** This fetch is still the newest one the hook cares about. */
-    const current = () => seq === seqRef.current;
+    // The identity this request is being made AS. An account switch is a
+    // supersession just as much as a camera settle is: a response fetched for
+    // the previous account must neither paint for the next one nor be written
+    // into their cache. The seq stamp alone does not cover it unless the
+    // identity change happens to have re-created this callback first, and a
+    // privacy boundary should not depend on a dependency array staying
+    // correct — so it is checked directly.
+    const requestAccountId = userId;
+    /** This fetch is still the newest one the hook cares about, for the same account. */
+    const current = () => seq === seqRef.current && requestAccountId === accountIdRef.current;
 
     if (!hasLoaded.current) setLoading(true);
 
@@ -904,6 +927,8 @@ export function useMapEntities(opts: {
     // Derived from every value above, but READ inside the callback (the cache
     // write-through), so the mechanical rule stated above applies to it too.
     cacheScope,
+    // Read directly by `current()` as the identity supersession stamp.
+    userId,
   ]);
 
   const refresh = useCallback(() => {
