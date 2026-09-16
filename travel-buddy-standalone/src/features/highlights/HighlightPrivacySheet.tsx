@@ -42,7 +42,7 @@ import {
 } from 'react-native';
 import { X, Check, AlertTriangle } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { color, space, radius, type as t, shadow, avatar } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, shadow, avatar, icon } from '../../theme/tokens.ts';
 import {
   fetchResurfacingControls,
   setResurfacingControl,
@@ -352,7 +352,7 @@ const s = StyleSheet.create({
   warnRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 4, marginTop: 2 },
   warn: { ...t.small, color: color.mute, fontSize: 11, flex: 1 },
   check: {
-    width: 24, height: 24, borderRadius: 12,
+    width: icon.s24, height: icon.s24, borderRadius: icon.s24 / 2,
     borderWidth: 1, borderColor: color.haze,
     alignItems: 'center', justifyContent: 'center',
   },
