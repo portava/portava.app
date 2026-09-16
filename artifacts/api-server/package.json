@@ -71,6 +71,7 @@
     "test:watch": "node --import tsx/esm --test --watch src/test/requests.test.ts",
     "test:intelligence": "node --import tsx/esm --test src/test/intelligence.test.ts",
     "test:experience-sessions": "node --import tsx/esm --test src/test/experienceSessions.test.ts",
+    "test:map-sensing-integration": "node --import tsx/esm --test src/test/mapObservations.test.ts",
     "test:privacy-sensing": "node --import tsx/esm --test src/test/deviceContributionCredential.test.ts src/test/intelRetentionScheduler.test.ts src/test/privacySafeSensingMigration.test.ts src/test/coverageState.test.ts src/test/intelNavigationStartRoute.test.ts",
     "test:stories": "node --import tsx/esm --test src/test/stories.test.ts",
     "test:trips-expansion": "node --import tsx/esm --test src/test/tripsExpansion.test.ts",

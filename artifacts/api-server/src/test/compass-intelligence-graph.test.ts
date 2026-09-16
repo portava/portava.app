@@ -544,6 +544,8 @@ describe("Destination World Model — time-sliced per-city profiles", () => {
       { id: "ai-1", src_type: "person", src_key: "u1",   dst_type: "time_slice", dst_key: "cebu|fri:evening", edge_type: "active_in" },
       { id: "ai-2", src_type: "person", src_key: "u2",   dst_type: "time_slice", dst_key: "cebu|fri:evening", edge_type: "active_in" },
       { id: "ai-3", src_type: "person", src_key: "u3",   dst_type: "time_slice", dst_key: "cebu|fri:evening", edge_type: "active_in" },
+      // A duplicated legacy row must not inflate the distinct-actor evidence.
+      { id: "ai-3-duplicate", src_type: "person", src_key: "u3", dst_type: "time_slice", dst_key: "cebu|fri:evening", edge_type: "active_in" },
     ];
     await buildCityWorldModels(fake.fakeClient);
     const cebu = await getCityWorldModel(fake.fakeClient, "cebu");
@@ -688,17 +690,115 @@ describe("city-confidence index", () => {
 describe("destination context lines", () => {
   beforeEach(() => seed());
 
-  it("emits rhythm + confidence lines with aggregates only — no ids, no coordinates", async () => {
+  it("suppresses under-qualified user rhythm while retaining safe aggregate context", async () => {
     seedTravelData(fake.store);
     await rebuildIntelligenceGraph(fake.fakeClient);
     const lines = await buildDestinationContextLines(fake.fakeClient, "Cebu", new Date("2026-07-24T11:30:00Z")); // Fri 19:30 Cebu local
-    assert.ok(lines.length >= 2);
+    assert.ok(lines.length >= 1);
     const blob = lines.join("\n");
-    assert.match(blob, /Destination rhythm — Cebu/);
+    assert.doesNotMatch(blob, /Destination rhythm — Cebu/);
     assert.match(blob, /City data confidence/);
     assert.ok(!blob.includes(USER_ID), "no user ids in prompt lines");
     assert.ok(!blob.includes(USER_B), "no user ids in prompt lines");
     assert.ok(!/lat|lng|latitude|longitude/i.test(blob), "no coordinates in prompt lines");
+  });
+
+  it("suppresses the legacy user-derived fallback without actor evidence", async () => {
+    fake.store.compass_city_models = [{
+      city: "cebu",
+      time_slices: {
+        "fri:evening": {
+          count: 30,
+          categories: { exploring: 30 },
+          // Simulates a legacy model written before active_in evidence existed.
+        },
+      },
+      monthly: {},
+      top_categories: ["exploring"],
+      sample_size: 30,
+      built_at: new Date().toISOString(),
+    }];
+
+    const lines = await buildDestinationContextLines(
+      fake.fakeClient,
+      "Cebu",
+      new Date("2026-07-24T11:30:00Z"),
+    );
+    assert.ok(!lines.some((line) => line.startsWith("Destination rhythm —")));
+    assert.ok(lines.some((line) => line.startsWith("City data confidence:")));
+  });
+
+  it("suppresses the legacy user-derived fallback with only one actor", async () => {
+    fake.store.compass_city_models = [{
+      city: "cebu",
+      time_slices: {
+        "fri:evening": {
+          count: 30,
+          distinctActors: 1,
+          categories: { exploring: 30 },
+        },
+      },
+      monthly: {},
+      top_categories: ["exploring"],
+      sample_size: 30,
+      built_at: new Date().toISOString(),
+    }];
+
+    const lines = await buildDestinationContextLines(
+      fake.fakeClient,
+      "Cebu",
+      new Date("2026-07-24T11:30:00Z"),
+    );
+    assert.ok(!lines.some((line) => line.startsWith("Destination rhythm —")));
+  });
+
+  it("suppresses the legacy user-derived fallback one actor below k", async () => {
+    fake.store.compass_city_models = [{
+      city: "cebu",
+      time_slices: {
+        "fri:evening": {
+          count: 30,
+          distinctActors: 4,
+          categories: { exploring: 30 },
+        },
+      },
+      monthly: {},
+      top_categories: ["exploring"],
+      sample_size: 30,
+      built_at: new Date().toISOString(),
+    }];
+
+    const lines = await buildDestinationContextLines(
+      fake.fakeClient,
+      "Cebu",
+      new Date("2026-07-24T11:30:00Z"),
+    );
+    assert.ok(!lines.some((line) => line.startsWith("Destination rhythm —")));
+  });
+
+  it("suppresses the legacy user-derived fallback while its gate is off", async () => {
+    _setTestClient(fake.fakeClient, false);
+    fake.store.compass_city_models = [{
+      city: "cebu",
+      time_slices: {
+        "fri:evening": {
+          count: 30,
+          distinctActors: 20,
+          categories: { exploring: 30 },
+        },
+      },
+      monthly: {},
+      top_categories: ["exploring"],
+      sample_size: 30,
+      built_at: new Date().toISOString(),
+    }];
+
+    const lines = await buildDestinationContextLines(
+      fake.fakeClient,
+      "Cebu",
+      new Date("2026-07-24T11:30:00Z"),
+    );
+    assert.ok(!lines.some((line) => line.startsWith("Destination rhythm —")));
   });
 
   it("fails soft: no db / no city → no lines", async () => {

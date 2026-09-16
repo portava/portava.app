@@ -57,8 +57,11 @@ function makeTrip(overrides: Partial<TripRow> = {}): TripRow {
     destinationCity: 'Tokyo',
     destinationCountry: 'Japan',
     neighborhoods: [],
-    startDate: '2026-09-01',
-    endDate: '2026-09-15',
+    // Keep the fixture ongoing regardless of the current date; the featured
+    // card (and therefore its video badge) is only rendered for ongoing or
+    // upcoming trips.
+    startDate: '2099-09-01',
+    endDate: '2099-09-15',
     status: 'active',
     visibility: 'public',
     travelStyle: null,

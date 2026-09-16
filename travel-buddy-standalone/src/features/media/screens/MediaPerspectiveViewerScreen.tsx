@@ -615,9 +615,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   controlButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: avatar.s44,
+    height: avatar.s44,
+    borderRadius: avatar.s44 / 2,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(17,17,15,0.7)',

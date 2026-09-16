@@ -88,8 +88,8 @@ describe("privacyGate — fail-closed on ambiguity", () => {
   });
 });
 
-describe("privacyGate — the remaining gap is recorded, not implied", () => {
-  it("names the publisher that cannot yet be routed through the gate", () => {
+describe("privacyGate — legacy publisher compatibility is recorded", () => {
+  it("names the publisher that requires distinct-actor evidence", () => {
     assert.ok(UNROUTED_PUBLISHERS.length > 0);
     assert.match(UNROUTED_PUBLISHERS[0], /CompassGraphEngine/);
     assert.match(UNROUTED_PUBLISHERS[0], /distinct-actor/);

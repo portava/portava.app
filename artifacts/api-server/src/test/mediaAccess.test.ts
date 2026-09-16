@@ -660,6 +660,40 @@ describe("GET /api/media/file — public vs signed mode", () => {
     assert.ok(r.location?.includes("token=signed"));
   });
 
+  it("relay denies a public trip post when viewer hides the owner", async () => {
+    _clearMediaAccessCache();
+    setClients(makeClient({
+      posts: [{
+        author_id: OWNER, visibility: "public", status: "active",
+        post_status: "published", trip_id: TRIP, media_urls: [pub(path)],
+      }],
+      visibilityOverrides: [{
+        user_id: VIEWER, target_user_id: OWNER,
+        context_type: "trip", context_id: TRIP,
+        direction: "hide_from_me", hidden: true,
+      }],
+    }));
+    const r = await req("GET", `/api/media/file/post-media/${path}`);
+    assert.equal(r.status, 403);
+  });
+
+  it("relay denies a public trip post when owner hides themselves from viewer", async () => {
+    _clearMediaAccessCache();
+    setClients(makeClient({
+      posts: [{
+        author_id: OWNER, visibility: "public", status: "active",
+        post_status: "published", trip_id: TRIP, media_urls: [pub(path)],
+      }],
+      visibilityOverrides: [{
+        user_id: OWNER, target_user_id: VIEWER,
+        context_type: "trip", context_id: TRIP,
+        direction: "hide_me_from", hidden: true,
+      }],
+    }));
+    const r = await req("GET", `/api/media/file/post-media/${path}`);
+    assert.equal(r.status, 403);
+  });
+
   it("unauthorized object → 403", async () => {
     _clearMediaAccessCache();
     setClients(makeClient());

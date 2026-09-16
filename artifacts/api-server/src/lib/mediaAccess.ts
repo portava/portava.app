@@ -285,10 +285,21 @@ async function decide(
       // already guard against.
       if (owner && owner === (post as any).author_id) {
         const v = postVisible(post, viewerId);
+        const tripContext = post.trip_id
+          ? { contextType: "trip" as const, contextId: String(post.trip_id) }
+          : undefined;
+        // Contextual overrides apply to every post attached to a trip, not only
+        // trip_only posts. Resolve this before signing/relaying even when the
+        // post's ordinary visibility is public.
+        if (
+          tripContext &&
+          !(await authorizeMediaContext(sc, viewerId, owner, tripContext))
+        ) return false;
         if (v === "allow") {
           return authorizeMediaAttachment(
             sc, viewerId, owner, (pm as any).media_asset_id ?? canonicalAssetId,
             { entityType: "post", entityId: String((pm as any).post_id) },
+            tripContext,
           );
         }
         if (v === "trip") {
@@ -325,10 +336,19 @@ async function decide(
     // object may be legitimately reachable via a later branch, else §4 denies.
     if (post && owner && owner === post.author_id) {
       const v = postVisible(post, viewerId);
+      const tripContext = post.trip_id
+        ? { contextType: "trip" as const, contextId: String(post.trip_id) }
+        : undefined;
+      // Do not let public visibility bypass directional trip overrides.
+      if (
+        tripContext &&
+        !(await authorizeMediaContext(sc, viewerId, owner, tripContext))
+      ) return false;
       if (v === "allow") {
         return authorizeMediaAttachment(
           sc, viewerId, owner, canonicalAssetId,
           { entityType: "post", entityId: String((post as any).id ?? "") },
+          tripContext,
         );
       }
       if (v === "trip") {
@@ -340,7 +360,7 @@ async function decide(
         return authorizeMediaAttachment(
           sc, viewerId, owner, canonicalAssetId,
           { entityType: "post", entityId: String((post as any).id ?? "") },
-          { contextType: "trip", contextId: post.trip_id },
+          tripContext,
         );
       }
       return false;

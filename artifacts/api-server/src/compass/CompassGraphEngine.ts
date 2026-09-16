@@ -391,6 +391,12 @@ export interface TimeSliceProfile {
    * count; treated as 0 (suppress) so a k=1 slice can never publish a rhythm line.
    */
   distinctActors?: number;
+  /**
+   * True when this slice includes the legacy user-stamp activity stream
+   * (`active_during:exploring`).  The legacy stream is event-counted and must
+   * not be described as a cohort unless actor evidence is present.
+   */
+  userDerived?: boolean;
 }
 
 export interface CityWorldModel {
@@ -669,13 +675,22 @@ export async function buildCityWorldModels(db: SupabaseClient): Promise<number> 
   try {
     const { data: actorEdges } = await db
       .from("compass_graph_edges")
-      .select("dst_key")
+      .select("src_key, dst_key")
       .eq("edge_type", "active_in")
+      .eq("src_type", "person")
       .eq("dst_type", "time_slice")
       .limit(50000);
+    const actorsByKey = new Map<string, Set<string>>();
     for (const a of (actorEdges as any[]) ?? []) {
       const k = String(a.dst_key ?? "");
-      if (k) distinctByKey.set(k, (distinctByKey.get(k) ?? 0) + 1);
+      const actor = String(a.src_key ?? "");
+      if (!k || !actor) continue;
+      const actors = actorsByKey.get(k) ?? new Set<string>();
+      actors.add(actor);
+      actorsByKey.set(k, actors);
+    }
+    for (const [key, actors] of actorsByKey) {
+      distinctByKey.set(key, actors.size);
     }
   } catch { /* fail-soft */ }
 
@@ -694,6 +709,9 @@ export async function buildCityWorldModels(db: SupabaseClient): Promise<number> 
     sp.count += count;
     // Distinct contributors behind this slice (k-anon denominator for the gate).
     sp.distinctActors = distinctByKey.get(dstKey) ?? sp.distinctActors ?? 0;
+    // `exploring` is the legacy user-stamp stream.  Unlike canonical event
+    // activity, its observed_count is not independent cohort evidence.
+    if (category === "exploring") sp.userDerived = true;
     sp.categories[category] = (sp.categories[category] ?? 0) + count;
     entry.slices[slice] = sp;
     entry.catTotals[category] = (entry.catTotals[category] ?? 0) + count;
@@ -1010,7 +1028,17 @@ export async function buildDestinationContextLines(
       // fall through to the city-wide, non-time-sliced summary below.
       // Literal flag name so check-flag-polarity can resolve this read statically.
       const rhythmGateOn = await isFlagEnabled(db, "intel_compass_rhythm_actor_gate");
-      if (slice && slice.count >= MIN_SLICE_SAMPLE && mayPublishRhythm(slice.distinctActors ?? 0, rhythmGateOn)) {
+      const actorEvidence = Number.isFinite(slice?.distinctActors)
+        && (slice?.distinctActors ?? 0) > 0;
+      // Models written before userDerived was persisted can still be
+      // identified by the reserved legacy `exploring` category.
+      const legacyUserDerived = slice?.userDerived === true
+        || Object.prototype.hasOwnProperty.call(slice?.categories ?? {}, "exploring");
+      const mayPublishUserDerived = mayPublishRhythm(
+        slice?.distinctActors ?? 0,
+        rhythmGateOn,
+      );
+      if (slice && slice.count >= MIN_SLICE_SAMPLE && mayPublishUserDerived) {
         const top = Object.entries(slice.categories)
           .sort(([, a], [, b]) => b - a)
           .slice(0, 3)
@@ -1018,7 +1046,7 @@ export async function buildDestinationContextLines(
         lines.push(
           `Destination rhythm — ${city} (${sliceKey.replace(":", " ")}): typically active around ${top.join(", ")} at this time (community history, ${slice.count} observations from ${slice.distinctActors ?? 0} contributors).`,
         );
-      } else {
+      } else if (!legacyUserDerived || (actorEvidence && mayPublishUserDerived)) {
         lines.push(
           `Destination rhythm — ${city}: not enough history for this exact time slot; overall the city skews toward ${model.topCategories.slice(0, 3).join(", ") || "general exploring"}.`,
         );

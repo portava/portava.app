@@ -103,7 +103,7 @@ export async function completeMediaProcessing(
     throw new Error(`completeMediaProcessing: positive dimensions required for ${claim.assetId}`);
   }
   const now = new Date().toISOString();
-  const { error } = await sc.from("media_assets").update({
+  const { data: updated, error } = await sc.from("media_assets").update({
     processing_status: "ready",
     processing_completed_at: now,
     processing_next_retry_at: null,
@@ -117,13 +117,18 @@ export async function completeMediaProcessing(
     thumbnail_path: input.thumbnailPath ?? null,
     thumbnail_url: input.thumbnailUrl ?? null,
     updated_at: now,
-  }).eq("id", claim.assetId).eq("processing_lease_token", claim.leaseToken);
-  if (error) return false;
-  const { error: attemptError } = await sc.from("media_processing_attempts").update({
+  }).eq("id", claim.assetId).eq("processing_lease_token", claim.leaseToken)
+    .select("id, processing_lease_token").maybeSingle();
+  if (error || !updated || updated.id !== claim.assetId || updated.processing_lease_token !== null) return false;
+  const { data: attempt, error: attemptError } = await sc.from("media_processing_attempts").update({
     status: "succeeded",
     completed_at: now,
-  }).eq("media_asset_id", claim.assetId).eq("attempt_number", claim.attemptNumber).eq("lease_token", claim.leaseToken);
-  return !attemptError;
+  }).eq("media_asset_id", claim.assetId).eq("attempt_number", claim.attemptNumber).eq("lease_token", claim.leaseToken)
+    .select("media_asset_id, attempt_number, lease_token").maybeSingle();
+  return !attemptError && !!attempt &&
+    attempt.media_asset_id === claim.assetId &&
+    Number(attempt.attempt_number) === claim.attemptNumber &&
+    attempt.lease_token === claim.leaseToken;
 }
 
 export async function failMediaProcessing(
@@ -136,7 +141,7 @@ export async function failMediaProcessing(
   const terminal = claim.attemptNumber >= (opts.maxAttempts ?? DEFAULT_PROCESSING_MAX_ATTEMPTS);
   const nextRetryAt = terminal ? null : retryAt(claim.attemptNumber, now.getTime());
   const nowIso = now.toISOString();
-  const { error } = await sc.from("media_assets").update({
+  const { data: updated, error } = await sc.from("media_assets").update({
     processing_status: terminal ? "failed" : "failed",
     processing_terminal: terminal,
     processing_error: message.slice(0, 2000),
@@ -144,16 +149,28 @@ export async function failMediaProcessing(
     processing_lease_until: null,
     processing_lease_token: null,
     updated_at: nowIso,
-  }).eq("id", claim.assetId).eq("processing_lease_token", claim.leaseToken);
-  if (error) return { ok: false, terminal, attemptNumber: claim.attemptNumber, nextRetryAt };
-  const { error: attemptError } = await sc.from("media_processing_attempts").update({
+  }).eq("id", claim.assetId).eq("processing_lease_token", claim.leaseToken)
+    .select("id, processing_lease_token").maybeSingle();
+  if (error || !updated || updated.id !== claim.assetId || updated.processing_lease_token !== null) {
+    return { ok: false, terminal, attemptNumber: claim.attemptNumber, nextRetryAt };
+  }
+  const { data: attempt, error: attemptError } = await sc.from("media_processing_attempts").update({
     status: terminal ? "terminal_failure" : "retryable_failure",
     error_message: message.slice(0, 2000),
     completed_at: nowIso,
   }).eq("media_asset_id", claim.assetId)
     .eq("attempt_number", claim.attemptNumber)
-    .eq("lease_token", claim.leaseToken);
-  return { ok: !attemptError, terminal, attemptNumber: claim.attemptNumber, nextRetryAt };
+    .eq("lease_token", claim.leaseToken)
+    .select("media_asset_id, attempt_number, lease_token").maybeSingle();
+  return {
+    ok: !attemptError && !!attempt &&
+      attempt.media_asset_id === claim.assetId &&
+      Number(attempt.attempt_number) === claim.attemptNumber &&
+      attempt.lease_token === claim.leaseToken,
+    terminal,
+    attemptNumber: claim.attemptNumber,
+    nextRetryAt,
+  };
 }
 
 export async function recoverStaleMediaProcessing(
@@ -178,15 +195,23 @@ export async function recoverStaleMediaProcessing(
       processing_lease_until: null,
       processing_lease_token: null,
       updated_at: cutoff,
-    }).eq("id", row.id).eq("processing_lease_token", row.processing_lease_token ?? "");
-    if (!result.error) {
-      recovered++;
-      const { error: attemptError } = await sc.from("media_processing_attempts").update({
+    }).eq("id", row.id).eq("processing_lease_token", row.processing_lease_token ?? "")
+      .select("id, processing_lease_token").maybeSingle();
+    if (!result.error && result.data?.id === row.id && result.data?.processing_lease_token === null) {
+      const { data: attempt, error: attemptError } = await sc.from("media_processing_attempts").update({
         status: "recovered",
         error_message: "Processing lease expired; scheduled for retry",
         completed_at: cutoff,
-      }).eq("media_asset_id", row.id).eq("attempt_number", Number(row.processing_attempt_count ?? 0));
-      if (attemptError) continue;
+      }).eq("media_asset_id", row.id)
+        .eq("attempt_number", Number(row.processing_attempt_count ?? 0))
+        .eq("lease_token", row.processing_lease_token ?? "")
+        .select("media_asset_id, attempt_number, lease_token").maybeSingle();
+      if (!attemptError && attempt &&
+          attempt.media_asset_id === row.id &&
+          Number(attempt.attempt_number) === Number(row.processing_attempt_count ?? 0) &&
+          attempt.lease_token === row.processing_lease_token) {
+        recovered++;
+      }
     }
   }
   return recovered;

@@ -137,17 +137,17 @@ export function mayPublishAggregate(
 }
 
 /**
- * KNOWN UNROUTED PUBLISHER — recorded here so it is not rediscovered.
+ * LEGACY PUBLISHER COMPATIBILITY GUARD — recorded here so it is not
+ * rediscovered.  CompassGraphEngine now suppresses the legacy user-derived
+ * fallback when no distinct-actor evidence is present; the entry remains as a
+ * reminder that its event count is not an actor count.
  *
  * compass/CompassGraphEngine.ts buildDestinationContextLines still publishes
  * per-city × day-part aggregates using MIN_SLICE_SAMPLE = 3 on an EVENT count.
- * It cannot be routed through this gate as-is: compass_graph_edges dedups on
- * `${src_type}|${src_key}|${dst_type}|${dst_key}|${edge_type}` with no user id,
- * so a distinct-ACTOR count is not derivable from the stored data. Closing it
- * needs either a user id in the edge key or a parallel distinct-actor rollup
- * computed at build time — a schema change on a live serving path, which is why
- * it is not bundled with this module.
+ * Its event count must never satisfy an actor threshold. The graph builder
+ * supplies a separate active_in rollup when actor evidence exists; absent that
+ * evidence, the legacy user-derived claim is suppressed.
  */
 export const UNROUTED_PUBLISHERS: readonly string[] = [
-  "compass/CompassGraphEngine.ts buildDestinationContextLines (needs a distinct-actor count that compass_graph_edges cannot currently produce)",
+  "compass/CompassGraphEngine.ts legacy event-count path (requires distinct-actor evidence before user-derived claims)",
 ];

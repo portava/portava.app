@@ -35,49 +35,40 @@ jest.mock('expo-av', () => {
   };
 });
 
+// NOTE: intentionally exhaustive — the video screen only needs deterministic
+// insets, and loading the native safe-area implementation is unnecessary here.
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
-jest.mock('lucide-react-native', () => {
-  const React = require('react');
-  const { View } = require('react-native');
-  const Icon = () => <View />;
-  return {
-    Captions: Icon,
-    Check: Icon,
-    ChevronLeft: Icon,
-    Compass: Icon,
-    FastForward: Icon,
-    MapPin: Icon,
-    MoreHorizontal: Icon,
-    Pause: Icon,
-    Play: Icon,
-    Rewind: Icon,
-    RotateCcw: Icon,
-    Volume2: Icon,
-    VolumeX: Icon,
-  };
-});
-
+// NOTE: intentionally exhaustive — the media screen's image is outside the
+// scope of these video-control tests and is replaced with a render no-op.
 jest.mock('../../../components/CachedImage.tsx', () => ({
   CachedImage: () => null,
 }));
+// NOTE: intentionally exhaustive — avatar rendering is outside the scope of
+// these video-control tests and is replaced with a render no-op.
 jest.mock('../../../components/ui/Avatar.tsx', () => ({
   Avatar: () => null,
 }));
+// NOTE: intentionally exhaustive — stamp controls are outside the scope of
+// these video-control tests and are replaced with a render no-op.
 jest.mock('../../../components/stamps/StampButton.tsx', () => ({
   StampButton: () => null,
 }));
+// NOTE: intentionally exhaustive — intelligence details are outside the scope
+// of these video-control tests and are replaced with a render no-op.
 jest.mock('../components/IntelligenceStrip.tsx', () => ({
   IntelligenceStrip: () => null,
 }));
+// NOTE: intentionally exhaustive — contributor trust details are outside the
+// scope of these video-control tests and are replaced with a render no-op.
 jest.mock('../components/ContributorTrustChips.tsx', () => ({
   ContributorTrustChips: () => null,
 }));
 
-import { MediaPerspectiveViewerScreen } from '../screens/MediaPerspectiveViewerScreen';
-import type { MediaProjection } from '../types/media';
+import { MediaPerspectiveViewerScreen } from '../screens/MediaPerspectiveViewerScreen.tsx';
+import type { MediaProjection } from '../types/media.ts';
 
 function makeVideo(): MediaProjection {
   return {

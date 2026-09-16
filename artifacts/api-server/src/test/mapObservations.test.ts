@@ -52,6 +52,14 @@ import { assembleClaimInput } from "../lib/intelProjectionAggregator.js";
 import { scoreConfidence } from "../lib/confidenceScore.js";
 import { invalidateFreshnessPolicyCache } from "../lib/freshnessPolicy.js";
 import { recordEarnedReward } from "../services/intel/RewardService.js";
+import { issueSensingCredential } from "../lib/deviceContributionCredential.js";
+import { projectAndStore } from "../lib/intelProjection.js";
+import { inferExperienceState } from "../lib/worldExperienceEngine.js";
+import {
+  startExperienceSession,
+  recordExperienceOutcome,
+  computeExperienceCalibration,
+} from "../services/experience/ExperienceSessionService.js";
 
 const ACTOR = "11111111-1111-4111-8111-111111111111";
 const ACTOR_B = "11111111-1111-4111-8111-111111111112";
@@ -91,6 +99,11 @@ function makeDb(flags: Record<string, boolean>, opts: FakeOpts = {}) {
     intel_claims: [],
     intel_confirmations: [],
     intel_reward_ledger: [],
+    intel_sensing_credentials: [],
+    intel_state_snapshots: [],
+    compass_served_recommendations: [],
+    experience_sessions: [],
+    experience_outcomes: [],
   };
   const writes: Record<string, number> = {};
   let seq = 0;
@@ -129,6 +142,12 @@ function makeDb(flags: Record<string, boolean>, opts: FakeOpts = {}) {
         writes[table] = (writes[table] ?? 0) + 1;
         return { data: op === "insert_select" ? row : null, error: null };
       }
+      if (op === "upsert") {
+        const existing = store.find((r) => r.subject_id === payload.subject_id && r.zone_id === payload.zone_id && r.claim_type === payload.claim_type);
+        if (existing) Object.assign(existing, payload);
+        else store.push({ id: `row-${++seq}`, schema_version: 1, created_at: new Date().toISOString(), ...payload });
+        return { data: null, error: null };
+      }
       if (op === "update" || op === "update_select") {
         const updated: any[] = [];
         for (const r of store) if (match(r)) { Object.assign(r, payload); updated.push(r); }
@@ -147,6 +166,7 @@ function makeDb(flags: Record<string, boolean>, opts: FakeOpts = {}) {
       select() { op = op === "insert" ? "insert_select" : op === "update" ? "update_select" : "select"; return b; },
       insert(row: any) { op = "insert"; payload = row; return b; },
       update(patch: any) { op = "update"; payload = patch; return b; },
+      upsert(row: any) { op = "upsert"; payload = row; return b; },
       eq(col: string, val: any) { filters.push({ col, val, kind: "eq" }); return b; },
       in(col: string, val: any[]) { filters.push({ col, val, kind: "in" }); return b; },
       is(col: string, val: any) { filters.push({ col, val, kind: "is" }); return b; },
@@ -161,7 +181,21 @@ function makeDb(flags: Record<string, boolean>, opts: FakeOpts = {}) {
     return b;
   }
 
-  return { from, _tables: tables, _writes: writes };
+  return {
+    from,
+    rpc(name: string, args: any) {
+      if (name !== "consume_intel_sensing_credential") return Promise.resolve({ data: null, error: { message: "unknown rpc" } });
+      const row = tables.intel_sensing_credentials.find((r) =>
+        r.token_digest === args.p_token_digest && r.nonce_digest === args.p_nonce_digest);
+      if (!row || row.actor_id !== args.p_actor_id || row.device_id !== args.p_device_id) {
+        return Promise.resolve({ data: { outcome: "unauthorized" }, error: null });
+      }
+      if (row.consumed_at) return Promise.resolve({ data: { outcome: "replay" }, error: null });
+      row.consumed_at = args.p_now;
+      return Promise.resolve({ data: { outcome: "authorized", ...row }, error: null });
+    },
+    _tables: tables, _writes: writes,
+  };
 }
 
 /** Every gate open: both flags on, the place exists, consent granted. */
@@ -703,6 +737,100 @@ describe("rewards cannot raise confidence", () => {
       "agreement", "evidenceQuality", "freshness", "independence",
       "presence", "sourceReliability", "specificity",
     ]);
+  });
+});
+
+// ── Sensing → world → outcome service-boundary seam ──────────────────────────
+//
+// This deliberately uses the shipping credential, capture, aggregator,
+// projection, world inference, and session services. The only in-memory seam is
+// the Supabase adapter (the same fake table/query adapter used above); no
+// load-bearing function is replaced.
+describe("device sensing to experience outcome integration", () => {
+  it("authorizes a sensing credential and exercises projection, world, session, and calibration boundaries", async () => {
+    invalidateFreshnessPolicyCache();
+    const actors = Array.from({ length: 15 }, (_, i) =>
+      `11111111-1111-4111-8111-${String(i + 1).padStart(12, "0")}`);
+    const db = openDb(actors, [PLACE]);
+    const deviceId = "33333333-3333-4333-8333-333333333333";
+    const issued = await issueSensingCredential(db, actors[0], { deviceId });
+    assert.equal(issued.ok, true);
+    if (!issued.ok) return;
+    db._tables.feature_flags.push(
+      { flag: "intel_sensing_credentials_enabled", enabled: true },
+      { flag: "intel_claim_projection_crowd", enabled: true },
+    );
+
+    const integrationObserved = new Date(Date.now() - 40 * 60_000).toISOString();
+    const first = await ingestMapContribution(db, actors[0], contribution({ observedAt: integrationObserved }), {
+      sensingCredential: issued.credential.credential,
+      sensingNonce: issued.credential.nonce,
+      sensingDeviceId: deviceId,
+    });
+    assert.equal(first.ok, true, JSON.stringify(first));
+    assert.equal(db._tables.intel_sensing_credentials[0].consumed_at !== undefined, true);
+
+    for (const actor of actors.slice(1)) {
+      const captured = await ingestMapContribution(db, actor, contribution({ observedAt: integrationObserved }));
+      assert.equal(captured.ok, true, JSON.stringify(captured));
+    }
+
+    // Promotion is intentionally a separate owner from capture. Supplying the
+    // active claim row lets the real aggregator assemble evidence, then the
+    // real projection writer applies privacy/confidence and persists a snapshot.
+    const claim = {
+      id: "claim-device-cohort",
+      subject_id: PLACE,
+      zone_id: null,
+      claim_type: "crowd.level",
+      value: { level: "busy" },
+      status: "active",
+      observed_at: integrationObserved,
+    };
+    db._tables.intel_claims.push(claim);
+    const input = await assembleClaimInput(db, claim, new Date());
+    assert.equal(input.distinctActors, 15);
+    const projection = await projectAndStore(db, PLACE, [input], { now: new Date() });
+    assert.equal(projection.suppressed, 1, JSON.stringify(projection));
+    assert.equal(db._tables.intel_state_snapshots[0].privacy_eligible, false);
+
+    const snapshot = db._tables.intel_state_snapshots[0];
+    const world = inferExperienceState({
+      subject: { subjectKind: "place", subjectId: PLACE, zoneId: null },
+      coverage: snapshot.privacy_eligible ? "covered" : "no_coverage",
+      crowd: snapshot.privacy_eligible ? "busy" : undefined,
+      crowdConfidence: snapshot.confidence,
+      observedAt: snapshot.observed_at,
+      validUntil: snapshot.expires_at,
+      sourceIds: [claim.id],
+    }, new Date());
+    assert.equal(world.state, "unknown");
+    assert.equal(world.coverage, "no_coverage");
+
+    db._tables.compass_served_recommendations.push({
+      recommendation_id: "recommendation-device-cohort",
+      user_id: actors[0],
+      item_id: PLACE,
+      item_type: "place",
+      created_at: new Date().toISOString(),
+    });
+    const session = await startExperienceSession(db, actors[0], {
+      recommendationId: "recommendation-device-cohort",
+    });
+    assert.equal(session.ok, true);
+    const outcome = await recordExperienceOutcome(db, actors[0], {
+      sessionId: session.sessionId!,
+      outcome: "returned",
+      confirmMemory: true,
+      occurredAt: new Date().toISOString(),
+    });
+    assert.equal(outcome.ok, true);
+    assert.equal(outcome.memoryEligible, true);
+    const calibration = await computeExperienceCalibration(db);
+    assert.equal(calibration.calibrationVersion, "calibration-v1");
+    assert.equal(calibration.outcomes, 1);
+    assert.equal(calibration.eligibleOutcomes, 1);
+    assert.equal(calibration.byOutcome.returned, 1);
   });
 });
 

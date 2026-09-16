@@ -14,7 +14,13 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { recordMediaAsset, completeVideoTranscode, type RecordAssetInput } from "../lib/mediaAssets.js";
-import { claimMediaProcessing } from "../services/media/MediaLifecycleService.js";
+import {
+  claimMediaProcessing,
+  completeMediaProcessing,
+  failMediaProcessing,
+  recoverStaleMediaProcessing,
+  type ProcessingClaim,
+} from "../services/media/MediaLifecycleService.js";
 
 // ── Minimal fake Supabase client ──────────────────────────────────────────────
 
@@ -375,5 +381,70 @@ describe("MediaLifecycleService — lost processing claim", () => {
       },
     };
     assert.equal(await claimMediaProcessing(client as any, "asset-race"), null);
+  });
+});
+
+function makeLifecycleZeroMatchClient(opts: {
+  staleRow?: Record<string, unknown>;
+  updatedRow?: Record<string, unknown> | null;
+} = {}): any {
+  const staleRow = opts.staleRow;
+  const updatedRow = opts.updatedRow ?? null;
+  return {
+    from(table: string) {
+      let updating = false;
+      const builder: any = {
+        select: () => builder,
+        eq: () => builder,
+        lt: () => builder,
+        limit: () => builder,
+        update: () => {
+          updating = true;
+          return builder;
+        },
+        maybeSingle: async () => ({
+          data: updating ? updatedRow : staleRow ?? null,
+          error: null,
+        }),
+        then: (resolve: any) => Promise.resolve({
+          data: updating ? updatedRow : (table === "media_assets" && staleRow ? [staleRow] : []),
+          error: null,
+        }).then(resolve),
+      };
+      return builder;
+    },
+  };
+}
+
+describe("MediaLifecycleService — conditional completion/failure/recovery matches", () => {
+  const claim: ProcessingClaim = {
+    assetId: "asset-race",
+    attemptNumber: 1,
+    leaseToken: "lease-old",
+    leaseUntil: "2025-01-01T00:00:00.000Z",
+  };
+
+  it("does not complete when a stale lease token matches zero asset rows", async () => {
+    const result = await completeMediaProcessing(makeLifecycleZeroMatchClient(), claim, {
+      width: 100,
+      height: 100,
+    });
+    assert.equal(result, false);
+  });
+
+  it("does not fail when a stale lease token matches zero asset rows", async () => {
+    const result = await failMediaProcessing(makeLifecycleZeroMatchClient(), claim, "transcode failed");
+    assert.equal(result.ok, false);
+  });
+
+  it("does not count stale recovery when the conditional update matches zero rows", async () => {
+    const client = makeLifecycleZeroMatchClient({
+      staleRow: {
+        id: claim.assetId,
+        processing_attempt_count: claim.attemptNumber,
+        processing_lease_token: claim.leaseToken,
+      },
+    });
+    assert.equal(await recoverStaleMediaProcessing(client, { now: new Date("2025-01-01T00:00:00.000Z") }), 0);
   });
 });
