@@ -51,6 +51,29 @@ system and then return to your own feature.** Tell the lead what you touched
 outside your lane so the integration is not a surprise. That is expected and
 allowed; silently editing another lane's files is not.
 
+## Never let a citation change how you write the code
+
+Documentation follows code, not the other way round.
+
+The census documents cite production files by `file:line#anchor`, so any edit that
+inserts a line moves some of those pointers. **That is expected, and repairing it
+is the lead's job, not yours.** Write the code the way it should be written, then
+tell the lead what moved — a per-file list of shifted regions, or just the net
+shift per file. Repointing is mechanical and scripted; one lane's shift table made
+174 repoints a few minutes' work.
+
+What you must NOT do is shape production code to keep a pointer still. A real
+example, rejected: a lane put two imports on one line, and two `router.use` calls
+on one line, so that four citations in a census it did not own would not move. It
+worked — and it left a file every future reader has to decode, permanently, to
+save a repoint that takes seconds. Keeping new code *below* a file's last cited
+line is fine when that is where the code naturally belongs; contorting layout,
+cramming statements, or leaving something in a worse place solely to protect a
+line number is not.
+
+If you find yourself choosing between a well-written file and a stable citation,
+choose the file and send the shift table.
+
 ## Migrations
 
 You may WRITE migration SQL in your reserved band. You may **not** apply one —
