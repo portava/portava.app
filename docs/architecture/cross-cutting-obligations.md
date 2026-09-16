@@ -26,7 +26,7 @@ Verified facts:
 | `WallMoment` has **zero occurrences** outside `docs/` | `grep -rI --exclude-dir={node_modules,.git,docs} WallMoment .` → no output |
 | `docs/architecture/census-wall.md` mentions Sensing **zero times** | `grep -ci sensing docs/architecture/census-wall.md` → 0 |
 | `census-wall.md` mentions `WallMoment` **zero times** | same grep → 0 |
-| `census-sensing.md` counts it as **S74, NOT-BUILT**, inside its own 127 denominator | `census-sensing.md:485#S74` |
+| `census-sensing.md` counts it as **S74, NOT-BUILT**, inside its own 127 denominator | `census-sensing.md:496#S74` |
 | `census-sensing.md` references the Wall **16 times** | `grep -c Wall census-sensing.md` |
 
 So **"Wall 95.1 % constructed / 91.7 % correct"** (`census-wall.md:15-20`) is true *against the
@@ -84,7 +84,7 @@ the 108 obligations below is counted by the census of the surface that owes it.*
    that caveat and is written as *"no direct `.from()` write found"*, never *"no writer exists"*.
 2. **Absence of a NAME is not absence of a RESPONSIBILITY.** `UserNowProjection` has zero
    occurrences, yet `routes/compassHome.ts` discharges its responsibility
-   (`census-sensing.md:497#S81`, S81 BUILT-AND-CORRECT). Every "zero occurrences" row below therefore
+   (`census-sensing.md:508#S81`, S81 BUILT-AND-CORRECT). Every "zero occurrences" row below therefore
    separately asks whether an equivalent exists under another name, and says so.
 
 ---

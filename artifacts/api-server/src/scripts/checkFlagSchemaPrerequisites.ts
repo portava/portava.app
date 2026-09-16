@@ -280,15 +280,33 @@ type Known = {
  * change. Against the 09-07 capture the ratchet reported green while four of
  * its entries described defects that no longer existed.
  */
-const KNOWN: Record<string, Known> = {
+/**
+ * EXPORTED so a test can derive its fixture from this map instead of hardcoding a
+ * flag name. The STALE case in flagSchemaPrerequisites.test.ts has now outlived
+ * its subject TWICE — first `trust_engine_enabled` when 2371 landed, then
+ * `media_canonical_enabled` when 2470 landed on 2026-09-16 — because each time it
+ * named a real entry, and resolving an entry is exactly what this file is for.
+ * A test that breaks every time the thing it guards succeeds is a maintenance
+ * trap, so the fixture now reads whichever entry happens to exist.
+ */
+export const KNOWN: Record<string, Known> = {
   // ── Guarded: the contract refuses before the failing call ───────────────────
-  media_canonical_enabled: {
-    classification: "guarded",
-    objects: ["media_assets.captured_at", "media_assets.intelligence_eligibility", "media_assets.provenance"],
-    note:
-      "THE founding case. Registered as MEDIA_CANONICAL; lib/mediaAssets.ts refuses before building a payload " +
-      "(outcome refused_schema, error-level log). Owner decision MEDIA_CANONICAL_FLAG (apply 2250/2470 or turn the flag off) is untouched.",
-  },
+  //
+  // `media_canonical_enabled` WAS HERE, and it was THE founding case of this whole
+  // file. STRUCK 2026-09-16, by this check's own instruction: once 2470 was applied
+  // the state the entry described stopped existing, and the STALE rule fired —
+  // "KNOWN.media_canonical_enabled is no longer in the state. Strike the entry."
+  // That rule is the reason a resolved exemption cannot quietly outlive its cause,
+  // so honouring it is the point rather than an inconvenience.
+  //
+  // What it recorded, kept because the history is the useful part: production had
+  // media_canonical_enabled TRUE while media_assets lacked captured_at, provenance
+  // and intelligence_eligibility, so lib/mediaAssets.ts refused before building a
+  // payload (outcome `refused_schema`, error-level log) rather than issuing an
+  // upsert PostgREST would reject with 42703. It reads "missing in production:
+  // none" now. The owner took MEDIA_CANONICAL_FLAG as ORDER B on 2026-09-16 and
+  // 2470 was applied; see snapshots/20260916d-production-schema.json for the
+  // measured before/after, including that all 8 existing rows survived.
 
   // ── Unguarded: ON in production, the code runs and fails ────────────────────
   //

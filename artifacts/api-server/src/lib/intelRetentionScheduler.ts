@@ -436,12 +436,66 @@ export interface RetentionPass {
   run: (opts?: { client?: any; now?: Date }) => Promise<{ skipped: boolean; reason: string | null }>;
 }
 
+/**
+ * Sweep expired and revoked sensing contribution CREDENTIALS (2480's
+ * `sensing_contribution_sessions`).
+ *
+ * Registered because `docs/architecture/sensing-auth-posture-decision.md` named
+ * it as the one piece of Option B that had no code: *"the sweep needs
+ * registering in index.ts beside sensingRetentionScheduler — code not yet
+ * written, trivially the same shape."* It is that shape.
+ *
+ * NO FLAG, deliberately, and this is the one judgement in the file worth
+ * stating. 2480's lifetime CHECK already makes a session unable to outlive 72
+ * hours, so retention is structural and this sweep is hygiene on top of it —
+ * exactly the relationship 2315 describes for contributions. A flag would let an
+ * operator switch off the hygiene while believing the structural guarantee still
+ * covered them, and the rows it removes are credentials nobody can use: expired
+ * or revoked by definition. It is also the same posture as
+ * `sensing_credential_cleanup`, the sibling pass directly below.
+ *
+ * The instant is passed IN rather than read inside the function, matching
+ * `purge_expired_sensing_contributions` and `purge_expired_sensing_sessions`'s
+ * own signature — both refuse a NULL instant — so the pass is deterministic and
+ * a test can drive it.
+ *
+ * ABSENT RELATION IS REPORTED, NOT COUNTED. A database without 2480 (the table
+ * reached production on 2026-09-16 and may not exist in every environment) makes
+ * the RPC fail; that is `skipped` with a reason, never a successful erasure of
+ * zero rows.
+ */
+export async function runSensingSessionCleanup(
+  opts: { client?: any; now?: Date } = {},
+): Promise<SweepResult> {
+  const db = "client" in opts && opts.client !== undefined ? opts.client : getServiceClient();
+  if (!db) return { purged: 0, skipped: true, reason: "no_client" };
+  const now = (opts.now ?? new Date()).toISOString();
+  try {
+    const { data, error } = await db.rpc("purge_expired_sensing_sessions", { p_now: now });
+    if (error) {
+      logger.warn({ err: error }, "sensing session cleanup failed");
+      return { purged: 0, skipped: true, reason: "error" };
+    }
+    // bigint over PostgREST can arrive as a STRING — the same trap
+    // runMapTelemetryRetentionSweep documents above. Coerce, never typeof-guard.
+    const purged = Number(data) || 0;
+    // A count and nothing else. WHICH credentials expired is a fact about
+    // contributors, and this pass exists partly so that fact stops existing.
+    if (purged > 0) logger.info({ purged }, "sensing session cleanup removed expired/revoked credentials");
+    return { purged, skipped: false, reason: null };
+  } catch (err) {
+    logger.warn({ err }, "sensing session cleanup threw");
+    return { purged: 0, skipped: true, reason: "error" };
+  }
+}
+
 export const RETENTION_PASSES: readonly RetentionPass[] = [
   { name: "intel_retention_sweep", flag: "intel_retention_sweep_enabled", run: runIntelRetentionSweep },
   { name: "intel_contribution_retention", flag: "intel_contribution_retention_enabled", run: runIntelContributionRetentionSweep },
   { name: "map_telemetry_retention", flag: "map_telemetry_retention_enabled", run: runMapTelemetryRetentionSweep },
   { name: "presence_cleanup", flag: "presence_cleanup_enabled", run: runPresenceCleanup },
   { name: "sensing_credential_cleanup", flag: null, run: runSensingCredentialCleanup },
+  { name: "sensing_session_cleanup", flag: null, run: runSensingSessionCleanup },
 ] as const;
 
 export function startIntelRetentionScheduler(): void {

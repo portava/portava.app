@@ -24,6 +24,7 @@
  */
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
+import { KNOWN } from "../scripts/checkFlagSchemaPrerequisites.js";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -245,11 +246,21 @@ describe("the script", () => {
   const run = (env: Record<string, string> = {}) =>
     spawnSync(process.execPath, ["--import", "tsx/esm", SCRIPT], { cwd: PKG_ROOT, encoding: "utf8", env: { ...process.env, ...env }, timeout: 120_000 });
 
-  it("exits 0 on the committed snapshot and reports the guarded media case", () => {
+  it("exits 0 on the committed snapshot, and reports every KNOWN entry it carries", () => {
     const r = run();
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.match(r.stdout, /^OK — /m);
-    assert.match(r.stdout, /GUARDED[^\n]*\(1\)\n  media_canonical_enabled/);
+    // DERIVED, not hardcoded. This used to require `GUARDED … (1)` naming
+    // media_canonical_enabled; 2470 landed on 2026-09-16, that entry was struck as
+    // STALE, and the assertion started describing a section that no longer exists.
+    // Every KNOWN entry must still be NAMED in the output — an exemption the report
+    // does not print is an exemption nobody re-reads — but which bucket it falls in
+    // is the script's to decide and changes as migrations land.
+    const known = Object.keys(KNOWN);
+    assert.ok(known.length > 0, "KNOWN is empty; this case has nothing left to prove");
+    for (const flag of known) {
+      assert.ok(r.stdout.includes(flag), `KNOWN.${flag} is carried but never printed`);
+    }
   });
 
   it("exits 1 the moment the snapshot says a latent flag was turned on (wall_enabled)", () => {
@@ -264,27 +275,60 @@ describe("the script", () => {
   });
 
   it("exits 1 when a KNOWN entry goes stale (the migration lands in production)", () => {
-    // This case used to push trust_profiles.evidence_weight/_count, because
-    // KNOWN.trust_engine_enabled listed them as absent. Migration 2371 then
-    // landed in production, the ratchet reported that entry STALE, the entry was
-    // struck — and this case started asserting a message that can no longer be
-    // produced, so it has been red ever since. The rule it exists to prove is
-    // fine; the fixture had outlived its subject.
+    // THE SUBJECT IS DERIVED FROM `KNOWN`, and that is the point of this rewrite.
+    // This case has now outlived its subject TWICE: it first pushed
+    // trust_profiles.evidence_weight until 2371 landed, was repointed at
+    // media_canonical_enabled, and 2470 landed on 2026-09-16. Each repoint named
+    // another real entry, so the case was guaranteed to break again the next time
+    // the ratchet did its job. Naming no entry at all fixes that.
     //
-    // It is repointed at the one KNOWN entry that remains rather than deleted,
-    // because deleting it would retire the proof that the ratchet notices when a
-    // migration lands — which is the ONLY way this list is allowed to shrink.
-    const edited = JSON.parse(readFileSync(SNAPSHOT, "utf8"));
+    // It is still not deleted, for the reason the previous author gave and which
+    // still holds: deleting it would retire the proof that the ratchet notices when
+    // a migration lands — the ONLY way this list is allowed to shrink.
+    const snap = JSON.parse(readFileSync(SNAPSHOT, "utf8"));
+
+    // Find any KNOWN entry naming a `table.column` the snapshot really lacks, and
+    // make that column present — i.e. simulate the migration landing.
+    // An entry's objects are either `table` or `table.column`, and the snapshot may
+    // be missing the column OR the whole table — the safe_return entries are the
+    // latter (trip_subgroups does not exist in production at all). Both shapes are
+    // "the migration has not landed", so both are usable, and creating the table is
+    // what landing it would do.
+    let subject: { flag: string; table: string; column: string } | null = null;
+    for (const [flag, entry] of Object.entries(KNOWN)) {
+      for (const obj of entry.objects ?? []) {
+        const [table, column] = String(obj).split(".");
+        if (!table) continue;
+        const cols = snap.tables?.[table];
+        if (column) {
+          if (!Array.isArray(cols) || !cols.includes(column)) {
+            subject = { flag, table, column };
+            break;
+          }
+        } else if (!Array.isArray(cols)) {
+          // A bare table name: landing it means the table exists with an id.
+          subject = { flag, table, column: "id" };
+          break;
+        }
+      }
+      if (subject) break;
+    }
     assert.ok(
-      !edited.tables.media_assets.includes("captured_at"),
-      "premise: media_assets.captured_at is still absent in production (owner decision MEDIA_CANONICAL_FLAG)",
+      subject,
+      "no KNOWN entry names a table.column absent from the snapshot, so the STALE rule cannot be exercised. " +
+        "If KNOWN is empty the ratchet has nothing left to guard and this case should be retired deliberately, " +
+        "not left passing vacuously.",
     );
-    edited.tables.media_assets.push("captured_at");
+
+    if (!Array.isArray(snap.tables[subject!.table])) snap.tables[subject!.table] = [];
+    if (!snap.tables[subject!.table].includes(subject!.column)) {
+      snap.tables[subject!.table].push(subject!.column);
+    }
     const p = join(fixture, "applied-snapshot.json");
-    writeFileSync(p, JSON.stringify(edited));
+    writeFileSync(p, JSON.stringify(snap));
     const r = run({ FLAG_SCHEMA_SNAPSHOT: p });
     assert.equal(r.status, 1, r.stdout);
-    assert.match(r.stdout, /STALE: KNOWN\.media_canonical_enabled/);
-    assert.match(r.stdout, /captured_at/);
+    assert.match(r.stdout, new RegExp(`STALE: KNOWN\\.${subject!.flag}`));
+    assert.ok(r.stdout.includes(subject!.column), `the report must name ${subject!.column}`);
   });
 });
