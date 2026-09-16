@@ -85,6 +85,22 @@ function placeHit(id: string, title: string) {
   };
 }
 
+/**
+ * One §27 SAVED result, as `searchSaved` emits it. `savedKind` is stated by the
+ * server rather than inferred by the adapter, so the fixture states it too.
+ */
+function savedHit(id: string, title: string) {
+  return {
+    id,
+    type: 'saved',
+    title,
+    subtitle: null,
+    imageUrl: null,
+    route: `/place/${id}`,
+    metadata: { savedKind: 'place', lat: 1.3, lng: 103.8 },
+  };
+}
+
 function envelope(results: unknown[], extra: Record<string, unknown> = {}) {
   return {
     ok: true,
@@ -161,6 +177,68 @@ describe('MapSearchSheet — refusals', () => {
       expect(screen.getByText('Kopitiam Tiong Bahru')).toBeTruthy();
     });
     expect(screen.getByText(/saved items/i)).toBeTruthy();
+  });
+
+  /**
+   * (3b) THE SAVED LANE CAN ALSO BE HALF-READ, and that used to be invisible.
+   *
+   * Saves live in TWO tables — `wishlist_places` and `discovery_place_saves` —
+   * written by paths that never write each other's. One can fail while the
+   * other answers, and the server now says so with `coverage: "partial"` and
+   * `failedSources` rather than serving the survivor's rows under a plain 200.
+   *
+   * This sheet used to compute `savedFailed` as `coverage === 'nothing'` ONLY,
+   * so a partial saved shelf took the healthy branch: the short list rendered
+   * with no notice at all, under a heading whose contents the person knows for
+   * a fact, because the contents are their own saves. Case (3) does not cover
+   * it — its fixture refuses the saved lane outright — so a sheet that ignored
+   * `partial` passed (1)-(6) with the defect intact.
+   */
+  it('(3b) a PARTIAL saved shelf keeps its rows AND says the list may be short', async () => {
+    mockSearchUnified.mockImplementation((_q: string, type: string) =>
+      Promise.resolve(
+        type === 'saved'
+          ? envelope([savedHit('s1', 'Kopitiam Katong')], {
+              refusal: { ...refusal('partial'), failedSources: ['wishlist_places'] },
+            })
+          : envelope([placeHit('p7', 'Kopitiam Clementi')]),
+      ),
+    );
+
+    await search();
+
+    // The rows that WERE read are real and must survive — discarding them is
+    // the opposite defect, and is what case (5) forbids for `nothing` bodies.
+    await waitFor(() => {
+      expect(screen.getByText('Kopitiam Katong')).toBeTruthy();
+    });
+    expect(screen.getByText('Kopitiam Clementi')).toBeTruthy();
+    // And the person is told, in the saved lane's own words rather than the
+    // whole-search "incomplete" line, which would misdescribe what happened.
+    expect(screen.getByText(/saved items couldn’t be loaded/i)).toBeTruthy();
+    expect(screen.queryByText(/Nothing matched/i)).toBeNull();
+  });
+
+  it('(3c) VACUITY GUARD — a healthy saved shelf says nothing at all', async () => {
+    // Without this, "(3b) shows the partial notice" is satisfied by a sheet
+    // that shows it on every search, which would make the notice noise and
+    // train the person to ignore the one that matters.
+    mockSearchUnified.mockImplementation((_q: string, type: string) =>
+      Promise.resolve(
+        type === 'saved'
+          ? envelope([savedHit('s2', 'Kopitiam Bugis')])
+          : envelope([placeHit('p8', 'Kopitiam Novena')]),
+      ),
+    );
+
+    await search();
+
+    await waitFor(() => {
+      expect(screen.getByText('Kopitiam Bugis')).toBeTruthy();
+    });
+    expect(screen.queryByText(/saved items couldn’t be loaded/i)).toBeNull();
+    expect(screen.queryByText(/saved items couldn’t be read/i)).toBeNull();
+    expect(screen.queryByText(/incomplete/i)).toBeNull();
   });
 
   it('(4) a genuinely empty answer STILL says "Nothing matched"', async () => {

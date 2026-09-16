@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Linking } from 'react-native';
-import { MapPin, Plus, Check, ChevronRight, Bookmark, Navigation, Route, ListPlus, ThumbsUp } from 'lucide-react-native';
+import { MapPin, Plus, Check, ChevronRight, Bookmark, Navigation, Route, ListPlus, ThumbsUp, ThumbsDown } from 'lucide-react-native';
 import { StampIcon } from '../stamps/StampIcon.tsx';
 import type { DiscoveryPlace, PlaceLiveStatus } from '../../services/discovery.ts';
 import { getPlaceLiveStatusCached } from '../../services/discovery.ts';
@@ -48,9 +48,23 @@ interface PlaceCardProps {
    * impression has nothing to close the predicted→realized loop against.
    */
   rankSurface?: RankSurface | null;
+  /**
+   * "Not interested" — called with this place's id AFTER the server has
+   * ACCEPTED the dismissal, so the owner can drop it from the list it is
+   * rendering.
+   *
+   * ABSENT ⇒ NO CONTROL IS RENDERED, and that is the point of making it a prop
+   * rather than something this card decides for itself. The suppression is
+   * viewer-scoped and lives on the `discovery` surface's `rank_events` rows, so
+   * it only means anything where those rows exist. A card rendered somewhere
+   * that served no impression would offer a button that cannot work, and the
+   * owner of the screen is the only thing that knows which case it is in — the
+   * same rule `rankSurface` already follows.
+   */
+  onDismissed?: (placeId: string) => void;
 }
 
-export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDistance = true, city, rankSurface }: PlaceCardProps) {
+export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDistance = true, city, rankSurface, onDismissed }: PlaceCardProps) {
   const [saved, setSaved]               = useState(false);
   const [pickerVisible, setPickerVisible] = useState(false);
   const [savedCount, setSavedCount]     = useState(0);
@@ -63,7 +77,18 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
   //   save — a bookmark / stamp that the API confirmed, or a trip-wishlist add.
   //   Plan / Route open pickers in the parent and are intent, not outcomes —
   //   deliberately not emitted (see useEventRsvp.ts for the same rule).
-  const { reportTap, reportSave } = useRankOutcome({ surface: rankSurface ?? null });
+  const { reportTap, reportSave, reportDismiss } = useRankOutcome({ surface: rankSurface ?? null });
+
+  /**
+   * Set when a dismissal was attempted and the server did NOT accept it.
+   *
+   * The card deliberately does NOT disappear in that case. An optimistic hide
+   * would be a claim — "this is gone" — that the next refresh contradicts, on
+   * the one control whose entire meaning is that it sticks. Saying so costs one
+   * line of text and keeps the control honest about what it did.
+   */
+  const [dismissFailed, setDismissFailed] = useState(false);
+  const [dismissing, setDismissing]       = useState(false);
 
   const { isAdded } = usePlanPicker();
   const alreadyAdded = isAdded(place.id);
@@ -458,7 +483,50 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
             >
               <ListPlus size={14} color={color.deep} />
             </Pressable>
+
+            {/*
+              "Not interested". Rendered only when the owner passed BOTH a
+              rank surface (so an impression row exists to dismiss against) and
+              an `onDismissed` handler (so something will act on it). Either
+              missing means the control could not do what it says, and a button
+              that cannot work should not be drawn.
+
+              The card is removed by the OWNER, and only after the server
+              accepted the dismissal — never optimistically. See `dismissFailed`.
+            */}
+            {rankSurface && onDismissed ? (
+              <Pressable
+                style={({ pressed }) => [styles.wishlistBtn, pressed && { opacity: 0.7 }]}
+                onPress={() => {
+                  if (dismissing) return;
+                  setDismissing(true);
+                  setDismissFailed(false);
+                  void reportDismiss(place.id)
+                    .then((ok) => {
+                      setDismissing(false);
+                      if (ok) onDismissed(place.id);
+                      else setDismissFailed(true);
+                    })
+                    .catch(() => {
+                      setDismissing(false);
+                      setDismissFailed(true);
+                    });
+                }}
+                disabled={dismissing}
+                hitSlop={6}
+                accessibilityRole="button"
+                accessibilityLabel={`Not interested in ${place.name}`}
+                testID={`place-card-dismiss-${place.id}`}
+              >
+                <ThumbsDown size={14} color={dismissFailed ? color.signal : color.faint} />
+              </Pressable>
+            ) : null}
           </View>
+          {dismissFailed ? (
+            <Text style={styles.dismissFailedText}>
+              Couldn’t hide this just now — tap again to retry.
+            </Text>
+          ) : null}
         </View>
       </View>
 
@@ -685,6 +753,11 @@ const styles = StyleSheet.create({
     color: color.mute,
     fontSize: 10,
     textTransform: 'capitalize',
+  },
+  dismissFailedText: {
+    ...t.small,
+    color: color.signal,
+    marginTop: space.xs,
   },
   actionRow: {
     flexDirection: 'row',

@@ -48,12 +48,25 @@
  * ONE unreadable save table still serves the other's rows and does NOT reject
  * (R5). That is not an oversight and it is not this file being lenient: the two
  * tables are written by two paths that never write each other's, one being
- * unreadable is a genuine half-answer, and `dispatchSearch` returns a bare
- * array with no channel to say "partial" on. Turning a real half-answer into
- * `coverage: "nothing"` would be a second lie in the opposite direction. R5 is
- * the guard that keeps the fix from over-reaching into it, and it is the live
- * remaining gap: a single-table outage is still silent. Closing THAT needs a
- * partial channel on `dispatchSearch`, which is a signature 18 call sites wide.
+ * unreadable is a genuine half-answer, and turning it into `coverage: "nothing"`
+ * would be a second lie in the opposite direction. R5 is the guard that keeps
+ * the fix from over-reaching into it.
+ *
+ * THE SILENCE AROUND THAT HALF-ANSWER IS NOW CLOSED (R6–R10). This header used
+ * to end by naming it as the live remaining gap — "a single-table outage is
+ * still silent", closable only by a partial channel on `dispatchSearch`, "a
+ * signature 18 call sites wide". The channel was built, and NOT by widening
+ * that signature: `dispatchSearchWithCoverage` is a sibling export returning
+ * `{ results, degradedSources }`, `dispatchSearch` is now a thin projection
+ * onto `results`, and the eighteen call sites are untouched — which R10 pins.
+ * `GET /discovery/search` reads the coverage form and answers a half-read shelf
+ * with `coverage: "partial"` and `failedSources`, so the person is told their
+ * saves may be short instead of being shown a list that looks whole.
+ *
+ * R6/R7 pin that each table names itself when unreadable; R8/R9 are the vacuity
+ * guards that keep `partial` meaningful — a lane that reported a degraded
+ * source unconditionally would satisfy R6 and R7 and make every healthy search
+ * cry wolf. Both directions were watched red by mutation before this landed.
  *
  * VACUITY GUARDS. R3 and R4 are as load-bearing as R1 and R2: a searcher that
  * rejected unconditionally would satisfy "rejects on an unreadable table" and
@@ -68,7 +81,7 @@
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 
-import { dispatchSearch, DiscoverySearchReadError } from "../routes/discoverySearch.js";
+import { dispatchSearch, dispatchSearchWithCoverage, DiscoverySearchReadError } from "../routes/discoverySearch.js";
 import { _clearPlaceIdBridgeCache } from "../lib/placeIdBridge.js";
 
 const ME = "aa000000-0000-4000-a000-000000000001";
@@ -184,6 +197,18 @@ function savedLane(
   return dispatchSearch(client as any, q, ME, new Set<string>(), new Set<string>(), "saved", 0, 20) as any;
 }
 
+/** The same lane through the coverage-bearing form, so R6–R8 can read it. */
+function savedLaneCoverage(
+  state: Record<string, any[]>,
+  q = "Lumina",
+  opts: FakeOpts = {},
+): Promise<{ results: Array<{ id: string }>; degradedSources: string[] }> {
+  const { client } = makeClient(state, opts);
+  return dispatchSearchWithCoverage(
+    client as any, q, ME, new Set<string>(), new Set<string>(), "saved", 0, 20,
+  ) as any;
+}
+
 beforeEach(() => { _clearPlaceIdBridgeCache(); });
 
 describe("§21.4 — `type=saved` rejects an outage instead of reporting an empty shelf", () => {
@@ -250,12 +275,89 @@ describe("§21.4 — `type=saved` rejects an outage instead of reporting an empt
     // Deliberate, and the boundary of this fix. The two save tables are written
     // by paths that never write each other's, so one being unreadable is a real
     // half-answer rather than an outage. Rejecting here would replace a silent
-    // partial with a false "nothing was readable". See the header: closing the
-    // remaining silence needs a partial channel on `dispatchSearch`.
+    // partial with a false "nothing was readable".
+    //
+    // STILL TRUE, AND NO LONGER THE WHOLE STORY. R5 pins that the half-answer is
+    // SERVED; R6 pins that it is no longer served SILENTLY. The two are the
+    // guard pair: R5 alone is satisfied by a lane that hides the failure, R6
+    // alone by a lane that throws the surviving rows away.
     const results = await savedLane(baseState(), "Lumina", { unreadable: ["wishlist_places"] });
     assert.deepEqual(
       results.map((r) => r.id), [V_CAFE],
       "the readable save table's rows were lost with the unreadable one",
+    );
+  });
+
+  it("R6 — ONE unreadable save table is REPORTED as a degraded source, not served silently", async () => {
+    // The gap R5's own comment used to describe as open. `dispatchSearch`
+    // returned a bare array, so a half-read shelf and a whole one were the same
+    // value and the route answered both with a plain 200 — a SHORT list of the
+    // person's own saves, presented as complete.
+    const { results, degradedSources } =
+      await savedLaneCoverage(baseState(), "Lumina", { unreadable: ["wishlist_places"] });
+    assert.deepEqual(
+      results.map((r) => r.id), [V_CAFE],
+      "the surviving table's rows must still be served — reporting the gap must not empty the shelf",
+    );
+    assert.deepEqual(
+      degradedSources, ["wishlist_places"],
+      "the unreadable save table was not named, so the route cannot say `coverage: \"partial\"`",
+    );
+  });
+
+  it("R7 — the OTHER save table unreadable is reported too, and names itself", async () => {
+    // Not symmetric by accident: the two tables are read by two different
+    // branches, and a guard that only watched one would pass R6 while leaving
+    // half the defect in place.
+    const { results, degradedSources } =
+      await savedLaneCoverage(baseState(), "Lumina", { unreadable: ["discovery_place_saves"] });
+    assert.deepEqual(
+      results.map((r) => r.id), [V_MUSEUM],
+      "the wishlist save was lost when the Discovery bookmark table was unreadable",
+    );
+    assert.deepEqual(
+      degradedSources, ["discovery_place_saves"],
+      "the unreadable bookmark table was not named",
+    );
+  });
+
+  it("R8 VACUITY GUARD — a fully readable shelf reports NO degraded sources", async () => {
+    // Without this, "names the unreadable table" is satisfied by a lane that
+    // names a table on every request, which would make every healthy search
+    // answer `coverage: "partial"` and train the person to ignore the notice.
+    const { results, degradedSources } = await savedLaneCoverage(baseState());
+    assert.deepEqual(
+      results.map((r) => r.id).sort(), [V_CAFE, V_MUSEUM].sort(),
+      "the healthy path stopped returning the viewer's saves",
+    );
+    assert.deepEqual(
+      degradedSources, [],
+      "a healthy shelf claimed a degraded source, so `partial` would mean nothing",
+    );
+  });
+
+  it("R9 VACUITY GUARD — an empty-but-READABLE shelf reports no degraded sources either", async () => {
+    // The distinction the whole file is about, restated on the new channel: a
+    // query that genuinely matches nothing is a complete answer, and must not
+    // acquire a `partial` just because it is empty.
+    const { results, degradedSources } = await savedLaneCoverage(baseState(), "Reykjavik");
+    assert.deepEqual(results, [], "a genuinely non-matching query stopped being empty");
+    assert.deepEqual(
+      degradedSources, [],
+      "an empty-but-read shelf was reported as partial, which would make emptiness untrustworthy",
+    );
+  });
+
+  it("R10 — `dispatchSearch` still returns a bare array, so its 18 call sites are unchanged", async () => {
+    // The coverage channel was added ALONGSIDE the old signature rather than by
+    // widening it. This pins that choice: if `dispatchSearch` ever starts
+    // returning the envelope, every existing caller silently starts treating an
+    // object as an array and this is the case that says so.
+    const results = await savedLane(baseState());
+    assert.ok(Array.isArray(results), "dispatchSearch stopped returning an array");
+    assert.deepEqual(
+      results.map((r) => r.id).sort(), [V_CAFE, V_MUSEUM].sort(),
+      "the unchanged form stopped agreeing with the coverage form's results",
     );
   });
 });
