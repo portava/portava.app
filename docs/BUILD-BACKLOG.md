@@ -49,3 +49,18 @@ Format: `- [lane] file:line — what is wrong, and what the user sees.`
   /highlights/:id/pin` writes only `pinned_at` and derives PINNED from it, which
   sidesteps the contradiction without resolving it. An owner should say which
   half of the spec wins.
+- [hm] `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json` —
+  `check:census-freshness` reports `census-highlights-memories.md` STALE. Four
+  counted files this lane created or changed are unnamed in the acknowledgement:
+  `lib/highlightPermissions.ts`, `services/highlights/highlightControlWrites.ts`,
+  `services/highlights/highlightRanking.ts`,
+  `services/memory/memorySearchService.ts`. LEAD DECISION, deliberately not
+  silenced here: an acknowledgement must argue the change cannot have moved a
+  verdict, and these changes move verdicts — that is what the lane was for. The
+  census wants re-measuring, which the build phase pauses.
+- [hm] `docs/architecture/trust-unproduced-vocabulary.md:145` — pre-existing and
+  NOT this lane's: the citation `routes/events.ts:3473` resolves ambiguously
+  across three copies of that file in the tree
+  (`artifacts/…`, `files/artifacts/…`, `portava-stamp-wave2-files/artifacts/…`),
+  so `check:doc-citations` exits 1 with `total findings 1` even at
+  `broken anchors 0`. Neither file is in this lane's diff.
