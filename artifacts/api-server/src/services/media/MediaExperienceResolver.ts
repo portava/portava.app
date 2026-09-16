@@ -26,6 +26,7 @@ import {
   type CurrentState,
   type ViewerResolved,
 } from "./MediaProjectionService.js";
+import { rankMediaCandidates } from "./MediaRankingService.js";
 import { aggregateFreshness, type FreshnessState } from "../../lib/media/mediaFreshness.js";
 
 export interface MediaExperienceProjection {
@@ -138,7 +139,15 @@ async function resolveEvent(
       postIds: linkedPostIds,
       limit: 200,
     });
-    media = projectMediaCandidates(candidates as MediaCandidateRow[], nowMs);
+    media = projectMediaCandidates(
+      rankMediaCandidates(candidates as MediaCandidateRow[], {
+        viewerId: viewer.viewerId,
+        viewerTripIds: viewer.viewerTripIds,
+        intentMediaIds: viewer.intentMediaIds,
+        nowMs,
+      }),
+      nowMs,
+    );
   }
 
   const placeIds = typeof ev.place_id === "string" && ev.place_id ? [ev.place_id] : [];
@@ -206,7 +215,15 @@ async function resolveTrip(
     tripId,
     limit: 200,
   });
-  const media = projectMediaCandidates(candidates as MediaCandidateRow[], nowMs);
+  const media = projectMediaCandidates(
+    rankMediaCandidates(candidates as MediaCandidateRow[], {
+      viewerId: viewer.viewerId,
+      viewerTripIds: viewer.viewerTripIds,
+      intentMediaIds: viewer.intentMediaIds,
+      nowMs,
+    }),
+    nowMs,
+  );
 
   const placeIds = Array.from(new Set(media.map((m) => m.placeId).filter((x): x is string => Boolean(x))));
   const contributors = new Set(media.map((m) => m.contributor?.id).filter(Boolean));

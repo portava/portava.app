@@ -36,6 +36,10 @@ import {
   readCurrentState,
 } from "../services/media/MediaProjectionService.js";
 import { resolveExperience } from "../services/media/MediaExperienceResolver.js";
+import {
+  rankMediaCandidates,
+  scoreMediaCandidate,
+} from "../services/media/MediaRankingService.js";
 
 // ── A capable, filtering fake Supabase client ────────────────────────────────
 
@@ -88,6 +92,69 @@ const AUTHOR_A = "22222222-2222-2222-2222-222222222222";
 const AUTHOR_B = "33333333-3333-3333-3333-333333333333";
 const PLACE_1 = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const EVENT_1 = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+
+describe("MediaRankingService — mutation-proof ranking signals", () => {
+  const nowMs = Date.parse("2026-01-01T12:00:00.000Z");
+  const row = (id: string, overrides: any = {}): any => ({
+    id,
+    author_id: AUTHOR_A,
+    created_at: "2026-01-01T11:00:00.000Z",
+    canonical_place_id: PLACE_1,
+    category: "food",
+    post_media: [{
+      processing_status: "ready",
+      moderation_status: "approved",
+      public_url: `https://${id}.example/media`,
+      width: 1200,
+      height: 800,
+    }],
+    profiles: { id: AUTHOR_A, verified: false, is_official: false },
+    ...overrides,
+  });
+
+  it("ranks authentic official material above generated/non-official material", () => {
+    const authentic = row("authentic", { profiles: { id: AUTHOR_A, is_official: true, verified: false } });
+    const generated = row("generated");
+    const ranked = rankMediaCandidates([generated, authentic], { nowMs });
+    assert.deepEqual(ranked.map((r) => r.id), ["authentic", "generated"]);
+  });
+
+  it("applies explicit intent and trip affinity without watch metrics", () => {
+    const wanted = row("wanted", { trip_id: "trip-1" });
+    const other = row("other", { trip_id: "trip-2" });
+    const ranked = rankMediaCandidates([other, wanted], {
+      nowMs,
+      viewerTripIds: new Set(["trip-1"]),
+      intentMediaIds: new Set(["wanted"]),
+    });
+    assert.equal(ranked[0].id, "wanted");
+    assert.equal(scoreMediaCandidate(wanted, {
+      nowMs,
+      viewerTripIds: new Set(["trip-1"]),
+      intentMediaIds: new Set(["wanted"]),
+    }).intent, 1);
+  });
+
+  it("uses selected media metadata quality, not watch/completion fields", () => {
+    const sized = row("sized");
+    const unknown = row("unknown", {
+      post_media: [{ processing_status: "ready", moderation_status: "approved", public_url: "https://x" }],
+      watch_completion_rate: 1,
+      view_count: 999999,
+    });
+    assert.ok(scoreMediaCandidate(sized, { nowMs }).quality > scoreMediaCandidate(unknown, { nowMs }).quality);
+  });
+
+  it("keeps exact ties stable and applies diversity penalties", () => {
+    const a = row("a");
+    const b = row("b");
+    const c = row("c", { canonical_place_id: "place-2", category: "art" });
+    assert.deepEqual(rankMediaCandidates([a, b], { nowMs }).map((r) => r.id), ["a", "b"]);
+    const diverse = rankMediaCandidates([a, b, c], { nowMs });
+    assert.equal(diverse[0].id, "a");
+    assert.equal(diverse[1].id, "c");
+  });
+});
 
 function isoAgo(ms: number): string {
   return new Date(Date.now() - ms).toISOString();

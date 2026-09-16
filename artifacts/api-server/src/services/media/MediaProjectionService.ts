@@ -48,10 +48,27 @@ import {
   type PerspectiveSummary,
 } from "./MediaPerspectiveService.js";
 import { buildMyWorldMemory, type MyWorldMemory } from "./MyWorldMemoryService.js";
+import { rankMediaCandidates } from "./MediaRankingService.js";
 
 const DEFAULT_CANDIDATE_LIMIT = 200;
 
 const SELECT = `${MEDIA_PROJECTION_POST_COLUMNS}, post_media(${MEDIA_PROJECTION_POST_MEDIA_COLUMNS}), profiles!author_id(${MEDIA_PROJECTION_PROFILE_COLUMNS})`;
+
+function rankAndProject(
+  candidates: MediaCandidateRow[],
+  viewer: ViewerResolved,
+  nowMs: number,
+): MediaProjection[] {
+  return projectMediaCandidates(
+    rankMediaCandidates(candidates, {
+      viewerId: viewer.viewerId,
+      viewerTripIds: viewer.viewerTripIds,
+      intentMediaIds: viewer.intentMediaIds,
+      nowMs,
+    }),
+    nowMs,
+  );
+}
 
 export interface ViewerResolved {
   viewerId: string;
@@ -59,6 +76,8 @@ export interface ViewerResolved {
   viewerAge: number | null;
   followedCreatorIds: Set<string>;
   viewerTripIds: Set<string>;
+  /** Bulk-loaded private intent ids; absent means no intent signal. */
+  intentMediaIds?: Set<string>;
 }
 
 /** Calculate whole-year age from an ISO date-of-birth, or null. */
@@ -187,6 +206,23 @@ export async function loadEligibleCandidates(
   }
   if (rows.length === 0) return [];
 
+  // Intent is private to the viewer and must be loaded in one bulk query. A
+  // failed read is intentionally neutral; it never turns into a guessed boost.
+  let intentMediaIds = new Set<string>();
+  try {
+    const { data } = await (sc as any)
+      .from("media_intent_signals")
+      .select("media_id")
+      .eq("user_id", viewer.viewerId)
+      .in("media_id", rows.map((r) => String(r.id)));
+    if (Array.isArray(data)) {
+      intentMediaIds = new Set(data.map((r: any) => String(r.media_id)).filter(Boolean));
+    }
+  } catch {
+    intentMediaIds = new Set<string>();
+  }
+  viewer.intentMediaIds = intentMediaIds;
+
   const viewerCtx: ViewerCtx = {
     viewerUserId: viewer.viewerId,
     feedType: filter.feedType,
@@ -299,7 +335,7 @@ export async function buildWorldProjection(
     city: city ?? undefined,
     limit: DEFAULT_CANDIDATE_LIMIT,
   });
-  const media = projectMediaCandidates(candidates, nowMs);
+  const media = rankAndProject(candidates, viewer, nowMs);
 
   const forYouNow = buildCategoryBuckets(media, nowMs);
 
@@ -384,7 +420,7 @@ export async function buildPlaceProjection(
     placeId,
     limit: DEFAULT_CANDIDATE_LIMIT,
   });
-  const media = projectMediaCandidates(candidates, nowMs);
+  const media = rankAndProject(candidates, viewer, nowMs);
   if (!placeCity) placeCity = media.find((m) => m.city)?.city ?? null;
   if (!placeName) placeName = media.find((m) => m.placeLabel)?.placeLabel ?? null;
 
@@ -426,7 +462,7 @@ export async function buildPeopleProjection(
     feedType: "following",
     limit: DEFAULT_CANDIDATE_LIMIT,
   });
-  const media = projectMediaCandidates(candidates, nowMs);
+  const media = rankAndProject(candidates, viewer, nowMs);
 
   const byContributor = new Map<string, MediaProjection[]>();
   for (const m of media) {
@@ -669,7 +705,7 @@ export async function buildTimelineProjection(
     placeId: opts.placeId ?? undefined,
     limit: DEFAULT_CANDIDATE_LIMIT,
   });
-  const media = projectMediaCandidates(candidates, nowMs).sort(
+  const media = rankAndProject(candidates, viewer, nowMs).sort(
     (a, b) => new Date(b.capturedAt).getTime() - new Date(a.capturedAt).getTime(),
   );
 
@@ -751,7 +787,7 @@ export async function buildMediaMapProjection(
     city: city ?? undefined,
     limit: DEFAULT_CANDIDATE_LIMIT,
   });
-  const media = projectMediaCandidates(candidates, nowMs);
+  const media = rankAndProject(candidates, viewer, nowMs);
 
   const zoneMap = groupZones(media);
   const clusters: MapCluster[] = [...zoneMap.values()]

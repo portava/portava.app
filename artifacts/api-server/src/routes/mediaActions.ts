@@ -39,10 +39,69 @@ import {
   softDeleteMediaAsset,
   retryMediaProcessing,
 } from "../services/media/MediaLifecycleService.js";
+import {
+  recordMediaAttachment,
+} from "../lib/mediaAssets.js";
 
 const router = Router();
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const ATTACHMENT_VISIBILITIES = ["inherit", "public", "private", "followers", "following", "trip_crew", "shared_moment"] as const;
+/** Entity types whose table and ownership semantics are defined below. */
+export const SUPPORTED_ATTACHMENT_ENTITY_TYPES = [
+  "post",
+  "postcard",
+  "memory",
+  "trip",
+  "event",
+  "hidden_gem",
+  "shared_moment",
+] as const;
+export const attachmentBodySchema = z.object({
+  entity_type: z.enum(SUPPORTED_ATTACHMENT_ENTITY_TYPES),
+  entity_id: z.string().regex(UUID_RE),
+  position: z.number().int().min(0).max(10000).optional(),
+  is_cover: z.boolean().optional(),
+  visibility_override: z.enum(ATTACHMENT_VISIBILITIES).nullable().optional(),
+}).strict();
+export function validateMediaAttachmentBody(body: unknown) {
+  return attachmentBodySchema.safeParse(body);
+}
+
+export async function ownsAttachmentEntity(sc: any, userId: string, entityType: string, entityId: string): Promise<boolean> {
+  const entities: Record<string, { table: string; ownerColumn: string }> = {
+    post: { table: "posts", ownerColumn: "author_id" },
+    postcard: { table: "passport_postcards", ownerColumn: "user_id" },
+    memory: { table: "passport_memories", ownerColumn: "user_id" },
+    event: { table: "events", ownerColumn: "host_id" },
+    hidden_gem: { table: "hidden_gems", ownerColumn: "submitted_by" },
+    shared_moment: { table: "shared_moments", ownerColumn: "owner_id" },
+    trip: { table: "trips", ownerColumn: "owner_id" },
+  };
+  const entity = entities[entityType];
+  if (!entity) return false;
+  try {
+    const { data, error } = await sc
+      .from(entity.table)
+      .select(`id,${entity.ownerColumn}`)
+      .eq("id", entityId)
+      .maybeSingle();
+    if (error || !data) return false;
+    if (String(data[entity.ownerColumn]) === userId) return true;
+    if (entityType !== "trip") return false;
+    // A trip attachment is collaborative: only an accepted member may attach.
+    const member = await sc
+      .from("trip_members")
+      .select("user_id")
+      .eq("trip_id", entityId)
+      .eq("user_id", userId)
+      .eq("status", "accepted")
+      .maybeSingle();
+    return !member.error && Boolean(member.data);
+  } catch {
+    return false;
+  }
+}
 
 // ── Owner lifecycle actions ───────────────────────────────────────────────────
 // These routes intentionally return probe-safe not_found for missing and
@@ -96,6 +155,46 @@ router.post(
       return;
     }
     res.status(202).json({ retryQueued: true, alreadyQueued: result.alreadyQueued });
+  }),
+);
+
+// ── POST /media/:id/attachments ──────────────────────────────────────────────
+router.post(
+  "/media/:id/attachments",
+  asyncHandler(async (req, res) => {
+    const auth = await requireUser(req, res);
+    if (!auth) return;
+    const sc = getServiceClient();
+    if (!sc) { sendError(res, "server_not_configured"); return; }
+    const mediaId = String(req.params.id ?? "");
+    if (!UUID_RE.test(mediaId)) { sendError(res, "invalid_payload", "Invalid media id"); return; }
+    const parsed = validateMediaAttachmentBody(req.body);
+    if (!parsed.success) { sendError(res, "invalid_payload", "Invalid attachment"); return; }
+    const body = parsed.data;
+    let asset: any;
+    try {
+      const result = await sc.from("media_assets").select("id,owner_user_id").eq("id", mediaId).maybeSingle();
+      asset = result.error ? null : result.data;
+    } catch { asset = null; }
+    // Missing and unauthorized assets/entities intentionally share not_found.
+    if (!asset || asset.owner_user_id !== auth.user.id ||
+      !(await ownsAttachmentEntity(sc, auth.user.id, body.entity_type, body.entity_id))) {
+      sendError(res, "not_found", "Media item not found");
+      return;
+    }
+    const attachmentId = await recordMediaAttachment(sc, {
+      mediaAssetId: mediaId,
+      entityType: body.entity_type,
+      entityId: body.entity_id,
+      position: body.position,
+      isCover: body.is_cover,
+      visibilityOverride: body.visibility_override,
+    });
+    if (!attachmentId) {
+      sendError(res, "not_found", "Media item not found");
+      return;
+    }
+    res.status(200).json({ id: attachmentId, mediaAssetId: mediaId, entityType: body.entity_type, entityId: body.entity_id });
   }),
 );
 

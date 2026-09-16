@@ -44,6 +44,7 @@ import {
   buildTimelineProjection,
   buildMediaMapProjection,
 } from "../services/media/MediaProjectionService.js";
+import { searchMyWorldMedia } from "../services/media/MyWorldMemoryService.js";
 import { resolveExperience } from "../services/media/MediaExperienceResolver.js";
 import { filterMediaProjectionVisibility } from "../lib/mediaVisibility.js";
 
@@ -227,7 +228,18 @@ router.get(
     }
     const viewer = await resolveViewer(sc, auth.user.id, { needFollows: false });
     const projection = await buildMyWorldProjection(sc, viewer, nowMs);
-    await sendProjection(res, "me", projection, sc, auth.user.id);
+     const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+     // Search is additive to the established My World shape. The helper is
+     // session-scoped and owner-only; user_id (or any other query identity)
+     // is intentionally ignored.
+     const search = q ? await searchMyWorldMedia(sc, auth.user.id, q) : undefined;
+     await sendProjection(
+       res,
+       "me",
+       search ? { ...projection, search: { q, results: search } } : projection,
+       sc,
+       auth.user.id,
+     );
   }),
 );
 

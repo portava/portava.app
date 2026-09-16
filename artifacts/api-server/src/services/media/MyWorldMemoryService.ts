@@ -33,6 +33,7 @@
  * grouping rather than throwing. A single failing read never sinks the surface.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { appStorageUrlInfo } from "../../lib/mediaUrl.js";
 import {
   buildDerivedMemory,
   loadSuppressions,
@@ -40,6 +41,113 @@ import {
   type RememberItem,
   type SuppressionSet,
 } from "../../compass/PassportRemembersService.js";
+
+/** The deliberately small, owner-scoped result used by GET /media/me?q=. */
+export interface MyWorldMediaSearchResult {
+  id: string;
+  mediaType: "image" | "video" | string;
+  url: string;
+  thumbnailUrl: string | null;
+  capturedAt: string | null;
+  source: "canonical" | "post";
+  visibility: "owner_only";
+}
+
+/**
+ * Search only the authenticated owner's media.  This is intentionally a
+ * separate read from the memory projection: canonical uploads may not have an
+ * attachment (or a post) yet, and must still be discoverable by their owner.
+ * No caller supplied owner id is accepted by this helper.
+ */
+export async function searchMyWorldMedia(
+  sc: SupabaseClient,
+  ownerId: string,
+  query: string,
+): Promise<MyWorldMediaSearchResult[]> {
+  const needle = query.trim().toLocaleLowerCase();
+  if (!needle || needle.length > 200) return [];
+  const matches = (row: Record<string, unknown>): boolean =>
+    [
+      row.id,
+      row.media_type,
+      row.mime_type,
+      row.storage_path,
+      row.public_url,
+      row.thumbnail_url,
+      row.captured_at,
+      row.created_at,
+      row.location_name,
+      row.location_city,
+      row.location_country,
+      row.category,
+      row.title,
+    ]
+      .some((value) => typeof value === "string" && value.toLocaleLowerCase().includes(needle));
+
+  const results: MyWorldMediaSearchResult[] = [];
+  try {
+    const { data } = await (sc as any)
+      .from("media_assets")
+      .select("*")
+      .eq("owner_user_id", ownerId)
+      .limit(200);
+    for (const row of (Array.isArray(data) ? data : []) as Record<string, unknown>[]) {
+      if (!matches(row) || typeof row.id !== "string" || typeof row.public_url !== "string") continue;
+      const ref = typeof row.storage_bucket === "string" && typeof row.storage_path === "string"
+        ? { bucket: row.storage_bucket, path: row.storage_path }
+        : appStorageUrlInfo(String(row.public_url));
+      if (!ref) continue;
+      results.push({
+        id: row.id,
+        mediaType: typeof row.media_type === "string" ? row.media_type : "image",
+        // Buckets are private; clients must use the authenticated relay.
+        url: `/api/media/file/${encodeURIComponent(ref.bucket)}/${String(ref.path).split("/").map(encodeURIComponent).join("/")}`,
+        thumbnailUrl: typeof row.thumbnail_url === "string" ? row.thumbnail_url : null,
+        capturedAt: typeof row.captured_at === "string" ? row.captured_at : null,
+        source: "canonical",
+        visibility: "owner_only",
+      });
+    }
+  } catch {
+    // A missing/old canonical table must not make the owner projection fail.
+  }
+  try {
+    const { data } = await (sc as any)
+      .from("posts")
+      .select("id,created_at,location_name,location_city,location_country,category,post_media(*)")
+      .eq("author_id", ownerId)
+      .limit(200);
+    for (const row of (Array.isArray(data) ? data : []) as Record<string, unknown>[]) {
+      for (const media of (Array.isArray(row.post_media) ? row.post_media : []) as Record<string, unknown>[]) {
+        const mediaUrl = typeof media.public_url === "string" ? media.public_url : media.url;
+        if (typeof media.id !== "string" || typeof mediaUrl !== "string") continue;
+        if (matches({ ...row, ...media })) {
+          results.push({
+            id: media.id,
+            mediaType: typeof media.media_type === "string" ? media.media_type : "image",
+            url: (() => {
+              const ref = typeof media.storage_bucket === "string" && typeof media.storage_path === "string"
+                ? { bucket: media.storage_bucket, path: media.storage_path }
+                : appStorageUrlInfo(mediaUrl);
+              return ref
+                ? `/api/media/file/${encodeURIComponent(ref.bucket)}/${String(ref.path).split("/").map(encodeURIComponent).join("/")}`
+                : "";
+            })(),
+            thumbnailUrl: typeof media.thumbnail_url === "string" ? media.thumbnail_url : null,
+            capturedAt: typeof media.captured_at === "string"
+              ? media.captured_at
+              : typeof row.created_at === "string" ? row.created_at : null,
+            source: "post",
+            visibility: "owner_only",
+          });
+        }
+      }
+    }
+  } catch {
+    // Owner search is best-effort, but remains strictly owner-scoped.
+  }
+  return results.slice(0, 100);
+}
 
 // ── §31 group taxonomy ───────────────────────────────────────────────────────
 
