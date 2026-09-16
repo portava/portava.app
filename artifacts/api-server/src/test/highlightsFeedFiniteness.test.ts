@@ -56,6 +56,12 @@ function makeFakeClient(rows: any[], flagOn: boolean) {
       insert() { return obj; }, update() { return obj; }, upsert() { return obj; }, delete() { return obj; },
       eq() { return obj; }, neq() { return obj; }, in() { return obj; },
       lt() { return obj; }, gt() { return obj; }, is() { return obj; }, not() { return obj; },
+      // `.or()` is how the feed asks for "not expired OR permanent" since
+      // migration 2975 made `expires_at` nullable. A fake without it makes the
+      // handler throw, which arrives as a 500 and reads exactly like a broken
+      // feed — this method is a no-op for the same reason `eq` is: this suite
+      // is about page SIZE, and every row the fake holds is unexpired.
+      or() { return obj; },
       order() { return obj; },
       limit(n: number) { limitN = n; return obj; },
       maybeSingle() { return resolve(true); },

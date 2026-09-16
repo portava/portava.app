@@ -105,6 +105,16 @@ export interface FakeOpts {
   failWrites?: Set<string>;
   absentTables?: Set<string>;
   zeroRowUpdate?: Set<string>;
+  /**
+   * A specific PostgREST error object for a write, keyed by table.
+   *
+   * `failWrites` answers with a bare message and no `code`, which is what a
+   * connection failure looks like. Handlers that branch on a SQLSTATE — a NOT
+   * NULL violation (23502), a CHECK violation (23514), an unknown column
+   * (PGRST204) — cannot be exercised by that, and a test that used it would be
+   * asserting the fallback branch while believing it asserted the specific one.
+   */
+  writeError?: Record<string, any>;
 }
 
 export function makeFakeClient(tables: Record<string, any[]>, opts: FakeOpts = {}) {
@@ -112,6 +122,7 @@ export function makeFakeClient(tables: Record<string, any[]>, opts: FakeOpts = {
   const failWrites = opts.failWrites ?? new Set<string>();
   const absentTables = opts.absentTables ?? new Set<string>();
   const zeroRowUpdate = opts.zeroRowUpdate ?? new Set<string>();
+  const writeError = opts.writeError ?? {};
 
   function chain(table: string) {
     const filters: Array<(r: any) => boolean> = [];
@@ -141,7 +152,38 @@ export function makeFakeClient(tables: Record<string, any[]>, opts: FakeOpts = {
       },
       gt(c: string, v: any) { filters.push((r) => r[c] > v); return obj; },
       lt(c: string, v: any) { filters.push((r) => r[c] < v); return obj; },
-      ilike() { return obj; }, or() { return obj; }, filter() { return obj; },
+      ilike() { return obj; },
+      /**
+       * PostgREST's `or=(a,b)` — parsed, not ignored.
+       *
+       * The Highlight feeds have asked for "not expired OR permanent" since
+       * migration 2975 made `expires_at` nullable, and a no-op `or()` would
+       * make this harness serve EXPIRED Highlights on every feed while every
+       * assertion still passed. That is the shape of fake that produces a false
+       * green: the filter under test simply would not run.
+       *
+       * Only the operators this surface uses are implemented — `is.null`,
+       * `gt`, `lt`, `eq` — and anything else throws rather than silently
+       * matching everything.
+       */
+      or(expr: string) {
+        const clauses = String(expr).split(",").map((c) => c.trim()).filter(Boolean);
+        const preds = clauses.map((clause) => {
+          const [col, op, ...rest] = clause.split(".");
+          const raw = rest.join(".");
+          switch (op) {
+            case "is": return (r: any) => (raw === "null" ? r[col] == null : r[col] === raw);
+            case "gt": return (r: any) => r[col] != null && r[col] > raw;
+            case "lt": return (r: any) => r[col] != null && r[col] < raw;
+            case "eq": return (r: any) => String(r[col]) === raw;
+            default:
+              throw new Error(`highlightsSpecHarness: or() does not implement operator ${JSON.stringify(op)} in ${JSON.stringify(clause)}`);
+          }
+        });
+        filters.push((r) => preds.some((p) => p(r)));
+        return obj;
+      },
+      filter() { return obj; },
       order() { return obj; }, limit() { return obj; }, range() { return obj; },
       maybeSingle() { single = true; return resolve(); },
       single() { single = true; return resolve(); },
@@ -156,6 +198,7 @@ export function makeFakeClient(tables: Record<string, any[]>, opts: FakeOpts = {
           count: null,
         };
       }
+      if (isWrite && writeError[table]) return { data: null, error: writeError[table], count: null };
       if (isWrite && failWrites.has(table)) return { data: null, error: { message: `${table} write failed` }, count: null };
       if (failTables.has(table)) return { data: null, error: { message: `${table} unavailable` }, count: null };
       if (obj.__insert || obj.__upsert) {

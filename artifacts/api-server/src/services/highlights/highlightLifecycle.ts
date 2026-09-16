@@ -276,6 +276,14 @@ export function describeHighlightLifecycle(
     expires_at?: unknown;
     deleted_at?: unknown;
     archived_at?: unknown;
+    /**
+     * §3.5 / §12 manual_pin. Added to this shape because PINNED now HAS a
+     * witness: migration 2723 put `pinned_at` on `public.highlights` and it was
+     * applied to production on 2026-09-15. The paragraph above that says PINNED
+     * has none was written against the 20260908 snapshot and is superseded —
+     * kept, because a reader comparing the two learns which half moved.
+     */
+    pinned_at?: unknown;
   },
   now: Date = new Date(),
 ): LifecycleDescription {
@@ -303,7 +311,35 @@ export function describeHighlightLifecycle(
     return { provenance: "derived", state: "HIDDEN", from: "archived_at" };
   }
 
-  if (row.expires_at == null) {
+  // PINNED HAS A WITNESS NOW, AND THE HEADER ABOVE SAYS IT DOES NOT.
+  // That paragraph was written against the 20260908 snapshot, where
+  // `public.highlights` had no pin column of any kind. Migration 2723 was
+  // applied to production on 2026-09-15 and `pinned_at` is in the 20260915
+  // snapshot, so "the owner pinned this" is now an exact, non-arbitrary fact in
+  // the schema — the same standard `expires_at` meets for EXPIRED. It is read
+  // AFTER `archived_at`, because §5 puts HIDDEN downstream of PINNED and a
+  // Highlight that is both pinned and archived has been removed from browsing.
+  //
+  // DRAFT still has no witness and is still never derived.
+  if ("pinned_at" in row && row.pinned_at != null) {
+    return { provenance: "derived", state: "PINNED", from: "pinned_at" };
+  }
+
+  if (!("expires_at" in row)) {
+    return {
+      provenance: "unavailable",
+      state: null,
+      reason: "no lifecycle_state column and no expires_at to derive from",
+    };
+  }
+  if (row.expires_at === null) {
+    // NULL is not "no expiry column to read". Since migration 2975 it is a §4
+    // PERMANENT Highlight, whose whole definition is that it does not expire —
+    // so it is ACTIVE, and reporting `unavailable` here would make the one
+    // class 2975 exists to enable the one class with no describable state.
+    return { provenance: "derived", state: "ACTIVE", from: "expires_at IS NULL (PERMANENT)" };
+  }
+  if (row.expires_at === undefined) {
     return {
       provenance: "unavailable",
       state: null,
