@@ -752,3 +752,74 @@ describe("GET /api/map/projection — kinds gating", () => {
     assert.deepEqual(ids, [`friend:${MEM_A}`, "trip:t1"]);
   });
 });
+
+// ── `sources` must not claim a layer the route never read ────────────────────
+//
+// WHY THIS MATTERS MORE THAN IT LOOKS
+// ===================================
+// `sources` is the ONLY signal that distinguishes "there is nothing here" from
+// "this layer could not be read". useMapEntities turns it into `unreadLayers`
+// and keeps the layer's absence visible to the user; a layer named in
+// `sources` is reported as an authoritative empty answer, and the client does
+// NOT fall back to its own transport for it (the gateway owning every layer it
+// answers is deliberate — re-fetching one it declined would route around a
+// fail-closed decision through a fail-open transport).
+//
+// Three layers kept the old `.catch(() => [])` + unconditional `sources.push`
+// shape after the rest of the route had been fixed: travelers, gems and
+// events. Each one turned a failed read into "no travelers / no gems / no
+// events in this viewport", with no fallback and nothing logged at the client.
+// The gems case was the worst of the three: the failure could come from
+// `applyGemPrivacyBatch`, so a viewer whose gem PRIVACY could not be resolved
+// was told authoritatively that the area has no gems.
+//
+// Each test below fails against the pre-fix route, which answers `sources`
+// with the layer named and `objects: []`.
+
+describe("GET /api/map/projection — a failed read is never reported as an empty layer", () => {
+  it("does not claim the travelers source when the traveler read failed", async () => {
+    const r = await projection(
+      "social_zone",
+      projectionState({ user_location_state: { error: { message: "travelers down" } } }),
+    );
+    assert.equal(r.status, 200, "a partial outage must still serve the rest of the map");
+    assert.ok(!r.body.sources.includes("travelers"), "claimed a travelers read that failed");
+  });
+
+  it("does not claim the gems source when the gem read failed", async () => {
+    const r = await projection(
+      "hidden_gem",
+      projectionState({ hidden_gems: { error: { message: "gems down" } } }),
+    );
+    assert.equal(r.status, 200);
+    assert.ok(!r.body.sources.includes("gems"), "claimed a gems read that failed");
+  });
+
+  it("does not claim the events source when the event read failed", async () => {
+    const r = await projection(
+      "event",
+      projectionState({ events: { error: { message: "events down" } } }),
+    );
+    assert.equal(r.status, 200);
+    assert.ok(!r.body.sources.includes("events"), "claimed an events read that failed");
+  });
+
+  it("still claims a layer that genuinely read zero rows", async () => {
+    // The other half of the contract, and the reason this cannot be fixed by
+    // simply never pushing: an EMPTY viewport must still name its sources, or
+    // the client would fall back on every quiet area of the map.
+    const r = await projection("event", projectionState({ events: [] }));
+    assert.equal(r.status, 200);
+    assert.ok(r.body.sources.includes("events"), "an empty-but-successful read must name its source");
+    assert.deepEqual(r.body.objects, []);
+  });
+
+  it("one failed layer does not suppress the layers that succeeded", async () => {
+    const r = await projection(
+      "event,trip_stop",
+      projectionState({ events: { error: { message: "events down" } } }),
+    );
+    assert.ok(!r.body.sources.includes("events"));
+    assert.ok(r.body.sources.includes("trips"), "a healthy layer was dropped with the failing one");
+  });
+});

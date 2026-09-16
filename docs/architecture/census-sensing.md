@@ -945,7 +945,7 @@ from one claim type and every leaf without a producer null, never a default
 (`test/mapExperienceState.test.ts:147#null`); the fold reads no personal
 preference (§1.1's pin); it is served on `payload.experienceState` behind the
 flag (`lib/mapProjection.ts:781#experienceState`;
-`routes/mapProjection.ts:1010#experienceState:`;
+`routes/mapProjection.ts:1031#experienceState:`;
 `test/mapSensingProjectionGates.test.ts:165#map_experience_state_enabled`).
 **S59** (ExperienceState on the place object, not separate pins, W → **C**):
 the same fold, onto the same object, and no new kind. **S64** (truth /
@@ -965,14 +965,14 @@ never observed (`lib/mapProducers/worldMomentProducer.ts:109#WORLD_CHANGE_TRUTH`
 (`test/mapWorldMoments.test.ts:183#unexpected`); hotspots are the pulse and
 rhythm is `city_model` (`lib/mapProducers/cityModelProducer.ts`); a sub-floor
 cell and a quiet cell serialize identically; wired at
-`routes/mapProjection.ts:1297#attachWorldMoments(pulses,` and served with
+`routes/mapProjection.ts:1318#attachWorldMoments(pulses,` and served with
 `moment: null` when nothing changed
 (`test/mapSensingProjectionGates.test.ts:272#map_world_moments_enabled`).
 **S65** (display resolver — safety, mode, zoom, intent, relevance, W → **C**):
 `lib/mapDisplayResolver.ts:268#resolveDisplay(` runs between ranking and
 paging, the band sets the budget, the mode allocates it across classes, the
 intent reorders within a tier, safety notices are never budgeted, and every
-drop is counted by kind (`routes/mapProjection.ts:1319#resolveDisplay(ranked,`;
+drop is counted by kind (`routes/mapProjection.ts:1340#resolveDisplay(ranked,`;
 `test/mapSensingProjectionGates.test.ts:195#map_display_resolver_enabled`).
 **S38** (coverage tracked separately from activity, W → **C**): the Map
 object now carries `coverage` beside `activity` (`lib/mapObjects.ts:455#coverage?:`),
@@ -1716,7 +1716,7 @@ so nothing ever entered the pipeline. This section builds the first two
 and feeds the third rather than replacing it: a candidate is FILED into the
 review queue the platform already has, `moderation_reports`, as a
 system-originated `place` / `safety_concern` row — the queue
-`routes/admin.ts:2094#/admin/moderation/reports` already serves — and
+`routes/admin.ts:2103#/admin/moderation/reports` already serves — and
 asserts nothing. One migration, 2803, seeds a flag FALSE; no table, no
 column. Every rule went red under a mutation before its commit; the
 mutations are listed in §5.3.
@@ -1775,7 +1775,7 @@ mutations are listed in §5.3.
   (`lib/safetyCandidate.ts:256#reporter_id`; `lib/safetyCandidate.ts:260#category`;
   `lib/safetyCandidate.ts:72#SAFETY_CANDIDATE_DETAILS_PREFIX`;
   `test/safetyCandidate.test.ts:141#no reporter`). That is the queue
-  `routes/admin.ts:2094#/admin/moderation/reports` serves to reviewers
+  `routes/admin.ts:2103#/admin/moderation/reports` serves to reviewers
   today, with its `place` filter; the row shape is one the table already
   admits, verified on the object rather than assumed — 2803's preconditions
   read the table's own CHECK constraints and the column's nullability and

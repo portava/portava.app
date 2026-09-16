@@ -112,6 +112,21 @@ export const KNOWN_WRITERLESS_READS: Record<
   { readers: number; classification: "external-seed" | "human-allowlist" | "legacy-decoy" | "dead-lane"; note: string }
 > = {
   // ── DEAD LANES — each of these must reach zero ────────────────────────────
+  circle_member_visibility_overrides: {
+    readers: 2,
+    classification: "dead-lane",
+    note:
+      "The table is real (0108_circle_schema_tracked.sql:250, present in both live schemas) and " +
+      "carries an owner-writable RLS policy (user_id = auth.uid()), so a client COULD write it " +
+      "directly — but nothing does. No server TS, no client TS, no SQL, and the " +
+      "app/circle-context-settings.tsx screen that would own the preference never names the " +
+      "table. Both readers are lib/mediaVisibility (the directional hide_from_me / hide_me_from " +
+      "resolver), added with the §6.1 contextual-visibility enforcement: the READ half is now " +
+      "correct and mutation-proved, and with no producer it simply finds no rows and allows, " +
+      "which is the same answer the surfaces gave before it existed. Nothing regressed; the " +
+      "feature is inert until the settings screen writes a row. Needs the write path, or a " +
+      "product ruling that the preference is not shipping — in which case the readers go with it.",
+  },
   circles: {
     readers: 9,
     classification: "dead-lane",

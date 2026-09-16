@@ -615,13 +615,20 @@ router.get(
     if (wantKind("social_zone")) {
       tasks.push(
         (async () => {
+          // `.catch(() => [])` + an unconditional push claimed a source this
+          // route may never have read. `sources` is how the client tells "no
+          // travelers here" from "the travelers layer could not be read" — it
+          // is what drives `unreadLayers` in useMapEntities — so a failed read
+          // reported as a successful empty one is the exact defect every other
+          // layer in this route was already fixed for.
           const travelers = await listMapTravelers(sc, {
             viewerId: user.id,
             lat,
             lng,
             radiusKm,
             blockedSet,
-          }).catch(() => []);
+          }).catch(() => null);
+          if (travelers === null) return;
           for (const t of travelers) collected.push(projectTraveler(t));
           sources.push("travelers");
         })(),
@@ -631,7 +638,13 @@ router.get(
     if (wantKind("hidden_gem")) {
       tasks.push(
         (async () => {
-          const ranked = await findNearbyGems(sc, lat, lng, radiusKm, { limit: 100 }).catch(() => []);
+          // BOTH reads must succeed before this layer may be claimed. The
+          // privacy batch failing is the more dangerous of the two: it used to
+          // yield [] and still push "gems", so a viewer whose gem privacy could
+          // not be resolved was told, authoritatively, that there are no gems
+          // here — and the client then did not fall back.
+          const ranked = await findNearbyGems(sc, lat, lng, radiusKm, { limit: 100 }).catch(() => null);
+          if (ranked === null) return;
           const notBlocked = ranked.filter(
             (r: any) => !r.gem?.submitted_by || !blockedSet.has(r.gem.submitted_by),
           );
@@ -639,7 +652,8 @@ router.get(
             notBlocked.map((r: any) => r.gem),
             sc,
             user.id,
-          ).catch(() => []);
+          ).catch(() => null);
+          if (safe === null) return;
           safe.forEach((g: any, i: number) =>
             collected.push(projectGem(g, notBlocked[i]?.distanceKm ?? null)),
           );
@@ -666,7 +680,14 @@ router.get(
     if (wantKind("event")) {
       tasks.push(
         (async () => {
-          const events = (await loadEventsOnce()) ?? [];
+          // The read is SHARED with the §10 inferred-cause producer, so it
+          // stays a single `loadEventsOnce()` and keeps returning null on
+          // failure. What changes is only the claim: null means the read
+          // failed, so the layer is not named in `sources` and the client
+          // keeps its own events layer visible instead of being told the
+          // viewport is empty.
+          const events = await loadEventsOnce();
+          if (events === null) return;
           for (const ev of events) collected.push(projectEvent(ev, nowMs));
           sources.push("events");
         })(),

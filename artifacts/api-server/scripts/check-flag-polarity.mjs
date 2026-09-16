@@ -257,6 +257,25 @@ const isTestPath = (rel) => rel.includes('__tests__/') || /(^|\/)test\//.test(re
 const CLASSIFIED = [
   // ── The ones that matter most: names whose polarity the conventions miss ──
   {
+    flag: 'map_telemetry_retention_enabled',
+    kind: 'CAPABILITY',
+    reason:
+      'Map telemetry RETENTION ENFORCEMENT, and its off-state is the unusual one. ' +
+      'For an ordinary capability an unreadable flag means the feature does not happen; ' +
+      'here it means expired behavioural rows are KEPT — 2202 gives ' +
+      'map_telemetry_events/map_telemetry_drops a 90-day `expires_at` that nothing else ' +
+      'enforces, and 2960 creates both this row and the purge function the sweep calls. ' +
+      'CAPABILITY, and read fail-closed like every other, but note that fail-closed here ' +
+      'means RETAINED: an unreadable flag leaves expired behavioural rows in place. That ' +
+      'is why 2960 seeds it TRUE rather than following the usual ship-a-DELETE-off ' +
+      'instinct — a retention control shipped off is a declared privacy promise that is ' +
+      'not kept, and with collection FALSE and both tables at 0 rows in production and CI ' +
+      'an enabled purger deletes nothing today while already enforcing on the day ' +
+      'collection is switched on. Kept DELIBERATELY SEPARATE from every collection flag: ' +
+      'switching collection off must not strand the rows someone just decided they did ' +
+      'not want kept.',
+  },
+  {
     flag: 'invite_only_beta',
     kind: 'CAPABILITY',
     reason:
@@ -667,6 +686,18 @@ const DISPOSITIONS = new Set([
 ]);
 
 const INERT_SEEDED_FLAGS = [
+  {
+    flag: 'intel_sensing_credentials_enabled', seededIn: '2956_privacy_safe_sensing_credentials.sql:152', kind: 'CAPABILITY',
+    disposition: 'remove-from-seed',
+    reason:
+      'Seeded FALSE by 2956_privacy_safe_sensing_credentials.sql, an IMPORTED RECORD of a migration that already ran in production and CI under a different filename during the Replit Media/Map/Sensing port. REMEDY EXECUTED, not merely intended: 2962_retire_unread_sensing_flags.sql DELETES the row from every database, routes/admin.ts HIDDEN_INERT_FLAGS excludes it from GET /admin/feature-flags and returns 400 not_operational from PATCH, and routes/featureFlags.ts INERT_FLAGS excludes it from the public list -- the same pairing 0209 and 4d5cc1f4e used for the freeze flags, so the surface behaves identically on a database where 2962 has not been applied yet. This entry remains because the seed scanner reads migration TEXT, and the INSERT inside 2956 cannot be edited away: its committed text has to keep matching what executed, which src/test/migrationImportedRecords.test.ts asserts. WRITE-READER WAS TRIED FIRST AND IS NOT AVAILABLE, for a design reason rather than an inconvenience: both readers on the source branch (routes/intel.ts and services/intel/IntelCaptureService.ts) guard blocks whose entire body calls deviceContributionCredential.ts, which the port rejected because it authorises a credential AGAINST AN ACTOR ID where this repository keeps no identity at rest. Re-pointing it at the stronger sensingContributionSession is not available either: lib/sensingAuthPosture.ts fixes SENSING_AUTH_POSTURE = \"undecided\" and states there is deliberately no environment variable or flag that can flip it at runtime -- a flag enabling credential acceptance is exactly what that forbids.',
+  },
+  {
+    flag: 'intel_sensing_device_enrollment_enabled', seededIn: '2956_privacy_safe_sensing_credentials.sql:153', kind: 'CAPABILITY',
+    disposition: 'remove-from-seed',
+    reason:
+      'Seeded FALSE by 2956_privacy_safe_sensing_credentials.sql, an IMPORTED RECORD of a migration that already ran in production and CI under a different filename during the Replit Media/Map/Sensing port. REMEDY EXECUTED, not merely intended: 2962_retire_unread_sensing_flags.sql DELETES the row from every database, routes/admin.ts HIDDEN_INERT_FLAGS excludes it from GET /admin/feature-flags and returns 400 not_operational from PATCH, and routes/featureFlags.ts INERT_FLAGS excludes it from the public list -- the same pairing 0209 and 4d5cc1f4e used for the freeze flags, so the surface behaves identically on a database where 2962 has not been applied yet. This entry remains because the seed scanner reads migration TEXT, and the INSERT inside 2956 cannot be edited away: its committed text has to keep matching what executed, which src/test/migrationImportedRecords.test.ts asserts. Its enrollment route IS portable in isolation and was still deliberately not ported: it writes intel_sensing_device_eligibility(actor_id, device_id, ...), a PERSISTENT IDENTITY-TO-DEVICE LINK AT REST, which is the thing the sensing design exists to eliminate; and its only consumer is is_sensing_device_eligible, called by the rejected issuance route, so porting it would have created an identity-linked write path feeding nothing.',
+  },
   // ── The four that matter: seeded AS KILL SWITCHES, read by nothing. ───────
   //
   // NOTE: push_notifications_enabled was here with disposition write-reader.

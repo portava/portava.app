@@ -19,6 +19,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { fetchBlockedSet } from "./blocks.js";
 import { resolveProfileVisibility } from "./profileVisibility.js";
+import {
+  authorizeMediaAttachment,
+  authorizeMediaContext,
+} from "./mediaVisibility.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -162,10 +166,18 @@ export async function authorizeMediaAccess(
 ): Promise<boolean> {
   const cacheKey = `${viewerId}:${bucket}/${path}`;
   const hit = allowCache.get(cacheKey);
-  if (hit && Date.now() - hit < ALLOW_TTL_MS) return true;
+  // ONLY `profile-media` is cached. The `post-media` decision now depends on
+  // lib/mediaVisibility — per-attachment `visibility_override` rows and
+  // directional `circle_member_visibility_overrides` rows — which a DIFFERENT
+  // process writes. A 60 s allow-cache there would keep serving the bytes for
+  // up to a minute after the owner revoked them, and "I hid this from them and
+  // they could still open it" is the one outcome a circle override exists to
+  // prevent. profile-media's inputs (profile visibility, follows, blocks) have
+  // no such contextual layer, so its cache is left alone.
+  if (bucket === "profile-media" && hit && Date.now() - hit < ALLOW_TTL_MS) return true;
 
   const allow = await decide(sc, viewerId, bucket, path);
-  if (allow) allowCache.set(cacheKey, Date.now());
+  if (allow && bucket === "profile-media") allowCache.set(cacheKey, Date.now());
   if (allowCache.size > 5000) {
     const oldest = allowCache.keys().next().value as string | undefined;
     if (oldest) allowCache.delete(oldest);
@@ -256,10 +268,19 @@ async function decide(
   if (pathOwner === viewerId) return true;
 
   let owner = pathOwner;
+  /**
+   * The canonical `media_assets.id` for this object, when the canonical layer
+   * is lit. It is the key `media_attachments` is filed under, so branches 3a/3b
+   * need it to ask lib/mediaVisibility about a per-attachment override. Null
+   * means "no canonical row" — `authorizeMediaAttachment` treats a null asset id
+   * as "no attachment to narrow by" and leaves the decision to the post rules,
+   * which is the pre-canonical behaviour unchanged.
+   */
+  let canonicalAssetId: string | null = null;
   try {
     const { data: asset, error: assetErr } = await sc
       .from("media_assets")
-      .select("owner_user_id")
+      .select("id, owner_user_id")
       .eq("storage_bucket", bucket)
       .eq("storage_path", path)
       .maybeSingle();
@@ -267,6 +288,7 @@ async function decide(
     // that makes branches 3d/3e deny outright ("cannot attribute the object").
     noteLookupFailure("media_assets owner", assetErr, { bucket, path });
     if ((asset as any)?.owner_user_id) {
+      canonicalAssetId = (asset as any).id ?? null;
       owner = (asset as any).owner_user_id;
       if (owner === viewerId) return true;
     }
@@ -381,11 +403,40 @@ async function decide(
         if (!(owner && owner === (post as any).author_id)) continue;
         decidable = true;
         const v = postVisible(post, viewerId);
-        if (v === "allow") return true;
-        if (v === "trip" && (await isTripMember(sc, (post as any).trip_id, viewerId))) return true;
+        if (v !== "allow" && v !== "trip") continue;
+        // The two CONTEXTUAL layers, both of which narrow what the post's own
+        // visibility would allow (§6.1 + circle overrides). They are applied on
+        // the "allow" arm too, not only on "trip": a directional override is a
+        // statement about a PERSON inside a trip, so a PUBLIC post attached to
+        // that trip is exactly the case it has to cover, and gating it on
+        // `trip_only` would leave the override trivially bypassable.
+        const tripContext = (post as any).trip_id
+          ? { contextType: "trip" as const, contextId: String((post as any).trip_id) }
+          : undefined;
+        if (!(await authorizeMediaContext(sc, viewerId, owner, tripContext))) continue;
+        if (v === "trip" && !(await isTripMember(sc, (post as any).trip_id, viewerId))) continue;
+        // The attachment key is `canonicalAssetId` — the `media_assets` row for
+        // THIS (bucket, path), resolved in §1. NOT a `post_media.media_asset_id`:
+        // `post_media` has no such column in either database (0103 created the
+        // table and nothing since has added one), so naming it in the select list
+        // above would fail the WHOLE 3a read with PGRST100 — and 3a now binds its
+        // error and denies, which would have taken every post-media object with it.
+        // media_assets carries UNIQUE (storage_bucket, storage_path), so the id
+        // resolved by storage key is the only canonical id this object has.
+        if (!(await authorizeMediaAttachment(
+          sc, viewerId, owner, canonicalAssetId,
+          { entityType: "post", entityId: String((pm as any).post_id) },
+          tripContext,
+        ))) continue;
+        return true;
       }
       // At least one row was the object owner's own post and none of them
       // authorized this viewer — that is a decision, not a miss.
+      //
+      // `continue`, not `return false`, above: one attachment being narrowed by
+      // an override is not authority over a SECOND attachment of the same
+      // object that carries none. The loop's own `decidable` gate still denies
+      // once every owner-post row has been asked and refused.
       if (decidable) return false;
     }
   } catch { /* fall through */ }
@@ -394,7 +445,7 @@ async function decide(
   try {
     const { data: posts, error: postsErr } = await sc
       .from("posts")
-      .select("author_id, visibility, status, post_status, trip_id")
+      .select("id, author_id, visibility, status, post_status, trip_id")
       .overlaps("media_urls", urlForms)
       .limit(1);
     noteLookupFailure("3b posts.media_urls", postsErr, { bucket, path });
@@ -407,9 +458,20 @@ async function decide(
     // object may be legitimately reachable via a later branch, else §4 denies.
     if (post && owner && owner === post.author_id) {
       const v = postVisible(post, viewerId);
-      if (v === "allow") return true;
-      if (v === "trip") return isTripMember(sc, post.trip_id, viewerId);
-      return false;
+      if (v !== "allow" && v !== "trip") return false;
+      // Same two contextual layers as 3a. This branch has no `post_media` row,
+      // so the only attachment key available is the canonical asset id; a null
+      // one means "nothing to narrow by" and the post rules stand alone.
+      const tripContext = post.trip_id
+        ? { contextType: "trip" as const, contextId: String(post.trip_id) }
+        : undefined;
+      if (!(await authorizeMediaContext(sc, viewerId, owner, tripContext))) return false;
+      if (v === "trip" && !(await isTripMember(sc, post.trip_id, viewerId))) return false;
+      return authorizeMediaAttachment(
+        sc, viewerId, owner, canonicalAssetId,
+        { entityType: "post", entityId: String((post as any).id ?? "") },
+        tripContext,
+      );
     }
   } catch { /* fall through */ }
 
@@ -590,7 +652,14 @@ async function decide(
             .in("role", ["host", "co_host", "moderator"])
             .maybeSingle(),
         ]);
-        return !!(rsvp as any).data || !!(role as any).data;
+        if (!(rsvp as any).data && !(role as any).data) return false;
+        // An RSVP/role is membership of the EVENT, not permission to see a
+        // particular host's media inside it. The directional circle override
+        // is the second half and is applied here, not left to the caller.
+        return authorizeMediaContext(sc, viewerId, hostId, {
+          contextType: "event",
+          contextId: String(gv.entity_id),
+        });
       }
       if (gv.entity_type === "trip") {
         // Fetch owner for block check — ownerFromPath() returns null for
@@ -606,7 +675,11 @@ async function decide(
         const trBlocked = await fetchBlockedSet(sc, viewerId);
         if (trBlocked === null) return false;
         if (trBlocked.has(tripOwnerId)) return false;
-        return isTripMember(sc, gv.entity_id, viewerId);
+        if (!(await isTripMember(sc, gv.entity_id, viewerId))) return false;
+        return authorizeMediaContext(sc, viewerId, tripOwnerId, {
+          contextType: "trip",
+          contextId: String(gv.entity_id),
+        });
       }
       return false;
     }
