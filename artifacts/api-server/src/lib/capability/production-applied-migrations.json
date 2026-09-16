@@ -1,5 +1,5 @@
 {
-  "$comment": "The repository's record of what has been applied to PRODUCTION (travel-buddy, ajrurzioarfkagpuxfnb), taken from its supabase_migrations.schema_migrations. COMMIT AN ENTRY HERE IN THE SAME CHANGE THAT APPLIES THE MIGRATION. checkFlagSchemaPrerequisites compares the newest version here against the snapshot's productionMigrationWatermark and FAILS when this file is ahead -- that is how a stale snapshot is caught OFFLINE, with no live database access. Production has no schema_migration_ledger, and migrations applied by hand through the Supabase dashboard write no row into supabase_migrations, so this file is necessarily a record of what WE applied, not proof of everything that is applied. It is a staleness tripwire, not an inventory.",
+  "$comment": "The repository's record of what has been applied to PRODUCTION (travel-buddy, ajrurzioarfkagpuxfnb), taken from its supabase_migrations.schema_migrations. COMMIT AN ENTRY HERE IN THE SAME CHANGE THAT APPLIES THE MIGRATION. checkFlagSchemaPrerequisites compares the newest version here against the snapshot's productionMigrationWatermark and FAILS when this file is ahead -- that is how a stale snapshot is caught OFFLINE, with no live database access. Production DOES now have a schema_migration_ledger (created 2026-09-15) but it is not an inventory either -- it only carries rows for migrations applied through the ledger discipline, and the 2026-09-16 capture found three migrations applied to production at 07:56 UTC that wrote supabase_migrations rows and NO ledger row, plus five applied by us that wrote ledger rows and NO supabase_migrations row. Neither table is complete on its own, and migrations applied by hand through the Supabase dashboard write no row into supabase_migrations, so this file is necessarily a record of what WE applied, not proof of everything that is applied. It is a staleness tripwire, not an inventory. VERSIONS FOR MANUAL APPLIES: the five 2026-09-16 entries ran through execute_sql inside BEGIN/COMMIT with postcondition DO blocks, which writes a schema_migration_ledger row but not a supabase_migrations row, so their version strings here are their ledger applied_at instants rendered in the same YYYYMMDDHHMMSS shape -- derived from the database's own record of when they landed, not invented.",
   "projectRef": "ajrurzioarfkagpuxfnb",
   "migrations": [
     {
@@ -205,6 +205,42 @@
     {
       "version": "20260915083533",
       "name": "2711_memory_kernel_execute"
+    },
+    {
+      "version": "20260916115520",
+      "name": "2297_rank_events_dismiss_outcome"
+    },
+    {
+      "version": "20260916115549",
+      "name": "2894_rank_events_trip_add_outcome"
+    },
+    {
+      "version": "20260916115607",
+      "name": "2995_rank_events_discovery_dismissed_index"
+    },
+    {
+      "version": "20260916115618",
+      "name": "2989_messages_audio_media_type"
+    },
+    {
+      "version": "20260916115643",
+      "name": "2984_layover_crews"
+    },
+    {
+      "version": "20260916120956",
+      "name": "2985_layover_events_crew_vocabulary"
+    },
+    {
+      "version": "20260916121130",
+      "name": "2860_layover_airport_truth_and_events"
+    },
+    {
+      "version": "20260916121232",
+      "name": "2982_layover_traveller_observation_submissions"
+    },
+    {
+      "version": "20260916121304",
+      "name": "2983_layover_events_observation_reported"
     }
   ]
 }

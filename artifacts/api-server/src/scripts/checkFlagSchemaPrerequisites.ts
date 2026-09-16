@@ -101,12 +101,18 @@ const SRC = join(API_ROOT, "src");
  */
 const SNAPSHOT = process.env.FLAG_SCHEMA_SNAPSHOT
   ? resolve(process.env.FLAG_SCHEMA_SNAPSHOT)
-  // REPOINTED 2026-09-15. The 09-08 capture went stale the moment sixteen
-  // migrations reached production; production-applied-migrations.json ran ahead
-  // of its watermark and the staleness tripwire fired, which is the tripwire
-  // doing its job. The replacement is a full capture whose three checksums
+  // REPOINTED 2026-09-16, for the second time and for the same reason: five
+  // migrations (2297, 2894, 2995, 2989, 2984) reached production that morning,
+  // production-applied-migrations.json ran ahead of the 09-15 watermark, and the
+  // tripwire fired. The replacement is a FULL re-read whose three checksums
   // production recomputed independently and agreed with.
-  : join(SRC, "lib", "capability", "snapshots", "20260915-production-schema.json");
+  //
+  // The 09-16 capture also found four tables, five functions, a column and three
+  // flags in production that THIS REPOSITORY DOES NOT DECLARE, applied outside
+  // its migration chain at 07:56 UTC. They are carried in the snapshot because a
+  // snapshot that hid them would misdescribe production; read that file's
+  // $comment for what they are and why they are inert rather than resolved.
+  : join(SRC, "lib", "capability", "snapshots", "20260916-production-schema.json");
 /**
  * The repository's record of what has been applied to PRODUCTION. See the file's
  * own $comment. FLAG_SCHEMA_APPLIED overrides it for the staleness test.

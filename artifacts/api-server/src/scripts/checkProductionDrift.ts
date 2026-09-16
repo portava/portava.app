@@ -75,7 +75,7 @@ const BASELINE_DIR = join(API_SERVER_ROOT, "baseline");
  * stale silently on the next refresh, which is how two cases in
  * productionDriftExtraction.test.ts came to assert the opposite of the truth.
  */
-export const PRODUCTION_SNAPSHOT = "20260915b_production_tables.txt";
+export const PRODUCTION_SNAPSHOT = "20260916_production_tables.txt";
 
 /**
  * `unmerged-pr` HAS NO MEMBERS AS OF 2026-09-15, AND IS KEPT — ruling, with the
@@ -428,87 +428,14 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
       "one table and alters nothing. Queued behind 2741, which landed in " +
       "production 2026-09-08; not yet certified through its own gate.",
   },
+  // Layover, migration 2860 — layover_external_events — STRUCK OFF, APPLIED.
+  //
+  // Applied by the same file in the same pass. It remains WRITERLESS and
+  // EMPTY: there is still no flight or airport feed anywhere in this tree, and
+  // LayoverEventReplanner is pure. Striking it off says the table exists, not
+  // that anything fills it — and the entry is removed rather than reclassified
+  // because a gap that has been closed is not a gap.
 
-  // Layover, migration 2860.
-  airport_fact_observations: {
-    classification: "unapplied",
-    note:
-      "Migration 2860. The spec s10 observation channel: one airport operational " +
-      "fact per row with the provenance and TTL census L14/L86 record as absent " +
-      "from every existing layover table. Creates one table, alters nothing, " +
-      "SELECT-only for authenticated and nothing for anon. UNAPPLIED ON PURPOSE " +
-      "and with NO WRITER, following 2700's ordering rule — a writer that names a " +
-      "column of an unapplied table fails outright on every database. The reader " +
-      "(src/services/airport/LayoverAirportTruth.ts) is pure and takes its " +
-      "observations as an argument, so nothing degrades while this is absent. " +
-      "Apply, confirm the postconditions, THEN land an ingest route behind a flag.",
-  },
-  // Layover, migration 2984 — §14 LAYOVER CREW.
-  //
-  // THESE TWO ARE NOT LIKE THE REST OF THIS SECTION, AND THE DIFFERENCE IS THE
-  // WHOLE ENTRY. 2700's and 2860's tables are unapplied AND WRITERLESS: nothing
-  // names their columns, so their absence costs nothing anywhere. These two have
-  // a writer that shipped in the same branch — `routes/airport.ts`'s four §14
-  // crew routes over `services/layover/LayoverCrewStore.ts` — and the flag that
-  // gates that router, `airport_mode_enabled`, is ALREADY TRUE IN PRODUCTION
-  // (read from ajrurzioarfkagpuxfnb's feature_flags on 2026-09-16).
-  //
-  // So the ordering rule the 2860 entry states — apply the table, confirm the
-  // postconditions, THEN land the writer — was inverted here, and this ratchet
-  // is the thing that noticed. DEPLOYING THIS BRANCH'S CODE TO PRODUCTION
-  // BEFORE APPLYING 2984 MAKES ALL FOUR CREW ROUTES FAIL FOR EVERY TRAVELLER.
-  //
-  // What that failure looks like, measured from the store rather than assumed:
-  // it is FAIL-CLOSED, not silent. `LayoverCrewStore` logs "refusing rather than
-  // serving an empty crew" / "...an empty city" and returns an error on an
-  // unreadable read, so a traveller sees the crew surface fail rather than an
-  // empty crew that looks like nobody is there. That is the right direction for
-  // a safety-adjacent surface — §14.1's shared deadline is a MINIMUM, and a
-  // minimum taken over the members we happened to read is a LATER deadline than
-  // the truth — but it is still a broken surface, not a degraded one.
-  //
-  // THE REMEDY IS TO APPLY 2984, NOT TO CARRY THIS ENTRY. It is recorded here
-  // because the ratchet requires a classification and a reason for a declared
-  // table that production lacks, and because an unrecorded gap is how this
-  // becomes invisible. It should be STRUCK OFF the moment 2984 lands, and the
-  // apply must precede or accompany the code deploy rather than follow it.
-  //
-  // Neither table carries a policy or a client grant (2984 asserts both), so the
-  // route layer is the only answer to who may see a crewmate — membership, then
-  // blocks in both directions, then `publishableUserIds`, then
-  // `nameVisibilitySet`. Neither table has a coordinate column, deliberately.
-  layover_crews: {
-    classification: "unapplied",
-    note:
-      "Migration 2984, §14 Layover Crew. HAS A LIVE WRITER AND A FLAG THAT IS " +
-      "ALREADY ON IN PRODUCTION (airport_mode_enabled = true, read 2026-09-16), " +
-      "unlike every other entry in this Layover block, which are writerless. " +
-      "Apply 2984 BEFORE or WITH the code deploy: without it the four crew " +
-      "routes in routes/airport.ts fail for every traveller. The failure is " +
-      "fail-closed (LayoverCrewStore refuses rather than serving an empty crew), " +
-      "which is correct but is still a broken surface. Strike this off when 2984 " +
-      "lands.",
-  },
-  layover_crew_members: {
-    classification: "unapplied",
-    note:
-      "Migration 2984, same file — crew membership with meeting_point_label and " +
-      "no coordinate column. Same live writer, same already-on flag, same " +
-      "remedy: apply 2984 before or with the deploy, then strike both off.",
-  },
-
-  layover_external_events: {
-    classification: "unapplied",
-    note:
-      "Migration 2860, same file. The spec s11 canonical event envelope with the " +
-      "UNIQUE dedup key s24 requires and census L194/L263 score as missing. Not a " +
-      "widening of layover_events: that table is an in-app audit trail with a NOT " +
-      "NULL profiles FK on every row, and an external event has no user. " +
-      "Unapplied with no writer and no producer — there is no flight or airport " +
-      "feed on this tree at all, so the table would be empty even if applied. " +
-      "The pipeline that would read it " +
-      "(src/services/airport/LayoverEventReplanner.ts) is pure.",
-  },
 
   // Sensing, migration 2480.
   sensing_contribution_sessions: {

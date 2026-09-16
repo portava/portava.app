@@ -6247,3 +6247,120 @@ replaced. The next measuring pass owns everything else, including whether
 `2971_layover_discovery_mode_flag.sql` belongs in this census's CENSUS_SCOPE —
 it is deliberately NOT added there by this change, because nothing in this
 document grades it yet.
+
+## §26 — L28 and L29 said "Absent." That is FALSE at this commit, because this pass applied 2984
+
+This section moves two rows and corrects one count. It does **not** re-measure
+census-layover, re-declare `head_commit`, or touch any other verdict.
+
+### 26.1 What changed in the world, not in the document
+
+`2984_layover_crews.sql` was applied to PRODUCTION (`ajrurzioarfkagpuxfnb`) on
+2026-09-16, after a rehearsal on the CI project, each inside `BEGIN … COMMIT`
+with the file's own postcondition block and a `schema_migration_ledger` row.
+Re-probed after the fact rather than assumed: both tables present, RLS enabled
+on both, **zero** policies and **zero** `anon`/`authenticated` grants — which is
+what the file asserts and what makes the route layer the only answer to who may
+see a crewmate.
+
+Its deploy dependency `2985_layover_events_crew_vocabulary.sql` was applied in
+the same pass, and that one had been **missed on the first attempt**. It is
+recorded here because the failure mode is the interesting part: without 2985 the
+three crew routes still work, and every crew audit row is rejected by the
+`layover_events.event_type` CHECK and swallowed by `emitEvent`'s deliberate
+non-fatal `logger.warn`. The result is a feature that looks built and audits
+nothing — visible only as a warning in a log. `check:enum-literals` cannot see
+it either, because the literal is an ARGUMENT to `emitLayoverEvent` rather than
+a key in an `.insert({ event_type: … })` object. The vocabulary now carries 23
+values; all 19 pre-existing values and all 42 existing rows survived, checked by
+count before and after, not inferred from the migration succeeding.
+
+### 26.2 The two rows
+
+| id | was | now | Evidence |
+| --- | --- | --- | --- |
+| L28 | N | **C** | `layover_crews` exists and is applied to production and CI (migration 2984, ledger row `2984_layover_crews.sql`). The requirement cell for this row names the TABLE and no columns, unlike L22/L26/L27 which enumerate them, so existence with the spec's meaning is the bar and it is met. |
+| L29 | N | **C** | `layover_crew_members` exists and is applied to the same two databases by the same file, with `meeting_point_label` and, deliberately, no coordinate column. |
+
+**WHAT THESE TWO ROWS DO NOT CERTIFY, stated because a `C` on a table row is the
+easiest verdict in this document to over-read.** The §14 crew FEATURE rows do
+**not** move and are not graded here:
+
+- **L131** ("L3 crew formed", shared chat) stays as it was. 2984 ships no chat,
+  deliberately — §14's shared-chat half belongs to Telegraph's threads, and a
+  second message store here is the duplicate this repository has spent several
+  passes removing.
+- **L124 / L132** (crew member as a map element) stay `N`. The precision ladder
+  is built and has no grant store, and 2984 asserts the ABSENCE of a coordinate
+  column in a postcondition: a place to put a position must not exist before the
+  thing that decides whether it may be shown.
+- **L196** (presence/crew tables with restrictive policies **and expiration
+  jobs**) stays `N`. The tables and the restrictive policies now exist; the job
+  does not. `layover_crews.expires_at` is a read FILTER, so an unswept crew is
+  invisible rather than stale-but-live, but nothing deletes the row and there is
+  no scheduler anywhere in this tree.
+- **L185 / L186 / L188** (`LayoverCrewService.join` / `.create` / `.leave`) are
+  not graded here. The constraint solver over them was always pure and always
+  built; what it lacked was a crew to solve for, and it now has one — but
+  whether those three rows move is a question about the ROUTES' behaviour
+  against a live table, which this section did not measure.
+
+### 26.3 The §23.3 count carries two clauses that are now false
+
+§23.3's row **(b) blocked on a migration no database has — 82** reads, in part:
+*"2700 / 2740 / **2860** are written and NOT applied"* and *"… `layover_crews`,
+`layover_crew_members` … do not exist anywhere"*.
+
+Three of those clauses are false at this commit. `2860` was applied to
+production in this same pass (with `2982` and `2983`, its own ordered
+dependants, unblocking the §10 traveller-observation surface that shipped with a
+live writer behind `airport_mode_enabled` — a flag that was ALREADY TRUE in
+production, which is the same ordering inversion 2984 had). `layover_crews` and
+`layover_crew_members` exist in two databases.
+
+**The number 82 is NOT re-derived here, and this section does not claim a new
+one.** Re-deriving it means re-reading every row that count aggregates, which is
+a measuring pass and not this one. What is recorded is that the row's *evidence*
+is now wrong in three named clauses while its *verdict* — that those rows are
+blocked — is untouched for every table except the two in §26.2. §25 set this
+precedent on §24.6 and the reasoning is the same: a false sentence is corrected
+where it stands rather than left to be read as current.
+
+### 26.4 What this section does NOT do
+
+It does not re-measure census-layover, re-declare `head_commit`, move any row
+other than L28 and L29, or re-derive §23.3's aggregate. The next measuring pass
+owns all of that, including whether L185/L186/L188 and L131 move now that the
+crew tables are real.
+
+### 26.5 Tally
+
+`check:census-integrity` now reads **C=75 W=124 N=97 X=0** across 296 rows,
+denominator 296. Two rows moved, both `N → C`, both in §26.2.
+
+| Measure | §22 | §26 |
+| --- | ---: | ---: |
+| BUILT-AND-CORRECT | 73 | **75** |
+| BUILT-BUT-WRONG | 124 | **124** |
+| NOT-BUILT | 99 | **97** |
+| CANNOT-VERIFY | 0 | **0** |
+| CONSTRUCTED% | 66.6 % | **67.2 %** |
+| CORRECT% raw | 24.7 % | **25.3 %** |
+
+This is the mirror image of §22.8's reading, and the difference is worth naming
+because it is the only kind of move that raises CONSTRUCTED%. §22 moved twelve
+rows that were already `W` — constructed and wrong — and made them right, so
+`N` did not move and CONSTRUCTED% did not move. This pass moved two rows out of
+`N`: the tables did not exist anywhere, and now they exist in two databases. So
+`N` falls by two and CONSTRUCTED% rises for the first time in four passes.
+
+**Restated from the rows, not from arithmetic on the previous headline** —
+`check:census-integrity` read C=75/W=124/N=97 off the table and refused the
+`C=73 … N=99` headline until this section was written, which is the check doing
+its job. §22.8's numbers were correct when written and are superseded here under
+this document's LAST-STATEMENT-WINS rule; they are not deleted.
+
+And the caveat §22.8 would have carried if the moves had been feature rows:
+these two are TABLE rows. A `C` on them says a table exists with the spec's
+meaning and is applied. It says nothing about whether the §14 crew experience
+works end to end — §26.2 lists the seven rows that deliberately did not move.

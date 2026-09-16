@@ -192,12 +192,43 @@ describe("the two injected-clock projections carry their clock all the way down"
    * `now` (or `getCrewMap` goes back to reading the wall clock), the recorded
    * instant is today's and these fail on any day the suite runs.
    *
-   * It is done by spy rather than through the returned observations because
-   * `readCrewPresenceForPulse` cannot produce any: `getCrewMap` excludes the
-   * viewer from `members` by design, so that function's `viewerPoint` is always
-   * null and its `for` loop always `continue`s. That is a real defect, but a
-   * different one — reported, not fixed here.
+   * It is done by spy rather than through the returned observations for a reason
+   * that has since changed, and the change is why these assertions are shaped the
+   * way they are. `getCrewMap` excludes the viewer from `members` BY DESIGN — a
+   * crew map is the OTHER people — so the Pulse's `viewerPoint` was always null
+   * and its `for` loop always `continue`d. That was recorded here as a real
+   * defect, reported and not fixed. It is now fixed: the Pulse takes the viewer's
+   * own position from `getViewerOwnPresence`, an authorized source for the
+   * viewer's own row, leaving `getCrewMap`'s contract untouched for every other
+   * caller.
+   *
+   * WHICH MEANS THESE NO LONGER ASSERT A COUNT. The fix adds a SECOND read of
+   * `trip_crew_location_sessions` — the viewer's own live-share grant — so
+   * `windowReads` now has two entries where it had one. Asserting `[instant]`
+   * would fail on a correct implementation, and "fixing" it by asserting
+   * `[instant, instant]` would just re-encode today's call count and break again
+   * on the next legitimate read.
+   *
+   * The property these exist to protect was never the count. It is that NO read
+   * of the grant window consults a clock other than the injected one — a second
+   * clock is the defect, and a second READ at the right instant is not. So the
+   * assertion is now: at least one window read happened (a projection that reads
+   * nothing proves nothing), and EVERY window read is at the injected instant.
+   * That is strictly stronger than the length check it replaces: it catches a
+   * second read at the WRONG instant, which a `[instant]` comparison would have
+   * caught only as a side effect of the length changing.
    */
+  function assertAllWindowReadsAt(reads: readonly string[], atMs: number, which: string): void {
+    const want = new Date(atMs).toISOString();
+    assert.ok(reads.length > 0, `${which} read the crew map's grant window zero times — nothing was proved`);
+    const wrong = reads.filter((r) => r !== want);
+    assert.deepEqual(
+      wrong, [],
+      `${which} read the crew map's grant window at ${wrong.join(", ")}, not at the ${want} it was asked about — ` +
+      "something below it is consulting a second clock",
+    );
+  }
+
   function spy(tables: Record<string, Row[]>) {
     const windowReads: string[] = [];
     const inner = fake(tables) as any;
@@ -228,10 +259,7 @@ describe("the two injected-clock projections carry their clock all the way down"
     const s = spy(crewFlagOn(PAST_MS));
     const res = await readCrewPresenceForPulse(s.client as any, TRIP_ID, VIEWER, PAST_MS);
     assert.equal(res.source.status, "ok", JSON.stringify(res.source));
-    assert.deepEqual(
-      s.windowReads, [new Date(PAST_MS).toISOString()],
-      "the crew map's grant window was read at a different instant from the one the Pulse was asked about",
-    );
+    assertAllWindowReadsAt(s.windowReads, PAST_MS, "the Pulse");
   });
 
   it("the Today projection reads the crew map's live-share window at the builder's own now", async () => {
@@ -246,13 +274,6 @@ describe("the two injected-clock projections carry their clock all the way down"
     const s = spy(tables);
     invalidateTripOperationalProjectionsGate();
     await buildTripTodayProjection(s.client as any, TRIP_ID, VIEWER, { now: new Date(PAST_MS) });
-    assert.ok(
-      s.windowReads.length > 0,
-      "the Today projection never reached the crew map; the fixture no longer exercises the path this guards",
-    );
-    assert.deepEqual(
-      [...new Set(s.windowReads)], [new Date(PAST_MS).toISOString()],
-      "the crew summary counted live shares at the wall clock, not at the instant the projection is about",
-    );
+    assertAllWindowReadsAt(s.windowReads, PAST_MS, "the Today projection");
   });
 });
