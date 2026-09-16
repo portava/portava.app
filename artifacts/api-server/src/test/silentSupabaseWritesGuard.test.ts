@@ -10,10 +10,13 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   findSilentSupabaseWrites,
   compareToBaseline,
   sanitize,
+  scanTree,
+  BASELINE_PATH,
   ESCAPE_HATCH,
 } from "../scripts/checkSilentSupabaseWrites.js";
 
@@ -169,5 +172,63 @@ describe("sanitize", () => {
     assert.ok(!out.includes("x{y}"), "string contents blanked");
     assert.ok(!out.includes("catch"), "comment contents blanked");
     assert.ok(out.includes("const b = 1"), "code preserved");
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ENFORCEMENT — the fixtures above prove the SCANNER works; this proves the
+// REPOSITORY is clean, which is a different claim and the one CI was missing.
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// `check:silent-supabase-writes` is invoked by scripts/run-all-checks.sh, which
+// reaches CI only through the api-server `check:all` step in live-db.yml. That
+// job needs Supabase credentials, contends for a shared CI database, and is the
+// tier that goes missing from a rollup when runs are cancelled or slot-starved.
+// Its ten static siblings — check:schema-references, check:enum-literals,
+// check:writerless-reads and the rest — run in ci.yml's credential-free
+// `api-server-static` job instead, where nothing can starve them.
+//
+// So this guard was the only one of the family whose enforcement depended on a
+// database being reachable, for a question that never needed one: it reads .ts
+// files off disk. These two cases move it into `pnpm test`, which runs in the
+// credential-free tests job. Nothing in the workflow changes, and the guard now
+// fails in a tier that cannot be starved.
+//
+// Mirrors "the committed baseline matches the tree exactly, in both directions"
+// in silentSupabaseReadsGuard.test.ts — same property, same wording, so the two
+// halves of the family stay legible as one idea.
+describe("the guard is enforced, not merely tested", () => {
+  const baseline = () =>
+    JSON.parse(readFileSync(BASELINE_PATH, "utf8")) as Record<string, number>;
+
+  it("the committed baseline matches the tree exactly, in both directions", () => {
+    const { newViolations, staleEntries } = compareToBaseline(scanTree(), baseline());
+    assert.deepEqual(
+      newViolations.map((v) => `${v.file}:${v.line}`), [],
+      "NEW silent supabase write(s). supabase-js RESOLVES on a DB error, so an " +
+      "empty catch around an awaited write discards the failure. Destructure " +
+      "{ error } and handle it, or annotate the site `// resolves-not-throws-ok:`.",
+    );
+    assert.deepEqual(
+      staleEntries, [],
+      "STALE baseline entries — a site was fixed without lowering its count. " +
+      "The ratchet is shrink-only; leaving the count high re-admits the defect.",
+    );
+  });
+
+  it("the subject has not vanished — 29 file entries, 39 sites", () => {
+    // A scan that finds nothing passes `newViolations: []` trivially. The stale
+    // check already catches a fully broken walk (all 29 entries would read as
+    // stale), but not a walk that silently loses SOME of the tree. Pinning both
+    // totals means a scanner that quietly stops seeing files fails here rather
+    // than reporting a clean repository.
+    //
+    // These numbers are shrink-only, like the baseline itself. Lowering a
+    // baseline count because a site was genuinely fixed is expected — update
+    // both numbers in the same commit, and never raise either.
+    const b = baseline();
+    assert.equal(Object.keys(b).length, 29, "baseline file entries");
+    assert.equal(Object.values(b).reduce((a, n) => a + n, 0), 39, "baselined sites");
+    assert.equal(scanTree().length, 39, "sites actually found in the tree");
   });
 });
