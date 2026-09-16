@@ -91,9 +91,9 @@ function leakyProjection() {
 }
 
 describe("A. sendProjection removes precise location from the assembled response", () => {
-  it("strips every coordinate key at every depth", () => {
+  it("strips every coordinate key at every depth", async () => {
     const { res, sent } = captureRes();
-    sendProjection(res, "world", leakyProjection());
+    await sendProjection(res, "world", leakyProjection());
 
     const leaks = findPreciseLocation(sent());
     assert.deepEqual(
@@ -114,9 +114,9 @@ describe("A. sendProjection removes precise location from the assembled response
     );
   });
 
-  it("keeps the coarse payload intact — the scrub removes keys, not content", () => {
+  it("keeps the coarse payload intact — the scrub removes keys, not content", async () => {
     const { res, sent } = captureRes();
-    sendProjection(res, "world", leakyProjection());
+    await sendProjection(res, "world", leakyProjection());
     const out = sent() as any;
 
     assert.equal(out.city, "Da Nang");
@@ -130,14 +130,14 @@ describe("A. sendProjection removes precise location from the assembled response
     assert.equal(out.changingNow.anchor.placeId, "place-2");
   });
 
-  it("a healthy coarse projection passes through unchanged and is sent exactly once", () => {
+  it("a healthy coarse projection passes through unchanged and is sent exactly once", async () => {
     const clean = {
       city: "Da Nang",
       places: [{ placeId: "p1", placeLabel: "An Thuong Bar", neighborhood: "An Thuong" }],
       country: "VN",
     };
     const { res, sent, calls } = captureRes();
-    sendProjection(res, "places", clean);
+    await sendProjection(res, "places", clean);
     assert.deepEqual(sent(), clean);
     assert.equal(calls(), 1);
   });
@@ -172,7 +172,7 @@ describe("B. no mediaWorld endpoint answers without the boundary scrub", () => {
         `res.json itself skips scrubPreciseLocation entirely.`,
     );
 
-    const fnStart = code.indexOf("export function sendProjection");
+    const fnStart = code.indexOf("export async function sendProjection");
     assert.ok(fnStart >= 0, "sendProjection must still be a named function in this router");
     const sendIdx = code.search(/\bres\s*\.\s*json\s*\(/);
     assert.ok(
@@ -182,7 +182,7 @@ describe("B. no mediaWorld endpoint answers without the boundary scrub", () => {
   });
 
   it("sendProjection actually calls the scrub", () => {
-    const fnStart = code.indexOf("export function sendProjection");
+    const fnStart = code.indexOf("export async function sendProjection");
     const body = code.slice(fnStart, code.indexOf("\n}", fnStart));
     assert.match(
       body,

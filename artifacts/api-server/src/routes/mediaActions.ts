@@ -4,7 +4,17 @@
  *   GET  /api/media/:id/actions                       §15/§43  eligible action set
  *   POST /api/media/:id/intent                        §15.1    "I Want This" signal
  *   DELETE /api/media/:id/intent                       §15.1    undo the signal
+ *   POST /api/media/:id/retry                         §6       owner re-queues processing
+ *   POST /api/media/:id/attachments                   §6.1     link asset → owned entity
  *   GET  /api/media/experiences/:experienceId/plan    §15.2    "Do This Experience"
+ *
+ * TWO ID SPACES SHARE ONE `:id` SLOT, and that is deliberate rather than
+ * accidental: /actions and /intent take a POST id (they run through
+ * `loadEligibleMediaRow`, and `media_intent_signals.media_id` REFERENCES
+ * posts(id)), while /retry and /attachments take a `media_assets.id`, because
+ * processing state and §6.1 attachments have no post-id spelling at all. Both
+ * are uuids, both answer `not_found` for anything the caller does not own, so a
+ * caller passing the wrong kind gets a deny and never a cross-space read.
  *
  * ADDITIVE. New routes only; existing media/compass behavior is untouched.
  *
@@ -34,10 +44,216 @@ import {
   MEDIA_INTENT_KINDS,
   type MediaIntentKind,
 } from "../services/media/MediaActionResolver.js";
+import { authorizeMediaContext } from "../lib/mediaVisibility.js";
+import { retryMediaProcessing } from "../services/media/MediaLifecycleService.js";
+import { recordMediaAttachment } from "../lib/mediaAssets.js";
 
 const router = Router();
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The §6.1 attachment audiences a client may ASK for. A subset of what
+ * `media_attachments.visibility_override` can hold — this is the write
+ * vocabulary, and `lib/mediaVisibility` is the read side that enforces it.
+ */
+const ATTACHMENT_VISIBILITIES = [
+  "inherit",
+  "public",
+  "private",
+  "followers",
+  "following",
+  "trip_crew",
+  "shared_moment",
+] as const;
+
+/**
+ * Entity types this route can PROVE ownership of, below. A strict subset of
+ * `lib/mediaAssets.ATTACHMENT_ENTITY_TYPES`: `place` and `observation` are
+ * omitted because neither has a single owning user, so there is no ownership
+ * question this route could answer about them — better to reject than to guess
+ * a table.
+ */
+export const SUPPORTED_ATTACHMENT_ENTITY_TYPES = [
+  "post",
+  "postcard",
+  "memory",
+  "trip",
+  "event",
+  "hidden_gem",
+  "shared_moment",
+] as const;
+
+export const attachmentBodySchema = z.object({
+  entity_type: z.enum(SUPPORTED_ATTACHMENT_ENTITY_TYPES),
+  entity_id: z.string().regex(UUID_RE),
+  position: z.number().int().min(0).max(10000).optional(),
+  is_cover: z.boolean().optional(),
+  visibility_override: z.enum(ATTACHMENT_VISIBILITIES).nullable().optional(),
+}).strict();
+
+export function validateMediaAttachmentBody(body: unknown) {
+  return attachmentBodySchema.safeParse(body);
+}
+
+/**
+ * May `userId` attach media to this entity? The owner column per entity type is
+ * a LOOKUP TABLE, never an interpolated guess: an unknown entityType returns
+ * false rather than reaching for a table named after client input.
+ *
+ * `trip` is the one collaborative case — an accepted crew member may attach to
+ * a trip they do not own. That uses the repo's accepted-member rule
+ * (status='accepted'); a `pending`/`invited` row is not membership.
+ */
+export async function ownsAttachmentEntity(
+  sc: any,
+  userId: string,
+  entityType: string,
+  entityId: string,
+): Promise<boolean> {
+  const entities: Record<string, { table: string; ownerColumn: string }> = {
+    post: { table: "posts", ownerColumn: "author_id" },
+    postcard: { table: "passport_postcards", ownerColumn: "user_id" },
+    memory: { table: "passport_memories", ownerColumn: "user_id" },
+    event: { table: "events", ownerColumn: "host_id" },
+    hidden_gem: { table: "hidden_gems", ownerColumn: "submitted_by" },
+    shared_moment: { table: "shared_moments", ownerColumn: "owner_id" },
+    trip: { table: "trips", ownerColumn: "owner_id" },
+  };
+  const entity = entities[entityType];
+  if (!entity) return false;
+  try {
+    const { data, error } = await sc
+      .from(entity.table)
+      .select(`id,${entity.ownerColumn}`)
+      .eq("id", entityId)
+      .maybeSingle();
+    if (error || !data) return false;
+    if (String(data[entity.ownerColumn]) === userId) return true;
+    if (entityType !== "trip") return false;
+    const member = await sc
+      .from("trip_members")
+      .select("user_id")
+      .eq("trip_id", entityId)
+      .eq("user_id", userId)
+      .eq("status", "accepted")
+      .maybeSingle();
+    return !member.error && Boolean(member.data);
+  } catch {
+    return false;
+  }
+}
+
+// ── POST /media/:id/retry  (owner re-queues a failed processing run) ─────────
+//
+// `:id` here is a `media_assets.id`, NOT the post id every other `/media/:id/*`
+// route in this router takes: processing state lives on the canonical asset and
+// has no post-id spelling. Both this route and /attachments below answer
+// `not_found` for a missing asset and for one owned by somebody else, so the
+// endpoint cannot be used to probe which asset ids exist.
+router.post(
+  "/media/:id/retry",
+  asyncHandler(async (req, res) => {
+    const auth = await requireUser(req, res);
+    if (!auth) return;
+    const sc = getServiceClient();
+    if (!sc) {
+      sendError(res, "server_not_configured");
+      return;
+    }
+    const id = String(req.params.id ?? "");
+    if (!UUID_RE.test(id)) {
+      sendError(res, "invalid_payload", "Invalid media id");
+      return;
+    }
+    const rl = checkRateLimit("media_retry", auth.user.id, 30, 60_000);
+    if (!rl.allowed) {
+      res.setHeader("Retry-After", Math.ceil(rl.retryAfterMs / 1000).toString());
+      sendError(res, "rate_limited", "Too many requests. Please wait.");
+      return;
+    }
+    const result = await retryMediaProcessing(sc, id, auth.user.id);
+    if (!result.ok) {
+      sendError(res, "not_found", "Media item not found");
+      return;
+    }
+    res.status(202).json({ retryQueued: true, alreadyQueued: result.alreadyQueued });
+  }),
+);
+
+// ── POST /media/:id/attachments  (§6.1 link an owned asset to an owned entity) ─
+router.post(
+  "/media/:id/attachments",
+  asyncHandler(async (req, res) => {
+    const auth = await requireUser(req, res);
+    if (!auth) return;
+    const sc = getServiceClient();
+    if (!sc) {
+      sendError(res, "server_not_configured");
+      return;
+    }
+    const mediaId = String(req.params.id ?? "");
+    if (!UUID_RE.test(mediaId)) {
+      sendError(res, "invalid_payload", "Invalid media id");
+      return;
+    }
+    const parsed = validateMediaAttachmentBody(req.body);
+    if (!parsed.success) {
+      sendError(res, "invalid_payload", "Invalid attachment");
+      return;
+    }
+    const rl = checkRateLimit("media_attachments", auth.user.id, 60, 60_000);
+    if (!rl.allowed) {
+      res.setHeader("Retry-After", Math.ceil(rl.retryAfterMs / 1000).toString());
+      sendError(res, "rate_limited", "Too many requests. Please wait.");
+      return;
+    }
+    const body = parsed.data;
+    let asset: any;
+    try {
+      const result = await sc
+        .from("media_assets")
+        .select("id, owner_user_id")
+        .eq("id", mediaId)
+        .maybeSingle();
+      asset = result.error ? null : result.data;
+    } catch {
+      asset = null;
+    }
+    // BOTH halves must hold: the caller owns the ASSET and may attach to the
+    // ENTITY. Missing, not-owned and not-permitted deliberately share one
+    // `not_found`, so neither half leaks which one failed.
+    if (
+      !asset ||
+      asset.owner_user_id !== auth.user.id ||
+      !(await ownsAttachmentEntity(sc, auth.user.id, body.entity_type, body.entity_id))
+    ) {
+      sendError(res, "not_found", "Media item not found");
+      return;
+    }
+    const attachmentId = await recordMediaAttachment(sc, {
+      mediaAssetId: mediaId,
+      entityType: body.entity_type,
+      entityId: body.entity_id,
+      position: body.position,
+      isCover: body.is_cover,
+      visibilityOverride: body.visibility_override,
+    });
+    if (!attachmentId) {
+      // recordMediaAttachment returns null when `media_canonical_enabled` is off
+      // or the upsert was rejected. Neither is a state this endpoint can report
+      // usefully without saying whether the asset exists.
+      sendError(res, "not_found", "Media item not found");
+      return;
+    }
+    res.status(200).json({
+      id: attachmentId,
+      mediaAssetId: mediaId,
+      entityType: body.entity_type,
+      entityId: body.entity_id,
+    });
+  }),
+);
 
 // ── GET /media/:id/actions ────────────────────────────────────────────────────
 router.get(
@@ -113,6 +329,20 @@ router.post(
     const viewer = await resolveViewer(sc, auth.user.id, { needFollows: true });
     const row = await loadEligibleMediaRow(sc, viewer, id);
     if (!row) {
+      sendError(res, "not_found", "Media item not found");
+      return;
+    }
+    // The eligibility gate knows blocks, mutes, visibility and membership. It
+    // does NOT know the directional per-trip circle overrides, which are a
+    // statement about a PERSON inside one trip rather than about the post. A
+    // viewer the author has hidden themselves from must not be able to record
+    // an intent signal against that author's trip media, so the same check
+    // lib/mediaAccess applies to the bytes is applied here to the write.
+    if ((row as any).trip_id && (row as any).author_id &&
+      !(await authorizeMediaContext(sc, auth.user.id, String((row as any).author_id), {
+        contextType: "trip",
+        contextId: String((row as any).trip_id),
+      }))) {
       sendError(res, "not_found", "Media item not found");
       return;
     }

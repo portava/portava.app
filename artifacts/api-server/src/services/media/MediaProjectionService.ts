@@ -63,6 +63,7 @@ import {
   type PerspectiveSummary,
 } from "./MediaPerspectiveService.js";
 import { buildMyWorldMemory, type MyWorldMemory } from "./MyWorldMemoryService.js";
+import { rankMediaCandidates } from "./MediaRankingService.js";
 import { buildVisualConsensus, type VisualConsensus } from "./MediaConsensusService.js";
 
 const DEFAULT_CANDIDATE_LIMIT = 200;
@@ -75,6 +76,14 @@ export interface ViewerResolved {
   viewerAge: number | null;
   followedCreatorIds: Set<string>;
   viewerTripIds: Set<string>;
+  /**
+   * The viewer's own §15.1 "I Want This" signals over the candidate page, bulk-
+   * loaded by `loadEligibleCandidatesOrRefuse`. PRIVATE to the viewer and never
+   * projected — it is a ranking input only. ABSENT (not empty) means the signal
+   * was never loaded for this viewer; empty means it was loaded and there are
+   * none. Both are neutral to the ranker.
+   */
+  intentMediaIds?: Set<string>;
 }
 
 /**
@@ -385,7 +394,50 @@ export async function loadEligibleCandidatesOrRefuse(
     sc,
     { profilesKey: "profiles" },
   );
+  await loadViewerIntent(sc, viewer, visible as unknown as MediaCandidateRow[]);
   return visible as unknown as MediaCandidateRow[];
+}
+
+/**
+ * Bulk-load the viewer's own §15.1 "I Want This" signals over a candidate page,
+ * for MediaRankingService.
+ *
+ * ONE query per page, after eligibility: the ids asked about are ids the viewer
+ * has already been proved entitled to see, so this read cannot become an
+ * existence oracle for anything the page withheld.
+ *
+ * It UNIONS into `viewer.intentMediaIds` rather than replacing it. Some lenses
+ * (§27 People) run two candidate loads against one `viewer` and merge the
+ * results; a replace would drop the first lane's signals on the floor at the
+ * moment the merged page is ranked.
+ *
+ * FAIL-SOFT AND NEUTRAL, deliberately. `media_intent_signals` is a ranking
+ * input, not an authorization one — losing it reorders a page, it never widens
+ * one — so a failed read leaves the set as it was and every row scores intent 0.
+ * A guessed boost would be worse than no boost.
+ */
+async function loadViewerIntent(
+  sc: SupabaseClient,
+  viewer: ViewerResolved,
+  rows: MediaCandidateRow[],
+): Promise<void> {
+  if (rows.length === 0) return;
+  try {
+    const { data, error } = await (sc as any)
+      .from("media_intent_signals")
+      .select("media_id")
+      .eq("user_id", viewer.viewerId)
+      .in("media_id", rows.map((r) => String(r.id)));
+    if (error || !Array.isArray(data)) return;
+    const set = viewer.intentMediaIds ?? new Set<string>();
+    for (const r of data) {
+      const id = (r as any)?.media_id;
+      if (typeof id === "string" && id) set.add(id);
+    }
+    viewer.intentMediaIds = set;
+  } catch {
+    /* ranking signal only — see above */
+  }
 }
 
 /**
@@ -582,6 +634,36 @@ export function disclosureForRow(
 }
 
 /**
+ * Rank a candidate page, then project it through the choke point.
+ *
+ * ORDER MATTERS AND IS NOT INTERCHANGEABLE. The ranker is fed the RAW rows,
+ * because it scores `post_media` dimensions, `profiles.is_official` and
+ * `trip_id` — inputs the projection deliberately coarsens or drops. But it only
+ * ever REORDERS, and `projectCandidatesProtected` still sees the same set, so
+ * moving the ranking here cannot widen what a viewer is shown; it changes the
+ * sequence, never the membership. Projecting first and sorting the projections
+ * would be the version that quietly loses the signals.
+ */
+async function rankAndProject(
+  sc: SupabaseClient,
+  viewer: ViewerResolved,
+  candidates: MediaCandidateRow[],
+  nowMs: number,
+): Promise<MediaProjection[]> {
+  return projectCandidatesProtected(
+    sc,
+    viewer,
+    rankMediaCandidates(candidates, {
+      viewerId: viewer.viewerId,
+      viewerTripIds: viewer.viewerTripIds,
+      intentMediaIds: viewer.intentMediaIds,
+      nowMs,
+    }),
+    nowMs,
+  );
+}
+
+/**
  * Project a page of candidate rows THROUGH the location/gem choke point.
  *
  * This is the only projection entry point the World-shell builders may use.
@@ -715,7 +797,7 @@ export async function buildWorldProjection(
     limit: DEFAULT_CANDIDATE_LIMIT,
     nowMs,
   });
-  const media = await projectCandidatesProtected(sc, viewer, candidates, nowMs);
+  const media = await rankAndProject(sc, viewer, candidates, nowMs);
 
   const forYouNow = buildCategoryBuckets(media, nowMs);
 
@@ -848,7 +930,7 @@ export async function buildPlaceProjection(
     limit: DEFAULT_CANDIDATE_LIMIT,
     nowMs,
   });
-  const media = await projectCandidatesProtected(sc, viewer, candidates, nowMs);
+  const media = await rankAndProject(sc, viewer, candidates, nowMs);
   if (!placeCity) placeCity = media.find((m) => m.city)?.city ?? null;
   if (!placeName) placeName = media.find((m) => m.placeLabel)?.placeLabel ?? null;
 
@@ -1077,7 +1159,7 @@ export async function buildPeopleProjection(
     if (!byId.has(String(id))) byId.set(String(id), row);
   }
 
-  const media = await projectCandidatesProtected(sc, viewer, [...byId.values()], nowMs);
+  const media = await rankAndProject(sc, viewer, [...byId.values()], nowMs);
 
   const relationOf = (cid: string): PeopleRelation | null => {
     if (viewer.followedCreatorIds.has(cid)) return "followed";
@@ -1470,7 +1552,7 @@ export async function buildTimelineProjection(
     limit: DEFAULT_CANDIDATE_LIMIT,
     nowMs,
   });
-  const media = (await projectCandidatesProtected(sc, viewer, candidates, nowMs)).sort(
+  const media = (await rankAndProject(sc, viewer, candidates, nowMs)).sort(
     (a, b) => new Date(b.capturedAt).getTime() - new Date(a.capturedAt).getTime(),
   );
 
@@ -1553,7 +1635,7 @@ export async function buildMediaMapProjection(
     limit: DEFAULT_CANDIDATE_LIMIT,
     nowMs,
   });
-  const media = await projectCandidatesProtected(sc, viewer, candidates, nowMs);
+  const media = await rankAndProject(sc, viewer, candidates, nowMs);
 
   const zoneMap = groupZones(media);
   const clusters: MapCluster[] = [...zoneMap.values()]
