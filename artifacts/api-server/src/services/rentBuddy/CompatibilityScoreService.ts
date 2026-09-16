@@ -1,3 +1,6 @@
+import type { WorldExperienceProjection } from "../intelligence/worldIntelligence.js";
+import { decideOpportunity } from "../intelligence/worldIntelligence.js";
+
 /**
  * CompatibilityScoreService
  *
@@ -251,8 +254,16 @@ export function calculateCompatibilityScore(
  * Rank an array of scored buddies using the priority ordering from the spec.
  * Ineligible buddies are excluded from the result.
  */
-export function rankBuddies(scored: ScoredBuddy[], buddyData: Map<string, BuddyScoringData>): ScoredBuddy[] {
-  const eligible = scored.filter((s) => s.eligible);
+export function rankBuddies(
+  scored: ScoredBuddy[],
+  buddyData: Map<string, BuddyScoringData>,
+  world?: WorldExperienceProjection | null,
+): ScoredBuddy[] {
+  const eligible = scored.filter((s) => s.eligible).map((s) => {
+    const decision = world ? decideOpportunity(world, world.opportunity ? 0.01 : 0) : null;
+    return decision?.allowed && decision.score > 0
+      ? { ...s, score: Math.min(100, s.score + decision.score) } : s;
+  });
 
   eligible.sort((a, b) => {
     const da = buddyData.get(a.buddyProfileId)!;

@@ -36,6 +36,7 @@ import {
   fetchUserTimezone,
   nowUtcInstant as sharedNowUtcInstant,
 } from "../lib/localTime.js";
+import { readWorldExperience, unifiedNowProjection } from "../services/intelligence/worldIntelligence.js";
 
 // Re-exported for existing consumers/tests.
 export { localHourFor };
@@ -315,6 +316,7 @@ router.get("/compass/home", asyncHandler(async (req, res) => {
 
   try {
     const profile = await getCompassProfile(sc, user.id);
+    const worldNow = unifiedNowProjection(await readWorldExperience(sc, profile.currentCity ?? null, { now: new Date() }));
     const timeOfDay = timeOfDayForHour(localHour);
     const signals = { ...defaultSignals(profile), hourUtc: localHour };
     const context = buildCompassContext(profile, signals);
@@ -387,6 +389,14 @@ router.get("/compass/home", asyncHandler(async (req, res) => {
       startingSoon: startingSoon.length > 0 ? startingSoon : null,
       tonightVibe: isEveningOrNight ? buildTonightVibe(tonightEvents) : null,
       weatherWindow,
+      // Canonical now projection. Unknown is explicit and does not replace
+      // the existing event/weather fallbacks.
+      worldNow: worldNow.isKnown ? {
+        label: worldNow.label,
+        truthClass: worldNow.state.truthClass,
+        confidence: worldNow.state.confidence,
+        validUntil: worldNow.state.validUntil,
+      } : null,
     };
     setCachedHome(cacheKey, payload);
     res.json(payload);

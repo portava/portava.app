@@ -13,6 +13,7 @@ import { getCompassProfile } from "../compass/CompassProfileService";
 import { rankItems as drsRankItems } from '../services/ranking/DiscoveryRankingService.js';
 import type { RankingInput, RankingViewerContext } from '../services/ranking/DiscoveryRankingService.js';
 import { emitFeedSlotAnalytics } from '../services/ranking/FeedSlotAllocator.js';
+import { meaningfulWorldTransition, readPreviousWorldExperience, readWorldExperience, resolveWorldSubjectId, unifiedNowProjection } from "../services/intelligence/worldIntelligence.js";
 import { buildCompassContext, defaultSignals } from "../compass/CompassContextEngine";
 import { deriveIntentMode } from "../compass/CompassIntentModeEngine";
 import { fetchUserTimezone, localHourFor, nowUtcInstant } from "../lib/localTime";
@@ -106,6 +107,7 @@ function filterPublicMedia(raw: any): Array<Record<string, unknown>> {
  * GET /api/pulse
  * -------------------------------------------------------------------------*/
 router.get("/pulse", async (req, res) => {
+  const requestNowMs = Date.now();
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { client, user } = auth;
@@ -664,6 +666,7 @@ router.get("/pulse", async (req, res) => {
           return {
             itemId:          (c.id ?? "") as string,
             itemType:        (c.kind ?? "post") as string,
+            canonicalPlaceId: (c.canonical_place_id ?? null) as string | null,
             creatorId:       (c.authorId ?? null) as string | null,
             createdAt:       (c.createdAt ?? null) as string | null,
             city:            (c.city ?? null) as string | null,
@@ -866,8 +869,23 @@ router.get("/pulse", async (req, res) => {
     }
   } catch { /* non-fatal — place cards degrade gracefully */ }
 
+  // Additive world context: this never changes the chronological post query or
+  // its ordering. A transition is only meaningful when both sides are known;
+  // this response has no previous snapshot, so clients receive an explicit null.
+  const worldSubject = await resolveWorldSubjectId(sc, cityParam ?? airportCity ?? null);
+  const worldNow = worldSubject
+    ? unifiedNowProjection(await readWorldExperience(sc, worldSubject.subjectId, { subjectKind: worldSubject.subjectKind }))
+    : null;
+  const previousWorld = worldSubject ? await readPreviousWorldExperience(sc, worldSubject, { before: new Date(requestNowMs) }) : null;
+  const worldTransition = worldNow
+    ? meaningfulWorldTransition(previousWorld, worldNow.state)
+    : { changed: false, from: null, to: null };
   // perf-trim: rankedCandidates stripped — not rendered by any client component; internal ranking state only
-  res.json({ posts: orderedPosts, total: orderedPosts.length, tab, prompts, placeCards, sessionId });
+  res.json({
+    posts: orderedPosts, total: orderedPosts.length, tab, prompts, placeCards, sessionId,
+    worldTransition,
+    worldNow: worldNow?.isKnown ? { label: worldNow.label, projectionId: worldNow.state.projectionId, projectionVersion: worldNow.state.projectionVersion } : null,
+  });
 });
 
 /* ---------------------------------------------------------------------------

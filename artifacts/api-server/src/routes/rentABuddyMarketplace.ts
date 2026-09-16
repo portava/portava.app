@@ -92,6 +92,7 @@ import {
 import { NotificationPreferenceService } from "../services/notifications/NotificationPreferenceService.js";
 import { syncFavoritesCount } from "../services/rentBuddy/ReliabilityCounters.js";
 import { ADDON_ALLOWED_STATUSES, UPCOMING_STATUSES } from "../lib/rentBuddyBookingStatus.js";
+import { readWorldExperience, resolveWorldSubjectId } from "../services/intelligence/worldIntelligence.js";
 import {
   getPricingSuggestion,
   calculateDeposit,
@@ -411,7 +412,11 @@ router.post("/rent-a-buddy/match", async (req, res) => {
   const scored = scoringDataList.map((bd) =>
     calculateCompatibilityScore(bd, prefs, city ?? null)
   );
-  const ranked = rankBuddies(scored, scoringMap);
+  const worldSubject = await resolveWorldSubjectId(svc, city ?? null);
+  const world = worldSubject
+    ? await readWorldExperience(svc, worldSubject.subjectId, { subjectKind: worldSubject.subjectKind })
+    : null;
+  const ranked = rankBuddies(scored, scoringMap, world);
   const top = ranked.slice(0, limit);
 
   // Persist scores for caching

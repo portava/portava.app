@@ -355,6 +355,8 @@ export interface CompassItem {
    * has ≥2 place_view events for this place in the last 30 days.
    */
   placeId?: string | null;
+  /** UUID of a validated public.places row; never a discovery/gem ID. */
+  canonicalPlaceId?: string | null;
 
   // ── Catch-all for domain-specific fields carried through the pipeline ──────
   [key: string]: unknown;

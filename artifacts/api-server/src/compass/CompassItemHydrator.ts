@@ -104,7 +104,8 @@ function postToItem(post: any): CompassItem {
     qualityScore:    5,
     // Place-affinity boost: carry the canonical place so scoreItem can apply
     // the ×1.15 multiplier when the viewer has recently visited this place.
-    placeId:         (post.canonical_place_id as string | null) ?? null,
+    placeId:          (post.canonical_place_id as string | null) ?? null,
+    canonicalPlaceId: (post.canonical_place_id as string | null) ?? null,
     data:            { title },
   };
 }
@@ -292,10 +293,10 @@ async function fetchPlaces(
       createdAt:       place.created_at,
       // Place-affinity boost: the raw DB UUID (not the prefixed CompassItem id)
       // is what rank_events records as item_id for place_view events.
-      placeId:         String(place.id),
       // Raw DB id stored in data so frontend can build the correct navigation path.
       // lat/lng/image/description are REAL venue data from discovery_places —
       // must be passed through so the client never has to fabricate/null them.
+      placeId:         String(place.id),
       data: {
         id:             String(place.id),
         name:           place.name,
@@ -345,8 +346,8 @@ async function fetchHiddenGems(
       createdAt:       gem.created_at,
       // Place-affinity boost: the raw DB UUID drives the ×1.15 boost when the
       // viewer has recently viewed this gem's place page.
-      placeId:         String(gem.id),
       // Raw DB id stored in data so frontend routes to /gems/:id correctly
+      placeId:         String(gem.id),
       data: { id: String(gem.id), name: gem.name, category: gem.category, city: gem.city, country: gem.country },
     }));
   } catch (err) {

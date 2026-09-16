@@ -26,6 +26,7 @@ import {
   type RankingFactor,
 } from "./CompassRecommendationEngine.js";
 import { getCityWorldModel, worldModelBoostForItem } from "./CompassGraphEngine.js";
+import { readWorldExperience, decideOpportunity } from "../services/intelligence/worldIntelligence.js";
 import { logger } from "../lib/logger.js";
 
 export interface PipelineResult {
@@ -122,6 +123,8 @@ export async function runPipeline(
   // Phase 15 — load the Destination World Model for the viewer's city once
   // per pipeline call. Fail-soft: a missing model contributes zero boost.
   const worldModel = await getCityWorldModel(db, profile.currentCity ?? null);
+  // World Experience is an additive, server-owned signal. Unknown/stale
+  // projections contribute zero and never change the existing Compass result.
   const now = new Date();
 
   const safetyFn     = _testOverrides?.safetyFilter     ?? runSafetyFilter;
@@ -162,13 +165,42 @@ export async function runPipeline(
     // item ranks differently on a Friday night vs a Monday morning when the
     // city's graph history says its category peaks in the current time slice.
     const wm = worldModelBoostForItem(sanitized, worldModel, now);
-    const rankingFactors = wm.factor
-      ? [...annotation.factors, wm.factor]
-      : annotation.factors;
+    // City strings are deliberately not world subjects: only candidates with
+    // canonical place IDs may receive an experience projection.
+    let candidateWorldState: Awaited<ReturnType<typeof readWorldExperience>> | null = null;
+    const canonicalPlaceId = (sanitized as any).canonicalPlaceId;
+    if (db && canonicalPlaceId && /^[0-9a-f-]{36}$/i.test(String(canonicalPlaceId))) {
+      try {
+        const { data } = await db.from("places").select("id").eq("id", canonicalPlaceId)
+          .eq("status", "active").is("merged_into_place_id", null).maybeSingle();
+        if (data?.id) candidateWorldState = await readWorldExperience(db, String(canonicalPlaceId), { now });
+      } catch { /* invalid/unavailable canonical place fails soft */ }
+    }
+    const worldDecision = candidateWorldState ? decideOpportunity(
+      candidateWorldState,
+      candidateWorldState.opportunity ? 0.5 : 0,
+      {
+        currentLabel: (profile as any).currentExperienceState ?? candidateWorldState.experienceState,
+        candidateLabel: (sanitized as any).category ?? null,
+      },
+    ) : { allowed: false, reason: "no_coverage" as const, score: 0 };
+    const worldBoost = worldDecision.allowed ? worldDecision.score * 3 : 0;
+    const worldFactor = worldBoost > 0 ? {
+      key: "world_experience",
+      label: "Fits the current world experience",
+      weight: worldDecision.score,
+      value: candidateWorldState?.experienceState ?? candidateWorldState?.vibe ?? "current conditions",
+      detail: candidateWorldState?.experienceState ?? candidateWorldState?.vibe ?? "current conditions",
+    } as RankingFactor : null;
+    const rankingFactors = [
+      ...annotation.factors,
+      ...(wm.factor ? [wm.factor] : []),
+      ...(worldFactor ? [worldFactor] : []),
+    ];
 
     results.push({
       item:             sanitized,
-      finalScore:       scored.finalScore + annotation.memoryBoost + wm.boost,
+      finalScore:       scored.finalScore + annotation.memoryBoost + wm.boost + worldBoost,
       safetyPassed:     true,
       eligiblePassed:   true,
       privacySanitized: true,

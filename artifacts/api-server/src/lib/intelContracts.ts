@@ -330,6 +330,7 @@ export const CLAIM_TYPES: readonly ClaimTypeSpec[] = [
   { claimType: "service.wait",          ttlSeconds: 2700,    hardExpirySeconds: 7200,     note: "Service wait — 45 min." },
   { claimType: "transit.condition",     ttlSeconds: 1800,    hardExpirySeconds: 86400,    note: "Route/mode condition — 30 min; official clearance may end it sooner." },
   { claimType: "experience.next_move",  ttlSeconds: 1800,    hardExpirySeconds: 5400,     note: "Aggregate next-stop movement — 30 min. Cohort-gated." },
+  { claimType: "safety.constraint",     ttlSeconds: 900,     hardExpirySeconds: 3600,     note: "Authoritative place safety constraint or clearance." },
 ] as const;
 
 /** The flat claim types seeded by 2122, kept for readers that still use them. */
@@ -412,7 +413,7 @@ export function isValidIdempotencyKey(key: unknown): key is string {
  * only where conditions genuinely differ within a venue (rooftop vs ground
  * floor); two zones are two subjects, not a contradiction.
  */
-export const SUBJECT_KINDS = ["experience", "zone", "neighborhood", "route", "event", "service"] as const;
+export const SUBJECT_KINDS = ["experience", "place", "locality", "zone", "neighborhood", "route", "event", "service"] as const;
 export type SubjectKind = (typeof SUBJECT_KINDS)[number];
 
 export interface ExperienceRef {
@@ -457,6 +458,8 @@ export const INTEL_FLAGS = [
   "intel_missions",
   "intel_external_api",
   "intel_qiu_cash_pool",
+  "intel_world_experience",
+  "intel_world_experience_live",
 ] as const;
 export type IntelFlag = (typeof INTEL_FLAGS)[number];
 
@@ -473,4 +476,6 @@ export const INTEL_FLAG_DEPENDENCIES: Record<IntelFlag, readonly IntelFlag[]> = 
   intel_missions:               ["intel_capture_quick_signal"],
   intel_external_api:           ["intel_live_label_crowd"],
   intel_qiu_cash_pool:          ["intel_missions"],
+  intel_world_experience:       ["intel_claim_projection_crowd"],
+  intel_world_experience_live:  ["intel_world_experience"],
 };

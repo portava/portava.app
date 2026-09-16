@@ -221,6 +221,18 @@ const isTestPath = (rel) => rel.includes('__tests__/') || /(^|\/)test\//.test(re
 const CLASSIFIED = [
   // ── The ones that matter most: names whose polarity the conventions miss ──
   {
+    flag: 'intel_world_experience',
+    kind: 'CAPABILITY',
+    reason:
+      'World Experience producer capability. `true` runs projection from privacy-safe aggregates; an unreadable flag leaves the producer off.',
+  },
+  {
+    flag: 'intel_world_experience_live',
+    kind: 'CAPABILITY',
+    reason:
+      'World Experience predictive-serving capability. `true` permits forecast/opportunity output; an unreadable flag keeps those projections in shadow mode.',
+  },
+  {
     flag: 'invite_only_beta',
     kind: 'CAPABILITY',
     reason:

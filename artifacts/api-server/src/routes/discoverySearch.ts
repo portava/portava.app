@@ -70,9 +70,42 @@ import {
   DiscoveryServePoint,
   searchTypeToItemKind,
 } from "../lib/discoveryServeLog.js";
+import { readWorldExperience, worldSearchLabel } from "../services/intelligence/worldIntelligence.js";
 
 const router = Router();
 const logger = rootLogger.child({ route: "discoverySearch" });
+
+export function addWorldLabels<T extends { locationPreview?: string | null; metadata?: any }>(
+  results: T[], label: string | null,
+): T[] {
+  if (!label) return results;
+  return results.map((result) => result.locationPreview
+    ? { ...result, metadata: { ...(result.metadata ?? {}), worldLabel: label } }
+    : result);
+}
+
+/** Enrich each result from its own canonical place, never from viewer city. */
+export async function addWorldLabelsPerResult<T extends { locationPreview?: string | null; metadata?: any }>(
+  db: any, results: T[], now = new Date(),
+): Promise<T[]> {
+  return Promise.all(results.map(async (result) => {
+    const metadata = result.metadata ?? {};
+    let placeId = metadata.canonicalPlaceId ?? null;
+    // livingPageId is a linkage from discovery_places; validate that it is
+    // actually a public.places row before promoting it to canonicalPlaceId.
+    if (!placeId && metadata.livingPageId) {
+      try {
+        const { data } = await db.from("places").select("id")
+          .eq("id", String(metadata.livingPageId)).eq("status", "active")
+          .is("merged_into_place_id", null).maybeSingle();
+        if (data?.id) placeId = String(data.id);
+      } catch { /* linkage unavailable: no world label */ }
+    }
+    if (!placeId || !result.locationPreview) return result;
+    const label = worldSearchLabel(await readWorldExperience(db, String(placeId), { now }));
+    return label ? { ...result, metadata: { ...metadata, canonicalPlaceId: placeId, worldLabel: label } } : result;
+  }));
+}
 
 // ── SearchType enum (mirrors openapi.yaml) ────────────────────────────────────
 
@@ -1486,15 +1519,20 @@ router.get("/discovery/search", async (req, res) => {
     };
 
     if (type === "all") {
-      const { results, hasMore, nextCursor } = await searchAll(sc, effectiveQ, user.id, blockedSet, ageRestrictedSet, offset, limit, ctx);
-      res.status(200).json({ results, nextCursor, hasMore, query: effectiveQ, type, timeLabel: ctx.timeLabel });
+      const all = await searchAll(sc, effectiveQ, user.id, blockedSet, ageRestrictedSet, offset, limit, ctx);
+      let results = all.results;
+      results = await addWorldLabelsPerResult(sc, results);
+      res.status(200).json({ results, nextCursor: all.nextCursor, hasMore: all.hasMore, query: effectiveQ, type, timeLabel: ctx.timeLabel });
       logSearchServe(results);
     } else {
       // Fetch limit+1 to detect hasMore without false positives
       const fetchLimit = limit + 1;
       const raw = await dispatchSearch(sc, effectiveQ, user.id, blockedSet, ageRestrictedSet, type, offset, fetchLimit, ctx);
       const hasMore = raw.length > limit;
-      const results = raw.slice(0, limit);
+       let results = raw.slice(0, limit);
+        if (["places", "events", "trips", "plans"].includes(type)) {
+          results = await addWorldLabelsPerResult(sc, results);
+        }
       const nextCursor = hasMore ? encodeCursor(offset + limit) : null;
       res.status(200).json({ results, nextCursor, hasMore, query: effectiveQ, type, timeLabel: ctx.timeLabel });
       logSearchServe(results);

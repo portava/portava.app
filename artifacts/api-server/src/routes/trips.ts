@@ -14,6 +14,7 @@ import { awardStamp, type StampLogger } from "../services/passport/StampAwardEng
 import { nameVisibilitySet, sanitizeIdentity, nameVisibleFor } from "../lib/publicIdentity";
 import { truncateDisplayName } from "../lib/displayName.js";
 import { trackBackgroundWork } from "../lib/backgroundWork.js";
+import { readWorldExperience, resolveWorldSubjectId, unifiedNowProjection, unknownWorldProjection } from "../services/intelligence/worldIntelligence.js";
 
 const router = Router();
 
@@ -1278,6 +1279,7 @@ router.get("/trips/:tripId/plan", async (req, res) => {
   const ctx = await requireUser(req, res);
   if (!ctx) return;
   const { client, user } = ctx;
+  const sc = getServiceClient();
 
   const { tripId } = req.params;
   if (!UUID.test(tripId)) { sendError(res, "invalid_payload", "Invalid tripId"); return; }
@@ -1288,7 +1290,7 @@ router.get("/trips/:tripId/plan", async (req, res) => {
   // Fetch trip metadata (dates + plan permission)
   const { data: trip } = await client
     .from("trips")
-    .select("start_date,end_date,owner_id,plan_edit_permission")
+    .select("start_date,end_date,owner_id,plan_edit_permission,destination_place_id,destination_city")
     .eq("id", tripId)
     .maybeSingle();
   const tripStartDate = (trip as any)?.start_date ?? null;
@@ -1335,10 +1337,26 @@ router.get("/trips/:tripId/plan", async (req, res) => {
   }
 
   const warnMap = computeWarnings(rows, tripStartDate, tripEndDate, cancelledMeetupIds);
+  const destinationPlaceId = UUID.test(String((trip as any)?.destination_place_id ?? ""))
+    ? (trip as any).destination_place_id : null;
+  // World projections live behind service-role RLS. Authorization above is
+  // complete, so use the service client only for this additive read.
+  const destinationSubject = sc && (destinationPlaceId
+    ? { subjectId: destinationPlaceId, subjectKind: "place" as const }
+    : await resolveWorldSubjectId(sc, (trip as any)?.destination_city ?? null));
+  const world = unifiedNowProjection(destinationSubject
+    ? await readWorldExperience(sc, destinationSubject.subjectId, { subjectKind: destinationSubject.subjectKind })
+    : unknownWorldProjection("", null));
 
   res.json({
     items: rows.map((row) => toCamel(row, { warnings: warnMap.get(row.id) ?? [] })),
     canEdit,
+    worldContext: world.isKnown ? {
+      label: world.label,
+      projectionId: world.state.projectionId,
+      projectionVersion: world.state.projectionVersion,
+      validUntil: world.state.validUntil,
+    } : null,
   });
 });
 

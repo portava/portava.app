@@ -38,6 +38,7 @@ import {
   type SuppressedNudge,
 } from "./CompassSenseEngine.js";
 import { NotificationService } from "../services/notifications/NotificationService.js";
+import { attentionAllowed, readWorldExperience } from "../services/intelligence/worldIntelligence.js";
 import { NotificationRouter } from "../services/notifications/NotificationRouter.js";
 import { RealtimeActivityService } from "../services/notifications/RealtimeActivityService.js";
 import { fetchUserTimezone, localHourFor, nowUtcInstant } from "../lib/localTime.js";
@@ -459,7 +460,22 @@ export async function runLiveCheck(
   // surface (AI tab) where the session and the nudge itself are visible —
   // including Sense-derived candidates that carry other deep links outside
   // live mode.
-  const candidates = [...senseCandidates, ...liveOnlyCandidates(context, nowMs, hourUtc)].map(
+  const worldState = await readWorldExperience(
+    sc,
+    (context as any).placeId ?? (context as any).currentCity ?? (context as any).city ?? null,
+    { now: new Date(nowMs) },
+  );
+  const worldOpportunity = worldState.opportunity && attentionAllowed(worldState)
+    ? [{
+        type: "free_time_block" as const, category: "free_time" as const,
+        dedupeKey: `world-opportunity:${worldState.projectionId}`,
+        title: "A timely opportunity is available",
+        body: "Compass found an option that fits the current conditions.",
+        actionUrl: LIVE_SURFACE_URL, confidence: "medium" as any,
+        worldDerived: true,
+      }]
+    : [];
+  const candidates = [...senseCandidates, ...liveOnlyCandidates(context, nowMs, hourUtc), ...worldOpportunity].map(
     (n) => ({ ...n, actionUrl: LIVE_SURFACE_URL }),
   );
 
@@ -475,6 +491,10 @@ export async function runLiveCheck(
   const realtimeSvc = new RealtimeActivityService(sc);
 
   for (const nudge of candidates) {
+    if ((nudge as any).worldDerived === true && !attentionAllowed(worldState)) {
+      suppressed.push({ dedupeKey: nudge.dedupeKey, type: nudge.type, reason: "presence_passive" });
+      continue;
+    }
     if (settings.categories[nudge.category] === false) {
       suppressed.push({ dedupeKey: nudge.dedupeKey, type: nudge.type, reason: "category_disabled" });
       continue;

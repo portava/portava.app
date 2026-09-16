@@ -79,7 +79,8 @@ INSERT INTO public.freshness_policies (claim_type, ttl_seconds, hard_expiry_seco
   ('inventory.status',     1800,    86400,   'Item/service availability — 30 min, hard 1 day.'),
   ('service.wait',         2700,    7200,    'Service wait — 45 min.'),
   ('transit.condition',    1800,    86400,   'Route/mode condition — 30 min; official clearance may end it sooner.'),
-  ('experience.next_move', 1800,    5400,    'Aggregate next-stop movement — 30 min. Cohort-gated.')
+   ('experience.next_move', 1800,    5400,    'Aggregate next-stop movement — 30 min. Cohort-gated.'),
+   ('safety.constraint',   900,     3600,    'Authoritative place safety constraint or clearance.')
 ON CONFLICT (claim_type) DO NOTHING;
 
 -- ── 3. Feature flags — DELIBERATELY NOT SEEDED HERE ────────────────────────

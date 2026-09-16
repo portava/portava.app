@@ -24,6 +24,7 @@ import { getActivityParams, getWeights, getPenalties } from "./rankingConfig.js"
 import { RankingEvent } from "./rankingAnalytics.js";
 import { logger } from "../../lib/logger.js";
 import { trackBackgroundWork } from "../../lib/backgroundWork.js";
+import { readWorldExperience, decideOpportunity } from "../intelligence/worldIntelligence.js";
 
 // ── Surface names ─────────────────────────────────────────────────────────────
 
@@ -44,6 +45,8 @@ export type SurfaceName =
 export interface RankingInput {
   /** Unique item identifier. */
   itemId: string;
+  /** Validated UUID from public.places; discovery/catalog IDs are not valid here. */
+  canonicalPlaceId?: string | null;
   /** Content type: post | event | trip | buddy | place | user | stamp | story */
   itemType: string;
   /** Creator / author user ID. Null for system content. */
@@ -766,7 +769,6 @@ export async function rankItems(
       maxBoost: 10, decayHalfLifeDays: 14, capScore: 100,
     }),
   ]);
-
   const shadowMode = !flags["ACTIVITY_DISCOVERY_BOOST_ENABLED"];
   const experimentEnabled = flags["RANKING_EXPERIMENT_ENABLED"] ?? false;
   const newContributorEnabled = !shadowMode && (flags["NEW_CONTRIBUTOR_BOOST_ENABLED"] ?? false);
@@ -948,6 +950,32 @@ export async function rankItems(
       eligibilityReason: null,
       explanationKey,
     };
+    // Canonical world opportunity is a bounded additive tie-breaker. It can
+    // never make an ineligible item eligible and unknown/stale state is zero.
+    let worldState: Awaited<ReturnType<typeof readWorldExperience>> | null = null;
+    if (db && input.canonicalPlaceId && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input.canonicalPlaceId)) {
+      try {
+        const { data } = await db.from("places").select("id").eq("id", input.canonicalPlaceId)
+          .eq("status", "active").is("merged_into_place_id", null).maybeSingle();
+        if (data?.id) worldState = await readWorldExperience(db, input.canonicalPlaceId, { now: new Date() });
+      } catch { /* invalid/unavailable canonical place fails soft */ }
+    }
+    const opportunityText = String(worldState?.opportunity ?? "").toLowerCase();
+    const categoryTerms: Record<string, string[]> = {
+      place: ["place", "food", "drink", "venue", "walk", "explore"],
+      event: ["event", "concert", "festival", "social", "show"],
+      trip: ["trip", "travel", "journey", "escape"],
+      buddy: ["buddy", "guide", "companion", "social"],
+    };
+    const terms = categoryTerms[String(input.itemType).toLowerCase()] ?? [String(input.itemType).toLowerCase()];
+    const opportunityMatchesCategory = terms.some((term) => opportunityText.includes(term));
+    const worldDecision = worldState
+      ? decideOpportunity(worldState, opportunityMatchesCategory ? 0.03 : 0)
+      : { allowed: false, score: 0 };
+    if (worldDecision.allowed && worldDecision.score > 0) {
+      output.finalScore = Math.min(100, output.finalScore + worldDecision.score);
+      output.explanationKey = `${surface}:${input.itemType}:world_experience`;
+    }
 
     outputs.push(output);
 

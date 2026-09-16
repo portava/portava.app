@@ -14,6 +14,7 @@ import type { LayoverSession } from "./LayoverSessionService.js";
 import { assess, type SafetyRating } from "./LayoverSafetyEngine.js";
 import { sanitizeRecommendation, type SafeRecommendation } from "./LayoverPrivacyGuard.js";
 import { localHour } from "./AirportTime.js";
+import { readWorldExperience, decideOpportunity } from "../intelligence/worldIntelligence.js";
 
 /**
  * Which parts of the day does the remaining layover window cover, in the
@@ -305,6 +306,44 @@ export async function generateRecommendations(
     };
     rows.push(row);
   }
+
+  // Safety is a hard constraint, never a feature score. World opportunity
+  // context may refine ordering only inside the same safety tier, and an
+  // unavailable/stale projection leaves the established ordering intact.
+  const safetyRank: Record<string, number> = {
+    safe: 0, possible_but_risky: 1, not_recommended: 2, airport_only: 3,
+  };
+  // Read venue-specific projections. A city string is intentionally only a
+  // locality subject when the producer marked it as such; otherwise it is
+  // unknown and cannot be borrowed by every venue in the city.
+  const worldByPlace = new Map<string, any>();
+  const localityWorld = await readWorldExperience(db, city, { now: new Date(nowMs) });
+  await Promise.all(rows.filter((r) => r.place_id).map(async (row) => {
+    worldByPlace.set(String(row.place_id), await readWorldExperience(db, String(row.place_id), { now: new Date(nowMs) }));
+  }));
+  const decisions = rows.map((row) => {
+    const world = row.place_id ? worldByPlace.get(String(row.place_id)) : localityWorld;
+    const opportunityText = String(world?.opportunity ?? "").toLowerCase();
+    const matches = opportunityText.length > 0 && [
+      row.rec_type, row.title, row.city, row.neighborhood,
+    ].some((value) => {
+      const term = typeof value === "string" ? value.trim().toLowerCase() : "";
+      return term.length > 0 && (term.includes(opportunityText) || opportunityText.includes(term));
+    });
+    const decision = world ? decideOpportunity(world, matches ? 1 : 0) : { allowed: false, score: 0 };
+    return { row, score: decision.allowed ? decision.score : 0 };
+  });
+  // Do not even apply the safety/travel tie-break ordering unless an eligible
+  // world opportunity actually changes at least one candidate.
+  const hasWorldChange = decisions.some((d) => d.score > 0);
+  if (hasWorldChange) rows.sort((a, b) => {
+    const safety = (safetyRank[a.safety_rating] ?? 9) - (safetyRank[b.safety_rating] ?? 9);
+    if (safety !== 0) return safety;
+    const aDecision = decisions.find((d) => d.row === a)?.score ?? 0;
+    const bDecision = decisions.find((d) => d.row === b)?.score ?? 0;
+    return bDecision - aDecision;
+  });
+  rows.forEach((row, i) => { row.sort_order = i; });
 
   // Delete old recs for this session and insert fresh ones (non-fatal)
   {

@@ -367,7 +367,7 @@ async function buildSavedInspiration(sc: SupabaseClient, ownerId: string): Promi
 const MATCHED_STAGES = new Set(["went", "stayed", "made_memory", "returned"]);
 
 async function buildExperienceMatched(sc: SupabaseClient, ownerId: string): Promise<MyWorldMemoryEntry[]> {
-  return safe(async () => {
+  const legacy = await safe(async () => {
     const { data } = await (sc as any)
       .from("compass_outcome_events")
       .select("id, recommendation_id, item_id, item_type, stage, occurred_at")
@@ -396,6 +396,28 @@ async function buildExperienceMatched(sc: SupabaseClient, ownerId: string): Prom
     }
     return out;
   }, []);
+  // New ExperienceSession records are the strict memory boundary: only an
+  // explicitly significant, user-eligible outcome may become a memory entry.
+  const eligible = await safe(async () => {
+    const { data } = await (sc as any).from("experience_outcomes")
+      .select("id, recommendation_id, item_type, outcome, occurred_at")
+      .eq("user_id", ownerId).eq("memory_eligible", true).eq("significance", "significant")
+      .in("outcome", [...MATCHED_STAGES]);
+    return safeArr(data).map((r) => ({
+      id: `myworld:matched::experience::${String(r.recommendation_id ?? r.id)}`,
+      group: "experience_matched_expectation" as const,
+      title: GROUP_LABELS.experience_matched_expectation,
+      detail: r.item_type ? String(r.item_type) : undefined,
+      subjectType: "myworld:matched:experience",
+      subjectId: String(r.recommendation_id ?? r.id),
+      occurredAt: isoOrUndefined(r.occurred_at),
+      source: { kind: "outcome" as const, derivation: `experience_outcomes:${String(r.outcome)}`, originTable: "experience_outcomes" },
+      visibility: "owner_only" as const,
+    }));
+  }, []);
+  // Keep the legacy chain available for backwards compatibility; new writes
+  // cannot enter this path and must satisfy the explicit eligibility gate.
+  return [...legacy, ...eligible];
 }
 
 // ── Gem signals (Visited / Discovered gem + §31.1 lines) ─────────────────────

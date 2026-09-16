@@ -91,8 +91,8 @@ describe("T-02 seed idempotence", () => {
 
 // ── T-03 · claim registry ──────────────────────────────────────────────────
 describe("T-03 claim-type registry", () => {
-  it("declares exactly the thirteen Phase-1 claim types", () => {
-    assert.equal(CLAIM_TYPES.length, 13);
+  it("declares exactly the fourteen Phase-1 claim types", () => {
+    assert.equal(CLAIM_TYPES.length, 14);
   });
 
   it("every claim type is dotted family.type and has a coherent ceiling", () => {
@@ -235,8 +235,8 @@ describe("T-07 truth boundary", () => {
 
 // ── T-08 · flags ───────────────────────────────────────────────────────────
 describe("T-08 feature flags", () => {
-  it("declares the eight named flags", () => {
-    assert.equal(INTEL_FLAGS.length, 8);
+  it("declares the ten named flags", () => {
+    assert.equal(INTEL_FLAGS.length, 10);
   });
 
   it("declares the flag names WITHOUT seeding rows — a flag with no reader is dead config", () => {

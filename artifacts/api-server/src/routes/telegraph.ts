@@ -18,6 +18,7 @@ import { getWeatherContext } from "../lib/weatherCache.js";
 import { buildCompassContext } from "../services/location/CompassLocationContext";
 import type { SpanHashtag, SpanTag } from "../lib/enrichSpans";
 import { makeConfidence } from "../lib/liveIntelligence.js";
+import { canonicalLiveReference, readWorldExperience } from "../services/intelligence/worldIntelligence.js";
 
 const router = Router();
 
@@ -188,6 +189,27 @@ ${weatherBrief ? "Important: factor in the weather forecast when writing 'reason
 
     const arr = Array.isArray(parsed) ? parsed : [];
     const recommendations = arr.slice(0, count).map(sanitizeRec);
+    // Keep Telegraph's world context as a canonical, expiring reference rather
+    // than copying a live claim into prose. Missing/stale projections simply
+    // omit the reference and retain the existing AI fallback.
+    let worldReference: ReturnType<typeof canonicalLiveReference> | null = null;
+    try {
+      const world = await readWorldExperience(getServiceClient(), destination ?? compassCtx?.currentCity ?? null);
+      if (world.truthClass !== "unknown" && world.freshness === "fresh") {
+        const reference = canonicalLiveReference(world);
+        worldReference = {
+          subjectId: reference.subjectId,
+          projectionId: reference.projectionId,
+          projectionVersion: reference.projectionVersion,
+          validUntil: reference.validUntil,
+          truthClass: reference.truthClass,
+          label: null,
+        };
+      }
+    } catch { /* optional world-intelligence rollout */ }
+    const referencedRecommendations = worldReference
+      ? recommendations.map((r) => ({ ...r, worldReference }))
+      : recommendations;
 
     // ── Compass span enrichment ───────────────────────────────────────────────
     // Scan each recommendation's reason text for #slug and @handle patterns.
@@ -196,7 +218,7 @@ ${weatherBrief ? "Important: factor in the weather forecast when writing 'reason
     //              are enforced using the same rules as the tag-suggestions endpoint.
     //              Handles that fail the permission check are excluded entirely so
     //              a user with tag_permission='nobody' never appears in AI output.
-    let enrichedRecommendations: typeof recommendations = recommendations;
+    let enrichedRecommendations: any[] = referencedRecommendations;
     try {
       const sc = getServiceClient();
       if (sc && recommendations.length > 0) {
@@ -278,7 +300,7 @@ ${weatherBrief ? "Important: factor in the weather forecast when writing 'reason
         }
 
         // ── 4. Compute positioned spans per recommendation ───────────────────
-        enrichedRecommendations = recommendations.map((r) => {
+     enrichedRecommendations = referencedRecommendations.map((r) => {
           const reasonText = r.reason ?? "";
           const hashtagSpans: SpanHashtag[] = [];
           const tagSpans: SpanTag[] = [];

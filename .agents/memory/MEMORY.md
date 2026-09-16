@@ -104,3 +104,4 @@
 - [Publishing blocked by Orval package firewall](publish-orval-package-firewall.md) — a 403 fetching the locked Orval tarball stops pnpm install before the app build; local missing-module errors may be secondary.
 - [Deterministic API background work](api-background-work-tracking.md) — tests use scoped tracking sessions and await real completion; production stays non-blocking and logs failures.
 - [Independent-group denominator](independent-group-denominator.md) — dominant-group share must divide by the distinct grouped-actor union; summed memberships let overlapping groups fake independence.
+- [World safety authority boundary](world-safety-authority.md) — user-owned recommendation rows must never become authoritative shared safety; only trusted service-written constraints may clear or hold.
