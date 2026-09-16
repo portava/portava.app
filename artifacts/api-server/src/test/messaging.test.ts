@@ -20,6 +20,7 @@ import messagingRouter from "../routes/messaging.js";
 
 const ALICE_ID  = "aaaaaaaa-0000-0000-0000-000000000001";
 const BOB_ID    = "bbbbbbbb-0000-0000-0000-000000000002";
+const CAROL_ID  = "cccccccc-0000-0000-0000-000000000003"; // in no thread: the non-member control
 const REQ_ID    = "rrrrrrrr-0000-0000-0000-000000000001";
 const THREAD_ID = "tttttttt-0000-0000-0000-000000000001";
 
@@ -674,6 +675,28 @@ describe("POST /api/threads/:threadId/media — Finding 14: E2EE plaintext-media
     assert.equal(status, 422, `expected the E2EE guard to reject the request, got ${status}: ${JSON.stringify(body)}`);
     assert.equal(body.error, "e2ee_thread");
     void client;
+  });
+
+  it("a NON-MEMBER is refused with the same words whatever they sent — authorization precedes payload", async () => {
+    // The ordering this pins was wrong for one commit: the ownership guard sat
+    // above the membership check, so a stranger sending a foreign storage key
+    // got 400 invalid_payload where every other site in §20.7's fourteen-site
+    // table answers 403 forbidden. src/test/telegraphMembershipHonesty.test.ts
+    // caught it. Pinned HERE too, beside the guard itself, because that file
+    // tests the property across fourteen routes and this one is where somebody
+    // editing this handler will look.
+    _setTestClient(makeClient(threadFixture(false), CAROL_ID) as any, true);
+
+    const { status, body } = await callApi("POST", `/api/threads/${E2EE_THREAD_ID}/media`, {
+      mediaUrl: `${SB}/storage/v1/object/public/post-media/${BOB_ID}/theirs.jpg`,
+      mediaType: "image",
+    });
+
+    assert.equal(status, 403, `a non-member must be refused before the payload is judged: ${JSON.stringify(body)}`);
+    assert.equal(body.error, "forbidden");
+    // And the refusal must not have told them anything about the object.
+    assert.ok(!JSON.stringify(body).includes(BOB_ID));
+    assert.ok(!/upload/i.test(JSON.stringify(body)), `the refusal leaked payload semantics: ${JSON.stringify(body)}`);
   });
 
   it("REFUSES a mediaUrl whose storage key belongs to another user (MEDIA-2, write half)", async () => {
