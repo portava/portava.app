@@ -111,26 +111,64 @@ export async function ownsAttachmentEntity(
   entityType: string,
   entityId: string,
 ): Promise<boolean> {
-  const entities: Record<string, { table: string; ownerColumn: string }> = {
-    post: { table: "posts", ownerColumn: "author_id" },
-    postcard: { table: "passport_postcards", ownerColumn: "user_id" },
-    memory: { table: "passport_memories", ownerColumn: "user_id" },
-    event: { table: "events", ownerColumn: "host_id" },
-    hidden_gem: { table: "hidden_gems", ownerColumn: "submitted_by" },
-    shared_moment: { table: "shared_moments", ownerColumn: "owner_id" },
-    trip: { table: "trips", ownerColumn: "owner_id" },
-  };
-  const entity = entities[entityType];
-  if (!entity) return false;
+  // WRITTEN AS A SWITCH OVER LITERALS, NOT A LOOKUP TABLE, AND THE REASON IS A
+  // CHECK RATHER THAN A STYLE PREFERENCE. The obvious shape here is a
+  // Record<string, {table, ownerColumn}> and `.from(entity.table)`, which is
+  // what this was. It reads better and it is a BLIND SPOT:
+  // check:write-path-columns resolves `.from("<literal>")` by AST and diffs the
+  // column list against the live schema, so a computed table name — and the
+  // template-literal select list that goes with it — is a site it cannot verify
+  // at all. CI caught exactly this at :126 and refused it as an unresolvable
+  // site. Seven literal branches are verifiable; one elegant lookup is not.
+  //
+  // The property the lookup was protecting is kept: an unknown entityType falls
+  // through to `return false` and never reaches for a table named after client
+  // input. Each branch names its own owner column because they genuinely differ
+  // (author_id, host_id, submitted_by, owner_id, user_id).
   try {
-    const { data, error } = await sc
-      .from(entity.table)
-      .select(`id,${entity.ownerColumn}`)
-      .eq("id", entityId)
-      .maybeSingle();
-    if (error || !data) return false;
-    if (String(data[entity.ownerColumn]) === userId) return true;
+    // One helper, so each branch is a single literal `.from("…").select("…")`
+    // that the checker can resolve, and the shared shape is written once.
+    const ownerIdOf = async (q: any, col: string): Promise<string | null> => {
+      const { data, error } = await q.eq("id", entityId).maybeSingle();
+      if (error || !data) return null;
+      return String(data[col]);
+    };
+
+    let ownerId: string | null;
+    switch (entityType) {
+      case "post":
+        ownerId = await ownerIdOf(sc.from("posts").select("id,author_id"), "author_id");
+        break;
+      case "postcard":
+        ownerId = await ownerIdOf(sc.from("passport_postcards").select("id,user_id"), "user_id");
+        break;
+      case "memory":
+        ownerId = await ownerIdOf(sc.from("passport_memories").select("id,user_id"), "user_id");
+        break;
+      case "event":
+        ownerId = await ownerIdOf(sc.from("events").select("id,host_id"), "host_id");
+        break;
+      case "hidden_gem":
+        ownerId = await ownerIdOf(sc.from("hidden_gems").select("id,submitted_by"), "submitted_by");
+        break;
+      case "shared_moment":
+        ownerId = await ownerIdOf(sc.from("shared_moments").select("id,owner_id"), "owner_id");
+        break;
+      case "trip":
+        ownerId = await ownerIdOf(sc.from("trips").select("id,owner_id"), "owner_id");
+        break;
+      default:
+        // An unknown entityType never reaches for a table named after client
+        // input. This is the property the lookup table was protecting.
+        return false;
+    }
+
+    // A missing or unreadable row is not ownership, for any entity type
+    // including trip: there is no trip to be a crew member of.
+    if (ownerId === null) return false;
+    if (ownerId === userId) return true;
     if (entityType !== "trip") return false;
+
     const member = await sc
       .from("trip_members")
       .select("user_id")
