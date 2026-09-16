@@ -158,11 +158,44 @@ const MEMBERS = [
   { thread_id: THREAD_A, user_id: USER.id, left_at: null },
   { thread_id: THREAD_B, user_id: USER.id, left_at: null },
 ];
+/**
+ * THE CONVERSATION IS DATED FROM THE REAL CLOCK, AND IT HAS TO BE.
+ *
+ * `MAX_RESUME_WINDOW_MS` in `routes/telegraphStream.ts` is twenty-four hours
+ * wide and is measured against `Date.now()`: `parseCursor` refuses anything
+ * older with `cursor_too_old` before a single row is read. These tests drive
+ * that route over HTTP, so there is no `now` to inject — the fixture itself has
+ * to land inside the window on whatever day the suite runs.
+ *
+ * Pinned to 2026-09-15 it did not. The cursors below were 09:00, 10:05 and
+ * 10:06 on that date, so on 2026-09-16 the three tests using the earliest
+ * cursor began asserting a replay against a refusal at 09:00Z, and the other
+ * two followed at 10:05Z and 10:06Z: five failures in three stages inside
+ * ninety minutes. Two of them — the unreadable roster and the unreadable
+ * messages table — would have gone GREEN FOR THE WRONG REASON, since "nothing
+ * was replayed" is equally true of a refused cursor; they survive as failures
+ * only because they also pin `reason: "read_failed"`.
+ *
+ * Everything is therefore an age rather than a date. `BASE` is read once, so a
+ * cursor and the message it points at cannot drift apart mid-file, and the
+ * whole conversation sits three hours back: far inside the 24h window at every
+ * hour of every day, and safely in the past, which `parseCursor` also demands
+ * (a cursor more than 60s ahead of now is refused as `cursor_invalid`). Moving
+ * the constants to a newer date would only re-arm the same trap.
+ */
+const BASE = Date.now() - 3 * 60 * 60 * 1000;
+
+/** The instant `minutes` after `BASE`, as the ISO string `created_at` holds. */
+const at = (minutes: number): string => new Date(BASE + minutes * 60_000).toISOString();
+
+/** An hour before the first message: a cursor that predates the conversation. */
+const CURSOR_BEFORE_ALL = at(-60);
+
 const MESSAGES = [
-  { id: "m1", thread_id: THREAD_A, sender_id: OTHER, msg_type: "text", subtype: null, created_at: "2026-09-15T10:00:00.000Z" },
-  { id: "m2", thread_id: THREAD_A, sender_id: OTHER, msg_type: "text", subtype: null, created_at: "2026-09-15T10:05:00.000Z" },
-  { id: "m3", thread_id: THREAD_B, sender_id: OTHER, msg_type: "text", subtype: null, created_at: "2026-09-15T10:06:00.000Z" },
-  { id: "m4", thread_id: THREAD_A, sender_id: USER.id, msg_type: "text", subtype: null, created_at: "2026-09-15T10:07:00.000Z" },
+  { id: "m1", thread_id: THREAD_A, sender_id: OTHER, msg_type: "text", subtype: null, created_at: at(0) },
+  { id: "m2", thread_id: THREAD_A, sender_id: OTHER, msg_type: "text", subtype: null, created_at: at(5) },
+  { id: "m3", thread_id: THREAD_B, sender_id: OTHER, msg_type: "text", subtype: null, created_at: at(6) },
+  { id: "m4", thread_id: THREAD_A, sender_id: USER.id, msg_type: "text", subtype: null, created_at: at(7) },
 ];
 
 test("every frame carries an SSE id so EventSource can resume on its own", async () => {
@@ -188,7 +221,7 @@ test("no cursor means no resume, and the client is told rather than left to assu
 
 test("a cursor replays the messages missed while disconnected, own messages excluded", async () => {
   await withServer(makeFakeClient({ members: MEMBERS, messages: MESSAGES }), async (server) => {
-    const since = encodeURIComponent("2026-09-15T10:05:00.000Z");
+    const since = encodeURIComponent(at(5)); // exactly m2's timestamp
     const frames = await readStream(server, `/api/telegraph/stream?token=${TOKEN}&since=${since}`);
     const replays = frames.filter((f) => f.event === "message.created");
     const ids = replays.map((f) => f.data.payload.messageId);
@@ -211,7 +244,7 @@ test("Last-Event-ID is accepted as the cursor, which is what EventSource sends",
         {
           hostname: "127.0.0.1", port: addr.port, method: "GET",
           path: `/api/telegraph/stream?token=${TOKEN}`,
-          headers: { "Last-Event-ID": "2026-09-15T10:06:00.000Z" },
+          headers: { "Last-Event-ID": at(6) }, // exactly m3's timestamp
         },
         (res) => {
           let buf = ""; const out: Frame[] = [];
@@ -245,10 +278,12 @@ test("Last-Event-ID is accepted as the cursor, which is what EventSource sends",
 test("a thread the caller has left is not replayed into their stream", async () => {
   const members = [
     { thread_id: THREAD_A, user_id: USER.id, left_at: null },
+    // A fixed date: the roster read is `.is("left_at", null)`, so only whether
+    // this is null is ever consulted — the value itself is never a clock.
     { thread_id: THREAD_B, user_id: USER.id, left_at: "2026-09-14T00:00:00.000Z" },
   ];
   await withServer(makeFakeClient({ members, messages: MESSAGES }), async (server) => {
-    const since = encodeURIComponent("2026-09-15T09:00:00.000Z");
+    const since = encodeURIComponent(CURSOR_BEFORE_ALL);
     const frames = await readStream(server, `/api/telegraph/stream?token=${TOKEN}&since=${since}`);
     const ids = frames.filter((f) => f.event === "message.created").map((f) => f.data.payload.messageId);
     assert.deepEqual(ids, ["m1", "m2"], "THREAD_B is left; m3 must not be replayed");
@@ -259,7 +294,7 @@ test("an unreadable roster resumes NOTHING and says so", async () => {
   await withServer(
     makeFakeClient({ members: MEMBERS, messages: MESSAGES, errorTables: ["message_thread_members"] }),
     async (server) => {
-      const since = encodeURIComponent("2026-09-15T09:00:00.000Z");
+      const since = encodeURIComponent(CURSOR_BEFORE_ALL);
       const frames = await readStream(server, `/api/telegraph/stream?token=${TOKEN}&since=${since}`);
       assert.equal(frames.filter((f) => f.event === "message.created").length, 0,
         "an unknown roster admits nothing");
@@ -274,7 +309,7 @@ test("an unreadable messages table resumes NOTHING and says so", async () => {
   await withServer(
     makeFakeClient({ members: MEMBERS, messages: MESSAGES, errorTables: ["messages"] }),
     async (server) => {
-      const since = encodeURIComponent("2026-09-15T09:00:00.000Z");
+      const since = encodeURIComponent(CURSOR_BEFORE_ALL);
       const frames = await readStream(server, `/api/telegraph/stream?token=${TOKEN}&since=${since}`);
       assert.equal(frames.filter((f) => f.event === "message.created").length, 0);
       const r = frames.find((f) => f.event === "stream.resumed")!;

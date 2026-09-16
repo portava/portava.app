@@ -57,10 +57,38 @@ describe("TR119 — absenceDisclosure (pure)", () => {
   });
 });
 
+/**
+ * THE TRIP HAS NOT BEGUN, AND IT MUST STILL NOT HAVE BEGUN WHENEVER THIS RUNS.
+ *
+ * `absenceDisclosure` compares `start_date` against the UTC calendar day of the
+ * `now` it is HANDED, and the pure tests above hand it `NOW` — their pinned
+ * dates are the whole point of the parameter and are correct forever. The route
+ * tests at the bottom of this file cannot do that: `GET /trips/:tripId` calls
+ * `absenceDisclosure(t, Date.now(), ...)` (routes/trips-expansion.ts), so this
+ * row's dates are judged against the real clock.
+ *
+ * Pinned to 2026-12-20 the row stopped being a FUTURE absence at 00:00Z on
+ * 2026-12-20, and "flag on: the preview carries no dates" would have begun
+ * asserting `datesWithheld: "future_absence"` against a preview that had
+ * correctly stopped withholding anything — the guard working as specified,
+ * reported as a regression. Re-pinning to a later date buys months and re-arms
+ * the same trap, so the row is dated forward from the clock instead, keeping
+ * the original 99-day lead and 7-day length.
+ *
+ * The margin is ninety-nine days, so neither the hour of the run nor the
+ * runner's timezone can push it over the boundary: both sides of `start > today`
+ * are UTC calendar days derived from the same instant.
+ */
+function isoDaysFromNow(days: number): string {
+  return new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+const FUTURE_START = isoDaysFromNow(99);
+const FUTURE_END = isoDaysFromNow(106);
+
 const ROW = {
   id: "cccc0000-0001-4000-a000-000000000009", owner_id: "owner000-0001-4000-a000-000000000001",
   title: "Away", destination_city: "Porto", destination_country: "Portugal",
-  start_date: "2026-12-20", end_date: "2026-12-27", status: "upcoming", visibility: "public",
+  start_date: FUTURE_START, end_date: FUTURE_END, status: "upcoming", visibility: "public",
   cover_url: null, trip_type: "leisure", open_to_meet: false, show_exact_dates: true,
   show_destination_city: true, precise_location_visible: false, show_header_publicly: false,
   created_at: "2026-09-01T10:00:00Z", updated_at: "2026-09-01T10:00:00Z",
@@ -74,7 +102,7 @@ describe("TR119 — toPrivateTripPreview renders the decision", () => {
   });
   it("without it the shape is exactly what it was: dates present, no datesWithheld key", () => {
     const p = toPrivateTripPreview(ROW, null);
-    assert.equal(p.startDate, "2026-12-20"); assert.equal(p.endDate, "2026-12-27");
+    assert.equal(p.startDate, FUTURE_START); assert.equal(p.endDate, FUTURE_END);
     assert.equal("datesWithheld" in p, false);
     const q = toPrivateTripPreview(ROW, null, { withholdFutureDates: false });
     assert.equal("datesWithheld" in q, false);
@@ -151,14 +179,14 @@ describe("TR119 — GET /trips/:tripId for a non-member of a public trip that ha
     _setTestClient(makeClient(false) as any, true);
     const r = await get(server, `/api/trips/${ROW.id}`);
     assert.equal(r.status, 200, JSON.stringify(r.body));
-    assert.equal(r.body.startDate, "2026-12-20"); assert.equal(r.body.endDate, "2026-12-27");
+    assert.equal(r.body.startDate, FUTURE_START); assert.equal(r.body.endDate, FUTURE_END);
     assert.equal("datesWithheld" in r.body, false);
   });
   it("no flag row (the un-migrated state): fail-closed to OFF — the preview is unchanged", async () => {
     _setTestClient(makeClient(null) as any, true);
     const r = await get(server, `/api/trips/${ROW.id}`);
     assert.equal(r.status, 200);
-    assert.equal(r.body.startDate, "2026-12-20");
+    assert.equal(r.body.startDate, FUTURE_START);
     assert.equal("datesWithheld" in r.body, false);
   });
 });

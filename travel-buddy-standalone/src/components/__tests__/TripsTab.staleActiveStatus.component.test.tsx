@@ -46,6 +46,11 @@ jest.mock('../ui/VideoThumbnail.tsx', () => ({
 
 // ── Fixture factory ───────────────────────────────────────────────────────────
 
+/** A date `days` from the real clock, as the 'YYYY-MM-DD' TripRow expects. */
+function isoDaysFromNow(days: number): string {
+  return new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
 function makeTrip(overrides: Partial<TripRow> = {}): TripRow {
   return {
     id: 'trip-1',
@@ -114,17 +119,28 @@ describe('TripsTab — active status: future endDate still shows Active', () => 
     // featured card (which shows an "Ongoing" pill from the bucket label,
     // not from tripStatusLabel), while the second trip stays in the list
     // and is rendered as a TripCard with its derived badge.
+    //
+    // The windows are dated from the REAL clock. TripCard derives the badge by
+    // comparing the end date to `new Date()`, and this suite renders the
+    // component — there is no clock to inject. Pinned to 2027-01-15 and
+    // 2027-02-15, "future endDate" stopped being true on those dates and this
+    // assertion would have started reporting the derivation as broken at the
+    // exact moment the derivation was right. Its sibling
+    // TripsTab.playBadge.component.test.tsx died that way on 2026-09-16.
+    //
+    // `status: 'active'` stays a literal, and the contradiction is deliberate:
+    // the stored column is the STALE one this file exists to prove is ignored.
     const featured = makeTrip({
       id: 'future-trip-a',
       status: 'active',
-      startDate: '2027-01-01',
-      endDate: '2027-01-15',
+      startDate: isoDaysFromNow(30),
+      endDate: isoDaysFromNow(44),
     });
     const inList = makeTrip({
       id: 'future-trip-b',
       status: 'active',
-      startDate: '2027-02-01',
-      endDate: '2027-02-15',
+      startDate: isoDaysFromNow(60),
+      endDate: isoDaysFromNow(74),
     });
 
     await render(<TripsTab trips={[featured, inList]} isOwner />);
