@@ -525,6 +525,51 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   ["src/services/airport/LayoverRecommendationService.ts|upsert|payload partially resolvable", 1],
   ["src/routes/adminFeatured.ts|update|payload partially resolvable", 1],
   ["src/routes/events.ts|update|payload partially resolvable", 2],
+  // ── Highlights §12 projection + §6.2 voice: REVEALED, not introduced ──────
+  //
+  // PROVENANCE, because it matters for reading this entry. These nine sites did
+  // not appear when the table name at their call site was a module constant:
+  // the extractor bucketed the whole chain as `dynamic table name` and never
+  // reached the select list or the payload. Making the table literal (so the
+  // columns COULD be checked) is what surfaced the second layer underneath. The
+  // count went up because the check can see further, not because new blind
+  // spots were written.
+  //
+  // WHY A LITERAL IS THE WRONG FIX AT EACH OF THEM:
+  //
+  // `routes/highlights.ts` — the select list is `highlightColumns(sc).columns`,
+  // and that function is a RUNTIME SCHEMA PROBE (`routes/highlights.ts:102-110`).
+  // It returns HIGHLIGHT_COLUMNS_WITH_CLASS when `probeHighlightObject` finds
+  // the §12 class columns live, and the NARROW HIGHLIGHT_COLUMNS when it does
+  // not — deliberately, so a transient probe failure degrades a badge instead of
+  // emptying a profile. Writing either literal at the call site would not merely
+  // duplicate the list, it would PIN ONE OF THE TWO and delete the fallback.
+  // What still covers these: the projection is derived FROM the live schema, so
+  // by construction it cannot name a column the probe did not just confirm —
+  // a stronger guarantee than this check gives a hand-written literal.
+  //
+  // `services/highlights/highlightControlWrites.ts` — the list is
+  // `[...RESURFACING_COLUMNS, "created_at"].join(", ")`. That array is the single
+  // source of truth and is ALSO the argument to `probeHighlightObject`, so a
+  // literal here would let the probed set and the selected set drift apart
+  // silently, which is the failure this check exists to prevent.
+  //
+  // `routes/telegraphVoice.ts` — the payload is `voiceMessageRow(...)`, a pure
+  // builder that exists precisely so the §6.2 row shape can be asserted without
+  // a database (`services/telegraph/voice.ts`). Inlining it at the route would
+  // trade a tested constructor for an untested object literal. Its eleven
+  // columns were checked against the live CI schema on 2026-09-16 and all
+  // eleven resolve.
+  //
+  // WHAT THIS COSTS, stated rather than waved at: these nine sites are blind to
+  // THIS check. What still covers them is check:missing-live-columns reading the
+  // live schema from the other direction, the migrations' own postconditions,
+  // and — for the two Highlights entries — the runtime probe that produces the
+  // list in the first place.
+  ["src/routes/highlights.ts|select|select list not statically resolvable", 4],
+  ["src/routes/telegraphVoice.ts|insert|payload not statically resolvable", 1],
+  ["src/services/highlights/highlightControlWrites.ts|select|select list not statically resolvable", 4],
+
 ]);
 
 // ── Read-path baseline ────────────────────────────────────────────────────────
