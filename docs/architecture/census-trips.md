@@ -6542,7 +6542,7 @@ code changes in this section.
   and the tiles are named as not carried — *"a client permission the server
   does not hold"* (`domain/trips/services/TripOfflineBundle.ts:242#mapTiles: "a client permission`).
   The Map's own cache keeps its objects with a freshness that only decays
-  (`travel-buddy-standalone/src/features/map/cache/mapCache.ts:472#rehydrate(`).
+  (`travel-buddy-standalone/src/features/map/cache/mapCache.ts:507#rehydrate(`).
   The points of an event's map are cached; the map is not. W.
 - **TR133 holds W, at two of four.** Compass's `get_freedom_windows`
   (`compass/CompassTools.ts:1993#case "get_freedom_windows":`) consumes the

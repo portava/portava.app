@@ -660,6 +660,15 @@ async function resolveDisplayNames(
 // mistaking silence for the feature being stopped.
 // See scripts/check-flag-polarity.mjs INERT_SEEDED_FLAGS for the recorded intent.
 const HIDDEN_INERT_FLAGS = new Set([
+  // Retired 2026-09-16 by 2962_retire_unread_sensing_flags.sql. Seeded FALSE by
+  // 2956 and read by nothing: their readers on the source branch both depended on
+  // a credential module the port rejected, and lib/sensingAuthPosture.ts forbids
+  // any runtime flag from flipping the sensing posture at all. Hidden here as well
+  // as deleted, so the surface behaves identically on a database where 2962 has
+  // not been applied yet -- the pairing 0209/4d5cc1f4e used for the freeze flags.
+  "intel_sensing_credentials_enabled",
+  "intel_sensing_device_enrollment_enabled",
+
   "freeze_city",
   "freeze_event",
   "freeze_circle",
