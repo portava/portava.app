@@ -133,9 +133,22 @@ it.
      Alone it passes 6/6, comfortably inside its ratchets (345 calls against 375;
      7.3 per item against 9).
 
-   **The honest check for both: re-run the file alone and read the NUMBER, not the
-   sentence.** A failure message that explains itself is still only a hypothesis,
-   and a confident one costs more time than a blank one.
+   - `discoverySuggestionSeenCache.test.ts` — **the worst of the three, and the
+     one to know about.** It fails at `0 !== 1` in ~176 ms with the message
+     *"vacuity guard: a never-issued write would be 0 here"* — a diagnosis the
+     test cannot make. It tells you the write was never issued (a dead write
+     path, a deleted `.upsert(`) when what happened is that a fire-and-forget
+     write had not landed inside a 50 ms timer. Two things make it costlier than
+     the other two: there is **no timing tell** — no null status, no 180-second
+     duration, it looks exactly like a real assertion failure — and its **three
+     siblings pass in the same run**, including one exercising the same write
+     path. A green neighbourhood around a single confident red is the pattern
+     that costs an afternoon. Alone: 7/7.
+
+   **The honest check for all three: re-run the file alone and read the NUMBER, not
+   the sentence.** A failure message that explains itself is still only a
+   hypothesis, and a confident one costs more time than a blank one. All three
+   messages have now been corrected to say what they can and cannot prove.
 
 6. Single api-server file:
    `SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy node --import tsx/esm --test src/test/<f>.ts`

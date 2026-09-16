@@ -109,8 +109,22 @@ function recorder(opts: { row?: any; fail?: "read" | "write" | null } = {}) {
  * touch the client, and module resolution settles on neither the microtask nor
  * the setImmediate queue. Measured: `setTimeout(0)` and ten `setImmediate`
  * rounds both observed an upsert count of ZERO — indistinguishable from a write
- * that was never issued, which is the very thing this file exists to detect. A
- * timer wide enough for the imports removes that ambiguity.
+ * that was never issued, which is the very thing this file exists to detect.
+ *
+ * A timer wide enough for the imports NARROWS that ambiguity. It does not remove
+ * it, and an earlier version of this comment claimed it did. On 2026-09-16 this
+ * CONTROL failed inside a full-suite run at `0 !== 1` in 176 ms while its three
+ * siblings passed, and passed 7/7 alone minutes later: 50 ms is enough on an idle
+ * machine and not enough on a loaded one. The window is deliberately NOT widened
+ * in response — a larger number is a slower suite that still fails on a slower
+ * box, and the assertions below would go on reporting a timing result as a
+ * structural one.
+ *
+ * The real fix is a completion signal for fire-and-forget work, so this file can
+ * AWAIT the write instead of guessing at a duration. That is
+ * `docs/handoff-background-work-determinism.md`; 65 test files in this workspace
+ * sleep for the same reason. Until it exists, the assertion messages below say
+ * what a zero can and cannot prove.
  */
 async function settle(): Promise<void> {
   await new Promise<void>((r) => setTimeout(r, 50));
@@ -127,7 +141,13 @@ describe("suggestionSeenCache — the L2 write is really sent", () => {
     markAsSeen(USER, [A, B]);
     await settle();
 
-    assert.equal(calls.upserts.length, 1, "vacuity guard: a never-issued write would be 0 here");
+    assert.equal(
+      calls.upserts.length,
+      1,
+      "0 means the upsert was NOT OBSERVED within this window — which is NOT the same as never issued, " +
+        "and this test cannot tell the two apart with a timer. On a loaded machine that is a timing " +
+        "artifact. Re-run this file ALONE before hunting for a missing .upsert( : it passes 7/7 idle.",
+    );
     assert.equal(calls.upserts[0].user_id, USER);
     assert.deepEqual([...calls.upserts[0].seen_ids].sort(), [A, B].sort());
   });
