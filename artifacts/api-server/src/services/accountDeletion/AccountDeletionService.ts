@@ -463,6 +463,16 @@ function chunkIds(ids: string[]): string[][] {
 }
 
 /**
+ * A database that does not have migration 2956 applied. PostgREST answers
+ * PGRST205 for an unknown relation and Postgres answers 42P01; neither is an
+ * erasure failure, so neither may abort the run.
+ */
+function isMissingSensingRelation(err: any): boolean {
+  const code = err?.code ?? err?.details?.code;
+  return code === "42P01" || code === "PGRST205";
+}
+
+/**
  * Execute a deletion request end to end.
  *
  * Fatal steps (profile anonymisation, auth-user deletion, marking the request
@@ -1274,6 +1284,31 @@ export async function executeAccountDeletion(
 
   if (opts.contentOnly) {
     return { ok: steps.every((s) => s.ok), userId, executedAt, steps, warnings, deletedCounts, tombstonedCounts };
+  }
+
+  // ── Sensing capability state (migration 2956) ─────────────────────────────
+  // FK cascades cannot reach this. Deletion here ends in a TOMBSTONE profile
+  // row, not a deleted one, so `actor_id` stays referentially valid and
+  // intel_sensing_credentials / intel_sensing_device_eligibility survive the
+  // cascade intact — a device-linked token digest and an eligibility grant
+  // belonging to an account that no longer exists. Erase both explicitly.
+  //
+  // FATAL, like erase_derived_memory above and for the same reason: leaving a
+  // live sensing capability behind a deleted account is a privacy failure, not a
+  // warning. The step is idempotent, so a retry is safe.
+  const sensingOk = await step(steps, "erase_sensing_credentials_and_devices", async () => {
+    let removed = 0;
+    for (const table of ["intel_sensing_credentials", "intel_sensing_device_eligibility"]) {
+      const result = await sc.from(table).delete().eq("actor_id", userId);
+      if (result?.error && isMissingSensingRelation(result.error)) continue;
+      must(result, `delete ${table}`);
+      removed += 1;
+    }
+    return removed;
+  });
+  if (!sensingOk) {
+    warnings.push("sensing capability state may remain — deletion aborted before profile anonymisation; retry is safe");
+    return { ok: false, userId, executedAt, steps, warnings, deletedCounts, tombstonedCounts };
   }
 
   // ── 4. Anonymise the tombstone profile (FATAL on failure) ─────────────────
