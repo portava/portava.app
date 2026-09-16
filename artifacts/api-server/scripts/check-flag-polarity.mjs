@@ -262,12 +262,18 @@ const CLASSIFIED = [
     reason:
       'Map telemetry RETENTION ENFORCEMENT, and its off-state is the unusual one. ' +
       'For an ordinary capability an unreadable flag means the feature does not happen; ' +
-      'here it means expired behavioural rows are KEPT — migration 2202 gives ' +
+      'here it means expired behavioural rows are KEPT — 2202 gives ' +
       'map_telemetry_events/map_telemetry_drops a 90-day `expires_at` that nothing else ' +
-      'enforces. It is still a CAPABILITY and still fail-closed, because the thing it ' +
-      'gates is an irreversible DELETE and defaulting a DELETE to on is worse. Kept ' +
-      'DELIBERATELY SEPARATE from every collection flag: switching collection off must ' +
-      'not strand the rows someone just decided they did not want kept.',
+      'enforces, and 2960 creates both this row and the purge function the sweep calls. ' +
+      'CAPABILITY, and read fail-closed like every other, but note that fail-closed here ' +
+      'means RETAINED: an unreadable flag leaves expired behavioural rows in place. That ' +
+      'is why 2960 seeds it TRUE rather than following the usual ship-a-DELETE-off ' +
+      'instinct — a retention control shipped off is a declared privacy promise that is ' +
+      'not kept, and with collection FALSE and both tables at 0 rows in production and CI ' +
+      'an enabled purger deletes nothing today while already enforcing on the day ' +
+      'collection is switched on. Kept DELIBERATELY SEPARATE from every collection flag: ' +
+      'switching collection off must not strand the rows someone just decided they did ' +
+      'not want kept.',
   },
   {
     flag: 'invite_only_beta',
