@@ -144,8 +144,18 @@ COMMENT ON FUNCTION public.caller_is_privileged_service() IS
 -- default changes. Granting EXECUTE on it discloses nothing: it reads
 -- `current_setting('role')` and `session_user` and returns a boolean the caller
 -- already knows about itself.
+--
+-- NAMED ROLES ONLY, NEVER `PUBLIC`. This grant first read
+-- `TO PUBLIC, anon, authenticated, service_role`, which
+-- `check:client-privilege-boundary` rule 3 refuses and was right to: a grant to
+-- the PUBLIC pseudo-role has grantee `0`, does not join to `pg_roles`, and is
+-- therefore INVISIBLE to exactly the ACL queries anyone would use to audit this
+-- boundary later -- including the query 2973's own sweep is built on. `PUBLIC`
+-- was redundant here in any case, since the three roles that can reach this
+-- database are named on the line beneath it; the only thing it added was the
+-- one shape a reviewer is least likely to catch by eye.
 GRANT EXECUTE ON FUNCTION public.caller_is_privileged_service()
-  TO PUBLIC, anon, authenticated, service_role;
+  TO anon, authenticated, service_role;
 
 -- Replaces 0119/2198's body. Everything below the guard is that body unchanged:
 -- same FOR UPDATE lock, same P0002 on a missing flag, same audit row, same

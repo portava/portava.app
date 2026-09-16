@@ -939,6 +939,13 @@ const EXEMPT = [
     'src/test/messaging.test.ts',
     'src/test/ogImageVisibility.test.ts',
     'src/test/storyMediaOwnership.test.ts',
+    // ADDED 2026-09-16 with the verification phase's privacy/authorization lane.
+    // Same shape as its neighbours above, checked rather than assumed: it names
+    // SUPABASE_URL only to save and restore the string around its own express
+    // server, injects a fake through `_setTestClient`, calls `createClient`
+    // nowhere, and every fetch it issues is to 127.0.0.1 on a port it opened
+    // itself. It is in the `test` script, so the loopback pin below covers it.
+    'src/test/verifyAuthzVoiceMediaOwnership.test.ts',
   ].map((file) => ({
     file,
     pinnedTestEnv: true,
