@@ -119,9 +119,27 @@ it.
    glob, enforced by `scripts/check-test-registration.mjs`. Register every new
    test file in `package.json` — that file is lead-owned, so send the lead the
    exact line to add, or add just your line and say so.
-5. Single api-server file:
+5. **Two suites fail under load with messages you must not believe.**
+   - `guardReachability.test.ts` — `duration_ms: 180254`, `actual: null` vs
+     `expected: 0`. A subprocess killed at a 180-second timeout, wearing an
+     assertion failure's clothes. Alone: 25/25. Confirmed four times, three lanes.
+   - `wallPerformance.test.ts` — **its message is actively misleading.** It reads
+     *"the first page now waits on ~140 serialized database round trips, over the
+     recorded ratchet of 110. Something new is awaited in a loop."* It names a
+     cause and points at a loop, so it reads like a structural regression somebody
+     just introduced, and a lane that trusts it goes hunting for an `await` that
+     does not exist. The counter observes actual await ORDERING, so under load work
+     that normally overlaps is serialized and the count inflates by about half.
+     Alone it passes 6/6, comfortably inside its ratchets (345 calls against 375;
+     7.3 per item against 9).
+
+   **The honest check for both: re-run the file alone and read the NUMBER, not the
+   sentence.** A failure message that explains itself is still only a hypothesis,
+   and a confident one costs more time than a blank one.
+
+6. Single api-server file:
    `SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy node --import tsx/esm --test src/test/<f>.ts`
-6. Five checks exit **2** without Supabase credentials (`write-path-columns`,
+7. Five checks exit **2** without Supabase credentials (`write-path-columns`,
    `missing-live-columns`, `authorization-contract`, `media-objects`,
    `rank-events-surfaces`). Exit 2 is **unverified**, not a pass and not a
    failure. Never report one as green.
