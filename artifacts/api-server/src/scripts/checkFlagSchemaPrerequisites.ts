@@ -280,7 +280,16 @@ type Known = {
  * change. Against the 09-07 capture the ratchet reported green while four of
  * its entries described defects that no longer existed.
  */
-const KNOWN: Record<string, Known> = {
+/**
+ * EXPORTED so a test can derive its fixture from this map instead of hardcoding a
+ * flag name. The STALE case in flagSchemaPrerequisites.test.ts has now outlived
+ * its subject TWICE — first `trust_engine_enabled` when 2371 landed, then
+ * `media_canonical_enabled` when 2470 landed on 2026-09-16 — because each time it
+ * named a real entry, and resolving an entry is exactly what this file is for.
+ * A test that breaks every time the thing it guards succeeds is a maintenance
+ * trap, so the fixture now reads whichever entry happens to exist.
+ */
+export const KNOWN: Record<string, Known> = {
   // ── Guarded: the contract refuses before the failing call ───────────────────
   //
   // `media_canonical_enabled` WAS HERE, and it was THE founding case of this whole
