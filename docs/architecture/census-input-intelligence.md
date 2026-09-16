@@ -2587,3 +2587,176 @@ Three things that did not exist now do, so they left `N` — and not one of them
 reaches a database, a metric, or a screen reader's full complement, so none
 reaches `C`. A pass that built real things and moved the correct-percentage by
 zero is what this document looks like when it is not scoring.
+
+---
+
+## 13. Independent re-measurement at `a97bfdac0` — `G277` closes, and two citations no checker can see
+
+*Written 2026-09-16 by an INDEPENDENT REVIEWER, not by a building lane. Measured
+against `a97bfdac0` (the merge of PR #506), which is three squash merges past
+this document's declared `head_commit` `1fe72289b`. **`head_commit` is NOT
+re-declared here and no acknowledgement was edited** — the declaration is the
+coordinator's to move, and §13.5 says exactly what this section does and does
+not license.*
+
+**Why this section exists.** Since `1fe72289b` three PRs merged (`0bea333b4`,
+`54ba9fd85`, `a97bfdac0`) and, rather than remeasure, every counted-file change
+was recorded in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json`
+with an argument for why no verdict moved. This census's entry names ONE counted
+file, `artifacts/api-server/src/routes/discoverySearch.ts`, and says the change is
+confined to the `countries` bucket. **That argument had never been checked
+against the code by anyone but its author. It is checked here, and it is wrong in
+the only direction that matters: a verdict DOES move, and the entry's sibling in
+`census-discovery.md` §43.6 said so and correctly declined to move it.**
+
+### 13.1 `G277` — the COMPLETE acceptance criteria, clause by clause
+
+The §40 row is judged as a RESPONSIBILITY, not a filename — §40's own preamble,
+which §52 backs by permitting *"configuration or a narrow resolver extension
+rather than a new architecture"*. The row's cell at §836 states five clauses.
+Each is graded here against `a97bfdac0` by reading the code, not the argument.
+
+| # | the clause, as the row states it | at `a97bfdac0` | evidence |
+|---:|---|---|---|
+| 1 | *"No canonical country resolver"* | **FALSE — a resolver exists** | `artifacts/api-server/src/lib/countryCodes.ts:286#export function searchCountryRegistry(` — 216 ISO-3166-1 alpha-2 codes with canonical English names over seven ranked rungs (code · exact name · exact alias · name prefix · alias prefix · name substring · alias substring), then alphabetical by canonical name so a cursor is stable. Pure data, no I/O, and the module `artifacts/api-server/src/lib/stamps/countryLookup.ts` already consumed it — Discovery CONSUMES it rather than growing a second list. |
+| 2 | *"`entityMap.ts:37` maps `country → 'countries'`"* | **TRUE, and it is not a defect** | `artifacts/api-server/src/lib/inputAssistance/entityMap.ts:37#country:` still reads `country: 'countries',`. This clause is the DELEGATION CHAIN, not the complaint — unlike `G66`, where `neighborhood → 'cities'` is the mis-mapping itself. A correct mapping into a now-correct resolver withholds nothing. |
+| 3 | *"`searchCountries` aggregates `profiles.home_country`"* | **TRUE but no longer EXHAUSTIVE** | The profile leg survives on purpose at `artifacts/api-server/src/routes/discoverySearch.ts:2083#.select("id, home_country")` and `artifacts/api-server/src/routes/discoverySearch.ts:2084#.ilike("home_country", pat)`, because a traveller may have typed a country the ISO table has no row for and dropping it would delete a real answer. It is now the SECOND leg: the registry head is read first at `artifacts/api-server/src/routes/discoverySearch.ts:2111#const registry = searchCountryRegistry(q, offset + fetchLimit);`, and a typed spelling the registry resolves folds into the canonical row by ISO code rather than appearing beside it. The row's word "aggregates" carried the force of "and nothing else"; that is what stopped being true. |
+| 4 | *"A country picker therefore resolves against the user table, not a canonical country registry"* | **FALSE** | The country picker is `country_picker` (`artifacts/api-server/src/lib/inputAssistance/policyRegistry.ts:147#country_picker: policy(`, `entityTypes` at `artifacts/api-server/src/lib/inputAssistance/policyRegistry.ts:150#entityTypes: ['country'],`). It is a geo picker (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:109#'country_picker',` inside `GEO_PICKER_CONTEXTS`, consulted at `artifacts/api-server/src/lib/inputAssistance/gateway.ts:200#const isGeoPicker`), so `countries` falls into the non-city branch `artifacts/api-server/src/lib/inputAssistance/gateway.ts:439#if (otherTypes.length > 0) {` and is dispatched at `artifacts/api-server/src/lib/inputAssistance/gateway.ts:440#let other = await dispatchAndProject(sc, otherTypes, {` into `dispatchSearch`, whose `countries` arm is `artifacts/api-server/src/routes/discoverySearch.ts:2258#return searchCountries(sc, q, blockedSet`. **The whole path was walked, not assumed** — this is the clause on which a "logic right, nothing reaches it" withholding would have rested, and it does not: `city_picker`, `trip_destination` and `global_search` reach the same resolver too. |
+| 5 | *"so a country with no users in it does not exist"* | **FALSE** | `artifacts/api-server/src/test/discoveryCountryRegistry.test.ts:237#R2` — *"a country with no users in it still exists as a suggestion"* — plus `R1` at `artifacts/api-server/src/test/discoveryCountryRegistry.test.ts:231#R1`, which resolves a country with ZERO profiles in the database. Run at this tree by this reviewer: **20 tests, 20 pass, 0 fail.** |
+
+**Two clauses that would have withheld it, checked and found not to apply.**
+(a) The registry leg is viewer-independent and needs no privacy read, so the
+obvious next defect is letting it ANSWER when the privacy reads refused —
+a registry-only page is short by an unknown amount and indistinguishable from a
+complete one. It does not: `R8` and `R9` pin the refusal in both directions and
+both pass. (b) The gateway gates entity dispatch on `q.length >= 2`
+(`artifacts/api-server/src/lib/inputAssistance/gateway.ts:420#if (wantsEntities && dispatchTypes.length > 0 && q.length >= 2) {`), so a
+one-character query never reaches the resolver — but a two-letter ISO code does,
+which is the shortest input this requirement is about, and the row states no
+clause about single characters.
+
+### 13.2 The row move
+
+| id | was | now | evidence |
+|---|---|---|---|
+| G277 | W | **C** | CountryResolver. Three of the row's five clauses are false at `a97bfdac0` and the two that survive are not defects — §13.1 grades each. The responsibility exists (`artifacts/api-server/src/lib/countryCodes.ts:286#export function searchCountryRegistry(`), it is CONSUMED rather than duplicated, and it is REACHED from `country_picker` through `dispatchSearch`. |
+
+**It is graded `C` and deliberately NOT `C ᵖ`.** The `ᵖ` marker means the work
+was pre-existing and is not attributable to this specification; §836's siblings
+`G278`, `G279`, `G281` and `G282` carry it for exactly that reason. This resolver
+was not pre-existing — it was written to close this requirement and names it:
+`artifacts/api-server/src/test/discoveryCountryRegistry.test.ts:2#GII G277 "CountryResolver"`.
+So the `23ᵖ` subtrahend in the headline is UNCHANGED at 23, and if a later pass
+judges the work Discovery-attributable rather than spec-attributable it should
+say so and move the subtrahend, not this verdict.
+
+### 13.3 Headline, restated from the rows
+
+**Restated from `check:census-integrity`'s own parse, not by adding this move to
+a previous headline.** The last stated headline before this section is §12.7's
+(C 262 / W 58 / N 49 / X 4), not the block at the top of this document.
+
+| Measure | Value |
+| --- | --- |
+| **Denominator — testable requirements** | **373** |
+| BUILT-AND-CORRECT | **263** |
+| BUILT-BUT-WRONG | **57** |
+| NOT-BUILT | **49** |
+| CANNOT-VERIFY | **4** |
+| **CONSTRUCTED%** = (C+W)/373 | **320 / 373 = 85.8 %** |
+| **CORRECT%** (raw) = C/373 | **263 / 373 = 70.5 %** |
+| **CORRECT% (spec-attributable)** = (C-23<sup>p</sup>)/373 | **240 / 373 = 64.3 %** |
+| **THE GAP** = W/373 | **57 / 373 = 15.3 %** |
+| CANNOT-VERIFY share | **4 / 373 = 1.1 %** |
+
+`G277` moved WITHIN the built set, so CONSTRUCTED does not move at all and only
+CORRECT does, which is the shape a defect closure has.
+
+**THE TOP-OF-DOCUMENT HEADLINE IS STALE AGAIN, AND IT HAS BEEN SINCE §12.** It
+reads `262 / 55 / 52 / 4`. §12.7 moved three rows `N` to `W` and restated the
+tally **only inside §12.7**, so the block a reader meets first has been
+contradicted by the body ever since. That is the exact failure §11 documented in
+the note printed under that same block — *"a reader who read the top of this
+document got a number the body had already contradicted twice"* — together with
+the instruction *"every later pass should do the same"*, meaning restate it at the
+top as well as in place. §12 did not, and this section cannot: the corpus is
+append-only and §11's block may not be edited. **So the top block is superseded
+here, for the second time, by this table.** `check:census-integrity` reads the
+LAST stated headline and therefore never saw the drift — it passed at
+`1fe72289b` against §12.7 and would have gone on passing. This is an ACCOUNTING
+correction: no verdict of the three §12 moved is questioned, and none is re-read
+here.
+
+§9.1's group **(a) logic wrong in code** names `G277` first among *"the nine left
+... in rough order of how wrong they are"*, describing it as *"`searchCountries`
+aggregating `profiles.home_country` so a country with no users in it does not
+exist"*. **That sentence is falsified by §13.1 and `G277` leaves group (a).** No
+new total is asserted for the group: it is a §9-era partition that later passes
+moved rows across without restating, and re-deriving it would need all 54 `W`
+rows re-read, which this section did not do.
+
+### 13.4 Two citations that are stale, and that NO check can see
+
+`G277`'s second pointer is `` `:1895-1896#home_country")` `` — a BARE inherited
+citation, which takes its file from `discoverySearch.ts` named earlier in the same
+row. **It does not resolve at `a97bfdac0`, it did not resolve at `1fe72289b`
+either, and neither pass can tell you so.** `INHERITED_RE` in
+`artifacts/api-server/scripts/check-doc-citations.mjs:399#export const INHERITED_RE` requires a
+closing backtick immediately after the anchor, and `ANCHOR` at
+`artifacts/api-server/scripts/check-doc-citations.mjs:391#const ANCHOR` stops at
+the first `"` — so the citation matches NOTHING and is not counted, not checked
+and not reported. `UNBINDABLE_INHERITED_RE` catches the SPACE form of this
+hazard and only that form; a double quote falls through it. `FULL_ANCHOR_RE`
+would have caught it had the path been spelled.
+
+The proof that this is a live hole and not a theoretical one: the Discovery
+closing lane repointed this row's OTHER pointer in the same change —
+`:1999#searchCountries` became `:2072#searchCountries`, correct at
+`a97bfdac0` — *because the checker showed it*, and left the quote-anchored one
+untouched *because the checker did not*. The same thing happened to `G220`.
+
+| row | the invisible pointer | what it lands on at `a97bfdac0` | what it should name |
+|---|---|---|---|
+| G277 (§836, §2097) | `` `:1895-1896#home_country")` `` | the `searchCities` signature — the anchor text is absent from both lines | `artifacts/api-server/src/routes/discoverySearch.ts:2083#.select("id, home_country")` and `artifacts/api-server/src/routes/discoverySearch.ts:2084#.ilike("home_country", pat)` |
+| G220 (§742, §2096) | `` `:2020-2057#"travelers":` `` | a comment about `canonical_locations` and a JSDoc line — `dispatchSearch`'s switch is nowhere near | `artifacts/api-server/src/routes/discoverySearch.ts:2215#case "travelers": {` — the switch runs 2215-2262 |
+
+Both were already wrong at `1fe72289b` (`searchCountries` was at line 1999 and
+`case "travelers":` at 2144 there), so this is a PRE-EXISTING defect the recent
+changes widened rather than caused. **The rows' VERDICTS are unaffected by it**
+— `G220` stays `C ᵖ` and `G277` moves for the reasons in §13.1, not for a line
+number. Corrected pointers are stated above rather than edited into §836 and
+§742, because this corpus is append-only and the last statement wins.
+
+Measured across all thirteen censuses: **nine** bare inherited citations carry a
+double quote in the anchor and are therefore unchecked by both passes. Seven are
+in `census-input-intelligence.md` and `census-discovery.md` and are named here
+and in `census-discovery.md` §44; the other two — `census-map.md` M282's
+`personal_city` pointer and `census-telegraph.md`'s two `vocabulary.ts` pointers —
+were read at this tree and ARE correct, so they are reported as a guard gap and
+not as an error.
+
+### 13.5 What this licenses, and what it does not
+
+This section measured **one requirement** — `G277` — plus the two citations
+§13.4 names. The single counted file this census's acknowledgement covers is
+`artifacts/api-server/src/routes/discoverySearch.ts`, and the five hunks in it
+touch the `countries` bucket and one line of `dispatchSearch`'s switch; every
+other row this census rests on in that file (`G31`, `G62`, `G68`, `G70`, `G71`,
+`G73`, `G95`, `G101`, `G126`, `G129`, `G180`, `G185`, `G190`, `G197`, `G220`,
+`G278`-`G283`, `G337`, `G363`) sits outside those hunks and is not re-read here.
+
+**So: this census's `head_commit` CAN truthfully advance to `a97bfdac0`** —
+because the one counted file that changed has had the one requirement its change
+could move re-measured, and the hunks are enumerable and do not reach the others.
+That is a statement about the ONE file that moved, not about the 373 rows. The
+declaration starts a clock; it certifies no past, and §1's reading rule applies to
+every row this section does not name.
+
+**Guards run at this tree by this reviewer**, after the edit:
+`check:census-freshness` **0**, `check:census-scope-coverage` **0**,
+`check:census-integrity` **0**, `check:census-row-move-labels` **0**,
+`check:doc-citations` **0**, `check:citation-targets` **0**. Five checks exit
+**2** without live credentials — `check:write-path-columns`,
+`check:missing-live-columns`, `check:authorization-contract`,
+`check:media-objects`, `check:rank-events-surfaces`. **Exit 2 is UNVERIFIED, not
+green**, and nothing in this section rests on any of them.

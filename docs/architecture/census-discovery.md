@@ -5975,3 +5975,177 @@ the seven — that the change **can** have moved a verdict and names which one.
   keeps `check:census-freshness` honest about that, and it is SPENT the moment
   this census is re-declared at the squash — the checker fails on a `since` that
   no longer matches, which is the interlock working.
+
+---
+
+## §44 — An INDEPENDENT re-measurement at `a97bfdac0`: `B05` holds, §43.6's request is discharged, and two of this row's citations are invisible to both checkers
+
+*Written 2026-09-16 by an independent reviewer with no lane in this tree, sent to
+check the argument in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json`
+rather than to inherit it. Measured against `a97bfdac0`. **`head_commit` is NOT
+re-declared here and the acknowledgement ledger is NOT edited** — §44.6 states
+exactly what this section licenses.*
+
+**The thing under review.** This census's ledger entry names **twenty** counted
+files and argues, per file, that no verdict could have moved. That argument had
+never been checked by anyone but its authors. The three claims with the most
+weight on them were re-derived from the code below; the rest of the twenty are
+named in §44.6 as NOT re-measured, because saying which is which is the only
+thing that makes the rest of this section worth reading.
+
+### 44.1 `B05` — re-measured independently, and it holds at `C`
+
+§43.1 moved `B05` from `W` to `C`. Re-read at `a97bfdac0` against the row's own
+original blocker rather than against §43's account of it:
+
+- **The registry exists and is a registry, not a list in Discovery.**
+  `artifacts/api-server/src/lib/countryCodes.ts:286#export function searchCountryRegistry(`
+  ranks over seven rungs and returns the CANONICAL name with the matching route
+  recorded separately, so an alias is never shown as a title. The module is pure
+  data with no I/O and predates this work — `artifacts/api-server/src/lib/stamps/countryLookup.ts`
+  already consumed it, which is what makes this a consumption and not a second copy.
+- **Discovery consumes it at one site.**
+  `artifacts/api-server/src/routes/discoverySearch.ts:2111#const registry = searchCountryRegistry(q, offset + fetchLimit);`
+  is the only call in `routes/`, checked by grep at this tree. §43.8's own
+  red-flag — *"`searchCountryRegistry` growing a second copy anywhere"* — does not
+  fire.
+- **The profile leg survives and a registry-unresolvable name still lists**, at
+  `artifacts/api-server/src/routes/discoverySearch.ts:2083#.select("id, home_country")`
+  and `artifacts/api-server/src/routes/discoverySearch.ts:2084#.ilike("home_country", pat)`,
+  so the free-text answers only `profiles` knows are not deleted to make the
+  function tidy.
+- **The refusal is NOT relaxed**, which is the half a reviewer should distrust
+  first, because the registry leg needs no privacy read and serving it alone
+  would be D11's masquerade pointing outward. The opt-out read still throws a
+  named read error at
+  `artifacts/api-server/src/routes/discoverySearch.ts:2092#.eq("allow_profile_discovery", false),`
+  and the bucket refuses whole.
+- **The suite was RUN at this tree by this reviewer**, not quoted:
+  `artifacts/api-server/src/test/discoveryCountryRegistry.test.ts` — **20 tests,
+  20 pass, 0 fail**, including `R8`/`R9` (the refusal, pinned in both directions)
+  and `R10` (the registry leg is viewer-independent).
+
+**`B05` stays `C`.** No move, and this is a confirmation rather than a
+restatement: the row was re-derived from the code, and the sentence §43.1
+falsified — *"Fix needs a canonical country registry Discovery does not own"* —
+is confirmed false at `a97bfdac0` as well as at the branch tree §43 was written on.
+
+### 44.2 §43.6's cross-lane request is DISCHARGED
+
+§43.6 recorded that `census-input-intelligence.md`'s `G277` is the same
+requirement, still read `W`, and that this lane would not move another census's
+verdict. **`G277` is now graded at `a97bfdac0` in `census-input-intelligence.md`
+§13 and moves `W` to `C`**, on all five of its stated clauses read one at a time
+and on a walk of the whole path from `country_picker` through
+`artifacts/api-server/src/lib/inputAssistance/gateway.ts:200#const isGeoPicker` and
+`dispatchSearch` into `searchCountries` — the reachability leg §43.6 did not owe
+and did not take. §43.6's paragraph is discharged, not superseded: it was right
+about what it owed and it paid it.
+
+### 44.3 Two `B05` citations that are stale, and that no check can report
+
+`B05`'s cell at §91 carries two BARE inherited pointers whose anchors contain a
+double quote. **`check:doc-citations` cannot see either of them.** `ANCHOR` at
+`artifacts/api-server/scripts/check-doc-citations.mjs:391#const ANCHOR` stops at
+the first `"`, and `INHERITED_RE` at
+`artifacts/api-server/scripts/check-doc-citations.mjs:399#export const INHERITED_RE`
+then demands a closing backtick that is not there, so the citation matches
+nothing: not counted, not checked, not reported. The sibling hazard with a SPACE
+in the anchor IS refused, by `UNBINDABLE_INHERITED_RE`; the quote form falls
+between the two passes.
+
+| the invisible pointer | what it lands on at `a97bfdac0` | what it should name |
+|---|---|---|
+| `` `:1896#.ilike("home_country",` `` | the `searchCities` signature — the anchor text is not on that line | `artifacts/api-server/src/routes/discoverySearch.ts:2084#.ilike("home_country", pat)` |
+| `` `:1904#.eq("allow_profile_discovery",` `` | a bare `sc` continuation line inside `searchCities` | `artifacts/api-server/src/routes/discoverySearch.ts:2092#.eq("allow_profile_discovery", false),` |
+
+**Both were already wrong at this census's own `head_commit` `1fe72289b`** — the
+`ilike` was at line 2011 there and the pointer said 1896 — so this is a
+pre-existing defect that the recent changes widened rather than caused. The
+first pointer of the same cell,
+`artifacts/api-server/src/routes/discoverySearch.ts:2072-2093#async function searchCountries(`,
+IS checker-visible and WAS repaired in the same branch, which is the proof that
+the difference is the grammar and not the author's care. **`B05`'s VERDICT is
+unaffected**: the `C` in §44.1 rests on code read at this tree, not on a line
+number. Corrected pointers are stated here rather than edited into §91, because
+this corpus is append-only.
+
+Measured across all thirteen censuses: **nine** bare inherited citations carry a
+quote in the anchor and are unchecked by both passes. Seven are in this document
+and `census-input-intelligence.md` and are named there and here; the remaining
+two (`census-map.md` `M282`, `census-telegraph.md`'s `vocabulary.ts` pair) were
+read at this tree and are CORRECT, so they are a guard gap rather than an error.
+**This is an accounting finding and no verdict rests on it.**
+
+### 44.4 The `2893` acknowledgement, checked rather than trusted
+
+The ledger entry for this census argues that `2893`'s edit is confined to its
+PRECONDITION and *"touches neither the constraint it installs nor the surfaces it
+retires"*, and that `DV-44` therefore cannot move. **Checked by diffing the
+installing block itself at the two commits, not by reading the argument**: the
+`ADD CONSTRAINT rank_events_surface_check` block of
+`artifacts/api-server/src/migrations/2893_rank_events_retire_writerless_surfaces.sql`
+is **byte-identical** at `1fe72289b` and `a97bfdac0` (33 lines, `diff` empty). The
+eight kept surfaces and the seven retired are the same eight and seven. The
+argument holds and `DV-44` does not move — and §41.1's finding that `DV-44`'s
+evidence cell is WRONG about the nine writerless surfaces still stands
+unaffected, exactly as the entry says.
+
+### 44.5 `DV-42` and `DV-55` re-read against the `discoveryPde.ts` change — neither moves
+
+`artifacts/api-server/src/lib/discoveryPde.ts` gained 218 lines: the `DV-54`
+neighbourhood geography key, and per-read failure reporting on the viewer load.
+Three of its reads also left
+`artifacts/api-server/src/scripts/UNCHECKED_READS_ALLOWLIST.json` — the follow
+graph, the preference read and the seen-set read now bind their errors into a
+`degraded` list instead of resolving a failure into an emptiness.
+
+- **`DV-55` stays `W`.** Its "New user FAIL" leg says *"no onboarding-interest
+  read exists in `lib/discoveryPde.ts`"*, and that is still true at
+  `a97bfdac0`: the only interest read is
+  `artifacts/api-server/src/lib/discoveryPde.ts:435#.select("interests, category_weights")`
+  against `compass_user_preferences`, which is a learned Compass preference and
+  not §9's onboarding input; the literal string `onboarding` occurs **zero**
+  times in the file at both commits. Reporting a degradation is not satisfying a
+  cold start, and the row's own wording already grades the degradation path as
+  *"real and deliberate"*.
+- **`DV-42` stays `W`.** Its blocker is that the intent half is gated OFF by 2850
+  with no client sender; the diff adds no flag, no migration and no sender.
+
+### 44.6 What this licenses, and the fifteen files it does NOT
+
+Re-measured here: `B05`; `DV-42`; `DV-55`; `DV-44`'s dependence on `2893`; and
+`G277` in the sibling census. Five counted files were read at both commits —
+`routes/discoverySearch.ts`, `lib/countryCodes.ts`, `lib/discoveryPde.ts`,
+`migrations/2893_rank_events_retire_writerless_surfaces.sql` and the two country
+test suites.
+
+**NOT re-measured, and named so that nobody reads this section as covering
+them:** `lib/portavaRank.ts`, `routes/discovery.ts`, `lib/discoveryLayoverMode.ts`,
+`lib/discoveryLayoverTiming.ts`, `services/airport/LayoverSnapshot.ts`,
+`routes/trails.ts`, `services/trails/TrailService.ts`,
+`domain/trips/services/TripFreedomConsumers.ts`, `lib/discoveryServeLog.ts`,
+`routes/rankEvents.ts`, `domain/trips/services/tripReadiness.ts`,
+`migrations/2910_discovery_trails.sql`, `migrations/2921_creator_earning_entries.sql`,
+and the three Discovery test suites the entry names. Several of those carry
+their own re-measurements in §40-§43, written by the lanes that changed them;
+this reviewer did not re-derive those and asserts nothing about them.
+
+**So this census's `head_commit` should NOT advance to `a97bfdac0` on the
+strength of this section alone.** Twenty counted files changed; five were
+re-read here. Advancing the declaration would spend a twenty-file acknowledgement
+against a five-file measurement, and the fifteen it does not cover would become
+silent — which is the precise failure the acknowledgement mechanism exists to
+prevent. If the coordinator advances it, the licence must come from §40-§43's
+own measurements plus this one, and the coordinator should say so in the
+declaration rather than letting this section imply it.
+
+**Guards run at this tree after this edit:** `check:census-freshness` **0**,
+`check:census-scope-coverage` **0**, `check:census-integrity` **0**,
+`check:census-row-move-labels` **0**, `check:doc-citations` **0**,
+`check:citation-targets` **0**. Five checks exit **2** without live credentials
+(`check:write-path-columns`, `check:missing-live-columns`,
+`check:authorization-contract`, `check:media-objects`,
+`check:rank-events-surfaces`). **Exit 2 is UNVERIFIED, not green**, and nothing
+above rests on any of them. No verdict in this section moves, so the §43.5
+headline stands unchanged at C 82 / W 82 / N 21 / X 3.
