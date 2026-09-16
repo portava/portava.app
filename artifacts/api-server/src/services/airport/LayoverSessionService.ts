@@ -393,6 +393,49 @@ export async function listSessions(
   return { ok: true, sessions: (data ?? []).map(rowToSession) };
 }
 
+/**
+ * Sessions by id, WITHOUT an ownership filter.
+ *
+ * ── WHY THIS EXISTS AND WHY IT IS NOT `getSession` ───────────────────────────
+ * Every other read in this module is scoped to one traveller, because every
+ * other caller is asking about their own layover. §14 Layover Crew is the first
+ * caller that is not: `certifyCrewPlan` takes `shared_return_by =
+ * min(member.required_return_by)` over the WHOLE crew, so certifying a crew
+ * plan means reading OTHER people's sessions to derive their deadlines.
+ *
+ * ── WHAT THIS IS NOT ─────────────────────────────────────────────────────────
+ * It is not an authorization decision and it must never be treated as one. It
+ * answers "what are these layovers", and the caller is responsible for having
+ * established that it is entitled to ask — for the crew surface that is
+ * membership of the crew whose `session_id` column supplied the ids, which is
+ * the only place those ids can come from.
+ *
+ * Nothing derived from these rows is published to another traveller: the crew
+ * route folds them into a MINIMUM (a shared deadline) and a per-member slack in
+ * minutes, and it takes names and avatars from the presence pipeline — blocks,
+ * `publishableUserIds`, `nameVisibilitySet` — not from here.
+ *
+ * Bounded by `limit` because an unbounded `.in()` over a caller-supplied id
+ * list is a fan-out an attacker chooses the size of.
+ */
+export async function readSessionsByIds(
+  db: SupabaseClient,
+  sessionIds: string[],
+  limit = 12,
+): Promise<SessionListRead> {
+  if (sessionIds.length === 0) return { ok: true, sessions: [] };
+  const { data, error } = await db
+    .from("layover_sessions")
+    .select("*")
+    .in("id", sessionIds.slice(0, limit))
+    .limit(limit);
+  if (error) {
+    logger.warn({ err: error, count: sessionIds.length }, "layover session batch read failed — refusing rather than reporting an empty crew");
+    return { ok: false, message: String(error.message ?? "layover_sessions unreadable") };
+  }
+  return { ok: true, sessions: (data ?? []).map(rowToSession) };
+}
+
 /** Toggle opt-in city-level layover visibility for a session. */
 export async function setShareStatus(
   db: SupabaseClient,

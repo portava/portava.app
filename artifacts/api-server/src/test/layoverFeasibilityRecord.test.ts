@@ -413,6 +413,20 @@ describe("routes consult the certified record and nothing else", () => {
     "/airport/sessions/:id/disruption",
     "/airport/sessions/:id/overview",
     "/airport/sessions/:id/stops",
+    // §14 Layover Crew. THE ONE ENTRY IN THIS LIST THAT CERTIFIES MORE THAN ONE
+    // SESSION PER REQUEST, and it is named here rather than exempted because
+    // that is a real difference worth a reviewer seeing.
+    //
+    // §14.1 is `shared_return_by = min(member.required_return_by)`, so
+    // certifying a crew means certifying every member's own layover. It is
+    // still ONE call site: `certifyCrewMemberRecord` in routes/airport.ts is
+    // the crew feature's single wrapper, used by both the GET/POST crew
+    // handlers (through `crewSolverMembers`) and by crew creation (for the
+    // founder's expiry bound). The per-member loop is inside that wrapper, so
+    // the property this ratchet actually protects -- no handler quietly
+    // acquiring a SECOND, divergent derivation -- still holds: a second
+    // `certifySessionFeasibility(` anywhere in the crew code turns this red.
+    "/airport/sessions/:id/crew",
   ];
 
   it("every handler that needs feasibility certifies exactly once", () => {

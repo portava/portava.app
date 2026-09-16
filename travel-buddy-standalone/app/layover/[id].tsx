@@ -50,12 +50,14 @@ import {
   scheduleLocalNotificationAt,
 } from '../../src/lib/safeNotifications';
 import { AirportEssentialsCard } from '../../src/components/layover/AirportEssentialsCard';
+import { AirportConditionsCard } from '../../src/components/layover/AirportConditionsCard';
 import { LayoverHero } from '../../src/components/layover/LayoverHero';
 import { CanILeaveCard } from '../../src/components/layover/CanILeaveCard';
 import { LayoverPlanSection } from '../../src/components/layover/LayoverPlanSection';
 import { LayoverRecsSection } from '../../src/components/layover/LayoverRecsSection';
 import { LayoverMapCard } from '../../src/components/layover/LayoverMapCard';
 import { LayoverPeopleSection } from '../../src/components/layover/LayoverPeopleSection';
+import { LayoverCrewSection } from '../../src/components/layover/LayoverCrewSection';
 import { LayoverSafeReturnCard } from '../../src/components/layover/LayoverSafeReturnCard';
 import { LayoverEndSheet } from '../../src/components/layover/LayoverEndSheet';
 import { useSafeReturnAbort } from '../../src/components/layover/useSafeReturnAbort';
@@ -75,6 +77,11 @@ export default function LayoverDashboardScreen() {
   const [recsLoading, setRecsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState(false);
+  // Bumped once per completed load so cards that own their own fetch
+  // (AirportConditionsCard) re-read on the same pull-to-refresh as the
+  // rest of the screen, rather than holding a reading the traveller has
+  // just asked to refresh.
+  const [dataEpoch, setDataEpoch] = useState(0);
 
   const [presence, setPresence] = useState<{ count: number; travelers: PresenceTraveler[] }>({ count: 0, travelers: [] });
   const [buddies, setBuddies] = useState<LayoverBuddy[]>([]);
@@ -145,6 +152,7 @@ export default function LayoverDashboardScreen() {
     setRecs(recList);
     setLoading(false);
     setRefreshing(false);
+    setDataEpoch((n) => n + 1);
   }, [id, loadPresence]);
 
   useEffect(() => { load(); }, [load]);
@@ -499,6 +507,12 @@ export default function LayoverDashboardScreen() {
         />
         <AirportEssentialsCard countryCode={airport.countryCode} countryName={airport.country !== 'Unknown' ? airport.country : undefined} />
 
+        {/* §10 L82 — the traveller observation channel's submission surface.
+            Placed directly under the essentials because it answers the same
+            question ("what is this airport like right now") with the one kind
+            of evidence no feed in this tree carries: somebody standing in it. */}
+        <AirportConditionsCard sessionId={session.id} refreshKey={dataEpoch} />
+
         {/* §15.1 "every active landside plan must expose RETURN TO AIRPORT" —
             directly above the plan it cancels. */}
         {!returnCardFirst && returnCard}
@@ -581,6 +595,17 @@ export default function LayoverDashboardScreen() {
               canEdit={!!canEdit}
               onToggleShare={handleToggleShare}
               onOpenBuddy={(b) => router.push(`/(rent-a-buddy)/buddy/${b.id}` as any)}
+            />
+
+            {/* §14 L28/L29/L131 — the crew. Placed with the other people, and
+                therefore inside the exploration block, which means it collapses
+                with it at RETURN_NOW. That is the certified posture doing its
+                job: at RETURN_NOW the default answer is the airport, and
+                "collapsed" is one press from open, not hidden. */}
+            <LayoverCrewSection
+              sessionId={session.id}
+              timezone={airport.timezone}
+              refreshKey={dataEpoch}
             />
           </View>
         )}

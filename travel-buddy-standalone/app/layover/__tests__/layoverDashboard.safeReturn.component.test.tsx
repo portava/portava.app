@@ -186,6 +186,23 @@ jest.mock('../../../src/services/layover', () => ({
   setShareCityStatus: jest.fn(async () => null),
   returnToAirportNow: jest.fn(async () => ({ kind: 'offline' })),
   askCompass: jest.fn(async () => null),
+  // §10 L82 and §14 L28/L29 — the observation card and the crew section fetch
+  // their own data on mount, so the module mock has to know they exist. Both
+  // are stubbed in their SUCCESSFUL-BUT-EMPTY state rather than as failures:
+  // a `null` from either is a FAILED READ in the real client and renders a
+  // retry, which would put an error affordance into every dashboard test that
+  // is not about errors.
+  getAirportObservations: jest.fn(async () => ({
+    airportRef: 'BKK',
+    submittableFactTypes: ['queue_report_minutes', 'checkpoint_timing_minutes', 'closure_reported'],
+    rateLimit: { maxPerWindow: 3, windowMinutes: 15 },
+    facts: [],
+  })),
+  submitAirportObservation: jest.fn(async () => ({ ok: false, message: 'stub', rateLimited: false })),
+  getLayoverCrew: jest.fn(async () => ({ inCrew: false, city: 'Bangkok', crews: [] })),
+  createLayoverCrew: jest.fn(async () => ({ ok: false, message: 'stub' })),
+  joinLayoverCrew: jest.fn(async () => ({ ok: false, message: 'stub' })),
+  leaveLayoverCrew: jest.fn(async () => ({ ok: false, message: 'stub' })),
   updateLayoverSession: jest.fn(async () => ({
     session: (global as any).__overview.session,
     replan: { ran: false, reason: 'window_unchanged', detail: 'no feasibility input moved' },

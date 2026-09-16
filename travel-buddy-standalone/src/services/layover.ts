@@ -1177,3 +1177,268 @@ export async function sendLayoverTelegraph(sessionId: string, message: string): 
   if (!res.ok) return null;
   return res.json();
 }
+
+// ── §10 traveller observations (census L82) ───────────────────────────────────
+
+/**
+ * The three facts a traveller may report. Exactly the `TRAVELER_OBSERVATION`
+ * class of `AIRPORT_FACT_TYPES` — §10's own row reads "checkpoint timing, queue
+ * report, closure".
+ *
+ * The server publishes this list on every GET (`submittableFactTypes`) and
+ * validates against its own copy, so this type is a convenience for rendering
+ * and NEVER the authority. A client that guessed a fourth type would be refused
+ * by name.
+ */
+export type TravellerFactType =
+  | 'checkpoint_timing_minutes'
+  | 'queue_report_minutes'
+  | 'closure_reported';
+
+export type EstimateSourceClass = 'STATIC' | 'HISTORICAL' | 'LIVE' | 'USER_DECLARED';
+export type EstimateFallbackLevel = 'NONE' | 'REGIONAL' | 'GLOBAL';
+
+/**
+ * §10 `TruthValue<T>`, transcribed from
+ * `artifacts/api-server/src/services/airport/LayoverAirportTruth.ts`.
+ *
+ * `conflict` is not decoration: when it is true the server took the
+ * CONSERVATIVE reading rather than an average, dropped the confidence, and kept
+ * BOTH sides in `sourceRefs`. A surface that renders the value and hides the
+ * flag is averaging the disagreement away on the server's behalf.
+ */
+export interface AirportTruthValue {
+  value: number;
+  confidence: EstimateConfidence;
+  conflict: boolean;
+  sourceClass: EstimateSourceClass;
+  sourceRefs: string[];
+  observedAt: string | null;
+  expiresAt: string | null;
+  fallbackLevel: EstimateFallbackLevel;
+}
+
+export interface AirportObservedFact {
+  factType: TravellerFactType;
+  factClass: string;
+  truthVersion: string;
+  /**
+   * NULL IS AN ANSWER, not a loading state and not a zero. It means either that
+   * nothing unexpired has been reported, or that what has been reported sits
+   * below the corroboration floor — one stranger cannot move a deadline. The
+   * screen must render it as "no reading", never as 0 minutes.
+   */
+  truth: AirportTruthValue | null;
+  corroboration: Record<string, number>;
+  conflictBetween: { low: number; high: number } | null;
+  rulesApplied: string[];
+}
+
+export interface AirportObservationsResult {
+  airportRef: string;
+  submittableFactTypes: TravellerFactType[];
+  rateLimit: { maxPerWindow: number; windowMinutes: number };
+  facts: AirportObservedFact[];
+}
+
+/**
+ * The reconciled traveller reports for this session's airport.
+ *
+ * Returns `null` on ANY non-ok response, and the caller must render that as
+ * "could not load" rather than as "nothing reported". The server refuses with
+ * `degraded_unavailable` when the corpus read fails precisely so that an outage
+ * is distinguishable from an empty airport; collapsing the two here would throw
+ * that away on the client side instead.
+ */
+export async function getAirportObservations(
+  sessionId: string,
+): Promise<AirportObservationsResult | null> {
+  const res = await authedFetch(airportUrl('sessions', sessionId, 'observations'));
+  if (!res.ok) return null;
+  return res.json();
+}
+
+export type ObservationSubmitOutcome =
+  | { ok: true; duplicate: boolean; fact: AirportObservedFact }
+  /** Screened out, rate-limited or refused. `message` is the server's sentence. */
+  | { ok: false; message: string; rateLimited: boolean };
+
+/**
+ * Report a queue, a checkpoint timing or a closure.
+ *
+ * `submissionToken` is the caller's idempotency key (migration 2982) and is
+ * REQUIRED. It must be stable across retries of the SAME report and different
+ * for a genuinely new one — a token minted inside this function would be fresh
+ * on every retry and would dedupe nothing, which is why it is a parameter.
+ *
+ * Failure carries the server's own sentence rather than a code. The route
+ * writes one per screening verdict (implausible value, rate limited, …) because
+ * a rejection here is the traveller's answer, not a server fault.
+ */
+export async function submitAirportObservation(
+  sessionId: string,
+  input: { factType: TravellerFactType; value: number; submissionToken: string },
+): Promise<ObservationSubmitOutcome> {
+  let res: Response;
+  try {
+    res = await authedFetch(airportUrl('sessions', sessionId, 'observations'), {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+  } catch {
+    return { ok: false, message: 'Your report could not be sent. Please try again.', rateLimited: false };
+  }
+
+  let body: Record<string, unknown> = {};
+  try { body = await res.json(); } catch { /* falls through to the status check */ }
+
+  if (!res.ok) {
+    const message = typeof body.message === 'string'
+      ? body.message
+      : 'That report could not be accepted.';
+    return { ok: false, message, rateLimited: res.status === 429 };
+  }
+  return {
+    ok: true,
+    duplicate: body.duplicate === true,
+    fact: body.fact as AirportObservedFact,
+  };
+}
+
+// ── §14 Layover Crew (census L28/L29/L131/L185/L186/L188) ─────────────────────
+
+export interface CrewSummary {
+  id: string;
+  title: string;
+  city: string;
+  meetingPointLabel: string | null;
+  status: 'open' | 'closed' | 'disbanded';
+  maxMembers: number;
+  expiresAt: string;
+  youAreOwner: boolean;
+  /**
+   * From the MEMBERSHIP rows, not from `members` below. The two differ whenever
+   * a crewmate has blocked you, paused sharing or gone into ghost mode: they
+   * are still in the crew and still bind the shared deadline, they just have no
+   * card. Rendering `members.length` as the size of the crew would quietly
+   * un-count them.
+   */
+  memberCount: number;
+}
+
+/** One member's certified constraint, as §14.1 folds it into the minimum. */
+export interface CrewMemberConstraint {
+  userId: string;
+  /** ISO. Null = this member's feasibility could not be certified. */
+  requiredReturnBy: string | null;
+  usableMinutes: number | null;
+  returnState: LayoverReturnState | null;
+}
+
+export type CrewInfeasibilityReason =
+  | 'no_members'
+  | 'member_without_certified_feasibility'
+  | 'member_unassigned'
+  | 'member_assigned_twice'
+  | 'unknown_member_in_branch'
+  | 'empty_branch'
+  | 'plan_exceeds_usable_minutes'
+  | 'plan_ends_after_shared_return';
+
+/**
+ * §14.1, server-certified. Transcribed from `certifyCrewPlan` in
+ * `artifacts/api-server/src/services/airport/LayoverCrewService.ts`.
+ *
+ * `sharedReturnBy` is `min(member.required_return_by)` over the WHOLE crew and
+ * is NULL whenever any member is uncertified — not because the server is being
+ * fussy, but because a minimum over the subset it could read is a LATER
+ * deadline than the truth. The client must render null as "not certified", and
+ * must never substitute its own earliest time: that is the duplicate
+ * time-budget derivation L2/L6 exist to forbid.
+ */
+export interface CrewSolution {
+  crewVersion: string;
+  sharedReturnBy: string | null;
+  bindingMemberIds: string[];
+  feasible: boolean;
+  reasons: CrewInfeasibilityReason[];
+  split: boolean;
+  members: CrewMemberConstraint[];
+}
+
+export interface CrewMemberCard {
+  id: string;
+  handle: string | null;
+  name: string | null;
+  avatarUrl: string | null;
+}
+
+export interface CrewOpening {
+  id: string;
+  title: string;
+  meetingPointLabel: string | null;
+  maxMembers: number;
+  expiresAt: string;
+}
+
+export type CrewState =
+  | {
+      inCrew: true;
+      crew: CrewSummary;
+      solution: CrewSolution;
+      members: CrewMemberCard[];
+      degraded: boolean;
+      degradedReasons: string[];
+    }
+  | { inCrew: false; city: string | null; crews: CrewOpening[]; reason?: string };
+
+/**
+ * The crew for this layover, or the open crews in this city.
+ *
+ * `null` is a FAILED READ and the caller must render it as one. "You are in no
+ * crew" and "we could not read your crew" produce the same screen if they are
+ * collapsed, and a traveller who believes the first walks away from people who
+ * are waiting for them.
+ */
+export async function getLayoverCrew(sessionId: string): Promise<CrewState | null> {
+  const res = await authedFetch(airportUrl('sessions', sessionId, 'crew'));
+  if (!res.ok) return null;
+  return res.json();
+}
+
+export type CrewActionOutcome =
+  | { ok: true; state: CrewState }
+  | { ok: false; message: string };
+
+async function crewAction(url: string, body?: unknown): Promise<CrewActionOutcome> {
+  let res: Response;
+  try {
+    res = await authedFetch(url, { method: 'POST', ...(body ? { body: JSON.stringify(body) } : {}) });
+  } catch {
+    return { ok: false, message: 'That could not be sent. Please try again.' };
+  }
+  let parsed: Record<string, unknown> = {};
+  try { parsed = await res.json(); } catch { /* falls through to the status check */ }
+  if (!res.ok) {
+    return {
+      ok: false,
+      message: typeof parsed.message === 'string' ? parsed.message : 'That did not work. Please try again.',
+    };
+  }
+  return { ok: true, state: parsed as unknown as CrewState };
+}
+
+export function createLayoverCrew(
+  sessionId: string,
+  input: { title: string; meetingPointLabel?: string | null; maxMembers?: number },
+): Promise<CrewActionOutcome> {
+  return crewAction(airportUrl('sessions', sessionId, 'crew'), input);
+}
+
+export function joinLayoverCrew(sessionId: string, crewId: string): Promise<CrewActionOutcome> {
+  return crewAction(airportUrl('sessions', sessionId, 'crew', crewId, 'join'));
+}
+
+export function leaveLayoverCrew(sessionId: string): Promise<CrewActionOutcome> {
+  return crewAction(airportUrl('sessions', sessionId, 'crew', 'leave'));
+}
