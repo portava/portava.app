@@ -163,3 +163,77 @@ the fixed final checkout, not now.
 imported already-applied files take `manual` with the full provenance — original
 filename, out-of-band writer, and the supabase_migrations version each ran as —
 in `notes`. No constraint is widened to accommodate them.
+
+## Proof that the runner SKIPS the seven (not re-executes them)
+
+The whole import rests on one property: a fresh `apply-migrations` run must
+classify the seven imported files as SKIPPED. If it ever called one PENDING, it
+would re-execute DDL that already ran against a database that already has it.
+
+Run against the REAL ledger rows now in portava-ci (569 rows, fetched with the
+same `select filename, checksum, applied_by` the runner itself issues at
+apply-migrations.ts:1233) and the REAL 569 files on disk, through the runner's own
+exported `planApply`:
+
+    THE SEVEN ALREADY-APPLIED EQUIVALENTS
+      SKIPPED   2951_media_processing_lifecycle.sql
+      SKIPPED   2952_media_asset_deletion_lifecycle.sql
+      SKIPPED   2953_media_processing_retention.sql
+      SKIPPED   2954_media_lifecycle_rls.sql
+      SKIPPED   2956_privacy_safe_sensing_credentials.sql
+      SKIPPED   2957_presence_cleanup_flag.sql
+      SKIPPED   2958_coverage_state.sql
+
+    THE TWO THAT GENUINELY RAN IN THIS PASS
+      SKIPPED   2955_media_asset_write_boundary.sql
+      SKIPPED   2961_safety_constraint_freshness_policy.sql
+
+    Plan totals: pending 0 | skipped 185 | unproven 384 | drifted 0 | orphaned 0
+
+`drifted 0` matters as much as the skips: no recorded checksum disagrees with the
+file on disk. `orphaned 0`: no ledger row names a file that is not there.
+
+### Original history preserved, no execution invented
+
+`isProofOfApply` (apply-migrations.ts:870) consults only `applied_by` and the
+checksum — never `applied_at`. So `applied_at` was free to carry the truth, and
+does:
+
+    2951-2954  applied_at 2026-09-16 12:03:01 .. 12:03:19   the ORIGINAL runs
+    2956-2958  applied_at 2026-09-16 07:55:48 .. 07:55:59   the ORIGINAL runs
+    2955, 2961 applied_at 2026-09-16 14:14:26               genuinely ran now
+
+Each imported row's `notes` names the original filename and the
+`supabase_migrations` version it ran as, so the record points back at the real
+execution rather than standing in for one.
+
+### The checksum question, answered rather than waved through
+
+The ledger records `checksumOf(file on disk)`, but the file on disk was
+renumbered and re-headered after the original execution. So "is recording this
+checksum honest?" had to be answered, not assumed. Comparing the committed files
+against the originals with comments stripped — and string literals deliberately
+PRESERVED, since masking them could hide a real change:
+
+    2951  executable SQL identical except RAISE EXCEPTION token 3000 -> 2951
+    2952  ... identical except 3001 -> 2952
+    2953  ... identical except 3002 -> 2953
+    2954  ... identical except 3001 -> 2952 and 3003 -> 2954
+    2956  byte-identical, no divergence at all
+    2957  byte-identical
+    2958  byte-identical
+
+The first pass of this check FAILED and that is why it was worth running: four
+files differed in executable text, because the renumbering `sed` had rewritten
+migration numbers inside `RAISE EXCEPTION` precondition messages. Every
+divergence is a number token inside guard message text and alters no schema
+effect — but it is disclosed in each ledger row rather than smoothed over, and
+the original file's sha256 is recorded alongside.
+
+`src/test/migrationImportedRecords.test.ts` keeps all of this from rotting: it
+asserts the seven skip, that editing a file after recording DRIFTS rather than
+silently re-applying, that downgrading a row to a `backfill` shape makes it
+UNPROVEN (the same false positive that hid 2202's absence from production), that
+each file still names its `supabase_migrations` version, and that all seven stay
+`IF NOT EXISTS`-idempotent because the CI kernel job replays the whole chain onto
+an empty Postgres where they genuinely do run.
