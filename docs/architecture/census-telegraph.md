@@ -4767,7 +4767,7 @@ a loader each.
 | Buddy service | `artifacts/api-server/src/services/telegraph/shareables.ts:915#const loadBuddyService` | `approved` AND `is_active`, or ownership. This one is a REPAIR, not an addition. See §15.3. |
 
 The three vocabulary types are `artifacts/api-server/src/services/telegraph/vocabulary.ts:52#"RESERVATION",`,
-`:53#"LAYOVER_PLAN",` and `:77#"MEDIA",`. The registry is
+`artifacts/api-server/src/services/telegraph/vocabulary.ts:53#"LAYOVER_PLAN",` and `artifacts/api-server/src/services/telegraph/vocabulary.ts:77#"MEDIA",`. The registry is
 `artifacts/api-server/src/services/telegraph/shareables.ts:948#const LOADERS` and
 now answers twenty-two object types where it answered fifteen
 (`:950#SHAREABLE_OBJECT_TYPES`). Forty-eight assertions:

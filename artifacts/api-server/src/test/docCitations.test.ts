@@ -506,11 +506,101 @@ describe("the real corpus — every covered citation resolves and every anchor h
       res.badAnchor.map((f) => `${f.doc}:${f.line} ${f.cited} — ${String(f.reason)}`),
       [],
     );
+    // A citation written in a shape NO pass can bind is not counted, not
+    // checked and not reported, so an empty badRange/badAnchor says nothing
+    // about it. Eight such citations sat in this corpus until 2026-09-16 and
+    // four of them were stale. Asserting it HERE is what stops that recurring.
+    assert.deepEqual(
+      res.unbindable.map((f) => `${f.doc}:${f.line} ${f.cited} — ${String(f.reason)}`),
+      [],
+    );
     assert.ok(
       res.anchored >= MIN_ANCHORED_CITATIONS,
       `${res.anchored} anchored citations, floor ${MIN_ANCHORED_CITATIONS}`,
     );
   });
+});
+
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+
+/**
+ * A BARE `:NNN#anchor` WHOSE ANCHOR CONTAINS A QUOTE IS MATCHED BY NO PASS.
+ *
+ * The SPACE form was refused when it was found; the QUOTE form reaches the same
+ * hole by a different route and was left open until 2026-09-16. ANCHOR excludes
+ * `"` and `'` because it also reads UNBACKTICKED prose, where a quote ends the
+ * anchor. So in `` `:12#a("b",` `` INHERITED_RE matches `a(`, stops at the
+ * quote, and then demands a closing backtick that is several characters away.
+ * FULL_ANCHOR_RE needs the path spelled out. The unbindable refusal wanted
+ * whitespace and there is none. Result: not counted, not checked, not reported.
+ *
+ * Unlike the space form, this shape WAS in use when it was refused — eight
+ * citations over fifteen occurrences across four censuses, FOUR of them stale.
+ * These cases are written so that a future loosening of the refusal (say, back
+ * to `\s` alone) fails here rather than silently un-checking those citations
+ * again.
+ */
+describe("a bare `:NNN#anchor` with a QUOTE in the anchor is refused, not ignored", () => {
+  const src = ['alpha', '.ilike("home_country", pat)', 'gamma'].join("\n");
+  const byBasename = new Map<string, string[]>([
+    ["thing.ts", ["src/thing.ts"]],
+    ["GUIDE.md", ["docs/x/GUIDE.md"]],
+  ]);
+  const evalOne = (doc: string) =>
+    evaluateCitations({
+      coveredFiles: ["docs/x/GUIDE.md"],
+      readFile: (rel: string): string | null =>
+        rel === "docs/x/GUIDE.md" ? doc : rel === "src/thing.ts" ? src : null,
+      byBasename,
+    });
+
+  it("refuses a DOUBLE-quoted anchor", () => {
+    const res = evalOne('`src/thing.ts` reads at `:2#.ilike("home_country",`');
+    assert.equal(res.unbindable.length, 1);
+    assert.match(String(res.unbindable[0]?.cited), /home_country/);
+  });
+
+  it("refuses a SINGLE-quoted anchor", () => {
+    const res = evalOne("`src/thing.ts` reads at `:2#x('my_cities',`");
+    assert.equal(res.unbindable.length, 1);
+  });
+
+  it("still refuses the SPACE form the rule was originally written for", () => {
+    const res = evalOne("`src/thing.ts` reads at `:2#count: rows.length`");
+    assert.equal(res.unbindable.length, 1);
+  });
+
+  it("a quote-anchored citation is NOT silently counted as a passing citation", () => {
+    // The whole point: before the fix this produced total=0 and zero findings,
+    // which reads identically to a document with no citations in it.
+    const res = evalOne('`src/thing.ts` reads at `:2#.ilike("home_country",`');
+    assert.equal(res.badAnchor.length, 0);
+    assert.equal(res.badRange.length, 0);
+    assert.equal(res.unbindable.length, 1);
+  });
+
+  it("spelling the path is the fix, and then the anchor is actually CHECKED", () => {
+    const ok = evalOne('`src/thing.ts:2#.ilike("home_country", pat)`');
+    assert.equal(ok.unbindable.length, 0);
+    assert.equal(ok.badAnchor.length, 0);
+    assert.equal(ok.badRange.length, 0);
+
+    // and a WRONG line now fails, which is the capability that was missing
+    const stale = evalOne('`src/thing.ts:1#.ilike("home_country", pat)`');
+    assert.equal(stale.unbindable.length, 0);
+    assert.equal(stale.badAnchor.length, 1);
+  });
+
+  it("a FULL citation whose anchor holds a quote is fine and stays fine", () => {
+    // Only the BARE inherited form was ever affected. `mapObjects.ts:105#"x",`
+    // shapes bind through FULL_ANCHOR_RE and must not be caught by the refusal.
+    const res = evalOne('`src/thing.ts:2#.ilike("home_country", pat)`');
+    assert.equal(res.unbindable.length, 0);
+    assert.equal(res.total, 1);
+  });
+
 });
 
 // ---------------------------------------------------------------------------

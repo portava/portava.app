@@ -739,7 +739,7 @@ declared and read by nothing (G30). What follows is what actually exists.
 | G217 | Prefer local: request cancellation / state | C | `services/raceGuard.ts`; `useInputAssistance.ts:212`, `:288`. |
 | G218 | Prefer server: canonical entity lookup requiring current DB state | C ᵖ | `gateway.ts:343-404` → `dispatchSearch`. |
 | G219 | Prefer server: privacy/eligibility filtering | C | `gateway.ts:373-378`, `:614-619` — server-side and fail-closed; the client explicitly does no re-filtering (`hooks/useTelegraphRecipients.ts:15-18`). |
-| G220 | Prefer server: cross-entity search | C ᵖ | `entityMap.ts:16-33#DispatchSearchType` (17 types) → `dispatchSearch` (`discoverySearch.ts:2194#dispatchSearch`, switch at `:2020-2057#"travelers":`). Still 17 after the §27 `saved` lane landed: `DispatchSearchType` is an EXPLICIT union and `ENTITY_TO_SEARCH` is `Record<EntityType, DispatchSearchType>`, so `SEARCH_TYPES`' eighteenth member (`:2241#searchSaved`) has no `EntityType` that reaches it. |
+| G220 | Prefer server: cross-entity search | C ᵖ | `entityMap.ts:16-33#DispatchSearchType` (17 types) → `dispatchSearch` (`discoverySearch.ts:2194#dispatchSearch`, switch at `artifacts/api-server/src/routes/discoverySearch.ts:2215#case "travelers":`). Still 17 after the §27 `saved` lane landed: `DispatchSearchType` is an EXPLICIT union and `ENTITY_TO_SEARCH` is `Record<EntityType, DispatchSearchType>`, so `SEARCH_TYPES`' eighteenth member (`:2241#searchSaved`) has no `EntityType` that reaches it. |
 | G221 | Prefer server: Live Intelligence suggestions | C | `liveSuggestions.ts:250-317`. ☠prod |
 | G222 | Prefer server: provider federation | **N** | No provider lane exists in the gateway; `external_places_enabled` is dormant and no provider candidate is ever projected. |
 | G223 | Prefer server: personalized ranking requiring server-owned context | C | `personalization.ts:243-268` runs server-side over server-held memory. ☠prod |
@@ -833,7 +833,7 @@ narrow resolver extension rather than a new architecture).
 | G274 | QueryNormalizer | C | The service now exists: `lib/inputAssistance/queryNormalizer.ts:553#export function normalizeQuery` is the single entry point, and `lib/inputAssistance/gateway.ts:175#const norm: NormalizedQuery` is its only caller in the suggest path. It COMPOSES rather than replaces — `applyAliases` and `sanitizeQuery` are still Discovery's, and the canonical fold is still `canonicalLocations` — and adds the three §10 clauses that had no implementation anywhere (transliteration G61, context-appropriate emoji handling G62, keyboard-weighted typo tolerance with a confidence measure G63). The pipeline order is fixed and documented in the file header: trim → sigil → transliterate → emoji → alias → typo → sanitize → clamp. It returns `aliased` unchanged for the §18 temporal extractor and the semantic parser, so those two consumers see byte-identical input to what they saw before this file existed. The client comment this row quoted — *"Real alias resolution belongs to the server's QueryNormalizer (§40)"* — now names something real; the client mirror itself is still local-only, which is G340/G344's problem, not this row's. |
 | G275 | EntitySuggestionService | C | `gateway.ts:601-640` `dispatchAndProject`. |
 | G276 | CityResolver | C | `geoResolver.ts:120-145`. |
-| G277 | CountryResolver | W | No canonical country resolver: `entityMap.ts:37` maps `country → 'countries'`, and `discoverySearch.ts:2072#searchCountries` **aggregates `profiles.home_country`** (`:1895-1896#home_country")`) (`.from("profiles").select("id, home_country").ilike("home_country", pat)`). A country picker therefore resolves against the user table, not a canonical country registry, so a country with no users in it does not exist. |
+| G277 | CountryResolver | W | No canonical country resolver: `entityMap.ts:37` maps `country → 'countries'`, and `discoverySearch.ts:2072#searchCountries` **aggregates `profiles.home_country`** (`artifacts/api-server/src/routes/discoverySearch.ts:2084#.ilike("home_country", pat)`) (`.from("profiles").select("id, home_country").ilike("home_country", pat)`). A country picker therefore resolves against the user table, not a canonical country registry, so a country with no users in it does not exist. |
 | G278 | PlaceResolver | C ᵖ | `discoverySearch.ts:2238#searchPlaces`. |
 | G279 | HiddenGemResolver | C ᵖ | `discoverySearch.ts:2242#searchHiddenGems` + `:289-303#gemSearchPosition`. |
 | G280 | UserResolver | C | `socialIdentity.ts:146-229`. |
@@ -2093,8 +2093,8 @@ were wrong.** After it, every citation into the file is anchored and holds.
 | G185 | lines 622, 724-725, 806-826 | `routes/discoverySearch.ts:739#visibility`, `:920#visibility`, `:921#show_in_discovery`, `:1081-1084#admitted:` | as G70 |
 | G190 | line 980, and `gemSearchPosition` "241-255" | `routes/discoverySearch.ts:1489#sensitivity_level,` + `:289-303#gemSearchPosition` | as G68 |
 | G197 | lines 1827-1828 | `routes/discoverySearch.ts:2259-2260#COMMON_LANGUAGES` | as G73 |
-| G220 | lines 1797-1830 | `routes/discoverySearch.ts:2194#dispatchSearch` + `:2020-2057#"travelers":` | the `searchCities` profile select |
-| G277 | lines 1664-1685 | `routes/discoverySearch.ts:2072#searchCountries` + `:1895-1896#home_country")` | a `catch { return []; }` |
+| G220 | lines 1797-1830 | `routes/discoverySearch.ts:2194#dispatchSearch` + `artifacts/api-server/src/routes/discoverySearch.ts:2215#case "travelers":` | the `searchCities` profile select |
+| G277 | lines 1664-1685 | `routes/discoverySearch.ts:2072#searchCountries` + `artifacts/api-server/src/routes/discoverySearch.ts:2084#.ilike("home_country", pat)` | a `catch { return []; }` |
 | G278 | line 1818 | `routes/discoverySearch.ts:2238#searchPlaces` | `let skipped = 0;` |
 | G279 | line 1819 | `routes/discoverySearch.ts:2242#searchHiddenGems` + `:289-303#gemSearchPosition` | a `for` header |
 | G281 | line 1810 | `routes/discoverySearch.ts:2231#searchTrips` | a fail-closed comment |
@@ -2697,7 +2697,7 @@ rows re-read, which this section did not do.
 
 ### 13.4 Two citations that are stale, and that NO check can see
 
-`G277`'s second pointer is `` `:1895-1896#home_country")` `` — a BARE inherited
+`G277`'s second pointer is `` `artifacts/api-server/src/routes/discoverySearch.ts:2084#.ilike("home_country", pat)` `` — a BARE inherited
 citation, which takes its file from `discoverySearch.ts` named earlier in the same
 row. **It does not resolve at `a97bfdac0`, it did not resolve at `1fe72289b`
 either, and neither pass can tell you so.** `INHERITED_RE` in
@@ -2717,8 +2717,8 @@ untouched *because the checker did not*. The same thing happened to `G220`.
 
 | row | the invisible pointer | what it lands on at `a97bfdac0` | what it should name |
 |---|---|---|---|
-| G277 (§836, §2097) | `` `:1895-1896#home_country")` `` | the `searchCities` signature — the anchor text is absent from both lines | `artifacts/api-server/src/routes/discoverySearch.ts:2083#.select("id, home_country")` and `artifacts/api-server/src/routes/discoverySearch.ts:2084#.ilike("home_country", pat)` |
-| G220 (§742, §2096) | `` `:2020-2057#"travelers":` `` | a comment about `canonical_locations` and a JSDoc line — `dispatchSearch`'s switch is nowhere near | `artifacts/api-server/src/routes/discoverySearch.ts:2215#case "travelers": {` — the switch runs 2215-2262 |
+| G277 (§836, §2097) | `` `artifacts/api-server/src/routes/discoverySearch.ts:2084#.ilike("home_country", pat)` `` | the `searchCities` signature — the anchor text is absent from both lines | `artifacts/api-server/src/routes/discoverySearch.ts:2083#.select("id, home_country")` and `artifacts/api-server/src/routes/discoverySearch.ts:2084#.ilike("home_country", pat)` |
+| G220 (§742, §2096) | `` `artifacts/api-server/src/routes/discoverySearch.ts:2215#case "travelers":` `` | a comment about `canonical_locations` and a JSDoc line — `dispatchSearch`'s switch is nowhere near | `artifacts/api-server/src/routes/discoverySearch.ts:2215#case "travelers": {` — the switch runs 2215-2262 |
 
 Both were already wrong at `1fe72289b` (`searchCountries` was at line 1999 and
 `case "travelers":` at 2144 there), so this is a PRE-EXISTING defect the recent
