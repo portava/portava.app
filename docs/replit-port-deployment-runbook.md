@@ -70,3 +70,54 @@ media_assets still 8, lifecycle still 0, attempts still 0, freshness_policies 18
   checkout, never against a tree that can still change.
 - Nothing here asserts the port is deployed or runtime-verified. Those are
   separate steps with separate evidence.
+
+## A wider finding this port surfaced but did NOT fix
+
+2202's absence from production was not a one-off. It is one instance of a class,
+and the class is large.
+
+Measured on 2026-09-16 by extracting every `CREATE TABLE` from the 569 numbered
+migrations (with comments stripped — an unstripped pass produced nine false
+positives from `CREATE TABLE` appearing in header prose) and diffing against
+production's live table list:
+
+    tables really created by numbered migrations ....... 384
+    of those, ABSENT from production .................... 68
+    migrations implicated ............................... 41
+
+Some are expected: `0050_rent_a_buddy.sql`'s nine `buddy_*` tables were
+superseded by the `rent_buddy_*` set that production does have, and one match
+(`2273`) is a `RETURNS TABLE` clause rather than a real table. The rest are not
+explained that way. Among them:
+
+    2910_discovery_trails.sql ...................... 6 tables
+    2763_trip_presence_proposals_snapshots_outcomes  4 tables
+    2811_telegraph_message_side_tables.sql ......... 4 tables
+    2762_trip_goals_decisions_risks.sql ............ 3 tables
+    2217_protected_locations.sql ................... protected_zones
+    2287_passport_telemetry_events.sql ............. passport_telemetry_events
+    2308_wall_telemetry_events.sql ................. wall_telemetry_events
+    2950_input_assistance_telemetry_events.sql ..... input_assistance_telemetry_events
+
+`checkProductionDrift.ts` already classifies 60 objects as "unapplied" across 40
+entries, so a good part of this is known and tracked — including `protected_zones`,
+whose note says the deny-by-default RLS pattern every new migration is told to
+copy "has no production instance to compare against", and the three other
+telemetry tables, each with the same "writer exists, storage does not" shape that
+2202 had.
+
+WHY THIS IS REPORTED RATHER THAN REPAIRED HERE. Applying 41 migrations to
+production is not this port's scope, it is not rehearsed, and several of them
+create tables whose writers are behind flags whose posture would need deciding
+one at a time. 2202 and 2222 were applied because 2960 concretely depends on
+them and the dependency was the thing blocking a deliverable. The rest need
+their own pass, with the same treatment: rehearse on CI, check the flag posture,
+apply in dependency order, verify data before and after.
+
+THE TRANSFERABLE LESSON, worth more than the list. A `schema_migration_ledger`
+row with `applied_by='backfill'` asserts that the FILENAME existed when 2254 ran
+— never that the file ran. Reading such a row as "applied" is what let 2202 look
+deployed for as long as it did, and `routes/mapTelemetry.ts` returning 200 with
+`accepted: 0` on a failed insert is what kept it invisible from the outside. Any
+audit of what is deployed must treat a backfill row as *no information* and go to
+the live schema instead.
