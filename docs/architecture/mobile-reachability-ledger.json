@@ -8701,7 +8701,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "artifacts/api-server/src/routes/discoverySearch.ts:2247",
+      "handler": "artifacts/api-server/src/routes/discoverySearch.ts:2327",
       "handlerCount": 1,
       "classification": "DEAD ENDPOINT",
       "chain": []
@@ -8711,7 +8711,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "artifacts/api-server/src/routes/discoverySearch.ts:1863",
+      "handler": "artifacts/api-server/src/routes/discoverySearch.ts:1866",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -8736,7 +8736,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "artifacts/api-server/src/routes/discoverySearch.ts:2127",
+      "handler": "artifacts/api-server/src/routes/discoverySearch.ts:2198",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [

@@ -670,8 +670,8 @@ ids named in that row; each id remains individually addressable.
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| TR35 | Primary lifecycle IDEA → PLANNING → BOOKED → PRE_DEPARTURE → TRAVELING → IN_DESTINATION → RETURNING → COMPLETED → MEMORY, plus DISRUPTED / CANCELLED / ABANDONED / ARCHIVED | **W** | `migrations/0001_spine.sql:10` — `trip_status as enum ('planning','upcoming','active','completed','cancelled')`, extended in practice by `'draft'` and `'archived'` (`domain/trips/invariants/tripStatus.ts:51,53`). Seven states against thirteen: BOOKED, PRE_DEPARTURE, TRAVELING vs IN_DESTINATION vs RETURNING, MEMORY, DISRUPTED and ABANDONED have no representation, so the states that carry the spec's operational meaning are exactly the missing ones. |
-| TR36 | Lifecycle is computed from canonical facts plus explicit user actions | **C** | `domain/trips/invariants/tripStatus.ts:51-68#computeTripStatus` `computeTripStatus` derives the state from title/city presence and date boundaries **in the trip's own timezone**, honours terminal states, and `:1-10` records why it exists: two copies had diverged, one comparing UTC midnight, so *"the same trip could read 'upcoming' on one endpoint and 'active' on the other around the day boundary."* The header ends *"Never let clients override this."* |
+| TR35 | Primary lifecycle IDEA → PLANNING → BOOKED → PRE_DEPARTURE → TRAVELING → IN_DESTINATION → RETURNING → COMPLETED → MEMORY, plus DISRUPTED / CANCELLED / ABANDONED / ARCHIVED | **W** | `migrations/0001_spine.sql:10` — `trip_status as enum ('planning','upcoming','active','completed','cancelled')`, extended in practice by `'draft'` and `'archived'` (`domain/trips/invariants/tripStatus.ts:38,40`). Seven states against thirteen: BOOKED, PRE_DEPARTURE, TRAVELING vs IN_DESTINATION vs RETURNING, MEMORY, DISRUPTED and ABANDONED have no representation, so the states that carry the spec's operational meaning are exactly the missing ones. |
+| TR36 | Lifecycle is computed from canonical facts plus explicit user actions | **C** | `domain/trips/invariants/tripStatus.ts:51-90#computeTripStatus` `computeTripStatus` derives the state from title/city presence and date boundaries **in the trip's own timezone**, honours terminal states, and `:1-10` records why it exists: two copies had diverged, one comparing UTC midnight, so *"the same trip could read 'upcoming' on one endpoint and 'active' on the other around the day boundary."* The header ends *"Never let clients override this."* |
 | TR37 | Do not store boolean soup such as isActive/isStarted/isFinished/isTraveling | **C** | `trips` has no such column (`0001_spine.sql:72-89`), and the client derives display state rather than trusting the stored one (`src/components/TripPage.tsx:58-60`, `src/domain/trips/invariants/tripStatus.ts` `deriveTripDisplayStatus`) — the prohibition is honoured on both sides. |
 | TR38–TR45 | §3.2 active operational phase: ARRIVAL_DAY · FREE_TIME · ACTIVE_PLAN · TRANSIT · NIGHTLIFE · REST · DEPARTURE_DAY · DISRUPTED, each with its own primary UI/behaviour | **N** ×8 | There is no phase concept at all: no column, no enum, no derivation, no UI switch. `grep -rli "ARRIVAL_DAY\|FREE_TIME\|ACTIVE_PLAN\|DEPARTURE_DAY"` over the whole tree returns nothing. The nearest artifact is `routes/tripReadiness.ts:344` `GET /trips/:tripId/arrival-board`, which is an arrival *list*, not an arrival-day phase, and it is behind `trip_readiness_enabled`, seeded false (`0170_trip_readiness.sql:76`). |
 | TR46 | Plan state machine DRAFT → PROPOSED → CONFIRMED → IN_PROGRESS → COMPLETED, with AT_RISK / MOVED / CANCELLED / SKIPPED | **W** | `0010_trip_plan.sql:12-13` — `'confirmed' \| 'tentative' \| 'done' \| 'cancelled'`. Four states against nine, and the three that carry operational meaning (IN_PROGRESS, AT_RISK, MOVED) are all absent, so a plan cannot be started, cannot be flagged at risk, and cannot record that it moved. |
@@ -3993,7 +3993,7 @@ nothing to get.
   reads makes a sub-projection AHEAD and the Today projection is refused
   `TRIP_PROJECTION_VERSION_AHEAD` rather than assembled from two states. The
   test drives it with a stateful fake
-  (`src/test/tripTodayProjection.test.ts:124#LIVE`) and a
+  (`src/test/tripTodayProjection.test.ts:144#LIVE`) and a
   mutation that stops handing the version over went red.
 - `GET /trips/:tripId/today` (`server/trips/readRoutes/tripProjections.ts:301#today`);
   one refusal mapping for the three gated builders
@@ -5283,7 +5283,7 @@ with every database suite green; no new flag, no new table.
 - **Two rows the tree had already earned.** TR186: Today's
   `opportunities` has been a layer with a producer since §43
   (`domain/trips/projections/TripTodayProjection.ts:114#opportunities:`;
-  `src/test/tripTodayProjection.test.ts:64#opportunities.status`). TR221:
+  `src/test/tripTodayProjection.test.ts:84#opportunities.status`). TR221:
   uncertainty is a value in four places now — a signal's confidence, a
   window's `certified`, an experience's UNCERTAIN verdict, and §12.3's
   `representedAsUncertainty` on `get_opportunities`, which is the row's
@@ -5633,7 +5633,7 @@ under a mutation before its commit.
   null when the hop could not be estimated (`domain/trips/projections/TripFreedomProjection.ts:205#arrivalEstimates.push(`);
   Today takes that as `estimatedArrivalAt` and a lodging's required arrival
   as its desk deadline (`domain/trips/projections/TripTodayProjection.ts:340#checkInDeadlineAt:`).
-  `test/tripTodayProjection.test.ts:84#late_check_in`: a hotel whose desk
+  `test/tripTodayProjection.test.ts:104#late_check_in`: a hotel whose desk
   closes ten minutes after the traveller leaves the previous commitment,
   ten kilometres away, fires with the minutes over the desk; the same
   commitment as an event does not. Mutation: the desk deadline dropped
@@ -5863,8 +5863,8 @@ and the column §17.4 needed.
   when everyone has arrived or the checkpoint is closed the reason is not
   derived and the switch is `NORMAL` again. The route says so in words
   (`prioritySwitch`) rather than writing a priority anywhere.
-  `test/tripHealthProjection.test.ts:201#REGROUP_OPEN → SAFETY_EVENT` and
-  `test/tripTodayProjection.test.ts:238#kind === "regroup"` pin the flip and
+  `test/tripHealthProjection.test.ts:224#REGROUP_OPEN → SAFETY_EVENT` and
+  `test/tripTodayProjection.test.ts:258#kind === "regroup"` pin the flip and
   the flip back; `test/tripMeetingCheckpointsRoute.test.ts:82#chosenBy` pins
   the route.
 - **The map's meetup layer (TR262)** — `server/trips/readRoutes/tripMapProjection.ts:247#kind: "meeting_checkpoint"`:
@@ -6656,12 +6656,12 @@ rows stay W with the reason narrowed to the gate alone.
   `TRIP_TEMPORAL_CONFLICT`, the commitments named
   (`routes/rentABuddy.ts:2187#error: "trip_time_conflict"`); every other verdict
   rides on the 201. Discovery search takes `tripId`
-  (`routes/discoverySearch.ts:2404#tripId: ctxTripId,`), reads the windows once
-  (`routes/discoverySearch.ts:827#const read = await readTripWindows(sc, ctx.tripId, userId);`),
+  (`routes/discoverySearch.ts:2484#tripId: ctxTripId,`), reads the windows once
+  (`routes/discoverySearch.ts:830#const read = await readTripWindows(sc, ctx.tripId, userId);`),
   places each event's start against them as `metadata.tripFit`
   (`domain/trips/services/TripFreedomConsumers.ts:153#export function fitInstantToWindows(`)
   and leads with the ones that fit, stably, AFTER the match-tier ranking
-  (`routes/discoverySearch.ts:849#function leadWithTripFit(`). Tests: the
+  (`routes/discoverySearch.ts:852#function leadWithTripFit(`). Tests: the
   verdicts against the real freedom projection on the health fixture's Paris
   trip — 13:00 local FITS, 11:30 crosses A, 17:30 runs into B's reserved
   travel, a later date OUTSIDE_TRIP, no start time UNPLACED, gate closed or
@@ -7662,7 +7662,7 @@ has. An `invited`, `declined`, `removed` or `left` member is not on the trip and
 not alerted. Naming a finer set for the downstream PLANS is TR150's, and TR150 stays
 W — see §68.2, where it is BOTH.
 
-`artifacts/api-server/src/test/tripTodayProjection.test.ts:95#tight arrival (TR144)`
+`artifacts/api-server/src/test/tripTodayProjection.test.ts:115#tight arrival (TR144)`
 drives it through the real projection: a commitment due at 10:05 whose hop from the
 previous commitment puts the traveller there ninety minutes later fires
 `tight_arrival` with the downstream named, the §8.4 mitigation verbatim, a magnitude

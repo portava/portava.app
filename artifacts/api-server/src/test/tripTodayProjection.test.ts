@@ -27,8 +27,28 @@ const T = (hhmm: string, day = "13") => `2026-09-${day}T${hhmm}:00.000Z`;
 const NOW = new Date(T("12:00"));
 type Row = Record<string, any>;
 
+/**
+ * The stage fixture must contain BOTH clocks this file uses.
+ *
+ * The builder tests pin `now` to NOW (2026-09-13). The route tests cannot —
+ * `GET /trips/:id/today` judges on the real clock — and the projection picks
+ * the stage with `starts_at <= now < ends_at`. With `ends_at` hard-coded to
+ * 2026-09-15T23:59 that route test was green only until the real date passed
+ * the 15th, and at 00:00 UTC on 2026-09-16 it began asserting `stageId ===
+ * "st1"` against a trip that, by the wall clock, had no current stage. It is
+ * the same failure mode as `computeTripStatus` reading a second clock, in a
+ * fixture instead of in code.
+ *
+ * `starts_at` stays fixed so the injected-clock tests are untouched. `ends_at`
+ * is the LATER of the original end and one day out from the real clock, so the
+ * window contains the pinned NOW and the real now on any day the suite runs.
+ * Bumping the constant to a new fixed date would only re-arm it.
+ */
 function withStages(tables: Record<string, Row[]>): Record<string, Row[]> {
-  return { ...tables, trip_stages: tables.trip_stages ?? [{ id: "st1", trip_id: TRIP_ID, sequence: 1, starts_at: T("00:00", "12"), ends_at: T("23:59", "15") }] };
+  const originalEnd = T("23:59", "15");
+  const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+  const endsAt = tomorrow > originalEnd ? tomorrow : originalEnd;
+  return { ...tables, trip_stages: tables.trip_stages ?? [{ id: "st1", trip_id: TRIP_ID, sequence: 1, starts_at: T("00:00", "12"), ends_at: endsAt }] };
 }
 
 let server: Server; let port: number;

@@ -61,16 +61,16 @@ with `docs/`, `db/` or `travel-buddy-standalone/`.
 | A05 | Sensing §8 `:137` — intent modes *"Right Now, Tonight, Explore, Quiet, Social, High Energy, Nearby, Trip"* on shared intelligence | **N** — owner hold | Nothing in `routes/discovery*.ts` or `lib/discovery*.ts` models an intent mode; the only mode concept is `DiscoveryContextMode` (`routes/discovery.ts:29`), which is a *location* mode (in_city / near_me / going_soon). Compass's nine modes (census-sensing S72) are a different vocabulary on a different surface. Same hold as A01 (`ROADMAP.md:648`). |
 | A06 | Sensing `:19` — *"Existing Map / Discovery / Wall / Compass paths must continue to function while new projections are partial or feature-gated"* | **C** | `lib/discoveryEngineMode.ts:151-175` — every failure (absent row, disabled, no mode, invalid mode, engaged stop, unreadable stop, null client, throwing client) resolves to `legacy`; pinned by `test/discoveryEngineMode.test.ts` cases A–L. `migrations/2289:70-74` refuses to commit the modifiers flag ON. |
 | A07 | Sensing `:129` — *"Safety constraints outrank opportunity/vibe. A dangerous place must never simultaneously be promoted as 'best move now'"* — Discovery half | **N** | No safety term reaches the ranker (A01 evidence). There is also no world safety state to consume — census-sensing S66 records the Compass half as W and the producer side as absent. Not gated by the hold (a constraint, not an optimisation), but unbuildable until a safety projection exists. |
-| A08 | GII `:8` — *"This is not owned by Discovery… Those surfaces consume it through a shared platform layer"*; `:7` core rule; census-input-intelligence G6 — *"four independent engines are still live and unmigrated"* | **W** | **Measured: Discovery owns ONE of the four.** The four G6 engines are `travel-buddy-standalone/src/hooks/useSearchSuggestions.ts` (→ `GET /api/discovery/suggest`, Discovery's), `hooks/useGooglePlacesAutocomplete.ts` (→ `/api/places/google-autocomplete`, Places), `hooks/usePlaceSearch.ts` (→ `/api/places/search`, Places) and `components/MentionInput.tsx` (mentions). Server side, `routes/discoverySearch.ts:2634#router.get("/discovery/suggest",` `/discovery/suggest` is **not a parallel matcher** — it calls the same `dispatchSearch` (`routes/discoverySearch.ts:2718#dispatchSearch(sc, q, user.id, blockedSet, ageRestrictedSet, p.type, 0, p.limit, ctx)`) the gateway calls (`lib/inputAssistance/gateway.ts:27,384`) — but it *is* a second route, and the client runs it **on every keystroke in parallel with the gateway** as a deliberate fallback: `hooks/useGlobalSearchSuggestions.ts:10-12` — *"The legacy hook ALWAYS runs and is the fallback — its proven behavior is never removed"*; `app/search.tsx:24,154` consumes that wrapper. Two requests per keystroke, one canonical path. **Not closed here**: the consolidation is a client change (stop invoking the legacy hook when the gateway is `available`), it removes a fallback users currently have, and the server route cannot be retired while the fallback references it. Owner decision (§6 D1). |
-| A09 | Trips `:12` — *"No Map, Compass, Telegraph, Discovery, Buddy, or UI component may independently invent canonical trip state"* | **C** | Every `.from(...)` literal in `routes/discovery.ts` enumerated: `discovery_places` ×8, `discovery_place_saves` ×3, `discovery_place_reports`, `place_votes`, `places`, `profiles` ×2, `reviews`, `collections`, `collection_items`, `user_location_state` — no `trip*` table; `routes/discoverySearch.ts:914,1006#.from(` read `trips` / `trip_plan_items` with `.select` only; **zero `.rpc(` calls** across `routes/discovery*.ts` and `lib/discovery*.ts`. Caveat recorded per `scripts/checkWriterlessReads.ts:39-41`: a literal grep is a floor; no dynamic `.from(expr)` was found in these files either. |
-| A10 | Trips `:25`, `:488` — *"Map, Compass, Discovery… consume explicit Trip projections/contracts rather than duplicating Trip semantics"* | **W** | **Stays W; its REASON is superseded — recensused 2026-09-08.** The row said *"No `TripDiscoveryProjection` exists … Not closable from Discovery: the projection is Trips' to publish"* and filed it as owner decision D3. Both halves are now false. **The projection exists and Trips publishes it**: `domain/trips/contracts/tripDiscoveryProjection.ts:225#searchTripDiscoveryProjections` and `:252#readTripDiscoveryProjections`, over `TRIP_DISCOVERY_SOURCE_COLUMNS` (`:136#TRIP_DISCOVERY_SOURCE_COLUMNS`). **Discovery consumes it**: `lib/discoveryTripProjectionConsumer.ts` — the switch, the §19.1 acceptance check and the card mapping, wired into both search paths at `routes/discoverySearch.ts:893#discoveryTripProjectionGate` (trips) and `:1035#discoveryTripProjectionGate` (plans). **Why it is still W, and why that is a DIFFERENT kind of open than before:** the consumer is behind a CAPABILITY, not a bare flag — `capability = discovery_trip_projection_enabled (migration 2550, seeded FALSE) && SCHEMA_CAPABILITY_READY`, because `TRIP_DISCOVERY_SOURCE_COLUMNS` ends in `trips.version` which migration 2420 adds and production does not have. Both projection readers fail CLOSED on a resolved `.error`, so an ungated switch would turn every production trip search into `[]` on a 42703, silently. Until 2420 is applied and the flag lit, the LIVE path is still the duplication this clause forbids (`routes/discoverySearch.ts:918#show_in_discovery`, `:1063#show_in_discovery`). **So this moved from an OWNER-blocked row to a DEPLOYMENT-gated one** — nothing here is waiting on a decision any more, and D3 in §6 is discharged. |
+| A08 | GII `:8` — *"This is not owned by Discovery… Those surfaces consume it through a shared platform layer"*; `:7` core rule; census-input-intelligence G6 — *"four independent engines are still live and unmigrated"* | **W** | **Measured: Discovery owns ONE of the four.** The four G6 engines are `travel-buddy-standalone/src/hooks/useSearchSuggestions.ts` (→ `GET /api/discovery/suggest`, Discovery's), `hooks/useGooglePlacesAutocomplete.ts` (→ `/api/places/google-autocomplete`, Places), `hooks/usePlaceSearch.ts` (→ `/api/places/search`, Places) and `components/MentionInput.tsx` (mentions). Server side, `routes/discoverySearch.ts:2714#router.get("/discovery/suggest",` `/discovery/suggest` is **not a parallel matcher** — it calls the same `dispatchSearch` (`routes/discoverySearch.ts:2798#dispatchSearch(sc, q, user.id, blockedSet, ageRestrictedSet, p.type, 0, p.limit, ctx)`) the gateway calls (`lib/inputAssistance/gateway.ts:27,384`) — but it *is* a second route, and the client runs it **on every keystroke in parallel with the gateway** as a deliberate fallback: `hooks/useGlobalSearchSuggestions.ts:10-12` — *"The legacy hook ALWAYS runs and is the fallback — its proven behavior is never removed"*; `app/search.tsx:24,154` consumes that wrapper. Two requests per keystroke, one canonical path. **Not closed here**: the consolidation is a client change (stop invoking the legacy hook when the gateway is `available`), it removes a fallback users currently have, and the server route cannot be retired while the fallback references it. Owner decision (§6 D1). |
+| A09 | Trips `:12` — *"No Map, Compass, Telegraph, Discovery, Buddy, or UI component may independently invent canonical trip state"* | **C** | Every `.from(...)` literal in `routes/discovery.ts` enumerated: `discovery_places` ×8, `discovery_place_saves` ×3, `discovery_place_reports`, `place_votes`, `places`, `profiles` ×2, `reviews`, `collections`, `collection_items`, `user_location_state` — no `trip*` table; `routes/discoverySearch.ts:917,1009#.from(` read `trips` / `trip_plan_items` with `.select` only; **zero `.rpc(` calls** across `routes/discovery*.ts` and `lib/discovery*.ts`. Caveat recorded per `scripts/checkWriterlessReads.ts:39-41`: a literal grep is a floor; no dynamic `.from(expr)` was found in these files either. |
+| A10 | Trips `:25`, `:488` — *"Map, Compass, Discovery… consume explicit Trip projections/contracts rather than duplicating Trip semantics"* | **W** | **Stays W; its REASON is superseded — recensused 2026-09-08.** The row said *"No `TripDiscoveryProjection` exists … Not closable from Discovery: the projection is Trips' to publish"* and filed it as owner decision D3. Both halves are now false. **The projection exists and Trips publishes it**: `domain/trips/contracts/tripDiscoveryProjection.ts:225#searchTripDiscoveryProjections` and `:252#readTripDiscoveryProjections`, over `TRIP_DISCOVERY_SOURCE_COLUMNS` (`:136#TRIP_DISCOVERY_SOURCE_COLUMNS`). **Discovery consumes it**: `lib/discoveryTripProjectionConsumer.ts` — the switch, the §19.1 acceptance check and the card mapping, wired into both search paths at `routes/discoverySearch.ts:896#discoveryTripProjectionGate` (trips) and `:1038#discoveryTripProjectionGate` (plans). **Why it is still W, and why that is a DIFFERENT kind of open than before:** the consumer is behind a CAPABILITY, not a bare flag — `capability = discovery_trip_projection_enabled (migration 2550, seeded FALSE) && SCHEMA_CAPABILITY_READY`, because `TRIP_DISCOVERY_SOURCE_COLUMNS` ends in `trips.version` which migration 2420 adds and production does not have. Both projection readers fail CLOSED on a resolved `.error`, so an ungated switch would turn every production trip search into `[]` on a 42703, silently. Until 2420 is applied and the flag lit, the LIVE path is still the duplication this clause forbids (`routes/discoverySearch.ts:921#show_in_discovery`, `:1066#show_in_discovery`). **So this moved from an OWNER-blocked row to a DEPLOYMENT-gated one** — nothing here is waiting on a decision any more, and D3 in §6 is discharged. |
 | A11 | Trips `:185` — *"Discovery, Compass, Saved Ideas, and Buddy matching consume these [Temporal Freedom] windows rather than independently calculating 'free time'"* | **N** | `FreedomWindow`: zero occurrences (census-trips TR131 N). Discovery's own arithmetic: `lib/portavaRank.ts:86` (`availableMinutes` — *"Minutes of free window (layover mode / availability) — actionability cap"*) and `:245-248` (*"must start within the window"*). No engine to consume. |
-| A12 | Trips `:175` — *"Public Trip content must not leak lodging detail, exact private location, future absence from home, safety state, or unconsented participant data"* — the Discovery leg | **C** | `routes/discoverySearch.ts:915#.select("id, title, destination_city,` selects `id, title, destination_city, destination_country, owner_id, cover_url, start_date, status, visibility, created_at` — no lodging, no coordinates, no safety column, no participant list — and only public rows (`routes/discoverySearch.ts:917#.eq("visibility", "public")`). Recorded, not hidden: `start_date` + destination on a public trip is a Trips-domain public field; whether that is "future absence" is a Trips ruling (census-trips settled only the lodging clause, TR117). |
+| A12 | Trips `:175` — *"Public Trip content must not leak lodging detail, exact private location, future absence from home, safety state, or unconsented participant data"* — the Discovery leg | **C** | `routes/discoverySearch.ts:918#.select("id, title, destination_city,` selects `id, title, destination_city, destination_country, owner_id, cover_url, start_date, status, visibility, created_at` — no lodging, no coordinates, no safety column, no participant list — and only public rows (`routes/discoverySearch.ts:920#.eq("visibility", "public")`). Recorded, not hidden: `start_date` + destination on a public trip is a Trips-domain public field; whether that is "future absence" is a Trips ruling (census-trips settled only the lodging clause, TR117). |
 | A13 | Layover `:66` — *"All surfaces consume the same certified LayoverSnapshot / RecommendationContract; no duplicate time-budget logic"*; `:803` — *"One canonical LayoverSnapshot drives Trips, Compass, Discovery, Map and Safe Return"* | **N** | `LayoverSnapshot`: zero occurrences. `grep -rIn -i layover routes/discovery*.ts lib/discovery*.ts` → nothing; Discovery has no layover reference at all. The duplicate time-budget logic named in L-02 is A11's `portavaRank.ts:86,245`. |
 | A14 | Layover §25 `:754` — *"Discovery: Only show experiences from certified action universe in Layover mode"* | **N** | Discovery has no Layover mode. The nearest artefact is `routes/hiddenGems.ts:599-631` `GET /hidden-gems/layover-safe` — a Hidden Gems route, flag-gated, taking `availableMinutes` **from the query string** (`:613`) rather than from any session, and per census-layover L269 never called by the layover dashboard. |
-| A15 | Passport `:57` — *"Do not create separate profile systems for self, public, Trips, Buddy, Discovery or Telegraph. Build one Passport projection system with context-specific views"* | **W** | Half satisfied since the census-passport pass: the person **card** is the assembler's (A16). The search **list** still assembles its own identity payload from `profiles` — `routes/discoverySearch.ts:577#.select("id, handle, username, name, display_name, avatar_url` selects `id, handle, username, name, avatar_url, is_private, home_city, home_country, …` and `routes/discoverySearch.ts:631-673#sc.from("user_follows")` applied its own privacy logic (locked preview, `show_profile_picture_publicly`, name rule). **POINTERS REPOINTED 2026-09-13 (§11): `:547` named a JSDoc line inside `searchTravelers`' header — and already did at `3ca68cb06` — and the privacy-logic half of this sentence is superseded by §10.2's A15 W→C, which measured all three rules as the Passport batch projection's; the cited range today is the follow/friend batch that feeds `routes/discoverySearch.ts:661#const identity = await buildListIdentityProjections(sc, nameSafe as any[], {`.** Rules agree with the assembler's today; the construction is the duplication `services/passport/PassportConsumerProjections.ts:6-14` says it exists to end. Not closed: routing every list row through `buildConsumerProjection` is N+1 assembler calls per search and a response-shape change on a live route. Owner decision (§6 D4). |
-| A16 | Passport §21 `:213-214` — Discovery variant: *"Identity, verification, availability, Open to Plans, shared context, permitted trust summary"* | **C** | `routes/discoverySearch.ts:2803-2835#router.get("/discovery/people/:userId/passport",` `GET /discovery/people/:userId/passport` → `allowDiscoveryPersonCard` (`:2824#allowDiscoveryPersonCard(sc,`) → `buildConsumerProjection(sc, "discovery_card", …)` (`:2828#buildConsumerProjection(sc,`). **Supersedes census-passport P95 (W — "Nothing calls it")**: it is called, from Discovery, by the route that opens a search row. |
-| A17 | Passport `:263` — *"A Passport block must propagate across Discovery… Do not implement blocking independently per surface"*; Telegraph `:285` — *"No subsystem may independently 'rediscover' a blocked relationship"* | **W → C (fixed this pass)** | **Was:** `routes/discoverySearch.ts` carried a byte-for-byte private copy of `lib/blocks.fetchBlockedSet` (the old `:371-388` — a pointer into the pre-fix tree, not into HEAD), while `lib/inputAssistance/gateway.ts:23`, `socialIdentity.ts:27` and `routes/discovery.ts:50` used the shared one — two copies of the bidirectional, fail-closed block reader, agreeing until one is edited. **Now:** `routes/discoverySearch.ts:83#fetchBlockedSet,` imports it and `routes/discoverySearch.ts:434#export { fetchBlockedSet }` re-exports it; `test/discoverySearchBlockedSubmitter.test.ts` pins source *and* function identity (`discoverySearch.fetchBlockedSet === blocks.fetchBlockedSet`). Behaviour byte-identical (same query, same null-on-error). Hand-revert: re-adding the copy → 1 failure (§7). |
+| A15 | Passport `:57` — *"Do not create separate profile systems for self, public, Trips, Buddy, Discovery or Telegraph. Build one Passport projection system with context-specific views"* | **W** | Half satisfied since the census-passport pass: the person **card** is the assembler's (A16). The search **list** still assembles its own identity payload from `profiles` — `routes/discoverySearch.ts:580#.select("id, handle, username, name, display_name, avatar_url` selects `id, handle, username, name, avatar_url, is_private, home_city, home_country, …` and `routes/discoverySearch.ts:634-676#sc.from("user_follows")` applied its own privacy logic (locked preview, `show_profile_picture_publicly`, name rule). **POINTERS REPOINTED 2026-09-13 (§11): `routes/discoverySearch.ts:562#Blocked users excluded` named a JSDoc line inside `searchTravelers`' header — and already did at `3ca68cb06` — and the privacy-logic half of this sentence is superseded by §10.2's A15 W→C, which measured all three rules as the Passport batch projection's; the cited range today is the follow/friend batch that feeds `routes/discoverySearch.ts:664#const identity = await buildListIdentityProjections(sc, nameSafe as any[], {`.** Rules agree with the assembler's today; the construction is the duplication `services/passport/PassportConsumerProjections.ts:6-14` says it exists to end. Not closed: routing every list row through `buildConsumerProjection` is N+1 assembler calls per search and a response-shape change on a live route. Owner decision (§6 D4). |
+| A16 | Passport §21 `:213-214` — Discovery variant: *"Identity, verification, availability, Open to Plans, shared context, permitted trust summary"* | **C** | `routes/discoverySearch.ts:2883-2915#router.get("/discovery/people/:userId/passport",` `GET /discovery/people/:userId/passport` → `allowDiscoveryPersonCard` (`:2904#allowDiscoveryPersonCard(sc,`) → `buildConsumerProjection(sc, "discovery_card", …)` (`:2908#buildConsumerProjection(sc,`). **Supersedes census-passport P95 (W — "Nothing calls it")**: it is called, from Discovery, by the route that opens a search row. |
+| A17 | Passport `:263` — *"A Passport block must propagate across Discovery… Do not implement blocking independently per surface"*; Telegraph `:285` — *"No subsystem may independently 'rediscover' a blocked relationship"* | **W → C (fixed this pass)** | **Was:** `routes/discoverySearch.ts` carried a byte-for-byte private copy of `lib/blocks.fetchBlockedSet` (the old `:371-388` — a pointer into the pre-fix tree, not into HEAD), while `lib/inputAssistance/gateway.ts:23`, `socialIdentity.ts:27` and `routes/discovery.ts:50` used the shared one — two copies of the bidirectional, fail-closed block reader, agreeing until one is edited. **Now:** `routes/discoverySearch.ts:83#fetchBlockedSet,` imports it and `routes/discoverySearch.ts:437#export { fetchBlockedSet }` re-exports it; `test/discoverySearchBlockedSubmitter.test.ts` pins source *and* function identity (`discoverySearch.fetchBlockedSet === blocks.fetchBlockedSet`). Behaviour byte-identical (same query, same null-on-error). Hand-revert: re-adding the copy → 1 failure (§7). |
 | A18 | Passport `:94` — *"Compass and Discovery should weight explicit current intent more heavily than generic interests"* | **N** — owner hold | Supply side exists (`PassportConsumerProjections.ts:106,188,212` expose explicit intent on the card). Demand side: no intent term in `lib/discoveryPde.ts` / `lib/discoveryModifiers.ts` (headers enumerate the inputs; census-passport P42 confirms *"nothing consumes it"*). Cross-cutting P-05 was COULD NOT ESTABLISH; it is now established absent. Ranking machinery → same hold as A01. |
 | A19 | Telegraph `:285` — block cascade, the *discovery* leg | **C** | Every Discovery reader applies the shared rule: search/suggest via `fetchBlockedSet` (`:1793,1982`) and `submitterIsVisible` (`:82`); `GET /discovery` and `/discovery/community` via `routes/discovery.ts:50,879,2654`; the person card inside the assembler. Pinned by `test/discoverySearchBlockedSubmitter.test.ts` (12) and `test/discoveryBlockedSubmitter.test.ts` (25), including the *unreadable-blocks-yields-nothing* cases. |
 | A20 | Telegraph `:606` — *"Every shareable Portava domain registers preview, authorization, current state, actions, search behavior, and revocation through a Telegraph content capability contract"* | **N → W** | **RE-MEASURED 2026-09-13 BY THE INTEGRATOR, because this row's stated evidence became false in this tree and an acknowledgement cannot silence that.** The old evidence read *"`TelegraphSharedContextProjection` / `contentCapability` / `content_capability`: zero occurrences repo-wide"* and *"blocked on Telegraph publishing the contract shape"*. The Telegraph §1–§11 lane published it: `services/telegraph/shareables.ts:80` declares the per-object interface — `getSharePreview(viewerId)`, `getCurrentState(viewerId)`, `getAvailableActions(viewerId, conversationId)`, `getDeepLink()` — and `:498` registers a loader for fifteen object families including `PLACE`, `MAP_PIN` and `HIDDEN_GEM`, the ones Discovery shares. Five of the six capabilities §5 names are now registered through one contract: **preview** (`getSharePreview`), **authorization** (each loader refuses per viewer and returns `UNAVAILABLE("private"|"unauthorized"|"not_found"|"deleted")` rather than a projection), **current state** (`getCurrentState`), **actions** (`getAvailableActions`, drawn from §8.1's fourteen at `shareables.ts:141`) and **revocation** (§5.3 — `DiscoveryCardMessage.tsx` no longer renders the sender's frozen JSON but re-resolves for the viewer on mount through `features/telegraph/sharing/useShareRevocation.ts`, showing a revoked notice when the source is gone, and treating `unknown` as its own state rather than as "revoked"). **W and not C, on the one capability that is missing: SEARCH BEHAVIOUR.** The contract has no search member and nothing registers Discovery objects for conversation search, so the requirement's six-item list is five-sixths satisfied. **What this re-measure does NOT claim:** it re-reads A20 alone, against the evidence its own text names, because that evidence is now contradicted by the tree; no other census-discovery row was re-read, and the Discovery headline is NOT restated here — moving it is the Discovery lane's to do. `grep -i discovery routes/messaging.ts routes/telegraph.ts` → nothing: the Discovery card that can be shared (`travel-buddy-standalone/src/components/DiscoveryCardMessage.tsx`) is a client-only rendering with no server-side preview/authorisation/revocation contract. Blocked on Telegraph publishing the contract shape (census-telegraph §30.16). |
@@ -85,10 +85,10 @@ with `docs/`, `db/` or `travel-buddy-standalone/`.
 | # | GII row | Verdict | Evidence |
 |---|---|---|---|
 | B01 | G57 — diacritic-insensitive matching, the **stored** side | **W** — deployment | Code is correct (census-input-intelligence G57). **Re-verified 2026-09-07: `canonical_locations.search_key` is absent from production** (`information_schema.columns` → 0), so migration 2220 is still unapplied and the fold degrades to the broken `normalized_name` in production. Operator apply, not a code change; the owning module is `lib/canonicalLocations.ts`, outside this pass's files. |
-| B02 | G62 — punctuation/emoji handling appropriate to field | **W** | `routes/discoverySearch.ts:151-153#export function sanitizeQuery` `sanitizeQuery` strips only `(),`; an emoji survives into the `ilike` pattern and matches nothing. Not changed: stripping emoji would make `"🔥 bar"` start matching `bar` — a user-visible result change on a live route with no flag. Owner decision (§6 D5). |
-| B03 | G71 / G283 — Buddy: *"service category, availability, launch/safety/payment eligibility"* | **W → partially closed** | **Was:** the only buddy predicate was `buddy_verified_at IS NOT NULL` (`routes/discoverySearch.ts:584#buddy_verified_at`), with the marketplace master switch `rent_buddy_enabled` (**false in production**) never consulted. **Now:** the **launch** leg is built — `routes/discoverySearch.ts:516-519#export async function buddiesWithheldByLaunchGate` `buddiesWithheldByLaunchGate`, applied at `:572#buddiesWithheldByLaunchGate(sc)` inside `searchTravelers(isBuddy)` so the gateway inherits it — behind `discovery_buddy_launch_gate_enabled` (migration 2360, **seeded FALSE**, applied to CI; rollback `db/rollback/2026-09-07-2360-discovery-buddy-launch-gate-rollback.sql`). Both reads fail-closed in the safe direction each (gate unreadable → legacy; marketplace unreadable → withheld). 8 tests; two hand-reverts → 2 and 5 failures (§7). **Still open:** category and availability legs — a buddy row carries no service category to filter on and the list has no availability field. Stays W. |
+| B02 | G62 — punctuation/emoji handling appropriate to field | **W** | `routes/discoverySearch.ts:154-156#export function sanitizeQuery` `sanitizeQuery` strips only `(),`; an emoji survives into the `ilike` pattern and matches nothing. Not changed: stripping emoji would make `"🔥 bar"` start matching `bar` — a user-visible result change on a live route with no flag. Owner decision (§6 D5). |
+| B03 | G71 / G283 — Buddy: *"service category, availability, launch/safety/payment eligibility"* | **W → partially closed** | **Was:** the only buddy predicate was `buddy_verified_at IS NOT NULL` (`routes/discoverySearch.ts:587#buddy_verified_at`), with the marketplace master switch `rent_buddy_enabled` (**false in production**) never consulted. **Now:** the **launch** leg is built — `routes/discoverySearch.ts:519-522#export async function buddiesWithheldByLaunchGate` `buddiesWithheldByLaunchGate`, applied at `:575#buddiesWithheldByLaunchGate(sc)` inside `searchTravelers(isBuddy)` so the gateway inherits it — behind `discovery_buddy_launch_gate_enabled` (migration 2360, **seeded FALSE**, applied to CI; rollback `db/rollback/2026-09-07-2360-discovery-buddy-launch-gate-rollback.sql`). Both reads fail-closed in the safe direction each (gate unreadable → legacy; marketplace unreadable → withheld). 8 tests; two hand-reverts → 2 and 5 failures (§7). **Still open:** category and availability legs — a buddy row carries no service category to filter on and the list has no availability field. Stays W. |
 | B04 | G190 — sensitive-location and protected-place rules before projection | **W** | The gem rule is real (`:1028` selects `sensitivity_level, approx_latitude, approx_longitude`, exact pair deliberately absent). `lib/protectedLocations.ts` is consulted by nothing in `routes/discovery*.ts` / `lib/discovery*.ts` (grep → nothing), and `protected_zones` is absent from production (§5). A protected zone that is not a gem has no effect on a Discovery result. Not changed: the table does not exist where it would matter. |
-| B05 | G277 — CountryResolver | **W** | `routes/discoverySearch.ts:1999-2020#async function searchCountries(` `searchCountries` aggregates `profiles.home_country` (`:1896#.ilike("home_country",`): a country with no users in it does not exist as a suggestion. Privacy-filtered (`:1904#.eq("allow_profile_discovery",` opt-outs), so not a leak; a construction defect. Fix needs a canonical country registry Discovery does not own. |
+| B05 | G277 — CountryResolver | **W** | `routes/discoverySearch.ts:2072-2093#async function searchCountries(` `searchCountries` aggregates `profiles.home_country` (`:1896#.ilike("home_country",`): a country with no users in it does not exist as a suggestion. Privacy-filtered (`:1904#.eq("allow_profile_discovery",` opt-outs), so not a leak; a construction defect. Fix needs a canonical country registry Discovery does not own. |
 | B06 | G68 — Hidden Gem separate identity/protection/approximate location | **C** (by reference, line re-opened) | `:1028`; census-input-intelligence G68. |
 | B07 | G70 / G185 — Trip/Event/Plan viewer eligibility before exposure | **C** (by reference, lines re-opened) | `:670` events, `:772-773` trips, `:838-860` plans; proven through the gateway by `test/inputAssistanceCertification.test.ts:330-366`. |
 | B08 | G126 — age restrictions | **C** (by reference, line re-opened) | `:397-407` `fetchAgeRestrictedSet`, null on error → callers return `[]`. |
@@ -98,7 +98,7 @@ with `docs/`, `db/` or `travel-buddy-standalone/`.
 
 | # | Contract (where stated) | Verdict | Evidence |
 |---|---|---|---|
-| C01 | Suspended/banned/deleted accounts excluded (`routes/discoverySearch.ts:15#Suspended/banned/deleted` header) | **C** | `routes/discoverySearch.ts:580#.in("account_status",` — `searchTravelers`' `.in("account_status", ["active"])`. |
+| C01 | Suspended/banned/deleted accounts excluded (`routes/discoverySearch.ts:15#Suspended/banned/deleted` header) | **C** | `routes/discoverySearch.ts:583#.in("account_status",` — `searchTravelers`' `.in("account_status", ["active"])`. |
 | C02 | Profile-discovery opt-outs excluded, fail-closed on query error (header `:16`) | **C** | `:548-556`; `noDiscErr → return []`. Test: *"excludes profiles that opted out of discovery (fail-closed on opt-out error)"*. |
 | C03 | Blocked users excluded both directions; unknown block state → empty search (header `:17-18`) | **C** | `lib/blocks.ts:21#fetchBlockedSet` (null on error), consumed at `routes/discovery.ts:1721#fetchBlockedSet`, `:2643#fetchBlockedSet` and `:3043#fetchBlockedSet`; every per-type searcher returns `[]` on null. Tests: *"returns empty results when the blocks table returns a DB error"*. |
 | C04 | Content from suspended/banned/deleted owners excluded (header `:19-20`) | **C** | `:479-494` `fetchActiveOwnerSet`, empty set on error (exclude, never leak). |
@@ -106,7 +106,7 @@ with `docs/`, `db/` or `travel-buddy-standalone/`.
 | C06 | Plans only from public or caller-owned trips (header `:22`) | **C** | `:828-860`. |
 | C07 | Private fields never selected (header `:25-26`) | **C** | `:529` — no email, phone, coordinates, safety, verification-document columns; `:1028` gems without the exact pair. |
 | C08 | Age-restricted profiles hidden fail-closed (header `:27-35`) | **C** | `:397-407`; `:523` returns `[]` on null. |
-| C09 | Hidden names are not searchable — a hidden-name match survives only if handle/username matched (`routes/discoverySearch.ts:614#Universal` comment; `.agents/memory/display-name-privacy.md`) | **C** | `routes/discoverySearch.ts:620#nameSafe` — a row whose only match was the hidden name is dropped; the viewer's own row is never redacted. |
+| C09 | Hidden names are not searchable — a hidden-name match survives only if handle/username matched (`routes/discoverySearch.ts:617#Universal` comment; `.agents/memory/display-name-privacy.md`) | **C** | `routes/discoverySearch.ts:623#nameSafe` — a row whose only match was the hidden name is dropped; the viewer's own row is never redacted. |
 | C10 | The viewer is never redacted (self-exemption before opt-in) | **C** | `:567` (filter) and `:603` (presentation). |
 | C11 | Header `:9` said *"Private accounts (is_private=true) excluded entirely"* | **W → C (fixed)** | The code has returned them as a locked preview since the `/users/search` parity change (`:611-618`; `searchTravelers` doc `:503-508`; tests *"returns profiles with is_private=true as a locked preview, not excluded"*). A contract stating the opposite of its tests is a defect of the contract. Header rewritten (`:9-14`); zero behaviour change, no test. |
 | C12 | `hasMore` derived from limit+1 overflow, no false positives (header `:38-40`) | **C** | `:1885`. |
@@ -116,7 +116,7 @@ with `docs/`, `db/` or `travel-buddy-standalone/`.
 | C16 | `GET /discovery` needs no auth and returns only public place data; `submitted_by` never serialised (`discovery.ts:1-5`; test *"never serialises submitted_by to the client"*) | **C** | `routes/discovery.ts:1393` optional auth; `test/discoveryBlockedSubmitter.test.ts` *"submitted_by is never mapped onto the DiscoveryPlace that toPublic returns"*. |
 | C17 | The community submitter block rule is `lib/blocks.submitterIsVisible`, shared, not re-implemented (`discovery.ts:874-879`) | **C** | `routes/discovery.ts:50,879`; applied at `:2757` before names are resolved (`:2761`). |
 | C18 | Viewer sees their own byline on a place they submitted (`f37e1cf0`) | **C** | `routes/discovery.ts:2675` (memoised viewer, guarded on `rows.length`), `:2694`. Tests *"shows the viewer their OWN name…"*, *"still redacts everyone ELSE"*, *"does not exempt the submitter from an ANONYMOUS caller's view"*. Not redone; the pattern was reused for C19. |
-| C19 | Display-name redaction shape (`.agents/memory/display-name-privacy.md`: null name + separate handle) | **W → partially closed** | **Measured, and the lead was half wrong:** the search list's shape is `title` = name-or-bare-handle, `subtitle` = `@handle` (`routes/discoverySearch.ts:684#subtitle`) — there is no `name` field — which is the **same** shape as Compass (`routes/compass.ts:3825-3843#title: nameOk`, `title` bare username / `displayName` null — REPOINTED AT INTEGRATION: both lanes carried this citation at the reason-code scoring block, which is not the card shape it claims; the shape is the `title`/`data.displayName` pair above). Discovery's one divergent shape is the community byline, which bakes the literal `@username` **into `name`** (`discovery.ts:3072#name`). It cannot be changed in place: `travel-buddy-standalone/src/components/DiscoveryWall.tsx:407` renders `By {submittedBy.name}` raw, so a null there is a blank byline — a user-visible change with no flag. **Now:** the canonical shape is emitted **additively** as `displayName` (`routes/discovery.ts:3091#displayName`: real name iff self or opted-in, else null, never a handle) alongside the unchanged legacy field, from one `nameAllowed` decision (`:2694`) so the two fields cannot disagree about *whether* a name is withheld (pinned: *"the two byline fields never disagree…"*). The legacy `name` stays until the client resolves the byline through `displayIdentity(displayName, handle)` (§6 D2). Stays W until then. |
+| C19 | Display-name redaction shape (`.agents/memory/display-name-privacy.md`: null name + separate handle) | **W → partially closed** | **Measured, and the lead was half wrong:** the search list's shape is `title` = name-or-bare-handle, `subtitle` = `@handle` (`routes/discoverySearch.ts:687#subtitle`) — there is no `name` field — which is the **same** shape as Compass (`routes/compass.ts:3825-3843#title: nameOk`, `title` bare username / `displayName` null — REPOINTED AT INTEGRATION: both lanes carried this citation at the reason-code scoring block, which is not the card shape it claims; the shape is the `title`/`data.displayName` pair above). Discovery's one divergent shape is the community byline, which bakes the literal `@username` **into `name`** (`discovery.ts:3072#name`). It cannot be changed in place: `travel-buddy-standalone/src/components/DiscoveryWall.tsx:407` renders `By {submittedBy.name}` raw, so a null there is a blank byline — a user-visible change with no flag. **Now:** the canonical shape is emitted **additively** as `displayName` (`routes/discovery.ts:3091#displayName`: real name iff self or opted-in, else null, never a handle) alongside the unchanged legacy field, from one `nameAllowed` decision (`:2694`) so the two fields cannot disagree about *whether* a name is withheld (pinned: *"the two byline fields never disagree…"*). The legacy `name` stays until the client resolves the byline through `displayIdentity(displayName, handle)` (§6 D2). Stays W until then. |
 | C20 | Engine mode resolves to `legacy` on every failure path (`lib/discoveryEngineMode.ts` header) | **C** | `:151-175`; tests A–L. |
 | C21 | An unreadable/absent/malformed cohort includes NOBODY; `kind:"all"` must be typed (`lib/discoveryCohort.ts` header) | **C** | `:85` `COHORT_NONE`, `:102` `NOBODY(...)` for every parse failure; tests N2–N6. |
 | C22 | Shadow never changes what was served and writes only to `discovery_shadow_serves` (`lib/discoveryShadow.ts` header) | **C** | `routes/discovery.ts:1912#served` (`served: false`, handed a client that cannot write), invoked after the response is sent (`:1947#served`); `lib/discoveryShadow.ts:371#discovery_shadow_serves` the single insert; tests G, I. (Re-anchored 2026-09-08: both line numbers had drifted 30-odd lines when the silent-write burn-down `2550b8ba` edited this file. The claim held; the pointers did not.) |
@@ -130,7 +130,7 @@ with `docs/`, `db/` or `travel-buddy-standalone/`.
 | C30 | Momentum is strictly non-negative with a minimum-evidence floor (`lib/discoveryLocalMomentum.ts:25-45`) | **C** | `:67` `MOMENTUM_MIN_RECENT_WEIGHT = 3`, `:150` floor, `:153` clamp to `[0,1]`. |
 | C31 | Stale L2 entries are served while a background revalidation runs (`.agents/memory/discovery-perf-cache.md`; `discoveryCacheCleanup.ts:22-27`) | **C** | `routes/discovery.ts:1880`. |
 | C32 | One ranking pipeline in the tree — the route no longer imports the ranker directly (`routes/discovery.ts:43-47`) | **C** | `:43-47` (type-only import of `portavaRank`), `:47` `rankForViewer`; test T *"discovery still declares those inputs constant, in source"*. |
-| C33 | The two `profiles` reads in `routes/discovery.ts` are the caller's **own** `date_of_birth` for the age filter, not identity payloads | **C** | `routes/discovery.ts:1686#resolveGateAge(sc,` and `routes/discovery.ts:2924#resolveGateAge(ageSc,` — `.select("date_of_birth").eq("id", <caller>)`. **Settles the census-passport P95 citation** (`discovery.ts:1504,2523`) as weak evidence, exactly as the sibling agent judged; the real direct person-identity readers are `routes/discoverySearch.ts:577#.select("id, handle, username, name, display_name, avatar_url` (A15) and `routes/compass.ts:3549#"id, username, display_name, name, avatar_url,` (Compass's traveler list, reported not changed — REPOINTED §11: `compass.ts:3378` is a date computation in the traveller scoring block, and `:1505`/`:2545` were a blank line and a `createdAt: string;`). |
+| C33 | The two `profiles` reads in `routes/discovery.ts` are the caller's **own** `date_of_birth` for the age filter, not identity payloads | **C** | `routes/discovery.ts:1686#resolveGateAge(sc,` and `routes/discovery.ts:2924#resolveGateAge(ageSc,` — `.select("date_of_birth").eq("id", <caller>)`. **Settles the census-passport P95 citation** (`discovery.ts:1504,2523`) as weak evidence, exactly as the sibling agent judged; the real direct person-identity readers are `routes/discoverySearch.ts:580#.select("id, handle, username, name, display_name, avatar_url` (A15) and `routes/compass.ts:3549#"id, username, display_name, name, avatar_url,` (Compass's traveler list, reported not changed — REPOINTED §11: `compass.ts:3378` is a date computation in the traveller scoring block, and `:1505`/`:2545` were a blank line and a `createdAt: string;`). |
 
 ### 2d. Tally
 
@@ -162,8 +162,8 @@ registration mechanism itself has zero occurrences, so "not registered" is not a
 | *"Four unmigrated autocomplete engines… likely your highest-value item"* | **FALSE as framed.** Discovery owns **one** of the four; two are Places', one is mentions. Discovery's server route is not a second matcher (it calls the gateway's `dispatchSearch`), and its client hook is wired as a **deliberate, documented fallback** to the gateway, not a stray. The divergence is real (two requests per keystroke) but the consolidation is a client-side fallback removal — not closable inertly from Discovery's files. A08. |
 | *"Three redaction shapes; Discovery contains two"* | **HALF FALSE.** Discovery's search shape (`title` bare-handle / `subtitle` `@handle`) is the **Compass** shape, not a separate one. Discovery has **one** divergent shape (community `name` = `"@username"`). Consolidated additively (`displayName`); the legacy field is client-pinned. C19. |
 | *"`f37e1cf0` fixed the viewer-self exemption; read it as the pattern"* | **CONFIRMED**; not redone; the same `nameAllowed` decision now feeds both byline fields. C18/C19. |
-| *"`discovery.ts:1504,2523` are the caller's own `date_of_birth`, weak evidence; real readers are `discoverySearch.ts:438` and `compass.ts:3376`"* | **CONFIRMED** (post-edit lines `routes/discovery.ts:1686,2924#resolveGateAge(`; `routes/discoverySearch.ts:577#.select("id, handle, username, name, display_name, avatar_url`; `routes/compass.ts:3549#"id, username, display_name, name, avatar_url,`). The line numbers inside the QUOTE are the sibling census's own and are stale; they are left as quoted. C33, A15. |
-| census-passport **P95 W — "Nothing calls it"** | **Superseded**: `routes/discoverySearch.ts:2828#buildConsumerProjection(sc,` calls the `discovery_card` variant. A16. |
+| *"`discovery.ts:1504,2523` are the caller's own `date_of_birth`, weak evidence; real readers are `discoverySearch.ts:441` and `compass.ts:3376`"* | **CONFIRMED** (post-edit lines `routes/discovery.ts:1686,2924#resolveGateAge(`; `routes/discoverySearch.ts:580#.select("id, handle, username, name, display_name, avatar_url`; `routes/compass.ts:3549#"id, username, display_name, name, avatar_url,`). The line numbers inside the QUOTE are the sibling census's own and are stale; they are left as quoted. C33, A15. |
+| census-passport **P95 W — "Nothing calls it"** | **Superseded**: `routes/discoverySearch.ts:2908#buildConsumerProjection(sc,` calls the `discovery_card` variant. A16. |
 | cross-cutting **P-05 "COULD NOT ESTABLISH"** | **Established absent.** A18. |
 
 ---
@@ -215,7 +215,7 @@ production.
 |---|---|---|
 | D1 | **Retire the legacy typeahead fallback.** `useGlobalSearchSuggestions` runs `useSearchSuggestions` on every keystroke alongside the gateway. Stopping it when the gateway reports `available` halves request volume and closes A08 — and removes a fallback users have today. If taken, `GET /discovery/suggest` can then be retired. Client change (`travel-buddy-standalone/src/hooks/`). | A08 |
 | D2 | **Migrate the community byline to `displayName`.** `DiscoveryWall.tsx:407` and `useCommunityDiscovery.ts:37` should resolve `displayIdentity(displayName, handle)`; then `name` can stop carrying `@username` and C19 closes. Client change, then a server follow-up. | C19 |
-| D3 | ~~**Trips publishes a `TripDiscoveryProjection`**; Discovery's `searchTrips`/`searchPlans` consume it instead of re-deriving visibility. Trips-owned.~~ **DISCHARGED 2026-09-08** — Trips published it (`domain/trips/contracts/tripDiscoveryProjection.ts`) and Discovery consumes it (`lib/discoveryTripProjectionConsumer.ts`, wired at `routes/discoverySearch.ts:893#discoveryTripProjectionGate` and `:1035#discoveryTripProjectionGate`). Nothing here awaits a decision. What remains is deployment: migration **2420** (`trips.version`, which the projection's column list requires) is unapplied in production, and `discovery_trip_projection_enabled` (**2550**) is seeded FALSE. See A10. | A10 |
+| D3 | ~~**Trips publishes a `TripDiscoveryProjection`**; Discovery's `searchTrips`/`searchPlans` consume it instead of re-deriving visibility. Trips-owned.~~ **DISCHARGED 2026-09-08** — Trips published it (`domain/trips/contracts/tripDiscoveryProjection.ts`) and Discovery consumes it (`lib/discoveryTripProjectionConsumer.ts`, wired at `routes/discoverySearch.ts:896#discoveryTripProjectionGate` and `:1038#discoveryTripProjectionGate`). Nothing here awaits a decision. What remains is deployment: migration **2420** (`trips.version`, which the projection's column list requires) is unapplied in production, and `discovery_trip_projection_enabled` (**2550**) is seeded FALSE. See A10. | A10 |
 | D4 | **Whether the search list should be assembler-built.** Routing list rows through `buildConsumerProjection` ends the last identity duplication but costs N+1 assembler calls per search and changes the response shape of a live route. | A15 |
 | D5 | **Emoji in queries.** Stripping them changes which results a query returns. | B02 |
 | D6 | **Drop the decorative `discovery_places` client write policies** (`auth_insert`, `own_*`, `owner_*`) so the boundary is not one re-`GRANT` from a column-unconstrained forge. 2153 deliberately left them; a 236x migration can remove them idempotently. Hardening, not a defect today. | C28 |
@@ -230,9 +230,9 @@ production.
 
 | Fix | Files | Rows closed | Hand-revert | Failures | Restore |
 |---|---|---|---|---|---|
-| F1 — `fetchBlockedSet` is `lib/blocks`', not a private copy | `routes/discoverySearch.ts:83#fetchBlockedSet,`, `routes/discoverySearch.ts:421-434#Blocked-user set (fail-closed)`; `test/discoverySearchBlockedSubmitter.test.ts` (+1 test, +1 regex relaxed to sibling imports) | A17 W→C | R1: re-add the private copy, drop the import | **1** (`discoverySearchBlockedSubmitter`, 11/12) | `diff -q` clean |
+| F1 — `fetchBlockedSet` is `lib/blocks`', not a private copy | `routes/discoverySearch.ts:83#fetchBlockedSet,`, `routes/discoverySearch.ts:424-437#Blocked-user set (fail-closed)`; `test/discoverySearchBlockedSubmitter.test.ts` (+1 test, +1 regex relaxed to sibling imports) | A17 W→C | R1: re-add the private copy, drop the import | **1** (`discoverySearchBlockedSubmitter`, 11/12) | `diff -q` clean |
 | F2 — canonical `displayName` on the community byline | `routes/discovery.ts:2425-2450` (type), `:2688-2704`; `test/discoveryBlockedSubmitter.test.ts` (+4 tests) | C19 W→W (half) | R2: delete the field · R2b: emit `@handle` when withheld (the wrong consolidation) | **4** / **4** (21/25 each) | `diff -q` clean ×2 |
-| F3 — buddy launch-eligibility gate behind a FALSE-seeded flag | `routes/discoverySearch.ts:458-519#Buddy launch-eligibility gate`, `routes/discoverySearch.ts:572#buddiesWithheldByLaunchGate(sc)`; `migrations/2360_discovery_buddy_launch_gate_flag.sql`; `db/rollback/2026-09-07-2360-discovery-buddy-launch-gate-rollback.sql`; `test/discoverySearch.test.ts` (+8 tests) | B03 W→W (launch leg) | R3a: remove the call site · R3b: predicate ignores the gate (the not-inert way) | **2** / **5** (64/66, 61/66) | `diff -q` clean ×2 |
+| F3 — buddy launch-eligibility gate behind a FALSE-seeded flag | `routes/discoverySearch.ts:461-522#Buddy launch-eligibility gate`, `routes/discoverySearch.ts:575#buddiesWithheldByLaunchGate(sc)`; `migrations/2360_discovery_buddy_launch_gate_flag.sql`; `db/rollback/2026-09-07-2360-discovery-buddy-launch-gate-rollback.sql`; `test/discoverySearch.test.ts` (+8 tests) | B03 W→W (launch leg) | R3a: remove the call site · R3b: predicate ignores the gate (the not-inert way) | **2** / **5** (64/66, 61/66) | `diff -q` clean ×2 |
 | F4 — header contract matches the code on private accounts | `routes/discoverySearch.ts:9-14` | C11 W→C | none — documentation, no test | — | — |
 | F5 — server-built `DiscoveryCandidate` projection + Map-facing reader, behind a FALSE-seeded flag | `lib/discoveryCandidate.ts` (new); `routes/discovery.ts` four serve sites + `serveCachedPlaces` now carries `cachedAt`; `migrations/2361_discovery_candidate_projection_flag.sql`; `db/rollback/2026-09-07-2361-discovery-candidate-projection-rollback.sql`; `test/discoveryCandidate.test.ts` (new, 30 tests, registered) | A03 N→W · A25 N→W | R5a helper ignores the flag · R5b cold site bypasses the helper · R5c manufactured `whyNow` · R5d cold path `rankedBy` from a truthy Map · R5e Map reader ranks `served:true` | 4 / 1 / 2 / 1 / 1 (of 30) | `diff -q` clean ×5 |
 
@@ -253,7 +253,7 @@ file is above baseline**.
 Three PERMISSIVE policies elsewhere on this branch carried `USING (auth.uid() IS NOT NULL)` as their
 whole predicate and, being OR-ed, dominated the careful policy beside them. Checked for Discovery:
 **no Discovery visibility guarantee rests on a policy.** Every Discovery read goes through the
-service client (`getServiceClient()` at `routes/discovery.ts:1592`, `routes/discoverySearch.ts:2434#getServiceClient();`),
+service client (`getServiceClient()` at `routes/discovery.ts:1592`, `routes/discoverySearch.ts:2514#getServiceClient();`),
 which bypasses RLS, so the guarantees are the application filters this census cites (C01–C10,
 C17, A19). The only posture Discovery *relies on* is the `discovery_places` **GRANT** (C28), which
 is a grant, not a policy — and the decorative write policies beside it are recorded as D6 precisely
@@ -397,7 +397,7 @@ so nothing is lost.
 | A01 | `N — owner hold` | W | **Moved. The owner hold no longer describes the tree.** Sensing's lane built the live half of `:133` and wired it into both serve points: `artifacts/api-server/src/lib/discoveryLiveRankRead.ts:51#export const RANK_CLAIM_TYPES` consumes crowd level, crowd trajectory, vibe state, queue wait and walk-in access through the one gated live read path, applied at `artifacts/api-server/src/routes/discovery.ts:1879#const liveRanked = await withDiscoveryLiveRank` and again on the cold path. **W and not C:** it is behind `artifacts/api-server/src/lib/discoveryLiveRankRead.ts:45#export const DISCOVERY_LIVE_RANK_FLAG` (migration 2850, seeded FALSE, refuses to commit ON), so on every deployment the helper returns the same array reference it was handed; and forecast, travel time, compatibility and **safety** are still absent from the term list. |
 | A03 | `N → W (built this pass, deliberately in the wrong bucket)` | W | Same bucket, **different reason, and the old one is now false.** The row's whole argument for W was *"`whyNow` is `null` on every row by construction — there is no live producer"*. There is one: `artifacts/api-server/src/lib/discoveryCandidate.ts:283#export function whyNowOf` returns the live grade's grounded reasons. It stays W because it is now doubly deployment-gated — the projection behind `discovery_candidate_projection_enabled` (2361, FALSE) and the producer behind `discovery_live_rank_enabled` (2850, FALSE) — so `whyNow` is still null on every row in every deployment, for a reason that is a flag rather than an absence. |
 | A05 | `N — owner hold` | N | Unchanged. No intent-mode concept in `routes/discovery*.ts` or `lib/discovery*.ts`; the explicit hold at `docs/discovery/ROADMAP.md:648#Step 7/8 modifiers` stands. |
-| A17 | `W → C (fixed this pass)` | C | Unchanged. Re-executed: `artifacts/api-server/src/routes/discoverySearch.ts:434#export { fetchBlockedSet }` still re-exports `lib/blocks`' reader rather than a private copy, and the test still pins function identity, not resemblance. |
+| A17 | `W → C (fixed this pass)` | C | Unchanged. Re-executed: `artifacts/api-server/src/routes/discoverySearch.ts:437#export { fetchBlockedSet }` still re-exports `lib/blocks`' reader rather than a private copy, and the test still pins function identity, not resemblance. |
 | A18 | `N — owner hold` | N | Unchanged. No intent term in the ranker; the supply side exists and nothing consumes it. |
 | A20 | `N → W` | C | **Moved by this lane's build. See §9.5.** |
 | A25 | `N → W (Discovery half built; Map half absent)` | W | Unchanged. `readDiscoveryCandidatesForViewer` still has no caller outside its own test — the Map gateway is another agent's file (D10). A reader nobody reads. |
@@ -458,7 +458,7 @@ values equal them.
 
 | id | was | now | why |
 |---|---|---|---|
-| A11 | N | W | *"`FreedomWindow`: zero occurrences. No engine to consume."* is false. The Trips lane published the engine and Discovery consumes it: `artifacts/api-server/src/routes/discoverySearch.ts:826#if (ctx?.tripId)` reads the trip's windows through `artifacts/api-server/src/domain/trips/services/TripFreedomConsumers.ts:128#export async function readTripWindows` and places each event's start against them, then `artifacts/api-server/src/routes/discoverySearch.ts:848#Trips §7.3` leads with the fitting rows. **W on both halves of the clause:** the consumption is behind `artifacts/api-server/src/domain/trips/policies/tripOperationalProjections.ts:29#export const TRIP_OPERATIONAL_PROJECTIONS_FLAG` (2778, seeded FALSE, schema 2760–2785 unapplied), so on every deployment the read refuses; and the independent calculation the clause forbids is still there at `artifacts/api-server/src/lib/portavaRank.ts:99#availableMinutes?`. |
+| A11 | N | W | *"`FreedomWindow`: zero occurrences. No engine to consume."* is false. The Trips lane published the engine and Discovery consumes it: `artifacts/api-server/src/routes/discoverySearch.ts:829#if (ctx?.tripId)` reads the trip's windows through `artifacts/api-server/src/domain/trips/services/TripFreedomConsumers.ts:128#export async function readTripWindows` and places each event's start against them, then `artifacts/api-server/src/routes/discoverySearch.ts:851#Trips §7.3` leads with the fitting rows. **W on both halves of the clause:** the consumption is behind `artifacts/api-server/src/domain/trips/policies/tripOperationalProjections.ts:29#export const TRIP_OPERATIONAL_PROJECTIONS_FLAG` (2778, seeded FALSE, schema 2760–2785 unapplied), so on every deployment the read refuses; and the independent calculation the clause forbids is still there at `artifacts/api-server/src/lib/portavaRank.ts:99#availableMinutes?`. |
 | A01 | N | W | Stated in full in §9.4. |
 | A20 | W | C | Stated in full in §9.5. |
 
@@ -572,7 +572,7 @@ test, nothing else), the legacy suggest hook still runs on every keystroke besid
 (`travel-buddy-standalone/src/hooks/useGlobalSearchSuggestions.ts:6#regressing the hard-won legacy path`),
 and C19's `displayName` is emitted additively while the client still reads the legacy `name`. Three
 need a decision or an artefact nobody has produced: whether stripping an emoji may change a live
-route's results (B02 — `artifacts/api-server/src/routes/discoverySearch.ts:151#export function sanitizeQuery` still
+route's results (B02 — `artifacts/api-server/src/routes/discoverySearch.ts:154#export function sanitizeQuery` still
 strips only `(),`), what a buddy's service category and availability even are as columns (B03), and a
 canonical country registry (B05 — `country_essentials` exists in production and is keyed by ISO code
 with **no name column**, so it is not the registry this needs).
@@ -583,7 +583,7 @@ with **no name column**, so it is not the registry this needs).
 
 | id | was | now | why |
 |---|---|---|---|
-| A15 | W | **C** | **Built.** The row's own gap was three named rules: *"the search list still assembles its own identity payload … `:598-640` applies its own privacy logic (locked preview, `show_profile_picture_publicly`, name rule)"*. All three are now the Passport batch projection's — `artifacts/api-server/src/routes/discoverySearch.ts:661#const identity = await buildListIdentityProjections(sc, nameSafe as any[], {` over `artifacts/api-server/src/services/passport/PassportConsumerProjections.ts:1153#export async function buildListIdentityProjections`, with the avatar taken from it (`artifacts/api-server/src/routes/discoverySearch.ts:685#avatarUrl: ident?.avatarUrl ?? null,`) rather than gated here. **What the row objected to is closed; what remains is not what it objected to.** The `select` at `artifacts/api-server/src/routes/discoverySearch.ts:577#.select("id, handle, username, name, display_name, avatar_url, is_private, home_city, home_country, account_status` stays, and stays deliberately: those columns are what the search MATCHES and RANKS on, and the projection's own header draws that line — *"a ranked list still selects the columns it ranks on — that is ranking input, not an identity payload"*. The cost objection is answered rather than accepted: the projection is a batch, and Discovery hands it the allow-set it already resolved (`artifacts/api-server/src/routes/discoverySearch.ts:667#allowedRealNames: allowedNames,`), so the search still makes **one** `profile_privacy_settings` read, not two. Pinned by `artifacts/api-server/src/test/passportListIdentityProjection.test.ts:1#/**` — 14 cases, three mutations. |
+| A15 | W | **C** | **Built.** The row's own gap was three named rules: *"the search list still assembles its own identity payload … `:598-640` applies its own privacy logic (locked preview, `show_profile_picture_publicly`, name rule)"*. All three are now the Passport batch projection's — `artifacts/api-server/src/routes/discoverySearch.ts:664#const identity = await buildListIdentityProjections(sc, nameSafe as any[], {` over `artifacts/api-server/src/services/passport/PassportConsumerProjections.ts:1153#export async function buildListIdentityProjections`, with the avatar taken from it (`artifacts/api-server/src/routes/discoverySearch.ts:688#avatarUrl: ident?.avatarUrl ?? null,`) rather than gated here. **What the row objected to is closed; what remains is not what it objected to.** The `select` at `artifacts/api-server/src/routes/discoverySearch.ts:580#.select("id, handle, username, name, display_name, avatar_url, is_private, home_city, home_country, account_status` stays, and stays deliberately: those columns are what the search MATCHES and RANKS on, and the projection's own header draws that line — *"a ranked list still selects the columns it ranks on — that is ranking input, not an identity payload"*. The cost objection is answered rather than accepted: the projection is a batch, and Discovery hands it the allow-set it already resolved (`artifacts/api-server/src/routes/discoverySearch.ts:670#allowedRealNames: allowedNames,`), so the search still makes **one** `profile_privacy_settings` read, not two. Pinned by `artifacts/api-server/src/test/passportListIdentityProjection.test.ts:1#/**` — 14 cases, three mutations. |
 
 ### 10.3 What this pass built
 
@@ -855,7 +855,7 @@ a claim, and here is the measurement.
 | DV-08 | §8 five states OFF · SHADOW · COMPARE · PARTIAL · ON — SPLIT off C20/C24/A06 | **W** | 3 of 5 — `lib/discoveryEngineMode.ts:70#export type DiscoveryEngineMode = "legacy"` — `"legacy" \ | "shadow" \| "pde"`, validated `lib/discoveryEngineMode.ts:72#const VALID_MODES: readonly string[] = ["l`. **OFF PASS** (= legacy) · **SHADOW PASS** · **ON PASS** (= pde) · **PARTIAL FAIL** — not a state; reached by crossing a cohort gate with a mode (`lib/discoveryCohort.ts`, applied `routes/discovery.ts:1856#if (pdeCohort?.included && callerUserId) {`) · **COMPARE FAIL** — no state; the artefact exists (`lib/discoveryDivergenceReport.ts`) as a consequence of SHADOW, not a selectable state. §8's last clause — no side effect merely because shadow computes — **PASSES** (C22, C23, C24). |
 | DV-09 | §9 surface-specific objectives: Pulse · Discovery · Trail · Trip Planning · Trending | **W** | 1 of 5 — **Discovery PASS** — `for_you` runs the Compass pipeline (`routes/discovery.ts:2172#const scored = await rankItemsForDiscovery` `rankItemsForDiscovery`) distinctly from the default. **Pulse FAIL** — shares `portavaRank`'s single `DEFAULT_WEIGHTS` with Discovery; per-surface weights exist in `services/ranking/rankingConfig.ts:77-129#exploration: number;` but Discovery does not vary by them. **Trail FAIL · Trending FAIL** — no such surface (DV-20, DV-28). **Trip Planning FAIL** — no trip-fit or route-fit term in `lib/portavaRank.ts`. |
 | DV-10 | §10 — never use private message contents as ranking features | **C** | `grep -rIn -i "message\|conversation\|dm_" lib/portavaRank.ts lib/discoveryPde.ts lib/discoveryModifiers.ts` → **nothing**. The live layer's read set is a five-family allow-list, `lib/discoveryLiveRankRead.ts:51-53#export const RANK_CLAIM_TYPES = [`: *"Nothing else is read, so nothing else can leak."* |
-| DV-11 | §10 — never expose block/unfollow reasons | **C** | `lib/blocks.ts` returns a `Set<string>` of ids — there is no reason field to expose. Consumed at `routes/discovery.ts:1721#viewerBlockedIds = blockSc ? await fetchBl`, `routes/discovery.ts:58#import { fetchBlockedSet, submitterIsVisib`, `routes/discoverySearch.ts:434#export { fetchBlockedSet };`. A block removes a row; it never annotates one. Matches `05` §7. Pinned by `discoveryBlockedSubmitter.test.ts` (25) and `discoverySearchBlockedSubmitter.test.ts` (12). |
+| DV-11 | §10 — never expose block/unfollow reasons | **C** | `lib/blocks.ts` returns a `Set<string>` of ids — there is no reason field to expose. Consumed at `routes/discovery.ts:1721#viewerBlockedIds = blockSc ? await fetchBl`, `routes/discovery.ts:58#import { fetchBlockedSet, submitterIsVisib`, `routes/discoverySearch.ts:437#export { fetchBlockedSet };`. A block removes a row; it never annotates one. Matches `05` §7. Pinned by `discoveryBlockedSubmitter.test.ts` (25) and `discoverySearchBlockedSubmitter.test.ts` (12). |
 | DV-12 | §10 — never reward abusive engagement | **W** | One direction only. `lib/portavaRank.ts:307#DOWN when the author's trust is unknown/lo` down-weights an author of unknown or low trust — *"manipulation resistance"*. That penalises a low-trust **author**; it does not detect abusive **engagement** (`03` §12's pods, farms, reciprocal action, automation). |
 | DV-13 | §10 — never let one creator permanently dominate a Trail | **N** | No Trail object (DV-20). `lib/portavaRank.ts:420-437#── Diversity (greedy MMR-style re-rank) ──` bounds per-author repetition **within a page**, which is the analogous control on the surface that exists — not the Trail-scoped one this clause names. |
 | DV-14 | §10 — never treat follower count as a direct quality score | **C** | No follower **count** enters the ranker. The one follows read is `lib/discoveryPde.ts:418-421#const { data: followRows, error: followErr } = await sc` — `.from("user_follows").select("following_id").eq("follower_id", userId)` — the set of **whom the viewer follows**, a per-viewer affinity signal (`03` §8's permitted use), never the size of an author's audience. `grep -n -i followerCount lib/portavaRank.ts lib/discoveryPde.ts` → nothing. |
@@ -1011,7 +1011,7 @@ those re-executed and unchanged are listed after the table.
 |---|---|---|---|
 | **A05** | **N** (owner hold) | **W** | **Stated evidence is now false.** The row read *"Nothing in `routes/discovery*.ts` or `lib/discovery*.ts` models an intent mode."* All eight of Sensing §8's modes exist in the spec's own wording and order at `lib/discoveryLiveRank.ts:99-101#export const DISCOVERY_INTENT_MODES = [`, with real weight profiles at `lib/discoveryLiveRank.ts:152#export const INTENT_MODE_PROFILES: Readonl`, parsed at `lib/discoveryLiveRankRead.ts:63#export function parseIntentMode(raw: unkno`, reaching the serve path at `routes/discovery.ts:1880#mode: parseIntentMode(req.query.intentMode` and `routes/discovery.ts:2288#mode: parseIntentMode(req.query.intentMode`. **W, not C, on DSV2-03's bar** — *"UI selection is not merely decorative"*: `grep -rIn intentMode travel-buddy-standalone/src` returns **only the Map's own `features/map/intent/intentModel.ts`**, a different lane's model on a different surface. **No Discovery client sends `intentMode`.** Doubly unreachable — flag FALSE (2850) *and* no caller. The owner hold remains in force and still explains why it is off; it no longer describes the code as absent. |
 | **A07** | **N** | **W** | **Stated evidence is now false in both halves.** The row read *"No safety term reaches the ranker… There is also no world safety state to consume."* `lib/discoveryLiveRank.ts:207-208#/** Live-qualified` carries `safety: { unsafe, demoted }` and `lib/discoveryLiveRank.ts:460#Safety first, and only ever downward: a de` forces a demoted row behind every non-demoted row *regardless of score* — Sensing `docs/specs/Portava_Sensing_World_Experience_Intelligence_Upgrade_Architecture_v1.txt:129#Safety constraints outrank opportunity/vib`'s "safety outranks opportunity" implemented as a sort invariant rather than a weight. **W**: gated OFF (2850), and no producer writes `crowd.level='unsafe_density'` in production, so the demotion can never fire. |
-| **C14** | **C** | **W** | **Re-graded against the restored requirement, not against new code.** C14 certifies that `/discovery/suggest` returns `200 { groups: [] }` on any internal error, citing the module's own header as the contract. Restored `11` §9 says the opposite in terms: *"A failure must not masquerade as success"* (`docs/specs/discovery-architecture-v1/discovery-v1-11-api-specification.md:103#A failure must not masquerade as success.`) — and requires six distinguishable failure classes. Applied at `routes/discoverySearch.ts:2140#For types without location context, rankBy`, `routes/discoverySearch.ts:2177#case "cities":      return rankByMatchTier`, `routes/discoverySearch.ts:2249#Promise.resolve(searchStatic(q, COMMON_VIB`: every class collapses to one empty success. This is §11.1 in a single row — the contract C14 grades against is the code's description of itself, and the document outranking it was overwritten. **Not fixed here**: surfacing errors changes a live route's contract with no flag; §6 D5's reasoning applies. New owner decision **D11** (§11.10). |
+| **C14** | **C** | **W** | **Re-graded against the restored requirement, not against new code.** C14 certifies that `/discovery/suggest` returns `200 { groups: [] }` on any internal error, citing the module's own header as the contract. Restored `11` §9 says the opposite in terms: *"A failure must not masquerade as success"* (`docs/specs/discovery-architecture-v1/discovery-v1-11-api-specification.md:103#A failure must not masquerade as success.`) — and requires six distinguishable failure classes. Applied at `routes/discoverySearch.ts:2211#For types without location context, rankBy`, `routes/discoverySearch.ts:2248#case "cities":      return rankByMatchTier`, `routes/discoverySearch.ts:2329#Promise.resolve(searchStatic(q, COMMON_VIB`: every class collapses to one empty success. This is §11.1 in a single row — the contract C14 grades against is the code's description of itself, and the document outranking it was overwritten. **Not fixed here**: surfacing errors changes a live route's contract with no flag; §6 D5's reasoning applies. New owner decision **D11** (§11.10). |
 
 **Re-executed and unchanged:** A01, A02, A03, A04, A10, A11, A18, A20, A25 (evidence re-read at this
 commit); B01 — **re-verified in production this pass**, which §9.4 and §10.5 both flagged as owed:
@@ -1038,7 +1038,7 @@ Per the brief these are named and the rest of the work continued.
    START_HERE: *"Where baseline and upgrade conflict, record the exact conflict and affected rows and
    ask for resolution."* **Exact conflict:**
    `docs/specs/discovery-architecture-v1/discovery-v1-11-api-specification.md:103#A failure must not masquerade as success.` vs
-   `artifacts/api-server/src/routes/discoverySearch.ts:2130-2140#offset: number,`. **Affected rows:** C14, DV-74's
+   `artifacts/api-server/src/routes/discoverySearch.ts:2201-2211#offset: number,`. **Affected rows:** C14, DV-74's
    sibling clause. **Asked, not taken** — D11.
 
 3. **DSV2's release gate: *"Provider-backed route time remains unverified until its configured
@@ -1840,9 +1840,9 @@ with a surviving verdict (C32) · 0 new verdict moves.**
 from the module's own header; `docs/specs/discovery-v1/11_API_Specification.md:103#A failure must not masquerade as success.`
 says the opposite and names six failure classes to distinguish. All three exits of
 `GET /discovery/suggest` still collapse to one empty success at
-`artifacts/api-server/src/routes/discoverySearch.ts:2654#discoveryRefusal("validation", "query_too_short", "GET /discovery/suggest")`,
-`artifacts/api-server/src/routes/discoverySearch.ts:2700#discoveryRefusal("transient_db", "visibility_state_unreadable", "GET /discovery/suggest")` and
-`artifacts/api-server/src/routes/discoverySearch.ts:2784#discoveryRefusal("transient_db", "suggest_failed", "GET /discovery/suggest")`.
+`artifacts/api-server/src/routes/discoverySearch.ts:2734#discoveryRefusal("validation", "query_too_short", "GET /discovery/suggest")`,
+`artifacts/api-server/src/routes/discoverySearch.ts:2780#discoveryRefusal("transient_db", "visibility_state_unreadable", "GET /discovery/suggest")` and
+`artifacts/api-server/src/routes/discoverySearch.ts:2864#discoveryRefusal("transient_db", "suggest_failed", "GET /discovery/suggest")`.
 The failure is observable in the server log and not to the caller, which is what §9 asks for.
 **W stands. D11 stands.**
 
@@ -1891,7 +1891,7 @@ where the file is outside this census's `CENSUS_SCOPE` the anchored citation liv
 
 | id | Obligation | Verdict | Evidence |
 |---|---|---|---|
-| DC-01 | `docs/specs/discovery-v1/01_Portava_Discovery_Engine.md:96#PDE should rank or recommend:` — ten output kinds | **W** | 7 of 10. Present: posts, places, events, trips, travelers, circles, itineraries-as-plans — eighteen types at `artifacts/api-server/src/routes/discoverySearch.ts:126#const SEARCH_TYPES = [`, nine ranked kinds at `artifacts/api-server/src/lib/portavaRank.ts:41#export type CandidateKind =`. **Trails FAIL** (DV-20). **Shared Moments FAIL** — absent from both lists and from every Discovery file. **Emerging discoveries FAIL** — trend states exist (DV-28) and are not an output kind. |
+| DC-01 | `docs/specs/discovery-v1/01_Portava_Discovery_Engine.md:96#PDE should rank or recommend:` — ten output kinds | **W** | 7 of 10. Present: posts, places, events, trips, travelers, circles, itineraries-as-plans — eighteen types at `artifacts/api-server/src/routes/discoverySearch.ts:129#const SEARCH_TYPES = [`, nine ranked kinds at `artifacts/api-server/src/lib/portavaRank.ts:41#export type CandidateKind =`. **Trails FAIL** (DV-20). **Shared Moments FAIL** — absent from both lists and from every Discovery file. **Emerging discoveries FAIL** — trend states exist (DV-28) and are not an output kind. |
 | DC-02 | `docs/specs/discovery-v1/02_Trails.md:58#Do not let creators attach unlimited disco` | **N** | No Trail or Signal label exists to attach. The analogue on the label system that does exist — a 20-tag cap in the tagging policy module — is named in `docs/discovery/compliance-v1.md` §4.2 and **not** counted as satisfying a Trail-scoped clause, on DV-13's precedent. |
 | DC-03 | `docs/specs/discovery-v1/02_Trails.md:68#Creation should require canonicalization c` — four checks | **N** | No Trail creation path. |
 | DC-04 | `02` §7 — Trail lifecycle (5 states) and in-Trail content lifecycle (6 states) | **N** | Neither exists. Distinct from DV-28, which is `03` §9's **place** momentum; `03` §4's **content** lifecycle is separately recorded absent inside DV-28's `W`. |
@@ -2756,7 +2756,7 @@ read is the only parent-trip resolution that runs. The projection branch beside
 it already refused its own failure explicitly; the legacy branch did not.
 
 Closed at
-`artifacts/api-server/src/routes/discoverySearch.ts:1071#if (tripsErr) throw new DiscoverySearchReadError("trips", tripsErr);`,
+`artifacts/api-server/src/routes/discoverySearch.ts:1074#if (tripsErr) throw new DiscoverySearchReadError("trips", tripsErr);`,
 re-raised through `searchPlans`' own catch, and answered by the route's existing
 catch arm as `transient_db` / `search_failed` / `coverage: "nothing"`.
 
@@ -3181,14 +3181,14 @@ refusal key, and the `[]` it merged in was byte-identical to a bucket that was
 read and matched nothing. That is `11` §9's masquerade on the busiest path,
 arriving through a door the fix for it did not cover.
 
-The 17 buckets are now named (`routes/discoverySearch.ts:2212#const FAN_SOURCES = [`),
+The 17 buckets are now named (`routes/discoverySearch.ts:2292#const FAN_SOURCES = [`),
 a rejected one is collected rather than collapsed
-(`routes/discoverySearch.ts:2267#const unreadableSources: string[] = [];`), and the
+(`routes/discoverySearch.ts:2347#const unreadableSources: string[] = [];`), and the
 route answers with `refusal.failedSources`. Coverage is `partial` whenever ANY
 source answered — including when the page itself is empty, because the buckets
 that were read are a real result and their emptiness is trustworthy — and
 `nothing` only when all 17 failed
-(`routes/discoverySearch.ts:2493#unreadableSources.length === FAN_SOURCES.length ? "nothing" : "partial",`).
+(`routes/discoverySearch.ts:2573#unreadableSources.length === FAN_SOURCES.length ? "nothing" : "partial",`).
 The serve log still runs on a partial: those items really were served, and
 dropping them under-counts exposure in the other direction.
 
@@ -3324,7 +3324,7 @@ All twelve are one defect. supabase-js RESOLVES on a read failure, so `error`
 is an outage and `[]` is what a query that matched nothing returns — the two
 answers byte-identical, through the back door of a destructure rather than the
 front door the refusal envelope guards. Each site now throws
-(`routes/discoverySearch.ts:940#if (error) throw new DiscoverySearchReadError("trips", error);`
+(`routes/discoverySearch.ts:943#if (error) throw new DiscoverySearchReadError("trips", error);`
 and eleven siblings) and keeps the empty answer for `!data`, which is a shape
 anomaly and not a failed read. Each function's catch re-raises only that named
 type, so everything it already swallowed it keeps swallowing.
@@ -3338,10 +3338,10 @@ category to an outage and answer `200 { groups: [...] }` with no refusal on it,
 on the surface that fires on every keystroke.
 
 It now collects the failed types by PLAN INDEX
-(`routes/discoverySearch.ts:2715#const unreadableAt = new Array<string | null>(plan.length).fill(null);`)
+(`routes/discoverySearch.ts:2795#const unreadableAt = new Array<string | null>(plan.length).fill(null);`)
 so the names come out in plan order however the parallel reads finish, and
 answers `suggest_sources_unreadable`
-(`routes/discoverySearch.ts:2760#suggest_sources_unreadable`),
+(`routes/discoverySearch.ts:2840#suggest_sources_unreadable`),
 `partial` while any type answered. §19's `useSearchSuggestions` already renders
 and caches a `partial` and refuses to cache a `nothing`, which is exactly the
 split this needs — the consumer fix landed three sections before the producer
@@ -3430,7 +3430,7 @@ opt-out state must not leak location signals. That is not the defect D11 names,
 and getting it right is not a defence against the one it does — `return []`
 alone is byte-identical to "no city matched", so a caller cannot tell a
 privacy-preserving refusal from a search result. Both now throw
-(`routes/discoverySearch.ts:1923#throw new DiscoverySearchReadError("profile_privacy_settings", optOutResult.error);`
+(`routes/discoverySearch.ts:1926#throw new DiscoverySearchReadError("profile_privacy_settings", optOutResult.error);`
 and its twin in `searchCountries`), which serves the same empty collection and
 SAYS it did not look: the fail-closed direction intact, the masquerade gone.
 
@@ -5728,3 +5728,250 @@ over another.
   `neighborhoodMatch`, and this section deliberately creates none — inventing an
   id to carry a finding is how `DV-83` happened (§28), and the residue count in
   §41.3 is a measurement of the ids this document already has.
+
+## §43 — `B05` closes: the registry it was waiting for was in this package all along
+
+*Written 2026-09-15 by the Discovery closing lane. **One verdict moves, `W` → `C`.**
+`head_commit` is NOT re-declared: §0's re-instated `1fe72289b` stands, because
+this branch squash-merges and the squash sha does not exist yet. The two files
+this section changes are named in this census's entry in
+`CENSUS_STALENESS_ACKNOWLEDGED.json`, and that entry says plainly what moved —
+a VERDICT, not only evidence — rather than claiming the changes cannot have
+mattered. That is a wider use of an acknowledgement than §42 argued for, so it
+is stated here and not left for a reader to discover in a JSON file.*
+
+### 43.1 The row, and the sentence in it that was false
+
+| id | was | now | evidence |
+|---|---|---|---|
+| B05 | W | **C** | `GET /discovery/search?type=countries` resolves against ISO-3166-1, not against who signed up. **The row's stated blocker was FALSE at this tree.** It read *"Fix needs a canonical country registry Discovery does not own"*, and §10.1 sharpened that to *"`country_essentials` exists in production and is keyed by ISO code with **no name column**, so it is not the registry this needs"*. `country_essentials` is not — but `artifacts/api-server/src/lib/countryCodes.ts:187#export function toCountryCode(` is: **216** ISO-3166-1 alpha-2 codes with canonical English names, a **169-entry** alias index carrying `holland`/`uk`/`bali`, and a diacritic-insensitive fold. It is PURE data with no I/O, it is in this package, and `lib/stamps/countryLookup.ts` already consumes it. Discovery now consumes the SAME module: `artifacts/api-server/src/lib/countryCodes.ts:286#export function searchCountryRegistry(` is the resolver a PICKER needs beside the parser that was already there, and `artifacts/api-server/src/routes/discoverySearch.ts:2111#const registry = searchCountryRegistry(q, offset + fetchLimit);` is where the country bucket reads it. Iceland is a country on this surface with no Icelander in the database. |
+
+**WHY THIS ONE AND NOT ANOTHER.** §18.3 named `B04` and `B05` as *"the only two
+of 111 that no other owner, migration or decision stands in front of"*, and
+§18.12 recorded that the pass which found them *"did not build B04 or B05"*.
+§41.4 left them in the 66 named non-correct rows. `B05` is the half of that pair
+that needs no flag, so it needs no migration, so it was closable by reading.
+
+### 43.2 What was built
+
+**The resolver, in the registry and not in Discovery.** `toCountryCode` answers
+*"is this string a country?"* — one input, one exact answer. A picker asks
+*"which countries could the person typing this mean?"*, and nothing answered
+that. `searchCountryRegistry(query, limit)` does, over seven ranked rungs:
+
+| rung | the query | example |
+|---:|---|---|
+| 0 | IS an ISO2 code | `in` → India |
+| 1 | EQUALS a canonical name | `japan` → Japan |
+| 2 | EQUALS an alias | `uk` → United Kingdom |
+| 3 | prefixes a canonical name | `united` → United Arab Emirates… |
+| 4 | prefixes an alias | `congo-` → DR Congo |
+| 5 | is inside a canonical name | `ran` → France |
+| 6 | is inside an alias | `ali` → Indonesia (Bali) |
+
+then alphabetically by canonical name, so a cursor means the same thing on the
+second request. **Substring and not prefix-only on purpose**: the profile leg it
+joins is a PostgREST `ilike '%q%'`, so a prefix-only registry would make the two
+halves of one bucket disagree about what "matches" means. **An alias is never a
+title** — `holland` resolves to *Netherlands*, and the alias is reported as
+`via`, never shown. Showing it would let a picker mint country names the
+entry-requirements corridor has never heard of.
+
+**The join, in `searchCountries`.** The registry head, then the free-text names
+only `profiles` knows, with a typed spelling folded into the canonical row by ISO
+code (`artifacts/api-server/src/routes/discoverySearch.ts:2132#if (code !== null && takenCodes.has(code)) continue;`).
+A name the registry cannot resolve **still lists**, carrying
+`metadata.source: "profile"` — dropping it to make the function tidy would
+delete a real answer. §27's position contract is unchanged: `lat`/`lng` are
+always present, null included, and `attachCentroids` still fills them when
+`canonical_locations` can.
+
+**The privacy model is untouched, and the refusal is deliberately NOT relaxed.**
+Blocked, age-restricted and discovery-opted-out profiles contribute nothing, as
+before. The registry leg needs no privacy read at all, so the obvious next move
+is to serve it when `profiles` or `profile_privacy_settings` could not be read —
+and it does not. A registry-only page is missing every free-text country only
+`profiles` knows, and a body short by an unknown amount is indistinguishable from
+a complete one. That is D11's masquerade pointing the other way: *"we did not
+look"* served as *"we looked, and this is all there is"*. The bucket has one
+answer and one refusal, because an intra-bucket partial is a shape the response
+envelope does not have.
+
+### 43.3 Two defects found by a failing test rather than by reasoning
+
+Neither is a graded row, and **no id is invented for either** — §42.3's rule,
+which is there because inventing one is how `DV-83` happened.
+
+**(1) A title-only re-rank cannot see an alias, so every colloquially-named
+country sorted last.** `dispatchSearch` passed the countries bucket through
+`rankByMatchTier`, which scores the TITLE against the raw query. "United
+Kingdom" does not contain "uk", so it scored tier 0 — behind *Ukraine*, which
+starts with the same two letters and means a different country. The same held
+for `holland`, `bali`, `dubai` and every other alias in the table: a row reached
+through an alias can never score above 0 on its own title. Countries now manage
+their own ordering (`artifacts/api-server/src/routes/discoverySearch.ts:2258#case "countries":   return searchCountries(sc, q, blockedSet, ageRestrictedSet, offset, fetchLimit);`),
+on `searchPlaces`' precedent two lines above it in the same switch, and the
+free-text tail is match-tier ranked inside the function
+(`artifacts/api-server/src/routes/discoverySearch.ts:2144#merged.push(...rankByMatchTier(tail, q));`)
+so the ordering the bucket used to get is kept for the half it is still right
+for. **This was a live defect before this pass and would have been one after it**
+— the registry's rung order would have been computed and then thrown away.
+
+**(2) `toCountryCode` skipped the alias table for any two-letter string.** The
+ISO branch read *"two letters are a code or they are nothing"* and returned null
+outright. `ALIASES` has exactly one two-letter key — `"uk"` — and `UK` is not an
+ISO-3166-1 code, so the most-typed colloquial country string in the product
+resolved to nothing: an entry-requirements lookup found no corridor
+(`lib/entryRequirements.ts` reads `destination_country` through this function),
+and a stamp keyed itself `XX` (`lib/stamps/StampCatalogService.ts`'s
+`toCountryCode(raw) ?? "XX"`). It now falls through to the name index. **The
+widening is strictly additive and only in the safe direction**: the ISO branch
+still runs first and wins, so no input that resolves today can change code and
+the only possible transition is `null` → a real code, never `A` → `B`. That is
+the argument `lib/stamps/countryLookup.ts`'s own header already makes for its
+fallback, and `lib/stamps/xxCatalogRepair.ts` is the machinery that exists to
+carry an `XX` row to a real code when one appears. **THE BLAST RADIUS IS NINE MODULES, NOT FOUR, AND
+THIS SENTENCE IS A CORRECTION OF ITS OWN FIRST DRAFT.** The count was written
+off a `grep` read through `head -20`, which cut the list mid-output — the same
+shape of error as reading a census and stopping at §11. Enumerated in full:
+`lib/entryRequirements.ts:87`, `routes/entryRequirements.ts` (five sites — :128,
+:330, :331, :347, :348), `routes/countryEssentials.ts` (:101, :130),
+`lib/stamps/countryLookup.ts:185`, `lib/stamps/StampCatalogService.ts:33`,
+`lib/stampHelper.ts:43`, `lib/inputAssistance/validationSuite.ts:72`, and two
+LAZY consumers that resolve the function through a dynamic import and fall back
+to `null` when it is absent — `domain/trips/services/tripReadiness.ts` and
+`domain/trips/services/tripBudgetIntel.ts`. **One of the nine is already immune
+by construction**: `routes/countryEssentials.ts` handles a two-letter input
+itself before it ever calls, so `uk` never reaches the branch that changed.
+
+**The safety argument is MEASURED, not asserted.** Parsing the two tables out of
+the module: `ALIASES` has exactly ONE key that normalises to two letters — `uk`
+— and it collides with no entry in `CODES`, so the ISO branch cannot shadow it;
+and zero aliases point at a code `CODES` does not carry. The behaviour change is
+therefore a single input, `uk`/`UK`, and it goes `null` -> `GB`.
+
+### 43.4 The tests, and the mutants each one killed
+
+`artifacts/api-server/src/test/discoveryCountryRegistry.test.ts` — 20 cases,
+registered in the `test` script (`check-test-registration` green: 1285 of 1315
+registered). **Failing first, measured rather than asserted**: with the resolver
+present and the route untouched, **7 of the 18 cases the suite carried at that
+moment were RED** — R1, R2, R3, R5, R6, R7, R11. (U8 and R12 are the two cases
+§43.3 and §43.4 say were written later, each because something went red or,
+worse, did not.)
+
+Seven mutants, each applied, run, watched red, then restored and compared
+byte-for-byte by `cmp`:
+
+| mutation applied | what went red |
+|---|---|
+| the registry leg returns `[]` | **8** — R1, R2, R3, R5, R6, R7, R11, R12 |
+| an alias becomes the row's title | **4** — U3, R6, R11, R12 |
+| the ISO-code fold between the legs is deleted | **1** — R12 |
+| the registry answers over a refused privacy read | **1** — R9 |
+| the title-only re-rank is put back on the bucket | **2** — R6, R12 |
+| the ISO2 rung is deleted from the resolver | **2** — U2, R5 |
+| `toCountryCode`'s two-letter early return is restored | **1** — R12 |
+
+**AN EIGHTH SURVIVED, AND R12 EXISTS BECAUSE OF IT.** Deleting the ISO-code fold
+left the suite GREEN on its first run. R3's fixture types the country the same
+way the registry spells it — `japan` against *Japan* — so the lowercase-name fold
+catches that on its own and the code fold is dead weight against it. The fold is
+the only thing that catches a DIFFERENT spelling of the same country, so R12 was
+written to type `Holland` and `UK`, and it is R12 that kills three of the seven
+mutants above. A test that cannot fail for the reason it was written is the
+failure mode §13.5 found in this census's own work and §42.2 found in the next
+lane's; it is the third time, and each time only the mutation said so.
+
+### 43.5 Headline, restated as a block so the last statement is the current one
+
+| bucket | count |
+|---|---|
+| BUILT-AND-CORRECT | **82** |
+| BUILT-BUT-WRONG | **82** |
+| NOT-BUILT | **21** |
+| CANNOT-VERIFY | **3** |
+
+`B05` moved WITHIN the built set, so CONSTRUCTED is unchanged at 164 / 188 =
+**87.2 %** and CORRECT rises to 82 / 188 = **43.6 %**, from 81 / 188 = 43.1 % at
+§39.7. The four buckets sum to 188 exactly. §18.3's bucket (a) — *"closable from
+code this lane owns"* — falls from two rows to one, and the one left is `B04`.
+
+**The residue reconciles, and it does not move.** §41.3's cross-check was *"66
+named rows still non-correct + 41 residue = 107"*. `B05` is a NAMED row — §18.3
+names it in bucket (a) — so the named count falls to **65** and the residue is
+untouched at **41**: 65 + 41 = **106**, which is 107 − 1. §41.7 warned the
+residue would decay through ordinary progress; this move is the other kind, and
+the arithmetic distinguishes them.
+
+### 43.6 A cross-lane request this lane did NOT take itself
+
+**`census-input-intelligence.md` G277 is the same requirement, and it still says
+`W`.** Its evidence is now false in the same two places B05's was: *"No canonical
+country resolver"* and *"a country picker therefore resolves against the user
+table, not a canonical country registry, so a country with no users in it does
+not exist."* Both are false at this tree. **That row is not re-graded here**, on
+§17.2's precedent that a lane does not move another census's verdict, and
+because G277's population is that census's to count. What this lane owes it is
+the notice, and that is this paragraph plus the named entry in
+`CENSUS_STALENESS_ACKNOWLEDGED.json`, which says for that census — alone among
+the seven — that the change **can** have moved a verdict and names which one.
+
+### 43.7 Rows examined and deliberately left, with the reason for each
+
+- **`B04`** (protected locations) — the other half of §18.3's bucket (a). NOT
+  built, and §10.5's argument is still right rather than merely old:
+  `lib/protectedLocations.ts` suppresses **fail-CLOSED** by design and
+  `protected_zones` is absent from production, so wiring Discovery into it with
+  no flag turns every production search into an empty result on the first failed
+  read. It needs a flag; a flag needs a migration; and a flag seeded FALSE lands
+  the row in §18.3's bucket (b) — still `W`. **It cannot reach `C` from this
+  tree in either direction**, which is why the effort went to `B05`.
+- **`B02`** (emoji in `sanitizeQuery`) — owner decision D5, recorded twice. The
+  fix is two characters of regex and §10.5 already says a reader should push
+  back on it. **Not overridden.** *"Overriding another lane's recorded owner
+  decision because the fix is small is how a census stops meaning anything"* is
+  this census's own sentence and it governs this pass too.
+- **`DV-31`** (*"can decay and rediscover"*) — the remaining leg is `02` §9.5's
+  *"periodically retest promising items"*, and §39's restatement says the only
+  thing that could do the re-exposing is the exploration governor, which is inert
+  behind `discovery_ranking_modifiers_enabled`. Building a retest would also mean
+  choosing what "promising" and "periodically" are, with no method here to derive
+  either — §42.1's refusal to invent a ranking constant, applied to a threshold.
+- **`DC-06` · `DC-15` · `DV-75`** (§41.5's other ranked items) — each closes PART
+  of a row. `DC-06`'s time-of-day normalizer takes it to 3 of 6; `DC-15` cannot
+  reach `C` because `10` §7 forbids editing the applied migrations that carry
+  two of its three legs; `DV-75`'s `live-db-verdict` cannot produce a verdict
+  from a checkout. None of the three is a verdict move, and none is user-facing.
+- **`A11`'s second half** — `lib/portavaRank.ts`'s `availableMinutes` is the
+  independent free-time calculation Trips `:185` forbids, and it is removable.
+  The row would still be `W`: its first half is
+  `TRIP_OPERATIONAL_PROJECTIONS_FLAG` (2778, seeded FALSE, schema 2760–2785
+  unapplied), so on every deployment the consumption refuses. Not taken, because
+  a change to the ranking context that moves no verdict is a change to a live
+  ranker for a document's benefit.
+
+### 43.8 WHAT WOULD TURN THIS RED
+
+- **Anyone reading B05's ORIGINAL cell.** Last-statement-wins means a reader who
+  stops at §2b gets *"Fix needs a canonical country registry Discovery does not
+  own"*, which is the sentence this section falsifies. Its neighbour §10.1 is
+  more specific and equally superseded.
+- **`searchCountryRegistry` growing a second copy anywhere.** The whole argument
+  for grading this `C` is that Discovery CONSUMES the registry rather than
+  carrying one. A country list inside `routes/discoverySearch.ts` would be the
+  defect `C32` and `DC-24` exist to catch, wearing a different hat, and this row
+  should go back to `W` the day one appears.
+- **Relaxing the refusal.** If a later pass decides the registry may answer over
+  an unreadable `profile_privacy_settings`, R9 goes red and it should; if R9 is
+  deleted instead, this row is no longer true. The registry leg is exactly the
+  kind of viewer-independent data that makes a masquerade look reasonable.
+- **`toCountryCode` acquiring a second two-letter alias.** The widening in §43.3
+  is safe because `"uk"` is the only two-letter key in `ALIASES` and `UK` is not
+  an ISO code. A future alias that collides with a real ISO2 code would be
+  shadowed by the ISO branch and silently never reached.
+- **The `head_commit` that is not re-declared.** §0's `1fe72289b` is older than
+  this section's own changes by construction. The acknowledgement entry is what
+  keeps `check:census-freshness` honest about that, and it is SPENT the moment
+  this census is re-declared at the squash — the checker fails on a `since` that
+  no longer matches, which is the interlock working.
