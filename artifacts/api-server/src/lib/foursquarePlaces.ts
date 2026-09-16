@@ -19,6 +19,13 @@ let keyMissingLogged = false;
 let authFailedLogged = false;
 let quotaExhaustedLogged = false;
 
+/** Reset process-local alert guards for deterministic integrated tests only. */
+export function _resetFoursquareAlertGuardsForTests(): void {
+  keyMissingLogged = false;
+  authFailedLogged = false;
+  quotaExhaustedLogged = false;
+}
+
 function inferType(categories: Array<{ name?: string }> | undefined): string {
   const names = (categories ?? []).map((c) => c.name ?? "").join(" ").toLowerCase();
   if (/airport/.test(names)) return "airport";

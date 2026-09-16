@@ -27,7 +27,10 @@ import assert from "node:assert/strict";
 // ── Module under test ─────────────────────────────────────────────────────────
 // Static imports so both modules share a single instance; Sentry exported from
 // sentry.ts is a plain mutable object, which lets us replace captureMessage.
-import { searchFoursquare } from "./foursquarePlaces.js";
+import {
+  _resetFoursquareAlertGuardsForTests,
+  searchFoursquare,
+} from "./foursquarePlaces.js";
 import { Sentry } from "./sentry.js";
 
 // ── Sentry spy ────────────────────────────────────────────────────────────────
@@ -93,6 +96,7 @@ describe("searchFoursquare — Sentry auth reporting", () => {
   it(
     "calls Sentry.captureMessage with level 'error' on the first 401 response",
     async () => {
+      _resetFoursquareAlertGuardsForTests();
       stubFetch(401);
 
       const result = await searchFoursquare("hotel");
