@@ -5984,7 +5984,7 @@ the exact opposite of 'not symmetric'."* What the census had NOT recorded is
 where that doubling is now reached from. It is no longer only the safety
 engine's per-card rating: since the Layover snapshot contract was published,
 it is the gate another architecture calls on six serve paths
-(`artifacts/api-server/src/routes/discovery.ts:3975#layoverGatedPlaces`).
+(`artifacts/api-server/src/routes/discovery.ts:4006#layoverGatedPlaces`).
 
 **The geometry half of this tree had already stopped assuming symmetry.**
 `bandCandidate` asks the port for the ride back TWICE — once at the departure
