@@ -17,13 +17,26 @@ import {
   unenforceableControls,
   FEED_ENFORCEABLE_CONTROLS,
   feedSubjectScope,
+  RESURFACING_CONTROLS,
+  CONTROL_EFFECTS,
   type ResurfacingSuppressions,
 } from "../services/highlights/highlightResurfacing.js";
 import {
   readProjectionPolicies,
   resolveLocationDisclosure,
+  LOCATION_PRECISION_LADDER,
+  PERSON_VISIBILITY_LADDER,
+  MEMORY_CONSENT_DIMENSIONS,
   type ProjectionPolicyRead,
 } from "../services/highlights/highlightProjectionPolicy.js";
+import {
+  listResurfacingControls,
+  setResurfacingControl,
+  clearResurfacingControl,
+  readProjectionPolicyForOwner,
+  setProjectionPolicy,
+  type ControlWriteFailure,
+} from "../services/highlights/highlightControlWrites.js";
 import { executeRevocation } from "../services/highlights/highlightRevocation.js";
 import { canMessage } from "../lib/messagingPermissions";
 import { isFlagEnabled } from "../lib/featureFlags";
@@ -944,6 +957,254 @@ router.get("/highlights/active", async (req, res) => {
   }));
 
   res.status(200).json({ highlights: result });
+});
+
+/* ============================================================================
+ * §10 / §11 — THE CONTROL SURFACE. The half that was missing.
+ *
+ * Highlights/Memories Development Architecture Spec v1 §10 (an owner's
+ * SELECTED location precision, person visibility and consent) and §11 (the six
+ * resurfacing controls).
+ *
+ * Both tables were applied to production on 2026-09-15 and the enforcement
+ * that reads them is live, correct and route-tested — `applyResurfacingControls`
+ * above and `resolveLocationDisclosure` on all three read paths. Census §O.2
+ * then recorded what remained: "There is no route, no service and no script by
+ * which a user can set a §11 resurfacing control or a §10 precision rung. Both
+ * tables are deployed and EMPTY, and they will stay empty." These five handlers
+ * are the writer, and with them every control this repository enforces is a
+ * control somebody can actually set.
+ *
+ * THE PATH ORDER IS LOAD-BEARING. `/highlights/resurfacing-controls` is
+ * registered BEFORE `DELETE /highlights/:id`, because Express matches in
+ * declaration order and `:id` would otherwise capture the literal segment and
+ * refuse it as a malformed UUID — a 400 on a route that exists.
+ *
+ * AUTHORIZATION IS APP-SIDE, NOT RLS. `requireUser` returns the SERVICE client,
+ * which bypasses every policy migrations 2720 and 2721 install. Every check
+ * that matters is in `services/highlights/highlightControlWrites.ts` and is
+ * exercised by src/test/highlightControlWrites.test.ts.
+ * ============================================================================ */
+
+/** One refusal mapping for all five handlers, so no two disagree. */
+function sendControlFailure(
+  res: Response,
+  reason: ControlWriteFailure,
+  detail: string,
+  log: (obj: any, msg: string) => void,
+): void {
+  switch (reason) {
+    case "invalid":
+      sendError(res, "invalid_payload", detail);
+      return;
+    case "not_owned":
+      // 404, not 403: see ownsHighlight. Telling a caller "that exists but is
+      // not yours" makes this endpoint an existence oracle for other people's
+      // Highlight ids.
+      sendError(res, "not_found", "Highlight not found");
+      return;
+    case "not_deployed":
+      // The control does not exist on this database. It is NOT an error the
+      // user caused and it is NOT a stored preference — reporting 200 here
+      // would tell somebody their Memory is protected when nothing was written.
+      log({ detail }, "highlights: §10/§11 control table is not deployed — refusing rather than reporting a stored preference");
+      sendError(res, "feature_disabled", "This privacy control is not available on this deployment.");
+      return;
+    case "unavailable":
+    case "write_unconfirmed":
+      log({ detail, reason }, "highlights: §10/§11 control write could not be confirmed — refusing rather than reporting success");
+      sendError(res, "degraded_unavailable", "We could not save that privacy setting. Please try again.");
+      return;
+  }
+}
+
+/** Every §11 control this user has set, with what each one suppresses. */
+router.get("/highlights/resurfacing-controls", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const listed = await listResurfacingControls(client, user.id);
+  if (!listed.ok) {
+    sendControlFailure(res, listed.reason, listed.detail, (o, m) => req.log.error(o, m));
+    return;
+  }
+
+  res.status(200).json({
+    controls: listed.value.map((c) => ({
+      control: c.control,
+      subjectType: c.subjectType,
+      subjectId: c.subjectId,
+      createdAt: c.createdAt,
+      // The surfaces the control acts on travel WITH it, derived from
+      // CONTROL_EFFECTS rather than retyped in the client. §21 insists these
+      // stay separate operations in the UX as well as the data model, and a
+      // client that has to hard-code "do-not-resurface means the feed" is one
+      // release away from disagreeing with the server about what it means.
+      suppresses: CONTROL_EFFECTS[c.control].suppresses,
+      retainsRecord: CONTROL_EFFECTS[c.control].retainsRecord,
+    })),
+    // Named so a client can render the controls it cannot yet enforce
+    // differently, rather than promising an effect the feed does not deliver.
+    // This is census H90's ceiling, stated on the wire.
+    unenforceableOnFeed: RESURFACING_CONTROLS.filter(
+      (c) =>
+        (CONTROL_EFFECTS[c].suppresses as readonly string[]).includes("proactive_resurfacing") &&
+        !(FEED_ENFORCEABLE_CONTROLS as readonly string[]).includes(c),
+    ),
+    catalogue: RESURFACING_CONTROLS.map((c) => ({
+      control: c,
+      scope: CONTROL_EFFECTS[c].scope,
+      suppresses: CONTROL_EFFECTS[c].suppresses,
+      note: CONTROL_EFFECTS[c].note,
+    })),
+  });
+});
+
+/** Set one §11 control. Idempotent on (owner, control, subject). */
+router.put("/highlights/resurfacing-controls", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const parsed = z
+    .object({ control: z.string(), subjectId: z.string() })
+    .safeParse(req.body ?? {});
+  if (!parsed.success) { sendError(res, "invalid_payload", "control and subjectId are required"); return; }
+
+  const set = await setResurfacingControl(client, user.id, parsed.data.control, parsed.data.subjectId);
+  if (!set.ok) {
+    sendControlFailure(res, set.reason, set.detail, (o, m) => req.log.error(o, m));
+    return;
+  }
+
+  // Fire-and-forget by contract: CompassCacheEngine.invalidate "logs but never
+  // throws". A privacy control that was STORED must not be reported as failed
+  // because a cache eviction did not land, so this does not gate the 200.
+  // CEILING, recorded rather than hidden: this evicts the SETTER's cache. A
+  // control that suppresses `public_projection` on somebody else's cached view
+  // is not reached by it — see docs/BUILD-BACKLOG.md.
+  await invalidateCompassCache(getServiceClient(), user.id, "highlight_privacy_control_changed");
+  res.status(200).json({
+    control: set.value.control,
+    subjectType: set.value.subjectType,
+    subjectId: set.value.subjectId,
+    createdAt: set.value.createdAt,
+    suppresses: CONTROL_EFFECTS[set.value.control].suppresses,
+  });
+});
+
+/** Clear one §11 control. Idempotent: clearing what is not set is a 200. */
+router.delete("/highlights/resurfacing-controls", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  // A DELETE carries its selector in the query string as well as the body,
+  // because a fetch() DELETE with a body is awkward on React Native and a
+  // control nobody can clear is the trap the service header names.
+  const control = (req.body?.control ?? req.query.control) as unknown;
+  const subjectId = (req.body?.subjectId ?? req.query.subjectId) as unknown;
+  const confirmed = req.body?.confirm === true || req.query.confirm === "true";
+
+  const cleared = await clearResurfacingControl(client, user.id, control, subjectId, { confirmed });
+  if (!cleared.ok) {
+    sendControlFailure(res, cleared.reason, cleared.detail, (o, m) => req.log.error(o, m));
+    return;
+  }
+
+  // Fire-and-forget by contract: CompassCacheEngine.invalidate "logs but never
+  // throws". A privacy control that was STORED must not be reported as failed
+  // because a cache eviction did not land, so this does not gate the 200.
+  // CEILING, recorded rather than hidden: this evicts the SETTER's cache. A
+  // control that suppresses `public_projection` on somebody else's cached view
+  // is not reached by it — see docs/BUILD-BACKLOG.md.
+  await invalidateCompassCache(getServiceClient(), user.id, "highlight_privacy_control_changed");
+  res.status(200).json({ cleared: cleared.value.cleared });
+});
+
+/** Read one Highlight's §10 projection policy. Owner-only. */
+router.get("/highlights/:id/projection-policy", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const { id } = req.params;
+  if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid highlight id"); return; }
+
+  const read = await readProjectionPolicyForOwner(client, user.id, id);
+  if (!read.ok) {
+    sendControlFailure(res, read.reason, read.detail, (o, m) => req.log.error(o, m));
+    return;
+  }
+
+  res.status(200).json({
+    highlightId: read.value.highlightId,
+    locationPrecision: read.value.locationPrecision,
+    personVisibility: read.value.personVisibility,
+    consent: read.value.consent,
+    // The ladders travel with the policy for the same reason the control
+    // catalogue does: §10's rungs COARSEN left to right and a client that
+    // reorders them renders a tightening as a loosening.
+    locationPrecisionLadder: LOCATION_PRECISION_LADDER,
+    personVisibilityLadder: PERSON_VISIBILITY_LADDER,
+    consentDimensions: MEMORY_CONSENT_DIMENSIONS,
+  });
+});
+
+/**
+ * Set one Highlight's §10 projection policy. PARTIAL — only named fields move.
+ *
+ * `location_precision` here is the OWNER'S SELECTED RUNG, which is exactly the
+ * value `resolveLocationDisclosure` combines with the visibility-implied rung
+ * through `strictestPrecision`. Because that combination can only TIGHTEN, an
+ * owner selecting a looser rung than their visibility implies does not loosen
+ * anything — which is the §10 invariant, and it is enforced on the read path
+ * rather than by refusing the write here.
+ */
+router.put("/highlights/:id/projection-policy", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const { id } = req.params;
+  if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid highlight id"); return; }
+
+  const parsed = z
+    .object({
+      // `.optional()` and a null value are DIFFERENT and both are legal: absent
+      // means "leave it alone", null means "unset it". Collapsing them would
+      // make it impossible to clear a rung once chosen.
+      locationPrecision: z.string().nullable().optional(),
+      personVisibility: z.string().nullable().optional(),
+      consent: z.record(z.string(), z.union([z.boolean(), z.null()])).optional(),
+    })
+    .safeParse(req.body ?? {});
+  if (!parsed.success) { sendError(res, "invalid_payload", "Invalid projection policy payload"); return; }
+
+  const saved = await setProjectionPolicy(client, user.id, id, {
+    locationPrecision: parsed.data.locationPrecision as any,
+    personVisibility: parsed.data.personVisibility as any,
+    consent: parsed.data.consent as any,
+  });
+  if (!saved.ok) {
+    sendControlFailure(res, saved.reason, saved.detail, (o, m) => req.log.error(o, m));
+    return;
+  }
+
+  // Fire-and-forget by contract: CompassCacheEngine.invalidate "logs but never
+  // throws". A privacy control that was STORED must not be reported as failed
+  // because a cache eviction did not land, so this does not gate the 200.
+  // CEILING, recorded rather than hidden: this evicts the SETTER's cache. A
+  // control that suppresses `public_projection` on somebody else's cached view
+  // is not reached by it — see docs/BUILD-BACKLOG.md.
+  await invalidateCompassCache(getServiceClient(), user.id, "highlight_privacy_control_changed");
+  res.status(200).json({
+    highlightId: saved.value.highlightId,
+    locationPrecision: saved.value.locationPrecision,
+    personVisibility: saved.value.personVisibility,
+    consent: saved.value.consent,
+  });
 });
 
 /* ============================================================================

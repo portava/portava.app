@@ -129,7 +129,7 @@ export function makeFakeClient(tables: Record<string, any[]>, opts: FakeOpts = {
       },
       insert(d: any) { isWrite = true; obj.__insert = d; return obj; },
       update(d: any) { isWrite = true; isUpdate = true; patch = d; return obj; },
-      upsert(d: any) { isWrite = true; obj.__upsert = d; return obj; },
+      upsert(d: any, o?: any) { isWrite = true; obj.__upsert = d; obj.__upsertOpts = o ?? null; return obj; },
       delete() { isWrite = true; obj.__delete = true; return obj; },
       eq(c: string, v: any) { filters.push((r) => r[c] === v); return obj; },
       neq(c: string, v: any) { filters.push((r) => r[c] !== v); return obj; },
@@ -164,14 +164,44 @@ export function makeFakeClient(tables: Record<string, any[]>, opts: FakeOpts = {
           ...r,
           id: r.id ?? `new-${Math.random().toString(16).slice(2)}`,
         }));
-        for (const r of rows) (tables[table] ??= []).push(r);
-        return { data: single ? rows[0] : rows, error: null, count: null };
+        // UPSERT MEANS UPSERT. The previous shape appended unconditionally, so
+        // an idempotent write — setting the same §11 control twice — produced
+        // two rows here and one row in Postgres, and any test asserting
+        // idempotency would have been asserting a fiction. `onConflict` names
+        // the unique index, so conflict resolution is done on exactly the
+        // columns the database would use.
+        const conflict = obj.__upsert
+          ? String(obj.__upsertOpts?.onConflict ?? "id").split(",").map((c: string) => c.trim()).filter(Boolean)
+          : [];
+        for (const r of rows) {
+          const existing = conflict.length
+            ? (tables[table] ??= []).find((e: any) => conflict.every((c: string) => e[c] === r[c]))
+            : undefined;
+          if (existing) {
+            // Keep the stored id and created_at: an upsert updates a row, it
+            // does not replace its identity.
+            const { id: _newId, ...rest } = r;
+            Object.assign(existing, rest);
+          } else {
+            (tables[table] ??= []).push(r);
+          }
+        }
+        const stored = conflict.length
+          ? rows.map((r: any) => (tables[table] ?? []).find((e: any) => conflict.every((c: string) => e[c] === r[c])) ?? r)
+          : rows;
+        return { data: single ? stored[0] : stored, error: null, count: null };
       }
       let rows = (tables[table] ?? []).filter((r) => filters.every((f) => f(r)));
       if (obj.__delete) {
         const ids = new Set(rows);
         tables[table] = (tables[table] ?? []).filter((r) => !ids.has(r));
-        return { data: null, error: null, count: null };
+        // A DELETE that asked for its rows back GETS them, exactly as
+        // supabase-js does, and one that did not still resolves `{ data: null,
+        // error: null }`. The distinction is the same one `zeroRowUpdate`
+        // exists for: without it a handler that checks "did this remove
+        // anything" cannot be told apart from one that assumed it did.
+        if (!selectedAfterWrite) return { data: null, error: null, count: null };
+        return { data: rows, error: null, count: null };
       }
       if (isUpdate) {
         if (zeroRowUpdate.has(table)) rows = [];

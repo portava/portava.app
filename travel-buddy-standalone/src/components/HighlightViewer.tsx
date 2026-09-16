@@ -20,7 +20,7 @@ import { Video, ResizeMode, type AVPlaybackStatus } from 'expo-av';
 import { getMediaFilter, buildCssFilter } from '../lib/media/filters.ts';
 import { DisplayMediaImage, AvatarImage } from './ui/DisplayMediaImage.tsx';
 import { useHydratedMedia } from '../services/mediaUrl.ts';
-import { X, MessageCircle, Flag, Eye, Plus, Trash2, Volume2, VolumeX } from 'lucide-react-native';
+import { X, MessageCircle, Flag, Eye, Plus, Trash2, Volume2, VolumeX, Lock } from 'lucide-react-native';
 import { ActionStampIcon, ActionShareIcon } from './ui/ActionRowIcon.tsx';
 import { POST_ACTION_ICON_SIZE } from './PostActionRow.tsx';
 import { SaveButton } from './SaveButton.tsx';
@@ -40,6 +40,11 @@ import {
 import { markHighlightsViewed } from '../services/messaging.ts';
 import { markViewed, invalidateHighlightCache } from '../hooks/useHighlightRingState.ts';
 import { HighlightViewersSheet } from './HighlightViewersSheet.tsx';
+// §10 / §11 — the owner's privacy controls. Both control tables have been
+// deployed since 2026-09-15 and the server enforces what they hold on every
+// read; until this sheet was wired here there was no way for the person they
+// protect to put anything in them (census §O.2).
+import { HighlightPrivacySheet } from '../features/highlights/HighlightPrivacySheet.tsx';
 import { EngagementUserListSheet } from './EngagementUserListSheet.tsx';
 import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
 
@@ -80,6 +85,7 @@ export function HighlightViewer({
   const [likeMap, setLikeMap] = useState<Record<string, { liked: boolean; count: number }>>({});
   const [likerHighlightId, setLikerHighlightId] = useState<string | null>(null);
   const [viewersOpen, setViewersOpen] = useState(false);
+  const [privacyOpen, setPrivacyOpen] = useState(false);
   const [replyOpen, setReplyOpen] = useState(false);
   const [replyText, setReplyText] = useState('');
   const [replying, setReplying] = useState(false);
@@ -557,6 +563,18 @@ export function HighlightViewer({
             )}
 
             {isOwner && (
+              <Pressable
+                onPress={() => setPrivacyOpen(true)}
+                style={s.actionBtn}
+                hitSlop={HIT_SLOP}
+                accessibilityRole="button"
+                accessibilityLabel="Privacy controls for this highlight"
+              >
+                <Lock size={POST_ACTION_ICON_SIZE} color="rgba(255,255,255,0.85)" />
+              </Pressable>
+            )}
+
+            {isOwner && (
               <Pressable onPress={handleDelete} style={s.actionBtn} hitSlop={HIT_SLOP}>
                 <Trash2 size={POST_ACTION_ICON_SIZE} color="rgba(255,255,255,0.7)" />
               </Pressable>
@@ -600,6 +618,19 @@ export function HighlightViewer({
         highlightId={current.id}
         onClose={() => setViewersOpen(false)}
       />
+
+      {isOwner && (
+        <HighlightPrivacySheet
+          visible={privacyOpen}
+          highlightId={current.id}
+          onClose={() => setPrivacyOpen(false)}
+          // The viewer holds its own copy of the list, so a control that
+          // suppresses this Highlight has to be reflected by whoever owns the
+          // feed. `onDeleted` is the existing "this list is stale" signal and
+          // is reused rather than inventing a second one.
+          onChanged={() => onDeleted?.()}
+        />
+      )}
 
       {likerHighlightId !== null && (
         <EngagementUserListSheet
