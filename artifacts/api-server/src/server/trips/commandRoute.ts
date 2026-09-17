@@ -91,6 +91,11 @@ export const COMMANDS_ENDPOINT_TYPES: readonly TripCommandType[] = [
   "ADD_TRANSPORT_SEGMENT", "UPDATE_TRANSPORT_SEGMENT", "SET_TRANSPORT_STATE", "REMOVE_TRANSPORT_SEGMENT",
   "DECLARE_DISRUPTION", "RESOLVE_DISRUPTION",
   "MARK_COMMITMENT_AT_RISK", "CLEAR_COMMITMENT_RISK", "OPEN_FREE_WINDOW", "RECORD_OPPORTUNITY_CHANGE",
+  // 2797/2798: §23 long-stay recurring commitments. No legacy twin — nothing in
+  // the tree could express a standing obligation before 2797, so there is
+  // nothing to cut over from and these are issuable here from the start.
+  "ADD_RECURRING_COMMITMENT", "UPDATE_RECURRING_COMMITMENT", "REMOVE_RECURRING_COMMITMENT",
+  "SKIP_RECURRENCE_OCCURRENCE", "UNSKIP_RECURRENCE_OCCURRENCE",
 ] as const;
 
 const ISSUABLE = new Set<string>(COMMANDS_ENDPOINT_TYPES);
@@ -126,7 +131,7 @@ const NOT_FOUND_REASONS = new Set([
   "TRIP_PRESENCE_NOT_FOUND", "TRIP_PROPOSAL_NOT_FOUND",
   "TRIP_PARTICIPANT_NOT_FOUND", "TRIP_PLAN_ATTENDANCE_NOT_FOUND",
   "TRIP_SUBGROUP_NOT_FOUND", "TRIP_TRANSPORT_NOT_FOUND", "TRIP_DISRUPTION_NOT_FOUND",
-  "TRIP_MEETING_NOT_FOUND",
+  "TRIP_MEETING_NOT_FOUND", "TRIP_RECURRENCE_NOT_FOUND",
 ]);
 /** Reason codes that mean "not from here": the state refuses the arrow, or the version moved. 409. */
 const CONFLICT_REASONS = new Set([

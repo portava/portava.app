@@ -38,6 +38,7 @@ import { recordDerivedEvents, type DerivedEventsReport } from "../events/tripDer
 import {
   computeFreedomWindows, type EngineCommitment, type FreedomWindow, type HopTravel, type TemporalConflict,
 } from "../invariants/TripFreedomEngine.js";
+import { buildTripRoutineContext, type TripRoutineContext } from "../services/TripRoutineContext.js";
 
 const log = logger.child({ mod: "tripFreedomProjection" });
 /** The BOUND. The departure-time assumption is layered per trip, below. */
@@ -52,6 +53,19 @@ export interface TripFreedomProjection extends TripProjectionEnvelope {
   derivedEvents: DerivedEventsReport;
   conflicts: TemporalConflict[];
   commitmentCount: number;
+  /**
+   * §23 "Long-stay 45 days" (census-trips TR427): the standing RULES in force
+   * and the occurrences this read expanded from them. `routine.rules.status`
+   * distinguishes "this traveller has no routine" (ok, empty) from "this
+   * deployment has no 2797" (no_source) from "the read failed" (unread) — three
+   * facts that all produce an empty list and must never produce one sentence.
+   * The occurrences below ARE in `windows`' inputs: a 09:00 class every weekday
+   * closes the morning on a long stay, and a freedom window that ignored it
+   * would be the confident wrong answer this projection exists not to give.
+   */
+  routine: TripRoutineContext;
+  /** Commitments the windows were computed over: rows PLUS expanded occurrences. Never a row count alone. */
+  effectiveCommitmentCount: number;
   unplacedCommitmentIds: string[];
   /** Commitment place ids that resolved to no `places` row. */
   unresolvedPlaceIds: string[];
@@ -149,7 +163,21 @@ export async function buildTripFreedomProjection(
   }
   const commitments = ((rows ?? []) as CommitmentRow[]);
 
-  const places = await resolvePlaces(sc, commitments.map((r) => r.place_id ?? ""));
+  // §23 long-stay. The range is the TRIP's own, which is what a window is asked
+  // about; a trip with no dates gets a fortnight from now rather than an
+  // unbounded ask, because the expander refuses an unbounded ask by design and
+  // a refusal here would be this file's bug, not the traveller's.
+  const routineFrom = dayBound(t.start_date ?? null, "start") ?? now;
+  const routineToRaw = dayBound(t.end_date ?? null, "end");
+  const routineTo = routineToRaw && routineToRaw.getTime() > routineFrom.getTime()
+    ? routineToRaw
+    : new Date(routineFrom.getTime() + 14 * 86_400_000);
+  const routine = await buildTripRoutineContext(sc, tripId, routineFrom, routineTo);
+
+  const places = await resolvePlaces(sc, [
+    ...commitments.map((r) => r.place_id ?? ""),
+    ...routine.occurrences.map((o) => o.placeId ?? ""),
+  ]);
   if (!places) {
     log.warn({ tripId }, "freedom: places unreadable — refusing");
     return { ok: false, reason: "TRIP_PROJECTION_UNAVAILABLE", message: "The places these commitments are at could not be read" };
@@ -168,15 +196,32 @@ export async function buildTripFreedomProjection(
   const participants = new Set<string>(t.owner_id ? [String(t.owner_id)] : []);
   for (const m of ((members ?? []) as any[])) if (m.status == null || m.status === "accepted") participants.add(String(m.user_id));
 
-  const engineCommitments: EngineCommitment[] = commitments.map((r) => ({
-    id: r.id, type: r.type,
-    startsAt: dateOrNull(r.starts_at), requiredArrivalAt: dateOrNull(r.required_arrival_at),
-    endsAt: null, // 2761: no end column
-    place: { placeId: r.place_id ?? null, point: pointOf(r.place_id) },
-    flexibility: r.flexibility ?? "flexible",
-    prepMinutes: intervalToMinutes(r.prep_duration) ?? 0,
-    latenessToleranceMinutes: intervalToMinutes(r.lateness_tolerance) ?? 0,
-  }));
+  const engineCommitments: EngineCommitment[] = [
+    ...commitments.map((r) => ({
+      id: r.id, type: r.type,
+      startsAt: dateOrNull(r.starts_at), requiredArrivalAt: dateOrNull(r.required_arrival_at),
+      endsAt: null, // 2761: no end column
+      place: { placeId: r.place_id ?? null, point: pointOf(r.place_id) },
+      flexibility: r.flexibility ?? "flexible",
+      prepMinutes: intervalToMinutes(r.prep_duration) ?? 0,
+      latenessToleranceMinutes: intervalToMinutes(r.lateness_tolerance) ?? 0,
+    })),
+    // The expanded occurrences enter the engine as ordinary commitments —
+    // deliberately, because they ARE commitments for the purposes of §7.2 and
+    // §7.3, and a second code path for "the recurring kind" is how the two
+    // would come to disagree. What they carry that a row does not is an id
+    // (`rec:<rule>:<date>`) that no command will accept, which is the model's
+    // own statement that an occurrence is computed and not stored.
+    ...routine.occurrences.map((o) => ({
+      id: o.id, type: o.type,
+      startsAt: o.startsAt, requiredArrivalAt: o.requiredArrivalAt,
+      endsAt: o.endsAt,
+      place: { placeId: o.placeId, point: pointOf(o.placeId) },
+      flexibility: o.flexibility,
+      prepMinutes: o.prepMinutes,
+      latenessToleranceMinutes: o.latenessToleranceMinutes,
+    })),
+  ];
 
   // The travel term per hop, from the feasibility engine, in the engine's
   // own order (by deadline). One hop per adjacent placed pair.
@@ -241,9 +286,14 @@ export async function buildTripFreedomProjection(
       participants: participants.size,
       tripDates: { start: t.start_date ?? null, end: t.end_date ?? null },
     },
-    sources: ["trips", "trip_commitments", "places", "trip_members"],
+    sources: routine.rules.status === "ok"
+      ? ["trips", "trip_commitments", "trip_commitment_recurrences", "places", "trip_members"]
+      : ["trips", "trip_commitments", "places", "trip_members"],
     assumptions: [
       "a commitment has no end column (2761); a window begins at the commitment's start, never before its latest allowed arrival",
+      routine.rules.status === "ok"
+        ? `${routine.occurrences.length} of the fixed points are expanded recurrence occurrences (2797), computed for this range and not stored`
+        : `recurring commitments were not read (${routine.rules.reason}); any standing routine is NOT reflected in these windows`,
       `travel term is ${provider.id}'s fastest-mode straight-line LOWER BOUND at the feasibility percentile; no window is certified`,
       `expected arrival applies ${provider.assumptionsModel}'s factor over the bound (§14.2); the bound alone is what windows and conflicts are judged on`,
     ],
@@ -268,6 +318,8 @@ export async function buildTripFreedomProjection(
       conflicts: result.conflicts,
       derivedEvents,
       commitmentCount: commitments.length,
+      routine,
+      effectiveCommitmentCount: engineCommitments.length,
       unplacedCommitmentIds: result.unplacedCommitmentIds,
       unresolvedPlaceIds: places.unresolved,
       participants: [...participants],

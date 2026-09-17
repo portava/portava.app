@@ -194,6 +194,28 @@ export type TripPlanCommandType =
   | "START_STAGE"
   | "COMPLETE_STAGE";
 
+/**
+ * §23 "Long-stay 45 days" — recurring commitments (2797/2798). Capability: crew,
+ * like every other §5 family.
+ *
+ * A recurrence is a RULE, not a set of rows: ADD writes one row for "every
+ * weekday at 09:00 for 45 days" and the occurrences are computed per read
+ * (domain/trips/invariants/TripRecurrence.ts). There is deliberately no
+ * MATERIALISE command — the scenario's third clause, "no bloated itinerary
+ * model", is exactly the absence of one.
+ *
+ * SKIP / UNSKIP are the EXCEPTION mechanism: "this Thursday's class moved" is
+ * SKIP_RECURRENCE_OCCURRENCE plus an ordinary ADD_COMMITMENT, so an exception is
+ * a first-class commitment row that every existing consumer already handles.
+ * UNSKIP exists because a skip that cannot be undone is a trap.
+ */
+export type TripRecurrenceCommandType =
+  | "ADD_RECURRING_COMMITMENT"
+  | "UPDATE_RECURRING_COMMITMENT"
+  | "REMOVE_RECURRING_COMMITMENT"
+  | "SKIP_RECURRENCE_OCCURRENCE"
+  | "UNSKIP_RECURRENCE_OCCURRENCE";
+
 /** §9.2 temporary subgroups (2780). Capability: crew; DISSOLVE additionally creator-or-host. */
 export type TripSubgroupCommandType =
   | "CREATE_SUBGROUP"
@@ -269,9 +291,10 @@ export type TripCommandType =
   | TripSubgroupCommandType
   | TripMeetingCommandType
   | TripTransportCommandType
-  | TripDisruptionCommandType;
+  | TripDisruptionCommandType
+  | TripRecurrenceCommandType;
 
-export type TripCommandFamily = "plan" | "trip" | "participant" | "admin" | "system" | "subgroup" | "meeting" | "transport" | "disruption" | "opportunity";
+export type TripCommandFamily = "plan" | "trip" | "participant" | "admin" | "system" | "subgroup" | "meeting" | "transport" | "disruption" | "opportunity" | "recurrence";
 
 /** Which family a command type belongs to, and therefore which actor_role it needs. */
 export function tripCommandFamily(type: TripCommandType): TripCommandFamily {
@@ -296,6 +319,9 @@ export function tripCommandFamily(type: TripCommandType): TripCommandFamily {
       return "disruption";
     case "RECORD_OPPORTUNITY_CHANGE":
       return "opportunity";
+    case "ADD_RECURRING_COMMITMENT": case "UPDATE_RECURRING_COMMITMENT": case "REMOVE_RECURRING_COMMITMENT":
+    case "SKIP_RECURRENCE_OCCURRENCE": case "UNSKIP_RECURRENCE_OCCURRENCE":
+      return "recurrence";
     default:
       return "plan";
   }
@@ -351,6 +377,17 @@ export type TripKernelReason =
   // reason would make the client distinguish a case it cannot act on.
   | "TRIP_LEG_NOT_FOUND"
   | "TRIP_COMMITMENT_NOT_FOUND"
+  // §23 long-stay recurrences (2798). TRIP_STAGE_NOT_FOUND is reused for a
+  // foreign stage, as above.
+  | "TRIP_RECURRENCE_NOT_FOUND"
+  // A zone no CHECK can validate and tzdata can: the write refuses rather than
+  // storing a rule that expands to nothing for ever.
+  | "TRIP_RECURRENCE_TIMEZONE_UNKNOWN"
+  // The write-time half of "no bloated itinerary model": a rule may not span
+  // more than 400 days. A POLICY, so it is a kernel refusal and not a CHECK.
+  | "TRIP_RECURRENCE_RANGE_TOO_LONG"
+  // A skip outside the rule's own range is not an exception to anything.
+  | "TRIP_RECURRENCE_DATE_OUT_OF_RANGE"
   // §5.1 goal, decision-task and risk families (2766).
   | "TRIP_GOAL_NOT_FOUND"
   | "TRIP_DECISION_TASK_NOT_FOUND"
@@ -484,6 +521,9 @@ export const TRIP_EVENT_TYPES = [
   // plan lifecycle, subgroup, transport, disruption, derived and opportunity
   // families (2779–2786) — every type trip_kernel_execute assigns.
   "trip.plan_started", "trip.plan_skipped", "trip.stage_started", "trip.stage_completed",
+  // recurrence family (2798); the snapshot fold names them as not-carried (2799).
+  "trip.recurring_commitment_added", "trip.recurring_commitment_updated", "trip.recurring_commitment_removed",
+  "trip.recurrence_occurrence_skipped", "trip.recurrence_occurrence_restored",
   "trip.commitment_at_risk", "trip.commitment_risk_cleared", "trip.disruption_resolved", "trip.free_window_created", "trip.opportunities_changed", "trip.subgroup_created", "trip.subgroup_dissolved", "trip.subgroup_joined", "trip.subgroup_left", "trip.transport_segment_added", "trip.transport_segment_removed", "trip.transport_segment_state_changed", "trip.transport_segment_updated", "trip.trip_disrupted",
 ] as const;
 export type TripEventType = (typeof TRIP_EVENT_TYPES)[number];
