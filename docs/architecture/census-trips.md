@@ -687,12 +687,12 @@ Nothing in this section exists. The evidence is one grep, run over
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| TR49 | The `TripCommand` envelope (commandId, tripId, actorUserId, expectedTripVersion, idempotencyKey, type, payload, clientObservedAt) | **C** | **Moved N→C in the §26 recensus.** The row said "No type, no table, no route." All three exist: the envelope is `domain/trips/commands/tripKernel.ts:263#TripCommand` (commandId, tripId, actorUserId, expectedTripVersion, idempotencyKey, type, payload), the receipt table is `migrations/2420_trip_kernel_foundation.sql:139#trip_command_receipts`, and the route is the `trip_kernel_execute` RPC that `domain/trips/commands/tripKernel.ts:667#executeTripCommand` calls. |
+| TR49 | The `TripCommand` envelope (commandId, tripId, actorUserId, expectedTripVersion, idempotencyKey, type, payload, clientObservedAt) | **C** | **Moved N→C in the §26 recensus.** The row said "No type, no table, no route." All three exist: the envelope is `domain/trips/commands/tripKernel.ts:285#TripCommand` (commandId, tripId, actorUserId, expectedTripVersion, idempotencyKey, type, payload), the receipt table is `migrations/2420_trip_kernel_foundation.sql:139#trip_command_receipts`, and the route is the `trip_kernel_execute` RPC that `domain/trips/commands/tripKernel.ts:707#executeTripCommand` calls. |
 | TR50 | A typed command vocabulary (ADD_PLAN, MOVE_PLAN, CONFIRM_PLAN, CANCEL_PLAN, JOIN_PLAN, LEAVE_PLAN, CREATE_SUBGROUP, SET_PRESENCE, CREATE_PROPOSAL, ACCEPT_PROPOSAL, COMPLETE_ACTIVITY) | **N** | None of the eleven exists as a command. Four have a *route* that does something adjacent (`POST /trips/:id/plan/items`, `PATCH …/items/:itemId`, `POST /trips/:id/complete`); seven have no analogue at all. |
 | TR51 | Command service validates schema | **W** | **MOVED C → W, 2026-09-11 (§38) — the first verdict this census has moved on a re-derivation.** The row read C on the sentence *"every trip write parses a zod schema first"*, which is its testable half. Counted across the three files it cites: **53 write endpoints, 8 reading `req.body` with no schema at all** — `POST /trips` (the primary create), `/invite`, `/members`, `/join-request`, `/invite-link` and the three checklist writes. 45 of 53 do validate, so the capability is built and used and this is BUILT-BUT-WRONG, not NOT-BUILT; the word *every* had never been counted. `POST /trips` is now closed by `CreateTripSchema` (`routes/trips.ts:800#CreateTripSchema`), mirroring `PatchTripSchema` field for field so it cannot reject what PATCH already accepts, and the remaining seven are held shrink-only by `check:trip-write-validation`. **What the gap costs is TYPE validation, not authorization** — `requireUser` runs first and `check:route-auth-gate` guards that independently — so a malformed payload became a 500 from the database where a 400 belongs. Returns to C when the list reaches zero. |
 | TR52 | …validates actor capability | **C** | `lib/http.ts:554#canEditPlan` `canEditPlan` and `:614#canEditPlanItem` `canEditPlanItem` are called before every plan mutation (`routes/trips.ts:1736,1839,1986#canEditPlan`), and membership is checked through the shared `domain/trips/invariants/tripMembership.ts:115#isAcceptedTripMember` `isAcceptedTripMember`. |
 | TR53 | …validates aggregate version | **C** | **Moved N→C.** The row said "No version exists." `trips.version` is added by `2420_trip_kernel_foundation.sql:96#version` and the kernel refuses a mismatch: `2590_trip_kernel_add_plan_attachment_columns.sql:365#TRIP_VERSION_CONFLICT` returns the current and expected versions so a caller can refetch and retry (§18.3 "explicit conflict"). |
-| TR54 | …validates temporal/spatial consistency | **W** | **Moved N→W 2026-09-08, and the W is the honest half.** The row said the write "accepts any `starts_at`/`ends_at` pair, including one that overlaps a confirmed item or precedes its predecessor." ORDERING is now checked: the kernel already refused an inverted range on the TRIP (`2590:...#TRIP_TEMPORAL_RANGE_INVERTED`, on create and on update, comparing the MERGED value), and the plan-item half is now enforced by `migrations/2750_trip_plan_item_interval_ordered.sql` (a CHECK, NOT VALID, rehearsed on portava-ci — an UPDATE into an inverted range is refused) plus the typed refusal at `domain/trips/commands/tripKernel.ts:667#executeTripCommand`. **OVERLAP is still unchecked** — an item may still be written across a confirmed item's interval, because that is the §7 consistency engine (TR128, TR134) and needs a route provider this tree does not have. Ordering built, overlap not. **Also recorded here rather than lost:** the plan-item check lives at the kernel's entry point rather than inside `trip_kernel_execute`, because every kernel change replaces that 700-line function in full; it should ride along with the next migration that replaces it for its own reasons. |
+| TR54 | …validates temporal/spatial consistency | **W** | **Moved N→W 2026-09-08, and the W is the honest half.** The row said the write "accepts any `starts_at`/`ends_at` pair, including one that overlaps a confirmed item or precedes its predecessor." ORDERING is now checked: the kernel already refused an inverted range on the TRIP (`2590:...#TRIP_TEMPORAL_RANGE_INVERTED`, on create and on update, comparing the MERGED value), and the plan-item half is now enforced by `migrations/2750_trip_plan_item_interval_ordered.sql` (a CHECK, NOT VALID, rehearsed on portava-ci — an UPDATE into an inverted range is refused) plus the typed refusal at `domain/trips/commands/tripKernel.ts:707#executeTripCommand`. **OVERLAP is still unchecked** — an item may still be written across a confirmed item's interval, because that is the §7 consistency engine (TR128, TR134) and needs a route provider this tree does not have. Ordering built, overlap not. **Also recorded here rather than lost:** the plan-item check lives at the kernel's entry point rather than inside `trip_kernel_execute`, because every kernel change replaces that 700-line function in full; it should ride along with the next migration that replaces it for its own reasons. |
 | TR55 | …validates dependent commitments | **N** | No commitments exist (TR15). |
 | TR56 | …validates sensitive-domain boundaries | **W** | Partially, by construction rather than by a validator: `trip_documents` and crew location have their own routes with their own gates (`routes/tripCrewLocation.ts:170-174`), so a plan write cannot touch them. There is no boundary *check* — there is simply no shared write path that could cross one. |
 | TR57 | Successful commands write canonical state plus an immutable domain event in the same transaction where feasible | **C** | **Moved N→C.** The row said "No event is written by any trip mutation." One plpgsql function does both writes in one transaction: `2590_trip_kernel_add_plan_attachment_columns.sql:798#version` bumps `trips.version` and `:804#trip_events` appends the event, with the outbox row at `:818#trip_outbox`. `logActivity` — the thing the row measured — is no longer the nearest artifact. |
@@ -3567,7 +3567,7 @@ mistaken for "built".
 | TR109 `canSeePresence(actor, subject, trip)` | W | **C** | `domain/trips/policies/tripPresencePolicy.ts:39` — a PREDICATE, not a card: ghost wins, an active (checked, unexpired, fail-closed on unparseable) live-share grant overrides a hidden default, else the default decides. `buildCrewCard` calls it for its fork (`domain/trips/services/tripCrewLocation.ts:170`), so card and predicate cannot disagree; 46 crew-card tests unchanged and green. |
 | TR111 `canManageSafety(actor, trip)` | W | **C** | `:310`; called at `routes/safeReturn.ts:306`. Its first live effect is the gap above: a session can no longer be attached to a trip its owner is not on. |
 | TR115 `negative assertions for anonymous, non-member, removed member, guest, host, service-facing` | W | **C** | All six in one matrix (`tripPolicy.test.ts`), per capability. "Guest" has no row in `member_role`; the nearest is `viewer` (crew, read-only) and it is tested as such, stated rather than assumed. Service-facing at `:353`. |
-| TR441 `TRIP_AUTH_*` | W | **C** | Emitted by the kernel (SQL, 2420–2500) AND by every converted route through `sendTripRefusal` — `TRIP_AUTH_NOT_OWNER`, `TRIP_AUTH_NOT_HOST`, `TRIP_AUTH_NOT_CREW` on the wire with the `forbidden` envelope. `TRIP_AUTH_BLOCKED` is internal-only and `sendTripRefusal` throws rather than leak it (`tripReasonCodes.ts:178#INTERNAL_ONLY_REASONS`, `:194#internal-only`). |
+| TR441 `TRIP_AUTH_*` | W | **C** | Emitted by the kernel (SQL, 2420–2500) AND by every converted route through `sendTripRefusal` — `TRIP_AUTH_NOT_OWNER`, `TRIP_AUTH_NOT_HOST`, `TRIP_AUTH_NOT_CREW` on the wire with the `forbidden` envelope. `TRIP_AUTH_BLOCKED` is internal-only and `sendTripRefusal` throws rather than leak it (`tripReasonCodes.ts:185#INTERNAL_ONLY_REASONS`, `:201#internal-only`). |
 | TR442 `TRIP_VERSION_*` | N | **C** | *"No versioning (TR12)."* Falsified since 2420: `TRIP_VERSION_CONFLICT` is emitted by `trip_kernel_execute`, mapped to 409 with `currentVersion`/`expectedVersion` (`domain/trips/commands/tripKernel.ts` `sendKernelRejection`), and **proven live** — `tripKernelLive.test.ts` "§22 concurrency: a stale expectedTripVersion is refused TRIP_VERSION_CONFLICT". The §39 pattern, one more time. |
 | TR443 `TRIP_TEMPORAL_*` | N | **W** | `TRIP_TEMPORAL_RANGE_INVERTED` is emitted (kernel SQL and `domain/trips/commands/tripKernel.ts`). `_CONFLICT`, `_INFEASIBLE`, `_UNKNOWN` are declared and nothing emits them until §7's engine (§40.3). One of four: W. |
 | TR444 `TRIP_SPATIAL_*` | N | **N** | **Holds.** Four codes declared; `routes/tripFeasibility.ts`'s §7.4 findings are served as `consistency` entries without a reason code. Nothing emits. |
@@ -3768,7 +3768,7 @@ never FEASIBLE).
   `overridden: false` typed as the literal (`:132#TemporalConflict`)
   because no override path exists. `detectPlanOverlaps`
   (`:371#detectPlanOverlaps`) is §7.2 on the plan itself.
-- `domain/trips/projections/TripFreedomProjection.ts:118#buildTripFreedomProjection` —
+- `domain/trips/projections/TripFreedomProjection.ts:132#buildTripFreedomProjection` —
   the reads (trips, commitments, places, members — each REFUSED when it fails;
   a window over "no commitments" is the whole trip), the hop travel terms from
   the feasibility engine (`:151#checkFeasibility`, the same provider
@@ -3829,7 +3829,7 @@ definition `:31#TRIP_OPERATIONAL_PROJECTIONS`, gate
 `lib/capability/registry.ts:215#[TRIP_OPERATIONAL_PROJECTIONS.flag]: TRIP_OPERATIONAL_PROJECTIONS,`), seeded
 FALSE by `2778_trip_operational_projections_flag.sql`. The gate is a pure
 helper in the ratchet's sense, so the builders that call it first
-(`domain/trips/projections/TripFreedomProjection.ts:127#tripOperationalProjectionsGate`)
+(`domain/trips/projections/TripFreedomProjection.ts:141#tripOperationalProjectionsGate`)
 are gate boundaries and their schema belongs to this flag, OFF everywhere;
 the ratchet now reports it LATENT, which is what it is. Off, the routes answer
 `feature_disabled` and Compass says "not enabled"; an UNVERIFIABLE probe is
@@ -4161,9 +4161,9 @@ to explain and no route.
   (`:43#TRIP_ENGINE_VERSIONS`), `recordTripDecision`
   (`:81#recordTripDecision`) and `explainTripDecision`
   (`:114#explainTripDecision`) — sentences from the record. Every
-  §40.3–§40.5 build records one (`domain/trips/projections/TripFreedomProjection.ts:234#recordTripDecision`,
+  §40.3–§40.5 build records one (`domain/trips/projections/TripFreedomProjection.ts:279#recordTripDecision`,
   `TripHealthProjection.ts:207#recordTripDecision`,
-  `TripTodayProjection.ts:439#recordTripDecision`) naming ids,
+  `TripTodayProjection.ts:481#recordTripDecision`) naming ids,
   versions and counts — never a coordinate or a name — and carries its
   `decisionId`. `GET /trips/:tripId/decisions/:decisionId/explain`
   (`server/trips/readRoutes/tripProjections.ts:697#explain`) and Compass
@@ -4384,14 +4384,14 @@ order: 217 files, 35 database tests, 0 skipped.
   `MARK_COMMITMENT_AT_RISK` → `trip.commitment_at_risk` (`:196#commitment_at_risk`),
   `OPEN_FREE_WINDOW` → `trip.free_window_created` (`:221#free_window_created`).
   `domain/trips/events/tripDerivedEvents.ts:49#recordDerivedEvents` issues them from
-  `TripFreedomProjection` (`domain/trips/projections/TripFreedomProjection.ts:231#recordDerivedEvents`)
+  `TripFreedomProjection` (`domain/trips/projections/TripFreedomProjection.ts:276#recordDerivedEvents`)
   with the fact's identity as the idempotency key
   (`domain/trips/events/tripDerivedEvents.ts:42#freeWindowKey`), so a re-read is a duplicate
   at the receipt and the aggregate does not churn — tested on the real kernel
   (`test/db/tripTransportAndDisruption.db.test.ts:134#engine`) and on the API
   side (`test/tripKernelFamiliesWiring.test.ts:118#derived`); skipped by name
   while `trip_kernel_enabled` is false.
-- The client of all of this: `domain/trips/commands/tripKernel.ts:198#TripSubgroupCommandType`,
+- The client of all of this: `domain/trips/commands/tripKernel.ts:220#TripSubgroupCommandType`,
   `:205#TripTransportCommandType`, `:219#TripDisruptionCommandType`, the
   reasons (`:385#TRIP_TEMPORAL_CONFLICT`; Appendix B at
   `domain/trips/contracts/tripReasonCodes.ts:100#TRIP_DISRUPTION_NOT_FOUND`); the `/commands`
@@ -4527,7 +4527,7 @@ the merge, the apply, Batch C and two flags.
   (`server/trips/readRoutes/tripProjections.ts:328#/trips/:tripId/pulse`), to Compass as
   `get_live_conditions` (`compass/CompassTools.ts:300#name: "get_live_conditions"`), and
   into Today's `pulseSignals` layer, which was `no_source` since §40.3
-  (`domain/trips/projections/TripTodayProjection.ts:240#pulseSignals = okLayer`). Ledgered as
+  (`domain/trips/projections/TripTodayProjection.ts:263#pulseSignals = okLayer`). Ledgered as
   `pulse_projection`.
 - **§11.4 the attention model** — `domain/trips/policies/TripAttentionPolicy.ts:27#export const ATTENTION_LEVELS`
   is the spec's five, read as a COST ladder, and `decideAttention`
@@ -4702,7 +4702,7 @@ production baseline through the chain: 39 database tests, 0 skipped.
   `get_opportunities` — §11.3's "Where next?"
   (`compass/CompassTools.ts:339#name: "get_opportunities"`) — as Today's
   `opportunities` layer, `no_source` since §40.3
-  (`domain/trips/projections/TripTodayProjection.ts:259#opportunities = okLayer`), and as the map's
+  (`domain/trips/projections/TripTodayProjection.ts:282#opportunities = okLayer`), and as the map's
   `liveOpportunities` layer, `no_source` since §40.4
   (`server/trips/readRoutes/tripMapProjection.ts:376#§14.1 live opportunities`).
 - **2786 `RECORD_OPPORTUNITY_CHANGE` → `trip.opportunities_changed`** —
@@ -4758,7 +4758,7 @@ production baseline through the chain: 39 database tests, 0 skipped.
   (`db/rollback/2026-09-12-2779-trip-kernel-plan-lifecycle-and-temporal-guard-rollback.sql`),
   rehearsed on a copy of the replica with 2780–2786 present. `TRIP_EVENT_TYPES`
   now names every event `trip_kernel_execute` assigns — fourteen from
-  2779–2786 were missing (`domain/trips/commands/tripKernel.ts:484#plan lifecycle, subgroup, transport, disruption, derived and opportunity`).
+  2779–2786 were missing (`domain/trips/commands/tripKernel.ts:521#plan lifecycle, subgroup, transport, disruption, derived and opportunity`).
 
 **Seen red.** The compiler suite (12) failed on a 90-minute window that
 left 33 minutes for a far candidate — the compiler was right and the test
@@ -4856,7 +4856,7 @@ route writes goes through the kernel as a command that already exists
   on a weather-bound plan; late check-in is an arrival estimate past the
   desk's deadline; crew transport mismatch is the party over the vehicle's
   seats (`domain/trips/services/TripRiskTriggers.ts:106#DEFAULT_VEHICLE_CAPACITY`).
-  On Today as `riskTriggers` (`domain/trips/projections/TripTodayProjection.ts:475#riskTriggers,`),
+  On Today as `riskTriggers` (`domain/trips/projections/TripTodayProjection.ts:522#riskTriggers,`),
   reading 2782's segments under the same gate for the party-size row.
 - **§9.4 the impact preview, §15.3 the booking side effects** —
   `domain/trips/services/TripImpactPreview.ts:119#previewImpact` over a typed
@@ -5107,11 +5107,11 @@ re-derives and cites rather than argues.
   impact preview over the re-read row is B's dinner; A retries at *v+1* and
   lands; the same stale command replayed by its key is the same refusal.
 - **Five rows the tree had already earned.** TR189: Today has carried
-  `pulseSignals` since §42 (`domain/trips/projections/TripTodayProjection.ts:130#pulseSignals:`).
+  `pulseSignals` since §42 (`domain/trips/projections/TripTodayProjection.ts:153#pulseSignals:`).
   TR375: `POST /trips/:tripId/simulate` was registered in §44
   (`server/trips/readRoutes/tripProjections.ts:507#/trips/:tripId/simulate`). TR393:
   `trip_command_rejected_total` by reason has existed in the kernel client
-  and been asserted three times (`domain/trips/commands/tripKernel.ts:496#readTripCommandRejectedTotal`,
+  and been asserted three times (`domain/trips/commands/tripKernel.ts:536#readTripCommandRejectedTotal`,
   `src/test/tripKernel.test.ts:110#counter`). TR379 and TR75: 2520's map
   projection worker consumes the outbox, idempotent by event id through
   `trip_map_projection_applied` and retried by `attempts`
@@ -5272,7 +5272,7 @@ with every database suite green; no new flag, no new table.
   their own routes — and is a check now: a payload key that names a travel
   document number, a health fact or a payment instrument, at any depth, is
   refused by name before the kernel is called and counted
-  (`domain/trips/commands/tripKernel.ts:642#sensitiveDomainKey`,
+  (`domain/trips/commands/tripKernel.ts:682#sensitiveDomainKey`,
   `src/test/tripKernelSensitiveDomain.test.ts:47#TRIP_COMMAND_SENSITIVE_DOMAIN`).
 - **§14.1 "active" means in progress now** — 2779 gave plans
   `in_progress`; the map's active-plans layer says which points are
@@ -5282,7 +5282,7 @@ with every database suite green; no new flag, no new table.
   document to it.
 - **Two rows the tree had already earned.** TR186: Today's
   `opportunities` has been a layer with a producer since §43
-  (`domain/trips/projections/TripTodayProjection.ts:124#opportunities:`;
+  (`domain/trips/projections/TripTodayProjection.ts:147#opportunities:`;
   `src/test/tripTodayProjection.test.ts:84#opportunities.status`). TR221:
   uncertainty is a value in four places now — a signal's confidence, a
   window's `certified`, an experience's UNCERTAIN verdict, and §12.3's
@@ -5630,9 +5630,9 @@ under a mutation before its commit.
   now reports, per placed commitment, when the traveller is estimated to
   arrive — the previous commitment's departure plus the hop's travel term
   and this commitment's prep, a lower bound like every travel term here,
-  null when the hop could not be estimated (`domain/trips/projections/TripFreedomProjection.ts:205#arrivalEstimates.push(`);
+  null when the hop could not be estimated (`domain/trips/projections/TripFreedomProjection.ts:250#arrivalEstimates.push(`);
   Today takes that as `estimatedArrivalAt` and a lodging's required arrival
-  as its desk deadline (`domain/trips/projections/TripTodayProjection.ts:400#checkInDeadlineAt:`).
+  as its desk deadline (`domain/trips/projections/TripTodayProjection.ts:442#checkInDeadlineAt:`).
   `test/tripTodayProjection.test.ts:104#late_check_in`: a hotel whose desk
   closes ten minutes after the traveller leaves the previous commitment,
   ten kilometres away, fires with the minutes over the desk; the same
@@ -5763,7 +5763,7 @@ called half-proved (TR418, TR419). No migration.
   active for a crew member or the trip is in §17.2's `SAFETY_EVENT` mode —
   the highest level that applies, with every reason that did, and `idle`
   for a trip not in progress today. Today publishes it as `sensing`
-  (`domain/trips/projections/TripTodayProjection.ts:134#sensing:`) from the phase, the
+  (`domain/trips/projections/TripTodayProjection.ts:157#sensing:`) from the phase, the
   attention mode, the next leave-by and the crew's Safe Return count it
   already derives. `test/tripSensingPolicy.test.ts:30#outranks` pins the
   ladder; the Today suite reads `idle` on the base fixture. Nothing here
@@ -6102,7 +6102,7 @@ same rule rather than waiting for the flag.
 
 ### 55.1 What was built, and where
 
-- **§3.3's arrows, in the twin** (`artifacts/api-server/src/domain/trips/commands/tripKernel.ts:569#export function planStatusTransitionRefused(`
+- **§3.3's arrows, in the twin** (`artifacts/api-server/src/domain/trips/commands/tripKernel.ts:609#export function planStatusTransitionRefused(`
   and `artifacts/api-server/src/routes/trips.ts:2052#const refused = planStatusTransitionRefused(`):
   the kernel's rule — no status change out of `done`, `cancelled` or
   `skipped` — as one pure function, asked by the flag-off PATCH before it
@@ -6551,7 +6551,7 @@ code changes in this section.
   of its own (`domain/trips/projections/TripOpportunityProjection.ts:292#from("trip_saved_places")`).
   Discovery and Buddy matching still compute nothing from the windows.
 - **TR440 holds W, with the pieces named.** The command route exists
-  (`server/trips/commandRoute.ts:140#router.post("/trips/:tripId/commands"`); the
+  (`server/trips/commandRoute.ts:145#router.post("/trips/:tripId/commands"`); the
   read routes are substantial; the outbox consumer and the projection
   writer are one worker
   (`lib/mapTripProjectionWorker.ts:126#startTripOutboxWorker as startTripMapProjectionScheduler`),
@@ -6687,10 +6687,10 @@ rows stay W with the reason narrowed to the gate alone.
   wraps a provider so the assumption rides on every estimate — the inner's
   `minutes` and percentiles UNCHANGED, a routed inner passed through with
   nothing assumed. The freedom projection layers it per trip in the trip's
-  zone (`domain/trips/projections/TripFreedomProjection.ts:139#const provider = withDepartureAssumptions(BOUND_PROVIDER,`)
+  zone (`domain/trips/projections/TripFreedomProjection.ts:153#const provider = withDepartureAssumptions(BOUND_PROVIDER,`)
   and each arrival estimate now carries `expectedArrivalAt`,
   `expectedTravelMinutes` and the assumption beside the bound
-  (`domain/trips/projections/TripFreedomProjection.ts:209#expectedArrivalAt: expectedTravel === null ? null`);
+  (`domain/trips/projections/TripFreedomProjection.ts:254#expectedArrivalAt: expectedTravel === null ? null`);
   the windows and conflicts still read the bound alone
   (`domain/trips/invariants/TripFeasibilityEngine.ts:200#const travelMinutes = travelMinutesAt(est, FEASIBILITY_PERCENTILE);`),
   which the test pins by asserting the between-window's reserved minutes
@@ -6762,7 +6762,7 @@ share a suffix — was found by the compiler and fixed by hand
 - **TR438 — `src/domain/trips/`, 72 files, eight directories, none empty.**
   `contracts/` (4): the projection envelope, the travel-time port, the
   Appendix B reason codes and the Discovery contract. `commands/` (1): the
-  kernel client (`domain/trips/commands/tripKernel.ts:667#export async function executeTripCommand(`).
+  kernel client (`domain/trips/commands/tripKernel.ts:707#export async function executeTripCommand(`).
   `events/` (3): derived events, the activity log, the reservation history.
   `policies/` (9): §6.1's decisions, presence, sensing, push, transport,
   attention, the operational-projections gate and the freshness classes.
@@ -6779,7 +6779,7 @@ share a suffix — was found by the compiler and fixed by hand
   projection pass.
 - **TR440 — `server/trips/`, the five pieces, real.**
   `commandRoute.ts` is the command route, moved whole
-  (`server/trips/commandRoute.ts:140#router.post("/trips/:tripId/commands"`).
+  (`server/trips/commandRoute.ts:145#router.post("/trips/:tripId/commands"`).
   `readRoutes/` holds the two projection routers. `outboxWorker.ts` is the
   split §59 asked for: the LOOP that drains `trip_outbox` left the Map-owned
   file, which keeps the PASS — the worker owns the timer and a consumer
@@ -7483,9 +7483,20 @@ that is 99.1 % constructed has run out of work it can do by itself.
    production's `trip_kernel_execute` is the plan-family-only one. So `trips.version`,
    `trip_events`, `trip_outbox` and `trip_command_receipts` ARE deployed, and the
    thirteen rows that rest only on them are gated by a FLAG, not by a migration.
-2. **2760–2795 are in portava-ci or in no database at all**, per
-   `artifacts/api-server/src/scripts/checkProductionDrift.ts:180#trip_stages:` and
-   the block that follows it. Ninety rows rest on one of these.
+2. **2760–2795 were in portava-ci or in no database at all when this was
+   measured; SUPERSEDED 2026-09-17 — they are now in PRODUCTION.** The clause is
+   corrected in place rather than appended because its citation pointed at a
+   `KNOWN_PRODUCTION_GAPS` entry that no longer exists: the twenty-one Trips
+   tables reached production between 2026-09-16 20:13 and 21:01 UTC and were
+   struck off the ratchet, per
+   `artifacts/api-server/src/scripts/checkProductionDrift.ts:135#STRUCK OFF 2026-09-17`
+   and the block that follows it. Ninety rows rest on one of these, AND NONE OF
+   THEM MOVES ON THIS: `trip_kernel_enabled` and
+   `trip_operational_projections_enabled` are both still FALSE in production, so
+   every one of those tables is still read by nothing. What changed is the
+   blocker's name — from "no migration" to "no flag" — not the verdict. See
+   docs/TRIPS-PRODUCTION-ACTIVATION.md, which keeps applied, enabled and
+   runtime-verified in separate columns for exactly this reason.
 3. **The §24 ratchet has exactly one ungated writer left**
    (`artifacts/api-server/src/scripts/tripKernelWriterBaseline.ts:257#ungated: 1`)
    and it is blocked on an OPEN OWNER DECISION, not on code:
@@ -7652,9 +7663,9 @@ one line red-fails both tests, which is the proof that they share it.
 so a fired `tight_arrival` returned an empty participant list: the mitigation said
 "alert affected participants" and named nobody, on every trip, always.
 
-`artifacts/api-server/src/domain/trips/projections/TripTodayProjection.ts:343#acceptedCrewIds`
+`artifacts/api-server/src/domain/trips/projections/TripTodayProjection.ts:385#acceptedCrewIds`
 now derives the accepted crew once — the same set `crewSize` already counted — and
-`artifacts/api-server/src/domain/trips/projections/TripTodayProjection.ts:401#participantIds: acceptedCrewIds`
+`artifacts/api-server/src/domain/trips/projections/TripTodayProjection.ts:443#participantIds: acceptedCrewIds`
 hands it to the trigger. **Why the crew and not something finer, stated rather than
 assumed:** §5.1 gives PLANS a participant relation (`trip_plan_participants`, 2771)
 and gives COMMITMENTS none, so the accepted crew is the finest relation a commitment
@@ -8139,7 +8150,7 @@ the work.
 | TR330 | `tripCrewLocation.ts` lines 154-156 is the opt-in | the `exactCoords` doc comment | `artifacts/api-server/src/domain/trips/services/tripCrewLocation.ts:286#shareSafeReturnStatus` |
 | TR355 | `routes/trips.ts` line 1520 sets `trip_plan_items.updated_at` server-side | `.from("plan_editors")` — a different table | the claim holds elsewhere in the file; **this pointer supports nothing** |
 | TR414 | `tripCrewLocation.ts` lines 170-174 refuses a non-member | the doc comment of `getAcceptedMemberIds` | `artifacts/api-server/src/routes/tripCrewLocation.ts:108#not_member` |
-| TR441 | `tripReasonCodes.ts` line 160 is where `sendTripRefusal` throws | a **blank line** | `artifacts/api-server/src/domain/trips/contracts/tripReasonCodes.ts:193#INTERNAL_ONLY_REASONS` |
+| TR441 | `tripReasonCodes.ts` line 160 is where `sendTripRefusal` throws | a **blank line** | `artifacts/api-server/src/domain/trips/contracts/tripReasonCodes.ts:200#INTERNAL_ONLY_REASONS` |
 | TR447 | `TRIP_BOOKING_NOT_MEMBER` at `tripReservations.ts` line 95, `NOT_CREATOR_OR_OWNER` at line 497 | line 95 is `requireTripMember`, line 497 is blank — and **neither code string occurs in that file at all**; both are emitted by the policy | `artifacts/api-server/src/domain/trips/policies/tripPolicy.ts:398#export async function canManageBooking(`, put on the wire at `artifacts/api-server/src/routes/tripReservations.ts:97#sendTripRefusal` and line 539 |
 
 #### 70.4.2 Drift — the pointer is within a few lines and a reader still lands right
@@ -9013,7 +9024,7 @@ indoor fallback"* — fired on an outdoor plan with `participantIds: []`, naming
 nobody to tell. That is the same shape §68.3 closed for the tight arrival, on the
 one object §5.1 actually gives a participant relation.
 
-`artifacts/api-server/src/domain/trips/projections/TripTodayProjection.ts:80#const ATTENDING_STATES`
+`artifacts/api-server/src/domain/trips/projections/TripTodayProjection.ts:82#const ATTENDING_STATES`
 counts GOING and MAYBE by **the same vocabulary `TripImpactState` uses** — two
 readers of one relation that disagreed about MAYBE would put two party sizes for
 one plan on one screen — and
@@ -9024,7 +9035,7 @@ names them. A member who declined the hike is not told about rain on it.
 to the crew, because 2771 is written when someone answers and silence on a
 crew-wide plan is the trip's default, not a declination. An UNREADABLE 2771 falls
 back to the crew too and says so in a new `unreadSources`
-(`artifacts/api-server/src/domain/trips/projections/TripTodayProjection.ts:480#unreadSources: attendanceUnread`)
+(`artifacts/api-server/src/domain/trips/projections/TripTodayProjection.ts:527#unreadSources: attendanceUnread`)
 rather than refusing a whole day's projection over an optional refinement or
 reporting that nobody is going.
 

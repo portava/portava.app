@@ -75,7 +75,7 @@ const BASELINE_DIR = join(API_SERVER_ROOT, "baseline");
  * stale silently on the next refresh, which is how two cases in
  * productionDriftExtraction.test.ts came to assert the opposite of the truth.
  */
-export const PRODUCTION_SNAPSHOT = "20260916_production_tables.txt";
+export const PRODUCTION_SNAPSHOT = "20260917_production_tables.txt";
 
 /**
  * `unmerged-pr` HAS NO MEMBERS AS OF 2026-09-15, AND IS KEPT — ruling, with the
@@ -132,6 +132,45 @@ interface Gap {
  * legacy-root renames.
  */
 export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
+  // ── STRUCK OFF 2026-09-17: the twenty-six this ratchet was largest for ─────
+  // Twenty-one Trips tables (2760-2794) and five that were not Trips at all —
+  // map_telemetry_events, map_telemetry_drops (2202/2222), media_intent_signals
+  // (2256), sensing_anon_contributions (2315/2340) and
+  // sensing_contribution_sessions (2480) — now EXIST in production and are
+  // struck off rather than left in place, because this ratchet fails in both
+  // directions and "a ratchet nobody prunes stops being read" is its own rule.
+  //
+  // The five non-Trips ones are the finding worth keeping. They were applied to
+  // production ON 2026-09-16 and recorded in production-applied-migrations.json
+  // that day, but baseline/20260916_production_tables.txt was never refreshed
+  // with them, so this check went on reporting five gaps that had already
+  // closed while the file it reads described a production two applies old. That
+  // is the same staleness class as the one checkFlagSchemaPrerequisites exists
+  // to refuse, in the sibling file, and it is why 20260917_production_tables.txt
+  // and snapshots/20260917-production-schema.json were refreshed together.
+  //
+  // WHAT BEING IN PRODUCTION DOES NOT ESTABLISH, stated so the next reader does
+  // not overclaim it: trip_kernel_enabled and trip_operational_projections_enabled
+  // are both still FALSE in production. Every one of these tables is reachable
+  // by its writer and read by nothing, exactly as before. The schema is applied;
+  // the feature is not on. docs/TRIPS-PRODUCTION-ACTIVATION.md keeps those two
+  // states in separate columns for this reason.
+
+  // ── Trips §23, the one Trips table that is genuinely NOT in production ─────
+  trip_commitment_recurrences: {
+    classification: "unapplied",
+    note:
+      "Trips §23 (2797) — recurring commitments as a RULE in local wall-clock " +
+      "time. REHEARSED on portava-ci 2026-09-17 (preconditions, the 15 refusal " +
+      "probes and the final count(*) = 2 all fired) and deliberately NOT applied " +
+      "to production. Its writer is 2798, whose five command branches are also " +
+      "CI-only, so the table would reach production writerless and readerless — " +
+      "the same argument the 2760-2763 block made, and 2797 is the last table " +
+      "still making it. Applying 2797/2798/2799 to production is an owner " +
+      "decision that has not been taken; when it is, strike this off in the same " +
+      "change that refreshes the two production snapshots.",
+  },
+
   // ── The one that undermines every other migration claim ────────────────────
   // schema_migration_ledger: STRUCK OFF 2026-09-15 — it now EXISTS in production.
   //
@@ -177,18 +216,6 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
   //   satisfies nothing", and it is right. Applying an unwritable, unreadable
   //   table to production buys nothing and adds surface, so it waits for the
   //   command family and goes with it.
-  trip_stages:         { classification: "unapplied", note: "Trips §5.1 (2760). In portava-ci, absent from production. No writer until the §4 stage command family lands; RLS crew-SELECT only, zero client write grants." },
-  trip_legs:           { classification: "unapplied", note: "Trips §5.1 (2761). In portava-ci, absent from production. Same block as trip_stages." },
-  trip_commitments:    { classification: "unapplied", note: "Trips §5.1 + §7.1 (2761). In portava-ci, absent from production. Carries required_arrival_at / prep_duration / lateness_tolerance / confidence — the §7.2 inputs that did not previously exist. Same block." },
-  trip_goals:          { classification: "unapplied", note: "Trips §5.1/§8 (2762). In portava-ci, absent from production. Same block." },
-  trip_decision_tasks: { classification: "unapplied", note: "Trips §5.1/§8 (2762). In portava-ci, absent from production. Same block." },
-  trip_risks:          { classification: "unapplied", note: "Trips §5.1/§8.4 (2762). In portava-ci, absent from production. The risk register §8.4 propagation (TR144) needs and does not have. Same block." },
-  trip_presence:       { classification: "unapplied", note: "Trips §5.1/§10 (2763). In portava-ci, absent from production. Distinct from trip_crew_location_sessions, which is a live-SHARE session. Same block." },
-  trip_proposals:      { classification: "unapplied", note: "Trips §5.1/§9/§12.2 (2763). In portava-ci, absent from production. Same block." },
-  trip_snapshots:      { classification: "unapplied", note: "Trips §5.1/§22 (2763). In portava-ci, absent from production. Distinct from trip_readiness_snapshots, which is a cached readiness summary. Same block." },
-  trip_outcomes:       { classification: "unapplied", note: "Trips §5.1/§20 (2763). In portava-ci, absent from production. Same block." },
-  trip_proposal_votes: { classification: "unapplied", note: "Trips §9.3 / §1 (2774) — one vote per crew member per proposal, the relation MAJORITY and UNANIMOUS are counted over. Absent from BOTH databases like the rest of this lane: nothing in it is on main and .github/workflows/live-db.yml applies only from main. Its writer is 2775 (VOTE_ON_PROPOSAL). Rehearsed end to end on db/harness/run.sh." },
-  trip_plan_participants: { classification: "unapplied", note: "Trips §5.1/§9.1 (2771) — the attendance relation census-trips TR83 is about. Absent from BOTH databases, unlike the 2760-2763 block which portava-ci carries: nothing in this Trips lane is on main, and .github/workflows/live-db.yml applies only from main. Its writer is 2772 (JOIN_PLAN / LEAVE_PLAN / SET_PLAN_ATTENDANCE). Rehearsed end to end on db/harness/run.sh." },
 
   // ── Trips §41 (census-trips), migrations 2780-2785: seven kernel families ──
   // Absent from BOTH databases, like 2771/2774 above: this branch is not on
@@ -197,15 +224,6 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
   // both projects; check:flag-schema-prerequisites lists the whole batch as that
   // flag's prerequisite) and every writer behind trip_kernel_enabled (also
   // FALSE). Rehearsed on scripts/local-db (the api-server-local-db CI job).
-  trip_subgroups:          { classification: "unapplied", note: "Trips §9.5 (2780) — temporary crews. Writer: CREATE_SUBGROUP / JOIN_SUBGROUP / LEAVE_SUBGROUP / DISSOLVE_SUBGROUP in trip_kernel_execute; reader: TripCloseoutService (§20.2 dissolve) under trip_operational_projections_enabled." },
-  trip_subgroup_members:   { classification: "unapplied", note: "Trips §9.5 (2780) — membership of trip_subgroups. Written only by the kernel; read by TripCrewLocationService for subgroup-scoped live shares under the same flag." },
-  trip_decisions:          { classification: "unapplied", note: "Trips §5.3/§21.2 (2781) — the persisted decision ledger. Writer: lib TripDecisionLedger.persistTripDecision, flag-gated and table-probed; absent table = in-process ring only, stated by DECISION_RETENTION." },
-  trip_transport_segments: { classification: "unapplied", note: "Trips §7.4 (2782) — transport legs with a state machine. Written only by the kernel (ADD/UPDATE/SET_STATE/REMOVE_TRANSPORT_SEGMENT); no TS reader yet." },
-  trip_reservation_events: { classification: "unapplied", note: "Trips §18.3 (2784) — append-only reservation history, trigger-fed from trip_reservations. Read by GET /trips/:id/reservations/:rid/history under trip_operational_projections_enabled." },
-  trip_disruptions:        { classification: "unapplied", note: "Trips §17 (2785) — disruption register. Written only by the kernel (DECLARE/RESOLVE_DISRUPTION); TripHealth does not consult it yet (census §41.3)." },
-  trip_transport_policies: { classification: "unapplied", note: "Trips §7.4 (2793) — the transport-mode policy the route-availability check reads (census-trips §47, TR137). Written by PUT /trips/:tripId/transport-policy (owner, §6.1 canEditTrip) and read by GET /trips/:tripId/feasibility, both under trip_operational_projections_enabled; absent from every database but the local replica until this branch merges and the owner's Batch C applies it." },
-  trip_meeting_checkpoints: { classification: "unapplied", note: "Trips §10.4 / §11.3 (2794) — meeting checkpoints: a chosen §14.3 candidate with its explanation, a meet-by and a status (census-trips §52, TR177/TR198). Written only by the kernel (CREATE_MEETING_CHECKPOINT / CLOSE_MEETING_CHECKPOINT); read by routes/tripMeetingCheckpoints, TripHealthProjection (REGROUP_OPEN), the map's meetup layer and the offline bundle, all under trip_operational_projections_enabled; absent from every database but the local replica until this branch merges and the owner's Batch C applies it." },
-  trip_meeting_checkpoint_participants: { classification: "unapplied", note: "Trips §10.4 (2794) — who is expected at a meeting checkpoint and their arrival state. Written only by the kernel (CREATE_MEETING_CHECKPOINT / SET_MEETING_ARRIVAL); read under the same flag as trip_meeting_checkpoints." },
 
   // ── A guarantee the docs rest on, that production does not have ───────────
   protected_zones: {
@@ -219,14 +237,6 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
   },
 
   // ── Telemetry: writers exist, storage does not ─────────────────────────────
-  map_telemetry_events: {
-    classification: "unapplied",
-    note: "Telemetry writer targets a table production does not have; the write fails there.",
-  },
-  map_telemetry_drops: {
-    classification: "unapplied",
-    note: "Companion to map_telemetry_events. Same absence, same consequence.",
-  },
   wall_telemetry_events: {
     classification: "unapplied",
     note: "Wall telemetry writer targets a table production does not have.",
@@ -258,7 +268,6 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
   // ── Everything else measured in the same comparison ────────────────────────
   event_passport_shares: { classification: "unapplied", note: "In portava-ci, absent from production." },
   input_selection_history: { classification: "unapplied", note: "In portava-ci, absent from production." },
-  media_intent_signals: { classification: "unapplied", note: "In portava-ci, absent from production." },
   media_view_requests: { classification: "unapplied", note: "In portava-ci, absent from production." },
   media_view_request_optins: { classification: "unapplied", note: "In portava-ci, absent from production." },
   route_flow_contribution_consent: {
@@ -268,23 +277,6 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
   sources: { classification: "unapplied", note: "In portava-ci, absent from production." },
 
   // ── Applied to CI this session, deliberately not to production ─────────────
-  sensing_anon_contributions: {
-    // RECLASSIFIED 2026-09-14, unmerged-pr -> unapplied. This note used to read
-    // "PR #475 (UNMERGED) ... Not drift until that PR lands". It landed:
-    // 2315_sensing_anon_contributions.sql is on `main` and in portava-ci's
-    // ledger. It reached main inside #476 rather than under its own number, so
-    // no commit subject ever named #475 and the excuse stayed plausible while
-    // being false. Nothing caught it because the "declared by NO migration"
-    // check in main() exempted unmerged-pr in one direction only; the assertion
-    // that closes that is STALE UNMERGED-PR, below.
-    classification: "unapplied",
-    note:
-      "Migration 2315, ON MAIN (it reached main inside #476) and applied to portava-ci " +
-      "2026-09-07. Absent from production, so it counts toward the must-reach-zero total " +
-      "like any other unapplied migration. Applying it to production remains an owner " +
-      "decision — the store is inert by construction — but that is a reason to leave it " +
-      "unapplied, not a reason to leave it unaccounted.",
-  },
   // ── RECLASSIFIED 2026-09-15, unmerged-pr -> unapplied. The migration files
   //    are now IN THIS TREE, so the exemption is false by construction.
   //
@@ -438,17 +430,6 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
 
 
   // Sensing, migration 2480.
-  sensing_contribution_sessions: {
-    classification: "unapplied",
-    note:
-      "Migration 2480. The ISSUED half of the Sensing spec s4.2 contribution " +
-      "credential. Its own header says NOT APPLIED, and it is written so the " +
-      "SENSING_AUTH_POSTURE decision (docs/architecture/" +
-      "sensing-auth-posture-decision.md) can be taken on evidence: dry-run inside " +
-      "a ROLLED-BACK transaction on portava-ci, postconditions passed, nothing " +
-      "committed. Under Option B the file is never run at all, so applying it " +
-      "would TAKE the decision.",
-  },
 
   // Telegraph, migration 2810.
   telegraph_outbox: {
