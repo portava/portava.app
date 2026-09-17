@@ -46,11 +46,37 @@ export type MeetingPointComputation =
   | { ok: true; result: MeetingPointResult; candidatesConsidered: number; candidates: MeetingCandidate[]; sourceTripVersion: number | null; unread: string[] }
   | { ok: false; reason: string; message: string };
 
-export async function computeMeetingPoint(sc: any, tripId: string, userId: string, opts: { participantIds?: string[]; candidateIds?: string[]; now?: Date } = {}): Promise<MeetingPointComputation> {
+export async function computeMeetingPoint(sc: any, tripId: string, userId: string, opts: { participantIds?: string[]; planId?: string | null; candidateIds?: string[]; now?: Date } = {}): Promise<MeetingPointComputation> {
   const now = opts.now ?? new Date();
   const loaded = await loadImpactState(sc, tripId, { now });
   if (!loaded.ok) return { ok: false, reason: loaded.reason, message: loaded.message };
-  const wanted = opts.participantIds && opts.participantIds.length > 0 ? opts.participantIds : loaded.state.crewIds;
+  // §14.3's party, in the order of how much the caller actually knows
+  // (census-trips TR150):
+  //
+  //   1. an explicit list        — the caller states the party.
+  //   2. a PLAN                  — the party is that plan's 2771 attendance,
+  //                                which `loadImpactState` already derives
+  //                                (GOING / MAYBE; SOLO scope means nobody
+  //                                but its owner). This is the case the row
+  //                                names: "meet for the hike" is a meeting
+  //                                point for the people going on the hike,
+  //                                not for fourteen people who are not.
+  //   3. neither                 — the whole crew, as before.
+  //
+  // A named plan that is NOT on this trip is REFUSED rather than silently
+  // falling through to the crew: answering with a fourteen-person meeting
+  // point to a request about one plan is a confident wrong answer, and the
+  // caller cannot tell it happened.
+  let wanted: string[];
+  if (opts.participantIds && opts.participantIds.length > 0) {
+    wanted = opts.participantIds;
+  } else if (opts.planId) {
+    const plan = loaded.state.plans.find((p) => p.id === opts.planId);
+    if (!plan) return { ok: false, reason: "TRIP_PLAN_NOT_FOUND", message: "That plan is not on this trip" };
+    wanted = plan.participantIds;
+  } else {
+    wanted = loaded.state.crewIds;
+  }
   const positions = new Map<string, { lat: number; lng: number } | null>();
   let positionReason = "trip_crew_map_enabled is off; no position is read";
   if (await isFlagEnabled(sc, "trip_crew_map_enabled")) {

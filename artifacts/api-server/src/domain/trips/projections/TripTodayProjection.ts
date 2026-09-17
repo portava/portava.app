@@ -69,6 +69,16 @@ import { recordTripDecision, persistTripDecision, TRIP_ENGINE_VERSIONS } from ".
 
 const log = logger.child({ mod: "tripTodayProjection" });
 
+/**
+ * 2771's attendance vocabulary that counts as "on this plan", lowercased.
+ *
+ * Deliberately the SAME set `TripImpactState` uses for §9.4's affected
+ * participants: two readers of one relation that disagreed about whether MAYBE
+ * attends would give one plan two party sizes on one screen. DECLINED and
+ * anything unrecognised are out — an unknown state is not a quiet yes.
+ */
+const ATTENDING_STATES = new Set(["going", "maybe", "interested"]);
+
 export interface TodayCurrentPlan {
   id: string; title: string | null; category: string | null; status: string | null;
   startsAt: string | null; endsAt: string | null; locationName: string | null;
@@ -122,6 +132,13 @@ export interface TripTodayProjection extends TripProjectionEnvelope {
   attention: PrioritySwitch;
   /** §10.3 (TR172): how often a client should sample location right now, and why. */
   sensing: SensingPolicy;
+  /**
+   * Sources this projection could NOT read but did not refuse over, by table
+   * name. Empty is the normal case and it is a claim: every optional read
+   * succeeded. A name here says the projection is served on a documented
+   * fallback — never that the fallback is the truth.
+   */
+  unreadSources: string[];
   /** §11.2's five questions, in order, each naming the field that answers it. */
   answers: { now: string; next: string; who: string; canDo: string; changed: string };
   derivedFrom: { healthSourceTripVersion: number | null; freedomSourceTripVersion: number | null };
@@ -327,6 +344,46 @@ export async function buildTripTodayProjection(
     .filter((m) => m.status == null || m.status === "accepted")
     .map((m) => String(m.user_id));
   const crewSize = acceptedCrewIds.length || 1;
+
+  // §5.1's plan participant relation (`trip_plan_participants`, 2771), used
+  // downstream rather than only stored (census-trips TR150). Until now
+  // `plans[].partySize` was the literal `null` on every input this projection
+  // built, so the trigger's own comment — "attendance count when known (2771),
+  // else the crew size" — described a branch nothing could reach, and the
+  // weather trigger fired on an outdoor plan naming nobody to tell.
+  //
+  // GOING and MAYBE both count. §9.4's impact preview already draws the line
+  // there (`TripImpactState`), and a member who said MAYBE is someone the rain
+  // concerns; DECLINED is not. The two readers use the same vocabulary on
+  // purpose — a plan whose party is four in the preview and three here would
+  // be two answers to one question.
+  //
+  // REFUSING IS WRONG HERE and the fallback is not a swallow. An unreadable
+  // 2771, or a database that does not have it yet, leaves the plan on the
+  // CREW — the set every other part of this projection already uses and the
+  // widest honest answer — and says so in `unreadSources`, rather than
+  // refusing a whole day's projection over an optional refinement or silently
+  // reporting that no one is going.
+  const planIds = ((items ?? []) as any[]).map((p) => String(p.id));
+  const attendanceByPlan = new Map<string, string[]>();
+  let attendanceUnread = false;
+  if (planIds.length > 0) {
+    const { data: attRows, error: attErr } = await sc
+      .from("trip_plan_participants")
+      .select("plan_id, user_id, attendance_state")
+      .in("plan_id", planIds);
+    if (attErr) {
+      attendanceUnread = true;
+      log.warn({ err: attErr.message, tripId }, "today: trip_plan_participants unreadable — plan parties fall back to the crew");
+    } else {
+      for (const a of ((attRows ?? []) as any[])) {
+        if (!ATTENDING_STATES.has(String(a.attendance_state).toLowerCase())) continue;
+        const list = attendanceByPlan.get(String(a.plan_id)) ?? [];
+        list.push(String(a.user_id));
+        attendanceByPlan.set(String(a.plan_id), list);
+      }
+    }
+  }
   const riskTriggers = evaluateRiskTriggers({
     now: nowMs,
     // §8.4 (TR146): the arrival estimate is the freedom projection's per-hop
@@ -344,7 +401,20 @@ export async function buildTripTodayProjection(
         participantIds: acceptedCrewIds,
       };
     }),
-    plans: ((items ?? []) as any[]).map((p) => ({ id: String(p.id), title: p.title ?? null, startsAt: p.starts_at ?? null, endsAt: p.ends_at ?? null, weatherSensitive: looksWeatherSensitive(p.title, p.category === "activity" ? p.location_name : null), partySize: null })),
+    plans: ((items ?? []) as any[]).map((p) => {
+      const attending = attendanceByPlan.get(String(p.id)) ?? null;
+      return {
+        id: String(p.id), title: p.title ?? null, startsAt: p.starts_at ?? null, endsAt: p.ends_at ?? null,
+        weatherSensitive: looksWeatherSensitive(p.title, p.category === "activity" ? p.location_name : null),
+        // A plan with no attendance ROW is not a plan nobody attends: 2771 is
+        // written when someone answers, and silence on a crew-wide plan is the
+        // trip's default, not a declination. So an absent relation falls back
+        // to the crew, and only a plan someone has actually answered on
+        // narrows.
+        partySize: attending ? attending.length : crewSize,
+        participantIds: attending ?? acceptedCrewIds,
+      };
+    }),
     transport: ((segRows ?? []) as any[]).map((t) => ({ id: String(t.id), mode: String(t.mode ?? ""), state: String(t.state ?? ""), plannedDepartureAt: t.planned_departure_at ?? null, partySize: typeof t.party_size === "number" ? t.party_size : null, capacity: null })),
     signals: pulseSignals.status === "ok" ? pulseSignals.items : [],
     crewSize,
@@ -374,7 +444,7 @@ export async function buildTripTodayProjection(
       nextCommitmentId: nextCommitment?.id ?? null, openWindows: freedom.windows.filter((w) => Date.parse(w.endsAt) > nowMs).length,
       crew: { total: crewSummary.total, featureEnabled: crewSummary.featureEnabled },
     },
-    sources: ["trips", "TripHealthProjection", "TripFreedomProjection", "TripPulseProjection", "TripOpportunityProjection", "trip_stages", "trip_transport_segments", "trip_plan_items", "trip_commitments", "trip_members", "trip_risks"],
+    sources: ["trips", "TripHealthProjection", "TripFreedomProjection", "TripPulseProjection", "TripOpportunityProjection", "trip_stages", "trip_transport_segments", "trip_plan_items", "trip_plan_participants", "trip_commitments", "trip_members", "trip_risks"],
     assumptions: ["composed from the health and freedom projections accepted against trips.version read first (§22.4)"],
     constraints: [`accepted sub-projections at version ${canonicalVersion ?? "unknown"}`],
     result: { phase: health.phase.phase, health: health.health, unresolvedActions: unresolvedActions.length, freeWindows: freedom.windows.length, firedTriggers: riskTriggers.filter((t) => t.fired).map((t) => t.kind) },
@@ -407,6 +477,7 @@ export async function buildTripTodayProjection(
       pulseSignals,
       attention: health.attention,
       sensing: decideSensing({ phase: health.phase.phase, attentionMode: health.attention.mode, mustLeaveBy: nextCommitment?.mustLeaveBy ?? null, safeReturnActive: crewSummary.safeReturnActive, now: nowMs }),
+      unreadSources: attendanceUnread ? ["trip_plan_participants"] : [],
       answers: { ...TODAY_ANSWERS },
       derivedFrom: { healthSourceTripVersion: health.sourceTripVersion, freedomSourceTripVersion: freedom.sourceTripVersion },
     },

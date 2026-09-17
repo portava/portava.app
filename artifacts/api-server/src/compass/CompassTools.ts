@@ -42,6 +42,7 @@ import { randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CompassItem, CompassProfile } from "./types.js";
 import { stripCoordinateFields, wrapUgc, buildStructuredCompassContext } from "./CompassStructuredContext.js";
+import { proposalContractPayload } from "../domain/trips/contracts/TripProposalContract.js";
 import { isAcceptedTripMember, canEditPlan, TripAccessUnavailableError } from "../lib/http.js";
 import { buildTripCompassProjection } from "../domain/trips/projections/TripCompassProjection.js";
 import { resolveCurrentTrip, TOOL_TRIP_STATUSES } from "./CompassCurrentTrip.js";
@@ -377,7 +378,14 @@ export const COMPASS_TOOL_DEFINITIONS = [
         properties: {
           tripId: { type: "string" },
           proposalType: { type: "string", description: "e.g. move_plan, cancel_plan, add_plan, change_meeting_point" },
-          change: { type: "object", description: "The change, as simulate_plan took it, plus a rationale.", additionalProperties: true },
+          change: { type: "object", description: "The change itself, as simulate_plan took it.", additionalProperties: true },
+          // §9.3's three payload-borne contract fields, named as parameters
+          // rather than left to be hidden inside `change`: the previous
+          // description said "plus a rationale" and there was nowhere for it
+          // to go that anything read.
+          affectedObjects: { type: "array", items: { type: "string" }, description: "§9.3: ids of the plans / commitments / bookings this change touches." },
+          rationale: { type: "string", description: "§9.3: WHY, in one or two sentences — simulate_plan's verdict belongs here." },
+          impactSummary: { type: "string", description: "§9.3: what it costs, from simulate_plan's impact summary." },
           decisionRule: { type: "string", enum: ["host", "majority", "unanimous", "anyone"] },
           expiresAt: { type: "string", description: "ISO instant (optional)." },
         },
@@ -1303,7 +1311,25 @@ export async function toolCreateProposal(sc: SupabaseClient, userId: string, arg
   const r = await executeTripCommand(sc, {
     commandId: newCommandId(), tripId: t.id, actorUserId: userId, actorRole: "user",
     idempotencyKey: `compass:proposal:${userId}:${proposalType}:${JSON.stringify(change).slice(0, 120)}`, type: "CREATE_PROPOSAL",
-    payload: { proposal_type: proposalType, decision_rule: rule, expires_at: typeof args.expiresAt === "string" ? args.expiresAt : null, payload_json: { ...change, source: "compass" } },
+    // §9.3's contract fields go under the keys TripProposalContract defines
+    // (census-trips TR153). The tool's own description already tells the model
+    // to "use simulate_plan first and pass its verdict as the rationale" — and
+    // the rationale it passed was landing in an unnamed corner of the payload
+    // that no reader looked at, so a crew saw a machine's proposal with no
+    // reason attached. The model's `change` is still carried verbatim beside
+    // them; a `rationale` key inside it does not become a second one.
+    payload: {
+      proposal_type: proposalType, decision_rule: rule,
+      expires_at: typeof args.expiresAt === "string" ? args.expiresAt : null,
+      payload_json: proposalContractPayload({ ...change, source: "compass" }, {
+        affectedObjects: Array.isArray(args.affectedObjects) ? args.affectedObjects.filter((x): x is string => typeof x === "string") : [],
+        // UGC-wrapped: a rationale is model text about user text and reaches
+        // other members' screens, so it carries the same data-not-instructions
+        // delimiters every other free-text field on this path does.
+        rationale: typeof args.rationale === "string" && args.rationale.length > 0 ? wrapUgc(args.rationale.slice(0, 2000)) : null,
+        impactSummary: typeof args.impactSummary === "string" && args.impactSummary.length > 0 ? wrapUgc(args.impactSummary.slice(0, 2000)) : null,
+      }),
+    },
     clientObservedAt: new Date().toISOString(),
   });
   if (!r.ok) return { proposal: null, info: `The kernel refused the proposal: ${r.reason}${(r as any).detail ? ` — ${(r as any).detail}` : ""}` };

@@ -256,6 +256,24 @@ router.post("/places/:placeId/add-to-trip-plan", asyncHandler(async (req, res) =
   res.status(201).json(toCamel(item));
 }));
 
+// ── The plan-item column list, in ONE place ──────────────────────────────────
+
+/**
+ * Every column `toCamel` below consumes, EXCEPT §6.3's `privacy_scope`.
+ *
+ * It is the fallback list: a database without
+ * `2770_trip_plans_spec_columns.sql` answers PGRST204 to the scope and the
+ * caller retries with this one, so an unapplied migration costs a reader the
+ * scope field and not their whole itinerary.
+ */
+export const PLAN_ITEM_COLUMNS_BASE =
+  "id, trip_id, creator_id, title, category, status, source_type, source_id, " +
+  "day_date, starts_at, ends_at, location_name, notes, sort_order, visibility, " +
+  "lock_type, location_is_private, lat, lng, created_at, updated_at";
+
+/** The list every plan reader asks for FIRST — the base plus §6.3's scope (2770, census-trips TR116). */
+export const PLAN_ITEM_COLUMNS = `${PLAN_ITEM_COLUMNS_BASE}, privacy_scope`;
+
 // ── Viewer-based privacy filter ───────────────────────────────────────────────
 
 export function filterPlanItemForViewer(row: Record<string, any>): {
@@ -293,6 +311,18 @@ function toCamel(row: Record<string, any>, opts: { stripCoords?: boolean; warnin
     notes: row.notes ?? null,
     sortOrder: row.sort_order,
     visibility: row.visibility,
+    /**
+     * §6.3's six-value scope (2770, census-trips TR116).
+     *
+     * `null` means NOT READ — either the row came from a select that did not
+     * name the column, or this database does not have 2770 yet. It does NOT
+     * mean `crew`: deriving a scope from `visibility` here would tell a client
+     * that a plan it cannot see the scope of is crew-wide, which is the one
+     * answer a privacy field must never invent. `privacyScopeFromVisibility`
+     * exists for a caller that has actually read `visibility` and wants the
+     * pre-2770 mapping; it is deliberately not applied here.
+     */
+    privacyScope: row.privacy_scope ?? null,
     lockType: row.lock_type ?? "flexible",
     ...coords,
     warnings: opts.warnings ?? [],
