@@ -488,7 +488,7 @@ Memory search of any kind, and no embedding of any kind anywhere in the repo (th
 |---|---|---|---|---|
 | H115–H122 | `getMemory`, `searchMemories`, `getSharedMemories`, `getPlaceHistory`, `getTripMemories`, `getMemoryEvidence`, `createMemoryDraft`, `suggestMemoryCorrection` | NB ×8 | `compass/CompassTools.ts:114-489` defines 11 tools: `get_user_profile`, `get_current_trip`, `search_places`, `search_events`, `get_place_details`, `get_circle_activity`, `check_trip_conflicts`, `add_to_trip`, `get_whos_around`, `get_travel_compatibility`, `get_group_recommendation`. **None** is memory-facing | |
 | H123–H128 | LLM boundary: may summarize supported evidence · may propose merge/split/correction · may ask a minimal clarifying question · may not invent states/participants/identity/attendance/outcomes · may not bypass privacy policy · may not use stale history as current truth | NB ×6 | No memory-facing LLM path exists to constrain; no boundary is encoded. (`2221_compass_ai_writing_default_off.sql` is the adjacent posture, for Compass prose generally) | |
-| H129 | Compass must not mutate canonical Memory facts through prose | **BAC** | The tool set at `compass/CompassTools.ts:114` contains no Memory mutation; the only write-shaped tool is `add_to_trip` (`compass/CompassTools.ts:426`). `routes/compass.ts:2275` `forgetMemory` writes `compass_memories` (a chat store), not `memories` | — |
+| H129 | Compass must not mutate canonical Memory facts through prose | **BAC** | The tool set at `compass/CompassTools.ts:114` contains no Memory mutation; the only write-shaped tool is `add_to_trip` (`compass/CompassTools.ts:434`). `routes/compass.ts:2275` `forgetMemory` writes `compass_memories` (a chat store), not `memories` | — |
 
 ### §17 Command bus and domain events (33)
 
@@ -1590,7 +1590,7 @@ row, and the wording each one supports was re-read at the new line before it was
 | `add_to_trip` | `CompassTools.ts:185#name` | `CompassTools.ts:452#add_to_trip` | Same defect, worse outcome: `:157` is now `get_place_details`, and `#name` matched it happily. |
 | the tool array (§16 rows) | `CompassTools.ts:67-215` | `CompassTools.ts:99-473` | The array's real extent on the merged tree. |
 | H129's tool set | `CompassTools.ts:67` | `CompassTools.ts:99` | Same. |
-| H129's write-shaped tool | `:158` | `CompassTools.ts:411` | Bare `:158` also named no file; now fully qualified. |
+| H129's write-shaped tool | `:158` | `CompassTools.ts:419` | Bare `:158` also named no file; now fully qualified. |
 | H129's `forgetMemory` | `routes/compass.ts:2199` | `routes/compass.ts:2275` | +76 lines above it; the call is unchanged. |
 | H4's GPS city stamp | `routes/location.ts:342-382` | `routes/location.ts:400-440` | +58 lines above it; the block is unchanged. |
 | the `passport_memories_enabled` gate | `routes/location.ts:365` | `routes/location.ts:427` | The mechanical +58 lands on `});`, which is what `:365` had been pointing at too. A sentence about a flag read should not point at a closing paren, so this one goes to the line that names the flag. |
