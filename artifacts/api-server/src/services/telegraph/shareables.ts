@@ -41,6 +41,7 @@
  * and a correct one; the alternative is a backdoor.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { mayDiscloseGemIdentity } from "../hiddenGems/HiddenGemPrivacyGuard.js";
 import {
   type TelegraphAction,
   type TelegraphObjectType,
@@ -425,7 +426,28 @@ const loadHiddenGem: Loader = async (client, id) => {
   // (baseline/20260819_baseline_structure.sql:237). Only `active` is a gem
   // anyone may be handed; `hidden` is a moderation state and `pending` is not
   // yet a gem at all.
-  if (r.status !== "active") {
+  //
+  // STATUS IS HALF THE POLICY, AND THIS USED TO BE THE ONLY HALF CHECKED.
+  // `sensitivity_level` was already SELECTed above and then never read, so a
+  // `protected` / `reveal_after_save` / `reveal_after_acceptance` gem — whose
+  // whole point is that its existence and place are earned, or never given —
+  // was shareable into a thread by name, neighbourhood and city, with a
+  // /gems/:id deep link. RLS does not cover this: the route reads
+  // `const { client } = await requireUser(...)`, which looks user-scoped and is
+  // not — lib/http.ts's requireUser verifies the bearer token and returns
+  // getServiceClient(), so the identity is the caller's and the privileges are
+  // the service role's. mayDiscloseGemIdentity IS migration 0043's
+  // `hidden_gems_public_read` written as a predicate, for exactly this case.
+  //
+  // The viewer passed is `null`, NOT viewerId, and that is deliberate. The
+  // predicate's owner bypass answers "may THIS VIEWER be told the gem exists",
+  // and for the submitter that is yes. But a share does not disclose to the
+  // sharer — it discloses to everyone else in the thread, none of whom has
+  // earned a reveal_after_save gem or may ever see a protected one. So the
+  // bypass is kept out of this surface on purpose.
+  if (!mayDiscloseGemIdentity(
+        { status: r.status as string, sensitivity_level: r.sensitivity_level as any, submitted_by: null },
+        null)) {
     return { state: UNAVAILABLE("unauthorized"), projection: null };
   }
   return {

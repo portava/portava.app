@@ -32,7 +32,7 @@ are files, tables, routes, event types and literals, each re-derived on every ru
 
 ### 2. Migrations that touch a messaging table
 
-32 of 571 migration files reference at least one messaging table.
+32 of 575 migration files reference at least one messaging table.
 
 - `src/migrations/0011_message_type.sql`
 - `src/migrations/0016_thread_reads.sql`

@@ -6633,7 +6633,7 @@ rows stay W with the reason narrowed to the gate alone.
   the pharmacy offered and the bar withheld under SAFETY_EVENT, both offered
   when everyone has arrived, nothing withheld and `consulted: false` with the
   gate closed or for a non-member; through the route
-  (`test/compassSurfaces.test.ts:1437#describe("GET /api/compass/recommendations?surface=trip — §17.2 the priority switch (TR319)"`),
+  (`test/compassSurfaces.test.ts:1441#describe("GET /api/compass/recommendations?surface=trip — §17.2 the priority switch (TR319)"`),
   where the calm case serves the same item the suppressed case withholds —
   the assertion that makes the first one mean something; the classifier and
   the reader in `test/tripAttentionFilter.test.ts:35#describe("classification is by whole token, fail-closed"`;

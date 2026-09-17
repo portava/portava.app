@@ -549,6 +549,10 @@ describe("GET /api/compass/recommendations?surface=passport — non-empty result
           city:         "Cebu",
           country:      "PH",
           category:     "sightseeing",
+          // NOT NULL DEFAULT 'public' in the schema, so a real row always carries
+          // it; a fixture that omits it is not a smaller row, it is an impossible
+          // one, and it makes a fail-closed reader look like a regression.
+          sensitivity_level: "public",
           submitted_by: null,
           status:       "active",
           created_at:   new Date(Date.now() - 86_400_000).toISOString(),
@@ -1453,8 +1457,8 @@ describe("GET /api/compass/recommendations?surface=trip — §17.2 the priority 
     hidden_gems: [
       // "sightseeing", not "nightlife": nightlife gems are time-gated upstream of this surface, and a
       // fixture the calm case cannot serve would make the suppressed case vacuous.
-      { id: "00000000-0000-0000-0000-000000000ee2", name: "Taoist Temple viewpoint", description: "The crowd-free ledge", city: "Cebu", country: "PH", category: "sightseeing", submitted_by: null, status: "active", created_at: new Date(Date.now() - 86_400_000).toISOString() },
-      { id: "00000000-0000-0000-0000-000000000ee3", name: "Colon Street pharmacy", description: "Open 24 hours", city: "Cebu", country: "PH", category: "pharmacy", submitted_by: null, status: "active", created_at: new Date(Date.now() - 86_400_000).toISOString() },
+      { id: "00000000-0000-0000-0000-000000000ee2", name: "Taoist Temple viewpoint", description: "The crowd-free ledge", city: "Cebu", country: "PH", category: "sightseeing", submitted_by: null, status: "active", sensitivity_level: "public", created_at: new Date(Date.now() - 86_400_000).toISOString() },
+      { id: "00000000-0000-0000-0000-000000000ee3", name: "Colon Street pharmacy", description: "Open 24 hours", city: "Cebu", country: "PH", category: "pharmacy", submitted_by: null, status: "active", sensitivity_level: "public", created_at: new Date(Date.now() - 86_400_000).toISOString() },
     ],
     ...({
       trip_meeting_checkpoints: [{ id: "cp1", trip_id: TRIP_ID, label: "Fountain", purpose: "regroup", status: "open" }],

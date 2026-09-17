@@ -418,7 +418,7 @@ and **search behaviour is the missing sixth**. Measured, the gap was sharper tha
 
 **Search behaviour existed. It was registered in a DIFFERENT REGISTRY, keyed differently.** Preview,
 authorization, current state, actions and revocation are registered per OBJECT FAMILY in
-`artifacts/api-server/src/services/telegraph/shareables.ts:948#const LOADERS`. Search behaviour was a
+`artifacts/api-server/src/services/telegraph/shareables.ts:970#const LOADERS`. Search behaviour was a
 pair of maps keyed by MESSAGE SUBTYPE in `domain/telegraph/contracts/conversationSearch.ts`. Nothing
 read the two together, so they could disagree about a family forever without a single failure — and
 they did: `MAP_PIN` and `MEETUP_POINT` are both shareable and were in neither search map. A Discovery
@@ -431,7 +431,7 @@ The build puts the sixth capability on the one contract:
 |---|---|
 | The registration, by object family: bucket, structured flag, and the message subtypes each family is carried by | `artifacts/api-server/src/domain/telegraph/contracts/conversationSearch.ts:92#export const SEARCH_BEHAVIOUR` |
 | Its type, stating what §21's last line means by "structured" | `artifacts/api-server/src/domain/telegraph/contracts/conversationSearch.ts:68#export interface TelegraphSearchBehaviour` |
-| The sixth member on the contract itself, beside the other five | `artifacts/api-server/src/services/telegraph/shareables.ts:102#getSearchBehaviour()` |
+| The sixth member on the contract itself, beside the other five | `artifacts/api-server/src/services/telegraph/shareables.ts:103#getSearchBehaviour()` |
 | The one searchable card kind with no shareable family, DECLARED rather than folded into `PLACE` | `artifacts/api-server/src/domain/telegraph/contracts/conversationSearch.ts:121#export const FAMILYLESS_SUBTYPE_BUCKET` |
 | Fifteen cases across five blocks, including literal copies of both pre-change maps | `artifacts/api-server/src/test/telegraphSearchCapability.test.ts:1#/**` |
 
