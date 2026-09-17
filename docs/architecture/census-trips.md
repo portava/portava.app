@@ -4920,7 +4920,7 @@ route writes goes through the kernel as a command that already exists
   explanation — never a coordinate. Positions come only through the crew
   map, so every §10 rule runs first and a participant not sharing is
   unplaced by name; candidates are the crew's saved ideas and the day's
-  plans with a public point (`domain/trips/services/TripReplanService.ts:49#computeMeetingPoint`).
+  plans with a public point (`domain/trips/services/TripReplanService.ts:54#computeMeetingPoint`).
   `POST /trips/:tripId/meeting-point`
   (`server/trips/readRoutes/tripProjections.ts:584#/trips/:tripId/meeting-point`); Compass
   `find_meeting_point` (`compass/CompassTools.ts:1371#toolFindMeetingPoint`).
@@ -9029,7 +9029,7 @@ rather than refusing a whole day's projection over an optional refinement or
 reporting that nobody is going.
 
 **§14.3's meeting point takes a PLAN.**
-`artifacts/api-server/src/domain/trips/services/TripReplanService.ts:76#wanted = plan.participantIds;`
+`artifacts/api-server/src/domain/trips/services/TripReplanService.ts:81#wanted = plan.participantIds;`
 resolves the party in the order of how much the caller knows: an explicit list,
 then a named plan's 2771 attendance, then the crew. A plan named that is not on
 the trip is **refused** with `TRIP_PLAN_NOT_FOUND` — answering a one-plan question

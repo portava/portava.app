@@ -35,7 +35,12 @@ export async function computeReplan(sc: any, tripId: string, userId: string, opt
   const triggers = evaluateRiskTriggers({
     now: now.getTime(), crewSize: st.crewIds.length || 1, signals,
     commitments: st.commitments.map((c) => ({ id: c.id, type: c.type, startsAt: c.startsAt, requiredArrivalAt: c.requiredArrivalAt })),
-    plans: st.plans.map((p) => ({ id: p.id, title: p.title, startsAt: p.startsAt, endsAt: p.endsAt, weatherSensitive: looksWeatherSensitive(p.title), partySize: p.participantIds.length || null })),
+    // `participantIds` is 2771's attendance, already derived by
+    // loadImpactState (census-trips TR150). Passed as well as counted: the
+    // replan's weather trigger names the same people the Today projection's
+    // does, and a crew reading one screen after the other is not told two
+    // different things about who a rained-on plan concerns.
+    plans: st.plans.map((p) => ({ id: p.id, title: p.title, startsAt: p.startsAt, endsAt: p.endsAt, weatherSensitive: looksWeatherSensitive(p.title), partySize: p.participantIds.length || null, participantIds: p.participantIds })),
     transport: st.transport.map((t) => ({ id: t.id, mode: t.mode, state: t.state, plannedDepartureAt: t.plannedDepartureAt, partySize: t.partySize, capacity: null })),
   });
   const diff = replanDay({ now: now.getTime(), day, plans: st.plans, state: st, conflicts: freedom.projection.conflicts, signals, triggers, windows: freedom.projection.windows, opportunities, actorUserId: userId, constraints: opts.constraints });
