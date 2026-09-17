@@ -119,8 +119,27 @@ describe("§23 — the transform is a transform, and refuses the wrong base", ()
                             "trip_command_receipts", "trip_outbox", "CREATE_TRIP"]) {
       assert.ok(kernel.includes(`'${survivor}'`), `${survivor} is not checked after apply`);
     }
-    assert.match(kernel, /2765''s 3 commitment-family assignments became/);
-    assert.match(kernel, /2764''s 3 stage-family assignments became/);
+    // These are DELTAS, not absolute counts, and the distinction is the point.
+    // The first rehearsal of 2798 on portava-ci rolled back on its own
+    // postcondition -- "2764's 3 stage-family assignments became 5" -- because
+    // the counts had been read off 2764/2765 alone, and 2768/2793/2794 add
+    // stage-family and range-checking branches of their own. An absolute number
+    // was wrong on this ancestry and weaker on any: a transform that drops one
+    // branch and adds another still totals whatever it totalled. So the
+    // migration records the counts from the kernel in front of it and compares.
+    assert.match(kernel, /CREATE TEMP TABLE _k2798_before/,
+      "2798 does not record the pre-transform counts it must compare against");
+    for (const what of ["branches", "stage", "commitment", "leg", "range_inv", "ins_commit"]) {
+      assert.ok(kernel.includes(`b.what = '${what}'`),
+        `the ${what} count is not compared against the pre-transform record`);
+    }
+    assert.match(kernel, /stage-family assignments went from % to %/);
+    assert.match(kernel, /commitment-family assignments went from % to %/);
+    assert.match(kernel, /trip-level range checks went from % to %/);
+    // And no absolute count may creep back in for the families this transform
+    // does not name -- that is the defect this test exists to hold shut.
+    assert.ok(!/IF n <> 3 THEN RAISE EXCEPTION '2798: 276/.test(kernel),
+      "2798 has gone back to asserting an absolute family count");
   });
 
   it("the rollback is the inverse transform and refuses the wrong order", () => {
@@ -141,7 +160,7 @@ describe("§23 — 'no bloated itinerary model' is a structural guarantee", () =
     assert.match(schema, /an occurrence table exists \(%\)/);
     assert.match(schema, /materialisation column\(s\) on the rule table/);
     assert.match(schema, /trigger\(s\) on the rule table; a rule must not write anything/);
-    assert.match(kernel, /expected exactly 1 INSERT INTO trip_commitments \(2765''s\), found % — an occurrence is being materialised/);
+    assert.match(kernel, /INSERT INTO trip_commitments went from % to % — an occurrence is being materialised/);
   });
 
   it("there is no MATERIALISE command, and no command writes commitments from a rule", () => {
