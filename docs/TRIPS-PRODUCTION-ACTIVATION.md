@@ -20,6 +20,17 @@ Code container** and is handed to Replit below, with the exact checks to run.
 | flag enabled | — | **no** | **no** |
 | end-to-end runtime-verified through the API | **no — blocked, see §4** | no | no |
 
+The same states for the §23 recurrence subsystem (2797/2798/2799), kept apart
+because it is at a different point in the same pipeline:
+
+| state | 2797 table | 2798 kernel family | 2799 fold |
+|---|---|---|---|
+| merged to this branch | yes | yes | yes |
+| rehearsed on portava-ci | **yes** | **yes** | **yes** |
+| applied to production | **no** | **no** | **no** |
+| runtime-exercised (portava-ci) | **yes, see §8** | **yes, see §8** | **yes, see §8** |
+| runtime-exercised (production) | no | no | no |
+
 Data preserved throughout: **43 trips, 42 trip_members, 8 trip_plan_items**,
 re-counted after 2590, after 2772 and at the end of the chain.
 
@@ -184,3 +195,108 @@ rolled the file back whole, so there is no partial-file state to unwind.
     FROM public.schema_migration_ledger
    WHERE filename ~ '^(2450|2500|2590|27[6-9][0-9])_' ORDER BY filename;
   ```
+
+## 8. Runtime exercise on portava-ci, 2026-09-17
+
+§3's 21 probes were the kernel as it stood. This section is the thing the owner
+asked for next: **representative commands with controlled test data, covering
+authorization, idempotency, event/outbox handling and projections** — run
+against the rehearsal database, in three transactions that each ended in a
+`RAISE EXCEPTION`, so portava-ci holds **no residue**: no users, no profiles, no
+trips, no members, no events, no outbox rows, no receipts.
+
+Why portava-ci and not production: production's kernel is byte-identical to the
+one exercised here up to 2795 (prosrc sha256
+`4ce0b3e510f151e3e794dcc59e9af9bc790f1ff241464ea90311187783957dec`, 66 command
+branches, verified on both), but 2797/2798/2799 are deliberately NOT applied to
+production, so the recurrence commands do not exist there. Exercising them on
+production was not possible and creating controlled test users there was not
+wanted.
+
+**Fixtures.** Three real `auth.users` + `public.profiles` (owner, crew member,
+outsider), a real trip, real `trip_members`. Worth recording: inserting a trip
+auto-enrols its owner in `trip_members` through a trigger, so the fixture only
+needed to add the crew member.
+
+### Phase 1 — authorization, the happy path, event/outbox, idempotency, concurrency
+
+| probe | result |
+|---|---|
+| outsider issues a crew command | `ok=false` `TRIP_AUTH_NOT_CREW` |
+| plain crew issues `CANCEL_TRIP` (owner-only) | `ok=false` `TRIP_AUTH_NOT_OWNER` |
+| unknown command type | `ok=false` `TRIP_COMMAND_UNKNOWN_TYPE` |
+| crew issues `ADD_RECURRING_COMMITMENT` | `ok=true`, `version: 1`, `duplicate: false` |
+| after one accepted command | `trips.version` 0→1, **1** event, **1** outbox row, **1** receipt |
+| event type written | `trip.recurring_commitment_added` |
+| **anti-bloat** | 1 recurrence row, `trip_commitments` **0 → 0** |
+| replay: same `idempotency_key`, NEW `command_id` | `ok=true`, `duplicate: true`, **same** `result.id` and **same** `event_id` |
+| after the replay | events **1**, outbox **1**, version **1**, recurrences **1** — all unchanged |
+| stale `expected_trip_version` | `ok=false` `TRIP_VERSION_CONFLICT` |
+
+The anti-bloat row is the §23 clause made observable: the rule written was
+"every weekday 09:00 for 45 days", which is 33 occurrences, and it added
+**zero** rows to `trip_commitments`.
+
+### Phase 2 — the recurrence lifecycle, its refusals, tenancy, and the fold
+
+| probe | result |
+|---|---|
+| `SKIP_RECURRENCE_OCCURRENCE` 2026-10-08 | `skip_dates = {2026-10-08}` |
+| skip 10-15, then `UNSKIP` 10-08 | `skip_dates = {2026-10-15}` |
+| `UPDATE_RECURRING_COMMITMENT` patch | `local_time` 10:00, `by_weekday {4}`; `freq` and `label` untouched |
+| timezone `Mars/Olympus_Mons` | `TRIP_RECURRENCE_TIMEZONE_UNKNOWN` |
+| 731-day range | `TRIP_RECURRENCE_RANGE_TOO_LONG`, `days: 730` |
+| skip a date outside the rule's range | `TRIP_RECURRENCE_DATE_OUT_OF_RANGE` |
+| patch `freq` to `fortnightly` | `TRIP_COMMAND_MALFORMED` |
+| **trip A's command naming trip B's recurrence** | `TRIP_RECURRENCE_NOT_FOUND`; trip B's row **unchanged** |
+| patch that moves ONE end past the cap | `TRIP_RECURRENCE_RANGE_TOO_LONG`, `days: 609` |
+| `REMOVE`, then `REMOVE` again | first `ok=true`; second `TRIP_RECURRENCE_NOT_FOUND` |
+| after `REMOVE` | trip A rules 0, **trip B rules 1**, `trip_commitments` 0 |
+
+**Projections.** All five events this phase produced were folded through
+`public.trip_snapshot_fold` in sequence: `unfolded` absent, both collections
+byte-unchanged, and **outbox rows = events = 5** — 1:1, no gap, no duplication.
+The stream was `recurring_commitment_added | occurrence_skipped |
+occurrence_skipped | occurrence_restored | recurring_commitment_updated`.
+
+The cross-trip probe is the one worth calling out: the kernel's `AND trip_id =
+v_trip_id` is not decoration. A crew member of both trips could not reach trip
+B's rule through trip A's command.
+
+### Phase 3 — Safe Return and subgroup access boundaries, under real RLS
+
+Run under `SET LOCAL ROLE authenticated` with a real `request.jwt.claims`, so
+`auth.uid()` resolved and every policy was actually evaluated.
+
+| viewer | `trip_subgroups` | `trip_subgroup_members` | `safe_return_sessions` | recurrence rules |
+|---|---|---|---|---|
+| subgroup member | 1 | 2 | **1** | 1 |
+| crew, NOT in the subgroup | 1 | 2 | **0** | 1 |
+| outsider (not on the trip) | 0 | 0 | 0 | 0 |
+
+**State this precisely rather than as "subgroup boundaries enforced", because
+the boundary is not where the phrase suggests.** `trip_subgroups` and
+`trip_subgroup_members` both gate on `authz.is_trip_crew`, so a subgroup is
+visible to the WHOLE CREW — a crew member outside it sees the subgroup and its
+membership. What they cannot see is the session: `safe_return_sessions` carries
+one owner-only policy (`srs_own`, `auth.uid() = user_id`), and the crew member
+outside the subgroup read **0 rows**, as did the outsider. So `subgroup_id` on
+that table is metadata for the notify path, **not a read grant**, and 2794
+widened nothing about who can see a Safe Return session.
+
+Also verified for all three viewers: a direct `INSERT` into
+`trip_commitment_recurrences` as `authenticated` is refused `42501` (no grant),
+and `trip_kernel_execute` is refused `42501` as well — `EXECUTE` is
+`service_role` only. Every write goes through the API server; there is no client
+write path to either.
+
+### What this does NOT establish
+
+- It is **portava-ci**, not production. Production has the same kernel through
+  2795 and does **not** have 2797/2798/2799.
+- Both flags were **FALSE** throughout; these probes call the kernel directly as
+  `service_role`, which is what the API server does, but they do not exercise
+  any HTTP route, worker or scheduled job.
+- Nothing here answers §4's question, which remains the blocker: **which build
+  is actually running on the Replit deployment.**
+
