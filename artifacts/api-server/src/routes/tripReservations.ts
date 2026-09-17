@@ -191,6 +191,10 @@ router.post("/trips/:tripId/reservations/import", asyncHandler(async (req, res) 
   // STATUS IS NEVER PATCHED. Re-reading the email does not un-confirm a
   // booking the member already confirmed, and does not resurrect one they
   // dismissed — only the FACTS move, and `updated_at` with them.
+  // One key per (reference, type). JSON rather than a joined string so a
+  // reference that happens to contain the separator cannot collide with a
+  // different pair — a booking reference is whatever the airline printed.
+  const refTypeKey = (ref: string, type: string) => JSON.stringify([ref.trim(), type]);
   const refsWanted = [...new Set(
     extraction.reservations
       .map((r) => (typeof r.confirmationRef === "string" ? r.confirmationRef.trim() : ""))
@@ -214,7 +218,7 @@ router.post("/trips/:tripId/reservations/import", asyncHandler(async (req, res) 
     }
     for (const row of ((priorRows ?? []) as any[])) {
       if (String(row.status) === "cancelled") continue;
-      const key = `${String(row.confirmation_ref).trim()} ${String(row.type)}`;
+      const key = refTypeKey(String(row.confirmation_ref), String(row.type));
       const seen = existingByKey.get(key);
       if (seen === undefined) existingByKey.set(key, { id: String(row.id), version: typeof row.version === "number" ? row.version : null });
       else existingByKey.set(key, "ambiguous");
@@ -248,7 +252,7 @@ router.post("/trips/:tripId/reservations/import", asyncHandler(async (req, res) 
   let ambiguousReferences = 0;
   for (const row of rows) {
     const ref = typeof row.confirmation_ref === "string" ? row.confirmation_ref.trim() : "";
-    const match = ref.length > 0 ? existingByKey.get(`${ref} ${row.type}`) : undefined;
+    const match = ref.length > 0 ? existingByKey.get(refTypeKey(ref, row.type)) : undefined;
     if (match === "ambiguous") { ambiguousReferences += 1; inserts.push(row); continue; }
     if (match === undefined) { inserts.push(row); continue; }
     // `status`, `created_from`, `user_id` and `trip_id` are deliberately NOT
