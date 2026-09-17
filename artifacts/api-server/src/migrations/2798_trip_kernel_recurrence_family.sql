@@ -106,6 +106,25 @@ BEGIN
   before_len := length(d);
   branches_before := (length(d) - length(replace(d, E'\n      WHEN ''', ''))) / length(E'\n      WHEN ''');
 
+  -- The "what this transform did not name, it must not have moved" counts are
+  -- taken FROM THE KERNEL IN FRONT OF US, and never hard-coded from a reading
+  -- of 2764/2765. Those two files are not the whole ancestry: 2768, 2793 and
+  -- 2794 each added stage- and range-checking branches of their own, so the
+  -- installed kernel carries 5 stage-family assignments and 3
+  -- TRIP_TEMPORAL_RANGE_INVERTED sites, not the 3 and 2 a reading of 2765
+  -- suggests. An absolute number here is wrong on this kernel AND weaker than
+  -- a delta on any kernel — a transform that dropped one stage branch and
+  -- added another still totals whatever it totalled. What must hold is that
+  -- these counts are UNCHANGED by a transform that does not name them.
+  CREATE TEMP TABLE _k2798_before (what text PRIMARY KEY, n int) ON COMMIT DROP;
+  INSERT INTO _k2798_before VALUES
+    ('branches',   branches_before),
+    ('stage',      (length(d) - length(replace(d, E'v_family     := ''stage'';',      ''))) / length(E'v_family     := ''stage'';')),
+    ('commitment', (length(d) - length(replace(d, E'v_family     := ''commitment'';', ''))) / length(E'v_family     := ''commitment'';')),
+    ('leg',        (length(d) - length(replace(d, E'v_family     := ''leg'';',        ''))) / length(E'v_family     := ''leg'';')),
+    ('range_inv',  (length(d) - length(replace(d, 'TRIP_TEMPORAL_RANGE_INVERTED',     ''))) / length('TRIP_TEMPORAL_RANGE_INVERTED')),
+    ('ins_commit', (length(d) - length(replace(d, 'INSERT INTO public.trip_commitments' || E'\n', ''))) / length('INSERT INTO public.trip_commitments' || E'\n'));
+
   IF position('ADD_RECURRING_COMMITMENT' in d) > 0 THEN
     RAISE EXCEPTION '2798: the recurrence family is already present; this migration is not idempotent by design';
   END IF;
@@ -389,7 +408,7 @@ END
 $mig$;
 
 DO $post$
-DECLARE d text; n int; t text;
+DECLARE d text; n int; was int; t text;
 BEGIN
   SELECT pg_get_functiondef(p.oid) INTO d
     FROM pg_proc p JOIN pg_namespace ns ON ns.oid = p.pronamespace
@@ -416,10 +435,11 @@ BEGIN
   -- occurrence into a commitment row is exactly what 2797 exists to prevent, and
   -- the place that would happen is here. The recurrence branches insert into
   -- trip_commitment_recurrences and nothing else, so the number of
-  -- `INSERT INTO public.trip_commitments` in the whole function must still be
-  -- the ONE 2765 put there.
+  -- `INSERT INTO public.trip_commitments` in the whole function must be exactly
+  -- what it was before this transform ran.
   n := (length(d) - length(replace(d, 'INSERT INTO public.trip_commitments' || E'\n', ''))) / length('INSERT INTO public.trip_commitments' || E'\n');
-  IF n <> 1 THEN RAISE EXCEPTION '2798: expected exactly 1 INSERT INTO trip_commitments (2765''s), found % — an occurrence is being materialised', n; END IF;
+  SELECT b.n INTO was FROM _k2798_before b WHERE b.what = 'ins_commit';
+  IF n <> was THEN RAISE EXCEPTION '2798: INSERT INTO trip_commitments went from % to % — an occurrence is being materialised', was, n; END IF;
   n := (length(d) - length(replace(d, 'INSERT INTO public.trip_commitment_recurrences', ''))) / length('INSERT INTO public.trip_commitment_recurrences');
   IF n <> 1 THEN RAISE EXCEPTION '2798: expected exactly 1 INSERT INTO trip_commitment_recurrences, found %', n; END IF;
 
@@ -429,14 +449,25 @@ BEGIN
                            'ADD_COMMITMENT','ADD_LEG','ADD_STAGE','SET_TRIP_COVER','JOIN_VIA_LINK','CREATE_TRIP'] LOOP
     IF position(t in d) = 0 THEN RAISE EXCEPTION '2798: % was lost', t; END IF;
   END LOOP;
+  -- Each of these is a DELTA against the kernel as it stood at the top of this
+  -- migration, recorded in _k2798_before. See the note there for why an
+  -- absolute count would be both wrong on this ancestry and weaker on any.
   n := (length(d) - length(replace(d, E'v_family     := ''commitment'';', ''))) / length(E'v_family     := ''commitment'';');
-  IF n <> 3 THEN RAISE EXCEPTION '2798: 2765''s 3 commitment-family assignments became %', n; END IF;
+  SELECT b.n INTO was FROM _k2798_before b WHERE b.what = 'commitment';
+  IF n <> was THEN RAISE EXCEPTION '2798: commitment-family assignments went from % to %', was, n; END IF;
   n := (length(d) - length(replace(d, E'v_family     := ''leg'';', ''))) / length(E'v_family     := ''leg'';');
-  IF n <> 3 THEN RAISE EXCEPTION '2798: 2765''s 3 leg-family assignments became %', n; END IF;
+  SELECT b.n INTO was FROM _k2798_before b WHERE b.what = 'leg';
+  IF n <> was THEN RAISE EXCEPTION '2798: leg-family assignments went from % to %', was, n; END IF;
   n := (length(d) - length(replace(d, E'v_family     := ''stage'';', ''))) / length(E'v_family     := ''stage'';');
-  IF n <> 3 THEN RAISE EXCEPTION '2798: 2764''s 3 stage-family assignments became %', n; END IF;
+  SELECT b.n INTO was FROM _k2798_before b WHERE b.what = 'stage';
+  IF n <> was THEN RAISE EXCEPTION '2798: stage-family assignments went from % to %', was, n; END IF;
   n := (length(d) - length(replace(d, 'TRIP_TEMPORAL_RANGE_INVERTED', ''))) / length('TRIP_TEMPORAL_RANGE_INVERTED');
-  IF n <> 2 THEN RAISE EXCEPTION '2798: expected the 2 pre-existing trip-level range checks, found %', n; END IF;
+  SELECT b.n INTO was FROM _k2798_before b WHERE b.what = 'range_inv';
+  IF n <> was THEN RAISE EXCEPTION '2798: trip-level range checks went from % to %', was, n; END IF;
+  -- And the branch total: exactly the 5 this migration names, no more.
+  SELECT b.n INTO was FROM _k2798_before b WHERE b.what = 'branches';
+  n := (length(d) - length(replace(d, E'\n      WHEN ''', ''))) / length(E'\n      WHEN ''');
+  IF n <> was + 5 THEN RAISE EXCEPTION '2798: the installed kernel has % branches, expected % (was % + 5)', n, was + 5, was; END IF;
 END
 $post$;
 
