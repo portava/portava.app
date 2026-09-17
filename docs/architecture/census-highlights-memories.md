@@ -488,7 +488,7 @@ Memory search of any kind, and no embedding of any kind anywhere in the repo (th
 |---|---|---|---|---|
 | H115–H122 | `getMemory`, `searchMemories`, `getSharedMemories`, `getPlaceHistory`, `getTripMemories`, `getMemoryEvidence`, `createMemoryDraft`, `suggestMemoryCorrection` | NB ×8 | `compass/CompassTools.ts:114-489` defines 11 tools: `get_user_profile`, `get_current_trip`, `search_places`, `search_events`, `get_place_details`, `get_circle_activity`, `check_trip_conflicts`, `add_to_trip`, `get_whos_around`, `get_travel_compatibility`, `get_group_recommendation`. **None** is memory-facing | |
 | H123–H128 | LLM boundary: may summarize supported evidence · may propose merge/split/correction · may ask a minimal clarifying question · may not invent states/participants/identity/attendance/outcomes · may not bypass privacy policy · may not use stale history as current truth | NB ×6 | No memory-facing LLM path exists to constrain; no boundary is encoded. (`2221_compass_ai_writing_default_off.sql` is the adjacent posture, for Compass prose generally) | |
-| H129 | Compass must not mutate canonical Memory facts through prose | **BAC** | The tool set at `compass/CompassTools.ts:114` contains no Memory mutation; the only write-shaped tool is `add_to_trip` (`compass/CompassTools.ts:426`). `routes/compass.ts:2275` `forgetMemory` writes `compass_memories` (a chat store), not `memories` | — |
+| H129 | Compass must not mutate canonical Memory facts through prose | **BAC** | The tool set at `compass/CompassTools.ts:114` contains no Memory mutation; the only write-shaped tool is `add_to_trip` (`compass/CompassTools.ts:434`). `routes/compass.ts:2275` `forgetMemory` writes `compass_memories` (a chat store), not `memories` | — |
 
 ### §17 Command bus and domain events (33)
 
@@ -1257,7 +1257,7 @@ production; the two that are present are name collisions with divergent schemas.
 | id | requirement | verdict | evidence |
 |---|---|---|---|
 | H107 | Do-again compiled through current-world / Temporal-Freedom engines | NB | A repository-wide grep for `doAgain`, `do_again`, `takeMeBack` and `take_me_back` across `artifacts/` and `travel-buddy-standalone/` in `.ts`, `.tsx` and `.sql` returns nothing at all — not a fixture, not a comment |
-| H108 | The eight executable actions | NB | Same grep. `add_to_trip` (`artifacts/api-server/src/compass/CompassTools.ts:452#add_to_trip`) adds a PLACE to a trip and knows nothing about a Memory |
+| H108 | The eight executable actions | NB | Same grep. `add_to_trip` (`artifacts/api-server/src/compass/CompassTools.ts:460#add_to_trip`) adds a PLACE to a trip and knows nothing about a Memory |
 | H109 | Historical / current fusion invariant | NB | No fusion path exists. The nearest artifact is the honesty note §25 now certifies (H243), which asserts the opposite direction: a historical fact must not be read as current |
 
 #### §15 Retrieval (H110–H114)
@@ -1272,7 +1272,7 @@ production; the two that are present are name collisions with divergent schemas.
 
 #### §16 Compass contract (H115–H128)
 
-`artifacts/api-server/src/compass/CompassTools.ts:144#get_user_profile` opens a list of **eleven** tools —
+`artifacts/api-server/src/compass/CompassTools.ts:145#get_user_profile` opens a list of **eleven** tools —
 `get_user_profile`, `get_current_trip`, `search_places`, `search_events`,
 `get_place_details`, `get_circle_activity`, `check_trip_conflicts`, `add_to_trip`,
 `get_whos_around`, `get_travel_compatibility`, `get_group_recommendation`. Not one is
@@ -1281,7 +1281,7 @@ constrain either.
 
 | id | requirement | verdict | evidence |
 |---|---|---|---|
-| H115 | `getMemory` | NB | Not in the eleven tools at `artifacts/api-server/src/compass/CompassTools.ts:144#get_user_profile` |
+| H115 | `getMemory` | NB | Not in the eleven tools at `artifacts/api-server/src/compass/CompassTools.ts:145#get_user_profile` |
 | H116 | `searchMemories` (Compass tool) | NB | Same. `services/memoryRetrieval/searchMemories.ts` exists and Compass cannot reach it |
 | H117 | `getSharedMemories` | NB | Same |
 | H118 | `getPlaceHistory` | NB | Same. `PlaceMemoryProjection` exists in the registry with `visit_index`; no tool reads it |
@@ -1438,7 +1438,7 @@ gives 22 BAC, 7 BBW, 1 NB.
 | H234 | Fixture: walk-past venue that must not become a visit | **BAC** | Entry 11. Certified: the day as a whole is eligible (a ticketed visit), 2 episodes, and the paired control — the 90-second proximity ALONE — is refused with `PASS_BY_NOT_VISIT` |
 | H235 | Fixture: downloaded screenshot that must not become experienced content | **BAC** | Entry 12. Certified refused with `MEDIA_NOT_CAPTURED`; the same image re-declared as a camera capture is eligible, so the gate reads provenance rather than counting media. Mutation 2 turned it red |
 | H236 | Invariant: PRIVATE memory cannot appear in public search | **BAC** | Two surfaces, both in CI. The derivative path: HELD, `PublicMemoryProjection` emits only the published-and-public row (only_me, custom-with-allow-list, draft and deleted all absent) and the PUBLIC namespace refuses an owner-private projection on the way in. The LIVE path: `artifacts/api-server/src/test/memoriesPublicFeedPrivacy.test.ts:234#describe` asserts the same property on the real `GET /memories`, including that a `custom` Memory whose allow-list contains the viewer stays out of the global feed. Mutations 1 and 3 each turned it red |
-| H237 | Invariant: deleted memory cannot remain in Compass retrieval | BBW | HELD on the only Compass-facing memory artifact that exists: the deleted Memory leaves `CompassMemoryProjection`, its registration is revoked with an emptied payload, and reading the revoked derivative refuses with `derivative_revoked` rather than returning an empty page. **BBW because the named surface does not exist** — `artifacts/api-server/src/compass/CompassTools.ts:144#get_user_profile` declares no memory tool |
+| H237 | Invariant: deleted memory cannot remain in Compass retrieval | BBW | HELD on the only Compass-facing memory artifact that exists: the deleted Memory leaves `CompassMemoryProjection`, its registration is revoked with an emptied payload, and reading the revoked derivative refuses with `derivative_revoked` rather than returning an empty page. **BBW because the named surface does not exist** — `artifacts/api-server/src/compass/CompassTools.ts:145#get_user_profile` declares no memory tool |
 | H238 | Invariant: rejected candidate cannot become a Highlight | NB | `NO_SURFACE`. The rejection half is real and asserted; the second half has nothing to assert against, because nothing turns a candidate into a Highlight — `highlight_sources` is 2722, unapplied, with no writer, and `POST /highlights` inserts a client-supplied `mediaUrl`. The suite asserts this exact status at `artifacts/api-server/src/test/memoryCertificationInvariants.test.ts:117#reports` so it can never drift into looking like a pass |
 | H239 | Invariant: planned activity without occurrence cannot earn a visit Memory/Stamp | BBW | HELD: PLANNED+SAVED alone is refused with `PLANNED_OR_SAVED_ONLY` and the same set plus one OCCURRED record is eligible, so the refusal is the intent rule and not a blanket deny. BBW because it is proved on `evidence.ts`, which no route imports; the live stamp path enforces the rule by requiring a real check-in (H4) and is not covered by this test |
 | H240 | Invariant: blocked person cannot be newly resurfaced through shared-memory recommendations | **BAC** | HELD on a module a route imports, and the live half was already covered: `HIDE_PERSON_FROM_RESURFACING` suppresses exactly its subject across proactive resurfacing and recap, does not leak to another participant, and an UNREADABLE preference set suppresses rather than serving. `artifacts/api-server/src/test/memoriesBlockFailClosed.test.ts:109#describe` covers the live feed's fail-closed block filter. **Ceiling: 2720 is unapplied, so in production the set is `absent` and suppresses nothing** |
@@ -1553,7 +1553,7 @@ edited none of them. Each was read, not skimmed:
 
 Section B's §16 paragraph said `CompassTools.ts` "opens a list of **eleven** tools" and named
 them. **That was true at `254e1876` and is false on the merged tree.** The literal array at
-`artifacts/api-server/src/compass/CompassTools.ts:140#COMPASS_TOOL_DEFINITIONS` now holds
+`artifacts/api-server/src/compass/CompassTools.ts:141#COMPASS_TOOL_DEFINITIONS` now holds
 **twenty-five** entries and spreads eight more at `:467#TELEGRAPH_COMPASS_TOOL_DEFINITIONS`,
 so the real figure is **thirty-three**. The twenty-two added since section B measured are
 `get_freedom_windows`, `get_route_chain`, `get_today_state`, `get_crew_state`,
@@ -1586,11 +1586,11 @@ row, and the wording each one supports was re-read at the new line before it was
 
 | citation | was | now | why |
 |---|---|---|---|
-| the eleven-tool list (×3 rows) | `CompassTools.ts:144#name` | `CompassTools.ts:144#get_user_profile` | `:83` had drifted onto a comment. **It was passing `check:doc-citations` anyway**, because the anchor was the single token `name` and line 83 reads "…the Telegraph spec names." A one-word anchor is a substring lottery; the replacement anchors on the tool name itself. |
-| `add_to_trip` | `CompassTools.ts:185#name` | `CompassTools.ts:452#add_to_trip` | Same defect, worse outcome: `:157` is now `get_place_details`, and `#name` matched it happily. |
+| the eleven-tool list (×3 rows) | `CompassTools.ts:145#name` | `CompassTools.ts:145#get_user_profile` | `:83` had drifted onto a comment. **It was passing `check:doc-citations` anyway**, because the anchor was the single token `name` and line 83 reads "…the Telegraph spec names." A one-word anchor is a substring lottery; the replacement anchors on the tool name itself. |
+| `add_to_trip` | `CompassTools.ts:186#name` | `CompassTools.ts:460#add_to_trip` | Same defect, worse outcome: `:157` is now `get_place_details`, and `#name` matched it happily. |
 | the tool array (§16 rows) | `CompassTools.ts:67-215` | `CompassTools.ts:99-473` | The array's real extent on the merged tree. |
 | H129's tool set | `CompassTools.ts:67` | `CompassTools.ts:99` | Same. |
-| H129's write-shaped tool | `:158` | `CompassTools.ts:411` | Bare `:158` also named no file; now fully qualified. |
+| H129's write-shaped tool | `:158` | `CompassTools.ts:419` | Bare `:158` also named no file; now fully qualified. |
 | H129's `forgetMemory` | `routes/compass.ts:2199` | `routes/compass.ts:2275` | +76 lines above it; the call is unchanged. |
 | H4's GPS city stamp | `routes/location.ts:342-382` | `routes/location.ts:400-440` | +58 lines above it; the block is unchanged. |
 | the `passport_memories_enabled` gate | `routes/location.ts:365` | `routes/location.ts:427` | The mechanical +58 lands on `});`, which is what `:365` had been pointing at too. A sentence about a flag read should not point at a closing paren, so this one goes to the line that names the flag. |
@@ -1656,7 +1656,7 @@ section B records — re-declare at the squash when this lands — is unchanged 
 | The accessor that has to say "there is none" | `artifacts/api-server/src/compass/MemoryCompassTools.ts:593#evidence_store` | `getMemoryEvidence` answers `evidence_store: "absent"` first, then lists the artifacts attached to the Memory with a caveat that they are not §6-normalized evidence. |
 | The minimum clarifying question | `artifacts/api-server/src/compass/MemoryCompassTools.ts:698#clarifyingQuestion` | Three material facts, ONE question, in a fixed priority order. A draft missing all three produces one question, not an interrogation. |
 | Two write-shaped tools that write nothing | `artifacts/api-server/src/compass/MemoryCompassTools.ts:658#toolMemoryCreateDraft` and `:728#toolMemorySuggestCorrection` | Both return a proposal with `requires_confirmation` and a `confirm_via` naming the existing authenticated route, which re-authorizes. Field allow-lists at `:637#DRAFTABLE_FIELDS` and `:641#CORRECTABLE_FIELDS`, both deliberately SHORTER than `patchMemorySchema`: audience lists, visibility and lifecycle state cannot be proposed by prose. |
-| The wiring | `artifacts/api-server/src/compass/CompassTools.ts:514#MEMORY_COMPASS_TOOL_DEFINITIONS` (spread) and `artifacts/api-server/src/compass/CompassTools.ts:2021#MEMORY_COMPASS_TOOL_NAMES.has` (dispatch) | One import, one spread, one branch, one prompt block — the shape Telegraph's §18.3 block already established in this file. |
+| The wiring | `artifacts/api-server/src/compass/CompassTools.ts:522#MEMORY_COMPASS_TOOL_DEFINITIONS` (spread) and `artifacts/api-server/src/compass/CompassTools.ts:2047#MEMORY_COMPASS_TOOL_NAMES.has` (dispatch) | One import, one spread, one branch, one prompt block — the shape Telegraph's §18.3 block already established in this file. |
 | The §16 boundary as prompt text | `artifacts/api-server/src/compass/MemoryCompassTools.ts:940#MEMORY_COMPASS_PROMPT_RULES` | Listed LAST on purpose. It is the weakest of the three layers, and it exists only for §16's "may" clauses, which cannot be expressed as a refusal. |
 | The suites | `artifacts/api-server/src/test/memoryCompassTools.test.ts:300#bypass` (35 tests) and `artifacts/api-server/src/test/memoryPublishPolicy.test.ts:195#refuses` (18 tests) | Both registered in `package.json`'s `test` script. |
 
@@ -2925,7 +2925,7 @@ NOT READ, AND THAT IS WHY NOTHING IN THIS SECTION MOVES FORWARD.** It is a crite
 `stamp_definitions`, reached from **more than fifteen** route call sites — the Trips, Events, Follows, Rent-a-Buddy,
 Hidden Gems, Safe Return, Stamps, Stamp Catalog and two Admin routers — and this section read
 one of them. That one is enough to show the question is live rather than theoretical:
-`artifacts/api-server/src/routes/trips.ts:424#definitionSlug: "first_trip_created",` awards
+`artifacts/api-server/src/routes/trips.ts:430#definitionSlug: "first_trip_created",` awards
 `first_trip_created` and `trip_planner` **at trip creation**, for a trip whose status is merely
 not `draft`, passing the trip's `destinationCity` and `destinationCountry` onto the stamp row.
 Those two slugs are PLANNING achievements and a badge for planning a trip is not a visit claim — but whether a `user_stamps` row carrying a city
@@ -4345,7 +4345,7 @@ counted file this section changed, with the argument for why it cannot move a ve
 
 | **ID** | **was** | **now** | why |
 |---|---|---|---|
-| **H3** | **N** | **W** | the row's evidence — *"No AI path over Memories exists; no guard exists either"* — is FALSE at HEAD and has been since §C. The path is `artifacts/api-server/src/compass/MemoryCompassTools.ts:949#executeMemoryCompassTool`, eight `memory_*` tools, reached from `artifacts/api-server/src/compass/CompassTools.ts:2026#executeMemoryCompassTool` inside `executeCompassTool`, reached from `artifacts/api-server/src/routes/compass.ts:1332#executeCompassTool` inside the tool loop. The guard is `artifacts/api-server/src/compass/MemoryCompassTools.ts:940#MEMORY_COMPASS_PROMPT_RULES` plus `truth_class`/`establishes_current_status` on every fact. `W` and not `C` on the two reasons this document has already recorded for the same object: there is no SUPPORTED EVIDENCE to summarize (H24, `memory_evidence` exists nowhere), and the "may not manufacture" half is mechanical for participants, attendance and identity and PROMPT TEXT ONLY for states and outcomes (H126) |
+| **H3** | **N** | **W** | the row's evidence — *"No AI path over Memories exists; no guard exists either"* — is FALSE at HEAD and has been since §C. The path is `artifacts/api-server/src/compass/MemoryCompassTools.ts:949#executeMemoryCompassTool`, eight `memory_*` tools, reached from `artifacts/api-server/src/compass/CompassTools.ts:2052#executeMemoryCompassTool` inside `executeCompassTool`, reached from `artifacts/api-server/src/routes/compass.ts:1332#executeCompassTool` inside the tool loop. The guard is `artifacts/api-server/src/compass/MemoryCompassTools.ts:940#MEMORY_COMPASS_PROMPT_RULES` plus `truth_class`/`establishes_current_status` on every fact. `W` and not `C` on the two reasons this document has already recorded for the same object: there is no SUPPORTED EVIDENCE to summarize (H24, `memory_evidence` exists nowhere), and the "may not manufacture" half is mechanical for participants, attendance and identity and PROMPT TEXT ONLY for states and outcomes (H126) |
 | **H266** | **N** | **W** | the row's evidence — *"No AI presentation exists"* — is FALSE at HEAD, by the same three links. §28.17 asks for a deterministic fallback renderer when AI presentation fails. A deterministic fallback EXISTS: `artifacts/api-server/src/routes/compass.ts:1812#ai_error` returns `HONEST_FALLBACK_MESSAGE`, a module constant at `artifacts/api-server/src/routes/compass.ts:1054#HONEST_FALLBACK_MESSAGE`. It renders NO Memory fact — it is the sentence *"Compass AI assistant is temporarily unavailable."* So the fallback is built and it is not a renderer: half, which is `W` |
 | **H264** | **C** | **C** | unmoved, restated because this section repaired a second instance of the defect that produced its green. §28.11 is now enforced on `GET /memories/:id` as well as on the block-lookup branch, which strengthens an existing `C` rather than moving one |
 
@@ -4411,7 +4411,7 @@ The chain, every link opened at HEAD:
    throws or returns nothing.
 3. `artifacts/api-server/src/routes/compass.ts:1332#executeCompassTool` runs **only inside
    `for (const tc of toolCalls)`**. No `toolCalls`, no tool execution.
-4. `artifacts/api-server/src/compass/CompassTools.ts:2026#executeMemoryCompassTool` is the only
+4. `artifacts/api-server/src/compass/CompassTools.ts:2052#executeMemoryCompassTool` is the only
    production reference to the Memory dispatcher.
 5. `artifacts/api-server/src/compass/MemoryCompassTools.ts:949#executeMemoryCompassTool` is the
    only production definition, and a repository-wide grep finds **no other production caller of

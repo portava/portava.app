@@ -55,10 +55,12 @@ import { isFlagEnabled } from "../../../lib/featureFlags.js";
 import { logger } from "../../../lib/logger.js";
 import { asyncHandler } from "../../../lib/asyncHandler.js";
 import { sendTripRefusal } from "../../../domain/trips/contracts/tripReasonCodes.js";
-import { toCamel } from "../../../routes/plan.js";
+import { toCamel, PLAN_ITEM_COLUMNS, PLAN_ITEM_COLUMNS_BASE } from "../../../routes/plan.js";
+import { isMissingColumnError } from "../../../lib/capability/schemaCapability.js";
 import { computeWarnings } from "../../../routes/trips.js";
 import { serveMapProjection } from "./tripMapProjection.js";
 import { liveEnvelope, readTripVersion } from "../../../domain/trips/contracts/TripProjectionEnvelope.js";
+import { proposalContractPayload } from "../../../domain/trips/contracts/TripProposalContract.js";
 import { buildTripTimeline, withStageLocalTimes, orderByInstant, type TimelineStage } from "../../../domain/trips/projections/TripTimelineProjection.js";
 import { projectTripSafety, type SafetySessionRow } from "../../../domain/trips/projections/TripSafetyProjection.js";
 import { buildTripCompassProjection } from "../../../domain/trips/projections/TripCompassProjection.js";
@@ -89,12 +91,6 @@ import { detectPlanOverlaps } from "../../../domain/trips/invariants/TripFreedom
 const router = Router();
 const log = logger.child({ mod: "tripProjections" });
 const UUID_RE = /^[0-9a-f-]{36}$/i;
-
-/** The columns `GET /trips/:tripId/plan` reads — the same list, so the two cannot disagree about an item. */
-const PLAN_ITEM_COLUMNS =
-  "id, trip_id, creator_id, title, category, status, source_type, source_id, " +
-  "day_date, starts_at, ends_at, location_name, notes, sort_order, visibility, " +
-  "lock_type, location_is_private, lat, lng, created_at, updated_at";
 
 /** Safe Return statuses that have a §17.4 operational state. `pending`/`cancelled` do not. */
 const OPERATIONAL_SAFE_RETURN_STATUSES = ["active", "missed", "safe"];
@@ -161,14 +157,22 @@ router.get("/trips/:tripId/timeline", asyncHandler(async (req, res) => {
 
   const editAllowed = await canEditPlan(sc, tripId, user.id);
 
-  const { data, error } = await sc
+  // The same list `GET /trips/:tripId/plan` reads, with the same one-retry
+  // fallback for §6.3's scope, so the timeline and the plan cannot disagree
+  // about an item on a database that has 2770 OR on one that does not.
+  const planItemQuery = (columns: string) => sc
     .from("trip_plan_items")
-    .select(PLAN_ITEM_COLUMNS)
+    .select(columns)
     .eq("trip_id", tripId)
     .is("removed_at", null)
     .order("day_date", { ascending: true, nullsFirst: false })
     .order("starts_at", { ascending: true, nullsFirst: false })
     .order("sort_order", { ascending: true });
+  let { data, error } = await planItemQuery(PLAN_ITEM_COLUMNS);
+  if (error && isMissingColumnError(error)) {
+    log.warn({ tripId }, "timeline: privacy_scope absent — 2770_trip_plans_spec_columns.sql is not applied to this database; serving the timeline without §6.3 scopes");
+    ({ data, error } = await planItemQuery(PLAN_ITEM_COLUMNS_BASE));
+  }
   if (error) {
     log.warn({ err: error.message, tripId }, "timeline: plan items unreadable — refusing");
     sendTripRefusal(res, "degraded_unavailable", "TRIP_PROJECTION_UNAVAILABLE", "The plan could not be read right now. Please try again shortly.");
@@ -270,7 +274,10 @@ router.get("/trips/:tripId/route-chain", asyncHandler(async (req, res) => {
 
 /** One mapping for the three gated builders' refusals. */
 function refuseBuild(res: Parameters<typeof sendError>[0], built: { reason: string; message: string }): void {
-  if (built.reason === "TRIP_NOT_FOUND") { sendError(res, "not_found", built.message); return; }
+  // A named subject that is not on this trip is a 404, not a 503: the request
+  // will never succeed by retrying it, and `degraded_unavailable` tells a
+  // client the opposite.
+  if (built.reason === "TRIP_NOT_FOUND" || built.reason === "TRIP_PLAN_NOT_FOUND") { sendError(res, "not_found", built.message); return; }
   if (built.reason === "FEATURE_DISABLED") { sendError(res, "feature_disabled", built.message); return; }
   if (built.reason === "TRIP_PROJECTION_VERSION_AHEAD" || built.reason === "TRIP_PROJECTION_STALE" || built.reason === "TRIP_PROJECTION_SCHEMA_MISMATCH") {
     sendTripRefusal(res, "degraded_unavailable", built.reason, built.message); return;
@@ -538,7 +545,31 @@ router.post("/trips/:tripId/replan", asyncHandler(async (req, res) => {
           idempotencyKey: `replan:${day}:${e.op}:${e.planId ?? e.experienceId ?? idx}:${e.to?.startsAt ?? ""}`, type: "CREATE_PROPOSAL",
           payload: {
             proposal_type: `replan_${e.op}`, decision_rule: e.impact?.governance.suggestedDecisionRule ?? "host", expires_at: `${day}T23:59:59.000Z`,
-            payload_json: { op: e.op, planId: e.planId, title: e.title, from: e.from, to: e.to, reason: e.reason, detail: e.detail, experienceId: e.experienceId, bookingSideEffects: e.impact?.bookingSideEffects ?? null, source: "replan" },
+            // §9.3's three payload-borne contract fields, under the keys
+            // TripProposalContract defines (census-trips TR153). The replan
+            // already computes all three and was throwing two of them away:
+            // the entry's own `reason` IS the rationale, the impact preview's
+            // summary IS the impact summary, and the plan the entry moves IS
+            // the affected object. Writing them means a crew member can see
+            // why a machine proposed this and what it costs before voting.
+            payload_json: proposalContractPayload(
+              { op: e.op, planId: e.planId, title: e.title, from: e.from, to: e.to, reason: e.reason, detail: e.detail, experienceId: e.experienceId, bookingSideEffects: e.impact?.bookingSideEffects ?? null, source: "replan" },
+              {
+                // §9.4's affected objects, not just the plan: a crew voting on
+                // a move needs to see the booking and the ride that move with
+                // it. The plan is first because it is the subject.
+                affectedObjects: [
+                  ...(e.planId ? [e.planId] : []),
+                  ...(e.impact?.affectedReservations ?? []).map((r) => r.id),
+                  ...(e.impact?.affectedTransport ?? []).map((t) => t.id),
+                ],
+                // `detail` is the sentence; `reason` is the code behind it and
+                // stands in only when there is no sentence. A rationale a
+                // human cannot read is not one.
+                rationale: e.detail || e.reason || null,
+                impactSummary: e.impact?.summary ?? null,
+              },
+            ),
           },
           clientObservedAt: now.toISOString(),
         });
@@ -555,6 +586,10 @@ router.post("/trips/:tripId/meeting-point", asyncHandler(async (req, res) => {
   const body = (req.body ?? {}) as any;
   const r = await computeMeetingPoint(ctx.sc, ctx.tripId, ctx.userId, {
     participantIds: Array.isArray(body.participantIds) ? body.participantIds.filter((x: unknown) => typeof x === "string") : undefined,
+    // §14.3 for ONE plan's people (2771 attendance), not for the whole crew —
+    // census-trips TR150. An explicit `participantIds` still wins; this is the
+    // relation a caller uses when it knows the plan and not the list.
+    planId: typeof body.planId === "string" ? body.planId : null,
     candidateIds: Array.isArray(body.candidateIds) ? body.candidateIds.filter((x: unknown) => typeof x === "string") : undefined,
   });
   if (!r.ok) { refuseBuild(res, r as any); return; }
