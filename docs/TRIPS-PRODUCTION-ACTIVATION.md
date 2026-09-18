@@ -300,3 +300,55 @@ write path to either.
 - Nothing here answers §4's question, which remains the blocker: **which build
   is actually running on the Replit deployment.**
 
+
+## 9. The four Memory flags — same handoff, same order of proof (added 2026-09-18)
+
+Census `census-highlights-memories.md` §O.2 counts roughly thirty rows whose whole
+blocker is one of four flags. All four are `false` in production
+(`artifacts/api-server/src/lib/capability/snapshots/20260917-production-schema.json`,
+`flags` block) and `false` on `portava-ci` (measured 2026-09-18). Their storage
+IS applied to production (2338, 2339, 2710, 2711 — `production-applied-migrations.json`),
+so the gate is the same one §4 names for Trips: **whether the deployed build is
+the build that implements the behaviour**, which this container cannot see.
+
+| flag | state (prod / ci) | prerequisite (storage) | effect if switched on today |
+|---|---|---|---|
+| `memory_kernel_enabled` | false / false | 2710 `memory_command_receipts`, `memory_command_audit`, `memory_domain_events`, `memory_event_outbox`; 2711 `memory_kernel_execute` — **applied** | every Memory write in `routes/memories.ts` routes through `memory_kernel_execute` instead of the direct write (`MemoryDomainService.ts`). Receipts, audit rows and domain events start being written; `memory_event_outbox` rows accumulate with `published_at NULL` because **nothing consumes the outbox** (`lib/memoryOutbox.ts`, certification invariant "CEILING: nothing consumes the outbox"). Not dangerous — an undrained outbox is inert — but the count will only ever grow until a consumer exists |
+| `memory_location_precision_enabled` | false / false | 2338 `memories.location_precision` — **applied** | Memory reads and writes in `routes/memories.ts` start naming `location_precision`; the kernel's `CREATE_MEMORY` sets it only when the caller sends it. On a build older than 2338's code the column is never named and the flag is inert |
+| `memory_public_feed_projection_enabled` | false / false | `memory_projections` (2183) — **applied** | `GET /memories` public feed serves the §18 projection table instead of the direct query (`routes/memories.ts` around the `useProjection` read). Rows that have never been projected disappear from the public feed until the projector has run — check `memory_projections` is populated before flipping |
+| `highlights_feed_bounded_enabled` | false / false | 2339 flag row — **applied** | `GET /highlights/following-feed` gains a page (`limit` ≤ 200, default 60) and a `nextCursor`. Off, the feed is unbounded. No data risk |
+
+**Note on what is NOT behind these flags.** The §10/§11 non-owner gate added
+2026-09-18 (`services/highlights/highlightPublicProjection.ts`) and the Highlight
+control writer (`PUT /highlights/resurfacing-controls`,
+`PUT /highlights/:id/projection-policy`) are live the moment the build is
+deployed; no flag guards them. A deployed build older than that commit has
+neither the writer nor the gate.
+
+Please run, on the Replit deployment, after §4 steps 1–3:
+
+1. **Live kernel test against production:**
+   `pnpm --filter @workspace/api-server run test:memory-kernel-transaction`
+   (`memoryKernelTransactionLive.test.ts`; exits "not run" without credentials).
+   It creates and cleans up its own fixture users and asserts the receipt,
+   audit, event and outbox rows the kernel writes, and that a rejected command
+   leaves nothing behind.
+2. If 1 passes, enable in this order, checking after each:
+   1. `highlights_feed_bounded_enabled` → `GET /highlights/following-feed?limit=2`
+      returns at most 2 and a `nextCursor`.
+   2. `memory_location_precision_enabled` → create a Memory with a
+      `locationPrecision`, read it back as another user and confirm the clamp.
+   3. `memory_kernel_enabled` → create a Memory, then confirm one
+      `memory_command_receipts` row, one `memory_command_audit` row with
+      `outcome='accepted'`, one `memory_domain_events` row `memory.created`, and
+      one `memory_event_outbox` row. Repeat the same request with the same
+      idempotency key and confirm `outcome='duplicate'` and no second Memory.
+   4. `memory_public_feed_projection_enabled` LAST, and only after
+      `memory_projections` is populated for the Memories that should be public.
+3. **What was rehearsed on `portava-ci` (2026-09-18, rolled back):** the kernel
+   sequence in 2.3 exactly — accepted → duplicate → `MEMORY_AUTH_NOT_OWNER` for
+   a second actor, with the audit, receipt, event and outbox rows each counted —
+   and the writer's contract on 2720/2721 under real RLS (owner-only read and
+   write, `42501` for another user, vocabulary CHECKs). Census §P.4 has the
+   transcript. `portava-ci` is not production; this is the rehearsal, not the
+   verification.

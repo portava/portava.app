@@ -1421,18 +1421,18 @@ and it was being violated on every thread that had ever carried a card.
 
 - **§5.1's interface exists, verbatim, and is instantiated per family.**
   `TelegraphShareable`
-  (`services/telegraph/shareables.ts:98#TelegraphShareable`) declares
+  (`services/telegraph/shareables.ts:107#TelegraphShareable`) declares
   `getSharePreview` / `getCurrentState` / `getAvailableActions` /
   `getDeepLink`, and `shareableFor`
-  (`services/telegraph/shareables.ts:1006#shareableFor`) returns one for any of
+  (`services/telegraph/shareables.ts:1041#shareableFor`) returns one for any of
   fifteen object types across §5's five families —
-  `services/telegraph/shareables.ts:996#SHAREABLE_OBJECT_TYPES`. A family with
+  `services/telegraph/shareables.ts:1031#SHAREABLE_OBJECT_TYPES`. A family with
   no loader returns `null`, and the resolver answers `not_found` rather than
   inventing a card: an unknown family must not silently become a live
   reference.
 - **§5.2's third layer is the whole point, and it is computed per read.**
   `resolveShareProjections`
-  (`services/telegraph/shareables.ts:1090#resolveShareProjections`) takes a
+  (`services/telegraph/shareables.ts:1125#resolveShareProjections`) takes a
   batch of references and a VIEWER and returns, for each, either a projection
   built from the live source row or an explicit unavailable state with a
   reason. An unavailable reference carries `projection: null`, `actions: []`
@@ -1446,14 +1446,14 @@ and it was being violated on every thread that had ever carried a card.
   read `error`, and an unreadable source degrades with reason `unknown`
   (`test/telegraphShare.test.ts:402`, four tables).
 - **Memory visibility is refused rather than approximated.** `loadMemory`
-  (`services/telegraph/shareables.ts:474#loadMemory`) grants `public`, an
+  (`services/telegraph/shareables.ts:483#loadMemory`) grants `public`, an
   explicit `allowed_user_ids` entry, or ownership, and degrades
   `friends_only` / `trip_crew` / `circle_only` to `private`. Guessing at a
   relationship read owned by the Memories surface is exactly the backdoor §5.3
   forbids, so the ladder stops where this module's knowledge stops
   (`test/telegraphShare.test.ts:363`).
 - **The envelope is a REFERENCE.** `PortavaObjectBody`
-  (`services/telegraph/shareables.ts:1168#PortavaObjectBody`) carries five
+  (`services/telegraph/shareables.ts:1203#PortavaObjectBody`) carries five
   fields — kind, objectType, objectId, the sender's caption, and a version —
   and nothing from the object. `buildPortavaObjectBody` (`:687#buildPortavaObjectBody`)
   is the only constructor and `parsePortavaObjectBody` (`:702#parsePortavaObjectBody`)
@@ -1490,16 +1490,16 @@ and it was being violated on every thread that had ever carried a card.
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| T41 | N | **C** | **`TelegraphShareable` interface — `getSharePreview` / `getCurrentState` / `getAvailableActions` / `getDeepLink`** — all four methods exist under those names (`services/telegraph/shareables.ts:98#TelegraphShareable`) and are implemented for fifteen object types (`:1006#shareableFor`), asserted family by family at `test/telegraphShare.test.ts:252`. |
-| T44 | N | **C** | **Four-layer model: Share projection — what the recipient is *currently* authorized to see** — the layer exists and is computed per (viewer, object) on every read (`services/telegraph/shareables.ts:1090#resolveShareProjections`); the card is no longer whatever the sender serialised. |
+| T41 | N | **C** | **`TelegraphShareable` interface — `getSharePreview` / `getCurrentState` / `getAvailableActions` / `getDeepLink`** — all four methods exist under those names (`services/telegraph/shareables.ts:107#TelegraphShareable`) and are implemented for fifteen object types (`:1041#shareableFor`), asserted family by family at `test/telegraphShare.test.ts:252`. |
+| T44 | N | **C** | **Four-layer model: Share projection — what the recipient is *currently* authorized to see** — the layer exists and is computed per (viewer, object) on every read (`services/telegraph/shareables.ts:1125#resolveShareProjections`); the card is no longer whatever the sender serialised. |
 | T46 | W | **C** | **Revocation: a deleted/private/unauthorized source degrades to unavailable; never a backdoor into revoked content** — the violation is closed on both ends. Server: an unavailable reference carries `projection: null` and `actions: []`, proved by the assertion that the deleted post's own words do not appear anywhere in the serialised response (`test/telegraphShare.test.ts:324`). Client: the two cards that WERE frozen snapshots now re-resolve and degrade (`travel-buddy-standalone/src/features/telegraph/__tests__/shareRevocation.component.test.tsx:134`, `:165`). |
-| T43 | W | **C** | **Four-layer model: Source object** — a reference is now a RESOLVED reference, not a payload field: the envelope carries only `(objectType, objectId)` (`services/telegraph/shareables.ts:1168#PortavaObjectBody`) and the renderer dereferences it through the registry. The census's objection — "a payload field, not a resolved reference … nothing dereferences it at render" — is answered by `travel-buddy-standalone/src/features/telegraph/sharing/PortavaObjectMessage.tsx:28#PortavaObjectMessage`. |
+| T43 | W | **C** | **Four-layer model: Source object** — a reference is now a RESOLVED reference, not a payload field: the envelope carries only `(objectType, objectId)` (`services/telegraph/shareables.ts:1203#PortavaObjectBody`) and the renderer dereferences it through the registry. The census's objection — "a payload field, not a resolved reference … nothing dereferences it at render" — is answered by `travel-buddy-standalone/src/features/telegraph/sharing/PortavaObjectMessage.tsx:28#PortavaObjectMessage`. |
 | T55 | W | **C** | **Message kind PORTAVA_OBJECT** — it is now a typed kind, not `system` plus a bespoke subtype: the route writes `msg_type='portava_object'` (`routes/telegraphShare.ts:80#/threads/:threadId/share`), `messages.msg_type` carries no CHECK so this needs no migration (`baseline/20260819_baseline_structure.sql:7565`), and both conversation surfaces dispatch it. |
 | T35 | W | **W** | **One consistent share contract for all eligible Portava content** — the contract now EXISTS and fifteen types implement it, which is the half that was missing. It stays W because the four legacy producers the census named still write their own bespoke JSON (`discovery_card`, `post_card`, `compass_card`, `circle_status_card`): the new cards are revocable, but they are revocable by MAPPING the old payload, not by the old producers having moved to the contract. One contract plus four legacy shapes is not yet one shape. |
-| T36 | W | **W** | **Object family Social — profile, post, Highlight, public Memory derivative, Memory Note, Stamp** — profile, post and Memory are now shareable through the contract (`services/telegraph/shareables.ts:996#SHAREABLE_OBJECT_TYPES`). Highlight and Stamp have no loader and `STAMP` is not in the registry, so three of six. |
+| T36 | W | **W** | **Object family Social — profile, post, Highlight, public Memory derivative, Memory Note, Stamp** — profile, post and Memory are now shareable through the contract (`services/telegraph/shareables.ts:1031#SHAREABLE_OBJECT_TYPES`). Highlight and Stamp have no loader and `STAMP` is not in the registry, so three of six. |
 | T37 | N | **W** | **Object family Travel — Trip, Trip stage, plan, event, route, reservation-safe derivative, layover plan** — was "none of the seven is shareable into a thread"; four now are (TRIP, TRIP_STAGE, PLAN/MEETUP, EVENT), each with its own authorization read. Route, reservation-safe derivative and layover plan have no loader. |
 | T38 | W | **W** | **Object family Places — place, Hidden Gem, map pin, neighborhood, meetup point** — place, gem, map pin and meetup point resolve through the contract; NEIGHBORHOOD is in the vocabulary and deliberately has no loader, so `shareableFor` returns null for it rather than pretending (`test/telegraphShare.test.ts:295`). Four of five. |
-| T39 | W | **W** | **Object family Services — Buddy profile/service, eligible booking card, Visa Buddy operational card** — the booking card now resolves with its two-party authorization (`services/telegraph/shareables.ts:1006#shareableFor`), and BUDDY_SERVICE maps to the same loader. There is no Visa Buddy card and no standalone Buddy profile share. |
+| T39 | W | **W** | **Object family Services — Buddy profile/service, eligible booking card, Visa Buddy operational card** — the booking card now resolves with its two-party authorization (`services/telegraph/shareables.ts:1041#shareableFor`), and BUDDY_SERVICE maps to the same loader. There is no Visa Buddy card and no standalone Buddy profile share. |
 | T3 | W | **W** | **Pillar Share — any eligible Portava object moves through a safe permission-aware share projection** — the "permission-aware share projection" half is now real and is exactly what §5.2 asked for. It stays W on "any eligible object": four object families are covered and Media (§5's fifth family — photo, video, voice, GIF, file) is not a shareable type at all; it travels as message media, which is a different mechanism. |
 
 ### 10.7 The §5 tests, and how each was shown red
@@ -3473,7 +3473,7 @@ stopped sharing" makes the label more precise — and any UI that says *sharing
 stopped* while showing a narrower area than before would be telling the truth
 about the grant and the opposite of the truth about the disclosure.
 
-**2. `messages.subtype` carries a highlight's ID.** `routes/highlights.ts:2022#subtype: id,`
+**2. `messages.subtype` carries a highlight's ID.** `routes/highlights.ts:2070#subtype: id,`
 writes `subtype: id` — an identifier into the discriminator column a renderer
 dispatches on. It can never match a renderer case, and it puts a
 highlights-domain id into a messaging-domain vocabulary field, which is the
@@ -4757,18 +4757,18 @@ a loader each.
 
 | family member | loader | authorization rule, and why it is that one |
 | --- | --- | --- |
-| Highlight | `artifacts/api-server/src/services/telegraph/shareables.ts:605#const loadHighlight` | Public or owner only. The other three `highlights.visibility` values need a relationship read another surface owns, and approximating it is the backdoor §5.3 forbids — the same reasoning `loadMemory` already states. Plus the rule no other family needs: **it expires.** |
-| Stamp | `artifacts/api-server/src/services/telegraph/shareables.ts:648#const loadStamp` | Revoked → gone. Hidden from its owner's own passport → not handed to a third party. Two reads, both bound and checked: an unreadable definition is `unknown`, not an untitled stamp. |
-| neighborhood | `artifacts/api-server/src/services/telegraph/shareables.ts:707#const loadNeighborhood` | None, and none invented. `neighborhood_areas` is derived public reference data with no owner and no visibility column. §11 said this family "deliberately has no loader ... rather than pretending"; what it refused to pretend about was an authorization model, and this family genuinely has none to get wrong. |
-| route | `artifacts/api-server/src/services/telegraph/shareables.ts:739#const loadRoute` | `route_plan_members`, not the trip. Being on the trip a route was planned for is not being on the route. A draft degrades for everyone but its owner. |
-| reservation-safe derivative | `artifacts/api-server/src/services/telegraph/shareables.ts:788#const loadReservation` | Owner or accepted trip member — and the projection carries neither `confirmation_ref`, `raw_text` nor `extraction`. See §15.2. |
-| layover plan | `artifacts/api-server/src/services/telegraph/shareables.ts:832#const loadLayoverPlan` | Owner, or an accepted member of the trip the session belongs to. A session with no `trip_id` is private to its traveller, full stop. |
-| Media | `artifacts/api-server/src/services/telegraph/shareables.ts:887#const loadMedia` | `visibility: 'inherit'` — the column's DEFAULT — degrades to `private`. See §15.2. |
-| Buddy service | `artifacts/api-server/src/services/telegraph/shareables.ts:937#const loadBuddyService` | `approved` AND `is_active`, or ownership. This one is a REPAIR, not an addition. See §15.3. |
+| Highlight | `artifacts/api-server/src/services/telegraph/shareables.ts:614#const loadHighlight` | Public or owner only. The other three `highlights.visibility` values need a relationship read another surface owns, and approximating it is the backdoor §5.3 forbids — the same reasoning `loadMemory` already states. Plus the rule no other family needs: **it expires.** |
+| Stamp | `artifacts/api-server/src/services/telegraph/shareables.ts:683#const loadStamp` | Revoked → gone. Hidden from its owner's own passport → not handed to a third party. Two reads, both bound and checked: an unreadable definition is `unknown`, not an untitled stamp. |
+| neighborhood | `artifacts/api-server/src/services/telegraph/shareables.ts:742#const loadNeighborhood` | None, and none invented. `neighborhood_areas` is derived public reference data with no owner and no visibility column. §11 said this family "deliberately has no loader ... rather than pretending"; what it refused to pretend about was an authorization model, and this family genuinely has none to get wrong. |
+| route | `artifacts/api-server/src/services/telegraph/shareables.ts:774#const loadRoute` | `route_plan_members`, not the trip. Being on the trip a route was planned for is not being on the route. A draft degrades for everyone but its owner. |
+| reservation-safe derivative | `artifacts/api-server/src/services/telegraph/shareables.ts:823#const loadReservation` | Owner or accepted trip member — and the projection carries neither `confirmation_ref`, `raw_text` nor `extraction`. See §15.2. |
+| layover plan | `artifacts/api-server/src/services/telegraph/shareables.ts:867#const loadLayoverPlan` | Owner, or an accepted member of the trip the session belongs to. A session with no `trip_id` is private to its traveller, full stop. |
+| Media | `artifacts/api-server/src/services/telegraph/shareables.ts:922#const loadMedia` | `visibility: 'inherit'` — the column's DEFAULT — degrades to `private`. See §15.2. |
+| Buddy service | `artifacts/api-server/src/services/telegraph/shareables.ts:972#const loadBuddyService` | `approved` AND `is_active`, or ownership. This one is a REPAIR, not an addition. See §15.3. |
 
 The three vocabulary types are `artifacts/api-server/src/services/telegraph/vocabulary.ts:52#"RESERVATION",`,
 `artifacts/api-server/src/services/telegraph/vocabulary.ts:53#"LAYOVER_PLAN",` and `artifacts/api-server/src/services/telegraph/vocabulary.ts:77#"MEDIA",`. The registry is
-`artifacts/api-server/src/services/telegraph/shareables.ts:970#const LOADERS` and
+`artifacts/api-server/src/services/telegraph/shareables.ts:1005#const LOADERS` and
 now answers twenty-two object types where it answered fifteen
 (`:950#SHAREABLE_OBJECT_TYPES`). Forty-eight assertions:
 `artifacts/api-server/src/test/telegraphShareFamilies.test.ts:271#it("Services:`
@@ -4779,7 +4779,7 @@ of the new families have no client screen that takes their id — there is no
 `app/highlight/`, no `app/neighborhood/` and no reservation route in
 `travel-buddy-standalone/app/`, which was read rather than assumed. Their deep
 link is the app root, and that is now a DECLARED absence
-(`artifacts/api-server/src/services/telegraph/shareables.ts:178#export const FAMILIES_WITH_NO_CLIENT_SCREEN: readonly TelegraphObjectType[] = [`)
+(`artifacts/api-server/src/services/telegraph/shareables.ts:187#export const FAMILIES_WITH_NO_CLIENT_SCREEN: readonly TelegraphObjectType[] = [`)
 with a test that the set of families answering `/` is EXACTLY that list
 (`artifacts/api-server/src/test/telegraphShareFamilies.test.ts:306#it("the families with no client screen are DECLARED, not discovered", () => {`).
 Adding a loader without a screen now fails loudly; so does adding the screen and
@@ -6449,7 +6449,7 @@ person saying "we are stuck in traffic" outranks a clock that thinks the table i
 | T179 | W | **C** | **§13.2 `message.seen`.** In the union and deliberately alongside `read.updated` rather than replacing it (`lib/telegraphEvents.ts:84#message.seen`), published with the MESSAGE IDS that crossed the reader's marker by `POST /api/threads/:id/seen` (`routes/telegraphLifecycle.ts:443#"/threads/:threadId/seen"`). A consumer can now answer "was this one seen" from the event itself. |
 | T217 | W | **C** | **§15.2 safety mode NORMAL → SAFETY_ATTENTION → SAFETY_EVENT.** The row's gap was "neither [ladder] is a conversation-level mode", and §13.4 classified it NEITHER — "A conversation-level safety mode does not exist in either tree". It does now, and it needed no table: both carriers were already in the thread and already written by shipped routes — §6.2's SAFETY kind (`check_in \| heads_up \| need_help \| all_clear`) and §9.1's `NEED_HELP` quick state. `projectSafetyMode` (`services/telegraph/safetyMode.ts:239#export function projectSafetyMode`) folds them; `GET /api/threads/:id/safety-mode` (`routes/telegraphCoordination.ts:1071#"/threads/:threadId/safety-mode"`) serves it, membership-gated and §14.3-bounded, and answers 500 rather than NORMAL on an unreadable thread. Three rules are asserted because a careless projection gets each of them wrong: a SAFETY_EVENT is cleared only by an explicit ALL CLEAR and never by time; a routine CHECK-IN does not clear a help request; and the mode is the HIGHEST unresolved signal, not the latest. |
 | T410 | W | **C** | **§30A.10 every executable action registers authorize / preview / execute / optional compensate; Telegraph orchestrates, source domains retain truth.** The row's gap was "No registry, no compensate". `TELEGRAPH_ACTION_REGISTRY` (`services/telegraph/actionRegistry.ts:213#export const TELEGRAPH_ACTION_REGISTRY`) registers all four hooks for every `ProposedAction.kind` the route can produce, and the registry is EXHAUSTIVE by test rather than by intention — `src/test/telegraphCommandRoute.test.ts:500#the registry is EXHAUSTIVE` reads the route's own source, extracts every `kind: "…"` literal, and fails on one that is not registered. `confirm-action` REFUSES an unregistered kind (`routes/telegraphCommands.ts:419#const registration = registrationFor(action.kind);`) rather than confirming it with three hooks silently skipped. Compensate is reachable, not decorative: §30A.11's capability recheck runs AFTER the write (`routes/telegraphCommands.ts:468#const recheck = await registration.authorize(ctx);`) and a membership lost in that window UNDOES the orchestration record (`services/telegraph/actionRegistry.ts:180#const undoConfirmation`), answering 409. "Source domains retain truth" is enforced by the same test: every registration names a `canonicalOwner` and it may not be `telegraph`. |
-| T268 | W | **C** | **§20 Memories — safe share derivatives · Memory Notes · explicit Save to Memory · post-experience recap.** MIS-GRADED, and the correction at §13.1 ("Safe-share derivatives are the remaining half and they are loaders") is itself stale: the loader exists and is registered. `loadMemory` (`services/telegraph/shareables.ts:474#const loadMemory`) is a derivative — title and city only, no items, no media, no graph — that re-checks `state`, `visibility`, `allowed_user_ids`, `hidden_user_ids` and blocks, and degrades rather than approximating. Memory Notes are T117/T118 C, Save to Memory is T119 C (`services/telegraph/memoryNotes.ts:144#export function memoryDraftRow`), recap is T121 C (`services/telegraph/memoryNotes.ts:242#export function buildRecap`). Four of four. |
+| T268 | W | **C** | **§20 Memories — safe share derivatives · Memory Notes · explicit Save to Memory · post-experience recap.** MIS-GRADED, and the correction at §13.1 ("Safe-share derivatives are the remaining half and they are loaders") is itself stale: the loader exists and is registered. `loadMemory` (`services/telegraph/shareables.ts:483#const loadMemory`) is a derivative — title and city only, no items, no media, no graph — that re-checks `state`, `visibility`, `allowed_user_ids`, `hidden_user_ids` and blocks, and degrades rather than approximating. Memory Notes are T117/T118 C, Save to Memory is T119 C (`services/telegraph/memoryNotes.ts:144#export function memoryDraftRow`), recap is T121 C (`services/telegraph/memoryNotes.ts:242#export function buildRecap`). Four of four. |
 
 **What would turn these red.** T217: a `check_in` clearing an EVENT, an uncleared help request ageing out of the mode, a later lesser signal de-escalating the thread, or the §9.1 carrier being dropped — all four were run as mutations, §21.6, and the third of them found a test that could not fail. T410: an action kind produced by the route with no registration (the test reads the route, so this is checked, not trusted); the post-write recheck removed, which leaves the 409 path dead; or a `compensate` that reports `undone: true` without deleting the row — all three were run as mutations, §21.6. T84: a commitment in a thread the caller has left appearing in the
 list, or the cross-thread query collapsing to one thread. T85: a session whose `endedAt` stays null

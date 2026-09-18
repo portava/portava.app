@@ -11602,7 +11602,7 @@
       "methods": [
         "POST"
       ],
-      "handler": "artifacts/api-server/src/routes/highlights.ts:262",
+      "handler": "artifacts/api-server/src/routes/highlights.ts:266",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -11624,7 +11624,7 @@
       "methods": [
         "DELETE"
       ],
-      "handler": "artifacts/api-server/src/routes/highlights.ts:646",
+      "handler": "artifacts/api-server/src/routes/highlights.ts:668",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -11667,7 +11667,7 @@
         "DELETE",
         "POST"
       ],
-      "handler": "artifacts/api-server/src/routes/highlights.ts:712",
+      "handler": "artifacts/api-server/src/routes/highlights.ts:734",
       "handlerCount": 2,
       "classification": "WIRED",
       "chain": [
@@ -11689,7 +11689,7 @@
       "methods": [
         "POST"
       ],
-      "handler": "artifacts/api-server/src/routes/highlights.ts:841",
+      "handler": "artifacts/api-server/src/routes/highlights.ts:878",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -11711,7 +11711,7 @@
       "methods": [
         "POST"
       ],
-      "handler": "artifacts/api-server/src/routes/highlights.ts:981",
+      "handler": "artifacts/api-server/src/routes/highlights.ts:1018",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -11733,7 +11733,7 @@
       "methods": [
         "POST"
       ],
-      "handler": "artifacts/api-server/src/routes/highlights.ts:681",
+      "handler": "artifacts/api-server/src/routes/highlights.ts:703",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -11755,7 +11755,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "artifacts/api-server/src/routes/highlights.ts:775",
+      "handler": "artifacts/api-server/src/routes/highlights.ts:797",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -11777,7 +11777,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "artifacts/api-server/src/routes/highlights.ts:475",
+      "handler": "artifacts/api-server/src/routes/highlights.ts:479",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -11808,7 +11808,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "artifacts/api-server/src/routes/highlights.ts:1032",
+      "handler": "artifacts/api-server/src/routes/highlights.ts:1069",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -27879,7 +27879,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "artifacts/api-server/src/routes/highlights.ts:342",
+      "handler": "artifacts/api-server/src/routes/highlights.ts:346",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [

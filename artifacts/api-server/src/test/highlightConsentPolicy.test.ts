@@ -483,17 +483,32 @@ describe("§10 on the feeds: the owner's selected precision is applied to what s
     } finally { await app.close(); }
   });
 
-  it("an UNREADABLE policy table clamps every location to HIDDEN and logs it", async () => {
+  it("an UNREADABLE policy table withholds every Highlight the viewer does not own, clamps the viewer's own to HIDDEN, and logs both", async () => {
+    // Until 2026-09-18 this case read "the highlights themselves are still
+    // served — only the location is withheld", and that was right while the
+    // table carried only a precision rung: HIDDEN is a safe answer that still
+    // serves. The same table also carries the §10 consent columns, and since
+    // highlightPublicProjection.ts those are ENFORCED here; a `consent_share =
+    // false` we cannot read has no safe answer that serves. So a non-owner's
+    // Highlight is withheld outright — the posture an unreadable §11 table
+    // already had on this feed — and the viewer's OWN Highlight, which consent
+    // does not gate, is served with its location clamped.
     const app = await startApp({ failTables: new Set(["highlight_projection_policies"]) });
     try {
       const r = await call(app, "GET", "/api/highlights/active", VIEWER);
       assert.equal(r.status, 200, JSON.stringify(r.body));
-      assert.ok(listIds(r.body).has(H_PUB), "the highlights themselves are still served — only the location is withheld");
+      assert.ok(!listIds(r.body).has(H_PUB), "another owner's Highlight was served on an unreadable consent table");
+      assert.ok(listIds(r.body).has(H_MINE), "the viewer's own Highlight is not gated by consent and must survive");
       for (const h of r.body?.highlights ?? []) {
+        assert.equal(h.owner_id, VIEWER, `${h.id} is not the viewer's`);
         assert.equal(h.location_name, null, h.id);
         assert.equal(h.location_city, null, h.id);
         assert.equal(h.location_country, null, h.id);
       }
+      assert.ok(
+        app.errors.some((e) => /UNREADABLE — withholding/.test(e.msg)),
+        JSON.stringify(app.errors.map((e) => e.msg)),
+      );
       assert.ok(
         app.errors.some((e) => /clamping every location to HIDDEN/.test(e.msg)),
         JSON.stringify(app.errors.map((e) => e.msg)),

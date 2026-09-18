@@ -43,6 +43,15 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { mayDiscloseGemIdentity } from "../hiddenGems/HiddenGemPrivacyGuard.js";
 import {
+  readProjectionInputs,
+  publicProjectionVerdict,
+} from "../highlights/highlightPublicProjection.js";
+import {
+  readProjectionPolicies,
+  resolveLocationDisclosure,
+  type ProjectionPolicyRead,
+} from "../highlights/highlightProjectionPolicy.js";
+import {
   type TelegraphAction,
   type TelegraphObjectType,
   isTelegraphObjectType,
@@ -619,13 +628,39 @@ const loadHighlight: Loader = async (client, id, viewerId) => {
   if (expiresAt <= Date.now()) return { state: UNAVAILABLE("deleted"), projection: null };
   const mine = r.owner_id === viewerId;
   if (!mine && r.visibility !== "public") return { state: UNAVAILABLE("private"), projection: null };
+  // §10/§11 — dropping a Highlight into a thread is `public_projection`, the
+  // destination KEEP_PRIVATE_FOREVER and a refused SHARE consent are declared
+  // to reach. A control we cannot read is `unknown`, not a share: the owner's
+  // refusal may be sitting in the row we failed to load.
+  let policies: ProjectionPolicyRead;
+  if (!mine) {
+    const inputs = await readProjectionInputs(client, [r.owner_id as string], [id]);
+    const verdict = publicProjectionVerdict({ id, owner_id: r.owner_id as string }, viewerId, "public_projection", inputs);
+    if (!verdict.allow) {
+      return { state: UNAVAILABLE(verdict.kind === "unreadable" ? "unknown" : "private"), projection: null };
+    }
+    policies = inputs.policies;
+  } else {
+    policies = await readProjectionPolicies(client, [id]);
+  }
+  // §10 — "Publishing location must never exceed the owner's selected
+  // precision", and a thread is publishing: the card's subtitle used to carry
+  // `location_name` verbatim past a CITY rung. Same clamp as the three
+  // Highlight reads in routes/highlights.ts, owner's own share included —
+  // the recipients are the audience, not the sharer. Unreadable ⇒ HIDDEN.
+  const stored = policies.state === "ready" ? policies.byHighlightId.get(id)?.location_precision ?? null : null;
+  const loc = resolveLocationDisclosure(
+    { location_name: r.location_name as string | null, location_city: r.location_city as string | null, location_country: null },
+    stored,
+    policies,
+  );
   return {
     state: AVAILABLE("live"),
     projection: proj(
       "HIGHLIGHT",
       id,
       (r.caption as string) || "Highlight",
-      [r.location_name, r.location_city].filter(Boolean).join(", ") || null,
+      [loc.location_name, loc.location_city].filter(Boolean).join(", ") || null,
       (r.media_url as string) ?? null,
       (r.updated_at as string) ?? null,
     ),
