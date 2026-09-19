@@ -6118,7 +6118,7 @@
       "methods": [
         "POST"
       ],
-      "handler": "artifacts/api-server/src/routes/compassAutopilot.ts:236",
+      "handler": "artifacts/api-server/src/routes/compassAutopilot.ts:240",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [

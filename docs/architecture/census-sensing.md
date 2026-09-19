@@ -1149,34 +1149,34 @@ before its commit; the mutations are listed in §2.3.
 ### 2.1 What was built, and where
 
 - **§10 the decision (S78)** — `lib/compassDecision.ts:81#COMPASS_DECISIONS`
-  is the spec's seven words verbatim, and `lib/compassDecision.ts:343#decideCompass(`
+  is the spec's seven words verbatim, and `lib/compassDecision.ts:366#decideCompass(`
   runs the rules in the order the spec's precedence implies: safety outranks
   opportunity — a Live-qualified `unsafe_density` is SKIP for every viewer,
   whatever the intent, ETA or current experience
-  (`lib/compassDecision.ts:369#safety_outranks_opportunity`); already at the
+  (`lib/compassDecision.ts:393#safety_outranks_opportunity`); already at the
   candidate is STAY; without a READING the engine cannot say GO — a reading
   is a claim Compass's own rule Live-qualifies
   (`compass/CompassLiveConstraints.ts:268#isLiveConstraintEligible(`) AND the
   Wall's §5.1 derivation classes as an observation
-  (`lib/compassDecision.ts:230#isReading(`), so a sponsored "busy" is
+  (`lib/compassDecision.ts:253#isReading(`), so a sponsored "busy" is
   `inferred` and a materially conflicting one `conflicting` and neither backs
   GO (§2 promotional claim ≠ observed reality); a read the gates refused is
   WAIT with `live_intelligence_unavailable`, nothing served is WAIT with
   `no_live_evidence`, live-but-not-observational evidence is WAIT with
   `evidence_not_observational` — three different facts, three reasons
-  (`lib/compassDecision.ts:376#live_intelligence_unavailable`); an emerging,
+  (`lib/compassDecision.ts:400#live_intelligence_unavailable`); an emerging,
   building candidate is GO SOON, labelled below the live floor; a refused
   walk-in is SKIP and a queue past the tolerance is WAIT; a candidate at the
   intent floor is SKIP; then interception, RETURN, the switching cost, and GO
   NOW. Every decision carries its grounding — the §5.1 block composed
   weakest-on-every-axis over the claims it rests on
-  (`lib/compassDecision.ts:221#truthOf(`; `lib/experienceTruth.ts:159#composeTruth(`) — and a sentence built from templates
+  (`lib/compassDecision.ts:244#truthOf(`; `lib/experienceTruth.ts:159#composeTruth(`) — and a sentence built from templates
   over the claim values with the truth class always in it, a vibe only as
   "reported as", and no template with a behaviour verb, so the engine cannot
-  produce "everyone is dancing" (`lib/compassDecision.ts:435#summariseDecision(`;
+  produce "everyone is dancing" (`lib/compassDecision.ts:459#summariseDecision(`;
   `test/compassDecision.test.ts:305#everyone`). Experience value is
   intent-relative — quiet, social, high energy — and UNKNOWN with no intent:
-  the engine does not read busy as good (`lib/compassDecision.ts:301#experienceValue(`;
+  the engine does not read busy as good (`lib/compassDecision.ts:324#experienceValue(`;
   `test/compassDecision.test.ts:152#intent-relative`). The route
   `GET /api/compass/decision` (`routes/compassDecision.ts:68#router.get(`)
   reads the flag fail-closed (`routes/compassDecision.ts:78#compass_decision_enabled`),
@@ -1194,46 +1194,46 @@ before its commit; the mutations are listed in §2.3.
   and was rehearsed apply → rollback → apply on the lane's replica. The route
   suite drives the real handler over the fake PostgREST double: flag absent
   (production's state), false and unreadable all answer `feature_disabled`
-  and read no place and no claim (`test/compassDecisionRoute.test.ts:93#ABSENT`);
+  and read no place and no claim (`test/compassDecisionRoute.test.ts:94#ABSENT`);
   unauthenticated, malformed and unknown place refused; GO NOW with
   corroborated grounding and the interception margin
-  (`test/compassDecisionRoute.test.ts:116#GO`); SKIP on `unsafe_density`;
+  (`test/compassDecisionRoute.test.ts:117#GO`); SKIP on `unsafe_density`;
   STAY under the switching cost with the current experience read through the
   same seam; WAIT with `live_intelligence_unavailable` when the pilot is
   closed and `no_live_evidence` when the gates are open and nothing is served
   — production's state, where every intel table holds zero rows
-  (`test/compassDecisionRoute.test.ts:152#CLOSED`;
-  `test/compassDecisionRoute.test.ts:160#NOTHING`). Nothing person-shaped is
+  (`test/compassDecisionRoute.test.ts:155#CLOSED`;
+  `test/compassDecisionRoute.test.ts:163#NOTHING`). Nothing person-shaped is
   on the wire: no contributor, coordinate or count.
 - **§10 the switching cost (S80)** — `lib/compassDecision.ts:92#SWITCHING_COST`
   is the cost (0.25 of the 0..1 value, a documented tunable; the SHAPE is the
   requirement); with a current experience whose value is known the candidate
   must beat it by more than the cost to be SWITCH, else STAY
-  (`lib/compassDecision.ts:400#better_by_more_than_switching_cost`); with a
+  (`lib/compassDecision.ts:424#better_by_more_than_switching_cost`); with a
   current experience whose value is UNKNOWN — no intent, or no reading where
   the traveller is — the engine has no basis to tell them to leave and says
   STAY for that reason, inventing neither a cost nor a preference
-  (`lib/compassDecision.ts:398#current_value_unknown`); dwell is revealed
+  (`lib/compassDecision.ts:422#current_value_unknown`); dwell is revealed
   preference and can only raise a KNOWN current value, bounded
-  (`lib/compassDecision.ts:314#currentExperienceValue(`), so an hour at a
+  (`lib/compassDecision.ts:337#currentExperienceValue(`), so an hour at a
   moderate place turns a SWITCH into a STAY
   (`test/compassDecision.test.ts:228#dwell`), and creates no value
   (`test/compassDecision.test.ts:237#creates`). The report says whether the
   cost was applied and both values.
-- **§11 peak interception (S86)** — `lib/compassDecision.ts:324#interceptPeak(`:
+- **§11 peak interception (S86)** — `lib/compassDecision.ts:347#interceptPeak(`:
   arrival = now + ETA against the EARLIEST horizon of the claims that
   qualified — min(`validUntil`, `observedAt` + the family's TTL), the rule
   Compass's arrival forecast already uses
   (`compass/CompassLiveConstraints.ts:505#forecastArrival(`) — reachable when
   arrival precedes it, with the margin in minutes either way; arrival after
   the horizon is WAIT with `window_may_decay_before_arrival` and the sentence
-  says by how much (`lib/compassDecision.ts:390#window_may_decay_before_arrival`);
+  says by how much (`lib/compassDecision.ts:414#window_may_decay_before_arrival`);
   an unknown ETA is an unknown interception, stated, never assumed reachable
   (`test/compassDecision.test.ts:190#unknown`;
   `test/compassDecision.test.ts:179#EARLIEST`). The route derives the ETA at
   walking speed from the viewer's position when the client sends none, and a
   viewer fifteen kilometres away is told to wait
-  (`test/compassDecisionRoute.test.ts:132#walking`).
+  (`test/compassDecisionRoute.test.ts:135#walking`).
 
 ### 2.2 Row moves
 

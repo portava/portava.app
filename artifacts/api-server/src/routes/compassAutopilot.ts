@@ -190,7 +190,7 @@ async function loadOwnPendingProposal(sc: any, res: any, id: string, userId: str
   if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid proposal id"); return null; }
   const { data: proposal } = await sc
     .from("trip_autopilot_proposals")
-    .select("id, trip_id, user_id, issue_type, reason, changes, status")
+    .select("id, trip_id, user_id, issue_type, reason, changes, status, dedupe_key")
     .eq("id", id)
     .maybeSingle();
   if (!proposal) { sendError(res, "not_found", "Proposal not found"); return null; }
@@ -224,13 +224,17 @@ router.post("/autopilot/proposals/:id/confirm", asyncHandler(async (req, res) =>
   if (permitted === null) { sendError(res, "not_found", "Trip not found"); return; }
   if (!permitted) { sendError(res, "forbidden", "You don't have permission to edit this trip's plan"); return; }
 
-  const { applied, blocked } = await applyProposal(sc, proposal);
+  const { applied, blocked, evidence } = await applyProposal(sc, proposal);
+  // CCL-13: a proposal whose evidence EXPIRED executed nothing, and marking it
+  // "confirmed" would record an action that did not happen. It is resolved as
+  // `expired` instead, which the client reads like a decline with a reason.
+  const status = evidence === "expired" ? "expired" : "confirmed";
   await sc
     .from("trip_autopilot_proposals")
-    .update({ status: "confirmed", resolved_at: new Date().toISOString() })
+    .update({ status, resolved_at: new Date().toISOString() })
     .eq("id", proposal.id);
 
-  res.json({ compassEnabled: true, status: "confirmed", applied, blocked });
+  res.json({ compassEnabled: true, status, applied, blocked, evidence });
 }));
 
 router.post("/autopilot/proposals/:id/decline", asyncHandler(async (req, res) => {

@@ -644,16 +644,86 @@ const APPLYABLE_FIELDS: Record<string, string> = {
   status: "status",
 };
 
+/**
+ * CCL-13 — what became of the EVIDENCE behind a proposal by the time it is
+ * confirmed. `holds`: the issue was recomputed from live inputs and is still
+ * there. `expired`: it was recomputed and is gone, so nothing executes.
+ * `not_revalidated`: it has no live source to recompute from (a simulated
+ * disruption, or a row written before proposals carried their key) — the
+ * change executes on the trip-state checks alone, and SAYS so.
+ */
+export type ProposalEvidence = "holds" | "expired" | "not_revalidated";
+
+/** The issue types whose evidence has a live source this engine can re-read. */
+const REVALIDATABLE_ISSUE_TYPES = new Set<string>(["timing_conflict", "weather_clash", "social_change"]);
+
+/**
+ * Recompute the issue a proposal repairs, from the same detectors that raised
+ * it, and answer whether it is still present. The proposal's `dedupe_key` is
+ * the identity of the issue (`timing:A:B`, `weather:item:day`,
+ * `social:item:cancelled`), so presence is a set lookup and not a judgement.
+ *
+ * A weather clash whose forecast cannot be re-read is `expired`, not
+ * `holds`: `detectWeatherClashes` answers an unreadable forecast with an empty
+ * issue list, and executing a repair because the evidence for it could not be
+ * checked is the exact thing this rule forbids.
+ */
+export async function revalidateProposalEvidence(
+  sc: SupabaseClient,
+  proposal: { trip_id: string; issue_type?: string | null; dedupe_key?: string | null },
+  items: PlanItem[],
+): Promise<{ evidence: ProposalEvidence; reason: string | null }> {
+  const type = proposal.issue_type ?? null;
+  // `buildRepairProposals` keys a proposal as `fix:<issue key>`; the issue's
+  // own key is what the detectors emit, so the prefix is dropped here.
+  const raw = proposal.dedupe_key ?? null;
+  const key = raw && raw.startsWith("fix:") ? raw.slice(4) : raw;
+  if (!type || !key || !REVALIDATABLE_ISSUE_TYPES.has(type)) {
+    return { evidence: "not_revalidated", reason: type && key ? `${type} has no live source to re-read` : "proposal carries no issue key" };
+  }
+  let present = false;
+  if (type === "timing_conflict") {
+    present = detectTimingConflicts(items).some((i) => i.dedupeKey === key);
+  } else if (type === "social_change") {
+    present = (await detectSocialChanges(sc, items)).some((i) => i.dedupeKey === key);
+  } else {
+    const { data: trip } = await sc
+      .from("trips")
+      .select("id, destination_city, start_date, end_date")
+      .eq("id", proposal.trip_id)
+      .maybeSingle();
+    const weather = await detectWeatherClashes(
+      items,
+      ((trip as any)?.destination_city as string | null) ?? null,
+      ((trip as any)?.start_date as string | null) ?? null,
+      ((trip as any)?.end_date as string | null) ?? null,
+    );
+    present = weather.issues.some((i) => i.dedupeKey === key);
+  }
+  return present
+    ? { evidence: "holds", reason: null }
+    : { evidence: "expired", reason: `the ${type.replace("_", " ")} this proposal repairs no longer holds at confirm time` };
+}
+
 export async function applyProposal(
   sc: SupabaseClient,
-  proposal: { id: string; trip_id: string; user_id: string; changes: any },
-): Promise<{ applied: number; blocked: string[] }> {
+  proposal: { id: string; trip_id: string; user_id: string; changes: any; issue_type?: string | null; dedupe_key?: string | null },
+): Promise<{ applied: number; blocked: string[]; evidence: ProposalEvidence }> {
   // Re-verify at confirm time: permissions may have changed and items may
   // have been re-typed since the proposal was created.
   const settings = await getAutopilotSettings(sc, proposal.trip_id, proposal.user_id);
   const changes: ItemChange[] = Array.isArray(proposal.changes) ? proposal.changes : [];
   const items = await fetchPlanItems(sc, proposal.trip_id);
   const byId = new Map(items.map((i) => [i.id, i]));
+
+  // CCL-13 — the EVIDENCE is re-verified too, before any change is looked at.
+  // Re-checking permissions and lock types answers "may this still be done";
+  // it never asked "is the reason for doing it still true".
+  const revalidated = await revalidateProposalEvidence(sc, proposal, items);
+  if (revalidated.evidence === "expired") {
+    return { applied: 0, blocked: [`evidence no longer holds: ${revalidated.reason}`], evidence: "expired" };
+  }
+  const evidence = revalidated.evidence;
 
   // Trip Kernel gate, read once per proposal (Trips spec §4.1; domain/trips/commands/tripKernel.ts).
   // routes/compassAutopilot.ts authorized the actor (own pending proposal,
@@ -711,7 +781,7 @@ export async function applyProposal(
     if (!error) applied++;
     else blocked.push(`${c.title}: ${error.message}`);
   }
-  return { applied, blocked };
+  return { applied, blocked, evidence };
 }
 
 // ── Trip Heartbeat ────────────────────────────────────────────────────────────

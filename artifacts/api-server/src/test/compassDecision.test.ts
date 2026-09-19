@@ -318,3 +318,49 @@ describe("language is grounded in structured truth (§10)", () => {
     }
   });
 });
+
+// ── CCL-14 / CCL-08 — the confirmation requirement is a FIELD, not an absence ─
+describe("CCL-08. every result says whether its action needs confirmation", () => {
+  it("carries `confirmation` on every branch of the vocabulary", () => {
+    const seen = new Set<string>();
+    const cases: Array<Partial<DecisionInput>> = [
+      { candidate: subject(A, [crowd("unsafe_density")]) },
+      { current: { ...subject(A, [crowd("busy")]), sinceMinutes: 5 } },
+      { current: { ...subject(B, [crowd("dead")]), sinceMinutes: 5 } },
+      { candidate: subject(A, [crowd("busy")], false) },
+      {},
+    ];
+    for (const c of cases) {
+      const r = decide(c);
+      seen.add(r.decision);
+      assert.ok(r.confirmation && typeof r.confirmation.required === "boolean", `${r.decision}: no confirmation field`);
+      assert.ok(typeof r.confirmation.reason === "string", `${r.decision}: reason is not a string`);
+    }
+    assert.ok(seen.size >= 3, `the fixtures reached only ${[...seen].join(",")}`);
+  });
+
+  it("SWITCH away from a current place requires confirmation; GO_NOW with no current place does not", () => {
+    const go = decide({});
+    assert.equal(go.decision, "GO_NOW");
+    assert.deepEqual(go.confirmation, { required: false, reason: "no_committed_plan_changes" });
+
+    const sw = decide({ candidate: subject(A, [crowd("busy")]), current: { ...subject(B, [crowd("quiet")]), sinceMinutes: 10 } }); // 1.0 vs 0.3
+    assert.equal(sw.decision, "SWITCH", JSON.stringify(sw.reasons));
+    assert.deepEqual(sw.confirmation, { required: true, reason: "leaves_current_plan" });
+  });
+
+  it("STAY and SKIP never require confirmation — nothing is acted on", () => {
+    const stay = decide({ current: { ...subject(A, [crowd("busy")]), sinceMinutes: 5 } });
+    assert.equal(stay.decision, "STAY");
+    assert.equal(stay.confirmation.required, false);
+    const skip = decide({ candidate: subject(A, [crowd("unsafe_density")]) });
+    assert.equal(skip.decision, "SKIP");
+    assert.equal(skip.confirmation.required, false);
+  });
+});
+
+/*
+ * CCL-08 mutation log (2026-09-19): the three confirmation cases were 3 red
+ * before `confirmation` existed (route case too: 4 red in total); `confirmationFor`
+ * always-false → 1 red.
+ */

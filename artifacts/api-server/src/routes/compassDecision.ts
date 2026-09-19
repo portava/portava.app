@@ -136,6 +136,7 @@ router.get(
       summary: result.summary,
       interception: result.interception,
       switchingCost: result.switchingCost,
+      confirmation: result.confirmation,
       candidate: result.candidate,
       current: result.current,
       liveIntelligenceReadable: readable,
