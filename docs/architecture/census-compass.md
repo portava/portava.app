@@ -2867,3 +2867,62 @@ only §21.4's sentence to retract, which this section does.
 
 **None.** No row in this census grades another census's row. CC-09 is unchanged
 at `C` on the basis §21.3 gave it.
+
+## §23 — The six `C1` rows the tallier could not read, restated so it can. NO VERDICT MOVES
+
+Written 2026-09-19. **`head_commit` is NOT re-declared.** This section grades nothing; it closes the
+last printed gap between this document and `check:census-integrity`.
+
+### 23.1 Why the gap existed, and why it no longer needs to
+
+§13.6 wrote the six `C1-01`…`C1-07` id cells in backticks on purpose: at the time `parseIdCell` read
+`C1-01` as prefix `C` plus the RANGE `1–01`, collapsed all six to one id, and a fabricated count is
+worse than an unread row. §17.2 then restated the three `CPV2` cells after the tool learned that a
+prefix may end in a digit (`artifacts/api-server/src/scripts/checkCensusIntegrity.ts:260#parseIdCell(cellRaw:`,
+the `digitPrefixed` shape), and left the `C1` six as they were. The same shape reads `C1-01` as a
+single id today. Every run since §17 has printed the residue — *"6 counted where this tool cannot
+read"* — and §17.5 reconciled it by hand: the six carry **C 5 · W 1 · N 0 · `?` 0**.
+
+The remedy is the one §17.2 used: the id cell only. Each row below carries the verdict the last
+statement about it gave — `C1-02` is `C` from §13.8's Build 4 and the other five are unchanged
+from §13.3 — and nothing about any row is re-executed, re-argued or moved.
+
+### 23.2 The six rows, id cells restated
+
+| **ID** | **was** | **now** | why |
+| --- | --- | --- | --- |
+| C1-01 | W | **W** | The id cell only. §13.3: six criteria, four pass; the two open ones are unchanged. |
+| C1-02 | C | **C** | The id cell only. §13.8 Build 4 moved it; nothing since. |
+| C1-03 | C | **C** | The id cell only. §13.3: both streaming criteria pass. |
+| C1-04 | C | **C** | The id cell only. §13.3: all three quick-action criteria pass. |
+| C1-05 | C | **C** | The id cell only. §13.3: versioned file and per-request logging both pass; the content half is `CPH-02`, graded `N` there. |
+| C1-07 | C | **C** | The id cell only. §13.3: the four named tests exist and are registered; the eval script exists. |
+
+There is no `C1-06`; §13.2 records it as a DUPLICATE and it is absent from both sides of the
+arithmetic, as it has been since §13.6.
+
+### 23.3 Reconciliation with the tool, which this section closes
+
+Before this section `check:census-integrity` read **135** of 141 rows as **95 C · 32 W · 6 N · 2 `?`**
+and printed a gap of 6. After it the tool reads **141** and the gap is **0**: 95 + 5 = 100,
+32 + 1 = 33, 6 + 0 = 6, 2 + 0 = 2. Those are §18.9's figures exactly. The seven denominators this
+document states (20, 36, 51, 70, 90, 126, 141) are unchanged and still deliberate.
+
+### 23.4 Tally
+
+> **Compass, after §23: 141 requirements · 100 BUILT-AND-CORRECT · 33 BUILT-BUT-WRONG ·
+> 6 NOT-BUILT · 2 CANNOT-VERIFY → CONSTRUCTED 94.3 % · CORRECT 70.9 %.** Unchanged from §18.9;
+> the only thing that moved is what the tool can see.
+
+The four buckets, as a table the tool reads as this document's current headline — §16.3's
+was/now/move table was the last such block, and its *move* column (+4 · +8 · +1 · +2) is what a
+last-number reader takes for a count once the prose gap that used to suppress the sum check is
+gone:
+
+| figure | after §23 |
+|---|---:|
+| Denominator | **141** |
+| BUILT-AND-CORRECT | **100** |
+| BUILT-BUT-WRONG | **33** |
+| NOT-BUILT | **6** |
+| CANNOT-VERIFY | **2** |
