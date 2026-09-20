@@ -34,6 +34,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import {
   stripSqlNoise,
   appliedAfterSnapshot,
@@ -42,6 +43,17 @@ import {
   undeclaredEntries,
   KNOWN_PRODUCTION_GAPS,
   PRODUCTION_SNAPSHOT,
+  PRODUCTION_CHECK_SNAPSHOT,
+  KNOWN_VOCABULARY_GAPS,
+  parseProductionCheckSnapshot,
+  treeCheckVocabularies,
+  treeVocabularies,
+  enumVsCheckDivergences,
+  missingVocabularyLabels,
+  closedVocabularyGaps,
+  phantomVocabularyGaps,
+  unexplainedVocabularyGaps,
+  splitVocabularyKey,
 } from "../scripts/checkProductionDrift.js";
 
 const TABLE_RE = /create\s+table\s+(?:if\s+not\s+exists\s+)?(?:"?public"?\.)?"?([a-z0-9_]+)"?/gi;
@@ -311,5 +323,378 @@ describe("an unmerged-pr classification expires when the PR lands", () => {
       ),
     );
     assert.deepEqual(undeclared, [], `ratcheted but declared by no migration: ${undeclared.join(", ")}`);
+  });
+});
+
+/**
+ * ─── THE VOCABULARY HALF ──────────────────────────────────────────────────────
+ *
+ * What check:production-drift could not see until 2026-09-20, and what it cost.
+ *
+ * 2298_dead_check_vocabularies.sql widens two CHECK vocabularies and sat
+ * unapplied on production while CI stayed green. `rank_events.surface` did not
+ * admit 'wall', so every analytics row the Wall's For You page wrote was refused
+ * 23514 — fire-and-forget, warn-only, invisible in the product and in the ranking
+ * data. `circle_presence.status` did not admit 'paused', so the explicit "stop
+ * sharing my presence" endpoint 500ed and the deactivation path's server-side
+ * pause silently left a deactivating user visible on other members' maps.
+ *
+ * check:enum-literals could not catch either: its source of truth is the baseline
+ * plus the migration chain, and by that source BOTH labels were legal. The code
+ * was right and the tree's schema was right. Production had not applied the
+ * migration, and nothing compared the two.
+ *
+ * WHAT WOULD TURN THIS SUITE RED, which is the only thing that makes it worth
+ * having:
+ *
+ *   - declare a label in a migration's CHECK that the production capture does not
+ *     admit, without recording it in KNOWN_VOCABULARY_GAPS → the "every missing
+ *     label is recorded" case fails;
+ *   - leave an entry on the ratchet after production learns the label → the
+ *     "nothing on the ratchet is already admitted" case fails;
+ *   - keep an entry for a label the tree stopped declaring → the phantom case
+ *     fails;
+ *   - re-transcribe the capture with a byte wrong → the digest case fails;
+ *   - break the comparison so that it reaches nothing → the floor cases fail,
+ *     which is what stops a collapsed rule from passing once the ratchet reaches
+ *     zero.
+ *
+ * The three predicates are CALLED here, never restated. The table half's own
+ * docblock above records why: a copy in the test file can drift from the guard in
+ * either direction, and proves nothing at all whenever the live population is
+ * empty. Each one is therefore driven against a CONSTRUCTED capture as well as
+ * against the real one, so its discrimination is proven whatever the real ratchet
+ * happens to contain — including, one day, nothing.
+ *
+ * The mutation log for the rule itself is in checkProductionDrift.ts's header,
+ * beside the code it was measured against.
+ */
+
+const CAPTURE = readFileSync(
+  new URL(`../../baseline/${PRODUCTION_CHECK_SNAPSHOT}`, import.meta.url),
+  "utf8",
+);
+
+describe("the CHECK-vocabulary capture is the capture it claims to be", () => {
+  it("the payload hashes to the sha256 recorded in its own header", () => {
+    // The capture was transcribed through the Management API rather than piped to
+    // disk, and production computed this digest over the same expression BEFORE
+    // the transcription. Recomputing it here is what makes "verbatim" a checked
+    // claim instead of an assertion about care taken.
+    const lines = CAPTURE.split("\n").filter((l) => !l.startsWith("#") && l.trim().length > 0);
+    const payload = `${lines.join("\n")}\n`;
+    const declared = /^#\s*sha256\s*:\s*([0-9a-f]{64})\s*$/m.exec(CAPTURE)?.[1];
+    assert.ok(declared, "the capture's header must record a sha256 of its payload");
+    assert.equal(
+      createHash("sha256").update(payload, "utf8").digest("hex"),
+      declared,
+      "the capture's payload does not hash to the digest its header records — it has been edited, " +
+        "or a refresh changed the bytes without updating the header",
+    );
+    // And the parser's own answer must agree with the one computed here. The
+    // duplication is deliberate: over a payload this trivially defined, two
+    // independent computations agreeing is a real cross-check, and the digest the
+    // CHECK acts on is the parser's, not this one.
+    const parsed = parseProductionCheckSnapshot(CAPTURE);
+    assert.equal(parsed.payloadSha256, declared, "the parser reads a different payload than the header describes");
+    assert.equal(parsed.declaredSha256, declared);
+  });
+
+  it("every payload line parses, and the header's own count is the truth", () => {
+    const parsed = parseProductionCheckSnapshot(CAPTURE);
+    const payloadLines = CAPTURE.split("\n").filter((l) => !l.startsWith("#") && l.trim().length > 0);
+    assert.equal(
+      parsed.constraints,
+      payloadLines.length,
+      "a payload line was skipped, which means the file's format and the parser have diverged",
+    );
+    const claimed = /^#\s*count\s*:\s*(\d+)\s+constraint/m.exec(CAPTURE)?.[1];
+    assert.equal(Number(claimed), parsed.constraints, "the header's count disagrees with the payload");
+    // Floors, so a capture that stopped parsing cannot pass this file quietly.
+    assert.ok(parsed.constraints >= 250, `only ${parsed.constraints} constraint(s) parsed`);
+    assert.ok(parsed.values.size >= 250, `only ${parsed.values.size} column vocabular(ies) parsed`);
+  });
+
+  it("a comment cannot declare a constraint, and a blank line is nothing", () => {
+    const parsed = parseProductionCheckSnapshot(
+      [
+        "# posts|posts_status_check|CHECK ((status = ANY (ARRAY['ghost'::text])))",
+        "",
+        "posts|posts_status_check|CHECK ((status = ANY (ARRAY['real'::text])))",
+        "",
+      ].join("\n"),
+    );
+    assert.equal(parsed.constraints, 1);
+    assert.deepEqual([...(parsed.values.get("posts.status") ?? [])], ["real"]);
+  });
+});
+
+/**
+ * The two labels this whole instrument exists for, asserted against the REAL
+ * capture rather than a fixture.
+ *
+ * This is the positive control that cannot go vacuous. The vocabulary ratchet
+ * opens with no entry for either label — 2298 reached production on 2026-09-20,
+ * before the capture — so nothing in the ratchet mentions them and a bug that
+ * stopped reading the capture entirely would otherwise pass every case above.
+ * Here the capture must positively SAY that production admits both, and the tree
+ * must still declare both, which is what makes the comparison live on those two
+ * columns instead of merely defined.
+ */
+describe("the 2298 labels are admitted by production and still declared by the tree", () => {
+  const production = parseProductionCheckSnapshot(CAPTURE);
+  const tree = treeCheckVocabularies();
+
+  for (const [column, label] of [
+    ["rank_events.surface", "wall"],
+    ["circle_presence.status", "paused"],
+  ] as const) {
+    it(`${column} admits "${label}" in production and declares it in the tree`, () => {
+      assert.ok(
+        tree.get(column)?.has(label),
+        `the tree must still declare ${column} = "${label}" — migration 2298 is what adds it`,
+      );
+      assert.ok(
+        production.values.get(column)?.has(label),
+        `the capture must show production admitting ${column} = "${label}". If a fresh capture ` +
+          "genuinely shows otherwise, 2298 has been reverted on production and this is a live " +
+          "defect, not a stale test: the Wall's analytics and two Circle privacy controls are broken.",
+      );
+    });
+  }
+});
+
+describe("a vocabulary gap fails in BOTH directions", () => {
+  const production = parseProductionCheckSnapshot(CAPTURE);
+  const tree = treeCheckVocabularies();
+
+  /**
+   * A capture built to order, so the assertions below do not depend on what
+   * production happens to hold today. `narrow_table.status` admits two labels;
+   * the fixture tree declares three.
+   */
+  const fixtureCapture = parseProductionCheckSnapshot(
+    [
+      "narrow_table|narrow_table_status_check|CHECK ((status = ANY (ARRAY['kept'::text, 'closed'::text])))",
+      "other_table|other_table_kind_check|CHECK ((kind = ANY (ARRAY['a'::text])))",
+      "",
+    ].join("\n"),
+  );
+  const fixtureTree = new Map<string, Set<string>>([
+    ["narrow_table.status", new Set(["kept", "closed", "refused"])],
+    // A column the fixture capture constrains nothing for: production accepts
+    // every label there, so it must never be reported as a gap.
+    ["unconstrained_table.status", new Set(["anything"])],
+  ]);
+
+  it("DIRECTION 1 — a label the tree declares and the capture does not admit is reported", () => {
+    assert.deepEqual(
+      missingVocabularyLabels(fixtureTree, fixtureCapture),
+      ["narrow_table.status:refused"],
+      "the predicate must report exactly the label production cannot hold",
+    );
+  });
+
+  it("DIRECTION 1 declines to judge a column the capture does not constrain", () => {
+    // The over-permissive direction, and the one that keeps this check from
+    // manufacturing findings: an unconstrained column refuses nothing, so a
+    // tree-declared label for it is not a 23514 risk.
+    assert.ok(
+      !missingVocabularyLabels(fixtureTree, fixtureCapture).some((k) =>
+        k.startsWith("unconstrained_table."),
+      ),
+      "a column production leaves unconstrained must never be reported as refusing a label",
+    );
+  });
+
+  it("DIRECTION 2 — a ratcheted label the capture DOES admit is reported", () => {
+    const stale = closedVocabularyGaps(
+      {
+        "narrow_table.status:refused": { classification: "unapplied", note: "still refused" },
+        "narrow_table.status:kept": { classification: "unapplied", note: "production learned this one" },
+      },
+      fixtureCapture,
+    );
+    assert.deepEqual(
+      stale,
+      ["narrow_table.status:kept"],
+      "the predicate must flag the entry production now admits, and spare the one it still refuses",
+    );
+  });
+
+  it("DIRECTION 3 — an entry describing no gap is reported, for either reason", () => {
+    const phantom = phantomVocabularyGaps(
+      {
+        "narrow_table.status:refused": { classification: "unapplied", note: "a real gap" },
+        "narrow_table.status:never_declared": { classification: "unapplied", note: "the tree does not declare this" },
+        "unconstrained_table.status:anything": { classification: "unapplied", note: "production constrains nothing here" },
+      },
+      fixtureTree,
+      fixtureCapture,
+    );
+    assert.deepEqual(phantom, [
+      "narrow_table.status:never_declared",
+      "unconstrained_table.status:anything",
+    ]);
+  });
+
+  it("a key is split at the FIRST colon, so a label may contain one", () => {
+    assert.deepEqual(splitVocabularyKey("t.c:a:b"), { column: "t.c", label: "a:b" });
+  });
+
+  it("an ENUM column production CHECK-constrains is separated out, not counted as a gap", () => {
+    // The filter in treeVocabularies keeps two defect classes apart, and this is
+    // the invariant that says it works. Asserted as a property rather than as a
+    // list of today's five columns: a case that named them would have to be edited
+    // the day one is fixed, and the property holds at any population.
+    const { check, enumTyped } = treeVocabularies();
+    const divergent = enumVsCheckDivergences(enumTyped, production);
+    const gaps = missingVocabularyLabels(check, production);
+    for (const { column, treeOnly } of divergent) {
+      assert.ok(treeOnly.length > 0, `${column} was reported as divergent with no divergent label`);
+      assert.ok(
+        !gaps.some((k) => splitVocabularyKey(k).column === column),
+        `${column} is reported BOTH as an enum/CHECK divergence and as a vocabulary gap — the two ` +
+          "classes have been conflated, and one of the two verdicts is unsupported by the capture",
+      );
+    }
+    // And the separation is not achieved by reporting nothing: the fixture proves
+    // the predicate discriminates.
+    const fixtureEnum = new Map<string, Set<string>>([
+      ["narrow_table.status", new Set(["kept", "closed", "not_in_the_check"])],
+      ["other_table.kind", new Set(["a"])],
+    ]);
+    assert.deepEqual(enumVsCheckDivergences(fixtureEnum, fixtureCapture), [
+      { column: "narrow_table.status", treeOnly: ["not_in_the_check"] },
+    ]);
+  });
+
+  // ── The same three questions, asked of the REAL ratchet ────────────────────
+
+  it("every label the tree declares and production refuses is ON the ratchet", () => {
+    const missing = missingVocabularyLabels(tree, production);
+    const unrecorded = missing.filter((k) => !(k in KNOWN_VOCABULARY_GAPS));
+    assert.deepEqual(
+      unrecorded,
+      [],
+      "these labels are declared by a migration in this tree and refused by production, with " +
+        `nothing recording them: ${unrecorded.join(", ")}`,
+    );
+    // Not a tautology in the other direction either: the comparison must actually
+    // be reaching the columns it claims to. 300 were compared on 2026-09-20.
+    const compared = [...tree.keys()].filter((c) => production.values.has(c));
+    assert.ok(
+      compared.length >= 200,
+      `only ${compared.length} column(s) were compared on both sides — the derivation has collapsed`,
+    );
+  });
+
+  it("nothing on the ratchet is already admitted by production", () => {
+    const closed = closedVocabularyGaps(KNOWN_VOCABULARY_GAPS, production);
+    assert.deepEqual(
+      closed,
+      [],
+      `production admits these and they were not struck off: ${closed.join(", ")}`,
+    );
+  });
+
+  it("every ratchet entry describes a gap that exists", () => {
+    const phantom = phantomVocabularyGaps(KNOWN_VOCABULARY_GAPS, tree, production);
+    assert.deepEqual(
+      phantom,
+      [],
+      `these entries describe no gap: ${phantom.join(", ")}`,
+    );
+  });
+
+  it("every ratchet entry is EXPLAINED by one of the three rules — the finder's positive control", () => {
+    // FOUND BY MUTATION TESTING, and the reason this case exists is worth stating
+    // where it is asserted: `missingVocabularyLabels` was mutated to skip every
+    // column, so it found nothing, and the check still exited 0 with every other
+    // case green. The other two predicates ask production and the tree directly,
+    // so all thirty entries stayed valid and "no unrecorded gaps" was trivially
+    // true of a rule that had stopped looking.
+    //
+    // The three rules are exhaustive over any entry, so landing in none of them
+    // is not a fact about production — it means the comparison is broken.
+    const unexplained = unexplainedVocabularyGaps(
+      KNOWN_VOCABULARY_GAPS,
+      missingVocabularyLabels(tree, production),
+      closedVocabularyGaps(KNOWN_VOCABULARY_GAPS, production),
+      phantomVocabularyGaps(KNOWN_VOCABULARY_GAPS, tree, production),
+    );
+    assert.deepEqual(
+      unexplained,
+      [],
+      `the comparison no longer explains these recorded gaps at all: ${unexplained.join(", ")}`,
+    );
+  });
+
+  it("the control fires when the finder stops finding, and spares an accounted entry", () => {
+    const ratchet = {
+      "narrow_table.status:refused": { classification: "unapplied" as const, note: "a real gap, migration 9999" },
+    };
+    const found = missingVocabularyLabels(fixtureTree, fixtureCapture);
+    assert.deepEqual(found, ["narrow_table.status:refused"], "the fixture's premise");
+    assert.deepEqual(
+      unexplainedVocabularyGaps(ratchet, found, [], []),
+      [],
+      "an entry the finder still finds must not be reported as unexplained",
+    );
+    // A finder that has stopped finding: the entry is accounted for by nothing,
+    // while remaining neither closed nor phantom. This is the shape the mutation
+    // had, and the shape no other case in this file can see.
+    assert.deepEqual(
+      unexplainedVocabularyGaps(ratchet, [], [], []),
+      ["narrow_table.status:refused"],
+    );
+  });
+
+  it("every entry carries a note that names the migration that would close it", () => {
+    // The ratchet's own rule, mechanised: "do not add an entry without a reason —
+    // an entry with no reason is how this becomes an allowlist."
+    //
+    // WHAT IS ASSERTED AND WHAT IS NOT. The migration number is required, because
+    // an entry that names no file leaves the next reader to guess which apply
+    // closes it. A LENGTH FLOOR IS NOT. The first draft of this case required 40
+    // characters and failed on "Migration 2309. Same block as 'city'." — a note
+    // that is short because the block comment above it carries the shared
+    // reasoning for all nine labels, which is the same idiom the table ratchet
+    // uses ("Same block as trip_stages."). A threshold that forces padding buys
+    // nothing and teaches the next author to write filler, so the floor is only
+    // wide enough to catch an empty or placeholder note.
+    for (const [key, gap] of Object.entries(KNOWN_VOCABULARY_GAPS)) {
+      const note = gap.note.trim();
+      assert.ok(note.length >= 20, `${key}: the note is a placeholder, not a reason`);
+      assert.ok(
+        /\b\d{4}\b/.test(note),
+        `${key}: the note names no migration number, so nothing says which apply closes it`,
+      );
+      assert.ok(
+        note.replace(/\b\d{4}\b/g, "").trim().split(/\s+/).length >= 4,
+        `${key}: the note is a bare migration number with no reason attached`,
+      );
+    }
+  });
+
+  it("the must-reach-zero total is exactly the `unapplied` entries", () => {
+    // `staged-by-ruling` is the only other classification, and it exists for one
+    // entry: 2880's `place`, whose own header says NOT READY TO APPLY and names
+    // owner decision D-STAMP. If that ever becomes the majority classification,
+    // the ratchet has started excusing rather than counting.
+    const byClass = Object.values(KNOWN_VOCABULARY_GAPS).reduce<Record<string, number>>((acc, g) => {
+      acc[g.classification] = (acc[g.classification] ?? 0) + 1;
+      return acc;
+    }, {});
+    const total = Object.keys(KNOWN_VOCABULARY_GAPS).length;
+    assert.equal(
+      (byClass.unapplied ?? 0) + (byClass["staged-by-ruling"] ?? 0),
+      total,
+      "an entry carries a classification this suite does not know about",
+    );
+    assert.ok(
+      (byClass.unapplied ?? 0) > (byClass["staged-by-ruling"] ?? 0),
+      "more entries are excused by a ruling than counted toward zero — check each ruling is real",
+    );
   });
 });

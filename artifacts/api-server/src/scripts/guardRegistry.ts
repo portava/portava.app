@@ -429,7 +429,13 @@ export const GUARDS: readonly GuardEntry[] = [
   },
   {
     checker: "src/scripts/checkProductionDrift.ts",
-    responsibility: "Reports where the live production schema has drifted from the committed canonical schema.",
+    responsibility:
+      "Reports where the live production schema has drifted from the committed canonical schema — TABLE " +
+      "PRESENCE against baseline/*_production_tables.txt, and, since 2026-09-20, a CHECK-constrained " +
+      "column's VOCABULARY against baseline/*_production_check_vocabularies.txt. The second comparison " +
+      "exists because migration 2298 sat unapplied on production while CI stayed green: every Wall " +
+      "analytics row was refused 23514 and two Circle privacy controls were inert, and nothing compared " +
+      "the tree's CHECK vocabularies against production's.",
     // WAS MANUAL, on the stated ground that it "reads PRODUCTION over the
     // Management API". That had stopped being true: it compares src/migrations
     // against the committed baseline/*_production_tables.txt snapshot and prints

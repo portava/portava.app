@@ -5190,7 +5190,7 @@ a file naming `trip_crew_map_enabled` (ON in production) and reading
 kernel-era tables — so the crew half of the pulse is its own module, as
 §43 did for the opportunity projection
 (`domain/trips/projections/TripPulseCrewPresence.ts:37#readCrewPresenceForPulse`).
-Two guards were unregistered (`src/scripts/guardRegistry.ts:624#checkTripDecisionDiff`),
+Two guards were unregistered (`src/scripts/guardRegistry.ts:630#checkTripDecisionDiff`),
 and this census watched 77 % of the files it cites against an 86 % floor:
 the kernel-era migrations, their rollbacks, the database suites, the trip
 guards and the trip test files are in scope now — 90 % — and every one of
@@ -7484,7 +7484,7 @@ that is 99.1 % constructed has run out of work it can do by itself.
    `trip_events`, `trip_outbox` and `trip_command_receipts` ARE deployed, and the
    thirteen rows that rest only on them are gated by a FLAG, not by a migration.
 2. **2760–2795 are in portava-ci or in no database at all**, per
-   `artifacts/api-server/src/scripts/checkProductionDrift.ts:180#trip_stages:` and
+   `artifacts/api-server/src/scripts/checkProductionDrift.ts:347#trip_stages:` and
    the block that follows it. Ninety rows rest on one of these.
 3. **The §24 ratchet has exactly one ungated writer left**
    (`artifacts/api-server/src/scripts/tripKernelWriterBaseline.ts:257#ungated: 1`)
