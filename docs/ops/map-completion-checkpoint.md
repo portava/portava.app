@@ -45,9 +45,39 @@ proven red. Its third finding — a guard matching prose in comments — is fixe
 (`486b633a5`): one name off the debt list, and the guard tightened rather than
 loosened.
 
+## CI state at `955190f69`
+
+**The whole `ci.yml` workflow is GREEN** — `CI · verdict` success, which is the
+first time on this branch. `api-server · node:test`, `standalone · check:all`,
+`api-server · typecheck + static`, `api-server · kernel SQL` and both `unwired`
+jobs all pass.
+
+**The only red is `live-db.yml`, and all of it is `main`'s 2481.**
+`api-server · check:all + live_pulse gate` is down to ONE failing check out of
+43 (`check:missing-live-columns`), and `schema drift` fails on the same cause.
+Both trace to `2481_sensing_sessions_option_a_issuer.sql`, which is deliberately
+unapplied under the Option B posture merged in #510 and has since been reverted
+on portava-ci. The auditors are name-keyed to files on disk and cannot know a
+file must never run.
+
+THE FIX IS TWO ENTRIES, NOT ONE — the same root cause reached through two
+scripts, each with its own mechanism:
+
+  artifacts/api-server/src/scripts/auditMigrationsVsLive.ts   SKIP_FILES
+  artifacts/api-server/src/scripts/checkMissingLiveColumns.ts ALLOWLIST
+
+Both patches are written out on PR 511 and NEITHER is applied. It is main's
+four-day-old breakage, not this PR's, and it sits on a security-posture
+auditor: whoever owns the Sensing posture should confirm that recording the
+skip is the intended reading rather than re-applying 2481 — which would also
+turn it green and is the WRONG fix, reintroducing exactly the Option A
+constraint #510 removed.
+
 Client suite at the integration head: `check:all` exit 0, node:test 6384/6384
 (0 fail, 0 skipped, 0 todo), jest 567 suites / 3646 tests, 3 webrender / 8. All
 ten client guards, all three citation checks and all three census checks pass.
+api-server suite: 23811 tests, 23809 pass, 2 fail → both fixed, now 23811/23811
+in CI.
 
 ## Decisions taken, and why
 
