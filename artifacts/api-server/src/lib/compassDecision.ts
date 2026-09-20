@@ -445,7 +445,8 @@ const VIBE_WORDS: Readonly<Record<string, string>> = {
 const DECISION_WORDS: Readonly<Record<CompassDecision, string>> = {
   GO_NOW: "Go now", GO_SOON: "Go soon", WAIT: "Wait", STAY: "Stay", SWITCH: "Switch", SKIP: "Skip", RETURN: "Return",
 };
-const TRUTH_WORDS: Readonly<Record<TruthMetadata["truthClass"], string>> = {
+/** The one word list for a truth class in prose; CompassRecommendationEngine reuses it rather than keeping a second. */
+export const TRUTH_WORDS: Readonly<Record<TruthMetadata["truthClass"], string>> = {
   observed: "observed", corroborated: "corroborated by several", inferred: "inferred", predicted: "predicted",
   conflicting: "reports differ", stale: "stale", unknown: "no current evidence",
 };

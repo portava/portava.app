@@ -286,7 +286,7 @@ import {
  * :592, the thread-rollback case at :502) and given anchors, so doc-citations
  * now holds them. The ceiling is the measurement, not a choice between 235 and
  * 238. */
-export const MAX_DEAD_TARGETS = 232;
+export const MAX_DEAD_TARGETS = 223;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);

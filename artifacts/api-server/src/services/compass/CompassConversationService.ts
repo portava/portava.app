@@ -39,13 +39,18 @@ export type ConversationSchema = "ready" | "absent" | "unreadable";
  */
 export const COMPASS_CONVERSATION_PHASE1: CapabilityDefinition = {
   flag: "COMPASS_ENABLED",
-  providedBy: ["2996_compass_conversations_phase1_schema.sql"],
+  providedBy: ["2996_compass_conversations_phase1_schema.sql", "2997_compass_recommendation_lineage.sql"],
   requires: {
     tables: {
       compass_conversations: { columns: ["trip_id", "status"] },
+      // CPV2-11 (2997): the recommendation lineage. One capability for the
+      // two pending Compass migrations because the registry is keyed by flag
+      // and both ride COMPASS_ENABLED; they are applied together.
+      compass_served_recommendations: { columns: ["revoked_at", "revocation_reason"] },
+      compass_outcome_events: { columns: ["weight_nudge"] },
     },
   },
-  consumers: ["services/compass/CompassConversationService.ts"],
+  consumers: ["services/compass/CompassConversationService.ts", "compass/CompassOutcomeEngine.ts"],
   note:
     "Naming trip_id/status on a database without 2996 fails the conversation INSERT and drops the " +
     "person into the honest fallback for every turn; probing first keeps the legacy shape working until the " +

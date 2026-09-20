@@ -41,6 +41,17 @@ import {
 } from "../services/passport/PassportConsumerProjections.js";
 import { allowDiscoveryPersonCard } from "../services/passport/PassportConsumerAccess.js";
 import { isCompassEnabled, isEnabled } from "../compass/flags.js";
+import { isFlagEnabled as isPlatformFlagEnabled } from "../lib/featureFlags.js";
+import { buildCompassHomeProjection } from "./compassHome.js";
+import {
+  assembleAskKernel,
+  formatHomeProjectionLines,
+  formatKernelLines,
+  formatOpportunityLines,
+} from "../compass/CompassPlatformContext.js";
+import { buildOpportunities, opportunityWorldValueKeys, projectForSurface } from "../lib/opportunityEngine.js";
+import { parseIntentMode } from "../lib/intentModes.js";
+import { certifiedLayoverSnapshot, isDegradedRefusal } from "../services/airport/LayoverSnapshot.js";
 import {
   ALGORITHM_VERSION_KEY,
   COMPASS_RANKING_ALGORITHM_VERSION,
@@ -1075,6 +1086,8 @@ const ITINERARY_INTENT_DIRECTIVE =
   'The user is asking for an itinerary. Build a day-by-day plan and set payload to the "itinerary" type from the response format (destination + days, each day with a label and highlights). Use tools first when you need real places to ground the plan.';
 
 const askBodySchema = z.object({
+  /** Sensing §8 intent mode (lib/intentModes): right_now · tonight · explore · quiet · social · high_energy · nearby · trip. Validated THERE; off-vocabulary ⇒ no mode. */
+  intentMode: z.string().max(40).optional(),
   prompt:              z.string().min(1).max(1000),
   city:                z.string().max(80).optional(),
   conversationId:      z.string().uuid().optional(),
@@ -1381,6 +1394,10 @@ router.post("/compass/ask", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
+  // ONE clock read for the turn (splitClockGuard): every "now" below derives
+  // from it, so the media context, the kernel and the opportunity window
+  // cannot disagree about the time by a tick.
+  const turnNowMs = Date.now();
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
@@ -1406,7 +1423,7 @@ router.post("/compass/ask", async (req, res) => {
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid request");
     return;
   }
-  const { prompt, city, conversationId: incomingConvId, tripId, circleOwnerId, mediaId, stream } = parsed.data;
+  const { prompt, city, conversationId: incomingConvId, tripId, circleOwnerId, mediaId, stream, intentMode } = parsed.data;
 
   // ── Conversation resolve ──────────────────────────────────────────────────
   let conversationId: string;
@@ -1466,6 +1483,8 @@ router.post("/compass/ask", async (req, res) => {
   let weatherBrief:          string   | null = null;
   let followedHashtagSlugs:  string[]        = [];
   let topItemsContext:        string[]        = [];
+  /** Place ids among the top items — the subjects the shared context kernel is assembled for. */
+  let topPlaceIds:            string[]        = [];
   let structuredLines:        string[]        = [];
   let modeWeightingLines:     string[]        = [];
 
@@ -1496,6 +1515,14 @@ router.post("/compass/ask", async (req, res) => {
     const ctx        = buildCompassContext(effProfile, signals);
     const rawItems   = await hydrateCompassItems(sc, effProfile);
     const { section: feedSection } = await buildSection("for_you", rawItems, effProfile, ctx, sc);
+    // The kernel's subjects are canonical place ids (the id the live layer keys
+    // on), not the feed's `place:<id>` item keys.
+    topPlaceIds = feedSection.items
+      .slice(0, 5)
+      .map((itm: any) => (itm.item ?? {}) as Record<string, unknown>)
+      .filter((d) => d.type === "place")
+      .map((d) => String((d.data as Record<string, unknown> | null)?.id ?? String(d.id ?? "").replace(/^place:/, "")))
+      .filter((id) => id.length > 0);
     topItemsContext = feedSection.items.slice(0, 5).map((itm: any) => {
       const d    = (itm.item ?? {}) as Record<string, unknown>;
       // `title` here can be raw UGC (a post body, a host-entered event title), so
@@ -1569,7 +1596,7 @@ router.post("/compass/ask", async (req, res) => {
   if (mediaId) {
     try {
       const mediaViewer = await resolveMediaViewer(sc, user.id, { needFollows: true });
-      const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, Date.now());
+      const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, turnNowMs);
       if (mediaCtx) ctxLines.push(...formatMediaContextLines(mediaCtx));
     } catch { /* non-fatal — proceed without media context */ }
   }
@@ -1620,6 +1647,77 @@ router.post("/compass/ask", async (req, res) => {
     });
     ctxLines.push(...projectedLines);
   } catch { /* non-fatal — proceed without projected memory */ }
+
+  // ── The shared platform layer (census-compass CCL-05 / CCL-06 / CX-10 / CX-11)
+  // `docs/specs/upgrades-v2/01-COMPASS-v2.md:13`: authorized request → EXISTING
+  // context assembly → shared world/experience/forecast/opportunity projections
+  // → the existing ranking owner (the "Verified nearby places" above) → grounded
+  // explanation. Three blocks, each additive, each fail-soft, each honest about
+  // a source it could not read. Never fatal.
+  //
+  // (a) CCL-06 — Home's server-built current-context projection is READ here,
+  //     not rebuilt: one builder (routes/compassHome.ts), two consumers.
+  try {
+    const home = await buildCompassHomeProjection(sc, user.id, {
+      localHour: await localHourForRequest(sc, user.id, req),
+    });
+    ctxLines.push(...formatHomeProjectionLines(home));
+  } catch { /* non-fatal — proceed without the Home projection */ }
+
+  // (a2) CL-03 — a traveller in a live layover is advised against the ONE
+  //      certified LayoverSnapshot (services/airport/LayoverSnapshot), never a
+  //      time budget of Compass's own. Proactive: the deadline must not depend
+  //      on the model electing to call the tool. A store that could not be read
+  //      is said so; "no live layover" is silent.
+  try {
+    const snap = await certifiedLayoverSnapshot(sc, user.id);
+    if (snap.ok) {
+      const s = snap.snapshot;
+      ctxLines.push(
+        "[Layover \u2014 certified snapshot]",
+        `Verdict ${s.verdict}; return state ${s.returnState}; tier ${s.tier}; usable ${s.usableMinutes} min; ` +
+          `hard return-by ${s.hardReturnBy} (${s.minutesToHardReturn} min from now); landside ${s.landsideOpen ? "open" : `closed (${s.landsideClosedReason ?? "unstated"})`}` +
+          (s.unknowns.length ? `; unknowns: ${s.unknowns.join(", ")}` : ""),
+      );
+    } else if (isDegradedRefusal(snap.reason)) {
+      ctxLines.push("[Layover \u2014 certified snapshot]", `Could not be read (${snap.reason}); do not assume the traveller is not in a layover.`);
+    }
+  } catch { /* non-fatal */ }
+
+  // (b) CX-10 — the platform Context Kernel (lib/contextKernel), assembled for
+  //     the subjects this turn already names. Pure; no flag. The live world read
+  //     inside it is gated by its own Live gates and REPORTS an unreadable world
+  //     rather than hiding it.
+  let askKernel: Awaited<ReturnType<typeof assembleAskKernel>> | null = null;
+  try {
+    askKernel = await assembleAskKernel(sc, user.id, topPlaceIds, {
+      utcOffsetMinutes: tzOffsetForRequest(req),
+      now: new Date(turnNowMs),
+      // §8 intent mode (CX-02): parsed by the shared parser; an off-vocabulary
+      // value is no mode, never a 400.
+      intentMode: parseIntentMode(intentMode),
+    });
+    ctxLines.push(...formatKernelLines(askKernel));
+  } catch { /* non-fatal — proceed without the kernel */ }
+
+  // (c) CX-11 — downstream of the Opportunity Engine (lib/opportunityEngine),
+  //     which answers only behind its pilot flag (migration 2840, seeded
+  //     FALSE). Literal name so check-flag-polarity resolves the read;
+  //     `*_enabled` ⇒ capability, fail-closed. The §5 prohibition on world
+  //     values is enforced on what would reach the prompt, exactly as
+  //     routes/opportunities.ts enforces it on the wire.
+  try {
+    if (askKernel && (await isPlatformFlagEnabled(sc, "opportunity_engine_enabled"))) {
+      const nowMs = askKernel.kernel.temporal.nowIso ? Date.parse(askKernel.kernel.temporal.nowIso) : turnNowMs;
+      const { opportunities, refusals } = buildOpportunities(askKernel.kernel, nowMs);
+      const wire = projectForSurface(opportunities, "compass");
+      if (opportunityWorldValueKeys(wire).length === 0) {
+        ctxLines.push(...formatOpportunityLines(wire, refusals));
+      } else {
+        req.log.error({ keys: opportunityWorldValueKeys(wire) }, "compass/ask: opportunity projection carried a world value — refused");
+      }
+    }
+  } catch { /* non-fatal — proceed without opportunities */ }
 
   // ── Phase 12: live-session grounding ──────────────────────────────────────
   // While a live session is active, chat answers are grounded in the rolling
@@ -1733,7 +1831,7 @@ router.post("/compass/ask", async (req, res) => {
       } catch { /* non-fatal */ }
       // Phase 6: bounded-cadence memory compression (fire-and-forget)
       compressConversationIfDue(sc, user.id, conversationId).catch(() => {});
-      res.write(`data: ${JSON.stringify({ done: true, conversationId, message, promptVersion: COMPASS_ASK_PROMPT_VERSION, payload, quickActions, pendingProposals: proposals, uiBlocks, meta: { droppedInventedIds: uiBlockMeta.droppedInventedIds, groundingViolations: _grounded.violations.map((v) => v.kind) }, intent: intentResult })}\n\n`);
+      res.write(`data: ${JSON.stringify({ done: true, conversationId, message, promptVersion: COMPASS_ASK_PROMPT_VERSION, payload, quickActions, pendingProposals: proposals, uiBlocks, meta: { droppedInventedIds: uiBlockMeta.droppedInventedIds, groundingViolations: _grounded.violations.map((v) => v.kind), toolsUsed: toolLog.map((t) => t.name) }, intent: intentResult })}\n\n`);
       res.end();
     } catch (err) {
       if (clientAbort.signal.aborted) {
@@ -1804,7 +1902,7 @@ router.post("/compass/ask", async (req, res) => {
     } catch { /* non-fatal */ }
     // Phase 6: bounded-cadence memory compression (fire-and-forget)
     compressConversationIfDue(sc, user.id, conversationId).catch(() => {});
-    res.json({ conversationId, message, payload: payload ?? null, quickActions, pendingProposals: proposals, uiBlocks, meta: { droppedInventedIds: uiBlockMeta.droppedInventedIds, groundingViolations: _grounded.violations.map((v) => v.kind) }, promptVersion: COMPASS_ASK_PROMPT_VERSION, intent: intentResult });
+    res.json({ conversationId, message, payload: payload ?? null, quickActions, pendingProposals: proposals, uiBlocks, meta: { droppedInventedIds: uiBlockMeta.droppedInventedIds, groundingViolations: _grounded.violations.map((v) => v.kind), toolsUsed: toolLog.map((t) => t.name) }, promptVersion: COMPASS_ASK_PROMPT_VERSION, intent: intentResult });
   } catch (err) {
     req.log.error({ err, userId: user.id }, "compass/ask: LLM call failed");
     // spec §1 `system-event`: the conversation records that the assistant was

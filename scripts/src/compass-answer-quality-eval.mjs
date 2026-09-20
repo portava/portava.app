@@ -32,7 +32,7 @@
  *        [--emit-adjudication <file.json>]   write the 76-slot skeleton, all null
  */
 import {
-  evaluateTierA, evaluateTierB, verdictOf, formatReport, EXIT_CODE, EVAL_QUESTIONS,
+  evaluateTierA, evaluateTierB, evaluateTierC, verdictOf, formatReport, EXIT_CODE, EVAL_QUESTIONS,
   collectReferencedIds, blockItemCount,
   ROADMAP_MEASURES, RUN_LEVEL_MEASURES, ADJUDICATION_SIZE,
 } from "./compass-eval-criteria.mjs";
@@ -176,6 +176,11 @@ async function main() {
         quickActions: (body.quickActions ?? []).slice(0, 4),
         intent: body.intent ?? null,
         promptVersion: body.promptVersion ?? null,
+        // census-compass CPH-EVAL: the tools the turn actually executed, as the
+        // route now reports them (meta.toolsUsed), so `tool_selection` is a
+        // measurement against an expected table rather than a reader's guess.
+        // ABSENT (an older server) stays null and is reported, never []`.
+        toolsUsed: Array.isArray(body.meta?.toolsUsed) ? body.meta.toolsUsed : null,
         // Full body keys for debugging
         _bodyKeys: Object.keys(body),
       };
@@ -204,9 +209,10 @@ async function main() {
       adjudication = JSON.parse(readFileSync(process.argv[adjIdx + 1], "utf8"));
     }
     const tierA = evaluateTierA(results);
-    const tierB = evaluateTierB(adjudication);
+    const tierC = evaluateTierC(results);
+    const tierB = evaluateTierB(adjudication, tierC);
     const verdict = verdictOf(tierA, tierB);
-    console.log(formatReport(tierA, tierB, verdict));
+    console.log(formatReport(tierA, tierB, verdict, tierC));
     exitCode = EXIT_CODE[verdict];
 
     // The adjudication is 76 verdicts and nobody is going to hand-write that

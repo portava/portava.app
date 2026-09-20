@@ -203,12 +203,34 @@ export class NotificationRouter {
           notificationId: notification.id,
           category:       notification.category,
           eventType:      notification.eventType,
+          // The row's priority is the Attention Engine's urgency fallback for
+          // a world change whose producer declared none (CompassNotificationEngine).
+          priority:       notification.priority,
           actionUrl:      notification.actionUrl ?? undefined,
           ...(notification.metadata ?? {}),
         },
       };
 
       const decision = await evaluateNotification(this.db, userId, compassPayload);
+
+      if (decision.outcome === "wall" || decision.outcome === "silent" || decision.outcome === "ignore") {
+        // Sensing §15: the Attention Engine routed a world change AWAY from a
+        // push. WALL — the notification row already persisted by
+        // NotificationService IS the durable in-app surface, so the change
+        // stays visible there and nothing interrupts. SILENT / IGNORE — the
+        // same row exists and is not pushed. The push attempt is logged with
+        // the route and the engine's reasons, so an audit can tell "deferred
+        // to the in-app surface" from "the user asked us not to".
+        logger.debug(
+          { notificationId: notification.id, outcome: decision.outcome, reasons: decision.attention?.reasons ?? [] },
+          "NotificationRouter: world change routed by the Attention Engine — not pushed",
+        );
+        await this.logAttempt(
+          notification.id, userId, "push", "suppressed",
+          decision.suppressionReason ?? `attention:${decision.outcome}`,
+        );
+        return;
+      }
 
       if (decision.outcome !== "sent") {
         logger.debug(

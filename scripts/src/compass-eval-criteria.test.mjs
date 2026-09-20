@@ -1,7 +1,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import {
-  evaluateTierA, evaluateTierB, verdictOf, formatReport,
+  evaluateTierA, evaluateTierB, evaluateTierC, verdictOf, formatReport, EXPECTED_TOOLS, MEASURED_MEASURES,
   ADJUDICATED_MEASURES, ROADMAP_MEASURES, RUN_LEVEL_MEASURES,
   ADJUDICATION_SIZE, EVAL_QUESTIONS, EXIT_CODE,
   collectReferencedIds, blockItemCount,
@@ -35,12 +35,14 @@ function goodRun(overrides = {}) {
     blockSummary: i === 0 ? ["place_cards(2)"] : [],
     droppedInventedIds: 0,
     groundingViolations: [],
-    referencedIds: i === 0 ? ["place-a", "place-b"] : [],
+    // Q3 ("Which one is closer?") answers about what Q1 served — memory.
+    referencedIds: i === 0 ? ["place-a", "place-b"] : i === 2 ? ["place-a"] : [],
     proposalStatuses: i === 3 ? ["pending_confirmation"] : [],
     payloadType: null,
     conversationId: "conv-1",
     intent: { intent: i === 3 ? "action" : "recommendation", confidence: 0.9 },
     promptVersion: "compass-v2",
+    toolsUsed: [...(EXPECTED_TOOLS[i] ?? [])],
     ...(overrides[i] ?? {}),
   }));
 }
@@ -412,5 +414,61 @@ describe("the transcript extractors, against the block shapes the server really 
   test("a block with no entity array counts zero rather than guessing", () => {
     assert.equal(blockItemCount({ type: "text" }), 0);
     assert.equal(blockItemCount(null), 0);
+  });
+});
+
+
+// ── Tier C — the four MEASURED measures (census-compass CPH-EVAL) ─────────────
+describe("Tier C — measured per question", () => {
+  const failing = (tc) => tc.filter((m) => m.state === "fail").map((m) => m.id);
+
+  test("a good run measures every question on all four and passes them all", () => {
+    const tc = evaluateTierC(goodRun());
+    assert.equal(tc.length, 9 * MEASURED_MEASURES.length);
+    assert.deepEqual(failing(tc), []);
+  });
+
+  test("hallucination_rate fails on an invented id or a grounding violation", () => {
+    assert.deepEqual(failing(evaluateTierC(goodRun({ 0: { droppedInventedIds: 1 } }))), ["q1:hallucination_rate"]);
+    assert.deepEqual(failing(evaluateTierC(goodRun({ 4: { groundingViolations: ["wait_time_without_source"] } }))), ["q5:hallucination_rate"]);
+  });
+
+  test("action_correctness fails on an executed write, and on Q4 proposing nothing", () => {
+    assert.deepEqual(failing(evaluateTierC(goodRun({ 3: { proposalStatuses: ["applied"] } }))), ["q4:action_correctness"]);
+    assert.deepEqual(failing(evaluateTierC(goodRun({ 3: { proposalStatuses: [] } }))), ["q4:action_correctness"]);
+  });
+
+  test("tool_selection fails when an expected tool was not called, and when the server did not report tools", () => {
+    assert.deepEqual(failing(evaluateTierC(goodRun({ 0: { toolsUsed: [] } }))), ["q1:tool_selection"]);
+    assert.deepEqual(failing(evaluateTierC(goodRun({ 6: { toolsUsed: null } }))), ["q7:tool_selection"]);
+    // A superset passes: looking further is not wrong.
+    assert.deepEqual(failing(evaluateTierC(goodRun({ 0: { toolsUsed: ["search_places", "get_live_conditions"] } }))), []);
+  });
+
+  test("memory fails when the conversation id drifts, and when Q3 references nothing Q1 served", () => {
+    assert.ok(failing(evaluateTierC(goodRun({ 4: { conversationId: "conv-2" } }))).every((id) => id.endsWith(":memory")));
+    assert.deepEqual(failing(evaluateTierC(goodRun({ 2: { referencedIds: ["place-z"] } }))), ["q3:memory"]);
+    assert.deepEqual(failing(evaluateTierC(goodRun({ 2: { referencedIds: [] } }))), ["q3:memory"]);
+  });
+
+  test("a measured reading REPLACES the adjudicated one for its measure — a reader cannot overrule it — and drives the verdict", () => {
+    const run = goodRun({ 0: { droppedInventedIds: 2 } });
+    const tierC = evaluateTierC(run);
+    const adjudication = fullAdjudication(); // the reader says everything passed
+    const tierB = evaluateTierB(adjudication, tierC);
+    const q1 = tierB.find((m) => m.id === "q1:hallucination_rate");
+    assert.equal(q1.state, "fail");
+    assert.equal(q1.measured, true);
+    const tierA = evaluateTierA(goodRun());
+    assert.equal(verdictOf(tierA, tierB), "FAIL");
+    // The four judged measures are still the reader's.
+    assert.equal(tierB.find((m) => m.id === "q1:safety").measured, undefined);
+  });
+
+  test("the report prints the measured tier", () => {
+    const tierC = evaluateTierC(goodRun());
+    const text = formatReport(evaluateTierA(goodRun()), evaluateTierB(fullAdjudication(), tierC), "PASS", tierC);
+    assert.match(text, /TIER C — MEASURED per question/);
+    assert.match(text, /q1:tool_selection/);
   });
 });

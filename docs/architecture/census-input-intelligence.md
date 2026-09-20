@@ -421,7 +421,7 @@ of the field→mode table.
 | G43 | `completion` | C | `projection.ts:213-229` — `Search "<q>"` → `submit_search`. |
 | G44 | `recent` | C | `projection.ts:177-207` (`type: 'recent'` for zero-char defaults); `personalization.ts:295-332`. |
 | G45 | `personalized` | C | `personalization.ts:295-332` `buildLearnedGeoInjections`. ☠prod. |
-| G46 | `structured_value` | **N** | Declared in the union (`types.ts:88-98`) and ranked (`projection.ts:313`) — and **never emitted**. No projector produces `type: 'structured_value'` and no registry policy lists it in `allowedSuggestionTypes`. The spec's examples ("Friday 8-11 PM; English; Nightlife interest") have no producer. (The `set_structured_value` *action* is §43 and does exist.) |
+| G46 | `structured_value` | **N** | Declared in the union (`types.ts:88-98`) and ranked (`projection.ts:325`) — and **never emitted**. No projector produces `type: 'structured_value'` and no registry policy lists it in `allowedSuggestionTypes`. The spec's examples ("Friday 8-11 PM; English; Nightlife interest") have no producer. (The `set_structured_value` *action* is §43 and does exist.) |
 | G47 | `action` | C | `validationSuite.ts:305-325`; `semanticIntent.ts:277-300`. |
 | G48 | `correction` | C | `validationSuite.ts:194-230` (city-country), `:265-287` (hashtag). |
 | G49 | `validation` | C | `socialIdentity.ts:444-470` (username); `validationSuite.ts:232-262` (trip dates). |

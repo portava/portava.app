@@ -399,13 +399,36 @@ export interface TimeSliceProfile {
   distinctActors?: number;
 }
 
+/**
+ * census-compass CPH-15 — the SEASON dimension. One profile per local month
+ * ("01".."12"), with the same category breakdown a time slice carries, so the
+ * ranking boost can vary by season the way it varies by weekday × daypart.
+ * Rows built before this shape carried a bare count per month; `monthProfile`
+ * reads both.
+ */
+export interface MonthProfile {
+  count: number;
+  categories: Record<string, number>;
+}
+
 export interface CityWorldModel {
   city: string;
   timeSlices: Record<string, TimeSliceProfile>;
-  monthly: Record<string, number>;
+  monthly: Record<string, number | MonthProfile>;
   topCategories: string[];
   sampleSize: number;
   builtAt: string;
+}
+
+/** A month's profile whichever shape the row carries; a bare count has no categories. */
+export function monthProfile(model: CityWorldModel, month: string): MonthProfile | null {
+  const raw = model.monthly?.[month];
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw === "number") return raw > 0 ? { count: raw, categories: {} } : null;
+  if (typeof raw === "object" && typeof (raw as MonthProfile).count === "number") {
+    return { count: (raw as MonthProfile).count, categories: (raw as MonthProfile).categories ?? {} };
+  }
+  return null;
 }
 
 export type CityConfidenceTier = "deep" | "moderate" | "thin";
@@ -601,6 +624,7 @@ export async function buildGraphFromSources(
         const slice = timeSliceKey(new Date(at), city, { lat: r.lat, lng: r.lng });
         batch.node("time_slice", `${city}|${slice}`, city, { slice });
         batch.edge({ src_type: "city", src_key: city, dst_type: "time_slice", dst_key: `${city}|${slice}`, edge_type: "active_during:exploring", at });
+        monthEdge(batch, city, new Date(at), { lat: r.lat, lng: r.lng }, "exploring", at);
         // IG-07: a person→time_slice `active_in` edge, deduped by the edge
         // identity index per (person, slice), so counting these rows per slice
         // yields the DISTINCT-actor count the rhythm k-anon gate needs — the
@@ -663,6 +687,7 @@ export async function buildGraphFromSources(
         const slice = timeSliceKey(new Date(at), city, { lat: r.location_lat, lng: r.location_lng });
         batch.node("time_slice", `${city}|${slice}`, city, { slice });
         batch.edge({ src_type: "city", src_key: city, dst_type: "time_slice", dst_key: `${city}|${slice}`, edge_type: `active_during:${category.toLowerCase()}`, at });
+        monthEdge(batch, city, new Date(at), { lat: r.location_lat, lng: r.location_lng }, category.toLowerCase(), at);
       }
     }
   } catch { /* fail-soft */ }
@@ -817,6 +842,7 @@ export async function buildGraphFromSources(
           const slice = timeSliceKey(new Date(at), city, { lat: r.location_lat, lng: r.location_lng });
           batch.node("time_slice", `${city}|${slice}`, city, { slice });
           batch.edge({ src_type: "city", src_key: city, dst_type: "time_slice", dst_key: `${city}|${slice}`, edge_type: "active_during:experience", at });
+          monthEdge(batch, city, new Date(at), { lat: r.location_lat, lng: r.location_lng }, "experience", at);
           batch.edge({ src_type: "person", src_key: String(r.owner_id), dst_type: "time_slice", dst_key: `${city}|${slice}`, edge_type: "active_in", at });
         }
       }
@@ -893,6 +919,29 @@ export async function buildGraphFromSources(
  * (city —active_during→ time_slice edges carry the category + timing of every
  * observation) and upsert them into compass_city_models.
  */
+/**
+ * CPH-15 — the season edge: city → month_slice, typed `active_during_month:
+ * <category>`, keyed on the city's LOCAL month (`localMonthKey`), written
+ * beside every time-slice edge so the two dimensions are folded from the same
+ * observations. A separate node type rather than a wider time-slice key, so
+ * the existing `time_slice` identity (and every row under it) is untouched.
+ */
+function monthEdge(
+  batch: GraphBatch,
+  city: string,
+  at: Date,
+  coords: CityCoords | null,
+  category: string,
+  atIso: string,
+): void {
+  // A month is a time slice at a coarser grain: the node stays `time_slice`
+  // (the CHECK on node_type admits no new kind without a migration) with the
+  // month in its key and attrs, and the edge type tells the two folds apart.
+  const month = localMonthKey(at, city, coords);
+  batch.node("time_slice", `${city}|m:${month}`, city, { month });
+  batch.edge({ src_type: "city", src_key: city, dst_type: "time_slice", dst_key: `${city}|m:${month}`, edge_type: `active_during_month:${category}`, at: atIso });
+}
+
 export async function buildCityWorldModels(db: SupabaseClient): Promise<number> {
   const { data } = await db
     .from("compass_graph_edges")
@@ -919,7 +968,31 @@ export async function buildCityWorldModels(db: SupabaseClient): Promise<number> 
     }
   } catch { /* fail-soft */ }
 
-  const perCity = new Map<string, { slices: Record<string, TimeSliceProfile>; monthly: Record<string, number>; catTotals: Record<string, number>; sample: number }>();
+  // CPH-15 — the season profiles, from the month edges (city-local months).
+  const monthlyByCity = new Map<string, Record<string, MonthProfile>>();
+  try {
+    const { data: monthEdges } = await db
+      .from("compass_graph_edges")
+      .select("src_key, dst_key, edge_type, observed_count")
+      .like("edge_type", "active_during_month:%")
+      .limit(20000);
+    for (const r of (monthEdges as any[]) ?? []) {
+      const city = String(r.src_key ?? "");
+      const dstKey = String(r.dst_key ?? "");           // "<city>|m:<MM>"
+      const month = dstKey.includes("|m:") ? dstKey.split("|m:").pop()! : "";
+      if (!city || !/^\d{2}$/.test(month)) continue;
+      const count = Number(r.observed_count ?? 1) || 1;
+      const category = (String(r.edge_type ?? "").split(":")[1] ?? "general").toLowerCase() || "general";
+      const months = monthlyByCity.get(city) ?? {};
+      const mp = months[month] ?? { count: 0, categories: {} };
+      mp.count += count;
+      mp.categories[category] = (mp.categories[category] ?? 0) + count;
+      months[month] = mp;
+      monthlyByCity.set(city, months);
+    }
+  } catch { /* fail-soft: no season profile this build */ }
+
+  const perCity = new Map<string, { slices: Record<string, TimeSliceProfile>; monthly: Record<string, MonthProfile>; catTotals: Record<string, number>; sample: number }>();
 
   for (const r of (data as any[]) ?? []) {
     const city = String(r.src_key ?? "");
@@ -938,12 +1011,9 @@ export async function buildCityWorldModels(db: SupabaseClient): Promise<number> 
     entry.slices[slice] = sp;
     entry.catTotals[category] = (entry.catTotals[category] ?? 0) + count;
     entry.sample += count;
-    for (const ts of [r.first_seen, r.last_seen]) {
-      if (ts) {
-        const m = String(ts).slice(5, 7);
-        if (m) entry.monthly[m] = (entry.monthly[m] ?? 0) + 1;
-      }
-    }
+    // The season profile comes from the month edges above (city-local month,
+    // per category), not from slicing UTC timestamps out of first/last seen.
+    entry.monthly = monthlyByCity.get(city) ?? entry.monthly;
     perCity.set(city, entry);
   }
 
@@ -1001,13 +1071,52 @@ export async function getCityWorldModel(
 
 /** Max bounded boost the world model may add to a final score (like memoryBoost). */
 export const WORLD_MODEL_BOOST_MAX = 5;
+/**
+ * CPH-15 — the SEASON addend's ceiling, a documented tunable beside
+ * WORLD_MODEL_BOOST_MAX: smaller, because a month is a coarser signal than a
+ * weekday × daypart slice.
+ */
+export const SEASON_BOOST_MAX = 2;
 
 /** Slices with fewer observations than this contribute NO boost (honesty). */
 export const MIN_SLICE_SAMPLE = 3;
 
 export interface WorldModelAnnotation {
-  boost: number;                       // 0..WORLD_MODEL_BOOST_MAX
+  boost: number;                       // 0..WORLD_MODEL_BOOST_MAX + SEASON_BOOST_MAX
   factor: RankingFactor | null;
+  /** CPH-15 — the season addend, reported separately so "varies by season" is observable. */
+  seasonBoost: number;                 // 0..SEASON_BOOST_MAX
+  seasonFactor: RankingFactor | null;
+}
+
+/**
+ * CPH-15 — bounded season addend: the SAME item scores differently in
+ * different months when the city's month profile says its category is what
+ * people do there then. Pure; 0 when the month is under-sampled or unmatched.
+ */
+export function seasonBoostForItem(item: CompassItem, model: CityWorldModel | null, at: Date): { boost: number; factor: RankingFactor | null } {
+  try {
+    if (!model) return { boost: 0, factor: null };
+    const month = localMonthKey(at, model.city);
+    const profile = monthProfile(model, month);
+    if (!profile || profile.count < MIN_SLICE_SAMPLE) return { boost: 0, factor: null };
+    let matched = 0;
+    let matchedCat: string | null = null;
+    for (const tok of itemCategoryTokens(item)) {
+      const c = profile.categories[tok];
+      if (c && c > 0) { matched += c; if (!matchedCat) matchedCat = tok; }
+    }
+    if (matched === 0) return { boost: 0, factor: null };
+    const share = Math.min(1, matched / profile.count);
+    const boost = Math.round(share * SEASON_BOOST_MAX * 100) / 100;
+    if (boost <= 0) return { boost: 0, factor: null };
+    return {
+      boost,
+      factor: { key: "city_season", label: `${model.city} leans into ${matchedCat} at this time of year`, weight: share, detail: `month ${month}` },
+    };
+  } catch {
+    return { boost: 0, factor: null };
+  }
 }
 
 function itemCategoryTokens(item: CompassItem): string[] {
@@ -1031,10 +1140,12 @@ export function worldModelBoostForItem(
   model: CityWorldModel | null,
   at: Date,
 ): WorldModelAnnotation {
+  const season = seasonBoostForItem(item, model, at);
+  const none: WorldModelAnnotation = { boost: season.boost, factor: null, seasonBoost: season.boost, seasonFactor: season.factor };
   try {
-    if (!model) return { boost: 0, factor: null };
+    if (!model) return { boost: 0, factor: null, seasonBoost: 0, seasonFactor: null };
     const slice = model.timeSlices[timeSliceKey(at, model.city)];
-    if (!slice || slice.count < MIN_SLICE_SAMPLE) return { boost: 0, factor: null };
+    if (!slice || slice.count < MIN_SLICE_SAMPLE) return none;
 
     const tokens = itemCategoryTokens(item);
     let matched = 0;
@@ -1046,24 +1157,26 @@ export function worldModelBoostForItem(
         if (!matchedCat) matchedCat = tok;
       }
     }
-    if (matched === 0) return { boost: 0, factor: null };
+    if (matched === 0) return none;
 
     const share = Math.min(1, matched / slice.count);
-    const boost = Math.round(share * WORLD_MODEL_BOOST_MAX * 100) / 100;
-    if (boost <= 0) return { boost: 0, factor: null };
+    const rhythm = Math.round(share * WORLD_MODEL_BOOST_MAX * 100) / 100;
+    if (rhythm <= 0) return none;
 
     const sliceKey = timeSliceKey(at, model.city);
     return {
-      boost,
+      boost: Math.round((rhythm + season.boost) * 100) / 100,
       factor: {
         key:    "city_rhythm",
         label:  `${model.city} is usually into ${matchedCat} around this time`,
         weight: share,
         detail: sliceKey.replace(":", " "),
       },
+      seasonBoost: season.boost,
+      seasonFactor: season.factor,
     };
   } catch {
-    return { boost: 0, factor: null };
+    return { boost: 0, factor: null, seasonBoost: 0, seasonFactor: null };
   }
 }
 
@@ -1264,9 +1377,14 @@ export async function buildDestinationContextLines(
         );
       }
       const month = localMonthKey(at, city);
-      const monthCount = model.monthly[month] ?? 0;
-      if (monthCount > 0) {
-        lines.push(`Seasonality: ${city} has recorded activity this month in past data (${monthCount} signals).`);
+      const season = monthProfile(model, month);
+      if (season && season.count > 0) {
+        const top = Object.entries(season.categories).sort(([, a], [, b]) => b - a).slice(0, 3).map(([k]) => k);
+        lines.push(
+          top.length > 0
+            ? `Seasonality: in month ${month} ${city} leans toward ${top.join(", ")} (community history, ${season.count} signals).`
+            : `Seasonality: ${city} has recorded activity this month in past data (${season.count} signals).`,
+        );
       }
     }
 

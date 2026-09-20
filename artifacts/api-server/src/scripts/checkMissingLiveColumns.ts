@@ -114,6 +114,10 @@ const ALLOWLIST = new Set<string>([
   // against a database without them. Remove both entries when 2996 is applied
   // to production and recorded in production-applied-migrations.json.
   "compass_conversations.trip_id",
+  // PENDING LIVE APPLY (2997): CPV2-11 recommendation lineage; named only where the probe finds them.
+  "compass_served_recommendations.revoked_at",
+  "compass_served_recommendations.revocation_reason",
+  "compass_outcome_events.weight_nudge",
   "compass_conversations.status",
   "plan_checkins.plan_item_id",         // live: plan_geofence_id
   "plan_attendance_events.plan_item_id", // live: plan_geofence_id

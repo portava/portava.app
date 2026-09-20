@@ -274,11 +274,9 @@ export {
   type AiWritingProposal,
 } from './compass/aiWriting.ts';
 export {
-  COMPASS_STARTERS,
-  buildCompassStarters,
+  startersFromSuggestions,
   isCompassPromptContext,
   type CompassStarter,
-  type BuildCompassStartersOptions,
 } from './compass/compassPrompt.ts';
 export {
   registerCompassFields,

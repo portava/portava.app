@@ -1173,7 +1173,7 @@ before its commit; the mutations are listed in §2.3.
   (`lib/compassDecision.ts:244#truthOf(`; `lib/experienceTruth.ts:159#composeTruth(`) — and a sentence built from templates
   over the claim values with the truth class always in it, a vibe only as
   "reported as", and no template with a behaviour verb, so the engine cannot
-  produce "everyone is dancing" (`lib/compassDecision.ts:459#summariseDecision(`;
+  produce "everyone is dancing" (`lib/compassDecision.ts:460#summariseDecision(`;
   `test/compassDecision.test.ts:305#everyone`). Experience value is
   intent-relative — quiet, social, high energy — and UNKNOWN with no intent:
   the engine does not read busy as good (`lib/compassDecision.ts:324#experienceValue(`;
@@ -1348,33 +1348,33 @@ in §3.3.
   (`services/wall/LiveForYouService.ts:212#buildLiveForYou(`); the record of
   transitions is a different object on a different route, so neither
   duplicates the other.
-- **§15 the Attention Engine (S102)** — `lib/attentionEngine.ts:42#ATTENTION_ROUTES`
-  is NOTIFY / WALL / SILENT / IGNORE, and `lib/attentionEngine.ts:121#routeAttention(`
+- **§15 the Attention Engine (S102)** — `lib/attentionEngine.ts:45#ATTENTION_ROUTES`
+  is NOTIFY / WALL / SILENT / IGNORE, and `lib/attentionEngine.ts:146#routeAttention(`
   decides one moment for one viewer with every factor the row names on the
   decision (`test/attentionEngine.test.ts:63#factor`): novelty first — a
   moment the viewer has seen is IGNORE whatever else is true, a safety
-  activation included (`lib/attentionEngine.ts:134#already_seen`;
+  activation included (`lib/attentionEngine.ts:177#already_seen`;
   `test/attentionEngine.test.ts:70#seen`); half-life — past its relevance
   window IGNORE, most of the way through it stale news
-  (`lib/attentionEngine.ts:141#decayed`; `test/attentionEngine.test.ts:86#stale`);
+  (`lib/attentionEngine.ts:183#decayed`; `test/attentionEngine.test.ts:86#stale`);
   relevance — none is IGNORE, a saved place or trip stop may be interrupted
   for, a followed place reaches the Wall, merely nearby only when urgent
-  (`lib/attentionEngine.ts:57#NOTIFY_RELEVANCE_FLOOR`;
-  `lib/attentionEngine.ts:61#RELEVANCE_WEIGHT`;
+  (`lib/attentionEngine.ts:60#NOTIFY_RELEVANCE_FLOOR`;
+  `lib/attentionEngine.ts:64#RELEVANCE_WEIGHT`;
   `test/attentionEngine.test.ts:102#followed`); urgency from the transition
-  kind (`lib/attentionEngine.ts:69#URGENCY_OF`); availability — quiet hours
+  kind (`lib/attentionEngine.ts:72#URGENCY_OF`); availability — quiet hours
   or push off defer an urgent change to the Wall, and UNKNOWN availability is
   not availability: an unreadable consent defers too, it is never read as
-  consent (`lib/attentionEngine.ts:144#availability_unknown_deferred_to_wall`;
+  consent (`lib/attentionEngine.ts:186#availability_unknown_deferred_to_wall`;
   `test/attentionEngine.test.ts:122#UNKNOWN`); interruption cost against the
   attention budget — the interruptions already delivered in the window
-  exhaust it (`lib/attentionEngine.ts:146#budget_exhausted_deferred_to_wall`;
-  `lib/attentionEngine.ts:49#ATTENTION_BUDGET_PER_WINDOW`;
+  exhaust it (`lib/attentionEngine.ts:188#budget_exhausted_deferred_to_wall`;
+  `lib/attentionEngine.ts:52#ATTENTION_BUDGET_PER_WINDOW`;
   `test/attentionEngine.test.ts:127#budget`); and the safety override — an
   activation for a saved place or trip stop is NOTIFY through quiet hours,
   through an unknown consent read and past the budget, the same override the
   notification path's safety category has, and never past novelty
-  (`lib/attentionEngine.ts:139#safety_override`;
+  (`lib/attentionEngine.ts:181#safety_override`;
   `test/attentionEngine.test.ts:139#through`). The engine reads no clock and
   no database and sends nothing (`test/attentionEngine.test.ts:58#sends`).
 - **The route** — `GET /api/wall/moments` (`routes/wallMoments.ts:94#router.get(`)
@@ -2520,7 +2520,7 @@ absence.** `lib/discoveryLiveRank.ts` is a pure engine that grades one served
 row on §8's eight inputs — live ExperienceState, forecast, travel time,
 friction, compatibility, freshness, safety, and the composite Opportunity value
 — as seven axes plus a safety verdict
-(`lib/discoveryLiveRank.ts:369#gradeLiveRow`). Every world fact reaches it as a
+(`lib/discoveryLiveRank.ts:371#gradeLiveRow`). Every world fact reaches it as a
 `LiveClaimEnvelope` from the one gated read path, and is summarised by
 `summariseLiveState` and valued by `experienceValue` **imported from
 `lib/compassDecision`**, not restated — so Discovery cannot rank on a reading
@@ -2537,7 +2537,7 @@ turned red (§7.3):
   (`lib/discoveryLiveRank.ts:462`). No mode, no weight and no evidence
   combination can promote it; the suite asserts that over all eight modes.
 - **Absence is not quiet.** A row with no live reading is not scored at all
-  (`lib/discoveryLiveRank.ts:408#hasWorldEvidence`) and keeps its incoming
+  (`lib/discoveryLiveRank.ts:410#hasWorldEvidence`) and keeps its incoming
   position. A distance alone is not world evidence and never moves anything —
   letting it would have been a second, unaudited distance ranker beside
   `lib/discoveryPde`.
@@ -2553,7 +2553,7 @@ turned red (§7.3):
 Influence is bounded in POSITIONS, not in score units: each grade carries a
 signed influence in −1..1 and the ranker spends it against the incoming
 position, capped at `LIVE_RANK_MAX_POSITIONS`
-(`lib/discoveryLiveRank.ts:110#LIVE_RANK_MAX_POSITIONS`) over a head window of
+(`lib/discoveryLiveRank.ts:112#LIVE_RANK_MAX_POSITIONS`) over a head window of
 `LIVE_RANK_WINDOW` rows (`:112#LIVE_RANK_WINDOW`). A place nobody has reported
 on cannot be pushed off page one by one that has been, and a fully-evidenced
 place cannot travel from last to first — the suite places a perfect row last in
@@ -2584,7 +2584,7 @@ The route suite asserts both arms with the candidate projection on: the place
 with a reading carries `["crowd_busy"]`, the two without carry null.
 
 **(c) The eight intent modes are §8's, over one engine.**
-`lib/discoveryLiveRank.ts:99#DISCOVERY_INTENT_MODES` is the spec's list verbatim
+`lib/discoveryLiveRank.ts:103#DISCOVERY_INTENT_MODES` is the spec's list verbatim
 and in its order — Right Now, Tonight, Explore, Quiet, Social, High Energy,
 Nearby, Trip — and each mode is a weight vector over the SAME axes
 (`:152#INTENT_MODE_PROFILES`), never an axis of its own; the suite asserts the
@@ -2601,7 +2601,7 @@ is that intersection, and it is deliberately **not** a second feasibility
 engine: it changes `assess`'s INPUTS and its candidate set, and the existing
 `LayoverSafetyEngine` — the one that already holds the certified deadline —
 decides. A Live-qualified `queue.wait` is added to the card's activity time
-(`lib/layoverLiveIntersection.ts:190`), capped
+(`lib/layoverLiveIntersection.ts:195`), capped
 (`:117#QUEUE_CAP_MINUTES`); a Live-qualified `unsafe_density` or refused walk-in
 drops the card (`:179`); survivors order by intent-relative value with a window
 that will have decayed before arrival demoted, never dropped
@@ -2675,7 +2675,7 @@ not the only resolver in the tree, and the row is about the tree.
   now narrower than the truth and the truth is still on the right side of it.
 - **S12 (no coverage ≠ quiet)** holds C and gained a second enforcement point:
   an unobserved place is not scored, so it cannot be ranked as though it had been
-  observed and found empty (`lib/discoveryLiveRank.ts:408#hasWorldEvidence`).
+  observed and found empty (`lib/discoveryLiveRank.ts:410#hasWorldEvidence`).
 - **S16 (user dislike ≠ bad venue)** holds C: the three modules added here
   perform no write of any kind — `grep -nE "\.insert\(|\.upsert\(|\.update\(|\.delete\("`
   over all three returns nothing — and read no personal feedback table.
@@ -2719,11 +2719,11 @@ not the only resolver in the tree, and the row is about the tree.
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| S68 Rank using live ExperienceState, forecast, travel time, friction, compatibility, freshness, safety and Opportunity value | N | **C** | All eight inputs are axes of one pure engine (`lib/discoveryLiveRank.ts:369#gradeLiveRow`) over the one gated live read, reusing Compass's own `summariseLiveState` / `experienceValue` rather than restating them; wired into the REAL `GET /discovery` at both serve points and before the page slice (`routes/discovery.ts:1880#withDiscoveryLiveRank`, `:2291#withDiscoveryLiveRank`) behind 2850's FALSE flag; influence bounded in positions, absence never scored, "could not look" distinguishable from "saw nothing". Mutations B7-M1 to B7-M10 and B7-R1 to B7-R5 each red. |
+| S68 Rank using live ExperienceState, forecast, travel time, friction, compatibility, freshness, safety and Opportunity value | N | **C** | All eight inputs are axes of one pure engine (`lib/discoveryLiveRank.ts:371#gradeLiveRow`) over the one gated live read, reusing Compass's own `summariseLiveState` / `experienceValue` rather than restating them; wired into the REAL `GET /discovery` at both serve points and before the page slice (`routes/discovery.ts:1880#withDiscoveryLiveRank`, `:2291#withDiscoveryLiveRank`) behind 2850's FALSE flag; influence bounded in positions, absence never scored, "could not look" distinguishable from "saw nothing". Mutations B7-M1 to B7-M10 and B7-R1 to B7-R5 each red. |
 | S66 Safety constraints outrank opportunity/vibe; a dangerous place is never simultaneously promoted as "best move now" | W | **W** | **Built on three more surfaces and still W, deliberately.** The gap the row named is closed in CODE: Discovery's ranker reads safety state now — a Live-qualified `unsafe_density` demotes behind every other row before any score is compared (`lib/discoveryLiveRank.ts:462`), asserted over all eight modes and from first position — and on the layover surface the same reading removes the card (`lib/layoverLiveIntersection.ts:179`). It does not move because of **this census's own stricter rule for prohibitions** (see *"The rule for prohibitions"*): a "must never" is C when an artifact makes the violation unrepresentable or refuses it, and on a DEFAULT deployment nothing refuses it. Discovery's demotion is behind 2850, seeded FALSE; the layover drop is behind 2851, seeded FALSE; Compass's exclusion is behind an env constant whose own comment reads *"Default OFF"* (`src/compass/CompassLiveConstraints.ts:79#liveConstraintsEnabled`). Only the Map's unconditional priority sort (`lib/mapObjects.ts:335#safety`) holds everywhere, and §1's promotion-stripping addition to it is itself behind 2350. Four surfaces can refuse; one does. B7-M1 and B7-L3 red. |
 | S70 Server-built DiscoveryCandidate with why-now, why-for-user, confidence, freshness and truth class | W | **C** | The one field the row is named for has a producer: `whyNow` carries grounded reasons in the claims' own vocabulary (`lib/discoveryCandidate.ts:312#whyNowOf`) and is null — never `[]` — when no grade was computed or no reading was found (`:283#whyNowOf`); route-tested with the candidate projection on, both arms. The other four fields were already carried. B7-R5 red. |
-| S72 Intent modes — Right Now, Tonight, Explore, Quiet, Social, High Energy, Nearby, Trip — on the same shared intelligence | W | **C** | The spec's eight, verbatim and in order (`lib/discoveryLiveRank.ts:99#DISCOVERY_INTENT_MODES`), each a weight vector over the SAME axes of the SAME engine (`:152#INTENT_MODE_PROFILES`) — the suite asserts no mode has an axis of its own — and the crowd preference they declare is Compass's `experienceValue`, so "the same shared intelligence" is literal. Reachable as `GET /discovery?intentMode=…`; an unknown string is not honoured as a mode (B7-R4 red). |
-| S85 Layover Temporal Freedom Engine intersects feasibility with live Experience value, forecast, friction and safe-return | W | **C** | The row's finding was `grep -rn liveClaimRead services/airport/` → nothing. It reads it now, and intersects rather than competing: a live queue becomes minutes the EXISTING `LayoverSafetyEngine` rates against the certified deadline (`services/airport/LayoverRecommendationService.ts:496`, `lib/layoverLiveIntersection.ts:190`), a live `unsafe_density` or refused walk-in removes the card, a decaying window demotes and never drops, and a card with no reading is untouched. Driven through the real `generateRecommendations` (90 → 180 minutes under a 90-minute queue). B7-L1 to B7-L4 red. |
+| S72 Intent modes — Right Now, Tonight, Explore, Quiet, Social, High Energy, Nearby, Trip — on the same shared intelligence | W | **C** | The spec's eight, verbatim and in order (`lib/discoveryLiveRank.ts:103#DISCOVERY_INTENT_MODES`), each a weight vector over the SAME axes of the SAME engine (`:154#INTENT_MODE_PROFILES`) — the suite asserts no mode has an axis of its own — and the crowd preference they declare is Compass's `experienceValue`, so "the same shared intelligence" is literal. Reachable as `GET /discovery?intentMode=…`; an unknown string is not honoured as a mode (B7-R4 red). |
+| S85 Layover Temporal Freedom Engine intersects feasibility with live Experience value, forecast, friction and safe-return | W | **C** | The row's finding was `grep -rn liveClaimRead services/airport/` → nothing. It reads it now, and intersects rather than competing: a live queue becomes minutes the EXISTING `LayoverSafetyEngine` rates against the certified deadline (`services/airport/LayoverRecommendationService.ts:496`, `lib/layoverLiveIntersection.ts:195`), a live `unsafe_density` or refused walk-in removes the card, a decaying window demotes and never drops, and a card with no reading is untouched. Driven through the real `generateRecommendations` (90 → 180 minutes under a 90-minute queue). B7-L1 to B7-L4 red. |
 | S97 Temporary activity must not be forced onto the nearest place ID when ownership is unknown; never assign to the nearest place merely to satisfy a foreign key | C | **W** | **The C rested on a grep that is now false.** `resolveZoneAnchorSubject` (`routes/mapObservations.ts:656#resolveZoneAnchorSubject`) resolves a §22 zone contribution by finding the **nearest** active place in the zone (`:648#NEAREST`) and storing the observation against it (`:802`); its own header gives the motive as the FK — *"`intel_observations.subject_id` FKs `public.places`, and a zone is not a place"*. Mounted (`src/routes/index.ts:308#mapObservationsRouter`) behind `map_contributions_enabled` (`routes/mapObservations.ts:741`). The 3 km ceiling and the recorded `zone_id` bound the mis-attribution; they do not make it absent, and §14's sentence carries no radius. Not fixable in this lane: the alternatives are deleting a §22 Map feature or removing `subject_id NOT NULL REFERENCES places(id)` (`src/migrations/2130_intel_storage.sql:142`), both owner decisions. |
 
 **Held, with the reason.** **S3** and **S106** stay W, unchanged from §1: the
@@ -2937,7 +2937,7 @@ confidence and freshness and **no coverage**
 (`` `artifacts/api-server/src/lib/discoveryCandidate.ts:146#export interface DiscoveryCandidate {` ``)
 — even though the grade it is built from already carries a full `TruthMetadata`
 including coverage
-(`` `artifacts/api-server/src/lib/discoveryLiveRank.ts:210#TruthMetadata` ``).
+(`` `artifacts/api-server/src/lib/discoveryLiveRank.ts:212#TruthMetadata` ``).
 So the gap is one field on one interface, and the value to put in it is already
 in the same function.
 
@@ -3342,7 +3342,7 @@ decision no diff can substitute for.
 | S49 | W | **W** | **Part closed this pass (§10.1): the §19 read model now carries all four §5.1 fields, per claim and composed, through the one shared derivation.** The gap §8 named is untouched — `` `artifacts/api-server/src/lib/discoveryCandidate.ts:146#export interface DiscoveryCandidate {` `` still carries truth class, confidence and freshness and no coverage, and `lib/discoveryLiveRank.ts` computes the value in the same function. **RED WHEN** the owner rules the §24 question — either route `DiscoveryCandidate` through `protectedLocations`, or rule that a four-value bucket over an already k-gated state is not protected-zone sensitive — and Discovery adds the field. §10.1's argument that the bucket was already served does **not** transfer: `DiscoveryCandidate` carries no cohort signal today, so adding one there is a first disclosure. **WHO**: the owner, then the Discovery lane. |
 | S51 | W | **W** | The inference exists and is guarded; not one signal is produced anywhere. **Narrowed**: §5.2's candidate list names `density` and the input carries `coverage` instead (§10.4), so this row needs one more signal than the census said. **RED WHEN** S28 exists AND a density input joins `VibeFeatureInput`. **WHO**: a client build, then whoever owns `lib/vibeInference.ts`. |
 | S52 | W | **W** | Checked field-for-field against the SPEC's §5.2 list rather than the module's own: energy, sociality, dance_likelihood, volatility, momentum, scene/context tags, confidence, coverage, freshness, provenance — all ten present on `` `artifacts/api-server/src/lib/vibeInference.ts:93#export interface SensingVibeState {` ``. **Evidence corrected 2026-09-14 (§10.9)**: the earlier sentence *"truth class always `inferred`"* restated the module's own header, which is false about its own code — the no-coverage branch returns `unknown`, deliberately (*"Nothing is inferred from nothing"*), and `unknown` is one of §5.1's seven. So the state carries `inferred` where there is coverage and `unknown` where there is none, and the band is structurally below the live floor in both. That is the spec behaving correctly, not a defect, and it moves no verdict. **RED WHEN** something can populate it, i.e. S28. **WHO**: a client build. |
-| S66 | W | **W** | Re-executed at both surfaces: Discovery demotes a Live-qualified `unsafe_density` behind every other row before any score is compared (`` `artifacts/api-server/src/lib/discoveryLiveRank.ts:462#    if (a.grade.safety.demoted !== b.grade.safety.demoted) return a.grade.safety.demoted ? 1 : -1;` ``) and the layover surface removes the card (`` `artifacts/api-server/src/lib/layoverLiveIntersection.ts:194#  if (state.unsafe) { drop = true; dropReason = "unsafe_density"; }` ``). **RED WHEN** a dangerous place is actually refused rather than refusable — the flags these paths ride are ON in a database and real `unsafe_density` state reaches them. **WHO**: nobody, deliberately: this is the census working, and it is recorded so the count of "W rows a lane should move" is not inflated by it. |
+| S66 | W | **W** | Re-executed at both surfaces: Discovery demotes a Live-qualified `unsafe_density` behind every other row before any score is compared (`` `artifacts/api-server/src/lib/discoveryLiveRank.ts:464#    if (a.grade.safety.demoted !== b.grade.safety.demoted) return a.grade.safety.demoted ? 1 : -1;` ``) and the layover surface removes the card (`` `artifacts/api-server/src/lib/layoverLiveIntersection.ts:199#  if (state.unsafe) { drop = true; dropReason = "unsafe_density"; }` ``). **RED WHEN** a dangerous place is actually refused rather than refusable — the flags these paths ride are ON in a database and real `unsafe_density` state reaches them. **WHO**: nobody, deliberately: this is the census working, and it is recorded so the count of "W rows a lane should move" is not inflated by it. |
 | S79 | W | **W** | Re-executed as an absence, by opening the three modules rather than by a grep that stops: `routes/compass.ts`, `compass/CompassStructuredContext.ts` and `routes/telegraph.ts` contain **zero** references to `liveClaimRead`, `readLiveClaimEnvelopes`, `resolvePlaceIntelState` or `truthOfEnvelope`. The decision surface is grounded by construction; the conversational path has no structured truth in its context to be grounded against. **RED WHEN** live claims are carried into `/compass/ask`'s context and a grounding checker constrains the generated language to the band of its inputs — in that order, because a checker over an empty context is vacuous. **WHO**: the Compass lane. |
 | S83 | W | **W** | `compass/CompassTripContext.ts` still exports exactly one function, `buildTripContextLines`, and it is trip grounding — no world state, no opportunities, no disruptions, no sessions. **RED WHEN** S54 (`ExperienceSession`) exists and a `TripWorldContext` projection carries the five named parts. **WHO**: the Compass lane, after a commissioned `ExperienceSession`. |
 | S92 | W | **W** | Eligibility and decay exist; the bridge is a graph-edge projection and `grep` over `lib/memoryProjectionScheduler.ts` and `services/memoryProjections/` finds no `ExperienceSession` of any spelling. **RED WHEN** S54 exists and memory eligibility is computed from a session's outcome rather than from a graph edge. **WHO**: the Highlights & Memories lane, after a commissioned `ExperienceSession`. |

@@ -293,12 +293,47 @@ export const KNOWN: Record<string, Known> = {
   // ── Guarded: the contract refuses before the failing call ───────────────────
   COMPASS_ENABLED: {
     classification: "guarded",
-    objects: ["compass_conversations.status", "compass_conversations.trip_id"],
+    // Only the two 2996 columns sit inside the COMPASS_ENABLED closure. 2997's
+    // three (compass_served_recommendations.revoked_at / revocation_reason,
+    // compass_outcome_events.weight_nudge) are named by compass/CompassOutcomeEngine.ts,
+    // which is reached from routes no flag gates, so the ratchet does not see
+    // them under this flag; they are probed by the same capability and listed
+    // in checkMissingLiveColumns' PENDING LIVE APPLY block instead.
+    //
+    // The ten trails objects (2910_discovery_trails.sql) entered this closure on
+    // 2026-09-20 with census-compass CM-02: the `compile_plan_from_experience`
+    // tool reaches services/media/MediaActionResolver.ts `compileExperiencePlan`,
+    // whose Trail branch reads `trails` and `content_trails`. 2910 is applied to
+    // portava-ci and NOT to production. The branch PROBES `trails` with the
+    // lib/capability sentinel before naming any other column and refuses
+    // `source_unavailable` when the table is absent (compassPlanCompiler.test.ts
+    // pins it), so the guard is the compiler's own rather than a registry
+    // entry: the registry keys one definition per flag and COMPASS_ENABLED's is
+    // COMPASS_CONVERSATION_PHASE1, whose requirement must not be widened to a
+    // schema conversations do not need.
+    objects: [
+      "compass_conversations.status",
+      "compass_conversations.trip_id",
+      "content_trails",
+      "content_trails.content_state",
+      "content_trails.created_at",
+      "content_trails.source_id",
+      "content_trails.source_type",
+      "content_trails.trail_id",
+      "trails",
+      "trails.id",
+      "trails.lifecycle_status",
+      "trails.title",
+    ],
     note:
-      "Migration 2996 (compass-phase1-spec §1: trip_id, status, role system-event) is applied to portava-ci and " +
+      "Migrations 2996 (compass-phase1-spec §1: trip_id, status, role system-event) and 2997 (CPV2-11 recommendation " +
+      "lineage: revoked_at, revocation_reason, weight_nudge) are applied to portava-ci and " +
       "NOT to production, where COMPASS_ENABLED is ON. Registered as COMPASS_CONVERSATION_PHASE1; " +
       "services/compass/CompassConversationService.ts probes before naming either column and uses the legacy " +
-      "shape when they are missing. Strike this entry when 2996 is applied to production and recorded.",
+      "shape when they are missing; compass/CompassOutcomeEngine.ts does the same for the lineage columns. " +
+      "2910 (Discovery trails) is likewise on portava-ci only; services/media/MediaActionResolver.ts " +
+      "compileExperiencePlan probes `trails` before naming it and refuses source_unavailable. " +
+      "Strike the 2996 objects when 2996 is applied to production and recorded; the trails objects when 2910 is.",
   },
   // ── Guarded: the contract refuses before the failing call ───────────────────
   //

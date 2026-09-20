@@ -48,6 +48,8 @@ import { resolveExperience } from "./MediaExperienceResolver.js";
 import { mayDiscloseGemIdentity } from "../hiddenGems/HiddenGemPrivacyGuard.js";
 import { areSharedMomentsEnabled, momentRole, type MomentRole } from "../../lib/places/sharedMoments.js";
 import type { MediaCandidateRow } from "../../lib/media/mediaProjection.js";
+import { SCHEMA_PROBE_SENTINEL_ID } from "../../lib/capability/schemaRequirement.js";
+import { isMissingSchemaError } from "../../lib/capability/schemaCapability.js";
 
 // ── Entity refs the media resolves to ─────────────────────────────────────────
 
@@ -765,6 +767,171 @@ export async function buildDoThisExperiencePlan(
     method: "POST",
     stops,
     eligibleTripIds: planEditable ?? [], planGateDetermined: planEditable !== null,
+  };
+}
+
+// ── census-compass CM-02 — an EXECUTABLE plan: sources + times ───────────────
+
+/** A stop with a place in time: what "executable" adds to `ExperiencePlanStop`. */
+export interface TimedPlanStop extends ExperiencePlanStop {
+  /** Position in the plan, 1-based. */
+  order: number;
+  /** ISO. Derived, never a coordinate. */
+  startsAt: string;
+  endsAt: string;
+  dwellMinutes: number;
+  /** Minutes of transit assumed before this stop; the first stop has none. */
+  transitMinutesBefore: number;
+  /**
+   * HOW the transit was assumed. `default` — no coordinates were available and
+   * the documented default was used; the plan says so rather than pretending
+   * to have routed. (Routed transit is a provider the owner has not bought.)
+   */
+  transitBasis: "none" | "default";
+}
+
+export type ExperiencePlanSourceKind = "experience" | "trail";
+
+export interface CompiledExperiencePlan {
+  source: { kind: ExperiencePlanSourceKind; id: string; title: string | null };
+  /** The day the plan is compiled onto (YYYY-MM-DD) and the first stop's start. */
+  day: string;
+  startsAt: string;
+  stops: TimedPlanStop[];
+  /** The EXISTING plan-item endpoint each stop is submitted to (per trip); nothing here writes. */
+  targetEndpoint: "/api/trips/:tripId/plan/items";
+  method: "POST";
+  eligibleTripIds: string[];
+  planGateDetermined: boolean;
+  /**
+   * Feasibility against the trip's freedom windows is the Trips lane's
+   * projection behind `trip_operational_projections_enabled` (FALSE on every
+   * deployment); a compiled plan says it was NOT verified rather than implying
+   * it was. `create_proposal` is the governed handoff, behind `trip_kernel_enabled`.
+   */
+  feasibility: "not_verified";
+  feasibilityUnavailableReason: "trip_operational_projections_disabled";
+}
+
+export type CompileExperiencePlanResult =
+  | { ok: true; plan: CompiledExperiencePlan }
+  | { ok: false; reason: "not_eligible" | "unknown_source" | "no_stops" | "source_unreadable" | "source_unavailable" };
+
+/** Default dwell per stop and default transit between stops when nothing is measured. Documented tunables. */
+export const PLAN_DEFAULT_DWELL_MINUTES = 60;
+export const PLAN_DEFAULT_TRANSIT_MINUTES = 20;
+/** The local hour a compiled day starts at when the caller states none. */
+export const PLAN_DEFAULT_START_HOUR = 10;
+
+/**
+ * Compile a Trail or an experience (event / trip recap) into an EXECUTABLE
+ * plan: ordered, resolvable stops WITH TIMES, for the day the caller names.
+ *
+ * Sources: an `experience` goes through `resolveExperience` (viewer-eligible
+ * or nothing, §47); a `trail` reads `trails` + its `content_trails` members
+ * (`source_type = 'place'`, in membership order) and refuses a trail that is
+ * not published. Times: sequential from the day's start, each stop given the
+ * default dwell and spaced by the default transit — stated as `default`
+ * because no route was measured. Writes nothing: the stops are what the
+ * client submits to the existing plan-item endpoint, or what
+ * `create_proposal` hands the Trip Kernel.
+ */
+export async function compileExperiencePlan(
+  sc: SupabaseClient,
+  viewer: ViewerResolved,
+  source: { kind: ExperiencePlanSourceKind; id: string },
+  opts: { day: string; startHour?: number; nowMs: number },
+): Promise<CompileExperiencePlanResult> {
+  let title: string | null = null;
+  let baseStops: ExperiencePlanStop[] = [];
+
+  if (source.kind === "experience") {
+    const proposal = await buildDoThisExperiencePlan(sc, viewer, source.id, opts.nowMs);
+    if (!proposal) return { ok: false, reason: "not_eligible" };
+    baseStops = proposal.stops;
+    const exp = await resolveExperience(sc, viewer, source.id, opts.nowMs);
+    title = exp?.title ?? null;
+    if (baseStops.length === 0) return { ok: false, reason: "no_stops" };
+    const planEditable = await loadPlanEditableTripIds(sc, viewer.viewerId);
+    return { ok: true, plan: schedule(source, title, baseStops, opts, planEditable) };
+  }
+
+  // A Trail: the row, then its place members in membership order.
+  //
+  // PROBE FIRST (checkFlagSchemaPrerequisites KNOWN.COMPASS_ENABLED): the
+  // trails schema (2910) is applied to portava-ci and NOT to production, and
+  // this compiler is reached from a Compass tool under COMPASS_ENABLED, which
+  // is ON there. So before naming any column the compiler asks whether the
+  // table exists at all — the same sentinel probe lib/capability uses — and
+  // refuses `source_unavailable` when it does not. A table that is present but
+  // unreadable is `source_unreadable`, as below. Nothing here retries or
+  // invents a plan.
+  const probe = await sc.from("trails").select("id").eq("id", SCHEMA_PROBE_SENTINEL_ID).maybeSingle();
+  if (probe.error) return { ok: false, reason: isMissingSchemaError(probe.error) ? "source_unavailable" : "source_unreadable" };
+  const { data: trail, error: trailErr } = await sc
+    .from("trails")
+    .select("id, title, lifecycle_status")
+    .eq("id", source.id)
+    .maybeSingle();
+  if (trailErr) return { ok: false, reason: "source_unreadable" };
+  if (!trail) return { ok: false, reason: "unknown_source" };
+  if ((trail as any).lifecycle_status !== "published") return { ok: false, reason: "not_eligible" };
+  const { data: members, error: memErr } = await sc
+    .from("content_trails")
+    .select("source_type, source_id, content_state, created_at")
+    .eq("trail_id", source.id)
+    .order("created_at", { ascending: true })
+    .limit(500);
+  if (memErr) return { ok: false, reason: "source_unreadable" };
+  const seen = new Set<string>();
+  for (const m of (members ?? []) as Array<Record<string, unknown>>) {
+    if (m.source_type !== "place" || typeof m.source_id !== "string" || seen.has(m.source_id)) continue;
+    if (m.content_state && m.content_state !== "published" && m.content_state !== "active") continue;
+    seen.add(m.source_id);
+    baseStops.push({ sourceType: "place", sourceId: m.source_id, title: "Stop", category: "activity" });
+  }
+  title = String((trail as any).title ?? "") || null;
+  if (baseStops.length === 0) return { ok: false, reason: "no_stops" };
+  const planEditable = await loadPlanEditableTripIds(sc, viewer.viewerId);
+  return { ok: true, plan: schedule(source, title, baseStops, opts, planEditable) };
+}
+
+function schedule(
+  source: { kind: ExperiencePlanSourceKind; id: string },
+  title: string | null,
+  baseStops: ExperiencePlanStop[],
+  opts: { day: string; startHour?: number },
+  planEditable: string[] | null,
+): CompiledExperiencePlan {
+  const hour = Math.min(23, Math.max(0, Math.floor(opts.startHour ?? PLAN_DEFAULT_START_HOUR)));
+  let cursor = Date.parse(`${opts.day}T${String(hour).padStart(2, "0")}:00:00.000Z`);
+  const stops: TimedPlanStop[] = baseStops.map((s, i) => {
+    const transit = i === 0 ? 0 : PLAN_DEFAULT_TRANSIT_MINUTES;
+    cursor += transit * 60_000;
+    const startsAt = new Date(cursor).toISOString();
+    cursor += PLAN_DEFAULT_DWELL_MINUTES * 60_000;
+    const endsAt = new Date(cursor).toISOString();
+    return {
+      ...s,
+      order: i + 1,
+      startsAt,
+      endsAt,
+      dwellMinutes: PLAN_DEFAULT_DWELL_MINUTES,
+      transitMinutesBefore: transit,
+      transitBasis: i === 0 ? "none" : "default",
+    };
+  });
+  return {
+    source: { kind: source.kind, id: source.id, title },
+    day: opts.day,
+    startsAt: stops[0]!.startsAt,
+    stops,
+    targetEndpoint: "/api/trips/:tripId/plan/items",
+    method: "POST",
+    eligibleTripIds: planEditable ?? [],
+    planGateDetermined: planEditable !== null,
+    feasibility: "not_verified",
+    feasibilityUnavailableReason: "trip_operational_projections_disabled",
   };
 }
 

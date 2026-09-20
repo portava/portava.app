@@ -1394,3 +1394,58 @@ named rather than closed quietly.
 | CANNOT-VERIFY | **6** |
 
 199 + 0 + 0 + 6 = 205.
+
+## §13 — The six `?` rows, attempted again on 2026-09-20: none moved, and each now says exactly what would move it
+
+**`head_commit` is NOT re-declared.** Six rows are CANNOT-VERIFY. The question asked of this pass
+was whether any could be built or measured from inside the repository. The answer, row by row:
+
+### 13.1 W146 — the real-Postgres first-page benchmark: buildable now, not built blind
+
+§11.2's stated reason for abandoning it — *no database, no credentials, and seeding shared CI is an
+infrastructure change* — has weakened since: the live tier now runs suites that create and delete
+their own fixture users and rows against the sanctioned CI project
+(`artifacts/api-server/src/test/wallSessionIntentLiveDb.test.ts:152#before(async () => {` … `artifacts/api-server/src/test/wallSessionIntentLiveDb.test.ts:181#after(async () => {`), and
+`.github/scripts/run-live-suite.sh` scores a live suite red when it skips. A first-page benchmark
+would be the same shape: the fake corpus of `artifacts/api-server/src/test/wallPerformance.test.ts:123#const POSTS = 150;` seeded
+under a namespaced fixture author set, the real router over loopback with the real client
+(`artifacts/api-server/src/test/wallPerformance.test.ts:314#_setTestClient(corpusClient(), true);` with the fake replaced), p50/p95 read
+off the wire, everything deleted in `after`. What stops it being written in this pass is not
+ownership but verification: this environment holds no live credentials, so a suite written here
+would ship unexecuted against real constraints on `posts`, `profiles`, `user_follows` and
+`places` — the class of file this repository names as its failure mode. **Stays `?`**, and the
+owner is no longer "CI / infrastructure": it is the next lane with `SUPABASE_URL` for
+`hwokxgbmezheskbzskfr` in its environment, and the plan above is what it runs.
+
+### 13.2 W71 — voice: no producer, and none was built
+
+Census-input-intelligence rules the voice ingress vacuously unsatisfiable: the platform has no
+speech producer, so the Wall's half (`artifacts/api-server/src/test/wallIntentResolutionTruthfulness.test.ts`, now watched — 13.3) can only
+prove that a resolved intent is handled truthfully. Building a speech ingress is a product
+decision with a paid provider behind it; on the standing rule that a new paid service is prepared
+and priced for the owner rather than purchased, none was added. **Stays `?`.**
+
+### 13.3 W149 · W159 · W167 · W168 — a device, a designer, a designer, a study
+
+Each needs a person or hardware the repository does not contain (§11.2 named them). Nothing in
+this pass changes that. **Stay `?`.**
+
+### 13.4 Scope, closed
+
+§12.5's cross-lane request is honoured: `wallIntentResolutionTruthfulness.test.ts`, the
+input-assistance gateway and the client mock checker are now in this census's scope
+(`artifacts/api-server/src/scripts/checkCensusFreshness.ts:1141#ADDED 2026-09-20 by census-wall §13`), which takes
+`check:census-scope-coverage` for this census to 80 / 80 watched.
+
+### 13.5 Headline — unchanged, restated
+
+> **Wall, after §13: 205 requirements · 199 BUILT-AND-CORRECT · 0 BUILT-BUT-WRONG · 0 NOT-BUILT ·
+> 6 CANNOT-VERIFY → CONSTRUCTED 97.1 % · CORRECT 97.1 %.**
+
+| BUILT-AND-CORRECT | **199** |
+|---|---|
+| BUILT-BUT-WRONG | **0** |
+| NOT-BUILT | **0** |
+| CANNOT-VERIFY | **6** |
+
+199 + 0 + 0 + 6 = 205.

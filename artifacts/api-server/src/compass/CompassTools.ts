@@ -1,7 +1,7 @@
 /**
  * CompassTools — Phase 4 native function calling for the Compass assistant.
  *
- * Forty-two tools the model may call on demand (the OpenAI schemas in
+ * Forty-four tools the model may call on demand (the OpenAI schemas in
  * COMPASS_TOOL_DEFINITIONS below are the authoritative list).
  *
  * THAT SENTENCE IS EXECUTABLE, BECAUSE IT HAS BEEN WRONG THREE TIMES.
@@ -39,6 +39,7 @@
  *     POST /compass/proposals/:proposalId/confirm (server re-authorizes).
  */
 import { randomUUID } from "node:crypto";
+import { isTruthClass } from "../lib/truthClass.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CompassItem, CompassProfile } from "./types.js";
 import { stripCoordinateFields, wrapUgc, buildStructuredCompassContext } from "./CompassStructuredContext.js";
@@ -64,6 +65,9 @@ import { valueOfInformation, unknownsFromExperiences } from "../domain/trips/ser
 import { executeTripCommand } from "../domain/trips/commands/tripKernel.js";
 import { isFlagEnabled as isKernelFlagEnabled } from "../lib/featureFlags.js";
 import { COMPASS_DECISION_FLAG, assembleCompassDecision } from "../lib/compassDecisionAssembly.js";
+import { certifiedLayoverSnapshot, isDegradedRefusal } from "../services/airport/LayoverSnapshot.js";
+import { compileExperiencePlan } from "../services/media/MediaActionResolver.js";
+import { resolveViewer as resolveMediaViewer } from "../services/media/MediaProjectionService.js";
 import { compatibleActionFor } from "../lib/compassDecisionActions.js";
 import { DECISION_INTENTS, type DecisionIntent } from "../lib/compassDecision.js";
 import { getCrewMap, CrewMapUnavailableError } from "../domain/trips/services/TripCrewLocationService.js";
@@ -75,7 +79,7 @@ import { acceptTripProjection, TRIP_PROJECTION_SCHEMA_VERSION } from "../domain/
 import { readTripAttention, applyAttentionSuppression, attentionNotConsulted, attentionOnTheWire, type AttentionReading } from "../domain/trips/policies/TripAttentionFilter.js";
 import { buildCompassContext, defaultSignals } from "./CompassContextEngine.js";
 import { runPipeline } from "./CompassPipeline.js";
-import {
+import { qualifyWhyThis,
   buildWhyThisText,
   loadCircleMemoryPreferenceTags,
   normalizeProfileForRanking,
@@ -138,7 +142,7 @@ import {
  * compare. Pinned to `COMPASS_TOOL_DEFINITIONS.length` AND to the header's own
  * number word by `src/test/compassToolCountContract.test.ts`.
  */
-export const COMPASS_TOOL_COUNT_IN_HEADER = 42;
+export const COMPASS_TOOL_COUNT_IN_HEADER = 44;
 // ── Tool definitions (OpenAI function schemas) ────────────────────────────────
 
 export const COMPASS_TOOL_DEFINITIONS = [
@@ -541,6 +545,34 @@ export const COMPASS_TOOL_DEFINITIONS = [
       },
     },
   },
+  {
+    type: "function" as const,
+    function: {
+      name: "get_layover_snapshot",
+      description:
+        "Layover §25 / census CL-03: the ONE certified LayoverSnapshot for the user's live layover session — verdict, return state, tier, usable minutes, the hard return-by deadline and the minutes to it, whether landside is open and why not, reason codes and unknowns. Call it before advising anyone in a layover; never compute a time budget yourself. Answers `noLayover` when the user has no live session, and `unavailable` when the session store could not be read (do not treat that as 'no layover').",
+      parameters: { type: "object", properties: {}, additionalProperties: false },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "compile_plan_from_experience",
+      description:
+        "Media §15.2 / census CM-02: compile a Trail, a Trip recap or an event experience into an EXECUTABLE plan for a day — ordered stops WITH start and end times (default dwell, default transit stated as unmeasured). Proposes only: returns the stops and the existing plan-item endpoint they go to, plus the viewer's plan-editable trips; nothing is written. Feasibility against the trip's freedom windows is NOT verified here (that projection is disabled on every deployment) and the result says so. Hand the stops to create_proposal for a governed proposal, or describe them.",
+      parameters: {
+        type: "object",
+        properties: {
+          sourceKind: { type: "string", enum: ["experience", "trail"], description: "`experience` for an event or trip recap id; `trail` for a Trail id." },
+          sourceId: { type: "string", description: "The experience (event / trip) id or the Trail id." },
+          day: { type: "string", description: "The day to compile onto, YYYY-MM-DD." },
+          startHour: { type: "number", description: "Local hour the day starts at (0-23); default 10." },
+        },
+        required: ["sourceKind", "sourceId", "day"],
+        additionalProperties: false,
+      },
+    },
+  },
   ...TELEGRAPH_COMPASS_TOOL_DEFINITIONS,
   ...MEMORY_COMPASS_TOOL_DEFINITIONS,
 ];
@@ -718,7 +750,15 @@ function applyToolRanking<T extends { id: unknown }>(
     .filter((c) => ranking.has(String(c.id)))
     .map((c) => {
       const r = ranking.get(String(c.id))!;
-      return { ...c, compassMatch: r.compassMatch, communityScore: r.communityScore, whyThis: r.whyThis, rank: r.rank };
+      // CPV2-02: the explanation carries the candidate's own truth class.
+      const truthClass = (c as { confidence?: { truthClass?: unknown } }).confidence?.truthClass;
+      return {
+        ...c,
+        compassMatch: r.compassMatch,
+        communityScore: r.communityScore,
+        whyThis: qualifyWhyThis(r.whyThis, isTruthClass(truthClass) ? truthClass : null),
+        rank: r.rank,
+      };
     })
     .sort((a, b) => (a.rank ?? 0) - (b.rank ?? 0))
     .map(({ rank: _rank, ...rest }) => rest as T & Partial<ToolRankEntry>);
@@ -2028,6 +2068,46 @@ export const COMPASS_TOOL_NAMES = new Set(
 // what the route refuses to serve.
 const UUID_ARG = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+/**
+ * census-compass CL-03 — the layover door, consumed rather than re-derived.
+ * `certifiedLayoverSnapshot` is the ONE builder (services/airport/LayoverSnapshot);
+ * the certified record it carries is dropped here because the model needs
+ * every figure above it and none of the engine.
+ */
+/**
+ * census-compass CM-02 — the plan compiler as a tool. The compiler
+ * (services/media/MediaActionResolver `compileExperiencePlan`) is the ONE
+ * implementation `GET /media/experiences/:id/plan` and this tool share; it
+ * proposes and never writes.
+ */
+export async function toolCompilePlanFromExperience(
+  sc: SupabaseClient,
+  userId: string,
+  args: Record<string, unknown>,
+): Promise<unknown> {
+  const kind = args.sourceKind === "trail" ? "trail" : args.sourceKind === "experience" ? "experience" : null;
+  const id = typeof args.sourceId === "string" ? args.sourceId.trim() : "";
+  const day = typeof args.day === "string" ? args.day.trim() : "";
+  if (!kind) return { error: "sourceKind must be 'experience' or 'trail'." };
+  if (!id) return { error: "sourceId is required." };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return { error: "day must be YYYY-MM-DD." };
+  const startHour = typeof args.startHour === "number" && Number.isFinite(args.startHour) ? args.startHour : undefined;
+  const viewer = await resolveMediaViewer(sc, userId, { needFollows: true });
+  const r = await compileExperiencePlan(sc, viewer, { kind, id }, { day, startHour, nowMs: Date.now() });
+  if (!r.ok) return { plan: null, reason: r.reason, info: `Could not compile a plan from that ${kind}: ${r.reason}.` };
+  return { plan: sanitizeToolResult(r.plan), info: "Proposed only — nothing was written. Feasibility was not verified (trip operational projections are disabled on this deployment)." };
+}
+
+export async function toolGetLayoverSnapshot(sc: SupabaseClient, userId: string): Promise<unknown> {
+  const r = await certifiedLayoverSnapshot(sc as any, userId);
+  if (!r.ok) {
+    if (isDegradedRefusal(r.reason)) return { unavailable: true, reason: r.reason, info: r.message };
+    return { noLayover: true, reason: r.reason, info: r.message };
+  }
+  const { certifiedRecord: _record, ...snapshot } = r.snapshot;
+  return { snapshot: sanitizeToolResult(snapshot) };
+}
+
 async function toolGetDecision(sc: SupabaseClient, args: Record<string, unknown>): Promise<unknown> {
   const subjectId = typeof args.subjectId === "string" ? args.subjectId : "";
   if (!UUID_ARG.test(subjectId)) return { error: "subjectId must be a place id from a search result" };
@@ -2103,6 +2183,8 @@ export async function executeCompassTool(
       // mid-conversation block takes effect immediately (the profile snapshot
       // passed into the tool loop may be stale/cached).
       case "get_decision":         raw = await toolGetDecision(sc, args); break;
+      case "get_layover_snapshot": raw = await toolGetLayoverSnapshot(sc, userId); break;
+      case "compile_plan_from_experience": raw = await toolCompilePlanFromExperience(sc, userId, args); break;
       case "get_whos_around":            raw = await toolWhosAround(sc, await refreshHiddenUsers(sc, userId, profile), userId); break;
       case "get_travel_compatibility":   raw = await toolTravelCompatibility(sc, await refreshHiddenUsers(sc, userId, profile), userId, args); break;
       case "get_group_recommendation":   raw = await toolGroupRecommendation(sc, await refreshHiddenUsers(sc, userId, profile), userId, args); break;

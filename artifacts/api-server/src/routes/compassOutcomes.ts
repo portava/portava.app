@@ -23,6 +23,8 @@ import {
   OUTCOME_STAGES,
   recordOutcome,
   computeValueDelivered,
+  REVOCATION_REASONS,
+  revokeServedRecommendation,
 } from "../compass/CompassOutcomeEngine.js";
 
 const router = Router();
@@ -63,6 +65,36 @@ router.post("/compass/outcomes", asyncHandler(async (req, res) => {
 
   res.json(result);
 }));
+
+/**
+ * CPV2-11 — revoke one of the viewer's own served recommendations. The
+ * lineage is walked back server-side (outcomes removed, nudges reversed); the
+ * served row stays, marked, so the revocation itself is a record.
+ */
+const revokeBodySchema = z.object({ reason: z.enum(REVOCATION_REASONS).default("user_withdrawn") });
+
+router.post("/compass/recommendations/:recommendationId/revoke", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+  const parsed = revokeBodySchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid request");
+    return;
+  }
+  const recommendationId = String(req.params.recommendationId ?? "");
+  if (recommendationId.length === 0 || recommendationId.length > 2000) {
+    sendError(res, "invalid_payload", "recommendationId required");
+    return;
+  }
+  const sc = getServiceClient();
+  const result = await revokeServedRecommendation(sc, user.id, recommendationId, parsed.data.reason);
+  if (!result.revoked && result.reason === "schema_not_applied") {
+    sendError(res, "feature_disabled", "Recommendation revocation is not available on this deployment yet (2997 not applied)");
+    return;
+  }
+  res.json(result);
+});
 
 router.get("/compass/value-delivered", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);

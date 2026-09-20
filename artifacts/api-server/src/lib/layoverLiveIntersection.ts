@@ -61,6 +61,7 @@ import {
   type DecisionSubject,
   type PeakInterception,
 } from "./compassDecision.js";
+import { INTENT_MODE_TO_DECISION_INTENT, LAYOVER_CHIP_TO_MODE } from "./intentModes.js";
 import type { TruthMetadata } from "./experienceTruth.js";
 import type { LiveClaimEnvelope } from "./liveClaimRead.js";
 
@@ -139,12 +140,16 @@ export const QUEUE_CAP_MINUTES = 180;
  * crowd vocabulary. Inventing a mapping for them would be guessing a
  * preference from an activity.
  */
-export const LAYOVER_INTENT_BY_CHIP: Readonly<Record<string, DecisionIntent>> = {
-  nightlife: "high_energy",
-  quiet: "quiet",
-  relax: "quiet",
-  social: "social",
-};
+export const LAYOVER_INTENT_BY_CHIP: Readonly<Record<string, DecisionIntent>> = Object.freeze(
+  // Chip → §8 intent mode → the crowd preference that mode declares, through
+  // the ONE vocabulary (lib/intentModes); a chip whose mode declares none maps
+  // to nothing, exactly as before.
+  Object.fromEntries(
+    Object.entries(LAYOVER_CHIP_TO_MODE)
+      .map(([chip, mode]) => [chip, INTENT_MODE_TO_DECISION_INTENT[mode]] as const)
+      .filter((e): e is readonly [string, DecisionIntent] => e[1] !== null),
+  ) as Record<string, DecisionIntent>,
+);
 
 /** The first chip that declares a crowd preference, or null. Order is the traveller's. */
 export function intentFromVibeChips(chips: readonly string[] | null | undefined): DecisionIntent | null {
