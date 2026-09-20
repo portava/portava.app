@@ -73,7 +73,7 @@ router.post("/compass/outcomes", asyncHandler(async (req, res) => {
  */
 const revokeBodySchema = z.object({ reason: z.enum(REVOCATION_REASONS).default("user_withdrawn") });
 
-router.post("/compass/recommendations/:recommendationId/revoke", async (req, res) => {
+router.post("/compass/recommendations/:recommendationId/revoke", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
@@ -94,7 +94,7 @@ router.post("/compass/recommendations/:recommendationId/revoke", async (req, res
     return;
   }
   res.json(result);
-});
+}));
 
 router.get("/compass/value-delivered", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
