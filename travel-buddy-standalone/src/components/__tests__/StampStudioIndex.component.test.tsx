@@ -1111,15 +1111,32 @@ import { useRequireAdmin } from '../../hooks/useRequireAdmin.ts';
 import { router } from 'expo-router';
 
 const mockUseRequireAdmin = useRequireAdmin as jest.Mock;
-// `jest.Mocked<typeof router>`, not a hand-written `{ push; back; replace }`
-// shape. The hand-written one asserted a conversion TypeScript rejects — the
-// two types do not overlap, because it named three members of a Router that has
-// many — and it drifts silently whenever expo-router's Router surface changes,
-// which is how this file came to carry a different error count under a
-// different resolution of that package. `jest.Mocked<T>` is the type
-// `jest.mock('expo-router')` actually produces, so it cannot drift from Router
-// and it needs no cast through `unknown`.
-const mockRouter = router as jest.Mocked<typeof router>;
+// THE CAST GOES THROUGH `unknown` ON PURPOSE, and the reason is that every
+// other spelling makes this file's error count depend on the environment.
+//
+// `jest.mock('expo-router')` has replaced these members with mocks before this
+// line runs, so the value genuinely is not a `Router` any more. Saying so
+// directly — `router as { push; back; replace }` — asks TypeScript to compare
+// `Router` against a three-member shape, and it answers TS2352: the two do not
+// sufficiently overlap. How many errors that comparison yields depends on the
+// `Router` surface in front of the compiler, so the same source counted 1 error
+// locally and 3 in CI.
+//
+// `jest.Mocked<typeof router>` does not fix that, it moves it: it still names
+// `typeof router`, so the comparison is still against a surface that can vary.
+// It counted 0 locally and 2 in CI.
+//
+// Going through `unknown` removes the comparison altogether. Nothing here
+// references the expo-router type surface, so there is no assignability
+// question left whose answer could differ between two installs. This is the
+// remedy the compiler itself prints for TS2352, and it is neither
+// `@ts-expect-error` nor `any` — the shape below is still checked at every use
+// site.
+const mockRouter = router as unknown as {
+  push: jest.Mock;
+  back: jest.Mock;
+  replace: jest.Mock;
+};
 
 describe('StampStudioIndex — Geocode Cache link renders for admins and navigates correctly', () => {
   let spy: ReturnType<typeof makeIntervalSpy>;
