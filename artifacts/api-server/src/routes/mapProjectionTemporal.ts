@@ -589,8 +589,34 @@ router.get(
         sources: [],
         aggregation: null,
         protection: null,
-        forecast: forecastReport,
-        history: historyReport,
+        // NULL, NOT THE REPORTS THIS HANDLER HAD ALREADY BUILT.
+        //
+        // They used to be `forecastReport` / `historyReport` here, and that was
+        // a fail-OPEN inside the one branch that exists because §24 could not be
+        // consulted. Three things were wrong with it:
+        //
+        //   • It contradicted its own envelope. `sources: []`, `aggregation:
+        //     null` and `protection: null` on the same object say "I read
+        //     nothing and gated nothing", while `forecast: { events: 1, … }`
+        //     says the opposite.
+        //   • `forecast.plan` carries COHORT ARITHMETIC — `published`,
+        //     `withheld` and a per-zone `refusals` map — derived from
+        //     `route_plans` rows belonging to real people under
+        //     `route_flow_contribution_consent`. Those counts are produced
+        //     BEFORE `withholdCoarsenableAggregates` and `applyProtection` run,
+        //     so on this branch they have passed through no §24 gate at all.
+        //     "How many people are due to arrive in this viewport" is exactly
+        //     the §24 association disclosure, one aggregation level up, and
+        //     publishing it from a fail-closed branch is the leak the branch
+        //     was added to prevent.
+        //   • routes/mapProjection.ts's sibling branch already nulls every
+        //     report it holds. Two routes answering the same refusal
+        //     differently is how one of them stays wrong.
+        //
+        // The client loses nothing: `enabled: false` means it is on the legacy
+        // path and is not reading these fields.
+        forecast: null,
+        history: null,
         generatedAt,
       });
       return;
