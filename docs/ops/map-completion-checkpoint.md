@@ -41,23 +41,37 @@ an absence.
 Lane A's shared-file patches are landed (`8d82a324d`): M43's
 `DiscoveryMapView.tsx` fix and M221's `app/map/index.tsx` refactor. Its M221
 screen-level wiring gap is closed (`d8af7dd8d`) with both surviving mutations
-proven red.
+proven red. Its third finding — a guard matching prose in comments — is fixed
+(`486b633a5`): one name off the debt list, and the guard tightened rather than
+loosened.
+
+Client suite at the integration head: `check:all` exit 0, node:test 6384/6384
+(0 fail, 0 skipped, 0 todo), jest 567 suites / 3646 tests, 3 webrender / 8. All
+ten client guards, all three citation checks and all three census checks pass.
 
 ## Decisions taken, and why
 
 **M223 — wire the temporal probe (Lane A's option b), do not restate the
-criterion.** The screen currently answers `timeMachineProducerEnabled:
-entitiesSource !== 'legacy'`, a proxy for the temporal route's own answer.
+criterion.** The screen ANSWERED `timeMachineProducerEnabled: entitiesSource
+!== 'legacy'`, a proxy for the temporal route's own answer.
 Option (a) was to keep the proxy and reword M223 to match it. That is
 redefining a requirement to reach 100%, which this effort does not do, so
 option (b) stands: the screen probes `GET /api/map/projection/temporal` once
 per session and feeds `temporalProducerReachable(probe)`.
 
-*Not yet implemented.* The trap Lane A identified must be honoured: the screen
-fetches the temporal endpoint only when the offset is not NOW, so a naive
-wiring closes Time Machine at NOW — a regression with a passing test. The probe
-must be its own one-shot request at mount, failing closed while pending.
-`temporalProducerReachable()` is already written, exported and mutation-proven.
+**IMPLEMENTED** in `src/hooks/useTemporalProducerProbe.ts`, wired at
+`app/map/index.tsx`. The trap Lane A identified is honoured: the probe is its
+own one-shot request rather than a read of `useTemporalEntities`, which fetches
+only while the mode is already active and the offset is not NOW — so wiring
+that in would have closed Time Machine at NOW. It fails closed while in flight
+and on a network error, and is latched by a ref so a moving camera cannot turn
+one request per session into one per pan. Five cases, two of them built to
+discriminate the producer's answer from the old proxy; reverting the gate to
+the proxy reddens four.
+
+**M223 is still not closed.** It additionally needs the temporal route
+answering `enabled: true` against a seeded CI, and its client fixtures replaced
+with a captured payload. Both are cross-lane.
 
 **M223's criterion wording is wrong regardless, and this is a correction, not a
 restatement.** Read literally — `enabled: true` **plus a non-null forecast** —
@@ -133,6 +147,16 @@ is not a licence.
    was reserved without being committed.
 6. **`live-db.yml` holds a shared-database slot** with a 2700 s wait;
    `portava-ci` is mutually exclusive between lanes.
+7. **`check-test-mocks.mjs` looks back exactly four lines** from a `jest.mock(`
+   for a comment containing NOTE. Adding a paragraph above an existing NOTE
+   pushes it out of reach and aborts BOTH `test` and `test:component` in about
+   a second. Run the guards after every edit, not once per batch — they are
+   cheap and a suite is not.
+8. **Three citation checks, and they see different things.**
+   `check:doc-citations` sees anchored citations; `check:citation-targets` sees
+   unanchored ones that land on nothing; `check:citation-symbols` sees
+   unanchored ones that NAME a symbol and drift more than two lines from it. A
+   change to a cited file can pass the first two and fail the third.
 
 ## Findings reported to owners, not yet acted on
 
