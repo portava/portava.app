@@ -47,7 +47,11 @@ import { TOGGLEABLE_LAYERS, KIND_TO_ENTITY_TYPE, mapObjectsToEntities } from '..
 import { MapCarousel } from '../../src/components/map/MapCarousel.tsx';
 import type { MapCarouselRef } from '../../src/components/map/MapCarousel.tsx';
 import { MapStoreProvider, useMapStore, deriveMapCapabilities } from '../../src/stores/mapStore.tsx';
-import { crowdFlowObjectCount as countServedCrowdFlow } from '../../src/features/map/state/mapMachine.ts';
+import {
+  crowdFlowObjectCount as countServedCrowdFlow,
+  temporalProducerReachable,
+} from '../../src/features/map/state/mapMachine.ts';
+import { useTemporalProducerProbe } from '../../src/hooks/useTemporalProducerProbe.ts';
 import { resolveBack } from '../../src/features/map/state/mapMachine.ts';
 import { activeIntent } from '../../src/features/map/intent/intentModel.ts';
 import {
@@ -1247,6 +1251,16 @@ function FullScreenMapScreenInner() {
     () => countServedCrowdFlow({ objects: defaultObjects }),
     [defaultObjects],
   );
+  // §15 — one request per map session asking the temporal producer whether it
+  // is reachable. Fails closed while in flight, so the scrubber appears only
+  // once the producer has said yes. See the hook's header for why it is a
+  // separate request rather than a read of useTemporalEntities.
+  const temporalProbe = useTemporalProducerProbe({
+    lat: fallbackLat,
+    lng: fallbackLng,
+    enabled: mode !== 'passport',
+  });
+
   const capabilities = useMemo(
     () =>
       deriveMapCapabilities({
@@ -1256,13 +1270,24 @@ function FullScreenMapScreenInner() {
         // it was opened for. No trip, no session to start, no mode to enter.
         locateFriendsScopeId: tripId,
         viewerId: userId ?? null,
-        // §15 — the temporal producer rides the SAME gateway flag the NOW
-        // projection does, so "the gateway answered for this session" is the
-        // honest presence check that the per-offset source is reachable. Legacy
-        // (per-layer) means the gateway is off/unreachable → no source to scrub.
-        timeMachineProducerEnabled: entitiesSource !== 'legacy',
+        // §15 — THE PRODUCER'S OWN ANSWER, not a proxy for it.
+        //
+        // This read `entitiesSource !== 'legacy'` — "the NOW gateway answered
+        // for this session" — on the reasoning that the temporal route rides
+        // the same map_projection_enabled flag, so one implies the other. That
+        // is defensible and it is not what census-map M223 asks for, which is
+        // the temporal route's own `enabled`. The proxy is also strictly
+        // weaker: the two share a flag but not a code path, and a temporal
+        // route that is deployed-but-broken answers the proxy's question yes.
+        //
+        // useTemporalEntities cannot supply this. It fetches only while the
+        // mode is ALREADY active and the offset is not NOW, both downstream of
+        // this very capability, so at NOW it never answers and wiring it here
+        // would close Time Machine at NOW — a regression with a passing test
+        // behind it. Hence the one-shot probe.
+        timeMachineProducerEnabled: temporalProducerReachable(temporalProbe),
       }),
-    [crowdFlowObjectCount, isFlagEnabled, tripId, userId, entitiesSource],
+    [crowdFlowObjectCount, isFlagEnabled, tripId, userId, temporalProbe],
   );
   useEffect(() => {
     // The store bails out when the record says the same thing, so this settles

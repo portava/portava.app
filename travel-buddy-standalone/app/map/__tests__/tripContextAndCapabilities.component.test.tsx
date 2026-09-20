@@ -38,7 +38,15 @@ const knobs: {
    *  is derived from these and nothing else — see the M221 block at the foot
    *  of this file for why that distinction is the whole requirement. */
   objects: { kind: string; id: string }[];
-} = { params: {}, flags: {}, userId: null, tripStops: [], entitiesSource: 'legacy', objects: [] };
+  /** What GET /api/map/projection/temporal answers the §15 session probe.
+   *  'enabled'  — the producer is reachable.
+   *  'refused'  — the flag-off envelope: ok, but `enabled: false`.
+   *  'error'    — the request did not complete at all. */
+  temporalProducer: 'enabled' | 'refused' | 'error';
+} = {
+  params: {}, flags: {}, userId: null, tripStops: [], entitiesSource: 'legacy',
+  objects: [], temporalProducer: 'refused',
+};
 
 /** Written by the LayersSheet stub on every render; read after a deep link. */
 const layerContextHolder: { mode?: string } = {};
@@ -214,6 +222,24 @@ jest.mock('../../../src/components/map/MapCarousel', () => {
   return { MapCarousel };
 });
 
+// NOTE: intentionally exhaustive — this is the network edge, and the §15
+// session probe is the thing under test, so the REAL hook must run against a
+// controlled answer rather than being stubbed out.
+jest.mock('../../../src/services/mapTemporal', () => ({
+  fetchMapTemporal: jest.fn(async () => {
+    if (knobs.temporalProducer === 'error') return { ok: false, error: 'Network error' };
+    return {
+      ok: true,
+      data: {
+        enabled: knobs.temporalProducer === 'enabled',
+        objects: [], sources: [], total: 0, nextCursor: null,
+        viewport: null, target: null, aggregation: null, protection: null,
+        forecast: null, history: null,
+      },
+    };
+  }),
+}));
+
 // NOTE: intentionally exhaustive — the hook is the object/entity SOURCE for
 // this screen; requireActual would fetch over the network.
 jest.mock('../../../src/hooks/useMapEntities', () => ({
@@ -256,6 +282,7 @@ beforeEach(() => {
   knobs.tripStops = [];
   knobs.entitiesSource = 'legacy';
   knobs.objects = [];
+  knobs.temporalProducer = 'refused';
   delete layerContextHolder.mode;
   locateSession().mockClear();
 });
@@ -354,34 +381,87 @@ describe('FullScreenMapScreen — §12 Locate My Friends capability', () => {
 });
 
 describe('FullScreenMapScreen — §15 Time Machine reachability', () => {
-  it('stays shut while the projection gateway is not answering (source: legacy)', async () => {
-    // The temporal producer rides map_projection_enabled; when the gateway is
-    // not answering (the legacy per-layer path), there is no per-offset source
-    // to scrub, so the control must not appear — and specifically must NOT be
-    // hardcoded true to make the surface show.
+  // census-map M223: the gate is the TEMPORAL ROUTE'S OWN `enabled`, not a
+  // proxy for it. The screen used to answer `entitiesSource !== 'legacy'` — "the
+  // NOW gateway answered" — on the reasoning that both ride
+  // map_projection_enabled. These cases hold the gate to the criterion instead:
+  // they drive the temporal endpoint directly and leave `entitiesSource` out of
+  // it entirely.
+  it('stays shut on the refusal envelope (ok, but enabled: false)', async () => {
     knobs.params = { entityTypes: 'trips', tripId: 'trip-1' };
     knobs.flags = { locate_friends_enabled: true, map_crowd_flow_enabled: true, map_search_enabled: true };
     knobs.userId = 'user-1';
     knobs.tripStops = STOPS;
-    knobs.entitiesSource = 'legacy';
+    // THE DISCRIMINATING PART. The NOW gateway answered, so the old proxy
+    // (`entitiesSource !== 'legacy'`) says YES here while the producer says NO.
+    // Without this line the case passes under either implementation and proves
+    // nothing about which one is wired.
+    knobs.entitiesSource = 'gateway';
+    knobs.temporalProducer = 'refused';
     await mount();
 
     await waitFor(() => expect(screen.getByTestId('map-carousel')).toBeTruthy());
     expect(screen.queryByTestId('time-machine-control')).toBeNull();
   });
 
-  it('opens the scrubber once the gateway answers (source: gateway)', async () => {
-    // The producer GET /api/map/projection/temporal is the source §15 never had.
-    // When the projection gateway answers, that sibling endpoint is reachable,
-    // so the mode opens — even before the user scrubs to an offset with data,
-    // because an empty offset is an honest empty state, not a closed mode.
+  it('opens the scrubber once the producer answers enabled', async () => {
+    // The mode opens even before the user scrubs to an offset with data: an
+    // empty offset is an honest empty state, not a closed mode.
     knobs.params = { tripId: 'trip-1' };
     knobs.userId = 'user-1';
-    knobs.entitiesSource = 'gateway';
+    // The mirror of the case above: the NOW gateway did NOT answer, so the old
+    // proxy says no while the producer says yes. Between them the two cases
+    // pin the gate to the producer in both directions.
+    knobs.entitiesSource = 'legacy';
+    knobs.temporalProducer = 'enabled';
+    await mount();
+
+    await waitFor(() => expect(screen.queryByTestId('time-machine-control')).not.toBeNull());
+  });
+
+  it('opens it AT NOW, which is the regression the probe exists to avoid', async () => {
+    // useTemporalEntities fetches only while the mode is active AND the offset
+    // is not NOW. Feeding its answer into this gate would therefore close Time
+    // Machine at NOW — the control would be missing until the user scrubbed,
+    // and scrubbing is what the control is for. The screen mounts at NOW, so
+    // this case IS that assertion: the probe answered without any scrubbing.
+    knobs.params = { tripId: 'trip-1' };
+    knobs.userId = 'user-1';
+    knobs.temporalProducer = 'enabled';
+    await mount();
+
+    await waitFor(() => expect(screen.queryByTestId('time-machine-control')).not.toBeNull());
+    // Nothing moved the control off NOW, and the offset the probe asks about is
+    // its own — a future one, because the route refuses a target it cannot
+    // resolve. The screen is still showing the present.
+    expect(screen.queryByTestId('time-machine-control')).not.toBeNull();
+  });
+
+  it('stays shut when the probe does not complete', async () => {
+    // Fail closed. An unestablished result is not a yes, so the surface does
+    // not appear on a network error any more than on a refusal.
+    knobs.params = { tripId: 'trip-1' };
+    knobs.userId = 'user-1';
+    knobs.temporalProducer = 'error';
     await mount();
 
     await waitFor(() => expect(screen.getByTestId('map-carousel')).toBeTruthy());
-    expect(screen.queryByTestId('time-machine-control')).not.toBeNull();
+    expect(screen.queryByTestId('time-machine-control')).toBeNull();
+  });
+
+  it('asks the producer ONCE per map session', async () => {
+    // The cost argument for this design is "one request per session". A hook
+    // that re-fires as the camera moves would quietly make it one per pan.
+    knobs.params = { tripId: 'trip-1' };
+    knobs.userId = 'user-1';
+    knobs.temporalProducer = 'enabled';
+    const fetchTemporal = jest.requireMock('../../../src/services/mapTemporal')
+      .fetchMapTemporal as jest.Mock;
+    fetchTemporal.mockClear();
+    await mount();
+
+    await waitFor(() => expect(screen.queryByTestId('time-machine-control')).not.toBeNull());
+    expect(fetchTemporal).toHaveBeenCalledTimes(1);
   });
 });
 
