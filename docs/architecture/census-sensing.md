@@ -964,7 +964,7 @@ freshness / coverage metadata; predicted visibly distinct, W → **C**): the
 object carries `truthClass` and `coverage` (`lib/mapObjects.ts:454#truthClass?:`;
 `lib/mapProjection.ts:800#truthClass:`) and every forecast object on the
 temporal route is stamped `predicted`
-(`routes/mapProjectionTemporal.ts:634#predicted`;
+(`routes/mapProjectionTemporal.ts:660#predicted`;
 `test/mapSensingProjectionGates.test.ts:335#predicted`). **S60** (world_pulse
 promoted into the seven change types, W → **C**) and **S44** (World Dynamics
 — change, anomalies, hotspots, rhythm; no cause when unknown, W → **C**):

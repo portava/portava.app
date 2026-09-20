@@ -2683,7 +2683,7 @@ Every consumer in the tree, by whether it branches on `coverage`:
 | `travel-buddy-standalone/src/components/map/MapSearchSheet.tsx:211#!savedRes || !savedRes.ok || savedRes.data.refusal?.coverage === 'nothing';` | **yes** | Correct. This is the one that was already found and fixed. |
 | `travel-buddy-standalone/app/search.tsx:229#if (!res.ok) {` | **NO** | **Defect.** The main search screen. A `coverage: "nothing"` refusal is `ok: true, results: []`, so it renders the empty state AND fires the Compass "no results" fallback — offering alternatives to a search that never ran. The one screen `GET /discovery/search`'s envelope was built for is the one that cannot read it. |
 | `travel-buddy-standalone/src/hooks/useSearchSuggestions.ts:94#if (res.ok) {` | **NO** | **Defect, and it caches.** See §18.2. This is the consumer C14's `C` rested on. |
-| `travel-buddy-standalone/app/map/index.tsx:1137#if (res.ok && Array.isArray(res.data?.places)) {` | **NO** | **Defect.** A refusal takes the `ok` branch with `places: []`, clears the pins, and the screen's own `placesEmpty` then renders "no places here" for an outage. |
+| `travel-buddy-standalone/app/map/index.tsx:1138#if (res.ok && Array.isArray(res.data?.places)) {` | **NO** | **Defect.** A refusal takes the `ok` branch with `places: []`, clears the pins, and the screen's own `placesEmpty` then renders "no places here" for an outage. |
 | `travel-buddy-standalone/src/services/discovery.ts` — then-line 756, `if (result.status === 'fulfilled' && result.value.ok) {` (`getDiscoveryCategoryCounts`) — DE-POINTERED, see §19.2 | **NO** | **Defect, and it fabricates a number.** The per-category fan-out reads `.data.total` off a refused body and writes `0` into the badge. The BATCH sibling's own doc comment names this exact failure — *"a badge row rendered from it as zeros is a fabricated number"* — and the fan-out neither parses nor propagates `refusal`. |
 | `travel-buddy-standalone/src/components/discovery/DiscoveryEventPostsRail.tsx:79#if (res.ok) {` | no, but **safe** | The `coverage` branch is in the service (`sessionId: refusedEverything(refusal) ? null : …`), which is what keeps a refused feed out of the rank-outcome join, and the rail renders nothing at all when `posts` is empty, so it makes no claim of emptiness. Not a defect; recorded so it is not re-found. |
 | `travel-buddy-standalone/app/(tabs)/_layout.tsx:368#getDiscoveryCategoryCountsBatch(prefetchCity, 10).catch(() => {});` | n/a | Safe by the service, not by itself: the prefetch discards the result, and `getDiscoveryPlaces` refuses to write a refused body into the client cache. Safe today, and safe for a reason that lives in another file. |
@@ -3037,7 +3037,7 @@ Unfixed, and named so they are not reported as closed:
 - `travel-buddy-standalone/app/search.tsx:229#if (!res.ok) {` — the main search
   screen renders the empty state AND fires the Compass "no results" fallback for a
   search that never ran.
-- `travel-buddy-standalone/app/map/index.tsx:1137#if (res.ok && Array.isArray(res.data?.places)) {`
+- `travel-buddy-standalone/app/map/index.tsx:1138#if (res.ok && Array.isArray(res.data?.places)) {`
   — clears the pins and renders "no places here" for an outage.
 
 Neither is touched here. §18's count of four stands as the count that was found;

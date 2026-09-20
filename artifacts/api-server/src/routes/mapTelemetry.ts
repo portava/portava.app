@@ -130,8 +130,15 @@ const eventSchema = z.object({
   synthesizedSession: z.literal(true).optional(),
 });
 
+/**
+ * The most events one batch may carry. Named rather than inline because the
+ * disabled-flag drop counter above reads it too: it counts from the RAW body,
+ * before `batchSchema` runs, and must clamp to the same ceiling.
+ */
+export const MAX_BATCH_EVENTS = 100;
+
 const batchSchema = z.object({
-  events: z.array(eventSchema).max(100),
+  events: z.array(eventSchema).max(MAX_BATCH_EVENTS),
   meta: z
     .object({
       schemaVersion: z.string().max(16).optional(),
@@ -159,7 +166,56 @@ router.post(
     }
 
     if (!(await isFlagEnabled(sc, "map_telemetry_enabled"))) {
-      res.json({ ok: true, accepted: 0, rejected: 0, enabled: false });
+      // ── THE DISABLED FLAG DISCARDS, AND THE DISCARD IS RECORDED ──────────
+      // This used to answer 200 and drop the batch on the floor. The client
+      // treats any 2xx as delivered, so it cleared its queue and reset its own
+      // drop counters, and the events ceased to exist without anything,
+      // anywhere, counting them. Commit 63772b76c found the consequence in
+      // production — "every production map telemetry event was silently
+      // discarded" — and the reason it went unnoticed for months is that the
+      // discard left no trace. A dashboard cannot tell an off flag from a
+      // feature nobody opened, because both read zero.
+      //
+      // So the count is written, to the table that exists for exactly this —
+      // `map_telemetry_drops` already carries the client's own losses under
+      // `dropped_by_reason` — with `flag_disabled` naming the cause. What is
+      // stored is a COUNT and a session id: no event names, no payloads, no
+      // positions. That is deliberately the minimum that makes the loss
+      // observable, and it is the reason this is not simply "collecting
+      // telemetry while telemetry is switched off": the flag governs whether
+      // the PRODUCT's §35 event stream is collected, and this row is an
+      // operational fact about the pipeline rather than a record of anything
+      // the user did on the map. It ages out on the same 90-day retention
+      // (`map_telemetry_drops.expires_at`) as every other row in the table.
+      //
+      // An empty batch writes nothing: a row asserting that zero events were
+      // lost is noise, and a row written unconditionally would satisfy "the
+      // discard is recorded" without recording any discard.
+      //
+      // Counted from the RAW body, because the flag gate runs before
+      // `batchSchema` — deliberately, so a disabled feature does not spend
+      // validation on a payload it will not store. The count is clamped to the
+      // batch ceiling the schema would enforce: `dropped` is an `integer`
+      // column, and an unvalidated length must not be able to overflow it and
+      // turn this non-fatal path into a write error.
+      const rawEvents = (req.body as { events?: unknown } | null)?.events;
+      const discarded = Array.isArray(rawEvents) ? Math.min(rawEvents.length, MAX_BATCH_EVENTS) : 0;
+      if (discarded > 0) {
+        const meta = (req.body as { meta?: { mapSessionId?: unknown } } | null)?.meta;
+        const sessionId = typeof meta?.mapSessionId === "string" ? meta.mapSessionId : null;
+        const { error } = await sc.from("map_telemetry_drops").insert({
+          viewer_id: user.id,
+          map_session_id: sessionId,
+          dropped: discarded,
+          dropped_total: discarded,
+          dropped_by_reason: { flag_disabled: discarded },
+          queue_depth: 0,
+        });
+        // Still non-fatal. A drop counter that cannot be written must not turn
+        // a disabled feature into a client-visible error.
+        if (error) req.log.warn({ err: error }, "map/telemetry: disabled-flag drop write failed");
+      }
+      res.json({ ok: true, accepted: 0, rejected: 0, enabled: false, discarded });
       return;
     }
 

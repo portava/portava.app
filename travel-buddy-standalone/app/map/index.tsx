@@ -110,6 +110,7 @@ import { useSession } from '../../src/context/SessionContext.tsx';
 import { proposeMeetHere, type MeetTarget } from '../../src/features/map/meet/meetHereModel.ts';
 import { countBucket, durationBucketMs } from '../../src/features/map/telemetry/mapTelemetry.ts';
 import { deriveMapEntryPoint } from '../../src/features/map/telemetry/mapTelemetry.ts';
+import { whyShownOpenedPayload } from '../../src/features/map/telemetry/whyShownOpened.ts';
 import { firstParam } from '../../src/lib/routeParams.ts';
 import type { MapEntryPoint } from '../../src/features/map/telemetry/mapTelemetry.ts';
 import { MapLongPressMenu } from '../../src/components/map/MapLongPressMenu.tsx';
@@ -2833,11 +2834,15 @@ function FullScreenMapScreenInner() {
           onClose={() => dispatchMapEvent({ type: 'CLEAR_SELECTION' })}
           onWhyPress={(obj) => {
             setWhyObject(obj);
-            emitMapEvent('why_shown_opened', {
-              ref: describeMapObject(obj),
-              lineCount: obj.provenance?.lines.length ?? 0,
-              provenanceRefs: obj.sourceRefs,
-            });
+            // §35's `lineCount` means "how many provenance lines the §9 panel
+            // SHOWED", and the panel below is `buildWhyPanel(obj)` — which
+            // synthesises its evidence whenever the server sent no
+            // `provenance.lines`. Computing the payload from the raw object
+            // reported 0 for every synthesised panel, i.e. for the common case.
+            // The rule lives in one place now; see whyShownOpened.ts.
+            // `WhyShownSheet` is rendered below without a `now` prop, so the
+            // event and the panel resolve against the same default clock.
+            emitMapEvent('why_shown_opened', whyShownOpenedPayload(obj));
           }}
           contributionsEnabled={contributionsEnabled}
           onContribute={setContributeObject}
