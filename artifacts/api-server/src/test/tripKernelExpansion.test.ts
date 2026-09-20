@@ -43,6 +43,7 @@ import { _setTestClient } from "../lib/http.js";
 import tripsExpansionRouter from "../routes/trips-expansion.js";
 import requestsRouter from "../routes/requests.js";
 import { _resetTripCommandRejectedTotal, readTripCommandRejectedTotal } from "../domain/trips/commands/tripKernel.js";
+import { todayInTimezone } from "../domain/trips/invariants/tripStatus.js";
 import { CLOSEOUT_STEPS } from "../domain/trips/services/TripCloseout.js";
 
 // ── IDs ───────────────────────────────────────────────────────────────────────
@@ -84,15 +85,34 @@ interface State {
  * the grep that went looking for the first three could not see it.
  *
  * The window is a function of the clock the assertion is judged against: it
- * opens tomorrow and closes five days out, which is "upcoming" on every day,
- * in every timezone. Never a newer constant — that is green tomorrow and armed
- * for the day after.
+ * opens tomorrow and closes five days out. Never a newer constant — that is
+ * green tomorrow and armed for the day after.
+ *
+ * ── AND IT MUST BE THE SAME CLOCK, IN THE SAME ZONE ─────────────────────────
+ *
+ * The first version of this used `.toISOString()`, which formats in UTC, while
+ * `computeTripStatus` compares against `todayInTimezone(trip.timezone)` — and
+ * this fixture's trip is `Europe/Lisbon`. Deriving the window from the real
+ * clock removed the pinned-constant bomb and left a SMALLER one running on a
+ * daily timer: for the hours between 23:00 UTC and UTC midnight, Lisbon is
+ * already on the next date, so "tomorrow in UTC" is TODAY in Lisbon and the
+ * trip reads `active`. It fired at 23:28 UTC on 2026-09-20, in CI and locally,
+ * with this file's own header claiming the window was "upcoming on every day,
+ * in every timezone". That claim was false for every zone ahead of UTC, for
+ * one hour a day — and for a zone at UTC+13 it would be thirteen.
+ *
+ * So the bounds are formatted through the SAME function the production code
+ * judges them with, in the SAME zone as the fixture's trip. Not a
+ * reimplementation of the formatting: if `todayInTimezone` ever changes how it
+ * resolves a date, the fixture moves with it instead of drifting apart.
  */
 const DAY_MS = 24 * 60 * 60 * 1_000;
-/** Read ONCE so the two bounds cannot straddle a UTC midnight between calls. */
+/** Read ONCE so the two bounds cannot straddle a midnight between calls. */
 const NOW_MS = Date.now();
+/** The zone the fixture's trip is in, and therefore the zone its status is judged in. */
+const TRIP_TZ = "Europe/Lisbon";
 const dayOffset = (days: number): string =>
-  new Date(NOW_MS + days * DAY_MS).toISOString().slice(0, 10);
+  todayInTimezone(TRIP_TZ, new Date(NOW_MS + days * DAY_MS));
 
 function baseState(kernelOn: boolean): State {
   return {
