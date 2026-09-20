@@ -26,9 +26,12 @@
  *   - `formatOpportunityLines` renders the opportunity engine's `compass`
  *     surface projection. The caller reads `opportunity_engine_enabled` (by
  *     its literal name, so check-flag-polarity resolves it) before building.
+ *   - `runWithAskProjections` / `currentAskProjections` carry those same
+ *     projections to the RANKING owner (CCL-05; see the block below).
  *
  * Nothing here writes, and no coordinate reaches the prompt.
  */
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   assembleContextKernel,
@@ -184,4 +187,51 @@ export function formatOpportunityLines(wire: readonly SurfaceProjection[], refus
   // is never rendered as "nothing is happening".
   for (const r of refusals) lines.push(`Refused ${r.subjectId}: ${r.reason}${r.decision ? ` (${r.decision})` : ""}`);
   return lines;
+}
+
+// ── CCL-05: the same projections, carried to the RANKING owner ───────────────
+//
+// §26.3 closed CCL-05's first half and named the second verbatim: "The ranking
+// owner, `CompassPipeline`, still ranks without them." The spec's chain is
+//
+//   … → shared world/experience/forecast/opportunity projections → EXISTING
+//   decision/ranking owner → …
+//
+// so the projections have to reach `runPipeline`, not only the prompt. The
+// ranker is reached from `/compass/ask` through the model's tool calls
+// (routes/compass.ts → runToolCallingLoop → CompassTools → runPipeline): a
+// stack of callers that have no business knowing about a context kernel and
+// must not grow a parameter for one. An AsyncLocalStorage is the request-scoped
+// seam for exactly that — one store per turn, established by the route around
+// the tool loop, read by the pipeline at the bottom. It is NOT global mutable
+// state: two concurrent turns each see their own store, and a caller that never
+// established one (the feed, a job, a test) reads `null` and ranks exactly as it
+// did before CCL-05.
+
+/** The shared projections as the ranking owner consumes them. */
+export interface AskRankingProjections {
+  /** The nine-context kernel this turn assembled. */
+  kernel: ContextKernel;
+  /** Whether the Live gates allowed the world read at all (`AskKernel.readable`). */
+  readable: boolean;
+  /**
+   * The opportunity engine's `compass` projections. Present ONLY when the
+   * caller read `opportunity_engine_enabled` TRUE — an empty array then means
+   * "the flag is on and nothing was promoted", while `undefined` means the
+   * flag-gated half never ran. The ranker must not conflate the two, so the
+   * field is optional rather than defaulted to `[]`.
+   */
+  opportunities?: readonly SurfaceProjection[];
+}
+
+const askProjectionStore = new AsyncLocalStorage<AskRankingProjections>();
+
+/** Run `fn` with these projections ambient for everything it awaits. */
+export function runWithAskProjections<T>(projections: AskRankingProjections, fn: () => Promise<T>): Promise<T> {
+  return askProjectionStore.run(projections, fn);
+}
+
+/** The projections for the turn in flight, or null outside one. Never throws, never guesses. */
+export function currentAskProjections(): AskRankingProjections | null {
+  return askProjectionStore.getStore() ?? null;
 }

@@ -290,51 +290,54 @@ type Known = {
  * trap, so the fixture now reads whichever entry happens to exist.
  */
 export const KNOWN: Record<string, Known> = {
-  // ── Guarded: the contract refuses before the failing call ───────────────────
-  COMPASS_ENABLED: {
-    classification: "guarded",
-    // Only the two 2996 columns sit inside the COMPASS_ENABLED closure. 2997's
-    // three (compass_served_recommendations.revoked_at / revocation_reason,
-    // compass_outcome_events.weight_nudge) are named by compass/CompassOutcomeEngine.ts,
-    // which is reached from routes no flag gates, so the ratchet does not see
-    // them under this flag; they are probed by the same capability and listed
-    // in checkMissingLiveColumns' PENDING LIVE APPLY block instead.
-    //
-    // The ten trails objects (2910_discovery_trails.sql) entered this closure on
-    // 2026-09-20 with census-compass CM-02: the `compile_plan_from_experience`
-    // tool reaches services/media/MediaActionResolver.ts `compileExperiencePlan`,
-    // whose Trail branch reads `trails` and `content_trails`. 2910 is applied to
-    // portava-ci and NOT to production. The branch PROBES `trails` with the
-    // lib/capability sentinel before naming any other column and refuses
-    // `source_unavailable` when the table is absent (compassPlanCompiler.test.ts
-    // pins it), so the guard is the compiler's own rather than a registry
-    // entry: the registry keys one definition per flag and COMPASS_ENABLED's is
-    // COMPASS_CONVERSATION_PHASE1, whose requirement must not be widened to a
-    // schema conversations do not need.
-    objects: [
-      "compass_conversations.status",
-      "compass_conversations.trip_id",
-      "content_trails",
-      "content_trails.content_state",
-      "content_trails.created_at",
-      "content_trails.source_id",
-      "content_trails.source_type",
-      "content_trails.trail_id",
-      "trails",
-      "trails.id",
-      "trails.lifecycle_status",
-      "trails.title",
-    ],
-    note:
-      "Migrations 2996 (compass-phase1-spec §1: trip_id, status, role system-event) and 2997 (CPV2-11 recommendation " +
-      "lineage: revoked_at, revocation_reason, weight_nudge) are applied to portava-ci and " +
-      "NOT to production, where COMPASS_ENABLED is ON. Registered as COMPASS_CONVERSATION_PHASE1; " +
-      "services/compass/CompassConversationService.ts probes before naming either column and uses the legacy " +
-      "shape when they are missing; compass/CompassOutcomeEngine.ts does the same for the lineage columns. " +
-      "2910 (Discovery trails) is likewise on portava-ci only; services/media/MediaActionResolver.ts " +
-      "compileExperiencePlan probes `trails` before naming it and refuses source_unavailable. " +
-      "Strike the 2996 objects when 2996 is applied to production and recorded; the trails objects when 2910 is.",
-  },
+  // ── STRUCK OFF 2026-09-20: COMPASS_ENABLED ─────────────────────────────────
+  //
+  // The entry's own note said "Strike the 2996 objects when 2996 is applied to
+  // production and recorded; the trails objects when 2910 is." Both were applied
+  // on 2026-09-20 — 2996 at 19:46:26 UTC, 2997 at 19:49:28, 2910 at 19:56:45,
+  // each with a schema_migration_ledger row and each rehearsed on production in a
+  // rolled-back transaction first. Against snapshots/20260920-production-schema.json
+  // none of the twelve objects is absent any more, so the ratchet reported
+  // "STALE: KNOWN.COMPASS_ENABLED is no longer in the state" and the entry is
+  // struck here rather than rewritten or narrowed. That rule is the reason a
+  // resolved exemption cannot quietly outlive its cause; honouring it is the
+  // point rather than an inconvenience, and it is the only honest way this list
+  // shrinks.
+  //
+  // WHAT IT RECORDED, kept because the history is the useful part. Production had
+  // COMPASS_ENABLED TRUE while it lacked twelve objects two closures name:
+  //
+  //   compass_conversations.trip_id / .status            2996 (compass-phase1-spec §1)
+  //   trails, trails.id/.title/.lifecycle_status         2910 (Discovery Trails)
+  //   content_trails and its trail_id/source_type/       2910
+  //     source_id/content_state/created_at
+  //
+  // Nothing broke while it stood, because both readers probe before they name:
+  // services/compass/CompassConversationService.ts (conversationSchemaReady) used
+  // the legacy conversation shape when the two columns were missing, and
+  // services/media/MediaActionResolver.ts `compileExperiencePlan` probed `trails`
+  // with the lib/capability sentinel and refused `source_unavailable` rather than
+  // naming a column of a table that did not exist — which is what made the entry
+  // `guarded` rather than `unguarded`. The trails objects had entered this closure
+  // only on 2026-09-20, with census-compass CM-02, via the
+  // `compile_plan_from_experience` tool.
+  //
+  // WHAT THAT CLOSES, AND WHAT IT DOES NOT. It closes the SCHEMA half of
+  // `capability = FLAG_ENABLED && SCHEMA_CAPABILITY_READY` for COMPASS_ENABLED:
+  // the registry line now reads "missing in production: none", so the flag is no
+  // longer ON over a database that cannot answer it, and /api/v1/discovery/trails
+  // no longer reads a missing relation. It does NOT mean the Trail features run:
+  // 2910 created all six tables EMPTY, so a Trail plan compiles over no rows, and
+  // 2997's lineage columns are still only written by the probe-guarded path.
+  // Applied is not enabled.
+  //
+  // 2997's three columns (compass_served_recommendations.revoked_at /
+  // revocation_reason, compass_outcome_events.weight_nudge) were never listed
+  // here — they are named by compass/CompassOutcomeEngine.ts, reached from routes
+  // no flag gates, so the ratchet never saw them under this flag. They were
+  // carried in checkMissingLiveColumns' PENDING LIVE APPLY block and were struck
+  // from it on the same day and for the same reason.
+
   // ── Guarded: the contract refuses before the failing call ───────────────────
   //
   // `media_canonical_enabled` WAS HERE, and it was THE founding case of this whole

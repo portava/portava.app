@@ -340,13 +340,18 @@ const DOW_SHORT_TO_KEY: Record<string, string> = {
   Sun: "sun", Mon: "mon", Tue: "tue", Wed: "wed", Thu: "thu", Fri: "fri", Sat: "sat",
 };
 
-/** Day-of-week key, hour, and month of a Date in a specific timezone. */
-function localClockParts(at: Date, tz: string): { dow: string; hour: number; month: string } | null {
+/** Day-of-week key, hour, month and day-of-month of a Date in a timezone. */
+function localClockParts(at: Date, tz: string): { dow: string; hour: number; month: string; day: string } | null {
   try {
     let fmt = TZ_FORMATTERS.get(tz);
     if (!fmt) {
       fmt = new Intl.DateTimeFormat("en-US", {
-        timeZone: tz, weekday: "short", hour: "numeric", hourCycle: "h23", month: "2-digit",
+        timeZone: tz, weekday: "short", hour: "numeric", hourCycle: "h23",
+        // CPH-15 (event) — the day is read from the SAME local clock the slice
+        // and month come from. A festival that runs 8pm–2am in Cebu is one
+        // local evening and two UTC dates; keying the event window on the UTC
+        // date would split it in half and under-sample both halves.
+        month: "2-digit", day: "2-digit",
       });
       TZ_FORMATTERS.set(tz, fmt);
     }
@@ -355,8 +360,9 @@ function localClockParts(at: Date, tz: string): { dow: string; hour: number; mon
     const dow = DOW_SHORT_TO_KEY[get("weekday")];
     const hour = Number(get("hour"));
     const month = get("month");
+    const day = get("day");
     if (!dow || !Number.isFinite(hour)) return null;
-    return { dow, hour, month };
+    return { dow, hour, month, day };
   } catch {
     return null; // unknown/invalid tz → caller falls back to UTC
   }
@@ -385,6 +391,26 @@ export function localMonthKey(at: Date, city?: string | null, coords?: CityCoord
   return String(at.getUTCMonth() + 1).padStart(2, "0");
 }
 
+/**
+ * census-compass CPH-15 — the EVENT dimension's key: a city's LOCAL
+ * day-of-year, "MM-DD" (UTC fallback when the city's timezone is unknown).
+ *
+ * WHY DAY-OF-YEAR AND NOT A FULL DATE. The world model is a model of a
+ * DESTINATION, not a calendar of instances: "Cebu on 01-15 is Sinulog and
+ * behaves nothing like 01-16" is a durable fact about the city, and keying on
+ * the recurring local day is what lets three years of the same festival
+ * accumulate into one window big enough to clear MIN_EVENT_SAMPLE. It also
+ * bounds the key space at 366 per city, which a full date does not.
+ */
+export function localEventDayKey(at: Date, city?: string | null, coords?: CityCoords | null): string {
+  const tz = cityTimezone(city, coords);
+  if (tz) {
+    const parts = localClockParts(at, tz);
+    if (parts?.month && parts?.day) return `${parts.month}-${parts.day}`;
+  }
+  return `${String(at.getUTCMonth() + 1).padStart(2, "0")}-${String(at.getUTCDate()).padStart(2, "0")}`;
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface TimeSliceProfile {
@@ -411,9 +437,35 @@ export interface MonthProfile {
   categories: Record<string, number>;
 }
 
+/**
+ * census-compass CPH-15 — the EVENT dimension. One profile per local
+ * day-of-year window ("MM-DD") on which the city has scheduled events, with
+ * the same category breakdown a slice and a month carry, so the ranking boost
+ * can vary while a notable event is on the way it varies by season.
+ */
+export interface EventWindowProfile {
+  count: number;
+  categories: Record<string, number>;
+}
+
+/**
+ * CPH-15 — the namespace event windows live under inside `monthly`.
+ *
+ * WHY THEY SHARE A COLUMN. `compass_city_models` is
+ * (city, time_slices, monthly, top_categories, sample_size, built_at) and
+ * nothing else (20260730_compass_intelligence_graph.sql); adding an
+ * `event_windows` column needs a migration, and an upsert naming a column the
+ * table does not have is REJECTED — which in `buildCityWorldModels` would
+ * silently model no city at all. The two key spaces cannot collide: a month
+ * key is exactly two digits (`monthProfile` looks one up by exact key), an
+ * event key is `ev:MM-DD`.
+ */
+export const EVENT_WINDOW_KEY_PREFIX = "ev:";
+
 export interface CityWorldModel {
   city: string;
   timeSlices: Record<string, TimeSliceProfile>;
+  /** Months keyed "01".."12"; event windows keyed `ev:MM-DD` (CPH-15). */
   monthly: Record<string, number | MonthProfile>;
   topCategories: string[];
   sampleSize: number;
@@ -431,7 +483,33 @@ export function monthProfile(model: CityWorldModel, month: string): MonthProfile
   return null;
 }
 
+/**
+ * CPH-15 — one event window's profile, or null when the city has no notable
+ * event on that local day. A zero-count window is NOT a window.
+ */
+export function eventWindowProfile(model: CityWorldModel, day: string): EventWindowProfile | null {
+  const raw = model.monthly?.[`${EVENT_WINDOW_KEY_PREFIX}${day}`];
+  if (raw === undefined || raw === null || typeof raw === "number") return null;
+  const count = Number((raw as EventWindowProfile).count ?? 0);
+  if (!Number.isFinite(count) || count <= 0) return null;
+  return { count, categories: (raw as EventWindowProfile).categories ?? {} };
+}
+
 export type CityConfidenceTier = "deep" | "moderate" | "thin";
+
+/**
+ * census-compass CPV2-12 — WHICH store answered "how well is this city
+ * known?". `platform_coverage` is the shared platform store
+ * (`intel_coverage_snapshots`, produced by lib/intelCoverageScheduler);
+ * `compass_graph` is Compass's own graph-derived fallback.
+ */
+export type CityConfidenceSource = "platform_coverage" | "compass_graph";
+
+/** CPV2-12 — WHY that store answered. A fallback must always say which kind. */
+export type CityConfidenceSourceReason =
+  | "platform_coverage"     // the platform had live cells for this city
+  | "platform_no_rows"      // the platform is readable and has nothing here
+  | "platform_unreadable";  // the platform read failed — NOT the same thing
 
 export interface CityConfidence {
   city: string;
@@ -439,6 +517,15 @@ export interface CityConfidence {
   tier: CityConfidenceTier;
   signals: Record<string, number>;    // aggregate counts only — never user ids
   computedAt: string;
+  /**
+   * CPV2-12 — provenance. ABSENT means "unknown provenance" (a record built
+   * before this seam existed) and is read everywhere as NOT the platform, so
+   * nothing can claim platform truth by omission.
+   */
+  source?: CityConfidenceSource;
+  sourceReason?: CityConfidenceSourceReason;
+  /** Platform cells behind a `platform_coverage` answer (0 otherwise). */
+  platformCells?: number;
 }
 
 export interface GraphRebuildReport {
@@ -688,6 +775,10 @@ export async function buildGraphFromSources(
         batch.node("time_slice", `${city}|${slice}`, city, { slice });
         batch.edge({ src_type: "city", src_key: city, dst_type: "time_slice", dst_key: `${city}|${slice}`, edge_type: `active_during:${category.toLowerCase()}`, at });
         monthEdge(batch, city, new Date(at), { lat: r.location_lat, lng: r.location_lng }, category.toLowerCase(), at);
+        // CPH-15 (event) — this row IS an event with a start time in a city,
+        // so it is the one observation in the whole build that can honestly
+        // say "a notable event was on here, on this local day".
+        eventEdge(batch, city, new Date(at), { lat: r.location_lat, lng: r.location_lng }, category.toLowerCase(), at);
       }
     }
   } catch { /* fail-soft */ }
@@ -942,6 +1033,36 @@ function monthEdge(
   batch.edge({ src_type: "city", src_key: city, dst_type: "time_slice", dst_key: `${city}|m:${month}`, edge_type: `active_during_month:${category}`, at: atIso });
 }
 
+/**
+ * CPH-15 — the EVENT edge: city → event window, typed
+ * `active_during_event:<category>`, keyed on the city's LOCAL day-of-year
+ * (`localEventDayKey`). Written beside the time-slice and month edges at the
+ * ONE site that knows an event is on — the `events` read — so all three
+ * dimensions are folded from the same observation.
+ *
+ * WHY ONLY THERE. A stamp or a Memory says somebody was in the city; it does
+ * not say a notable event was running. Writing this edge from those reads
+ * would turn ordinary activity into a fabricated "event", which is the one
+ * thing the census clause cannot be closed with.
+ *
+ * The node stays `time_slice` for the same reason the month node does: the
+ * CHECK on compass_graph_nodes.node_type admits no new kind without a
+ * migration (GRAPH_NODE_KINDS). The `ev:` in the key and the distinct
+ * edge_type prefix are what tell the three folds apart.
+ */
+function eventEdge(
+  batch: GraphBatch,
+  city: string,
+  at: Date,
+  coords: CityCoords | null,
+  category: string,
+  atIso: string,
+): void {
+  const day = localEventDayKey(at, city, coords);
+  batch.node("time_slice", `${city}|ev:${day}`, city, { eventDay: day });
+  batch.edge({ src_type: "city", src_key: city, dst_type: "time_slice", dst_key: `${city}|ev:${day}`, edge_type: `active_during_event:${category}`, at: atIso });
+}
+
 export async function buildCityWorldModels(db: SupabaseClient): Promise<number> {
   const { data } = await db
     .from("compass_graph_edges")
@@ -992,6 +1113,34 @@ export async function buildCityWorldModels(db: SupabaseClient): Promise<number> 
     }
   } catch { /* fail-soft: no season profile this build */ }
 
+  // CPH-15 — the EVENT windows, from the event edges (city-local day-of-year).
+  // They ride in the SAME per-city record as the months, under the `ev:`
+  // namespace (EVENT_WINDOW_KEY_PREFIX) — see that constant for why there is no
+  // separate column. A window whose key is not MM-DD is DROPPED rather than
+  // guessed at: a malformed key is a broken writer, not an event.
+  try {
+    const { data: eventEdges } = await db
+      .from("compass_graph_edges")
+      .select("src_key, dst_key, edge_type, observed_count")
+      .like("edge_type", "active_during_event:%")
+      .limit(20000);
+    for (const r of (eventEdges as any[]) ?? []) {
+      const city = String(r.src_key ?? "");
+      const dstKey = String(r.dst_key ?? "");           // "<city>|ev:<MM-DD>"
+      const day = dstKey.includes("|ev:") ? dstKey.split("|ev:").pop()! : "";
+      if (!city || !/^\d{2}-\d{2}$/.test(day)) continue;
+      const count = Number(r.observed_count ?? 1) || 1;
+      const category = (String(r.edge_type ?? "").split(":")[1] ?? "general").toLowerCase() || "general";
+      const windows = monthlyByCity.get(city) ?? {};
+      const key = `${EVENT_WINDOW_KEY_PREFIX}${day}`;
+      const wp = windows[key] ?? { count: 0, categories: {} };
+      wp.count += count;
+      wp.categories[category] = (wp.categories[category] ?? 0) + count;
+      windows[key] = wp;
+      monthlyByCity.set(city, windows);
+    }
+  } catch { /* fail-soft: no event windows this build */ }
+
   const perCity = new Map<string, { slices: Record<string, TimeSliceProfile>; monthly: Record<string, MonthProfile>; catTotals: Record<string, number>; sample: number }>();
 
   for (const r of (data as any[]) ?? []) {
@@ -1012,7 +1161,8 @@ export async function buildCityWorldModels(db: SupabaseClient): Promise<number> 
     entry.catTotals[category] = (entry.catTotals[category] ?? 0) + count;
     entry.sample += count;
     // The season profile comes from the month edges above (city-local month,
-    // per category), not from slicing UTC timestamps out of first/last seen.
+    // per category), not from slicing UTC timestamps out of first/last seen —
+    // and CPH-15's event windows ride in the same record under `ev:`.
     entry.monthly = monthlyByCity.get(city) ?? entry.monthly;
     perCity.set(city, entry);
   }
@@ -1057,7 +1207,7 @@ export async function getCityWorldModel(
     return {
       city:          String((data as any).city),
       timeSlices:    ((data as any).time_slices as Record<string, TimeSliceProfile>) ?? {},
-      monthly:       ((data as any).monthly as Record<string, number>) ?? {},
+      monthly:       ((data as any).monthly as Record<string, number | MonthProfile>) ?? {},
       topCategories: ((data as any).top_categories as string[]) ?? [],
       sampleSize:    Number((data as any).sample_size ?? 0),
       builtAt:       String((data as any).built_at ?? ""),
@@ -1077,16 +1227,40 @@ export const WORLD_MODEL_BOOST_MAX = 5;
  * weekday × daypart slice.
  */
 export const SEASON_BOOST_MAX = 2;
+/**
+ * CPH-15 — the EVENT addend's ceiling, the third documented tunable beside
+ * WORLD_MODEL_BOOST_MAX and SEASON_BOOST_MAX. It sits between them: an event
+ * window is a SHARPER claim than a month (a specific local day the city
+ * actually schedules things on) but rests on narrower evidence than the whole
+ * weekday × daypart history, so it may move a rank more than a season and less
+ * than a rhythm. Every addend stays bounded — the world model nudges a rank,
+ * it never decides one.
+ */
+export const EVENT_BOOST_MAX = 3;
 
 /** Slices with fewer observations than this contribute NO boost (honesty). */
 export const MIN_SLICE_SAMPLE = 3;
 
+/**
+ * CPH-15 — an event window needs at least this many observations before it is
+ * "notable". Lower than MIN_SLICE_SAMPLE on purpose: a window is ONE local day
+ * of the year, so it accumulates far more slowly than a weekday × daypart
+ * slice, and a city that genuinely schedules two or more things on the same
+ * local day is already behaving unlike its ordinary days. One lone event is
+ * not a festival, and is deliberately below the floor.
+ */
+export const MIN_EVENT_SAMPLE = 2;
+
 export interface WorldModelAnnotation {
-  boost: number;                       // 0..WORLD_MODEL_BOOST_MAX + SEASON_BOOST_MAX
+  /** 0..WORLD_MODEL_BOOST_MAX + SEASON_BOOST_MAX + EVENT_BOOST_MAX */
+  boost: number;
   factor: RankingFactor | null;
   /** CPH-15 — the season addend, reported separately so "varies by season" is observable. */
   seasonBoost: number;                 // 0..SEASON_BOOST_MAX
   seasonFactor: RankingFactor | null;
+  /** CPH-15 — the event addend, reported separately so "varies by event" is observable. */
+  eventBoost: number;                  // 0..EVENT_BOOST_MAX
+  eventFactor: RankingFactor | null;
 }
 
 /**
@@ -1119,6 +1293,52 @@ export function seasonBoostForItem(item: CompassItem, model: CityWorldModel | nu
   }
 }
 
+/**
+ * CPH-15 — bounded EVENT addend: the SAME item scores differently WHILE A
+ * NOTABLE EVENT IS ON, because the city's event window for this local day says
+ * its category is what the city is actually running then. Pure.
+ *
+ * HONEST DEGRADATION, stated once. There are exactly three ways to get nothing
+ * here, and all three return `{ boost: 0, factor: null }` — no model, no window
+ * for this day (or one below MIN_EVENT_SAMPLE), or a window whose categories
+ * the item does not match. No event signal means no boost AND no factor: a
+ * "why this" line naming an event that is not happening would be the census
+ * finding wearing the fix's name.
+ */
+export function eventBoostForItem(
+  item: CompassItem,
+  model: CityWorldModel | null,
+  at: Date,
+): { boost: number; factor: RankingFactor | null } {
+  try {
+    if (!model) return { boost: 0, factor: null };
+    const day = localEventDayKey(at, model.city);
+    const profile = eventWindowProfile(model, day);
+    if (!profile || profile.count < MIN_EVENT_SAMPLE) return { boost: 0, factor: null };
+    let matched = 0;
+    let matchedCat: string | null = null;
+    for (const tok of itemCategoryTokens(item)) {
+      const c = profile.categories[tok];
+      if (c && c > 0) { matched += c; if (!matchedCat) matchedCat = tok; }
+    }
+    if (matched === 0) return { boost: 0, factor: null };
+    const share = Math.min(1, matched / profile.count);
+    const boost = Math.round(share * EVENT_BOOST_MAX * 100) / 100;
+    if (boost <= 0) return { boost: 0, factor: null };
+    return {
+      boost,
+      factor: {
+        key: "city_event",
+        label: `${model.city} has ${matchedCat} events running on this date`,
+        weight: share,
+        detail: `event window ${day}`,
+      },
+    };
+  } catch {
+    return { boost: 0, factor: null };
+  }
+}
+
 function itemCategoryTokens(item: CompassItem): string[] {
   const toks = new Set<string>();
   const cat = (item as any).category;
@@ -1141,9 +1361,17 @@ export function worldModelBoostForItem(
   at: Date,
 ): WorldModelAnnotation {
   const season = seasonBoostForItem(item, model, at);
-  const none: WorldModelAnnotation = { boost: season.boost, factor: null, seasonBoost: season.boost, seasonFactor: season.factor };
+  // CPH-15 — the third dimension. Independent of the slice: a city can be in
+  // the middle of a festival at an hour it has no rhythm history for.
+  const evt = eventBoostForItem(item, model, at);
+  const none: WorldModelAnnotation = {
+    boost: Math.round((season.boost + evt.boost) * 100) / 100,
+    factor: null,
+    seasonBoost: season.boost, seasonFactor: season.factor,
+    eventBoost: evt.boost, eventFactor: evt.factor,
+  };
   try {
-    if (!model) return { boost: 0, factor: null, seasonBoost: 0, seasonFactor: null };
+    if (!model) return { boost: 0, factor: null, seasonBoost: 0, seasonFactor: null, eventBoost: 0, eventFactor: null };
     const slice = model.timeSlices[timeSliceKey(at, model.city)];
     if (!slice || slice.count < MIN_SLICE_SAMPLE) return none;
 
@@ -1165,7 +1393,7 @@ export function worldModelBoostForItem(
 
     const sliceKey = timeSliceKey(at, model.city);
     return {
-      boost: Math.round((rhythm + season.boost) * 100) / 100,
+      boost: Math.round((rhythm + season.boost + evt.boost) * 100) / 100,
       factor: {
         key:    "city_rhythm",
         label:  `${model.city} is usually into ${matchedCat} around this time`,
@@ -1174,9 +1402,11 @@ export function worldModelBoostForItem(
       },
       seasonBoost: season.boost,
       seasonFactor: season.factor,
+      eventBoost: evt.boost,
+      eventFactor: evt.factor,
     };
   } catch {
-    return { boost: 0, factor: null, seasonBoost: 0, seasonFactor: null };
+    return { boost: 0, factor: null, seasonBoost: 0, seasonFactor: null, eventBoost: 0, eventFactor: null };
   }
 }
 
@@ -1294,30 +1524,191 @@ export async function computeCityConfidenceIndex(
   return { scored, strongestCity };
 }
 
-/** Load one city's confidence record (null-safe, fail-soft). */
+// ── census-compass CPV2-12 — the SHARED coverage seam ─────────────────────────
+//
+// Compass used to answer "how well do we know this city?" entirely from its own
+// edges: `computeCityConfidenceIndex` scores compass_graph_edges and upserts
+// compass_city_confidence, and that was the whole answer. Meanwhile the
+// PLATFORM already maintains a coverage store for the same question under a
+// different owner — lib/intelCoverage* writes `intel_coverage_snapshots`, one
+// scored (zone, claim-family) cell per city with a `coverage_state` and a
+// `current_confidence`. Two stores, two independent answers, no seam: that is
+// duplicated truth, and the census row says so.
+//
+// The seam is a READ, in one direction. Compass consumes the platform store;
+// it never writes it, never re-runs its producer and never imports its
+// scheduler. Where the platform has live cells for a city, the platform
+// GOVERNS the confidence Compass serves. Where it does not — or cannot be read
+// — Compass falls back to its own graph-derived score and SAYS WHICH, through
+// `CityConfidence.source` / `.sourceReason`, so a local answer can never be
+// mistaken for platform truth.
+
+/** One city's live platform coverage, folded to Compass's 0–100 depth scale. */
+export interface PlatformCityCoverage {
+  city: string;                 // canonical city key
+  cells: number;                // unexpired (zone, claim-family) cells counted
+  covered: number;
+  noCoverage: number;
+  unknown: number;
+  meanConfidence: number;       // mean current_confidence, 0..1
+  depthScore: number;           // 0–100, comparable with scoreCityDepth
+  computedAt: string;           // freshest cell's computed_at
+}
+
+const PLATFORM_COVERAGE_READ_LIMIT = 2000;
+// Coverage dominates confidence: a city whose cells are answered at all is
+// better known than one whose cells are merely confident about nothing. The
+// two weights sum to 1 so the result lands on the same 0–100 scale
+// `scoreCityDepth` produces and `tierForScore` reads.
+const PLATFORM_COVERED_WEIGHT = 0.6;
+const PLATFORM_CONFIDENCE_WEIGHT = 0.4;
+
+/**
+ * CPV2-12 — fold the platform's coverage census onto Compass's depth scale.
+ * Pure. An `unknown` cell counts as neither covered nor confident, so a city
+ * the platform has only ever shrugged at scores near zero — which is the
+ * honest reading, not a missing answer.
+ */
+export function platformCoverageDepthScore(
+  c: { cells: number; covered: number; meanConfidence: number },
+): number {
+  if (!Number.isFinite(c.cells) || c.cells <= 0) return 0;
+  const coveredShare = Math.min(1, Math.max(0, c.covered / c.cells));
+  const conf = Math.min(1, Math.max(0, Number(c.meanConfidence) || 0));
+  const s = 100 * (coveredShare * PLATFORM_COVERED_WEIGHT + conf * PLATFORM_CONFIDENCE_WEIGHT);
+  return Math.round(Math.min(100, Math.max(0, s)) * 100) / 100;
+}
+
+/**
+ * CPV2-12 — read the PLATFORM's coverage for one city.
+ *
+ * `readable` and `coverage` are separate answers on purpose: "the platform has
+ * nothing for this city" (readable, null) and "the platform could not be read"
+ * (not readable, null) are different facts, and collapsing them is exactly how
+ * an outage starts looking like a confident local answer.
+ *
+ * CITY KEYS. The platform stores `places.city` RAW ("Cebu City"); Compass keys
+ * canonical ("cebu"). The read narrows server-side on the canonical prefix and
+ * then re-verifies each row through `canonicalCityKey`, so a differently
+ * spelled row still counts and another city's row never does. A raw spelling
+ * that is not a prefix of its canonical key is simply not read — Compass then
+ * falls back and says it fell back, which is a degradation, not a wrong claim.
+ */
+export async function readPlatformCityCoverage(
+  db: SupabaseClient | null,
+  city: string | null,
+  now: Date = new Date(),
+): Promise<{ coverage: PlatformCityCoverage | null; readable: boolean }> {
+  const key = canonicalCityKey(city);
+  if (!db || !key) return { coverage: null, readable: false };
+  try {
+    // Literal `.from("t").select("cols")` — the repo's schema scanner
+    // attributes a table reference only from a literal chain, and this read is
+    // the whole visible seam between Compass and the platform store.
+    const { data, error } = await db
+      .from("intel_coverage_snapshots")
+      .select("city, zone_id, claim_family, coverage_state, current_confidence, score, computed_at, expires_at")
+      .ilike("city", `${key}%`)
+      // Snapshots carry a freshness horizon and the producer prunes past it; an
+      // expired cell is a gap that stopped being rewritten, not live coverage.
+      .gt("expires_at", now.toISOString())
+      .limit(PLATFORM_COVERAGE_READ_LIMIT);
+    if (error) return { coverage: null, readable: false };
+
+    let cells = 0, covered = 0, noCoverage = 0, unknown = 0, confSum = 0;
+    let computedAt = "";
+    for (const r of (data as any[]) ?? []) {
+      if (canonicalCityKey(r?.city) !== key) continue;
+      cells++;
+      const state = String(r?.coverage_state ?? "unknown");
+      if (state === "covered") covered++;
+      else if (state === "no_coverage") noCoverage++;
+      else unknown++;
+      const c = Number(r?.current_confidence ?? 0);
+      confSum += Number.isFinite(c) ? Math.min(1, Math.max(0, c)) : 0;
+      const at = String(r?.computed_at ?? "");
+      if (at > computedAt) computedAt = at;
+    }
+    if (cells === 0) return { coverage: null, readable: true };
+    const meanConfidence = Math.round((confSum / cells) * 10000) / 10000;
+    return {
+      coverage: {
+        city: key, cells, covered, noCoverage, unknown, meanConfidence,
+        depthScore: platformCoverageDepthScore({ cells, covered, meanConfidence }),
+        computedAt,
+      },
+      readable: true,
+    };
+  } catch {
+    return { coverage: null, readable: false };
+  }
+}
+
+/**
+ * Load one city's confidence (null-safe, fail-soft).
+ *
+ * CPV2-12: the PLATFORM's coverage governs where it exists; Compass's own
+ * graph-derived row is the fallback, and the answer always names which of the
+ * two it is. Null means neither store had anything — an absence, never a
+ * confident zero.
+ */
 export async function getCityConfidence(
   db: SupabaseClient | null,
   city: string | null,
+  now: Date = new Date(),
 ): Promise<CityConfidence | null> {
   const key = canonicalCityKey(city);
   if (!db || !key) return null;
+
+  let local: CityConfidence | null = null;
   try {
     const { data } = await db
       .from("compass_city_confidence")
       .select("city, depth_score, tier, signals, computed_at")
       .eq("city", key)
       .maybeSingle();
-    if (!data) return null;
-    return {
-      city:       String((data as any).city),
-      depthScore: Number((data as any).depth_score ?? 0),
-      tier:       ((data as any).tier as CityConfidenceTier) ?? "thin",
-      signals:    ((data as any).signals as Record<string, number>) ?? {},
-      computedAt: String((data as any).computed_at ?? ""),
-    };
+    if (data) {
+      local = {
+        city:       String((data as any).city),
+        depthScore: Number((data as any).depth_score ?? 0),
+        tier:       ((data as any).tier as CityConfidenceTier) ?? "thin",
+        signals:    ((data as any).signals as Record<string, number>) ?? {},
+        computedAt: String((data as any).computed_at ?? ""),
+      };
+    }
   } catch {
-    return null;
+    local = null; // fail-soft: the platform read below may still answer
   }
+
+  const { coverage, readable } = await readPlatformCityCoverage(db, key, now);
+  if (coverage) {
+    return {
+      city:       key,
+      depthScore: coverage.depthScore,
+      tier:       tierForScore(coverage.depthScore),
+      // Aggregate counts only, still — the privacy contract of this file does
+      // not loosen because the numbers came from the platform.
+      signals: {
+        ...(local?.signals ?? {}),
+        platform_cells:           coverage.cells,
+        platform_covered:         coverage.covered,
+        platform_no_coverage:     coverage.noCoverage,
+        platform_unknown:         coverage.unknown,
+        platform_mean_confidence: coverage.meanConfidence,
+      },
+      computedAt:   coverage.computedAt || local?.computedAt || "",
+      source:       "platform_coverage",
+      sourceReason: "platform_coverage",
+      platformCells: coverage.cells,
+    };
+  }
+  if (!local) return null;
+  return {
+    ...local,
+    source:       "compass_graph",
+    sourceReason: readable ? "platform_no_rows" : "platform_unreadable",
+    platformCells: 0,
+  };
 }
 
 // ── Phase 8 bridge + prompt context ───────────────────────────────────────────
@@ -1327,13 +1718,44 @@ export async function getCityConfidence(
  * Deep cities answer confidently; thin/unknown cities say so.
  */
 export function cityConfidenceNote(conf: CityConfidence | null, city: string): string {
+  const src = confidenceProvenanceClause(conf);
   if (!conf || conf.tier === "thin") {
-    return `Limited local data for ${city} — be upfront that suggestions there are less certain.`;
+    return `Limited local data for ${city} — be upfront that suggestions there are less certain.${src}`;
   }
   if (conf.tier === "moderate") {
-    return `Moderate local data depth for ${city} — reasonable grounding, flag gaps honestly.`;
+    return `Moderate local data depth for ${city} — reasonable grounding, flag gaps honestly.${src}`;
   }
-  return `Deep local data for ${city} — recommendations are grounded in substantial community history.`;
+  return `Deep local data for ${city} — recommendations are grounded in substantial community history.${src}`;
+}
+
+/**
+ * CPV2-12 — the clause that names WHERE the depth came from. An unlabelled
+ * record (one built before this seam) says nothing rather than claiming the
+ * platform, and the unreadable case is stated out loud instead of passing for
+ * "the platform has nothing here".
+ */
+function confidenceProvenanceClause(conf: CityConfidence | null): string {
+  if (!conf || !conf.source) return "";
+  if (conf.source === "platform_coverage") {
+    return ` (depth from the shared coverage index — ${conf.platformCells ?? 0} live coverage cells, not Compass's own graph.)`;
+  }
+  return conf.sourceReason === "platform_unreadable"
+    ? " (depth from Compass's own graph history — the shared coverage index could not be read just now, so treat this as local-only.)"
+    : " (depth from Compass's own graph history — the shared coverage index holds no cells for this city.)";
+}
+
+/**
+ * CPV2-12 — short provenance label for the prompt line.
+ *
+ * "shared coverage index" and not the store's owning subsystem's name: these
+ * strings reach a PROMPT, and the read-time privacy assertion over these lines
+ * rejects any "lat" substring (coordinates) — which the word "pl-at-form"
+ * contains. The name here is about which store answered, and this phrasing says
+ * that without tripping a privacy guard that exists for a better reason.
+ */
+function confidenceSourceLabel(conf: CityConfidence | null): string {
+  if (!conf || !conf.source) return "unlabelled";
+  return conf.source === "platform_coverage" ? "shared coverage index" : "Compass graph history";
 }
 
 /**
@@ -1350,7 +1772,9 @@ export async function buildDestinationContextLines(
   try {
     const [model, conf] = await Promise.all([
       getCityWorldModel(db, city),
-      getCityConfidence(db, city),
+      // CPV2-12 — `at` is this line's clock, so the platform's freshness
+      // horizon is judged against the same moment the slice is.
+      getCityConfidence(db, city, at),
     ]);
     const lines: string[] = [];
 
@@ -1386,9 +1810,23 @@ export async function buildDestinationContextLines(
             : `Seasonality: ${city} has recorded activity this month in past data (${season.count} signals).`,
         );
       }
+      // CPH-15 (event) — the EVENT dimension in prose, published ONLY when the
+      // city really has a notable event window on this local day. No window ⇒
+      // no line at all: a hedged "there may be events on" is the fabrication
+      // the census clause is grading against.
+      const day = localEventDayKey(at, city);
+      const window = eventWindowProfile(model, day);
+      if (window && window.count >= MIN_EVENT_SAMPLE) {
+        const top = Object.entries(window.categories).sort(([, a], [, b]) => b - a).slice(0, 3).map(([k]) => k);
+        if (top.length > 0) {
+          lines.push(
+            `Event window — ${city} (${day}): the city's history shows ${top.join(", ")} events running on this date (${window.count} signals), so expect behaviour to differ from an ordinary day.`,
+          );
+        }
+      }
     }
 
-    lines.push(`City data confidence: ${conf ? `${conf.tier} (${conf.depthScore}/100)` : "unknown"}. ${cityConfidenceNote(conf, city)}`);
+    lines.push(`City data confidence: ${conf ? `${conf.tier} (${conf.depthScore}/100, source: ${confidenceSourceLabel(conf)})` : "unknown"}. ${cityConfidenceNote(conf, city)}`);
     return lines;
   } catch {
     return [];

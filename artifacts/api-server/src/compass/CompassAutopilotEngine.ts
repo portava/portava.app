@@ -705,10 +705,30 @@ export async function revalidateProposalEvidence(
     : { evidence: "expired", reason: `the ${type.replace("_", " ")} this proposal repairs no longer holds at confirm time` };
 }
 
+/**
+ * The reason a change did not execute because the Trip Kernel was not
+ * available. Its own constant because it is the load-bearing sentence of
+ * census-compass CT-01: what used to happen here instead was a direct write.
+ */
+export const KERNEL_UNAVAILABLE_REASON =
+  "the Trip Kernel is unavailable, so this change was not made — Autopilot never writes trip plans itself";
+
+export interface ApplyProposalResult {
+  applied: number;
+  blocked: string[];
+  evidence: ProposalEvidence;
+  /**
+   * Whether the Trip Kernel was reachable for this proposal. FALSE means every
+   * change was refused for that reason alone and NOTHING was written anywhere;
+   * the caller must not record the confirm as having happened.
+   */
+  kernelAvailable: boolean;
+}
+
 export async function applyProposal(
   sc: SupabaseClient,
   proposal: { id: string; trip_id: string; user_id: string; changes: any; issue_type?: string | null; dedupe_key?: string | null },
-): Promise<{ applied: number; blocked: string[]; evidence: ProposalEvidence }> {
+): Promise<ApplyProposalResult> {
   // Re-verify at confirm time: permissions may have changed and items may
   // have been re-typed since the proposal was created.
   const settings = await getAutopilotSettings(sc, proposal.trip_id, proposal.user_id);
@@ -721,13 +741,31 @@ export async function applyProposal(
   // it never asked "is the reason for doing it still true".
   const revalidated = await revalidateProposalEvidence(sc, proposal, items);
   if (revalidated.evidence === "expired") {
-    return { applied: 0, blocked: [`evidence no longer holds: ${revalidated.reason}`], evidence: "expired" };
+    return { applied: 0, blocked: [`evidence no longer holds: ${revalidated.reason}`], evidence: "expired", kernelAvailable: true };
   }
   const evidence = revalidated.evidence;
 
   // Trip Kernel gate, read once per proposal (Trips spec §4.1; domain/trips/commands/tripKernel.ts).
   // routes/compassAutopilot.ts authorized the actor (own pending proposal,
   // accepted member, canEditPlan) before calling; the kernel re-checks crew.
+  //
+  // census-compass CT-01 — "No Compass component may independently invent
+  // canonical trip state; consequential changes pass through the Trip Kernel."
+  // `trip_plan_items` is a canonical Trip aggregate table and this was the one
+  // place Compass wrote it directly. `trip_autopilot_settings` and
+  // `trip_autopilot_proposals` are Compass's OWN tables and are not that.
+  //
+  // NULL here means the kernel is unavailable — the flag is off (its seeded
+  // value, and its value on production and CI), or no service client is
+  // configured. There is deliberately NO flag-off twin below any more: a
+  // direct `trip_plan_items` update as the fallback IS the violation the row
+  // names, and with the flag off that fallback was not a fallback at all — it
+  // was the only path anything ever took. So the confirm refuses, says why,
+  // and leaves the proposal for a retry.
+  //
+  // Safe to ship refusing: the census records "Production: 0 rows in both
+  // autopilot tables", so no live user is mid-flight on this path and no
+  // confirm that works today begins to fail.
   const kernel = await tripKernelClient(sc);
 
   let applied = 0;
@@ -743,6 +781,12 @@ export async function applyProposal(
     }
     if (Object.keys(patch).length === 1) continue;
 
+    // CT-01: checked AFTER the lock-type and permission re-verification above,
+    // so a Fixed or unpermitted item is still refused by NAME with the flag off
+    // — the path CI runs. A kernel gate that short-circuited those checks would
+    // make them untestable on the only path anyone exercises.
+    if (!kernel) { blocked.push(`${c.title}: ${KERNEL_UNAVAILABLE_REASON}`); continue; }
+
     // Trip Kernel path: one command per changed item — MOVE_PLAN for a time /
     // day change, CONFIRM_PLAN / CANCEL_PLAN / COMPLETE_ACTIVITY / UPDATE_PLAN
     // for a status change (§3.3 names). The actor is the proposal's owner (the
@@ -750,38 +794,30 @@ export async function applyProposal(
     // the same confirm replays the receipt and moves nothing twice. The kernel
     // refuses a done/cancelled item changing status where the direct update did
     // not; that lands in `blocked` with the reason, never as a silent skip.
-    if (kernel) {
-      const { updated_at, ...columns } = patch;
-      const commandType = planCommandTypeForPatch({
-        status: columns.status as string | undefined,
-        dayDate: columns.day_date as string | null | undefined,
-        startsAt: columns.starts_at as string | null | undefined,
-        endsAt: columns.ends_at as string | null | undefined,
-      });
-      const r = await executeTripCommand(kernel, {
-        commandId: randomUUID(),
-        tripId: proposal.trip_id,
-        actorUserId: proposal.user_id,
-        expectedTripVersion: null,
-        idempotencyKey: `autopilot:${proposal.id}:${c.itemId}`,
-        type: commandType,
-        payload: { item_id: c.itemId, patch: columns, updated_at },
-      });
-      if (r.ok) { applied++; recordOpportunityCompletion(commandType, r.result, proposal.trip_id, r.duplicate); }
-      else blocked.push(`${c.title}: ${r.reason}`);
-      continue;
-    }
-
-    // trip-kernel:legacy-path — flag-off twin of the plan-item command above.
-    const { error } = await sc
-      .from("trip_plan_items")
-      .update(patch)
-      .eq("id", c.itemId)
-      .eq("trip_id", proposal.trip_id);
-    if (!error) applied++;
-    else blocked.push(`${c.title}: ${error.message}`);
+    const { updated_at, ...columns } = patch;
+    const commandType = planCommandTypeForPatch({
+      status: columns.status as string | undefined,
+      dayDate: columns.day_date as string | null | undefined,
+      startsAt: columns.starts_at as string | null | undefined,
+      endsAt: columns.ends_at as string | null | undefined,
+    });
+    const r = await executeTripCommand(kernel, {
+      commandId: randomUUID(),
+      tripId: proposal.trip_id,
+      actorUserId: proposal.user_id,
+      expectedTripVersion: null,
+      // The census pins this key at CompassAutopilotEngine.ts#autopilot:... and
+      // the receipt at tripKernel.ts#cmd.idempotencyKey. It is handed to the
+      // KERNEL rather than re-implemented beside it, so duplicate-execution
+      // protection is the kernel's one scheme and not a second, weaker twin.
+      idempotencyKey: `autopilot:${proposal.id}:${c.itemId}`,
+      type: commandType,
+      payload: { item_id: c.itemId, patch: columns, updated_at },
+    });
+    if (r.ok) { applied++; recordOpportunityCompletion(commandType, r.result, proposal.trip_id, r.duplicate); }
+    else blocked.push(`${c.title}: ${r.reason}`);
   }
-  return { applied, blocked, evidence };
+  return { applied, blocked, evidence, kernelAvailable: kernel !== null };
 }
 
 // ── Trip Heartbeat ────────────────────────────────────────────────────────────

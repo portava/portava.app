@@ -1,7 +1,7 @@
 /**
  * CompassTools — Phase 4 native function calling for the Compass assistant.
  *
- * Forty-four tools the model may call on demand (the OpenAI schemas in
+ * Forty-six tools the model may call on demand (the OpenAI schemas in
  * COMPASS_TOOL_DEFINITIONS below are the authoritative list).
  *
  * THAT SENTENCE IS EXECUTABLE, BECAUSE IT HAS BEEN WRONG THREE TIMES.
@@ -46,7 +46,7 @@ import { stripCoordinateFields, wrapUgc, buildStructuredCompassContext } from ".
 import { proposalContractPayload } from "../domain/trips/contracts/TripProposalContract.js";
 import { isAcceptedTripMember, canEditPlan, TripAccessUnavailableError } from "../lib/http.js";
 import { buildTripCompassProjection } from "../domain/trips/projections/TripCompassProjection.js";
-import { resolveCurrentTrip, TOOL_TRIP_STATUSES } from "./CompassCurrentTrip.js";
+import { resolveCurrentTrip, resolveUserTrips, TOOL_TRIP_STATUSES, isWellFormedTripId, MALFORMED_TRIP_ID_INFO } from "./CompassCurrentTrip.js";
 import { buildTripFreedomProjection } from "../domain/trips/projections/TripFreedomProjection.js";
 import { buildTripRouteChainProjection } from "../domain/trips/projections/TripRouteChainProjection.js";
 import { buildTripPulseProjection } from "../domain/trips/projections/TripPulseProjection.js";
@@ -72,7 +72,7 @@ import { compatibleActionFor } from "../lib/compassDecisionActions.js";
 import { DECISION_INTENTS, type DecisionIntent } from "../lib/compassDecision.js";
 import { getCrewMap, CrewMapUnavailableError } from "../domain/trips/services/TripCrewLocationService.js";
 import { randomUUID as newCommandId } from "node:crypto";
-import { tripOperationalProjectionsGate } from "../domain/trips/policies/tripOperationalProjections.js";
+import { tripOperationalProjectionsGate, describeOperationalGate } from "../domain/trips/policies/tripOperationalProjections.js";
 import { buildTripTodayProjection } from "../domain/trips/projections/TripTodayProjection.js";
 import { explainTripDecisionFrom } from "../domain/trips/services/TripDecisionLedger.js";
 import { acceptTripProjection, TRIP_PROJECTION_SCHEMA_VERSION } from "../domain/trips/contracts/TripProjectionEnvelope.js";
@@ -95,9 +95,17 @@ import {
   buildGroupRankingProfile,
   eventSatisfiesGroup,
   getWhosAround,
+  getMeetupOpportunities,
   sharesSocialContext,
   type GroupMemberPrefs,
 } from "./CompassSocialEngine.js";
+// census-compass CL-04 — the clarification clause. The decision is a
+// computation in its own module; this file only surfaces it as a tool.
+import {
+  decideClarification,
+  clarificationFactsFromToolArgs,
+  CLARIFIABLE_FACTS,
+} from "./CompassClarification.js";
 import { gateAgeFrom, readVerifiedAgeSignals, type GateAge } from "../lib/gateAge.js"; // the ONE age seam — see prefsFromRow
 // §8 (Open to Plans and Intent): Compass weights EXPLICIT current intent above
 // generic interests. The explicit-intent read + bounded weight live in the ONE
@@ -142,7 +150,7 @@ import {
  * compare. Pinned to `COMPASS_TOOL_DEFINITIONS.length` AND to the header's own
  * number word by `src/test/compassToolCountContract.test.ts`.
  */
-export const COMPASS_TOOL_COUNT_IN_HEADER = 44;
+export const COMPASS_TOOL_COUNT_IN_HEADER = 46;
 // ── Tool definitions (OpenAI function schemas) ────────────────────────────────
 
 export const COMPASS_TOOL_DEFINITIONS = [
@@ -493,6 +501,47 @@ export const COMPASS_TOOL_DEFINITIONS = [
   {
     type: "function" as const,
     function: {
+      name: "get_meetup_opportunities",
+      description:
+        "Trips §16 / census CT-12: turn who's around into a suggested meeting OCCASION — for each nearby person, the occasion, WHY it is one, and WHEN the window holds. Subject to BOTH parties' privacy: the other person must be sharing presence with the user AND the user must be sharing presence with them; a one-sided arrangement yields nothing, and so does a stale reading. People it cannot offer are counted in `withheldForPrivacy` and never named — do not ask who they are and never guess. Location is approximate only: repeat the `where` string exactly and never propose a place the result did not name.",
+      parameters: { type: "object", properties: {}, additionalProperties: false },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "get_clarifying_question",
+      description:
+        "Layover §25 / census CL-04: when the user's layover request is UNDER-DETERMINED, this returns the ONE question worth asking and the fact it resolves — computed from the certified layover snapshot, not guessed. Call it BEFORE advising a traveller in a layover whenever a required fact has not been stated. `clarificationNeeded: false` means ask nothing and answer: either everything required is known, or no answer would change the advice, or the layover context could not be read (`context_unreadable` — do not treat that as 'nothing to ask'). List in `stated` only the facts the user ACTUALLY said; never invent a fact, never assume a default, and never answer the question yourself.",
+      parameters: {
+        type: "object",
+        properties: {
+          stated: {
+            type: "array",
+            items: { type: "string", enum: [...CLARIFIABLE_FACTS] },
+            description: "Facts the user has already stated in this conversation. Only what they actually said.",
+          },
+          ambiguous: {
+            type: "array",
+            description: "A fact the user addressed in words carrying MORE THAN ONE reading. `readings` must be readings of THEIR words — never add one they did not say. Fewer than two readings is not an ambiguity and is treated as unstated.",
+            items: {
+              type: "object",
+              properties: {
+                fact: { type: "string", enum: [...CLARIFIABLE_FACTS] },
+                readings: { type: "array", items: { type: "string" } },
+              },
+              required: ["fact", "readings"],
+              additionalProperties: false,
+            },
+          },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
       name: "get_travel_compatibility",
       description:
         "Phase 9: travel-compatibility score (0-100) between the user and one person they share a Circle or trip with, by @handle. Reveals only the OVERLAP (shared interests/styles/languages) — never the other person's full preferences.",
@@ -587,7 +636,7 @@ TOOLS — you have function tools that look up REAL app data on demand.
 - RANKING RULE: search results arrive PRE-RANKED by the app's recommendation engine. Each candidate carries "compassMatch" (personal fit, 0-100), "communityScore" (community popularity, 0-100) and "whyThis" (the engine's grounded reason). Preserve the given order unless the user asks for a different ordering, surface whyThis when explaining a pick, and NEVER invent your own fit or popularity scores.
 - add_to_trip only creates a PENDING PROPOSAL. Tell the user it needs their confirmation; never claim the item was added.
 - CONFIDENCE RULE (Phase 8): tool data carries a "confidence" object with a sourceClass — "verified_live" (checked against a live source just now), "community_reported" (entered by app users), "historical" (catalog/cached, may be stale), or "ai_inference". Be honest about it: only claim something is open/closed RIGHT NOW when a datum is verified_live; when liveStatus.available is false, say the live status can't be verified right now and clearly label anything else as last-known/historical. NEVER invent live status, wait times, or current conditions.
-- SOCIAL RULES (Phase 9): people data comes ONLY from get_whos_around / get_travel_compatibility / get_group_recommendation / get_circle_activity results — never mention a person a tool did not return. Location for people is APPROXIMATE ONLY: repeat exactly the approximateArea/venue string a tool returned; NEVER guess, infer, triangulate, or imply anyone's precise location, and never speculate about where someone "probably" is. Refer to people by the label/handle a tool returned. If someone doesn't appear in a social result, they chose not to share — say availability isn't shared, never speculate why. Group recommendations must respect the group constraints the tool applied; do not re-add candidates it filtered out.
+- SOCIAL RULES (Phase 9): people data comes ONLY from get_whos_around / get_meetup_opportunities / get_travel_compatibility / get_group_recommendation / get_circle_activity results — never mention a person a tool did not return. Location for people is APPROXIMATE ONLY: repeat exactly the approximateArea/venue string a tool returned; NEVER guess, infer, triangulate, or imply anyone's precise location, and never speculate about where someone "probably" is. Refer to people by the label/handle a tool returned. If someone doesn't appear in a social result, they chose not to share — say availability isn't shared, never speculate why. Group recommendations must respect the group constraints the tool applied; do not re-add candidates it filtered out. A meetup occasion exists only when BOTH people are sharing presence with each other: propose only what get_meetup_opportunities returned, never build one out of a get_whos_around entry, and when it reports withheldForPrivacy say only that availability isn't shared both ways — never who, never why.
 - ATTENTION RULE (Trips §17.2): when a search result carries attention.suppressed = true, commercial and entertainment candidates were withheld because the user's trip needs their attention. Say so in one sentence, offer only what was returned (safety and logistics), and never invent or re-suggest what was withheld.
 - CONVERSATION RULES (Telegraph §18.3): the telegraph_* tools answer only for a conversation the user is currently a participant of, and they return { authorized: false, reason } when they will not answer — say the reason, never work around it with another tool. They return no message prose, no coordinates and no live location: a plan's "where" is a place NAME. If a participant does not appear in telegraph_get_participant_availability, they are not sharing availability with this conversation — say that and never speculate why. telegraph_create_plan_draft creates NOTHING: it returns a draft with requiresConfirmation, and you must present it as a proposal the participant confirms. telegraph_find_safe_public_meetup filters to public, staffed venue categories only — never present it as a statement about crime, lighting or opening hours.
 ${MEMORY_COMPASS_PROMPT_RULES}
@@ -791,15 +840,20 @@ export async function toolGetCurrentTrip(sc: SupabaseClient, userId: string, tri
   // Membership is checked with the same gate the trip routes use; a trip the
   // user is not on is answered as "no trip", not as somebody else's context.
   if (typeof tripId === "string" && tripId.length > 0) {
+    // CT-07 (TR202): a string that is not a trip id is refused HERE. Sent on,
+    // it becomes a 22P02 inside `isAcceptedTripMember`, which throws, which the
+    // dispatcher relays as "unreadable right now — temporary". See
+    // MALFORMED_TRIP_ID_INFO for why that sentence is the wrong one.
+    if (!isWellFormedTripId(tripId)) return { trip: null, info: MALFORMED_TRIP_ID_INFO };
     if (!(await isAcceptedTripMember(sc, tripId, userId))) return { trip: null, info: "The user is not a member of that trip." };
-    const { data: named, error: namedErr } = await sc
-      .from("trips")
-      .select("id, title, destination_city, destination_country, start_date, end_date, status")
-      .eq("id", tripId)
-      .maybeSingle();
-    if (namedErr) return { trip: null, info: "Trip context unavailable: the trip could not be read." };
-    if (!named) return { trip: null, info: "No such trip." };
-    return projectCurrentTrip(sc, named);
+    // CT-02: this path used to read `trips` HERE and then hand the row to
+    // `projectCurrentTrip`, which builds TripCompassProjection — whose FIRST
+    // act is to read that same row, by that same id, for the version it
+    // reports. Two reads of one row, and the tool's copy carried no version,
+    // so `sourceTripVersion` described a row nobody had compared it to. The
+    // projection's own summary is now the one trip row, and TRIP_NOT_FOUND is
+    // its answer to "no such trip" instead of a second lookup's empty result.
+    return projectCurrentTrip(sc, tripId, null);
   }
   // Trips the user owns or is an accepted member of, active or upcoming.
   //
@@ -818,29 +872,55 @@ export async function toolGetCurrentTrip(sc: SupabaseClient, userId: string, tri
   }
   if (resolved.status === "none") return { trip: null, info: "No active or upcoming trip." };
   const t = resolved.trip;
-  return projectCurrentTrip(sc, {
+  // The selected candidate is passed as the DEGRADED fallback only: when the
+  // projection can be built it is the projection's summary that is served, so
+  // the named path and this one describe the trip from the same object.
+  return projectCurrentTrip(sc, t.id, {
     id: t.id, title: t.title, destination_city: t.destinationCity,
     destination_country: t.destinationCountry, start_date: t.startDate,
     end_date: t.endDate, status: t.status,
   });
 }
 
-/** The trip's CONTENT, from the projection — one path for a resolved trip and a named one. */
-async function projectCurrentTrip(sc: SupabaseClient, trip: any): Promise<unknown> {
+/** The projection's trip summary on the wire shape this tool has always used. */
+function tripSummaryRow(t: { id: string; title: string | null; destinationCity: string | null; destinationCountry: string | null; startDate: string | null; endDate: string | null; status: string | null }) {
+  return {
+    id: t.id, title: t.title,
+    destination_city: t.destinationCity, destination_country: t.destinationCountry,
+    start_date: typeof t.startDate === "string" ? t.startDate.slice(0, 10) : null,
+    end_date:   typeof t.endDate   === "string" ? t.endDate.slice(0, 10)   : null,
+    status: t.status,
+  };
+}
+
+/**
+ * The trip ITSELF and its CONTENT, both from the projection — one path for a
+ * resolved trip and a named one (CT-02 / TR202).
+ *
+ * `fallback` is the selection candidate, and is used ONLY when the projection
+ * could not be built or was refused: a degraded answer may still name the trip
+ * the user asked about, but it must not be the source anything is described
+ * from when the projection CAN speak. The named path has no candidate and
+ * passes null, so a projection it cannot build is answered as no trip at all
+ * rather than as a trip with an empty plan.
+ */
+async function projectCurrentTrip(sc: SupabaseClient, tripId: string, fallback: any | null): Promise<unknown> {
   // §19.1: the plan comes from the projection, accepted or refused by the one
   // consumer rule. A refused projection is SAID to be refused — the old read
   // handed the assistant an empty plan when the table could not be read.
-  const built = await buildTripCompassProjection(sc, trip.id);
+  const built = await buildTripCompassProjection(sc, tripId);
   if (!built.ok) {
-    return { trip, planItems: [], info: `Trip context unavailable: ${built.message}` };
+    if (built.reason === "TRIP_NOT_FOUND") return { trip: null, info: "No such trip." };
+    return { trip: fallback, planItems: [], info: `Trip context unavailable: ${built.message}` };
   }
   const decision = acceptTripProjection(built.projection, {
     acceptedSchemaVersion: TRIP_PROJECTION_SCHEMA_VERSION, metric: "TripCompassProjection",
   });
   if (!decision.accepted) {
-    return { trip, planItems: [], info: `Trip context rejected (${decision.reason}): ${decision.message}` };
+    return { trip: fallback ?? tripSummaryRow(built.projection.trip), planItems: [], info: `Trip context rejected (${decision.reason}): ${decision.message}` };
   }
   const p = built.projection;
+  const trip = tripSummaryRow(p.trip);
   const planItems = p.planItems.status === "ok"
     ? p.planItems.items.map((i) => ({
         title: wrapUgc(String(i.title ?? "")), category: i.category, day_date: i.dayDate, status: i.status,
@@ -1088,61 +1168,67 @@ async function toolCheckTripConflicts(
   const endDate   = String(args["endDate"] ?? startDate).slice(0, 10) || startDate;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate)) return { conflicts: [], info: "startDate must be YYYY-MM-DD." };
 
-  const { data: memberRows } = await sc
-    .from("trip_members")
-    .select("trip_id")
-    .eq("user_id", userId)
-    .in("role", ["owner", "member"]);
-  const memberTripIds = ((memberRows ?? []) as any[]).map((r) => r.trip_id as string);
-
-  const { data: owned } = await sc
-    .from("trips")
-    .select("id, title, destination_city, start_date, end_date, status")
-    .eq("owner_id", userId)
-    .in("status", ["active", "upcoming", "planning"]);
-
-  let memberTrips: any[] = [];
-  if (memberTripIds.length > 0) {
-    const { data } = await sc
-      .from("trips")
-      .select("id, title, destination_city, start_date, end_date, status")
-      .in("id", memberTripIds)
-      .in("status", ["active", "upcoming", "planning"]);
-    memberTrips = (data ?? []) as any[];
+  // CT-02 — THIS WAS THE SIXTH COPY of "which trips is this user on": its own
+  // `trip_members` read, its own owned-trips read, its own member-trips read,
+  // its own dedupe, and the same three statuses spelled out again. It is now
+  // the ONE union in compass/CompassCurrentTrip.ts, so a change to who counts
+  // as on a trip changes this answer too instead of leaving it behind.
+  //
+  // AND THE UNION USED TO LIE. None of the three reads bound `error`: an
+  // unreadable `trip_members` produced zero member trips, an unreadable `trips`
+  // produced zero trips, and the function answered "No overlapping trips in
+  // that date range." — the exact sentence a traveller double-books on. That
+  // outcome is now `unread`, which is a different answer from `none`.
+  const read = await resolveUserTrips(sc, userId, TOOL_TRIP_STATUSES);
+  if (read.status === "unread") {
+    return {
+      conflicts: null,
+      info: `Trip conflicts unavailable: ${read.reason}. This is NOT "no conflicts" — the user's trips could not be read, so nothing can be said about overlaps.`,
+    };
   }
 
-  const seen = new Set<string>();
-  const trips = [...((owned ?? []) as any[]), ...memberTrips].filter((t) => {
-    if (seen.has(t.id)) return false;
-    seen.add(t.id);
-    return true;
-  });
-
-  const overlaps = trips.filter((t) => {
-    const ts = t.start_date as string | null;
-    const te = (t.end_date as string | null) ?? ts;
+  const overlaps = read.trips.filter((t) => {
+    const ts = t.startDate;
     if (!ts) return false;
-    return ts <= endDate && (te ?? ts) >= startDate;
+    const te = t.endDate ?? ts;
+    return ts <= endDate && te >= startDate;
   });
 
+  if (overlaps.length === 0) return { conflicts: [], info: "No overlapping trips in that date range." };
+
+  // The plan items in the asked-for RANGE, across the overlapping trips. This
+  // read stays raw on purpose and the reason is recorded in
+  // src/test/compassTripProjectionReads.test.ts's allow-list: TripCompassProjection
+  // answers ONE trip, windowed on a focus day and capped at ten items, so
+  // consuming it here would silently drop items inside the range the caller
+  // asked about — a narrower answer wearing a cleaner one's clothes.
   const conflictItems: any[] = [];
-  if (overlaps.length > 0) {
-    const { data: items } = await sc
-      .from("trip_plan_items")
-      .select("trip_id, title, day_date")
-      .in("trip_id", overlaps.map((t) => t.id))
-      .gte("day_date", startDate)
-      .lte("day_date", endDate)
-      .is("removed_at", null)
-      .limit(20);
-    for (const i of (items ?? []) as any[]) {
-      conflictItems.push({ tripId: i.trip_id, title: wrapUgc(String(i.title ?? "")), dayDate: i.day_date });
-    }
+  let itemsUnread = false;
+  const { data: items, error: itemsErr } = await sc
+    .from("trip_plan_items")
+    .select("trip_id, title, day_date")
+    .in("trip_id", overlaps.map((t) => t.id))
+    .gte("day_date", startDate)
+    .lte("day_date", endDate)
+    .is("removed_at", null)
+    .limit(20);
+  // Unbound before, like the three selection reads above: an unreadable plan
+  // became an empty `plannedItems`, which reads as "those days are free".
+  if (itemsErr) itemsUnread = true;
+  else for (const i of (items ?? []) as any[]) {
+    conflictItems.push({ tripId: i.trip_id, title: wrapUgc(String(i.title ?? "")), dayDate: i.day_date });
   }
 
-  return overlaps.length > 0
-    ? { conflicts: overlaps.map((t) => ({ ...t, title: t.title ? wrapUgc(String(t.title)) : null })), plannedItems: conflictItems }
-    : { conflicts: [], info: "No overlapping trips in that date range." };
+  return {
+    // The wire shape the model has always been given: the trip's own column
+    // names, not the projection's camelCase.
+    conflicts: overlaps.map((t) => ({
+      id: t.id, title: t.title ? wrapUgc(String(t.title)) : null,
+      destination_city: t.destinationCity, start_date: t.startDate, end_date: t.endDate, status: t.status,
+    })),
+    plannedItems: conflictItems,
+    ...(itemsUnread ? { info: "The overlapping trips are real, but their planned items could not be read — the empty list is unread, not empty." } : {}),
+  };
 }
 
 /**
@@ -1158,6 +1244,7 @@ export async function toolGetFreedomWindows(sc: SupabaseClient, userId: string, 
   const tripId = typeof args.tripId === "string" && args.tripId.length > 0 ? args.tripId : null;
   let trip: any = null;
   if (tripId) {
+    if (!isWellFormedTripId(tripId)) return { windows: [], info: MALFORMED_TRIP_ID_INFO }; // CT-07 (TR205)
     if (!(await isAcceptedTripMember(sc, tripId, userId))) return { windows: [], info: "The user is not a member of that trip." };
     trip = { id: tripId };
   } else {
@@ -1198,6 +1285,7 @@ export async function toolGetRouteChain(sc: SupabaseClient, userId: string, args
   const tripId = typeof args.tripId === "string" && args.tripId.length > 0 ? args.tripId : null;
   let id: string | null = tripId;
   if (id) {
+    if (!isWellFormedTripId(id)) return { chain: null, info: MALFORMED_TRIP_ID_INFO }; // CT-07 (§14.2 getRouteChain)
     if (!(await isAcceptedTripMember(sc, id, userId))) return { chain: null, info: "The user is not a member of that trip." };
   } else {
     const current: any = await toolGetCurrentTrip(sc, userId);
@@ -1231,6 +1319,7 @@ export async function toolGetLiveConditions(sc: SupabaseClient, userId: string, 
   const tripId = typeof args.tripId === "string" && args.tripId.length > 0 ? args.tripId : null;
   let id: string | null = tripId;
   if (id) {
+    if (!isWellFormedTripId(id)) return { pulse: null, info: MALFORMED_TRIP_ID_INFO }; // CT-07 (TR208)
     if (!(await isAcceptedTripMember(sc, id, userId))) return { pulse: null, info: "The user is not a member of that trip." };
   } else {
     const current: any = await toolGetCurrentTrip(sc, userId);
@@ -1264,6 +1353,9 @@ export async function toolGetLiveConditions(sc: SupabaseClient, userId: string, 
 async function resolveMemberTrip(sc: SupabaseClient, userId: string, args: Record<string, unknown>): Promise<{ id: string } | { info: string }> {
   const tripId = typeof args.tripId === "string" && args.tripId.length > 0 ? args.tripId : null;
   if (tripId) {
+    // CT-07 (TR206/TR207/TR209/TR210/TR211/TR212 and §17.3): the one place the
+    // seven tools behind this helper refuse a malformed id.
+    if (!isWellFormedTripId(tripId)) return { info: MALFORMED_TRIP_ID_INFO };
     if (!(await isAcceptedTripMember(sc, tripId, userId))) return { info: "The user is not a member of that trip." };
     return { id: tripId };
   }
@@ -1277,7 +1369,11 @@ export async function toolGetCommitments(sc: SupabaseClient, userId: string, arg
   const t = await resolveMemberTrip(sc, userId, args);
   if ("info" in t) return { commitments: null, info: t.info };
   const gate = await tripOperationalProjectionsGate(sc);
-  if (!gate.enabled) return { commitments: null, info: `Commitments are not enabled: ${gate.reason}` };
+  // CT-07 (TR206): the refusal NAMES the gate. `gate.reason` alone is "flag_off",
+  // which tells an operator neither which flag nor what to do about it; the
+  // gate's own describe() names the flag and, when it is the schema that is
+  // missing, the migrations. Same sentence the freedom/today projections give.
+  if (!gate.enabled) return { commitments: null, info: `Commitments are not enabled: ${describeOperationalGate(gate)}` };
   const { data, error } = await sc
     .from("trip_commitments")
     .select("id, stage_id, type, starts_at, required_arrival_at, place_id, lateness_tolerance, prep_duration, flexibility, confidence")
@@ -1448,6 +1544,7 @@ export async function toolGetTodayState(sc: SupabaseClient, userId: string, args
   const tripId = typeof args.tripId === "string" && args.tripId.length > 0 ? args.tripId : null;
   let id: string | null = tripId;
   if (id) {
+    if (!isWellFormedTripId(id)) return { today: null, info: MALFORMED_TRIP_ID_INFO }; // CT-07 (TR203)
     if (!(await isAcceptedTripMember(sc, id, userId))) return { today: null, info: "The user is not a member of that trip." };
   } else {
     const current: any = await toolGetCurrentTrip(sc, userId);
@@ -1489,6 +1586,7 @@ export async function toolGetCrewState(sc: SupabaseClient, userId: string, args:
   const tripId = typeof args.tripId === "string" && args.tripId.length > 0 ? args.tripId : null;
   let id: string | null = tripId;
   if (id) {
+    if (!isWellFormedTripId(id)) return { crew: null, info: MALFORMED_TRIP_ID_INFO }; // CT-07 (TR204)
     if (!(await isAcceptedTripMember(sc, id, userId))) return { crew: null, info: "The user is not a member of that trip." };
   } else {
     const current: any = await toolGetCurrentTrip(sc, userId);
@@ -1533,6 +1631,7 @@ export async function toolExplainTripDecision(sc: SupabaseClient, userId: string
   const tripId = typeof args.tripId === "string" ? args.tripId : "";
   const decisionId = typeof args.decisionId === "string" ? args.decisionId : "";
   if (!tripId || !decisionId) return { explanation: null, info: "tripId and decisionId are required." };
+  if (!isWellFormedTripId(tripId)) return { explanation: null, info: MALFORMED_TRIP_ID_INFO }; // CT-07 (TR213)
   if (!(await isAcceptedTripMember(sc, tripId, userId))) return { explanation: null, info: "The user is not a member of that trip." };
   const e = await explainTripDecisionFrom(sc, decisionId);
   if (!e || e.decision.tripId !== tripId) return { explanation: null, info: `Decision ${decisionId} is not retained (neither in this process's ledger nor in trip_decisions where the deployment keeps one).` };
@@ -1545,7 +1644,9 @@ async function toolAddToTrip(
   args: Record<string, unknown>,
 ): Promise<{ proposal?: AddToTripProposal; error?: string; info?: string }> {
   const tripId = String(args["tripId"] ?? "");
-  if (!/^[0-9a-f-]{36}$/i.test(tripId)) return { error: "Invalid tripId." };
+  // CT-07: this tool's own regex WAS the grammar; it is now the shared one in
+  // CompassCurrentTrip.ts, unchanged, so the other twelve check the same thing.
+  if (!isWellFormedTripId(tripId)) return { error: "Invalid tripId." };
 
   // Server-side authorization — the model cannot bypass this.
   const member = await isAcceptedTripMember(sc, tripId, userId);
@@ -1650,6 +1751,90 @@ async function toolWhosAround(
     : { people: [], info: "Nobody in the user's circles is sharing their presence right now." };
 }
 
+/**
+ * census-compass CT-12 — the step from presence to an OPPORTUNITY.
+ *
+ * The gating is entirely `getMeetupOpportunities`': viewer→target through
+ * `canViewCirclePresenceBatch` and target→viewer through
+ * `canBeSeenByViewersBatch`, both fail-closed. This function adds nothing to
+ * what may be shown and only phrases the honest empty answers — including the
+ * one that matters, `withheldForPrivacy`, which is a COUNT and never a list.
+ */
+async function toolMeetupOpportunities(
+  sc: SupabaseClient,
+  profile: CompassProfile | null,
+  userId: string,
+): Promise<unknown> {
+  const { opportunities, contextsChecked, withheldForPrivacy } =
+    await getMeetupOpportunities(sc, userId, hiddenUserIds(profile));
+  if (contextsChecked === 0) {
+    return { opportunities: [], withheldForPrivacy: 0, info: "The user has no active trips or upcoming events with a circle to check." };
+  }
+  if (opportunities.length === 0) {
+    return {
+      opportunities: [],
+      withheldForPrivacy,
+      info:
+        withheldForPrivacy > 0
+          ? "Nobody can be offered as a meetup right now — a meetup needs BOTH people to be sharing presence with each other. Say that availability isn't shared both ways; never say who, and never guess why."
+          : "Nobody in the user's circles is sharing a current presence to build a meetup on.",
+    };
+  }
+  return {
+    opportunities,
+    withheldForPrivacy,
+    info: "Each occasion exists only because both people are sharing presence with each other. Location is approximate only — repeat the `where` string exactly and never propose a place the result did not name.",
+  };
+}
+
+/**
+ * census-compass CL-04 — the clarification clause, as a tool.
+ *
+ * Thin on purpose: the certified snapshot comes through the ONE door
+ * (`certifiedLayoverSnapshot`) and the decision is `decideClarification`'s.
+ * This function computes nothing about the layover and phrases no question of
+ * its own — a second phrasing here would be a second clarification policy.
+ */
+export async function toolGetClarifyingQuestion(
+  sc: SupabaseClient,
+  userId: string,
+  args: Record<string, unknown>,
+): Promise<unknown> {
+  const facts = clarificationFactsFromToolArgs(args);
+  const r = await certifiedLayoverSnapshot(sc as any, userId);
+  const verdict = r.ok
+    ? decideClarification({ snapshot: r.snapshot, facts })
+    : decideClarification({
+        snapshot: null,
+        // An unreadable store is NOT "no layover" — CL-03's distinction, kept.
+        contextUnreadableReason: isDegradedRefusal(r.reason) ? r.reason : null,
+        facts,
+      });
+  if (!verdict.needed) {
+    return {
+      clarificationNeeded: false,
+      reason: verdict.reason,
+      representedAsUncertainty: verdict.representedAsUncertainty,
+      info:
+        verdict.reason === "context_unreadable"
+          ? "The layover context could not be read, so there is nothing solid to ask about — say the layover details are unavailable right now; do NOT treat this as 'no layover' and do NOT invent a question."
+          : verdict.reason === "no_live_layover"
+            ? "The user has no live layover session, so none of these facts is required."
+            : "Ask nothing — answer with what is known, and state the remaining uncertainty rather than turning it into a question.",
+    };
+  }
+  return {
+    clarificationNeeded: true,
+    fact: verdict.fact,
+    question: verdict.question,
+    resolves: verdict.resolves,
+    dimension: verdict.dimension,
+    value: verdict.value,
+    representedAsUncertainty: verdict.representedAsUncertainty,
+    info: "Ask this ONE question and wait for the answer. Do not answer it yourself, do not assume a default, and do not ask the others.",
+  };
+}
+
 const PREF_COLUMNS = "id, handle, name, display_name, interests, travel_styles, budget_style, travel_pace, spoken_languages, verified, date_of_birth";
 
 function memberFieldsFromRow(row: any): Omit<GroupMemberPrefs, "ageGate"> {
@@ -1688,8 +1873,13 @@ async function toolTravelCompatibility(
   if (hiddenUserIds(profile).has(targetId)) return notAvailable;
 
   // Relationship gate: must share a Circle or an accepted trip (fail-closed).
+  // CTG-08: the CANONICAL relationship model's verdict, consumed as a verdict.
+  // It was a bare boolean from this file's own fourth resolver; it is now
+  // `{ shares, relationship, reason }` off `resolveInteractionPermissions`, and
+  // `unavailable` (the canonical read failed) refuses exactly like "no shared
+  // context" — the uniform answer below never says which.
   const related = await sharesSocialContext(sc, userId, targetId);
-  if (!related) return notAvailable;
+  if (!related.shares) return notAvailable;
 
   // Trust gate: below-floor accounts are not surfaced in social answers.
   //
@@ -2184,8 +2374,10 @@ export async function executeCompassTool(
       // passed into the tool loop may be stale/cached).
       case "get_decision":         raw = await toolGetDecision(sc, args); break;
       case "get_layover_snapshot": raw = await toolGetLayoverSnapshot(sc, userId); break;
+      case "get_clarifying_question": raw = await toolGetClarifyingQuestion(sc, userId, args); break;
       case "compile_plan_from_experience": raw = await toolCompilePlanFromExperience(sc, userId, args); break;
       case "get_whos_around":            raw = await toolWhosAround(sc, await refreshHiddenUsers(sc, userId, profile), userId); break;
+      case "get_meetup_opportunities":   raw = await toolMeetupOpportunities(sc, await refreshHiddenUsers(sc, userId, profile), userId); break;
       case "get_travel_compatibility":   raw = await toolTravelCompatibility(sc, await refreshHiddenUsers(sc, userId, profile), userId, args); break;
       case "get_group_recommendation":   raw = await toolGroupRecommendation(sc, await refreshHiddenUsers(sc, userId, profile), userId, args); break;
       default: {

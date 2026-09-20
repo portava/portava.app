@@ -48,6 +48,19 @@
  * authorized empty results from dependency failure internally and give an
  * honest user-facing limitation"* and *"Unknown is not zero"*.
  *
+ * WHY THE THREE RAW READS BELOW ARE THE SANCTIONED ONES (CT-02)
+ * =============================================================
+ * CT-02 says stop duplicating the trip tables; it does not say a read of them
+ * cannot exist. "Which trip is this user on" is a USER-scoped question, and
+ * every Trip projection is built FROM a tripId — none of them can answer it, so
+ * there is nothing here to consume. What CT-02 buys is that the union is read
+ * ONCE, in this module, instead of in five. `check_trip_conflicts` was the
+ * sixth copy and now calls `resolveUserTrips` too.
+ *
+ * These three reads are allow-listed BY NAME, with that reason, in
+ * `src/test/compassTripProjectionReads.test.ts`. A fourth appearing in this
+ * file — or in `CompassTools.ts` — fails that suite.
+ *
  * NOT PURE — it reads. It writes nothing, and it never widens what the caller
  * may see: membership is the same owner ∪ accepted-member union every caller
  * already used.
@@ -73,6 +86,48 @@ export const TOOL_TRIP_STATUSES = ["active", "upcoming", "planning"] as const;
  * disagreed since both were written.
  */
 export const CONTEXT_TRIP_STATUSES = ["active", "upcoming", "planning", "draft"] as const;
+
+/**
+ * THE TRIP-ID GRAMMAR — census-compass CT-07, census-trips TR202..TR213.
+ *
+ * It lives HERE, in the one module that decides which trip Compass is talking
+ * about, for the same reason the status sets do: twelve tools that each spell
+ * out their own id check are twelve chances for eleven of them to be right.
+ *
+ * WHY A TOOL MUST CHECK AT ALL. `add_to_trip` has guarded its id since it was
+ * written; the other §12.1 tools handed whatever the model sent to
+ * `isAcceptedTripMember`. Postgres answers a non-uuid with
+ * `22P02 invalid input syntax for type uuid`, PostgREST returns it as a read
+ * error, `requireTripMember` refuses — correctly — to read a failed read as
+ * "not a member" and throws `TripAccessUnavailableError`, and
+ * `executeCompassTool` relays that — correctly — as
+ *
+ *     "That trip's records are unreadable right now — this is temporary …"
+ *
+ * Every link is right and the sentence is false. Nothing is unreadable, nothing
+ * is temporary, and "try again shortly" is an invitation to resend the same bad
+ * id. A string that is not a trip id is a fact the tool can establish itself,
+ * before it asks anything, and that is what this does.
+ *
+ * The pattern is `add_to_trip`'s own, unchanged, so the twelve and the
+ * thirteenth agree: 36 characters of hex and dashes. Deliberately NOT a strict
+ * RFC-4122 matcher — tightening it here would silently start refusing ids some
+ * caller already passes, which is a behaviour change dressed as a clean-up.
+ */
+export const TRIP_ID_PATTERN = /^[0-9a-f-]{36}$/i;
+
+/** True only for a string shaped like a trip id. Everything else — including `""` — is false. */
+export function isWellFormedTripId(value: unknown): value is string {
+  return typeof value === "string" && TRIP_ID_PATTERN.test(value);
+}
+
+/**
+ * The ONE sentence every §12.1 tool answers a malformed id with. One string so
+ * the twelve cannot drift, and worded so the model learns the id was wrong
+ * rather than that the database was.
+ */
+export const MALFORMED_TRIP_ID_INFO =
+  "That is not a valid trip id — nothing was looked up. Use a trip id from get_current_trip.";
 
 /** A selected trip, in one shape, with the raw column names left behind. */
 export interface CompassTripCandidate {

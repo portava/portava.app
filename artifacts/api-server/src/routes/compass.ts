@@ -33,7 +33,6 @@ import {
 } from "../domain/trips/commands/tripKernel.js";
 import {
   buildConsumerProjection,
-  buildListIdentityProjections,
   explicitIntentBoost,
   genericInterestWeight,
   readVisibleExplicitIntent,
@@ -48,6 +47,8 @@ import {
   formatHomeProjectionLines,
   formatKernelLines,
   formatOpportunityLines,
+  runWithAskProjections,
+  type AskRankingProjections,
 } from "../compass/CompassPlatformContext.js";
 import { buildOpportunities, opportunityWorldValueKeys, projectForSurface } from "../lib/opportunityEngine.js";
 import { parseIntentMode } from "../lib/intentModes.js";
@@ -1688,7 +1689,13 @@ router.post("/compass/ask", async (req, res) => {
   //     the subjects this turn already names. Pure; no flag. The live world read
   //     inside it is gated by its own Live gates and REPORTS an unreadable world
   //     rather than hiding it.
+  //
+  //     CCL-05: the kernel does not stop at the prompt. `askProjections` is what
+  //     the EXISTING ranking owner (CompassPipeline, reached through the model's
+  //     tool calls below) ranks with — established here, around the tool loop.
+  //     The kernel half is UNGATED, exactly as the assembler above is.
   let askKernel: Awaited<ReturnType<typeof assembleAskKernel>> | null = null;
+  let askProjections: AskRankingProjections | null = null;
   try {
     askKernel = await assembleAskKernel(sc, user.id, topPlaceIds, {
       utcOffsetMinutes: tzOffsetForRequest(req),
@@ -1698,6 +1705,7 @@ router.post("/compass/ask", async (req, res) => {
       intentMode: parseIntentMode(intentMode),
     });
     ctxLines.push(...formatKernelLines(askKernel));
+    askProjections = { kernel: askKernel.kernel, readable: askKernel.readable };
   } catch { /* non-fatal — proceed without the kernel */ }
 
   // (c) CX-11 — downstream of the Opportunity Engine (lib/opportunityEngine),
@@ -1713,6 +1721,12 @@ router.post("/compass/ask", async (req, res) => {
       const wire = projectForSurface(opportunities, "compass");
       if (opportunityWorldValueKeys(wire).length === 0) {
         ctxLines.push(...formatOpportunityLines(wire, refusals));
+        // CCL-05 — the opportunity half of what the ranker consumes. It is set
+        // ONLY inside this flag read, so with `opportunity_engine_enabled` off
+        // (every deployment) the field stays undefined and the ranker cannot
+        // read a promoted opportunity that was never admitted. A projection
+        // that failed the world-value guard above never reaches it either.
+        if (askProjections) askProjections = { ...askProjections, opportunities: wire };
       } else {
         req.log.error({ keys: opportunityWorldValueKeys(wire) }, "compass/ask: opportunity projection carried a world value — refused");
       }
@@ -1739,6 +1753,15 @@ router.post("/compass/ask", async (req, res) => {
     ...modelTurns(history),
     { role: "user",   content: userMessageWithContext },
   ];
+
+  // CCL-05 — everything the tool-calling loop reaches (CompassTools →
+  // CompassPipeline, the EXISTING decision/ranking owner) runs with this turn's
+  // shared projections ambient, so the ranker ranks against the same world the
+  // prompt was given rather than a world of its own. A turn whose kernel could
+  // not be assembled establishes nothing and ranks exactly as it did before
+  // CCL-05 — never a partial or fabricated kernel.
+  const withAskProjections = <T>(fn: () => Promise<T>): Promise<T> =>
+    askProjections ? runWithAskProjections(askProjections, fn) : fn();
 
   // Persist user message (non-fatal)
   try { await appendMessage(sc, conversationId, "user", prompt); } catch { /* */ }
@@ -1774,11 +1797,11 @@ router.post("/compass/ask", async (req, res) => {
       // Tool rounds run silently server-side; the FINAL model round streams
       // its content token-by-token as delta events (same contract as before
       // Phase 4). The done event still carries the parsed message fields.
-      const { finalRaw, toolLog, proposals } = await runToolCallingLoop(
+      const { finalRaw, toolLog, proposals } = await withAskProjections(() => runToolCallingLoop(
         sc, user.id, guardProfile, messages as any, req.log,
         (delta) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify({ delta })}\n\n`); },
         clientAbort.signal,
-      );
+      ));
       const _parsed = _parseModelResponse(finalRaw);
       const _rawMessage  = finalRaw === "" ? SUMMARISE_EMPTY_FALLBACK_MESSAGE : _parsed.message;
       // Sensing `:148`. The tokens are already on the wire — the client rebuilds
@@ -1849,9 +1872,9 @@ router.post("/compass/ask", async (req, res) => {
 
   // ── Non-streaming (default) ───────────────────────────────────────────────
   try {
-    const { finalRaw, toolLog, proposals } = await runToolCallingLoop(
+    const { finalRaw, toolLog, proposals } = await withAskProjections(() => runToolCallingLoop(
       sc, user.id, guardProfile, messages as any, req.log,
-    );
+    ));
     const _parsed = _parseModelResponse(finalRaw);
     const _rawMessage  = finalRaw === "" ? SUMMARISE_EMPTY_FALLBACK_MESSAGE : _parsed.message;
     // Sensing `:148` — the same boundary the streamed branch applies, on the
@@ -3650,11 +3673,23 @@ router.get("/compass/recommendations", async (req, res) => {
 
       const effectiveCity = city ?? profile.currentCity ?? null;
 
+      // §35 / census-compass CP-02 — this is the RANKING read, and only that.
+      // The person-identity columns this list used to select (`username`,
+      // `display_name`, `name`, `avatar_url`, `show_profile_picture_publicly`)
+      // are deliberately gone: WHO these people are is answered further down by
+      // the Passport `discovery_card` consumer projection — the same projection
+      // GET /compass/people/:userId/passport serves — so Compass consumes its
+      // Passport variant instead of rebuilding identity independently.
+      //
+      // What stays is what RANKS a candidate, and ranking runs over a pool far
+      // wider than the page, which cannot afford a per-person projection.
+      // `verified` is in that set as a +10 ranking term only; the verified BADGE
+      // the client renders comes from the projection, never from this column.
       const { data: travelerRows } = await sc
         .from("profiles")
         .select(
-          "id, username, display_name, name, avatar_url, show_profile_picture_publicly, home_city, home_country, " +
-          "spoken_languages, interests, verified, account_status, is_private, created_at",
+          "id, home_city, spoken_languages, interests, verified, " +
+          "account_status, is_private, created_at",
         )
         .neq("id", user.id)
         .in("account_status", ["active"])
@@ -3895,45 +3930,85 @@ router.get("/compass/recommendations", async (req, res) => {
         );
       }
 
-      const topTravSlice = intentPool.slice(0, limit);
-
-      // §35 / census-passport P169 — identity through the Passport BATCH
-      // projection, which is now viewer-aware, instead of a fourth inline copy
-      // of the display-name rule. It owns four facts: may the real name be
-      // shown, what that name is (through `lib/publicIdentity`'s choke point,
-      // which TRIMS — this file did not, so a whitespace-only display_name used
-      // to render as a blank title here while every other surface fell through
-      // to the handle), whether the avatar may be shown, and the badge. What
-      // stays here is Compass's own: the @username fallback, and the wider
-      // suppression a private row gets (city, username, reason) whether or not
-      // the viewer follows — which is Compass's product rule, not Discovery's,
-      // and is deliberately NOT folded into the shared projection.
-      const travIdentity = await buildListIdentityProjections(
-        sc,
-        topTravSlice.map((s) => ({ ...s.row, id: s.id })),
-        { viewerId: user.id, following: followingSet, friends: friendSet },
+      // ── §35 / census-compass CP-02 ──────────────────────────────────────────
+      // "Compass consumes its Passport projection variant; §35 does not rebuild
+      // identity independently." Two things happen here, and both belong to the
+      // person-card endpoint below rather than to this list:
+      //
+      //  1. `allowDiscoveryPersonCard` — the very gate
+      //     GET /compass/people/:userId/passport applies, from the one module
+      //     that owns it — decides whether this viewer may ask about this person
+      //     AT ALL. A denial removes the person from the page ENTIRELY: not a
+      //     redacted row, not a stub, not even an id on the wire. The gate is
+      //     FAIL-CLOSED, so an unreadable opt-out table empties the page instead
+      //     of filling it: "we could not check" and "you may" must never render
+      //     alike, and a list is no exception to that.
+      //
+      //  2. `buildConsumerProjection(…, "discovery_card", …)` NAMES whoever
+      //     survives. The identity columns this list used to read for itself
+      //     (`username`, `display_name`, `name`, `avatar_url`,
+      //     `show_profile_picture_publicly`) are gone from the candidate select
+      //     above, so the Compass person CARD and the Compass person LIST now
+      //     have exactly one source for who someone is — which is the whole of
+      //     §35's canonical architecture rule.
+      //
+      // COST is bounded by the PAGE, never by the pool. The gate is two reads
+      // per ranked candidate (pool ≤ 24) and runs BEFORE the slice, so a denied
+      // person is replaced by the next-best candidate rather than silently
+      // shortening the page; the per-person projection — the expensive half,
+      // which `PassportConsumerProjections` warns must never be used in bulk —
+      // runs only for the ≤ `limit` (≤ 20) people actually returned.
+      const travGates = await Promise.all(
+        intentPool.map((s) => allowDiscoveryPersonCard(sc, s.id)),
       );
-      const travelerRecommendations = topTravSlice.map((s) => {
-        const ident = travIdentity.get(s.id);
-        // A row the projection does not know lost its profile between reads:
-        // answer with the most restrictive shape rather than the raw columns.
-        const nameOk = ident?.nameAllowed ?? false;
+      const topTravSlice = intentPool.filter((_, i) => travGates[i].allowed).slice(0, limit);
+
+      const travCards = await Promise.all(
+        topTravSlice.map((s) =>
+          buildConsumerProjection(sc, "discovery_card", s.id, user.id, { nowMs })
+            .catch((err: unknown) => {
+              req.log.warn({ err, userId: s.id }, "compass traveler card projection failed");
+              return null;
+            }),
+        ),
+      );
+
+      const travelerRecommendations = topTravSlice.flatMap((s, i) => {
+        const card = travCards[i];
+        // Fail-closed on the projection as well as on the gate: a person the
+        // assembler cannot project at all, or projects only as the minimal
+        // restricted (blocked / account-unavailable) card, is DROPPED. There is
+        // no half-person shape for a list row to fall back to.
+        if (!card || card.restricted) return [];
         const isPrivate = s.row.is_private ?? false;
+        // A private account this viewer does not follow is a locked preview.
+        // That wider suppression (handle, city, avatar, reason) is Compass's own
+        // product rule, not Discovery's, and is deliberately NOT folded into the
+        // shared projection — it narrows the projection, never widens it.
+        const lockedPreview = isPrivate && !followingSet.has(s.id);
+        // `identity.name` is already null unless the subject opted into
+        // `show_real_name` — the assembler's fail-closed choke point owns that.
+        // It is not blank-checked there, though (`presentedName` rejects a
+        // whitespace-only name, `buildIdentity` does not), so a display_name of
+        // "   " would render as a blank title. Falling through to the handle is
+        // the answer every other surface gives.
+        const projectedName =
+          typeof card.identity.name === "string" && card.identity.name.trim().length > 0
+            ? card.identity.name
+            : null;
+        const handle = card.identity.handle ?? null;
         const followStatus: "following" | "requested" | "not_following" =
           followingSet.has(s.id) ? "following"
           : requestedSet.has(s.id) ? "requested"
           : "not_following";
-        return {
+        return [{
           id:       s.id,
           type:     "traveler",
           category: "traveler",
-          // Universal display-name rule: hidden names fall back to @username
-          // (and to null for private non-followed profiles, which suppress it).
-          title: nameOk
-            ? (ident?.presentedName ?? ((s.row.username ?? null) as string | null))
-            : (isPrivate && !followingSet.has(s.id)
-              ? null
-              : ((s.row.username ?? null) as string | null)),
+          // Universal display-name rule: a name the viewer may not see falls
+          // back to the handle (and to null for a locked preview, which
+          // suppresses that too).
+          title: projectedName ?? (lockedPreview ? null : handle),
           reason:   buildTravelerReasonText(
             s.reasonCode,
             isPrivate ? [] : s.sharedInterests,
@@ -3946,12 +4021,12 @@ router.get("/compass/recommendations", async (req, res) => {
           data: {
             userId:          s.id,
             // Private profiles: suppress identifying details until followed
-            username:        isPrivate ? null : ((s.row.username ?? null) as string | null),
-            displayName:     ident?.presentedName ?? null,
-            avatarUrl:       ident?.avatarUrl ?? null,
+            username:        isPrivate ? null : handle,
+            displayName:     projectedName,
+            avatarUrl:       lockedPreview ? null : (card.identity.avatarUrl ?? null),
             homeCity:        isPrivate ? null : ((s.row.home_city ?? null) as string | null),
             isPrivate,
-            verified:        ident?.verified ?? false,
+            verified:        card.identity.verified,
             sharedInterests: isPrivate ? [] : s.sharedInterests,
             // §8 — the explicit current-intent overlap that outranked it, and
             // the bounded weight it was worth, so "why this person" is
@@ -3961,7 +4036,7 @@ router.get("/compass/recommendations", async (req, res) => {
             reasonCode:      s.reasonCode,
             followStatus,
           },
-        };
+        }];
       });
 
       void logCompassImpression(travelerRecommendations, user.id, effectiveSessionId);

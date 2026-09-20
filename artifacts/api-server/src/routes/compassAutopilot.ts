@@ -214,7 +214,8 @@ router.post("/autopilot/proposals/:id/confirm", asyncHandler(async (req, res) =>
   if (!proposal) return;
 
   // Re-authorize at execution time. Confirm is the only autopilot route that
-  // WRITES trip_plan_items, so it must honour trips.plan_edit_permission like
+  // CHANGES trip_plan_items — through the Trip Kernel since CT-01, never
+  // directly — so it must honour trips.plan_edit_permission like
   // every other plan write. Membership alone is not enough on an owner_only or
   // specific_members trip, and the per-user autopilot settings applyProposal
   // re-checks are self-service, so they authorize nothing. Deliberately NOT put
@@ -224,7 +225,37 @@ router.post("/autopilot/proposals/:id/confirm", asyncHandler(async (req, res) =>
   if (permitted === null) { sendError(res, "not_found", "Trip not found"); return; }
   if (!permitted) { sendError(res, "forbidden", "You don't have permission to edit this trip's plan"); return; }
 
-  const { applied, blocked, evidence } = await applyProposal(sc, proposal);
+  const { applied, blocked, evidence, kernelAvailable } = await applyProposal(sc, proposal);
+
+  // census-compass CT-01 — "consequential changes pass through the Trip
+  // Kernel". Autopilot's confirm is the one autopilot path that changes
+  // CANONICAL trip state (`trip_plan_items`), so it goes through the kernel or
+  // it does not happen. When the kernel is unavailable — `trip_kernel_enabled`
+  // is FALSE on production and on CI — this REFUSES rather than falling back to
+  // a direct write: that fallback is exactly the violation the row names, and
+  // it was the only path any confirm ever took.
+  //
+  // The proposal is deliberately left PENDING. Nothing was applied, so
+  // recording it `confirmed` would claim an action that did not happen, and
+  // `declined`/`expired` would claim a decision the user did not make. Pending
+  // means the same confirm succeeds unchanged once an operator flips the flag.
+  //
+  // Safe to ship: the census records "Production: 0 rows in both autopilot
+  // tables" — no live user is mid-flight on this path.
+  if (!kernelAvailable) {
+    res.status(503).json({
+      compassEnabled: true,
+      error: "service_unavailable",
+      message: "Autopilot changes go through the Trip Kernel, which is not available right now. Your proposal is still pending — try again later.",
+      reason: "TRIP_KERNEL_UNAVAILABLE",
+      status: "pending",
+      applied,
+      blocked,
+      evidence,
+    });
+    return;
+  }
+
   // CCL-13: a proposal whose evidence EXPIRED executed nothing, and marking it
   // "confirmed" would record an action that did not happen. It is resolved as
   // `expired` instead, which the client reads like a decline with a reason.

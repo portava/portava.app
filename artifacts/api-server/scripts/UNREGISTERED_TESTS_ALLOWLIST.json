@@ -146,5 +146,6 @@
   "src/test/tripNotFound.test.ts",
   "src/test/tripPrivacy.test.ts",
   "src/test/trustAdminAuditInsertSchemaDrift.test.ts",
+  "src/test/wallFirstPageLiveDb.test.ts",
   "src/test/wallSessionIntentLiveDb.test.ts"
 ]

@@ -6,6 +6,13 @@ import {
   ADJUDICATION_SIZE, EVAL_QUESTIONS, EXIT_CODE,
   collectReferencedIds, blockItemCount,
 } from "./compass-eval-criteria.mjs";
+import {
+  HISTORY_SCHEMA, DEFAULT_HISTORY_PATH,
+  buildRunEntry, appendRun, readHistoryFile, compareHistory, formatHistoryComparison,
+} from "./compass-eval-history.mjs";
+import { appendFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 /**
  * These test the CRITERIA, not Compass. There is no model provider here, which
@@ -18,6 +25,40 @@ import {
  * `{intent, confidence}` (`CompassIntentClassifier.ts` IntentClassification),
  * not `{name}`. A fixture that invents a field name is a fixture that can pass
  * while the real response fails.
+ *
+ * ── MUTATION LOG, result history (census-compass CPH-EVAL) ───────────────────
+ *
+ * Baseline 80 pass / 0 fail (the counts beside M1–M11 are from the 79-case
+ * baseline those mutations were run against; M12 and its case came later, and
+ * M1–M11 were not re-run for it). Each mutation was applied ALONE to
+ * `./compass-eval-history.mjs` (M11 to the store on disk), the suite re-run, the
+ * source restored. Only mutations actually run are listed. Every one went red;
+ * none is reported green because none was.
+ *
+ *   M1  an empty history reports status "compared" instead of "no_history"
+ *                                                                    → red 76/3
+ *   M2  a single run is compared with ITSELF (the classic fabricated
+ *       "stable" trend out of one data point)                        → red 78/1
+ *   M3  a dimension unjudged on either side reads "unchanged" rather
+ *       than "not_comparable"                                        → red 78/1
+ *   M4  `appendRun` writes with writeFileSync — the store is overwritten
+ *       by each run instead of appended to                           → red 78/1
+ *   M5  a malformed history line is silently skipped instead of thrown
+ *       on, so a corrupt store reads as a shorter honest one         → red 78/1
+ *   M6  a run with no `--phase` is filed under "unknown" instead of
+ *       being refused                                                → red 78/1
+ *   M7  a run with no commit sha is accepted                         → red 78/1
+ *   M8  the pass rate is taken over ALL slots rather than the JUDGED
+ *       ones, so unjudged slots count as failures                    → red 78/1
+ *   M9  a regression is computed and then never collected, so
+ *       `regressions` is always empty                                → red 77/2
+ *   M10 the empty-history report prints "all dimensions: 0% change"  → red 78/1
+ *   M11 a backfilled Phase 1 entry, with `"ranAt":"estimated"` and no
+ *       commit, planted in the shipped store                         → red 78/1
+ *   M12 only one phase named, silently paired with whatever ran last
+ *       (against the 80-case baseline)                               → red 79/1
+ *
+ * Restored: 80 pass / 0 fail.
  */
 
 const QS = EVAL_QUESTIONS;
@@ -60,6 +101,31 @@ function fullAdjudication(mutate = () => {}) {
 }
 
 const idsOf = (results) => results.filter((c) => !c.pass).map((c) => c.id);
+
+/**
+ * A SYNTHETIC history entry, for the comparison tests only.
+ *
+ * It is built through `buildRunEntry` — the same constructor the runner uses —
+ * from the good synthetic transcript, and then its dimension counts are bent to
+ * whatever the case under test needs. Nothing here is ever written to the real
+ * store: `appendRun` is called only against a file in the OS temp directory,
+ * deleted in a `finally`.
+ */
+function entry({ phase, ranAt = "2026-09-20T09:00:00.000Z", commit = "abc1234", dims = {} } = {}) {
+  const tierC = evaluateTierC(goodRun());
+  const e = buildRunEntry({
+    phase, ranAt, commit, verdict: "PASS",
+    tierA: evaluateTierA(goodRun()),
+    tierB: evaluateTierB(fullAdjudication(), tierC),
+  });
+  for (const [measure, over] of Object.entries(dims)) {
+    const merged = { ...e.dimensions[measure], ...over };
+    merged.judged = merged.pass + merged.fail;
+    merged.total = merged.judged + merged.unjudged;
+    e.dimensions[measure] = merged;
+  }
+  return e;
+}
 
 describe("Tier A — the baseline is green, so a red case means something", () => {
   test("a fully healthy transcript turns nothing red", () => {
@@ -470,5 +536,224 @@ describe("Tier C — measured per question", () => {
     const text = formatReport(evaluateTierA(goodRun()), evaluateTierB(fullAdjudication(), tierC), "PASS", tierC);
     assert.match(text, /TIER C — MEASURED per question/);
     assert.match(text, /q1:tool_selection/);
+  });
+});
+
+
+// ── The result history (census-compass CPH-EVAL, the "every phase" half) ──────
+//
+// WHAT THESE TESTS ARE FOR, AND WHAT THEY REFUSE TO TEST.
+//
+// The row asks for the nine queries run "against every phase from Phase 1 on".
+// The eval has run for real ONCE (2026-07-21, compass-v1.1, 7 of 9 returning no
+// text) and Phases 1..15 are in the past. There is therefore NO per-phase
+// history, and none can be manufactured: a backfilled score is a measurement
+// nobody took. So what is built is the STORE and the COMPARISON, starting
+// empty, and the tests below pin the empty case hardest — an empty history must
+// say "no history" and must never yield a trend, a delta or a percentage.
+//
+// The comparison is tested on SYNTHETIC entries built in the test body, exactly
+// as the criteria above are tested on synthetic transcripts. A synthetic entry
+// inside a test is a fixture; a synthetic entry written into the store would be
+// a lie, and `appendRun` is the only writer.
+describe("eval history — empty is empty, and says so", () => {
+  test("an empty history reports no history, and no movement at all", () => {
+    const c = compareHistory([]);
+    assert.equal(c.status, "no_history");
+    assert.equal(c.comparable, false);
+    assert.deepEqual(c.movements, []);
+    assert.deepEqual(c.regressions, []);
+    assert.equal(c.from, null);
+    assert.equal(c.to, null);
+  });
+
+  test("the printed report for an empty history states it plainly and prints no number", () => {
+    const text = formatHistoryComparison(compareHistory([]));
+    assert.match(text, /no run/i);
+    // The failure mode this pins: a "0% change" or "9/9 → 9/9" line invented
+    // out of an empty store, which reads exactly like a measured no-op.
+    assert.doesNotMatch(text, /%/);
+    assert.doesNotMatch(text, /→/);
+  });
+
+  test("a history file that has never been written reads as empty, not as an error", () => {
+    const missing = join(tmpdir(), `compass-eval-history-absent-${process.pid}-${Math.random()}.jsonl`);
+    assert.deepEqual(readHistoryFile(missing), []);
+    assert.equal(compareHistory(readHistoryFile(missing)).status, "no_history");
+  });
+
+  test("ONE recorded run is still not a comparison", () => {
+    const c = compareHistory([entry({ phase: "16" })]);
+    assert.equal(c.status, "single_run");
+    assert.equal(c.comparable, false);
+    assert.deepEqual(c.movements, []);
+    assert.deepEqual(c.regressions, []);
+    assert.equal(c.to.phase, "16");
+    assert.match(formatHistoryComparison(c), /one run/i);
+  });
+
+  test("the store this repo ships holds only genuinely recorded runs", () => {
+    // Vacuously true today because the store does not exist: no run was
+    // backfilled and no phase was invented. It stays true afterwards — every
+    // entry must carry a real commit sha and a real ISO timestamp, which is
+    // what `buildRunEntry` refuses to fabricate.
+    for (const e of readHistoryFile(DEFAULT_HISTORY_PATH)) {
+      assert.match(e.commit, /^[0-9a-f]{7,40}$/, `entry for phase ${e.phase} has no commit sha`);
+      assert.ok(Number.isFinite(Date.parse(e.ranAt)), `entry for phase ${e.phase} has no timestamp`);
+    }
+  });
+});
+
+describe("eval history — an entry is keyed by phase, run time and commit", () => {
+  test("a run with no phase is refused rather than filed under a guess", () => {
+    assert.throws(() => buildRunEntry({ commit: "abc1234", verdict: "PASS", tierA: [], tierB: [] }), /phase/i);
+  });
+
+  test("a run with no commit is refused — a score with no code behind it cannot be compared", () => {
+    assert.throws(() => buildRunEntry({ phase: "16", verdict: "PASS", tierA: [], tierB: [] }), /commit/i);
+  });
+
+  test("an entry carries the key, the verdict and one summary per named dimension", () => {
+    const tierC = evaluateTierC(goodRun());
+    const e = buildRunEntry({
+      phase: "16",
+      commit: "e0d858f28791ada13501a4833fad19801c3b796a",
+      ranAt: "2026-09-20T09:00:00.000Z",
+      verdict: "PASS",
+      tierA: evaluateTierA(goodRun()),
+      tierB: evaluateTierB(fullAdjudication(), tierC),
+    });
+    assert.equal(e.phase, "16");
+    assert.equal(e.commit, "e0d858f28791ada13501a4833fad19801c3b796a");
+    assert.equal(e.ranAt, "2026-09-20T09:00:00.000Z");
+    assert.equal(e.verdict, "PASS");
+    assert.equal(e.schema, HISTORY_SCHEMA);
+    // The roadmap's eight, plus the four v2 requires recorded separately.
+    assert.deepEqual(
+      Object.keys(e.dimensions).sort(),
+      [...ROADMAP_MEASURES, ...RUN_LEVEL_MEASURES].sort(),
+    );
+    assert.deepEqual(e.dimensions.safety, { pass: 9, fail: 0, unjudged: 0, judged: 9, total: 9, source: "adjudicated" });
+    // The four Tier C measures are MEASURED, and the entry says so, so a later
+    // reader can tell a measurement from a reader's opinion.
+    assert.equal(e.dimensions.tool_selection.source, "measured");
+    assert.equal(e.dimensions.factual_grounding.total, 1);
+    assert.deepEqual(e.tierA, { total: evaluateTierA(goodRun()).length, failed: [] });
+  });
+
+  test("a red Tier A criterion is named in the entry, not just counted", () => {
+    const e = buildRunEntry({
+      phase: "16", commit: "abc1234", verdict: "FAIL",
+      tierA: evaluateTierA(goodRun({ 5: { isFallback: true } })),
+      tierB: [],
+    });
+    assert.deepEqual(e.tierA.failed, ["provider_reached"]);
+  });
+});
+
+describe("eval history — append, never overwrite", () => {
+  const tmp = () => join(tmpdir(), `compass-eval-history-${process.pid}-${Math.random()}.jsonl`);
+
+  test("a second run is added to the first, in order, and the first is still there", () => {
+    const path = tmp();
+    try {
+      appendRun(entry({ phase: "16", ranAt: "2026-09-20T09:00:00.000Z" }), path);
+      appendRun(entry({ phase: "17", ranAt: "2026-10-01T09:00:00.000Z" }), path);
+      const h = readHistoryFile(path);
+      assert.deepEqual(h.map((e) => e.phase), ["16", "17"]);
+    } finally { rmSync(path, { force: true }); }
+  });
+
+  test("a malformed line is reported, not silently dropped — a corrupt store must not read as a shorter honest one", () => {
+    const path = tmp();
+    try {
+      appendRun(entry({ phase: "16" }), path);
+      appendFileSync(path, "{not json\n");
+      assert.throws(() => readHistoryFile(path), /line 2/);
+    } finally { rmSync(path, { force: true }); }
+  });
+});
+
+describe("eval history — the comparison, and what it refuses to call a trend", () => {
+  const move = (c, measure) => c.movements.find((m) => m.measure === measure);
+
+  test("two runs produce one movement per named dimension", () => {
+    const c = compareHistory([entry({ phase: "16" }), entry({ phase: "17" })]);
+    assert.equal(c.status, "compared");
+    assert.equal(c.comparable, true);
+    assert.equal(c.movements.length, ROADMAP_MEASURES.length + RUN_LEVEL_MEASURES.length);
+    assert.deepEqual(c.regressions, []);
+    assert.equal(move(c, "safety").direction, "unchanged");
+  });
+
+  test("a dimension that got worse is flagged as a regression and names both phases", () => {
+    const before = entry({ phase: "16" });
+    const after = entry({ phase: "17", dims: { safety: { pass: 7, fail: 2 } } });
+    const c = compareHistory([before, after]);
+    assert.deepEqual(c.regressions.map((m) => m.measure), ["safety"]);
+    const m = move(c, "safety");
+    assert.equal(m.direction, "regressed");
+    assert.equal(m.from.pass, 9);
+    assert.equal(m.to.pass, 7);
+    assert.ok(m.delta < 0);
+    assert.equal(c.from.phase, "16");
+    assert.equal(c.to.phase, "17");
+    assert.match(formatHistoryComparison(c), /REGRESSED/);
+    assert.match(formatHistoryComparison(c), /safety/);
+  });
+
+  test("a dimension that improved is not called a regression", () => {
+    const c = compareHistory([
+      entry({ phase: "16", dims: { memory: { pass: 5, fail: 4 } } }),
+      entry({ phase: "17" }),
+    ]);
+    assert.deepEqual(c.regressions, []);
+    assert.equal(move(c, "memory").direction, "improved");
+  });
+
+  test("a dimension nobody judged on either side is NOT comparable, and is never a trend", () => {
+    const c = compareHistory([
+      entry({ phase: "16", dims: { personalization: { pass: 0, fail: 0, unjudged: 9 } } }),
+      entry({ phase: "17" }),
+    ]);
+    const m = move(c, "personalization");
+    assert.equal(m.direction, "not_comparable");
+    assert.equal(m.delta, null);
+    assert.deepEqual(c.regressions, []);
+    assert.match(formatHistoryComparison(c), /not comparable/i);
+  });
+
+  test("the same pass rate over FEWER judged slots is not a regression, but it is reported as lost coverage", () => {
+    const c = compareHistory([
+      entry({ phase: "16" }),
+      entry({ phase: "17", dims: { factual_accuracy: { pass: 3, fail: 0, unjudged: 6 } } }),
+    ]);
+    assert.equal(move(c, "factual_accuracy").direction, "unchanged");
+    assert.deepEqual(c.regressions, []);
+    assert.deepEqual(c.coverageLosses.map((m) => m.measure), ["factual_accuracy"]);
+  });
+
+  test("by default the LAST two runs are compared, and two phases can be named instead", () => {
+    const h = [entry({ phase: "14" }), entry({ phase: "15", dims: { safety: { pass: 4, fail: 5 } } }), entry({ phase: "16" })];
+    assert.deepEqual(compareHistory(h).movements.find((m) => m.measure === "safety").from.pass, 4);
+    const named = compareHistory(h, { fromPhase: "14", toPhase: "15" });
+    assert.equal(named.from.phase, "14");
+    assert.equal(named.to.phase, "15");
+    assert.deepEqual(named.regressions.map((m) => m.measure), ["safety"]);
+  });
+
+  test("naming only ONE phase is refused — half a pair is not a comparison", () => {
+    const c = compareHistory([entry({ phase: "16" }), entry({ phase: "17" })], { toPhase: "17" });
+    assert.equal(c.comparable, false);
+    assert.deepEqual(c.movements, []);
+    assert.match(c.message, /two phases/);
+  });
+
+  test("a named phase with no recorded run says so instead of comparing something else", () => {
+    const c = compareHistory([entry({ phase: "16" })], { fromPhase: "1", toPhase: "16" });
+    assert.equal(c.status, "phase_not_recorded");
+    assert.equal(c.comparable, false);
+    assert.deepEqual(c.movements, []);
+    assert.match(formatHistoryComparison(c), /phase 1\b/i);
   });
 });

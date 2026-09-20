@@ -107,18 +107,24 @@ const ALLOWLIST = new Set<string>([
   "highlight_replies.user_id",          // live: replier_id
   "highlight_replies.body",             // does not exist live (thread-based replies)
   "highlight_replies.deleted_at",       // does not exist live
-  // ── 2996_compass_conversations_phase1_schema.sql — PENDING LIVE APPLY ──────
-  // Applied to portava-ci 2026-09-19 (ledger row), NOT to production. The
-  // service names both columns only when its probe finds them
-  // (CompassConversationService.conversationSchemaReady), so the build is safe
-  // against a database without them. Remove both entries when 2996 is applied
-  // to production and recorded in production-applied-migrations.json.
-  "compass_conversations.trip_id",
-  // PENDING LIVE APPLY (2997): CPV2-11 recommendation lineage; named only where the probe finds them.
-  "compass_served_recommendations.revoked_at",
-  "compass_served_recommendations.revocation_reason",
-  "compass_outcome_events.weight_nudge",
-  "compass_conversations.status",
+  // 2996_compass_conversations_phase1_schema.sql AND
+  // 2997_compass_recommendation_lineage.sql USED TO BE ALLOWLISTED HERE — five
+  // entries: compass_conversations.trip_id / .status,
+  // compass_served_recommendations.revoked_at / .revocation_reason and
+  // compass_outcome_events.weight_nudge.
+  //
+  // REMOVED 2026-09-20 under this list's own rule ("Remove the entry once the
+  // migration is applied and verified live"). Both files were already on
+  // portava-ci (2026-09-19, ledger rows) and both reached PRODUCTION on
+  // 2026-09-20 — 2996 at 19:46:26 UTC, 2997 at 19:49:28, each rehearsed in a
+  // rolled-back transaction first and each carrying a schema_migration_ledger
+  // row. All five columns are read back in
+  // snapshots/20260920-production-schema.json, so this check now passes on them
+  // because they are PRESENT, not because they are excused — which is the only
+  // reason to remove an entry from this list, exactly as the 2970 note below
+  // states. 2997's validated cascading FK from compass_outcome_events to
+  // compass_served_recommendations is not this check's scope (columns only);
+  // audit:schema owns it.
   "plan_checkins.plan_item_id",         // live: plan_geofence_id
   "plan_attendance_events.plan_item_id", // live: plan_geofence_id
   "plan_attendance_events.metadata",    // live: details

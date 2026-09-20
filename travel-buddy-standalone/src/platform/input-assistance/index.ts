@@ -289,3 +289,43 @@ export {
 } from './compass/compassFields.ts';
 export { AiWritingAssist, type AiWritingAssistProps } from './compass/AiWritingAssist.tsx';
 export { CompassStarters, type CompassStartersProps } from './compass/CompassStarters.tsx';
+
+// ── voice intake (census-wall W71) ────────────────────────────────────────────
+// W71: "Voice input and typo normalization use the same global engine." The
+// typo half is proven at the Wall; this is the voice half's provider-independent
+// seam — a transcript becomes the SAME request typed text becomes, through the
+// SAME gateway entry point. NO speech-to-text provider is bound: the port's
+// default reports unavailable and never fabricates a transcript. A device build
+// installs one at bootstrap with `installTranscriptionPort(...)`.
+export {
+  VOICE_INTAKE_STATES,
+  MIN_TRANSCRIPT_CONFIDENCE,
+  type TranscriptionResult,
+  type VoiceIntakeState,
+  type VoiceRefusalReason,
+  type VoiceUnavailableReason,
+} from './voice/types.ts';
+export {
+  NO_TRANSCRIPTION_PROVIDER,
+  installTranscriptionPort,
+  clearTranscriptionPort,
+  installedTranscriptionPort,
+  resolveTranscriptionPort,
+  isVoiceInputAvailable,
+  type AudioCapturePort,
+  type CapturedAudio,
+  type TranscriptionPort,
+  type TranscriptionRequest,
+  type TranscriptionOutcome,
+} from './voice/transcriptionPort.ts';
+export {
+  assistanceRequestFor,
+  voiceIntakeRequest,
+  submitVoiceIntake,
+  voiceIntakeFromCapture,
+  type SuggestSubmitter,
+  type VoiceIntakeOptions,
+  type VoiceIntakeOutcome,
+  type VoiceIntakeDeps,
+  type VoiceSubmission,
+} from './voice/voiceIntake.ts';
