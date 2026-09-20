@@ -39,7 +39,7 @@ import { buildUnifiedStamps, filterUnifiedStamps, type UnifiedStamp, type StampS
 import { loadMemoriesRead } from "./PassportMemoryService.js";
 import { filterMemories } from "./PassportPrivacyGuard.js";
 import { countUserTrips } from "../../domain/trips/services/tripCounts.js";
-import { nameVisibilitySet, sanitizeIdentity } from "../../lib/publicIdentity.js";
+import { nameVisibilitySet, presentedName, sanitizeIdentity } from "../../lib/publicIdentity.js";
 import { buildFeaturedJourney, type JourneyProjection, type JourneyPermissions } from "./PassportJourneyService.js";
 import {
   buildSharedContext,
@@ -856,7 +856,12 @@ function buildIdentity(
   const named = sanitizeIdentity(profile, nameAllowed, viewerId);
   return {
     userId: profile.id,
-    name: named.display_name ?? named.name ?? null,
+    // census-compass CP-02: compose the CANONICAL rule rather than rebuilding it.
+    // `named` has already had the viewer short-circuit and redaction applied by
+    // sanitizeIdentity, so `allowed` is true here; presentedName adds the blank
+    // check this site used to drop, which let a whitespace-only display_name
+    // reach every consumer variant as a nameless person.
+    name: presentedName(named, true),
     handle: profile.handle ?? profile.username ?? null,
     avatarUrl: showAvatar ? (profile.avatar_url ?? null) : null,
     coverUrl: profile.cover_photo_url ?? null,

@@ -26,6 +26,12 @@ import { logger } from "../../lib/logger.js";
 
 // ── Surface names ─────────────────────────────────────────────────────────────
 
+/**
+ * WEIGHT-PROFILE names. This union selects `SURFACE_WEIGHT_PROFILES[surface]`
+ * and nothing else. It is NOT the vocabulary of `rank_events.surface` — see
+ * PersistedRankSurface immediately below, and read both before adding a member
+ * to either.
+ */
 export type SurfaceName =
   | "pulse"
   | "compass"
@@ -37,6 +43,71 @@ export type SurfaceName =
   | "trip"
   | "profile"
   | "explore";
+
+// ── The persisted analytics-surface vocabulary ────────────────────────────────
+
+/**
+ * The surfaces `rank_events.surface` ACCEPTS, expressed once, in code.
+ *
+ * ══ WHY THIS EXISTS, AND WHY IT IS NOT `SurfaceName` ═════════════════════════
+ * One argument used to do two unrelated jobs: choosing a weight profile AND
+ * being written to a CHECK-constrained column. The two vocabularies then
+ * diverged, and the divergence was the bug.
+ *
+ * Migration 2893 (`2893_rank_events_retire_writerless_surfaces.sql`) narrowed
+ * `rank_events_surface_check` to exactly these eight on the grounds that the
+ * other seven had "no writer anywhere in the tree". That was false for
+ * `explore`: the Wall's For You page reached this module with
+ * `surface: "explore"` on every request, so every one of the ~151 analytics
+ * inserts a first page issues was rejected 23514 and dropped by the
+ * fire-and-forget handler below. It was a silent, total loss of For You
+ * ranking analytics.
+ *
+ * Keeping the list here, as a `const` tuple whose type is derived FROM it,
+ * means a surface the database would reject is now a COMPILE error at the call
+ * site rather than a runtime 23514 nobody reads. This list is the code's copy
+ * of the constraint: if a migration ever changes the CHECK, change it here in
+ * the same commit — `src/test/rankEventsSurfaceContract.test.ts` compares the
+ * two and fails when they drift.
+ *
+ * ADDING A LABEL HERE DOES NOT ADD IT TO THE DATABASE. The CHECK is
+ * authoritative; this is only how the code refuses to write outside it.
+ */
+export const PERSISTED_RANK_SURFACES = [
+  "pulse",
+  "discovery",
+  "events",
+  "compass",
+  "live_pulse",
+  "living_page",
+  "watch_feed",
+  "wall",
+] as const;
+
+/** A value `rank_events.surface` will accept. Anything else is a type error. */
+export type PersistedRankSurface = (typeof PERSISTED_RANK_SURFACES)[number];
+
+/**
+ * The persisted surface a caller gets when it does not choose one — TODAY'S
+ * BEHAVIOUR, preserved exactly.
+ *
+ * Every weight-profile name that is also an admitted persisted surface maps to
+ * itself, so `discovery`, `pulse` and `compass` — the only weight profiles any
+ * production caller passes — write precisely the label they have always
+ * written. Nothing about those callers changes.
+ *
+ * A profile the database does NOT admit returns null, and the write is skipped
+ * rather than attempted. That is not a loss: such a row has been rejected 23514
+ * and discarded since 2893, so the only thing skipping it removes is a
+ * round-trip guaranteed to fail. A caller that wants those rows must say which
+ * ADMITTED surface they belong to, via `RankItemsOptions.analyticsSurface` —
+ * which is exactly what the Wall's For You page now does (`wall`).
+ */
+function defaultPersistedSurface(surface: SurfaceName): PersistedRankSurface | null {
+  return (PERSISTED_RANK_SURFACES as readonly string[]).includes(surface)
+    ? (surface as PersistedRankSurface)
+    : null;
+}
 
 // ── Input / output types ──────────────────────────────────────────────────────
 
@@ -686,17 +757,25 @@ function calcSpamPenalty(rawSpamPenalty: number | null, max: number): number {
  *
  * Safe fields only: event_type, item_id, surface, content_type,
  * user_id (viewer), session_id.  No score components or private PII.
+ *
+ * `surface` here is the ANALYTICS surface — a PersistedRankSurface, i.e. a
+ * value `rank_events_surface_check` admits — NOT the weight-profile name the
+ * ranker scored with. The two are frequently the same string and were once the
+ * same argument; they are separate because the database constrains one of them
+ * and not the other. `null` means "this weight profile has no admitted
+ * persisted label", and the row is skipped rather than posted for certain
+ * rejection; see defaultPersistedSurface.
  */
 function writeRankAnalyticAsync(
   db:           SupabaseClient | null,
   eventType:    string,
   itemId:       string,
   itemType:     string,
-  surface:      SurfaceName,
+  surface:      PersistedRankSurface | null,
   viewerId:     string,
   sessionId:    string | null,
 ): void {
-  if (!db) return;
+  if (!db || surface === null) return;
   try {
     void db
       .from("rank_events")
@@ -738,6 +817,13 @@ function writeRankAnalyticAsync(
 
 const SAMPLE_RATE = 10; // 1-in-10
 
+/**
+ * Debug samples record HOW an item was scored, so `surface` here is
+ * deliberately the WEIGHT-PROFILE name, not the persisted analytics surface —
+ * a breakdown labelled `wall` would not say which weight profile produced it.
+ * `ranking_debug_samples.surface` carries no CHECK constraint, so the two
+ * vocabularies do not collide here. Unchanged by the analyticsSurface split.
+ */
 function writeSampleAsync(
   db: SupabaseClient,
   viewerId: string,
@@ -831,6 +917,28 @@ export interface RankItemsOptions {
    * record when a row was written, and pinning them would falsify the log.
    */
   nowMs?: number;
+
+  /**
+   * The value written to `rank_events.surface` for this call, when it is NOT
+   * the same as the weight-profile name in `surface`.
+   *
+   * ══ THE TWO CONCEPTS, AND WHY THEY MUST BE SEPARABLE ═══════════════════════
+   * `surface` picks the SCORING WEIGHTS. This picks the ANALYTICS LABEL. They
+   * coincide for every surface whose profile name the database also admits,
+   * which is why this is optional and defaults to today's behaviour — every
+   * existing caller is completely unaffected by its existence.
+   *
+   * They do NOT coincide for the Wall's For You page, which ranks on the
+   * exploration-heavy `explore` profile but is the `wall` surface as far as
+   * `rank_events_surface_check` is concerned (migration 2893 retired `explore`
+   * and kept `wall`). Before this option existed, that page had to choose
+   * between the right ranking and a row the database would accept; it chose
+   * the ranking, and lost 100% of its analytics to 23514.
+   *
+   * Typed as PersistedRankSurface, so a label outside the database's
+   * vocabulary cannot be passed here at all.
+   */
+  analyticsSurface?: PersistedRankSurface;
 }
 
 /**
@@ -887,6 +995,15 @@ export async function rankItems(
   // Defaults to ON, so every existing caller keeps writing exactly what it
   // wrote before and only a surface that opts out changes behaviour.
   const emitPerCandidateAnalytics = options.emitPerCandidateAnalytics ?? true;
+
+  // Resolve the ANALYTICS surface once, for the whole call.
+  //
+  // `surface` continues to do exactly one job below — selecting the weight
+  // profile at Step 3. This is the other job it used to do, now separate and
+  // constrained to the vocabulary the database actually admits. Defaulting to
+  // the profile name keeps every caller that does not opt in byte-identical.
+  const analyticsSurface: PersistedRankSurface | null =
+    options.analyticsSurface ?? defaultPersistedSurface(surface);
 
   // ONE evaluation instant for the whole call. Read once, never per item: the
   // clock ticks mid-loop otherwise, and two items with identical createdAt get
@@ -984,7 +1101,7 @@ export async function rankItems(
       // evidence required to show that it did.
       writeRankAnalyticAsync(
         db, RankingEvent.ITEM_INELIGIBLE,
-        input.itemId, input.itemType, surface,
+        input.itemId, input.itemType, analyticsSurface,
         viewer.viewerId, viewer.sessionId ?? null,
       );
       continue;
@@ -1109,7 +1226,7 @@ export async function rankItems(
     if (emitPerCandidateAnalytics) {
       writeRankAnalyticAsync(
         db, RankingEvent.ITEM_SCORED,
-        input.itemId, input.itemType, surface,
+        input.itemId, input.itemType, analyticsSurface,
         viewer.viewerId, viewer.sessionId ?? null,
       );
     }
@@ -1122,7 +1239,7 @@ export async function rankItems(
           : RankingEvent.ACTIVITY_BOOST_APPLIED;
       writeRankAnalyticAsync(
         db, boostedEvent,
-        input.itemId, input.itemType, surface,
+        input.itemId, input.itemType, analyticsSurface,
         viewer.viewerId, viewer.sessionId ?? null,
       );
     }
@@ -1131,7 +1248,7 @@ export async function rankItems(
     if (fatiguePenalty > 0) {
       writeRankAnalyticAsync(
         db, RankingEvent.FATIGUE_PENALTY_APPLIED,
-        input.itemId, input.itemType, surface,
+        input.itemId, input.itemType, analyticsSurface,
         viewer.viewerId, viewer.sessionId ?? null,
       );
     }

@@ -14,9 +14,14 @@
  * has no live source) is reported as `not_revalidated`, never dressed up as
  * `holds`.
  *
- * Driven over the shared table-backed fake with the Trip Kernel flag ABSENT,
- * so the legacy write path is what would execute; the kernel path shares the
- * gate because the gate sits before the per-change loop.
+ * Driven over the shared table-backed fake with the Trip Kernel flag ON and a
+ * fake `trip_kernel_execute` (see withKernel below). It used to run with the
+ * flag ABSENT, over the legacy direct write; census-compass CT-01 deleted that
+ * write, so the kernel path is now the only way a change executes at all and
+ * the flag has to be on for these cases to reach their own question. The
+ * evidence gate still sits before the kernel gate, so an expired proposal is
+ * refused for its evidence either way — pinned below and again in
+ * compassAutopilotKernelPath.test.ts.
  *
  * Run: SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy \
  *      node --import tsx/esm --test src/test/compassAutopilotRevalidation.test.ts
@@ -54,9 +59,32 @@ function resolved() {
   return [item(A, "Museum", "2026-10-01T10:00:00.000Z", "2026-10-01T11:00:00.000Z"), item(B, "Lunch", "2026-10-01T13:00:00.000Z", "2026-10-01T14:00:00.000Z")];
 }
 
+/**
+ * census-compass CT-01 removed applyProposal's direct `trip_plan_items` write,
+ * so a change now EXECUTES only as a Trip Kernel command. The shared harness
+ * does not model `trip_kernel_execute` (`rpc not modelled`), so this suite
+ * wraps the client with a fake function that applies the command's patch to the
+ * store — which is what the real kernel does, and what these cases need in
+ * order to keep asserting that a live issue's repair actually runs. The flag is
+ * seeded ON for the same reason: with it off every case below would be refused
+ * for the flag and CCL-13's own question would never be reached.
+ *
+ * The flag-OFF refusal is pinned in compassAutopilotKernelPath.test.ts.
+ */
+function withKernel(sc: any) {
+  sc.rpc = async (name: string, args: any) => {
+    if (name !== "trip_kernel_execute") return { data: null, error: { message: "rpc not modelled" } };
+    const cmd = args?.p_command ?? {};
+    const patch = (cmd.payload?.patch ?? {}) as Record<string, unknown>;
+    for (const r of sc._store.trip_plan_items ?? []) if (r.id === cmd.payload?.item_id) Object.assign(r, patch);
+    return { data: { ok: true, duplicate: false, version: 2, event_id: "e1", sequence: 1, result: null, contract_version: 2 }, error: null };
+  };
+  return sc;
+}
+
 function state(items: any[]) {
   return {
-    feature_flags: [],
+    feature_flags: [{ flag: "trip_kernel_enabled", enabled: true }],
     trips: [{ id: TRIP, destination_city: null, start_date: "2026-10-01", end_date: "2026-10-03" }],
     trip_plan_items: items,
     trip_autopilot_settings: [],
@@ -69,7 +97,7 @@ const MOVE_B = [{ itemId: B, title: "Lunch", lockType: "flexible", before: { sta
 
 describe("CCL-13 — the issue a proposal repairs is recomputed at confirm", () => {
   it("POSITIVE CONTROL: the conflict still holds → the change is applied", async () => {
-    const sc = makeClient(state(overlapping()));
+    const sc = withKernel(makeClient(state(overlapping())));
     const r = await applyProposal(sc as any, { id: P, trip_id: TRIP, user_id: USER, issue_type: "timing_conflict", dedupe_key: `fix:timing:${A}:${B}`, changes: MOVE_B });
     assert.equal(r.applied, 1, JSON.stringify(r));
     assert.deepEqual(r.blocked, []);
@@ -78,7 +106,7 @@ describe("CCL-13 — the issue a proposal repairs is recomputed at confirm", () 
   });
 
   it("the conflict was resolved by hand since the proposal → NOTHING is applied, and the reason says why", async () => {
-    const sc = makeClient(state(resolved()));
+    const sc = withKernel(makeClient(state(resolved())));
     const before = JSON.stringify(sc._store.trip_plan_items);
     const r = await applyProposal(sc as any, { id: P, trip_id: TRIP, user_id: USER, issue_type: "timing_conflict", dedupe_key: `fix:timing:${A}:${B}`, changes: MOVE_B });
     assert.equal(r.applied, 0, JSON.stringify(r));
@@ -89,14 +117,14 @@ describe("CCL-13 — the issue a proposal repairs is recomputed at confirm", () 
   });
 
   it("a proposal whose evidence has no live source (simulated disruption) executes and SAYS it was not revalidated", async () => {
-    const sc = makeClient(state(overlapping()));
+    const sc = withKernel(makeClient(state(overlapping())));
     const r = await applyProposal(sc as any, { id: P, trip_id: TRIP, user_id: USER, issue_type: "disruption_recovery", dedupe_key: `fix:cancelled:${A}`, changes: MOVE_B });
     assert.equal(r.applied, 1, JSON.stringify(r));
     assert.equal(r.evidence, "not_revalidated");
   });
 
   it("a proposal row written before the key existed (no dedupe_key) is not revalidated, and says so rather than pretending", async () => {
-    const sc = makeClient(state(resolved()));
+    const sc = withKernel(makeClient(state(resolved())));
     const r = await applyProposal(sc as any, { id: P, trip_id: TRIP, user_id: USER, issue_type: "timing_conflict", changes: MOVE_B });
     assert.equal(r.evidence, "not_revalidated");
   });

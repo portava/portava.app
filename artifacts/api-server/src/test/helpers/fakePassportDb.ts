@@ -4,7 +4,8 @@
  *   .from(t).select(cols,{count}).eq/.neq/.in/.is/.gt/.lt/.gte/.lte/.or/.not
  *           .order/.limit/.maybeSingle/.single  and thenable list resolution.
  *
- * `.or()` is intentionally a no-op (it does not narrow) — tests stage only the
+ * `.or()` NARROWS, via helpers/postgrestOrFilter (it used to be a no-op, which
+ * made every pair read as blocked through lib/blockGuard). Tests stage only the
  * rows relevant to the case, so the coarse matching is sufficient and matches
  * the pattern used by the existing trust tests. Unknown tables resolve empty.
 *
@@ -48,6 +49,7 @@
  */
 
 import { projectionKeys, projectRow } from "./selectProjection.js";
+import { orPredicate } from "./postgrestOrFilter.js";
 
 type Row = Record<string, any>;
 
@@ -119,7 +121,7 @@ export function makePassportDb(tables: Record<string, Row[]>, opts: FakePassport
       lt(col: string, val: any) { filters.push((r) => r[col] < val); return builder; },
       gte(col: string, val: any) { filters.push((r) => r[col] >= val); return builder; },
       lte(col: string, val: any) { filters.push((r) => r[col] <= val); return builder; },
-      or() { return builder; },
+      or(expr: string) { filters.push(orPredicate(expr)); return builder; },
       not(col: string, _op: string, val: any) { filters.push((r) => (val === null ? r[col] != null : r[col] !== val)); return builder; },
       order() { return builder; },
       range() { return builder; },

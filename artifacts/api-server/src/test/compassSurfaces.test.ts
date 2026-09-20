@@ -19,6 +19,7 @@ import { _setTestClient } from "../lib/http.js";
 import compassRouter from "../routes/compass.js";
 import { invalidateFlagsCache } from "../compass/flags.js";
 import { clearCompassProfileCache } from "../compass/CompassProfileService.js";
+import { orPredicate } from "./helpers/postgrestOrFilter.js";
 import {
   isEventInRange,
   isPublicItem,
@@ -78,7 +79,7 @@ function makeFakeClient(state: FakeState) {
       neq(col: string, val: any) { filters.push((r: any) => r[col] !== val); return b; },
       in(col: string, vals: any[]){ filters.push((r: any) => vals.includes(r[col])); return b; },
       not()                      { return b; },
-      or()                       { return b; },
+      or(expr: string)           { filters.push(orPredicate(expr)); return b; },
       is()                       { return b; },
       like()                     { return b; },
       ilike()                    { return b; },
