@@ -152,7 +152,16 @@ is not a licence.
    pushes it out of reach and aborts BOTH `test` and `test:component` in about
    a second. Run the guards after every edit, not once per batch — they are
    cheap and a suite is not.
-8. **Three citation checks, and they see different things.**
+8. **A clock fixture must be derived in the zone its assertion is judged in.**
+   Deriving it from the real clock is necessary and NOT sufficient.
+   `tripKernelExpansion.test.ts` had already replaced its pinned dates with
+   `Date.now()`-derived ones and was still armed: it formatted them through
+   `.toISOString()` (UTC) while `computeTripStatus` compares against
+   `todayInTimezone("Europe/Lisbon")`, so for the hour between 23:00 UTC and
+   UTC midnight "tomorrow" was today and the trip read `active`. One hour a
+   day at UTC+1; thirteen at UTC+13. Format bounds through the same function
+   the production code judges them with.
+9. **Three citation checks, and they see different things.**
    `check:doc-citations` sees anchored citations; `check:citation-targets` sees
    unanchored ones that land on nothing; `check:citation-symbols` sees
    unanchored ones that NAME a symbol and drift more than two lines from it. A
