@@ -35,7 +35,7 @@ an absence.
 | A — Map interface | `src/features/map/**`, map components | **LANDED** (merge of `worktree-agent-a8607f93b9412b6a6`) |
 | B — Map backend | `routes/map*`, `lib/mapProducers/**` | **LANDED** (`c36aac77d`) |
 | C — Sensing | §35 telemetry, `routes/mapTelemetry.ts` | **LANDED** (`bca43861b`) |
-| D — Integrations | seeded-CI fixtures, cross-lane capture | **IN FLIGHT** |
+| D — Integrations | seeded-CI fixtures, cross-lane capture | **STALLED** — 0 commits, transcript silent since 22:04 |
 | Integration owner | shared files, migrations, census, citations | this session |
 
 Lane A's shared-file patches are landed (`8d82a324d`): M43's
@@ -113,6 +113,36 @@ mode, and mutation C5 (adding the forecast requirement) is red.
 
 **M43 is fixed but NOT regraded.** The fix landed; the row still reads
 not-correct. Regrading needs the full criteria read against a real flow.
+
+## portava-ci state, verified 2026-09-20 23:55 UTC
+
+Checked directly rather than taken from any lane's report, because a flag left
+ON makes another lane's assertions pass for the wrong reason and that is the
+exact false green this effort is trying not to produce.
+
+**EVERY Map flag on portava-ci is FALSE.** `map_crowd_flow_enabled`,
+`map_telemetry_enabled` and `map_world_intelligence_enabled` were flipped by
+Lane C and restored at 22:17:58; `map_projection_enabled`,
+`locate_friends_enabled`, `map_contributions_enabled`,
+`map_display_resolver_enabled`, `map_experience_state_enabled`,
+`map_trip_projection_read_enabled` and `map_world_moments_enabled` are all
+false. The single `true` is `map_telemetry_retention_enabled`, set 2026-09-16,
+which predates this effort. Both telemetry tables are at zero rows — Lane C
+cleaned up by predicate as it said it did.
+
+**SEEDED ROWS LANE D LEFT BEHIND — cleanup owed, NOT yet done:**
+
+```
+auth.users        0dd0dd00-0000-4000-8000-00000000d42a
+public.profiles   0dd0dd00-0000-4000-8000-00000000d42a  laned_m42_fixture
+public.profiles   0dd0dd00-0000-4000-8000-00000000d42b  laned_m42_friend
+```
+
+Created 22:00:01 and 22:00:29, minutes before Lane D's transcript stopped
+advancing at 22:04. They are inert fixture identities and harm nothing where
+they sit. They are NOT deleted yet only because Lane D still reads as running
+and may resume onto them. Delete BY PREDICATE (`handle like 'laned\_%'` and the
+two ids), never by truncate, once that lane is confirmed finished.
 
 ## Open owner decisions — none of these is takeable by a lane
 
