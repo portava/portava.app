@@ -45,16 +45,25 @@
  * this repository's production denylist and is not weakened here. What this file
  * adds is an honest reading of its own target:
  *
- *   loopback host  -> cannot be a Supabase project at all. There is no project
- *                     ref to resolve, so the allowlist has nothing to bind to
- *                     and no packet leaves the machine. The guard is skipped,
- *                     and ONLY because `isLoopbackTarget()` said so — a tested
- *                     predicate in helpers/liveWallCorpus.ts, not a deleted
- *                     import.
- *   anything else  -> the full guard runs, exactly as
- *                     wallSessionIntentLiveDb.test.ts runs it. Unparseable,
- *                     empty and non-http targets all take this branch: the
- *                     predicate fails CLOSED.
+ *   LOCAL          an operator named the ONE disposable local database in
+ *                     W146_LOCAL_DB_URL. A loopback host cannot be a Supabase
+ *                     project at all: there is no project ref to resolve, so
+ *                     the allowlist has nothing to bind to and no packet leaves
+ *                     the machine. The guard is skipped, and ONLY after
+ *                     `assertDisposableLocalBenchmarkTarget()` has refused a
+ *                     missing, blank, remote, production, hostile-spelling or
+ *                     mismatched target — the same call that opens the write
+ *                     latch in helpers/liveWallCorpus.ts, which seedCorpus and
+ *                     teardownCorpus both check before they write.
+ *                     SELECTION IS EXPLICIT: a bare loopback SUPABASE_URL that
+ *                     nobody configured is NOT local mode.
+ *   REMOTE         anything else that is named -> the full guard runs, exactly
+ *                     as wallSessionIntentLiveDb.test.ts runs it. Unparseable
+ *                     and non-http targets take this branch: the predicate
+ *                     fails CLOSED.
+ *   NO TARGET      nothing configured -> nothing to connect to. The benchmark
+ *                     skips, no client is built, the latch stays shut, and the
+ *                     module asserts that inertness rather than assuming it.
  *
  * "REFUSED IS STILL REFUSED" below pins that by SPAWNING this very file with a
  * public https target and the env vars unset, and asserting exit code 2.
@@ -88,15 +97,34 @@
  * carries its reason into the TAP output via `describe({ skip })`, which is what
  * `.github/scripts/run-live-suite.sh` scores as red (`pass > 0 && skipped == 0`).
  *
+ * WHY check:guard-coverage LISTS THIS FILE RATHER THAN SEEING THE GUARD
+ * =====================================================================
+ * That checker recognises coverage by matching a STATIC side-effect import on a
+ * line of its own. The decision above cannot take that form — the guard must
+ * NOT run for the disposable loopback target, and deciding that means reading
+ * the environment, which a static import cannot wait for. So the front door is
+ * reached by `await import(...)`, which a regex over import STATEMENTS cannot
+ * see. This file and helpers/liveWallCorpus.ts are therefore listed in
+ * RUNTIME_TARGET_GATES in scripts/check-guard-coverage.mjs: an exception to
+ * STATIC DETECTION, not to the production guard, and not an EXEMPT entry —
+ * exemption would mean unguarded. The checker re-verifies the gate's shape in
+ * this file's code on every run, and requires the refusals below to exist.
+ *
  * RUN IT (against the local real-Postgres environment described in the doc):
  *   SUPABASE_URL=http://127.0.0.1:4000 \
  *   SUPABASE_SERVICE_ROLE_KEY=<service_role jwt> \
  *   npm run test:wall-first-page-live-db
+ *
+ * The npm script pins W146_LOCAL_DB_URL to http://127.0.0.1:4000 — an
+ * independent, committed statement of WHICH database is disposable. SUPABASE_URL
+ * must agree with it or the run refuses with `target_mismatch`; that is the
+ * point. Pointing SUPABASE_URL at anything remote refuses before connecting.
  */
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
@@ -112,7 +140,11 @@ import {
   VIEWER_ID,
   buildLiveCorpus,
   clearFeatureFlags,
+  DisposableTargetError,
+  approvedDisposableTarget,
+  assertDisposableLocalBenchmarkTarget,
   isLoopbackTarget,
+  resetDisposableTargetApproval,
   missingLiveDbReason,
   readExistingFlags,
   seedCorpus,
@@ -126,17 +158,59 @@ const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 
 // ── THE TARGET DECISION — the first thing this module does ───────────────────
 //
-// W146. A loopback host is not a Supabase project, so the CI-project allowlist
-// has nothing to say about it. Everything else — including an empty or
-// malformed SUPABASE_URL — goes through the full guard, which exits 2 right
-// here, before `before()` runs and before any Supabase code is loaded.
-const TARGET_IS_LOOPBACK = isLoopbackTarget(SUPABASE_URL);
-if (!TARGET_IS_LOOPBACK) {
+// W146. Three mutually exclusive modes, decided here, before `before()` runs
+// and before any Supabase code is loaded:
+//
+//   LOCAL      W146_LOCAL_DB_URL names the ONE disposable local database. The
+//              host is loopback, so it cannot be a Supabase project at all:
+//              there is no project ref for the CI allowlist to bind to and no
+//              packet leaves the machine. `assertDisposableLocalBenchmarkTarget`
+//              refuses missing / remote / production / ambiguous targets here,
+//              and it is the ONLY thing that opens the corpus helper's write
+//              latch. Selection is explicit: a bare loopback SUPABASE_URL that
+//              nobody configured is NOT local mode.
+//   REMOTE     W146_LOCAL_DB_URL is unset and SUPABASE_URL names something. The
+//              full production guard runs, unchanged, exactly as
+//              wallSessionIntentLiveDb.test.ts runs it — including for a
+//              malformed or non-http URL, where the loopback predicate fails
+//              CLOSED. It exits 2 right here.
+//   NO TARGET  SUPABASE_URL names nothing, so there is nothing to connect to —
+//              whether or not W146_LOCAL_DB_URL is set, because a disposable
+//              database nobody pointed the process at is not a target. The
+//              benchmark below skips, no client is ever constructed, and the
+//              write latch stays shut, so seedCorpus/teardownCorpus throw. The
+//              module-level assertion under NO_TARGET_IS_INERT pins that, and
+//              the always-run write-gate suite runs in exactly this mode.
+const CONFIGURED_LOCAL_DB = process.env.W146_LOCAL_DB_URL ?? "";
+const A_TARGET_IS_NAMED = SUPABASE_URL.trim() !== "";
+const LOCAL_MODE_SELECTED = A_TARGET_IS_NAMED && CONFIGURED_LOCAL_DB.trim() !== "";
+const REMOTE_TARGET_NAMED = A_TARGET_IS_NAMED && !LOCAL_MODE_SELECTED;
+
+let TARGET_IS_LOOPBACK = false;
+if (LOCAL_MODE_SELECTED) {
+  assertDisposableLocalBenchmarkTarget(SUPABASE_URL, CONFIGURED_LOCAL_DB);
+  TARGET_IS_LOOPBACK = true;
+} else if (REMOTE_TARGET_NAMED) {
   await import("../lib/ciSupabaseGuard.mjs");
 }
 
 const SKIP_REASON = missingLiveDbReason(SUPABASE_URL, SERVICE_ROLE_KEY);
 const LIVE = SKIP_REASON === null;
+
+// NO_TARGET_IS_INERT. The one branch above that runs no guard is the branch
+// with no target. That is only safe while it also reaches no database, so the
+// claim is asserted rather than asserted-about: with nothing configured, the
+// benchmark MUST be skipped and the write latch MUST be shut. If either ever
+// stops being true, this module refuses to evaluate.
+if (!A_TARGET_IS_NAMED) {
+  if (LIVE || approvedDisposableTarget() !== null) {
+    throw new Error(
+      "W146: no target is configured, yet this file believes it can reach a database " +
+        `(live=${LIVE}, approvedTarget=${String(approvedDisposableTarget())}). ` +
+        "The unguarded no-target branch is only sound while it is inert.",
+    );
+  }
+}
 
 /** Any bearer token: the local shim names the viewer from a header, not a JWT. */
 const TOKEN = "w146-fixture-token";
@@ -403,38 +477,38 @@ describe(
       );
     });
 
-    it("FINDING — the first page's ranking analytics are REFUSED by the real schema", async () => {
-      // WHAT THIS FOUND (W146). The first page writes one `rank_events` row per
-      // SCORED CANDIDATE, fire-and-forget, through DiscoveryRankingService.
-      // Against the in-memory fake in wallPerformance.test.ts every one of those
-      // inserts "succeeds" — the fake's `insert` returns `{ error: null }`
-      // unconditionally. Against the REAL schema every one of them is REFUSED
-      // with 23514, and the page logs ~150 warnings per request:
+    it("CLOSED FINDING — the first page's ranking analytics now LAND in the real schema", async () => {
+      // WHAT THIS FOUND, AND WHAT CLOSED IT (W146).
+      //
+      // As first written this test asserted ZERO rank_events rows, because that
+      // was the measured truth: the first page wrote one row per SCORED
+      // CANDIDATE, fire-and-forget, stamped `surface = 'explore'`, and the real
+      // schema refused every one of them with 23514 —
       //
       //   new row for relation "rank_events" violates check constraint
       //   "rank_events_surface_check"   (surface = 'explore')
       //
-      // The mechanism, in two files that have never been compared:
-      //   • services/wall/WallRankingService.ts:62 — `FOR_YOU_SURFACE = "explore"`;
-      //     For You is ranked on the discovery ranker's "explore" surface, and
-      //     DiscoveryRankingService's analytics writer stamps that name onto
-      //     every rank_events row it emits.
-      //   • migrations/2893_rank_events_retire_writerless_surfaces.sql — RETIRES
-      //     the `explore` label from `rank_events_surface_check` on the grounds
-      //     that it has "no writer anywhere in the tree". It has one: the Wall's
-      //     For You page, on every request.
+      // — which the ranker's handler logged at warn and dropped, so ~151
+      // rejected inserts per request were invisible to every test that used the
+      // in-memory fake (its `insert` returns `{ error: null }` unconditionally).
+      // Migration 2893 had retired the `explore` label on the stated grounds
+      // that it had "no writer anywhere in the tree"; the Wall's For You page
+      // was its writer, on every request.
       //
-      // 2893's own header records that it was applied to the CI project
-      // (hwokxgbmezheskbzskfr) and NOT to production, and the schema this
-      // benchmark runs against was extracted from CI — so this is what the CI
-      // database does TODAY and what production will do the moment 2893 is
-      // applied there. Either the label comes back or the Wall stops writing it.
+      // THE FIX, and it is not this test. WallRankingService now threads TWO
+      // vocabularies separately, because they had silently become one:
+      //   • FOR_YOU_WEIGHT_PROFILE = "explore" — the ranker's WEIGHT PROFILE.
+      //     §14's objective is exploration and diversity, and there is no "wall"
+      //     key in SURFACE_WEIGHT_PROFILES, so renaming this would fall through
+      //     to the default profile and re-rank every user's feed.
+      //   • FOR_YOU_ANALYTICS_SURFACE = "wall" — the value PERSISTED. Typed
+      //     PersistedRankSurface, so a label the database would reject is a
+      //     compile error rather than a runtime warning nobody reads.
       //
-      // THIS TEST IS NOT THE FIX AND MUST NOT BECOME ONE. W146 owns a benchmark,
-      // not the ranker or the migration lane; editing either to make this green
-      // was explicitly out of scope. What it owes them is the finding, executable,
-      // so it cannot be lost. WHEN IT IS FIXED THIS TEST GOES RED — rewrite it
-      // then to assert that the rows land.
+      // This test now asserts the closure the way the original asked for: the
+      // rows LAND, and they land under the admitted label. It still pins the
+      // constraint from both sides below, so "rows landed" can never be read as
+      // "the constraint was widened to admit anything".
       await get("/api/wall?mode=for_you");
       await new Promise((r) => setTimeout(r, 750)); // the response does not await them
 
@@ -442,26 +516,33 @@ describe(
         .from("rank_events")
         .select("id, surface")
         .eq("user_id", VIEWER_ID)
-        .limit(5);
+        .limit(200);
       assert.equal(landed.error, null, "rank_events is not readable");
-      assert.equal(
-        (landed.data ?? []).length,
-        0,
-        "rank_events rows from the first page now land — the 'explore' surface refusal " +
-          "described above is fixed. Rewrite this test to assert the rows are present.",
+      const rows = landed.data ?? [];
+      assert.ok(
+        rows.length > 0,
+        "the first page's ranking analytics no longer land. Either the Wall stopped writing them, or the " +
+          "persisted label was changed back to one the schema refuses — check FOR_YOU_ANALYTICS_SURFACE " +
+          "against rank_events_surface_check before assuming this test is stale.",
+      );
+      const surfaces = [...new Set(rows.map((r: { surface: string }) => r.surface))];
+      assert.deepEqual(
+        surfaces,
+        ["wall"],
+        `every row the first page writes must carry the admitted label; got ${JSON.stringify(surfaces)}`,
       );
 
-      // …and the reason is the LABEL, not the harness. Probe both directly, so
-      // "no rows" cannot be read as "the fixture viewer is broken" or "the table
-      // is unreachable".
+      // The constraint is still NARROW. Without this, "the rows land" would also
+      // be satisfied by a migration that widened the check to admit everything,
+      // which is the opposite of what closed this finding.
       const refused = await pub.from("rank_events").insert([
         { user_id: VIEWER_ID, item_id: "w146-probe", surface: "explore", outcome: "analytics" },
       ]);
       assert.equal(
         refused.error?.code,
         "23514",
-        `surface='explore' must be refused by rank_events_surface_check; got ` +
-          `${JSON.stringify(refused.error)}`,
+        `surface='explore' must STILL be refused by rank_events_surface_check — the fix was to stop writing ` +
+          `that label, not to re-admit it; got ${JSON.stringify(refused.error)}`,
       );
       const accepted = await pub.from("rank_events").insert([
         { user_id: VIEWER_ID, item_id: "w146-probe", surface: "wall", outcome: "analytics" },
@@ -479,6 +560,98 @@ describe(
 );
 
 // ── The guard, pinned. Needs no database, so it is NOT inside the skip ───────
+
+describe("W146 — the write gate: only the explicitly configured disposable database", () => {
+  // These never connect to anything. The gate is a decision over strings, made
+  // before any client exists, which is exactly why it can be tested here.
+  const LOCAL = "http://127.0.0.1:4000";
+
+  it("approves the configured disposable target, and ONLY that one", () => {
+    resetDisposableTargetApproval();
+    assert.equal(approvedDisposableTarget(), null, "the latch starts shut");
+    assert.equal(assertDisposableLocalBenchmarkTarget(LOCAL, LOCAL), LOCAL);
+    assert.equal(approvedDisposableTarget(), LOCAL, "and only then is it open");
+  });
+
+  it("REFUSES missing, remote, production and ambiguous targets — before any connection", () => {
+    const cases: Array<{ runtime: string; configured: string | undefined; reason: string; why: string }> = [
+      { runtime: LOCAL, configured: undefined, reason: "missing_configured_target", why: "nothing configured" },
+      { runtime: LOCAL, configured: "", reason: "missing_configured_target", why: "blank configuration" },
+      { runtime: LOCAL, configured: "   ", reason: "missing_configured_target", why: "whitespace configuration" },
+      { runtime: "https://ajrurzioarfkagpuxfnb.supabase.co", configured: "https://ajrurzioarfkagpuxfnb.supabase.co",
+        reason: "configured_target_not_loopback", why: "PRODUCTION named as the disposable database" },
+      { runtime: LOCAL, configured: "https://hwokxgbmezheskbzskfr.supabase.co",
+        reason: "configured_target_not_loopback", why: "a remote project named as the disposable database" },
+      { runtime: "https://127.0.0.1.evil.example", configured: "https://127.0.0.1.evil.example",
+        reason: "configured_target_not_loopback", why: "a hostile spelling of loopback" },
+      { runtime: "https://ajrurzioarfkagpuxfnb.supabase.co", configured: LOCAL,
+        reason: "runtime_target_not_loopback", why: "SUPABASE_URL points at production" },
+      { runtime: "", configured: LOCAL, reason: "runtime_target_not_loopback", why: "SUPABASE_URL unset" },
+      { runtime: "http://127.0.0.1:5555", configured: LOCAL, reason: "target_mismatch", why: "two different loopback targets is ambiguous" },
+    ];
+    for (const c of cases) {
+      resetDisposableTargetApproval();
+      assert.throws(
+        () => assertDisposableLocalBenchmarkTarget(c.runtime, c.configured),
+        (err: unknown) => err instanceof DisposableTargetError && err.reason === c.reason,
+        `${c.why} must be refused as ${c.reason}`,
+      );
+      assert.equal(approvedDisposableTarget(), null, `${c.why}: the latch must stay shut`);
+    }
+  });
+
+  it("the WRITE paths refuse while the latch is shut — the gate cannot be skipped", async () => {
+    resetDisposableTargetApproval();
+    // A client that would throw if it were ever reached. It is not reached.
+    const never: any = { from() { throw new Error("W146: a write path opened a connection without an approved target"); } };
+    await assert.rejects(
+      () => seedCorpus(never, never, buildLiveCorpus()),
+      (err: unknown) => err instanceof DisposableTargetError,
+      "seedCorpus must refuse without an approved target",
+    );
+    await assert.rejects(
+      () => teardownCorpus(never, never),
+      (err: unknown) => err instanceof DisposableTargetError,
+      "teardownCorpus must refuse without an approved target",
+    );
+  });
+
+  it("a bare loopback URL that nobody configured is NOT local mode — it takes the guarded path", () => {
+    // The file selects local mode ONLY from W146_LOCAL_DB_URL. This asserts the
+    // selector, not the predicate: isLoopbackTarget says "could be local", and
+    // that is deliberately not sufficient on its own.
+    const src = readFileSync(new URL("./wallFirstPageLiveDb.test.ts", import.meta.url), "utf8");
+    assert.match(src, /const LOCAL_MODE_SELECTED = A_TARGET_IS_NAMED && CONFIGURED_LOCAL_DB\.trim\(\) !== "";/);
+    assert.match(src, /if \(LOCAL_MODE_SELECTED\) \{[\s\S]{0,200}assertDisposableLocalBenchmarkTarget\(/);
+    assert.match(
+      src,
+      /\} else if \(REMOTE_TARGET_NAMED\) \{\s*await import\("\.\.\/lib\/ciSupabaseGuard\.mjs"\);/,
+      "a named non-local target must still take the full production guard",
+    );
+    assert.match(
+      src,
+      /const REMOTE_TARGET_NAMED = A_TARGET_IS_NAMED && !LOCAL_MODE_SELECTED;/,
+      "REMOTE is every named target that is not the configured disposable one",
+    );
+    // The only unguarded branch is the one with no target at all, and it is
+    // required to be inert. Deleting that assertion is the way this could rot.
+    assert.match(
+      src,
+      /if \(!A_TARGET_IS_NAMED\) \{\s*if \(LIVE \|\| approvedDisposableTarget\(\) !== null\) \{/,
+      "the no-target branch must assert its own inertness",
+    );
+  });
+
+  it("this run IS the no-target mode, so the refusals above were proved without a database", () => {
+    // Belt and braces on the suite above: it is only meaningful if the process
+    // running it genuinely has no database. `npm run test:wall-first-page-live-db`
+    // sets W146_LOCAL_DB_URL and runs the benchmark too; every other invocation
+    // lands here.
+    if (process.env.W146_LOCAL_DB_URL || process.env.SUPABASE_URL) return;
+    assert.equal(LIVE, false, "no target configured, so the benchmark must be skipped");
+    assert.equal(TARGET_IS_LOOPBACK, false, "no target configured, so no loopback was approved");
+  });
+});
 
 describe("W146 — the production-safety guard decides this file's target", () => {
   it("isLoopbackTarget() accepts only genuine loopback hosts", () => {
@@ -533,6 +706,11 @@ describe("W146 — the production-safety guard decides this file's target", () =
     env.SUPABASE_SERVICE_ROLE_KEY = "not-a-real-key";
     delete env.CI_SUPABASE_PROJECT_REF;
     delete env.KNOWN_PROD_PROJECT_REF;
+    // The npm script pins this, and the child must NOT inherit it: with a local
+    // database configured the child would refuse at the write gate instead,
+    // which is a different refusal and would leave the front door untested. The
+    // next test covers that combination on purpose.
+    delete env.W146_LOCAL_DB_URL;
 
     let status = 0;
     let output = "";
@@ -559,6 +737,55 @@ describe("W146 — the production-safety guard decides this file's target", () =
       /ciSupabaseGuard\] REFUSED/,
       `the refusal must come from ../lib/ciSupabaseGuard.mjs itself, not from something ` +
         `this file reimplemented. Output:\n${output}`,
+    );
+  });
+
+  it("a remote SUPABASE_URL is refused even WITH a disposable database configured", () => {
+    // The combination the npm script makes reachable: W146_LOCAL_DB_URL names
+    // the disposable database, and SUPABASE_URL points somewhere remote. Local
+    // mode is selected, so the front door is not the thing that runs — the gate
+    // is, and it must refuse before any connection. Spawned rather than called
+    // so the refusal is observed where it actually happens: module evaluation.
+    if (process.env.W146_GUARD_CHILD === "1") return;
+
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const pkgRoot = path.resolve(here, "..", "..");
+    const selfPath = path.join(here, "wallFirstPageLiveDb.test.ts");
+
+    const env: NodeJS.ProcessEnv = { ...process.env, W146_GUARD_CHILD: "1" };
+    env.SUPABASE_URL = "https://ajrurzioarfkagpuxfnb.supabase.co"; // declared production
+    env.SUPABASE_SERVICE_ROLE_KEY = "not-a-real-key";
+    env.W146_LOCAL_DB_URL = "http://127.0.0.1:4000";
+
+    let status = 0;
+    let output = "";
+    try {
+      output = execFileSync(
+        process.execPath,
+        ["--import", "tsx/esm", selfPath],
+        { cwd: pkgRoot, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 120_000 },
+      );
+    } catch (err) {
+      const e = err as { status?: number; stdout?: string; stderr?: string };
+      status = e.status ?? -1;
+      output = `${e.stdout ?? ""}${e.stderr ?? ""}`;
+    }
+
+    assert.notEqual(status, 0, `the child must not run. Output:\n${output}`);
+    assert.match(
+      output,
+      /DisposableTargetError/,
+      `the refusal must be the write gate's, raised before any client exists. Output:\n${output}`,
+    );
+    assert.match(
+      output,
+      /runtime_target_not_loopback/,
+      `and it must name WHY: the runtime target is not the disposable database. Output:\n${output}`,
+    );
+    assert.doesNotMatch(
+      output,
+      /seedCorpus|inserted|fetch failed/i,
+      `nothing may have been attempted against the target. Output:\n${output}`,
     );
   });
 

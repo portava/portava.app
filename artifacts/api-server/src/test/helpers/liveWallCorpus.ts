@@ -105,6 +105,112 @@ export function isLoopbackTarget(url: string): boolean {
   return octets[0] === 127;
 }
 
+// ── THE WRITE-SIDE TARGET GATE (census-wall §14 / W146) ──────────────────────
+//
+// `isLoopbackTarget` answers "could this be a local database at all". It is NOT
+// by itself permission to write: "any loopback port" is a broader licence than
+// this benchmark needs, and a broader one than the owner authorised. The
+// benchmark writes fixtures, so before the FIRST write it must have been handed
+// the ONE disposable database an operator explicitly configured.
+//
+// So the local path is opened by exactly one call, below, and everything else
+// is refused BEFORE any connection is opened or any fixture is built:
+//
+//   missing    W146_LOCAL_DB_URL unset            -> refused
+//   remote     configured target is not loopback  -> refused
+//   production a production URL in either place   -> refused (not loopback, and
+//                                                   the mismatch check as well)
+//   ambiguous  SUPABASE_URL != configured target  -> refused
+//
+// The latch is module-scoped and starts empty, so importing this helper grants
+// nothing. `seedCorpus` and `teardownCorpus` refuse while it is empty, which
+// means a future caller cannot reach the writes by skipping the assertion.
+let APPROVED_TARGET: string | null = null;
+
+/** What the write gate refused, for a test to assert on by identity. */
+export type DisposableTargetRefusal =
+  | "missing_configured_target"
+  | "configured_target_not_loopback"
+  | "runtime_target_not_loopback"
+  | "target_mismatch";
+
+export class DisposableTargetError extends Error {
+  readonly reason: DisposableTargetRefusal;
+  constructor(reason: DisposableTargetRefusal, message: string) {
+    super(message);
+    this.name = "DisposableTargetError";
+    this.reason = reason;
+  }
+}
+
+/**
+ * Approve the ONE explicitly configured disposable local database, or refuse.
+ *
+ * Call this before opening a write-capable connection. It returns the approved
+ * URL and opens the write latch; on any other target it throws and the latch
+ * stays shut. It NEVER connects to anything — the decision is made from strings.
+ */
+export function assertDisposableLocalBenchmarkTarget(
+  runtimeUrl: string,
+  configuredUrl: string | undefined,
+): string {
+  const configured = (configuredUrl ?? "").trim();
+  if (configured === "") {
+    throw new DisposableTargetError(
+      "missing_configured_target",
+      "W146: no disposable local database is configured. Set W146_LOCAL_DB_URL to the " +
+        "loopback URL of a throwaway database. A benchmark that writes fixtures does not " +
+        "get to infer its own target.",
+    );
+  }
+  if (!isLoopbackTarget(configured)) {
+    throw new DisposableTargetError(
+      "configured_target_not_loopback",
+      `W146: W146_LOCAL_DB_URL (${configured}) is not a loopback address. The local benchmark ` +
+        "path accepts ONLY a disposable local database. A remote or production target must go " +
+        "through src/lib/ciSupabaseGuard.mjs instead, which this file imports for exactly that case.",
+    );
+  }
+  if (!isLoopbackTarget(runtimeUrl)) {
+    throw new DisposableTargetError(
+      "runtime_target_not_loopback",
+      `W146: SUPABASE_URL (${runtimeUrl || "unset"}) is not a loopback address while the local ` +
+        "benchmark path is selected. Refusing before any connection.",
+    );
+  }
+  if (runtimeUrl !== configured) {
+    throw new DisposableTargetError(
+      "target_mismatch",
+      `W146: SUPABASE_URL (${runtimeUrl}) is not the configured disposable database ` +
+        `(${configured}). Two different loopback targets is ambiguous, so it is refused rather ` +
+        "than guessed.",
+    );
+  }
+  APPROVED_TARGET = configured;
+  return configured;
+}
+
+/** The approved target, or null when the gate has not been passed. */
+export function approvedDisposableTarget(): string | null {
+  return APPROVED_TARGET;
+}
+
+/** Test-only: shut the latch again so a refusal case starts from zero. */
+export function resetDisposableTargetApproval(): void {
+  APPROVED_TARGET = null;
+}
+
+/** Throw unless the write gate was passed. Called before every write path. */
+function requireApprovedTarget(op: string): void {
+  if (APPROVED_TARGET === null) {
+    throw new DisposableTargetError(
+      "missing_configured_target",
+      `W146: ${op} was called without an approved disposable target. ` +
+        "assertDisposableLocalBenchmarkTarget() must succeed first.",
+    );
+  }
+}
+
 /**
  * Why the suite cannot run, or null when it can.
  *
@@ -335,6 +441,7 @@ export async function teardownCorpus(
   pub: AnyClient,
   authSchema: AnyClient,
 ): Promise<string[]> {
+  requireApprovedTarget("teardownCorpus");
   const problems: string[] = [];
   const step = async (label: string, run: () => PromiseLike<{ error: unknown }>) => {
     try {
@@ -375,6 +482,7 @@ export async function seedCorpus(
   authSchema: AnyClient,
   corpus: LiveCorpus,
 ): Promise<SeedCounts> {
+  requireApprovedTarget("seedCorpus");
   await teardownCorpus(pub, authSchema);
 
   // auth.users before profiles: profiles.id REFERENCES auth.users(id).

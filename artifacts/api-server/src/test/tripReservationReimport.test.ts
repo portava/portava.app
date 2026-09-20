@@ -165,13 +165,36 @@ async function startServer() {
   port = (server.address() as any).port;
 }
 
-async function importText(text = "the reschedule email") {
+/**
+ * The shape POST /trips/:id/reservations/import actually emits. Named rather
+ * than inferred because `Response.json()` is typed `Promise<unknown>`: reading
+ * a field straight off it is a type error, and the two ways to silence that —
+ * `any`, or a cast with no runtime check — both let a fixture describe a
+ * response the route never sends. Every field here is one this file asserts on.
+ */
+interface ImportResponseBody {
+  updatedCount?: number;
+  createdCount?: number;
+  needsConfirmation?: boolean;
+  ambiguousReferences?: unknown;
+  error?: string;
+}
+
+async function importText(text = "the reschedule email"): Promise<{ status: number; body: ImportResponseBody }> {
   const r = await fetch(`http://127.0.0.1:${port}/api/trips/${TRIP_ID}/reservations/import`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: "Bearer owner-token", connection: "close" },
     body: JSON.stringify({ text }),
   });
-  return { status: r.status, body: await r.json().catch(() => null) };
+  const parsed: unknown = await r.json().catch(() => null);
+  // Checked, not asserted-by-cast: a route that answers with a non-object (or
+  // with nothing parseable) fails HERE, naming the status, rather than surfacing
+  // as `undefined !== 1` in whichever assertion happened to read a field first.
+  assert.ok(
+    parsed !== null && typeof parsed === "object" && !Array.isArray(parsed),
+    `import must answer with a JSON object; status ${r.status} gave ${JSON.stringify(parsed)}`,
+  );
+  return { status: r.status, body: parsed as ImportResponseBody };
 }
 
 describe("§15.2 a re-import is a new VERSION of a booking (TR290)", () => {

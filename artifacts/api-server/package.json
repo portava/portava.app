@@ -95,7 +95,7 @@
     "test:memory-projection-lifecycle": "node --import tsx/esm --env-file-if-exists=.env --test src/test/memoryProjectionLifecycleLive.test.ts",
     "test:rls-policy-shape": "node --import tsx/esm --env-file-if-exists=.env --test src/test/rlsPolicyShapeLive.test.ts",
     "test:wall-session-intent-live-db": "node --import tsx/esm --env-file-if-exists=.env --test src/test/wallSessionIntentLiveDb.test.ts",
-    "test:wall-first-page-live-db": "node --import tsx/esm --env-file-if-exists=.env --test src/test/wallFirstPageLiveDb.test.ts",
+    "test:wall-first-page-live-db": "W146_LOCAL_DB_URL=http://127.0.0.1:4000 node --import tsx/esm --env-file-if-exists=.env --test src/test/wallFirstPageLiveDb.test.ts",
     "test:rls-hardening": "node --import tsx/esm --env-file-if-exists=.env --test src/test/rlsHardening.test.ts",
     "test:is-official-privileged": "node --import tsx/esm --env-file-if-exists=.env --test src/test/isOfficialPrivileged.test.ts",
     "test:profile-role-not-self-writable": "node --import tsx/esm --env-file-if-exists=.env --test src/test/profileRoleNotSelfWritable.test.ts",

@@ -272,8 +272,14 @@ describe("E. router coupling — WALL keeps the in-app row and does not push", (
     id: "ee000000-0000-4000-8000-000000000002", userId: USER, title: "Compass pick", body: "…",
     // An event with no template row, so the router's default channels apply
     // (in_app + push); category "compass" maps it to the `recommendation` class.
-    category: "compass", eventType: "compass.live_pick", priority: "normal", isRead: false,
-    actionUrl: null, sourceId: null, metadata: null, expiresAt: null, createdAt: new Date().toISOString(),
+    category: "compass", eventType: "compass.live_pick", priority: "normal",
+    // The full NotificationRow, not a convenient subset. `readAt: null` is what
+    // "unread" IS on this row — there is no `isRead` field, and inventing one
+    // described a row the read boundary never emits. `metadata: {}`, not null,
+    // for the same reason: NotificationService maps `r.metadata ?? {}`.
+    readAt: null, dismissedAt: null, privacyLevel: "standard",
+    imageUrl: null, sourceType: null, actorId: null,
+    actionUrl: null, sourceId: null, metadata: {}, expiresAt: null, createdAt: new Date().toISOString(),
   };
   function routerDb(delivered = 0) {
     const attempts: any[] = [];

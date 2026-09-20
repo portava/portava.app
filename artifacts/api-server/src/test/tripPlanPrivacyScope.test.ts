@@ -186,13 +186,50 @@ async function startServer(state: State) {
   return { port, close: () => new Promise<void>((res) => { srv.closeAllConnections(); srv.close(() => res()); }) };
 }
 
-async function call(port: number, method: string, path: string, body?: unknown) {
+/**
+ * The fields of a plan-route response this file reads. Named rather than
+ * inferred because `Response.json()` is typed `Promise<unknown>`, and the two
+ * ways to silence that — `any`, or a bare cast — both let a fixture describe a
+ * response the route never sends.
+ */
+interface PlanResponseBody {
+  privacyScope?: string;
+  /** `privacyScope` is nullable on purpose: a database without 2770 costs the
+   *  reader the scope and must report it as NOT READ, never as a value derived
+   *  from `visibility`. Typing it `string` would make that test uncompilable. */
+  items?: Array<{ privacyScope?: string | null }>;
+  error?: string;
+}
+
+async function call(
+  port: number, method: string, path: string, body?: unknown,
+): Promise<{ status: number; body: PlanResponseBody }> {
   const r = await fetch(`http://127.0.0.1:${port}${path}`, {
     method,
     headers: { "Content-Type": "application/json", Authorization: "Bearer alice-tok", connection: "close" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  return { status: r.status, body: await r.json().catch(() => null) };
+  const parsed: unknown = await r.json().catch(() => null);
+  // Checked, not asserted-by-cast: a non-object answer fails here, naming the
+  // route and status, instead of surfacing as `undefined !== "trip"` later.
+  assert.ok(
+    parsed !== null && typeof parsed === "object" && !Array.isArray(parsed),
+    `${method} ${path} must answer with a JSON object; status ${r.status} gave ${JSON.stringify(parsed)}`,
+  );
+  return { status: r.status, body: parsed as PlanResponseBody };
+}
+
+/**
+ * The plan items from a 200, or a failure naming what came back instead. A 200
+ * that carries no `items` is a route defect, and it should read as one here
+ * rather than as `undefined` reaching an index.
+ */
+function planItems(r: { status: number; body: PlanResponseBody }): Array<{ privacyScope?: string | null }> {
+  assert.ok(
+    Array.isArray(r.body.items),
+    `a 200 from the plan route must carry an items array; status ${r.status} gave ${JSON.stringify(r.body)}`,
+  );
+  return r.body.items;
 }
 
 const CREATE = { title: "Rooftop dinner", category: "dining" };
@@ -281,7 +318,7 @@ describe("§6.3 privacy scopes on the plan read path (TR116)", () => {
     const r = await call(port, "GET", `/api/trips/${TRIP}/plan`);
     await close();
     assert.equal(r.status, 200);
-    assert.equal(r.body.items[0].privacyScope, "selected_participants");
+    assert.equal(planItems(r)[0].privacyScope, "selected_participants");
   });
 
   it("a database without 2770 costs the reader the SCOPE, not the itinerary", async () => {
@@ -292,7 +329,7 @@ describe("§6.3 privacy scopes on the plan read path (TR116)", () => {
     const r = await call(port, "GET", `/api/trips/${TRIP}/plan`);
     await close();
     assert.equal(r.status, 200, "one retry without the column, not a 500 over the whole plan");
-    assert.equal(r.body.items.length, 1);
-    assert.equal(r.body.items[0].privacyScope, null, "NOT READ — never derived from `visibility: public`");
+    assert.equal(planItems(r).length, 1);
+    assert.equal(planItems(r)[0].privacyScope, null, "NOT READ — never derived from `visibility: public`");
   });
 });

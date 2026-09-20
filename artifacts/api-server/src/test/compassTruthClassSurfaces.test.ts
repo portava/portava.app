@@ -35,7 +35,17 @@ import { buildUiBlocks } from "../compass/CompassUiBlocks.js";
 import { qualifyWhyThis } from "../compass/CompassRecommendationEngine.js";
 import { enforceCompassGroundingEnvelope, readGroundingEvidence } from "../compass/CompassGroundingEnvelope.js";
 
-const NON_OBSERVATION: TruthClass[] = ["predicted", "inferred", "conflicting", "stale", "unknown"];
+/**
+ * The five §5.1 classes that are not observations. Typed as the NARROW union
+ * rather than TruthClass[], because the per-class tables below are keyed on
+ * exactly these five: widened to TruthClass, indexing one of those tables with
+ * a loop variable is a type error naming the two observation classes, which is
+ * the right complaint about the wrong thing. The test immediately below proves
+ * this list is exactly TRUTH_CLASSES minus OBSERVATION_TRUTH_CLASSES, so the
+ * narrow type cannot drift from the vocabulary it names.
+ */
+type NonObservationClass = "predicted" | "inferred" | "conflicting" | "stale" | "unknown";
+const NON_OBSERVATION: NonObservationClass[] = ["predicted", "inferred", "conflicting", "stale", "unknown"];
 
 /** A places tool result carrying one place with a declared truth class. */
 function placeResult(truthClass: TruthClass, name = "Han Market", id = `p-${name.toLowerCase().replace(/\s+/g, "-")}`) {

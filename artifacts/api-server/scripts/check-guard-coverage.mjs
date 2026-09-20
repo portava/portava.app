@@ -500,6 +500,131 @@ const READ_ONLY_AUDIT_ENTRY_POINTS = [
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
+// RUNTIME TARGET GATES — a THIRD form of coverage, and the narrowest.
+//
+// WHAT IT IS, AND HOW IT DIFFERS FROM AN EXEMPTION
+// ------------------------------------------------
+// An EXEMPT entry says "CI cannot invoke this file", and means the file is
+// UNGUARDED: hand it a production URL from a laptop and it talks to production.
+// An entry here says something stronger and entirely different: the file DOES
+// decide its own target at runtime, before it opens any connection and before
+// it loads any fixture, and it refuses every target but one. It is covered, not
+// excused. "CI does not run it" is NOT a reason to be on this list and does not
+// appear in any entry below.
+//
+// The shape a gate must have to be recognised — all four, verified from source
+// on every run by REQUIRED_GATE_TOKENS below:
+//   1. it selects the disposable local target EXPLICITLY, from a dedicated
+//      variable, never by inferring "this URL looks local";
+//   2. every other named target falls through to the ordinary front door
+//      `src/lib/ciSupabaseGuard.mjs`, whose production denylist is untouched;
+//   3. the refusal happens before any write-capable client is constructed and
+//      before any fixture is seeded — a latch the assertion opens is the only
+//      thing that lets the write paths run at all;
+//   4. the refusals are PROVED by a test that needs no database, named in
+//      `provedBy`, which this check requires to exist and to exercise the
+//      assertion by name.
+//
+// WHY STATIC DETECTION CANNOT SEE IT, STATED PLAINLY
+// --------------------------------------------------
+// This checker recognises coverage by GUARD_IMPORT_RE, which matches a STATIC
+// side-effect import — `import "…/ciSupabaseGuard.mjs";` on a line of its own.
+// That is deliberate: the guard works by ES module evaluation order, so a
+// static first import is the only form that refuses before anything else loads.
+// The two files below cannot use that form, for the reason the guard's own
+// header asks for. The guard must NOT run when the target is the disposable
+// loopback database (a loopback host has no Supabase project ref, so the
+// allowlist has nothing to bind to and the guard would refuse a database it was
+// never meant to protect). Deciding that requires reading the environment,
+// which a static import cannot wait for. So the guard is reached by
+// `await import("../lib/ciSupabaseGuard.mjs")` inside the else branch — a
+// dynamic specifier, invisible to a regex that matches import STATEMENTS.
+//
+// The gap is therefore in the DETECTOR, not in the protection. Listing the two
+// files here records that judgement where a diff shows it, and makes the check
+// verify the protection's shape instead of taking it on trust.
+//
+// MUTATION LOG — this rule was made to fail before it was trusted to pass.
+// Each mutation was applied ALONE, `node scripts/check-guard-coverage.mjs` was
+// run, and the source was restored before the next one.
+//
+//   G1  latch pre-opened in the helper (APPROVED_TARGET seeded non-null)   red
+//   G2  `requireApprovedTarget("seedCorpus")` deleted                      red
+//   G3  `requireApprovedTarget("teardownCorpus")` deleted                  red
+//   G4  harness stops reaching the front door on the remote branch         red
+//   G5  the explicit-selection declaration renamed away                    red
+//   G6  an entry whose reason argues "CI never invokes this file"          red
+//   G7  one token dropped, 5 -> 4                                        GREEN
+//       REPORTED, NOT HIDDEN: 4 is the floor and 4 remained, so this is the
+//       rule behaving as written rather than a hole. G7b crosses it:
+//   G7b two tokens dropped, 5 -> 3                                         red
+//   G8  provedBy repointed at a file that never calls the assertion        red
+//   G9  a gated file also listed in EXEMPT                                 red
+//   G10 a bare identifier used as a gate token                             red
+//   G11 an entry naming a file that does not exist                         red
+//
+// G5 and G10 were GREEN on the first pass and the rule was strengthened for
+// them rather than the results being written down as acceptable: the tokens
+// became whole statements (a bare identifier matches at every use site, so
+// renaming its declaration left the check green) and a four-token floor was
+// added (deleting tokens one at a time hollows out an entry that still reads
+// as verified).
+// ─────────────────────────────────────────────────────────────────────────────
+const RUNTIME_TARGET_GATES = [
+  {
+    file: 'src/test/wallFirstPageLiveDb.test.ts',
+    reason:
+      'W146, the Wall first-page benchmark. It decides its own target in three mutually exclusive modes at ' +
+      'module scope, before before() runs and before any Supabase code is loaded. LOCAL requires an operator ' +
+      'to name the one disposable database in W146_LOCAL_DB_URL; assertDisposableLocalBenchmarkTarget then ' +
+      'refuses a missing, blank, remote, production, hostile-loopback-spelling, or mismatched target, and ' +
+      'only on success opens the corpus write latch. REMOTE — every other named target, including a ' +
+      'malformed or non-http one, where the loopback predicate fails closed — takes `await ' +
+      'import("../lib/ciSupabaseGuard.mjs")`, the ordinary front door, unweakened. NO TARGET reaches nothing: ' +
+      'the benchmark skips, no client is constructed, the latch stays shut, and the file asserts that ' +
+      'inertness at module scope rather than assuming it. A bare loopback SUPABASE_URL nobody configured is ' +
+      'NOT local mode and takes the guarded branch.',
+    requires: [
+      'const CONFIGURED_LOCAL_DB = process.env.W146_LOCAL_DB_URL ?? "";',
+      'const LOCAL_MODE_SELECTED = A_TARGET_IS_NAMED && CONFIGURED_LOCAL_DB.trim() !== "";',
+      'const REMOTE_TARGET_NAMED = A_TARGET_IS_NAMED && !LOCAL_MODE_SELECTED;',
+      'assertDisposableLocalBenchmarkTarget(SUPABASE_URL, CONFIGURED_LOCAL_DB);',
+      'await import("../lib/ciSupabaseGuard.mjs");',
+    ],
+    provedBy: 'src/test/wallFirstPageLiveDb.test.ts',
+  },
+  {
+    file: 'src/test/helpers/liveWallCorpus.ts',
+    reason:
+      'The W146 fixture helper, and the file that actually issues the benchmark writes. It holds the latch ' +
+      'the harness above opens: APPROVED_TARGET starts null, only ' +
+      'assertDisposableLocalBenchmarkTarget sets it, and requireApprovedTarget() throws a ' +
+      'DisposableTargetError at the top of both seedCorpus and teardownCorpus. So the two write paths refuse ' +
+      'while the latch is shut, whatever client they are handed — the gate is not on the connection, it is ' +
+      'on the write. The helper is imported by the harness, never executed on its own.',
+    requires: [
+      'let APPROVED_TARGET: string | null = null;',
+      'export function assertDisposableLocalBenchmarkTarget(',
+      'function requireApprovedTarget(',
+      'requireApprovedTarget("seedCorpus")',
+      'requireApprovedTarget("teardownCorpus")',
+    ],
+    provedBy: 'src/test/wallFirstPageLiveDb.test.ts',
+  },
+];
+
+/**
+ * The test that proves a gate must actually exercise it. Named here rather than
+ * inside the entries because it is the same claim for every gate: a `provedBy`
+ * file that never calls the assertion proves nothing.
+ */
+const GATE_PROOF_TOKENS = [
+  'assertDisposableLocalBenchmarkTarget(',
+  'DisposableTargetError',
+  'approvedDisposableTarget()',
+];
+
+// ─────────────────────────────────────────────────────────────────────────────
 // THE EXEMPT LIST. Every entry needs a reason, and the reason must say what
 // makes CI unable to invoke this file — not that the file is harmless.
 //
@@ -1302,6 +1427,131 @@ for (const entry of EXEMPT) {
   exemptByFile.set(entry.file, entry);
 }
 
+// ── RUNTIME TARGET GATES: verified from source, in both directions. ─────────
+//
+// This is the narrow coverage rule, and it is narrow in three senses: the list
+// is closed and short, each entry must still CONTAIN the gate for the entry to
+// count, and the entry is rejected outright if its reason rests on CI not
+// running the file. A gate that is deleted, renamed or weakened stops matching
+// here and the file is reported as an ordinary unguarded reacher.
+if (!Array.isArray(RUNTIME_TARGET_GATES) || RUNTIME_TARGET_GATES.length === 0) {
+  problem(
+    'RUNTIME_TARGET_GATES in artifacts/api-server/scripts/check-guard-coverage.mjs is empty or is not an ' +
+      'array. With it empty, "these files gate their own target at runtime" is a claim about a set this ' +
+      'check can no longer describe. Restore the entries and their reasons.',
+  );
+}
+
+/** A reason that rests on CI not invoking the file. That is an EXEMPT reason. */
+const CI_DOES_NOT_RUN_IT_RE =
+  /\bCI\b[^.]{0,60}\b(?:never|does not|doesn't|cannot|can't|will not|won't)\b[^.]{0,40}\b(?:run|runs|invoke|invokes|reach|reaches|execute|executes)\b|\b(?:never|not)\s+(?:invoked|run|executed)\s+(?:by|in|on)\s+CI\b/i;
+
+const gateByFile = new Map();
+for (const entry of RUNTIME_TARGET_GATES) {
+  if (typeof entry?.file !== 'string' || entry.file === '') {
+    problem(`A RUNTIME_TARGET_GATES entry has no 'file': ${JSON.stringify(entry)}.`);
+    continue;
+  }
+  if (typeof entry.reason !== 'string' || entry.reason.trim().length < 120) {
+    problem(
+      `RUNTIME_TARGET_GATES entry '${entry.file}' has no usable reason. An entry here asserts that the file ` +
+        'refuses every target but one, at runtime, before it writes. That claim has to be spelled out — ' +
+        'which variable selects the target, what is refused, and where the refusal sits relative to the ' +
+        'first write.',
+    );
+    continue;
+  }
+  if (CI_DOES_NOT_RUN_IT_RE.test(entry.reason)) {
+    problem(
+      `RUNTIME_TARGET_GATES entry '${entry.file}' argues from CI not invoking the file. That is the premise ` +
+        'of an EXEMPT entry, and EXEMPTION MEANS UNGUARDED. This list is for files that protect themselves ' +
+        'wherever they are run, including from a laptop with a production .env. If the protection is really ' +
+        '"CI does not run it", move the entry to EXEMPT and accept that the file is unguarded.',
+    );
+    continue;
+  }
+  // A FLOOR, not just non-empty. Deleting tokens one at a time is how a gate
+  // gets hollowed out while the entry still looks verified: each of the four
+  // shape requirements at the top of RUNTIME_TARGET_GATES needs at least one
+  // token, so an entry that can no longer name four has stopped describing a
+  // gate. Tokens must be whole statements, not bare identifiers — an identifier
+  // matches at every use site, so renaming its declaration would leave the
+  // check green.
+  const MIN_GATE_TOKENS = 4;
+  if (!Array.isArray(entry.requires) || entry.requires.length < MIN_GATE_TOKENS) {
+    problem(
+      `RUNTIME_TARGET_GATES entry '${entry.file}' names ` +
+        `${Array.isArray(entry.requires) ? entry.requires.length : 0} 'requires' token(s); at least ` +
+        `${MIN_GATE_TOKENS} are needed, one per element of the gate's shape (explicit selection, the ` +
+        'refusing assertion, the front door for every other target, and the latched write path). Fewer ' +
+        'than that and the entry is taken on trust, which is exactly what this list exists to avoid.',
+    );
+    continue;
+  }
+  const bareIdentifiers = entry.requires.filter((t) => /^[A-Za-z_$][\w$]*$/.test(t));
+  if (bareIdentifiers.length > 0) {
+    problem(
+      `RUNTIME_TARGET_GATES entry '${entry.file}' requires bare identifier(s) ` +
+        `${bareIdentifiers.map((t) => JSON.stringify(t)).join(', ')}. A bare name matches at every use ` +
+        'site, so the declaration could be renamed or deleted and this check would stay green. Require the ' +
+        'statement.',
+    );
+    continue;
+  }
+  if (gateByFile.has(entry.file)) {
+    problem(`RUNTIME_TARGET_GATES lists '${entry.file}' twice. A duplicated entry hides which reason is in force.`);
+    continue;
+  }
+  if (exemptByFile.has(entry.file)) {
+    problem(
+      `'${entry.file}' is in BOTH RUNTIME_TARGET_GATES and EXEMPT. The two say opposite things — one that ` +
+        'the file refuses every target but one, the other that it is unguarded and CI merely cannot reach ' +
+        'it. Pick the one that is true and delete the other.',
+    );
+    continue;
+  }
+  const abs = join(PKG_ROOT, entry.file);
+  if (!existsSync(abs)) {
+    problem(
+      `RUNTIME_TARGET_GATES names '${entry.file}', which does not exist. A stale entry is a line a reviewer ` +
+        'reads as a verified runtime protection on a file that is not there. Remove it.',
+    );
+    continue;
+  }
+  // Comments stripped: a gate described in a comment is not a gate.
+  const gateCode = stripComments(readFileSync(abs, 'utf8'));
+  const absent = entry.requires.filter((tok) => !gateCode.includes(tok));
+  if (absent.length > 0) {
+    problem(
+      `RUNTIME_TARGET_GATES names '${entry.file}', but its gate is no longer in the file's CODE. Missing: ` +
+        `${absent.map((t) => JSON.stringify(t)).join(', ')}. The entry claims a runtime refusal that this ` +
+        'file no longer performs, so the file is now an unguarded reacher wearing a coverage entry. Restore ' +
+        'the gate, or delete the entry and import a guard front door.',
+    );
+    continue;
+  }
+  const proofAbs = join(PKG_ROOT, entry.provedBy ?? '');
+  if (typeof entry.provedBy !== 'string' || !existsSync(proofAbs)) {
+    problem(
+      `RUNTIME_TARGET_GATES entry '${entry.file}' names no existing 'provedBy' test. The gate's refusals ` +
+        'must be proved by a test that needs no database — otherwise the only evidence for this entry is ' +
+        'the entry.',
+    );
+    continue;
+  }
+  const proofCode = stripComments(readFileSync(proofAbs, 'utf8'));
+  const unproved = GATE_PROOF_TOKENS.filter((tok) => !proofCode.includes(tok));
+  if (unproved.length > 0) {
+    problem(
+      `RUNTIME_TARGET_GATES entry '${entry.file}' names '${entry.provedBy}' as its proof, but that file does ` +
+        `not exercise the gate: missing ${unproved.map((t) => JSON.stringify(t)).join(', ')}. A proof that ` +
+        'never calls the assertion proves nothing.',
+    );
+    continue;
+  }
+  gateByFile.set(entry.file, entry);
+}
+
 const { scripts: ciScripts, files: ciFiles } = deriveCiSurface(pkg);
 if (ciScripts.size === 0) {
   problem(
@@ -1315,10 +1565,21 @@ const pinnedOk = assertPinnedTestEnv(pkg);
 
 // ── The rule. ───────────────────────────────────────────────────────────────
 const unguardedOnCiSurface = [];
+const runtimeGated = [];
 const exemptUsed = new Set();
+
+const gatesUsed = new Set();
 
 for (const { rel, importsGuard } of reachable) {
   if (importsGuard) {
+    if (gateByFile.has(rel)) {
+      problem(
+        `${rel} both imports a Supabase guard front door statically and is listed in RUNTIME_TARGET_GATES. ` +
+          'The entry exists only because a static import is impossible here; it is now possible, so the ' +
+          'entry is stale and misleading. Remove it.',
+      );
+      gatesUsed.add(rel);
+    }
     if (exemptByFile.has(rel)) {
       problem(
         `${rel} both imports a Supabase guard front door and is listed in EXEMPT. The exemption is stale ` +
@@ -1327,6 +1588,17 @@ for (const { rel, importsGuard } of reachable) {
       );
       exemptUsed.add(rel);
     }
+    continue;
+  }
+
+  const gate = gateByFile.get(rel);
+  if (gate) {
+    // COVERED, not excused. The entry was verified above against the file's own
+    // code, so reaching here means the runtime gate is present. CI surface is
+    // deliberately not consulted: a runtime gate holds wherever the file runs,
+    // which is the whole difference between this list and EXEMPT.
+    gatesUsed.add(rel);
+    runtimeGated.push(rel);
     continue;
   }
 
@@ -1365,13 +1637,24 @@ for (const { rel, importsGuard } of reachable) {
     `${rel} can reach Supabase (it names a Supabase credential env var or calls createClient) but neither ` +
       `imports a guard front door (${GUARD_REL}, or ${READONLY_GUARD_REL} for the read-only audits) ` +
       'nor appears on the EXEMPT list in ' +
-      'artifacts/api-server/scripts/check-guard-coverage.mjs. ' +
+      'artifacts/api-server/scripts/check-guard-coverage.mjs, ' +
+      'nor gates its own target at runtime in the verified shape RUNTIME_TARGET_GATES describes. ' +
       (onCiSurface
         ? 'CI INVOKES IT, so it must import the guard — add the import as the first import in the file. '
         : 'If CI never invokes it, add an EXEMPT entry saying WHY CI cannot invoke it, and note that the ' +
           'exemption means the file is unguarded rather than safe. ') +
       'The guard is opt-in; a file that does not opt in is not covered by anything, whatever the guard\'s ' +
       'header says about "every process that can reach Supabase".',
+  );
+}
+
+for (const [file] of gateByFile) {
+  if (gatesUsed.has(file)) continue;
+  problem(
+    `RUNTIME_TARGET_GATES names '${file}', but this check no longer classifies it as able to reach ` +
+      'Supabase. Either the file stopped touching Supabase — in which case delete the entry — or the ' +
+      'reachability patterns stopped seeing how it does, in which case OTHER unguarded reachers are being ' +
+      'missed too. Both need a human.',
   );
 }
 
@@ -1399,7 +1682,8 @@ for (const [file] of exemptByFile) {
 notes.push(
   `${sourceFiles.length} source file(s) scanned under artifacts/api-server/src/; ${reachable.length} can ` +
     `reach Supabase directly; ${guarded.length} import a guard front door (${guardedStrict.length} strict, ` +
-    `${guardedReadOnly.length} read-only-audit); ${exemptByFile.size} exempt with a written reason.`,
+    `${guardedReadOnly.length} read-only-audit); ${runtimeGated.length} carry a verified runtime target gate ` +
+    `(${runtimeGated.join(', ') || 'none'}); ${exemptByFile.size} exempt with a written reason.`,
 );
 notes.push(
   `CI surface derived from .github/workflows/ + package.json: script(s) ${[...ciScripts].sort().join(', ') || 'none'}; ` +
@@ -1415,6 +1699,14 @@ notes.push(
     'here inspects the SQL a script sends. That was established by reading them; what is enforced here is ' +
     'that the set is closed, so granting the capability to a further file is a diff in ' +
     'READ_ONLY_AUDIT_ENTRY_POINTS rather than an import nobody notices.',
+);
+notes.push(
+  'RUNTIME TARGET GATES are coverage, not exemption, and the distinction is load-bearing: an EXEMPT file is ' +
+    'unguarded and merely out of CI\'s reach, while a gated file refuses every target but the one explicitly ' +
+    'configured, wherever it runs. What this check verifies is the gate\'s SHAPE — that the selector, the ' +
+    'assertion, the dynamic front-door import and the latched write paths are all still in the file\'s code, ' +
+    'and that a database-free test exercises them by name. What it does NOT verify is that the refusal is ' +
+    'correct; that is what the named test is for, and it is run by the ordinary suite.',
 );
 
 console.log('');
@@ -1452,5 +1744,18 @@ if (problems.length > 0) {
 console.log('');
 console.log(
   `All ${reachable.length} Supabase-reaching file(s) accounted for: ${guarded.length} guarded, ` +
-    `${exemptByFile.size} exempt with a reason.`,
+    `${runtimeGated.length} runtime-target-gated, ${exemptByFile.size} exempt with a reason.`,
 );
+// The three categories must actually partition the reachable set. Without this,
+// a file could fall out of every category and still be printed as accounted for.
+{
+  const accounted = guarded.length + runtimeGated.length + exemptUsed.size;
+  if (accounted !== reachable.length) {
+    problem(
+      `The report says all ${reachable.length} reachable files are accounted for, but the three categories ` +
+        `cover ${accounted} of them (${guarded.length} guarded + ${runtimeGated.length} runtime-gated + ` +
+        `${exemptUsed.size} exempt-and-used). The categories no longer partition the set, so the summary ` +
+        'line is claiming more than the check established.',
+    );
+  }
+}

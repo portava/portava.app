@@ -200,10 +200,14 @@ describe("B. the service — names the columns only where they exist", () => {
   });
 
   it("a system-event is never a model turn", () => {
+    // The shape `loadHistory` actually returns: it maps `payload ?? undefined`
+    // and `prompt_version ?? undefined`, and parses `created_at` into a Date.
+    // A fixture carrying nulls and an ISO string was describing a
+    // ConversationMessage the service never produces.
     const turns = modelTurns([
-      { role: "user", content: "hi", payload: null, promptVersion: null, createdAt: nowIso() },
-      { role: "system-event", content: "assistant_unavailable", payload: { fallbackReason: "ai_error" }, promptVersion: null, createdAt: nowIso() },
-      { role: "assistant", content: "hello", payload: null, promptVersion: null, createdAt: nowIso() },
+      { role: "user", content: "hi", createdAt: new Date() },
+      { role: "system-event", content: "assistant_unavailable", payload: { fallbackReason: "ai_error" }, createdAt: new Date() },
+      { role: "assistant", content: "hello", createdAt: new Date() },
     ]);
     assert.deepEqual(turns.map((t) => t.role), ["user", "assistant"]);
   });

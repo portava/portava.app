@@ -32,7 +32,10 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { evaluateRiskTriggers, DEFAULT_VEHICLE_CAPACITY } from "../domain/trips/services/TripRiskTriggers.js";
 import { computeMeetingPoint } from "../domain/trips/services/TripReplanService.js";
-import type { PulseInterpretation } from "../domain/trips/projections/TripPulseProjection.js";
+// Imported from where it is DECLARED. TripPulseProjection imports this type for
+// its own use and does not re-export it, so routing the test through that module
+// was a type error, not a shortcut.
+import type { PulseInterpretation } from "../domain/trips/services/TripSignals.js";
 
 const NOW = Date.parse("2026-08-14T08:00:00.000Z");
 const PLAN = "plan-hike";
