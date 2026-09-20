@@ -291,6 +291,16 @@ type Known = {
  */
 export const KNOWN: Record<string, Known> = {
   // ── Guarded: the contract refuses before the failing call ───────────────────
+  COMPASS_ENABLED: {
+    classification: "guarded",
+    objects: ["compass_conversations.status", "compass_conversations.trip_id"],
+    note:
+      "Migration 2996 (compass-phase1-spec §1: trip_id, status, role system-event) is applied to portava-ci and " +
+      "NOT to production, where COMPASS_ENABLED is ON. Registered as COMPASS_CONVERSATION_PHASE1; " +
+      "services/compass/CompassConversationService.ts probes before naming either column and uses the legacy " +
+      "shape when they are missing. Strike this entry when 2996 is applied to production and recorded.",
+  },
+  // ── Guarded: the contract refuses before the failing call ───────────────────
   //
   // `media_canonical_enabled` WAS HERE, and it was THE founding case of this whole
   // file. STRUCK 2026-09-16, by this check's own instruction: once 2470 was applied

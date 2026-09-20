@@ -1,7 +1,7 @@
 /**
  * CompassTools — Phase 4 native function calling for the Compass assistant.
  *
- * Forty-one tools the model may call on demand (the OpenAI schemas in
+ * Forty-two tools the model may call on demand (the OpenAI schemas in
  * COMPASS_TOOL_DEFINITIONS below are the authoritative list).
  *
  * THAT SENTENCE IS EXECUTABLE, BECAUSE IT HAS BEEN WRONG THREE TIMES.
@@ -63,6 +63,9 @@ import { planRescue, RESCUE_PROBLEMS } from "../domain/trips/services/TripRescue
 import { valueOfInformation, unknownsFromExperiences } from "../domain/trips/services/TripValueOfInformation.js";
 import { executeTripCommand } from "../domain/trips/commands/tripKernel.js";
 import { isFlagEnabled as isKernelFlagEnabled } from "../lib/featureFlags.js";
+import { COMPASS_DECISION_FLAG, assembleCompassDecision } from "../lib/compassDecisionAssembly.js";
+import { compatibleActionFor } from "../lib/compassDecisionActions.js";
+import { DECISION_INTENTS, type DecisionIntent } from "../lib/compassDecision.js";
 import { getCrewMap, CrewMapUnavailableError } from "../domain/trips/services/TripCrewLocationService.js";
 import { randomUUID as newCommandId } from "node:crypto";
 import { tripOperationalProjectionsGate } from "../domain/trips/policies/tripOperationalProjections.js";
@@ -135,7 +138,7 @@ import {
  * compare. Pinned to `COMPASS_TOOL_DEFINITIONS.length` AND to the header's own
  * number word by `src/test/compassToolCountContract.test.ts`.
  */
-export const COMPASS_TOOL_COUNT_IN_HEADER = 41;
+export const COMPASS_TOOL_COUNT_IN_HEADER = 42;
 // ── Tool definitions (OpenAI function schemas) ────────────────────────────────
 
 export const COMPASS_TOOL_DEFINITIONS = [
@@ -514,6 +517,26 @@ export const COMPASS_TOOL_DEFINITIONS = [
           query:      { type: "string", description: "Optional free-text filter" },
           limit:      { type: "integer", minimum: 1, maximum: 10 },
         },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "get_decision",
+      description:
+        "Sensing §10 / census CCL-09: should the user GO NOW to a specific place? Returns ONE of GO_NOW, GO_SOON, WAIT, STAY, SWITCH, SKIP, RETURN with its reasons, the §5.1 grounding of the live evidence it rests on, whether the action needs the user's confirmation, and — for the four decisions that are opportunities — the one existing quick action (viewPlace) that carries it. Refusals (WAIT/STAY/SKIP) carry no action: explain the reasons instead. Answers `unavailable` when the decision capability is off; never invents a reading.",
+      parameters: {
+        type: "object",
+        properties: {
+          subjectId: { type: "string", description: "The place id (from search_places / get_place_details) to decide about." },
+          currentSubjectId: { type: "string", description: "The place the user is at now, if known, so SWITCH/STAY can be weighed." },
+          currentSinceMinutes: { type: "number", description: "How long the user has been at the current place." },
+          etaMinutes: { type: "number", description: "Minutes to reach the subject, if the user said or a route tool measured it." },
+          intent: { type: "string", enum: [...DECISION_INTENTS], description: "The user's stated intent, when they said one." },
+        },
+        required: ["subjectId"],
         additionalProperties: false,
       },
     },
@@ -1996,6 +2019,51 @@ export const COMPASS_TOOL_NAMES = new Set(
  * Execute one tool call. Never throws — errors become honest result objects.
  * Every result is passed through sanitizeToolResult() before returning.
  */
+// ── get_decision (Sensing §10 through /compass/ask — census CCL-09) ──────────
+//
+// The same gate, the same assembly and the same engine as GET /compass/decision;
+// the tool adds only the compatibility step: the decision expressed in the
+// action model the client already renders, never a new enum value. The flag is
+// read HERE, by its literal name, so a person cannot obtain through the chat
+// what the route refuses to serve.
+const UUID_ARG = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+async function toolGetDecision(sc: SupabaseClient, args: Record<string, unknown>): Promise<unknown> {
+  const subjectId = typeof args.subjectId === "string" ? args.subjectId : "";
+  if (!UUID_ARG.test(subjectId)) return { error: "subjectId must be a place id from a search result" };
+  if (!(await isKernelFlagEnabled(sc, COMPASS_DECISION_FLAG))) {
+    return { unavailable: true, reason: "feature_disabled", note: "Compass decisions are not enabled on this deployment; do not tell the user whether to go now." };
+  }
+  const currentSubjectId = typeof args.currentSubjectId === "string" && UUID_ARG.test(args.currentSubjectId) ? args.currentSubjectId : null;
+  const minutes = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 24 * 60 ? v : null);
+  const intent = typeof args.intent === "string" && (DECISION_INTENTS as readonly string[]).includes(args.intent) ? (args.intent as DecisionIntent) : null;
+
+  const assembled = await assembleCompassDecision(
+    sc,
+    { subjectId, currentSubjectId, currentSinceMinutes: minutes(args.currentSinceMinutes), etaMinutes: minutes(args.etaMinutes), intent },
+    new Date(),
+  );
+  if (!assembled.ok) {
+    return assembled.reason === "not_found"
+      ? { error: "Place not found — only real catalog places can be decided about." }
+      : { error: "Place lookup unavailable right now — retryable, not a verdict about the place." };
+  }
+  const { result, place, liveIntelligenceReadable } = assembled;
+  return {
+    subjectId,
+    placeName: place.name ?? null,
+    decision: result.decision,
+    reasons: result.reasons,
+    summary: result.summary,
+    grounding: result.grounding,
+    confirmation: result.confirmation,
+    interception: result.interception,
+    switchingCost: result.switchingCost,
+    liveIntelligenceReadable,
+    compatibleAction: compatibleActionFor(result.decision, { id: place.id, name: place.name ?? null }, result.reasons, result.confirmation.required),
+  };
+}
+
 export async function executeCompassTool(
   sc: SupabaseClient,
   userId: string,
@@ -2034,6 +2102,7 @@ export async function executeCompassTool(
       // Phase 9 social tools re-resolve blocked/muted users PER CALL so a
       // mid-conversation block takes effect immediately (the profile snapshot
       // passed into the tool loop may be stale/cached).
+      case "get_decision":         raw = await toolGetDecision(sc, args); break;
       case "get_whos_around":            raw = await toolWhosAround(sc, await refreshHiddenUsers(sc, userId, profile), userId); break;
       case "get_travel_compatibility":   raw = await toolTravelCompatibility(sc, await refreshHiddenUsers(sc, userId, profile), userId, args); break;
       case "get_group_recommendation":   raw = await toolGroupRecommendation(sc, await refreshHiddenUsers(sc, userId, profile), userId, args); break;

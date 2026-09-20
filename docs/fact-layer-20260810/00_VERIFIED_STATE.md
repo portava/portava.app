@@ -984,7 +984,7 @@ the argument for having both:
 
 1. `compass/flags.ts` `isEnabled` was **not in the reader list at all** — a fourth
    shared reader, missed. It reads `COMPASS_V1_RULE_BASED_ENABLED` at
-   `routes/discovery.ts:1215` and `COMPASS_TELEGRAPH` at `routes/compass.ts:3490`;
+   `routes/discovery.ts:1215` and `COMPASS_TELEGRAPH` at `routes/compass.ts:3499`;
    both flags were invisible to the check until it was added.
 2. `COMPASS_TELEGRAPH` is **read but seeded by no migration**, so through the
    `COMPASS_%` loader it is permanently `false` and indistinguishable from

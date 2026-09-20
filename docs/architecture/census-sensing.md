@@ -1178,11 +1178,11 @@ before its commit; the mutations are listed in §2.3.
   intent-relative — quiet, social, high energy — and UNKNOWN with no intent:
   the engine does not read busy as good (`lib/compassDecision.ts:324#experienceValue(`;
   `test/compassDecision.test.ts:152#intent-relative`). The route
-  `GET /api/compass/decision` (`routes/compassDecision.ts:68#router.get(`)
-  reads the flag fail-closed (`routes/compassDecision.ts:78#compass_decision_enabled`),
+  `GET /api/compass/decision` (`routes/compassDecision.ts:53#router.get(`)
+  reads the flag fail-closed (`routes/compassDecision.ts:63#compass_decision_enabled`),
   the place for a walking ETA when the client sends none
-  (`routes/compassDecision.ts:106#haversineKm(q.lat,`), asks the Live gates
-  whether it may look (`routes/compassDecision.ts:112#liveLabelsServable(sc)`),
+  (`lib/compassDecisionAssembly.ts:76#haversineKm(q.lat,`), asks the Live gates
+  whether it may look (`lib/compassDecisionAssembly.ts:89#liveLabelsServable(sc)`),
   reads the candidate and the current experience through
   `readLiveClaimEnvelopes`, and answers the decision with its reasons,
   grounding, interception and switching-cost report; it writes nothing and

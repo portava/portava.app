@@ -32,6 +32,7 @@
 import { SCHEMA_PROBE_SENTINEL_ID, type CapabilityDefinition } from "./schemaRequirement.js";
 import { DISCOVERY_TRIP_PROJECTION } from "../discoveryTripProjectionConsumer.js";
 import { TRIP_OPERATIONAL_PROJECTIONS } from "../../domain/trips/policies/tripOperationalProjections.js";
+import { COMPASS_CONVERSATION_PHASE1 } from "../../services/compass/CompassConversationService.js";
 
 /** The `media_assets` columns migration 2250 adds. Nothing before it does. */
 export const MEDIA_CANONICAL_ASSET_COLUMNS = [
@@ -213,6 +214,10 @@ export const CAPABILITIES: Readonly<Record<string, CapabilityDefinition>> = Obje
   // scanFlagReads resolves it. The consumers are the three builders; the
   // routes and Compass tools reach the schema only through them.
   [TRIP_OPERATIONAL_PROJECTIONS.flag]: TRIP_OPERATIONAL_PROJECTIONS,
+  // Registered because compass/flags.ts and routes/pulse.ts read COMPASS_ENABLED
+  // by name, so scanFlagReads resolves it. The consumer is the conversation
+  // service, the only module that names 2996's two columns.
+  [COMPASS_CONVERSATION_PHASE1.flag]: COMPASS_CONVERSATION_PHASE1,
   // NOT registered here, deliberately: MAP_TRIP_PROJECTION_CAPABILITY
   // (lib/mapProjectionTripContract.ts). resolveCapability takes the definition
   // directly, so the Map reader is fully guarded either way.

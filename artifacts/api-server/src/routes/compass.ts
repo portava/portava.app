@@ -21,6 +21,7 @@
 import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
+import { COMPASS_QUICK_ACTION_TYPES } from "../lib/compassDecisionActions.js";
 import { requireUser, sendError, canEditPlan, isAcceptedTripMember } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import {
@@ -126,6 +127,8 @@ import { getOpenAI }                             from "../lib/openai.js";
 import { COMPASS_ASK_PROMPT, COMPASS_ASK_PROMPT_VERSION } from "../lib/prompts/compass-v1.js";
 import {
   getOrCreateConversation,
+  appendSystemEvent,
+  modelTurns,
   loadHistory,
   appendMessage,
   touchConversation,
@@ -1045,11 +1048,10 @@ router.get("/compass/why/:recommendationId", async (req, res) => {
 // Deprecated: body.conversationContext is accepted but ignored when conversationId is present.
 // Deprecated: body.mode — replaced by classifier-derived intent routing.
 
-const ALLOWED_QUICK_ACTION_TYPES = new Set([
-  "addTrip", "buildItinerary", "askCommunity", "explore",
-  "viewEvent", "viewPlace", "startPoll", "shareTip",
-  "openMap", "viewPassport", "findBuddy", "viewTrips",
-]);
+// CCL-09: the twelve are declared ONCE, in lib/compassDecisionActions.ts, where
+// the decision → action mapping is pinned against them. A second copy here is
+// what let "no enum value added" go unmeasured.
+const ALLOWED_QUICK_ACTION_TYPES = new Set<string>(COMPASS_QUICK_ACTION_TYPES);
 
 const HONEST_FALLBACK_MESSAGE =
   "Compass AI assistant is temporarily unavailable. Please try again shortly.";
@@ -1076,6 +1078,9 @@ const askBodySchema = z.object({
   prompt:              z.string().min(1).max(1000),
   city:                z.string().max(80).optional(),
   conversationId:      z.string().uuid().optional(),
+  /** compass-phase1-spec §1 `trip_id`: the trip this conversation is about.
+   *  Recorded on a NEW conversation only where migration 2996 is applied. */
+  tripId:              z.string().uuid().optional(),
   /** Phase 6: circle context — circle memories are only injected when this is
    *  set AND the caller is a verified member of that circle. */
   circleOwnerId:       z.string().uuid().optional(),
@@ -1401,12 +1406,12 @@ router.post("/compass/ask", async (req, res) => {
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid request");
     return;
   }
-  const { prompt, city, conversationId: incomingConvId, circleOwnerId, mediaId, stream } = parsed.data;
+  const { prompt, city, conversationId: incomingConvId, tripId, circleOwnerId, mediaId, stream } = parsed.data;
 
   // ── Conversation resolve ──────────────────────────────────────────────────
   let conversationId: string;
   try {
-    conversationId = await getOrCreateConversation(sc, user.id, incomingConvId);
+    conversationId = await getOrCreateConversation(sc, user.id, incomingConvId, { tripId: tripId ?? null });
   } catch (err) {
     req.log.error({ err, userId: user.id }, "compass/ask: conversation resolve failed");
     res.json({
@@ -1442,7 +1447,7 @@ router.post("/compass/ask", async (req, res) => {
   try {
     intentResult = await classifyIntent(
       prompt,
-      history.slice(-CLASSIFIER_CONTEXT_TURNS).map((h) => ({ role: h.role, content: h.content })),
+      modelTurns(history).slice(-CLASSIFIER_CONTEXT_TURNS),
     );
   } catch { /* non-fatal — treated as no classification */ }
   const isItineraryIntent =
@@ -1633,7 +1638,7 @@ router.post("/compass/ask", async (req, res) => {
     ...(isItineraryIntent
       ? [{ role: "system" as const, content: ITINERARY_INTENT_DIRECTIVE }]
       : []),
-    ...history.map((h) => ({ role: h.role as "user" | "assistant", content: h.content })),
+    ...modelTurns(history),
     { role: "user",   content: userMessageWithContext },
   ];
 
@@ -1802,6 +1807,10 @@ router.post("/compass/ask", async (req, res) => {
     res.json({ conversationId, message, payload: payload ?? null, quickActions, pendingProposals: proposals, uiBlocks, meta: { droppedInventedIds: uiBlockMeta.droppedInventedIds, groundingViolations: _grounded.violations.map((v) => v.kind) }, promptVersion: COMPASS_ASK_PROMPT_VERSION, intent: intentResult });
   } catch (err) {
     req.log.error({ err, userId: user.id }, "compass/ask: LLM call failed");
+    // spec §1 `system-event`: the conversation records that the assistant was
+    // unavailable at this turn, so the history is honest about the gap. Never a
+    // model turn (modelTurns drops it); refused where 2996 is not applied.
+    appendSystemEvent(sc, conversationId, "assistant_unavailable", { fallbackReason: "ai_error" }).catch(() => {});
     res.json({
       conversationId,
       message:        HONEST_FALLBACK_MESSAGE,

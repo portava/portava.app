@@ -107,6 +107,14 @@ const ALLOWLIST = new Set<string>([
   "highlight_replies.user_id",          // live: replier_id
   "highlight_replies.body",             // does not exist live (thread-based replies)
   "highlight_replies.deleted_at",       // does not exist live
+  // ── 2996_compass_conversations_phase1_schema.sql — PENDING LIVE APPLY ──────
+  // Applied to portava-ci 2026-09-19 (ledger row), NOT to production. The
+  // service names both columns only when its probe finds them
+  // (CompassConversationService.conversationSchemaReady), so the build is safe
+  // against a database without them. Remove both entries when 2996 is applied
+  // to production and recorded in production-applied-migrations.json.
+  "compass_conversations.trip_id",
+  "compass_conversations.status",
   "plan_checkins.plan_item_id",         // live: plan_geofence_id
   "plan_attendance_events.plan_item_id", // live: plan_geofence_id
   "plan_attendance_events.metadata",    // live: details
