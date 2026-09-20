@@ -1769,3 +1769,88 @@ Recorded here rather than silently fixed because the next reader deserves to kno
 that these eight `C`s never carried the meaning they appear to carry. If a
 tenancy criterion is ever added to §28, it is a new row and it is `C` at this
 commit — not a re-grade of M203-M210.
+
+---
+
+## §43 — 2026-09-20: the production blockers, re-measured live, and the gate the census never named
+
+Every "absent from production" verdict in §41 and §42 rests on one artifact —
+`artifacts/api-server/baseline/20260907_production_tables.txt` — and both sections
+say so in as many words: *"It did not, and could not, re-measure the database."*
+This section re-measures it. The census was right about the method and has since
+gone stale about the facts.
+
+### 43.1 What is actually in production, read live on 2026-09-20
+
+| object the census calls absent | live state | rows it was blocking |
+| --- | --- | --- |
+| `locate_friends_sessions` / `_members` / `_positions` / `_audit` | **all four PRESENT** (9 / 5 / 11 / 8 columns) | M7, M83, M85–M87, M90–M94, M222 |
+| `map_telemetry_events`, `map_telemetry_drops` | **both PRESENT**, 0 rows | M259–M275 |
+| `protected_zones` | still absent | M10, M133, M139, M179, M223, M280 |
+| `route_flow_contribution_consent` | still absent | M67, M5, M119, M221, M279 |
+| `geo_zones` | present, 0 rows | M5, M119, M279 |
+
+Three of the four blocking objects the census names are no longer absent. The
+committed baselines already said so and were not read: `20260915_production_tables.txt`,
+`20260915b_production_tables.txt` and `20260916_production_tables.txt` all list the
+four `locate_friends_*` names. The census cites only the 2026-09-07 file, which
+does not. **The evidence was in the repository before this pass and the verdicts
+were stale against it.**
+
+### 43.2 The gate the census never records, and why no row moves to C here
+
+M7's criterion is *"a refreshed `baseline/*_production_tables.txt` contains the
+four names."* **That criterion is met today.** Read literally, M7 and the ten rows
+that inherit it are C.
+
+They are not being graded C, because the criterion is incomplete. A third gate
+exists that no row in this census names: `locate_friends_enabled`
+(`artifacts/api-server/src/lib/locateFriendsSession.ts:99#LOCATE_FRIENDS_FLAG`,
+also read by `services/passport/PassportProjectionService.ts:1722`). It is present
+in production and **FALSE**.
+
+So the true state of §12 is **deployed and switched off** — which is a different
+fact from "the storage does not exist", and a better one, but it is not "works".
+Grading eleven rows C on a criterion now known not to capture the thing that
+decides whether the feature runs would be scoring to the letter of a sentence this
+section has just shown to be incomplete.
+
+**What changes here is the BLOCKER, not the verdict.** For M7, M83, M85–M87,
+M90–M94 and M222 the blocker is no longer *storage absent from production*. It is
+*`locate_friends_enabled` is FALSE in production*. Any future reader who closes
+these rows by applying 2219 will have closed nothing: 2219 is already applied and
+its tables are already there.
+
+### 43.3 An owner decision these eleven rows now wait on, shared with fourteen others
+
+Whether a correct implementation behind a dark flag is C or W is **not settled in
+this corpus**, and it is not settleable inside one census. §41.5 already recorded
+the asymmetry for M282: this census grades that shape W, while `census-media`
+§11.3.3 grades the same shape C for MD375 and MD379, and `census-media` §12.8
+enumerates fourteen further media rows turning on the same question.
+
+Under media's convention these eleven Map rows are C today. Under this census's
+convention they are W. **One rule for thirteen documents**, and a lane cannot take
+it. It is recorded here as an open decision rather than resolved in the direction
+that happens to raise this census's number.
+
+### 43.4 A ledger class that is not evidence, generalised
+
+Production's `schema_migration_ledger` carries rows for 2201, 2217, 2218, 2219 and
+2224, all dated 2026-09-15 with `applied_by='backfill'`. Commit `63772b76c` already
+named this class for 2202: *"a ledger row with `applied_by='backfill'` … asserts the
+FILENAME existed when 2254 ran and never that the file ran."*
+
+Checked object by object against the live database: **2219 did run** — its four
+tables exist. **2201, 2217, 2218 and 2224 did not** — their tables and flag rows are
+absent. Four of the five ledger rows describe migrations that never executed.
+
+**No verdict in this census, or any other, may be taken from a `backfill` ledger
+row.** The object is the evidence; the ledger row is a filename.
+
+### 43.5 What this section does not do
+
+It re-establishes the state of the 56 not-correct rows and nothing else. No other
+row was re-audited, no verdict letter moves, and the tally below is unchanged from
+§42.6 — deliberately. Re-measuring a blocker is not the same as passing an
+acceptance criterion, and this section is the former.
