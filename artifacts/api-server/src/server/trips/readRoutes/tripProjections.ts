@@ -55,7 +55,7 @@ import { isFlagEnabled } from "../../../lib/featureFlags.js";
 import { logger } from "../../../lib/logger.js";
 import { asyncHandler } from "../../../lib/asyncHandler.js";
 import { sendTripRefusal } from "../../../domain/trips/contracts/tripReasonCodes.js";
-import { toCamel, PLAN_ITEM_COLUMNS, PLAN_ITEM_COLUMNS_BASE } from "../../../routes/plan.js";
+import { toCamel, readPlanItemsInOrder } from "../../../routes/plan.js";
 import { isMissingColumnError } from "../../../lib/capability/schemaCapability.js";
 import { computeWarnings } from "../../../routes/trips.js";
 import { serveMapProjection } from "./tripMapProjection.js";
@@ -157,22 +157,16 @@ router.get("/trips/:tripId/timeline", asyncHandler(async (req, res) => {
 
   const editAllowed = await canEditPlan(sc, tripId, user.id);
 
-  // The same list `GET /trips/:tripId/plan` reads, with the same one-retry
-  // fallback for §6.3's scope, so the timeline and the plan cannot disagree
-  // about an item on a database that has 2770 OR on one that does not.
-  const planItemQuery = (columns: string) => sc
-    .from("trip_plan_items")
-    .select(columns)
-    .eq("trip_id", tripId)
-    .is("removed_at", null)
-    .order("day_date", { ascending: true, nullsFirst: false })
-    .order("starts_at", { ascending: true, nullsFirst: false })
-    .order("sort_order", { ascending: true });
-  let { data, error } = await planItemQuery(PLAN_ITEM_COLUMNS);
-  if (error && isMissingColumnError(error)) {
+  // The same read `GET /trips/:tripId/plan` performs, through the same helper,
+  // so the timeline and the plan cannot disagree about an item on a database
+  // that has 2770 OR on one that does not. It is a shared function rather than
+  // a copied query for two reasons: that agreement, and the column check —
+  // this file imports the column constants, and check:write-path-columns
+  // cannot resolve an imported identifier, so a `.select()` written here is a
+  // blind spot. See readPlanItemsInOrder's header.
+  const { data, error } = await readPlanItemsInOrder(sc, tripId, () => {
     log.warn({ tripId }, "timeline: privacy_scope absent — 2770_trip_plans_spec_columns.sql is not applied to this database; serving the timeline without §6.3 scopes");
-    ({ data, error } = await planItemQuery(PLAN_ITEM_COLUMNS_BASE));
-  }
+  });
   if (error) {
     log.warn({ err: error.message, tripId }, "timeline: plan items unreadable — refusing");
     sendTripRefusal(res, "degraded_unavailable", "TRIP_PROJECTION_UNAVAILABLE", "The plan could not be read right now. Please try again shortly.");

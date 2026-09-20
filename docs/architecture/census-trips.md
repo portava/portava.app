@@ -690,7 +690,7 @@ Nothing in this section exists. The evidence is one grep, run over
 | TR49 | The `TripCommand` envelope (commandId, tripId, actorUserId, expectedTripVersion, idempotencyKey, type, payload, clientObservedAt) | **C** | **Moved N→C in the §26 recensus.** The row said "No type, no table, no route." All three exist: the envelope is `domain/trips/commands/tripKernel.ts:285#TripCommand` (commandId, tripId, actorUserId, expectedTripVersion, idempotencyKey, type, payload), the receipt table is `migrations/2420_trip_kernel_foundation.sql:139#trip_command_receipts`, and the route is the `trip_kernel_execute` RPC that `domain/trips/commands/tripKernel.ts:707#executeTripCommand` calls. |
 | TR50 | A typed command vocabulary (ADD_PLAN, MOVE_PLAN, CONFIRM_PLAN, CANCEL_PLAN, JOIN_PLAN, LEAVE_PLAN, CREATE_SUBGROUP, SET_PRESENCE, CREATE_PROPOSAL, ACCEPT_PROPOSAL, COMPLETE_ACTIVITY) | **N** | None of the eleven exists as a command. Four have a *route* that does something adjacent (`POST /trips/:id/plan/items`, `PATCH …/items/:itemId`, `POST /trips/:id/complete`); seven have no analogue at all. |
 | TR51 | Command service validates schema | **W** | **MOVED C → W, 2026-09-11 (§38) — the first verdict this census has moved on a re-derivation.** The row read C on the sentence *"every trip write parses a zod schema first"*, which is its testable half. Counted across the three files it cites: **53 write endpoints, 8 reading `req.body` with no schema at all** — `POST /trips` (the primary create), `/invite`, `/members`, `/join-request`, `/invite-link` and the three checklist writes. 45 of 53 do validate, so the capability is built and used and this is BUILT-BUT-WRONG, not NOT-BUILT; the word *every* had never been counted. `POST /trips` is now closed by `CreateTripSchema` (`routes/trips.ts:800#CreateTripSchema`), mirroring `PatchTripSchema` field for field so it cannot reject what PATCH already accepts, and the remaining seven are held shrink-only by `check:trip-write-validation`. **What the gap costs is TYPE validation, not authorization** — `requireUser` runs first and `check:route-auth-gate` guards that independently — so a malformed payload became a 500 from the database where a 400 belongs. Returns to C when the list reaches zero. |
-| TR52 | …validates actor capability | **C** | `lib/http.ts:554#canEditPlan` `canEditPlan` and `:614#canEditPlanItem` `canEditPlanItem` are called before every plan mutation (`routes/trips.ts:1736,1839,1986#canEditPlan`), and membership is checked through the shared `domain/trips/invariants/tripMembership.ts:115#isAcceptedTripMember` `isAcceptedTripMember`. |
+| TR52 | …validates actor capability | **C** | `lib/http.ts:554#canEditPlan` `canEditPlan` and `:614#canEditPlanItem` `canEditPlanItem` are called before every plan mutation (`routes/trips.ts:1736,1828,1975#canEditPlan`), and membership is checked through the shared `domain/trips/invariants/tripMembership.ts:115#isAcceptedTripMember` `isAcceptedTripMember`. |
 | TR53 | …validates aggregate version | **C** | **Moved N→C.** The row said "No version exists." `trips.version` is added by `2420_trip_kernel_foundation.sql:96#version` and the kernel refuses a mismatch: `2590_trip_kernel_add_plan_attachment_columns.sql:365#TRIP_VERSION_CONFLICT` returns the current and expected versions so a caller can refetch and retry (§18.3 "explicit conflict"). |
 | TR54 | …validates temporal/spatial consistency | **W** | **Moved N→W 2026-09-08, and the W is the honest half.** The row said the write "accepts any `starts_at`/`ends_at` pair, including one that overlaps a confirmed item or precedes its predecessor." ORDERING is now checked: the kernel already refused an inverted range on the TRIP (`2590:...#TRIP_TEMPORAL_RANGE_INVERTED`, on create and on update, comparing the MERGED value), and the plan-item half is now enforced by `migrations/2750_trip_plan_item_interval_ordered.sql` (a CHECK, NOT VALID, rehearsed on portava-ci — an UPDATE into an inverted range is refused) plus the typed refusal at `domain/trips/commands/tripKernel.ts:707#executeTripCommand`. **OVERLAP is still unchecked** — an item may still be written across a confirmed item's interval, because that is the §7 consistency engine (TR128, TR134) and needs a route provider this tree does not have. Ordering built, overlap not. **Also recorded here rather than lost:** the plan-item check lives at the kernel's entry point rather than inside `trip_kernel_execute`, because every kernel change replaces that 700-line function in full; it should ride along with the next migration that replaces it for its own reasons. |
 | TR55 | …validates dependent commitments | **N** | No commitments exist (TR15). |
@@ -765,7 +765,7 @@ because there is no stage.*
 | TR104 | `canInviteParticipant(actor, trip)` | **W** | Inline at `routes/trips.ts:927` and `routes/trips-expansion.ts:897`; no named policy. |
 | TR105 | `canEditTrip(actor, trip)` | **W** | Inline owner checks at `routes/trips.ts:684` and `routes/trips-expansion.ts:356`; no named policy. |
 | TR106 | `canCreatePlan(actor, trip)` | **C** | `lib/http.ts:554#canEditPlan` `canEditPlan`, called before the create at `routes/trips.ts:1736#canEditPlan`. |
-| TR107 | `canModifyPlan(actor, plan)` | **C** | `lib/http.ts:614#canEditPlanItem` `canEditPlanItem`, called at `routes/trips.ts:1990,2120#canEditPlanItem`. |
+| TR107 | `canModifyPlan(actor, plan)` | **C** | `lib/http.ts:614#canEditPlanItem` `canEditPlanItem`, called at `routes/trips.ts:1979,2109#canEditPlanItem`. |
 | TR108 | `canManageBooking(actor, trip)` | **W** | `routes/tripReservations.ts` has `requireReservationMember` plus a stricter delete rule at `:426-429` (*"creator or trip OWNER only"*) — real authorization, expressed as a route-local helper rather than a policy function. |
 | TR109 | `canSeePresence(actor, subject, trip)` | **W** | The decision is made inside `domain/trips/services/tripCrewLocation.ts:104` `buildCrewCard` per member, honouring ghost mode, default visibility and safe-return opt-in. It is a card builder, not a predicate, so no caller can *ask* the question — and `routes/tripCrewLocation.ts:170-174` admits **invited-but-not-accepted** members (`getMemberRoleAny`) to the crew map. |
 | TR110 | `canSeePreciseLocation(actor, subject, trip)` | **C** | `domain/trips/services/tripCrewLocation.ts:320#resolveExactCoords` `resolveExactCoords`, gated on a grant this module now checks for expiry itself (`:238#grantIsActive`) — exact coordinates require an **active live-share grant** *and* hotel-blur off *and* populated coordinates; ghost mode short-circuits first (`:217-218#TRIP_PRESENCE_GHOST`). Three independent conditions, all fail-closed, and membership alone never suffices. |
@@ -982,7 +982,7 @@ PHOTO, EXPLORE, PLAY, LEARN, NIGHTLIFE, TRANSIT) appear nowhere as a vocabulary.
 | TR289 | §15.2 Booking ownership remains with the booking/provider domain | **C** | Nothing in Trips creates or cancels a booking with a provider; `routes/tripReservations.ts` is import-and-record only (`:118` paste-import, `:189` manual create). |
 | TR290 | §15.2 Cancellation/refund policies imported as versioned facts, treated with provenance/confidence | **W** | Provenance and confidence are genuinely there: `0172:22-24` keeps `raw_text` (*"original pasted text (audit / re-extract)"*), `extraction` (*"model output for this row, verbatim"*) and `extraction_confidence` (*"model-reported 0..1 (never invented)"*). **Versioning is not** — a re-import overwrites; there is no policy version and no history of what the policy said when. |
 | TR291–TR295 | §15.3 On invalidating a booked activity the planner returns explicit side effects: booking at risk · cancellation deadline · potential cost · affected participants · required user confirmation | **N** ×5 | There is no planner and no invalidation path, so no side effects are computed. `cancellation_deadline_at` is stored (`0172:21`) and read by nothing on any change path. |
-| TR296 | §15.3 Automatic replanning may not silently cancel purchases | **C** ⌀ | Satisfied structurally: there is no automatic replanning (TR196) **and** no code path anywhere cancels a reservation as a side effect — the only reservation state changes are the explicit `/confirm` (`routes/tripReservations.ts:309`), `/dismiss` (`:501`) and `DELETE` (`:416`), each requiring a direct user action and an authorization check. Flagged `⌀` because the guarantee rests partly on the absence of the feature it guards. |
+| TR296 | §15.3 Automatic replanning may not silently cancel purchases | **C** ⌀ | Satisfied structurally: there is no automatic replanning (TR196) **and** no code path anywhere cancels a reservation as a side effect — the only reservation state changes are the explicit `/confirm` (`routes/tripReservations.ts:335`), `/dismiss` (`:527`) and `DELETE` (`:416`), each requiring a direct user action and an authorization check. Flagged `⌀` because the guarantee rests partly on the absence of the feature it guards. |
 | TR297 | §15.4 Booking/reservation history is append-only: confirmed then cancelled, not confirmed row deleted | **W** | Violated by a live endpoint. `routes/tripReservations.ts:416-437` — `DELETE /trips/:tripId/reservations/:id` issues `sc.from("trip_reservations").delete().eq("id", …)` and returns 204. The row is gone: no tombstone, no cancelled state (the `status` CHECK at `0172:26-27` has no `cancelled` value), no event. The authorization is stricter than for edit (*"creator or trip OWNER only"*, `:426-429`), which makes it a deliberate hard delete rather than an oversight. |
 | TR298 | §15.4 Compensation is represented as a new state/event so replay remains accurate | **N** | No compensating state, no event, no replay (TR406). |
 
@@ -1119,7 +1119,7 @@ PHOTO, EXPLORE, PLAY, LEARN, NIGHTLIFE, TRANSIT) appear nowhere as a vocabulary.
 | TR411 | Safety/authorization invariants block merge regardless of product experiment | **C** | This one is met, and by the platform's strongest machinery: ~40 `src/scripts/check*.ts` ratchets run in CI, including `checkAuthorizationContract.ts`, `checkSilentSupabaseWrites.ts`, `checkLocationPurposes.ts`, `checkDataRights.ts`, `rlsDispositions.ts` (which carries `trip_activity_log` at `:458` and `trip_area_preferences` at `:459`) and `checkWriterlessReads.ts`. A trip change that weakened an authorization contract would fail the build. |
 | TR412 | §22.4 An earlier hard commitment cannot increase the preceding certified free window | **N** | Vacuous and unguarded: no commitments, no windows, no invariant test. |
 | TR413 | §22.4 A closed-before-arrival activity cannot remain executable | **N** | No opening hours as a constraint (TR230), no executability concept. |
-| TR414 | §22.4 A removed participant cannot receive future precise trip presence through that Trip | **C** | Proven, and it is the only §22.4 invariant with a test: removal deletes the `trip_members` row (`routes/trips.ts:2303#members/:userId` `DELETE /trips/:tripId/members/:userId`), `routes/tripCrewLocation.ts:170-174` refuses a non-member with `not_member`, and `src/test/tripPrivacy.test.ts:11` asserts *"A removed member immediately receives the preview on the next request."* Caveat recorded at TR109: the same gate admits *invited* members, so the invariant holds for removal and is looser than it should be for admission. |
+| TR414 | §22.4 A removed participant cannot receive future precise trip presence through that Trip | **C** | Proven, and it is the only §22.4 invariant with a test: removal deletes the `trip_members` row (`routes/trips.ts:2292#members/:userId` `DELETE /trips/:tripId/members/:userId`), `routes/tripCrewLocation.ts:170-174` refuses a non-member with `not_member`, and `src/test/tripPrivacy.test.ts:11` asserts *"A removed member immediately receives the preview on the next request."* Caveat recorded at TR109: the same gate admits *invited* members, so the invariant holds for removal and is looser than it should be for admission. |
 | TR415 | §22.4 An unknown place identity cannot be silently treated as a canonical place match | **C** | `0010_trip_plan.sql:14-15` types the source (`'manual'` default), `lib/placeIdBridge.ts` is the only sanctioned crossing, and `scripts/checkSchemaReferences.ts` is the ratchet. An unresolved place stays typed as manual. |
 | TR416 | §22.4 A projection's `sourceTripVersion` may never exceed the canonical aggregate version | **N** | Neither side of the comparison exists (TR12, TR365). |
 | TR417 | §22.4 A duplicate command with the same idempotency key cannot produce a duplicate state transition | **N** | No idempotency key anywhere in the trip domain. The nearest artifact is a route-level short-circuit — `routes/trips-expansion.ts:514` returns `{ status: "completed", idempotent: true }` when a trip is already completed — a per-endpoint guard, not the invariant. |
@@ -3520,7 +3520,7 @@ reaching the client as a bare `forbidden` / `not_found`.
   `routes/trips-expansion.ts:1029`, `:1155` (approve/decline join request →
   `canManageJoinRequests`), `:3356` (`GET /trips/:tripId` → `canViewTrip`,
   with the locked sentinel now carrying the reason at `:3392`);
-  `routes/tripReservations.ts:96#const booking = await canManageBooking(sc, { userId: user.id }, tripId, "read"` (gate) and `routes/tripReservations.ts:651#const del = await canManageBooking(sc, { userId }, (trip as any).id, "delete"` (delete →
+  `routes/tripReservations.ts:96#const booking = await canManageBooking(sc, { userId: user.id }, tripId, "read"` (gate) and `routes/tripReservations.ts:677#const del = await canManageBooking(sc, { userId }, (trip as any).id, "delete"` (delete →
   `canManageBooking`); `routes/safeReturn.ts:306` (session create →
   `canManageSafety`); `domain/trips/services/tripCrewLocation.ts:170` (`buildCrewCard` →
   `canSeePresence`).
@@ -3563,7 +3563,7 @@ mistaken for "built".
 | TR103 `canViewTrip(actor, trip)` | W | **C** | `domain/trips/policies/tripPolicy.ts:138`; called from `GET /trips/:tripId` (`routes/trips-expansion.ts:3356`); `tripPrivacy.test.ts` pins every outcome through the route and the matrix pins the rule. |
 | TR104 `canInviteParticipant(actor, trip)` | W | **C** | `:185`; called at `routes/trips.ts:1180` and `:2114`. Owner only — the kernel's INVITE_PARTICIPANT capability — with `canManageJoinRequests` (`:199`) kept apart for the host rule, because the kernel keeps them apart. |
 | TR105 `canEditTrip(actor, trip)` | W | **C** | `:215`; called at `routes/trips.ts:874`. |
-| TR108 `canManageBooking(actor, trip)` | W | **C** | `:273`; the crew gate at `routes/tripReservations.ts:96#const booking = await canManageBooking(sc, { userId: user.id }, tripId, "read"` and the stricter delete rule at `routes/tripReservations.ts:651#const del = await canManageBooking(sc, { userId }, (trip as any).id, "delete"`, which had been a route-local comparison. |
+| TR108 `canManageBooking(actor, trip)` | W | **C** | `:273`; the crew gate at `routes/tripReservations.ts:96#const booking = await canManageBooking(sc, { userId: user.id }, tripId, "read"` and the stricter delete rule at `routes/tripReservations.ts:677#const del = await canManageBooking(sc, { userId }, (trip as any).id, "delete"`, which had been a route-local comparison. |
 | TR109 `canSeePresence(actor, subject, trip)` | W | **C** | `domain/trips/policies/tripPresencePolicy.ts:39` — a PREDICATE, not a card: ghost wins, an active (checked, unexpired, fail-closed on unparseable) live-share grant overrides a hidden default, else the default decides. `buildCrewCard` calls it for its fork (`domain/trips/services/tripCrewLocation.ts:170`), so card and predicate cannot disagree; 46 crew-card tests unchanged and green. |
 | TR111 `canManageSafety(actor, trip)` | W | **C** | `:310`; called at `routes/safeReturn.ts:306`. Its first live effect is the gap above: a session can no longer be attached to a trip its owner is not on. |
 | TR115 `negative assertions for anonymous, non-member, removed member, guest, host, service-facing` | W | **C** | All six in one matrix (`tripPolicy.test.ts`), per capability. "Guest" has no row in `member_role`; the nearest is `viewer` (crew, read-only) and it is tested as such, stated rather than assumed. Service-facing at `:353`. |
@@ -3573,7 +3573,7 @@ mistaken for "built".
 | TR444 `TRIP_SPATIAL_*` | N | **N** | **Holds.** Four codes declared; `routes/tripFeasibility.ts`'s §7.4 findings are served as `consistency` entries without a reason code. Nothing emits. |
 | TR445 `TRIP_PRIVACY_*` | N | **C** | `TRIP_PRIVACY_NOT_VISIBLE` / `TRIP_PRIVACY_BUDDIES_ONLY` on the locked sentinel (`routes/trips-expansion.ts:3392`) — the first time a privacy refusal has said which rule refused. Route-tested (`tripPrivacy.test.ts`) and matrix-tested. |
 | TR446 `TRIP_PRESENCE_*` | N | **W** | *"Presence refusals return a status label, not a reason code."* Half false already: `TRIP_PRESENCE_NOT_SELF` / `_NOT_FOUND` are emitted by 2768. `_GHOST` / `_HIDDEN` are now DECIDED by `canSeePresence` and consumed by `buildCrewCard` — but the crew card still renders a label, not the reason, so they do not reach the wire. W. |
-| TR447 `TRIP_BOOKING_*` | N | **C** | `TRIP_BOOKING_NOT_MEMBER` at `routes/tripReservations.ts:96#const booking = await canManageBooking(sc, { userId: user.id }, tripId, "read"`, `TRIP_BOOKING_NOT_CREATOR_OR_OWNER` at `routes/tripReservations.ts:651#const del = await canManageBooking(sc, { userId }, (trip as any).id, "delete"`, through `sendTripRefusal`. `tripReservations.test.ts`'s 403 cases pass unchanged against them. |
+| TR447 `TRIP_BOOKING_*` | N | **C** | `TRIP_BOOKING_NOT_MEMBER` at `routes/tripReservations.ts:96#const booking = await canManageBooking(sc, { userId: user.id }, tripId, "read"`, `TRIP_BOOKING_NOT_CREATOR_OR_OWNER` at `routes/tripReservations.ts:677#const del = await canManageBooking(sc, { userId }, (trip as any).id, "delete"`, through `sendTripRefusal`. `tripReservations.test.ts`'s 403 cases pass unchanged against them. |
 | TR448 `TRIP_DISRUPTION_*` | N | **N** | **Holds.** Declared; no disruption model emits (§17.2 is §40's later work). |
 | TR449 `TRIP_PROJECTION_*` | N | **W** | *"No projections (§19.1)."* Falsified since 42aeac38: `TRIP_PROJECTION_UNAVAILABLE` is emitted by `domain/trips/contracts/tripDiscoveryProjection.ts:240`. One projection, one code; `_STALE` / `_SCHEMA_MISMATCH` / `_VERSION_AHEAD` declared for §40.2. W. |
 | TR450 `TRIP_IDENTITY_*` | N | **W** | *"...build-time ratchets ... rather than returning a runtime reason code."* `TRIP_IDENTITY_ALREADY_EXISTS` IS a runtime reason: emitted by 2450's CREATE_TRIP and mapped to 409. Not C: CREATE_TRIP carries the open `TRIP_KERNEL_CREATE_TRIP_UNGUARDED_INSERT` finding (§35), so the family's one emitter is not one this document calls proven. |
@@ -3777,7 +3777,7 @@ never FEASIBLE).
   at detection by kind (`:162#temporal_conflict_total`;
   `domain/trips/services/tripMetrics.ts:64#incrementTripMetric`).
 - `GET /trips/:tripId/freedom-windows`
-  (`server/trips/readRoutes/tripProjections.ts:235#freedom-windows`) — §12.1's
+  (`server/trips/readRoutes/tripProjections.ts:229#freedom-windows`) — §12.1's
   `getFreedomWindows(tripId)` as a read; accepted crew; refusals by reason.
   `/timeline` now carries `conflicts` and each day's `conflictIds`
   (`:156#detectPlanOverlaps`, `:159#conflictIds`),
@@ -3920,7 +3920,7 @@ AT_RISK, MOVED absent. TR194: no START_PLAN. TR396: no metric.
   opt-in rule, and today's plan; every read refused when it fails, because a
   health computed over "no risks" is HEALTHY by construction. Behind the
   §40.3 gate (`:59#tripOperationalProjectionsGate`).
-- `GET /trips/:tripId/health` (`server/trips/readRoutes/tripProjections.ts:288#health`),
+- `GET /trips/:tripId/health` (`server/trips/readRoutes/tripProjections.ts:282#health`),
   accepted crew, under the envelope.
 - **§3.3 AT_RISK, derived.** The timeline projection marks plan items in a
   temporal conflict as at risk (`:162#atRiskPlanIds`) and
@@ -3995,7 +3995,7 @@ nothing to get.
   test drives it with a stateful fake
   (`src/test/tripTodayProjection.test.ts:182#LIVE`) and a
   mutation that stops handing the version over went red.
-- `GET /trips/:tripId/today` (`server/trips/readRoutes/tripProjections.ts:308#today`);
+- `GET /trips/:tripId/today` (`server/trips/readRoutes/tripProjections.ts:302#today`);
   one refusal mapping for the three gated builders
   (`:202#refuseBuild`). Compass `get_today_state`
   (`compass/CompassTools.ts:289#get_today_state`,
@@ -4154,7 +4154,7 @@ to explain and no route.
   calls it AFTER the transition (`routes/trips-expansion.ts:744#runTripCloseout`),
   so a failed step cannot un-complete a trip, and the response carries the
   closeout rather than implying it. `GET /trips/:tripId/closeout`
-  (`server/trips/readRoutes/tripProjections.ts:722#closeout`) is the same plan as a
+  (`server/trips/readRoutes/tripProjections.ts:716#closeout`) is the same plan as a
   dry run.
 - `domain/trips/services/TripDecisionLedger.ts` — §21.2's `TripDecision`, every
   field (`:56#TripDecision`), versioned engines
@@ -4166,7 +4166,7 @@ to explain and no route.
   `TripTodayProjection.ts:481#recordTripDecision`) naming ids,
   versions and counts — never a coordinate or a name — and carries its
   `decisionId`. `GET /trips/:tripId/decisions/:decisionId/explain`
-  (`server/trips/readRoutes/tripProjections.ts:697#explain`) and Compass
+  (`server/trips/readRoutes/tripProjections.ts:691#explain`) and Compass
   `explain_trip_decision` (`compass/CompassTools.ts:461#explain_trip_decision`,
   `:889#toolExplainTripDecision`, dispatched at
   `:1371#explain_trip_decision`; fourteen tools now) answer
@@ -4524,7 +4524,7 @@ the merge, the apply, Batch C and two flags.
   file sees a coordinate (`domain/trips/projections/TripPulseProjection.ts:201#through the crew map`).
   A source that cannot be read is UNREAD, not empty; context that cannot be
   read refuses. Served at `GET /trips/:id/pulse`
-  (`server/trips/readRoutes/tripProjections.ts:328#/trips/:tripId/pulse`), to Compass as
+  (`server/trips/readRoutes/tripProjections.ts:322#/trips/:tripId/pulse`), to Compass as
   `get_live_conditions` (`compass/CompassTools.ts:315#name: "get_live_conditions"`), and
   into Today's `pulseSignals` layer, which was `no_source` since §40.3
   (`domain/trips/projections/TripTodayProjection.ts:263#pulseSignals = okLayer`). Ledgered as
@@ -4560,13 +4560,13 @@ the merge, the apply, Batch C and two flags.
   serves `attention`; Today and the pulse carry it.
 - **§21.1** — `notification_actionability_rate`: sent is counted at dispatch,
   acted at `POST /trips/:id/notifications/acted`
-  (`server/trips/readRoutes/tripProjections.ts:648#/trips/:tripId/notifications/acted`), and
+  (`server/trips/readRoutes/tripProjections.ts:642#/trips/:tripId/notifications/acted`), and
   `readNotificationActionability` (`domain/trips/policies/tripPush.ts:147#export function readNotificationActionability`)
   divides per kind, null over zero. `trip_event_replay_mismatch_total`:
   `verifyTripReplay` (`domain/trips/replay/tripReplayVerify.ts:35#export async function verifyTripReplay`)
   calls 2773's `trip_snapshot_verify_replay` and increments on `equal = false`,
   reached from `POST /trips/:id/replay/verify`
-  (`server/trips/readRoutes/tripProjections.ts:674#/trips/:tripId/replay/verify`).
+  (`server/trips/readRoutes/tripProjections.ts:668#/trips/:tripId/replay/verify`).
 - **Appendix B** — every §7.4 consistency finding now carries `reasonCode`
   from `SPATIAL_REASON_CODES` (`domain/trips/invariants/TripSpatialConsistency.ts:90#export const SPATIAL_REASON_CODES`),
   stamped by the check functions themselves, so the feasibility route's
@@ -4698,7 +4698,7 @@ production baseline through the chain: 39 database tests, 0 skipped.
   AT_RISK / SAFETY_EVENT the executable list is served empty with the
   suppression named (`domain/trips/projections/TripOpportunityProjection.ts:384#suppressed`).
   Served at `GET /trips/:id/opportunities`
-  (`server/trips/readRoutes/tripProjections.ts:407#/trips/:tripId/opportunities"`), to Compass as
+  (`server/trips/readRoutes/tripProjections.ts:401#/trips/:tripId/opportunities"`), to Compass as
   `get_opportunities` — §11.3's "Where next?"
   (`compass/CompassTools.ts:354#name: "get_opportunities"`) — as Today's
   `opportunities` layer, `no_source` since §40.3
@@ -4719,7 +4719,7 @@ production baseline through the chain: 39 database tests, 0 skipped.
   (`db/rollback/2026-09-12-2786-trip-kernel-opportunity-events-rollback.sql`),
   rehearsed apply → rollback → apply.
 - **Accepted and completed** — `POST /trips/:id/opportunities/:experienceId/accept`
-  (`server/trips/readRoutes/tripProjections.ts:425#/trips/:tripId/opportunities/:experienceId/accept`) writes
+  (`server/trips/readRoutes/tripProjections.ts:419#/trips/:tripId/opportunities/:experienceId/accept`) writes
   the plan the only way a plan is written: ADD_PLAN through the kernel with
   `source_type 'opportunity'`, keyed by the experience so a double tap is
   one plan; a non-executable experience is refused with its verdict and
@@ -4728,7 +4728,7 @@ production baseline through the chain: 39 database tests, 0 skipped.
   `opportunity_accepted_total` at that route,
   `opportunity_completed_total` where COMPLETE_ACTIVITY succeeds on an
   opportunity-sourced plan (`domain/trips/services/tripOpportunityMetrics.ts:18#export function recordOpportunityCompletion`)
-  — on the plan PATCH cutover (`routes/trips.ts:2039#recordOpportunityCompletion(planCommandTypeForPatch(patch)`)
+  — on the plan PATCH cutover (`routes/trips.ts:2028#recordOpportunityCompletion(planCommandTypeForPatch(patch)`)
   and the Compass autopilot, the two places that issue it.
 - **2787 — the fold names every event** — `src/migrations/2787_trip_snapshot_fold_vocabulary.sql:53#WHEN t IN ('trip.stage_started','trip.stage_completed') THEN`:
   2773's `trip_snapshot_fold` met the eighteen event types 2779–2786 added
@@ -4871,12 +4871,12 @@ route writes goes through the kernel as a command that already exists
   touches. The state is one read under the gate
   (`domain/trips/services/TripImpactState.ts:16#loadImpactState`); the route is
   `POST /trips/:tripId/proposals/preview`
-  (`server/trips/readRoutes/tripProjections.ts:496#/trips/:tripId/proposals/preview`).
+  (`server/trips/readRoutes/tripProjections.ts:490#/trips/:tripId/proposals/preview`).
 - **§12.1 simulate** — `domain/trips/services/TripReplan.ts:195#simulateChange`
   returns FEASIBLE / INFEASIBLE / UNKNOWN with the conflicts named and the
   freedom window as it would be after; judged, never written
   (`POST /trips/:tripId/simulate`,
-  `server/trips/readRoutes/tripProjections.ts:507#/trips/:tripId/simulate`; Compass
+  `server/trips/readRoutes/tripProjections.ts:501#/trips/:tripId/simulate`; Compass
   `simulate_plan`, `compass/CompassTools.ts:1438#toolSimulatePlan`).
 - **§11.3 replan today, §12.1 createProposal** — `domain/trips/services/TripReplan.ts:107#replanDay`
   produces the candidate diff: keep / move / cancel / add
@@ -4889,7 +4889,7 @@ route writes goes through the kernel as a command that already exists
   Shared mutations are the diff's `proposals`; nothing is written.
   `domain/trips/services/TripReplanService.ts:23#computeReplan` feeds it from the
   trip (pulse, freedom, compiler). `POST /trips/:tripId/replan`
-  (`server/trips/readRoutes/tripProjections.ts:522#/trips/:tripId/replan`) turns each proposal
+  (`server/trips/readRoutes/tripProjections.ts:516#/trips/:tripId/replan`) turns each proposal
   into `CREATE_PROPOSAL` only when the caller asks and the kernel is on —
   `proposal_type: replan_<op>`, the suggested decision rule, an idempotency
   key from the day, the op, the plan and the target time, `source: "replan"`
@@ -4922,7 +4922,7 @@ route writes goes through the kernel as a command that already exists
   unplaced by name; candidates are the crew's saved ideas and the day's
   plans with a public point (`domain/trips/services/TripReplanService.ts:54#computeMeetingPoint`).
   `POST /trips/:tripId/meeting-point`
-  (`server/trips/readRoutes/tripProjections.ts:584#/trips/:tripId/meeting-point`); Compass
+  (`server/trips/readRoutes/tripProjections.ts:578#/trips/:tripId/meeting-point`); Compass
   `find_meeting_point` (`compass/CompassTools.ts:1530#toolFindMeetingPoint`).
 - **§17.3 rescue** — `domain/trips/services/TripRescue.ts:66#planRescue` over the
   seven typed problems (`domain/trips/services/TripRescue.ts:18#RESCUE_PROBLEMS`):
@@ -4932,7 +4932,7 @@ route writes goes through the kernel as a command that already exists
   (`domain/trips/services/TripRescue.ts:21#ESCALATION_TARGETS`) — or to the crew,
   with why and when, and says what Compass may and must not do; a safe
   return is proposed where the problem is a person. `POST /trips/:tripId/rescue`
-  (`server/trips/readRoutes/tripProjections.ts:600#/trips/:tripId/rescue`) returns the plan
+  (`server/trips/readRoutes/tripProjections.ts:594#/trips/:tripId/rescue`) returns the plan
   (201) and declares the disruption through `DECLARE_DISRUPTION` — §17.2's
   switch — when the kernel is on, skipped by name when not; an unknown
   problem is 400. Compass `get_rescue_plan` (`compass/CompassTools.ts:1499#toolGetRescuePlan`)
@@ -5109,7 +5109,7 @@ re-derives and cites rather than argues.
 - **Five rows the tree had already earned.** TR189: Today has carried
   `pulseSignals` since §42 (`domain/trips/projections/TripTodayProjection.ts:153#pulseSignals:`).
   TR375: `POST /trips/:tripId/simulate` was registered in §44
-  (`server/trips/readRoutes/tripProjections.ts:507#/trips/:tripId/simulate`). TR393:
+  (`server/trips/readRoutes/tripProjections.ts:501#/trips/:tripId/simulate`). TR393:
   `trip_command_rejected_total` by reason has existed in the kernel client
   and been asserted three times (`domain/trips/commands/tripKernel.ts:536#readTripCommandRejectedTotal`,
   `src/test/tripKernel.test.ts:110#counter`). TR379 and TR75: 2520's map
@@ -5403,7 +5403,7 @@ mutations are named with the rows.
   orders a day's items by the instant, whatever zone each was typed in.
   The route reads the stages under the operational gate as /readiness does,
   refuses when they are unreadable, applies both, and says which zone rule
-  it used (`server/trips/readRoutes/tripProjections.ts:199#withStageLocalTimes(rows.map`;
+  it used (`server/trips/readRoutes/tripProjections.ts:193#withStageLocalTimes(rows.map`;
   `server/trips/readRoutes/tripProjections.ts:140#stageZoneReading`). `test/tripTimelineStageLocalTime.test.ts:25#Asia/Tokyo`:
   a Lisbon item at 08:00Z reads 09:00, a Tokyo item at 23:30Z reads 08:30
   the next day, the boundary instant belongs to the later stage, and two
@@ -5945,7 +5945,7 @@ transport segment and estimated nothing (TR287).
   with 2795 applied it expects the refusal by name; without it, the §35
   defect it was written to pin.
 - **§11.3 "I am bored" (TR197)** — `GET /trips/:tripId/bored`
-  (`server/trips/readRoutes/tripProjections.ts:355#router.get("/trips/:tripId/bored"`): the
+  (`server/trips/readRoutes/tripProjections.ts:349#router.get("/trips/:tripId/bored"`): the
   §7.3 window containing now, its minutes left and the deadline that ends
   it, and the §13 candidates the opportunity projection compiled for that
   window — executable, uncertain, and how many were not — in one answer,
@@ -6103,7 +6103,7 @@ same rule rather than waiting for the flag.
 ### 55.1 What was built, and where
 
 - **§3.3's arrows, in the twin** (`artifacts/api-server/src/domain/trips/commands/tripKernel.ts:609#export function planStatusTransitionRefused(`
-  and `artifacts/api-server/src/routes/trips.ts:2052#const refused = planStatusTransitionRefused(`):
+  and `artifacts/api-server/src/routes/trips.ts:2041#const refused = planStatusTransitionRefused(`):
   the kernel's rule — no status change out of `done`, `cancelled` or
   `skipped` — as one pure function, asked by the flag-off PATCH before it
   writes. The refusal is the kernel path's own: 409, `invalid_state_transition`,
@@ -6893,7 +6893,7 @@ state, which is why TR437 moves to W and not to C.
   (`domain/trips/services/TripDecisionLedger.ts:63#"route_chain"`) whose
   assumptions say the chain is the plan and no stop exists that is not a
   plan item. Served at `GET /trips/:tripId/route-chain` under the gate
-  (`server/trips/readRoutes/tripProjections.ts:257#router.get("/trips/:tripId/route-chain"`)
+  (`server/trips/readRoutes/tripProjections.ts:251#router.get("/trips/:tripId/route-chain"`)
   and to Compass as `get_route_chain`
   (`compass/CompassTools.ts:1284#export async function toolGetRouteChain(`).
 - **A route plan on a trip is a view over the plan.** Under the gate,
@@ -7296,7 +7296,7 @@ actually missing.
   `TRIP_AUTH_NOT_CREW`.
 - **Served, not consumed — and the row says so.**
   `GET /trips/:tripId/telegraph-context?with=<ids>`
-  (`server/trips/readRoutes/tripProjections.ts:829#router.get("/trips/:tripId/telegraph-context"`)
+  (`server/trips/readRoutes/tripProjections.ts:823#router.get("/trips/:tripId/telegraph-context"`)
   is registered and crew-gated, and `?with=` refuses a malformed id and a list
   over the cap. No Telegraph file is touched by this section: three lanes hold
   those files concurrently, and `routes/telegraphChat.ts` still reads
@@ -8127,17 +8127,17 @@ the work.
 | --- | --- | --- | --- |
 | TR25 | `trips-expansion.ts` lines 2091,2116,2169 serve saved places | 2091 and 2116 are **blank lines** | `artifacts/api-server/src/routes/trips-expansion.ts:2650#saved-places` |
 | TR30 | `trips-expansion.ts` line 2578 is `GET /trips/:tripId` | a `readUnavailable("trips", …)` throw | `artifacts/api-server/src/routes/trips-expansion.ts:3318#router.get` |
-| TR52 | `routes/trips.ts` line 1716 is a plan MUTATION gate | the read path `GET /trips/:tripId/plan`, computing `canEdit` for the client | the create gate is `artifacts/api-server/src/routes/trips.ts:1839#canEditPlan` |
+| TR52 | `routes/trips.ts` line 1716 is a plan MUTATION gate | the read path `GET /trips/:tripId/plan`, computing `canEdit` for the client | the create gate is `artifacts/api-server/src/routes/trips.ts:1828#canEditPlan` |
 | TR98 | `tripCrewLocation.ts` line 142 consumes the session expiry | a comment about accuracy banding | `artifacts/api-server/src/domain/trips/services/tripCrewLocation.ts:225#expires_at` |
 | TR104 | `routes/trips.ts` line 1180, line 2114 call `canInviteParticipant` | a comment, and `.eq("id", itemId)` | `artifacts/api-server/src/routes/trips.ts:1197#canInviteParticipant` (and line 2162) |
-| TR106 | `routes/trips.ts` line 1716 is "called before the create" | the read path again | `artifacts/api-server/src/routes/trips.ts:1839#canEditPlan` |
+| TR106 | `routes/trips.ts` line 1716 is "called before the create" | the read path again | `artifacts/api-server/src/routes/trips.ts:1828#canEditPlan` |
 | TR108 | `tripPolicy.ts` line 273 is `canManageBooking` | `canContributeToTrip` — a different capability | `artifacts/api-server/src/domain/trips/policies/tripPolicy.ts:398#export async function canManageBooking(` |
-| TR108 | `tripReservations.ts` line 497 is the stricter delete rule | a **blank line** | `artifacts/api-server/src/routes/tripReservations.ts:654#sendTripRefusal` |
+| TR108 | `tripReservations.ts` line 497 is the stricter delete rule | a **blank line** | `artifacts/api-server/src/routes/tripReservations.ts:680#sendTripRefusal` |
 | TR109 | `tripCrewLocation.ts` line 170 is where `buildCrewCard` calls the predicate | a comment about a legacy bucket name | `artifacts/api-server/src/domain/trips/services/tripCrewLocation.ts:210#canSeePresence` |
 | TR111 | `tripPolicy.ts` line 310 is `canManageSafety` | the body of `canSeePrivateContributions` | `artifacts/api-server/src/domain/trips/policies/tripPolicy.ts:435#export async function canManageSafety(` |
 | TR111 | `routes/safeReturn.ts` line 306 is the call | a comment about a 503 | `artifacts/api-server/src/routes/safeReturn.ts:309#canManageSafety` |
 | TR113 | `trips-expansion.ts` lines 1798-1948 gate documents separately | invite-link slot release — no document code in the range | `artifacts/api-server/src/routes/trips-expansion.ts:2275#router.get` |
-| TR118 | `routes/trips.ts` line 1531 gates private coordinates | a `planEditPermits` filter; `location_is_private` does not occur in that file until much later | `artifacts/api-server/src/routes/trips.ts:1823#location_is_private` |
+| TR118 | `routes/trips.ts` line 1531 gates private coordinates | a `planEditPermits` filter; `location_is_private` does not occur in that file until much later | `artifacts/api-server/src/routes/trips.ts:1812#location_is_private` |
 | TR120 | `tripCrewLocation.ts` lines 154-156 is the safe-return opt-in | a doc comment about `exactCoords` | `artifacts/api-server/src/domain/trips/services/tripCrewLocation.ts:286#shareSafeReturnStatus` |
 | TR121 | `routes/trips.ts` line 349 gates the members endpoint | a comment about boolean parsing | `artifacts/api-server/src/routes/trips.ts:478#router.get` |
 | TR160 | `tripCrewLocation.ts` line 142 is `liveShareExpiresAt` | the accuracy-banding comment again | `artifacts/api-server/src/domain/trips/services/tripCrewLocation.ts:225#expires_at` |
@@ -8145,8 +8145,8 @@ the work.
 | TR214 | `CompassTools.ts` lines 245-249 "is exactly this instruction set" | JSON-schema boilerplate (`parameters: { type: "object" …`) | `artifacts/api-server/src/compass/CompassTools.ts:635#explain` |
 | TR215 | `CompassTools.ts` lines 734-738 runs the gates, line 821 is the relationship gate | a comment about trip selection; a `discovery_places` query | `artifacts/api-server/src/compass/CompassTools.ts:1654#canEditPlan` and `artifacts/api-server/src/compass/CompassTools.ts:1875#Relationship gate` |
 | TR216 | `CompassTools.ts` lines 261-269 strips coordinate-shaped keys | JSON-schema boilerplate | `artifacts/api-server/src/compass/CompassTools.ts:655#sanitizeToolResult` |
-| TR289 | `tripReservations.ts` line 118 paste-import, line 189 manual create | neither is a route | `artifacts/api-server/src/routes/tripReservations.ts:331#router.post` (and line 145) |
-| TR296 | `tripReservations.ts` line 309, line 390, line 416 are confirm / dismiss / delete | line 309 is a **blank line**; none of the three is a route | `artifacts/api-server/src/routes/tripReservations.ts:480#confirm` (dismiss line 500, delete line 526) |
+| TR289 | `tripReservations.ts` line 118 paste-import, line 189 manual create | neither is a route | `artifacts/api-server/src/routes/tripReservations.ts:357#router.post` (and line 145) |
+| TR296 | `tripReservations.ts` line 309, line 390, line 416 are confirm / dismiss / delete | line 309 is a **blank line**; none of the three is a route | `artifacts/api-server/src/routes/tripReservations.ts:506#confirm` (dismiss line 500, delete line 526) |
 | TR330 | `tripCrewLocation.ts` lines 154-156 is the opt-in | the `exactCoords` doc comment | `artifacts/api-server/src/domain/trips/services/tripCrewLocation.ts:286#shareSafeReturnStatus` |
 | TR355 | `routes/trips.ts` line 1520 sets `trip_plan_items.updated_at` server-side | `.from("plan_editors")` — a different table | the claim holds elsewhere in the file; **this pointer supports nothing** |
 | TR414 | `tripCrewLocation.ts` lines 170-174 refuses a non-member | the doc comment of `getAcceptedMemberIds` | `artifacts/api-server/src/routes/tripCrewLocation.ts:108#not_member` |
@@ -8666,7 +8666,7 @@ had answered.**
    crew signal exists to prevent"*. Converting the two callers is **open**, and it
    is named in §73.5 rather than done here.
 6. **`server/trips/readRoutes/tripProjections.ts` — ruled HARMLESS, in code, with
-   the argument attached.** `artifacts/api-server/src/server/trips/readRoutes/tripProjections.ts:626#void tripRowErr`.
+   the argument attached.** `artifacts/api-server/src/server/trips/readRoutes/tripProjections.ts:620#void tripRowErr`.
    The rescue route's `destination_country` reaches `planRescue` and is read in
    exactly two places, both guarded by a DIFFERENT field (`ctx.homeCountry ? …` and
    `ctx.emergencyNumber ? …`), and this call site passes both as literal `null` on
@@ -8976,7 +8976,7 @@ CASE 2772 installs in `trip_kernel_execute`. Two writers that disagreed about
 what a scope means would make a plan written with the flag off readable by a
 different set of people than the same plan written with it on.
 
-`artifacts/api-server/src/routes/trips.ts:1876#const scope: TripPlanPrivacyScope`
+`artifacts/api-server/src/routes/trips.ts:1865#const scope: TripPlanPrivacyScope`
 takes an **optional** `privacyScope` on create and on patch and writes the
 derived pair. Three properties, each deliberate:
 
@@ -8993,11 +8993,12 @@ derived pair. Three properties, each deliberate:
   migration**, not a `db_error` — the request is well-formed and only the
   deployment is behind.
 
-`artifacts/api-server/src/routes/trips.ts:1755#let { data, error } = await planQuery(`
+`artifacts/api-server/src/routes/plan.ts:304#export async function readPlanItemsInOrder(`
 reads the scope with the rest of the plan and retries ONCE without it, so a
 database that does not have 2770 costs a reader the scope field and not their
-itinerary. `GET /trips/:id/timeline` uses the same two constants and the same
-retry, so the plan and the timeline cannot disagree about an item on either kind
+itinerary. `GET /trips/:id/timeline` calls the SAME function rather than
+repeating the query, so the plan and the timeline cannot disagree about an item
+on either kind
 of database. `privacyScope` is `null` when the column was not read, and
 `toCamel` states in the file that this means NOT READ — deriving a scope from
 `visibility` there would tell a client a plan is crew-wide when nobody looked.
@@ -9096,7 +9097,7 @@ accept the proposal, and a governance rule a reader INVENTED is worse than one i
 admits it does not know. 2774's own header makes the same argument about an
 unconstrained rule inside jsonb.
 
-`artifacts/api-server/src/server/trips/readRoutes/tripProjections.ts:555#payload_json: proposalContractPayload(`
+`artifacts/api-server/src/server/trips/readRoutes/tripProjections.ts:549#payload_json: proposalContractPayload(`
 and
 `artifacts/api-server/src/compass/CompassTools.ts:1483#payload_json: proposalContractPayload(`
 are the two writers. The replan was **discarding a rationale and an impact
@@ -9124,7 +9125,7 @@ changed" email produced a SECOND reservation beside the first: two rows, two
 cancellation deadlines, nothing relating them and nothing saying which is
 current. The policy had no history because it had no identity.
 
-`artifacts/api-server/src/routes/tripReservations.ts:265#const written: any[] = [];`
+`artifacts/api-server/src/routes/tripReservations.ts:262#const written: any[] = [];`
 splits the extraction into new versions and new bookings. Four decisions, each
 made against a way this could go wrong:
 

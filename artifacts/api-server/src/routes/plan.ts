@@ -9,6 +9,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { requireUser, isAcceptedTripMember, canEditPlan, sendError } from "../lib/http.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
+import { isMissingColumnError } from "../lib/capability/schemaCapability.js";
 import {
   tripKernelClient,
   readCommandEnvelope,
@@ -273,6 +274,62 @@ export const PLAN_ITEM_COLUMNS_BASE =
 
 /** The list every plan reader asks for FIRST — the base plus §6.3's scope (2770, census-trips TR116). */
 export const PLAN_ITEM_COLUMNS = `${PLAN_ITEM_COLUMNS_BASE}, privacy_scope`;
+
+/**
+ * Read a trip's plan items in render order, with §6.3's one-retry fallback.
+ *
+ * WHY THIS LIVES HERE AND NOT AT ITS CALL SITES. `resolveSelectString` in
+ * check:write-path-columns follows an identifier only to a SAME-FILE
+ * initializer. A `.select(PLAN_ITEM_COLUMNS)` written in routes/trips.ts or in
+ * server/trips/readRoutes/tripProjections.ts — both of which IMPORT the
+ * constant — is a blind spot the live column check cannot resolve, and both
+ * sites were reported as exactly that. Worse, each had wrapped the select in a
+ * `(columns: string) => …` helper, so the list was a parameter and not even a
+ * cross-file identifier.
+ *
+ * Selecting through the constants in the file that DEFINES them makes both
+ * lists statically resolvable, so every column in them is checked against the
+ * live schema on every run. That matters more here than it looks: a select
+ * list naming a column that does not exist fails the WHOLE read with PGRST100,
+ * so an unchecked twenty-one-column list is an itinerary that disappears.
+ *
+ * The alternative was inlining the literal at both sites, which would put two
+ * more copies of that list in the tree — the drift this constant exists to
+ * prevent.
+ *
+ * `onFallback` is the caller's own log line. The two readers word it
+ * differently on purpose — one is serving a plan, the other a timeline — and a
+ * shared message would tell an operator the wrong route degraded.
+ */
+export async function readPlanItemsInOrder(
+  client: any,
+  tripId: string,
+  onFallback: () => void,
+): Promise<{ data: any[] | null; error: any }> {
+  const ordered = (q: any) =>
+    q
+      .eq("trip_id", tripId)
+      .is("removed_at", null)
+      .order("day_date", { ascending: true, nullsFirst: false })
+      .order("starts_at", { ascending: true, nullsFirst: false })
+      .order("sort_order", { ascending: true });
+
+  // §6.3's scope is read WITH the rest (2770, census-trips TR116), and its
+  // absence must not cost the caller their itinerary: on a database without
+  // 2770 the whole list would otherwise 500 on one unknown column. One retry
+  // without it, and `privacyScope` then comes back null — NOT READ, which
+  // toCamel documents and does not turn into a scope.
+  let { data, error } = await ordered(
+    client.from("trip_plan_items").select(PLAN_ITEM_COLUMNS),
+  );
+  if (error && isMissingColumnError(error)) {
+    onFallback();
+    ({ data, error } = await ordered(
+      client.from("trip_plan_items").select(PLAN_ITEM_COLUMNS_BASE),
+    ));
+  }
+  return { data: (data as any[]) ?? null, error };
+}
 
 // ── Viewer-based privacy filter ───────────────────────────────────────────────
 

@@ -247,7 +247,7 @@ router.post("/trips/:tripId/reservations/import", asyncHandler(async (req, res) 
   // Split the extraction into the rows that are a NEW version of a booking
   // this trip already holds, and the rows that are new bookings.
   type ImportRow = (typeof rows)[number];
-  const updates: { id: string; patch: Record<string, unknown>; original: ImportRow }[] = [];
+  const updates: { id: string; original: ImportRow }[] = [];
   const inserts: ImportRow[] = [];
   let ambiguousReferences = 0;
   for (const row of rows) {
@@ -255,11 +255,8 @@ router.post("/trips/:tripId/reservations/import", asyncHandler(async (req, res) 
     const match = ref.length > 0 ? existingByKey.get(refTypeKey(ref, row.type)) : undefined;
     if (match === "ambiguous") { ambiguousReferences += 1; inserts.push(row); continue; }
     if (match === undefined) { inserts.push(row); continue; }
-    // `status`, `created_from`, `user_id` and `trip_id` are deliberately NOT
-    // in the patch: the booking keeps the state and the attribution it already
-    // has, and only the facts (and their provenance) take a new version.
-    const { status: _status, created_from: _createdFrom, user_id: _userId, trip_id: _tripId, ...facts } = row;
-    updates.push({ id: match.id, patch: { ...facts, updated_at: new Date().toISOString() }, original: row });
+    // The columns this update writes are named at the UPDATE itself, below.
+    updates.push({ id: match.id, original: row });
   }
 
   const written: any[] = [];
@@ -267,9 +264,38 @@ router.post("/trips/:tripId/reservations/import", asyncHandler(async (req, res) 
   // One statement per updated booking: 2784's history row is per row, and a
   // bulk write would not tell these two cases apart in the history either.
   for (const u of updates) {
+    // `status`, `created_from`, `user_id` and `trip_id` are deliberately NOT
+    // written: the booking keeps the state and the attribution it already has,
+    // and only the facts (and their provenance) take a new version.
+    //
+    // NAMED HERE, in the call, rather than spread from a four-key omission
+    // held in a variable. Two reasons, and the second is the substantive one:
+    //
+    //   - check:write-path-columns resolves the payload of an `.update()` only
+    //     when it is a literal at the call. A spread, or a variable built
+    //     earlier, makes this write a blind spot its live column check skips
+    //     entirely — this site was reported as exactly that.
+    //   - the omission was SUBTRACTIVE. Any column a later edit adds to the
+    //     extraction rows above would have been carried silently into this
+    //     UPDATE, including the next column whose whole point is that an
+    //     import must not overwrite it. Naming the ten fact columns makes the
+    //     rule above true by construction rather than by remembering to extend
+    //     a destructure.
     const { data: updated, error: updErr } = await sc
       .from("trip_reservations")
-      .update(u.patch)
+      .update({
+        type:                     u.original.type,
+        title:                    u.original.title,
+        starts_at:                u.original.starts_at,
+        ends_at:                  u.original.ends_at,
+        location_name:            u.original.location_name,
+        confirmation_ref:         u.original.confirmation_ref,
+        cancellation_deadline_at: u.original.cancellation_deadline_at,
+        raw_text:                 u.original.raw_text,
+        extraction:               u.original.extraction,
+        extraction_confidence:    u.original.extraction_confidence,
+        updated_at:               new Date().toISOString(),
+      })
       .eq("id", u.id)
       .select("*")
       .maybeSingle();

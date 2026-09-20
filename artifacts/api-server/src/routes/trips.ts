@@ -25,7 +25,7 @@ import {
 } from "../domain/trips/policies/tripPlanPrivacy.js";
 import { isMissingColumnError } from "../lib/capability/schemaCapability.js";
 import { sendTripRefusal } from "../domain/trips/contracts/tripReasonCodes.js";
-import { toCamel, PLAN_ITEM_COLUMNS, PLAN_ITEM_COLUMNS_BASE } from "./plan.js";
+import { toCamel, readPlanItemsInOrder } from "./plan.js";
 import { logTripActivity, findTripActivityByKey } from "../domain/trips/events/tripActivityLog.js";
 import { syncTripChatMembers } from "../lib/chatSync.js";
 import { getRestrictionState } from "../services/trust/TrustRestrictionService.js";
@@ -1737,26 +1737,15 @@ router.get("/trips/:tripId/plan", async (req, res) => {
   const canEdit = editAllowed === true;
 
   // perf-trim: explicit column list replaces SELECT * — only columns consumed by toCamel()
-  // are fetched; removed_at is a filter (WHERE), not needed in the result set
-  const planQuery = (columns: string) => client
-    .from("trip_plan_items")
-    .select(columns)
-    .eq("trip_id", tripId)
-    .is("removed_at", null)
-    .order("day_date", { ascending: true, nullsFirst: false })
-    .order("starts_at", { ascending: true, nullsFirst: false })
-    .order("sort_order", { ascending: true });
-
-  // §6.3's scope is read WITH the rest (2770, census-trips TR116), and its
-  // absence must not cost the caller their itinerary: on a database without
-  // 2770 the whole list would otherwise 500 on one unknown column. One retry
-  // without it, and `privacyScope` then comes back null — NOT READ, which
-  // toCamel documents and does not turn into a scope.
-  let { data, error } = await planQuery(PLAN_ITEM_COLUMNS);
-  if (error && isMissingColumnError(error)) {
+  // are fetched; removed_at is a filter (WHERE), not needed in the result set.
+  //
+  // The select lives in plan.ts beside the column constants rather than here:
+  // this file IMPORTS them, and check:write-path-columns cannot resolve an
+  // imported identifier, so a `.select()` written here is a blind spot the
+  // live column check silently skips. See readPlanItemsInOrder's header.
+  const { data, error } = await readPlanItemsInOrder(client, tripId, () => {
     req.log.warn({ tripId }, "trip plan: privacy_scope absent — 2770_trip_plans_spec_columns.sql is not applied to this database; serving the plan without §6.3 scopes");
-    ({ data, error } = await planQuery(PLAN_ITEM_COLUMNS_BASE));
-  }
+  });
 
   if (error) { req.log.error({ err: error }, "get trip plan"); sendError(res, "db_error", error.message); return; }
 
