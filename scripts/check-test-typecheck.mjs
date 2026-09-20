@@ -34,6 +34,30 @@
 // staleness branch below exits 1. A gate whose baseline is non-zero cannot be
 // satisfied by a compiler incapable of producing output.
 //
+// THIS GATE'S ANSWER DEPENDS ON GENERATED FILES THAT GIT DOES NOT CARRY, and
+// that has already cost three commits of guessing. travel-buddy-standalone's
+// tsconfig.test.json includes `expo-env.d.ts` and `.expo/types/**/*.ts`; both
+// are produced by the Expo tooling and both are GITIGNORED. A working copy
+// that has run `expo` has them, a fresh clone — every CI runner — does not,
+// and their presence changes ambient globals: with `expo-env.d.ts` the
+// DOM-flavoured `setInterval`/`clearInterval` merge in, without it only
+// @types/node's. Source that is clean here can therefore be two diagnostics
+// above its ceiling in CI, in a file nobody touched.
+//
+// To reproduce a CI count locally, move both aside and delete the incremental
+// cache first:
+//
+//   cd travel-buddy-standalone
+//   mv .expo /tmp/expo-types && mv expo-env.d.ts /tmp/expo-env.d.ts
+//   rm -f .test.tsbuildinfo
+//   node ../scripts/check-test-typecheck.mjs --package travel-buddy-standalone
+//   # …then MOVE THEM BACK.
+//
+// The fix for a file caught this way is to stop restating a signature that
+// varies and name it instead (`as unknown as typeof global.setInterval`), not
+// to raise the ceiling — the ratchet fails on a stale baseline too, so a
+// number that is right in one environment is wrong in the other either way.
+//
 // Usage:
 //   node scripts/check-test-typecheck.mjs --package <dir> --project <name> \
 //        --baseline <name> [--update]

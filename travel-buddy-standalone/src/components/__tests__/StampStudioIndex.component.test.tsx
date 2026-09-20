@@ -118,27 +118,55 @@ function makeIntervalSpy() {
   // Intercept only long-delay intervals (component polls at 30 s / 45 s / 60 s).
   // Short-delay calls (waitFor at ~50 ms, React scheduler at 0 ms) pass through
   // so async assertions continue to work normally.
-  jest.spyOn(global, 'setInterval').mockImplementation(
-    (fn: TimerHandler, delay?: number, ...args: unknown[]) => {
-      if ((delay ?? 0) >= 1_000) {
-        const id = nextId++ as unknown as ReturnType<typeof setInterval>;
-        captured.push({ id, fn: fn as () => void, delay: delay ?? 0 });
-        return id;
-      }
-      return originalSetInterval(fn as TimerHandler, delay, ...args);
-    },
-  );
+  // WHY THESE TWO CASTS EXIST — and why they are not laziness.
+  //
+  // `mockImplementation` demands a function assignable to the member being
+  // spied on, so these two arrows are checked against `typeof
+  // global.setInterval` / `typeof global.clearInterval`. THOSE SIGNATURES ARE
+  // NOT THE SAME EVERYWHERE THIS FILE COMPILES:
+  //
+  //   with    expo-env.d.ts (`/// <reference types="expo/types" />`) present:
+  //           the DOM-flavoured `(handler: TimerHandler, timeout?: number,
+  //           ...args: unknown[]) => number` merges in.
+  //   without it: only @types/node's `(callback, ms?, ...args) => Timeout`.
+  //
+  // `expo-env.d.ts` and `.expo/types/` are GENERATED AND GITIGNORED. A working
+  // copy that has run `expo` has them; a fresh clone — every CI runner — does
+  // not. So the same source compiled either way disagreed about the return
+  // type (`number | NodeJS.Timeout` vs `Timeout`) and, under
+  // strictFunctionTypes, about the contravariant `clearInterval` parameter
+  // (`string | number | Timeout | undefined` vs `Timeout | undefined`). That
+  // cost three commits of guessing at an unrelated router mock before the
+  // divergence was reproduced by moving both generated files aside.
+  //
+  // Casting the implementation to the member's own type is the fix that is
+  // correct under BOTH shapes, because it names the target rather than
+  // restating it. It is not `any` and not `@ts-expect-error`: every call site
+  // below is still checked, and the arrows' own parameter and return
+  // annotations are still enforced inside their bodies.
+  jest.spyOn(global, 'setInterval').mockImplementation(((
+    fn: TimerHandler,
+    delay?: number,
+    ...args: unknown[]
+  ) => {
+    if ((delay ?? 0) >= 1_000) {
+      const id = nextId++ as unknown as ReturnType<typeof setInterval>;
+      captured.push({ id, fn: fn as () => void, delay: delay ?? 0 });
+      return id;
+    }
+    return originalSetInterval(fn as TimerHandler, delay, ...args);
+  }) as unknown as typeof global.setInterval);
 
-  jest.spyOn(global, 'clearInterval').mockImplementation(
-    (id?: ReturnType<typeof setInterval>) => {
-      const idx = captured.findIndex((e) => e.id === id);
-      if (idx !== -1) {
-        captured.splice(idx, 1);
-      } else {
-        originalClearInterval(id);
-      }
-    },
-  );
+  jest.spyOn(global, 'clearInterval').mockImplementation(((
+    id?: ReturnType<typeof setInterval>,
+  ) => {
+    const idx = captured.findIndex((e) => e.id === id);
+    if (idx !== -1) {
+      captured.splice(idx, 1);
+    } else {
+      originalClearInterval(id);
+    }
+  }) as unknown as typeof global.clearInterval);
 
   return {
     captured,
