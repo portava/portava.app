@@ -174,13 +174,15 @@ jest.mock('../../../src/components/map/MapFilterSheet', () => ({
   MapFilterSheet: () => null,
   loadEnabledLayers: jest.fn().mockResolvedValue(['buddies', 'events', 'gems', 'trips', 'friends']),
 }));
-// NOTE: intentionally exhaustive — reads AsyncStorage at import.
-//
 // The stub RECORDS its `context` prop rather than discarding it. That prop is
 // `layerContext`, which the screen builds from `machine.mode`, so it is the
 // screen's own mode as the screen itself reports it to a real child — not a
 // test-only hook bolted on to observe internal state. It is what the §30
 // capability gates ultimately decide.
+//
+// NOTE: intentionally exhaustive — reads AsyncStorage at import. (This line
+// must stay within four lines of the mock: check-test-mocks.mjs looks back
+// exactly NOTE_LOOKBEHIND_LINES for it.)
 jest.mock('../../../src/components/map/LayersSheet', () => ({
   LayersSheet: (props: { context?: { mode?: string } }) => {
     layerContextHolder.mode = props?.context?.mode;
