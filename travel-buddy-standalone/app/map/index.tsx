@@ -47,6 +47,7 @@ import { TOGGLEABLE_LAYERS, KIND_TO_ENTITY_TYPE, mapObjectsToEntities } from '..
 import { MapCarousel } from '../../src/components/map/MapCarousel.tsx';
 import type { MapCarouselRef } from '../../src/components/map/MapCarousel.tsx';
 import { MapStoreProvider, useMapStore, deriveMapCapabilities } from '../../src/stores/mapStore.tsx';
+import { crowdFlowObjectCount as countServedCrowdFlow } from '../../src/features/map/state/mapMachine.ts';
 import { resolveBack } from '../../src/features/map/state/mapMachine.ts';
 import { activeIntent } from '../../src/features/map/intent/intentModel.ts';
 import {
@@ -1237,8 +1238,13 @@ function FullScreenMapScreenInner() {
   // The derivation runs against the objects the gateway returned, NOT against
   // the post-layer/post-zoom projection: whether the world contains aggregate
   // movement is a fact about the data, not about what the user has switched on.
+  // The derivation lives in mapMachine.ts beside the gate it feeds, so
+  // census-map M221's criterion ("with a projection response carrying >= 1
+  // crowd_flow object, CROWD_FLOW is enterable; with zero it is not") has
+  // addressable code to test. The inline reduce that used to be here could not
+  // be reached from any test.
   const crowdFlowObjectCount = useMemo(
-    () => defaultObjects.reduce((n, o) => (o.kind === 'crowd_flow' ? n + 1 : n), 0),
+    () => countServedCrowdFlow({ objects: defaultObjects }),
     [defaultObjects],
   );
   const capabilities = useMemo(
