@@ -67,7 +67,7 @@
  * Gating this module's own analytics calls is NOT sufficient, and the tests
  * caught that. `rankItems` in DiscoveryRankingService writes its own
  * `rank_events` rows, via `writeRankAnalyticAsync` at
- * `services/ranking/DiscoveryRankingService.ts:985,1110,1123,1132#writeRankAnalyticAsync`
+ * `services/ranking/DiscoveryRankingService.ts:769,1102,1227,1240#writeRankAnalyticAsync`
  * — an ITEM_ELIGIBLE and an ITEM_SCORED row per candidate, plus boost and
  * fatigue rows. Those fire whenever it is handed a non-null client, and nothing
  * at this layer can ask it not to. A 20-place shadow run would have written 40+

@@ -394,7 +394,7 @@ sibling censuses.
 > **A staleness note that is not a recount.** Read at the wave-1 worktree (`7d1f2d498`), the
 > pillar-1 grep no longer returns one hit: three artifacts now name the Telegraph spec in their
 > own text — `artifacts/api-server/src/domain/telegraph/contracts/certification.ts:4#Telegraph spec (v1 and v1_1 — v1_1's shared body is a byte-exact`,
-> `artifacts/api-server/src/compass/CompassTools.ts:119#Telegraph §18.3 — the eight conversation accessors the Telegraph spec names.`
+> `artifacts/api-server/src/compass/CompassTools.ts:127#Telegraph §18.3 — the eight conversation accessors the Telegraph spec names.`
 > and `artifacts/api-server/src/migrations/2400_telegraph_history_bound.sql:5#Both Telegraph specification versions require this (v1_1 is a byte-exact`.
 > Whether any BUILT-AND-CORRECT row rests on them has NOT been re-derived, so **no figure in
 > this document is changed by this note** — it records that the "admits no exception in HEAD"

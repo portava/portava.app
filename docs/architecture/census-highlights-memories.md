@@ -1257,7 +1257,7 @@ production; the two that are present are name collisions with divergent schemas.
 | id | requirement | verdict | evidence |
 |---|---|---|---|
 | H107 | Do-again compiled through current-world / Temporal-Freedom engines | NB | A repository-wide grep for `doAgain`, `do_again`, `takeMeBack` and `take_me_back` across `artifacts/` and `travel-buddy-standalone/` in `.ts`, `.tsx` and `.sql` returns nothing at all — not a fixture, not a comment |
-| H108 | The eight executable actions | NB | Same grep. `add_to_trip` (`artifacts/api-server/src/compass/CompassTools.ts:467#add_to_trip`) adds a PLACE to a trip and knows nothing about a Memory |
+| H108 | The eight executable actions | NB | Same grep. `add_to_trip` (`artifacts/api-server/src/compass/CompassTools.ts:475#add_to_trip`) adds a PLACE to a trip and knows nothing about a Memory |
 | H109 | Historical / current fusion invariant | NB | No fusion path exists. The nearest artifact is the honesty note §25 now certifies (H243), which asserts the opposite direction: a historical fact must not be read as current |
 
 #### §15 Retrieval (H110–H114)
@@ -1272,7 +1272,7 @@ production; the two that are present are name collisions with divergent schemas.
 
 #### §16 Compass contract (H115–H128)
 
-`artifacts/api-server/src/compass/CompassTools.ts:152#get_user_profile` opens a list of **eleven** tools —
+`artifacts/api-server/src/compass/CompassTools.ts:160#get_user_profile` opens a list of **eleven** tools —
 `get_user_profile`, `get_current_trip`, `search_places`, `search_events`,
 `get_place_details`, `get_circle_activity`, `check_trip_conflicts`, `add_to_trip`,
 `get_whos_around`, `get_travel_compatibility`, `get_group_recommendation`. Not one is
@@ -1281,7 +1281,7 @@ constrain either.
 
 | id | requirement | verdict | evidence |
 |---|---|---|---|
-| H115 | `getMemory` | NB | Not in the eleven tools at `artifacts/api-server/src/compass/CompassTools.ts:152#get_user_profile` |
+| H115 | `getMemory` | NB | Not in the eleven tools at `artifacts/api-server/src/compass/CompassTools.ts:160#get_user_profile` |
 | H116 | `searchMemories` (Compass tool) | NB | Same. `services/memoryRetrieval/searchMemories.ts` exists and Compass cannot reach it |
 | H117 | `getSharedMemories` | NB | Same |
 | H118 | `getPlaceHistory` | NB | Same. `PlaceMemoryProjection` exists in the registry with `visit_index`; no tool reads it |
@@ -1438,7 +1438,7 @@ gives 22 BAC, 7 BBW, 1 NB.
 | H234 | Fixture: walk-past venue that must not become a visit | **BAC** | Entry 11. Certified: the day as a whole is eligible (a ticketed visit), 2 episodes, and the paired control — the 90-second proximity ALONE — is refused with `PASS_BY_NOT_VISIT` |
 | H235 | Fixture: downloaded screenshot that must not become experienced content | **BAC** | Entry 12. Certified refused with `MEDIA_NOT_CAPTURED`; the same image re-declared as a camera capture is eligible, so the gate reads provenance rather than counting media. Mutation 2 turned it red |
 | H236 | Invariant: PRIVATE memory cannot appear in public search | **BAC** | Two surfaces, both in CI. The derivative path: HELD, `PublicMemoryProjection` emits only the published-and-public row (only_me, custom-with-allow-list, draft and deleted all absent) and the PUBLIC namespace refuses an owner-private projection on the way in. The LIVE path: `artifacts/api-server/src/test/memoriesPublicFeedPrivacy.test.ts:234#describe` asserts the same property on the real `GET /memories`, including that a `custom` Memory whose allow-list contains the viewer stays out of the global feed. Mutations 1 and 3 each turned it red |
-| H237 | Invariant: deleted memory cannot remain in Compass retrieval | BBW | HELD on the only Compass-facing memory artifact that exists: the deleted Memory leaves `CompassMemoryProjection`, its registration is revoked with an emptied payload, and reading the revoked derivative refuses with `derivative_revoked` rather than returning an empty page. **BBW because the named surface does not exist** — `artifacts/api-server/src/compass/CompassTools.ts:152#get_user_profile` declares no memory tool |
+| H237 | Invariant: deleted memory cannot remain in Compass retrieval | BBW | HELD on the only Compass-facing memory artifact that exists: the deleted Memory leaves `CompassMemoryProjection`, its registration is revoked with an emptied payload, and reading the revoked derivative refuses with `derivative_revoked` rather than returning an empty page. **BBW because the named surface does not exist** — `artifacts/api-server/src/compass/CompassTools.ts:160#get_user_profile` declares no memory tool |
 | H238 | Invariant: rejected candidate cannot become a Highlight | NB | `NO_SURFACE`. The rejection half is real and asserted; the second half has nothing to assert against, because nothing turns a candidate into a Highlight — `highlight_sources` is 2722, unapplied, with no writer, and `POST /highlights` inserts a client-supplied `mediaUrl`. The suite asserts this exact status at `artifacts/api-server/src/test/memoryCertificationInvariants.test.ts:117#reports` so it can never drift into looking like a pass |
 | H239 | Invariant: planned activity without occurrence cannot earn a visit Memory/Stamp | BBW | HELD: PLANNED+SAVED alone is refused with `PLANNED_OR_SAVED_ONLY` and the same set plus one OCCURRED record is eligible, so the refusal is the intent rule and not a blanket deny. BBW because it is proved on `evidence.ts`, which no route imports; the live stamp path enforces the rule by requiring a real check-in (H4) and is not covered by this test |
 | H240 | Invariant: blocked person cannot be newly resurfaced through shared-memory recommendations | **BAC** | HELD on a module a route imports, and the live half was already covered: `HIDE_PERSON_FROM_RESURFACING` suppresses exactly its subject across proactive resurfacing and recap, does not leak to another participant, and an UNREADABLE preference set suppresses rather than serving. `artifacts/api-server/src/test/memoriesBlockFailClosed.test.ts:109#describe` covers the live feed's fail-closed block filter. **Ceiling: 2720 is unapplied, so in production the set is `absent` and suppresses nothing** |
@@ -1553,7 +1553,7 @@ edited none of them. Each was read, not skimmed:
 
 Section B's §16 paragraph said `CompassTools.ts` "opens a list of **eleven** tools" and named
 them. **That was true at `254e1876` and is false on the merged tree.** The literal array at
-`artifacts/api-server/src/compass/CompassTools.ts:148#COMPASS_TOOL_DEFINITIONS` now holds
+`artifacts/api-server/src/compass/CompassTools.ts:156#COMPASS_TOOL_DEFINITIONS` now holds
 **twenty-five** entries and spreads eight more at `:467#TELEGRAPH_COMPASS_TOOL_DEFINITIONS`,
 so the real figure is **thirty-three**. The twenty-two added since section B measured are
 `get_freedom_windows`, `get_route_chain`, `get_today_state`, `get_crew_state`,
@@ -1586,8 +1586,8 @@ row, and the wording each one supports was re-read at the new line before it was
 
 | citation | was | now | why |
 |---|---|---|---|
-| the eleven-tool list (×3 rows) | `CompassTools.ts:152#name` | `CompassTools.ts:152#get_user_profile` | `:86` had drifted onto a comment. **It was passing `check:doc-citations` anyway**, because the anchor was the single token `name` and line 83 reads "…the Telegraph spec names." A one-word anchor is a substring lottery; the replacement anchors on the tool name itself. |
-| `add_to_trip` | `CompassTools.ts:193#name` | `CompassTools.ts:467#add_to_trip` | Same defect, worse outcome: `:160` is now `get_place_details`, and `#name` matched it happily. |
+| the eleven-tool list (×3 rows) | `CompassTools.ts:153#export const COMPASS_TOOL_COUNT_IN_HEADER` | `CompassTools.ts:160#get_user_profile` | `:86` had drifted onto a comment. **It was passing `check:doc-citations` anyway**, because the anchor was the single token `name` and line 83 reads "…the Telegraph spec names." A one-word anchor is a substring lottery; the replacement anchors on the tool name itself. |
+| `add_to_trip` | `CompassTools.ts:201#name` | `CompassTools.ts:475#add_to_trip` | Same defect, worse outcome: `:160` is now `get_place_details`, and `#name` matched it happily. |
 | the tool array (§16 rows) | `CompassTools.ts:70-218` | `CompassTools.ts:102-476` | The array's real extent on the merged tree. |
 | H129's tool set | `CompassTools.ts:70` | `CompassTools.ts:102` | Same. |
 | H129's write-shaped tool | `:158` | `CompassTools.ts:422` | Bare `:161` also named no file; now fully qualified. |
@@ -1656,7 +1656,7 @@ section B records — re-declare at the squash when this lands — is unchanged 
 | The accessor that has to say "there is none" | `artifacts/api-server/src/compass/MemoryCompassTools.ts:593#evidence_store` | `getMemoryEvidence` answers `evidence_store: "absent"` first, then lists the artifacts attached to the Memory with a caveat that they are not §6-normalized evidence. |
 | The minimum clarifying question | `artifacts/api-server/src/compass/MemoryCompassTools.ts:698#clarifyingQuestion` | Three material facts, ONE question, in a fixed priority order. A draft missing all three produces one question, not an interrogation. |
 | Two write-shaped tools that write nothing | `artifacts/api-server/src/compass/MemoryCompassTools.ts:658#toolMemoryCreateDraft` and `:728#toolMemorySuggestCorrection` | Both return a proposal with `requires_confirmation` and a `confirm_via` naming the existing authenticated route, which re-authorizes. Field allow-lists at `:637#DRAFTABLE_FIELDS` and `:641#CORRECTABLE_FIELDS`, both deliberately SHORTER than `patchMemorySchema`: audience lists, visibility and lifecycle state cannot be proposed by prose. |
-| The wiring | `artifacts/api-server/src/compass/CompassTools.ts:577#MEMORY_COMPASS_TOOL_DEFINITIONS` (spread) and `artifacts/api-server/src/compass/CompassTools.ts:2198#MEMORY_COMPASS_TOOL_NAMES.has` (dispatch) | One import, one spread, one branch, one prompt block — the shape Telegraph's §18.3 block already established in this file. |
+| The wiring | `artifacts/api-server/src/compass/CompassTools.ts:626#MEMORY_COMPASS_TOOL_DEFINITIONS` (spread) and `artifacts/api-server/src/compass/CompassTools.ts:2390#MEMORY_COMPASS_TOOL_NAMES.has` (dispatch) | One import, one spread, one branch, one prompt block — the shape Telegraph's §18.3 block already established in this file. |
 | The §16 boundary as prompt text | `artifacts/api-server/src/compass/MemoryCompassTools.ts:940#MEMORY_COMPASS_PROMPT_RULES` | Listed LAST on purpose. It is the weakest of the three layers, and it exists only for §16's "may" clauses, which cannot be expressed as a refusal. |
 | The suites | `artifacts/api-server/src/test/memoryCompassTools.test.ts:300#bypass` (35 tests) and `artifacts/api-server/src/test/memoryPublishPolicy.test.ts:195#refuses` (18 tests) | Both registered in `package.json`'s `test` script. |
 
@@ -1670,13 +1670,13 @@ out: `artifacts/api-server/src/test/memoryCompassTools.test.ts:247#offered`.
 ### C.2 Reachability, stated as a chain with its weak links named
 
 `POST /compass/ask` → `COMPASS_TOOL_DEFINITIONS` handed to the model
-(`artifacts/api-server/src/routes/compass.ts:1313#COMPASS_TOOL_DEFINITIONS`) → the model emits a
+(`artifacts/api-server/src/routes/compass.ts:1314#COMPASS_TOOL_DEFINITIONS`) → the model emits a
 tool call → `executeCompassTool` dispatches by name → `executeMemoryCompassTool`.
 
 Three things that chain depends on, each said rather than assumed:
 
 1. **`COMPASS_ENABLED`.** Read fail-closed at
-   `artifacts/api-server/src/routes/compass.ts:1406#isCompassEnabled`. The committed production
+   `artifacts/api-server/src/routes/compass.ts:1407#isCompassEnabled`. The committed production
    snapshot records it `true`. That is a repository artifact, not a live query — production was
    not touched.
 2. **An OpenAI credential.** `artifacts/api-server/src/lib/openai.ts:4#apiKey` reads
@@ -2032,7 +2032,7 @@ censuses were looking at the same file and only one of them could see it. What t
 to CH-03 is the fix and the §28.10 half beside it; the observation was not its own, and claiming
 it would be the exact overclaim this corpus exists to catch.
 
-`artifacts/api-server/src/compass/CompassGraphEngine.ts:763#Experiences` builds the Travel Intelligence
+`artifacts/api-server/src/compass/CompassGraphEngine.ts:854#Experiences` builds the Travel Intelligence
 Graph from `public.memories`. Its output lands in `compass_graph_nodes` and
 `compass_graph_edges`; `buildCityWorldModels` and `computeCityConfidenceIndex` fold those into
 per-city Destination World Models and the city-confidence index, which reach **every** user
@@ -2076,17 +2076,17 @@ below says so in those words rather than quietly repointing the citation.
 ### D.3 What was built
 
 **1. §28.10 eligibility, stated once and used by both halves.**
-`artifacts/api-server/src/compass/CompassGraphEngine.ts:571#isPublicWorldMemory` is `isPublicWorldMemory`
+`artifacts/api-server/src/compass/CompassGraphEngine.ts:658#isPublicWorldMemory` is `isPublicWorldMemory`
 — `state === "published" && visibility === "public"`. One definition, because the builder that
 ADDS an experience node and the sweep that REMOVES one must agree; when they disagree the
 graph either keeps a row it would no longer admit or deletes one it just wrote, and neither
 failure announces itself. The query now asks the database for it
-(`artifacts/api-server/src/compass/CompassGraphEngine.ts:811#visibility`) **and** the
-loop re-asserts it (`artifacts/api-server/src/compass/CompassGraphEngine.ts:818#isPublicWorldMemory`). Both are
+(`artifacts/api-server/src/compass/CompassGraphEngine.ts:902#visibility`) **and** the
+loop re-asserts it (`artifacts/api-server/src/compass/CompassGraphEngine.ts:909#isPublicWorldMemory`). Both are
 separately mutation-covered, because defence in depth that nothing exercises is a comment.
 
 **2. §28.8 revocation.**
-`artifacts/api-server/src/compass/CompassGraphEngine.ts:1614#reconcileExperienceNodes` is
+`artifacts/api-server/src/compass/CompassGraphEngine.ts:2052#reconcileExperienceNodes` is
 `reconcileExperienceNodes`: it reads the persisted `experience` node keys, asks `memories`
 about **those ids**, and deletes the nodes — and every edge touching them — whose Memory is
 gone or no longer eligible. Three design choices, each load-bearing:
@@ -2103,7 +2103,7 @@ gone or no longer eligible. Three design choices, each load-bearing:
   - **Edges first, and before the aggregates are folded.** A node deleted before its edges
     leaves orphan `in_city` edges, and those are what `buildCityWorldModels` counts; a sweep
     run after the fold would let a revoked experience into today's score anyway.
-    `artifacts/api-server/src/compass/CompassGraphEngine.ts:1710#experienceRevocations` places it.
+    `artifacts/api-server/src/compass/CompassGraphEngine.ts:2148#experienceRevocations` places it.
 
 **3. §1 in the Memory domain, not only on the Compass surface.**
 `artifacts/api-server/src/services/memory/historicalTruth.ts:275#asHistoricalMemoryPayload` is
@@ -2142,7 +2142,7 @@ already runs, so `check:test-registration` covers them:
 | id | was | now | why |
 |---|---|---|---|
 | H5 | W | **C** | §1's separation is now a property of the Memory DOMAIN, which is exactly what section C said was missing: "*`routes/memories.ts` still serializes Memory rows with no truth class on them.*" Every canonical Memory the REST domain serves — single read, discovery feed, profile listing, trip recap, create and patch responses — carries `truthClass: "historical"` and `establishesCurrentStatus: false`, applied by `artifacts/api-server/src/routes/memories.ts:3048#asHistoricalMemoryPayload` rather than written into each handler. **CEILING: this is a declaration on the datum, not an enforcement on the reader.** What is mechanical is that the caveat cannot be dropped without dropping a field, that a payload claiming `current_world` has the claim removed, and that `currentWorldReading` still refuses a historical source class |
-| H237 | W | **C** | "Deleted memory cannot remain in Compass retrieval." It now holds on the only Compass projection of Memories **production actually has**: `artifacts/api-server/src/compass/CompassGraphEngine.ts:1614#reconcileExperienceNodes` revokes the experience node and every edge touching it when the Memory is deleted, archived, hard-deleted with its owner's account, or narrowed below `public`. **PART OF THIS MOVE IS A RE-READ, NOT A BUILD, AND IS LABELLED AS SUCH:** the §16 accessors section C built already excluded deleted Memories (`canCompassReadMemory` requires `published`; every tool query filters `state <> 'deleted'`) and this row did not account for them. The BUILD half is the graph sweep. **CEILING: the revocation is bounded by the rebuild's daily cadence**, so a deleted Memory can sit in the aggregate substrate for up to 24 hours, and §24's `privacy_revocation_latency` — the metric that would measure exactly that — does not exist |
+| H237 | W | **C** | "Deleted memory cannot remain in Compass retrieval." It now holds on the only Compass projection of Memories **production actually has**: `artifacts/api-server/src/compass/CompassGraphEngine.ts:2052#reconcileExperienceNodes` revokes the experience node and every edge touching it when the Memory is deleted, archived, hard-deleted with its owner's account, or narrowed below `public`. **PART OF THIS MOVE IS A RE-READ, NOT A BUILD, AND IS LABELLED AS SUCH:** the §16 accessors section C built already excluded deleted Memories (`canCompassReadMemory` requires `published`; every tool query filters `state <> 'deleted'`) and this row did not account for them. The BUILD half is the graph sweep. **CEILING: the revocation is bounded by the rebuild's daily cadence**, so a deleted Memory can sit in the aggregate substrate for up to 24 hours, and §24's `privacy_revocation_latency` — the metric that would measure exactly that — does not exist |
 | H263 | C | **C** | **NO NET MOVE, AND THAT IS THE WORST WAY TO READ THIS ROW.** Its C was a FALSE GREEN at `f8384ea5b`: its stated evidence was "*the only path from derived memory to any shared surface is `memoryProducer.ts` … Nothing feeds memory into world intelligence*", and `CompassGraphEngine` was a second path, running daily, carrying `friends_only`, `trip_crew`, `circle_only` and `custom` Memories into the Destination World Model. The row ends green because the gate was narrowed to `public` (D.3), not because the sentence was rewritten. Evidence replaced: the rule now holds on **both** paths, and both are named |
 | H189 | W | **W** | Evidence corrected, verdict unmoved. The row read "*revokes nothing — there are no derivatives or indexes to revoke, and no cache invalidation on the memories path*". Half of that is now false: there IS a public derivative of a Memory in production — its experience node and edges in the Compass graph — and narrowing a Memory's audience now revokes it. **Still W for two reasons, both stated rather than implied:** the revocation is asynchronous with a daily ceiling, and `compass_feed_cache` is still never invalidated on a memory visibility change |
 | H190 | W | **W** | Same correction, same verdict. A soft delete now revokes the graph derivative on the same cadence. The media bytes stay publicly served, §21's five-step deletion lifecycle still does not exist, and neither moves |
@@ -2365,7 +2365,7 @@ by a sweep that considers it eligible. Had it survived, **H263 would be a false 
 second time and H237's C would not be earned.**
 
 The surviving sweep decides through `isPublicWorldMemory`
-(`artifacts/api-server/src/compass/CompassGraphEngine.ts:571#isPublicWorldMemory`), the same
+(`artifacts/api-server/src/compass/CompassGraphEngine.ts:658#isPublicWorldMemory`), the same
 predicate `buildGraphFromSources` gates its write on, which is the property D.3 item 1 claims
 and is unchanged at this commit. A Compass-lane test pins the distinction:
 `artifacts/api-server/src/test/compassCensusCorrectness.test.ts:214#B2` seeds one experience
@@ -2396,30 +2396,30 @@ D.3's second bullet under **2. §28.8 revocation** reads, and stays on the recor
 
 **Restated at `75cc31d9e`: it fails closed PER BATCH, and the pass no longer abandons itself.**
 The sweep asks `memories` about the node keys it holds in chunks of 200
-(`artifacts/api-server/src/compass/CompassGraphEngine.ts:1410#DELETE_CHUNK`). Before the merge,
+(`artifacts/api-server/src/compass/CompassGraphEngine.ts:1848#DELETE_CHUNK`). Before the merge,
 the first chunk whose read errored or threw set `unresolved` and **returned** — every later
 chunk's revocations waited a day. Now a failed chunk sets `unresolved`, counts its keys into a
 new field, and the loop **carries on**
-(`artifacts/api-server/src/compass/CompassGraphEngine.ts:1671#undecided`).
+(`artifacts/api-server/src/compass/CompassGraphEngine.ts:2109#undecided`).
 
 Three corrections, each mechanical:
 
 1. **"deletes nothing" is now a statement about the FAILED BATCH, not about the pass.** Nothing
    in a batch that failed can be deleted, because the dooming decision is a pure helper,
-   `artifacts/api-server/src/compass/CompassGraphEngine.ts:1563#deadExperienceKeys`, which
+   `artifacts/api-server/src/compass/CompassGraphEngine.ts:2001#deadExperienceKeys`, which
    returns `[]` on `ok === false` and is called with the batch's own `ok`
-   (`artifacts/api-server/src/compass/CompassGraphEngine.ts:1670#deadExperienceKeys`). A failed
+   (`artifacts/api-server/src/compass/CompassGraphEngine.ts:2108#deadExperienceKeys`). A failed
    batch therefore contributes no dead keys and cannot widen a revocation. The batches that
    answered are acted on.
 2. **"reporting zero twice" is now three states, not two.** `ExperienceReconcileReport` gained
-   `artifacts/api-server/src/compass/CompassGraphEngine.ts:1546#undecided` — the node keys the
+   `artifacts/api-server/src/compass/CompassGraphEngine.ts:1984#undecided` — the node keys the
    pass refused to judge. A clean sweep reports `undecided: 0, unresolved: false`; a partial one
    reports a non-zero `undecided`; a sweep that could not read the node table at all reports
    `examined: 0, unresolved: true`. D.3's sentence covered the first and the third and had no
    word for the second, because before the merge the second did not exist.
 3. **The whole-pass fail-closed claim survives in one place, and only there.** An unreadable
    `compass_graph_nodes` read still returns immediately and decides nothing
-   (`artifacts/api-server/src/compass/CompassGraphEngine.ts:1627#report.unresolved`). That is
+   (`artifacts/api-server/src/compass/CompassGraphEngine.ts:2065#report.unresolved`). That is
    the read D.3's third design choice depends on, and it is untouched.
 
 **The evidence-table line in D.3 is restated the same way.** It reads "an unreadable `memories`
@@ -2442,7 +2442,7 @@ is recorded here as a ceiling rather than counted as a build.
 
 | row | verdict at `d3b19fa9d` | at `75cc31d9e` | the mechanical reason it does not move |
 |---|---|---|---|
-| H237 | C | **C** | The sweep still revokes the experience node and every edge touching it, and still runs before the aggregates are folded (`artifacts/api-server/src/compass/CompassGraphEngine.ts:1710#experienceRevocations`, re-read at the new line). The per-batch change moves the ceiling in the SAFE direction: a transient read failure no longer defers every other batch's revocation for a day. The stated ceiling — daily cadence, no `privacy_revocation_latency` — is unchanged |
+| H237 | C | **C** | The sweep still revokes the experience node and every edge touching it, and still runs before the aggregates are folded (`artifacts/api-server/src/compass/CompassGraphEngine.ts:2148#experienceRevocations`, re-read at the new line). The per-batch change moves the ceiling in the SAFE direction: a transient read failure no longer defers every other batch's revocation for a day. The stated ceiling — daily cadence, no `privacy_revocation_latency` — is unchanged |
 | H263 | C | **C** | The §28.10 gate is byte-identical: `:548`, `:768` and `:775` are untouched by the merge. What the merge decided is which sweep AGREES with that gate, and it kept the one that does |
 | H189 | W | **W** | Unchanged. `compass_feed_cache` is still never invalidated on a Memory visibility change, which is the half the W rests on |
 | H190 | W | **W** | Unchanged. The media bytes stay publicly served and §21's five-step deletion lifecycle still does not exist |
@@ -2574,7 +2574,7 @@ and that is now honoured.
 D.11 recorded, as a ceiling rather than a build, that the merged sweep's carry-on path — one
 batch fails, another succeeds, **the successful one's revocations are applied anyway** — was
 "asserted by construction and by nothing else", because `DELETE_CHUNK` is 200
-(`artifacts/api-server/src/compass/CompassGraphEngine.ts:1410#DELETE_CHUNK`) and no fixture in
+(`artifacts/api-server/src/compass/CompassGraphEngine.ts:1848#DELETE_CHUNK`) and no fixture in
 this repository seeded more than 200 experience nodes.
 
 **That was checked before it was believed, and it is exactly true.** Restoring the pre-merge
@@ -4345,8 +4345,8 @@ counted file this section changed, with the argument for why it cannot move a ve
 
 | **ID** | **was** | **now** | why |
 |---|---|---|---|
-| **H3** | **N** | **W** | the row's evidence — *"No AI path over Memories exists; no guard exists either"* — is FALSE at HEAD and has been since §C. The path is `artifacts/api-server/src/compass/MemoryCompassTools.ts:949#executeMemoryCompassTool`, eight `memory_*` tools, reached from `artifacts/api-server/src/compass/CompassTools.ts:2203#executeMemoryCompassTool` inside `executeCompassTool`, reached from `artifacts/api-server/src/routes/compass.ts:1350#executeCompassTool` inside the tool loop. The guard is `artifacts/api-server/src/compass/MemoryCompassTools.ts:940#MEMORY_COMPASS_PROMPT_RULES` plus `truth_class`/`establishes_current_status` on every fact. `W` and not `C` on the two reasons this document has already recorded for the same object: there is no SUPPORTED EVIDENCE to summarize (H24, `memory_evidence` exists nowhere), and the "may not manufacture" half is mechanical for participants, attendance and identity and PROMPT TEXT ONLY for states and outcomes (H126) |
-| **H266** | **N** | **W** | the row's evidence — *"No AI presentation exists"* — is FALSE at HEAD, by the same three links. §28.17 asks for a deterministic fallback renderer when AI presentation fails. A deterministic fallback EXISTS: `artifacts/api-server/src/routes/compass.ts:1919#ai_error` returns `HONEST_FALLBACK_MESSAGE`, a module constant at `artifacts/api-server/src/routes/compass.ts:1067#HONEST_FALLBACK_MESSAGE`. It renders NO Memory fact — it is the sentence *"Compass AI assistant is temporarily unavailable."* So the fallback is built and it is not a renderer: half, which is `W` |
+| **H3** | **N** | **W** | the row's evidence — *"No AI path over Memories exists; no guard exists either"* — is FALSE at HEAD and has been since §C. The path is `artifacts/api-server/src/compass/MemoryCompassTools.ts:949#executeMemoryCompassTool`, eight `memory_*` tools, reached from `artifacts/api-server/src/compass/CompassTools.ts:2395#executeMemoryCompassTool` inside `executeCompassTool`, reached from `artifacts/api-server/src/routes/compass.ts:1351#executeCompassTool` inside the tool loop. The guard is `artifacts/api-server/src/compass/MemoryCompassTools.ts:940#MEMORY_COMPASS_PROMPT_RULES` plus `truth_class`/`establishes_current_status` on every fact. `W` and not `C` on the two reasons this document has already recorded for the same object: there is no SUPPORTED EVIDENCE to summarize (H24, `memory_evidence` exists nowhere), and the "may not manufacture" half is mechanical for participants, attendance and identity and PROMPT TEXT ONLY for states and outcomes (H126) |
+| **H266** | **N** | **W** | the row's evidence — *"No AI presentation exists"* — is FALSE at HEAD, by the same three links. §28.17 asks for a deterministic fallback renderer when AI presentation fails. A deterministic fallback EXISTS: `artifacts/api-server/src/routes/compass.ts:1942#ai_error` returns `HONEST_FALLBACK_MESSAGE`, a module constant at `artifacts/api-server/src/routes/compass.ts:1068#HONEST_FALLBACK_MESSAGE`. It renders NO Memory fact — it is the sentence *"Compass AI assistant is temporarily unavailable."* So the fallback is built and it is not a renderer: half, which is `W` |
 | **H264** | **C** | **C** | unmoved, restated because this section repaired a second instance of the defect that produced its green. §28.11 is now enforced on `GET /memories/:id` as well as on the block-lookup branch, which strengthens an existing `C` rather than moving one |
 
 ### M.2 The 205 non-correct rows, partitioned
@@ -4379,7 +4379,7 @@ sections and is the most useful number in this document.
    guard). Both have been in the tree since §C, which moved fourteen rows onto them and never came
    back to H3.
 2. **H266, line 1485:** *"No AI presentation exists."* — disproved by the same dispatcher and by
-   `artifacts/api-server/src/routes/compass.ts:1350#executeCompassTool`, the tool loop that feeds
+   `artifacts/api-server/src/routes/compass.ts:1351#executeCompassTool`, the tool loop that feeds
    every `memory_*` result back to the model for narration.
 3. **H265, line 1484:** *"No summarization of Memories exists to preserve anything through."* —
    disproved by `artifacts/api-server/src/compass/MemoryCompassTools.ts:940#MEMORY_COMPASS_PROMPT_RULES`,
@@ -4406,12 +4406,12 @@ The chain, every link opened at HEAD:
 1. `artifacts/api-server/src/lib/openai.ts:4#AI_INTEGRATIONS_OPENAI_API_KEY` reads the credential
    and `artifacts/api-server/src/lib/openai.ts:14#not-configured` constructs the client with the
    literal `"not-configured"` when it is absent. Every model call then fails.
-2. `artifacts/api-server/src/routes/compass.ts:1327#chat.completions.create` is that call, and
-   `artifacts/api-server/src/routes/compass.ts:1329#tool_calls` binds `toolCalls` to `[]` when it
+2. `artifacts/api-server/src/routes/compass.ts:1328#chat.completions.create` is that call, and
+   `artifacts/api-server/src/routes/compass.ts:1330#tool_calls` binds `toolCalls` to `[]` when it
    throws or returns nothing.
-3. `artifacts/api-server/src/routes/compass.ts:1350#executeCompassTool` runs **only inside
+3. `artifacts/api-server/src/routes/compass.ts:1351#executeCompassTool` runs **only inside
    `for (const tc of toolCalls)`**. No `toolCalls`, no tool execution.
-4. `artifacts/api-server/src/compass/CompassTools.ts:2203#executeMemoryCompassTool` is the only
+4. `artifacts/api-server/src/compass/CompassTools.ts:2395#executeMemoryCompassTool` is the only
    production reference to the Memory dispatcher.
 5. `artifacts/api-server/src/compass/MemoryCompassTools.ts:949#executeMemoryCompassTool` is the
    only production definition, and a repository-wide grep finds **no other production caller of
@@ -4443,7 +4443,7 @@ deployment and not of the code, and this lane may not read the deployment.
 anywhere in the path. §E.7 said so and this section re-checked it.
 
 **And one row runs BECAUSE the credential is absent.** H266's fallback branch —
-`artifacts/api-server/src/routes/compass.ts:1919#ai_error` — is the branch that fires on every
+`artifacts/api-server/src/routes/compass.ts:1942#ai_error` — is the branch that fires on every
 request when the model call fails. If D-C2 resolves to "not set", H266's `W` is the only verdict in
 this family that is describing production rather than describing a possibility.
 
@@ -4722,7 +4722,7 @@ Closed, and slightly wider than §L.2 framed it: the same loop also writes the
 person was in that city **at that hour**. Somebody who only planned a trip was
 not. The city NODE and its coordinates are kept for every row — those are facts
 about a PLACE — and every person-level edge below them is now gated
-(`compass/CompassGraphEngine.ts:619#const def = Array.isArray(r.stamp_definitions)`).
+(`compass/CompassGraphEngine.ts:706#const def = Array.isArray(r.stamp_definitions)`).
 
 ### N.3 §L.5's survivor G, closed at both new sites
 

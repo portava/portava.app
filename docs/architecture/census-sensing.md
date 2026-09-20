@@ -2272,7 +2272,7 @@ did **not** build.
   GPS at every depth. So this bridge adds **no table, no column, no index and
   no verb**. A session is TWO ROWS on the existing spine — an opening
   `direction` event and the outcome's own existing verb — and its state is the
-  FOLD over them (`lib/experienceSession.ts:300#export function foldSession(`;
+  FOLD over them (`lib/experienceSession.ts:532#export function foldSession(`;
   `test/experienceSession.test.ts:152#the fold takes the CLOSE`). The only
   platform change is one new allow-listed payload key beside `intel`, so the
   I4a/I4b outcome contract stays exact
@@ -2280,13 +2280,13 @@ did **not** build.
   `test/experienceSession.test.ts:164#ALLOW-LISTED`). Migration 2841 seeds a
   flag and states the same reasoning in SQL
   (`migrations/2841_experience_session_flag.sql:41#PRECONDITION FAILED: public.canonical_events`).
-- **The bridge itself** — `lib/experienceSession.ts:190#export function openExperienceSession(`
+- **The bridge itself** — `lib/experienceSession.ts:367#export function openExperienceSession(`
   opens a session against an OPPORTUNITY (lib/opportunityEngine's own four
   kinds, §6.1), carrying the subject, the claim refs the opportunity rested on
   and a bounded window; a kind outside that vocabulary is refused as
   `no_opportunity_reference`, because a session with no opportunity is not a
   bridge (`test/experienceSession.test.ts:69#NOT a bridge`; B7-M3 red).
-  `lib/experienceSession.ts:254#export function closeExperienceSession(`
+  `lib/experienceSession.ts:486#export function closeExperienceSession(`
   closes it with a RESULT from the existing outcome vocabulary and OPTIONAL
   feedback on the existing 1..5 scale, and the closing event carries the
   outcome's OWN existing verb — so a closed session is, to every existing
@@ -2297,13 +2297,13 @@ did **not** build.
   ONE SUBJECT: the envelope has a single `subject_id` and every trail-shaped
   key — path, route, trail, waypoints, visits, previous/next subject, track,
   and the coordinate names — is refused at any depth, at build time and again
-  on the wire (`lib/experienceSession.ts:105#export const SESSION_FORBIDDEN_KEYS`;
-  `lib/experienceSession.ts:127#export function sessionForbiddenKeys(`;
-  `routes/experienceSessions.ts:169#const trail = sessionForbiddenKeys`;
+  on the wire (`lib/experienceSession.ts:181#export const SESSION_FORBIDDEN_KEYS`;
+  `lib/experienceSession.ts:203#export function sessionForbiddenKeys(`;
+  `routes/experienceSessions.ts:224#const trail = sessionForbiddenKeys`;
   `test/experienceSession.test.ts:83#cannot be given a trail`; B7-M5 red).
   ONE OPEN SESSION: a second while one is open is refused, so sessions cannot
   accumulate into a parallel trail
-  (`routes/experienceSessions.ts:147#already_open`;
+  (`routes/experienceSessions.ts:202#already_open`;
   `test/experienceSessionsRoute.test.ts:156#a SECOND session`; B7-M9 red).
   NO HISTORY READ: the store exports exactly three functions — the open
   session, one session by id, and an append — and the suite asserts that set
@@ -2313,7 +2313,7 @@ did **not** build.
   (`lib/experienceSessionStore.ts:71#const since = new Date(nowMs`; B7-M12 red).
   A BOUNDED LIFE: `expires_at` is mandatory and at most twelve hours, and an
   unbounded one is refused rather than clamped
-  (`lib/experienceSession.ts:63#export const MAX_SESSION_HOURS`; B7-M6 red).
+  (`lib/experienceSession.ts:99#export const MAX_SESSION_HOURS`; B7-M6 red).
 - **Closing is terminal, and an expired window cannot be closed with an
   outcome** — a closed session cannot be closed again (B7-M2 red), and a
   session whose window has passed is refused `expired` rather than accepting a
@@ -2322,7 +2322,7 @@ did **not** build.
   (`test/experienceSession.test.ts:141#an EXPIRED session`;
   `test/experienceSessionsRoute.test.ts:314#an EXPIRED session`; B7-M1 red).
   The state itself is folded, never a stored status somebody could set
-  (`lib/experienceSession.ts:228#export function sessionState(`).
+  (`lib/experienceSession.ts:460#export function sessionState(`).
 - **A failed read is a refusal, never "you have no session"** —
   `lib/experienceSessionStore.ts:80#read_failed` returns a named refusal, and
   the route will not open a second session on the strength of a read that
@@ -2335,7 +2335,7 @@ did **not** build.
   `experience_session_enabled` (2841, seeded FALSE), read fail-closed: with the
   flag absent — production's state — all three answer `feature_disabled` and
   neither read nor write, asserted by counting the rows the double stored
-  (`routes/experienceSessions.ts:106#experience_session_enabled`;
+  (`routes/experienceSessions.ts:161#experience_session_enabled`;
   `test/experienceSessionsRoute.test.ts:109#the flag ABSENT`; B7-M10 red).
   Every read and write is keyed on the caller's own id, so another person's
   session simply does not resolve
@@ -2437,7 +2437,7 @@ could be closed honestly — by going through the path that already exists.
   `intel` rather than inside it, so the shared I4a/I4b contract is still
   exactly its six keys (`lib/intelOutcomes.ts:178#experienceSession?: Record<string, unknown>;`;
   `lib/intelOutcomes.ts:204#if (input.experienceSession)`;
-  `routes/experienceSessions.ts:220#if (q.snapshotId && q.claimId && q.servedAt)`).
+  `routes/experienceSessions.ts:406#if (q.snapshotId && q.claimId && q.servedAt)`).
   Through the real route the single written event carries `payload.intel`
   byte-exact — snapshot, claim, subject, outcome, the 1..5 rating and
   `served_at` — and `payload.experience_session` naming the session it closed,
@@ -2456,7 +2456,7 @@ could be closed honestly — by going through the path that already exists.
   event with `calibrated: false`, invisible to the calibration report and
   honestly so: no snapshot id is fabricated to be counted
   (`test/experienceSessionsRoute.test.ts:285#names NO snapshot`;
-  `routes/experienceSessions.ts:14#THE LAST ARROW`).
+  `routes/experienceSessions.ts:38#THE LAST ARROW`).
 
 ### 6.10 Row moves (third pass)
 

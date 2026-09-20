@@ -1146,6 +1146,10 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/wallIntentResolutionTruthfulness.test.ts",
     "artifacts/api-server/src/lib/inputAssistance/gateway.ts",
     "travel-buddy-standalone/scripts/check-test-mocks.mjs",
+    // ADDED 2026-09-20 by census-wall §14: the first-page benchmark this census
+    // now cites, and the build config it reads to say the repo names no device.
+    "artifacts/api-server/src/test/wallFirstPageLiveDb.test.ts",
+    "eas.json",
     "artifacts/api-server/src/lib/mediaAssets.ts",
     "artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts",
     "artifacts/api-server/src/routes/wallTelemetry.ts",
@@ -1984,6 +1988,20 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/lib/experienceTruth.ts",
     "artifacts/api-server/src/test/compassMemoryClientBoundary.test.ts",
     "artifacts/api-server/src/test/compass-tools.test.ts",
+    // WIDENED 2026-09-20 by census-compass §27. Nine more files this census now
+    // CITES: the two flag migrations and the Trails migration it applied to
+    // production (27.1), the model client that proves CPH-01 is unmeasurable
+    // here (27.2), the decision assembler named as branch-only, and the four the
+    // new rows reach through.
+    "artifacts/api-server/src/migrations/2840_opportunity_engine_flag.sql",
+    "artifacts/api-server/src/migrations/2910_discovery_trails.sql",
+    "artifacts/api-server/src/lib/openai.ts",
+    "artifacts/api-server/src/lib/compassDecisionAssembly.ts",
+    "artifacts/api-server/src/services/airport/LayoverTravelTime.ts",
+    "artifacts/api-server/src/routes/memories.ts",
+    "artifacts/api-server/src/routes/plan.ts",
+    "artifacts/api-server/src/routes/mediaFeed.ts",
+    "artifacts/api-server/src/test/verifyFlowHighlightControls.test.ts",
     // WIDENED 2026-09-20 by census-compass §26. Sixteen rows were built in one
     // pass and their evidence lives in files this list did not watch: the
     // shared Attention Engine (CX-08), the §8 intent-mode vocabulary (CX-02),

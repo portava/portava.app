@@ -144,13 +144,12 @@ below, reviewed as such, one at a time.
 | `src/services/appeals/resolveAppeal.ts` | executeTripCommand | `UPDATE_TRIP` |
 | `src/services/hiddenGems/HiddenGemService.ts` | executeTripCommand | `ADD_PLAN` |
 
-### Direct write paths around the kernel — 80
+### Direct write paths around the kernel — 79
 
 | file | table | verb |
 | --- | --- | --- |
 | `src/compass/CompassAutopilotEngine.ts` | `trip_autopilot_settings` | upsert |
 | `src/compass/CompassAutopilotEngine.ts` | `trip_autopilot_proposals` | insert |
-| `src/compass/CompassAutopilotEngine.ts` | `trip_plan_items` | update |
 | `src/domain/trips/events/tripActivityLog.ts` | `trip_activity_log` | insert |
 | `src/domain/trips/services/TripCloseoutService.ts` | `trip_crew_location_sessions` | update |
 | `src/domain/trips/services/TripCloseoutService.ts` | `trip_decisions` | update |
