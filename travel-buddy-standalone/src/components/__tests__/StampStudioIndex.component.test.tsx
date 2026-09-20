@@ -1111,7 +1111,15 @@ import { useRequireAdmin } from '../../hooks/useRequireAdmin.ts';
 import { router } from 'expo-router';
 
 const mockUseRequireAdmin = useRequireAdmin as jest.Mock;
-const mockRouter = router as { push: jest.Mock; back: jest.Mock; replace: jest.Mock };
+// `jest.Mocked<typeof router>`, not a hand-written `{ push; back; replace }`
+// shape. The hand-written one asserted a conversion TypeScript rejects — the
+// two types do not overlap, because it named three members of a Router that has
+// many — and it drifts silently whenever expo-router's Router surface changes,
+// which is how this file came to carry a different error count under a
+// different resolution of that package. `jest.Mocked<T>` is the type
+// `jest.mock('expo-router')` actually produces, so it cannot drift from Router
+// and it needs no cast through `unknown`.
+const mockRouter = router as jest.Mocked<typeof router>;
 
 describe('StampStudioIndex — Geocode Cache link renders for admins and navigates correctly', () => {
   let spy: ReturnType<typeof makeIntervalSpy>;
