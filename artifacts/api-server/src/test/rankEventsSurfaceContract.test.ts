@@ -30,19 +30,30 @@
  * TEST-FIRST — WRITTEN AND WATCHED FAIL BEFORE THE FIX
  * ══════════════════════════════════════════════════════════════════════════════
  * This file was written before any change to DiscoveryRankingService.ts or
- * WallRankingService.ts and run against the unfixed tree. Observed:
+ * WallRankingService.ts.
  *
- *   ✗ "the persisted surface is one the live CHECK admits"
- *       AssertionError: rank_events row carries surface='explore', which
- *       rank_events_surface_check REJECTS (23514). Admitted: pulse, discovery,
- *       events, compass, live_pulse, living_page, watch_feed, wall
- *       — i.e. exactly the production 23514, reproduced in-process.
- *   ✗ "the code's persisted-surface vocabulary is the one the database admits"
- *       (PERSISTED_RANK_SURFACES did not exist — import failure.)
- *   ✓ "For You keeps the explore weight profile" — GREEN before the fix, and
- *       deliberately so: it is the REGRESSION GUARD for the trap above, not a
- *       demonstration of the defect. It goes red the moment the profile slips
- *       to the default. Reported green honestly rather than contrived red.
+ * Two of its four cases name exports that did not exist yet
+ * (PERSISTED_RANK_SURFACES, FOR_YOU_WEIGHT_PROFILE, FOR_YOU_ANALYTICS_SURFACE),
+ * so the whole MODULE could not load against the unfixed tree — a red that
+ * proves nothing about the defect. So the defect assertion was first run in
+ * isolation, against the untouched source, with the same fake database and the
+ * same admitted-surface list as `the persisted surface is one the live CHECK
+ * admits` below. Observed, verbatim:
+ *
+ *       accepted: 0  rejected: 2  rejected surfaces: [ 'explore' ]
+ *       AssertionError: rank_events rows REJECTED 23514; surfaces=["explore"]
+ *         + [ { event_type: 'ranking_item_scored', surface: 'explore', … } ]
+ *         - []
+ *
+ *   — every analytics row the For You page produced was rejected and none was
+ *   accepted: the production defect, reproduced in-process, before the fix.
+ *
+ *   ✓ "For You keeps the explore weight profile" was GREEN once the fix made
+ *     the module loadable, and would have been green before it too. Reported
+ *     honestly rather than contrived into a red: it is the REGRESSION GUARD
+ *     for the trap (renaming the profile to `wall` silently selects the
+ *     DEFAULT profile), not a demonstration of the defect. M2 below is the
+ *     evidence that it bites.
  *
  * ══════════════════════════════════════════════════════════════════════════════
  * MUTATION LOG — each applied ALONE to the source, suite re-run, then restored

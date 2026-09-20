@@ -434,6 +434,36 @@ describe("CT-01 — the direct canonical write no longer exists in the source", 
 });
 
 /*
- * ── MUTATION LOG ─────────────────────────────────────────────────────────────
- * PENDING — filled in after the implementation lands.
+ * ── MUTATION LOG (2026-09-20) ────────────────────────────────────────────────
+ * TEST-FIRST: written before the implementation. Red at the start — 8 pass /
+ * 5 fail — on exactly the residual, and for the right reasons: `kernelAvailable`
+ * absent, the flag-off path APPLYING the change through the direct write, the
+ * confirm route answering 200 `confirmed` for a change it had not made, the
+ * `.from("trip_plan_items").update(` still in the engine, and the ratchet
+ * baseline still allowing it. Green after: 13 / 0.
+ *
+ * Each mutation applied ALONE to the restored source, the suites re-run, the
+ * source restored before the next. Suites: K = this file,
+ * A = compass-autopilot.test.ts, R = compassAutopilotRevalidation.test.ts,
+ * T = tripKernel.test.ts.
+ *
+ *   M1  the direct `trip_plan_items` write reinstated as the flag-off
+ *       fallback (the CT-01 violation itself) ....... RED  K 3, T 1 (A, R green)
+ *   M2  the idempotency key replaced with randomUUID()
+ *       instead of `autopilot:<proposal>:<item>` .... RED  K 1
+ *   M3  the lock-type and permission re-verification
+ *       at confirm deleted ......................... RED  K 3, A 1
+ *   M4  the route's kernel-unavailable refusal
+ *       skipped, so a confirm that changed nothing
+ *       is recorded `confirmed` .................... RED  K 1
+ *   M5  `kernelAvailable` hard-coded true ........... RED  K 2
+ *   M6  the §24 ratchet baseline left at direct: 1 .. RED  K 1 — and T GREEN.
+ *       Reported, not hidden: checkTripKernelWriters.judge() skips a file with
+ *       zero writes before the `shrank` comparison, so a stale entry lands in
+ *       `vanished`, which tripKernel.test.ts does not assert on and the check
+ *       prints only as advice. K is the only thing that makes a stale baseline
+ *       fail, which is why the assertion is there.
+ *
+ * None green. A, R and T are listed wherever they moved so it is visible which
+ * guarantees they still carry and which ones only this suite holds.
  */
