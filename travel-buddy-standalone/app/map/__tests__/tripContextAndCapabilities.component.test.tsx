@@ -34,7 +34,14 @@ const knobs: {
   /** useMapEntities source — 'gateway' means the projection (and its temporal
    *  sibling) answered, which is what opens §15 Time Machine. */
   entitiesSource: 'gateway' | 'legacy' | 'mixed';
-} = { params: {}, flags: {}, userId: null, tripStops: [], entitiesSource: 'legacy' };
+  /** The objects the PROJECTION RESPONSE carried. §30's CROWD_FLOW capability
+   *  is derived from these and nothing else — see the M221 block at the foot
+   *  of this file for why that distinction is the whole requirement. */
+  objects: { kind: string; id: string }[];
+} = { params: {}, flags: {}, userId: null, tripStops: [], entitiesSource: 'legacy', objects: [] };
+
+/** Written by the LayersSheet stub on every render; read after a deep link. */
+const layerContextHolder: { mode?: string } = {};
 
 jest.mock('expo-router', () => {
   const React = require('react');
@@ -168,8 +175,17 @@ jest.mock('../../../src/components/map/MapFilterSheet', () => ({
   loadEnabledLayers: jest.fn().mockResolvedValue(['buddies', 'events', 'gems', 'trips', 'friends']),
 }));
 // NOTE: intentionally exhaustive — reads AsyncStorage at import.
+//
+// The stub RECORDS its `context` prop rather than discarding it. That prop is
+// `layerContext`, which the screen builds from `machine.mode`, so it is the
+// screen's own mode as the screen itself reports it to a real child — not a
+// test-only hook bolted on to observe internal state. It is what the §30
+// capability gates ultimately decide.
 jest.mock('../../../src/components/map/LayersSheet', () => ({
-  LayersSheet: () => null,
+  LayersSheet: (props: { context?: { mode?: string } }) => {
+    layerContextHolder.mode = props?.context?.mode;
+    return null;
+  },
   loadLayerPreferences: jest.fn().mockResolvedValue({}),
 }));
 // NOTE: intentional stub — not under test here.
@@ -200,7 +216,7 @@ jest.mock('../../../src/components/map/MapCarousel', () => {
 // this screen; requireActual would fetch over the network.
 jest.mock('../../../src/hooks/useMapEntities', () => ({
   useMapEntities: () => ({
-    entities: [], objects: [], liveEnrichment: null,
+    entities: [], objects: knobs.objects, liveEnrichment: null,
     loading: false, error: null, refresh: () => {}, source: knobs.entitiesSource,
   }),
 }));
@@ -237,6 +253,8 @@ beforeEach(() => {
   knobs.userId = null;
   knobs.tripStops = [];
   knobs.entitiesSource = 'legacy';
+  knobs.objects = [];
+  delete layerContextHolder.mode;
   locateSession().mockClear();
 });
 
@@ -362,5 +380,61 @@ describe('FullScreenMapScreen — §15 Time Machine reachability', () => {
 
     await waitFor(() => expect(screen.getByTestId('map-carousel')).toBeTruthy());
     expect(screen.queryByTestId('time-machine-control')).not.toBeNull();
+  });
+});
+
+// ── §30 CROWD_FLOW, at the SCREEN ────────────────────────────────────────────
+//
+// census-map M221 reads: with a projection response carrying at least one
+// crowd_flow object, CROWD_FLOW is enterable; with zero it is not.
+//
+// `crowdFlowObjectCount` is pinned in mapMachine.test's own file. THE WIRING
+// WAS NOT. Lane A measured the hole and reported it rather than papering over
+// it: replacing the screen's `countServedCrowdFlow({ objects: defaultObjects })`
+// with `() => 1` — claiming a crowd flow that was never served, which opens a
+// mode with nothing in it — left all sixteen map-screen suites green. No test
+// anywhere asserted that the screen's CROWD_FLOW capability comes from the
+// objects the gateway actually returned.
+//
+// These two cases close that. The observable is the `mode` the screen hands
+// LayersSheet in `layerContext`, which is `machine.mode`: a mode `canEnterMode`
+// refuses leaves the machine in LIVE, so a refused deep link is visible as a
+// mode that did not change.
+//
+// Both mutations Lane A left surviving are red against this block:
+//   J1  stop passing the served objects to the gate  → the first case fails
+//   J2  report a crowd flow that was never served    → the second case fails
+describe('FullScreenMapScreen — §30 CROWD_FLOW comes from the served objects', () => {
+  it('opens the mode when the projection response carried a crowd_flow object', async () => {
+    knobs.flags = { map_crowd_flow_enabled: true };
+    knobs.userId = 'user-1';
+    knobs.entitiesSource = 'gateway';
+    knobs.objects = [{ kind: 'crowd_flow', id: 'flow-1' }];
+    await mount();
+
+    await deepLinkTo('CROWD_FLOW');
+
+    await waitFor(() => expect(layerContextHolder.mode).toBe('CROWD_FLOW'));
+  });
+
+  it('refuses the mode when the response carried none, however many other objects it carried', async () => {
+    // Deliberately NOT an empty response. A gate that counted objects rather
+    // than crowd_flow objects would pass an empty-vs-nonempty test and still be
+    // wrong; §10's capability is about aggregate movement being present, not
+    // about the projection having returned something.
+    knobs.flags = { map_crowd_flow_enabled: true };
+    knobs.userId = 'user-1';
+    knobs.entitiesSource = 'gateway';
+    knobs.objects = [
+      { kind: 'live_place', id: 'p-1' },
+      { kind: 'hidden_gem', id: 'g-1' },
+      { kind: 'traveler_flow', id: 't-1' },
+    ];
+    await mount();
+
+    await deepLinkTo('CROWD_FLOW');
+
+    await waitFor(() => expect(screen.getByTestId('map-carousel')).toBeTruthy());
+    expect(layerContextHolder.mode).not.toBe('CROWD_FLOW');
   });
 });
