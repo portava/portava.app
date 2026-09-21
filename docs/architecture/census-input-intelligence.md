@@ -6,7 +6,7 @@
 | **`.docx` reconciliation** | The `.txt` and the `.docx` are **identical** after whitespace/Unicode normalisation. I extracted `word/document.xml`, stripped tags, NFC-normalised and collapsed whitespace on both sides: 508 non-empty lines each, `difflib` diff length **0**. The "`.docx` is authoritative" clause never had to be exercised, and no verdict here rests on a transcription difference. |
 | **Section count** | The brief said 59. **It is 58** (`§1 Product Definition` … `§58 Final Architecture Principle`; verified by `grep -nE '^[0-9]+\. '`, which returns 58 headings plus one false positive at line 101 — §9's inline "1. Exact canonical Portava entity…" ranked list). Four sibling censuses found their briefed section counts wrong; this is a fifth. |
 | **Tree censused** | `claude/portava-continuation-uqta94`, HEAD `68ed59d9`. |
-| `head_commit` | `a97bfdac0` — RE-DECLARED 2026-09-16 by **§13**, replacing `1fe72289b`. This is a MEASUREMENT, not a field edit, and it is the first re-declaration in this census made by someone who did not write the work being graded. §13 re-read this census's requirements affected by everything that landed between `1fe72289b` and `a97bfdac0` and moved exactly one: **G277 `W` → `C`**, clause by clause, three of its five clauses being false at this commit and the two that survive not being defects. The headline is restated from the LAST STATED headline (§12.7) rather than the stale top block — C 262→263 · W 58→57 · N 49 · X 4 — and §13 names that top-block drift as an accounting correction rather than quietly fixing it. ONE counted file changed in the acknowledged range (`routes/discoverySearch.ts`) and §13 enumerates its diff as exactly five hunks, all confined to the countries path, which is why this declaration is licensed: the only requirement those hunks could move is the one that was measured. The acknowledgement written against `1fe72289b` is therefore SPENT and has been moved to the `retired` array of CENSUS_STALENESS_ACKNOWLEDGED.json; zero counted files have changed between `a97bfdac0` and HEAD, so no replacement entry is written. It does **NOT** certify the other 262 `C` rows, and §1's reading rule applies unchanged. The previous declaration read: `1fe72289b` — RE-DECLARED 2026-09-15 at the squash merge of PR #482. The previous value was `80a8d655a`, a commit on the pre-merge branch. **The squash made it an orphan**: it still exists in a clone that fetched the branch, but it is on no line of history leading to `main`, and `check:census-freshness` refuses an orphan because the check would pass locally and fail in a fresh clone. Nothing about this census was re-measured and NO verdict moves — `1fe72289b` is the commit its previous declaration's tree became, so zero counted files have changed since it. The prior declaration and its reasoning follow. — RE-DECLARED 2026-09-14 by §12, replacing `90a515a6`. §12 re-derived the rows this branch's Input changes bear on — G292, G372 and G351 moved `N → W`, and §12.2 refuses the `C` the lane proposed for G292 on the grounds the lane itself stated. §12.3 answers §25/G163 (voice) from a re-run grep rather than inheriting it, and §12.4 names four sentences this document had been contradicting itself with. The 22 counted files that changed are that work. It does **NOT** certify the other 259 `C` rows, and §1's reading rule applies unchanged. The previous declaration read: `90a515a6` — RE-DECLARED 2026-09-13 by §9, replacing `579694d6` (itself a §8 re-declaration of `42aeac38`). It **starts a clock; it does not certify a past.** Read the next row before quoting it, and read §9.9 for what this re-declaration is and is not worth. `579694d6` carried no acknowledgement of its own, so nothing was spent to replace it — the only ledger edit §9 makes is to **census-discovery**, whose entry is extended with an argument for the one `lib/inputAssistance/` file this pass changed. |
+| `head_commit` | `e1acc6045` — RE-DECLARED 2026-09-21 by **§14**, replacing `a97bfdac0`. FOUR counted files changed in that range and all four are §14's own slice (`lib/inputAssistance/gateway.ts`, `lib/inputAssistance/rankingSignals.ts`, `components/SmartInput.tsx`, `hooks/useInputAssistance.ts`); `check:census-freshness` names exactly those four, so the range is enumerable rather than asserted. §14 re-read the requirements those files bear on and moved exactly one: **G216 `W` → `C`** (§34 immediate zero-state), with **G233 built and deliberately LEFT at `W`** on two named holes, and G214/G224 re-measured because G216's local tier is the premise their evidence rests on. The headline is restated in §14.3 from the LAST stated headline (§13.3) — C 263→264 · W 57→56 · N 49 · X 4 — and the top-of-document block is superseded for the THIRD time rather than edited, for the append-only reason §13.3 gives. **The acknowledgement written against `a97bfdac0` is SPENT** and has been moved to the `retired` array of CENSUS_STALENESS_ACKNOWLEDGED.json: its contract is to argue why a change cannot have moved a verdict, and this change moved one, so extending it would have been the wrong instrument. Zero counted files have changed between `e1acc6045` and HEAD, so no replacement entry is written. **`e1acc6045` is a commit on `claude/ii-preview-local-antispam`**: this repository squash-merges, so the merge will make it an ancestor of nothing and the next pass must re-declare at the squash — the same trap the `1fe72289b` row below was written for. It does **NOT** certify the other 263 `C` rows, and §1's reading rule applies unchanged. The previous declaration read: `a97bfdac0` — RE-DECLARED 2026-09-16 by **§13**, replacing `1fe72289b`. This is a MEASUREMENT, not a field edit, and it is the first re-declaration in this census made by someone who did not write the work being graded. §13 re-read this census's requirements affected by everything that landed between `1fe72289b` and `a97bfdac0` and moved exactly one: **G277 `W` → `C`**, clause by clause, three of its five clauses being false at this commit and the two that survive not being defects. The headline is restated from the LAST STATED headline (§12.7) rather than the stale top block — C 262→263 · W 58→57 · N 49 · X 4 — and §13 names that top-block drift as an accounting correction rather than quietly fixing it. ONE counted file changed in the acknowledged range (`routes/discoverySearch.ts`) and §13 enumerates its diff as exactly five hunks, all confined to the countries path, which is why this declaration is licensed: the only requirement those hunks could move is the one that was measured. The acknowledgement written against `1fe72289b` is therefore SPENT and has been moved to the `retired` array of CENSUS_STALENESS_ACKNOWLEDGED.json; zero counted files have changed between `a97bfdac0` and HEAD, so no replacement entry is written. It does **NOT** certify the other 262 `C` rows, and §1's reading rule applies unchanged. The previous declaration read: `1fe72289b` — RE-DECLARED 2026-09-15 at the squash merge of PR #482. The previous value was `80a8d655a`, a commit on the pre-merge branch. **The squash made it an orphan**: it still exists in a clone that fetched the branch, but it is on no line of history leading to `main`, and `check:census-freshness` refuses an orphan because the check would pass locally and fail in a fresh clone. Nothing about this census was re-measured and NO verdict moves — `1fe72289b` is the commit its previous declaration's tree became, so zero counted files have changed since it. The prior declaration and its reasoning follow. — RE-DECLARED 2026-09-14 by §12, replacing `90a515a6`. §12 re-derived the rows this branch's Input changes bear on — G292, G372 and G351 moved `N → W`, and §12.2 refuses the `C` the lane proposed for G292 on the grounds the lane itself stated. §12.3 answers §25/G163 (voice) from a re-run grep rather than inheriting it, and §12.4 names four sentences this document had been contradicting itself with. The 22 counted files that changed are that work. It does **NOT** certify the other 259 `C` rows, and §1's reading rule applies unchanged. The previous declaration read: `90a515a6` — RE-DECLARED 2026-09-13 by §9, replacing `579694d6` (itself a §8 re-declaration of `42aeac38`). It **starts a clock; it does not certify a past.** Read the next row before quoting it, and read §9.9 for what this re-declaration is and is not worth. `579694d6` carried no acknowledgement of its own, so nothing was spent to replace it — the only ledger edit §9 makes is to **census-discovery**, whose entry is extended with an argument for the one `lib/inputAssistance/` file this pass changed. |
 | **What that declaration does and does not say** | `42aeac38` is #476's squash — the commit where this document itself reached `main`. Its verdicts were taken at a pre-squash working tree that **exists nowhere**: verified against FULL history (`git fetch --unshallow`, 4,300 commits, then `git cat-file -e`), not assumed — a shallow clone had made every such commit look unresolvable for the wrong reason. So `nobody` can diff that tree against `42aeac38`, and this declaration **does not claim that interval was empty**. What it claims is mechanically checked: `git diff --name-only 42aeac38..HEAD` over the paths in `CENSUS_SCOPE` returns **0 files**, and from here any change to one of them ages this census. Before it, `check:census-freshness` reported this document as CANNOT BE CHECKED — the weakest of the three states, not the safest. FRESH means *no counted file has moved since `42aeac38`*; it does **not** mean the rows were re-read, and none has been. Declared by the Trips lane while recounting the sibling census; if this lane disagrees, reverting costs only the check. |
 | **Method** | Requirement-level, four buckets, exactly one bucket per requirement. Every BUILT verdict cites a `file:line` I opened and read. |
 | **Database** | Not queried. Every production fact below comes from the supplied ground truth, from `src/scripts/checkProductionDrift.ts` (which records a direct CI-vs-production comparison), or from a commit message whose author did measure it. |
@@ -2760,3 +2760,135 @@ every row this section does not name.
 `check:missing-live-columns`, `check:authorization-contract`,
 `check:media-objects`, `check:rank-events-surfaces`. **Exit 2 is UNVERIFIED, not
 green**, and nothing in this section rests on any of them.
+
+---
+
+## 14 — §28 / §30 / §34 / §36: one row moves, four stale rows agree again
+
+This section is the slice that built G216 and the impersonation demotion. It is
+written here because the four requirement rows it edits sit in §4, and a row
+edited in place leaves no record of WHO moved it or what the count became — the
+failure §11 and §13.3 both name. The rule those sections set is that a pass
+restates the tally in its own section; this one does that.
+
+### 14.1 The one row that moves
+
+| id | was | now | evidence |
+|---|---|---|---|
+| G216 | W | **C** | §34 *"prefer local: immediate zero-state"*. The gate now has a reader — `hooks/useInputAssistance.ts:162#const zeroStateTier =` reads `zeroStateAssistance` from the context descriptor, which nothing on either side had ever read — and a local source answers it first, gated by `privacyClass` on both the record and the read (`localZeroState.ts:113#export function mayRetainLocally`) and kept when the server answer never arrives (`hooks/useInputAssistance.ts:320#setSuggestions(local ?? []);`). |
+
+**This is the only verdict this section moves**, and it moves WITHIN the built
+set, so CONSTRUCTED does not change and only CORRECT does — the shape a defect
+closure has, and the same shape §13.3 records for G277.
+
+**G233 (§36) was BUILT AND STAYS `W`, deliberately.** `handleSignature` /
+`applyImpersonationRisk` exist and are wired, so the row's one surviving reason
+— *"no confusable/homoglyph comparison exists anywhere in the layer"* — is now
+false. It does not move because the rule is **within-response only** (an
+impersonator whose target is absent from that answer is untouched) and because
+**businesses are not covered at all** (`verified` / `isOfficial` exist only on
+`profiles`, so a venue row has no genuine-listing signal to be impersonated
+against). Both holes are pinned by assertions rather than described. Building
+something a row asks for is not by itself a reason to move it, and this is the
+case where saying so matters.
+
+**G232 (§36) is not built, on purpose**, and the reasoning is in its §4 row: no
+suggestion path reads `canonical_locations.aliases`, so a detector placed in
+this layer would guard a set this layer does not consult.
+
+### 14.2 Three rows whose §4 text was stale, and which move no number
+
+`G180`, `G181` (§28) and `G214` (§34) were moved to `C` by §8.4's and §9.3's
+row-move tables. The §4 requirement rows kept the old text, so this document
+contradicted its own later statement for three rows at once, while
+`check:census-integrity` — which takes the LAST statement of a row — had already
+been counting them `C`. **The count therefore does not move**: these are
+repairs to the reading experience, not verdicts. They are re-verified end to end
+rather than copied across, and `G176`, `G177`, `G179`, `G192`, `G212`, `G213`,
+`G222`, `G224` and `G237` keep their verdicts with an
+**EVIDENCE THAT WOULD CLOSE IT** clause added.
+
+### 14.3 Headline, restated from the rows
+
+**Restated from `check:census-integrity`'s own parse, not by adding this move to
+a previous headline.** The last stated headline before this section is §13.3's
+(C 263 / W 57 / N 49 / X 4).
+
+| Measure | Value |
+| --- | --- |
+| **Denominator — testable requirements** | **373** |
+| BUILT-AND-CORRECT | **264** |
+| BUILT-BUT-WRONG | **56** |
+| NOT-BUILT | **49** |
+| CANNOT-VERIFY | **4** |
+| **CONSTRUCTED%** = (C+W)/373 | **320 / 373 = 85.8 %** |
+| **CORRECT%** (raw) = C/373 | **264 / 373 = 70.8 %** |
+| **CORRECT% (spec-attributable)** = (C-23<sup>p</sup>)/373 | **241 / 373 = 64.6 %** |
+| **THE GAP** = W/373 | **56 / 373 = 15.0 %** |
+| CANNOT-VERIFY share | **4 / 373 = 1.1 %** |
+
+The `23ᵖ` subtrahend is UNCHANGED. G216 is graded `C` and not `C ᵖ`: the local
+zero-state source did not exist before this slice — `localZeroState.ts` is a new
+file — so the work is attributable to this specification.
+
+**The top-of-document headline remains stale, and this section does not repair
+it.** It reads `262 / 55 / 52 / 4`. §13.3 superseded it for the second time and
+recorded why the block itself may not be edited (the corpus is append-only and
+§11's block carries its own note). This is the third supersession, stated for
+the same reason: a reader who stops at the top block gets a number the body has
+now contradicted three times.
+
+### 14.4 `head_commit` advances to `e1acc6045`
+
+Four counted files changed since `a97bfdac0`, and all four are this slice's:
+`lib/inputAssistance/gateway.ts`, `lib/inputAssistance/rankingSignals.ts`,
+`components/SmartInput.tsx`, `hooks/useInputAssistance.ts`. Nothing else in this
+census's scope moved in that range — which is checkable rather than asserted,
+because `check:census-freshness` names exactly those four and no others.
+
+**An acknowledgement would have been the wrong instrument here.** Its contract
+is to argue why a change CANNOT have moved a verdict, and this change moved one.
+So the `a97bfdac0` entry is retired to the `retired` array of
+`CENSUS_STALENESS_ACKNOWLEDGED.json` rather than extended, and `head_commit` is
+re-declared at `e1acc6045` — the commit that carries the measured work.
+
+**What that declaration is worth.** The four files are the input-assistance
+gateway, its ranking signals, and the two client modules this slice edited. The
+requirement each could move has been re-read: G216 and G233 for the client and
+ranking changes, G214 and G224 re-measured alongside them because G216's local
+tier is the premise both of their evidence cells rest on. It does **NOT** certify
+the other 263 `C` rows, and §1's reading rule applies unchanged to every row this
+section does not name. The declaration starts a clock; it certifies no past.
+
+**It will need re-declaring at the squash.** `e1acc6045` is a commit on
+`claude/ii-preview-local-antispam`, and this repository squash-merges, so the
+merge makes it an ancestor of nothing — the exact trap the `1fe72289b`
+re-declaration was written for, recorded in this census's own header. The next
+pass re-declares at the squash, where zero counted files will have changed.
+
+### 14.5 Scope, widened
+
+`check:census-scope-coverage` put this census at 96% against a floor of 98%
+once this slice's files entered the denominator. Four paths are added to
+`CENSUS_SCOPE`: `services/localZeroState.ts` and its two new test files, which
+carry G216's verdict and could otherwise have been deleted without ageing this
+census, and `test/discoveryCountryRegistry.test.ts`, whose line 2 reads
+`GII G277 "CountryResolver"` and which §13.2 rests G277's `C` on. Coverage is
+99%.
+
+`artifacts/api-server/src/lib/stamps/countryLookup.ts` is deliberately **not**
+added, and this sentence is the "say so" the check asks for in place of a path.
+§13.1 cites it once, as corroboration that the resolver is CONSUMED rather than
+duplicated; the subject graded is `countryCodes.ts`, not its Stamps-lane
+consumer, and watching it would age this census whenever that lane touches its
+own country lookup — §9.4's stated rule for other lanes' files.
+
+### 14.6 Guards run at this tree
+
+`check:census-integrity` **0**, `check:census-freshness` **0**,
+`check:census-scope-coverage` **0**, `check:census-row-move-labels` **0**,
+`check:census-policy-citations` **0**, `check:doc-citations` **0**,
+`check:citation-targets` **0**, `check:citation-symbols` **0**,
+`check:test-registration` **0**, `typecheck` **0**, `typecheck:tests` at
+baseline. The live-credential checks are not run here and nothing in this
+section rests on one.

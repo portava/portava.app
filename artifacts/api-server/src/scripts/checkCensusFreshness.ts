@@ -2179,6 +2179,33 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // deliberately NOT here: they are other lanes' files, and watching them would
     // age this census every time those lanes touch their own telemetry.
     "artifacts/api-server/src/migrations/2258_input_selection_history.sql",
+    // ── WIDENED 2026-09-21 by §14 (§28/§30/§34/§36). Same rule as §8's and §9's
+    // widenings: a census must watch what it CITES. §14 closes G216 on three
+    // files that did not exist before it, and all three carry the verdict:
+    // `localZeroState.ts` IS the local source the row now grades, and the two
+    // test files are the mutation-proof that it is reached and that the
+    // privacy-class gate holds on both the record and the read. Unwatched, any
+    // of the three could have been deleted without ageing this census — which is
+    // the §9 argument verbatim, and it bit here one section later.
+    //
+    // `discoveryCountryRegistry.test.ts` is added for the SAME reason and is not
+    // a cross-lane file despite its name: its line 2 reads
+    // `GII G277 "CountryResolver"`, and §13.2 rests G277's `C` (and its refusal
+    // of the `ᵖ` marker) on that naming. The proof of a row in THIS census may
+    // not be deletable without ageing THIS census.
+    //
+    // `artifacts/api-server/src/lib/stamps/countryLookup.ts` is deliberately NOT
+    // added, and this is the "say so" that check:census-scope-coverage asks for
+    // in place of a path. §13.1 cites it once, as corroboration that Discovery
+    // CONSUMES `countryCodes.ts` rather than growing a second list — the subject
+    // graded is the resolver, not its Stamps-lane consumer. Watching it would
+    // age this census every time the Stamps lane touches stamp country lookup,
+    // which is §9.4's stated rule for other lanes' files. Coverage clears the
+    // 98% floor without it.
+    "travel-buddy-standalone/src/platform/input-assistance/services/localZeroState.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/services/__tests__/localZeroState.test.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.zeroState.component.test.tsx",
+    "artifacts/api-server/src/test/discoveryCountryRegistry.test.ts",
   ],
   "census-discovery.md": [
     // ── ADDED 2026-09-15 by §43: the registry B05 now rests on ──────────────
