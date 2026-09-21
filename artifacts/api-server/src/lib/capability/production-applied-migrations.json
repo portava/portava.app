@@ -477,6 +477,26 @@
   {
    "version": "20260921075225",
    "name": "2964_map_telemetry_disabled_discards"
+  },
+  {
+   "version": "20260921085226",
+   "name": "2965_memory_projector_canon_saves_delete_guard"
+  },
+  {
+   "version": "20260921101101",
+   "name": "2976_journey_shadow_global_stop_delete_scope"
+  },
+  {
+   "version": "20260921105203",
+   "name": "2220_canonical_locations_search_key"
+  },
+  {
+   "version": "20260921105203",
+   "name": "2221_compass_ai_writing_default_off"
+  },
+  {
+   "version": "20260921105203",
+   "name": "2258_input_selection_history"
   }
  ]
 }

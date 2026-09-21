@@ -307,7 +307,23 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
 
   // ── Everything else measured in the same comparison ────────────────────────
   event_passport_shares: { classification: "unapplied", note: "In portava-ci, absent from production." },
-  input_selection_history: { classification: "unapplied", note: "In portava-ci, absent from production." },
+  // input_selection_history — STRUCK 2026-09-21. It is no longer "absent from
+  // production": 2258_input_selection_history.sql was applied to production at
+  // 10:52:03 UTC in the same change that strikes this line, rehearsed first on a
+  // throwaway PostgreSQL 16 with Supabase's ALTER DEFAULT PRIVILEGES armed so the
+  // migration's ACL postcondition was exercised rather than trivially true, and
+  // verified in production independently of that postcondition: RLS on, anon
+  // holding no SELECT and authenticated no INSERT, service_role holding the four
+  // writes, both indexes present, the auth.users FK ON DELETE CASCADE, and
+  // input_record_selection SECURITY DEFINER with EXECUTE revoked from anon and
+  // authenticated. Both production snapshots were refreshed in the same change
+  // (baseline/20260921_production_tables.txt 481 -> 482 tables, and
+  // snapshots/20260921-production-schema.json, whose three digests were compared
+  // against the ones production computes for itself and matched).
+  //
+  // The entry's own header says this classification "MUST reach zero. They are
+  // not a steady state." This is one reaching zero by being applied, which is the
+  // only way the header allows.
   media_view_requests: { classification: "unapplied", note: "In portava-ci, absent from production." },
   media_view_request_optins: { classification: "unapplied", note: "In portava-ci, absent from production." },
   route_flow_contribution_consent: {

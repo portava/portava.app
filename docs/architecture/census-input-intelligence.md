@@ -277,6 +277,14 @@ Highlights/Memories.
 
 ## 3. Deployment reality — read this before any percentage
 
+> **FACTS 1, 2 AND 3 BELOW ARE SUPERSEDED. See §14.** Migrations 2220, 2221 and
+> 2258 were applied to production on 2026-09-21, so `input_selection_history`,
+> `input_record_selection`, `canonical_locations.search_key` and the
+> `compass_ai_writing_enabled` flag row all now exist there. The reasoning in
+> those three facts is still the reasoning and is left standing; the measurement
+> is not current. **Facts 4 and 5 are unchanged and still true.** Applying the
+> migrations closed no row on its own — §14.5 says why.
+
 Five facts decide whether the correct column means anything in production. None
 of them is a code defect and none is folded into a bucket.
 
@@ -2760,3 +2768,136 @@ every row this section does not name.
 `check:missing-live-columns`, `check:authorization-contract`,
 `check:media-objects`, `check:rank-events-surfaces`. **Exit 2 is UNVERIFIED, not
 green**, and nothing in this section rests on any of them.
+
+---
+
+## 14. Three of §3's five deployment facts stopped being true on 2026-09-21
+
+§3 is titled *"read this before any percentage"* and is the section this
+document leans on hardest, because it is what separates *correct code* from
+*correct code that runs*. Three of its five facts were measured against
+production and are now false, not because the measurement was wrong but because
+the migrations they described were applied. §3 is left in place — the corpus is
+append-only and its reasoning is still the reasoning — but **a reader who quotes
+§3 facts 1, 2 or 3 after this date is quoting a superseded measurement, and this
+section is where they are corrected.**
+
+### 14.1 What was measured in production before the apply
+
+Read directly from the production project, not from a document:
+
+| object | before |
+| --- | --- |
+| `public.input_selection_history` | **absent** (`to_regclass` null) |
+| `public.input_record_selection(…)` | **absent** (0 overloads) |
+| `canonical_locations.search_key` | **absent** |
+| `public.input_normalize_city_key(text)` | **absent** |
+| `pg_trgm` | **not installed** |
+| `feature_flags` row `compass_ai_writing_enabled` | **no row at all** |
+
+And the live evidence of the §10 defect, which the census had only ever argued
+from the migration header: production's `Thành phố Đà Nẵng` row carried
+`normalized_name = 'thanh pho a nang'`. The stroke `Đ` had been deleted, exactly
+as `2220`'s header predicts, in real data.
+
+### 14.2 The ledger says 2220 was applied. The ledger is not saying that.
+
+This is the trap, and it is worth writing down because anyone re-deriving §3
+will hit it. `schema_migration_ledger` in production **does** carry a row for
+`2220_canonical_locations_search_key.sql`. Its `applied_by` is `backfill` and
+its own `notes` read:
+
+> *"Seeded by 2254_schema_migration_ledger.sql. Asserts only that this filename
+> existed in src/migrations/ when 2254 ran. NOT evidence that it was applied to
+> this database; nothing verified that it was."*
+
+So the ledger and the schema never disagreed. A `backfill` row is a
+filename-existence assertion, and 380 of production's 461 ledger rows are
+`backfill` — about five-sixths of that ledger cannot be cited as evidence of
+application. **2220 was genuinely unapplied**, there was no replay risk, and no
+migration was duplicated or re-authored to work around a stale document.
+
+### 14.3 Rehearsed first, on a database where the first apply could fail
+
+`portava-ci` already carried all three, so re-running them there would have
+rehearsed the *re-run* path and proved nothing about the *first* apply. The
+rehearsal was built instead on a throwaway PostgreSQL 16.13 seeded with
+production's exact `canonical_locations` column list, production's exact
+`feature_flags` shape, an `auth.users` stub, all 31 real `canonical_locations`
+names — **and Supabase's `ALTER DEFAULT PRIVILEGES … GRANT EXECUTE … TO anon,
+authenticated`**, so `2258`'s ACL postcondition was actually exercised rather
+than trivially true. That last detail is the 2190/2214 lesson: the postcondition
+only means something in an environment where the thing it forbids can happen.
+
+Proven there before production touched anything: all three apply clean on a
+first apply and again on a re-run (idempotent); the `Đ` fold turns
+`thanh pho a nang` into `thanh pho da nang` and an `ILIKE '%da nang%'` on
+`search_key` then reaches the Vietnamese row; `input_record_selection` upserts to
+one row at `selection_count = 2` rather than two rows; a NULL label does not
+overwrite a known one; deleting the `auth.users` row erases the memory through
+the cascade; and `SET ROLE authenticated` followed by a call raises
+*"permission denied for function input_record_selection"*.
+
+None of the three files contains an unqualified `DELETE` or `UPDATE`, so the
+`supautils` `safeupdate` guard that made `2963` raise on every call has nothing
+to catch here. That was checked rather than assumed.
+
+### 14.4 Applied, and verified independently of the migrations' own postconditions
+
+| object | after |
+| --- | --- |
+| `canonical_locations.search_key` | `text`, `GENERATED ALWAYS … STORED`; all 31 rows backfilled; `normalized_name` untouched; row count unchanged at 31 |
+| `canonical_locations_search_key_trgm_idx` | present |
+| `input_normalize_city_key` | 1 overload |
+| `Thành phố Đà Nẵng` | `search_key = 'thanh pho da nang'`; `ILIKE '%da nang%'` returns it **and** the ASCII `Da Nang` row |
+| `input_selection_history` | present; RLS enabled; `anon` no `SELECT`, `authenticated` no `INSERT`, `service_role` `SELECT/INSERT/UPDATE/DELETE`; both indexes present; `auth.users` FK `confdeltype = 'c'`; 0 rows |
+| `input_record_selection` | 1 overload; `SECURITY DEFINER`; `EXECUTE` revoked from `anon` and `authenticated`, granted to `service_role` |
+| `compass_ai_writing_enabled` | present, `false`; `compass_ai_enabled` left at `true`, untouched; `feature_flags` 198 → 199 |
+
+All three recorded in `schema_migration_ledger` with their real `sha256` and
+`applied_by = 'manual'`, the 2220 `backfill` row superseded in place with the
+reason written into its notes.
+
+### 14.5 What this does NOT license
+
+**It does not close a single row by itself.** §3 fact 4 (every `intel_*` table
+at `count(*) = 0`) and fact 5 (the telemetry sink defined as
+`let sink: TelemetrySink = () => {}` and attached by nothing) are **unchanged**
+and still true. The eleven verdicts §3 flagged `☠prod` are no longer inert, but
+"the substrate now exists" is not evidence that a requirement is satisfied — the
+acceptance criterion is a live-path demonstration that a recorded selection
+resurfaces as a recent, or reorders a candidate, and that demonstration has not
+been run. Those rows stay where they are until it is.
+
+The same rule bars the tempting inference in the other direction: nothing here
+says the application *reads* any of it yet. What changed is that the database no
+longer makes it impossible.
+
+### 14.6 Headline, restated from the rows
+
+**Restated from `check:census-integrity`'s own parse.** The last stated headline
+before this section is §13.3's (C 263 / W 57 / N 49 / X 4).
+
+| Measure | Value |
+| --- | --- |
+| **Denominator — testable requirements** | **373** |
+| BUILT-AND-CORRECT | **264** |
+| BUILT-BUT-WRONG | **57** |
+| NOT-BUILT | **48** |
+| CANNOT-VERIFY | **4** |
+| **CONSTRUCTED%** = (C+W)/373 | **321 / 373 = 86.1 %** |
+| **CORRECT%** (raw) = C/373 | **264 / 373 = 70.8 %** |
+| **CORRECT% (spec-attributable)** = (C-23<sup>p</sup>)/373 | **241 / 373 = 64.6 %** |
+| **THE GAP** = W/373 | **57 / 373 = 15.3 %** |
+| CANNOT-VERIFY share | **4 / 373 = 1.1 %** |
+
+The move is `N 49 → 48`, `C 263 → 264`: `G228` `W → C` on new code, `G97` and
+`G101` `N → C` on a contradiction the document had been carrying since Phase 9,
+and `G86` `N → W` as one of its four required sources came into existence. Two
+of those four are accounting corrections to rows §8.4 had already moved and
+never written back — they are not new work and they are labelled as such in
+their rows.
+
+**The top-of-document block remains stale**, as §13.3 said it was; it is
+superseded here for the third time. The denominator is unchanged at **373**: no
+row was added, removed or merged in this pass.

@@ -1,7 +1,7 @@
 # Production public-schema table snapshot
 # project ref : ajrurzioarfkagpuxfnb (travel-buddy, PRODUCTION)
-# captured    : 2026-09-21, read-only, via the Supabase MCP execute_sql channel
-# count       : 481 BASE TABLEs in schema public
+# captured    : 2026-09-21 10:55 UTC, read-only, via the Supabase MCP execute_sql channel
+# count       : 482 BASE TABLEs in schema public
 #
 # REFRESHED for 2963 and 2964, applied to production 2026-09-21 07:42-07:43 UTC
 # from merged main fd0b3a6f4, both already applied and certified on portava-ci
@@ -35,6 +35,23 @@
 #
 # trip_commitment_recurrences (2797) is still NOT here: it is rehearsed on
 # portava-ci and has NOT been applied to production. It stays on the ratchet.
+#
+# REFRESHED AGAIN 2026-09-21 10:55 UTC, in the same change that applied 2220,
+# 2221 and 2258 to production. ONE table is new since the 07:55 capture and it
+# is this change: input_selection_history (2258, the §35 selection-memory
+# table). The other two migrations add no table at all -- 2220 adds a GENERATED
+# column to canonical_locations and a function, 2221 adds one feature_flags
+# row -- which is again the point the 07:42 refresh made: a table list is not a
+# migration record and does not pretend to be. The companion snapshot
+# src/lib/capability/snapshots/20260921-production-schema.json moved in the
+# same change and carries the column- and function-level delta this file
+# cannot see; its three digests were verified against production's own.
+#
+# Two migrations applied by other sessions between the two captures --
+# 2965 (08:52) and 2976 (10:11) -- add NO table and are invisible here. Both
+# were missing from production-applied-migrations.json and are added there in
+# this change; that omission, not their content, is why the staleness tripwire
+# had not already fired.
 activity_events
 admin_access_log
 age_limit_audit_log
@@ -191,6 +208,7 @@ highlight_sources
 highlight_views
 highlights
 identity_verifications
+input_selection_history
 intel_claims
 intel_confirmations
 intel_contribution_consent
