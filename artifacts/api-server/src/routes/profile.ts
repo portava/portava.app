@@ -17,7 +17,7 @@ import { appMediaRef } from "../lib/postSchemas";
 import { computeTrustScore } from "../lib/trustScore.js";
 import { countContentStampsReceived } from "../services/stamps/ContentStampService.js";
 import { countUserTrips } from "../domain/trips/services/tripCounts.js";
-import { validateUsername } from "../lib/usernameRules.js";
+import { validateUsername, suggestUsernameAlternatives } from "../lib/usernameRules.js";
 
 /**
  * Sniff + strip-EXIF/auto-orient an avatar/cover image. Returns the processed
@@ -1094,9 +1094,22 @@ router.get("/users/check-username", async (req, res) => {
     return;
   }
 
+  // §23: "Username unavailable → immediate non-blocking state PLUS alternatives".
+  // The state was here; the alternatives were not, so the field said "taken" and
+  // the user guessed the next handle one round trip at a time. The candidates
+  // come from `lib/usernameRules` — the same module this handler already uses for
+  // validity and reserved names — so the assistance gateway's §23 lane and this
+  // endpoint can never offer different handles. `null` back means the registry
+  // was UNREADABLE: the key is then OMITTED rather than sent empty, because "no
+  // alternatives" and "I could not look" are different answers.
+  const offerAlternatives = async () => {
+    const alts = await suggestUsernameAlternatives(client, username, 3);
+    return alts && alts.length > 0 ? { alternatives: alts } : {};
+  };
+
   const v = validateUsername(username);
   if (!v.valid) {
-    res.status(200).json({ available: false, reason: v.reason });
+    res.status(200).json({ available: false, reason: v.reason, ...(await offerAlternatives()) });
     return;
   }
 
@@ -1120,7 +1133,11 @@ router.get("/users/check-username", async (req, res) => {
   }
 
   if (data) {
-    res.status(200).json({ available: false, reason: "Username is already taken" });
+    res.status(200).json({
+      available: false,
+      reason: "Username is already taken",
+      ...(await offerAlternatives()),
+    });
     return;
   }
   res.status(200).json({ available: true });

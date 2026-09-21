@@ -104,6 +104,20 @@ const ADDRESS_FALLBACK_CONTEXTS: ReadonlySet<InputContext> = new Set<InputContex
   'address',
 ]);
 
+/**
+ * §37 — which NEW record each unresolved-location context would mint, and the
+ * noun the row calls it. A context absent from this map offers no creation row
+ * at all, which is the default: the map is an allowlist, not a fallback.
+ */
+const CREATABLE_ENTITY_BY_CONTEXT: Partial<
+  Record<InputContext, { entityType: EntityType; noun: string }>
+> = {
+  hidden_gem_location: { entityType: 'hidden_gem', noun: 'Gem' },
+  event_location: { entityType: 'place', noun: 'Place' },
+  place_picker: { entityType: 'place', noun: 'Place' },
+  address: { entityType: 'place', noun: 'Place' },
+};
+
 // ── §20 constraint-aware filtering (pure, tested directly) ─────────────────────
 
 export interface ConstraintCandidate<T> {
@@ -393,10 +407,24 @@ export function buildUnresolvedAddress(
   const canAction = policy.allowedSuggestionTypes.includes('action');
   const canValidate = policy.allowedSuggestionTypes.includes('validation');
   if (!canAction && !canValidate) return [];
+  // §37 "new-entity creation UNDER POLICY". Two gates, both required: the
+  // context must be one that creates that kind of record, and the context's
+  // policy must declare the entity type it would create. The second gate is
+  // what makes this a policy decision rather than a hard-coded table — a
+  // context whose `entityTypes` stops naming `hidden_gem` stops offering to
+  // create one, with no edit here. `city_picker`/`country_picker` are excluded
+  // by ADDRESS_FALLBACK_CONTEXTS above and by allowing no `action` rows, which
+  // is the same pair of gates that answers §37's "should not offer create city".
+  const creatable = CREATABLE_ENTITY_BY_CONTEXT[context];
+  const createEntity =
+    canAction && creatable && (policy.entityTypes ?? []).includes(creatable.entityType)
+      ? creatable
+      : null;
   return buildAddressFallbacks(context, policyVersion, text, {
     dropPin: canAction,
     searchNearby: canAction,
     useRaw: canValidate,
+    createEntity,
   });
 }
 

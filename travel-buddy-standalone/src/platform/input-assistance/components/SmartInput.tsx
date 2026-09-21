@@ -14,6 +14,14 @@
  *   - keyboard navigation (Arrow/Enter/Escape) with an active-row highlight,
  *     and screen-reader announcement of field purpose, result count and the
  *     SELECTION RESULT (§46 — see `selectionAnnouncement` below);
+ *   - §46 focus management: when the overlay closes while the user is still in
+ *     the field, the accessibility cursor is pulled back to the input instead
+ *     of being orphaned on a node that no longer exists. Opening the overlay
+ *     deliberately does NOT steal focus — see `a11yFocus.ts` for why, and for
+ *     what a green test of it does and does not prove;
+ *   - §46 keyboard + dynamic-type fit: the overlay's height is capped to the
+ *     band actually visible between the field and the software keyboard, and
+ *     that cap grows with the OS text scale (`overlayFit.ts`);
  *   - suggestion selection: applies `replacementText` (never silently replaces
  *     more than the field text, §22) and reports the chosen suggestion up.
  *
@@ -24,10 +32,14 @@
 import React, { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AccessibilityInfo,
+  Dimensions,
+  Keyboard,
+  PixelRatio,
   View,
   Text,
   TextInput,
   StyleSheet,
+  type LayoutChangeEvent,
   type TextInputProps,
   type NativeSyntheticEvent,
   type TextInputKeyPressEventData,
@@ -36,6 +48,9 @@ import type { InputContext } from '../types/inputContext.ts';
 import type { InputSuggestion, InputSessionContext } from '../types/inputSuggestion.ts';
 import { useInputAssistance } from '../hooks/useInputAssistance.ts';
 import { SuggestionOverlay } from './SuggestionOverlay.tsx';
+import { moveAccessibilityFocusTo, shouldRestoreFieldFocus } from './a11yFocus.ts';
+import { overlayFit, DEFAULT_OVERLAY_MAX_HEIGHT } from './overlayFit.ts';
+import { SDK_CAPABILITIES } from '../contexts/clientCapabilities.ts';
 import {
   emitInputEvent,
   emitSuggestionsRendered,
@@ -48,6 +63,7 @@ import {
   type TelemetryField,
 } from '../services/inputTelemetry.ts';
 import { recordSuggestionSelection } from '../services/selectionRecorder.ts';
+import { recordLocalSelection } from '../services/localZeroState.ts';
 import { color, space, radius, type as t } from '../../../theme/tokens.ts';
 
 export interface SmartInputProps extends Omit<TextInputProps, 'onChange'> {
@@ -70,6 +86,14 @@ export interface SmartInputProps extends Omit<TextInputProps, 'onChange'> {
   overlayMaxHeight?: number;
   /** Empty/no-match content (§37 fallback actions). */
   emptyState?: React.ReactNode;
+  /**
+   * §27 zero-state panel heading. When the field is EMPTY the rows the gateway
+   * returned are the pre-typing set (§14 recents / defaults), and they are
+   * framed as such rather than rendered as if they had matched something.
+   */
+  zeroStateTitle?: string;
+  /** §27 pre-typing hint shown when the zero-state set is empty. */
+  zeroStateHint?: string;
   /** Optional leading renderer for entity rows (e.g. sanctioned avatar). */
   renderLeading?: (s: InputSuggestion) => React.ReactNode;
 }
@@ -111,6 +135,8 @@ export const SmartInput = forwardRef<TextInput, SmartInputProps>(function SmartI
     assist = true,
     overlayMaxHeight,
     emptyState,
+    zeroStateTitle,
+    zeroStateHint,
     renderLeading,
     style,
     onFocus,
@@ -122,6 +148,27 @@ export const SmartInput = forwardRef<TextInput, SmartInputProps>(function SmartI
 ) {
   const [focused, setFocused] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
+
+  // ── §46 focus management + keyboard fit ─────────────────────────────────────
+  // The component needs its own handle on the TextInput (to pull the
+  // accessibility cursor back to it, and to know where its bottom edge sits),
+  // while still honouring a ref the caller forwarded. `attachInput` is the one
+  // place both are set.
+  const inputRef = useRef<TextInput | null>(null);
+  const attachInput = useCallback(
+    (node: TextInput | null) => {
+      inputRef.current = node;
+      if (typeof ref === 'function') ref(node);
+      else if (ref) (ref as React.MutableRefObject<TextInput | null>).current = node;
+    },
+    [ref],
+  );
+
+  // Keyboard height (0 = down) and the field's bottom edge in window
+  // coordinates. Both are measurements, not opinions: until one exists the fit
+  // grants the full cap rather than guessing (see overlayFit.ts).
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [fieldBottomY, setFieldBottomY] = useState<number | null>(null);
 
   // ── §44/§45 funnel state ────────────────────────────────────────────────────
   // `shownRef` is what is currently in front of the user; `acceptedRef` says
@@ -136,6 +183,14 @@ export const SmartInput = forwardRef<TextInput, SmartInputProps>(function SmartI
     text: value,
     context,
     sessionContext,
+    // §48 capability handshake (census G343). The shared overlay renders every
+    // assistance type — `SuggestionList` dispatches `action` and
+    // `ai_suggestion` to their own primitives and everything else to
+    // `EntitySuggestionRow` — so this declaration narrows nothing today, and
+    // says so rather than trimming the list to look like it is working. Its job
+    // is to be WRONG the moment a row primitive is removed, which is the case
+    // a handshake exists for.
+    capabilities: SDK_CAPABILITIES,
     enabled: assist && focused,
   });
 
@@ -151,8 +206,73 @@ export const SmartInput = forwardRef<TextInput, SmartInputProps>(function SmartI
   );
 
   const assistEnabled = assist && !!policy && policy.mode !== 'no_assistance';
+  // §27 — nothing typed, so whatever is in front of the user is the zero-state
+  // set. The distinction is the surface's whole point: a result list asserts
+  // "these matched", and there is nothing to match yet.
+  const zeroState = value.trim().length === 0;
+  // NOT widened to "focused && zeroState": whether an empty focused field opens
+  // a panel at all is the FIELD's call (§2 "the field owns behaviour"), and
+  // making every assisted field in the app pop a panel on focus is a product
+  // decision this component does not get to take on its own. The panel is the
+  // surface the zero-char rows land in when the gateway returns them.
   const overlayVisible = assistEnabled && focused && (loading || suggestions.length > 0 || unavailable);
   const activeId = activeIndex >= 0 && activeIndex < suggestions.length ? suggestions[activeIndex].id : null;
+
+  // ── §46 "no suggestion overlay trapped behind the software keyboard" ────────
+  // Subscribed only while the overlay can appear, so an unassisted field costs
+  // nothing. `keyboardDidShow`/`Hide` rather than `WillShow`: the end
+  // coordinates are final by then, and a cap computed against a mid-animation
+  // height would be wrong for the frame that matters.
+  useEffect(() => {
+    if (!assistEnabled) return;
+    const show = Keyboard.addListener('keyboardDidShow', (e) => {
+      setKeyboardHeight(e?.endCoordinates?.height ?? 0);
+    });
+    const hide = Keyboard.addListener('keyboardDidHide', () => setKeyboardHeight(0));
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, [assistEnabled]);
+
+  // The field's bottom edge in WINDOW coordinates. `onLayout` gives parent-
+  // relative numbers, which are useless against a window-relative keyboard, so
+  // it is only the trigger; `measureInWindow` is the measurement. A platform
+  // that cannot measure leaves `fieldBottomY` null and the fit grants the cap.
+  const measureField = useCallback(() => {
+    const node = inputRef.current as unknown as {
+      measureInWindow?: (cb: (x: number, y: number, w: number, h: number) => void) => void;
+    } | null;
+    if (!node?.measureInWindow) return;
+    try {
+      node.measureInWindow((_x, y, _w, h) => {
+        if (Number.isFinite(y) && Number.isFinite(h)) setFieldBottomY(y + h);
+      });
+    } catch {
+      // A measurement that cannot be taken stays absent, never zero: y=0 would
+      // read as "the field is at the top of the window" and grant a full card.
+    }
+  }, []);
+
+  const handleInputLayout = useCallback(
+    (e: LayoutChangeEvent) => {
+      measureField();
+      textInputProps.onLayout?.(e);
+    },
+    [measureField, textInputProps],
+  );
+
+  const fit = useMemo(
+    () =>
+      overlayFit({
+        fieldBottomY,
+        windowHeight: Dimensions.get('window').height,
+        keyboardHeight,
+        cap: overlayMaxHeight ?? DEFAULT_OVERLAY_MAX_HEIGHT,
+        fontScale: PixelRatio.getFontScale(),
+      }),
+    [fieldBottomY, keyboardHeight, overlayMaxHeight],
+  );
 
   // ── §44 `suggestion_rendered` / `validation_shown` ──────────────────────────
   // Both were declared and never emitted. This is the funnel's denominator: an
@@ -184,6 +304,24 @@ export const SmartInput = forwardRef<TextInput, SmartInputProps>(function SmartI
     // re-render that produced an equal list.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [renderSignature, telemetryField]);
+
+  // ── §46 VoiceOver/TalkBack focus management (census G326) ───────────────────
+  // The overlay is a transient surface. When it unmounts, a screen-reader
+  // cursor that had walked into the list is on a node that is gone — iOS
+  // VoiceOver answers by jumping to the top of the screen — so the cursor is
+  // pulled back to the input the user is still sitting in. The decision is
+  // `shouldRestoreFieldFocus`, kept pure in a11yFocus.ts so the POLICY can be
+  // asserted separately from the bridge call it leads to.
+  const overlayWasVisibleRef = useRef(false);
+  useEffect(() => {
+    const restore = shouldRestoreFieldFocus({
+      overlayWasVisible: overlayWasVisibleRef.current,
+      overlayIsVisible: overlayVisible,
+      stillFocused: focused,
+    });
+    overlayWasVisibleRef.current = overlayVisible;
+    if (restore) moveAccessibilityFocusTo(inputRef.current);
+  }, [overlayVisible, focused]);
 
   const handleSelect = useCallback(
     (s: InputSuggestion) => {
@@ -235,6 +373,15 @@ export const SmartInput = forwardRef<TextInput, SmartInputProps>(function SmartI
       // accept (never on view/hover/type), never awaits, never throws, and never
       // gates or changes the selection above. `value` is the query that led here.
       recordSuggestionSelection(s, { policy, query: value });
+      // §34 "prefer local" — the DEVICE-side half of the same explicit accept.
+      // `recordSuggestionSelection` above writes the server's selection memory
+      // (`input_selection_history`), which is absent from production and, being
+      // a round trip, cannot answer the next open of this field instantly. This
+      // keeps the accepted row in the process-local ring buffer so the field's
+      // zero-state is available with no network at all. Same trigger, same
+      // explicit-accept-only rule (§35), and gated by the field's privacyClass
+      // so a viewer-scoped row is never retained — see localZeroState.ts.
+      recordLocalSelection(policy, s);
       setActiveIndex(-1);
     },
     [fieldId, policy, telemetryField, onSelectSuggestion, onChangeText, value, requestId],
@@ -275,7 +422,7 @@ export const SmartInput = forwardRef<TextInput, SmartInputProps>(function SmartI
   return (
     <View style={styles.wrap}>
       <TextInput
-        ref={ref}
+        ref={attachInput}
         value={value}
         onChangeText={onChangeText}
         style={[styles.input, style]}
@@ -288,6 +435,11 @@ export const SmartInput = forwardRef<TextInput, SmartInputProps>(function SmartI
         autoCapitalize={textInputProps.autoCapitalize ?? 'none'}
         onFocus={(e) => {
           setFocused(true);
+          // §46 — re-measure on focus, not only on layout: a field inside a
+          // scroll view moves without ever re-laying-out, and a stale bottom
+          // edge is what would hand the overlay a height for where the field
+          // used to be.
+          measureField();
           if (policy) emitInputEvent('input_opened', fieldId, policy.context, undefined, policy.telemetryPolicy, requestId);
           onFocus?.(e);
         }}
@@ -312,6 +464,11 @@ export const SmartInput = forwardRef<TextInput, SmartInputProps>(function SmartI
         }}
         onKeyPress={handleKeyPress}
         {...textInputProps}
+        // AFTER the spread on purpose: `onLayout` is not destructured out of
+        // `textInputProps`, so a caller's handler would otherwise replace the
+        // §46 measurement instead of running beside it. `handleInputLayout`
+        // calls through to it.
+        onLayout={handleInputLayout}
       />
 
       {overlayVisible ? (
@@ -326,7 +483,16 @@ export const SmartInput = forwardRef<TextInput, SmartInputProps>(function SmartI
             renderLeading={renderLeading}
             grouped={policy?.mode === 'search'}
             emptyState={emptyState}
-            maxHeight={overlayMaxHeight}
+            zeroState={zeroState}
+            zeroStateTitle={zeroStateTitle}
+            zeroStateHint={zeroStateHint}
+            // §46 — the band that is actually visible between this field and
+            // the software keyboard, grown for the OS text scale. NOT the
+            // caller's cap: that is the ceiling this fit works down from
+            // (`fit` is computed above with `cap: overlayMaxHeight ?? …`), so
+            // the §27 zero-state panel this overlay now mounts is bounded by
+            // the same visible band as the suggestion list.
+            maxHeight={fit.maxHeight}
           />
         </View>
       ) : null}
