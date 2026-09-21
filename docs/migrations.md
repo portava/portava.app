@@ -2202,8 +2202,43 @@ armed from a Management API session (`LOAD 'safeupdate'` is refused), so
 sufficiency is established by the live memory suites on the first `main` run
 after 2965 lands — not by anything runnable before it.
 
+### The same defect class, looked for rather than assumed unique
+
+2963 was not searched for in isolation. Every non-extension function in
+production's `public` schema was scanned for an **unqualified `DELETE FROM x;`**
+— the shape `safeupdate` refuses — with comments stripped first so prose could
+not create or hide a match. Two functions carry one:
+
+| function | verdict |
+|---|---|
+| `project_user_memory` | **fixed** by 2965, above |
+| `global_journey_shadow_stop_v1(uuid)` | **reported, deliberately not touched** |
+
+`global_journey_shadow_stop_v1` is `SECURITY DEFINER`, `EXECUTE` to
+`service_role` only (`anon` and `authenticated` refused), and carries **three**
+unqualified deletes — `journey_shadow_ground_truth`, `journey_observations` and
+`journey_segment_revisions`. Its four `UPDATE`s are all properly qualified. By
+the same reasoning as 2963, a call through PostgREST would raise
+*"DELETE requires a WHERE clause"* and roll back, which would make a **global
+stop for the journey-shadow programme** fail — the deletes are the point of a
+stop, so this is a safety control that does not work.
+
+**Three reasons it is reported here and not repaired here.** It exists **only in
+production** — `portava-ci` has no such function. It appears **nowhere in this
+repository**: no file in `src/migrations/`, no TypeScript caller, no mention in
+any document, so it is an out-of-band object of the same family as
+`dead_check_vocabularies_2298`. And nothing establishes who is supposed to call
+it: amending an orphaned safety control whose intended caller is unknown, on the
+strength of a pattern match, is how the next unqualified delete gets shipped.
+
+It wants an owner and a deliberate decision, not a drive-by `WHERE true`.
+
 ### Still open
 
+- **`global_journey_shadow_stop_v1` is broken in production and unowned.** See
+  the section directly above. Whoever owns the journey-shadow programme should
+  decide whether it is repaired, replaced or dropped; it is not this lane's to
+  guess at.
 - **2965 is not yet on `main`.** It lives on `claude/fix-2963-canon-saves-delete`
   and is applied to production ahead of its own merge, because production was
   actively broken and waiting for a merge is still waiting. `portava-ci` still
