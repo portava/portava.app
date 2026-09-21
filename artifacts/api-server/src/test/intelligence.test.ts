@@ -129,7 +129,30 @@ function makeClient(state: FakeState) {
           const row = { id: `evt-${Date.now()}`, ...pendingInsert };
           state.preferenceEvents.push(row);
         }
+        // PERSIST the profile insert, as resolveSingle already did. This path
+        // returned the row it was handed WITHOUT storing it, so a follow-up
+        // UPDATE matched nothing in the fake even though the real insert would
+        // have created the row. That divergence vetoed a real fix: a row-count
+        // branch on the profile write would have reported zero rows for every
+        // feedback case here, so the branch was withheld rather than land a
+        // change this fixture said was broken.
+        if (table === "user_preference_profiles") {
+          const row = { id: "pref-1", updated_at: new Date().toISOString(), ...pendingInsert };
+          state.preferenceProfiles[pendingInsert.user_id] = row;
+        }
         return { data: [pendingInsert], error: null };
+      }
+      if (pendingUpdate) {
+        // PostgREST applies the patch to the matched rows and, with a trailing
+        // .select(), returns them; without one it returns data: null. The fake
+        // used to fall through to `rows()` here, which returned the PRE-update
+        // rows and never applied the patch at all.
+        const matched = rows();
+        for (const r of matched) {
+          Object.assign(r, pendingUpdate);
+          if (table === "user_preference_profiles") state.preferenceProfiles[r.user_id] = r;
+        }
+        return { data: matched, error: null };
       }
       return { data: rows(), error: null };
     }

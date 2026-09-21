@@ -25,23 +25,9 @@ import {
   cityConfidenceNote,
 } from "../compass/CompassGraphEngine.js";
 import { getLastRebuildInfo } from "../lib/intelligenceGraphScheduler.js";
+import { requireAdmin } from "../lib/requireAdmin.js";
 
 const router = Router();
-
-async function requireAdmin(req: any, res: any) {
-  const auth = await requireUser(req, res);
-  if (!auth) return null;
-  const { data, error } = await auth.client
-    .from("profiles")
-    .select("role")
-    .eq("id", auth.user.id)
-    .maybeSingle();
-  if (error || !data || (data as any).role !== "admin") {
-    res.status(403).json({ error: "forbidden", message: "Admin role required" });
-    return null;
-  }
-  return auth;
-}
 
 router.post("/compass/graph/rebuild", asyncHandler(async (req, res) => {
   const auth = await requireAdmin(req, res);

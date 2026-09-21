@@ -36,6 +36,7 @@ import {
 } from "../services/passport/StampAwardEngine.js";
 import { NotificationService } from "../services/notifications/NotificationService.js";
 import { NotificationRouter as NotifRouter } from "../services/notifications/NotificationRouter.js";
+import { isBlockedBetween } from "../lib/blockGuard.js";
 
 const router = Router();
 
@@ -105,15 +106,15 @@ async function areFriends(
 // ── Block check helper ────────────────────────────────────────────────────────
 
 /**
- * Fail-CLOSED block check, matching lib/blockGuard.isBlockedBetween.
+ * FAIL-CLOSED, shape 1 (lib/exclusionSet.ts): a two-party gate on ONE stamp
+ * interaction, so an unreadable `blocks` table denies that interaction only.
  *
- * The previous body was fail-open twice over:
- *   1. it read only `data`, so a PostgREST error (which supabase-js RESOLVES
- *      with `{ data: null, error }`) answered "not blocked";
- *   2. it used `.maybeSingle()`, which RAISES on more than one row — and a
- *      MUTUAL block is exactly two rows, (A,B) and (B,A). The strongest block
- *      state therefore produced PGRST116, `data: null`, and "not blocked".
- * `.limit(1)` removes the second, `error → true` removes the first.
+ * The old body was fail-open twice over. `const { data } = …; return data != null`
+ * read a resolved DB error as "no block row"; and `.maybeSingle()` RAISES on
+ * more than one row, so a MUTUAL block — two rows, both permitted by
+ * UNIQUE(blocker_id, blocked_id) — errored into `data: null` and reported "not
+ * blocked" for the strongest block state there is. isBlockedBetween uses
+ * `.limit(1)` and returns true on error, which fixes both.
  */
 async function isBlocked(
   sc: ReturnType<typeof getServiceClient>,
@@ -121,15 +122,7 @@ async function isBlocked(
   targetId: string,
 ): Promise<boolean> {
   if (!sc) return false;
-  const { data, error } = await sc
-    .from("blocks")
-    .select("id")
-    .or(
-      `and(blocker_id.eq.${callerId},blocked_id.eq.${targetId}),and(blocker_id.eq.${targetId},blocked_id.eq.${callerId})`,
-    )
-    .limit(1);
-  if (error) return true; // block state unknown → treat as blocked
-  return Array.isArray(data) && data.length > 0;
+  return isBlockedBetween(sc, callerId, targetId);
 }
 
 /**

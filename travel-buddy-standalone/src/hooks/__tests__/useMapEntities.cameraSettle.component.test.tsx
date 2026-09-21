@@ -54,10 +54,15 @@ jest.mock('../../services/events.ts', () => ({ listEvents: jest.fn() }));
 // NOTE: exhaustive by design — the hook uses only `listGems` from here.
 jest.mock('../../services/hiddenGems.ts', () => ({ listGems: jest.fn() }));
 
-// NOTE: exhaustive by design — only `mapCache.read`/`.write` are used, and the
+// NOTE: exhaustive by design — only `mapCache.read`/`.write`/
+// `.purgeSupersededVersions` are used, and the
 // real cache reaches for AsyncStorage on import.
 jest.mock('../../features/map/cache/mapCache.ts', () => ({
-  mapCache: { read: jest.fn().mockResolvedValue(null), write: jest.fn() },
+  mapCache: {
+    read: jest.fn().mockResolvedValue(null),
+    write: jest.fn(),
+    purgeSupersededVersions: jest.fn().mockResolvedValue(0),
+  },
 }));
 
 const { fetchMapProjection } = jest.requireMock('../../services/mapProjection.ts') as {

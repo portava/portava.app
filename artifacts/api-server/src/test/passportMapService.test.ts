@@ -167,6 +167,19 @@ describe("buildMapPayload — §26 My World", () => {
 
 // ── buildStats ───────────────────────────────────────────────────────────────
 
+/**
+ * Slugs that EVIDENCE PRESENCE — the same 13 migration 2970 seeds
+ * `stamp_definitions.evidences_presence = true`. Kept here so a fixture cannot
+ * accidentally claim a planned trip was a visit, and so the country/city
+ * assertions below still mean something after §K.4.
+ * `src/test/passportPresenceEvidence.test.ts` owns the property itself.
+ */
+const PRESENCE_SLUGS = new Set([
+  "first_trip_completed", "long_haul", "weekend_wanderer", "international_voyager",
+  "solo_traveler", "group_tripper", "good_host", "road_warrior", "frequent_flyer",
+  "city_explorer", "world_citizen", "globe_trotter_5", "globe_trotter_10",
+]);
+
 function userStamp(slug: string, over: Record<string, any> = {}) {
   return {
     user_id: OWNER,
@@ -174,7 +187,7 @@ function userStamp(slug: string, over: Record<string, any> = {}) {
     city: "Da Nang",
     visibility: "public",
     is_revoked: false,
-    stamp_definitions: { category: "location", slug },
+    stamp_definitions: { category: "location", slug, evidences_presence: PRESENCE_SLUGS.has(slug) },
     ...over,
   };
 }

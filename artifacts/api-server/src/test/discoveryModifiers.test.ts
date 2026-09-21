@@ -186,7 +186,7 @@ describe("loadDiscoveryModifiers — flag ON", () => {
     assert.equal(m.cityConfidence, null);
     assert.equal(m.momentumScale, MOMENTUM_SCALE_MIN);
     assert.equal(m.explorationBudgetPct, GOVERNOR_BUDGET_MAX_PCT);
-    const raw = computeLocalMomentum(surge(), NOW).p1!;
+    const raw = computeLocalMomentum(surge(), NOW).values.p1!;
     assert.equal(m.localMomentum.p1, Math.round(raw * MOMENTUM_SCALE_MIN * 1000) / 1000);
     assert.equal(m.localMomentum.p2, undefined, "no activity ⇒ no entry");
     for (const v of Object.values(m.localMomentum)) assert.ok(v > 0 && v <= 1);
@@ -199,7 +199,7 @@ describe("loadDiscoveryModifiers — flag ON", () => {
     assert.equal(m.cityConfidence?.depthScore, 100);
     assert.equal(m.momentumScale, MOMENTUM_SCALE_MAX);
     assert.equal(m.explorationBudgetPct, GOVERNOR_BUDGET_MIN_PCT);
-    assert.equal(m.localMomentum.p1, computeLocalMomentum(surge(), NOW).p1);
+    assert.equal(m.localMomentum.p1, computeLocalMomentum(surge(), NOW).values.p1);
   });
 
   it("a failed confidence read is THIN, and the modifiers stay on", async () => {

@@ -25,17 +25,19 @@ import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
+import { getRestrictionState } from "../services/trust/TrustRestrictionService.js";
 import {
   getCrewMap,
   getCrewPreferences,
   upsertCrewPreferences,
   setGhostMode,
-} from "../services/tripCrew/TripCrewLocationService.js";
+  CrewMapUnavailableError,
+} from "../domain/trips/services/TripCrewLocationService.js";
 import {
   startLiveShare,
   stopLiveShare,
   getActiveLiveShares,
-} from "../services/tripCrew/TripCrewLiveShareService.js";
+} from "../domain/trips/services/TripCrewLiveShareService.js";
 
 const router = Router();
 
@@ -45,89 +47,218 @@ const router = Router();
  * Returns 'owner' | 'member' | null.
  * Only 'owner' and 'member' (accepted) are granted access.
  * Pending invites, removed members, and non-members get null → 403.
+ *
+ * "PENDING" IS ENCODED TWICE, AND THIS USED TO CHECK ONLY ONE OF THEM.
+ * trip_members carries pending state in BOTH columns:
+ *   role   — the legacy encoding; role='invited' is a pending invite, which
+ *            routes/invites flips to 'member' on accept. The role filter below
+ *            already excluded it.
+ *   status — text NOT NULL DEFAULT 'accepted'; status='invited' is a pending
+ *            invite under the newer encoding. This function never read it, so
+ *            a row of {role:'member', status:'invited'} passed every check and
+ *            the doc comment above was false. Production holds exactly one such
+ *            row, and this function gates seven crew-location endpoints.
+ *
+ * The rule now matches requireTripMember (lib/http.ts:430-478), which is the
+ * definition of record: coalesce(status,'accepted') = 'accepted'. Status is
+ * selected and compared in JS rather than filtered in PostgREST because
+ * coalesce-on-a-nullable-column is awkward to express as a filter and easy to
+ * get subtly wrong; the row count here is at most one.
+ *
+ * DELIBERATELY NOT WIDENED: requireTripMember also accepts 'viewer', and
+ * migration 2337 widened the RLS policies to match it. This function keeps its
+ * narrower owner/co_host/member set, because widening it would GRANT crew
+ * location access to a role that does not have it today. Route stricter than
+ * RLS is the safe direction; the reverse is not.
  */
+/**
+ * A membership answer that keeps DENY and UNKNOWN apart.
+ *
+ * `{ readable: true, role: null }` — the roster was read and this person is not
+ * on it. 403 is the honest answer.
+ * `{ readable: false, role: null }` — the roster could not be read. The gate
+ * still grants nothing, but the request is RETRYABLE and the member is not
+ * told they have been taken off their own trip. 503 degraded_unavailable is
+ * the vocabulary this codebase already carries for exactly that (lib/http.ts).
+ */
+type RoleRead<T extends string> =
+  | { readable: true; role: T | null }
+  | { readable: false; role: null };
+
+const UNREADABLE = { readable: false, role: null } as const;
+
+/**
+ * The one place the two answers turn into two status codes. Returns true when
+ * the caller must stop — having already sent the refusal.
+ */
+function refuseUnlessMember(
+  res: Parameters<typeof sendError>[0],
+  read: { readable: boolean; role: string | null },
+  notMemberMessage?: string,
+): boolean {
+  if (!read.readable) {
+    sendError(
+      res,
+      "degraded_unavailable",
+      "This trip's membership could not be read, so access could not be decided. Please try again.",
+    );
+    return true;
+  }
+  if (!read.role) {
+    sendError(res, "not_member", notMemberMessage);
+    return true;
+  }
+  return false;
+}
+
 async function getMemberRole(
   db: ReturnType<typeof getServiceClient>,
   tripId: string,
   userId: string,
-): Promise<"owner" | "member" | null> {
-  if (!db) return null;
+): Promise<RoleRead<"owner" | "member">> {
+  if (!db) return UNREADABLE;
   try {
-    const { data: trip } = await db
+    const { data: trip, error: tripErr } = await db
       .from("trips")
       .select("owner_id")
       .eq("id", tripId)
       .maybeSingle();
-    if ((trip as any)?.owner_id === userId) return "owner";
+    if (tripErr) return UNREADABLE;
+    if ((trip as any)?.owner_id === userId) return { readable: true, role: "owner" };
 
-    const { data: member } = await db
+    const { data: member, error: memberErr } = await db
       .from("trip_members")
-      .select("role")
+      .select("role, status")
       .eq("trip_id", tripId)
       .eq("user_id", userId)
       .in("role", ["owner", "co_host", "member"])
       .maybeSingle();
-    return member ? "member" : null;
+    // DENY IS NOT UNKNOWN. supabase-js RESOLVES on a database error, so `member`
+    // was null both for "there is no such row" and for "the roster could not be
+    // read", and this function answered the same `null` to both — which seven
+    // endpoints turned into 403 "you are not a member". Fail-closed is right
+    // about authorization and stays: an unreadable roster still grants nothing.
+    // What it may not do is TELL THE MEMBER THEY ARE NOT ONE, and 403 is not
+    // retryable. The error is now carried out so the route can answer 503.
+    if (memberErr) return UNREADABLE;
+    if (!member) return { readable: true, role: null };
+    const status = (member as any).status ?? "accepted";
+    if (status !== "accepted") return { readable: true, role: null };
+    return { readable: true, role: "member" };
   } catch {
-    return null;
+    return UNREADABLE;
   }
+}
+
+/**
+ * The statuses a trip_members row may carry, from migration 0078:
+ *   status TEXT NOT NULL DEFAULT 'accepted'
+ *          CHECK (status IN ('invited','accepted','declined','removed','left'))
+ * A row that is not one of the two "still on the trip" states below describes a
+ * person who is GONE — they declined, they were removed, or they left — and the
+ * role column does not change when that happens (REMOVE_PARTICIPANT records the
+ * role at removal; see migration 2450). So a rule that reads role and not status
+ * cannot tell a member from an ex-member. `null`/absent is treated as 'accepted'
+ * for pre-0078 rows, exactly as requireTripMember (lib/http.ts) does.
+ */
+const STILL_ON_TRIP_STATUSES = ["accepted", "invited"];
+
+/** True when a trip_members row's status means the person is still on the trip. */
+function statusStillOnTrip(row: any): boolean {
+  const status = (row as any)?.status;
+  return status == null || STILL_ON_TRIP_STATUSES.includes(String(status));
 }
 
 /**
  * Like getMemberRole but also accepts 'invited' role.
  * Used for read-only crew visibility endpoints where pending invitees should be
  * able to see who else is on their trip before deciding to accept.
+ *
+ * THE STATUS GATE, AND WHY IT IS WIDER HERE THAN IN getMemberRole.
+ * This function read ROLE ONLY, so {role:'member', status:'removed'} — the
+ * shape a removed member's row keeps — passed it, and the crew map served the
+ * trip's roster and area labels to someone taken off the trip. That contradicts
+ * this file's own header ("Pending invites and removed members receive 403").
+ * getMemberRole demands status === 'accepted'; this one also admits 'invited',
+ * because admitting PENDING invitees is this endpoint's documented purpose. The
+ * three statuses it now rejects — declined, removed, left — are the ones that
+ * mean the person is off the trip, and none of them was ever meant in.
  */
 async function getMemberRoleAny(
   db: ReturnType<typeof getServiceClient>,
   tripId: string,
   userId: string,
-): Promise<string | null> {
-  if (!db) return null;
+): Promise<RoleRead<string>> {
+  if (!db) return UNREADABLE;
   try {
-    const { data: trip } = await db
+    const { data: trip, error: tripErr } = await db
       .from("trips")
       .select("owner_id")
       .eq("id", tripId)
       .maybeSingle();
-    if ((trip as any)?.owner_id === userId) return "owner";
+    if (tripErr) return UNREADABLE;
+    if ((trip as any)?.owner_id === userId) return { readable: true, role: "owner" };
 
-    const { data: member } = await db
+    const { data: member, error: memberErr } = await db
       .from("trip_members")
-      .select("role")
+      .select("role, status")
       .eq("trip_id", tripId)
       .eq("user_id", userId)
       .in("role", ["owner", "co_host", "member", "invited"])
       .maybeSingle();
-    return member ? ((member as any).role as string) : null;
+    // Same ruling as getMemberRole: still fail-closed, no longer mute.
+    if (memberErr) return UNREADABLE;
+    if (!member) return { readable: true, role: null };
+    if (!statusStillOnTrip(member)) return { readable: true, role: null };
+    return { readable: true, role: (member as any).role as string };
   } catch {
-    return null;
+    return UNREADABLE;
   }
 }
 
 /**
- * Returns all accepted member IDs for a trip (owner + role=member rows).
+ * Returns all accepted member IDs for a trip (owner + accepted member rows).
  * Used to validate allowedMemberIds in live-share start.
+ *
+ * THIS IS AN ALLOW-LIST FOR EXACT COORDINATES, and it filtered by role alone.
+ * A live-share recipient is precisely who getCrewMap will hand exact lat/lng to
+ * (TripCrewLocationService step 7 → buildCrewCard), so a removed member named
+ * here kept receiving the sharer's position for the life of the share — while
+ * the route rejected everyone ELSE with the words "not accepted trip members".
+ * `status` is compared in JS rather than filtered in PostgREST for the same
+ * reason getMemberRole does it: coalesce-on-a-nullable-column is awkward to
+ * express as a filter and easy to get subtly wrong.
+ *
+ * Note this set is deliberately NARROWER than getMemberRoleAny's: a pending
+ * invitee may LOOK at the crew map, but may not be given a live-share grant.
  */
 async function getAcceptedMemberIds(
   db: ReturnType<typeof getServiceClient>,
   tripId: string,
-): Promise<string[]> {
-  if (!db) return [];
+): Promise<{ readable: boolean; ids: string[] }> {
+  if (!db) return { readable: false, ids: [] };
   try {
     const [ownerRes, membersRes] = await Promise.all([
       db.from("trips").select("owner_id").eq("id", tripId).maybeSingle(),
-      db.from("trip_members").select("user_id").eq("trip_id", tripId).in("role", ["owner", "co_host", "member"]),
+      db.from("trip_members").select("user_id, status").eq("trip_id", tripId).in("role", ["owner", "co_host", "member"]),
     ]);
+    // THE SHARPEST FORM OF THE SWALLOWED READ IN THIS FILE. An unreadable
+    // roster returned [], every requested recipient then failed the
+    // `acceptedMemberIds.includes(id)` test, and the caller answered 400
+    // invalid_payload "These user IDs are not accepted trip members" — a
+    // specific accusation about named people, made out of a query that never
+    // answered, on a request that should have been retried.
+    if ((ownerRes as any).error || (membersRes as any).error) return { readable: false, ids: [] };
     const ids: string[] = [];
     const ownerId = (ownerRes.data as any)?.owner_id;
     if (ownerId) ids.push(ownerId);
     for (const row of ((membersRes.data as any[]) ?? [])) {
+      if (String((row as any).status ?? "accepted") !== "accepted") continue;
       if (row.user_id && !ids.includes(row.user_id)) ids.push(row.user_id);
     }
-    return ids;
+    return { readable: true, ids };
   } catch {
-    return [];
+    return { readable: false, ids: [] };
   }
 }
 
@@ -167,16 +298,23 @@ router.get("/trips/:tripId/crew/map", async (req, res) => {
   }
 
   const { tripId } = req.params;
-  const role = await getMemberRoleAny(sc, tripId, user.id);
-  if (!role) {
-    sendError(res, "not_member", "Only trip members (including invited) can view crew location data");
-    return;
-  }
+  const roleRead = await getMemberRoleAny(sc, tripId, user.id);
+  if (refuseUnlessMember(res, roleRead, "Only trip members (including invited) can view crew location data")) return;
 
   try {
     const result = await getCrewMap(sc, tripId, user.id);
     res.status(200).json({ featureEnabled: true, ...result });
   } catch (err) {
+    // getCrewMap refuses with CrewMapUnavailableError (503
+    // degraded_unavailable, retryable) when an input it cannot answer without
+    // could not be READ. Flattening that into db_error (500, not retryable)
+    // would tell the client its request failed when the truth is "ask again" —
+    // so the refusal is re-thrown for the global handler, which reads the
+    // `status`/`code` it carries. Everything else stays a 500.
+    if (err instanceof CrewMapUnavailableError) {
+      req.log.warn({ err, tripId }, "crew/map: input unavailable — refusing");
+      throw err;
+    }
     req.log.error({ err }, "crew/map: failed");
     sendError(res, "db_error", "Failed to load crew map", { exposeDetail: true });
   }
@@ -193,11 +331,8 @@ router.get("/trips/:tripId/crew/location-preferences", async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
   const { tripId } = req.params;
-  const role = await getMemberRole(sc, tripId, user.id);
-  if (!role) {
-    sendError(res, "not_member", "Only accepted trip members can view crew preferences");
-    return;
-  }
+  const roleRead = await getMemberRole(sc, tripId, user.id);
+  if (refuseUnlessMember(res, roleRead, "Only accepted trip members can view crew preferences")) return;
 
   try {
     const prefs = await getCrewPreferences(sc, tripId, user.id);
@@ -225,11 +360,8 @@ router.put("/trips/:tripId/crew/location-preferences", async (req, res) => {
   }
 
   const { tripId } = req.params;
-  const role = await getMemberRole(sc, tripId, user.id);
-  if (!role) {
-    sendError(res, "not_member", "Only accepted trip members can update crew preferences");
-    return;
-  }
+  const roleRead = await getMemberRole(sc, tripId, user.id);
+  if (refuseUnlessMember(res, roleRead, "Only accepted trip members can update crew preferences")) return;
 
   const result = await upsertCrewPreferences(sc, tripId, user.id, parsed.data);
   if (!result.ok) { sendError(res, "db_error", result.error); return; }
@@ -252,8 +384,8 @@ router.post("/trips/:tripId/crew/ghost-mode/enable", async (req, res) => {
   }
 
   const { tripId } = req.params;
-  const role = await getMemberRole(sc, tripId, user.id);
-  if (!role) { sendError(res, "not_member"); return; }
+  const roleRead = await getMemberRole(sc, tripId, user.id);
+  if (refuseUnlessMember(res, roleRead)) return;
 
   const result = await setGhostMode(sc, tripId, user.id, true);
   if (!result.ok) { sendError(res, "db_error", result.error); return; }
@@ -288,8 +420,8 @@ router.post("/trips/:tripId/crew/ghost-mode/disable", async (req, res) => {
   }
 
   const { tripId } = req.params;
-  const role = await getMemberRole(sc, tripId, user.id);
-  if (!role) { sendError(res, "not_member"); return; }
+  const roleRead = await getMemberRole(sc, tripId, user.id);
+  if (refuseUnlessMember(res, roleRead)) return;
 
   const result = await setGhostMode(sc, tripId, user.id, false);
   if (!result.ok) { sendError(res, "db_error", result.error); return; }
@@ -330,13 +462,47 @@ router.post("/trips/:tripId/crew/live-share/start", async (req, res) => {
   }
 
   const { tripId } = req.params;
-  const role = await getMemberRole(sc, tripId, user.id);
-  if (!role) { sendError(res, "not_member"); return; }
+  const roleRead = await getMemberRole(sc, tripId, user.id);
+  if (refuseUnlessMember(res, roleRead)) return;
+
+  // ── Trust: location_plan_join, the other restriction nothing enforced ──────
+  //
+  // "cannot join location-based plans" (TrustRestrictionService:8). Like
+  // private_plan_access it reached the user as a Passport capability chip and
+  // was enforced NOWHERE (census-trust A13). Starting a live location share with
+  // a trip's crew is the location-based join this type names: it is the moment a
+  // restricted user begins broadcasting their position to a group, which is the
+  // harm the restriction exists to prevent.
+  //
+  // Gated on START only, never on STOP — a restricted user must always be able
+  // to stop sharing.
+  //
+  // No degraded branch, for the reason stated on the private-plan gate in
+  // routes/trips.ts: this type fails OPEN inside getRestrictionState by design,
+  // so canJoinLocationPlans is `true` on an unreadable read and the gate cannot
+  // fire on one.
+  const locTrust = await getRestrictionState(sc, user.id);
+  if (!locTrust.canJoinLocationPlans) {
+    res.status(403).json({
+      error: "trust_restriction",
+      message: "Your account is currently restricted from joining location-based plans.",
+    });
+    return;
+  }
 
   const { duration, visibilityLevel, allowedMemberIds, planEndAt } = parsed.data;
 
   // Validate allowedMemberIds are accepted members of this trip (not pending/non-members)
-  const acceptedMemberIds = await getAcceptedMemberIds(sc, tripId);
+  const acceptedRead = await getAcceptedMemberIds(sc, tripId);
+  if (!acceptedRead.readable) {
+    sendError(
+      res,
+      "degraded_unavailable",
+      "This trip's membership could not be read, so the recipients could not be checked. Please try again.",
+    );
+    return;
+  }
+  const acceptedMemberIds = acceptedRead.ids;
   const invalid = allowedMemberIds.filter((id) => !acceptedMemberIds.includes(id));
   if (invalid.length > 0) {
     sendError(res, "invalid_payload", `These user IDs are not accepted trip members: ${invalid.join(", ")}`);
@@ -367,8 +533,8 @@ router.post("/trips/:tripId/crew/live-share/stop", async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
   const { tripId } = req.params;
-  const role = await getMemberRole(sc, tripId, user.id);
-  if (!role) { sendError(res, "not_member"); return; }
+  const roleRead = await getMemberRole(sc, tripId, user.id);
+  if (refuseUnlessMember(res, roleRead)) return;
 
   const result = await stopLiveShare(sc, tripId, user.id);
   if (!result.ok) { sendError(res, "db_error", result.error); return; }
@@ -386,13 +552,19 @@ router.get("/trips/:tripId/crew/live-shares", async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
   const { tripId } = req.params;
-  const role = await getMemberRole(sc, tripId, user.id);
-  if (!role) { sendError(res, "not_member"); return; }
+  const roleRead = await getMemberRole(sc, tripId, user.id);
+  if (refuseUnlessMember(res, roleRead)) return;
 
   try {
     const liveShares = await getActiveLiveShares(sc, tripId, user.id);
     res.status(200).json({ liveShares });
   } catch (err) {
+    // An unreadable sessions table is "ask again", not "your request failed":
+    // the same disposition crew/map records above, for the same reason.
+    if (err instanceof CrewMapUnavailableError) {
+      req.log.warn({ err, tripId }, "crew/live-shares: input unavailable — refusing");
+      throw err;
+    }
     req.log.error({ err }, "crew/live-shares GET: failed");
     sendError(res, "db_error", "Failed to load live shares", { exposeDetail: true });
   }

@@ -1,21 +1,55 @@
 import { Router } from "express";
+import { randomUUID } from "node:crypto";
 import { isBlockedBetween } from "../lib/blockGuard.js";
-import { computeTripStatus } from "../lib/tripStatus.js";
+import {
+  isTripKernelEnabled,
+  readCommandEnvelope,
+  executeTripCommand,
+  sendKernelRejection,
+  setTripVersionHeader,
+  planCommandTypeForPatch,
+  planStatusTransitionRefused,
+  IDEMPOTENCY_KEY_HEADER,
+} from "../domain/trips/commands/tripKernel.js";
+import { computeTripStatus } from "../domain/trips/invariants/tripStatus.js";
 import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getServiceClient, isServiceClientReady } from "../lib/supabase";
 import { detectAndStoreLanguage, invalidateContentTranslations } from "../services/contentTranslation.js";
 import { requireUser, isAcceptedTripMember, requireTripMember, sendError, canEditPlanItem, canEditPlan, type PlanEditPermission } from "../lib/http.js";
-import { toCamel } from "./plan.js";
+import { canEditTrip, canInviteParticipant, isTripOwner, planEditPermits } from "../domain/trips/policies/tripPolicy.js";
+import {
+  TRIP_PLAN_PRIVACY_SCOPES,
+  visibilityForPrivacyScope,
+  type TripPlanPrivacyScope,
+} from "../domain/trips/policies/tripPlanPrivacy.js";
+import { isMissingColumnError } from "../lib/capability/schemaCapability.js";
+import { sendTripRefusal } from "../domain/trips/contracts/tripReasonCodes.js";
+import { toCamel, readPlanItemsInOrder } from "./plan.js";
+import { logTripActivity, findTripActivityByKey } from "../domain/trips/events/tripActivityLog.js";
 import { syncTripChatMembers } from "../lib/chatSync.js";
 import { getRestrictionState } from "../services/trust/TrustRestrictionService.js";
-import { sendPushWithRetry } from "../lib/pushWithRetry.js";
+import { sendTripPush } from "../domain/trips/policies/tripPush.js";
+import { recordOpportunityCompletion } from "../domain/trips/services/tripOpportunityMetrics.js";
 import { awardStamp, type StampLogger } from "../services/passport/StampAwardEngine.js";
 import { buildConsumerProjection } from "../services/passport/PassportConsumerProjections.js";
 import { nameVisibilitySet, sanitizeIdentity, nameVisibleFor } from "../lib/publicIdentity";
 import { truncateDisplayName } from "../lib/displayName.js";
+import { readBlockExclusions, isExcluded, sendExclusionsUnavailable } from "../lib/exclusionSet.js";
 
 const router = Router();
+
+/**
+ * Trip Kernel gate (Trips spec §4; domain/trips/commands/tripKernel.ts; migration 2420).
+ * Returns the service client when `trip_kernel_enabled` is TRUE, else null.
+ * Null means: run the pre-kernel direct write exactly as before. The flag read
+ * is fail-closed, so an unreadable feature_flags table is "off", never "on".
+ */
+async function tripKernel(): Promise<SupabaseClient | null> {
+  const sc = getServiceClient();
+  if (!sc) return null;
+  return (await isTripKernelEnabled(sc)) ? sc : null;
+}
 
 /**
  * Explicit column list for all trip selects.
@@ -29,6 +63,18 @@ const TRIP_COLUMNS =
   "show_on_profile, show_in_discovery, allow_friend_suggestions, allow_trip_crew_invites, " +
   "allow_join_requests, show_exact_dates, show_destination_city, delayed_posting_default, " +
   "precise_location_visible, plan_edit_permission, progress, created_at, updated_at";
+
+/**
+ * The kernel returns the whole trips row (the receipt needs it for replay);
+ * the HTTP response must expose exactly TRIP_COLUMNS, in that order, the way
+ * the direct `.select(TRIP_COLUMNS)` did. Nothing internal reaches a client.
+ */
+const TRIP_COLUMN_LIST = TRIP_COLUMNS.split(",").map((c) => c.trim());
+function pickTripColumns(row: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const c of TRIP_COLUMN_LIST) out[c] = row[c] === undefined ? null : row[c];
+  return out;
+}
 
 
 // ── Trip-completion stamp awards ──────────────────────────────────────────────
@@ -80,11 +126,30 @@ async function awardTripCompletionStamps(
   log?: StampLogger,
 ): Promise<void> {
   // Only accepted participants earn completion stamps — exclude pending invitees.
-  const { data: membersData } = await sc
+  //
+  // FAIL-CLOSED, and this one MINTS A PERMANENT USER-VISIBLE CLAIM. The read
+  // used to leave `error` unbound, so an unreadable trip_members produced
+  // memberIds = [owner] and memberCount = 1 — which then awarded
+  // `solo_traveler` to the owner of a six-person trip and withheld
+  // `group_tripper` and `good_host` from everyone who earned them. A stamp is
+  // not a cache: it is a durable statement on someone's Passport about a trip
+  // they took, and the wrong one cannot be un-awarded by a later successful
+  // read. So a failure awards NOTHING and says so; the trip still completes,
+  // because the completion is the user's and the stamps are ours.
+  const { data: membersData, error: membersErr } = await sc
     .from("trip_members")
     .select("user_id")
     .eq("trip_id", tripId)
     .in("role", ["owner", "member"]);
+
+  if (membersErr) {
+    log?.warn?.(
+      { err: membersErr.message, tripId },
+      "awardTripCompletionStamps: trip_members unreadable — awarding NO completion stamps. " +
+      "A party size read from a failed query would mint solo_traveler for a group trip.",
+    );
+    return;
+  }
 
   const memberIds: string[] = (membersData ?? []).map((m: any) => m.user_id as string);
   if (!memberIds.includes(ownerId)) memberIds.push(ownerId);
@@ -131,16 +196,29 @@ async function awardTripCompletionStamps(
   // good_host: owner hosted a trip that completed with at least one other participant
   if (memberCount >= 2)  awards.push({ userId: ownerId, slug: "good_host" });
 
-  // Milestone stamps — count owner's completed trips (patch has already committed)
-  const { count: completedCount } = await sc
+  // Milestone stamps — count owner's completed trips (patch has already
+  // committed). A FAILED COUNT IS NOT ZERO: `count ?? 0` silently withheld
+  // road_warrior and frequent_flyer from someone who had earned them, and
+  // because awardStamp is idempotent the milestone would only reappear on the
+  // NEXT completed trip. The milestones are skipped explicitly and logged, so
+  // the per-member stamps above still land.
+  const { count: completedCount, error: countErr } = await sc
     .from("trips")
     .select("id", { count: "exact", head: true })
     .eq("owner_id", ownerId)
     .eq("status", "completed");
 
-  const n = completedCount ?? 0;
-  if (n >= 5)  awards.push({ userId: ownerId, slug: "road_warrior" });
-  if (n >= 10) awards.push({ userId: ownerId, slug: "frequent_flyer" });
+  if (countErr || completedCount == null) {
+    log?.warn?.(
+      { err: countErr?.message ?? "count was null", ownerId },
+      "awardTripCompletionStamps: completed-trip count unavailable — milestone stamps skipped. " +
+      "A count read as 0 would withhold a milestone that was earned.",
+    );
+  } else {
+    const n = completedCount;
+    if (n >= 5)  awards.push({ userId: ownerId, slug: "road_warrior" });
+    if (n >= 10) awards.push({ userId: ownerId, slug: "frequent_flyer" });
+  }
 
   // ── Call awardStamp() directly to collect results, then batch notifications ─
   // Direct engine calls (not HTTP) so we get AwardResult back for notification logic.
@@ -227,7 +305,12 @@ router.post("/trips", async (req, res) => {
     return;
   }
 
-  const { title, destinationCity, destinationCountry, startDate, endDate, visibility, coverUrl, coverMediaType, coverImageWidth, coverImageHeight, tripNotes, showHeaderPublicly } = req.body;
+  const parsedBody = CreateTripSchema.safeParse(req.body);
+  if (!parsedBody.success) {
+    sendError(res, "invalid_payload", parsedBody.error.issues[0]?.message ?? "Invalid trip payload");
+    return;
+  }
+  const { title, destinationCity, destinationCountry, startDate, endDate, visibility, coverUrl, coverMediaType, coverImageWidth, coverImageHeight, tripNotes, showHeaderPublicly } = parsedBody.data;
 
   // Date conflict check — applies even when title/city are absent (draft support)
   if (startDate && endDate && new Date(startDate) > new Date(endDate)) {
@@ -239,7 +322,50 @@ router.post("/trips", async (req, res) => {
   // Trips without title/city are saved as drafts.
   const computedStatus = computeTripStatus(title ?? null, destinationCity ?? null, startDate ?? null, endDate ?? null, "planning");
 
-  const { data, error } = await client
+  // Trip Kernel path (CREATE_TRIP, contract v2). requireUser above (identity +
+  // ban gate) is the authorization; there is no aggregate to be a member of
+  // yet. The kernel creates the row at version 1 with event sequence 1
+  // (trip.created). Off => the direct insert below, exactly as before.
+  const kernelCreate = await tripKernel();
+  let kernelCreated: Record<string, unknown> | null = null;
+  if (kernelCreate) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const r = await executeTripCommand(kernelCreate, {
+      commandId: randomUUID(),
+      tripId: randomUUID(),
+      actorUserId: user.id,   // always from token; becomes owner_id
+      expectedTripVersion: null,   // nothing to match against on a create
+      idempotencyKey: env.idempotencyKey,
+      type: "CREATE_TRIP",
+      payload: {
+        title,
+        destination_city: destinationCity,
+        destination_country: destinationCountry ?? null,
+        start_date: startDate ?? null,
+        end_date: endDate ?? null,
+        status: computedStatus,
+        visibility: visibility ?? "private",
+        cover_url: coverUrl ?? null,
+        cover_media_type: coverMediaType ?? null,
+        cover_image_width: (coverImageWidth as number | null | undefined) ?? null,
+        cover_image_height: (coverImageHeight as number | null | undefined) ?? null,
+        trip_notes: tripNotes ?? null,
+        // Typed by CreateTripSchema now, so absence is the only fallback case;
+        // the old `typeof === "boolean"` test silently turned the STRING "false"
+        // into the derived default instead of refusing it.
+        show_header_publicly: showHeaderPublicly ?? ((visibility ?? "private") === "public"),
+      },
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    kernelCreated = pickTripColumns(r.result);
+  }
+
+  // trip-kernel:legacy-path — the flag-off twin of CREATE_TRIP above.
+  const { data, error } = kernelCreated
+    ? { data: kernelCreated, error: null }
+    : await client
     .from("trips")
     .insert({
       owner_id: user.id,
@@ -276,7 +402,10 @@ router.post("/trips", async (req, res) => {
   if (newTripIdForLang && (title ?? '').trim()) {
     const _sc = getServiceClient();
     if (_sc) {
-      const textToDetect = tripNotes ? `${title} ${tripNotes}` : title;
+      // `title` is `string | undefined` now that CreateTripSchema types it —
+      // the guard above already proved it is a non-empty string, but the
+      // compiler cannot see through `(title ?? '').trim()`, so narrow it here.
+      const textToDetect = tripNotes ? `${title} ${tripNotes}` : (title ?? "");
       detectAndStoreLanguage(_sc, 'trip', newTripIdForLang, textToDetect, req.log).catch(() => {});
     }
   }
@@ -494,41 +623,37 @@ router.get("/trips/:tripId/invitable-users", async (req, res) => {
   const membership = await requireTripMember(sc, tripId, user.id);
   if (!membership) { sendError(res, "forbidden", "Not a trip member"); return; }
 
-  const [{ data: memberRows }, { data: friendsAsA }, { data: friendsAsB }, blockResult] = await Promise.all([
+  const [{ data: memberRows }, { data: friendsAsA }, { data: friendsAsB }, blockedSet] = await Promise.all([
     sc.from("trip_members").select("user_id").eq("trip_id", tripId).in("role", ["owner", "member"]),
     sc.from("user_friendships").select("user_b").eq("user_a", user.id),
     sc.from("user_friendships").select("user_a").eq("user_b", user.id),
-    sc.from("blocks").select("blocker_id, blocked_id").or(`blocker_id.eq.${user.id},blocked_id.eq.${user.id}`),
+    readBlockExclusions(sc, user.id),
   ]);
-
-  // FAIL CLOSED: `blockResult.data ?? []` read a PostgREST error as "nobody is
-  // blocked", and the whole list below is filtered on this set — so an
-  // unreadable blocks table surfaced blocked people in the trip mention candidates.
-  // There is no honest partial answer here, so the route refuses.
-  if ((blockResult as any).error) {
-    req.log?.warn(
-      { userId: user.id, err: (blockResult as any).error },
-      "trip mention candidates: block-state read failed — refusing rather than listing unfiltered people",
-    );
-    sendError(res, "db_error", "Block state could not be verified");
+  //
+  // FAIL-CLOSED, shape 3 (lib/exclusionSet.ts): both halves of this response —
+  // groupMembers and otherFollowers — are rosters of people, and the block set
+  // scopes every id in both. There is no sub-part left to serve honestly, and
+  // an empty picker is a false statement ("you have nobody to invite") that the
+  // caller would act on. It refuses with `degraded_unavailable` (503,
+  // retryable), the code this codebase already uses for "the check could not be
+  // PERFORMED", not db_error (500).
+  //
+  // `blockResult.data ?? []` previously turned a resolved DB error into an
+  // empty block set, so the invite picker offered people the caller blocked.
+  if (!blockedSet.ok) {
+    sendExclusionsUnavailable(req, res, blockedSet, "trips/invitable-users");
     return;
-  }
-
-  const blockedSet = new Set<string>();
-  for (const b of (blockResult.data ?? [])) {
-    if ((b as any).blocker_id === user.id) blockedSet.add((b as any).blocked_id);
-    else blockedSet.add((b as any).blocker_id);
   }
 
   const groupMemberIds = (memberRows ?? [])
     .map((r: any) => r.user_id as string)
-    .filter((id) => id !== user.id && !blockedSet.has(id));
+    .filter((id) => id !== user.id && !isExcluded(blockedSet, id));
 
   const groupMemberSet = new Set(groupMemberIds);
   const otherFollowerIds = [
     ...(friendsAsA ?? []).map((r: any) => r.user_b as string),
     ...(friendsAsB ?? []).map((r: any) => r.user_a as string),
-  ].filter((id) => id !== user.id && !groupMemberSet.has(id) && !blockedSet.has(id));
+  ].filter((id) => id !== user.id && !groupMemberSet.has(id) && !isExcluded(blockedSet, id));
 
   const allIds = [...groupMemberIds, ...otherFollowerIds];
   const profileMap: Record<string, any> = {};
@@ -656,6 +781,37 @@ const UUID_RE = /^[0-9a-f-]{36}$/i;
 
 const TripStatusEnum = ["draft", "upcoming", "active", "planning", "completed", "cancelled", "archived"] as const;
 
+/**
+ * POST /trips body. census-trips TR51's testable claim is that "every trip write
+ * parses a zod schema first"; measured 2026-09-11 that was false for eight
+ * endpoints, this one among them — twelve fields came straight off `req.body`
+ * and the only validation was startDate <= endDate. TR51 moved C -> W on that
+ * measurement and this closes the flagship create.
+ *
+ * DELIBERATELY NOT STRICTER THAN PatchTripSchema. Every field below mirrors the
+ * one this router has enforced on PATCH /trips/:tripId all along, so a client
+ * able to patch a field can create with it and this cannot reject a payload the
+ * API already accepted elsewhere. Unknown keys are STRIPPED rather than
+ * rejected — zod's default, and exactly what the destructuring it replaces did.
+ *
+ * Every field is optional: a trip with no title or city is a DRAFT, which
+ * computeTripStatus below depends on and which the client relies on.
+ */
+const CreateTripSchema = z.object({
+  title:              z.string().min(1).max(200).optional(),
+  destinationCity:    z.string().max(100).optional(),
+  destinationCountry: z.string().max(100).nullable().optional(),
+  startDate:          z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  endDate:            z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  visibility:         z.enum(["public", "private", "buddies", "invite"]).optional(),
+  coverUrl:           z.string().url().nullable().optional(),
+  coverMediaType:     z.enum(["image", "video"]).nullable().optional(),
+  coverImageWidth:    z.number().int().positive().nullable().optional(),
+  coverImageHeight:   z.number().int().positive().nullable().optional(),
+  tripNotes:          z.string().nullable().optional(),
+  showHeaderPublicly: z.boolean().optional(),
+});
+
 const PatchTripSchema = z.object({
   // Plan edit settings
   planEditPermission: z.enum(PlanEditPermissionEnum).optional(),
@@ -710,10 +866,23 @@ router.patch("/trips/:tripId", async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
   // Only the trip owner may change trip settings
-  const { data: trip } = await sc.from("trips").select("id, owner_id, title, destination_city, destination_country, start_date, end_date, status, timezone, plan_edit_permission").eq("id", tripId).maybeSingle();
+  // `error` is bound because `!trip` is the OWNER CHECK's input. Unbound, a
+  // failed read is indistinguishable from a deleted trip, and the caller is
+  // told "Trip not found" — a confident, non-retryable claim assembled out of a
+  // query that never answered. A trip that could not be read is unknown, not
+  // absent (lib/http.ts TripAccessUnavailableError records the same rule).
+  const { data: trip, error: tripErr } = await sc.from("trips").select("id, owner_id, title, destination_city, destination_country, start_date, end_date, status, timezone, plan_edit_permission").eq("id", tripId).maybeSingle();
+  if (tripErr) {
+    req.log.error({ err: tripErr }, "update trip settings: trip unreadable");
+    sendError(res, "degraded_unavailable", "We could not read this trip right now. Please try again shortly.");
+    return;
+  }
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
   const t = trip as any;
-  if (t.owner_id !== user.id) { sendError(res, "forbidden", "Only the trip owner can update this trip"); return; }
+  // §6.1 canEditTrip. The row is already in hand, so it is passed rather than
+  // re-read; the RULE (owner only) is the policy module's, tested as a rule.
+  const edit = await canEditTrip(sc, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: t.owner_id } });
+  if (!edit.allowed) { sendTripRefusal(res, "forbidden", edit.reason, edit.message); return; }
 
   // Date conflict check across current + incoming values
   const newStart = b.startDate !== undefined ? b.startDate : (t.start_date ?? null);
@@ -768,7 +937,34 @@ router.patch("/trips/:tripId", async (req, res) => {
     (b.timezone ?? t.timezone ?? null) as string | null,
   );
 
-  const { data: updated, error: patchErr } = await sc
+  // Trip Kernel path (UPDATE_TRIP, contract v2). The owner check above is the
+  // authorization; the kernel re-checks owner, refuses a way out of a terminal
+  // status (§3.1) and a start > end, and records which columns changed. Off
+  // => the direct update below, exactly as before.
+  const kernelPatch = await tripKernel();
+  let kernelUpdated: Record<string, unknown> | null = null;
+  if (kernelPatch) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const { updated_at: patchStamp, ...columnPatch } = patch;
+    const r = await executeTripCommand(kernelPatch, {
+      commandId: randomUUID(),
+      tripId,
+      actorUserId: user.id,
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: "UPDATE_TRIP",
+      payload: { patch: columnPatch, updated_at: patchStamp },
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    kernelUpdated = pickTripColumns(r.result);
+  }
+
+  // trip-kernel:legacy-path — the flag-off twin of UPDATE_TRIP above.
+  const { data: updated, error: patchErr } = kernelUpdated
+    ? { data: kernelUpdated, error: null }
+    : await sc
     .from("trips")
     .update(patch)
     .eq("id", tripId)
@@ -825,7 +1021,7 @@ router.patch("/trips/:tripId", async (req, res) => {
           );
           // Route through NotificationService so the privacy guard + dedup run.
           // notifRouter.route() is intentionally NOT called here; push is sent
-          // below via sendPushWithRetry to avoid double-delivery.
+          // below via sendTripPush to avoid double-delivery.
           const { NotificationService } = await import("../services/notifications/NotificationService.js");
           const notifSvc = new NotificationService(sc);
           await Promise.allSettled(
@@ -854,7 +1050,7 @@ router.patch("/trips/:tripId", async (req, res) => {
           }
           const recipients = [...tokensByUser.entries()].map(([userId, tokens]) => ({ userId, tokens }));
           if (recipients.length > 0) {
-            await sendPushWithRetry(sc, recipients, {
+            await sendTripPush(sc, recipients, {
               title: "How was the trip?",
               body: `Leave a review for "${tripTitle}" — your feedback helps the community.`,
               data: { type: "review_prompt", entityType: "trip", entityId: tripId, entityName: tripTitle },
@@ -904,21 +1100,42 @@ router.get("/trips/:tripId/plan-permission", async (req, res) => {
   const member = await isAcceptedTripMember(client, tripId, user.id);
   if (!member) { sendError(res, "not_member", "Not a trip member"); return; }
 
-  const { data: trip } = await sc
+  // Both reads bind `error`. This handler is a hand-rolled copy of
+  // lib/http.ts canEditPlan, and it had carried the EXACT two defects that
+  // helper's own comment records as fixed there: an unreadable `trips` row was
+  // reported to the user as "trip not found", and an unreadable `plan_editors`
+  // produced `canEdit: false` with an empty editor list — "you may not edit
+  // this trip", said because a query failed.
+  //
+  // Absent and unreadable are different facts and only one of them is an
+  // answer. Both now answer 503, which is retryable; a 404 is not, and a client
+  // told the trip does not exist will stop asking.
+  const { data: trip, error: tripErr } = await sc
     .from("trips")
     .select("owner_id, plan_edit_permission")
     .eq("id", tripId)
     .maybeSingle();
 
+  if (tripErr) {
+    req.log?.warn?.({ err: tripErr.message, tripId }, "plan-permission: trips unreadable");
+    sendError(res, "degraded_unavailable", "Could not read this trip");
+    return;
+  }
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
 
   const perm    = ((trip as any).plan_edit_permission as PlanEditPermission) ?? "all_members";
   const ownerId = (trip as any).owner_id as string;
 
-  const { data: editorRows } = await sc
+  const { data: editorRows, error: editorsErr } = await sc
     .from("plan_editors")
     .select("user_id")
     .eq("trip_id", tripId);
+
+  if (editorsErr) {
+    req.log?.warn?.({ err: editorsErr.message, tripId }, "plan-permission: plan_editors unreadable");
+    sendError(res, "degraded_unavailable", "Could not read this trip's plan editors");
+    return;
+  }
 
   const editorIds = (editorRows ?? []).map((r: any) => r.user_id as string);
 
@@ -937,6 +1154,12 @@ router.get("/trips/:tripId/plan-permission", async (req, res) => {
  * Reuses the existing trip_members table with role='invited'.
  * Friendship alone NEVER creates this row — only explicit owner invitation.
  */
+// TR51 (§4.1 "command service validates schema"): the two membership writes
+// parse a schema first, like the other 46. The messages are the ones the
+// hand-rolled checks used to send, so no client sees a new sentence.
+const InviteMemberSchema = z.object({ userId: z.string().uuid() });
+const AddMemberSchema = z.object({ userId: z.string().uuid(), role: z.enum(["member", "invited"]).default("member") });
+
 router.post("/trips/:tripId/invite", async (req, res) => {
   if (!isServiceClientReady) {
     res.status(503).json({ error: "server_not_configured" });
@@ -953,14 +1176,26 @@ router.post("/trips/:tripId/invite", async (req, res) => {
   const { tripId } = req.params;
   if (!/^[0-9a-f-]{36}$/i.test(tripId)) { res.status(400).json({ error: "invalid_payload", message: "Invalid trip id" }); return; }
 
-  const userId = req.body?.userId;
-  if (!userId || !/^[0-9a-f-]{36}$/i.test(userId)) { res.status(400).json({ error: "invalid_payload", message: "userId must be a valid UUID" }); return; }
+  const parsedInvite = InviteMemberSchema.safeParse(req.body ?? {});
+  if (!parsedInvite.success) { res.status(400).json({ error: "invalid_payload", message: "userId must be a valid UUID" }); return; }
+  const userId = parsedInvite.data.userId;
   if (userId === user.id) { res.status(400).json({ error: "invalid_payload", message: "You cannot invite yourself" }); return; }
 
   // Only the trip owner may invite
-  const { data: trip } = await client.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  // `error` bound for the same reason as the first `trips` read in this file:
+  // unreadable is not absent, and "Trip not found" is not a thing a failed read
+  // may say.
+  const { data: trip, error: tripErr } = await client.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (tripErr) {
+    req.log.error({ err: tripErr }, "invite member: trip unreadable");
+    sendError(res, "degraded_unavailable", "We could not read this trip right now. Please try again shortly.");
+    return;
+  }
   if (!trip) { res.status(404).json({ error: "not_found", message: "Trip not found" }); return; }
-  if ((trip as any).owner_id !== user.id) { res.status(403).json({ error: "forbidden", message: "Only the trip owner can invite members" }); return; }
+  // §6.1 canInviteParticipant — owner only, as the kernel's INVITE_PARTICIPANT
+  // capability is. Passed the row already read.
+  const invite = await canInviteParticipant(client, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
+  if (!invite.allowed) { sendTripRefusal(res, "forbidden", invite.reason, "Only the trip owner can invite members"); return; }
 
   // Blocked-user guard: cannot invite a user with an active block in either
   // direction. Fail-closed shared helper — the previous .maybeSingle() raised on
@@ -970,11 +1205,45 @@ router.post("/trips/:tripId/invite", async (req, res) => {
     res.status(403).json({ error: "forbidden", message: "Cannot invite a blocked user" }); return;
   }
 
-  // Idempotent: check existing membership
-  const { data: existing } = await client.from("trip_members").select("role").eq("trip_id", tripId).eq("user_id", userId).maybeSingle();
+  // Idempotent: check existing membership.
+  // supabase-js resolves on a DB error, so an unreadable trip_members returns
+  // the same `null` "not a member" does. Reading that as "not a member" sends
+  // an INVITE_PARTICIPANT / trip_members INSERT for someone who may already be
+  // an accepted member or the owner — demoting an existing relationship to a
+  // fresh "invited" row on the legacy path, and re-notifying them. The 200
+  // already_member answer is exactly what we can no longer prove, so refuse.
+  const { data: existing, error: existingErr } = await client.from("trip_members").select("role").eq("trip_id", tripId).eq("user_id", userId).maybeSingle();
+  if (existingErr) {
+    req.log.error({ err: existingErr, tripId, userId }, "trip invite: membership check unavailable");
+    sendError(res, "degraded_unavailable", "We could not check this trip's members right now. Please try again shortly.");
+    return;
+  }
   if (existing) { res.status(200).json({ status: "already_member", role: (existing as any).role, idempotent: true }); return; }
 
-  const { error } = await client.from("trip_members").insert({ trip_id: tripId, user_id: userId, role: "invited" });
+  // Trip Kernel path (INVITE_PARTICIPANT, contract v2). Owner + block checks
+  // above are the authorization; the kernel re-checks owner and refuses a
+  // second row for the same user. Off => the direct insert below.
+  const kernelInvite = await tripKernel();
+  let kernelInvited = false;
+  if (kernelInvite) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const r = await executeTripCommand(kernelInvite, {
+      commandId: randomUUID(),
+      tripId,
+      actorUserId: user.id,
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: "INVITE_PARTICIPANT",
+      payload: { user_id: userId },
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    kernelInvited = true;
+  }
+
+  // trip-kernel:legacy-path — the flag-off twin of INVITE_PARTICIPANT above.
+  const { error } = kernelInvited ? { error: null } : await client.from("trip_members").insert({ trip_id: tripId, user_id: userId, role: "invited" });
   if (error) { req.log.error({ err: error }, "trip invite: insert failed"); sendError(res, "db_error", error.message); return; }
 
   // Fire-and-forget: notify the invitee they've been invited.
@@ -992,7 +1261,7 @@ router.post("/trips/:tripId/invite", async (req, res) => {
       const inviterName = truncateDisplayName(inviterNameAllowed
         ? ((inviterRow as any)?.display_name ?? ((inviterRow as any)?.handle ? `@${(inviterRow as any).handle}` : "Someone"))
         : ((inviterRow as any)?.handle ? `@${(inviterRow as any).handle}` : "Someone"));
-      await sendPushWithRetry(sc2, { userId, tokens: [(inviteeRow as any)?.expo_push_token] }, {
+      await sendTripPush(sc2, { userId, tokens: [(inviteeRow as any)?.expo_push_token] }, {
         title: "Trip invitation",
         // Privacy: do not include the trip name or destination in the push body —
         // the invitee has not accepted yet and the content may be private.
@@ -1002,7 +1271,7 @@ router.post("/trips/:tripId/invite", async (req, res) => {
       });
       // In-app notification: store with generic text — no trip name in params.
       // notifRouter.route() is intentionally NOT called here; push was already
-      // sent above via sendPushWithRetry to avoid double-delivery.
+      // sent above via sendTripPush to avoid double-delivery.
       const { NotificationService } = await import("../services/notifications/NotificationService.js");
       const notifSvc = new NotificationService(sc2);
       await notifSvc.create({
@@ -1042,7 +1311,67 @@ router.post("/trips/:tripId/accept-invite", async (req, res) => {
   if (!membership) { res.status(404).json({ error: "not_found", message: "No invitation found for this trip" }); return; }
   if ((membership as any).role !== "invited") { res.status(400).json({ error: "invalid_payload", message: `Already a ${(membership as any).role}` }); return; }
 
-  const { error } = await client.from("trip_members").update({ role: "member" }).eq("trip_id", tripId).eq("user_id", user.id);
+  // ── Trust: private_plan_access, the restriction nothing enforced ───────────
+  //
+  // TrustRestrictionService declares four restriction types. `hosting` is gated
+  // twenty lines up in this file and `messaging` in routes/messaging.ts;
+  // `private_plan_access` — "excluded from private plans" — reached the user as
+  // a capability chip on their Passport and was enforced NOWHERE (census-trust
+  // A13). A user was TOLD they were excluded and then let in, which is worse
+  // than either honest outcome.
+  //
+  // Accepting an invitation to a trip whose visibility is `private` or `invite`
+  // IS joining a private plan; a public trip is not one, so the restriction does
+  // not touch it.
+  //
+  // The degraded branch is deliberately absent here, and that is not an
+  // oversight: getRestrictionState fails OPEN for this type on purpose
+  // (TrustRestrictionService:207-214, "Low-risk actions (private_plan_access,
+  // location_plan_join) stay open"), so canJoinPrivatePlans is `true` on an
+  // unreadable read and this gate cannot fire on a degraded one. The hosting
+  // gate above needs its degraded branch because hosting fails CLOSED.
+  const { data: tripVis, error: tripVisErr } = await client
+    .from("trips").select("visibility").eq("id", tripId).maybeSingle();
+  if (tripVisErr) {
+    sendError(res, "degraded_unavailable", "We could not verify this invitation right now. Please try again shortly.");
+    return;
+  }
+  const isPrivatePlan = ["private", "invite"].includes(String((tripVis as any)?.visibility ?? "private"));
+  if (isPrivatePlan) {
+    const inviteTrust = await getRestrictionState(client, user.id);
+    if (!inviteTrust.canJoinPrivatePlans) {
+      res.status(403).json({
+        error: "trust_restriction",
+        message: "Your account is currently restricted from joining private trips.",
+      });
+      return;
+    }
+  }
+
+  // Trip Kernel path (ACCEPT_INVITE, contract v2). The invitee is NOT accepted
+  // crew, so the v1 crew re-check could never admit this command; v2 requires
+  // exactly an 'invited' row for the actor. Off => the direct update below.
+  const kernelAccept = await tripKernel();
+  let kernelAccepted = false;
+  if (kernelAccept) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const r = await executeTripCommand(kernelAccept, {
+      commandId: randomUUID(),
+      tripId,
+      actorUserId: user.id,
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: "ACCEPT_INVITE",
+      payload: {},
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    kernelAccepted = true;
+  }
+
+  // trip-kernel:legacy-path — the flag-off twin of ACCEPT_INVITE above.
+  const { error } = kernelAccepted ? { error: null } : await client.from("trip_members").update({ role: "member" }).eq("trip_id", tripId).eq("user_id", user.id);
   if (error) { req.log.error({ err: error }, "trip invite accept: update failed"); sendError(res, "db_error", error.message); return; }
 
   // Fire-and-forget: sync group chat membership for this trip.
@@ -1054,7 +1383,7 @@ router.post("/trips/:tripId/accept-invite", async (req, res) => {
       const sc2 = getServiceClient();
       if (!sc2) return;
       const { data: tripRow } = await sc2.from("trips").select("title, owner_id").eq("id", tripId).maybeSingle();
-      if (!tripRow || (tripRow as any).owner_id === user.id) return; // skip if caller IS owner
+      if (!tripRow || isTripOwner(tripRow as { owner_id: string }, { userId: user.id })) return; // skip if caller IS owner
       const [{ data: ownerRow }, { data: acceptorRow }] = await Promise.all([
         sc2.from("profiles").select("expo_push_token").eq("id", (tripRow as any).owner_id).maybeSingle(),
         sc2.from("profiles").select("display_name, handle").eq("id", user.id).maybeSingle(),
@@ -1063,7 +1392,7 @@ router.post("/trips/:tripId/accept-invite", async (req, res) => {
       const acceptorName = truncateDisplayName(acceptorNameAllowed
         ? ((acceptorRow as any)?.display_name ?? ((acceptorRow as any)?.handle ? `@${(acceptorRow as any).handle}` : "Someone"))
         : ((acceptorRow as any)?.handle ? `@${(acceptorRow as any).handle}` : "Someone"));
-      await sendPushWithRetry(sc2, { userId: (tripRow as any).owner_id as string, tokens: [(ownerRow as any)?.expo_push_token] }, {
+      await sendTripPush(sc2, { userId: (tripRow as any).owner_id as string, tokens: [(ownerRow as any)?.expo_push_token] }, {
         title: (tripRow as any).title ?? "Your trip",
         body: `${acceptorName} joined your trip!`,
         data: { type: "trip_invite_accepted", tripId },
@@ -1096,7 +1425,29 @@ router.post("/trips/:tripId/decline-invite", async (req, res) => {
   if (!membership) { res.status(404).json({ error: "not_found", message: "No invitation found for this trip" }); return; }
   if ((membership as any).role !== "invited") { res.status(400).json({ error: "invalid_payload", message: "Cannot decline — you are already a member" }); return; }
 
-  const { error } = await client.from("trip_members").delete().eq("trip_id", tripId).eq("user_id", user.id);
+  // Trip Kernel path (DECLINE_INVITE, contract v2): requires the actor's own
+  // 'invited' row; deletes it as legacy does and records trip.participant_declined.
+  const kernelDecline = await tripKernel();
+  let kernelDeclined = false;
+  if (kernelDecline) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const r = await executeTripCommand(kernelDecline, {
+      commandId: randomUUID(),
+      tripId,
+      actorUserId: user.id,
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: "DECLINE_INVITE",
+      payload: {},
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    kernelDeclined = true;
+  }
+
+  // trip-kernel:legacy-path — the flag-off twin of DECLINE_INVITE above.
+  const { error } = kernelDeclined ? { error: null } : await client.from("trip_members").delete().eq("trip_id", tripId).eq("user_id", user.id);
   if (error) { req.log.error({ err: error }, "trip invite decline: delete failed"); sendError(res, "db_error", error.message); return; }
 
   // Fire-and-forget: notify trip owner that their invitation was declined.
@@ -1115,7 +1466,7 @@ router.post("/trips/:tripId/decline-invite", async (req, res) => {
       const declinerName = truncateDisplayName(declinerNameAllowed
         ? ((declinerRow as any)?.display_name ?? ((declinerRow as any)?.handle ? `@${(declinerRow as any).handle}` : "Someone"))
         : ((declinerRow as any)?.handle ? `@${(declinerRow as any).handle}` : "Someone"));
-      await sendPushWithRetry(sc2, { userId: ownerId, tokens: [(ownerRow as any)?.expo_push_token] }, {
+      await sendTripPush(sc2, { userId: ownerId, tokens: [(ownerRow as any)?.expo_push_token] }, {
         title: "Invite declined",
         body:  `${declinerName} declined your invitation to ${(tripRow as any)?.title ?? "your trip"}`,
         data:  { type: "trip_invite_declined", tripId },
@@ -1182,13 +1533,8 @@ router.get("/me/plan-editable-trips", async (req, res) => {
     }
   }
 
-  const editable = (trips as any[]).filter((trip) => {
-    if (trip.owner_id === user.id) return true;
-    const perm: string = trip.plan_edit_permission ?? "all_members";
-    if (perm === "all_members") return true;
-    if (perm === "owner_only")  return false;
-    return (editorMap[trip.id] ?? []).includes(user.id);
-  });
+  // §6.2's plan-edit rule, decided by the policy module (TR102), not spelled here.
+  const editable = (trips as any[]).filter((trip) => planEditPermits(trip, user.id, editorMap[trip.id] ?? []));
 
   res.json({
     trips: editable.map((t: any) => ({
@@ -1228,6 +1574,13 @@ const CreatePlanItemSchema = z.object({
   notes:             z.string().max(1000).optional(),
   sortOrder:         z.number().int().default(0),
   lockType:          z.enum(["fixed", "flexible", "optional"]).default("flexible"),
+  // §6.3's six scopes (2770). OPTIONAL, with no default here on purpose: when
+  // the caller names none, the write below omits the column entirely and the
+  // row lands on 2770's own default — which is also what the kernel's
+  // `coalesce(v_payload->>'privacy_scope', 'crew')` does. A default in this
+  // schema would make every create name a column a pre-2770 database does not
+  // have, turning a new optional field into a hard dependency on a migration.
+  privacyScope:      z.enum(TRIP_PLAN_PRIVACY_SCOPES).optional(),
 });
 
 const UpdatePlanItemSchema = z.object({
@@ -1244,6 +1597,13 @@ const UpdatePlanItemSchema = z.object({
   notes:             z.string().max(1000).nullable().optional(),
   sortOrder:         z.number().int().optional(),
   lockType:          z.enum(["fixed", "flexible", "optional"]).optional(),
+  /**
+   * §6.3's six scopes (2770). There is deliberately NO `visibility` key beside
+   * it: 2770 ties the two by CHECK and 2772 makes UPDATE_PLAN refuse a direct
+   * `visibility` patch, so the only coherent thing a caller can send is the
+   * scope. `visibility` is derived from it below.
+   */
+  privacyScope:      z.enum(TRIP_PLAN_PRIVACY_SCOPES).optional(),
 });
 
 const ReorderSchema = z.object({
@@ -1257,7 +1617,7 @@ const ReorderBatchSchema = z.object({
 
 // ── Conflict detection helper ─────────────────────────────────────────────────
 
-function computeWarnings(
+export function computeWarnings(
   items: any[],
   tripStartDate: string | null | undefined,
   tripEndDate: string | null | undefined,
@@ -1351,12 +1711,24 @@ router.get("/trips/:tripId/plan", async (req, res) => {
   const member = await isAcceptedTripMember(client, tripId, user.id);
   if (!member) { sendError(res, "not_member", "You must be an accepted trip member to view the plan"); return; }
 
-  // Fetch trip metadata (dates + plan permission)
-  const { data: trip } = await client
+  // Fetch trip metadata (dates + plan permission).
+  //
+  // `error` is bound because it decides whether the WARNINGS below are a
+  // measurement or an assumption. computeWarnings() treats a null start/end as
+  // "this trip has no dates", so an unreadable `trips` row used to produce a
+  // plan with no `outside_trip_dates` warning on any item — indistinguishable
+  // from a plan whose items are all inside the trip. A failed read is not a
+  // clean plan; refuse and let the client retry.
+  const { data: trip, error: tripErr } = await client
     .from("trips")
     .select("start_date,end_date,owner_id,plan_edit_permission")
     .eq("id", tripId)
     .maybeSingle();
+  if (tripErr) {
+    req.log.error({ err: tripErr }, "get trip plan: trip metadata unreadable");
+    sendError(res, "degraded_unavailable", "We could not read this trip's dates right now, so the plan cannot be checked against them. Please try again shortly.");
+    return;
+  }
   const tripStartDate = (trip as any)?.start_date ?? null;
   const tripEndDate   = (trip as any)?.end_date   ?? null;
 
@@ -1365,19 +1737,15 @@ router.get("/trips/:tripId/plan", async (req, res) => {
   const canEdit = editAllowed === true;
 
   // perf-trim: explicit column list replaces SELECT * — only columns consumed by toCamel()
-  // are fetched; removed_at is a filter (WHERE), not needed in the result set
-  const { data, error } = await client
-    .from("trip_plan_items")
-    .select(
-      "id, trip_id, creator_id, title, category, status, source_type, source_id, " +
-      "day_date, starts_at, ends_at, location_name, notes, sort_order, visibility, " +
-      "lock_type, location_is_private, lat, lng, created_at, updated_at",
-    )
-    .eq("trip_id", tripId)
-    .is("removed_at", null)
-    .order("day_date", { ascending: true, nullsFirst: false })
-    .order("starts_at", { ascending: true, nullsFirst: false })
-    .order("sort_order", { ascending: true });
+  // are fetched; removed_at is a filter (WHERE), not needed in the result set.
+  //
+  // The select lives in plan.ts beside the column constants rather than here:
+  // this file IMPORTS them, and check:write-path-columns cannot resolve an
+  // imported identifier, so a `.select()` written here is a blind spot the
+  // live column check silently skips. See readPlanItemsInOrder's header.
+  const { data, error } = await readPlanItemsInOrder(client, tripId, () => {
+    req.log.warn({ tripId }, "trip plan: privacy_scope absent — 2770_trip_plans_spec_columns.sql is not applied to this database; serving the plan without §6.3 scopes");
+  });
 
   if (error) { req.log.error({ err: error }, "get trip plan"); sendError(res, "db_error", error.message); return; }
 
@@ -1391,10 +1759,19 @@ router.get("/trips/:tripId/plan", async (req, res) => {
     .map((i) => i.source_id as string);
   const cancelledMeetupIds = new Set<string>();
   if (meetupSourceIds.length > 0) {
-    const { data: meetups } = await client
+    const { data: meetups, error: meetupsErr } = await client
       .from("meetups")
       .select("id, status")
       .in("id", meetupSourceIds);
+    // Same reasoning as the trip read above, one step further: an unreadable
+    // `meetups` read left this set EMPTY, and an empty set is exactly what "no
+    // source meetup was cancelled" looks like. The plan then rendered an item
+    // whose meetup had been cancelled as an ordinary, warning-free item.
+    if (meetupsErr) {
+      req.log.error({ err: meetupsErr }, "get trip plan: source meetups unreadable");
+      sendError(res, "degraded_unavailable", "We could not check whether the events behind this plan are still on. Please try again shortly.");
+      return;
+    }
     for (const m of (meetups ?? [])) {
       if ((m as any).status === "cancelled") cancelledMeetupIds.add(m.id);
     }
@@ -1458,7 +1835,12 @@ router.post("/trips/:tripId/plan/items", async (req, res) => {
 
   // Duplicate guard for sourced items
   if (b.sourceId) {
-    const { data: dup } = await client
+    // The 409 below is the only duplicate protection on the legacy
+    // (kernel-off) path, whose INSERT runs unconditionally. An unreadable
+    // trip_plan_items resolves as `{ data: null }` — the same shape as "no
+    // duplicate" — so ignoring `error` turns a retry into a second copy of the
+    // same sourced item in the itinerary. Refuse; the add is safe to retry.
+    const { data: dup, error: dupErr } = await client
       .from("trip_plan_items")
       .select("id")
       .eq("trip_id", tripId)
@@ -1466,9 +1848,70 @@ router.post("/trips/:tripId/plan/items", async (req, res) => {
       .eq("source_id", b.sourceId)
       .is("removed_at", null)
       .maybeSingle();
+    if (dupErr) {
+      req.log.error({ err: dupErr, tripId, sourceType: b.sourceType, sourceId: b.sourceId }, "plan item: duplicate check unavailable");
+      sendError(res, "degraded_unavailable", "We could not check the plan for duplicates right now. Please try again shortly.");
+      return;
+    }
     if (dup) { res.status(409).json({ error: "duplicate", message: "This item is already in the plan" }); return; }
   }
 
+  // §6.3 (2770, census-trips TR116). `visibility` is DERIVED, never asked for:
+  // 2770's CHECK makes a scope and a disagreeing visibility impossible, so a
+  // caller who named both could only be refused by the database. When no scope
+  // is named the column is omitted and the row lands on 2770's default
+  // (`crew`), which derives the same `members` this route has always written —
+  // so a client that has not been updated sees no change at all.
+  const scope: TripPlanPrivacyScope | null = b.privacyScope ?? null;
+  const derivedVisibility = scope === null ? "members" : visibilityForPrivacyScope(scope);
+
+  // Trip Kernel path (§4.1 ADD_PLAN). Authorization above is unchanged; the
+  // kernel writes the row, the event, the outbox row and the receipt in one
+  // transaction and bumps trips.version. Off => the direct insert below.
+  const kernel = await tripKernel();
+  if (kernel) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const r = await executeTripCommand(kernel, {
+      commandId: randomUUID(),
+      tripId,
+      actorUserId: user.id,   // always from token
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: "ADD_PLAN",
+      payload: {
+        title:               b.title,
+        category:            b.category,
+        status:              b.status,
+        source_type:         b.sourceType,
+        source_id:           b.sourceId ?? null,
+        day_date:            b.dayDate ?? null,
+        starts_at:           b.startsAt ?? null,
+        ends_at:             b.endsAt ?? null,
+        location_name:       b.locationName ?? null,
+        lat:                 b.lat ?? null,
+        lng:                 b.lng ?? null,
+        location_is_private: b.locationIsPrivate ?? false,
+        notes:               b.notes ?? null,
+        sort_order:          b.sortOrder,
+        lock_type:           b.lockType,
+        // Both keys, on purpose. A kernel carrying 2772 DERIVES `visibility`
+        // from `privacy_scope` and ignores the key sent here; a kernel that
+        // stops at 2590 has no `privacy_scope` branch and reads `visibility`.
+        // Sending the derived pair means the same command produces the same
+        // row on either, instead of silently widening a `private` plan to
+        // `members` on the older one.
+        ...(scope === null ? {} : { privacy_scope: scope }),
+        visibility:          derivedVisibility,
+      },
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    res.status(201).json(toCamel(r.result));
+    return;
+  }
+
+  // trip-kernel:legacy-path — flag-off twin of the plan-item command above.
   const { data: item, error } = await client
     .from("trip_plan_items")
     .insert({
@@ -1489,12 +1932,27 @@ router.post("/trips/:tripId/plan/items", async (req, res) => {
       notes:               b.notes ?? null,
       sort_order:          b.sortOrder,
       lock_type:           b.lockType,
-      visibility:          "members",
+      ...(scope === null ? {} : { privacy_scope: scope }),
+      visibility:          derivedVisibility,
     })
     .select("*")
     .single();
 
-  if (error) { req.log.error({ err: error }, "create plan item"); sendError(res, "db_error", error.message); return; }
+  if (error) {
+    // A named scope on a database without 2770 is the one new failure this
+    // field can cause, and it must not read as a generic write fault: the
+    // request is well-formed and will succeed once the migration is applied,
+    // so it is retryable and the operator is told which file provides the
+    // column. Every other error keeps the shape it had.
+    if (scope !== null && isMissingColumnError(error)) {
+      req.log.error({ err: error, tripId, privacyScope: scope }, "plan item: privacy_scope absent — 2770_trip_plans_spec_columns.sql is not applied to this database");
+      sendError(res, "degraded_unavailable", "Plan privacy scopes are not available on this deployment yet. Please try again shortly.");
+      return;
+    }
+    req.log.error({ err: error }, "create plan item");
+    sendError(res, "db_error", error.message);
+    return;
+  }
 
   res.status(201).json(toCamel(item));
 });
@@ -1535,7 +1993,73 @@ router.patch("/trips/:tripId/plan/items/:itemId", async (req, res) => {
   if (patch.locationIsPrivate !== undefined) dbPatch.location_is_private = patch.locationIsPrivate;
   if (patch.notes             !== undefined) dbPatch.notes               = patch.notes;
   if (patch.sortOrder         !== undefined) dbPatch.sort_order          = patch.sortOrder;
+  // §6.3 (2770, census-trips TR116). The scope moves and `visibility` follows
+  // it in the same statement — 2770's CHECK refuses the pair apart, and 2772
+  // derives it on the kernel path, so writing both here is what makes the
+  // flag-off twin land on the row the command would have written.
+  // Both keys reach the kernel patch too: a kernel carrying 2772 derives
+  // `visibility` and ignores the key; one that stops at 2590 has no
+  // `privacy_scope` branch and applies `visibility`. Same command, same row,
+  // either way.
+  if (patch.privacyScope      !== undefined) {
+    dbPatch.privacy_scope = patch.privacyScope;
+    dbPatch.visibility    = visibilityForPrivacyScope(patch.privacyScope);
+  }
 
+  // Trip Kernel path (§3.3: a status change is a command, not a column write).
+  // The command type is derived from the patch; the kernel refuses a transition
+  // out of `done` / `cancelled` and writes state + event atomically.
+  const kernel = await tripKernel();
+  if (kernel) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const { updated_at: updatedAt, ...columnPatch } = dbPatch;
+    const r = await executeTripCommand(kernel, {
+      commandId: randomUUID(),
+      tripId,
+      actorUserId: user.id,
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: planCommandTypeForPatch(patch),
+      payload: { item_id: itemId, patch: columnPatch, updated_at: updatedAt },
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    // §21.1 opportunity_completed_total — a §13 opportunity's plan, done.
+    recordOpportunityCompletion(planCommandTypeForPatch(patch), r.result, tripId, r.duplicate);
+    setTripVersionHeader(res, r.version);
+    res.json(toCamel(r.result));
+    return;
+  }
+
+  // §3.3 holds in the flag-off twin too (census-trips TR47, TR48): an arrow
+  // out of a terminal state is refused with the kernel path's own reason and
+  // shape; a request carrying an Idempotency-Key the audit already holds for
+  // this item is answered with the row as it stands, nothing written twice;
+  // and the write it does make is audited as `plan_item_updated`. What the
+  // twin cannot give is the kernel's receipt and event — that is what the
+  // flag is for.
+  const refused = planStatusTransitionRefused(auth.status, patch.status);
+  if (refused) {
+    res.status(409).json({
+      error: "invalid_state_transition",
+      message: `A ${refused.from} plan item cannot become ${refused.to}`,
+      reason: "TRIP_PLAN_INVALID_TRANSITION", from: refused.from, to: refused.to,
+    });
+    return;
+  }
+  const legacyEnv = readCommandEnvelope(req);
+  if (!legacyEnv.ok) { sendError(res, "invalid_payload", legacyEnv.message); return; }
+  const suppliedKey = req.get(IDEMPOTENCY_KEY_HEADER) ? legacyEnv.idempotencyKey : null;
+  if (suppliedKey) {
+    const seen = await findTripActivityByKey(client, tripId, "plan_item_updated", suppliedKey);
+    if (seen && (seen.metadata as any)?.item_id === itemId) {
+      const { data: current, error: curErr } = await client.from("trip_plan_items").select("*").eq("id", itemId).maybeSingle();
+      if (curErr) { sendError(res, "db_error", curErr.message); return; }
+      if (current) { res.json(toCamel(current)); return; }
+    }
+  }
+
+  // trip-kernel:legacy-path — flag-off twin of the plan-item command above.
   const { data: updated, error } = await client
     .from("trip_plan_items")
     .update(dbPatch)
@@ -1543,7 +2067,27 @@ router.patch("/trips/:tripId/plan/items/:itemId", async (req, res) => {
     .select("*")
     .single();
 
-  if (error) { req.log.error({ err: error }, "update plan item"); sendError(res, "db_error", error.message); return; }
+  if (error) {
+    // Same reasoning as the create path: a named scope on a database without
+    // 2770 is retryable and names the file that provides the column, and
+    // nothing else changes shape.
+    if (patch.privacyScope !== undefined && isMissingColumnError(error)) {
+      req.log.error({ err: error, tripId, itemId, privacyScope: patch.privacyScope }, "plan item: privacy_scope absent — 2770_trip_plans_spec_columns.sql is not applied to this database");
+      sendError(res, "degraded_unavailable", "Plan privacy scopes are not available on this deployment yet. Please try again shortly.");
+      return;
+    }
+    req.log.error({ err: error }, "update plan item");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+
+  await logTripActivity(client, tripId, user.id, "plan_item_updated", {
+    item_id: itemId,
+    changed_keys: Object.keys(dbPatch).filter((k) => k !== "updated_at"),
+    status_from: auth.status ?? null,
+    status_to: patch.status ?? null,
+    idempotency_key: suppliedKey,
+  });
 
   res.json(toCamel(updated));
 });
@@ -1565,7 +2109,28 @@ router.patch("/trips/:tripId/plan/items/:itemId/remove", async (req, res) => {
   const auth = await canEditPlanItem(client, tripId, itemId, user.id);
   if (!auth.permitted) { sendError(res, auth.code, auth.message); return; }
 
+  // Trip Kernel path (REMOVE_PLAN): same soft-delete, as a command.
+  const kernel = await tripKernel();
+  if (kernel) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const r = await executeTripCommand(kernel, {
+      commandId: randomUUID(),
+      tripId,
+      actorUserId: user.id,
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: "REMOVE_PLAN",
+      payload: { item_id: itemId, removed_at: new Date().toISOString() },
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    res.json({ status: "removed", itemId });
+    return;
+  }
+
   // Soft-delete only — source record is NOT deleted
+  // trip-kernel:legacy-path — flag-off twin of the plan-item command above.
   const { error } = await client
     .from("trip_plan_items")
     .update({ removed_at: new Date().toISOString() })
@@ -1593,6 +2158,27 @@ router.delete("/trips/:tripId/plan/items/:itemId", async (req, res) => {
   const auth = await canEditPlanItem(client, tripId, itemId, user.id);
   if (!auth.permitted) { sendError(res, auth.code, auth.message); return; }
 
+  // Trip Kernel path (REMOVE_PLAN): the REST spelling of the same command.
+  const kernel = await tripKernel();
+  if (kernel) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const r = await executeTripCommand(kernel, {
+      commandId: randomUUID(),
+      tripId,
+      actorUserId: user.id,
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: "REMOVE_PLAN",
+      payload: { item_id: itemId, removed_at: new Date().toISOString() },
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    res.status(204).send();
+    return;
+  }
+
+  // trip-kernel:legacy-path — flag-off twin of the plan-item command above.
   const { error } = await client
     .from("trip_plan_items")
     .update({ removed_at: new Date().toISOString() })
@@ -1624,27 +2210,77 @@ router.post("/trips/:tripId/members", async (req, res) => {
   const { tripId } = req.params;
   if (!/^[0-9a-f-]{36}$/i.test(tripId)) { res.status(400).json({ error: "invalid_payload", message: "Invalid trip id" }); return; }
 
-  const { userId, role = "member" } = req.body ?? {};
-  if (!userId || !/^[0-9a-f-]{36}$/i.test(userId)) { res.status(400).json({ error: "invalid_payload", message: "userId must be a valid UUID" }); return; }
-  if (role !== "member" && role !== "invited") { res.status(400).json({ error: "invalid_payload", message: "role must be 'member' or 'invited'" }); return; }
+  const parsedMember = AddMemberSchema.safeParse(req.body ?? {});
+  if (!parsedMember.success) {
+    const issue = parsedMember.error.issues[0];
+    res.status(400).json({ error: "invalid_payload", message: issue?.path[0] === "role" ? "role must be 'member' or 'invited'" : "userId must be a valid UUID" });
+    return;
+  }
+  const { userId, role } = parsedMember.data;
   if (userId === user.id) { res.status(400).json({ error: "invalid_payload", message: "Cannot add yourself" }); return; }
 
-  const { data: trip } = await client.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  // `error` bound for the same reason as the first `trips` read in this file:
+  // unreadable is not absent, and "Trip not found" is not a thing a failed read
+  // may say.
+  const { data: trip, error: tripErr } = await client.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (tripErr) {
+    req.log.error({ err: tripErr }, "add member: trip unreadable");
+    sendError(res, "degraded_unavailable", "We could not read this trip right now. Please try again shortly.");
+    return;
+  }
   if (!trip) { res.status(404).json({ error: "not_found", message: "Trip not found" }); return; }
-  if ((trip as any).owner_id !== user.id) { res.status(403).json({ error: "forbidden", message: "Only the trip owner can add members" }); return; }
+  // §6.1 canInviteParticipant: adding a member IS inviting them. Owner only.
+  const add = await canInviteParticipant(client, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
+  if (!add.allowed) { sendTripRefusal(res, "forbidden", add.reason, "Only the trip owner can add members"); return; }
 
-  const { data: existing } = await client.from("trip_members").select("role").eq("trip_id", tripId).eq("user_id", userId).maybeSingle();
+  // `existing` picks the WRITE, not just the response: SET_PARTICIPANT_ROLE vs
+  // ADD_PARTICIPANT for the kernel, UPDATE vs INSERT on the legacy path. An
+  // unreadable trip_members resolves as `{ data: null }`, exactly like "not a
+  // member", so a failed read turns an intended role CHANGE into an attempted
+  // add — the existing row keeps its old role (a silently un-applied
+  // demotion/promotion) while the caller is told "added". Refuse instead.
+  const { data: existing, error: existingErr } = await client.from("trip_members").select("role").eq("trip_id", tripId).eq("user_id", userId).maybeSingle();
+  if (existingErr) {
+    req.log.error({ err: existingErr, tripId, userId }, "trip member add: membership check unavailable");
+    sendError(res, "degraded_unavailable", "We could not check this trip's members right now. Please try again shortly.");
+    return;
+  }
   if (existing && (existing as any).role === role) { res.status(200).json({ status: "already_member", role, idempotent: true }); return; }
 
+  // Trip Kernel path (SET_PARTICIPANT_ROLE when a row exists, ADD_PARTICIPANT
+  // when it does not; contract v2). The owner check above is the
+  // authorization; the kernel re-checks owner and refuses touching the
+  // owner's own row. Off => the direct update / insert below.
+  const kernelMember = await tripKernel();
+  let kernelMembered = false;
+  if (kernelMember) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const r = await executeTripCommand(kernelMember, {
+      commandId: randomUUID(),
+      tripId,
+      actorUserId: user.id,
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: existing ? "SET_PARTICIPANT_ROLE" : "ADD_PARTICIPANT",
+      payload: { user_id: userId, role },
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    kernelMembered = true;
+  }
+
   if (existing) {
-    const { error } = await client.from("trip_members").update({ role }).eq("trip_id", tripId).eq("user_id", userId);
+    // trip-kernel:legacy-path — the flag-off twin of SET_PARTICIPANT_ROLE above.
+    const { error } = kernelMembered ? { error: null } : await client.from("trip_members").update({ role }).eq("trip_id", tripId).eq("user_id", userId);
     if (error) { req.log.error({ err: error }, "trip member role update failed"); sendError(res, "db_error", error.message); return; }
     syncTripChatMembers(tripId, client).catch((e) => req.log?.error({ err: e }, "syncTripChatMembers failed"));
     res.status(200).json({ status: "updated", tripId, userId, role });
     return;
   }
 
-  const { error } = await client.from("trip_members").insert({ trip_id: tripId, user_id: userId, role });
+  // trip-kernel:legacy-path — the flag-off twin of ADD_PARTICIPANT above.
+  const { error } = kernelMembered ? { error: null } : await client.from("trip_members").insert({ trip_id: tripId, user_id: userId, role });
   if (error) { req.log.error({ err: error }, "trip member add: insert failed"); sendError(res, "db_error", error.message); return; }
 
   syncTripChatMembers(tripId, client).catch((e) => req.log?.error({ err: e }, "syncTripChatMembers failed"));
@@ -1672,20 +2308,62 @@ router.delete("/trips/:tripId/members/:userId", async (req, res) => {
 
   if (userId === user.id) { res.status(400).json({ error: "invalid_payload", message: "Cannot remove yourself" }); return; }
 
-  const { data: trip } = await client.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  // `error` bound for the same reason as the first `trips` read in this file:
+  // unreadable is not absent, and "Trip not found" is not a thing a failed read
+  // may say.
+  const { data: trip, error: tripErr } = await client.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (tripErr) {
+    req.log.error({ err: tripErr }, "remove member: trip unreadable");
+    sendError(res, "degraded_unavailable", "We could not read this trip right now. Please try again shortly.");
+    return;
+  }
   if (!trip) { res.status(404).json({ error: "not_found", message: "Trip not found" }); return; }
-  if ((trip as any).owner_id !== user.id) { res.status(403).json({ error: "forbidden", message: "Only the trip owner can remove members" }); return; }
+  const removeAuth = await canEditTrip(client, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
+  if (!removeAuth.allowed) { sendTripRefusal(res, "forbidden", removeAuth.reason, "Only the trip owner can remove members"); return; }
 
-  const { data: memberRow } = await client.from("trip_members").select("role").eq("trip_id", tripId).eq("user_id", userId).maybeSingle();
+  // The same rule one line further in, and it matters more here: the ROLE this
+  // read returns is what stops the trip owner being removed. An unreadable
+  // trip_members row answered "Member not found", which is at least honest in
+  // outcome; but the row could equally have been the owner's, and the branch
+  // below that refuses on role === 'owner' would never have been reached.
+  const { data: memberRow, error: memberErr } = await client.from("trip_members").select("role").eq("trip_id", tripId).eq("user_id", userId).maybeSingle();
+  if (memberErr) {
+    req.log.error({ err: memberErr }, "remove member: membership unreadable");
+    sendError(res, "degraded_unavailable", "We could not check this member's role right now. Please try again shortly.");
+    return;
+  }
   if (!memberRow) { res.status(404).json({ error: "not_found", message: "Member not found on this trip" }); return; }
   if ((memberRow as any).role === "owner") { res.status(400).json({ error: "invalid_payload", message: "Cannot remove the trip owner" }); return; }
 
-  const { error } = await client.from("trip_members").delete().eq("trip_id", tripId).eq("user_id", userId);
+  // Trip Kernel path (REMOVE_PARTICIPANT, contract v2). The owner check above
+  // is the authorization; the kernel re-checks owner, refuses removing the
+  // owner's row, and records the role at removal. Off => the direct delete.
+  const kernelRemove = await tripKernel();
+  let kernelRemoved = false;
+  if (kernelRemove) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const r = await executeTripCommand(kernelRemove, {
+      commandId: randomUUID(),
+      tripId,
+      actorUserId: user.id,
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: "REMOVE_PARTICIPANT",
+      payload: { user_id: userId },
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    kernelRemoved = true;
+  }
+
+  // trip-kernel:legacy-path — the flag-off twin of REMOVE_PARTICIPANT above.
+  const { error } = kernelRemoved ? { error: null } : await client.from("trip_members").delete().eq("trip_id", tripId).eq("user_id", userId);
   if (error) { req.log.error({ err: error }, "trip member remove: delete failed"); sendError(res, "db_error", error.message); return; }
 
   syncTripChatMembers(tripId, client).catch((e) => req.log?.error({ err: e }, "syncTripChatMembers failed"));
 
-  const { revokeAccessForMember } = await import("../services/tripCrew/TripCrewLiveShareService.js");
+  const { revokeAccessForMember } = await import("../domain/trips/services/TripCrewLiveShareService.js");
   revokeAccessForMember(client, tripId, userId).catch((e: unknown) => req.log?.error({ err: e }, "revokeAccessForMember failed"));
 
   res.status(200).json({ status: "removed", tripId, userId });
@@ -1707,6 +2385,27 @@ router.post("/trips/:tripId/plan/items/:itemId/reorder", async (req, res) => {
   const auth = await canEditPlanItem(client, tripId, itemId, user.id, true);
   if (!auth.permitted) { sendError(res, auth.code, auth.message); return; }
 
+  // Trip Kernel path (REORDER_PLAN, one item).
+  const kernel = await tripKernel();
+  if (kernel) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const r = await executeTripCommand(kernel, {
+      commandId: randomUUID(),
+      tripId,
+      actorUserId: user.id,
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: "REORDER_PLAN",
+      payload: { items: [{ item_id: itemId, sort_order: parsed.data.sortOrder }], updated_at: new Date().toISOString() },
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    res.json({ status: "reordered", itemId, sortOrder: parsed.data.sortOrder });
+    return;
+  }
+
+  // trip-kernel:legacy-path — flag-off twin of the plan-item command above.
   const { data: updated, error } = await client
     .from("trip_plan_items")
     .update({ sort_order: parsed.data.sortOrder, updated_at: new Date().toISOString() })
@@ -1751,11 +2450,18 @@ router.post("/trips/:tripId/plan/reorder", async (req, res) => {
 
   // Owner-only (matches the single-item reorder): the global sort order is the
   // trip owner's prerogative, not any accepted member's.
-  const { data: trip } = await client.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
-  if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
-  if ((trip as { owner_id: string }).owner_id !== user.id) {
-    sendError(res, "forbidden", "Only the trip owner can reorder plan items"); return;
+  // `error` bound for the same reason as the first `trips` read in this file:
+  // unreadable is not absent, and "Trip not found" is not a thing a failed read
+  // may say.
+  const { data: trip, error: tripErr } = await client.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (tripErr) {
+    req.log.error({ err: tripErr }, "bulk reorder: trip unreadable");
+    sendError(res, "degraded_unavailable", "We could not read this trip right now. Please try again shortly.");
+    return;
   }
+  if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
+  const reorderAuth = await canEditTrip(client, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as { owner_id: string }).owner_id } });
+  if (!reorderAuth.allowed) { sendTripRefusal(res, "forbidden", reorderAuth.reason, "Only the trip owner can reorder plan items"); return; }
 
   // Current sort_order of exactly the requested items, scoped to this trip and
   // excluding soft-deleted rows.
@@ -1781,12 +2487,47 @@ router.post("/trips/:tripId/plan/reorder", async (req, res) => {
   // order. Items outside the list keep their slots untouched.
   const slots = orderedItemIds.map((id) => found.get(id) as number).sort((a, b) => a - b);
 
+  // Trip Kernel path (REORDER_PLAN, whole set): one command, one event, one
+  // version bump for the accepted order. Items already in their slot are not
+  // sent; an all-in-place order issues no command at all (nothing changed).
+  const kernel = await tripKernel();
+  if (kernel) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const kernelStamp = new Date().toISOString();
+    const items: Array<{ item_id: string; sort_order: number }> = [];
+    for (let i = 0; i < orderedItemIds.length; i += 1) {
+      const itemId = orderedItemIds[i];
+      const nextSort = slots[i];
+      if (found.get(itemId) === nextSort) continue;
+      items.push({ item_id: itemId, sort_order: nextSort });
+    }
+    if (items.length === 0) {
+      res.json({ status: "reordered", count: 0, order: orderedItemIds });
+      return;
+    }
+    const r = await executeTripCommand(kernel, {
+      commandId: randomUUID(),
+      tripId,
+      actorUserId: user.id,
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: "REORDER_PLAN",
+      payload: { items, updated_at: kernelStamp },
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    res.json({ status: "reordered", count: items.length, order: orderedItemIds });
+    return;
+  }
+
   const updates: Array<{ itemId: string; sortOrder: number }> = [];
   const stamp = new Date().toISOString();
   for (let i = 0; i < orderedItemIds.length; i += 1) {
     const itemId = orderedItemIds[i];
     const nextSort = slots[i];
     if (found.get(itemId) === nextSort) continue; // already in place — no write
+    // trip-kernel:legacy-path — flag-off twin of the plan-item command above.
     const { error: upErr } = await client
       .from("trip_plan_items")
       .update({ sort_order: nextSort, updated_at: stamp })

@@ -68,6 +68,9 @@ import { join, dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { FROZEN_LEGACY_FILES, findRogueFrozenFiles } from "./frozenLegacyFiles.js";
 import { FROZEN_ROOT_FILES } from "./frozenRootFiles.js";
+import { isMissing, type Claim, type LiveSchema } from "./lib/schemaClaimResolution.js";
+import { isOptionAInForce } from "./lib/sensingPostureOnDisk.js";
+import { partitionClaims, staleEntries } from "./lib/conditionalClaims.js";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -160,7 +163,83 @@ const SKIP_FILES = new Set([
   // into the post-cutover band (renumber >= "2100") and apply it then, deleting
   // this skip at that point.
   "2095_discovery_place_photos.sql",
+  // 2481_sensing_sessions_option_a_issuer.sql — OPTION A ONLY; DELIBERATELY NOT
+  // APPLIED, AND MUST NOT BE. Not drift: the database is right and this auditor
+  // cannot see why.
+  //
+  // The file's own header says it: "OPTION A ONLY (SENSING_AUTH_POSTURE =
+  // authenticated_only). Do NOT apply under Option B." On 2026-09-16 the owner
+  // put Sensing on Option B staged — SENSING_AUTH_POSTURE is `anonymous_capable`
+  // (src/lib/sensingAuthPosture.ts) — so the file is never run. Two reasons it
+  // must not be, both structural rather than stylistic: the second conjunct of
+  // its CHECK is `issuance_class = 'authenticated_profile'`, which makes an
+  // attested- or unattested-device session UNREPRESENTABLE even though
+  // production accepts all three classes; and it hangs a `profiles` foreign key
+  // off a sensing table that Option B exists to keep free of account identity.
+  //
+  // WHY THIS ENTRY EXISTS AT ALL. portava-ci carried 2481 from an earlier Option
+  // A rehearsal, so CI refused two issuance classes production accepts — the
+  // divergence recorded (not papered over) in the Option B commit, which also
+  // recorded that reverting 2481 on CI was owed. That revert has since happened:
+  // `sensing_contribution_sessions` is present (2480 is applied and stays), and
+  // `issued_to_profile_id`, `revoke_sensing_sessions_for_profile` and
+  // `sensing_contribution_sessions_issuer_idx` are all absent. Its
+  // schema_migration_ledger row is deliberately retained so the applier does not
+  // replay the file; only the objects were reverted.
+  //
+  // This auditor is name-keyed against the files on disk and has no notion of a
+  // posture, so it reads "file present, objects absent" as drift. Every file it
+  // reports is assumed to be a migration that SHOULD have been applied; 2481 is
+  // the one that should not. An ALLOWLIST entry would be wrong here — that list
+  // is for objects where live deliberately differs from an applied migration,
+  // and 2481 is not applied at all.
+  //
+  // DELETE THIS SKIP IF SENSING EVER MOVES TO OPTION A — i.e. if
+  // SENSING_AUTH_POSTURE becomes `authenticated_only` and 2481 is applied. From
+  // that moment its three objects must exist live, and this entry would hide
+  // their absence. See docs/architecture/census-sensing.md and
+  // docs/architecture/sensing-auth-posture-decision.md.
+  "2481_sensing_sessions_option_a_issuer.sql",
 ]);
+
+// ── 2481: A FILE THAT MUST NEVER RUN, AND A SKIP THAT EXPIRES BY ITSELF ──────
+//
+// 2481_sensing_sessions_option_a_issuer.sql adds `issued_to_profile_id` to
+// sensing_contribution_sessions and the CHECK that makes every session
+// profile-issued. Its own first line says "OPTION A ONLY ... Do NOT apply under
+// Option B; under Option B this file is never run and the column never exists."
+// The owner took Option B (`anonymous_capable`) in #510, so none of its objects
+// exist live and none of them should.
+//
+// This auditor is name-keyed to files on disk. It cannot know a file must never
+// run, so it reports five claimed objects as drift on every run, which is main's
+// standing red — not the fault of whatever branch happens to be measuring.
+//
+// WHY A CONDITION RATHER THAN A LINE IN SKIP_FILES ABOVE. A plain entry would be
+// permanent, and it would be WRONG the moment the posture changes: under Option A
+// those five objects must exist and their absence is exactly the drift this
+// auditor is for. So the skip is derived from the posture constant that decides
+// the question — lib/sensingAuthPosture.ts, a reviewed diff being the only way it
+// moves, no flag and no environment variable. Flip it back to
+// `authenticated_only` and this skip disappears on the next run without anybody
+// remembering to delete it.
+//
+// VERIFIED ON portava-ci 2026-09-21, not assumed: issued_to_profile_id (0),
+// sensing_contribution_sessions_issuer_fk (0), _option_a_check (0),
+// _issuer_idx (0), revoke_sensing_sessions_for_profile (0) — all five absent,
+// while 2480's table itself is present. Option B holds live.
+//
+// THE PART THAT SURPRISES PEOPLE, recorded because pruning it would re-apply
+// Option A: schema_migration_ledger DOES carry a 2481 row (applied_by='ci',
+// 2026-09-09 14:44:05Z, from the run that applied it before #510 reverted the
+// objects). scripts/src/apply-migrations.ts skips any file already in the
+// ledger, so that row is what currently stops 2481 from being re-applied on the
+// next CI migrate. It reads like stale bookkeeping and it is load-bearing.
+// Deleting it as "a ledger row for a migration that clearly did not run" would
+// reintroduce the Option A constraint #510 removed. Leave it.
+if (!isOptionAInForce()) {
+  SKIP_FILES.add("2481_sensing_sessions_option_a_issuer.sql");
+}
 
 /**
  * Objects the migration files claim but the live schema intentionally differs
@@ -208,6 +287,31 @@ const ALLOWLIST = new Set([
   // policy and the auditor reads each migration's claims independently. It is
   // removable only if 0035 itself is rewritten.
   "policy:plan_geofences.trip_members_manage_geofences",
+  // 0172_trip_reservations.sql creates trip_reservations_owner_delete, and
+  // 2784_trip_reservation_history.sql:174 DROPs it. The drop was deliberate and is
+  // a TIGHTENING, not drift: 2784 comments it "§15.4 as a privilege: clients
+  // cancel; only the service deletes (account deletion)" and pairs the DROP with
+  // REVOKE DELETE ON public.trip_reservations FROM authenticated. Its own
+  // postcondition block RAISEs if `authenticated` can still delete, so the
+  // migration refuses to record itself unless the revocation took.
+  //
+  // The auditor reads each migration's claimed objects independently, so it
+  // cannot see that a later migration removed this one — hence an entry here
+  // rather than adding 0172 to SKIP_FILES, whose other claimed objects (the
+  // table, its columns, the three surviving policies) must still be verified.
+  // Same shape as the intel_append_only_stmt entries above.
+  //
+  // VERIFIED ON portava-ci 2026-09-15: the policy is absent; the live family is
+  // exactly trip_reservations_member_read [SELECT], trip_reservations_owner_insert
+  // [INSERT], trip_reservations_owner_update [UPDATE], trip_reservations_svc [ALL];
+  // has_table_privilege('authenticated','public.trip_reservations','DELETE') is
+  // false; 2784's history trigger and trip_reservation_events are both present.
+  // Live is deliberately not what 0172 says — this list's own contract.
+  //
+  // Removable only if 0172 itself is rewritten to stop claiming the policy.
+  // auditSchemaAuthzResolution.test.ts binds this entry to that justification:
+  // it fails if 2784 stops carrying either the DROP or the REVOKE.
+  "policy:trip_reservations.trip_reservations_owner_delete",
   "column:feature_flags.key", // live column is `flag`
   "column:highlights.user_id", // live column is `owner_id`
   "column:highlight_replies.user_id", // live column is `replier_id`
@@ -327,55 +431,67 @@ const ALLOWLIST = new Set([
   // If a direct-from-client read of post-media is ever required, restore the
   // policy from 2089's DOWN block and delete this entry in the same change.
   "policy:objects.post_media_storage_public_read",
+  // RETIRED 2026-09-09: `function:is_blocked` and `function:viewer_in_call`
+  // used to sit here. Both existed for one reason — this auditor resolved
+  // claimed functions in `public` only, so the authz-schema membership
+  // predicates read as missing. It now resolves `public` OR `authz` and reports
+  // an authz-only resolution as a NOTE, so both entries became dead: an
+  // allowlist entry asserts "the object does not exist", and these objects do.
+  // Seven further false positives (2334, 2337 x4, 2402, 2460) went with them.
   //
-  // ── RELOCATED TO `authz` (2026-08-28, migration 2182) ───────────────────────
-  //
-  // is_blocked(uuid,uuid) is declared by 0015_blocks.sql in `public` and MOVED
-  // to the `authz` schema by 2182_close_authz_rpc_oracle.sql
-  // (ALTER FUNCTION … SET SCHEMA). This auditor asks "does every object a
-  // migration claims exist live", keyed by function NAME in the `public`
-  // schema — so after 2182 it reports `public.is_blocked` missing. It is not
-  // missing; it is `authz.is_blocked`, with the same OID/ACL/body, and all four
-  // RLS policies (loc_select, messages_hide_blocked_sender, highlights_select,
-  // highlights_select_active) still bind to it by OID. Without this entry 2182
-  // makes schema-drift permanently red — against production too once pressed —
-  // and a permanently red check is one discarded exit code away from being no
-  // check at all.
-  //
-  // AN ALLOWLIST ENTRY MEANS THE `public` OBJECT DOES NOT EXIST, and here that
-  // absence IS the fix: the anonymous PostgREST RPC oracle (POST /rpc/is_blocked
-  // with a caller-supplied identity) is closed precisely BY the function no
-  // longer living in an exposed schema. The purpose the relocation serves is the
-  // reason `public.is_blocked` is gone.
-  //
-  // Scope note: 2182 also relocated in_accepted_circle and can_see_location, but
-  // 0015 is the only file in THIS auditor's chain (api-server src/migrations,
-  // + the archived legacy chain) that declares any of the three, and it declares
-  // only is_blocked — so this is the sole entry the move requires here. The other
-  // two are declared in migration roots this auditor does not scan
-  // (migrations/, travel-buddy-standalone/migrations/, supabase/migrations/).
-  //
-  // If is_blocked is ever collapsed into viewer_is_blocked (the deduplication
-  // 2182's header flags as future cleanup) and 0015's declaration is retired,
-  // delete this entry in the same change.
-  "function:is_blocked",
+  // policy trip_reminders_own — 0079 created it FOR ALL with no WITH CHECK.
+  // 2535_trip_reminders_write_boundary.sql REPLACED it with four verb-scoped
+  // policies (trip_reminders_{select,insert,update,delete}), which is exactly
+  // what portava-ci now carries. 0079's claim is superseded, not unmet. The
+  // blocker ledger records the same supersession for production.
+  "policy:trip_reminders.trip_reminders_own",
 
-  // viewer_in_call(uuid) is created by 2199 in the `authz` schema, for the same
-  // reason is_blocked lives there: `authz` is not in PostgREST's db-schemas, so
-  // a membership predicate placed there is reachable by RLS but not exposed as
-  // an RPC endpoint. This auditor resolves claimed functions in `public` only,
-  // so it reports it missing. It is not missing — it is authz.viewer_in_call,
-  // with a pinned search_path, and both call policies bind to it.
+  // portava_featured SELECT to anon/authenticated — 2160 granted them;
+  // 2332_money_grant_boundary.sql deliberately took them back, and says why in
+  // its own header: the client never reaches this table over PostgREST
+  // (`from('portava_featured')` appears nowhere in travel-buddy-standalone),
+  // every reader goes through the service client, and the grants were Supabase
+  // ALTER DEFAULT PRIVILEGES residue rather than something a migration asked
+  // for. 2160's claim is superseded by a later migration in the same corpus.
   //
-  // Its ABSENCE from public is part of the design, not an omission: the whole
-  // point of 2199 is that the membership read happens inside a SECURITY DEFINER
-  // function that RLS can call without re-entering the policy, and that the
-  // function takes only a call id so it can never answer "is user X in call Y"
-  // for an arbitrary X.
+  // Delete these two if 2332 is ever reversed, in the same change.
+  "grant:portava_featured.anon.select",
+  "grant:portava_featured.authenticated.select",
+
+  // ── PENDING LIVE APPLY: 2964_map_telemetry_disabled_discards.sql ───────────
   //
-  // Delete this entry if 2199 is ever reversed or the function is moved back
-  // into public — in the same change, not later.
-  "function:viewer_in_call",
+  // Unlike every entry above, these three are NOT a case of live being
+  // deliberately different from what a migration claims. They are a migration
+  // that has not run anywhere yet, and the reason it has not is structural
+  // rather than an oversight: `live-db.yml` applies migrations only from `main`
+  // (its "apply to the sanctioned CI project" step is skipped on a branch), and
+  // hand-applying an unmerged branch's migrations to the shared CI database is
+  // the recorded root cause of `CI (live DB)` being red on main's own sha
+  // across five consecutive scheduled runs. Trading this visible red for that
+  // invisible one is not a fix. Same posture, and the same wording, as
+  // checkMissingLiveColumns.ts's 2745 and 2810/2813 entries.
+  //
+  // WHAT IS AND IS NOT BROKEN WHILE THESE ARE ALLOWLISTED, stated rather than
+  // implied — and here the answer is NOTHING, structurally. 2964's only caller
+  // is routes/mapTelemetry.ts on the path where `map_telemetry_enabled` is
+  // FALSE, and that call is `sc.rpc(...)` with the result checked: on a
+  // database that lacks the function PostgREST answers 404, the route logs a
+  // warning and still returns 200. So the collection-off path writes NOTHING,
+  // which is precisely the promise 2964 exists to keep — it simply keeps it
+  // without the operational counter until the apply lands. The failure mode of
+  // a missing table here is a lost diagnostic, never a lost request and never a
+  // widened collection.
+  //
+  // REHEARSED, not assumed: applied and re-applied on a throwaway PostgreSQL
+  // 16, with all four privacy guards armed (an added identity column, a
+  // non-hour bucket_hour, a direct service_role INSERT, an `authenticated`
+  // EXECUTE — each refused).
+  //
+  // Remove all three once the merge-to-main apply is certified in
+  // docs/migrations.md — NOT when the migration merges.
+  "table:map_telemetry_disabled_discards",
+  "function:record_map_telemetry_disabled_discard",
+  "index:map_telemetry_disabled_discards_expiry_idx",
 ]);
 
 // ── Environment ───────────────────────────────────────────────────────────────
@@ -421,19 +537,6 @@ export async function liveQuery<T = Record<string, unknown>>(
 
 // ── Live schema snapshot ──────────────────────────────────────────────────────
 
-export interface LiveSchema {
-  relations: Set<string>; // tables + views + matviews
-  columns: Set<string>; // "table.column"
-  functions: Set<string>;
-  indexes: Set<string>;
-  policies: Set<string>; // "table.policy"
-  enums: Set<string>;
-  enumValues: Set<string>; // "enum.value"
-  triggers: Set<string>; // "table.trigger"
-  rlsEnabled: Set<string>; // tables with pg_class.relrowsecurity = true
-  tableGrants: Set<string>; // "table.grantee.privilege"
-  routineGrants: Set<string>; // "function.grantee" (EXECUTE only)
-}
 
 export async function fetchLiveSchema(): Promise<LiveSchema> {
   const [rels, cols, fns, idxs, pols, enums, trgs, rls, tgrants, rgrants] =
@@ -447,10 +550,13 @@ export async function fetchLiveSchema(): Promise<LiveSchema> {
       `select table_name as t, column_name as c
        from information_schema.columns where table_schema = 'public'`,
     ),
-    liveQuery<{ name: string }>(
-      `select p.proname as name from pg_proc p
+    liveQuery<{ name: string; s: string }>(
+      // BOTH schemas, tagged. `authz` holds the SECURITY DEFINER membership
+      // predicates (2182, 2199, 2334, 2337, 2402, 2460); resolving only
+      // `public` reported seven live functions as missing.
+      `select p.proname as name, n.nspname as s from pg_proc p
        join pg_namespace n on n.oid = p.pronamespace
-       where n.nspname = 'public'`,
+       where n.nspname in ('public', 'authz')`,
     ),
     liveQuery<{ name: string }>(
       `select indexname as name from pg_indexes where schemaname = 'public'`,
@@ -492,10 +598,16 @@ export async function fetchLiveSchema(): Promise<LiveSchema> {
     // GRANT statements in src/migrations/ are GRANT EXECUTE ON FUNCTION, which
     // role_table_grants cannot see at all — modelling only table grants would
     // have covered 1 of 19 while reporting "GRANT" as a covered claim type.
-    liveQuery<{ r: string; g: string }>(
-      `select routine_name as r, grantee as g
+    // `authz` as well as `public`, for the same reason the function query above
+    // reads both: the membership predicates live in authz precisely because it
+    // is outside PostgREST's db-schemas, and their migrations grant EXECUTE on
+    // them there. Reading only `public` here, once the EXISTENCE check had been
+    // widened, turned eight grants that ARE live into reported drift — see
+    // LiveSchema.authzRoutineGrants for the measurement.
+    liveQuery<{ r: string; g: string; s: string }>(
+      `select routine_name as r, grantee as g, routine_schema as s
        from information_schema.role_routine_grants
-       where routine_schema = 'public' and privilege_type = 'EXECUTE'`,
+       where routine_schema in ('public', 'authz') and privilege_type = 'EXECUTE'`,
     ),
   ]);
 
@@ -506,7 +618,8 @@ export async function fetchLiveSchema(): Promise<LiveSchema> {
   return {
     relations: new Set(rels.map((r) => lc(r.name))),
     columns: new Set(cols.map((r) => lc(`${r.t}.${r.c}`))),
-    functions: new Set(fns.map((r) => lc(r.name))),
+    functions: new Set(fns.filter((r) => r.s === "public").map((r) => lc(r.name))),
+    authzFunctions: new Set(fns.filter((r) => r.s === "authz").map((r) => lc(r.name))),
     indexes: new Set(idxs.map((r) => lc(r.name))),
     policies: new Set(pols.map((r) => lc(`${r.t}.${r.p}`))),
     enums: new Set(enums.map((r) => lc(r.e))),
@@ -514,30 +627,17 @@ export async function fetchLiveSchema(): Promise<LiveSchema> {
     triggers: new Set(trgs.map((r) => lc(`${r.t}.${r.g}`))),
     rlsEnabled: new Set(rls.map((r) => lc(r.name))),
     tableGrants: new Set(tgrants.map((r) => lc(`${r.t}.${r.g}.${r.p}`))),
-    routineGrants: new Set(rgrants.map((r) => lc(`${r.r}.${r.g}`))),
+    routineGrants: new Set(rgrants.filter((r) => r.s === "public").map((r) => lc(`${r.r}.${r.g}`))),
+    authzRoutineGrants: new Set(rgrants.filter((r) => r.s === "authz").map((r) => lc(`${r.r}.${r.g}`))),
+    collidingFunctionNames: new Set(
+      [...new Set(fns.filter((r) => r.s === "public").map((r) => lc(r.name)))]
+        .filter((n) => fns.some((r) => r.s === "authz" && lc(r.name) === n)),
+    ),
   };
 }
 
 // ── Migration parsing ─────────────────────────────────────────────────────────
 
-export interface Claim {
-  kind:
-    | "table"
-    | "column"
-    | "function"
-    | "index"
-    | "policy"
-    | "enum"
-    | "enumvalue"
-    | "trigger"
-    | "view"
-    | "rls"
-    | "grant"
-    | "grantfn";
-  /** allowlist / report key, e.g. "column:feature_flags.key" */
-  key: string;
-  label: string;
-}
 
 const ident = String.raw`(?:"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*))`;
 const qualIdent = String.raw`(?:(?:"[^"]+"|[A-Za-z_][A-Za-z0-9_]*)\.)?${ident}`;
@@ -836,56 +936,6 @@ export function parseMigration(sql: string): Claim[] {
 
 // ── Diff ──────────────────────────────────────────────────────────────────────
 
-function isMissing(claim: Claim, live: LiveSchema): boolean {
-  const key = claim.key.slice(claim.kind.length + 1);
-  switch (claim.kind) {
-    case "table":
-    case "view":
-      // legacy buddy_* relations live as views; any relation kind counts
-      return !live.relations.has(key);
-    case "column": {
-      const [table] = key.split(".");
-      // If the table itself is missing it's already reported; a column claim
-      // on a view (compat layer) is checked against columns of that view too
-      // (information_schema.columns includes view columns).
-      if (!live.relations.has(table)) return false;
-      return !live.columns.has(key);
-    }
-    case "function":
-      return !live.functions.has(key);
-    case "index":
-      return !live.indexes.has(key);
-    case "policy":
-      return !live.policies.has(key);
-    case "enum":
-      return !live.enums.has(key);
-    case "enumvalue":
-      return !live.enumValues.has(key);
-    case "trigger":
-      return !live.triggers.has(key);
-    case "rls": {
-      // THE DISCRIMINATION THAT MAKES THIS CLAIM TYPE USABLE. A great many RLS
-      // claims come from conditional blocks (`IF to_regclass(...) IS NOT NULL`,
-      // `EXCEPTION WHEN undefined_table`) written to be safe on environments
-      // where the table does not exist. Reporting those as drift would flood
-      // the output with statements that were correctly skipped and drown the
-      // one case that matters. Absent table → not drift; the missing TABLE is
-      // reported separately by its own claim if a migration declares it.
-      if (!live.relations.has(key)) return false;
-      return !live.rlsEnabled.has(key);
-    }
-    case "grant": {
-      const [table] = key.split(".");
-      if (!live.relations.has(table)) return false;
-      return !live.tableGrants.has(key);
-    }
-    case "grantfn": {
-      const [fn] = key.split(".");
-      if (!live.functions.has(fn)) return false;
-      return !live.routineGrants.has(key);
-    }
-  }
-}
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 //
@@ -933,6 +983,12 @@ async function main(): Promise<void> {
   let missingCount = 0;
   let filesAudited = 0;
 
+  const authzOnly: string[] = [];
+  // Conditional claims that did not apply to THIS database, and the entries
+  // that matched a real claim. Both are reported: an exemption nobody can see
+  // in the output is an exemption nobody can review.
+  const notApplicable: string[] = [];
+  const conditionalMatched = new Set<string>();
   for (const dir of MIGRATION_DIRS) {
     let files: string[];
     try {
@@ -949,9 +1005,22 @@ async function main(): Promise<void> {
       filesAudited++;
       const claims = parseMigration(readFileSync(join(dir, file), "utf8"));
       totalClaims += claims.length;
-      const missing = claims.filter(
-        (c) => !ALLOWLIST.has(c.key) && isMissing(c, live),
-      );
+      // Collected, not silenced: a function claim that resolves ONLY in authz
+      // is not drift, but it is also not what the claim's text says, and a
+      // reader deserves to be told which ones those are.
+      for (const c of claims) {
+        if (c.kind !== "function") continue;
+        const name = c.key.slice("function:".length);
+        if (!live.functions.has(name) && live.authzFunctions.has(name)) {
+          authzOnly.push(`${file}: ${name}`);
+        }
+      }
+      // Conditional claims are resolved in lib/conditionalClaims.ts, which is
+      // importable and under test; this script only reports what it decides.
+      const part = partitionClaims(file, claims, live, ALLOWLIST);
+      for (const m of part.matched) conditionalMatched.add(m);
+      notApplicable.push(...part.notApplicable);
+      const missing = part.missing;
       if (missing.length > 0) {
         filesWithGaps++;
         missingCount += missing.length;
@@ -959,6 +1028,56 @@ async function main(): Promise<void> {
         for (const c of missing) console.log(`      missing ${c.label}`);
       }
     }
+  }
+
+  if (authzOnly.length > 0) {
+    console.log(
+      `\nNOTE: ${authzOnly.length} function claim(s) resolved in \`authz\`, not \`public\`. ` +
+        "Not drift — `authz` is outside PostgREST's db-schemas, which is why the " +
+        "membership predicates live there — but the claim does not say so, and this " +
+        "auditor is name-keyed, so it cannot tell an intentional authz function from " +
+        "one that was supposed to be in public:",
+    );
+    for (const a of authzOnly) console.log(`  · ${a}`);
+  }
+
+  // The one case where name-keying can hide real drift, reported rather than
+  // assumed away: a function name present in BOTH schemas. A grantfn claim on
+  // such a name is satisfied by a grant on EITHER, so a missing authz grant is
+  // invisible if the public twin carries it. That is not hypothetical — it is
+  // exactly what happened to `is_accepted_trip_member` in the run that found
+  // the public-only grant catalogue.
+  if (live.collidingFunctionNames.size > 0) {
+    console.log(
+      `\nNOTE: ${live.collidingFunctionNames.size} function name(s) exist in BOTH \`public\` and ` +
+        "`authz`. Claims here are name-keyed, so an existence or grant claim on one of these " +
+        "is satisfied by EITHER schema and this auditor cannot say which — a missing grant on " +
+        "the authz copy would be masked by the public one:",
+    );
+    for (const n of [...live.collidingFunctionNames].sort()) console.log(`  · ${n}`);
+  }
+
+  if (notApplicable.length > 0) {
+    console.log(
+      `\nNOTE: ${notApplicable.length} conditional claim(s) did not apply to this database. ` +
+        "These migrations repair objects that exist only where an out-of-band programme was " +
+        "installed; where it was not, the file correctly creates nothing. Enforced in full " +
+        "wherever the precondition holds — see CONDITIONAL_CLAIMS:",
+    );
+    for (const n of notApplicable) console.log(`  · ${n}`);
+  }
+
+  // STALENESS: an entry that matches no claim is a dead exemption, and a dead
+  // exemption is how a real gap gets carried for months. Fail rather than warn.
+  const staleConditional = staleEntries(conditionalMatched);
+  if (staleConditional.length > 0) {
+    console.error(
+      `\n✖ ${staleConditional.length} CONDITIONAL_CLAIMS entr(y/ies) matched no claim in the ` +
+        "migration named. The file no longer claims that object (or was renamed), so the entry " +
+        "is exempting nothing and must be deleted or corrected:",
+    );
+    for (const x of staleConditional) console.error(`  · ${x.file} → ${x.key}`);
+    process.exit(1);
   }
 
   console.log(
@@ -980,3 +1099,6 @@ async function main(): Promise<void> {
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   await main();
 }
+
+export { isMissing };
+export type { Claim, LiveSchema };

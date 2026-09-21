@@ -38,6 +38,12 @@ interface Props {
    *  entity groups and dispatched via `onPickAction` (NOT a search submit). */
   actionSuggestions?: InputSuggestion[];
   onPickAction?: (suggestion: InputSuggestion) => void;
+  /** The suggest read was REFUSED, not empty (`refusal.coverage === 'nothing'`
+   *  — the server never reached the table). Absent `groups` are then padding,
+   *  not an answer, and the empty-state sentence below would state on the
+   *  server's behalf that there is nothing to find. A `partial` refusal is not
+   *  this: it carries real groups and renders as the result it is. */
+  refused?: boolean;
   /** @deprecated Panel no longer owns a ScrollView; scroll is handled by the outer FlatList. */
   onScroll?: never;
 }
@@ -73,7 +79,7 @@ function SuggestionAvatar({ item }: { item: UnifiedSearchResult }) {
 export function SearchSuggestionsPanel({
   query, groups, loading, recentSearches,
   onSubmit, onPickRecent, onPickResult,
-  actionSuggestions, onPickAction,
+  actionSuggestions, onPickAction, refused = false,
 }: Props) {
   const trimmed = query.trim();
   const qLower = trimmed.toLowerCase();
@@ -157,8 +163,18 @@ export function SearchSuggestionsPanel({
         </View>
       ))}
 
+      {/* The read failed. Say so — whether or not held groups are on screen,
+          because those groups are the PREVIOUS query's answer and nothing here
+          refreshed them. Never the empty-state sentence below: the server did
+          not look, so "no quick matches" would be our claim, not its answer. */}
+      {!loading && refused && (
+        <Text style={styles.emptyHint}>
+          Suggestions are unavailable right now — the full search above still works.
+        </Text>
+      )}
+
       {/* Quiet empty state — the Search-for row above remains the primary action */}
-      {!loading && !hasAny && matchingRecent.length === 0 && (
+      {!loading && !refused && !hasAny && matchingRecent.length === 0 && (
         <Text style={styles.emptyHint}>
           No quick matches yet — keep typing, or search everything.
         </Text>

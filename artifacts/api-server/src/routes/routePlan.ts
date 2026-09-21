@@ -17,9 +17,13 @@
  * ONLY accepted plans for exactly this reason.
  */
 import { Router } from "express";
+import { randomUUID } from "node:crypto";
 import { asyncHandler } from "../lib/asyncHandler.js";
+import { isTripKernelEnabled, executeTripCommand } from "../domain/trips/commands/tripKernel.js";
 import { z } from "zod";
 import { requireUser, sendError, canEditPlan, isAcceptedTripMember } from "../lib/http.js";
+import { tripOperationalProjectionsGate } from "../domain/trips/policies/tripOperationalProjections.js";
+import { sendTripRefusal } from "../domain/trips/contracts/tripReasonCodes.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { nameVisibilitySet } from "../lib/publicIdentity.js";
 import { optimizeRoute, type RouteStyle, type CandidateStop } from "../services/routeOptimizer.js";
@@ -98,6 +102,24 @@ router.post("/route-plans", asyncHandler(async (req, res) => {
     const permitted = await canEditPlan(client, tripId, user.id);
     if (permitted === null) { sendError(res, "not_found", "Trip not found"); return; }
     if (!permitted) { sendError(res, "forbidden", "You don't have permission to edit this trip plan"); return; }
+
+    // §25 (census-trips §62, TR437): under the operational-projections gate a
+    // route plan that names a trip is a VIEW over that trip's own plan — every
+    // stop must be one of its plan items — not a second itinerary with its own
+    // places. Where the gate is closed (every deployment today) the route plan
+    // is created as before.
+    const gate = await tripOperationalProjectionsGate(client);
+    if (gate.enabled) {
+      const { data: planItems, error: planErr } = await client.from("trip_plan_items").select("id").eq("trip_id", tripId).is("removed_at", null);
+      if (planErr) { sendTripRefusal(res, "db_error", "TRIP_PROJECTION_UNAVAILABLE", "The trip's plan could not be read"); return; }
+      const planIds = new Set(((planItems ?? []) as any[]).map((i) => String(i.id)));
+      const stray = stops.filter((s) => s.sourceType !== "plan_item" || !s.sourceId || !planIds.has(String(s.sourceId)));
+      if (stray.length > 0) {
+        sendTripRefusal(res, "conflict", "TRIP_IDENTITY_STOP_NOT_IN_PLAN",
+          `${stray.length} stop(s) are not plan items of this trip (${stray.map((s) => s.title).join(", ")}); a trip's route is its plan — add the place to the plan first`);
+        return;
+      }
+    }
   }
 
   // sourceId is carried on CandidateStop so the optimizer preserves it through
@@ -225,8 +247,32 @@ router.post("/route-plans", asyncHandler(async (req, res) => {
     }))
     .filter((x) => x.sourceType === "plan_item" && x.sourceId && x.stopId);
 
-  if (planItemLinks.length > 0) {
+  // Trip Kernel path (Trips spec §25: a route plan integrates with the Trip by
+  // ISSUING A TRIP COMMAND, not by writing the Trip's table itself). Only when
+  // the plan is attached to a trip — a detached plan (tripId null) has no
+  // aggregate to command and keeps the legacy write below. Best-effort in both
+  // paths, exactly as before: a failed link is logged, never fatal.
+  const kernelSc = getServiceClient();
+  const kernel = planItemLinks.length > 0 && tripId && kernelSc && (await isTripKernelEnabled(kernelSc)) ? kernelSc : null;
+  if (kernel && tripId) {
     for (const link of planItemLinks) {
+      const r = await executeTripCommand(kernel, {
+        commandId: randomUUID(),
+        tripId,
+        actorUserId: user.id,
+        // Deterministic key: re-accepting the same plan re-links the same stop
+        // without a second event (§22.4).
+        idempotencyKey: `route-plan:${planId}:link:${link.sourceId}`,
+        type: "LINK_PLAN_ROUTE_STOP",
+        payload: { item_id: link.sourceId, route_stop_id: link.stopId },
+      });
+      if (!r.ok) {
+        req.log.warn({ reason: r.reason, detail: r.detail, sourceId: link.sourceId }, "link trip_plan_item route_stop_id (kernel)");
+      }
+    }
+  } else if (planItemLinks.length > 0) {
+    for (const link of planItemLinks) {
+      // trip-kernel:legacy-path — flag-off / detached-plan twin of LINK_PLAN_ROUTE_STOP above.
       const { error: linkErr } = await (client as any)
         .from("trip_plan_items")
         .update({ route_stop_id: link.stopId })

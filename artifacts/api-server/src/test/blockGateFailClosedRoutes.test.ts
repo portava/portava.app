@@ -158,8 +158,17 @@ function makeClient() {
       }
       if (table === "feature_flags") {
         const flag = obj._filters.find(([c]: [string, any]) => c === "flag")?.[1];
-        // Everything the routes under test need turned ON.
-        const on = new Set(["airport_mode_enabled", "airport_buddies_enabled", "stamp_system_v2_enabled"]);
+        // Everything the routes under test need turned ON. `rent_buddy_enabled`
+        // is the marketplace master switch GET /airport/sessions/:id/buddies now
+        // asks before it reads rent_buddy_profiles: with it off the route answers
+        // an empty list for that reason alone, which would make the fail-closed
+        // assertion below pass without the block read ever being reached.
+        const on = new Set([
+          "airport_mode_enabled",
+          "airport_buddies_enabled",
+          "stamp_system_v2_enabled",
+          "rent_buddy_enabled",
+        ]);
         return { data: on.has(flag) ? { flag, enabled: true } : { flag, enabled: false }, error: null, count: null };
       }
       if (table === "trip_members") {
@@ -287,6 +296,14 @@ beforeEach(() => {
   _setTestServiceClient(client as any);
 });
 
+// TWO REFUSAL CODES, ON PURPOSE. Most routes here refuse an unknown block state
+// with `degraded_unavailable`, the retryable 503 lib/exclusionSet.ts reserves for
+// "the check could not be performed". GET /users/:userId/block-status below is
+// the exception and answers `db_error`: it is the block API itself, so its
+// failure is a plain read failure rather than a degraded downstream gate. Assert
+// the code each route actually uses — collapsing the two hides which layer
+// refused.
+
 // ── follows: the public passport ─────────────────────────────────────────────
 
 describe("GET /users/:userId (passport) — block read fails closed", () => {
@@ -295,13 +312,13 @@ describe("GET /users/:userId (passport) — block read fails closed", () => {
     const r = await get(`/api/users/${OTHER}`);
     assert.notEqual(r.status, 200,
       `the passport must not be served on unknown block state (got ${r.status} ${JSON.stringify(r.body)})`);
-    assert.equal(r.body?.error, "db_error");
+    assert.equal(r.body?.error, "degraded_unavailable");
   });
 
   it("NEGATIVE CONTROL: serves the passport when the blocks read is clean", async () => {
     const r = await get(`/api/users/${OTHER}`);
     assert.equal(r.status, 200, JSON.stringify(r.body));
-    assert.notEqual(r.body?.error, "db_error");
+    assert.notEqual(r.body?.error, "degraded_unavailable");
   });
 });
 
@@ -310,7 +327,7 @@ describe("GET /users/by-handle/:handle (passport) — block read fails closed", 
     state.blocksError = true;
     const r = await get(`/api/users/by-handle/h_2222`);
     assert.notEqual(r.status, 200, JSON.stringify(r.body));
-    assert.equal(r.body?.error, "db_error");
+    assert.equal(r.body?.error, "degraded_unavailable");
   });
 
   it("NEGATIVE CONTROL: serves the passport when the blocks read is clean", async () => {
@@ -428,7 +445,7 @@ describe("GET /trips/:tripId/invitable-users — block read fails closed", () =>
     state.blocksError = true;
     const r = await get(`/api/trips/${TRIP_ID}/invitable-users`);
     assert.notEqual(r.status, 200, JSON.stringify(r.body));
-    assert.equal(r.body?.error, "db_error");
+    assert.equal(r.body?.error, "degraded_unavailable");
   });
 
   it("NEGATIVE CONTROL: answers when the blocks read is clean", async () => {
@@ -442,7 +459,7 @@ describe("GET /circles/:circleOwnerId/invitable-users — block read fails close
     state.blocksError = true;
     const r = await get(`/api/circles/${CIRCLE_ID}/invitable-users`);
     assert.notEqual(r.status, 200, JSON.stringify(r.body));
-    assert.equal(r.body?.error, "db_error");
+    assert.equal(r.body?.error, "degraded_unavailable");
   });
 
   it("NEGATIVE CONTROL: answers when the blocks read is clean", async () => {
@@ -460,7 +477,7 @@ describe("GET /engagement/likes — block read fails closed", () => {
     state.blocksError = true;
     const r = await get(path);
     assert.notEqual(r.status, 200, JSON.stringify(r.body));
-    assert.equal(r.body?.error, "db_error");
+    assert.equal(r.body?.error, "degraded_unavailable");
   });
 
   it("NEGATIVE CONTROL: answers when the blocks read is clean", async () => {

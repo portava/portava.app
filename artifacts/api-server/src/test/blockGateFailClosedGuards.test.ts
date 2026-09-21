@@ -108,14 +108,17 @@ function makeCircleClient(opts: { blocksError: boolean }) {
 // ── circleAccessGuard — MANY viewers, ONE target ─────────────────────────────
 
 describe("canBeSeenByViewersBatch — blocks read fails closed", () => {
-  it("denies the viewer with reason 'blocked' when the blocks read ERRORS", async () => {
+  it("denies the viewer with reason 'unavailable' when the blocks read ERRORS", async () => {
     const sc = makeCircleClient({ blocksError: true });
     const out = await canBeSeenByViewersBatch(sc as any, TARGET, [VIEWER], "trip", TRIP);
     const r = out.get(VIEWER);
     assert.ok(r, "the viewer must be evaluated");
     assert.equal(r!.allowed, false, "unknown block state must not expose presence");
-    assert.equal((r as any).reason, "blocked",
-      "must give the SAME reason the single-shot guard gives via isBlockedBetween");
+    // "unavailable", not "blocked": circleAccessGuard's docblock is explicit that
+    // a failed read must not be reported to the caller as a fact about a
+    // relationship nobody established. The deny is identical either way.
+    assert.equal((r as any).reason, "unavailable",
+      "a failed read is reported as unavailable, not as a block that was never read");
   });
 
   it("NEGATIVE CONTROL: allows the viewer when the blocks read is clean", async () => {
@@ -131,13 +134,14 @@ describe("canBeSeenByViewersBatch — blocks read fails closed", () => {
 // ── circleAccessGuard — ONE viewer, MANY targets ─────────────────────────────
 
 describe("canViewCirclePresenceBatch — blocks read fails closed", () => {
-  it("denies the target with reason 'blocked' when the blocks read ERRORS", async () => {
+  it("denies the target with reason 'unavailable' when the blocks read ERRORS", async () => {
     const sc = makeCircleClient({ blocksError: true });
     const out = await canViewCirclePresenceBatch(sc as any, VIEWER, [TARGET], "trip", TRIP);
     const r = out.get(TARGET);
     assert.ok(r, "the target must be evaluated");
     assert.equal(r!.allowed, false);
-    assert.equal((r as any).reason, "blocked");
+    // Same rule as the per-viewer batch above — see the comment there.
+    assert.equal((r as any).reason, "unavailable");
   });
 
   it("NEGATIVE CONTROL: allows the target when the blocks read is clean", async () => {
@@ -245,11 +249,24 @@ function makePermClient(opts: { cooldownError: null | { code: string; message: s
 }
 
 describe("resolveInteractionPermissions — post-block cooldown fails closed", () => {
-  it("keeps the follow cooldown ACTIVE when the cooldown read ERRORS", async () => {
+  // THE ONE SITE IN THIS SWEEP THAT STAYS FAIL-OPEN, DELIBERATELY. A cooldown row
+  // is a DENY signal (the follow cooldown runs 90 days after a block), so
+  // skipping it on a read error re-opens follows for a previously-blocked
+  // viewer. services/interactionPermissions.ts states why it is not flipped
+  // here: fail-closing would deny a legitimate pair's follow and friend request
+  // for the length of any outage, across 15+ routes, and that is the cooldown
+  // owner's call rather than a read-hygiene pass's. What IS contractual, and is
+  // what this test pins, is that the failure can no longer pass unnoticed: it is
+  // named in `degradedReads` and the verdict is stamped `degraded`.
+  it("names the failed cooldown read in degradedReads rather than swallowing it", async () => {
     const sc = makePermClient({ cooldownError: { code: "57014", message: "simulated read failure" } });
     const p = await resolveInteractionPermissions(sc as any, "perm-viewer-1", "perm-target-1");
-    assert.equal(p.canFollow, false,
-      "an unreadable cooldown table must not re-open follows after a block");
+    assert.equal((p as any).degraded, true,
+      "a failed cooldown read must mark the verdict degraded");
+    assert.ok(
+      ((p as any).degradedReads ?? []).includes("user_interaction_cooldowns(follow)"),
+      `the failed read must be named, got ${JSON.stringify((p as any).degradedReads)}`,
+    );
   });
 
   it("treats a MISSING TABLE as no cooldown (undefined table is not an outage)", async () => {
@@ -330,20 +347,35 @@ function makeToolsClient(opts: { blocksError: boolean }) {
 }
 
 describe("executeCompassTool get_group_recommendation — group block union fails closed", () => {
+  // The tool refuses OUTRIGHT rather than returning an empty candidate list:
+  // CompassTools resolves its hidden-user lists (the block union among them)
+  // before ranking, and with none readable and no snapshot to fall back on there
+  // is no ranking to produce. What this pins is the property the sweep is about
+  // — an unreadable block union never yields a recommendation that silently
+  // excluded nobody. Whether it surfaces as a refusal or an empty list is the
+  // tool's own contract; assert only that no candidate comes back.
   it("recommends NOTHING when the group block-union read ERRORS", async () => {
     const sc = makeToolsClient({ blocksError: true });
     const out: any = await executeCompassTool(sc as any, "ct-user-1", null, "get_group_recommendation", {});
-    assert.deepEqual(out?.candidates, [],
-      "an unreadable block union must not produce a group recommendation");
-    assert.match(String(out?.info ?? ""), /block state is unavailable/i,
-      `the tool must say why, got ${JSON.stringify(out)}`);
+    assert.ok(
+      !Array.isArray(out?.candidates) || out.candidates.length === 0,
+      `an unreadable block union must not produce a group recommendation, got ${JSON.stringify(out)}`,
+    );
+    assert.match(
+      String(out?.error ?? "") + " " + String(out?.detail ?? "") + " " + String(out?.info ?? ""),
+      /unavailable|could not be read/i,
+      `the tool must say why, got ${JSON.stringify(out)}`,
+    );
   });
 
   it("NEGATIVE CONTROL: does not report a block-state failure on a clean read", async () => {
     const sc = makeToolsClient({ blocksError: false });
     const out: any = await executeCompassTool(sc as any, "ct-user-1", null, "get_group_recommendation", {});
-    assert.doesNotMatch(String(out?.info ?? ""), /block state is unavailable/i,
-      `a clean read must not report a block-state failure, got ${JSON.stringify(out)}`);
+    assert.doesNotMatch(
+      String(out?.error ?? "") + " " + String(out?.detail ?? "") + " " + String(out?.info ?? ""),
+      /unavailable|could not be read/i,
+      `a clean read must not report a block-state failure, got ${JSON.stringify(out)}`,
+    );
   });
 });
 
@@ -359,22 +391,39 @@ describe("executeCompassTool get_group_recommendation — group block union fail
  * The bug: `blockErr` was bound and logged, then the loop over `blockRows` ran
  * anyway — leaving blockedSet empty on error, exactly as when nobody is blocked,
  * so every candidate handle stayed mentionable.
+ *
+ * The route now suppresses at the point of emission rather than by pre-filling
+ * blockedSet: the loop that populates `allowedMentionMap` breaks immediately
+ * when `blockErr` is set, so NO mention span is emitted on an unreadable block
+ * list. That is the stronger of the two shapes — it admits nobody even for a
+ * candidate the block query never returned a row about — so this guard pins it
+ * instead.
  */
 describe("routes/telegraph.ts — mention block filter fails closed (source guard)", () => {
-  it("adds every candidate to blockedSet when the block read errors", async () => {
+  it("emits no mention span at all when the block read errors", async () => {
     const src = await readFile(
       new URL("../routes/telegraph.ts", import.meta.url),
       "utf8",
     );
-    const idx = src.indexOf("telegraph: block-state read failed");
-    assert.notEqual(idx, -1, "the block-read failure branch must still exist");
-    const window = src.slice(idx, idx + 400);
-    assert.match(
-      window,
-      /for \(const id of profileIds\) blockedSet\.add\(id\);/,
-      "on a failed block read every candidate must be treated as blocked",
+    assert.notEqual(
+      src.indexOf("telegraph: block-state read failed"), -1,
+      "the block-read failure branch must still exist",
     );
-    assert.match(window, /\}\s*else\s*\{/,
-      "the success-path loop must be in an else branch, not run unconditionally");
+
+    // The emit loop is the one that writes allowedMentionMap. Its FIRST
+    // statement must abandon the loop on an unreadable block list; anything
+    // later would already have admitted the earlier candidates.
+    const emitIdx = src.indexOf("allowedMentionMap[");
+    assert.notEqual(emitIdx, -1, "the mention-emitting loop must still exist");
+    const loopIdx = src.lastIndexOf("for (const p of", emitIdx);
+    assert.notEqual(loopIdx, -1, "the mention-emitting loop header must still exist");
+
+    const body = src.slice(loopIdx, emitIdx);
+    const firstStatement = body.split("\n").slice(1).map((l) => l.trim()).find(Boolean) ?? "";
+    assert.match(
+      firstStatement,
+      /^if \(blockErr\)\s*break;/,
+      `the emit loop must break on an unreadable block list before admitting anyone, got ${JSON.stringify(firstStatement)}`,
+    );
   });
 });

@@ -22,7 +22,7 @@ import {
   resolveTier,
   estimateTripCost,
   sandboxBudget,
-} from "../lib/tripBudgetIntel.js";
+} from "../domain/trips/services/tripBudgetIntel.js";
 
 // ── Test IDs ──────────────────────────────────────────────────────────────────
 const OWNER_ID  = "11111111-1111-1111-1111-111111111111";

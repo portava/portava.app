@@ -10,10 +10,19 @@
  *   - Trip context only available if user is an accepted trip member
  *   - Circle context only available if user is an accepted circle member
  *   - Non-members get canShowRecommendation: false
+ *   - An UNREADABLE `profiles` row (a resolved PostgREST error, not an absent
+ *     row) gets canShowRecommendation: false and reason
+ *     "telegraph_settings_unavailable" — the opt-out defaults to ON, so a read
+ *     failure must not be allowed to look like consent.
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { logger } from "../lib/logger.js";
 import type { IntentResult } from "./telegraphIntent.js";
+import { buildTripTelegraphProjection } from "../domain/trips/projections/TripTelegraphProjection.js";
+import {
+  applyAttentionSuppression, attentionNotConsulted, type AttentionReading,
+} from "../domain/trips/policies/TripAttentionFilter.js";
 
 export interface TelegraphChatPrivacyVerdict {
   canUseTripContext: boolean;
@@ -25,7 +34,27 @@ export interface TelegraphChatPrivacyVerdict {
   circleOwnerId: string | null;
   tripDestination: string | null;
   threadType: "direct" | "trip" | "circle";
+  /**
+   * §17.2's switch as `TripTelegraphProjection` reported it, or a
+   * not-consulted reading. NEVER null-as-"fine": a switch that could not be
+   * read says so, and `applyAttentionSuppression` treats that as "withhold
+   * nothing" — the same posture Compass and the trip brief take.
+   */
+  tripAttention: AttentionReading;
 }
+
+/**
+ * The roles a suggestion may be offered to. `viewer` is deliberately absent:
+ * every card carries an action (`add_to_plan`, `create_meetup`, …) and the
+ * routes behind those refuse a viewer, so offering one would be offering a
+ * button that 403s.
+ *
+ * `co_host` is deliberately PRESENT, and its absence was a defect. The rule
+ * this replaced was `role IN ('owner','member')`, written before 0078 added
+ * `co_host` and `viewer` to `member_role`; a co-host got no trip context in
+ * their own trip's conversation, and no test covered it.
+ */
+const SUGGESTIBLE_TRIP_ROLES: ReadonlySet<string> = new Set(["owner", "co_host", "member"]);
 
 export interface SuggestionCard {
   id: string;
@@ -97,6 +126,7 @@ export async function resolvePrivacyVerdict(
       circleOwnerId: null,
       tripDestination: null,
       threadType: "direct",
+      tripAttention: attentionNotConsulted(null, "the thread could not be read"),
     };
   }
 
@@ -104,29 +134,71 @@ export async function resolvePrivacyVerdict(
   const tripId = (thread as any).trip_id ?? null;
   const circleOwnerId = (thread as any).circle_owner_id ?? null;
 
-  // Trip context: only if user is accepted trip member
+  // ── Trip context comes from the TRIP's projection, not from this file ─────
+  //
+  // TR5: "Trips owns context distribution (stable typed projections for
+  // Compass, Map, Telegraph, …)". `TripTelegraphProjection` is that object and
+  // it is the only thing read here now. What this replaced was a hand-rolled
+  // pair of selects — `trip_members` for the gate, `trips` for the
+  // destination — and re-deriving a membership rule beside the canonical one
+  // is how the two drifted apart. They HAD drifted, in both directions:
+  //
+  //   • `role IN ('owner','member')` predates 0078, which added `co_host`. A
+  //     co-host of a trip got NO context in that trip's own conversation and
+  //     was told `not_trip_member`.
+  //   • the rule read ROLE and never `status`, so a member who had `declined`,
+  //     been `removed`, or `left` kept their trip's destination in the
+  //     suggestion prompt for as long as the row survived.
+  //
+  // The projection's gate is `status accepted`, which fixes the second, and
+  // the role test below is kept because a card carries an ACTION and the
+  // projection deliberately does not decide who may act. Together they are
+  // strictly closer to the intended rule than what they replace.
+  //
+  // WHAT IS NOT CLAIMED: the §17.2 reading is soft and is gated by
+  // `trip_operational_projections_enabled`, which is seeded FALSE on every
+  // deployment today, so `tripAttention.consulted` is false in production and
+  // NOTHING is suppressed yet. The wiring is real; the effect is flag-capped,
+  // and `buildSuggestions` says so by asking the canonical filter rather than
+  // inventing a second rule.
   let canUseTripContext = false;
   let tripDestination: string | null = null;
+  let tripAttention: AttentionReading = attentionNotConsulted(tripId, "not a trip thread");
   if (threadType === "trip" && tripId) {
-    const { data: membership } = await client
-      .from("trip_members")
-      .select("role")
-      .eq("trip_id", tripId)
-      .eq("user_id", userId)
-      .in("role", ["owner", "member"])
-      .maybeSingle();
-    canUseTripContext = Boolean(membership);
-
-    if (canUseTripContext) {
-      const { data: trip } = await client
-        .from("trips")
-        .select("destination_city, destination_country")
-        .eq("id", tripId)
-        .maybeSingle();
-      tripDestination =
-        (trip as any)?.destination_city ??
-        (trip as any)?.destination_country ??
-        null;
+    tripAttention = attentionNotConsulted(tripId, "the trip context could not be read");
+    const built = await buildTripTelegraphProjection(client as any, tripId, userId, [userId]);
+    if (built.ok) {
+      // The caller named exactly itself, so `participants` is the viewer's own
+      // crew row or nothing. The projection already refused a viewer who is
+      // not accepted crew, so reaching here means accepted.
+      const me = built.projection.participants.find((pp) => pp.userId === userId) ?? null;
+      canUseTripContext = me !== null && SUGGESTIBLE_TRIP_ROLES.has(me.role);
+      if (canUseTripContext) {
+        tripDestination =
+          built.projection.trip.destinationCity ??
+          built.projection.trip.destinationCountry ??
+          null;
+        const a = built.projection.attention;
+        tripAttention = a.status === "ok" && a.items[0]
+          ? {
+              consulted: true,
+              tripId,
+              mode: a.items[0].mode as AttentionReading["mode"],
+              suppressed: a.items[0].suppressed,
+              reason: a.items[0].suppressed ? "TRIP_DISRUPTION_SUPPRESSED" : null,
+              detail: a.items[0].detail,
+              info: null,
+              attention: null,
+            }
+          : attentionNotConsulted(tripId, a.status === "ok" ? "the switch returned no reading" : a.reason);
+      }
+    } else if (built.reason !== "TRIP_AUTH_NOT_CREW") {
+      // A trip that cannot be READ is not a trip the viewer is not on. Both
+      // withhold context, and the log has to be able to tell them apart.
+      logger.warn(
+        { tripId, userId, threadId, reason: built.reason, message: built.message },
+        "telegraphChatSuggestions: trip context unavailable — withholding, not refusing",
+      );
     }
   }
 
@@ -146,8 +218,21 @@ export async function resolvePrivacyVerdict(
     }
   }
 
-  // Availability: only if user has enabled sharing
-  const { data: profile } = await client
+  // ── The user's own telegraph opt-out (FAIL-CLOSED on an unreadable read) ──
+  //
+  // `show_telegraph_*` are OPT-OUTS: the product default is on, so the test is
+  // `!== false` and an ABSENT column or row correctly means "enabled". That is
+  // right for a user who has never touched the setting, and it was wrong for a
+  // user who has: supabase-js RESOLVES on a database error, so a failed read
+  // arrives as `profile === null`, `undefined !== false` is true, and a user who
+  // set `show_telegraph_dm = false` had suggestions generated into their chat —
+  // and persisted, since routes/telegraphChat.ts inserts the shown cards.
+  //
+  // An opt-out we could not read is not an opt-out we may ignore. On a read
+  // error the verdict withholds, and it says so in `reason` with a value
+  // distinct from "telegraph_disabled": a caller (or a log reader) must be able
+  // to tell "this user turned it off" apart from "we could not find out".
+  const { data: profile, error: profileErr } = await client
     .from("profiles")
     .select("show_telegraph_dm, show_telegraph_trip, show_telegraph_circle")
     .eq("id", userId)
@@ -160,7 +245,14 @@ export async function resolvePrivacyVerdict(
         ? "show_telegraph_circle"
         : "show_telegraph_dm";
 
-  const telegraphEnabled = (profile as any)?.[settingKey] !== false;
+  if (profileErr) {
+    logger.error(
+      { err: profileErr, userId, threadId, threadType },
+      "telegraphChatSuggestions: could not read the viewer's show_telegraph_* opt-outs — " +
+        "suppressing suggestions rather than assuming consent",
+    );
+  }
+  const telegraphEnabled = !profileErr && (profile as any)?.[settingKey] !== false;
 
   // Non-members of trip/circle chats cannot see suggestions
   if (threadType === "trip" && !canUseTripContext) {
@@ -174,6 +266,7 @@ export async function resolvePrivacyVerdict(
       circleOwnerId,
       tripDestination: null,
       threadType,
+      tripAttention,
     };
   }
   if (threadType === "circle" && !canUseCircleContext) {
@@ -187,6 +280,7 @@ export async function resolvePrivacyVerdict(
       circleOwnerId,
       tripDestination: null,
       threadType,
+      tripAttention,
     };
   }
 
@@ -195,11 +289,16 @@ export async function resolvePrivacyVerdict(
     canUseCircleContext,
     canShowRecommendation: telegraphEnabled,
     canUseAvailability: false, // availability feature gated in future
-    reason: telegraphEnabled ? "ok" : "telegraph_disabled",
+    reason: profileErr
+      ? "telegraph_settings_unavailable"
+      : telegraphEnabled
+        ? "ok"
+        : "telegraph_disabled",
     tripId,
     circleOwnerId,
     tripDestination,
     threadType,
+    tripAttention,
   };
 }
 
@@ -230,7 +329,20 @@ export function buildSuggestions(
   const secondary = buildSecondaryCard(intentType, dest, verdict);
   if (secondary && cards.length < 2) cards.push(secondary);
 
-  return cards.map((c) => ({
+  // §17.2 — a trip that needs attention does not want a nightlife card.
+  //
+  // The classification is NOT re-derived here. `applyAttentionSuppression` is
+  // the same decider Compass's search tools and the trip brief use, and
+  // consuming it rather than writing a second list of "commercial" categories
+  // is the whole point of having one. It withholds nothing when the switch was
+  // not consulted, which is every deployment today.
+  const filtered = applyAttentionSuppression(
+    cards,
+    verdict.tripAttention,
+    (c) => [c.category, c.intent_type, c.title, c.location_context],
+  );
+
+  return filtered.kept.map((c) => ({
     ...c,
     id: `${threadId}_${userId}_${intentType}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
   }));
@@ -377,6 +489,19 @@ function buildSecondaryCard(
 /**
  * Check rate limits: max 3 suggestions shown per thread per hour.
  * Returns true if a new suggestion can be shown.
+ *
+ * ── AN UNCOUNTABLE LIMIT IS A REACHED LIMIT ─────────────────────────────────
+ * supabase-js RESOLVES on a DB error, so `const { count } = await …` produced
+ * `count: undefined` — coerced by `?? 0` to ZERO — for both "no suggestions in
+ * the last hour" and "telegraph_chat_suggestions could not be read". Zero is
+ * the maximally permissive count: the cap could never be reached while the
+ * table was unreadable, and every detected intent inserted another suggestion
+ * row into that same table.
+ *
+ * An uncountable cap therefore answers "not within limit". The whole effect is
+ * that ONE suggestion card is not shown on ONE message — the thread, its
+ * messages and every other part of the response are untouched (shape 2 of
+ * lib/exclusionSet.ts). Nothing is disclosed, denied or written.
  */
 export async function checkRateLimit(
   client: SupabaseClient,
@@ -384,18 +509,35 @@ export async function checkRateLimit(
   threadId: string,
 ): Promise<boolean> {
   const cutoff = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-  const { count } = await client
+  const { count, error } = await client
     .from("telegraph_chat_suggestions")
     .select("id", { count: "exact", head: true })
     .eq("user_id", userId)
     .eq("thread_id", threadId)
     .gte("created_at", cutoff);
+  if (error) return false; // cap unknown — do not show
   return (count ?? 0) < 3;
 }
 
 /**
  * Check cooldown: has this intent already been shown/dismissed in the last
  * 30 minutes for this (user, thread)?  Prevents instant re-surfacing.
+ *
+ * Returns true when it is safe to show. TWO ways this used to clear a cooldown
+ * that was actually in force, both of them the same defect wearing different
+ * clothes:
+ *
+ *   1. A DB error. supabase-js RESOLVES rather than throwing, so the failed
+ *      read arrived as `{ data: null, error }` and `!data` said "no cooldown".
+ *   2. `.maybeSingle()` RAISES on more than one row. Showing the same intent
+ *      twice inside the window — which is exactly what a cooldown bug looks
+ *      like — produced two rows, maybeSingle turned that into an error, and
+ *      case 1 then cleared the cooldown. The STRONGEST evidence of a cooldown
+ *      was read as its absence. `checkCategoryDeclineCooldown` below already
+ *      documents this trap and uses `.limit(1)`; so does this now.
+ *
+ * An unknown cooldown answers "in cooldown" — one suggestion card is withheld
+ * from one response and nothing else changes.
  */
 export async function checkCooldown(
   client: SupabaseClient,
@@ -404,15 +546,16 @@ export async function checkCooldown(
   intentType: string,
 ): Promise<boolean> {
   const cutoff = new Date(Date.now() - 30 * 60 * 1000).toISOString();
-  const { data } = await client
+  const { data, error } = await client
     .from("telegraph_chat_suggestions")
     .select("id, status")
     .eq("user_id", userId)
     .eq("thread_id", threadId)
     .eq("intent_type", intentType)
     .gte("created_at", cutoff)
-    .maybeSingle();
-  return !data; // true = no cooldown, safe to show
+    .limit(1);
+  if (error) return false; // cooldown state unknown — do not show
+  return !data || (data as any[]).length === 0; // true = no cooldown, safe to show
 }
 
 /**
@@ -429,7 +572,7 @@ export async function checkCategoryDeclineCooldown(
   category: string,
 ): Promise<boolean> {
   const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-  const { data } = await client
+  const { data, error } = await client
     .from("user_preference_events")
     .select("user_id")
     .eq("user_id", userId)
@@ -437,5 +580,12 @@ export async function checkCategoryDeclineCooldown(
     .eq("signal", "dismiss")
     .gte("created_at", cutoff)
     .limit(1);
+  // The dismissal IS the user's stated preference, and this read is the only
+  // place it is honoured. supabase-js RESOLVES on a DB error, so a dropped
+  // `.error` made "user_preference_events could not be read" identical to "the
+  // user has not declined anything" — and re-surfaced a category they
+  // explicitly dismissed. An unreadable preference resolves the
+  // privacy-preserving way: assume the decline stands and suppress the card.
+  if (error) return false; // decline history unknown — respect the stricter answer
   return !data || (data as any[]).length === 0; // true = no recent decline, safe to show
 }

@@ -210,7 +210,72 @@ function resolvePayload(
     if (init) return resolvePayload(init, sf, usePos, depth + 1);
     return null;
   }
+  // `xs.map(cb)` / `xs.flatMap(cb)` — a batch of rows built from ONE row
+  // shape. The array is variable-length so it can never be an array literal,
+  // but the row shape is right there in the callback, and the columns a batch
+  // insert writes are exactly that shape's keys. Resolving it turns every
+  // batch writer in the tree from a blind spot into a checked site.
+  if (
+    ts.isCallExpression(expr) &&
+    ts.isPropertyAccessExpression(expr.expression) &&
+    (expr.expression.name.text === "map" ||
+      expr.expression.name.text === "flatMap") &&
+    expr.arguments.length >= 1
+  ) {
+    const cb = expr.arguments[0];
+    if (ts.isArrowFunction(cb) || ts.isFunctionExpression(cb)) {
+      return resolveFunctionReturn(cb, sf, usePos, depth + 1);
+    }
+    return null;
+  }
   return null;
+}
+
+/**
+ * Union the payload keys of every `return` a callback can take.
+ *
+ * A concise-body arrow (`(r) => ({ ... })`) has one. A block body may have
+ * several, and a batch whose rows differ by branch writes the union of their
+ * columns — so all of them count, and a branch we cannot read marks the whole
+ * thing unresolved rather than silently narrowing the answer.
+ */
+function resolveFunctionReturn(
+  fn: ts.ArrowFunction | ts.FunctionExpression,
+  sf: ts.SourceFile,
+  usePos: number,
+  depth: number,
+): { keys: string[]; unresolved: boolean } | null {
+  if (depth > 3) return null;
+  if (!ts.isBlock(fn.body)) {
+    return resolvePayload(fn.body as ts.Expression, sf, usePos, depth);
+  }
+  const returns: ts.Expression[] = [];
+  const visit = (node: ts.Node) => {
+    // Do not descend into nested functions: their `return` belongs to them.
+    if (
+      ts.isArrowFunction(node) ||
+      ts.isFunctionExpression(node) ||
+      ts.isFunctionDeclaration(node)
+    ) {
+      return;
+    }
+    if (ts.isReturnStatement(node) && node.expression) returns.push(node.expression);
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(fn.body, visit);
+  if (returns.length === 0) return null;
+  const keys: string[] = [];
+  let unresolved = false;
+  for (const r of returns) {
+    const inner = resolvePayload(r, sf, usePos, depth + 1);
+    if (inner) {
+      keys.push(...inner.keys);
+      unresolved = unresolved || inner.unresolved;
+    } else {
+      unresolved = true;
+    }
+  }
+  return { keys, unresolved };
 }
 
 // Per-file map of variable name → declarations (position + initializer),

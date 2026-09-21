@@ -5,6 +5,7 @@
  * scoring occurs. Gates (in order):
  *   1. Blocks — bidirectional fail-closed
  *   2. Mutes — viewer muted the creator
+ *   2b. Viewer hide list — post_hides, the store behind "Not interested"/"Hide"
  *   3. Creator account status — suspended/banned creators excluded
  *   4. Post status — only active posts
  *   5. Delayed-publish gate — post_status must be 'published' (or absent)
@@ -41,6 +42,46 @@ export type FeedType = "for_you" | "following";
  * passes, exactly as before.
  */
 export const DISTRIBUTABLE_MODERATION_STATES: ReadonlySet<string> = new Set(["approved", "active"]);
+
+/**
+ * Moderation states an INDIVIDUAL media row must never be distributed in.
+ *
+ * WHY A DENY-LIST HERE WHEN THE POST-LEVEL GATE IS AN ALLOW-LIST. The post gate
+ * above can be an allow-list because an unmoderated post carries NULL. A
+ * `post_media` row cannot: `0103_post_media.sql` defaults `moderation_status` to
+ * the legacy `'pending'`, so an allow-list of {approved, active} would hide
+ * every freshly uploaded item on every surface. The deny-list is the only shape
+ * that is both safe and non-breaking here, and saying so is better than leaving
+ * the asymmetry to look like an oversight.
+ *
+ * WHAT WAS WRONG WITH THE OLD ONE. It was written inline as two comparisons,
+ * `!== "rejected" && !== "flagged"` — the legacy pair. Migration 2250 then
+ * reconciled media moderation onto the §36 MediaModerationStatus vocabulary
+ * (`processing|active|limited|rejected|removed|owner_deleted`) and documented
+ * the mapping `flagged → limited`, `(new) → removed`, `(new) → owner_deleted`.
+ * The deny-list was never extended, so `limited`, `removed` and `owner_deleted`
+ * — a restricted item, a taken-down item and an owner-deleted item — all read as
+ * distributable to the gate this file calls fail-closed.
+ *
+ * services/wall/WallCandidateLoaders.ts:1120 already blocks four of these on
+ * `media_assets` (QUICK_MEDIA_BLOCKED_MODERATION), so the repository held two
+ * different answers to the same question in two files. This is the union, and
+ * it includes `limited` because `limited` IS the canonical spelling of
+ * `flagged`, which was already blocked.
+ *
+ * HONEST BOUND ON THE IMPACT: `routes/adminMedia.ts` writes only
+ * `approved|rejected|flagged` to post_media today, so no path currently
+ * produces the three states that leaked. This closes a gate that was open, not
+ * a leak that was flowing — and the day a takedown starts writing `removed` is
+ * the day it would have mattered.
+ */
+export const NON_DISTRIBUTABLE_MEDIA_MODERATION_STATES: ReadonlySet<string> = new Set([
+  "flagged",
+  "limited",
+  "rejected",
+  "removed",
+  "owner_deleted",
+]);
 
 /**
  * Account statuses that are NOT `active` — the creators whose media must not be
@@ -157,12 +198,25 @@ export interface MediaCandidate {
  * @param viewerCtx — viewer context including feedType and followed ids
  * @param sc — Supabase service client (for blocks + mutes lookup)
  * @param mutedCreatorIds — optional pre-fetched muted set (pass null to load from DB)
+ * @param nowMs
+ *   The instant the DELAYED-PUBLISH gate below is judged at. Additive, and
+ *   defaulted to the wall clock, so every call site that does not pass one is
+ *   byte-identical in behaviour.
+ *
+ *   IT EXISTS BECAUSE THIS WAS THE SECOND CLOCK IN AN INJECTED-CLOCK ANSWER.
+ *   Every media projection builder takes a `nowMs`, stamps its envelope's
+ *   `generatedAt` from it, and then reached this filter — which had nowhere to
+ *   put it — so `publish_at <= now` was the one gate in those answers decided
+ *   by the real date. It is the `computeTripStatus` defect in the media lane,
+ *   and the only reason no suite went red at midnight is that no test pins a
+ *   `nowMs` on this path; that is luck, not safety.
  */
 export async function filterEligibleMediaCandidates(
   candidates: MediaCandidate[],
   viewerCtx: ViewerCtx,
   sc: SupabaseClient,
   mutedCreatorIds?: Set<string> | null,
+  nowMs: number = Date.now(),
 ): Promise<EligibilityResult> {
   if (candidates.length === 0) {
     return { eligible: [], blockFetchFailed: false };
@@ -259,13 +313,60 @@ export async function filterEligibleMediaCandidates(
     }
   }
 
+  // ── Step 3b: Viewer hide list ──────────────────────────────────────────────
+  //
+  // "Not interested" and "Hide" on the Media options sheet are the two rows a
+  // non-owner sees FIRST, and until now neither hid anything: both POSTed to
+  // /media/:id/report, which filed a moderation report and returned.
+  //
+  // The store was never the missing piece. `post_hides` (migration 0116,
+  // UNIQUE (user_id, post_id), in production) is written by
+  // POST /api/posts/:postId/hide and read by THREE feeds — the following feed
+  // and the global feed in routes/posts.ts, and routes/pulse.ts — with a client
+  // service and a Pulse-card entry point. Media was bypassing a working
+  // feature, not compensating for an absent one. The report route now writes it
+  // through the same lib/postHide writer; this is the read that makes the media
+  // surfaces honour it too, and it lands here rather than on each caller
+  // because this function is the one choke point every media candidate crosses:
+  // the legacy Watch and Grid feeds (routes/mediaFeed.ts) and, through
+  // MediaProjectionService.projectCandidatesProtected, all six World-shell
+  // builders and the experience resolver.
+  //
+  // FAIL-SOFT, like the mute gate two steps up and unlike the block and
+  // suspended-account gates. Losing this costs the viewer a preference; losing
+  // those serves content the platform has already decided must not be served.
+  // The asymmetry is deliberate and is the same one this file argues for mutes.
+  const hiddenPostIds = new Set<string>();
+  try {
+    const { data: hideRows, error: hideErr } = await sc
+      .from("post_hides")
+      .select("post_id")
+      .eq("user_id", viewerCtx.viewerUserId);
+    if (hideErr) {
+      console.warn(
+        "filterEligibleMediaCandidates: post_hides read failed — viewer hide gate is OFF for this request",
+        { viewerUserId: viewerCtx.viewerUserId, code: (hideErr as any)?.code, message: (hideErr as any)?.message },
+      );
+    }
+    for (const r of (hideRows as any[]) ?? []) hiddenPostIds.add(r.post_id as string);
+  } catch (err) {
+    console.warn(
+      "filterEligibleMediaCandidates: post_hides read rejected — viewer hide gate is OFF for this request",
+      { viewerUserId: viewerCtx.viewerUserId, err },
+    );
+  }
+
   // ── Step 4: Per-item eligibility gates ────────────────────────────────────
-  const now = Date.now();
+  // ONE clock for this call, and it is the caller's whenever the caller has one.
+  const now = nowMs;
   const eligible = candidates.filter((c) => {
     const authorId = c.author_id;
 
     // Block gate
     if (blockedSet.has(authorId)) return false;
+
+    // Viewer hide gate — this viewer asked not to see this item again.
+    if (hiddenPostIds.has(c.id)) return false;
 
     // Mute gate
     if (muteSet.has(authorId)) return false;
@@ -337,8 +438,7 @@ export async function filterEligibleMediaCandidates(
     const readyMedia = rawMedia.filter(
       (m: any) =>
         m.processing_status === "ready" &&
-        m.moderation_status !== "rejected" &&
-        m.moderation_status !== "flagged",
+        !NON_DISTRIBUTABLE_MEDIA_MODERATION_STATES.has(String(m.moderation_status ?? "")),
     );
     if (readyMedia.length === 0) return false;
 

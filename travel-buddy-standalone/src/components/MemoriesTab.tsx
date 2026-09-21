@@ -24,6 +24,9 @@ import { resolvePickedPlace } from '../lib/location/applyPickedPlace.ts';
 import type { Place } from '../lib/location/placeTypes.ts';
 import { color, space, radius, type as t, avatar, aspect } from '../theme/tokens.ts';
 import { groupMemoriesByTimeline } from '../lib/memoryTimeline.ts';
+import type { TripRow } from '../services/trips.ts';
+import { groupMemoriesByTrip, groupMemoriesByPlace } from './passport/memoryViews.ts';
+import { MemoriesMapView } from './passport/MemoriesMapView';
 
 const CATEGORIES = [
   { key: 'city', label: '🏙 City' },
@@ -754,23 +757,51 @@ export function CreateMemoryModal({ visible, onClose, onCreated }: CreateModalPr
 
 // ── Main MemoriesTab ──────────────────────────────────────────────────────────
 
+/**
+ * The Memories views this surface offers.
+ *
+ * 'all' is the ungrouped grid. The rest are §15's views, minus 'people' —
+ * see the note at the `viewMode` state below for why People is not here.
+ */
+export type MemoriesViewMode = 'all' | 'trips' | 'places' | 'timeline' | 'map';
+
+/** Tab order: the grid first, then §15's views in the order §15 names them. */
+const MEMORY_VIEW_TABS: ReadonlyArray<readonly [MemoriesViewMode, string]> = [
+  ['all', 'All'],
+  ['trips', 'Trips'],
+  ['places', 'Places'],
+  ['timeline', 'Timeline'],
+  ['map', 'Map'],
+] as const;
+
 interface MemoriesTabProps {
   memories: PassportMemory[];
   loading?: boolean;
   onReload: () => void;
   /** When true, renders as a collapsible section (for embedding inside another tab). */
   collapsed?: boolean;
+  /**
+   * The viewer's trips, used only to TITLE the §15 "Trips" view and to supply a
+   * precise destination coordinate to the "Map" view. Optional: every view still
+   * forms without it, with neutral labels and centroid coordinates.
+   */
+  trips?: TripRow[];
 }
 
-export function MemoriesTab({ memories, loading, onReload, collapsed }: MemoriesTabProps) {
+export function MemoriesTab({ memories, loading, onReload, collapsed, trips }: MemoriesTabProps) {
   const [localMemories, setLocalMemories] = useState<PassportMemory[]>(memories);
   const [createOpen, setCreateOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [editMemory, setEditMemory] = useState<PassportMemory | null>(null);
   const [viewVideoMemory, setViewVideoMemory] = useState<PassportMemory | null>(null);
-  // §15 Memories views. "All" is the existing grid; "Timeline" groups by month,
-  // newest first, so the Passport reads as a travel story (§15).
-  const [viewMode, setViewMode] = useState<'all' | 'timeline'>('all');
+  // §15 Memories views. "All" is the ungrouped grid the five §15 views are views
+  // OF — not one of them. Of §15's five (Trips, Places, People, Timeline, Map),
+  // four are built here. **People is absent deliberately**: `PassportMemory`
+  // carries no participant field, and the memory-participant visibility contract
+  // that would give it one belongs to the Highlights/Memories lane
+  // (`artifacts/api-server/src/services/memory/`). A People tab rendered against
+  // data that does not exist would be a label, not a view.
+  const [viewMode, setViewMode] = useState<MemoriesViewMode>('all');
 
   React.useEffect(() => {
     setLocalMemories(memories);
@@ -778,6 +809,14 @@ export function MemoriesTab({ memories, loading, onReload, collapsed }: Memories
 
   const timelineSections = React.useMemo(
     () => groupMemoriesByTimeline(localMemories),
+    [localMemories],
+  );
+  const tripSections = React.useMemo(
+    () => groupMemoriesByTrip(localMemories, trips ?? []),
+    [localMemories, trips],
+  );
+  const placeSections = React.useMemo(
+    () => groupMemoriesByPlace(localMemories),
     [localMemories],
   );
 
@@ -912,9 +951,15 @@ export function MemoriesTab({ memories, loading, onReload, collapsed }: Memories
         </View>
       ) : (
         <>
-          {/* §15 view switcher — All grid vs. chronological Timeline. */}
-          <View style={mt.viewSwitch} accessibilityRole="tablist">
-            {([['all', 'All'], ['timeline', 'Timeline']] as const).map(([mode, label]) => {
+          {/* §15 view switcher — the grid plus the four §15 views this lane can build. */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={mt.viewSwitchScroll}
+            contentContainerStyle={mt.viewSwitch}
+            accessibilityRole="tablist"
+          >
+            {MEMORY_VIEW_TABS.map(([mode, label]) => {
               const active = viewMode === mode;
               return (
                 <Pressable
@@ -929,15 +974,17 @@ export function MemoriesTab({ memories, loading, onReload, collapsed }: Memories
                 </Pressable>
               );
             })}
-          </View>
+          </ScrollView>
 
-          {viewMode === 'all' ? (
+          {viewMode === 'all' && (
             <View style={mt.list} testID="memories-view-all-list">
               {localMemories.map((m) => (
                 <MemoryCard key={m.id} memory={m} onVisibilityChange={handleVisibilityChange} onEdit={handleEdit} onViewVideo={handleViewVideo} />
               ))}
             </View>
-          ) : (
+          )}
+
+          {viewMode === 'timeline' && (
             <View style={mt.list} testID="memories-view-timeline-list">
               {timelineSections.map((section) => (
                 <View key={section.key} style={mt.timelineSection}>
@@ -949,6 +996,44 @@ export function MemoriesTab({ memories, loading, onReload, collapsed }: Memories
                   ))}
                 </View>
               ))}
+            </View>
+          )}
+
+          {viewMode === 'trips' && (
+            <View style={mt.list} testID="memories-view-trips-list">
+              {tripSections.map((section) => (
+                <View key={section.key} style={mt.timelineSection}>
+                  <Text style={mt.timelineHeader} testID={`memories-trips-header-${section.key}`}>
+                    {section.label}
+                  </Text>
+                  {section.sublabel && <Text style={mt.sectionSub}>{section.sublabel}</Text>}
+                  {section.memories.map((m) => (
+                    <MemoryCard key={m.id} memory={m} onVisibilityChange={handleVisibilityChange} onEdit={handleEdit} onViewVideo={handleViewVideo} />
+                  ))}
+                </View>
+              ))}
+            </View>
+          )}
+
+          {viewMode === 'places' && (
+            <View style={mt.list} testID="memories-view-places-list">
+              {placeSections.map((section) => (
+                <View key={section.key} style={mt.timelineSection}>
+                  <Text style={mt.timelineHeader} testID={`memories-places-header-${section.key}`}>
+                    {section.label}
+                  </Text>
+                  {section.sublabel && <Text style={mt.sectionSub}>{section.sublabel}</Text>}
+                  {section.memories.map((m) => (
+                    <MemoryCard key={m.id} memory={m} onVisibilityChange={handleVisibilityChange} onEdit={handleEdit} onViewVideo={handleViewVideo} />
+                  ))}
+                </View>
+              ))}
+            </View>
+          )}
+
+          {viewMode === 'map' && (
+            <View style={mt.list} testID="memories-view-map-list">
+              <MemoriesMapView memories={localMemories} trips={trips ?? []} />
             </View>
           )}
         </>
@@ -1109,6 +1194,9 @@ const mt = StyleSheet.create({
   addBtnLarge: { marginTop: space.sm, borderWidth: 1, borderColor: color.haze, borderRadius: radius.pill, paddingVertical: space.md, paddingHorizontal: space.xl },
   addBtnLargeText: { ...t.bodyStrong, color: color.ink },
   list: { paddingBottom: space.xxxl },
+  // The switcher scrolls horizontally so five tabs still reach at phone width
+  // without the row growing vertically.
+  viewSwitchScroll: { flexGrow: 0, marginBottom: space.md },
   viewSwitch: {
     flexDirection: 'row', gap: 4, alignSelf: 'flex-start',
     backgroundColor: color.haze, borderRadius: radius.pill, padding: 3, marginBottom: space.md,
@@ -1122,6 +1210,8 @@ const mt = StyleSheet.create({
     ...t.small, color: color.mute, fontWeight: '700',
     textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: space.sm,
   },
+  /** Secondary section line — a trip's destination, a place's country. */
+  sectionSub: { ...t.small, color: color.faint, marginTop: -space.xs, marginBottom: space.sm },
   collapsedWrap: {
     marginHorizontal: space.lg, marginTop: space.md,
     borderRadius: radius.md, borderWidth: 1, borderColor: color.haze,

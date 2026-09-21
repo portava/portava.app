@@ -38,6 +38,36 @@ const TRAVELER_ID    = "gate-traveler-1";
 const BUDDY_USER     = "gate-buddy-user-1";
 const BUDDY_PROF     = "gate-buddy-profile-1";
 
+
+/**
+ * Evaluate a PostgREST `or(...)` body against one row. Understands the two
+ * forms the block check emits: top-level `col.eq.val` alternatives and
+ * `and(col.eq.val,col.eq.val)` conjunctions of them.
+ */
+function orMatches(expr: string, row: any): boolean {
+  const split = (s: string): string[] => {
+    const out: string[] = []; let depth = 0, cur = "";
+    for (const ch of s) {
+      if (ch === "(") depth++;
+      if (ch === ")") depth--;
+      if (ch === "," && depth === 0) { out.push(cur); cur = ""; continue; }
+      cur += ch;
+    }
+    if (cur.trim()) out.push(cur);
+    return out.map((x) => x.trim()).filter(Boolean);
+  };
+  const one = (c: string): boolean => {
+    const and = c.match(/^and\((.*)\)$/s);
+    if (and) return split(and[1]).every(one);
+    const m = c.match(/^(\w+)\.(\w+)\.(.*)$/s);
+    if (!m) return false;
+    const [, col, op, val] = m;
+    if (op === "is") return (row[col] ?? null) === (val === "null" ? null : val);
+    return String(row[col]) === val;
+  };
+  return split(expr).some(one);
+}
+
 function req(method: string, path: string, body?: unknown, token = TRAVELER_TOKEN): Promise<{ status: number; body: any }> {
   return new Promise((resolve, reject) => {
     const url = new URL(path, base);
@@ -125,11 +155,11 @@ function makeClient() {
     return {
       _table: table,
       _filters: [] as Array<[string, string, any]>,
-      _or: null as string | null,
       _insertData: null as any,
       _updateData: null as any,
       _maybeSingle: false,
       _single: false,
+      _orExpr: null as string | null,
 
       select() { return this; },
       insert(data: any) { this._insertData = data; return this; },
@@ -143,7 +173,14 @@ function makeClient() {
       in(col: string, val: any) { this._filters.push(["in", col, val]); return this; },
       ilike(col: string, val: any) { this._filters.push(["ilike", col, val]); return this; },
       is(col: string, val: any) { this._filters.push(["is", col, val]); return this; },
-      or(expr: string) { this._or = expr; return this; },
+      // Records the PostgREST `.or(...)` expression instead of discarding it.
+      // The block check is now lib/blockGuard's single
+      // `.or(and(...),and(...)).limit(1)` query — one query rather than two
+      // `.maybeSingle()` reads, because a MUTUAL block is two rows and
+      // maybeSingle raised on them. A no-op `or()` made every block invisible
+      // to this fake, so "a blocked traveler cannot create a booking" passed
+      // for the wrong reason. Only the `blocks` branch below consults it.
+      or(expr: string) { this._orExpr = expr; return this; },
       order() { return this; },
       limit() { return this; },
       maybeSingle() { this._maybeSingle = true; return this; },
@@ -235,30 +272,15 @@ function makeClient() {
         }
 
         if (t === "blocks") {
-          // The block guard is now lib/blockGuard.isBlockedBetween, which asks
-          // for BOTH directions in one `.or(...)` + `.limit(1)` list read
-          // (.maybeSingle() raised PGRST116 on a mutual block, so the strongest
-          // block state read as "not blocked"). Honour both shapes.
-          let hits: any[];
-          if (this._or) {
-            const ids = [...String(this._or).matchAll(/(blocker_id|blocked_id)\.eq\.([^,)]+)/g)];
-            const pairs: Array<[string, string]> = [];
-            for (let i = 0; i + 1 < ids.length; i += 2) {
-              const a = ids[i], b = ids[i + 1];
-              const blocker = a[1] === "blocker_id" ? a[2] : b[2];
-              const blocked = a[1] === "blocked_id" ? a[2] : b[2];
-              pairs.push([blocker, blocked]);
-            }
-            hits = state.blocks.filter((b) =>
-              pairs.some(([bl, bd]) => b.blocker_id === bl && b.blocked_id === bd));
-          } else {
-            const blocker = this._eq("blocker_id");
-            const blocked = this._eq("blocked_id");
-            hits = state.blocks.filter((b) => b.blocker_id === blocker && b.blocked_id === blocked);
-          }
-          const rows = hits.map(() => ({ id: "block-1" }));
-          if (this._maybeSingle) return { data: rows[0] ?? null, error: null };
-          return { data: rows, error: null };
+          const hit = this._orExpr
+            ? state.blocks.find((b) => orMatches(this._orExpr as string, b))
+            : state.blocks.find(
+                (b) => b.blocker_id === this._eq("blocker_id") && b.blocked_id === this._eq("blocked_id"),
+              );
+          // `.limit(1)` (no maybeSingle) resolves to an ARRAY, which is what
+          // isBlockedBetween tests with `Array.isArray(data) && data.length > 0`.
+          if (this._maybeSingle) return { data: hit ? { id: "block-1" } : null, error: null };
+          return { data: hit ? [{ id: "block-1" }] : [], error: null };
         }
 
         if (t === "rent_buddy_launch_controls") {

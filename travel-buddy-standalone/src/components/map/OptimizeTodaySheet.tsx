@@ -45,12 +45,12 @@ import {
   X,
 } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
-import { proposalMoves } from '../../features/map/trip/tripMapModel.ts';
+import { proposalMoves } from '../../features/trips/map/tripMapModel.ts';
 import type {
   OptimizeFactor,
   OptimizeProposal,
   ProposalMove,
-} from '../../features/map/trip/tripMapModel.ts';
+} from '../../features/trips/map/tripMapModel.ts';
 
 // Matches AskCompassBar / LivePulseCard so the floating surfaces read as one system.
 const BRAND_BG = '#0A3D4A';

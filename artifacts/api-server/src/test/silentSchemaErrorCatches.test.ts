@@ -331,19 +331,34 @@ const FIXED_SITES: Array<{ file: string; markers: string[]; reason: string }> = 
   },
   {
     file: "routes/telegraph.ts",
-    markers: ["suppressing every mention suggestion (fail-closed)"],
+    markers: [
+      "mentions SUPPRESSED (cannot establish who is blocked)",
+      "block state unknown — admit nobody",
+    ],
     reason:
       "A string-built or() predicate, so a malformed filter is the likely failure — and it emptied the block set for the " +
-      "mention-suggestion list. The 2026-09-06 sweep made an unreadable block state treat every candidate as blocked; " +
-      "the marker pins that wording.",
+      "suggestion list. THE MARKER MOVED BECAUSE THE SITE GOT STRONGER, which is what this rule says to do rather than " +
+      "delete the entry. The old marker pinned a LOG LINE ('blocked users are NOT being filtered from suggestions') — the " +
+      "site bound its error, said so, and carried on with an empty blockedSet, emitting a resolved @mention span for " +
+      "somebody the caller may have blocked. A log line is not a guard. `blocks` is an EXCLUSION table, so an empty read " +
+      "means ALLOW and an unreadable one must SUPPRESS. The two markers now pin the refusal itself: the new log line, and " +
+      "the break that admits nobody while the block state is unknown. Pinning the guard rather than the confession is the " +
+      "stronger assertion — deleting the entry would have left the site unwatched at the moment it started mattering.",
   },
   {
     file: "compass/CompassNotificationEngine.ts",
-    markers: ["suppressing the push (fail-closed)"],
+    markers: [
+      "push SUPPRESSED (cannot establish the block relationship)",
+      "block_state_unknown:",
+    ],
     reason:
       "maybeSingle() returns null both for 'no block row' and for a rejected query, against a gate whose stated contract is " +
-      "that a blocked sender must never reach the recipient via push. The engine used to log and DELIVER anyway; the " +
-      "2026-09-06 sweep made it suppress, and the marker pins that wording.",
+      "that a blocked sender must never reach the recipient via push. THE MARKER MOVED BECAUSE THE SITE GOT STRONGER: the old " +
+      "one pinned a CONFESSION — the site bound its errors, logged that the push was going out unsuppressed, and sent it. It " +
+      "now withholds the notification on both the rejected-read and the thrown path. The two markers pin the refusal itself: " +
+      "the new log line, and the ledger reason that keeps 'we could not check' distinguishable from 'this person is blocked'. " +
+      "The old marker was retired only after it was found still SATISFIED — by a code comment quoting it, which is a guard " +
+      "green on a quotation rather than on a diagnostic.",
   },
   {
     file: "lib/mediaAccess.ts",

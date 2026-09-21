@@ -24,7 +24,7 @@ import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
 import { createReminder, type ReminderTargetType } from '../../src/services/reminders.ts';
 import { listMyTrips, type TripRow } from '../../src/services/trips.ts';
-import { fetchTripPlan } from '../../src/services/tripPlan.ts';
+import { fetchTripPlan } from '../../src/features/trips/planning/tripPlan.ts';
 import type { TripPlanItem } from '../../src/types/models.ts';
 import { listSaved, type BookmarkedPlace } from '../../src/services/discoveryBookmarks.ts';
 

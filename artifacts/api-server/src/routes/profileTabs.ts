@@ -81,21 +81,25 @@ async function applyVisibilityGuard(
 ): Promise<{ allowed: boolean; privacySettings: PrivacySettings | null; isOwner: boolean }> {
   const isOwner = viewerId === targetId;
 
-  if (isOwner) {
-    // NOTE: the supabase-js query builder is only a `then`-able (PostgrestBuilder does
-    // not extend Promise), so chaining `.catch()` directly on it throws
-    // "...catch is not a function" synchronously — it is not a valid error guard.
-    // Wrap the awaited call in try/catch instead.
-    let ps: PrivacySettings | null = null;
-    try {
-      const { data } = await sc.from("profile_privacy_settings").select("*").eq("user_id", targetId).maybeSingle();
-      ps = data ?? null;
-    } catch {
-      ps = null;
-    }
-    return { allowed: true, privacySettings: ps, isOwner: true };
-  }
-
+  // ── ONE privacy-settings read IMPLEMENTATION, not two ─────────────────────
+  //
+  // Until 2026-09-08 the owner branch here returned early with its OWN
+  // `profile_privacy_settings` read: a second implementation of the read
+  // `resolveProfileVisibility` already performs on its self-view path, reached
+  // instead of it rather than in addition to it (the request count was, and
+  // remains, one). Two implementations of the same privacy read cannot help but
+  // drift, and this pair had — the shared resolver distinguishes an unreadable
+  // settings table from an unconfigured user and logs the failure; the copy
+  // here bound only `data` and could not, so an owner-path read failure was
+  // silent. `resolveProfileVisibility` returns `{ visibility: "full" }` for
+  // viewer === target before it touches account state or blocks, so delegating
+  // is behaviour-preserving for the owner and leaves one implementation.
+  //
+  // NOTE for anyone re-adding a direct read: the supabase-js query builder is
+  // only a `then`-able (PostgrestBuilder does not extend Promise), so chaining
+  // `.catch()` on it throws synchronously — and a `try/catch` around the await
+  // is NOT the error guard either, because supabase-js RESOLVES on a database
+  // error. `.error` is the only failure signal.
   let visibility: string;
   let privacySettings: PrivacySettings | null;
   try {
@@ -104,7 +108,14 @@ async function applyVisibilityGuard(
     privacySettings = result.privacySettings;
   } catch (e: any) {
     res.status(500).json({ error: "db_error", message: e.message ?? "Visibility check failed" });
-    return { allowed: false, privacySettings: null, isOwner: false };
+    return { allowed: false, privacySettings: null, isOwner };
+  }
+
+  if (isOwner) {
+    // "full" by construction. The owner's own tabs are never filtered by their
+    // own opt-outs (every consumer below guards with `!guard.isOwner`), so an
+    // unavailable settings row costs the owner nothing here.
+    return { allowed: true, privacySettings, isOwner: true };
   }
 
   if (visibility === "unavailable") {

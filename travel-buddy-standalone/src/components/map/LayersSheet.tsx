@@ -37,6 +37,7 @@ import {
   View,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { USER_POSITION_COLOR } from './UserPositionMarker.tsx';
 import {
   CalendarDays,
   Gem,
@@ -88,7 +89,11 @@ const dark = {
   textFaint: 'rgba(242,245,247,0.40)',
   backdrop: 'rgba(4,6,8,0.62)',
   onAccent: '#0E1216',
-  blueDot: '#3B82F6',
+  // §6's blue dot, quoted from the component that draws it. These were two
+  // independent literals and had already drifted ('#3B82F6' here vs '#2D7FF9'
+  // on the map), so the legend swatch and the marker were different colours —
+  // part of what census-map M43 is about. One source now.
+  blueDot: USER_POSITION_COLOR,
   gold: '#D4A017',
 } as const;
 

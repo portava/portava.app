@@ -159,21 +159,21 @@ export const LOCATION_PURPOSES: readonly LocationPurpose[] = [
     precision: "coarse",
     lawfulBasis: "consent",
     retentionSeconds: null,
-    // ACCURACY CORRECTION (2026-08-28). This note previously read "...with a
-    // sweeper". There is no sweeper. circle_presence carries the TTL COLUMNS
-    // (stale_after_secs, expires_at, is_stale) and routes/circle.ts defines
-    // POST /circle/internal/cleanup-presence, but that route has NO CALLER —
-    // no scheduler, no cron, no job invokes it — so TRIP_PRESENCE_TTL_HOURS and
-    // EVENT_PRESENCE_TTL_HOURS (circle.ts) are enforced by nothing today.
-    // Readers of this registry must not treat expiry as an active control.
-    // This registry documents what the system DOES, so the claim is corrected
-    // rather than the reality being assumed. Fixing it is a scheduler-wiring
-    // decision for the circle/presence owner, not a documentation change.
-    // Materiality today is low but not zero: the table currently holds 0 rows,
-    // so nothing is being retained past its TTL yet — but the moment presence
-    // is written, stale rows would persist and readers would still see
-    // is_stale=false unless the caller computes staleness itself.
-    retentionNote: "circle_presence carries TTL columns (stale_after_secs, expires_at, is_stale) but NO sweeper runs: POST /circle/internal/cleanup-presence exists with no caller, so the TTLs are not enforced automatically. circle_checkins is the append-only log behind it and stores venue/approximate labels, never coordinates.",
+    // ACCURACY CORRECTION (2026-08-28), SUPERSEDED (this port). The note used to
+    // read "...with a sweeper", was corrected to "NO sweeper runs", and is now
+    // corrected again because a sweeper exists: lib/intelRetentionScheduler's
+    // runPresenceCleanup is on RETENTION_PASSES, which src/index.ts starts via
+    // startIntelRetentionScheduler. Registration is asserted by
+    // src/test/intelRetentionScheduler.test.ts and src/test/schedulerRegistration.test.ts.
+    //
+    // WHAT IS STILL NOT TRUE: that the TTLs are being enforced in production
+    // TODAY. Migration 2957 seeds presence_cleanup_enabled FALSE in BOTH live
+    // databases — "disabled by default until scheduler rollout is verified" —
+    // and the pass fails closed on it, so every pass is currently a no-op. This
+    // registry documents what the system DOES, so the state it records is
+    // "wired and gated off", not "enforced". Readers must still not treat
+    // expiry as an active control until an owner flips the flag.
+    retentionNote: "circle_presence carries TTL columns (stale_after_secs, expires_at, is_stale). IntelRetentionScheduler (started in src/index.ts, 60-second cadence) runs runPresenceCleanup on every pass, but it is gated on presence_cleanup_enabled, which migration 2957 seeds FALSE in production and CI — so the TTLs are WIRED but NOT YET ENFORCED. POST /circle/internal/cleanup-presence still exists as an operator-triggered fallback and is NOT flag-gated, so the two paths can disagree while the flag is off. circle_checkins is the append-only log behind it and stores venue/approximate labels, never coordinates.",
     visibility: "The trip or event context only, per circle_visibility_settings.",
     deletionBehavior: "Deleted with the account.",
     tables: ["circle_checkins", "circle_presence"],
