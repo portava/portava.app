@@ -59,6 +59,38 @@ function makeFakeClient(state: FakeState, rpcLog: RpcCall[] = []) {
     },
     rpc: async (name: string, args: any) => {
       rpcLog.push({ name, args });
+      // APPLY the write, do not merely record that it was attempted. Until this
+      // existed the fake made `input_record_selection` inert, so no test in this
+      // file could assert the ROUND TRIP — that a recorded selection is read
+      // back and changes what the next request serves. It models 2258's
+      // upsert-with-increment exactly: one row per
+      // (user, context, entity_type, entity_id, query_key), `selection_count`
+      // incremented on a repeat, and a NULL label never overwriting a known one.
+      // The SQL semantics themselves are proven against a real Postgres by
+      // src/test/inputAssistanceSelectionMemoryLiveDb.test.ts, not by this fake.
+      if (name === "input_record_selection") {
+        const rows = (state.input_selection_history ??= []);
+        const key = (r: any) =>
+          [r.user_id, r.context, r.entity_type, r.entity_id, r.query_key ?? ""].join("\u0000");
+        const incoming = {
+          user_id: args.p_user_id,
+          context: args.p_context,
+          entity_type: args.p_entity_type,
+          entity_id: args.p_entity_id,
+          query_key: args.p_query_key ?? "",
+          label: args.p_label ?? null,
+          selection_count: 1,
+          last_selected_at: new Date().toISOString(),
+        };
+        const existing = rows.find((r: any) => key(r) === key(incoming));
+        if (existing) {
+          existing.selection_count += 1;
+          existing.last_selected_at = incoming.last_selected_at;
+          existing.label = incoming.label ?? existing.label;
+        } else {
+          rows.push(incoming);
+        }
+      }
       return { data: null, error: null };
     },
     from: (table: string) => {
@@ -436,5 +468,141 @@ describe("POST /select — records explicit selections, owner-scoped", () => {
     assert.equal(body.recorded, false, "username selections must not be recorded");
     assert.equal(rpcLog.filter((c) => c.name === "input_record_selection").length, 0,
       "no write may happen for a personalization-disabled context");
+  });
+});
+
+// ── 6. §35 "recently selected USERS" — the round trip on the recipient path ────
+//
+// This block exists because the two halves of the users arm both landed after
+// the rest of §35, and each was a no-op without the other:
+//
+//   * the WRITE. `telegraph_recipient` is the only context in the registry
+//     whose entityTypes are ['user'], and the §35 writer-coverage guard carried
+//     it as a KNOWN GAP — the picker consumed the gateway and recorded nothing,
+//     so the users arm had no writer anywhere in the product.
+//   * the READ. The gateway's recipient branch is a full TAKEOVER that returns
+//     before the generic `applyPriorSelectionBoost`, so even a recorded pick
+//     fed nothing. That is the "boost-only benefit" the exemption promised, and
+//     it did not exist.
+//
+// These assert the ROUND TRIP — POST /select, then POST /suggest — rather than
+// either half on its own. The fake applies 2258's upsert semantics; that those
+// semantics are what Postgres actually does is proven separately against a real
+// database by src/test/inputAssistanceSelectionMemoryLiveDb.test.ts.
+
+const REC_ONE = "cc000000-0000-4000-a000-0000000000c1";
+const REC_TWO = "cc000000-0000-4000-a000-0000000000c2";
+
+/** Two equally-eligible recipients: both are people USER_A follows. */
+function recipientWorld(extra: FakeState = {}): FakeState {
+  return {
+    user_follows: [
+      { follower_id: USER_A, following_id: REC_ONE },
+      { follower_id: USER_A, following_id: REC_TWO },
+    ],
+    user_friendships: [],
+    message_thread_members: [],
+    trip_members: [],
+    profiles: [
+      // Seeded so the one the user has NOT picked comes back first from the
+      // fake's row order — a broken boost shows up as "input order won".
+      { id: REC_ONE, handle: "rivertwin", username: "rivertwin", name: "River Twin", account_status: "active" },
+      { id: REC_TWO, handle: "riverstone", username: "riverstone", name: "River Stone", account_status: "active" },
+    ],
+    blocks: [],
+    user_privacy_settings: [],
+    input_selection_history: [],
+    ...extra,
+  };
+}
+
+const recipIndex = (body: any, id: string) =>
+  body.suggestions.findIndex((s: any) => s.entityId === id);
+
+describe("§35 users arm — a recorded recipient pick changes what the picker serves", () => {
+  it("records the pick, and the NEXT request ranks that person ahead of an equally-eligible one", async () => {
+    // MUTATION-PROOF: drop `applyPriorSelectionBoost` from the telegraph_recipient
+    // branch in gateway.ts (return `recips` directly) and the two recipients stay
+    // in input order, so REC_ONE leads and this goes RED. Equally, make the fake
+    // rpc inert again and the memory is never written → RED.
+    setup(recipientWorld());
+
+    // Before: nothing recorded, so the two are indistinguishable.
+    const before = await (await suggest({ context: "telegraph_recipient", text: "river" }, A_TOK)).json() as any;
+    const b1 = before.suggestions.find((s: any) => s.entityId === REC_ONE);
+    const b2 = before.suggestions.find((s: any) => s.entityId === REC_TWO);
+    assert.ok(b1 && b2, `both recipients expected; got ${JSON.stringify(before.suggestions.map((s: any) => s.label))}`);
+    assert.equal(b1.confidence, b2.confidence, "with no memory the two must tie exactly — the control");
+
+    // The explicit accept the picker screen now fires.
+    _resetRateLimit();
+    const rec = await select({
+      context: "telegraph_recipient", entityType: "user", entityId: REC_TWO,
+      query: "river", label: "River Stone",
+    }, A_TOK);
+    assert.equal(((await rec.json()) as any).recorded, true, "a recipient pick must be recordable");
+
+    // After: the same query, the same eligibility, a different order.
+    _resetRateLimit();
+    const after = await (await suggest({ context: "telegraph_recipient", text: "river" }, A_TOK)).json() as any;
+    const a1 = after.suggestions.find((s: any) => s.entityId === REC_ONE);
+    const a2 = after.suggestions.find((s: any) => s.entityId === REC_TWO);
+    assert.ok(a1 && a2, "both recipients must still be RETURNED — this is a ranking term, not a filter");
+    assert.ok(a2.confidence > a1.confidence,
+      `the picked recipient must rank higher (${a2.confidence} vs ${a1.confidence})`);
+    assert.ok(recipIndex(after, REC_TWO) < recipIndex(after, REC_ONE),
+      "and must sort ahead of the one the user never picked");
+  });
+
+  it("adds NOBODY: the boost reorders the eligibility-scoped list and never extends it", async () => {
+    // A remembered person who is NOT in the viewer's graph must not reappear
+    // because they are remembered. MUTATION-PROOF: surface the memory directly
+    // (e.g. route recipients through buildSelectionRecents) and this goes RED.
+    const STRANGER = "dd000000-0000-4000-a000-0000000000d9";
+    setup(recipientWorld({
+      input_selection_history: [
+        selRow({ user: USER_A, context: "telegraph_recipient", entityType: "user", entityId: STRANGER, count: 9, label: "Stranger" }),
+      ],
+      profiles: [
+        { id: REC_ONE, handle: "rivertwin", username: "rivertwin", name: "River Twin", account_status: "active" },
+        { id: REC_TWO, handle: "riverstone", username: "riverstone", name: "River Stone", account_status: "active" },
+        { id: STRANGER, handle: "riverghost", username: "riverghost", name: "River Ghost", account_status: "active" },
+      ],
+    }));
+    const body = await (await suggest({ context: "telegraph_recipient", text: "river" }, A_TOK)).json() as any;
+    assert.equal(
+      body.suggestions.filter((s: any) => s.entityId === STRANGER).length, 0,
+      "selection memory must never add a person the eligibility gate did not return",
+    );
+  });
+
+  it("is owner-scoped: user B's recipient history does not reorder user A's picker", async () => {
+    // MUTATION-PROOF: drop the `.eq("user_id", …)` filter in fetchSelectionMemory
+    // and A inherits B's boost → RED.
+    setup(recipientWorld({
+      input_selection_history: [
+        selRow({ user: USER_B, context: "telegraph_recipient", entityType: "user", entityId: REC_TWO, count: 7 }),
+      ],
+    }));
+    const body = await (await suggest({ context: "telegraph_recipient", text: "river" }, A_TOK)).json() as any;
+    const a1 = body.suggestions.find((s: any) => s.entityId === REC_ONE);
+    const a2 = body.suggestions.find((s: any) => s.entityId === REC_TWO);
+    assert.ok(a1 && a2);
+    assert.equal(a1.confidence, a2.confidence, "user A must see no boost from user B's memory");
+  });
+
+  it("stays context-scoped: a pick made in global_search does not reorder the recipient picker", async () => {
+    // fetchSelectionMemory filters .eq('context', …). This is the property that
+    // made the original missing-writer bug invisible, so it is asserted here too.
+    setup(recipientWorld({
+      input_selection_history: [
+        selRow({ user: USER_A, context: "global_search", entityType: "user", entityId: REC_TWO, count: 9 }),
+      ],
+    }));
+    const body = await (await suggest({ context: "telegraph_recipient", text: "river" }, A_TOK)).json() as any;
+    const a1 = body.suggestions.find((s: any) => s.entityId === REC_ONE);
+    const a2 = body.suggestions.find((s: any) => s.entityId === REC_TWO);
+    assert.ok(a1 && a2);
+    assert.equal(a1.confidence, a2.confidence, "memory learned on another field must not leak into this one");
   });
 });

@@ -22,7 +22,8 @@ import type {
 } from '../types/inputSuggestion.ts';
 import { INPUT_POLICY_VERSION } from '../contexts/inputContexts.ts';
 import { buildSuggestBody } from './suggestBody.ts';
-import { parseSuggestBody, type RawSuggestBody } from './suggestResponse.ts';
+import { parseSuggestBody, isSchemaCompatible, type RawSuggestBody } from './suggestResponse.ts';
+import { CLIENT_SCHEMA_VERSION } from '../contexts/clientCapabilities.ts';
 
 function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
@@ -88,6 +89,20 @@ export async function requestSuggestions(
     // cannot be reached by a node:test. Inline, they were unprovable.
     const parsed = parseSuggestBody((await res.json()) as RawSuggestBody);
 
+    // §48 (census G341) — a serve whose RESPONSE SHAPE is newer than this build
+    // is not an error and not an empty result: it is assistance this client
+    // cannot safely read. `unavailable` is §38's own word for that, and it is
+    // what makes the field fall back to its local zero-state instead of
+    // rendering rows out of a shape it does not know.
+    if (!isSchemaCompatible(parsed.schemaVersion, CLIENT_SCHEMA_VERSION)) {
+      return {
+        ok: false,
+        aborted: false,
+        unavailable: true,
+        error: `Unsupported suggestion schema ${parsed.schemaVersion} (this build reads ${CLIENT_SCHEMA_VERSION})`,
+      };
+    }
+
     return {
       ok: true,
       requestId: parsed.requestId,
@@ -96,6 +111,7 @@ export async function requestSuggestions(
       // §44/§57 serve latency (census G372). ABSENT, never 0, when the server
       // did not send it — see suggestResponse.ts.
       serverMs: parsed.serverMs,
+      schemaVersion: parsed.schemaVersion ?? undefined,
     };
   } catch (e) {
     const aborted = e instanceof Error && e.name === 'AbortError';

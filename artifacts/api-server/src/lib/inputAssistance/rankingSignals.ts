@@ -338,3 +338,126 @@ export function applyTripFit(base: number, inTripCity: boolean): number {
   if (!inTripCity) return base;
   return Math.max(base, Math.min(base + TRIP_FIT_BOOST, SIGNAL_CEILING));
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §36 Impersonation — a confusable-handle demotion, and what it deliberately
+// is not
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// §36 asks for "impersonation protections for people and businesses". What
+// existed was two things, neither of which is a protection against
+// impersonation: `account_status` filtering removes SUSPENDED accounts (a
+// different fact about a different account), and `verified` / `official` now
+// reach the row as badges (disclosure — it tells a reader what the genuine
+// account looks like, and does nothing to the copy). A handle built to be
+// misread as a verified account's — `@p0rtava`, `@portavaa`, `@port_ava` —
+// ranked exactly like any other substring match, ahead of the real account
+// whenever it matched the typed text more tightly.
+//
+// This is the missing term. It is a WITHIN-RESPONSE rule: a person row that is
+// neither verified nor official, whose handle folds to the SAME signature as a
+// verified-or-official person row in the same answer, is demoted below it.
+//
+// ── WHY EXACT SIGNATURE EQUALITY AND NOT EDIT DISTANCE ───────────────────────
+//
+// An edit-distance threshold would fire on @sarah_travels vs @sara_travels —
+// two real people with similar names — and there is nothing here that could
+// tell those apart from an impersonation. Folding to a signature and requiring
+// EQUALITY is deliberately narrow: it catches substitutions that are
+// visually-motivated and semantically empty (digit-for-letter, doubled letter,
+// separators, `rn`/`m`) and fires on nothing else. A narrow rule that is right
+// is worth more here than a broad one that demotes real people.
+//
+// ── WHY A DEMOTION AND NOT A REMOVAL ─────────────────────────────────────────
+//
+// Same reason as SpamRisk: this layer has neither the evidence nor the mandate
+// to decide that an account IS an impersonation. Co-occurrence with a verified
+// twin is a suspicion, not a finding. A demotion puts the genuine account
+// first, which is the whole of the user-facing harm; removing the other row
+// would be a moderation verdict reached from a search result set.
+//
+// ── WHAT THIS DOES NOT COVER, STATED SO IT IS NOT MISTAKEN FOR COVERAGE ──────
+//
+// 1. An impersonating account that appears WITHOUT its target in the same
+//    answer is untouched — there is no verified twin to compare against, and
+//    no global handle index is consulted.
+// 2. BUSINESSES are not covered at all. `verified` / `isOfficial` exist only on
+//    `profiles` (`routes/discoverySearch.ts:706-707`); a `places` /
+//    `hidden_gems` row carries no verification flag of any kind, so there is no
+//    genuine-listing signal for a venue to be impersonated AGAINST.
+// Both are why census G233 stays BUILT-BUT-WRONG rather than moving.
+
+/** Confidence removed from an unverified row that collides with a verified twin. */
+export const IMPERSONATION_DEMOTION = 0.25;
+
+/** The person-ish assistance rows this term applies to. */
+const IMPERSONABLE_ENTITY_TYPES: ReadonlySet<string> = new Set(['user', 'buddy']);
+
+/**
+ * Fold a handle to its confusable signature.
+ *
+ * Lower-cased; the leading `@` and every separator dropped; the digits that
+ * stand in for letters mapped back (`0`→o, `1`/`!`→l, `3`→e, `4`→a, `5`→s,
+ * `7`→t, `8`→b); `rn` folded to `m`; runs of a repeated letter collapsed to
+ * one. Returns `''` for anything too short to be a handle, which never matches.
+ */
+export function handleSignature(handle: string | null | undefined): string {
+  const raw = (handle ?? '').trim().toLowerCase().replace(/^@+/, '');
+  if (!raw) return '';
+  const mapped = raw
+    .replace(/[^a-z0-9]/g, '')
+    .replace(/0/g, 'o')
+    .replace(/[1!]/g, 'l')
+    .replace(/3/g, 'e')
+    .replace(/4/g, 'a')
+    .replace(/5/g, 's')
+    .replace(/7/g, 't')
+    .replace(/8/g, 'b')
+    .replace(/rn/g, 'm')
+    .replace(/(.)\1+/g, '$1');
+  return mapped.length >= 3 ? mapped : '';
+}
+
+/** The handle a projected person row displays, or null. Subtitle is `@handle`. */
+function rowHandle(r: { entityType?: string; subtitle?: string }): string | null {
+  if (!r.entityType || !IMPERSONABLE_ENTITY_TYPES.has(r.entityType)) return null;
+  const sub = (r.subtitle ?? '').trim();
+  return sub.startsWith('@') ? sub : null;
+}
+
+/**
+ * Apply the §36 impersonation demotion to an already-projected list.
+ *
+ * Pure and order-preserving, exactly like {@link applyDiversity}: it returns
+ * new rows with adjusted confidence and leaves ordering to the ranker. A list
+ * with no verified person row, or no collision, is returned BYTE-IDENTICAL, so
+ * nothing that ranks correctly today can move because of this term.
+ */
+export function applyImpersonationRisk<
+  T extends {
+    entityType?: string;
+    subtitle?: string;
+    confidence?: number;
+    verified?: boolean;
+    official?: boolean;
+  },
+>(rows: readonly T[]): T[] {
+  // The signatures a GENUINE (verified or official) person row occupies.
+  const genuine = new Set<string>();
+  for (const r of rows) {
+    if (r.verified !== true && r.official !== true) continue;
+    const sig = handleSignature(rowHandle(r));
+    if (sig) genuine.add(sig);
+  }
+  if (genuine.size === 0) return rows as T[];
+
+  let changed = false;
+  const out = rows.map((r) => {
+    if (r.verified === true || r.official === true) return r;
+    const sig = handleSignature(rowHandle(r));
+    if (!sig || !genuine.has(sig)) return r;
+    changed = true;
+    return { ...r, confidence: Math.max(0, (r.confidence ?? 0) - IMPERSONATION_DEMOTION) };
+  });
+  return changed ? out : (rows as T[]);
+}

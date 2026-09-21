@@ -350,6 +350,120 @@ function rowToCanonicalFields(row: CanonicalRow): ResolveResult["canonical"] {
   };
 }
 
+// ── Alias plausibility (the append is the attack surface, not the read) ───────
+//
+// WHY THIS EXISTS. `matchCanonical`'s first rule is "shared provider id -> same
+// location, always", with no name or country comparison — which is correct, a
+// provider id IS the identity. But `buildRowPatch` then appended the INCOMING
+// name to that row's alias set unconditionally, and `matchCanonical`'s later
+// name test and `resolveCanonicalLocation`'s candidate query both READ aliases.
+// `POST /locations/resolve` is authenticated and rate-limited, but `place.id`
+// and `place.name` are entirely caller-supplied, and provider ids travel in the
+// app's own place payloads. So a caller holding a real row's provider id could
+// attach an arbitrary name to it, and from then on that name resolved to that
+// place through canonical identity merging.
+//
+// THE GUARD IS ON THE APPEND, NOT THE READ. Refusing to READ aliases would
+// break the legitimate variants the alias set exists for. Refusing an
+// implausible WRITE keeps the set meaning what it says. The provider-id match
+// is untouched: an implausible name still identifies and returns the row, it
+// just does not get to rename it. A refused alias must never become a refused
+// resolution.
+//
+// WHAT "PLAUSIBLE" MEANS. The base rule is the obvious one — a variant of a
+// name shares a word with it. Four carve-outs exist because real variants that
+// share no word do occur, and each is a shape this codebase already handles
+// elsewhere rather than a new invention:
+//   spacing   "danang" for "da nang"            (squash whitespace)
+//   folds     "da nang" for stored "Đà Nẵng"    (searchKey, migration 2220)
+//   dictionary "hcmc" for "ho chi minh"          (CITY_GEO_ALIASES/CITY_NAME_ALIASES)
+//   initials  "nyc" for "new york city"          (first letters, in order)
+//
+// KNOWN LIMITS, stated rather than papered over. (1) Generic geographic
+// particles are not counted as a shared word — otherwise "San Juan" would be a
+// plausible alias of "San Francisco" — but two names that share a rare word
+// still pass, so this narrows the hole rather than closing it. (2) A row whose
+// every word is generic has no non-generic word to share, so appends to it
+// resolve through the carve-outs only; that is the fail-closed direction.
+// (3) This says nothing about whether the caller SHOULD be trusted; it says the
+// name is at least a variant of the row it is being attached to.
+
+/** Words too common in place names to count as evidence of the same place. */
+const GENERIC_NAME_TOKENS = new Set([
+  "de", "del", "la", "las", "le", "les", "los", "el", "da", "do", "dos", "di",
+  "van", "von", "al", "the", "of", "and", "y", "e",
+  "san", "santa", "santo", "sao", "saint", "st", "sankt",
+  "new", "nova", "nuevo", "old", "north", "south", "east", "west", "central",
+  "upper", "lower", "great", "greater", "little", "big",
+  "port", "puerto", "lake", "fort", "mount", "mt", "cape", "isla", "island",
+  "city", "town", "village", "municipality", "province", "district", "county",
+  "region", "state", "prefecture", "area", "metro",
+]);
+
+function nameTokens(s: string): string[] {
+  return s.split(" ").filter((t) => t.length > 0);
+}
+
+function squash(s: string): string {
+  return s.replace(/\s+/g, "");
+}
+
+/** `["new","york","city"]` -> `"nyc"`. Empty for a single-word name. */
+function initialsOf(tokens: string[]): string {
+  return tokens.length >= 2 ? tokens.map((t) => t[0]).join("") : "";
+}
+
+/**
+ * Is `norm` (an already-normalized incoming name) plausibly another name for
+ * `row`? Pure; exported so the rule is testable without a database.
+ *
+ * Compared against every name the row already answers to: its
+ * `normalized_name`, the normalized form of its display `name`, and each
+ * existing alias — so a row legitimately grown one variant at a time keeps
+ * accepting further variants of what it has become.
+ */
+export function isPlausibleAlias(row: CanonicalRow, norm: string): boolean {
+  if (!norm) return false;
+
+  const known = [
+    row.normalized_name,
+    row.name ? normalizeLocationName(row.name) : "",
+    ...(row.aliases ?? []),
+  ].filter((k): k is string => typeof k === "string" && k.length > 0);
+  if (known.length === 0) return false;
+
+  const incoming = nameTokens(norm);
+  const incomingSquashed = squash(norm);
+  const incomingKey = searchKey(norm);
+  const incomingAliased = resolveGeoAlias(norm);
+  const incomingInitials = initialsOf(incoming);
+
+  for (const k of known) {
+    if (k === norm) return true;
+
+    // 1. Shares a non-generic word — the base rule.
+    const kt = nameTokens(k);
+    if (incoming.some((t) => !GENERIC_NAME_TOKENS.has(t) && kt.includes(t))) return true;
+
+    // 2. Spacing variant: "danang" / "da nang", "newyork" / "new york".
+    if (incomingSquashed === squash(k)) return true;
+
+    // 3. Diacritic / stroke fold: a typed "da nang" for a stored "Đà Nẵng".
+    if (incomingKey === searchKey(k)) return true;
+
+    // 4. The abbreviation dictionary this module already ships.
+    if (incomingAliased === k || incomingAliased === resolveGeoAlias(k) || norm === resolveGeoAlias(k)) {
+      return true;
+    }
+
+    // 5. Initialism, in order, in either direction: "hcmc" / "ho chi minh city".
+    if (incomingSquashed.length >= 2 && incomingSquashed === initialsOf(kt)) return true;
+    if (incomingInitials.length >= 2 && incomingInitials === squash(k)) return true;
+  }
+
+  return false;
+}
+
 /** Prefer non-null incoming values to backfill canonical rows over time. */
 function buildRowPatch(row: CanonicalRow, place: PlaceInput, norm: string): Partial<CanonicalRow> | null {
   const patch: any = {};
@@ -358,7 +472,18 @@ function buildRowPatch(row: CanonicalRow, place: PlaceInput, norm: string): Part
     patch.provider_ids = { ...(row.provider_ids ?? {}), [pk.provider]: pk.providerId };
   }
   if (norm !== row.normalized_name && !(row.aliases ?? []).includes(norm)) {
-    patch.aliases = [...(row.aliases ?? []), norm];
+    if (isPlausibleAlias(row, norm)) {
+      patch.aliases = [...(row.aliases ?? []), norm];
+    } else {
+      // The row is still matched, patched and returned — only the alias growth
+      // is refused. Logged because a provider-id match carrying an unrelated
+      // name is either a provider data error worth seeing or an attempt at
+      // canonical identity poisoning, and both are invisible otherwise.
+      logger.warn(
+        { canonicalId: row.id, rowNormalizedName: row.normalized_name, refusedAlias: norm },
+        "canonicalLocations: refused an implausible alias append",
+      );
+    }
   }
   if (row.lat == null && place.lat != null) { patch.lat = place.lat; patch.lng = place.lng; }
   if (row.postal_code == null && place.postalCode) patch.postal_code = place.postalCode;
