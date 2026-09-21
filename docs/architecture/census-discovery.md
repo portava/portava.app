@@ -2681,7 +2681,7 @@ Every consumer in the tree, by whether it branches on `coverage`:
 | `travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:511#if (nextPage === 1 && res.data.refusal?.coverage === 'nothing') {` | **yes** | Correct, and page-1-scoped so a refused page 2 does not erase page 1. |
 | `travel-buddy-standalone/src/hooks/useCommunityDiscovery.ts:197#const refused = result.data.refusal?.coverage === 'nothing';` | **yes** | Correct, and it is the reference implementation: the refusal is surfaced AND kept out of the module cache. |
 | `travel-buddy-standalone/src/components/map/MapSearchSheet.tsx:211#!savedRes || !savedRes.ok || savedRes.data.refusal?.coverage === 'nothing';` | **yes** | Correct. This is the one that was already found and fixed. |
-| `travel-buddy-standalone/app/search.tsx:229#if (!res.ok) {` | **NO** | **Defect.** The main search screen. A `coverage: "nothing"` refusal is `ok: true, results: []`, so it renders the empty state AND fires the Compass "no results" fallback — offering alternatives to a search that never ran. The one screen `GET /discovery/search`'s envelope was built for is the one that cannot read it. |
+| `travel-buddy-standalone/app/search.tsx:232#if (!res.ok) {` | **NO** | **Defect.** The main search screen. A `coverage: "nothing"` refusal is `ok: true, results: []`, so it renders the empty state AND fires the Compass "no results" fallback — offering alternatives to a search that never ran. The one screen `GET /discovery/search`'s envelope was built for is the one that cannot read it. |
 | `travel-buddy-standalone/src/hooks/useSearchSuggestions.ts:94#if (res.ok) {` | **NO** | **Defect, and it caches.** See §18.2. This is the consumer C14's `C` rested on. |
 | `travel-buddy-standalone/app/map/index.tsx:1143#if (res.ok && Array.isArray(res.data?.places)) {` | **NO** | **Defect.** A refusal takes the `ok` branch with `places: []`, clears the pins, and the screen's own `placesEmpty` then renders "no places here" for an outage. |
 | `travel-buddy-standalone/src/services/discovery.ts` — then-line 756, `if (result.status === 'fulfilled' && result.value.ok) {` (`getDiscoveryCategoryCounts`) — DE-POINTERED, see §19.2 | **NO** | **Defect, and it fabricates a number.** The per-category fan-out reads `.data.total` off a refused body and writes `0` into the badge. The BATCH sibling's own doc comment names this exact failure — *"a badge row rendered from it as zeros is a fabricated number"* — and the fan-out neither parses nor propagates `refusal`. |
@@ -3034,7 +3034,7 @@ also only surfaces a boolean.
 
 Unfixed, and named so they are not reported as closed:
 
-- `travel-buddy-standalone/app/search.tsx:229#if (!res.ok) {` — the main search
+- `travel-buddy-standalone/app/search.tsx:232#if (!res.ok) {` — the main search
   screen renders the empty state AND fires the Compass "no results" fallback for a
   search that never ran.
 - `travel-buddy-standalone/app/map/index.tsx:1143#if (res.ok && Array.isArray(res.data?.places)) {`
@@ -3225,8 +3225,8 @@ And §21.1 created a body this screen had never seen: `coverage: "partial"` with
 an EMPTY page. `app/search.tsx` closed that gap with *"No results found. /
 Nothing matched «q»."* — true of sixteen sources and unknown of the
 seventeenth. It now carries the failed source names
-(`app/search.tsx:117#const [partialSources, setPartialSources] = useState<string[] | null>(null);`)
-and says the search was incomplete (`app/search.tsx:677#Some of this search could not run.`).
+(`app/search.tsx:120#const [partialSources, setPartialSources] = useState<string[] | null>(null);`)
+and says the search was incomplete (`app/search.tsx:706#Some of this search could not run.`).
 The Compass fallback is deliberately LEFT firing: it offers alternatives, it
 does not assert an absence, and suppressing it would delete a feature rather
 than fix a claim.

@@ -24,6 +24,9 @@ import { SearchSuggestionsPanel } from '../src/components/search/SearchSuggestio
 import { useGlobalSearchSuggestions } from '../src/hooks/useGlobalSearchSuggestions';
 import { getSubmitQuery } from '../src/platform/input-assistance/search/globalSearch';
 import { getAddToTripTarget } from '../src/platform/input-assistance/search/smartActions';
+import { emitActionCompleted } from '../src/platform/input-assistance/services/inputTelemetry';
+import { resolveFieldPolicy } from '../src/platform/input-assistance/contexts/fieldRegistry';
+import { SEARCH_FIELD_IDS } from '../src/platform/input-assistance/search/searchFields';
 import type { InputSuggestion } from '../src/platform/input-assistance/types/inputSuggestion';
 import { TripWishlistPicker, type AddToTripPayload } from '../src/components/discovery/TripWishlistPicker';
 import { usePlainBottomInset } from '../src/hooks/useBottomInset';
@@ -457,6 +460,32 @@ export default function SearchScreen() {
   // actions are a no-op — the chip lane already filters to dispatchable actions,
   // so this never renders a dead chip and never throws.
   const [addToTripPayload, setAddToTripPayload] = useState<AddToTripPayload | null>(null);
+
+  /**
+   * §44 `action_completed` for the one dispatchable §21 action this screen owns.
+   *
+   * The field is `discovery.search` on `global_search` — the same registration
+   * `useGlobalSearchSuggestions` serves this screen from, so the event joins the
+   * rest of that field's funnel in the serve log rather than arriving under an
+   * id nothing else uses. `requestId` is null and honestly so: this screen's
+   * hook does not surface the serve id, so the completion cannot yet be joined
+   * back to the impression that produced the action row (census G355's other
+   * half). A null says that; an invented id would not.
+   */
+  function emitInputAssistActionCompleted(ok: boolean) {
+    const policy = resolveFieldPolicy(SEARCH_FIELD_IDS.globalSearch, 'global_search');
+    if (!policy) return;
+    emitActionCompleted(
+      {
+        fieldId: policy.fieldId,
+        context: policy.context,
+        policy: policy.telemetryPolicy,
+        requestId: null,
+      },
+      'add_to_trip',
+      ok,
+    );
+  }
 
   function handleSuggestionAction(suggestion: InputSuggestion) {
     const target = getAddToTripTarget(suggestion);
@@ -921,6 +950,18 @@ export default function SearchScreen() {
         place={addToTripPayload}
         visible={!!addToTripPayload}
         onClose={() => setAddToTripPayload(null)}
+        // §44 `action_completed` (census G319). The row the user tapped only
+        // OPENED this picker; §21 actions are propose-only, so the tap itself is
+        // not a completion and SmartInput deliberately does not record one — "an
+        // abandoned picker would look like a success". This screen is the one
+        // place that learns the answer, which is why the census named it as the
+        // owner of this event.
+        //
+        // Both arms, on purpose: `onClose` alone emits nothing, so an abandoned
+        // picker stays uncounted, and a failed save reports ok:false rather than
+        // being indistinguishable from never having tried.
+        onSaved={() => emitInputAssistActionCompleted(true)}
+        onSaveFailed={() => emitInputAssistActionCompleted(false)}
       />
     </KeyboardSafeScrollView>
   );

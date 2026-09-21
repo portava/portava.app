@@ -316,11 +316,24 @@ of them is a code defect and none is folded into a bucket.
    measured every `intel_*` table in production at `count(*) = 0`. §31's three
    requirements are correct code over an empty substrate.
 
-5. **The telemetry sink is a no-op and is never attached.**
-   `platform/input-assistance/services/inputTelemetry.ts:35-36` defines
-   `let sink: TelemetrySink = () => {}`, and `setTelemetrySink` is exported from
-   `index.ts:124` and called from **no non-test file in the app**. Every §44 event
-   the platform emits goes nowhere.
+5. **The telemetry sink IS now attached, and migration 2950 is not applied.**
+   *(Restated 2026-09-21. This fact previously read "the telemetry sink is a
+   no-op and is never attached … every §44 event the platform emits goes
+   nowhere." That was true and is no longer: the default sink is still
+   `let sink: TelemetrySink = () => {}`, but `travel-buddy-standalone/app/_layout.tsx` now mounts an
+   `InputTelemetrySetup` that calls
+   `travel-buddy-standalone/src/platform/input-assistance/services/installInputTelemetry.ts:124#export function installInputTelemetry`
+   with the real batched transport, flushes it when the app backgrounds, and is
+   ratcheted by a source-scanning assertion in
+   `services/__tests__/installInputTelemetry.test.ts` that goes red the day the
+   line is deleted.)* What remains is the DESTINATION:
+   `2950_input_assistance_telemetry_events.sql` is classified `unapplied` by
+   `scripts/checkProductionDrift.ts:615-616`, on production and on portava-ci
+   alike. The ingest route answers a failed write with a truthful 503 and the
+   client's batcher drops the batch and COUNTS the drop, so today's §44 events
+   are produced, transported, refused and counted — a different and better state
+   than silently discarded, and still not a measurement. The `☠prod` reason for
+   §44 and §57 is therefore **migration 2950**, not the sink.
 
 A reader who wants "correct *and* demonstrated in production" should treat the
 CORRECT column as an upper bound. Its realised value for §14 recents, §35
@@ -361,7 +374,7 @@ a finding that the work was done for something else. See `docs/architecture/attr
 | G11 | Privacy and eligibility filtering occur before projection | C | `gateway.ts:373-402` — the gate runs, then `projectSearchResult`. Fail-closed comment at `:402`. |
 | G12 | Live suggestions carry freshness and are never fabricated when live state is unavailable | C | `liveSuggestions.ts:177-223` `buildFreshnessState` returns `null` for an empty envelope list and every label maps from a real claim value; unknown values return `null` (`:120`, `:138`) rather than a default. |
 | G13 | Offline mode degrades gracefully and must not present stale data as live | W | The "never stale-as-live" half is exact (`components/freshnessDisplay.ts:53-58` drops the label and keeps only the age). The "degrades gracefully" half has no substrate: `offlinePolicy` is declared per context and **read by nothing** (see G30), and no local dictionary or city index ships. |
-| G14 | Suggestions should accelerate real-world outcomes, not increase keystrokes or engagement for its own sake | W | Unchanged where it matters: `personalization.ts:220-228` still scales the boost by `selection_count` and it is still the only signal that moves rank. What changed is that the COUNTER-signals now exist as events (`suggestion_dismissed`, `manual_value_kept`, `raw_search_submitted` — G313/G315/G314), so the imbalance is now measurable rather than invisible. WHAT WOULD TURN THIS RED: an outcome or task-completion term weighed against the acceptance boost. Who can supply it: whoever owns the screens that COMPLETE the task (Trips / Events / Telegraph), by calling `services/inputTelemetry.ts:266#export function emitDownstreamTaskCompleted`. |
+| G14 | Suggestions should accelerate real-world outcomes, not increase keystrokes or engagement for its own sake | W | Unchanged where it matters: `personalization.ts:220-228` still scales the boost by `selection_count` and it is still the only signal that moves rank. What changed is that the COUNTER-signals now exist as events (`suggestion_dismissed`, `manual_value_kept`, `raw_search_submitted` — G313/G315/G314), so the imbalance is now measurable rather than invisible. WHAT WOULD TURN THIS RED: an outcome or task-completion term weighed against the acceptance boost. Who can supply it: whoever owns the screens that COMPLETE the task (Trips / Events / Telegraph), by calling `services/inputTelemetry.ts:282#export function emitDownstreamTaskCompleted`. |
 | G15 | Every accepted suggestion resolves to a valid canonical destination, structured value, or explicit user-approved action | C | `projection.ts:391-407` `isResolvable`/`dropDeadRows` — a row without an action, entity id or routable destination is dropped at the boundary, on every return path in `gateway.ts` (`:212`, `:241`, `:264`, `:291`, `:320`, `:593`). |
 
 ### §3 System Placement
@@ -882,7 +895,7 @@ narrow resolver extension rather than a new architecture).
 
 | id | Requirement | V | Evidence / divergence |
 | --- | --- | --- | --- |
-| G306 | Measure usefulness without unnecessarily capturing raw private text | W | The privacy half is real and mutation-proven (`services/inputTelemetry.ts:48-62` drops `text`/`query`/`rawText`/`message` for a non-capturing field; `services/__tests__/inputTelemetry.test.ts`), and the new funnel arms were built to the same rule — every one carries a COUNT or a LENGTH and never the text, asserted directly rather than assumed (`components/__tests__/inputTelemetryFunnel.component.test.tsx`). The **measurement** half still does not exist: the sink is `() => {}` (`:35-36`) and is attached nowhere outside tests. What moved is that there is now something worth transporting — nine event names with call sites instead of nine strings in a union. WHAT WOULD TURN THIS RED: see G263. |
+| G306 | Measure usefulness without unnecessarily capturing raw private text | C | Both halves now exist. PRIVACY: `services/inputTelemetry.ts:48-62` drops `text`/`query`/`rawText`/`message` for a non-capturing field, `telemetryBatcher.ts` copies six fields BY NAME onto the wire rather than spreading the event, the ingest REBUILDS each event from a per-name allow-list of ints, unit floats, bools and 64-char enum tokens (`lib/inputAssistance/telemetry.ts:168#export const TELEMETRY_EVENT_PROPS`), and migration 2950 stores no account id and RAISEs at apply time if a column is ever added that would. MEASUREMENT: the sink is attached at app boot — `travel-buddy-standalone/src/platform/input-assistance/services/installInputTelemetry.ts:124#export function installInputTelemetry`, mounted by `travel-buddy-standalone/app/_layout.tsx`'s `InputTelemetrySetup`, flushed on background, idempotent, and disposing restores the default. Proven end-to-end in `services/__tests__/installInputTelemetry.test.ts` (11 tests): an event emitted BEFORE install reaches nothing, the same event after install reaches a poster, raw text still does not survive the installed path, and a refused batch is dropped and COUNTED rather than retried. MUTATION: deleting `setTelemetrySink(batcher.sink)` turns six of them RED; deleting the `<InputTelemetrySetup />` mount turns the source-scanning ratchet RED. ☠prod: migration 2950 is unapplied on production AND on portava-ci (`scripts/checkProductionDrift.ts:615-616`), so the ingest answers 503 and every batch is dropped-and-counted today. Nothing has been MEASURED; what changed is that the measurement now has an unbroken path and one applied migration away from producing numbers. WHAT WOULD TURN THIS RED: removing the bootstrap call, or widening the ingest allow-list to admit a free-text key. ☠prod. |
 | G307 | `input_opened` | C | `SmartInput.tsx:170`. |
 | G308 | `query_length_changed` | C | `useInputAssistance.ts:154`. |
 | G309 | `suggestion_request_started` | C | `useInputAssistance.ts:161`. |
@@ -894,19 +907,28 @@ narrow resolver extension rather than a new architecture).
 | G315 | `manual_value_kept` | C | §45's EDITED arm. `components/SmartInput.tsx:300#emitManualValueKept(telemetryField, value.trim().length)` fires on blur when assistance WAS shown, nothing was accepted, and the field still holds the user's own text. It carries a LENGTH and never the text, so it is emittable on a caption or a private message whose policy forbids raw capture — asserted directly, not assumed. This is §57's manual-fallback numerator. Proven in `components/__tests__/inputTelemetryFunnel.component.test.tsx`, including the negative: accepting a suggestion is not a manual keep. MUTATION: dropping the `!acceptedRef.current` guard turns it RED. |
 | G316 | `validation_shown` | C | Emitted alongside the impression whenever the rendered list contains a `validation` row: `components/SmartInput.tsx:181#if (validations > 0) emitValidationShown(telemetryField, validations)`, shaped by `services/inputTelemetry.ts:187#export function emitValidationShown`. §23's validations have been produced and rendered since Phase 5; nothing recorded that they were ever SEEN, so a user who ignored a warning was indistinguishable from one who never got it. Proven in `components/__tests__/inputTelemetryFunnel.component.test.tsx`, with the negative case (an empty list emits neither event). |
 | G317 | `correction_accepted` | C | `components/SmartInput.tsx:208#if (s.type === 'correction') emitCorrectionAccepted(telemetryField, s)`, carrying the correction's CONFIDENCE (`services/inputTelemetry.ts:221#export function emitCorrectionAccepted`) — which is now a real measured quantity rather than a nominal one, because §10 typo tolerance computes it (G63). Proven in `components/__tests__/inputTelemetryFunnel.component.test.tsx` by pressing a real correction row through `SmartInput`. |
-| G318 | `disambiguation_selected` | C | `components/SmartInput.tsx:209#if (s.type === 'disambiguation') emitDisambiguationSelected(telemetryField, s)`, carrying `entityType` and confidence (`services/inputTelemetry.ts:233#export function emitDisambiguationSelected`). It is not redundant with `suggestion_selected`: §57 asks for a wrong-selection reversal rate and a duplicate-prevention count, and both need to know WHICH KIND of row resolved the field. Proven in `components/__tests__/inputTelemetryFunnel.component.test.tsx`. |
-| G319 | `action_completed` | **N** | The emitter now exists — `services/inputTelemetry.ts:253#export function emitActionCompleted` — and is deliberately NOT called from `SmartInput`: selecting an action row OPENS a propose-only picker, and calling the event "completed" at that moment would make every abandoned picker look like a success. The only place that knows is the screen that dispatches the action, and `search/smartActions.ts:35-43`'s single dispatchable type (`add_to_trip`) is dispatched by a screen outside this lane's paths. WHAT WOULD TURN THIS RED: the global-search screen calling `emitActionCompleted` after the trip picker CONFIRMS. Who can supply it: the owner of the global-search tab screen. |
-| G320 | `downstream_task_completed` | **N** | The emitter now exists — `services/inputTelemetry.ts:266#export function emitDownstreamTaskCompleted` — and has no caller, because this layer cannot observe the thing: the input field is long gone by the time a trip is saved, an event is created or a message is sent. This is the outcome signal §45's whole loop is built on (G5/G14/G322/G323 all depend on it). WHAT WOULD TURN THIS RED: one call per completed task from the screens that complete them — `app/trip/new.tsx`, `app/events/create/index.tsx`, `app/telegraph/new.tsx` — none of which is this lane's file. |
+| G318 | `disambiguation_selected` | C | `components/SmartInput.tsx:209#if (s.type === 'disambiguation') emitDisambiguationSelected(telemetryField, s)`, carrying `entityType` and confidence (`services/inputTelemetry.ts:246#export function emitDisambiguationSelected`). It is not redundant with `suggestion_selected`: §57 asks for a wrong-selection reversal rate and a duplicate-prevention count, and both need to know WHICH KIND of row resolved the field. Proven in `components/__tests__/inputTelemetryFunnel.component.test.tsx`. |
+| G319 | `action_completed` | C | The census named the owner of this event — "the global-search screen calling `emitActionCompleted` after the trip picker CONFIRMS" — and that screen now does. `app/search.tsx` passes BOTH outcomes of `TripWishlistPicker` into `services/inputTelemetry.ts:269#export function emitActionCompleted` under `discovery.search`/`global_search`: `onSaved` reports `ok: true`, `onSaveFailed` reports `ok: false`. The failure arm is the part that took a code change — the picker previously told its caller only about successes, so a wired caller could have reported `ok: true` forever, a flag that cannot go red. SmartInput still does NOT emit on the tap that opens the picker, and the ratchet asserts that too: §21 actions are propose-only and an abandoned picker is not a success. Proven behaviourally in `src/components/discovery/__tests__/TripWishlistPicker.actionCompleted.component.test.tsx` (4 tests: confirmed, failed, untoggle-is-neither, abandoned-is-nothing) and structurally by the screen-wiring assertion in `services/__tests__/installInputTelemetry.test.ts`. MUTATION: deleting `onSaveFailed?.(trip)` from the picker's catch turns the failure test RED; deleting the `onSaveFailed` prop from `app/search.tsx` turns the wiring ratchet RED. NOT CLAIMED: `requestId` is null on this event, because this screen's hook does not surface the serve id — so the completion cannot yet be joined back to the impression that produced the action row. That is G355's remaining half, not this row's. |
+| G320 | `downstream_task_completed` | **N** | Unchanged as a verdict, sharpened as a blocker. The emitter exists (`services/inputTelemetry.ts:282#export function emitDownstreamTaskCompleted`) and has no caller, because this layer cannot observe the thing: the input field is long gone by the time a trip is saved, an event is created or a message is sent. This is the outcome signal §45's whole loop is built on (G5/G14/G322/G323 all depend on it). TWO things it needs, not one. (1) A call per completed task from `app/trip/new.tsx`, `app/events/create/index.tsx` and `app/telegraph/new.tsx` — none of which is this lane's file — carrying the fieldId that served the creation, which those screens do not currently retain. (2) A CONSENT GATE, which the other thirteen events do not need. Every other §44 event is a fact about a UI interaction; this one asserts that a real-world task really happened, which is the class of claim D4 Intelligence-Contribution consent governs — `wallAnalytics.ts:216-249` gates exactly that arm and nothing else. The gate belongs in `installInputTelemetry.ts`, in front of the sink, and is named there. WHAT WOULD TURN THIS RED: both, together. Shipping (1) without (2) would route an outcome claim past the consent the rest of the product routes outcome claims through. |
 | G321 | For private-message fields, prefer metadata events over raw message text | C | `policyRegistry.ts:51-54` `METADATA_ONLY_TELEMETRY` on `telegraph_message`; `logRawText: false` on every policy (`:40`); `services/inputTelemetry.ts:48-62` enforces the scrub client-side. Certified at `test/inputAssistanceCertification.test.ts:443-476`. |
 
-**Five of fourteen named events fire.** The nine that do not are the entire
-outcome half of the taxonomy.
+**Thirteen of fourteen named events fire, and they now reach a transport.**
+*(Restated 2026-09-21. This paragraph read "Five of fourteen named events fire.
+The nine that do not are the entire outcome half of the taxonomy", which had
+been overtaken by its own table: twelve of the fourteen had call sites by the
+end of Phase 11, and `action_completed` is the thirteenth as of this pass.)*
+The one that does not is `downstream_task_completed` (G320), and it is still the
+outcome signal §45's loop is built on. The sink is attached (§3 fact 5), so the
+thirteen are produced, batched and POSTed rather than dropped in the emitter —
+but migration 2950 is unapplied, so the ingest refuses them and the batcher
+counts the loss. Nothing in §44 has been measured; every §44 and §57 `☠prod`
+below names that one migration.
 
 ### §45 Learning Loop
 
 | id | Requirement | V | Evidence / divergence |
 | --- | --- | --- | --- |
-| G322 | Suggestion shown → selected/ignored/edited → did the downstream task succeed → rank calibration | W | **Three of the four arms now exist.** "Shown" is `suggestion_rendered` (G311), "ignored" is `suggestion_dismissed` (G313) and "edited" is `manual_value_kept` (G315), all three emitted from real `SmartInput` call sites and mutation-proven. What is still missing is the half the loop is actually FOR: **"downstream success"** (`downstream_task_completed`, G320) has an exported emitter and no caller, because this layer cannot observe it — the input field is long gone by the time a trip is saved — and **there is still no calibration step**: `applyPriorSelectionBoost` remains a fixed formula over a raw count, not a model fitted to outcomes. WHAT WOULD TURN THIS RED: a feature screen calling `services/inputTelemetry.ts:266#export function emitDownstreamTaskCompleted` on a completed save/create/send, plus a ranking term that reads the resulting shown/ignored/completed ratios. The first needs the Trips / Events / Telegraph screen owners; the second needs somewhere for the events to LAND, which is G263. |
+| G322 | Suggestion shown → selected/ignored/edited → did the downstream task succeed → rank calibration | W | **Three of the four arms now exist.** "Shown" is `suggestion_rendered` (G311), "ignored" is `suggestion_dismissed` (G313) and "edited" is `manual_value_kept` (G315), all three emitted from real `SmartInput` call sites and mutation-proven. What is still missing is the half the loop is actually FOR: **"downstream success"** (`downstream_task_completed`, G320) has an exported emitter and no caller, because this layer cannot observe it — the input field is long gone by the time a trip is saved — and **there is still no calibration step**: `applyPriorSelectionBoost` remains a fixed formula over a raw count, not a model fitted to outcomes. WHAT WOULD TURN THIS RED: a feature screen calling `services/inputTelemetry.ts:282#export function emitDownstreamTaskCompleted` on a completed save/create/send, plus a ranking term that reads the resulting shown/ignored/completed ratios. The first needs the Trips / Events / Telegraph screen owners; the second needs somewhere for the events to LAND, which is G263. |
 | G323 | Optimize for successful resolution / task completion / appropriate action / real-world outcome; **do not optimize merely for suggestion acceptance rate** | W | Unchanged: `personalization.ts:220-228` scales `MAX_BOOST` by `selection_count` and nothing else moves rank, so the named anti-pattern is still the whole learning signal. The ignored/edited arms are now emitted (G313/G315) but no ranking term reads them. WHAT WOULD TURN THIS RED: a rank term whose input is an OUTCOME rather than an acceptance — and, before that, a telemetry destination (G263) plus a `downstream_task_completed` caller (G320). |
 
 ### §46 Accessibility
@@ -966,15 +988,15 @@ this area? (The underlying behaviours are scored in their own sections.)
 | G351 | Accessibility — keyboard / screen reader / focus / dynamic type / reduced motion | **N** | **Zero accessibility tests exist** in the layer or around its consumers. Two of the five named dimensions (focus management, and the selection-result announcement half of screen reader) are code-answerable failures, not device questions (G324, G326). |
 | G352 | Failure — provider timeout / API error / empty result / partial degradation | C | `test/inputAssistanceCertification.test.ts:369-436`: partial degradation `:370-388`, total data-layer failure → empty 200 `:390-409`, empty result `:427-434`. Provider timeout is untestable because there is no provider (G222). **Note the documented exception**: `:411-425` asserts that an unreadable `profiles` returns **503 `degraded_unavailable`, not a 200** — the ban gate outranks the never-error rule. The certification's flat claim "(never a 500 mid-keystroke)" is now qualified by a deliberate non-200. |
 | G353 | AI — no silent insertion / no canonical-fact invention / correct opt-in and provenance | C | `test/inputAssistanceCompassAI.test.ts` (15) — opt-in mutation-proofed OFF, `source:'ai'` provenance, `replace_text` only, last-place ordering, coarse context, `sanitizeSuggestedText`. |
-| G354 | Performance — P50/P95 latency / cold start / render cost / large index behaviour | **?** | No latency, cold-start, render-cost or large-index test or harness exists. The required certification is a measurement against a running server and device; it cannot be satisfied or refuted from this tree. |
+| G354 | Performance — P50/P95 latency / cold start / render cost / large index behaviour | **?** | Unchanged as a verdict; the blocker narrows from "no harness exists" to "no run exists". `artifacts/api-server/src/scripts/measureInputAssistanceLatency.ts` is a runnable, read-only harness for three of the four dimensions, with the protocol and the ledger in `docs/architecture/input-intelligence-performance-protocol.md`. It reports the round trip and the serve's own `serverMs` SEPARATELY, keeps cold start on its own line rather than averaging it into a P50, probes large-index behaviour by running the same corpus at both ends of selectivity with result counts beside the times, REFUSES to print a percentile below 60 successful samples, and paces itself at 70 req/min under the route's own 90/min ceiling rather than asking for the limit to be raised. **Render cost is refused, not approximated**: it is overlay frame timing on real hardware and belongs with the device rows. EVERY LEDGER ROW READS NOT RUN. No deployment and no handset were reachable from the session that wrote the harness, which is a failed prerequisite and not a result — the same rule `docs/map/device-measurement-protocol.md` states for its own ledger. A harness is not a number. WHAT WOULD SETTLE IT: an operator with deployment access running §2–§3 of the protocol, and one with handsets running §4. |
 | G355 | Telemetry — no prohibited raw private-text capture; **action/result linkage works** | W | The prohibition half is certified and mutation-proven (`test/inputAssistanceCertification.test.ts:443-476`; client `services/__tests__/inputTelemetry.test.ts`), and now also for the seven new arms. The **linkage** half is still not built: `requestId` is generated per request (`routes/inputAssistance.ts:166`) and no event carries it back, so an impression still cannot be joined to the selection that followed it, and `action_completed` / `downstream_task_completed` still have no callers (G319/G320). WHAT WOULD TURN THIS RED: putting the response's `requestId` into the client's telemetry field and emitting it on every event — which needs `routes/inputAssistance.ts` (not this lane's file) to keep returning it, the client hook to thread it, and a sink to join them in (G263). |
 
 ### §50 Required Audit Before Adoption
 
 | id | Requirement | V | Evidence / divergence |
 | --- | --- | --- | --- |
-| G356 | Inventory every current text field and classify it | **N** | Three source files cite "the client audit's §50 field table" as an existing artifact (`social/socialFields.ts:25`, `search/searchFields.ts:19`, `creation/creationFields.ts:27`) and **it is not in the repository** — a repo-wide search for `§50`, a field table, or the fifteen recorded attributes returns only those three references to it. |
-| G357 | Record, per field: screen/route, component file, fieldId, InputContext, current implementation, desired mode, entity types, provider/API, zero-state, offline, privacy class, validation, bugs, migration status | **N** | No such record exists in any form. |
+| G356 | Inventory every current text field and classify it | C | **This row's evidence was stale, not its subject.** It read "three source files cite 'the client audit's §50 field table' as an existing artifact and it is not in the repository"; the table was written in Phase 9 and this census was not re-read against it. `travel-buddy-standalone/src/platform/input-assistance/contexts/fieldInventory.ts:102#export const FIELD_INVENTORY` records all 24 registered fieldIds in registration order, and the three citing files (`social/socialFields.ts:25`, `search/searchFields.ts:19`, `creation/creationFields.ts:27`) now point at something real. It is a RATCHET, not a document: `test/inputAssistanceFieldInventory.test.ts` parses the five registrars out of the source and asserts the inventory and the registrars name the same SET, that no fieldId is listed twice, and that the wall pill's inline registration really is in the component the inventory names. Registering a 25th field without inventorying it goes red. Verified this pass: 14 of 14 assertions pass at `origin/main`. |
+| G357 | Record, per field: screen/route, component file, fieldId, InputContext, current implementation, desired mode, entity types, provider/API, zero-state, offline, privacy class, validation, bugs, migration status | C | **Also stale evidence** ("No such record exists in any form"). All fifteen attributes resolve for every field, and the record is deliberately NOT a copy: nine attributes are stored per field and the six the context registry owns — desired mode, entity types, assistance types, offline policy, privacy class, zero-state — are merged in at read time by `fieldInventory.ts:415#export function fieldInventoryRow`, so a §50 row CANNOT disagree with the contract, which is the second-source-of-truth rot that `inputPolicyContractParity` exists to catch. `test/inputAssistanceFieldInventory.test.ts` asserts the merge is complete for every row, that every `componentFile` resolves on disk, that the context each registrar declares is the context the inventory records, and — for `migrationStatus` — that every `mounted` field is referenced OUTSIDE the SDK and every `registered_unmounted` one is not, with a vacuity guard proving the scan can find a reference at all. The finding the table makes visible: of 24 registered fieldIds, 8 are mounted on a screen and 16 are a policy nobody can type into. |
 | G358 | Do not assume a field is migrated because it renders SmartInput; verify routing, source, policy and outcome end-to-end | C | This one is genuinely built, and as a **ratchet**: `services/__tests__/selectionWriterCoverage.test.ts` scans the real source for gateway consumers outside the SDK and requires each to reference a recorder or carry a named exemption with its reason. Its header describes exactly the failure this bullet warns about — `GlobalPlacePicker` consumed the gateway, rendered correctly, and recorded nothing. |
 
 ### §52 Feature-Team Adoption Rule
@@ -995,20 +1017,43 @@ this area? (The underlying behaviours are scored in their own sections.)
 
 ### §57 Product Success Metrics
 
-None of the nine is instrumented. There is no metric emitter, no analytics
-transport (G306), and no store any of these could be computed from.
+*(Restated 2026-09-21. This paragraph read "None of the nine is instrumented.
+There is no metric emitter, no analytics transport (G306), and no store any of
+these could be computed from." All three clauses have been answered, and the
+answer is not "the metrics are now known".)*
+
+**Five of the nine are defined, computable and reachable; four are refused.**
+The events have call sites (§44), the transport is attached (§3 fact 5), the
+store is migration 2950, and the computation is
+`artifacts/api-server/src/lib/inputAssistance/metrics.ts:239#export function computeInputSuccessMetrics`,
+asserted to exact values over hand-built rows in
+`src/test/inputAssistanceMetrics.test.ts` (31 tests, seven mutations applied and
+watched go red). `pnpm --filter @workspace/api-server run report:input-metrics`
+is the reader.
+
+**The four with no producer are refused rather than estimated**, each carrying a
+blocker string naming what is missing — G368, G370, G373 and G371. A rate over
+an event nothing emits is not a zero; it is a number that looks green forever,
+and the module's tests assert the refusals so that a later "complete the
+dashboard" edit cannot quietly turn them into zeroes.
+
+**No §57 number exists.** Migration 2950 is unapplied on production and on
+portava-ci, so the table does not exist and a run today exits with the PostgREST
+error rather than printing nine nulls that could be mistaken for a measurement.
+That is what the `☠prod` on these rows means, and it is the whole of what
+separates them from being real.
 
 | id | Requirement | V | Evidence / divergence |
 | --- | --- | --- | --- |
-| G365 | Time to valid selection | **N** | `input_opened`, `suggestion_rendered` and `suggestion_selected` now all fire from real call sites, so the two ENDPOINTS of this measurement exist as events. It is still not a metric: nothing correlates them into a session (each event carries only `at`), and the sink is a no-op so no pair ever meets (G263). WHAT WOULD TURN THIS RED: a session id on the event envelope plus a sink that retains it. |
-| G366 | Valid entity resolution rate | **N** | The denominator's EVENT now exists — `suggestion_rendered` has a call site (G311) — which is a correction to this row's stated evidence, not to its verdict. The rate is still not computed and still not recorded anywhere: the sink is `() => {}`, so neither numerator nor denominator survives the function call. WHAT WOULD TURN THIS RED: a telemetry destination (G263) plus a query over impressions vs entity selections. |
-| G367 | Manual fallback rate | **N** | Both events now fire — `manual_value_kept` from `components/SmartInput.tsx:300#emitManualValueKept(telemetryField, value.trim().length)` and `raw_search_submitted` from two call sites (G314/G315) — which corrects this row's stated evidence. The RATE is still not computed and the events reach a no-op sink. WHAT WOULD TURN THIS RED: see G263. |
-| G368 | Wrong-selection reversal rate | **N** | No reversal signal exists in the taxonomy or the code. |
-| G369 | Duplicate creation prevented | **N** | The duplicate rows are produced (G148, G234) and their acceptance is never recorded — `/select` is the only write and it records no duplicate-resolution outcome. |
-| G370 | Downstream task completion | **N** | `downstream_task_completed` still never fires; the emitter exists and no screen calls it (G320). WHAT WOULD TURN THIS RED: one call per completed task from the Trips / Events / Telegraph screens, plus a destination for it. |
-| G371 | Privacy incident count must remain zero (explicit certification metric) | **?** | The construction-side guarantees are strong and tested (G183–G191). Whether zero privacy incidents have occurred in production is a fact about production traffic, and there is no incident counter, alert or log in this layer to answer it from. |
-| G372 | P95 suggestion latency | **N** | No latency instrumentation anywhere; the response carries no server timing. |
-| G373 | Offline completion rate | **N** | No offline instrumentation, and (G197–G201) little offline behaviour to measure. |
+| G365 | Time to valid selection | W | Defined and computed: `metrics.ts:239#export function computeInputSuccessMetrics` builds EPISODES — the run of events for one (`session_id`, `field_id`) pair starting at an `input_opened` — and reports the P50/P95 of open → FIRST `suggestion_selected` across them. The correlator this row said did not exist now does: `telemetryBatcher.ts#newTelemetrySessionId` mints a per-app-run pseudonymous token, the batch carries it and migration 2950 stores it per row. It is not derived from and not resolvable to an account. Asserted to exact values in `src/test/inputAssistanceMetrics.test.ts`, including the two ways this metric goes quietly wrong: an episode that never resolved contributes NOTHING rather than a zero (otherwise the headline falls as the product gets worse), and a backwards clock is dropped rather than recorded as a negative duration. MUTATIONS: keying episodes on `session_id` alone, and dropping the per-(session,field) sort, each turn a test RED. ☠prod: migration 2950 unapplied, so no episode has ever been stored. **W, NOT C — and the reason is this document's own §12.2.** The integration owner declined a `C ☠prod` for G292 on exactly this migration, writing that "a grader who reads `C` as 'works' should read it as `W`." A §57 row asks for a NUMBER, and no number exists or can: 2950 is applied to no database, so `report:input-metrics` exits with the PostgREST error rather than printing anything. What moved is that the metric is now DEFINED, computed and reachable instead of absent — which is the distance from N to W, not from N to C. WHAT WOULD TURN THIS RED: applying migration 2950 and reporting the number. ☠prod. |
+| G366 | Valid entity resolution rate | W | Entity-RESOLVING selections over impressions. The denominator is `suggestion_rendered` (G311), which is never emitted for an empty list, so it cannot be inflated by lists nobody could choose from. The numerator counts only `entity`, `personalized`, `recent`, `structured_value` and `disambiguation`: a `completion` puts text in the field, an `action` opens something else, and counting either is how a resolution rate stops meaning resolution — asserted directly in `src/test/inputAssistanceMetrics.test.ts`, where widening that set to include `completion`/`action` turns a 0 into a perfect 1.0 and the test RED. No impressions reports null, not zero percent. ☠prod: migration 2950 unapplied. **W, NOT C — and the reason is this document's own §12.2.** The integration owner declined a `C ☠prod` for G292 on exactly this migration, writing that "a grader who reads `C` as 'works' should read it as `W`." A §57 row asks for a NUMBER, and no number exists or can: 2950 is applied to no database, so `report:input-metrics` exits with the PostgREST error rather than printing anything. What moved is that the metric is now DEFINED, computed and reachable instead of absent — which is the distance from N to W, not from N to C. WHAT WOULD TURN THIS RED: applying migration 2950 and reporting the number. ☠prod. |
+| G367 | Manual fallback rate | W | Manual-ending episodes over episodes that ended either way, computed in `metrics.ts`. Two guards carry the meaning and both are mutation-proven: an episode where assistance was never SHOWN is outside the denominator (or the rate becomes a function of how often the backend returns nothing), and a `raw_search_submitted` with `viaSuggestion: true` is not a fallback (or the user TAKING a "search for …" row counts as having fallen back from assistance). An episode that kept text and then came back and chose counts as resolved — the field ended resolved, which is the outcome §57 asks about. ☠prod: migration 2950 unapplied. **W, NOT C — and the reason is this document's own §12.2.** The integration owner declined a `C ☠prod` for G292 on exactly this migration, writing that "a grader who reads `C` as 'works' should read it as `W`." A §57 row asks for a NUMBER, and no number exists or can: 2950 is applied to no database, so `report:input-metrics` exits with the PostgREST error rather than printing anything. What moved is that the metric is now DEFINED, computed and reachable instead of absent — which is the distance from N to W, not from N to C. WHAT WOULD TURN THIS RED: applying migration 2950 and reporting the number. ☠prod. |
+| G368 | Wrong-selection reversal rate | **N** | Unchanged, and now refused EXPLICITLY rather than silently: `metrics.ts` returns `{ value: null, blocked: … }` for this metric and `src/test/inputAssistanceMetrics.test.ts` asserts the refusal, so a later edit cannot report 0 for a reversal rate nothing can observe. No event records that a resolved field was later un-resolved. WHAT WOULD TURN THIS RED: a fifteenth name in `INPUT_TELEMETRY_EVENT_NAMES` with a real call site in `SmartInput` (the field's value moving away from an accepted `replacementText`), AND a follow-on migration widening 2950's `iate_event_name_known` CHECK — which enumerates the fourteen names, so an unlisted one fails the whole insert batch at the database. The migration is the blocker this lane cannot clear: 2950 is itself unapplied, and the owner holds migrations. |
+| G369 | Duplicate creation prevented | W | The acceptance is now RECORDED rather than inferred. §55's duplicate rows are projected as `disambiguation` carrying a `resolve_existing` structured value (`lib/inputAssistance/creation.ts:211#export function projectDuplicate`), and §19's ordinary ambiguity rows are `disambiguation` too — from the event alone the two were indistinguishable, so "duplicates prevented" could only have been GUESSED at from the context the event happened in, which is a different claim. `services/inputTelemetry.ts:246#export function emitDisambiguationSelected` now carries one bool, `resolvedExisting`, read off the pressed suggestion; the ingest allow-list admits it as a `bool` and coerces nothing, so a client sending the STRING "true" is dropped rather than counted as a prevented duplicate. `metrics.ts` counts it. Proven at the press in `components/__tests__/inputTelemetryFunnel.component.test.tsx` (both polarities, and no label rides along) and at the rebuild in `test/inputAssistanceCertification.test.ts`. MUTATIONS: forcing the flag false, and removing `resolvedExisting` from `TELEMETRY_EVENT_PROPS`, each turn a test RED. It is a COUNT, not a rate: the duplicates a user never saw are unobservable, so there is no honest denominator. ☠prod: migration 2950 unapplied. **W, NOT C — and the reason is this document's own §12.2.** The integration owner declined a `C ☠prod` for G292 on exactly this migration, writing that "a grader who reads `C` as 'works' should read it as `W`." A §57 row asks for a NUMBER, and no number exists or can: 2950 is applied to no database, so `report:input-metrics` exits with the PostgREST error rather than printing anything. What moved is that the metric is now DEFINED, computed and reachable instead of absent — which is the distance from N to W, not from N to C. WHAT WOULD TURN THIS RED: applying migration 2950 and reporting the number. ☠prod. |
+| G370 | Downstream task completion | **N** | Unchanged, and refused explicitly in `metrics.ts` with a blocker naming the three screens (`app/trip/new.tsx`, `app/events/create/index.tsx`, `app/telegraph/new.tsx`), asserted in `src/test/inputAssistanceMetrics.test.ts`. A rate over an event nothing emits would be green forever. See G320 for the two things it needs — the screen call sites AND the D4 consent gate the other thirteen events do not need. |
+| G371 | Privacy incident count must remain zero (explicit certification metric) | **?** | Unchanged, deliberately, and the blocker is now structural rather than circumstantial. The construction-side guarantees are strong and tested (G183–G191), and this pass added three more (the wire copies six fields by name, the ingest rebuilds from an allow-list, migration 2950 RAISEs if an account id is ever added). NONE OF THAT IS THE METRIC. Whether zero privacy incidents have occurred in production is a fact about production traffic, and the §44 serve log is deliberately INCAPABLE of answering it: it stores no account id, so "an incident happened to someone" is not a fact it could hold. `metrics.ts` refuses this metric with that reason rather than reporting 0, and `src/test/inputAssistanceMetrics.test.ts` asserts the refusal names the privacy property — so a future reader who "fixes" it by adding a `user_id` would be breaking 2950's own postcondition. WHAT WOULD SETTLE IT: production security/audit logs, read by someone with access to them. Nothing in this tree can, and no assertion that there have been zero incidents may be entered here. |
+| G372 | P95 suggestion latency | W | This row's stated evidence — "No latency instrumentation anywhere; the response carries no server timing" — was already stale when written against this tree, and the chain is now complete end to end. The serve measures ITSELF (`routes/inputAssistance.ts:192-199`), `serverMs` travels on the response envelope, `services/suggestResponse.ts` parses it and OMITS it rather than zeroing it when a deployment does not send one, `useInputAssistance.ts:253` emits it beside the round trip the device saw, and the ingest allow-list admits both as ints. `metrics.ts` reports P50/P95 for each SEPARATELY — the difference between them is the network and neither side can measure that alone — using NEAREST-RANK, so a reported P95 is a latency the system actually produced rather than an interpolation between two it did not. MUTATIONS: switching to interpolation, and coercing an absent `serverMs` to 0, each turn a test RED. ☠prod: migration 2950 unapplied, so no latency has been recorded. See also G354: a runnable harness for measuring this against a deployment now exists and has NOT been run. **W, NOT C — and the reason is this document's own §12.2.** The integration owner declined a `C ☠prod` for G292 on exactly this migration, writing that "a grader who reads `C` as 'works' should read it as `W`." A §57 row asks for a NUMBER, and no number exists or can: 2950 is applied to no database, so `report:input-metrics` exits with the PostgREST error rather than printing anything. What moved is that the metric is now DEFINED, computed and reachable instead of absent — which is the distance from N to W, not from N to C. WHAT WOULD TURN THIS RED: applying migration 2950 and reporting the number. ☠prod. |
+| G373 | Offline completion rate | **N** | Unchanged, and refused explicitly in `metrics.ts` rather than reported as 0. The blocker is sharper than "no offline instrumentation": `useInputAssistance.ts` DOES detect the degraded case — it sets `unavailable` state and retains the local tier — and emits no event for it, so there is no offline denominator to divide anything by. WHAT WOULD TURN THIS RED: a degraded flag on `suggestion_request_completed` (a bool, inside the existing name, so no migration to 2950's event-name CHECK is needed) plus a prop-allow-list entry for it — and then the offline BEHAVIOUR this would measure still has to exist (G197–G201). |
 
 ---
 
@@ -1105,8 +1150,8 @@ Only **four** requirements are CANNOT-VERIFY. None is folded into either side.
 | --- | --- | --- | --- |
 | G327 | §46 — no suggestion overlay trapped behind the software keyboard | The layer contains no keyboard-avoidance mechanism at all (no `KeyboardAvoidingView`, no `Keyboard` height listener, no safe-area inset) and the overlay renders below the field. But whether it is *actually* occluded depends on where each consuming screen puts the field and how tall the keyboard is on that device. | Opening each of the ~10 wired fields on a real iOS and Android device with the keyboard up. |
 | G328 | §46 — Dynamic Type and large text support | RN's default scaling is not disabled, so text does grow; whether the layout survives is a rendering fact. The fixed `maxHeight: 320` (`SuggestionOverlay.tsx:61`) does not scale and rows are `numberOfLines={1}`, so the failure mode would be truncation, not overflow — which is only visible on a device. | A device run at the largest accessibility text size. |
-| G354 | §49 — Performance certification (P50/P95 latency, cold start, render cost, large index) | The required certification *is* a measurement against a running server and device. No harness, benchmark or timing assertion exists in the tree to satisfy or refute it. | A load run against a deployed instance plus a device render profile. |
-| G371 | §57 — Privacy incident count must remain zero | The construction-side guarantees are strong and mutation-proven (G183–G191), but whether an incident has occurred in production is a fact about production traffic, and this layer emits no incident counter, alert or log. | Production security/audit logs. |
+| G354 | §49 — Performance certification (P50/P95 latency, cold start, render cost, large index) | *(Restated 2026-09-21.)* A harness NOW exists — `artifacts/api-server/src/scripts/measureInputAssistanceLatency.ts`, with its protocol and ledger in `docs/architecture/input-intelligence-performance-protocol.md` — and every ledger row reads **NOT RUN**, because no deployment and no handset were reachable from the session that wrote it. A harness is not a number. Render cost is refused outright as a device fact rather than approximated from a component render. | An operator with deployment access running §2–§3 of the protocol, and one with handsets running §4. |
+| G371 | §57 — Privacy incident count must remain zero | The construction-side guarantees are strong and mutation-proven (G183–G191), and three more were added 2026-09-21 (the wire copies six fields by name, the ingest rebuilds from an allow-list, migration 2950 RAISEs if an account id is added). None of that is the metric. The §44 serve log is deliberately INCAPABLE of answering it: with no account id stored, "an incident happened to someone" is not a fact it could hold. `lib/inputAssistance/metrics.ts` refuses this metric with that reason rather than reporting 0, and its test asserts the refusal names the privacy property. | Production security/audit logs, read by someone with access to them. No assertion from this tree may be entered here. |
 
 **Sixteen further rows carry a `☠prod` marker: the code question is settled and
 the effect is not.** They are *not* CANNOT-VERIFY, and they are not moved out of their buckets — but a
@@ -1118,7 +1163,7 @@ reader should not count them as working software:
 | G57 | migration 2220 is not applied to production, so the stored `search_key` column does not exist and "Đà Nẵng" is stored under the broken key `"a nang"` | applying migration 2220 |
 | G138 (and all of §22) | `compass_ai_writing_enabled` (2221) is absent from production and `isFlagEnabled` is fail-closed, so no AI writing has ever run | seeding the flag, deliberately |
 | G194, G221, G287 | every `intel_*` table in production holds zero rows (`docs/architecture/intel-spine-liveness.md`), so the live lane has never attached a label | any production observation |
-| G306 and all of §44 | the telemetry sink is `() => {}` and `setTelemetrySink` is called from no non-test file | attaching a transport |
+| G306 and all of §44/§57 | *(Restated 2026-09-21: the sink IS attached — `travel-buddy-standalone/app/_layout.tsx` mounts `InputTelemetrySetup`, ratcheted by a source scan.)* Migration 2950 (`input_assistance_telemetry_events`) is unapplied on production and on portava-ci, so the ingest answers 503 and every batch is dropped-and-counted. The events are produced, transported and refused; none has ever been stored, and no §57 number exists | applying migration 2950 |
 | G236, G242, G330, G342 (⌀) | the guard is real and the path it guards is empty — no provider to fail, no animation to reduce, no client old enough to break | a provider integration; an animation; a second client version |
 
 ---
@@ -2334,8 +2379,8 @@ unchanged; what is new is a named blocker and a named owner.
 | row | left at | what would turn it red, and who can supply it |
 | --- | --- | --- |
 | G263, G306, G355 | W | A telemetry POST target (the `routes/` owner — `routes/inputAssistance.ts` is not this lane's file) plus one `setTelemetrySink` call at app bootstrap. Until then nine event names have call sites and no destination. |
-| G319 | N | `services/inputTelemetry.ts:253#export function emitActionCompleted` exists and is deliberately uncalled: selecting an action row OPENS a propose-only picker, and calling it "completed" there would make every abandoned picker a success. The global-search screen owner must call it on CONFIRM. |
-| G320, G370 | N | `services/inputTelemetry.ts:266#export function emitDownstreamTaskCompleted` exists and has no caller. This layer cannot observe the outcome — the field is long gone when a trip is saved. One call each from `app/trip/new.tsx`, `app/events/create/index.tsx`, `app/telegraph/new.tsx`. |
+| G319 | N | `services/inputTelemetry.ts:269#export function emitActionCompleted` exists and is deliberately uncalled: selecting an action row OPENS a propose-only picker, and calling it "completed" there would make every abandoned picker a success. The global-search screen owner must call it on CONFIRM. |
+| G320, G370 | N | `services/inputTelemetry.ts:282#export function emitDownstreamTaskCompleted` exists and has no caller. This layer cannot observe the outcome — the field is long gone when a trip is saved. One call each from `app/trip/new.tsx`, `app/events/create/index.tsx`, `app/telegraph/new.tsx`. |
 | G5, G14, G322, G323 | W | All four need an OUTCOME signal to weigh against the acceptance boost. G322 moved N→W this pass because three of its four arms now exist; the fourth is G320 and the calibration step is still absent. |
 | G365, G366, G367 | N | Their EVENTS now fire, which corrects the stated evidence on all three. The metrics are still not computed and cannot be until the events land somewhere (G263). Left N rather than moved, because "recorded into a no-op" is not recorded. |
 | G163 | N | See §11.5. Voice does not exist. |
@@ -2760,3 +2805,138 @@ every row this section does not name.
 `check:missing-live-columns`, `check:authorization-contract`,
 `check:media-objects`, `check:rank-events-surfaces`. **Exit 2 is UNVERIFIED, not
 green**, and nothing in this section rests on any of them.
+
+---
+
+## 14. Phase 14 — the §44 sink attached, §57 computed, and the two rows that stay unverifiable
+
+**Written:** 2026-09-21 · **Branch:** `claude/ii-telemetry-metrics` · **Base:** `1ba2de3fa`
+**Scope:** §44 Telemetry, §50 Required Audit, §57 Product Success Metrics, plus
+§49's G354. No row outside those sections is moved here.
+
+Every OLD verdict below was read from `check:census-integrity`'s own recount,
+not from this document's prose — §11.6 and §9.6 both record why that matters,
+and this pass found the §4 tables for six of its own rows disagreeing with the
+last statement about them.
+
+### 14.1 What this pass built
+
+**1. The sink is attached.** §3 fact 5 — *"the telemetry sink is a no-op and is
+never attached … every §44 event the platform emits goes nowhere"* — was the
+root cause under G263, G306, G355, G365, G366, G367 and the whole of §57. It is
+now false. `travel-buddy-standalone/src/platform/input-assistance/services/installInputTelemetry.ts`
+is the seam; `travel-buddy-standalone/app/_layout.tsx` mounts an `InputTelemetrySetup` that calls it with
+the real batched transport, flushes on background, is idempotent against a
+re-mounting root layout, and restores the default sink on dispose. It follows
+`installPassportTelemetry` exactly, because that is the pattern this app already
+uses for a boot-time telemetry binding.
+
+**Why it is not gated on D4 Intelligence-Contribution consent, written down
+rather than assumed.** `wallAnalytics.ts:216-249` gates `trackRealWorldOutcome`
+and NOTHING else in that module, because a real-world outcome is a claim that a
+person physically did something. No §44 event is such a claim: they carry
+counts, lengths and enum tokens under a per-app-run token, with four independent
+enforcement points (client scrub; a wire that copies six fields BY NAME rather
+than spreading; a server that REBUILDS from a per-name allow-list; a table that
+RAISEs if an account id is ever added). Gating this on D4 would widen what D4
+means rather than honour it. **One future event does belong behind that gate and
+is named in the installer's header: `downstream_task_completed` (G320/G370).**
+
+**2. The store is bounded.** `input_assistance_telemetry_events` shipped with no
+retention. `lib/intelRetentionScheduler.ts#runInputTelemetryRetentionSweep` is
+the 90-day sweep (`docs/ops/retention-policy.md:3`), registered on the existing
+timer, bounding on the server's `received_at` rather than the device's
+`occurred_at`. **Flagless on purpose**, following `sensing_credential_cleanup`:
+a retention flag shipped unseeded declares a promise and never keeps it, and
+seeding one needs a migration this lane does not own.
+
+**3. §57 is computed.** `lib/inputAssistance/metrics.ts` defines all nine
+metrics over the serve log and `pnpm --filter @workspace/api-server run
+report:input-metrics` is the reader. Five are computed; **four are REFUSED with
+a blocker string rather than estimated** (G368, G370, G373, G371), and the tests
+assert the refusals, so a later "complete the dashboard" edit cannot turn a
+metric over an event nothing emits into a forever-green zero.
+
+**4. G354 has a harness.** `src/scripts/measureInputAssistanceLatency.ts` plus
+`docs/architecture/input-intelligence-performance-protocol.md`. **Every ledger
+row reads NOT RUN.** A harness is not a number.
+
+### 14.2 Row moves
+
+| **ID** | **was** | **now** | why |
+|---|---|---|---|
+| **G306** | **W** | **C** | The measurement half now exists end to end and is mutation-proven at the seam that was missing: an event emitted BEFORE install reaches nothing, the same event after install reaches a poster, and deleting either `setTelemetrySink(batcher.sink)` or the `<InputTelemetrySetup />` mount turns tests RED. The privacy half was never in doubt and gained three more enforcement points. **This C is granted on the owner's standing instruction that an attached sink with a detachment-detecting test is what turns a §44 row to C, and it is in tension with §12.2** — which declined a `C ☠prod` for G292 on the same unapplied migration. If that ruling governs here too, this row is `W`; the evidence in it is the same either way. ☠prod (2950). |
+| **G319** | **N** | **C** | `app/search.tsx` now calls `emitActionCompleted` on BOTH outcomes of the trip picker — `onSaved` → `ok:true`, a NEW `onSaveFailed` → `ok:false`. The failure arm is the part that needed a code change: the picker told its caller only about successes, so a wired caller could have reported `ok:true` forever. The tap that OPENS the picker still emits nothing, and a test asserts that too. No dependency on migration 2950 beyond the one its twelve already-`C` siblings share. |
+| **G365** | **N** | **W** | The metric is defined and computed (episodes per session+field; P50/P95 of open → first selection), and the session correlator this row said did not exist now does and is stored per row. `W` not `C`: see 14.3. |
+| **G366** | **N** | **W** | Entity-resolving selections over impressions, computed, with the entity-resolving set deliberately excluding `completion` and `action`. `W` not `C`: see 14.3. |
+| **G367** | **N** | **W** | Manual-ending episodes over episodes that ended either way, computed, with both meaning-carrying guards mutation-proven. `W` not `C`: see 14.3. |
+| **G369** | **N** | **W** | The acceptance of a duplicate row is now RECORDED rather than inferred from context: `emitDisambiguationSelected` carries `resolvedExisting`, read off the pressed suggestion's `resolve_existing` structured value, admitted by the ingest as a `bool` with no coercion. `W` not `C`: see 14.3. |
+
+**G356 and G357 are not in this table because they did not move.** §8.4 moved
+both `N → C` when `contexts/fieldInventory.ts` was written; the §4 rows were
+never updated and still read NOT-BUILT with the evidence *"it is not in the
+repository"*. They have been rewritten against the tree and the ratchet that
+enforces them (`test/inputAssistanceFieldInventory.test.ts`, 14 passing
+assertions, verified this pass). That is a documentation correction, not a
+verdict change, and it moves no number.
+
+### 14.3 The `C` this pass did not grant on five rows
+
+`metrics.ts` computes G365, G366, G367, G369 and G372. It would have been easy
+to call all five `C ☠prod` and note the migration. §12.2 is the reason not to:
+the integration owner refused exactly that trade on exactly this migration,
+writing that *"a grader who reads `C` as 'works' should read it as `W`."*
+
+A §44 row asks whether an event is emitted; a §57 row asks for a NUMBER. Nothing
+in this tree can produce one — 2950 is applied to no database, so a run of
+`report:input-metrics` today exits with the PostgREST error rather than printing
+anything. The distance travelled is from *absent* to *defined, computed and
+reachable*, which is N → W. **Applying migration 2950 and reporting the numbers
+is what moves these five to C**, and it is one action, held by the owner.
+
+### 14.4 Rows examined and deliberately NOT moved
+
+| row | left at | what would turn it red, and who can supply it |
+| --- | --- | --- |
+| G320, G370 | N | TWO things, not one. (1) A call per completed task from `app/trip/new.tsx`, `app/events/create/index.tsx`, `app/telegraph/new.tsx`, carrying the fieldId that served the creation — which those screens do not currently retain. (2) A CONSENT GATE: this is the only §44 event that asserts a real-world task happened, the class of claim D4 governs. Shipping (1) without (2) routes an outcome claim past the consent the rest of the product routes outcome claims through. The gate is named in `installInputTelemetry.ts`. |
+| G368 | N | A fifteenth name in `INPUT_TELEMETRY_EVENT_NAMES` with a real call site, AND a follow-on migration widening 2950's `iate_event_name_known` CHECK — which enumerates the fourteen, so an unlisted name fails the whole insert batch at the database. `metrics.ts` refuses this metric explicitly rather than reporting 0. The migration is the blocker: the owner holds migrations. |
+| G373 | N | Sharper than "no offline instrumentation": `useInputAssistance.ts` DOES detect the degraded case and emits no event for it. A `degraded` bool on `suggestion_request_completed` needs no new event name and so no migration — but the offline BEHAVIOUR it would measure still has to exist (G197–G201). |
+| G372 | W | Left where §12.1 put it. The P95 is now computed and reachable, which corrects the row's evidence; the number does not exist. Same argument as 14.3. |
+| G354 | ? | A harness now exists for three of the four dimensions and **every ledger row in `docs/architecture/input-intelligence-performance-protocol.md` reads NOT RUN** — no deployment and no handset were reachable. Render cost is refused outright as a device fact rather than approximated from a component render. An operator with deployment access runs §2–§3; one with handsets runs §4. |
+| G371 | ? | **Must never close on an assertion from this tree.** The construction guarantees got stronger again this pass and none of them is the metric. The serve log is deliberately INCAPABLE of answering it: with no account id stored, "an incident happened to someone" is not a fact it could hold. `metrics.ts` refuses it with that reason and its test asserts the reason names the privacy property, so a future reader who "fixes" it by adding a `user_id` would be breaking migration 2950's own postcondition. Production security/audit logs settle it; nothing else does. |
+
+### 14.5 Mutation log — every one applied, watched go red, reverted, `cmp`-verified
+
+| mutation | what went red |
+| --- | --- |
+| `installInputTelemetry.ts`: delete `setTelemetrySink(batcher.sink)` | 6 of 11 in `installInputTelemetry.test.ts` |
+| `installInputTelemetry.ts`: drop the background flush | the AppState-flush test |
+| `travel-buddy-standalone/app/_layout.tsx`: unmount `<InputTelemetrySetup />` | the bootstrap source-scan ratchet |
+| `app/search.tsx`: drop the `onSaveFailed` arm | the G319 wiring ratchet |
+| `TripWishlistPicker.tsx`: delete `onSaveFailed?.(trip)` from the catch | the "a FAILED save is not silence" test |
+| `inputTelemetry.ts`: force `resolvedExisting` false | the G369 funnel test |
+| `lib/inputAssistance/telemetry.ts`: drop `resolvedExisting` from the allow-list | the ingest rebuild test |
+| `metrics.ts`: widen the entity-resolving set with `completion`/`action` | the G366 test (0 → a perfect 1.0) |
+| `metrics.ts`: drop the `suggestion_rendered` guard on the fallback rate | the G367 denominator test |
+| `metrics.ts`: interpolate instead of nearest-rank | the "a P95 is a latency the system produced" test |
+| `metrics.ts`: coerce an absent `serverMs` to 0 | the G372 omission test |
+| `metrics.ts`: count every `disambiguation_selected` | the G369 count test (1 → 3) |
+| `metrics.ts`: key episodes on `session_id` alone | the two-fields-one-session test |
+| `metrics.ts`: ignore the `contexts` scope | the scoping test |
+| `intelRetentionScheduler.ts`: window 90 → 180 days | the cutoff-boundary test |
+| `intelRetentionScheduler.ts`: bound on `occurred_at` | the server-clock test |
+| `intelRetentionScheduler.ts`: report an absent table as a clean sweep | the "absent table is an error" test |
+| `intelRetentionScheduler.ts`: unregister the pass | both registration tests |
+| `fieldInventory.ts`: flip an unmounted row to `mounted` | the §50 mounted-claim test |
+| `fieldInventory.ts`: delete a record / dangle a `componentFile` | the bijection and file-pointer tests |
+
+### 14.6 What this pass does NOT license
+
+- **No §57 number exists.** Every metric this section claims is computable is
+  computable against an empty table that does not exist on any database.
+- **No latency has been measured.** G354's ledger is NOT RUN in every row.
+- **No privacy-incident count has been observed**, and none can be from here.
+- **Nothing was applied to any database**, and migration 2950 is unchanged.
+- The headline and §5 are untouched by this pass and must be recomputed from the
+  rows by whoever integrates it. Recounted at this tree, the rows read
+  **C 265 / W 60 / N 44 / X 4 = 373**.
