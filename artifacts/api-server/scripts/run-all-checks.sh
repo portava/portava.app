@@ -328,6 +328,10 @@ run_check "check:deletion-coverage" pnpm run check:deletion-coverage
 run_check "check:data-rights" pnpm run check:data-rights
 run_check "check:location-purposes" pnpm run check:location-purposes
 run_check "check:silent-supabase-writes" pnpm run check:silent-supabase-writes
+# check:silent-supabase-reads — the READ half of the same language fact. Runs
+# beside its sibling deliberately: a fix that moves a silent write into a silent
+# read should not be able to turn one of these green while the other stays red.
+run_check "check:silent-supabase-reads" pnpm run check:silent-supabase-reads
 # check:unissued-supabase-writes — the third member of this family, and the one
 # no test could have caught. check:unchecked-supabase-reads catches a read whose
 # error is discarded; check:silent-supabase-writes catches a write whose error is

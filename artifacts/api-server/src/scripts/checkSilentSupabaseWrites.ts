@@ -41,6 +41,20 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { resolve, dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  sanitize,
+  matchBrace,
+  stripNestedTry,
+  lineOf,
+  compareToBaseline,
+} from "./lib/supabaseCallScan.js";
+
+// Re-exported from their original home so this guard's unit tests (and anyone
+// else) keep importing them from where they have always lived. The bodies moved
+// to scripts/lib/supabaseCallScan.ts when the READ guard was written and needed
+// the identical primitives; sharing them is what keeps the two guards' notion
+// of "a supabase call" from drifting apart.
+export { sanitize, compareToBaseline };
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const SRC_ROOT = resolve(__dir, "..");
@@ -65,103 +79,10 @@ export interface SilentWrite {
   call: string;
 }
 
-// ── Source sanitizer ─────────────────────────────────────────────────────────
-// Blank out comments and string/template contents (preserving length and
-// newlines) so brace counting and pattern matching cannot be confused by
-// braces or keywords inside literals. The ORIGINAL text is kept for reading
-// catch-body comments (escape hatch detection).
-export function sanitize(src: string): string {
-  const out = src.split("");
-  const n = src.length;
-  let i = 0;
-  const blank = (from: number, to: number) => {
-    for (let k = from; k < to; k++) if (out[k] !== "\n") out[k] = " ";
-  };
-  while (i < n) {
-    const c = src[i];
-    const c2 = src[i + 1];
-    if (c === "/" && c2 === "/") {
-      const end = src.indexOf("\n", i);
-      const stop = end === -1 ? n : end;
-      blank(i, stop);
-      i = stop;
-    } else if (c === "/" && c2 === "*") {
-      const end = src.indexOf("*/", i + 2);
-      const stop = end === -1 ? n : end + 2;
-      blank(i, stop);
-      i = stop;
-    } else if (c === '"' || c === "'") {
-      let j = i + 1;
-      while (j < n && src[j] !== c) {
-        if (src[j] === "\\") j++;
-        if (src[j] === "\n") break; // unterminated — bail at line end
-        j++;
-      }
-      blank(i + 1, Math.min(j, n));
-      i = Math.min(j, n) + 1;
-    } else if (c === "`") {
-      // Template literal: blank everything through the closing backtick,
-      // including interpolations (an awaited supabase call inside `${}` is
-      // pathological and out of scope).
-      let j = i + 1;
-      while (j < n && src[j] !== "`") {
-        if (src[j] === "\\") j++;
-        j++;
-      }
-      blank(i + 1, Math.min(j, n));
-      i = Math.min(j, n) + 1;
-    } else {
-      i++;
-    }
-  }
-  return out.join("");
-}
-
-/** Index of the matching close brace for the open brace at `open`. -1 if none. */
-function matchBrace(code: string, open: number): number {
-  let depth = 0;
-  for (let i = open; i < code.length; i++) {
-    if (code[i] === "{") depth++;
-    else if (code[i] === "}") {
-      depth--;
-      if (depth === 0) return i;
-    }
-  }
-  return -1;
-}
-
-/** Blank nested `try { … } catch { … } [finally { … }]` spans inside a try body. */
-function stripNestedTry(body: string): string {
-  let code = body;
-  for (;;) {
-    const m = /\btry\s*\{/.exec(code);
-    if (!m) return code;
-    const open = m.index + m[0].length - 1;
-    const close = matchBrace(code, open);
-    if (close === -1) return code;
-    let end = close + 1;
-    // absorb catch/finally blocks attached to this try
-    for (;;) {
-      const tail = code.slice(end);
-      const cm = /^\s*(catch\s*(\([^)]*\))?|finally)\s*\{/.exec(tail);
-      if (!cm) break;
-      const bOpen = end + cm[0].length - 1;
-      const bClose = matchBrace(code, bOpen);
-      if (bClose === -1) break;
-      end = bClose + 1;
-    }
-    code = code.slice(0, m.index) + code.slice(m.index, end).replace(/[^\n]/g, " ") + code.slice(end);
-  }
-}
-
 // WRITE shapes only: a fail-soft READ with an empty catch is a legitimate
 // graceful-degradation idiom all over the compass engines; the audit class is
 // the silently-discarded WRITE (insert/update/upsert/delete) and RPC.
 const AWAIT_SUPA = /\bawait\b[^;]*?\.(insert|update|upsert|delete|rpc)\s*\(/;
-
-function lineOf(src: string, index: number): number {
-  return src.slice(0, index).split("\n").length;
-}
 
 /** Scan one file's source for silent-supabase-write shapes. */
 export function findSilentSupabaseWrites(src: string, file: string): SilentWrite[] {
@@ -250,27 +171,6 @@ export function scanTree(root: string = SRC_ROOT): SilentWrite[] {
 // entry — a stale (too-high) entry fails the check, keeping the baseline honest
 // over time, exactly like UNREGISTERED_TESTS_ALLOWLIST.json.
 const BASELINE_PATH = resolve(__dir, "../../scripts/SILENT_SUPABASE_WRITES_BASELINE.json");
-
-export function compareToBaseline(
-  violations: SilentWrite[],
-  baseline: Record<string, number>,
-): { newViolations: SilentWrite[]; staleEntries: Array<{ file: string; baselined: number; found: number }> } {
-  const byFile = new Map<string, SilentWrite[]>();
-  for (const v of violations) {
-    (byFile.get(v.file) ?? byFile.set(v.file, []).get(v.file)!).push(v);
-  }
-  const newViolations: SilentWrite[] = [];
-  const staleEntries: Array<{ file: string; baselined: number; found: number }> = [];
-  for (const [file, vs] of byFile) {
-    const allowed = baseline[file] ?? 0;
-    if (vs.length > allowed) newViolations.push(...vs.slice(0, vs.length - allowed));
-  }
-  for (const [file, allowed] of Object.entries(baseline)) {
-    const found = byFile.get(file)?.length ?? 0;
-    if (found < allowed) staleEntries.push({ file, baselined: allowed, found });
-  }
-  return { newViolations, staleEntries };
-}
 
 const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
