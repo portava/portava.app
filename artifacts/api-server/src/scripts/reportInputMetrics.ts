@@ -33,6 +33,23 @@
  * Needs SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY for the deployment to measure.
  * READ-ONLY: it issues SELECTs and nothing else.
  */
+// ── THE GUARD FRONT DOOR, AND WHY IT IS THE READ-ONLY ONE ───────────────────
+//
+// check:guard-coverage classifies this file as able to reach Supabase, and it
+// is right: line 72 takes a service client and pages the §44 serve log. The
+// read-only audit door is the correct one rather than the strict door, on the
+// same grounds auditLiveVsCanonical.ts and auditStorageExif.ts use it. Measured
+// on this file: ONE database statement, a `.from(TELEMETRY_TABLE).select(...)`
+// page loop, and zero .insert/.update/.upsert/.delete/.rpc, zero auth.admin and
+// zero storage call anywhere in it. Reading a deployment is the whole point —
+// §57's nine metrics cannot be computed from anything else.
+//
+// If a write is ever added here, the fix is to move this import to
+// ../lib/ciSupabaseGuard.mjs and drop the READ_ONLY_AUDIT_ENTRY_POINTS entry,
+// in the same change. It must stay the FIRST import: a guard that runs after
+// the module it is guarding has already built a client guards nothing.
+import "../lib/ciProdReadOnlyAuditGuard.mjs";
+
 import { getServiceClient } from "../lib/supabase.js";
 import { TELEMETRY_TABLE } from "../lib/inputAssistance/telemetry.js";
 import {

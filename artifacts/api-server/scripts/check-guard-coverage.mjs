@@ -231,6 +231,17 @@ const ANY_IMPORT_RE = /^[ \t]*import[ \t]+(?:["']|[A-Za-z_$*{])/;
 // ─────────────────────────────────────────────────────────────────────────────
 const READ_ONLY_AUDIT_ENTRY_POINTS = [
   {
+    file: 'src/scripts/reportInputMetrics.ts',
+    reason:
+      'Reads §57\'s nine Product Success Metrics off the §44 serve log: one `.from(TELEMETRY_TABLE)' +
+      '.select("session_id,event_name,context,field_id,occurred_at,props")` page loop and nothing else. ' +
+      'Measured on this file: zero .insert/.update/.upsert/.delete/.rpc, zero auth.admin, zero storage call. ' +
+      'Reading a real deployment IS its purpose — a metric definition nothing can RUN is not a metric, and the ' +
+      'census says so — so the read-only audit door is the right one rather than the strict door, on the same ' +
+      'grounds auditLiveVsCanonical.ts uses it. If a write is ever added, the import moves to ' +
+      'src/lib/ciSupabaseGuard.mjs and this entry is deleted, in the same change.',
+  },
+  {
     file: 'src/scripts/auditMigrationsVsLive.ts',
     reason:
       'Reads the live schema through the Management API with SELECTs on pg_class, information_schema.columns, ' +
@@ -964,6 +975,26 @@ const EXEMPT = [
       + 'fail-CLOSED assertion, which is why removing the credentials is the fixture and not a bypass. '
       + 'EXEMPTION MEANS UNGUARDED, NOT SAFE — if this file ever stops deleting those variables, or ever '
       + 'constructs a client, the exemption is void and it must import the guard.',
+  },
+
+  {
+    file: 'src/test/inputAssistanceSelectionMemoryLiveDbStatus.test.ts',
+    pinnedTestEnv: true,
+    reason:
+      'G226 ANNOUNCEMENT half of the §35 selection-memory live harness, built exactly like '
+      + 'wallSessionIntentLiveDbStatus.test.ts above and exempt for the same reason. Its whole job is to make the '
+      + 'ordinary suite SAY, on every run, that src/test/inputAssistanceSelectionMemoryLiveDb.test.ts (which DOES '
+      + 'import the strict guard front door, and is therefore unregisterable in the curated test script) was not '
+      + 'verified against a database, and exactly what is missing. It reads process.env.SUPABASE_URL and '
+      + 'process.env.SUPABASE_SERVICE_ROLE_KEY at exactly two lines, and uses both only to COMPOSE THE BANNER '
+      + 'STRING naming what is absent. The detector here is NAME-BASED and cannot tell a read that dials from a '
+      + 'read that describes. Measured on this file: zero createClient, zero getServiceClient, zero .from(, zero '
+      + 'fetch, zero import of src/lib/supabase — its only imports are node:test, node:assert/strict, node:fs, '
+      + 'node:path and node:url. Importing the strict guard here would make the file exit 2 on every ordinary '
+      + 'run, which is precisely the silence it exists to prevent, so the exemption is the requirement rather '
+      + 'than a convenience. pinnedTestEnv because CI invokes it and the CI-surface rule requires the flag of any '
+      + 'exemption CI runs. EXEMPTION MEANS UNGUARDED, NOT SAFE — if this file ever constructs a client or issues '
+      + 'a request, the exemption is void and it must import the guard or leave the curated list.',
   },
 
   {

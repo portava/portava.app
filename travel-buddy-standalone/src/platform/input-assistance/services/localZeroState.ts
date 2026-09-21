@@ -20,7 +20,7 @@
  * A zero-state served from device memory is a list re-shown WITHOUT the server
  * re-running §29's eligibility gate. For a public field (a city, a country) the
  * answer is the same for everyone and cannot go stale in a way that harms
- * anyone. For `telegraph_recipient` (`privacyClass: 'personal'`) the rows are
+ * anyone. For `telegraph_recipient` (`privacyClass: 'viewer_scoped'`) the rows are
  * PEOPLE the viewer was eligible to message at the time — re-offering them from
  * memory would re-publish a viewer-scoped list around the gate, which is
  * precisely what `isCacheablePrivacyClass` already refuses for the shared SWR

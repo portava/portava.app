@@ -134,7 +134,7 @@ test('§44: the installed sink carries NO raw text onto the wire', async () => {
     'telegraph.message',
     'telegraph_message',
     { length: 22, text: 'meet me at the secret bar', query: 'secret bar' },
-    { events: 'all', captureRawText: false },
+    { logRawText: false, events: ['query_length_changed'] },
   );
   await handle.batcher.flush();
 

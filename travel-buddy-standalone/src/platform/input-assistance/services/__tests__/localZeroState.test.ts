@@ -46,7 +46,7 @@ const PUBLIC_POLICY: LocalZeroStatePolicy = {
 };
 const PERSONAL_POLICY: LocalZeroStatePolicy = {
   context: 'telegraph_recipient',
-  privacyClass: 'personal',
+  privacyClass: 'viewer_scoped',
   maxSuggestions: 3,
 };
 
