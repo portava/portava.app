@@ -1,12 +1,12 @@
 {
-  "$comment": "GENERATED SNAPSHOT of PRODUCTION public schema + feature_flags — do not edit by hand. Read-only capture; see artifacts/api-server/scripts/refresh-production-snapshot.md for the refresh procedure. REFRESHED 2026-09-21 10:55 UTC, in the same change that applied 2220_canonical_locations_search_key.sql, 2221_compass_ai_writing_default_off.sql and 2258_input_selection_history.sql to production (ledger applied_at 10:52:03 UTC, applied_by='manual'), rehearsed first on a throwaway PostgreSQL 16 seeded with production's exact column lists and all 31 real canonical_locations names. The delta from the 07:55 capture is exactly FIVE objects: the table input_selection_history; the column canonical_locations.search_key (a GENERATED ALWAYS ... STORED column, which is why it appears as a column delta and not a table one); the functions input_normalize_city_key and input_record_selection; and the feature_flags row compass_ai_writing_enabled=false. NOTHING ELSE MOVED, and that is measured rather than asserted: the three digests below were computed from this file after the delta and then compared against the SAME digests computed by production itself (the queries in the refresh doc, with COLLATE \"C\" on the function and flag sorts). All three matched, so this is a complete refresh and not a partial one. The watermark moves 20260921075225 -> 20260921105203. Two migrations applied to production between those instants by other sessions — 2965_memory_projector_canon_saves_delete_guard (08:52:26) and 2976_journey_shadow_global_stop_delete_scope (10:11:01) — were recorded in schema_migration_ledger but were MISSING from production-applied-migrations.json; they are added there in this same change, which is the only reason the tripwire had not already fired. Neither changed this snapshot's contents: 2965 replaces one statement inside an existing function body and 2976 leaves the installed object byte-identical, and a schema census sees neither.",
+  "$comment": "GENERATED SNAPSHOT of PRODUCTION public schema + feature_flags — do not edit by hand. Read-only capture; see artifacts/api-server/scripts/refresh-production-snapshot.md for the refresh procedure. REFRESHED 2026-09-21 10:55 UTC, in the same change that applied 2220_canonical_locations_search_key.sql, 2221_compass_ai_writing_default_off.sql and 2258_input_selection_history.sql to production (ledger applied_at 10:52:03 UTC, applied_by='manual'), rehearsed first on a throwaway PostgreSQL 16 seeded with production's exact column lists and all 31 real canonical_locations names. The delta from the 07:55 capture is exactly FIVE objects: the table input_selection_history; the column canonical_locations.search_key (a GENERATED ALWAYS ... STORED column, which is why it appears as a column delta and not a table one); the functions input_normalize_city_key and input_record_selection; and the feature_flags row compass_ai_writing_enabled=false. NOTHING ELSE MOVED, and that is measured rather than asserted: the three digests below were computed from this file after the delta and then compared against the SAME digests computed by production itself (the queries in the refresh doc, with COLLATE \"C\" on the function and flag sorts). All three matched, so this is a complete refresh and not a partial one. REFRESHED AGAIN at 11:10 UTC for 2217_protected_locations.sql, applied to production at 11:09:40 UTC in the same change: ONE further object, the table protected_zones, which SHIPS EMPTY (0 rows, RLS on with zero policies, service_role only) so nothing on the map changes. Its digests were likewise verified against the ones production computes for itself. The watermark moves 20260921075225 -> 20260921105203 -> 20260921110940. Two migrations applied to production between those instants by other sessions — 2965_memory_projector_canon_saves_delete_guard (08:52:26) and 2976_journey_shadow_global_stop_delete_scope (10:11:01) — were recorded in schema_migration_ledger but were MISSING from production-applied-migrations.json; they are added there in this same change, which is the only reason the tripwire had not already fired. Neither changed this snapshot's contents: 2965 replaces one statement inside an existing function body and 2976 leaves the installed object byte-identical, and a schema census sees neither.",
   "projectRef": "ajrurzioarfkagpuxfnb",
   "projectName": "travel-buddy",
-  "capturedAt": "2026-09-21T10:55:00Z",
-  "productionMigrationWatermark": "20260921105203",
+  "capturedAt": "2026-09-21T11:10:00Z",
+  "productionMigrationWatermark": "20260921110940",
   "method": "information_schema.columns (table_schema=public, views included); pg_proc in schema public excluding extension-owned functions (pg_depend deptype=e); pg_type typtype=e in public; public.feature_flags(flag, enabled) | 2026-09-21: derived from the 2026-09-20 capture plus the two-object delta described above, then verified by comparing all three recomputed digests, and all three object counts, against digests and counts computed by production itself.",
   "checksums": {
-    "tables": "852d9aa838fadd9a436a46e16c0ef35a",
+    "tables": "86ebbc00a8ceeead1b2a7f7ada95bccd",
     "functions": "db94becbd79816dc6507414edf0677a7",
     "flags": "fbc8232c4abebe2a208c7296ddd1e670"
   },
@@ -6301,6 +6301,23 @@
       "selection_count",
       "first_selected_at",
       "last_selected_at"
+    ],
+    "protected_zones": [
+      "id",
+      "category",
+      "action",
+      "privacy_floor",
+      "shape",
+      "center_lat",
+      "center_lng",
+      "radius_meters",
+      "ring",
+      "jurisdiction",
+      "policy_ref",
+      "label",
+      "active",
+      "created_at",
+      "updated_at"
     ]
   },
   "functions": [

@@ -266,15 +266,29 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
   // FALSE). Rehearsed on scripts/local-db (the api-server-local-db CI job).
 
   // ── A guarantee the docs rest on, that production does not have ───────────
-  protected_zones: {
-    classification: "unapplied",
-    note:
-      "Migration 2217 is cited by 10_Database_Architecture.md §8 as THE canonical " +
-      "deny-by-default RLS + grant pattern, and by 09_Payment_Architecture.md as the " +
-      "shape to copy. It is on the check:writerless-reads ratchet as a human-allowlist " +
-      "entry. It is not in production, so the pattern every new migration is told to " +
-      "follow has no production instance to compare against.",
-  },
+  // protected_zones — STRUCK 2026-09-21. The entry's own complaint was that "the
+  // pattern every new migration is told to follow has no production instance to
+  // compare against". It has one now: 2217_protected_locations.sql was applied at
+  // 11:09:40 UTC in the same change that strikes this line.
+  //
+  // WHAT WAS AND WAS NOT DEPLOYED. The table, its four indexes and its eight CHECK
+  // constraints. NO ROWS — the migration's own header is emphatic that which places
+  // are protected is a policy decision with a named owner, not a schema decision,
+  // and that the row set is itself a map of exactly what it protects. With no rows
+  // applyProtection() is an identity pass, so this changes nothing a user sees. The
+  // first row remains an act of policy.
+  //
+  // Verified independently of the file's own postconditions: RLS enabled with ZERO
+  // policies (the deny-by-default state 10_Database_Architecture.md §8 cites), anon
+  // and authenticated holding neither SELECT nor INSERT, service_role holding the
+  // four writes, 4 indexes, 8 CHECKs, 0 rows. Rehearsed first-apply and re-run on a
+  // throwaway PostgreSQL 16, where four constraint probes were each REFUSED — a
+  // circle with no centre, action='allow' (deliberately not storable, because a
+  // protection row that permits is a hole), a polygon carrying circle fields, and
+  // an unknown category — and a well-formed row was accepted and then removed.
+  // Both snapshots were refreshed in the same change (baseline 482 -> 483 tables;
+  // the schema snapshot's three digests recomputed and compared against the ones
+  // the database computes for itself, and matched).
 
   // ── Telemetry: writers exist, storage does not ─────────────────────────────
   wall_telemetry_events: {

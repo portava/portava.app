@@ -497,6 +497,10 @@
   {
    "version": "20260921105203",
    "name": "2258_input_selection_history"
+  },
+  {
+   "version": "20260921110940",
+   "name": "2217_protected_locations"
   }
  ]
 }
