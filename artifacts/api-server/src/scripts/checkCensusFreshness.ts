@@ -2194,6 +2194,32 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // deliberately NOT here: they are other lanes' files, and watching them would
     // age this census every time those lanes touch their own telemetry.
     "artifacts/api-server/src/migrations/2258_input_selection_history.sql",
+    // WIDENED 2026-09-21 by the §23 username-alternatives pass (G147). Same rule
+    // as the two widenings above: a census must watch what it CITES. G147 now
+    // rests on the LIVE username path rather than on the gateway lane alone, and
+    // every file below is part of that path or is the proof of it — the endpoint
+    // that answers availability, the shared client rules and hook it feeds, the
+    // two shipping screens that render the offers, and the three test files that
+    // would otherwise be deletable without ageing this census.
+    //
+    // `routes/profile.ts` is the one entry here that is not obviously this
+    // census's. It is named anyway, and deliberately: `GET /users/check-username`
+    // IS the §23 surface a user reaches, so a change to it is exactly the change
+    // that must age G147. It is also watched by census-trust, which is correct —
+    // one file can be graded by two censuses.
+    "artifacts/api-server/src/routes/profile.ts",
+    "artifacts/api-server/src/test/profileUsernameCooldownFailOpen.test.ts",
+    "travel-buddy-standalone/src/services/profile.ts",
+    "travel-buddy-standalone/src/hooks/useUsernameAvailability.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/social/usernameValidation.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/social/__tests__/usernameValidation.test.ts",
+    "travel-buddy-standalone/app/profile/edit/identity.tsx",
+    "travel-buddy-standalone/app/profile/edit/__tests__/identity.usernameAlternatives.component.test.tsx",
+    "travel-buddy-standalone/app/(auth)/onboarding.tsx",
+    // Cited by G5 and G14 as the file where `setTelemetrySink` is exported and
+    // never called. That absence is load-bearing for two verdicts, so the file
+    // that would end it must age this census.
+    "travel-buddy-standalone/src/platform/input-assistance/index.ts",
   ],
   "census-discovery.md": [
     // ── ADDED 2026-09-15 by §43: the registry B05 now rests on ──────────────
