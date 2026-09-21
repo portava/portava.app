@@ -333,11 +333,19 @@ describe("§50 migration status (G357) — mounted means a screen really referen
 // ═══════════════════════════════════════════════════════════════════════════════
 
 describe("§29 privacyClass (G31) — the shared suggestion cache refuses viewer-scoped fields", () => {
-  it("public is cacheable; personal, sensitive and private_message are not", () => {
-    // MUTATION-PROOF: remove 'personal' from UNCACHEABLE_PRIVACY_CLASSES → RED.
+  it("public is cacheable; every viewer-scoped class is not", () => {
+    // MUTATION-PROOF: remove 'viewer_scoped' from UNCACHEABLE_PRIVACY_CLASSES → RED.
+    //
+    // The class names here are the ones `types/inputContext.ts#PrivacyClass`
+    // actually declares. An earlier version of this test asserted "personal"
+    // and "sensitive", which are not members of that union — so it was pinning
+    // a vocabulary the code has never used, and `isCacheablePrivacyClass`
+    // would have answered `true` (cacheable) for both, which is the leaking
+    // direction. It compiled only until the union was exported properly.
     assert.equal(isCacheablePrivacyClass("public"), true);
-    assert.equal(isCacheablePrivacyClass("personal"), false);
-    assert.equal(isCacheablePrivacyClass("sensitive"), false);
+    assert.equal(isCacheablePrivacyClass("viewer_scoped"), false);
+    assert.equal(isCacheablePrivacyClass("owner_only"), false);
+    assert.equal(isCacheablePrivacyClass("sensitive_location"), false);
     assert.equal(isCacheablePrivacyClass("private_message"), false);
   });
 

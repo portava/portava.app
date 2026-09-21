@@ -33,6 +33,12 @@ import {
   POLICY_VERSION,
 } from '../lib/inputAssistance/policyRegistry';
 import { generateSuggestions } from '../lib/inputAssistance/gateway';
+import {
+  SUGGESTION_SCHEMA_VERSION,
+  parseClientCapabilities,
+  negotiateSuggestionTypes,
+  dropUnresolvableActionRows,
+} from '../lib/inputAssistance/compatibility';
 import { recordSelection } from '../lib/inputAssistance/personalization';
 import {
   rebuildTelemetryEvent,
@@ -144,6 +150,18 @@ router.post(
     // never enabled by an ambiguous value.
     const aiAssist = body.aiAssist === true;
 
+    // ── §48 capability handshake (census G343) ────────────────────────────────
+    // Absent ⇒ null ⇒ served exactly as before this block existed. A
+    // declaration can only NARROW: `negotiateSuggestionTypes` intersects with
+    // the field's own policy, so no client can talk its way into a type §6
+    // forbids.
+    const clientCaps = parseClientCapabilities(body.client);
+    const negotiatedTypes = negotiateSuggestionTypes(policy.allowedSuggestionTypes, clientCaps);
+    const servePolicy =
+      negotiatedTypes.length === policy.allowedSuggestionTypes.length
+        ? policy
+        : { ...policy, allowedSuggestionTypes: negotiatedTypes };
+
     // limit: honor the request but never exceed the policy's maxSuggestions.
     const rawLimit = typeof body.limit === 'number' ? body.limit : parseInt(String(body.limit), 10);
     const requestedLimit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.floor(rawLimit) : policy.maxSuggestions;
@@ -174,9 +192,9 @@ router.post(
     const startedAt = Date.now();
 
     try {
-      const suggestions = await generateSuggestions(sc, {
+      const generated = await generateSuggestions(sc, {
         context,
-        policy,
+        policy: servePolicy,
         text,
         userId: user.id,
         limit,
@@ -189,10 +207,23 @@ router.post(
         aiAssist,
       });
 
+      // The second half of the handshake: a row the client has told us it
+      // cannot resolve is withheld rather than sent to be dropped on arrival.
+      const { rows: suggestions, dropped } = dropUnresolvableActionRows(generated, clientCaps);
+
       const serverMs = Date.now() - startedAt;
       const payload: SuggestResponse = {
         requestId,
         policyVersion: POLICY_VERSION,
+        // §48 (census G341) — the SHAPE's version, independent of the policy's.
+        // A policy bump and a shape bump are different events with different
+        // consequences and were previously indistinguishable to a client.
+        schemaVersion: SUGGESTION_SCHEMA_VERSION,
+        capabilities: {
+          schemaVersion: SUGGESTION_SCHEMA_VERSION,
+          suggestionTypes: negotiatedTypes,
+          withheldForClient: dropped,
+        },
         context,
         fieldId,
         suggestions,
@@ -201,7 +232,7 @@ router.post(
       // Instrumented on the server's own side too, so the quantile is
       // computable from logs even where the client transport is not attached.
       logger.info(
-        { requestId, context, fieldId, serverMs, count: suggestions.length },
+        { requestId, context, fieldId, serverMs, count: suggestions.length, withheldForClient: dropped },
         'input-assistance/suggest served',
       );
       res.status(200).json(payload);
@@ -212,6 +243,10 @@ router.post(
       const payload: SuggestResponse = {
         requestId,
         policyVersion: POLICY_VERSION,
+        // The degraded envelope carries the schema version too: a client that
+        // refuses an unknown shape must be able to tell "this serve failed"
+        // from "this serve speaks a shape I do not know".
+        schemaVersion: SUGGESTION_SCHEMA_VERSION,
         context,
         fieldId,
         suggestions: [],
@@ -401,10 +436,27 @@ router.post(
 
     const result = await recordTelemetryEvents(sc, rows, logger);
     if ('refusal' in result) {
+      // A PERMANENT refusal is answered 422, not 503 with a Retry-After. The
+      // distinction is not cosmetic: 503 + Retry-After tells the batcher this
+      // batch will succeed later, and for a constraint violation that is false
+      // — the row can never be accepted, so the client would retry forever and
+      // every event queued behind it would never land. A permanent failure
+      // dressed as a transient one is the same dishonesty as an empty success
+      // over a broken ingest, which this route's header already refuses.
+      if (!result.refusal.retryable) {
+        res.status(422).json({
+          ok: false,
+          retryable: false,
+          reason: result.refusal.reason,
+          accepted: 0,
+          rejected,
+        });
+        return;
+      }
       res.setHeader('Retry-After', '60');
       res.status(503).json({
         ok: false,
-        retryable: result.refusal.retryable,
+        retryable: true,
         reason: result.refusal.reason,
         accepted: 0,
         rejected,
