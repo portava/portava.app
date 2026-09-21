@@ -79,16 +79,21 @@ const EXEMPT: Record<string, string> = {
   // no selection memory for this context to write.
   [join('app', '(tabs)', 'ai.tsx')]:
     'compass_prompt starters are ai_suggestion rows (NON_SELECTION_TYPES) on a context with allowPersonalization:false',
-  // KNOWN REMAINING GAP, recorded honestly rather than hidden: the Telegraph
-  // recipient picker consumes `telegraph_recipient`, whose policy DOES allow
-  // personalization, but the gateway serves that context's zero-character
-  // recents from the eligibility-scoped recipient path (gateway.ts explicitly
-  // excludes it from buildSelectionRecents), so a recorded row would today feed
-  // only the §15 boost. Wiring it needs the picker screen's accept handler,
-  // which is out of scope for the pass that added this guard.
-  [join('src', 'hooks', 'useTelegraphRecipients.ts')]:
-    'KNOWN GAP — telegraph_recipient recents come from the eligibility path; boost-only benefit, accept handler not wired yet',
 };
+
+// The exemption list above USED to carry `src/hooks/useTelegraphRecipients.ts`
+// as a KNOWN REMAINING GAP: `telegraph_recipient` allows personalization, the
+// picker consumed the gateway, and nothing recorded — so that context's
+// selection memory could never be filled, and "recently selected USERS" (§35)
+// had no writer anywhere in the product. It is wired now and the exemption is
+// GONE rather than reworded, which is what makes the guard below load-bearing:
+// remove the wiring and the generic scan above fails, not just the fence.
+//
+// The reason the exemption gave for deferring it — "boost-only benefit" — was
+// also true when it was written and is not any more: the gateway's recipient
+// branch is a full takeover that returned before the generic
+// `applyPriorSelectionBoost`, so a recorded recipient pick fed NOTHING. It now
+// applies the §15 boost inside that branch, over the eligibility-scoped list.
 
 function walk(dir: string, out: string[] = []): string[] {
   let entries: string[];
@@ -173,5 +178,32 @@ test('the two surfaces the audit found unwired are wired (regression fence)', ()
   assert.ok(
     searchScreen.includes('recordPick('),
     'the search screen must call recordPick on an explicit suggestion pick',
+  );
+});
+
+test('the telegraph_recipient gap the exemption list used to carry is wired (§35 "users")', () => {
+  // "Recently selected cities / places / users" — the USERS arm. The only
+  // context in the registry whose entityTypes are ['user'] is
+  // telegraph_recipient, so this hook and this screen are the whole of it.
+  const hook = readFileSync(
+    join(APP_ROOT, 'src', 'hooks', 'useTelegraphRecipients.ts'),
+    'utf8',
+  );
+  assert.ok(
+    hook.includes('recordSuggestionSelection('),
+    'useTelegraphRecipients must expose a recording path for an accepted recipient (telegraph_recipient §35)',
+  );
+
+  const pickerScreen = readFileSync(join(APP_ROOT, 'app', 'telegraph', 'new.tsx'), 'utf8');
+  assert.ok(
+    pickerScreen.includes('recordPick('),
+    'the new-Telegraph picker must call recordPick on the recipient the user chose',
+  );
+
+  // The exemption must be GONE, not reworded. A future pass that re-adds it
+  // silently would put the users arm back to a read with no writer.
+  assert.ok(
+    !Object.keys(EXEMPT).some((k) => k.includes('useTelegraphRecipients')),
+    'useTelegraphRecipients must not be on the exemption list — it records now',
   );
 });

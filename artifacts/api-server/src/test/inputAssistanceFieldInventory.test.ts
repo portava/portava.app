@@ -34,7 +34,8 @@ import {
   inventoriedFieldIds,
   mountedFieldIds,
 } from "../../../../travel-buddy-standalone/src/platform/input-assistance/contexts/fieldInventory.ts";
-import { INPUT_CONTEXT_REGISTRY } from "../../../../travel-buddy-standalone/src/platform/input-assistance/contexts/inputContexts.ts";
+import { getContextDescriptor } from "../../../../travel-buddy-standalone/src/platform/input-assistance/contexts/inputContexts.ts";
+import { INPUT_CONTEXTS } from "../../../../travel-buddy-standalone/src/platform/input-assistance/types/inputContext.ts";
 import { isCacheablePrivacyClass } from "../../../../travel-buddy-standalone/src/platform/input-assistance/services/suggestionCache.ts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -235,9 +236,23 @@ describe("§50 field inventory (G356) — every registered field is inventoried"
 
 describe("§50 field inventory (G357) — the recorded attributes are checkable", () => {
   it("every row's context is a real InputContext, and the merged row is complete", () => {
+    // ── 2026-09-21 (G340) ────────────────────────────────────────────────
+    // This used to index `INPUT_CONTEXT_REGISTRY`, the client's local
+    // 29-context table, which is deleted: the client resolves policy from
+    // `GET /input-assistance/policies` now. The assertion below is UNCHANGED in
+    // substance, and that is the point — the §50 row must be MERGED from
+    // whatever the resolver returns, never copied, so the two cannot disagree.
+    // With no policy fetched (which is the case under node:test) the resolver
+    // returns the conservative policy for every context, and the merge must
+    // still agree with it member for member. A row that carried its own copy
+    // of the policy would now be caught here.
+    const contexts = new Set<string>(INPUT_CONTEXTS);
     for (const rec of FIELD_INVENTORY) {
-      const d = INPUT_CONTEXT_REGISTRY[rec.context];
-      assert.ok(d, `${rec.fieldId} names context "${rec.context}", which is not in the registry`);
+      assert.ok(
+        contexts.has(rec.context),
+        `${rec.fieldId} names context "${rec.context}", which is not an InputContext`,
+      );
+      const d = getContextDescriptor(rec.context);
       const row = fieldInventoryRow(rec.fieldId);
       assert.ok(row, `${rec.fieldId} must resolve to a merged §50 row`);
       // The four attributes the registry owns are MERGED, never copied — so they
@@ -333,11 +348,19 @@ describe("§50 migration status (G357) — mounted means a screen really referen
 // ═══════════════════════════════════════════════════════════════════════════════
 
 describe("§29 privacyClass (G31) — the shared suggestion cache refuses viewer-scoped fields", () => {
-  it("public is cacheable; personal, sensitive and private_message are not", () => {
-    // MUTATION-PROOF: remove 'personal' from UNCACHEABLE_PRIVACY_CLASSES → RED.
+  it("public is cacheable; every viewer-scoped class is not", () => {
+    // MUTATION-PROOF: remove 'viewer_scoped' from UNCACHEABLE_PRIVACY_CLASSES → RED.
+    //
+    // The class names here are the ones `types/inputContext.ts#PrivacyClass`
+    // actually declares. An earlier version of this test asserted "personal"
+    // and "sensitive", which are not members of that union — so it was pinning
+    // a vocabulary the code has never used, and `isCacheablePrivacyClass`
+    // would have answered `true` (cacheable) for both, which is the leaking
+    // direction. It compiled only until the union was exported properly.
     assert.equal(isCacheablePrivacyClass("public"), true);
-    assert.equal(isCacheablePrivacyClass("personal"), false);
-    assert.equal(isCacheablePrivacyClass("sensitive"), false);
+    assert.equal(isCacheablePrivacyClass("viewer_scoped"), false);
+    assert.equal(isCacheablePrivacyClass("owner_only"), false);
+    assert.equal(isCacheablePrivacyClass("sensitive_location"), false);
     assert.equal(isCacheablePrivacyClass("private_message"), false);
   });
 

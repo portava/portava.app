@@ -56,15 +56,31 @@ export interface ValidationRule {
 }
 
 /**
- * §44 — per-field telemetry policy. `captureRawText` must be false for
- * private-message fields (prefer metadata events: suggestion type selected,
- * latency — never the raw message).
+ * §44 — per-field telemetry policy.
+ *
+ * THIS SHAPE IS THE SERVER'S (`lib/inputAssistance/types.ts#InputTelemetryPolicy`),
+ * and it did not used to be. Census G33 recorded that the two sides declared
+ * DIFFERENT SHAPES for this member — this side named its raw-text gate
+ * `capture`-something and allowed an `'all'` sentinel in `events`, neither of
+ * which existed on the server — so the "implemented verbatim … matches
+ * byte-for-byte" claim was false for it, and a server policy change to it could
+ * not reach the client.
+ *
+ * Two names for one gate is not a cosmetic divergence: it is why nothing could
+ * compare the two registries on the member that decides whether the user's raw
+ * typed text is allowed into an analytics event. `events` is likewise an
+ * explicit list on both sides now — the old `'all'` sentinel had no server
+ * counterpart, so a server policy that NARROWED a field's vocabulary had no
+ * way to be expressed here.
+ *
+ * `test/inputPolicyContractParity.test.ts` pins both members, context for
+ * context, so the shapes cannot drift apart again.
  */
 export interface InputTelemetryPolicy {
-  /** false for private_message + sensitive fields (§44). */
-  captureRawText: boolean;
-  /** 'all', or a narrowed allowlist of event names to emit. */
-  events: 'all' | InputTelemetryEventName[];
+  /** MUST be false for private-message and sensitive fields (§44). */
+  logRawText: boolean;
+  /** The declared §44 event vocabulary this field participates in. */
+  events: InputTelemetryEventName[];
 }
 
 /** §44 — the named telemetry event taxonomy. */

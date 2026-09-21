@@ -30,9 +30,16 @@ import { logger as rootLogger } from '../lib/logger';
 import {
   resolvePolicy,
   isKnownContext,
+  KNOWN_CONTEXTS,
   POLICY_VERSION,
 } from '../lib/inputAssistance/policyRegistry';
 import { generateSuggestions } from '../lib/inputAssistance/gateway';
+import {
+  SUGGESTION_SCHEMA_VERSION,
+  parseClientCapabilities,
+  negotiateSuggestionTypes,
+  dropUnresolvableActionRows,
+} from '../lib/inputAssistance/compatibility';
 import { recordSelection } from '../lib/inputAssistance/personalization';
 import {
   rebuildTelemetryEvent,
@@ -100,6 +107,73 @@ function parseCreationDraft(raw: unknown): CreationDraft | undefined {
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+// ── G340 §48: the AUTHORITATIVE policy registry, served ──────────────────────
+//
+// THE DEFECT THIS CLOSES. `POLICY_VERSION` has travelled on every response
+// since Phase 1, but there was nothing to FETCH — so a shipped client could
+// learn that its policies were stale and had no way to get the current ones.
+// The client therefore re-declared all 29 contexts locally, and the two copies
+// drifted: measured 2026-09-21, 26 of 29 contexts disagreed on
+// `allowedSuggestionTypes` and 2 on `defaultMode`. A mirror with no source is
+// not a cache, it is a second authority.
+//
+// WHY THIS IS A GET WITH NO BODY AND NO VIEWER SCOPE. The registry is the same
+// for every caller: it declares what KINDS of assistance a field may carry, not
+// anything about a person. Nothing here is viewer-scoped, so nothing here needs
+// a viewer to scope it — and making it anonymous is what lets a client fetch
+// its policies BEFORE the user signs in, which is when it most needs them.
+// Authentication is still required, because an unauthenticated caller has no
+// field to apply a policy to and the surface is not a public API.
+//
+// WHAT IS DELIBERATELY NOT SERVED: `telemetryPolicy`. It governs what the
+// SERVER logs, the client cannot alter it, and shipping it would invite a
+// client to believe it may choose. The client's own telemetry gate reads
+// `privacyClass`, which IS served.
+router.get(
+  '/input-assistance/policies',
+  asyncHandler(async (req, res) => {
+    const auth = await requireUser(req, res);
+    if (!auth) return;
+
+    // The HANDLER touches no database — it projects an in-memory registry and
+    // allocates one object per context. (`requireUser` above does read
+    // `profiles.account_status`; that is the §9 account gate every route pays,
+    // not something this one adds.) The limit exists so a client loop cannot
+    // turn a cheap read into a hot one, and is deliberately generous: a correct
+    // client fetches this once per cold start and then on a version change.
+    const rl = checkRateLimit('input_assist_policies', auth.user.id, 30, 60_000);
+    if (!rl.allowed) {
+      res.setHeader('Retry-After', Math.ceil(rl.retryAfterMs / 1000).toString());
+      sendError(res, 'rate_limited', 'Too many policy fetches. Please wait.');
+      return;
+    }
+
+    const contexts: Record<string, unknown> = {};
+    for (const context of KNOWN_CONTEXTS) {
+      const p = resolvePolicy(context);
+      if (!p) continue;
+      contexts[context] = {
+        context,
+        mode: p.mode,
+        allowedSuggestionTypes: p.allowedSuggestionTypes,
+        entityTypes: p.entityTypes,
+        allowPersonalization: p.allowPersonalization,
+        allowLiveContext: p.allowLiveContext,
+        allowMemoryContext: p.allowMemoryContext,
+        allowAI: p.allowAI,
+        minChars: p.minChars,
+        maxSuggestions: p.maxSuggestions,
+        debounceMs: p.debounceMs,
+        offlinePolicy: p.offlinePolicy,
+        privacyClass: p.privacyClass,
+        zeroStateAssistance: p.zeroStateAssistance,
+      };
+    }
+
+    res.status(200).json({ policyVersion: POLICY_VERSION, contexts });
+  }),
+);
+
 router.post(
   '/input-assistance/suggest',
   asyncHandler(async (req, res) => {
@@ -144,6 +218,18 @@ router.post(
     // never enabled by an ambiguous value.
     const aiAssist = body.aiAssist === true;
 
+    // ── §48 capability handshake (census G343) ────────────────────────────────
+    // Absent ⇒ null ⇒ served exactly as before this block existed. A
+    // declaration can only NARROW: `negotiateSuggestionTypes` intersects with
+    // the field's own policy, so no client can talk its way into a type §6
+    // forbids.
+    const clientCaps = parseClientCapabilities(body.client);
+    const negotiatedTypes = negotiateSuggestionTypes(policy.allowedSuggestionTypes, clientCaps);
+    const servePolicy =
+      negotiatedTypes.length === policy.allowedSuggestionTypes.length
+        ? policy
+        : { ...policy, allowedSuggestionTypes: negotiatedTypes };
+
     // limit: honor the request but never exceed the policy's maxSuggestions.
     const rawLimit = typeof body.limit === 'number' ? body.limit : parseInt(String(body.limit), 10);
     const requestedLimit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.floor(rawLimit) : policy.maxSuggestions;
@@ -174,9 +260,9 @@ router.post(
     const startedAt = Date.now();
 
     try {
-      const suggestions = await generateSuggestions(sc, {
+      const generated = await generateSuggestions(sc, {
         context,
-        policy,
+        policy: servePolicy,
         text,
         userId: user.id,
         limit,
@@ -189,10 +275,23 @@ router.post(
         aiAssist,
       });
 
+      // The second half of the handshake: a row the client has told us it
+      // cannot resolve is withheld rather than sent to be dropped on arrival.
+      const { rows: suggestions, dropped } = dropUnresolvableActionRows(generated, clientCaps);
+
       const serverMs = Date.now() - startedAt;
       const payload: SuggestResponse = {
         requestId,
         policyVersion: POLICY_VERSION,
+        // §48 (census G341) — the SHAPE's version, independent of the policy's.
+        // A policy bump and a shape bump are different events with different
+        // consequences and were previously indistinguishable to a client.
+        schemaVersion: SUGGESTION_SCHEMA_VERSION,
+        capabilities: {
+          schemaVersion: SUGGESTION_SCHEMA_VERSION,
+          suggestionTypes: negotiatedTypes,
+          withheldForClient: dropped,
+        },
         context,
         fieldId,
         suggestions,
@@ -201,7 +300,7 @@ router.post(
       // Instrumented on the server's own side too, so the quantile is
       // computable from logs even where the client transport is not attached.
       logger.info(
-        { requestId, context, fieldId, serverMs, count: suggestions.length },
+        { requestId, context, fieldId, serverMs, count: suggestions.length, withheldForClient: dropped },
         'input-assistance/suggest served',
       );
       res.status(200).json(payload);
@@ -212,6 +311,10 @@ router.post(
       const payload: SuggestResponse = {
         requestId,
         policyVersion: POLICY_VERSION,
+        // The degraded envelope carries the schema version too: a client that
+        // refuses an unknown shape must be able to tell "this serve failed"
+        // from "this serve speaks a shape I do not know".
+        schemaVersion: SUGGESTION_SCHEMA_VERSION,
         context,
         fieldId,
         suggestions: [],
@@ -401,10 +504,27 @@ router.post(
 
     const result = await recordTelemetryEvents(sc, rows, logger);
     if ('refusal' in result) {
+      // A PERMANENT refusal is answered 422, not 503 with a Retry-After. The
+      // distinction is not cosmetic: 503 + Retry-After tells the batcher this
+      // batch will succeed later, and for a constraint violation that is false
+      // — the row can never be accepted, so the client would retry forever and
+      // every event queued behind it would never land. A permanent failure
+      // dressed as a transient one is the same dishonesty as an empty success
+      // over a broken ingest, which this route's header already refuses.
+      if (!result.refusal.retryable) {
+        res.status(422).json({
+          ok: false,
+          retryable: false,
+          reason: result.refusal.reason,
+          accepted: 0,
+          rejected,
+        });
+        return;
+      }
       res.setHeader('Retry-After', '60');
       res.status(503).json({
         ok: false,
-        retryable: result.refusal.retryable,
+        retryable: true,
         reason: result.refusal.reason,
         accepted: 0,
         rejected,
