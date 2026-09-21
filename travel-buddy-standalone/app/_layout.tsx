@@ -69,6 +69,7 @@ import { createWallAnalyticsTransport } from '../src/features/wall/services/wall
 import { installPassportTelemetry } from '../src/features/passport/installPassportTelemetry';
 import { installInputTelemetry } from '../src/platform/input-assistance/services/installInputTelemetry';
 import { installInputTelemetryTransport } from '../src/platform/input-assistance/services/telemetryTransport';
+import { registerGeographicFields } from '../src/platform/input-assistance/geographic/geoFields';
 
 /**
  * Session-aware root crash boundary. Sits inside SessionProvider so it can
@@ -160,6 +161,28 @@ function InputTelemetrySetup() {
       appState: AppState,
     });
     return () => handle.dispose();
+  }, []);
+  return null;
+}
+
+/**
+ * §5/§52 — register the geographic fields' policies once at boot.
+ *
+ * `registerGeographicFields()` has existed, been idempotent and been
+ * unit-tested since Phase 2, and was called from NO non-test file in the app.
+ * Every geographic surface therefore resolved a DEFAULT policy built from its
+ * context descriptor instead of its registered one — or, where a screen passed
+ * no context at all, nothing. §50's field inventory records `geo.city` as
+ * UNMOUNTED for exactly this reason.
+ *
+ * It is a pure registry operation — no React state, no network, no I/O — so it
+ * runs at module-mount cost and is safe to call before anything renders. The
+ * function's own latch makes a re-mounting root layout a no-op, and a field a
+ * test already registered is left untouched.
+ */
+function GeographicFieldsSetup() {
+  useEffect(() => {
+    registerGeographicFields();
   }, []);
   return null;
 }
@@ -290,6 +313,7 @@ export default function RootLayout() {
                       <CryptoSetup />
                       <PassportTelemetrySetup />
                       <InputTelemetrySetup />
+                      <GeographicFieldsSetup />
                       <CompassFrontloadSetup />
                       <WallAnalyticsSetup />
                       <StatusBar style="dark" />
