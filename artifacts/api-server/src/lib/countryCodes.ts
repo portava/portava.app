@@ -189,9 +189,28 @@ export function toCountryCode(input: string | null | undefined): string | null {
   const trimmed = input.trim();
   if (!trimmed) return null;
   // Already an ISO2 code?
+  //
+  // A TWO-LETTER STRING THAT IS NOT A CODE FALLS THROUGH, and it did not used
+  // to. The branch returned `null` outright, which reads as "two letters are a
+  // code or they are nothing" — and skips the alias table on the way past.
+  // `ALIASES` has exactly one two-letter key, `"uk"`, and `UK` is not an
+  // ISO-3166-1 code (the United Kingdom is `GB`). So the single most-typed
+  // colloquial country string in the product resolved to nothing: an entry-
+  // requirements lookup found no corridor, and a stamp keyed itself `XX`.
+  //
+  // Found by a Discovery test, not by reasoning: `home_country: "UK"` failed to
+  // fold into the canonical "United Kingdom" row and the picker offered both.
+  //
+  // The widening is STRICTLY ADDITIVE and only in the one safe direction. The
+  // ISO branch still runs first and wins, so no input that resolves today can
+  // change code; the only possible transition is null -> a real code, never
+  // A -> B. That is the same argument `lib/stamps/countryLookup.ts`'s header
+  // already makes for its own fallback, and `lib/stamps/xxCatalogRepair.ts` is
+  // the machinery that exists to carry an `XX` row to a real code when one
+  // appears.
   if (/^[A-Za-z]{2}$/.test(trimmed)) {
     const upper = trimmed.toUpperCase();
-    return CODES[upper] ? upper : null;
+    if (CODES[upper]) return upper;
   }
   return NAME_INDEX[norm(trimmed)] ?? null;
 }
@@ -200,4 +219,109 @@ export function toCountryCode(input: string | null | undefined): string | null {
 export function countryName(code: string | null | undefined): string | null {
   if (!code) return null;
   return CODES[code.trim().toUpperCase()] ?? null;
+}
+
+// ── The resolver a country PICKER needs, as opposed to a country PARSER ───────
+//
+// `toCountryCode` answers "is this string a country?" — one input, one answer,
+// exact. A picker asks a different question: "which countries could the person
+// typing this mean?" Until now Discovery had no way to ask it, so
+// `routes/discoverySearch.ts`'s `searchCountries` aggregated
+// `profiles.home_country` instead: the set of countries that EXISTED as a
+// suggestion was a function of who had signed up, and Iceland was not a country
+// on that surface until an Icelander was. census-discovery B05 /
+// census-input-intelligence G277 record that as a construction defect, and this
+// is the missing half — deliberately HERE and not in Discovery, because a
+// second country list inside a product surface is how two lists disagree.
+//
+// It is PURE, like everything above it: no I/O, no clock, no cache. The three
+// tables it reads are already built at module load.
+//
+// ORDERING IS PART OF THE CONTRACT, not an accident of iteration. A picker is
+// read top-down, so the rungs are ranked by how sure the match is:
+//
+//   0  the query IS an ISO2 code            "in"       -> India
+//   1  a canonical name EQUALS it           "japan"    -> Japan
+//   2  an alias EQUALS it                   "uk"       -> United Kingdom
+//   3  a canonical name starts with it      "united"   -> United Arab Emirates…
+//   4  an alias starts with it              "congo-"   -> DR Congo
+//   5  a canonical name contains it         "ran"      -> France
+//   6  an alias contains it                 "ali"      -> Indonesia (Bali)
+//
+// then alphabetically by canonical name, so the same query always produces the
+// same page and a cursor means the same thing on the second request.
+//
+// AN EXACT ALIAS OUTRANKS A PREFIX NAME, and that rung order was WRITTEN BY A
+// FAILING TEST rather than guessed. With alias-prefix below name-prefix, "uk"
+// returned **Ukraine** first: `UK` is not an ISO code (the United Kingdom is
+// `GB`), so the code rung declines it, and "Ukraine" happens to start with the
+// two letters that are the most-typed colloquial name for a different country.
+// A person typing "uk" into a country picker does not mean Ukraine. Matching
+// the WHOLE of a name a human actually uses is stronger evidence than matching
+// the first two letters of one they did not, so exactness ranks above shape.
+//
+// SUBSTRING AND NOT PREFIX-ONLY, on purpose: the profile leg this joins in
+// Discovery is a PostgREST `ilike '%q%'`, so a registry that matched only
+// prefixes would make the two halves of one bucket disagree about what
+// "matches" means.
+//
+// AN ALIAS NEVER BECOMES A TITLE. `holland` resolves to "Netherlands" and
+// `bali` to "Indonesia"; the alias is how the row was REACHED, reported in
+// `via`, never what the row is called. Showing the alias would let a picker
+// mint country names the entry-requirements corridor has never heard of.
+
+/** One country the registry can offer, with how the query reached it. */
+export interface CountryRegistryMatch {
+  /** Uppercase ISO-3166-1 alpha-2. */
+  code: string;
+  /** Canonical English name — never the alias that matched. */
+  name: string;
+  /** Provenance of the match, so a caller can rank or explain it. */
+  via: "code" | "name" | "alias";
+}
+
+/** Default page size. Callers that page pass their own. */
+const COUNTRY_REGISTRY_DEFAULT_LIMIT = 25;
+
+export function searchCountryRegistry(
+  query: string | null | undefined,
+  limit: number = COUNTRY_REGISTRY_DEFAULT_LIMIT,
+): CountryRegistryMatch[] {
+  if (typeof query !== "string") return [];
+  const q = norm(query);
+  if (q.length === 0 || limit <= 0) return [];
+
+  // Best (lowest) rung wins per country, so a row reached three ways is still
+  // one row and is ranked by its STRONGEST evidence.
+  const best = new Map<string, { rank: number; via: CountryRegistryMatch["via"] }>();
+  const consider = (code: string, rank: number, via: CountryRegistryMatch["via"]): void => {
+    // An alias pointing at a code the canonical table does not carry is a data
+    // error, not a country. Dropping it here keeps a nameless row off a picker.
+    if (!CODES[code]) return;
+    const prev = best.get(code);
+    if (prev && prev.rank <= rank) return;
+    best.set(code, { rank, via });
+  };
+
+  if (/^[a-z]{2}$/.test(q)) consider(q.toUpperCase(), 0, "code");
+
+  for (const [code, name] of Object.entries(CODES)) {
+    const n = norm(name);
+    const at = n.indexOf(q);
+    if (n === q) consider(code, 1, "name");
+    else if (at === 0) consider(code, 3, "name");
+    else if (at > 0) consider(code, 5, "name");
+  }
+  for (const [alias, code] of Object.entries(ALIASES)) {
+    const a = norm(alias);
+    const at = a.indexOf(q);
+    if (a === q) consider(code, 2, "alias");
+    else if (at === 0) consider(code, 4, "alias");
+    else if (at > 0) consider(code, 6, "alias");
+  }
+
+  return [...best.entries()]
+    .sort((a, b) => a[1].rank - b[1].rank || CODES[a[0]]!.localeCompare(CODES[b[0]]!))
+    .slice(0, limit)
+    .map(([code, m]) => ({ code, name: CODES[code]!, via: m.via }));
 }

@@ -242,7 +242,7 @@ projectObjects" (`:443`) proves the merged set still passes §23.
 account deletion keeps an anonymised tombstone profile rather than deleting the
 `profiles` row, so the cascade never fires. Rows — including the `raw_text` echo
 of what the user typed (`2271_wall_session_intents.sql:40-42`,
-`WallSessionIntentService.ts:207`) — survived deletion as orphaned personal data.
+`WallSessionIntentService.ts:345`) — survived deletion as orphaned personal data.
 Fix: an explicit, audited, user-scoped delete step `delete_wall_session_intent`
 (`services/accountDeletion/AccountDeletionService.ts:1068`), classified in
 `lib/deletionDispositions.ts:127,443`. Test:
@@ -317,11 +317,11 @@ piece absent. **MISSING** = absent. *No section is MISSING.*
 | 8 | Context Thread | BUILT | `services/wall/ContextThreadService.ts` — one compact attachment; readers for live (`:231`), trip, social (`:384`), gem, buddy (`:572`). |
 | 9 | Context Thread eligibility gate | BUILT | `ContextThreadService.shouldAttachContextThread:103-117` — the 8-condition boolean ANDed, default false. Test: `wallContextThread.test.ts:152-176`. |
 | 10 | Postcards | BUILT | `objects/PostcardWallItem.tsx` distinct paper frame + date stamp; producer `loadPostcardCandidates` (`WallCandidateLoaders.ts:216`); never a Post with a badge. Test: `wallCandidateLoaders.test.ts:115`. |
-| 11 | Video | BUILT | `objects/VideoWallItem.tsx` inline poster, no forced fullscreen; producer `loadVideoMediaCandidates` (`:329`). Test: `wallCandidateLoaders.test.ts:237`. |
+| 11 | Video | BUILT | `objects/VideoWallItem.tsx` inline poster, no forced fullscreen; producer `services/wall/WallCandidateLoaders.ts:505#loadVideoMediaCandidates`. Test: `wallCandidateLoaders.test.ts:326#loadVideoMediaCandidates`. |
 | **12** | **Shared Moments** | **BUILT** *(was PARTIAL)* | `loadSharedMomentCandidates:444` + wiring (`routes/wall.ts:683`) + dedupe precedence; owner eligibility real since `#344` (`:411`). Coarse participants, block-filtered. **Full evidence in §5.2, §5.5.** |
 | 13 | Discovery in For You | BUILT | `WallDiscoveryInsertionService.explainDiscovery` — relationship/relevance ladder, popularity last; unexplained outside-graph objects dropped (`routes/wall.ts:470-484`). Tests: `wallDiscoveryInsertion.test.ts:77,85,100`; `wallDiscoveryRoute.test.ts:169,179`. |
 | 14 | For You ranking | BUILT | `WallRankingService.rankForYou:273` wraps `DiscoveryRankingService.rankItems` (`:312-319`); "explore" surface, not watch-time. |
-| 15 | Feed diversity controller | BUILT | `WallDiversityService.applyFeedDiversity:263-299` · `DEFAULT_FEED_DIVERSITY_POLICY:62` — actor/type spacing, discovery-cap prune, annotation cap, live-strip dedup. Test: `wallDiversity.test.ts:59-172`. |
+| 15 | Feed diversity controller | BUILT | `services/wall/WallDiversityService.ts:218#applyFeedDiversity` · `:77#DEFAULT_FEED_DIVERSITY_POLICY` — actor/type spacing, discovery-cap prune, annotation cap, live-strip dedup. Test: `wallDiversity.test.ts:67,86,108,135#it(`. |
 | **16** | **Two clocks** | **PARTIAL** *(was BUILT)* | Shape + 5 client consumers present; **no producer assigns `experienceAt`.** `FollowingFeedService.ts:11-14` correctly sorts on `publishedAt` only. **§4.1.** |
 | 17 | Global Input Intelligence | BUILT | `WallSessionIntentService` delegates to `lib/inputAssistance` gateway; session-scoped, `MAX_INTENT_TEXT` echo only (`:35,102`); steer never empties the feed (`routes/wall.ts:525-530`). Test: `wallSessionIntent.test.ts:19-110`. |
 | 18 | Stories / Quick Media | BUILT | `QuickMediaRow.tsx` — top row (`WallScreen.tsx:88`), renders nothing when empty, `CachedImage`. |
@@ -443,7 +443,7 @@ piece absent. **MISSING** = absent. *No section is MISSING.*
    `CreatorCapEnforcer` consecutive-run break (`:277`) + windowed actor/type
    spacing (the "5 videos in a row" cap), annotation cap, live-strip dedup. Only
    prunable insertions (`!isSocialObject`, `:98-99`) are ever dropped; social
-   objects are only reordered. Tests: `wallDiversity.test.ts:59,78,100,127,152,172`.
+   objects are only reordered. Tests: `wallDiversity.test.ts:67,86,108,135#it(`.
 
 6. **Context Thread earns space; §9 gate defaults false (§8/§9).**
    `ContextThreadService.shouldAttachContextThread:103-117` is the spec boolean
@@ -464,7 +464,7 @@ piece absent. **MISSING** = absent. *No section is MISSING.*
    `services/wallAnalytics.ts` events carry only `objectId`/`objectType`/enums/
    counts; server mutation payloads are ids + verb only
    (`services/wallApi.ts:248-263`); session intent stores the *structured* intent
-   plus a bounded echo, never a transcript (`WallSessionIntentService.ts:35,102,207`;
+   plus a bounded echo, never a transcript (`WallSessionIntentService.ts:36,199,345`;
    `2271_wall_session_intents.sql:15,40-42`). **Strengthened by `#342`:** that
    echo is now deleted with the account (§5.3). Test:
    `WallFeedAnalytics.component.test.tsx:138` ("signals the server (ids only)").

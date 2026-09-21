@@ -23,15 +23,16 @@
  */
 
 import { wrapUgc } from "./CompassStructuredContext.js";
+import { resolveCurrentTrip, CONTEXT_TRIP_STATUSES } from "./CompassCurrentTrip.js";
 
 const MAX_BLOCK_CHARS      = 1200;
 const UPCOMING_WINDOW_DAYS = 60;
 const MAX_TODAY_ITEMS      = 5;
 const DAY_MS               = 86_400_000;
 
-const TRIP_COLUMNS =
-  "id, title, destination_city, destination_country, start_date, end_date, status, timezone";
-const TRIP_STATUSES = ["active", "upcoming", "planning", "draft"];
+// Trip COLUMNS and STATUSES moved to compass/CompassCurrentTrip.ts with the
+// selection they belonged to; this module now names only what it reads itself
+// (the day-scoped plan items below, which no Trip projection serves yet).
 
 /** Parse a YYYY-MM-DD(-prefixed) string to a UTC-midnight timestamp. */
 function ymdToUtcMs(ymd: unknown): number | null {
@@ -86,63 +87,55 @@ function hhmm(startsAt: unknown, timezone: unknown): string | null {
 
 /**
  * Build the [Trip context] lines for /compass/ask.
- * Plain strings, no markdown, capped at ~1200 chars. [] on any error.
+ * Plain strings, no markdown, capped at ~1200 chars.
+ *
+ * RETURNING NOTHING IS SAFE. ASSERTING SOMETHING IS NOT.
+ * =====================================================
+ * These lines are GROUNDING for a language model: whatever is in them, the
+ * assistant will treat as fact and repeat to the user in prose. `[] on any
+ * error` covers saying nothing, and that remains the behaviour — an absent
+ * trip context makes the assistant answer without trip knowledge, which is
+ * merely less useful.
+ *
+ * What it did NOT cover is the POSITIVE sentence this function used to emit
+ * when a read failed: an unreadable trip_plan_items produced zero rows, which
+ * fell through to `lines.push("No plan items scheduled today.")`, and the
+ * assistant then told the user their day was empty. That is not a degraded
+ * answer, it is a wrong one, and the user has no way to tell it from the truth.
+ *
+ * So every read below binds `error`, and a failed read either omits the line
+ * or says the state is unknown. Nothing here asserts an absence it did not
+ * observe.
  */
 export async function buildTripContextLines(sc: any, userId: string): Promise<string[]> {
   try {
-    // ── Trip selection (mirrors toolGetCurrentTrip) ───────────────────────
-    const { data: memberRows } = await sc
-      .from("trip_members")
-      .select("trip_id, role")
-      .eq("user_id", userId)
-      .in("role", ["owner", "member"]);
-    const memberTripIds = ((memberRows ?? []) as any[]).map((r) => r.trip_id as string);
-
-    const { data: owned } = await sc
-      .from("trips")
-      .select(TRIP_COLUMNS)
-      .eq("owner_id", userId)
-      .in("status", TRIP_STATUSES);
-
-    let memberTrips: any[] = [];
-    if (memberTripIds.length > 0) {
-      const { data } = await sc
-        .from("trips")
-        .select(TRIP_COLUMNS)
-        .in("id", memberTripIds)
-        .in("status", TRIP_STATUSES);
-      memberTrips = (data ?? []) as any[];
-    }
-
-    const seen = new Set<string>();
-    const all = [...((owned ?? []) as any[]), ...memberTrips].filter((t) => {
-      if (seen.has(t.id)) return false;
-      seen.add(t.id);
-      return true;
-    });
-    if (all.length === 0) return [];
-
-    // Prefer active, then earliest start date.
-    all.sort((a, b) => {
-      const aActive = a.status === "active" ? 0 : 1;
-      const bActive = b.status === "active" ? 0 : 1;
-      if (aActive !== bActive) return aActive - bActive;
-      return String(a.start_date ?? "9999").localeCompare(String(b.start_date ?? "9999"));
-    });
-    const trip = all[0] as any;
+    // ── Trip selection ────────────────────────────────────────────────────
+    // This used to be a second copy of toolGetCurrentTrip's union, differing
+    // from it by one status (`draft`). One seam now decides it for every
+    // Compass surface — compass/CompassCurrentTrip.ts — and the status set is
+    // passed explicitly so THIS surface's long-standing rule is preserved
+    // rather than quietly unified with the tool's (CT-02; the divergence is an
+    // owner decision, named in that module's header).
+    //
+    // `unread` keeps this function's existing contract: it returns no lines, so
+    // the assistant answers without trip knowledge rather than asserting a trip
+    // state it did not observe.
+    const resolved = await resolveCurrentTrip(sc, userId, CONTEXT_TRIP_STATUSES);
+    if (resolved.status !== "ok") return [];
+    const trip = resolved.trip;
 
     // Trip title is UGC (user-entered, and a trip is shared with members), so wrap
     // it in <portava:ugc> — matching the plan-item titles below — before it lands
     // in the /ask prompt. A co-member could otherwise inject via the trip title.
     const title    = wrapUgc(String(trip.title ?? "Untitled trip"));
-    const city     = String(trip.destination_city ?? "unknown city");
-    const country  = String(trip.destination_country ?? "unknown country");
+    const city     = String(trip.destinationCity ?? "unknown city");
+    const country  = String(trip.destinationCountry ?? "unknown country");
     const tz       = trip.timezone;
 
     const today    = todayYmd(tz, new Date());
     const todayMs  = ymdToUtcMs(today);
-    const startYmd = typeof trip.start_date === "string" ? trip.start_date.slice(0, 10) : null;
-    const endYmd   = typeof trip.end_date   === "string" ? trip.end_date.slice(0, 10)   : null;
+    const startYmd = trip.startDate;
+    const endYmd   = trip.endDate;
     const startMs  = startYmd ? ymdToUtcMs(startYmd) : null;
     const endMs    = endYmd   ? ymdToUtcMs(endYmd)   : null;
     if (todayMs == null) return [];
@@ -159,7 +152,7 @@ export async function buildTripContextLines(sc: any, userId: string): Promise<st
       );
 
       // Today's plan items (≤5, not cancelled, not removed).
-      const { data: todayItems } = await sc
+      const { data: todayItems, error: todayErr } = await sc
         .from("trip_plan_items")
         .select("title, starts_at, sort_order, status")
         .eq("trip_id", trip.id)
@@ -169,7 +162,7 @@ export async function buildTripContextLines(sc: any, userId: string): Promise<st
         .order("starts_at", { ascending: true })
         .order("sort_order", { ascending: true })
         .limit(MAX_TODAY_ITEMS);
-      const items = (todayItems ?? []) as any[];
+      const items = (todayErr ? [] : (todayItems ?? [])) as any[];
       if (items.length > 0) {
         const parts = items.map((i) => {
           const itemTitle = wrapUgc(String(i.title ?? ""));
@@ -177,6 +170,11 @@ export async function buildTripContextLines(sc: any, userId: string): Promise<st
           return at ? `${itemTitle} (${at})` : itemTitle;
         });
         lines.push(`Today's plan: ${parts.join("; ")}`);
+      } else if (todayErr) {
+        // NOT "no plan items scheduled today". The assistant repeats these
+        // lines as fact; telling someone their day is empty because a query
+        // failed is the worst answer available here.
+        lines.push("Today's plan could not be read — do not state whether anything is scheduled today.");
       } else {
         lines.push("No plan items scheduled today.");
       }
@@ -184,7 +182,7 @@ export async function buildTripContextLines(sc: any, userId: string): Promise<st
       // Tomorrow's count (only mentioned when > 0).
       const tomorrow = addDays(today, 1);
       if (tomorrow) {
-        const { data: tomorrowItems } = await sc
+        const { data: tomorrowItems, error: tomorrowErr } = await sc
           .from("trip_plan_items")
           .select("id")
           .eq("trip_id", trip.id)
@@ -192,7 +190,12 @@ export async function buildTripContextLines(sc: any, userId: string): Promise<st
           .neq("status", "cancelled")
           .is("removed_at", null)
           .limit(50);
-        const n = ((tomorrowItems ?? []) as any[]).length;
+        // Omitted on failure rather than reported as 0. This line is only ever
+        // emitted when n > 0, so an unreadable table already said nothing —
+        // binding the error keeps it that way deliberately rather than by
+        // accident, and stops a future edit from adding an `else` branch that
+        // asserts tomorrow is clear.
+        const n = tomorrowErr ? 0 : ((tomorrowItems ?? []) as any[]).length;
         if (n > 0) lines.push(`Tomorrow: ${n} planned item(s).`);
       }
     } else if (startMs != null) {

@@ -47,14 +47,14 @@ export interface UnifiedSearchResultLike {
  * The server's per-item `type` is a `SearchType` from the discovery search
  * route (artifacts/api-server/src/routes/discoverySearch.ts, `SEARCH_TYPES`).
  * Those are the PLURAL forms — "travelers", "hidden_gems", "cities" — and there
- * are SEVENTEEN of them, not nine. §27 lists what the MAP shows; the endpoint
+ * are EIGHTEEN of them, not nine. §27 lists what the MAP shows; the endpoint
  * is the app's one global search and also returns posts, circles, stamps,
  * plans and three static taxonomy facets.
  *
- * Every one of those seventeen must appear in exactly one of the two tables
+ * Every one of those eighteen must appear in exactly one of the two tables
  * below. `__tests__/serverSearchTypes.test.ts` reads `SEARCH_TYPES` out of the
  * server source itself and fails if any type is in neither — so the wire
- * growing an eighteenth type breaks a test here instead of silently losing
+ * growing a nineteenth type breaks a test here instead of silently losing
  * results, which is exactly what the singular keys this table used to hold did
  * to Travelers, Hidden Gems, Cities and Countries.
  */
@@ -78,6 +78,10 @@ export const SERVER_TYPE_TO_MAP_TYPE: Record<string, MapSearchResultType> = {
   // bounding box around it.
   cities: 'area',
   countries: 'area',
+  // §27's ninth heading. `saved` is WIRE vocabulary as of the `searchSaved`
+  // lane in discoverySearch.ts — the viewer's own saves, read from
+  // wishlist_places + discovery_place_saves — and no longer a tolerated alias.
+  saved: 'saved',
 
   // ── Tolerated aliases — NOT the wire vocabulary ───────────────────────
   // None of these is emitted by discoverySearch.ts. They are kept so a rename
@@ -102,9 +106,6 @@ export const SERVER_TYPE_TO_MAP_TYPE: Record<string, MapSearchResultType> = {
   country: 'area',
   hashtag: 'hashtag',
   tag: 'hashtag',
-  // §27's ninth type. The server has NO `saved` SearchType and never emits one,
-  // so this is reachable only from a local or future producer.
-  saved: 'saved',
   wishlist: 'saved',
 };
 
@@ -246,6 +247,24 @@ export function boundsFromMetadata(
   return { north, south, east, west };
 }
 
+/** §27 Saved items: what was saved, as the server states it. */
+const SAVED_KINDS = ['place', 'event', 'trip', 'hidden_gem', 'area'] as const;
+type SavedKind = (typeof SAVED_KINDS)[number];
+
+/**
+ * `metadata.savedKind`, when the server sent one this model knows.
+ *
+ * An unrecognised value returns null rather than being passed through: the
+ * discriminant drives the icon AND the detail route, so an unknown kind would
+ * render a saved item as something it is not.
+ */
+export function savedKindFromMetadata(metadata: Record<string, unknown> | null | undefined): SavedKind | null {
+  const raw = metadata?.savedKind;
+  return typeof raw === 'string' && (SAVED_KINDS as readonly string[]).includes(raw)
+    ? (raw as SavedKind)
+    : null;
+}
+
 /**
  * Translate one unified result. Returns null in three distinguishable cases:
  * the type has no map representation (deliberate, silent), the type is unknown
@@ -290,7 +309,18 @@ export function toMapSearchResult(r: UnifiedSearchResultLike): MapSearchResult |
     case 'trip':
       return { ...base, type: 'trip', center: center ?? null, bounds: bounds ?? null, stops: null };
     case 'saved':
-      return { ...base, type: 'saved', center: center ?? null, bounds: bounds ?? null, savedKind: 'place' };
+      return {
+        ...base,
+        type: 'saved',
+        center: center ?? null,
+        bounds: bounds ?? null,
+        // STATED BY THE SERVER, not assumed here. `searchSaved` puts
+        // `metadata.savedKind` on every row it emits; 'place' remains the
+        // fallback because that is what every save path writes today, and
+        // because an `area` result with no bounds degrades into this branch
+        // carrying its own kind above.
+        savedKind: savedKindFromMetadata(r.metadata) ?? 'place',
+      };
     case 'user':
       return { ...base, type: 'user', center: center ?? null };
     case 'buddy':

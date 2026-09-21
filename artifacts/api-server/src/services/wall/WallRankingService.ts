@@ -50,6 +50,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { randomUUID, createHash } from "node:crypto";
 import {
   rankItems,
+  type PersistedRankSurface,
   type RankingInput,
   type RankingViewerContext,
 } from "../ranking/DiscoveryRankingService.js";
@@ -59,8 +60,39 @@ import { logger } from "../../lib/logger.js";
 /** Ranking algorithm/config version — bump to force new sessions on rollout. */
 export const WALL_RANK_VERSION = "wall-foryou-v1";
 
-/** For You is exploratory/diverse — mapped to the ranker's "explore" surface. */
-const FOR_YOU_SURFACE = "explore" as const;
+// ── TWO surfaces, on purpose. Read both before changing either. ─────────────
+//
+// The ranker's `surface` argument used to do two jobs at once: pick the WEIGHT
+// PROFILE, and be written to `rank_events.surface`. Those two vocabularies have
+// diverged, and For You is where they diverge.
+//
+//   * The WEIGHT PROFILE is still "explore". §14's objective is exploration and
+//     diversity, and SURFACE_WEIGHT_PROFILES.explore is the profile that
+//     encodes it (explorationBoost ×2.0, relationshipRelevance ×0.5). There is
+//     no "wall" key in that table, so naming the profile "wall" would fall
+//     through to `?? {}` — the DEFAULT profile — and silently re-rank every
+//     user's For You feed. Changing this constant changes what users see.
+//
+//   * The PERSISTED surface is "wall". `rank_events_surface_check` admits
+//     `wall` and, since migration 2893, does NOT admit `explore`. 2893 retired
+//     `explore` on the stated grounds that it had "no writer anywhere in the
+//     tree" — a claim this file falsified on every request: each For You page
+//     issued ~151 analytics inserts that the database rejected 23514, which the
+//     ranker's fire-and-forget handler logged at warn and dropped. Changing
+//     this constant changes nothing a user sees and everything we can measure.
+//
+// They are threaded separately to rankItems: the profile as `surface`, the
+// label as `RankItemsOptions.analyticsSurface`.
+
+/** The ranker's WEIGHT PROFILE for For You — exploration/diversity heavy (§14). */
+export const FOR_YOU_WEIGHT_PROFILE = "explore" as const;
+
+/**
+ * The value PERSISTED to `rank_events.surface` for For You rows. Typed
+ * PersistedRankSurface, so a label the database would reject cannot be written
+ * here without a compile error.
+ */
+export const FOR_YOU_ANALYTICS_SURFACE: PersistedRankSurface = "wall";
 
 /** Signal-rich fields the route may supply per object to feed the ranker. All
  *  optional — absent signals default to neutral so ranking still runs on the
@@ -312,11 +344,17 @@ export async function rankForYou(
     const inputs = deduped.map((p) => toRankingInput(p, opts.signals?.get(p.canonicalObjectId)));
     const ranked = await rankItems(
       inputs,
-      FOR_YOU_SURFACE,
+      // Weight profile — NOT the persisted label. See the two constants above.
+      FOR_YOU_WEIGHT_PROFILE,
       toViewerContext(viewer, sess.session),
       sc,
       opts.rankOverrides ?? {},
-      { nowMs: evaluatedAtMs },
+      {
+        nowMs: evaluatedAtMs,
+        // …and the persisted label, which the database constrains separately.
+        // Without this the rows are written on the profile name and rejected.
+        analyticsSurface: FOR_YOU_ANALYTICS_SURFACE,
+      },
     );
     for (const r of ranked) {
       if (r.eligibilityPassed) scoreOf.set(r.itemId, r.finalScore);

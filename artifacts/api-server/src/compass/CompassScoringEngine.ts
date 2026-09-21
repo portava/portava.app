@@ -34,6 +34,13 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CompassItem, CompassProfile, CompassContext } from "./types.js";
 import { intentBoost } from "./CompassTemporaryIntent.js";
+// CCL-05 — the shared projections reach the ranking owner through this module;
+// the judgements they are valued with stay with the platform owners of each.
+import { experienceValue, type DecisionIntent, type LiveStateSummary } from "../lib/compassDecision.js";
+import { truthClassMayRenderAsObservation } from "../lib/truthClass.js";
+import { UNKNOWN_TRUTH } from "../lib/experienceTruth.js";
+import type { RankingFactor } from "./CompassRecommendationEngine.js";
+import type { AskRankingProjections } from "./CompassPlatformContext.js";
 
 // ── Per-type weight profiles ──────────────────────────────────────────────────
 // Each key is the max contribution of that component for the given content type.
@@ -580,3 +587,174 @@ export const scoreNotification = (item: CompassItem, p: CompassProfile, c: Compa
   scoreItem({ ...item, type: "notification" }, p, c, db ?? null);
 export const scoreSuggestion   = (item: CompassItem, p: CompassProfile, c: CompassContext, db?: SupabaseClient | null) =>
   scoreItem({ ...item, type: "suggestion" },   p, c, db ?? null);
+
+// ── CCL-05: the shared projections, as a ranking factor ──────────────────────
+//
+// census-compass §26.3 left CCL-05 open on one sentence: "The ranking owner,
+// `CompassPipeline`, still ranks without them." This is what the ranking owner
+// consumes. It is PURE — no clock, no I/O, no flag read — and total: every
+// unknown resolves to "no boost, no factor", never to a guess.
+//
+// Three bounded addends, each with its own ceiling and its own named factor:
+//
+//   world     the subject's LIVE crowd reading, valued against the intent the
+//             request DECLARED, through `experienceValue` — the platform's
+//             existing owner of "what is this state worth to this viewer".
+//             Nothing here re-decides that; a second table would be a second
+//             opinion about the same world.
+//   forecast  the same valuation of the forecast state, at half the ceiling
+//             because a prediction is weaker evidence than an observation, and
+//             labelled `predicted` so the "Why this" sheet can never state it
+//             as an observation (CX-04's rule).
+//   opportunity  the Opportunity Engine's own relevance for a PROMOTED
+//             decision. Reached only when the caller supplied opportunities,
+//             which routes/compass.ts does only behind the literal flag
+//             `opportunity_engine_enabled` (FALSE on every deployment). The
+//             kernel half above is deliberately NOT behind that flag.
+//
+// Rules that hold on every path:
+//   · A subject the kernel does not carry contributes nothing.
+//   · "Could not look" (readable false, or a null density) is NOT a reading:
+//     zero boost and NO factor. An invented "why" is worse than none.
+//   · A value of 0 (the candidate CONFLICTS with the intent) adds no factor
+//     either — a ranking factor is a reason to show something, and the demote
+//     side of the ledger belongs to CompassLiveConstraints, not here.
+//   · A subject the kernel's SafetyContext suppresses is never promoted, at any
+//     relevance (Sensing §20: safety suppression wins over opportunity
+//     promotion). Suppression removes the boost only; withholding a candidate
+//     stays with the safety gates that own it.
+export const KERNEL_WORLD_BOOST_MAX = 4;
+export const KERNEL_FORECAST_BOOST_MAX = 2;
+export const KERNEL_OPPORTUNITY_BOOST_MAX = 3;
+
+/** What the shared projections contributed to one candidate's rank. */
+export interface KernelRankingAnnotation {
+  /** 0 … KERNEL_WORLD_BOOST_MAX + KERNEL_FORECAST_BOOST_MAX + KERNEL_OPPORTUNITY_BOOST_MAX. */
+  boost: number;
+  /** One per addend that actually fired. Empty whenever the boost is 0. */
+  factors: RankingFactor[];
+  /** The kernel subject this candidate was ranked against, or null when it carried none. */
+  subjectId: string | null;
+}
+
+const noKernelRanking = (subjectId: string | null = null): KernelRankingAnnotation => ({ boost: 0, factors: [], subjectId });
+const round2 = (n: number) => Math.round(n * 100) / 100;
+const intentWord = (intent: DecisionIntent) => intent.replace(/_/g, " ");
+
+/** The ids this candidate could be known by in the kernel (feed items carry a `place:` prefix). */
+function subjectKeysFor(item: CompassItem): string[] {
+  const keys: string[] = [];
+  const push = (v: unknown) => {
+    if (typeof v === "string" && v.length > 0 && !keys.includes(v)) keys.push(v);
+  };
+  push(item.id);
+  if (typeof item.id === "string") push(item.id.replace(/^[a-z_]+:/, ""));
+  push(item.placeId);
+  return keys;
+}
+
+/**
+ * The value of a density TO THIS VIEWER, 0..1, or null when it cannot be known
+ * — no declared intent, an `explore` intent (which has no crowd preference), or
+ * no density. Delegates to lib/compassDecision; this module owns no table of
+ * its own about what a crowd level is worth.
+ */
+function fitOfDensity(density: string | null | undefined, intent: DecisionIntent | null): number | null {
+  if (typeof density !== "string" || density.length === 0) return null;
+  const state: LiveStateSummary = {
+    live: true,
+    liveNonObservational: false,
+    emerging: false,
+    unsafe: false,
+    crowdLevel: density,
+    trajectory: null,
+    vibe: null,
+    walkIn: null,
+    queueMinMinutes: null,
+    horizonAt: null,
+    truth: UNKNOWN_TRUTH,
+    claimRefs: [],
+  };
+  const value = experienceValue(state, intent);
+  return value === null || !Number.isFinite(value) || value <= 0 ? null : value;
+}
+
+/**
+ * The shared projections' contribution to ONE candidate's rank.
+ *
+ * Pure and total: `null` projections, an unknown subject, an unreadable world
+ * or an unfitting one all return the same honest zero.
+ */
+export function kernelRankingForItem(
+  item: CompassItem,
+  projections: AskRankingProjections | null | undefined,
+): KernelRankingAnnotation {
+  if (!projections) return noKernelRanking();
+  const { kernel } = projections;
+  if (!kernel || !kernel.world || !Array.isArray(kernel.world.subjects)) return noKernelRanking();
+
+  const keys = subjectKeysFor(item);
+  const subject = kernel.world.subjects.find((s) => keys.includes(s.subjectId));
+  if (!subject) return noKernelRanking();
+
+  // Sensing §20 — safety suppression wins over promotion, before anything else
+  // is computed for this subject.
+  if (kernel.safety.suppressedSubjectIds.includes(subject.subjectId)) return noKernelRanking(subject.subjectId);
+
+  const intent = kernel.user.intent;
+  const factors: RankingFactor[] = [];
+  let boost = 0;
+
+  // World / experience: only a reading we may render as an observation counts.
+  // `readable: false` means the gates did not allow a look — not an empty city.
+  const observed =
+    subject.readable &&
+    projections.readable !== false &&
+    truthClassMayRenderAsObservation(subject.crowd.truth.truthClass);
+  const worldFit = observed ? fitOfDensity(subject.crowd.density, intent) : null;
+  if (worldFit !== null && intent) {
+    boost += round2(worldFit * KERNEL_WORLD_BOOST_MAX);
+    factors.push({
+      key: "shared_context_kernel",
+      label: `Fits your ${intentWord(intent)} intent right now (${subject.crowd.density})`,
+      weight: round2(worldFit),
+      detail: `shared context kernel; live reading, truth ${subject.crowd.truth.truthClass}`,
+    });
+  }
+
+  // Forecast: a refused or absent forecast is silence, never a neutral score.
+  const forecastFit = subject.forecast ? fitOfDensity(subject.forecast.expectedDensity, intent) : null;
+  if (forecastFit !== null && intent && subject.forecast) {
+    boost += round2(forecastFit * KERNEL_FORECAST_BOOST_MAX);
+    factors.push({
+      key: "shared_forecast_projection",
+      label: `Expected to fit your ${intentWord(intent)} intent by ${subject.forecast.predictedFor}`,
+      weight: round2(forecastFit),
+      detail: `shared forecast projection; predicted (${subject.forecast.expectedDensity}), truth ${subject.forecast.truth.truthClass}`,
+    });
+  }
+
+  // Opportunity: present only when the caller's flag read admitted it.
+  if (projections.opportunities) {
+    const promoted = projections.opportunities.find(
+      (o) => o.subjectId === subject.subjectId && (o.decision === "GO_NOW" || o.decision === "GO_SOON"),
+    );
+    const relevance = typeof promoted?.relevance === "number" ? promoted.relevance : null;
+    // Unreachable is a fact, not a detail: an opportunity the viewer cannot
+    // reach before its window decays must not promote the candidate.
+    if (promoted && relevance !== null && relevance > 0 && promoted.reachable !== false) {
+      const weight = Math.max(0, Math.min(1, relevance)) * (promoted.decision === "GO_NOW" ? 1 : 0.5);
+      if (weight > 0) {
+        boost += round2(weight * KERNEL_OPPORTUNITY_BOOST_MAX);
+        factors.push({
+          key: "shared_opportunity",
+          label: `Worth acting on now (${promoted.kind ?? "opportunity"})`,
+          weight: round2(weight),
+          detail: `shared opportunity projection; ${promoted.decision}`,
+        });
+      }
+    }
+  }
+
+  return { boost: round2(boost), factors, subjectId: subject.subjectId };
+}

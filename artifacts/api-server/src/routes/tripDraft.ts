@@ -84,9 +84,24 @@ router.post("/trips/draft-from-text", asyncHandler(async (req, res) => {
   }
   const { text } = parsed.data;
 
-  let draft: z.infer<typeof DraftSchema>;
+  // ── THE PROVIDER CALL, ON ITS OWN ──────────────────────────────────────────
+  // Separate from the parsing below, and that separation is the point. Both
+  // used to sit in ONE try/catch whose only exit was 400 `invalid_payload`
+  // 'could_not_extract' — so a missing API key, a 429, a provider 500, a DNS
+  // failure or a timeout answered with the same code and the same string as a
+  // model that genuinely found no trip in the text. `invalid_payload` is 400:
+  // a statement that the REQUEST was bad. None of those is the caller's doing
+  // and none is fixable by editing their sentence, yet `app/trip/new.tsx`
+  // rendered every one of them as "Could not generate a draft. Fill the form
+  // manually." — an outage reported as a fact about the user.
+  //
+  // `degraded_unavailable` is this codebase's code for "the work was NOT
+  // PERFORMED" (lib/http.ts RETRYABLE_CODES — it is the only retryable one),
+  // and it is what the ban gate sends for exactly this reason: refuse to make
+  // a claim that is not in evidence, in either direction.
+  let completion: unknown;
   try {
-    const completion = await getOpenAI().chat.completions.create({
+    completion = await getOpenAI().chat.completions.create({
       model:                 "gpt-4o-mini",
       temperature:           0,
       max_completion_tokens: 400,
@@ -100,7 +115,25 @@ router.post("/trips/draft-from-text", asyncHandler(async (req, res) => {
         },
       ],
     } as any);
+  } catch (err) {
+    // Operator-facing only. The provider's message can carry a key fragment or
+    // an upstream host, so it is logged and never put on the wire.
+    (req as any).log?.warn?.({ err }, "trip draft extractor unavailable — refusing to call it a bad request");
+    sendError(
+      res,
+      "degraded_unavailable",
+      "The trip draft service is unavailable right now. Please try again.",
+    );
+    return;
+  }
 
+  // ── WHAT CAME BACK ─────────────────────────────────────────────────────────
+  // The provider ANSWERED. Anything wrong from here is about the answer, not
+  // about availability, and 400 'could_not_extract' stays the right reply: a
+  // retry would fail identically, so telling the caller to retry would be the
+  // same lie in the other direction.
+  let draft: z.infer<typeof DraftSchema>;
+  try {
     const raw = String((completion as any).choices?.[0]?.message?.content ?? "").trim();
     const cleaned = raw.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "");
     const payload = JSON.parse(cleaned);

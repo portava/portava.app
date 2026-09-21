@@ -41,6 +41,11 @@ import { requireUser, sendError } from "../lib/http";
 import { nameVisibilitySet, presentedName } from "../lib/publicIdentity";
 import { getServiceClient } from "../lib/supabase";
 import { stampOverlayCol } from "../lib/postMediaOverlay";
+import { getDisplayTrustScores } from "../services/trust/TrustScoreService.js";
+import {
+  mayDiscloseGemIdentity,
+  resolveGemCoords,
+} from "../services/hiddenGems/HiddenGemPrivacyGuard.js";
 
 const router = Router();
 
@@ -531,19 +536,24 @@ router.get("/pulse", async (req, res) => {
       }
       const trustMap = new Map<string, number>();
       if (authorIdsForTrust.size > 0) {
-        try {
-          // Trust scores live in trust_profiles.overall_score (0043_trust_engine.sql);
-          // there is no user_trust_scores table. NUMERIC comes back as a string,
-          // so coerce to number.
-          const { data: trustRows } = await sc
-            .from("trust_profiles")
-            .select("user_id, overall_score")
-            .in("user_id", [...authorIdsForTrust]);
-          for (const r of (trustRows as any[]) ?? []) {
-            const score = Number(r.overall_score);
-            if (Number.isFinite(score)) trustMap.set(r.user_id as string, score);
-          }
-        } catch { /* non-fatal — trust scores contribute 0 when absent */ }
+        // Through the canonical seam (census-trust A17): TrustScoreService owns
+        // every read of trust_profiles, and it binds the error. The inline read
+        // this replaces did not — `const { data: trustRows } = await …` on a
+        // client that RESOLVES on failure, so an unreadable table produced an
+        // empty map and every author silently ranked as trustless.
+        const read = await getDisplayTrustScores(sc, [...authorIdsForTrust]);
+        if (read.state === "ok") {
+          for (const [id, score] of read.scores) trustMap.set(id, score);
+        } else {
+          // Ranking input, not an authorization gate, so the feed still serves —
+          // but it serves WITHOUT the trust term rather than with a fabricated
+          // one, and it says so in the log instead of looking like a feed where
+          // nobody has any trust.
+          req.log?.warn?.(
+            { reason: read.reason, authors: authorIdsForTrust.size },
+            "pulse ranking: trust scores unavailable — ranking without the trust term rather than treating every author as trustless",
+          );
+        }
       }
 
       // ── Official-publisher boost setup ───────────────────────────────────
@@ -1571,33 +1581,97 @@ router.get("/pulse/live", async (req, res) => {
       let gems: any[] | null = null;
       if (context === 'nearMe' && lat !== undefined && lng !== undefined) {
         // Proximity mode: fetch all active gems with coordinates, filter by radius
-        const { data } = await sc
+        // `sensitivity_level` and `submitted_by` are selected because the
+        // disclosure decision is made HERE, by the gem's own guard, and not by
+        // the WHERE clause: mayDiscloseGemIdentity grants the submitter a
+        // bypass on their own gem, which no single equality filter expresses.
+        // Reading a row the guard then drops is cheap and service-role internal;
+        // emitting one is not.
+        const { data, error } = await sc
           .from("hidden_gems")
-          .select("id, name, city, category, save_count, latitude, longitude")
+          .select("id, name, city, category, save_count, latitude, longitude, approx_latitude, approx_longitude, sensitivity_level, status, submitted_by")
           .eq("status", "active")
           .order("save_count", { ascending: false })
           .limit(100);
-        gems = ((data as any[]) ?? [])
-          .map((g: any) => ({
-            ...g,
-            _distKm: (g.latitude != null && g.longitude != null)
-              ? haversineKmGems(lat, lng, g.latitude as number, g.longitude as number)
-              : null,
-          }))
-          .filter((g: any) => g._distKm !== null && (g._distKm as number) <= NEAR_ME_RADIUS_KM)
+        if (error) {
+          // supabase-js resolves on a database error, so without this the rail
+          // renders "no gems near you" — a claim about a place — whenever the
+          // table is unreadable. The rail still degrades to empty (it is a
+          // discovery rail, not an answer the caller asked for), but the
+          // failure stops being invisible.
+          req.log?.warn(
+            { err: error, code: "live_pulse_gem_read_failed" },
+            "livePulse: nearMe gem read failed — no gems this request",
+          );
+        }
+        // ── DISCLOSURE GATE (HiddenGemPrivacyGuard) ─────────────────────────
+        // Both halves of the guard are reached from this path, in this order:
+        //
+        //  1. mayDiscloseGemIdentity — may this viewer be told the gem EXISTS?
+        //     Naming a gem is its own disclosure; the rule is the
+        //     `hidden_gems_public_read` RLS policy (migration 0043) that the
+        //     service client bypasses, plus the submitter's owner bypass.
+        //  2. resolveGemCoords — which coordinates may this viewer have?
+        //     The distance below is haversine from a CALLER-SUPPLIED lat/lng, so
+        //     it is the gem's position in another coordinate system: three
+        //     requests from three points trilaterate it. It must therefore be
+        //     computed only from coordinates the guard actually hands out, never
+        //     from the raw row. `coordsPrecision !== "exact"` means the caller is
+        //     not entitled to a distance and the gem is dropped rather than
+        //     ranged approximately (a 50 km rail cannot honestly use a
+        //     neighbourhood centroid).
+        //
+        // Step 1 runs first and is synchronous, so step 2 only ever sees gems
+        // that are public-or-owned and therefore never issues a DB read of its
+        // own.
+        //
+        // HONEST NOTE ON STEP 2: given step 1 it is currently REDUNDANT —
+        // mayDiscloseGemIdentity admits only public-or-owned gems, and
+        // resolveGemCoords returns "exact" for exactly those, so no row can be
+        // admitted by one and refused by the other. Hand-reverting step 2 alone
+        // leaves src/test/livePulseGemDisclosure.test.ts green, and that file
+        // says so rather than implying a proof it does not have. It is kept as
+        // defence in depth with a specific job: if the identity predicate is
+        // ever widened (say to include `approximate`), the distance still
+        // cannot be computed from coordinates the guard would not hand out.
+        const disclosable = ((data as any[]) ?? []).filter((g: any) =>
+          mayDiscloseGemIdentity(g, user.id),
+        );
+        const ranged: any[] = [];
+        for (const g of disclosable) {
+          const coords = await resolveGemCoords(g, sc, user.id, g.submitted_by ?? null, null);
+          if (coords.coordsPrecision !== "exact" || coords.lat == null || coords.lng == null) continue;
+          const distKm = haversineKmGems(lat, lng, coords.lat, coords.lng);
+          if (distKm > NEAR_ME_RADIUS_KM) continue;
+          ranged.push({ ...g, _distKm: distKm });
+        }
+        gems = ranged
           .sort((a: any, b: any) => (a._distKm as number) - (b._distKm as number))
           .slice(0, 3);
       } else {
         const gemCity = citySlug?.replace(/-/g, ' ');
         if (gemCity) {
-          const { data } = await sc
+          const { data, error } = await sc
             .from("hidden_gems")
-            .select("id, name, city, category, save_count")
+            .select("id, name, city, category, save_count, sensitivity_level, status, submitted_by")
             .eq("status", "active")
             .ilike("city", `%${gemCity}%`)
             .order("save_count", { ascending: false })
-            .limit(3);
-          gems = (data as any[]) ?? [];
+            .limit(12);
+          if (error) {
+            req.log?.warn(
+              { err: error, code: "live_pulse_gem_read_failed" },
+              "livePulse: city gem read failed — no gems this request",
+            );
+          }
+          // Same identity gate as the nearMe rail. No distance is published
+          // here, so only step 1 applies — but naming a non-public gem is
+          // itself the disclosure mayDiscloseGemIdentity exists to refuse.
+          // The fetch limit is raised above the display cap so the filter
+          // trims disclosable gems rather than the query trimming them first.
+          gems = ((data as any[]) ?? [])
+            .filter((g: any) => mayDiscloseGemIdentity(g, user.id))
+            .slice(0, 3);
         }
       }
 
@@ -1651,15 +1725,26 @@ router.get("/pulse/live", async (req, res) => {
         .slice(0, 2); // top 2 extra cities only
 
       for (const compassCity of uniqueCompassCities) {
-        const { data: picks } = await sc
+        const { data: picks, error: picksError } = await sc
           .from("hidden_gems")
-          .select("id, name, city, category, save_count")
+          .select("id, name, city, category, save_count, sensitivity_level, status, submitted_by")
           .eq("status", "active")
           .ilike("city", `%${compassCity}%`)
           .order("save_count", { ascending: false })
-          .limit(2);
+          .limit(8);
+        if (picksError) {
+          req.log?.warn(
+            { err: picksError, code: "live_pulse_gem_read_failed" },
+            "livePulse: compass pick gem read failed — no picks for this city",
+          );
+        }
 
-        for (const gem of (picks as any[]) ?? []) {
+        // Identity gate again: a Compass pick names the gem. Fetch limit raised
+        // above the display cap so the filter, not the query, does the trimming.
+        const disclosablePicks = ((picks as any[]) ?? [])
+          .filter((g: any) => mayDiscloseGemIdentity(g, user.id))
+          .slice(0, 2);
+        for (const gem of disclosablePicks) {
           addItem({
             id:                `compass:${gem.id as string}`,
             item_type:         'compass',

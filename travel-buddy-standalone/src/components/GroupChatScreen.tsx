@@ -54,6 +54,9 @@ import { getTripMembers, getCircleMembers, type FriendUser } from '../services/f
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
 import { MessageEntrance, useMessageEntranceGate } from './MessageEntrance.tsx';
+import { SharedContextRail } from '../features/telegraph/index.ts';
+import { PortavaObjectMessage } from '../features/telegraph/sharing/PortavaObjectMessage.tsx';
+import { deriveReceiptState, deriveSeenBy } from '../features/telegraph/lifecycle/lifecycleApi.ts';
 import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
 import { localDateKey, localTodayKey } from '../utils/localDate.ts';
 
@@ -293,6 +296,7 @@ function GroupMessageBubble({
   mine,
   onLongPress,
   receiptState,
+  receiptSeenBy,
   readerAvatars,
   autoTranslate,
   defaultShowOriginal,
@@ -302,7 +306,9 @@ function GroupMessageBubble({
   item: Message;
   mine: boolean;
   onLongPress?: () => void;
-  receiptState?: 'sent' | 'delivered' | 'read' | null;
+  receiptState?: 'sent' | 'read' | null;
+  /** §7.3's "Seen by N" for a group. Null renders the plain "Seen". */
+  receiptSeenBy?: number | null;
   /** Up to 3 avatar URIs of members who've read past this message. */
   readerAvatars?: string[];
   autoTranslate: boolean;
@@ -416,15 +422,13 @@ function GroupMessageBubble({
       {/* Read receipt — shown on every confirmed own message */}
       {mine && receiptState && deliveryStatus !== 'sending' && deliveryStatus !== 'failed' && (
         <View style={styles.receiptRow}>
+          {/* §7.3: Sent or Seen. There is no DELIVERED to report. */}
           {receiptState === 'read' ? (
             <>
               <CheckCheck size={11} color={color.signal} />
-              <Text style={styles.receiptSent}>Read</Text>
-            </>
-          ) : receiptState === 'delivered' ? (
-            <>
-              <CheckCheck size={11} color={color.mute} />
-              <Text style={[styles.receiptSent, { color: color.mute }]}>Delivered</Text>
+              <Text style={styles.receiptSent}>
+                {receiptSeenBy && receiptSeenBy > 1 ? `Seen by ${receiptSeenBy}` : 'Seen'}
+              </Text>
             </>
           ) : (
             <>
@@ -555,17 +559,31 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
     return items;
   }, [messages]);
 
-  // Per-message receipt: 'delivered' once confirmed (>3 s), 'sent' while fresh.
-  // Reader avatar chips (readerAvatarsForMsg) surface WHO read, complementing the state label.
-  const receiptForMsg = useCallback((msg: Message): 'sent' | 'delivered' | null => {
-    const ageSecs = (Date.now() - new Date(msg.createdAt).getTime()) / 1000;
-    return ageSecs > 3 ? 'delivered' : 'sent';
-  }, []);
 
   // Group-thread member reads — fetched once per thread to drive per-message reader chips.
   const [groupMemberReads, setGroupMemberReads] = useState<
     { userId: string; lastReadAt: string | null; avatarUrl: string | null }[]
   >([]);
+  /**
+   * Telegraph §7.3 — the per-message receipt, derived from measured reads.
+   *
+   * THIS USED TO FABRICATE "DELIVERED": `ageSecs > 3 ? 'delivered' : 'sent'`
+   * showed a double tick because three seconds had elapsed. Nothing on this
+   * deployment produces a delivery signal — no per-device acknowledgement, no
+   * `lastDeliveredSequence` — so a "Delivered" tick was a claim about the
+   * recipient's device that nobody measured. DELIVERED is gone; what remains is
+   * SEEN, from the same `last_read_at` predicate §7.4's unsend window uses, and
+   * SENT otherwise.
+   */
+  const receiptForMsg = useCallback((msg: Message): 'sent' | 'read' | null => {
+    return deriveReceiptState({ createdAt: msg.createdAt, memberReads: groupMemberReads });
+  }, [groupMemberReads]);
+
+  /** §7.3's "Seen by N". */
+  const seenByForMsg = useCallback((msg: Message): number | null => {
+    return deriveSeenBy(msg.createdAt, groupMemberReads);
+  }, [groupMemberReads]);
+
 
   useEffect(() => {
     if (!thread?.id) return;
@@ -790,6 +808,12 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
         )}
       </View>
 
+      {/* Telegraph §3: the Shared Context Rail, on the group surface too —
+          "at the top of EACH conversation". Renders nothing when the pair (or
+          crew) shares no canonical mutual state, and nothing when the read
+          failed. */}
+      {thread?.id ? <SharedContextRail threadId={thread.id} /> : null}
+
       <FlatList
         ref={listRef}
         data={listItems}
@@ -812,6 +836,23 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
           }
           const m = item.data;
           const mine = m.senderId === userId;
+          // Telegraph §6.2 PORTAVA_OBJECT — a typed REFERENCE, resolved for
+          // this viewer at render (§5.2) and degraded when revoked (§5.3).
+          if (m.msgType === 'portava_object') {
+            return (
+              <MessageEntrance
+                animate={shouldAnimateMessage(m.clientId ?? m.id, m.createdAt)}
+                style={[styles.bubbleRow, mine && styles.bubbleRowMine]}
+              >
+                <PortavaObjectMessage
+                  body={m.body ?? null}
+                  mine={mine}
+                  threadId={thread?.id ?? null}
+                  messageId={m.id}
+                />
+              </MessageEntrance>
+            );
+          }
           // System-event messages render as centred pill labels
           if (m.msgType === 'system') {
             return (
@@ -872,6 +913,7 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
                   setActionMsgMine(mine);
                 }}
                 receiptState={mine ? receiptForMsg(m) : null}
+                receiptSeenBy={mine ? seenByForMsg(m) : null}
                 readerAvatars={mine ? readerAvatarsForMsg(m) : undefined}
                 autoTranslate={autoTranslate}
                 defaultShowOriginal={defaultShowOriginal}

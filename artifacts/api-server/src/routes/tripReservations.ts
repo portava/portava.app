@@ -14,12 +14,23 @@
  *   DELETE /trips/:tripId/reservations/:id          — creator or trip owner
  */
 import { Router } from "express";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { asyncHandler } from "../lib/asyncHandler.js";
+import {
+  tripKernelClient,
+  readCommandEnvelope,
+  executeTripCommand,
+  sendKernelRejection,
+  setTripVersionHeader,
+} from "../domain/trips/commands/tripKernel.js";
 import { requireUser, requireTripMember, sendError } from "../lib/http.js";
+import { canManageBooking } from "../domain/trips/policies/tripPolicy.js";
+import { sendTripRefusal } from "../domain/trips/contracts/tripReasonCodes.js";
+import { reservationHistoryGate } from "../domain/trips/events/tripReservationHistory.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
-import { extractReservations, RESERVATION_TYPES } from "../lib/reservationExtract.js";
+import { extractReservations, RESERVATION_TYPES } from "../server/trips/integrationAdapters/reservationExtract.js";
 
 const router = Router();
 const UUID_RE = /^[0-9a-f-]{36}$/i;
@@ -64,20 +75,27 @@ async function requireReservationMember(
     return null;
   }
 
-  const { data: trip } = await sc
+  // `error` is bound because `!trip` is this gate's whole answer. Unbound, a
+  // failed read became "Trip not found" — a confident, non-retryable claim
+  // about a trip nobody actually looked at. Unreadable is not absent.
+  const { data: trip, error: tripErr } = await sc
     .from("trips")
     .select("id, owner_id")
     .eq("id", tripId)
     .maybeSingle();
+  if (tripErr) {
+    sendError(res, "degraded_unavailable", "We could not read this trip right now. Please try again shortly.");
+    return null;
+  }
   if (!trip) { sendError(res, "not_found", "Trip not found"); return null; }
 
-  const isOwner = (trip as any).owner_id === user.id;
-  let role = "owner";
-  if (!isOwner) {
-    const membership = await requireTripMember(sc, tripId, user.id);
-    if (!membership) { sendError(res, "not_member", "You must be an accepted trip member"); return null; }
-    role = membership.role;
-  }
+  // §6.1 canManageBooking: any accepted crew member may read and edit
+  // reservations. requireTripMember already answers "owner" for the trip's
+  // owner_id with no membership row, so one call covers both.
+  const membership = await requireTripMember(sc, tripId, user.id);
+  const booking = await canManageBooking(sc, { userId: user.id }, tripId, "read", { role: membership?.role ?? null });
+  if (!booking.allowed) { sendTripRefusal(res, "not_member", booking.reason, "You must be an accepted trip member"); return null; }
+  const role = membership?.role ?? "owner";
 
   return { sc, userId: user.id, trip, role };
 }
@@ -101,6 +119,15 @@ async function fetchReservation(
     .maybeSingle();
   if (!data) { sendError(res, "not_found", "Reservation not found"); return null; }
   return data;
+}
+
+/** `If-Match: 3` or `If-Match: "3"` → 3; absent or unparseable → null. */
+function readIfMatch(req: any): number | null {
+  const raw = req.headers?.["if-match"];
+  const text = Array.isArray(raw) ? raw[0] : raw;
+  if (typeof text !== "string") return null;
+  const m = /^\s*(?:W\/)?"?(\d+)"?\s*$/.exec(text);
+  return m ? Number(m[1]) : null;
 }
 
 /** creator OR trip owner/co_host may edit / confirm / dismiss. */
@@ -138,6 +165,66 @@ router.post("/trips/:tripId/reservations/import", asyncHandler(async (req, res) 
     return;
   }
 
+  // ── §15.2: a RE-import is a new VERSION of a fact, not a second fact ──────
+  //
+  // census-trips TR290. §15.2 asks for cancellation / refund policies
+  // "imported as VERSIONED facts, treated with provenance and confidence".
+  // Provenance and confidence were already kept per row (0172's `raw_text`,
+  // `extraction`, `extraction_confidence`) and 2784 added the version:
+  // `trip_reservations.version`, bumped by trigger on every UPDATE, with an
+  // append-only `trip_reservation_events` row naming the keys that changed.
+  //
+  // What was missing was the writer. This route INSERTED unconditionally, so
+  // pasting the airline's "your booking has changed" email produced a SECOND
+  // reservation beside the first — two rows, two cancellation deadlines, no
+  // relation between them and nothing to say which is current. The policy had
+  // no history because it had no identity.
+  //
+  // THE MATCH, AND WHY IT IS THIS NARROW. `confirmation_ref` is the only
+  // identifier a booking carries that survives a reschedule (the times are
+  // exactly what changes). It is matched together with `type`, and ONLY when
+  // it resolves to exactly ONE live row: one PNR routinely covers an outbound
+  // and a return, and collapsing two flights into one is a worse outcome than
+  // a duplicate a member can delete. An ambiguous ref therefore inserts, and
+  // the response says so rather than picking.
+  //
+  // STATUS IS NEVER PATCHED. Re-reading the email does not un-confirm a
+  // booking the member already confirmed, and does not resurrect one they
+  // dismissed — only the FACTS move, and `updated_at` with them.
+  // One key per (reference, type). JSON rather than a joined string so a
+  // reference that happens to contain the separator cannot collide with a
+  // different pair — a booking reference is whatever the airline printed.
+  const refTypeKey = (ref: string, type: string) => JSON.stringify([ref.trim(), type]);
+  const refsWanted = [...new Set(
+    extraction.reservations
+      .map((r) => (typeof r.confirmationRef === "string" ? r.confirmationRef.trim() : ""))
+      .filter((ref) => ref.length > 0),
+  )];
+  const existingByKey = new Map<string, { id: string; version: number | null } | "ambiguous">();
+  if (refsWanted.length > 0) {
+    const { data: priorRows, error: priorErr } = await sc
+      .from("trip_reservations")
+      .select("id, type, confirmation_ref, status, version")
+      .eq("trip_id", (trip as any).id)
+      .in("confirmation_ref", refsWanted);
+    // FAIL CLOSED. supabase-js RESOLVES on a database error, so an unbound
+    // error here reads exactly like "no reservation has this reference" and
+    // the import would go on to insert a duplicate of every booking on the
+    // trip. The import is safe to retry; a duplicated itinerary is not.
+    if (priorErr) {
+      req.log?.error({ err: priorErr, tripId: (trip as any).id }, "reservation import: existing-reference lookup failed — refusing to import");
+      sendError(res, "degraded_unavailable", "We could not check this trip's existing bookings right now. Please try again shortly.");
+      return;
+    }
+    for (const row of ((priorRows ?? []) as any[])) {
+      if (String(row.status) === "cancelled") continue;
+      const key = refTypeKey(String(row.confirmation_ref), String(row.type));
+      const seen = existingByKey.get(key);
+      if (seen === undefined) existingByKey.set(key, { id: String(row.id), version: typeof row.version === "number" ? row.version : null });
+      else existingByKey.set(key, "ambiguous");
+    }
+  }
+
   // Every extracted row lands as pending_confirm — extraction NEVER
   // auto-commits to the plan; that only happens via explicit /confirm.
   const rows = extraction.reservations.map((r) => ({
@@ -157,14 +244,95 @@ router.post("/trips/:tripId/reservations/import", asyncHandler(async (req, res) 
     created_from:             "paste",
   }));
 
-  const { data: inserted, error } = await sc
-    .from("trip_reservations")
-    .insert(rows)
-    .select("*");
-  if (error) { sendError(res, "db_error", error.message); return; }
+  // Split the extraction into the rows that are a NEW version of a booking
+  // this trip already holds, and the rows that are new bookings.
+  type ImportRow = (typeof rows)[number];
+  const updates: { id: string; original: ImportRow }[] = [];
+  const inserts: ImportRow[] = [];
+  let ambiguousReferences = 0;
+  for (const row of rows) {
+    const ref = typeof row.confirmation_ref === "string" ? row.confirmation_ref.trim() : "";
+    const match = ref.length > 0 ? existingByKey.get(refTypeKey(ref, row.type)) : undefined;
+    if (match === "ambiguous") { ambiguousReferences += 1; inserts.push(row); continue; }
+    if (match === undefined) { inserts.push(row); continue; }
+    // The columns this update writes are named at the UPDATE itself, below.
+    updates.push({ id: match.id, original: row });
+  }
+
+  const written: any[] = [];
+  let updatedCount = 0;
+  // One statement per updated booking: 2784's history row is per row, and a
+  // bulk write would not tell these two cases apart in the history either.
+  for (const u of updates) {
+    // `status`, `created_from`, `user_id` and `trip_id` are deliberately NOT
+    // written: the booking keeps the state and the attribution it already has,
+    // and only the facts (and their provenance) take a new version.
+    //
+    // NAMED HERE, in the call, rather than spread from a four-key omission
+    // held in a variable. Two reasons, and the second is the substantive one:
+    //
+    //   - check:write-path-columns resolves the payload of an `.update()` only
+    //     when it is a literal at the call. A spread, or a variable built
+    //     earlier, makes this write a blind spot its live column check skips
+    //     entirely — this site was reported as exactly that.
+    //   - the omission was SUBTRACTIVE. Any column a later edit adds to the
+    //     extraction rows above would have been carried silently into this
+    //     UPDATE, including the next column whose whole point is that an
+    //     import must not overwrite it. Naming the ten fact columns makes the
+    //     rule above true by construction rather than by remembering to extend
+    //     a destructure.
+    const { data: updated, error: updErr } = await sc
+      .from("trip_reservations")
+      .update({
+        type:                     u.original.type,
+        title:                    u.original.title,
+        starts_at:                u.original.starts_at,
+        ends_at:                  u.original.ends_at,
+        location_name:            u.original.location_name,
+        confirmation_ref:         u.original.confirmation_ref,
+        cancellation_deadline_at: u.original.cancellation_deadline_at,
+        raw_text:                 u.original.raw_text,
+        extraction:               u.original.extraction,
+        extraction_confidence:    u.original.extraction_confidence,
+        updated_at:               new Date().toISOString(),
+      })
+      .eq("id", u.id)
+      .select("*")
+      .maybeSingle();
+    if (updErr) { sendError(res, "db_error", updErr.message); return; }
+    // A row that vanished between the lookup and the write (a concurrent
+    // delete) is not an error and is not silently dropped: it is imported as a
+    // new booking instead, which is what it now is.
+    if (updated) { written.push(updated); updatedCount += 1; }
+    else inserts.push(u.original);
+  }
+
+  if (inserts.length > 0) {
+    const { data: inserted, error } = await sc
+      .from("trip_reservations")
+      .insert(inserts)
+      .select("*");
+    if (error) { sendError(res, "db_error", error.message); return; }
+    written.push(...((inserted as any[]) ?? []));
+  }
 
   res.status(201).json({
-    reservations: (inserted as any[]) ?? [],
+    reservations: written,
+    /**
+     * §15.2 (census-trips TR290): how many of these were a new VERSION of a
+     * booking this trip already held rather than a new booking. A client that
+     * says "3 bookings imported" after a reschedule email is telling the
+     * member something false; this is what lets it say "2 updated, 1 added".
+     */
+    updatedCount,
+    createdCount: inserts.length,
+    /**
+     * References that matched more than one live booking of the same type and
+     * were therefore imported as new rows rather than merged into one of them.
+     * Named because the alternative to naming it is a duplicate the member
+     * cannot explain.
+     */
+    ambiguousReferences,
     needsConfirmation: true,
   });
 }));
@@ -289,6 +457,34 @@ router.patch("/trips/:tripId/reservations/:id", asyncHandler(async (req, res) =>
   if (p.confirmationRef        !== undefined) patch.confirmation_ref         = p.confirmationRef;
   if (p.cancellationDeadlineAt !== undefined) patch.cancellation_deadline_at = toIsoOrNull(p.cancellationDeadlineAt);
 
+  // §18.3 (2784): optimistic concurrency on the ROW version. An If-Match that
+  // names a version the row no longer has is a conflict, stated by name, and
+  // nothing is written. Legacy behaviour — last write wins — where the gate is
+  // off or the schema is not there.
+  const history = await reservationHistoryGate(sc);
+  const ifMatch = readIfMatch(req);
+  if (history.enabled && ifMatch !== null) {
+    if (ifMatch !== Number((reservation as any).version ?? 0)) {
+      sendTripRefusal(res, "conflict", "TRIP_VERSION_CONFLICT",
+        `If-Match ${ifMatch} does not match the reservation's version ${(reservation as any).version}`);
+      return;
+    }
+    const { data: updated, error } = await sc
+      .from("trip_reservations")
+      .update(patch)
+      .eq("id", (reservation as any).id)
+      .eq("version", ifMatch)
+      .select("*")
+      .maybeSingle();
+    if (error) { sendError(res, "db_error", error.message); return; }
+    if (!updated) {
+      sendTripRefusal(res, "conflict", "TRIP_VERSION_CONFLICT", "The reservation changed while you were editing it");
+      return;
+    }
+    res.setHeader("ETag", String((updated as any).version));
+    res.json({ reservation: updated });
+    return;
+  }
   const { data: updated, error } = await sc
     .from("trip_reservations")
     .update(patch)
@@ -296,6 +492,7 @@ router.patch("/trips/:tripId/reservations/:id", asyncHandler(async (req, res) =>
     .select("*")
     .single();
   if (error) { sendError(res, "db_error", error.message); return; }
+  if (history.enabled) res.setHeader("ETag", String((updated as any).version));
 
   res.json({ reservation: updated });
 }));
@@ -337,7 +534,13 @@ router.post("/trips/:tripId/reservations/:id/confirm", asyncHandler(async (req, 
   let planItem: any = null;
   if (addToPlan) {
     // Duplicate guard: one plan item per reservation (source_id = reservation id).
-    const { data: dup } = await sc
+    // supabase-js RESOLVES on a DB error, so an unbound `error` read an
+    // unreadable trip_plan_items as "not in the plan yet" and added a SECOND
+    // plan item for this reservation on every confirm — two identical hotel /
+    // flight rows in the trip timeline, each visible to the whole crew. The
+    // reservation itself is already confirmed above and that update is
+    // idempotent, so refusing here leaves a retry clean.
+    const { data: dup, error: dupErr } = await sc
       .from("trip_plan_items")
       .select("id")
       .eq("trip_id", (trip as any).id)
@@ -346,10 +549,58 @@ router.post("/trips/:tripId/reservations/:id/confirm", asyncHandler(async (req, 
       .is("removed_at", null)
       .maybeSingle();
 
+    if (dupErr) {
+      req.log.error({ err: dupErr, reservationId: (reservation as any).id }, "reservation plan-item duplicate check failed — reservation confirmed, plan item not added");
+      sendError(res, "db_error", dupErr.message);
+      return;
+    }
+
     if (dup) {
       planItem = dup;
     } else {
       const startsAt: string | null = (reservation as any).starts_at ?? null;
+      // Trip Kernel path (§4.1 ADD_PLAN, capability crew). requireReservationMember
+      // + canManageReservation above are the authorization; the kernel re-checks
+      // crew. The payload is the direct insert's column set, key for key. Off =>
+      // the insert below.
+      const kernel = await tripKernelClient(sc);
+      if (kernel) {
+        const env = readCommandEnvelope(req);
+        if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+        const r = await executeTripCommand(kernel, {
+          commandId: randomUUID(),
+          tripId: (trip as any).id,
+          actorUserId: userId,   // always from token
+          expectedTripVersion: env.expectedTripVersion,
+          idempotencyKey: env.idempotencyKey,
+          type: "ADD_PLAN",
+          payload: {
+            title:               (reservation as any).title,
+            category:            PLAN_CATEGORY_MAP[(reservation as any).type] ?? "other",
+            status:              "confirmed",
+            source_type:         "manual",
+            source_id:           (reservation as any).id,
+            day_date:            startsAt ? String(startsAt).slice(0, 10) : null,
+            starts_at:           startsAt,
+            ends_at:             (reservation as any).ends_at ?? null,
+            location_name:       (reservation as any).location_name ?? null,
+            lat:                 null,
+            lng:                 null,
+            location_is_private: false,
+            notes:               (reservation as any).confirmation_ref
+              ? `Confirmation: ${(reservation as any).confirmation_ref}`
+              : null,
+            sort_order:          0,
+            lock_type:           startsAt ? "fixed" : "flexible",
+            visibility:          "members",
+          },
+        });
+        if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+        setTripVersionHeader(res, r.version);
+        res.json({ reservation: updated, planItem: r.result });
+        return;
+      }
+      // trip-kernel:legacy-path — flag-off twin of ADD_PLAN above.
       // Column shape mirrors POST /trips/:tripId/plan/items (src/routes/trips.ts).
       const { data: item, error: planError } = await sc
         .from("trip_plan_items")
@@ -421,10 +672,35 @@ router.delete("/trips/:tripId/reservations/:id", asyncHandler(async (req, res) =
   const reservation = await fetchReservation(sc, res, (trip as any).id, req.params.id);
   if (!reservation) return;
 
-  // Delete is stricter than edit: creator or trip OWNER only.
-  const isCreator = (reservation as any).user_id === userId;
-  if (!isCreator && role !== "owner") {
-    sendError(res, "forbidden", "Only the reservation creator or trip owner can delete it");
+  // Delete is stricter than edit: creator or trip OWNER only — §6.1
+  // canManageBooking("delete"), with the creator read off the row in hand.
+  const del = await canManageBooking(sc, { userId }, (trip as any).id, "delete",
+    { role, reservationCreatorId: (reservation as any).user_id ?? null });
+  if (!del.allowed) {
+    sendTripRefusal(res, "forbidden", del.reason, "Only the reservation creator or trip owner can delete it");
+    return;
+  }
+
+  // §15.4 (2784): a reservation is CANCELLED, never deleted by a client —
+  // "confirmed then cancelled, not confirmed row deleted". The history row
+  // names who did it (portava.actor is what the trigger reads; the service
+  // client cannot set a transaction GUC through PostgREST, so the actor is
+  // recorded on the compensation path and the cancel event carries the
+  // change itself). Legacy hard delete where the gate is off.
+  const history = await reservationHistoryGate(sc);
+  if (history.enabled) {
+    if ((reservation as any).status === "cancelled") {
+      res.json({ reservation, idempotent: true });
+      return;
+    }
+    const { data: cancelled, error } = await sc
+      .from("trip_reservations")
+      .update({ status: "cancelled", cancelled_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+      .eq("id", (reservation as any).id)
+      .select("*")
+      .single();
+    if (error) { sendError(res, "db_error", error.message); return; }
+    res.json({ reservation: cancelled });
     return;
   }
 
@@ -435,6 +711,64 @@ router.delete("/trips/:tripId/reservations/:id", asyncHandler(async (req, res) =
   if (error) { sendError(res, "db_error", error.message); return; }
 
   res.status(204).end();
+}));
+
+// ── GET /trips/:tripId/reservations/:id/history — §15.4 ───────────────────────
+
+router.get("/trips/:tripId/reservations/:id/history", asyncHandler(async (req, res) => {
+  const ctx = await requireReservationMember(req, res);
+  if (!ctx) return;
+  const { sc, trip } = ctx;
+  const reservation = await fetchReservation(sc, res, (trip as any).id, req.params.id);
+  if (!reservation) return;
+  const history = await reservationHistoryGate(sc);
+  if (!history.enabled) { sendError(res, "feature_disabled", `Reservation history is not enabled (${history.reason})`); return; }
+  const { data, error } = await sc
+    .from("trip_reservation_events")
+    .select("id, event_type, from_status, to_status, version, actor_user_id, changed_keys, payload_json, created_at")
+    .eq("reservation_id", (reservation as any).id)
+    .order("id", { ascending: true });
+  if (error) { sendError(res, "db_error", error.message); return; }
+  res.json({ reservationId: (reservation as any).id, version: (reservation as any).version ?? null, events: (data as any[]) ?? [] });
+}));
+
+// ── POST /trips/:tripId/reservations/:id/compensation — §15.4 ─────────────────
+
+const CompensationSchema = z.object({
+  amountMinor: z.number().int().nonnegative().optional(),
+  currency: z.string().regex(/^[A-Z]{3}$/).optional(),
+  note: z.string().max(500).optional(),
+  kind: z.enum(["refund", "voucher", "credit", "rebooking", "other"]).optional().default("other"),
+});
+
+router.post("/trips/:tripId/reservations/:id/compensation", asyncHandler(async (req, res) => {
+  const ctx = await requireReservationMember(req, res);
+  if (!ctx) return;
+  const { sc, userId, trip, role } = ctx;
+  const reservation = await fetchReservation(sc, res, (trip as any).id, req.params.id);
+  if (!reservation) return;
+  if (!canManageReservation(reservation, userId, role)) {
+    sendError(res, "forbidden", "Only the reservation creator or trip owner/co-host can record compensation");
+    return;
+  }
+  const history = await reservationHistoryGate(sc);
+  if (!history.enabled) { sendError(res, "feature_disabled", `Reservation history is not enabled (${history.reason})`); return; }
+  const parsed = CompensationSchema.safeParse(req.body ?? {});
+  if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
+  const p = parsed.data;
+  const { data, error } = await sc.rpc("trip_reservation_record_compensation", {
+    p_reservation_id: (reservation as any).id, p_actor: userId,
+    p_payload: { kind: p.kind, amount_minor: p.amountMinor ?? null, currency: p.currency ?? null, note: p.note ?? null },
+  });
+  if (error) { sendError(res, "db_error", error.message); return; }
+  const r = (data ?? {}) as { ok?: boolean; reason?: string; detail?: string; event_id?: number; version?: number };
+  if (!r.ok) {
+    if (r.reason === "TRIP_BOOKING_NOT_FOUND") { sendTripRefusal(res, "not_found", "TRIP_BOOKING_NOT_FOUND", "Reservation not found"); return; }
+    if (r.reason === "TRIP_BOOKING_HISTORY_APPEND_ONLY") { sendTripRefusal(res, "conflict", "TRIP_BOOKING_HISTORY_APPEND_ONLY", r.detail ?? "Compensation is recorded against a cancelled reservation"); return; }
+    sendError(res, "invalid_payload", r.detail ?? "Compensation refused");
+    return;
+  }
+  res.status(201).json({ ok: true, eventId: r.event_id ?? null, version: r.version ?? null });
 }));
 
 export default router;
