@@ -3556,7 +3556,7 @@ users.
    a half-person for a blocked traveller, which is what CP-02 forbids.
 5. **A whitespace-only display name reaching every consumer as a nameless person,** because
    `buildIdentity` rebuilt the display-name rule with its own `??` chain and dropped the blank check
-   the canonical rule applies. Now composes it: `artifacts/api-server/src/services/passport/PassportProjectionService.ts:864#name: presentedName(named, true)`.
+   the canonical rule applies. Now composes it: `artifacts/api-server/src/services/passport/PassportProjectionService.ts:877#name: presentedName(named, true)`.
 6. **A source file was committed as 0 bytes.** A lane used `git stash` in the shared working tree to
    measure a baseline; the file was truncated mid-operation and an integration checkpoint captured
    it in that state. Caught by reading the committed blob sizes, restored from the byte-identical
