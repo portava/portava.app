@@ -96,6 +96,9 @@ interface ClientDescriptor {
   privacyClass: string;
   minChars: string;
   offlinePolicy: string;
+  defaultMode: string;
+  /** null when the entry's list could not be resolved — reported, never silently 0. */
+  allowedSuggestionTypes: string[] | null;
 }
 
 /** This side's union, read from the type rather than restated. */
@@ -138,6 +141,10 @@ function readClientPrivacyClassUnion(): Set<string> {
  */
 function readClientRegistry(): Map<string, ClientDescriptor> {
   const src = fs.readFileSync(CLIENT_REGISTRY, "utf8");
+  const CLIENT_TYPE_CONSTANTS = new Map<string, string[]>();
+  for (const m of src.matchAll(/^const (\w+): AssistanceType\[\] = \[([^\]]*)\];/gm)) {
+    CLIENT_TYPE_CONSTANTS.set(m[1]!, [...m[2]!.matchAll(/'([^']+)'/g)].map((x) => x[1]!));
+  }
   const out = new Map<string, ClientDescriptor>();
   const blockRe = /\n {2}(\w+): \{\n([\s\S]*?)\n {2}\},/g;
   let m: RegExpExecArray | null;
@@ -151,11 +158,26 @@ function readClientRegistry(): Map<string, ClientDescriptor> {
     // Only entries that look like a context descriptor.
     const pers = field("allowPersonalization");
     if (pers === null) continue;
+    // `allowedSuggestionTypes` is written EITHER as an inline array OR as one of
+    // the shared constants declared at the top of the client file
+    // (ENTITY_PICKER_TYPES, SEARCH_TYPES, …). Resolving the constant is what
+    // makes this comparable at all — reading the identifier as a value would
+    // compare the string "ENTITY_PICKER_TYPES" against a list and report every
+    // context as drifted, which is a finding with no information in it.
+    const rawTypes = /allowedSuggestionTypes:\s*(\[[^\]]*\]|\w+)/.exec(body)?.[1] ?? null;
+    let types: string[] | null = null;
+    if (rawTypes !== null) {
+      types = rawTypes.startsWith("[")
+        ? [...rawTypes.matchAll(/'([^']+)'/g)].map((x) => x[1]!)
+        : (CLIENT_TYPE_CONSTANTS.get(rawTypes) ?? null);
+    }
     out.set(name, {
       allowPersonalization: pers === "true",
       privacyClass: field("privacyClass") ?? "(default)",
       minChars: field("minChars") ?? "(default)",
       offlinePolicy: field("offlinePolicy") ?? "(default)",
+      defaultMode: field("defaultMode") ?? "(default)",
+      allowedSuggestionTypes: types,
     });
   }
   return out;
@@ -200,6 +222,81 @@ describe("§48 — the client policy registry mirrors the server authority", () 
     assert.ok(
       enabled.length > 0 && enabled.length < KNOWN_CONTEXTS.length,
       "the server registry must contain BOTH personalization-enabled and personalization-disabled contexts",
+    );
+  });
+
+  // ── 2026-09-21: `allowedSuggestionTypes` and `defaultMode`, RATCHETED ───────
+  //
+  // Found while grading G46, whose third clause asks for exactly this guard:
+  // "a parity assertion over `allowedSuggestionTypes` so the two registries
+  // cannot disagree about it again."
+  //
+  // THEY DISAGREE IN 27 OF 29 CONTEXTS, and in 3 of 29 on `defaultMode`. Those
+  // are the numbers below, and they are CEILINGS rather than zeroes for a
+  // reason that is worth stating rather than hiding behind a lower bar:
+  // aligning the mirror to the authority is mechanically safe — nothing on the
+  // client reads its copy — but the 30 values it would commit encode product
+  // decisions this test may not invent. `display_name` is the sharp one: the
+  // SERVER calls it a `search` context serving `['entity']`, the CLIENT calls
+  // it `no_assistance` with an empty list, and whether a person's display-name
+  // field should offer people-search suggestions is a question for an owner,
+  // not a merge.
+  //
+  // WHY A CEILING IS WORTH HAVING ANYWAY. This is the shape `privacyClass` had
+  // until 2026-09-21: declared on both sides, read on one, drifted on 14 of 29
+  // — and two of those ran the UNSAFE way, which nobody noticed until it was
+  // measured. The server enforces `allowedSuggestionTypes` at ~14 decision
+  // points in the gateway. A mirror that may quietly drift further is how the
+  // next such surprise gets built; a ceiling means it can only shrink.
+  //
+  // The real fix is G340 (a policy endpoint with the local registry demoted to
+  // a cold-start fallback), which deletes the mirror rather than aligning it.
+  const MAX_SUGGESTION_TYPE_DRIFT = 27;
+  const MAX_DEFAULT_MODE_DRIFT = 3;
+
+  it(`drifts from the server on allowedSuggestionTypes in at most ${MAX_SUGGESTION_TYPE_DRIFT} contexts`, () => {
+    const client = readClientRegistry();
+    const unresolved: string[] = [];
+    const drifted: string[] = [];
+    for (const ctx of KNOWN_CONTEXTS) {
+      const server = resolvePolicy(ctx)!;
+      const c = client.get(ctx);
+      assert.ok(c, `client descriptor missing for ${ctx}`);
+      if (c!.allowedSuggestionTypes === null) { unresolved.push(ctx); continue; }
+      const a = [...server.allowedSuggestionTypes].sort().join(",");
+      const b = [...c!.allowedSuggestionTypes!].sort().join(",");
+      if (a !== b) drifted.push(`${ctx}: server=[${a}] client=[${b}]`);
+    }
+    // An unresolvable entry is NOT a pass. If the client file's layout changes
+    // so the lists stop parsing, every context would silently read "no drift".
+    assert.deepEqual(
+      unresolved,
+      [],
+      `these client entries' allowedSuggestionTypes could not be resolved, so the count below would understate the drift:\n  ${unresolved.join("\n  ")}`,
+    );
+    assert.ok(
+      drifted.length <= MAX_SUGGESTION_TYPE_DRIFT,
+      `allowedSuggestionTypes drift grew to ${drifted.length} (ceiling ${MAX_SUGGESTION_TYPE_DRIFT}). LOWER the ceiling when you fix one; never raise it:\n  ${drifted.join("\n  ")}`,
+    );
+  });
+
+  it(`drifts from the server on defaultMode in at most ${MAX_DEFAULT_MODE_DRIFT} contexts`, () => {
+    const client = readClientRegistry();
+    const drifted: string[] = [];
+    for (const ctx of KNOWN_CONTEXTS) {
+      const server = resolvePolicy(ctx)!;
+      const c = client.get(ctx);
+      assert.ok(c, `client descriptor missing for ${ctx}`);
+      if (c!.defaultMode !== "(default)" && c!.defaultMode !== server.mode) {
+        drifted.push(`${ctx}: server=${server.mode} client=${c!.defaultMode}`);
+      }
+    }
+    // Not vacuous: the parse must actually be finding modes.
+    const parsed = [...client.values()].filter((c) => c.defaultMode !== "(default)").length;
+    assert.ok(parsed >= 20, `defaultMode parsed for only ${parsed} contexts — the layout changed and this assertion is empty`);
+    assert.ok(
+      drifted.length <= MAX_DEFAULT_MODE_DRIFT,
+      `defaultMode drift grew to ${drifted.length} (ceiling ${MAX_DEFAULT_MODE_DRIFT}). This one decides whether a field is ASSISTED AT ALL, so a new entry here is a bigger deal than a type-list difference:\n  ${drifted.join("\n  ")}`,
     );
   });
 
