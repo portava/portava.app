@@ -142,7 +142,11 @@ describe("the fold covers the event vocabulary that exists", () => {
     // the live example: §10.2 forbids replaying a stale observation as current.
     // The fold is 2773 plus every later transform of it (2787 named the
     // 2779–2786 vocabulary); the contract is over the fold as installed.
-    const fold = sql + readFileSync(new URL("../migrations/2787_trip_snapshot_fold_vocabulary.sql", import.meta.url), "utf8");
+    const fold = sql
+      + readFileSync(new URL("../migrations/2787_trip_snapshot_fold_vocabulary.sql", import.meta.url), "utf8")
+      // 2799 named the 2798 recurrence vocabulary. The fold is 2773 plus every
+      // later transform of it, so every later transform belongs in this list.
+      + readFileSync(new URL("../migrations/2799_trip_snapshot_fold_recurrence_vocabulary.sql", import.meta.url), "utf8");
     const missing = (TRIP_EVENT_TYPES as readonly string[]).filter((t) => !fold.includes(`'${t}'`));
     assert.deepEqual(missing, [],
       `these event types are not named in the fold and would land in 'unfolded': ${missing.join(", ")}`);

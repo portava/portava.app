@@ -416,6 +416,16 @@ export type TripKernelReason =
   // 2785 disruptions (Appendix B TRIP_DISRUPTION_* family).
   | "TRIP_DISRUPTION_NOT_FOUND"
   | "TRIP_DISRUPTION_NOT_ACTIVE"
+  // §23 long-stay recurrences (2798). DECLARED HERE BECAUSE THE SQL RETURNS
+  // THEM: 2798 is applied on portava-ci and its file is now in the tree, so
+  // tripKernelFamilyContract and tripReasonCodes both read these four out of the
+  // migration and require the vocabulary to know them. Declaring a reason is not
+  // building the capability — no command dispatches to these families yet, and
+  // census-trips TR427 stays W for that reason.
+  | "TRIP_RECURRENCE_NOT_FOUND"
+  | "TRIP_RECURRENCE_TIMEZONE_UNKNOWN"
+  | "TRIP_RECURRENCE_RANGE_TOO_LONG"
+  | "TRIP_RECURRENCE_DATE_OUT_OF_RANGE"
   // §4.1 "validates sensitive-domain boundaries": a payload key from another domain.
   | "TRIP_COMMAND_SENSITIVE_DOMAIN"
   | "TRIP_KERNEL_UNAVAILABLE";
@@ -485,6 +495,13 @@ export const TRIP_EVENT_TYPES = [
   // families (2779–2786) — every type trip_kernel_execute assigns.
   "trip.plan_started", "trip.plan_skipped", "trip.stage_started", "trip.stage_completed",
   "trip.commitment_at_risk", "trip.commitment_risk_cleared", "trip.disruption_resolved", "trip.free_window_created", "trip.opportunities_changed", "trip.subgroup_created", "trip.subgroup_dissolved", "trip.subgroup_joined", "trip.subgroup_left", "trip.transport_segment_added", "trip.transport_segment_removed", "trip.transport_segment_state_changed", "trip.transport_segment_updated", "trip.trip_disrupted",
+  // recurrence family (2798) — the five types trip_kernel_execute assigns for
+  // recurring commitments. Same reason as the four codes above: the SQL emits
+  // them, so every consumer has to know the name exists. No consumer acts on
+  // one yet.
+  "trip.recurring_commitment_added", "trip.recurring_commitment_updated",
+  "trip.recurring_commitment_removed",
+  "trip.recurrence_occurrence_skipped", "trip.recurrence_occurrence_restored",
 ] as const;
 export type TripEventType = (typeof TRIP_EVENT_TYPES)[number];
 
