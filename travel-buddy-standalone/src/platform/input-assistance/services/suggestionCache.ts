@@ -20,10 +20,16 @@ import type { PrivacyClass } from '../types/inputContext.ts';
  * process-wide cache.
  *
  * `privacyClass` was declared on every one of the 29 contexts and READ BY
- * NOTHING: `sensitive` on `hidden_gem_location`, `personal` on
+ * NOTHING: sensitive on `hidden_gem_location`, viewer-scoped on
  * `telegraph_recipient` and `compass_prompt`, `private_message` on the
  * message body. No production path branched on it, and deleting the field
  * would have changed no behaviour. This is its first reader.
+ *
+ * The member names below are the SERVER's, since 2026-09-21: the client used to
+ * declare its own four-member taxonomy and this set named two members the
+ * server had never heard of, so the authority's classification could not reach
+ * this gate. See `types/inputContext.ts` for the unification, and
+ * `test/inputPolicyContractParity.test.ts` for what now pins it.
  *
  * What it changes, concretely. `sharedSuggestionCache` is ONE process-global
  * map keyed by (fieldId, typed text, coarse coords), living for the life of the
@@ -39,8 +45,9 @@ import type { PrivacyClass } from '../types/inputContext.ts';
  * viewer-scoped list should have had all along.
  */
 const UNCACHEABLE_PRIVACY_CLASSES: ReadonlySet<PrivacyClass> = new Set<PrivacyClass>([
-  'personal',
-  'sensitive',
+  'viewer_scoped',
+  'owner_only',
+  'sensitive_location',
   'private_message',
 ]);
 

@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 
 import { buildSuggestBody } from '../suggestBody.ts';
 import type { SuggestRequest } from '../../types/inputSuggestion.ts';
+import { GLOBAL_SEARCH_CAPABILITIES } from '../../contexts/clientCapabilities.ts';
 
 function base(overrides: Partial<SuggestRequest> = {}): SuggestRequest {
   return {
@@ -56,4 +57,30 @@ test('coarse city/tz/draft are forwarded only when meaningfully set (§29)', () 
   assert.equal('city' in blank, false);
   assert.equal('tz' in blank, false);
   assert.equal('draft' in blank, false);
+});
+
+// ── §48 the capability handshake's REQUEST half (census G343) ────────────────
+
+test('§48: a caller that declares nothing sends the body it always sent', () => {
+  // The handshake must be additive. A surface that does not participate must
+  // produce a byte-for-byte unchanged request, or this is a flag day for every
+  // screen at once rather than a negotiation.
+  const body = buildSuggestBody(base());
+  assert.equal('client' in body, false);
+});
+
+test('§48: a declaration reaches the wire verbatim', () => {
+  const body = buildSuggestBody(base({ client: GLOBAL_SEARCH_CAPABILITIES }));
+  assert.deepEqual(body.client, GLOBAL_SEARCH_CAPABILITIES);
+});
+
+test('§48: an EMPTY declaration is not sent — it would read as "I render nothing"', () => {
+  // The server treats an absent block as "serve it the way you always did" and
+  // a present one as a narrowing instruction. Sending an empty one would ask
+  // the server to withhold everything.
+  assert.equal('client' in buildSuggestBody(base({ client: { schemaVersion: 1 } })), false);
+  assert.equal(
+    'client' in buildSuggestBody(base({ client: { schemaVersion: 1, actionTypes: [], suggestionTypes: [] } })),
+    false,
+  );
 });

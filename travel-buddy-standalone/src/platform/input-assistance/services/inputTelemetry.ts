@@ -5,7 +5,7 @@
  * private text." This defines the §44 event names and a pluggable sink. By
  * default it is a no-op (Phase 1 wires the taxonomy; a later phase attaches a
  * real analytics transport). The privacy rule is enforced HERE: when a field's
- * telemetry policy says `captureRawText: false`, any `text`/`query` payload is
+ * telemetry policy says `logRawText: false`, any `text`/`query` payload is
  * dropped before the event leaves this module — a caller cannot leak a private
  * message by accident.
  *
@@ -68,7 +68,7 @@ function scrubProps(
   policy: InputTelemetryPolicy | undefined,
 ): InputTelemetryEvent['props'] {
   if (!props) return props;
-  if (policy?.captureRawText) return props;
+  if (policy?.logRawText) return props;
   const out: NonNullable<InputTelemetryEvent['props']> = {};
   for (const [k, v] of Object.entries(props)) {
     if (RAW_TEXT_KEYS.has(k)) continue; // drop raw text for private/sensitive fields
@@ -82,7 +82,9 @@ function isEventAllowed(
   policy: InputTelemetryPolicy | undefined,
 ): boolean {
   if (!policy) return true;
-  if (policy.events === 'all') return true;
+  // An explicit list on both sides since 2026-09-21 (census G33). The old
+  // `'all'` sentinel had no server counterpart, so a server policy that
+  // NARROWED a field's vocabulary could not be expressed on this side at all.
   return policy.events.includes(name);
 }
 

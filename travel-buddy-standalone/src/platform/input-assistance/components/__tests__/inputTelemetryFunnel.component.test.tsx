@@ -233,7 +233,7 @@ test('§44: a non-capturing policy drops every raw-text prop the new arms could 
     'f',
     'telegraph_message',
     { length: 5, text: 'secret', query: 'secret', rawText: 'secret', message: 'secret' },
-    { captureRawText: false, events: 'all' },
+    { logRawText: false, events: ['manual_value_kept'] },
   );
   expect(named('manual_value_kept')[0]!.props).toEqual({ length: 5 });
 });
@@ -244,7 +244,7 @@ test("§44: a policy's event allowlist still gates the new names", () => {
     'f',
     'telegraph_message',
     { shownCount: 3 },
-    { captureRawText: false, events: ['input_opened'] },
+    { logRawText: false, events: ['input_opened'] },
   );
   expect(names()).not.toContain('suggestion_dismissed');
 });
