@@ -155,7 +155,7 @@ Not counted here. Checked because the brief asked what it marked wrong.
 | C9 | Slow to earn, immediate to lose — the ramp applies only to positive movement (`:162-188`) | C | `computeCategoryScore:189-215`; `trustAsymmetryAndMaintenance.test.ts` pins the asymmetry and the worked example (56, not 80). |
 | C10 | `getDisplayTrustScore` is THE display number; no second engine (`:353-364`; `lib/trustScore.ts:1-25`) | C | `lib/trustScore.ts:124-149` delegates; `PassportProjectionService.ts:1295#getDisplayTrustScore` and `routes/rentABuddy.ts:1237` read through it; `passportTrustConsistency.test.ts`. |
 | C11 | `getTrustProfile` "loads the current profile" (`:375`) — and a failed read is not a missing profile | **W** | `:376-410` never destructures `error`; `null` means both. Five readers collapse an unreachable engine into "New Traveler"/`score: null`: `getDisplayTrustScore:365`, `getSafeTrustSummary:91`, `getPublicTrustBadge:136`, `getRecoveryStatus:89`, `computeTrustScore:131`. **PR #467 adds `getTrustProfileResult()` (ok/absent/unavailable) and switches ONE reader — Passport's domain builder.** Not fixed here: a second error-aware read in the same file would duplicate #467's hunk. Recommended as a #467 follow-up (§4). |
-| C12 | Caps: create, enforce as ceilings, expire on schedule (`TrustCapService.ts:1-6`) | C | `TrustCapService.ts:35#createCap`, the ceiling applied at `TrustScoreService.ts:318#caps`, `TrustCapService.ts:149#expireOldCaps` driven by the scheduler (`lib/trustMaintenanceScheduler.ts:642#capsExpired = await expireOldCaps(db);`); `trust.test.ts:400-475`. |
+| C12 | Caps: create, enforce as ceilings, expire on schedule (`TrustCapService.ts:1-6`) | C | `TrustCapService.ts:35#createCap`, the ceiling applied at `TrustScoreService.ts:324#caps`, `TrustCapService.ts:149#expireOldCaps` driven by the scheduler (`lib/trustMaintenanceScheduler.ts:642#capsExpired = await expireOldCaps(db);`); `trust.test.ts:400-475`. |
 | C13 | `applyEventCaps` keys on the event vocabulary the emitters actually write (`:166-180`) | **W → C** | `coordinate_jump` named a type nobody emits; `recordLocationTrustEvent:375-396` writes `gps_coordinate_jump`. Corrected (`:186`). Residual, **owner decision**: `plan_no_show` and `fake_gps_confirmed` have ceilings and no emitter; `content_removed` and `message_report_confirmed` were wired by the emitter pass. **Correction (2026-09-07, second pass):** this row cited `event_host_no_show (serious, −15, routes/events.ts:3473)` as an emitter. Nothing emits it — `:3473` is the attendance route (`event_attendance_confirmed`), and the no-show emitter at `:3575` writes `event_no_show` (−5 moderate). Which serious findings deserve a ceiling is policy, listed in §5; the per-type evidence is in [trust-unproduced-vocabulary.md](trust-unproduced-vocabulary.md). |
 | C14 | Every cap a moderation finding created is lifted when the finding is reversed (`:93-108`) | C | `liftCapsBySourceEvents:110-128`; wired through `revokeModerationTrustConsequences:112-155` from `routes/admin.ts:1835#void revokeModerationTrustConsequences(sc, adminUserId, userId, reason ?? "Account restore`. |
 | C15 | `getRestrictionState()` is the enforcement seam — "never query trust_restrictions directly in route code" (`TrustRestrictionService.ts:175-179`) | **W** | `routes/admin.ts:1319-1322` selects `trust_restrictions` directly for the admin user view (read-only, includes `reason`). Low impact; **owner: admin route.** |
@@ -493,7 +493,7 @@ still true at `3ca68cb06`, because a restatement that is not re-executed is just
 
 | id | was | now | re-executed at this commit |
 |---|---|---|---|
-| A3 | `NB → C` | C | `artifacts/api-server/src/services/trust/TrustScoreService.ts:294#export function measureEvidence` still computes the decayed evidence weight and count, and `artifacts/api-server/src/services/trust/TrustScoreService.ts:371#.update({ evidence_weight: evidence.weight, evidence_count: evidence.count })` still persists both. The migration that holds the columns is present at `artifacts/api-server/src/migrations/2371_trust_profiles_evidence.sql:1#-- 2371_trust_profiles_evidence.sql`. NULL still means not measured, 0 still means measured empty. |
+| A3 | `NB → C` | C | `artifacts/api-server/src/services/trust/TrustScoreService.ts:300#export function measureEvidence` still computes the decayed evidence weight and count, and `artifacts/api-server/src/services/trust/TrustScoreService.ts:467#.update({ evidence_weight: evidence.weight, evidence_count: evidence.count })` still persists both. The migration that holds the columns is present at `artifacts/api-server/src/migrations/2371_trust_profiles_evidence.sql:1#-- 2371_trust_profiles_evidence.sql`. NULL still means not measured, 0 still means measured empty. |
 | A8 | `W → C` | C | `artifacts/api-server/src/migrations/2370_trust_tables_privileges.sql:1#-- 2370_trust_tables_privileges.sql` is in the tree and still carries the REVOKE-then-grant-service_role shape with the RAISE-on-residue postcondition. **The row's caveat is unchanged and matters more than the verdict: applied to CI, NOT to production** — this pass made no production read and no production change, so A8's `C` is a statement about the migration, not about the live grants. |
 | C5 | `W → C` | C | `artifacts/api-server/src/services/trust/TrustEventService.ts:374#async function queueEventForReview` still writes the open `event_review` row, called on the pending-review path, and the admin queue that reads it is still routed at `artifacts/api-server/src/routes/trust-admin.ts:155#router.get("/admin/trust/events/pending", async (req, res) => {`. |
 | C13 | `W → C` | C | The cap table still keys on the type the emitter actually writes: `artifacts/api-server/src/services/trust/TrustCapService.ts:316#gps_coordinate_jump:       [{ category: "location_honesty", ceiling: 55, reasonCode: "coordinate_jump",      expiresInDays: 7  }],`. The residual owner decision on unproduced ceilings is unchanged and stays in §5's list. |
@@ -578,7 +578,7 @@ transient one — in which the admin's number is the stored value. The admin get
 `{ ok: true }`, an audit row saying `score_override`, and no change.
 
 The ceiling itself is
-`artifacts/api-server/src/services/trust/TrustScoreService.ts:318#if (caps[cat] !== undefined && score > caps[cat]) {`
+`artifacts/api-server/src/services/trust/TrustScoreService.ts:324#if (caps[cat] !== undefined && score > caps[cat]) {`
 — a strict one-directional clamp — and `trust_caps` carries only
 `ceiling_score`, with no floor column anywhere.
 
@@ -1416,15 +1416,15 @@ number persisted before and after this change is the same number.
 
 ### 15.4 The test, and the mutations that turn it red
 
-`src/test/trust-integration.test.ts:1743#describe("D-OVERRIDE: the ceiling the owner ruled for must PERSIST"` —
+`src/test/trust-integration.test.ts:1886#describe("D-OVERRIDE: the ceiling the owner ruled for must PERSIST"` —
 three cases, appended to an already-registered suite. **GREEN 67/67 → 70/70**, and all three were
 **RED before the fix** (the third with `Missing expected rejection`, i.e. the false success itself).
 
 | # | case | what it asserts |
 |---|---|---|
-| 1 | `src/test/trust-integration.test.ts:1769#it("a downward ceiling reaches trust_profiles, and the call REPORTS that it bound"` | the ceiling is on the row, `overall_score` fell with it, and `ceilingBinding` is true |
-| 2 | `src/test/trust-integration.test.ts:1797#it("an UPWARD override reports that it bound NOTHING — CAP semantics, said out loud"` | `persistedScore` is the natural score and `ceilingBinding` is **false**, in the result AND in the audit metadata |
-| 3 | `src/test/trust-integration.test.ts:1819#it("a failed recalculation leaves NO raw admin number on the row, and is never audited as applied"` | **the defect.** With `trust_events` unreadable: rejects, no raw number on the row, the row stays internally consistent, zero `score_override` audit rows, and the cap row stands |
+| 1 | `src/test/trust-integration.test.ts:1912#it("a downward ceiling reaches trust_profiles, and the call REPORTS that it bound"` | the ceiling is on the row, `overall_score` fell with it, and `ceilingBinding` is true |
+| 2 | `src/test/trust-integration.test.ts:1940#it("an UPWARD override reports that it bound NOTHING — CAP semantics, said out loud"` | `persistedScore` is the natural score and `ceilingBinding` is **false**, in the result AND in the audit metadata |
+| 3 | `src/test/trust-integration.test.ts:1962#it("a failed recalculation leaves NO raw admin number on the row, and is never audited as applied"` | **the defect.** With `trust_events` unreadable: rejects, no raw number on the row, the row stays internally consistent, zero `score_override` audit rows, and the cap row stands |
 
 Four mutations, each run and each **RED**:
 
@@ -1433,7 +1433,7 @@ Four mutations, each run and each **RED**:
 | P1 | restore the raw `trust_profiles` upsert before the recalculation | case 3 |
 | P2 | swallow the recalculation failure again (`.catch(() => {})`) | case 3 |
 | P3 | report `ceilingBinding` unconditionally `true` | case 2 |
-| P4 | invert the ceiling comparison in `recalculateTrustScore` (`services/trust/TrustScoreService.ts:318#if (caps[cat] !== undefined && score > caps[cat]) {` → `<`) — reverted immediately; the file is unchanged | cases 1 and 2 |
+| P4 | invert the ceiling comparison in `recalculateTrustScore` (`services/trust/TrustScoreService.ts:324#if (caps[cat] !== undefined && score > caps[cat]) {` → `<`) — reverted immediately; the file is unchanged | cases 1 and 2 |
 
 P4 exists because P1–P3 leave case 1 green whatever they do to the implementation, and a case that
 cannot fail is worse than no case (§LANE-RULES 4). It also demonstrates that case 1 measures the

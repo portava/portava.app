@@ -386,13 +386,41 @@ export async function recalculateTrustScore(
   // stale 60 really is wrong, and leaving it would be its own defect. Narrowing
   // here fixes the dangerous case — every user at once on first enable — without
   // silently reversing a decision someone already made and tested.
+  //
+  // A TRUST_CAPS ROW IS ALSO EVIDENCE, and is excluded from the skip. A cap is
+  // deliberate recorded state about this specific user — a moderation ceiling
+  // or an admin's ruling — not the untouched population this block exists to
+  // protect, and a ceiling can only ever pull a score DOWN (trust_caps has no
+  // floor column), so keeping a capped user's row promotes nobody. It matters
+  // because `main` made the admin cap lane read its result back off
+  // trust_profiles and throw when the read is not `ok`
+  // (TrustAdminService.adminOverrideScore and confirmOverrideRemoved), so that
+  // an override can never be reported or audited as applied without being
+  // observed. Skipping the persist for a capped user would turn every such
+  // override — and every lift of one — into a hard failure: a different defect,
+  // not this one's fix. LIFTED caps count too: the lift path recalculates after
+  // the ceiling is gone, and the user is still one an admin has deliberately
+  // touched.
   if (events.length === 0) {
     const { data: existing } = await db
       .from("trust_profiles")
       .select("user_id")
       .eq("user_id", userId)
       .maybeSingle();
-    if (!existing) {
+    const { data: capRows, error: capRowsError } = await db
+      .from("trust_caps")
+      .select("id")
+      .eq("user_id", userId)
+      .limit(1);
+    if (capRowsError) {
+      // Same rule as loadCaps: "no caps" on a failed read is a guess, and here
+      // it would decide to write nothing at all. Refuse instead.
+      throw new Error(
+        `recalculateTrustScore: trust_caps history read failed for ${userId} — ${(capRowsError as any).message ?? (capRowsError as any).code ?? "db_error"}`,
+      );
+    }
+    const everCapped = ((capRows as any[]) ?? []).length > 0;
+    if (!existing && !everCapped) {
       return {
         userId,
         overall_score: overall,
