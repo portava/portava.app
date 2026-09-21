@@ -180,7 +180,11 @@ export const TELEMETRY_EVENT_PROPS: Record<InputTelemetryEventName, Record<strin
   manual_value_kept: { length: 'int' },
   validation_shown: { count: 'int' },
   correction_accepted: { confidence: 'unit', source: 'token' },
-  disambiguation_selected: { entityType: 'token', confidence: 'unit' },
+  // `resolvedExisting` is §57's duplicate-prevention count (census G369): true
+  // when the disambiguation row the user pressed carried a `resolve_existing`
+  // structured value, i.e. it was a §55 duplicate rather than a §19 ambiguity.
+  // One bool — no identifier, no text. `metrics.ts` is its only reader.
+  disambiguation_selected: { entityType: 'token', confidence: 'unit', resolvedExisting: 'bool' },
   action_completed: { actionType: 'token', ok: 'bool' },
   downstream_task_completed: { task: 'token', ok: 'bool' },
 };

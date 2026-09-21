@@ -2116,6 +2116,32 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // WATCH, which are different things.
     "travel-buddy-standalone/src/platform/input-assistance/services/telemetryBatcher.ts",
     "travel-buddy-standalone/src/platform/input-assistance/services/telemetryTransport.ts",
+    // ── ADDED 2026-09-21 with the §44 sink attachment ───────────────────────
+    // The client SDK as a DIRECTORY rather than seven more single files. Every
+    // file under it is this census's own subject — the individually-named
+    // entries below predate this line and are kept so the history of what was
+    // watched when stays readable.
+    "travel-buddy-standalone/src/platform/input-assistance/",
+    // `app/search.tsx` is G319's call site: the global-search screen is the only
+    // place that learns whether the propose-only trip picker was CONFIRMED, so a
+    // change to it is exactly the change that must age this census.
+    "travel-buddy-standalone/app/search.tsx",
+    // …and the picker it learns it from. Its `onSaveFailed` arm is the half that
+    // stops `action_completed` reporting ok:true forever.
+    "travel-buddy-standalone/src/components/discovery/TripWishlistPicker.tsx",
+    // The §44 store's 90-day retention pass lives on the shared intel timer.
+    "artifacts/api-server/src/lib/intelRetentionScheduler.ts",
+    // The table the §44 sink posts into, and G354's harness. Migrations are not
+    // scoped as a directory (see census-media's note on why); this one is named.
+    "artifacts/api-server/src/migrations/2950_input_assistance_telemetry_events.sql",
+    "artifacts/api-server/src/scripts/measureInputAssistanceLatency.ts",
+    "artifacts/api-server/src/scripts/reportInputMetrics.ts",
+    // The Wall's analytics module is cited by §14 as the precedent that decides
+    // WHICH telemetry needs D4 Intelligence-Contribution consent: it gates
+    // `trackRealWorldOutcome` and nothing else. §44's argument for attaching its
+    // sink ungated rests on that line being where it is, so a change to it is a
+    // change to this census's reasoning, not merely to the Wall's.
+    "travel-buddy-standalone/src/features/wall/services/wallAnalytics.ts",
     // ── ADDED 2026-09-14 by the scope-coverage finding ──────────────────────
     // `app/_layout.tsx` is the one line §12.6 says four rows wait on, so a
     // change to it is exactly the change that must age this census.

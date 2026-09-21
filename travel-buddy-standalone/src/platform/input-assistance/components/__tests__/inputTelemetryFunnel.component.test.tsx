@@ -194,6 +194,36 @@ test('§45: blurring past a shown list records it as IGNORED and the text as KEP
   expect(JSON.stringify(kept[0]!.props)).not.toContain('words');
 });
 
+// ── 4b. §55 duplicate resolution — §57's duplicate-prevention count (G369) ───
+
+test('§44/G369: a duplicate row taken is recorded as resolving an EXISTING entity', async () => {
+  // This is what lib/inputAssistance/creation.ts#projectDuplicate puts on the
+  // wire: a `disambiguation` row carrying a `resolve_existing` structured value.
+  // Before this bit existed, a §55 duplicate and a §19 ambiguity were the same
+  // event, so "duplicate creation prevented" could only be GUESSED at from the
+  // context the event happened in — which is a different claim.
+  const r = await renderWith([
+    sug({
+      id: 'dup',
+      type: 'disambiguation',
+      label: 'Did you mean Hidden Bar?',
+      entityType: 'hidden_gem',
+      entityId: 'g-1',
+      confidence: 0.72,
+      structuredValue: { kind: 'resolve_existing', entityType: 'hidden_gem', entityId: 'g-1' },
+    }),
+  ]);
+
+  fireEvent.press(r.getByTestId('ia-entity-row-dup'));
+
+  const ev = named('disambiguation_selected');
+  expect(ev).toHaveLength(1);
+  expect(ev[0]!.props).toMatchObject({ resolvedExisting: true, entityType: 'hidden_gem' });
+  // One BOOL and nothing else new: no label, no name, no free text rides along
+  // on the back of the duplicate signal.
+  expect(JSON.stringify(ev[0]!.props)).not.toContain('Hidden Bar');
+});
+
 // ── 4. the per-kind acceptance events (G314, G317, G318) ─────────────────────
 
 test('§44: correction, disambiguation and query rows each record their own kind', async () => {
@@ -210,6 +240,10 @@ test('§44: correction, disambiguation and query rows each record their own kind
   // G318 — a §19 ranked CHOICE was resolved by the user rather than guessed.
   fireEvent.press(r.getByTestId('ia-entity-row-d'));
   expect(named('disambiguation_selected')[0]!.props).toMatchObject({ entityType: 'city' });
+  // …and this one is an AMBIGUITY, not a duplicate: it carries no
+  // `resolve_existing` structured value, so §57's duplicate count must not
+  // claim it (G369).
+  expect(named('disambiguation_selected')[0]!.props).toMatchObject({ resolvedExisting: false });
 
   // G314 — the user submitted their query instead of resolving it.
   fireEvent.press(r.getByTestId('ia-entity-row-q'));

@@ -18,6 +18,7 @@ import {
   runMapTelemetryRetentionSweep,
   runIntelRetentionSweep,
   runIntelContributionRetentionSweep,
+  runInputTelemetryRetentionSweep,
 } from "../lib/intelRetentionScheduler.js";
 
 // ── registration ─────────────────────────────────────────────────────────────
@@ -35,13 +36,18 @@ test("every retention pass is registered on the scheduler's timer", () => {
     // written; 2480's sessions now exist in production, so expired and revoked
     // credentials need removing on the same timer as everything else.
     sensing_session_cleanup: runSensingSessionCleanup,
+    // ADDED 2026-09-21 with the §44 telemetry sink. `input_assistance_telemetry_events`
+    // (migration 2950) is the store the sink posts into, and it shipped without a
+    // retention bound. Registered FLAGLESS on purpose — see the sweep's own header:
+    // a retention flag shipped unseeded declares a 90-day promise and never keeps it.
+    input_telemetry_retention: runInputTelemetryRetentionSweep,
   })) {
     assert.ok(registered.has(name), `${name} is exported but nothing on the timer calls it`);
     assert.equal(RETENTION_PASSES.find((p) => p.name === name)!.run, fn);
   }
   // The count is asserted so a pass cannot be added or dropped silently; the map
   // above is what says WHICH, so bumping this number alone will not satisfy it.
-  assert.equal(RETENTION_PASSES.length, 6);
+  assert.equal(RETENTION_PASSES.length, 7);
 });
 
 test("a registered pass survives its own rejection — one broken sweep cannot starve the others", async () => {
