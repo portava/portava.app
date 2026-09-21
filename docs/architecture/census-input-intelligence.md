@@ -4583,3 +4583,71 @@ the identical defect from the §48 pass. Both cells now carry a single `**C**`
 with the transition in the evidence, so the corpus reports **0 prose-counted
 requirements across all 13 censuses**, the denominator is unchanged at 373, and
 the rows and the headline agree.
+
+---
+
+## §31 — Migration 2950 is applied. The §57 blocker changes, and no verdict does.
+
+**MEASURED 2026-09-21 against production `ajrurzioarfkagpuxfnb`, by object probe
+rather than by a ledger row.** `public.input_assistance_telemetry_events` exists
+and carries all nine of its constraints, including `iate_event_name_known`,
+whose CHECK was read back from `pg_constraint` with all fourteen event names.
+`public.schema_migration_ledger` also carries the row, applied 12:11:18 UTC.
+
+**EVERY SENTENCE IN THIS DOCUMENT THAT SAYS 2950 IS UNAPPLIED IS NOW FALSE.**
+They occur in the evidence cells of G292, G306, G365, G366, G367, G368, G369,
+G371, G372 and G373, in phrasings including *"migration 2950 unapplied"*,
+*"2950 is applied to no database"*, and — as a `TURNS GREEN WHEN` clause —
+*"applying migration 2950 and reporting the number"*. They are corrected here in
+one place rather than in ten cells, because rewriting ten evidence cells would
+move every citation inside them and buy nothing: the correction is identical for
+all ten and none of them changes a verdict.
+
+### 31.1 What actually changed, and what did not
+
+**NO VERDICT MOVES.** The headline stays **281 C / 47 W / 41 N / 4 X of 373**.
+
+What moved is the BLOCKER, and it moved from a false one to a true one:
+
+| | before | after |
+|---|---|---|
+| stated blocker | migration 2950 is unapplied | **2950 is applied; nothing writes to it** |
+| what a reader should do | apply the migration | **deploy a build that emits, then measure** |
+
+**THE TABLE HOLDS ZERO ROWS.** Measured the same day: `count(*) = 0`, no
+earliest, no latest, zero distinct event names. So `report:input-metrics` no
+longer exits with a PostgREST error — it now has a table to read and nothing in
+it. That is a different failure and a more honest one.
+
+**HALF OF G372's OWN RED-CRITERION IS NOW MET.** Its clause reads *"applying
+migration 2950 and reporting the number."* The first half is done. The second
+cannot be done from any tree: a §57 row asks for a NUMBER, and no traffic has
+produced one. G372 stays `W` for precisely the reason §12.2 gave when the
+integration owner declined a `C ☠prod` for G292 — *"a grader who reads `C` as
+'works' should read it as `W`."* Applying a migration is not a measurement.
+
+### 31.2 Why this correction is recorded rather than quietly applied
+
+The stale claim did real damage before it was caught, and the mechanism is worth
+keeping. Migration 2950's own file header read *"⚠ NOT APPLIED ANYWHERE YET"*
+long after it was applied, and a later reader trusted it and reported production
+as unmigrated across the whole 2890+ band. That report was wrong twice over:
+
+* It queried `supabase_migrations.schema_migrations` (the Supabase CLI ledger)
+  while attributing the result to `public.schema_migration_ledger`. The two
+  tables have **disjoint columns** — the hand-rolled one has `filename` and no
+  `version`; the CLI one has `version` and no `filename` — so a query written
+  for one silently misbehaves against the other and still looks authoritative.
+* It compared a TEXT `version` column holding **two formats at once**, bare
+  serials (`'2272'`) and 14-digit timestamps (`'20260921101005'`). Collation
+  orders them `'289' < '20260915123045' < '2950'`, so `>= '2890'` excludes every
+  post-cutover row **no matter what is applied**, and `MAX(version)` returns a
+  PRE-cutover serial.
+
+**AND THE DEEPER RULE, which this census should apply to every `☠prod` claim it
+carries: LEDGER ABSENCE IS NOT EVIDENCE OF NON-APPLICATION.** Probed the same
+day, migrations 2890, 2900 and 2958 are all live in production with **no**
+hand-ledger row; 2958 has no row in **either** ledger and its column exists.
+Migration 2298 is this repository's precedent for the inverse — a ledger row
+whose effects were absent. Only an object probe settles whether a migration ran,
+and a `☠prod` annotation resting on a ledger count is resting on nothing.
