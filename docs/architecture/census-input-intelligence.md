@@ -3747,3 +3747,73 @@ this table with §20.4 should read the difference as *visibility restored*, not
 as work delivered — and the row for each says so in its own cell.
 
 The denominator is unchanged at **373**.
+
+---
+
+## 22. G85's host, and the five Map flags re-evaluated one at a time
+
+### 22.1 `G85` — the city picker was always on screen, it just never said so
+
+The row's blocker was that `city_picker` was a registered **context** that no
+screen in the app ever mounted. §50's field inventory recorded `geo.city` as
+UNMOUNTED, and `registerGeographicFields()` — idempotent, unit-tested, shipped
+since Phase 2 — was called from **no non-test file**, so every geographic
+surface resolved a default policy rebuilt from its descriptor instead of its
+registered one.
+
+`src/components/discovery/DestinationBar.tsx` **is** the city picker: titled
+"Search destination", prompting for "City, island or region", mounted in
+Discovery. It declared no assist context at all, so `GlobalPlacePicker` fell
+back to the `__geo_no_assist__` fieldId and the platform was off for it
+entirely. It now declares `assistContext="city_picker"` and the canonical
+`GEO_FIELD_IDS.cityPicker`, following the idiom `app/trip/new.tsx` and
+`app/trip/edit.tsx` already used — those two were the **only** screens in the
+product passing an assist context, both `trip_destination`. `app/_layout.tsx`
+mounts a `GeographicFieldsSetup` beside the telemetry installer.
+
+**The write side needed nothing.** `GlobalPlacePicker` has called
+`recordSuggestionSelection` on select all along, and
+`selectionWriterCoverage.test.ts` already fails any accept handler that stops.
+It recorded nothing for this surface because an unnamed field has no policy that
+permits personalization.
+
+**It stays `W`.** The substrate reached production at 10:52 and the surface is
+wired, but nobody has observed a pick recorded and re-surfaced. Same wall as
+`G306`, named the same way.
+
+### 22.2 The five Map flags, individually — and why none is enabled
+
+`protected_zones` (2217) cleared the prerequisite all five shared;
+`check:flag-schema-prerequisites` went from **24 latent flags to 18**, and none
+of the five still reports an absent object. That half of the re-evaluation is a
+real result. The other half is not:
+
+| flag | schema prerequisites | production `feature_flags` row | server read sites |
+| --- | --- | --- | --- |
+| `map_display_resolver_enabled` | **satisfied** | **no row at all** | `lib/mapDisplayResolver.ts`, `routes/mapProjection.ts` |
+| `map_experience_state_enabled` | **satisfied** | **no row at all** | `lib/mapProjection.ts`, `routes/mapProjection.ts`, `routes/mapProjectionTemporal.ts` |
+| `map_projection_enabled` | **satisfied** | **no row at all** | `routes/mapProjection.ts`, `routes/mapProjectionTemporal.ts` |
+| `map_world_moments_enabled` | **satisfied** | **no row at all** | `lib/mapProducers/worldMomentProducer.ts`, `routes/mapProjection.ts` |
+| `locate_friends_enabled` | **satisfied** — "missing in production: none" | present, `false` | 6 sites incl. `routes/locateFriends.ts`, `routes/safeReturn.ts` |
+
+Two facts decide this, and neither is a matter of taste:
+
+1. **Four of the five have no row in production at all.** `isFlagEnabled` is
+   fail-closed, so an absent row reads OFF. "Enabling" them is not flipping a
+   switch — it is **seeding flags no migration has seeded in production**, which
+   is a different and larger act than the one the instruction describes.
+2. **The deployed consumer cannot be verified from here.** Every one of these
+   flags gates server code, and whether the deployment is running code that
+   reads them is not observable: the host is unreachable from this environment
+   (403 to CONNECT at the egress gateway), and much of the code that reads them
+   is on an unmerged branch.
+
+Enabling a map flag turns on **user-visible behaviour** over real people's
+locations. Doing that on a verified schema and an unverified consumer is exactly
+the "looks correct, runs nowhere" failure this corpus keeps cataloguing, with
+the consequences pointing at users rather than at a number. **So none is
+enabled, and the blocker is reachability, not judgement.**
+
+What would let each be enabled, in order: a reachable deployment; confirmation
+that its build carries the reading code; for the four, a seeded row (OFF first);
+then one flag at a time, with the map surface observed after each.
