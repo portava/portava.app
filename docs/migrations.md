@@ -2143,8 +2143,72 @@ All seven missing entries have been added to
 `src/migrations/`; it is **deliberately not listed**, because inventing an entry
 for something this repository cannot name would be worse than the gap.
 
+### 2963 BROKE THE PROJECTOR IN PRODUCTION, AND 2965 REPAIRED IT
+
+Written at the top of its own section rather than folded into a list, because
+this is the most serious thing in this entry and burying it would be the second
+mistake.
+
+`2963:171` is `DELETE FROM _canon_saves;` — **unqualified**, against the TEMP
+table it creates six lines above. Plain PostgreSQL permits that. `portava-ci`
+and production do not: both run `session_preload_libraries = supautils`, whose
+`safeupdate` guard raises *"DELETE requires a WHERE clause"* for PostgREST-role
+sessions.
+
+The statement sits **mid-body, after** the episodic, semantic and social
+inserts. So the failure is not a lost PLACE lane — every call through the API
+raised and the entire transaction rolled back, and `project_user_memory`
+projected **nothing at all**. That is strictly worse than the M42 defect 2963
+was written to remove, where three lanes worked and one was empty.
+`lib/memoryProjectionScheduler.ts:81` catches the rejection and only
+`logger.warn`s it, so wherever the pass runs unattended it failed **silently**.
+
+**Why the apply and every check around it missed it**, which is the part worth
+keeping:
+
+| | why it did not catch the defect |
+|---|---|
+| the apply | `CREATE OR REPLACE FUNCTION` only **parses** a body; nothing executed it |
+| the Management API session | does **not** preload `supautils` — read directly: `session_preload_libraries` is `supautils`, and `safeupdate.enabled` is `null` in that session |
+| 2963's own postconditions | inspect `pg_get_functiondef` text; a guard that fires at execution is invisible to them |
+| the independent post-apply checks | signature, overload count, lane presence — all true of a body that raises |
+| `#511`'s own PR run | `db:apply-migrations` runs from `main` only, so that run exercised a database without 2963 |
+| the behavioural proof | run against a local **plain** PostgreSQL, where the guard does not exist |
+
+That last row is this session's own: a proof was run, it passed, and it was not
+the proof it appeared to be. It established the SQL logic and nothing about the
+environment the function actually runs in. The census row that briefly moved on
+it has been moved back, with the reason written into the row.
+
+**The repair is `2965_memory_projector_canon_saves_delete_guard.sql`**, authored
+and rehearsed on `portava-ci` by a separate session and applied here **verbatim
+rather than reinvented** — a second, parallel fix for one defect is exactly the
+failure the rest of this branch documents. It reads the installed definition
+with `pg_get_functiondef`, replaces that one statement with
+`DELETE FROM _canon_saves WHERE true;` and `EXECUTE`s it, so it corrects what is
+actually installed. 2963 could not simply be re-run: it carries a ledger row the
+applier skips, and editing it in place would break its recorded sha256.
+
+Applied to production 2026-09-21 and **verified there independently** of the
+file's own postconditions: exactly 1 overload, signature still
+`(p_user_id uuid, p_enforce_flag boolean)`, SECURITY INVOKER unchanged, **zero**
+unqualified `DELETE FROM _canon_saves` remaining, exactly one qualified form,
+and the PLACE lane still reading `wishlist_places`. Recorded in
+`schema_migration_ledger` with `applied_by='manual'` and the file's real
+SHA-256.
+
+**NOT proven here, and not claimed:** that the guard now passes. It cannot be
+armed from a Management API session (`LOAD 'safeupdate'` is refused), so
+sufficiency is established by the live memory suites on the first `main` run
+after 2965 lands — not by anything runnable before it.
+
 ### Still open
 
+- **2965 is not yet on `main`.** It lives on `claude/fix-2963-canon-saves-delete`
+  and is applied to production ahead of its own merge, because production was
+  actively broken and waiting for a merge is still waiting. `portava-ci` still
+  carries the unqualified form until that branch merges and the apply step runs
+  from `main`, so the live memory suites stay red there until then.
 - **Neither migration's feature is switched on in production.** 2963 changes a
   projector body and is live the moment it is applied; 2964's counter is written
   only on the `map_telemetry_enabled = FALSE` path, so the table exists and holds
