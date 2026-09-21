@@ -343,11 +343,25 @@ describe("maintenance lifts restrictions that have run out", () => {
     const orig = trustRestrictionLogger.warn;
     (trustRestrictionLogger as any).warn = (...args: any[]) => { seen.push(args); };
     try {
-      const db = failing(makeClient(tables()), "trust_restrictions", "update");
-      const n = await expireOldRestrictions(db);
-      assert.equal(n, 0);
+      // A restriction must actually BE due. The sweep now reads the due set
+      // first and returns early when there is nothing to lift, so an empty
+      // table would never reach the refused update and this test would assert
+      // nothing. The seeded row is what makes the refusal reachable.
+      const t = tables({
+        trust_restrictions: [
+          { id: "r-expired", user_id: USER, restriction_type: "hosting", reason: "x", expires_at: daysAgo(1), lifted_at: null },
+        ],
+      });
+      const db = failing(makeClient(t), "trust_restrictions", "update");
+      const r = await expireOldRestrictions(db);
+      assert.equal(r.expired, 0);
+      assert.equal(
+        r.failed, true,
+        "the point of the rewrite: a refused lift is NOT a clean sweep with nothing to do",
+      );
+      assert.equal(t.trust_restrictions[0].lifted_at, null, "and nothing was lifted");
       assert.equal(seen.length, 1, "one warn for the refused update");
-      assert.match(String(seen[0][1]), /expireOldRestrictions failed/);
+      assert.match(String(seen[0][1]), /expireOldRestrictions: lift failed/);
     } finally {
       (trustRestrictionLogger as any).warn = orig;
     }
