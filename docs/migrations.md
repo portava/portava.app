@@ -2260,15 +2260,38 @@ The apply itself had succeeded. A red certify there meant "this run's migration
 has a non-re-runnable block", not "the apply is bad", and the two look identical
 from the job list.
 
-**It self-clears**, which is why no fix is proposed here: scope is resolved from
-ledger rows tagged with `GITHUB_RUN_ID` (`resolveScope`,
-`certifyMigrations.ts:556`), so a later run applies nothing, scope is empty, and
-stages 2-4 pass. Confirmed on the very next run.
+**It self-clears**: scope is resolved from ledger rows tagged with
+`GITHUB_RUN_ID` (`resolveScope`), so a later run applies nothing, scope is
+empty, and stages 2-4 pass. Confirmed on the very next run.
 
-The cost is one wasted CI round and a red `main` that looks like a bad apply.
-The cheap avoidance, for whoever writes the next one: **make the precondition
-tolerate the post-state** — return quietly instead of raising when the work is
-already done — so the same block is honest run once and run twice.
+**THIS PARAGRAPH ORIGINALLY SAID "which is why no fix is proposed here", AND
+THAT WAS WRONG.** #516 fixed it properly, and measured the problem far past
+where this entry stopped looking:
+
+- **32** of 580 migration files carry an assertion-only `DO $pre$` block, and
+  **23** of those RAISE on a second apply — 2760, 2784, 2796 and 2965 among
+  them. So this was never a quirk of 2965, which is what "it self-clears" let
+  me assume.
+- Run `35581577283` was simply the **first** to reach stage 4 with such a file
+  in scope. An earlier run (`34972255308`) had 16 of them in scope and survived
+  only because certify stops at the first failed stage and failed at STAGE 1
+  instead.
+- The fix keeps `$pre$` blocks out of the re-run, **counts** them in the report
+  and names any migration that declares preconditions only — so a file certify
+  asserted nothing about is never mistaken for one it certified. 474 assertion
+  blocks are still re-run, 32 held back, and all 32 still run inside the
+  applier's own transaction where a raise aborts the apply.
+
+Self-clearing made it survivable, not harmless. A latent trap that fires the
+first time conditions line up is exactly the shape of defect this file keeps
+recording, and "it goes away on its own" is a reason to write it down, not a
+reason to leave it armed. The advice below still stands for anyone writing a
+migration today, because it costs nothing and does not depend on which certify
+version is deployed:
+
+**Make the precondition tolerate the post-state** — return quietly instead of
+raising when the work is already done — so the same block is honest run once and
+run twice.
 
 ### The same defect class, looked for rather than assumed unique
 
