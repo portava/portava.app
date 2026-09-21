@@ -37,6 +37,8 @@ router.get("/feature-flags", asyncHandler(async (req, res) => {
   // gate on, believing it works.
   const INERT_FLAGS = new Set([
     "freeze_city", "freeze_event", "freeze_circle", "freeze_booking",
+    // Retired 2026-09-16 by 2962; see HIDDEN_INERT_FLAGS in routes/admin.ts.
+    "intel_sensing_credentials_enabled", "intel_sensing_device_enrollment_enabled",
     "COMPASS_FRONTLOAD_ENABLED",
     "COMPASS_ACTIVE_REWARD_ENABLED",
     "COMPASS_EXPLAIN_WHY_ENABLED",

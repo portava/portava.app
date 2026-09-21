@@ -5,6 +5,16 @@ import keyPackagesRouter from "./keyPackages";
 import healthRouter from "./health";
 import authRouter from "./auth";
 import tripsRouter from "./trips";
+import tripFeasibilityRouter from "./tripFeasibility";
+import tripOfflineRouter from "./tripOffline";
+import tripMeetingCheckpointsRouter from "./tripMeetingCheckpoints";
+import tripPostTripRouter from "./tripPostTrip";
+import tripPresenceRouter from "./tripPresence";
+import tripDecisionsRouter from "./tripDecisions";
+import tripStructureRouter from "./tripStructure";
+import tripMapProjectionRouter from "../server/trips/readRoutes/tripMapProjection";
+import tripProjectionsRouter from "../server/trips/readRoutes/tripProjections";
+import tripCommandsRouter from "../server/trips/commandRoute";
 import postsRouter from "./posts";
 import followsRouter from "./follows";
 import friendsRouter from "./friends";
@@ -13,6 +23,13 @@ import passportRouter from "./passport";
 import telegraphRouter from "./telegraph";
 import telegraphChatRouter from "./telegraphChat";
 import telegraphStreamRouter from "./telegraphStream";
+import telegraphSharedContextRouter from "./telegraphSharedContext";
+import telegraphShareRouter from "./telegraphShare";
+import telegraphKindsRouter from "./telegraphKinds";
+import telegraphVoiceRouter from "./telegraphVoice";
+import telegraphCoordinationRouter from "./telegraphCoordination";
+import telegraphMemoryRouter from "./telegraphMemory";
+import telegraphLifecycleRouter from "./telegraphLifecycle";
 import messagingRouter from "./messaging";
 import requestsRouter from "./requests";
 import planRouter from "./plan";
@@ -23,6 +40,11 @@ import preferencesRouter from "./preferences";
 import dailyBriefRouter from "./dailyBrief";
 import telegraphCommandsRouter from "./telegraphCommands";
 import telegraphFeedbackRouter from "./telegraphFeedback";
+// Telegraph §14.1 / §21 / §18.3 — the domain kernel's own server surface.
+import telegraphCapabilityRouter from "../server/telegraph/capabilityRoute";
+import telegraphSearchRouter from "../server/telegraph/searchRoute";
+import telegraphReadReceiptsRouter from "../server/telegraph/readReceiptsRoute";
+import telegraphKernelCommandRouter from "../server/telegraph/commandRoute";
 import discoveryRouter from "./discovery";
 import blocksRouter from "./blocks";
 import locationRouter from "./location";
@@ -144,6 +166,16 @@ const router: IRouter = Router();
 router.use(healthRouter);
 router.use(authRouter);
 router.use(tripsRouter);
+router.use(tripFeasibilityRouter);
+router.use(tripOfflineRouter);
+router.use(tripMeetingCheckpointsRouter);
+router.use(tripPostTripRouter);
+router.use(tripPresenceRouter);
+router.use(tripDecisionsRouter);
+router.use(tripStructureRouter);
+router.use(tripMapProjectionRouter);
+router.use(tripProjectionsRouter);
+router.use(tripCommandsRouter);
 router.use(postsRouter);
 router.use(profileRouter);
 router.use(followsRouter);
@@ -153,8 +185,19 @@ router.use(passportStampsRouter);
 router.use(telegraphRouter);
 router.use(telegraphChatRouter);
 router.use(telegraphStreamRouter);
+router.use(telegraphSharedContextRouter);
+router.use(telegraphShareRouter);
+router.use(telegraphKindsRouter);
+router.use(telegraphVoiceRouter);
+router.use(telegraphCoordinationRouter);
+router.use(telegraphMemoryRouter);
+router.use(telegraphLifecycleRouter);
 router.use(telegraphFeedbackRouter);
 router.use(telegraphCommandsRouter);
+router.use(telegraphCapabilityRouter);
+router.use(telegraphSearchRouter);
+router.use(telegraphReadReceiptsRouter);
+router.use(telegraphKernelCommandRouter);
 router.use(messagingRouter);
 router.use(requestsRouter);
 router.use(planRouter);
@@ -304,5 +347,40 @@ router.use(wallRouter);
 // wallRouter, which owns /wall, /wall/live, /wall/quick-media and the
 // session-intent / impression / action mutations.
 router.use(wallTelemetryRouter);
+
+// ── Sensing §10: the Compass decision surface (GO NOW … RETURN) ─────────────
+// Its own file behind compass_decision_enabled (2800, seeded FALSE);
+// routes/compass*.ts are owned by the Compass unit and are not touched.
+// Registered at the tail, and the import with it, so no line above moves —
+// census-trips.md and sensing-surface-inventory.md cite this file by line.
+import compassDecisionRouter from "./compassDecision.js";
+router.use(compassDecisionRouter);
+// ── Sensing §9 / §15: the Wall's moments, routed through the Attention Engine ─
+// Its own file behind wall_enabled AND wall_moments_enabled (2801, seeded
+// FALSE); routes/wall.ts is untouched. At the tail for the same reason.
+import wallMomentsRouter from "./wallMoments.js";
+router.use(wallMomentsRouter);
+// ── Sensing §12: canonical live references in Telegraph ───────────────────────
+// Its own file behind telegraph_live_references_enabled (2802, seeded FALSE);
+// routes/telegraph*.ts are untouched. At the tail for the same reason.
+import telegraphLiveReferencesRouter from "./telegraphLiveReferences.js";
+router.use(telegraphLiveReferencesRouter);
+// ── Sensing §16: the safety candidate stage, feeding the existing review ─────
+// Its own file behind intel_safety_candidates_enabled (2803, seeded FALSE) and
+// requireAdmin; routes/admin.ts is untouched. At the tail for the same reason.
+import adminSafetyCandidatesRouter from "./adminSafetyCandidates.js";
+router.use(adminSafetyCandidatesRouter);
+// ── Sensing §6: CONTEXT KERNEL → OPPORTUNITY ENGINE → surface projections ────
+// Its own file behind opportunity_engine_enabled (2840, seeded FALSE); no
+// existing surface's route is touched and every legacy candidate builder keeps
+// working. At the tail for the same reason.
+import opportunitiesRouter from "./opportunities.js";
+router.use(opportunitiesRouter);
+// ── Sensing §5.4: the ExperienceSession bridge, over canonical_events ────────
+// Its own file behind experience_session_enabled (2841, seeded FALSE); no
+// table and no verb are added and routes/intel.ts is untouched. At the tail
+// for the same reason.
+import experienceSessionsRouter from "./experienceSessions.js";
+router.use(experienceSessionsRouter);
 
 export default router;

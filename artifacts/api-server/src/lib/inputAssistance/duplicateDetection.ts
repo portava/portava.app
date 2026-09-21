@@ -191,7 +191,7 @@ async function fetchGemCandidates(
   sc: SupabaseClient,
   input: DedupCandidateInput,
   poolLimit: number,
-): Promise<GemRow[]> {
+): Promise<GemRow[] | null> {
   const preds: string[] = [];
   const nameVal = safeOrIlikeValue((input.name ?? '').trim());
   const cityVal = safeOrIlikeValue((input.city ?? '').trim());
@@ -212,10 +212,10 @@ async function fetchGemCandidates(
       // even for an identical name at identical coordinates.
       .in('status', ['active'])
       .limit(poolLimit);
-    if (error || !data) return [];
+    if (error || !data) return null; // D11: null = UNREADABLE, [] = genuinely none
     return data as GemRow[];
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -243,20 +243,13 @@ export async function findDuplicateGems(
   input: DedupCandidateInput,
   opts: { max?: number; poolLimit?: number; selfId?: string } = {},
 ): Promise<DuplicateMatch[]> {
-  const max = opts.max ?? 3;
-  if (!(input.name ?? '').trim() && !(input.city ?? '').trim()) return [];
-
-  const rows = await fetchGemCandidates(sc, input, opts.poolLimit ?? 50);
-  const matches: DuplicateMatch[] = [];
-  for (const r of rows) {
-    if (opts.selfId && r.id === opts.selfId) continue;
-    const entity = gemRowToEntity(r);
-    if (!entity.name) continue;
-    const score = scoreGemDuplicate(input, entity);
-    const m = toDuplicateMatch(input, entity, score);
-    if (m) matches.push(m);
-  }
-  return dedupeById(matches).sort((a, b) => b.score - a.score).slice(0, Math.max(0, max));
+  // D11 (swallowed-read inventory): the fail-soft ADAPTER. Its contract — []
+  // and never throws — is depended on by callers and by an existing guard, so
+  // it is preserved byte-for-byte. `scanDuplicateGems` below is the honest
+  // entry point: it separates "the candidate pool could not be read" from
+  // "the candidate pool is empty", which this signature cannot express.
+  const scan = await scanDuplicateGems(sc, input, opts);
+  return scan.ok ? scan.matches : [];
 }
 
 interface PlaceRow {
@@ -283,10 +276,116 @@ export async function findDuplicatePlaces(
   input: DedupCandidateInput,
   opts: { max?: number; poolLimit?: number; selfId?: string } = {},
 ): Promise<DuplicateMatch[]> {
+  // D11: fail-soft adapter — see findDuplicateGems. `scanDuplicatePlaces`
+  // below tells an unreadable `places` pool from an empty one.
+  const scan = await scanDuplicatePlaces(sc, input, opts);
+  return scan.ok ? scan.matches : [];
+}
+
+interface EventRow {
+  id: string;
+  title: string | null;
+  city: string | null;
+  country: string | null;
+  starts_at: string | null;
+  visibility: string | null;
+  state: string | null;
+}
+
+/** Within this many days a same-named same-city event is the SAME event, not a recurring series. */
+export const EVENT_SAME_WINDOW_DAYS = 7;
+
+/**
+ * Find likely-existing PUBLIC events that duplicate the one being created
+ * (§20 "Duplicate ... Event candidates"). Matches folded title + same city, and
+ * — when both have a start time — treats occurrences within a week as the same
+ * event (a far-apart same-name event is a recurring series, surfaced weakly).
+ *
+ * Only PUBLIC, non-cancelled/deleted/banned events are ever candidates, so this
+ * never turns dedup into an oracle for private events (§29 fail-closed spirit).
+ */
+export async function findDuplicateEvents(
+  sc: SupabaseClient,
+  input: DedupCandidateInput & { startsAt?: string | null },
+  opts: { max?: number; poolLimit?: number; selfId?: string } = {},
+): Promise<DuplicateMatch[]> {
+  // D11: fail-soft adapter — see findDuplicateGems. `scanDuplicateEvents`
+  // below tells an unreadable `events` pool from an empty one.
+  const scan = await scanDuplicateEvents(sc, input, opts);
+  return scan.ok ? scan.matches : [];
+}
+
+function dedupeById(matches: DuplicateMatch[]): DuplicateMatch[] {
+  const seen = new Set<string>();
+  const out: DuplicateMatch[] = [];
+  for (const m of matches) {
+    if (seen.has(m.entity.id)) continue;
+    seen.add(m.entity.id);
+    out.push(m);
+  }
+  return out;
+}
+
+// ── D11: an unreadable candidate pool is not an empty one ────────────────────
+//
+// docs/architecture/swallowed-read-inventory.md, SILENT/COMMENTED columns:
+// `fetchGemCandidates` (:215, COMMENTED — its comment quotes the branch
+// verbatim), `findDuplicatePlaces` (:306, SILENT) and `findDuplicateEvents`
+// (:411, SILENT) each answered a failed read with the same `[]` a genuinely
+// empty pool returns.
+//
+// May the caller act on that emptiness as if it were an answer? NO. The caller
+// (creation.ts:286/294/301) projects these matches as `disambiguation` rows;
+// NO rows is rendered to a traveller as "nothing like this exists yet", and the
+// traveller acts on it by creating the duplicate. The comments at :207-213,
+// :296-300 and :402-408 record two production outages of exactly that.
+//
+// The fail-closed direction is unchanged — nothing is auto-merged, nothing is
+// blocked, and the legacy `findDuplicate*` adapters still resolve to [] and
+// still never throw. What is added is the tree's local discriminated shape
+// ({ ok: true; … } | { ok: false; reason }, as in telemetry.ts:228 and
+// validationSuite.ts:86) so a caller CAN ask and CAN be told.
+export type DuplicateScan =
+  | { ok: true; matches: DuplicateMatch[] }
+  | { ok: false; reason: 'candidate_pool_unreadable'; table: string };
+
+const UNREADABLE_GEMS: DuplicateScan   = { ok: false, reason: 'candidate_pool_unreadable', table: 'hidden_gems' };
+const UNREADABLE_PLACES: DuplicateScan = { ok: false, reason: 'candidate_pool_unreadable', table: 'places' };
+const UNREADABLE_EVENTS: DuplicateScan = { ok: false, reason: 'candidate_pool_unreadable', table: 'events' };
+
+/** `findDuplicateGems` that says so when the `hidden_gems` pool was unreadable. */
+export async function scanDuplicateGems(
+  sc: SupabaseClient,
+  input: DedupCandidateInput,
+  opts: { max?: number; poolLimit?: number; selfId?: string } = {},
+): Promise<DuplicateScan> {
+  const max = opts.max ?? 3;
+  if (!(input.name ?? '').trim() && !(input.city ?? '').trim()) return { ok: true, matches: [] };
+
+  const rows = await fetchGemCandidates(sc, input, opts.poolLimit ?? 50);
+  if (rows === null) return UNREADABLE_GEMS; // D11: not the same as an empty pool
+  const matches: DuplicateMatch[] = [];
+  for (const r of rows) {
+    if (opts.selfId && r.id === opts.selfId) continue;
+    const entity = gemRowToEntity(r);
+    if (!entity.name) continue;
+    const score = scoreGemDuplicate(input, entity);
+    const m = toDuplicateMatch(input, entity, score);
+    if (m) matches.push(m);
+  }
+  return { ok: true, matches: dedupeById(matches).sort((a, b) => b.score - a.score).slice(0, Math.max(0, max)) };
+}
+
+/** `findDuplicatePlaces` that says so when the `places` pool was unreadable. */
+export async function scanDuplicatePlaces(
+  sc: SupabaseClient,
+  input: DedupCandidateInput,
+  opts: { max?: number; poolLimit?: number; selfId?: string } = {},
+): Promise<DuplicateScan> {
   const max = opts.max ?? 3;
   const nameVal = safeOrIlikeValue((input.name ?? '').trim());
   const cityVal = safeOrIlikeValue((input.city ?? '').trim());
-  if (!nameVal && !cityVal) return [];
+  if (!nameVal && !cityVal) return { ok: true, matches: [] };
 
   let rows: PlaceRow[] = [];
   try {
@@ -303,10 +402,10 @@ export async function findDuplicatePlaces(
       .select('id, name, city, country_code, primary_category, latitude, longitude')
       .or(preds.join(','))
       .limit(opts.poolLimit ?? 50);
-    if (error || !data) return [];
+    if (error || !data) return UNREADABLE_PLACES; // D11: not the same as an empty pool
     rows = data as PlaceRow[];
   } catch {
-    return [];
+    return UNREADABLE_PLACES;
   }
 
   const candLike: PlaceLike = {
@@ -355,40 +454,19 @@ export async function findDuplicatePlaces(
       matches.push({ entity, score, strength: classify(score), reason });
     }
   }
-  return dedupeById(matches).sort((a, b) => b.score - a.score).slice(0, Math.max(0, max));
+  return { ok: true, matches: dedupeById(matches).sort((a, b) => b.score - a.score).slice(0, Math.max(0, max)) };
 }
 
-interface EventRow {
-  id: string;
-  title: string | null;
-  city: string | null;
-  country: string | null;
-  starts_at: string | null;
-  visibility: string | null;
-  state: string | null;
-}
-
-/** Within this many days a same-named same-city event is the SAME event, not a recurring series. */
-export const EVENT_SAME_WINDOW_DAYS = 7;
-
-/**
- * Find likely-existing PUBLIC events that duplicate the one being created
- * (§20 "Duplicate ... Event candidates"). Matches folded title + same city, and
- * — when both have a start time — treats occurrences within a week as the same
- * event (a far-apart same-name event is a recurring series, surfaced weakly).
- *
- * Only PUBLIC, non-cancelled/deleted/banned events are ever candidates, so this
- * never turns dedup into an oracle for private events (§29 fail-closed spirit).
- */
-export async function findDuplicateEvents(
+/** `findDuplicateEvents` that says so when the `events` pool was unreadable. */
+export async function scanDuplicateEvents(
   sc: SupabaseClient,
   input: DedupCandidateInput & { startsAt?: string | null },
   opts: { max?: number; poolLimit?: number; selfId?: string } = {},
-): Promise<DuplicateMatch[]> {
+): Promise<DuplicateScan> {
   const max = opts.max ?? 3;
   const titleVal = safeOrIlikeValue((input.name ?? '').trim());
   const cityVal = safeOrIlikeValue((input.city ?? '').trim());
-  if (!titleVal) return [];
+  if (!titleVal) return { ok: true, matches: [] };
 
   let rows: EventRow[] = [];
   try {
@@ -408,10 +486,10 @@ export async function findDuplicateEvents(
       // verbatim from mapSearch.loadNearbyEvents / discoverySearch:615.
       .not('state', 'in', '("draft","cancelled","archived")')
       .limit(opts.poolLimit ?? 50);
-    if (error || !data) return [];
+    if (error || !data) return UNREADABLE_EVENTS; // D11: not the same as an empty pool
     rows = data as EventRow[];
   } catch {
-    return [];
+    return UNREADABLE_EVENTS;
   }
 
   const candStart = input.startsAt ? Date.parse(input.startsAt) : NaN;
@@ -453,16 +531,5 @@ export async function findDuplicateEvents(
       });
     }
   }
-  return dedupeById(matches).sort((a, b) => b.score - a.score).slice(0, Math.max(0, max));
-}
-
-function dedupeById(matches: DuplicateMatch[]): DuplicateMatch[] {
-  const seen = new Set<string>();
-  const out: DuplicateMatch[] = [];
-  for (const m of matches) {
-    if (seen.has(m.entity.id)) continue;
-    seen.add(m.entity.id);
-    out.push(m);
-  }
-  return out;
+  return { ok: true, matches: dedupeById(matches).sort((a, b) => b.score - a.score).slice(0, Math.max(0, max)) };
 }

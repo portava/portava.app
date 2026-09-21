@@ -144,7 +144,14 @@ router.post("/shared-moments/:id/request", asyncHandler(async (req, res) => {
   if (row.join_policy !== "approval_required") { sendError(res, "forbidden", "This Moment accepts invitations only"); return; }
   const blocked = await fetchBlockedSet(ctx.sc, ctx.userId);
   if (blocked === null || blocked.has(row.owner_id)) { sendError(res, "forbidden", "This request is unavailable"); return; }
-  const { data: existing } = await ctx.sc.from("shared_moment_memberships").select("status").eq("moment_id", row.id).eq("user_id", ctx.userId).maybeSingle();
+  // supabase-js RESOLVES on a DB error, so an unbound `error` read an
+  // unreadable shared_moment_memberships row as "not a member yet" and let the
+  // upsert below run on an ALREADY-ACCEPTED member — demoting them to
+  // status "requested" and revoking their own access to the Moment until an
+  // owner re-approves them. The sibling /invites route already binds this
+  // error; match it.
+  const { data: existing, error: existingErr } = await ctx.sc.from("shared_moment_memberships").select("status").eq("moment_id", row.id).eq("user_id", ctx.userId).maybeSingle();
+  if (existingErr) { sendError(res, "db_error", existingErr.message); return; }
   if ((existing as any)?.status === "accepted") { res.json({ ok: true, status: "accepted", idempotent: true }); return; }
   const { error: requestError } = await ctx.sc.from("shared_moment_memberships").upsert({
     moment_id: row.id, user_id: ctx.userId, role: "member", status: "requested", invited_by: null, responded_at: null, removed_at: null, updated_at: new Date().toISOString(),
@@ -161,9 +168,19 @@ router.post("/shared-moments/:id/respond", asyncHandler(async (req, res) => {
   const { data: membership } = await ctx.sc.from("shared_moment_memberships").select("status").eq("moment_id", params.data.id).eq("user_id", ctx.userId).maybeSingle();
   if ((membership as any)?.status !== "invited") { sendError(res, "not_found", "No pending invitation"); return; }
   const status = parsed.data.response === "accept" ? "accepted" : "declined";
-  const { error } = await ctx.sc.from("shared_moment_memberships").update({ status, responded_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-    .eq("moment_id", params.data.id).eq("user_id", ctx.userId).eq("status", "invited");
+  // `.eq("status","invited")` is a compare-and-swap against a value read a
+  // moment ago, and LOSING it is not an error — supabase-js resolves a zero-row
+  // update as `{ data: null, error: null }`. If the invitation was revoked or
+  // already answered in between, the old code still answered {ok:true, status}
+  // and wrote an `invite_accepted` audit row for an acceptance that never
+  // happened — i.e. the caller was told they had joined a Moment they are not a
+  // member of. `.select().maybeSingle()` makes the transition observable; the
+  // not_found is the same one the pre-check five lines up returns, and the
+  // sibling owner-side handler below already answers exactly this way.
+  const { data: responded, error } = await ctx.sc.from("shared_moment_memberships").update({ status, responded_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+    .eq("moment_id", params.data.id).eq("user_id", ctx.userId).eq("status", "invited").select("user_id").maybeSingle();
   if (error) { sendError(res, "db_error", error.message); return; }
+  if (!responded) { sendError(res, "not_found", "No pending invitation"); return; }
   await appendMomentAudit(ctx.sc, params.data.id, ctx.userId, `invite_${status}`);
   res.json({ ok: true, status });
 }));

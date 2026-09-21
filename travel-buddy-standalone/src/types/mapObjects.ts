@@ -274,6 +274,35 @@ export function mayCountAsConsensus(cls: SourceClass): boolean {
   return !(NON_INDEPENDENT_SOURCE_CLASSES as readonly string[]).includes(cls);
 }
 
+// ── Truth class + coverage (Sensing §5.1 / §7) ─────────────────────────────────
+
+/**
+ * Sensing §5.1's seven truth classes and §4.4's coverage bucket — MIRRORED
+ * from the server (api-server lib/mapObjects.ts TRUTH_CLASSES /
+ * COVERAGE_STATES, themselves pinned to lib/wallProjection's Sensing
+ * vocabulary). The server stamps both only behind
+ * `map_experience_state_enabled` / `map_world_moments_enabled`; absent means
+ * "no server-built truth metadata", never a default.
+ *
+ * `predicted`, `inferred`, `stale` and `unknown` must NEVER be drawn as a
+ * current observation (Sensing §5.1: "Prediction must never be rendered
+ * indistinguishably from observation").
+ */
+export const TRUTH_CLASSES = [
+  'observed',
+  'corroborated',
+  'inferred',
+  'predicted',
+  'conflicting',
+  'stale',
+  'unknown',
+] as const;
+export type TruthClass = (typeof TRUTH_CLASSES)[number];
+
+/** Coverage bucket. `unknown` is a first-class value and is NOT "none". */
+export const COVERAGE_STATES = ['few', 'several', 'many', 'unknown'] as const;
+export type CoverageState = (typeof COVERAGE_STATES)[number];
+
 // ── Trend (spec §7) ────────────────────────────────────────────────────────────
 
 /** Spec §7's "Trend" column — the direction of change, separate from level. */
@@ -507,6 +536,14 @@ export interface MapObject<T = unknown> {
    * SOURCE_CLASSES, and that guarantee is what lets a badge be exhaustive.
    */
   sourceClass?: SourceClass;
+
+  /**
+   * Sensing §5.1 truth class and §4.4 coverage, server-stamped and optional
+   * for the same reasons `sourceClass` is: absent means no server-built
+   * state, and §24 coarsening strips both.
+   */
+  truthClass?: TruthClass;
+  coverage?: CoverageState;
 
   /** Opaque provenance refs backing the §9 Why? panel. Never user identifiers. */
   sourceRefs?: string[];

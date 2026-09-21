@@ -348,14 +348,24 @@ export async function emitStateChangedEvents(
   prior: Map<string, SnapshotRow>,
   post: Map<string, SnapshotRow>,
   wentDark: readonly Pick<SnapshotRow, "id" | "subject_id" | "zone_id" | "claim_type">[],
-  opts: { now?: Date } = {},
+  opts: { now?: Date; priorComplete?: boolean } = {},
 ): Promise<StateChangedEmitResult> {
   const now = opts.now ?? new Date();
   if (!sc) return { stateChanged: 0 };
+  // An UNKNOWN prior is not an ABSENT prior. With `priorComplete:false` the diff
+  // is skipped entirely — a missing key would read as "appeared" and put a
+  // transition that never happened on an append-only spine. The wentDark rows
+  // below are unaffected: they come from the scheduler's fully-paginated
+  // reconciliation, which refuses to name an orphan on a partial read at all,
+  // so an "expired" transition is grounded whether or not the prior read worked.
+  const priorComplete = opts.priorComplete !== false;
+  if (!priorComplete) {
+    logger.warn({ post: post.size }, "intelDomainEvents: prior snapshot state unknown; emitting no state diff this pass");
+  }
   try {
     const events: CanonicalEventInput[] = [];
     const emittedSnapIds = new Set<string>();
-    for (const [key, next] of post) {
+    for (const [key, next] of (priorComplete ? post : new Map<string, SnapshotRow>())) {
       const p = prior.get(key);
       const t = snapshotTransition(
         p ? { value: p.value, confidence_band: p.confidence_band, privacy_eligible: p.privacy_eligible } : undefined,
@@ -379,10 +389,33 @@ export async function emitStateChangedEvents(
   }
 }
 
-/** Read snapshot semantic state for a set of subjects, keyed by snapshotKey. */
-export async function captureSnapshotStates(sc: any, subjectIds: readonly string[]): Promise<Map<string, SnapshotRow>> {
-  const out = new Map<string, SnapshotRow>();
-  if (!sc || subjectIds.length === 0) return out;
+/**
+ * Read snapshot semantic state for a set of subjects, keyed by snapshotKey.
+ *
+ * THE RESULT CARRIES `ok`, AND THAT IS THE WHOLE POINT. This used to return a
+ * bare Map and answer an unreadable `intel_state_snapshots` with an EMPTY one.
+ * The caller uses the result as the PRIOR state of the projection diff, and
+ * `snapshotTransition(undefined, next)` is "appeared" — so a single failed read
+ * turned every snapshot the pass touched into a freshly-appeared one and wrote a
+ * burst of false `intel.state.changed / appeared` rows onto an append-only spine
+ * that blocks UPDATE and DELETE absolutely (2130). "I could not read the prior
+ * state" is not "there was no prior state"; the two are now different values and
+ * the caller has to say which it got.
+ *
+ * `ok:false` still carries whatever rows were read (none), so a caller that only
+ * wants a best-effort snapshot map can ignore it — but it cannot do so silently.
+ * A caller with an EMPTY subject list gets `ok:true`: nothing was asked for, so
+ * nothing failed.
+ */
+export interface SnapshotStateCapture {
+  ok: boolean;
+  states: Map<string, SnapshotRow>;
+}
+
+export async function captureSnapshotStates(sc: any, subjectIds: readonly string[]): Promise<SnapshotStateCapture> {
+  const states = new Map<string, SnapshotRow>();
+  if (!sc) return { ok: false, states };
+  if (subjectIds.length === 0) return { ok: true, states };
   try {
     const { data, error } = await sc
       .from("intel_state_snapshots")
@@ -391,14 +424,15 @@ export async function captureSnapshotStates(sc: any, subjectIds: readonly string
       .limit(MAX_PER_PASS);
     if (error) {
       logger.warn({ err: error }, "intelDomainEvents: snapshot-state read failed");
-      return out;
+      return { ok: false, states };
     }
     for (const r of ((data as SnapshotRow[]) ?? [])) {
       if (!r.id || !r.subject_id || !r.claim_type) continue;
-      out.set(snapshotKey(r), r);
+      states.set(snapshotKey(r), r);
     }
   } catch (err) {
     logger.warn({ err }, "intelDomainEvents: snapshot-state read threw");
+    return { ok: false, states };
   }
-  return out;
+  return { ok: true, states };
 }

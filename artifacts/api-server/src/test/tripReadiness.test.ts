@@ -21,6 +21,7 @@ import { createServer } from "node:http";
 import type { Server } from "node:http";
 import app from "../app.js";
 import { _setTestClient } from "../lib/http.js";
+import { summarizeReadiness, type ReadinessItem } from "../domain/trips/services/tripReadiness.js";
 
 // ---------------------------------------------------------------------------
 // Test IDs
@@ -39,7 +40,17 @@ const PASS_ID   = "77777777-7777-7777-7777-777777777777";
 // ---------------------------------------------------------------------------
 type Row = Record<string, any>;
 interface FakeTable { rows: Row[]; nextInsertError?: string; }
-interface FakeOpts { throwOnTables?: string[]; }
+interface FakeOpts {
+  /** `from(table)` THROWS — a transport-level failure / a client that dies before it queries. */
+  throwOnTables?: string[];
+  /**
+   * Every chain on the table RESOLVES `{ data: null, error }` — which is what a
+   * real PostgREST failure looks like, and the case `throwOnTables` does NOT
+   * model. supabase-js resolves rather than throws, so a double that only
+   * throws cannot exercise a route's `.error` handling at all.
+   */
+  errorOnTables?: string[];
+}
 
 function makeFakeClient(tables: Record<string, FakeTable> = {}, opts: FakeOpts = {}) {
   const db: Record<string, FakeTable> = {
@@ -61,6 +72,7 @@ function makeFakeClient(tables: Record<string, FakeTable> = {}, opts: FakeOpts =
     ...tables,
   };
   const throwOn = opts.throwOnTables ?? [];
+  const errorOn = opts.errorOnTables ?? [];
 
   let idCtr = 0;
   function newId() {
@@ -203,8 +215,24 @@ function makeFakeClient(tables: Record<string, FakeTable> = {}, opts: FakeOpts =
     },
     from: (tableName: string) => {
       if (throwOn.includes(tableName)) {
-        // Simulates an environment where the table's schema doesn't exist yet.
+        // Simulates a client that dies before it queries (transport level).
         throw new Error(`relation "${tableName}" does not exist`);
+      }
+      if (errorOn.includes(tableName)) {
+        // Simulates the REAL failure shape: the builder RESOLVES with an error.
+        const failing: any = new Proxy({}, {
+          get(_t, prop) {
+            if (prop === "then") {
+              return (onF: any, onR: any) =>
+                Promise.resolve({ data: null, error: { message: `relation "${tableName}" is unavailable`, code: "PGRST999" } }).then(onF, onR);
+            }
+            if (prop === "maybeSingle" || prop === "single") {
+              return () => Promise.resolve({ data: null, error: { message: `relation "${tableName}" is unavailable`, code: "PGRST999" } });
+            }
+            return () => failing;
+          },
+        });
+        return failing;
       }
       return chain(tableName);
     },
@@ -311,6 +339,19 @@ describe("trip readiness routes", () => {
     // reservations ready → score = round(100 * 1/7)
     assert.deepEqual(r.body.counts, { ready: 1, actionNeeded: 3, incomplete: 3, unknown: 0 });
     assert.equal(r.body.score, 14);
+    // §8: the explanation rides on the wire, built from the same items, and
+    // says in words what the counts say in numbers — never as a percentage.
+    const ex = r.body.explanation;
+    assert.equal(typeof ex.headline, "string");
+    assert.doesNotMatch(ex.headline, /\d+ ?%/);
+    assert.equal(ex.byCategory.length, 7);
+    assert.deepEqual(ex.byCategory.map((c: any) => c.category), ["plan", "stay", "transport", "budget", "entry", "documents", "reservations"]);
+    const plan = ex.byCategory.find((c: any) => c.category === "plan");
+    assert.equal(plan.status, "incomplete");
+    assert.match(plan.because, /^Trip dates not set/);
+    assert.equal(plan.nextAction.title, "Trip dates not set");
+    assert.equal(ex.measured, 7);
+    assert.equal(ex.ready, 1);
   });
 
   it("aggregates open days into ONE plan gap item listing the gap dates", async () => {
@@ -444,7 +485,10 @@ describe("trip readiness routes", () => {
     assert.ok(visa.title.includes("official source"));
     assert.equal(visa.actionRef?.officialSourceUrl, "https://example.gov/visa");
     assert.ok(r.body.criticalItems.some((i: any) => i.dedupeKey === `entry:${OWNER_ID}`));
-  });
+      // §8 headline: the critical item, by its own title, first.
+    assert.match(r.body.explanation.headline, /^1 critical item needs attention: /);
+    assert.doesNotMatch(r.body.explanation.headline, /\d+ ?%/);
+});
 
   it("emits an honest unknown item when the corridor has no verified entry data", async () => {
     const { client } = makeFakeClient({
@@ -561,6 +605,46 @@ describe("trip readiness routes", () => {
     assert.equal(snap.trip_id, TRIP_ID);
     assert.equal(snap.snapshot_date, todayStr, "snapshot_date must be today (UTC)");
     assert.equal(snap.score, r.body.score, "snapshot score must match the returned score");
+  });
+
+  it("a snapshot table that ERRORS does not break the readiness response (and the trend reads as none)", async () => {
+    // The snapshot is a decoration on an otherwise-correct readiness answer, so
+    // its failure must never become the user's 5xx. Nothing covered the failure
+    // shape the real client actually produces — a RESOLVED `{ data: null, error }`
+    // — only a synchronous throw, which supabase-js never does.
+    const { client } = makeFakeClient(
+      {
+        trips: { rows: [baseTrip()] },
+        trip_members: { rows: [ownerMemberRow()] },
+        feature_flags: flagOn(),
+      },
+      { errorOnTables: ["trip_readiness_snapshots"] },
+    );
+    _setTestClient(client, true);
+
+    const r = await req(port, "GET", `/trips/${TRIP_ID}/readiness`, { token: "owner-token" });
+    assert.equal(r.status, 200, `a failed snapshot must not fail readiness (got ${r.status} ${JSON.stringify(r.body)})`);
+    assert.equal(r.body.previousScore, null, "an unreadable snapshot reads as 'no prior snapshot', not as a score");
+    assert.equal(typeof r.body.score, "number", "the readiness score itself is still computed");
+  });
+
+  it("a snapshot table that THROWS does not break the readiness response either", async () => {
+    // The transport-level case. This is what the `try`/`catch` around the
+    // snapshot read and write is actually for; deleting it turns a socket error
+    // during a decoration into a 5xx on the whole readiness response.
+    const { client } = makeFakeClient(
+      {
+        trips: { rows: [baseTrip()] },
+        trip_members: { rows: [ownerMemberRow()] },
+        feature_flags: flagOn(),
+      },
+      { throwOnTables: ["trip_readiness_snapshots"] },
+    );
+    _setTestClient(client, true);
+
+    const r = await req(port, "GET", `/trips/${TRIP_ID}/readiness`, { token: "owner-token" });
+    assert.equal(r.status, 200, `a throwing snapshot table must not fail readiness (got ${r.status} ${JSON.stringify(r.body)})`);
+    assert.equal(r.body.previousScore, null);
   });
 
   it("prunes snapshot rows older than 30 days on recompute, keeping recent ones", async () => {
@@ -810,7 +894,15 @@ describe("trip readiness routes", () => {
     assert.equal(r2.body.error, "feature_disabled");
   });
 
-  it("still computes readiness when trip_reservations does not exist (defensive)", async () => {
+  // THIS TEST USED TO ASSERT `categories.reservations === "ready"`.
+  //
+  // It read "Reservations treated as absent", and that is the defect: the
+  // table could not be READ, and the response said the reservations category
+  // was ready — a clean bill of health on a cancellation deadline nobody
+  // looked at. Worse, `unknown` categories counted toward the score exactly
+  // like `ready` did, so the less of a trip could be checked the readier it
+  // scored. Both are fixed; this test now pins the honest shape.
+  it("reports reservations as UNKNOWN — never ready — when trip_reservations cannot be read", async () => {
     const { client } = makeFakeClient(
       {
         trips: { rows: [baseTrip()] },
@@ -823,10 +915,55 @@ describe("trip readiness routes", () => {
 
     const r = await req(port, "GET", `/trips/${TRIP_ID}/readiness`, { token: "owner-token" });
     assert.equal(r.status, 200);
-    assert.ok(Array.isArray(r.body.items), "compute must succeed without the table");
-    // Reservations treated as absent → transport gap still derived from plan items
-    assert.ok(findItem(r.body.items, "transport:none"));
-    assert.equal(r.body.categories.reservations, "ready");
+    assert.ok(Array.isArray(r.body.items), "compute must still succeed without the table");
+
+    // 1. The category is unknown, and unknown is not ready.
+    assert.equal(r.body.categories.reservations, "unknown");
+    assert.notEqual(r.body.categories.reservations, "ready");
+
+    // 2. The failure is SAID, not merely absent, and it is critical-visible.
+    const unreadable = findItem(r.body.items, "reservations:unreadable");
+    assert.ok(unreadable, "the unreadable reservations item must be present");
+    assert.equal(unreadable.status, "unknown");
+    assert.ok(
+      r.body.criticalItems.some((i: any) => /could not be checked/i.test(i.title)),
+      "an unreadable reservations table must ride in criticalItems",
+    );
+
+    // 3. The stay/transport verdicts do not claim a reservation is absent when
+    //    the reservations table is what could not be read. The dedupe keys are
+    //    unchanged (the gap is still reported); the STATUS is not action_needed.
+    const transport = findItem(r.body.items, "transport:none");
+    assert.ok(transport, "the transport gap is still reported");
+    assert.equal(transport.status, "unknown");
+    assert.match(transport.detail, /could not be read/);
+    const stay = findItem(r.body.items, "stay:none");
+    assert.ok(stay);
+    assert.equal(stay.status, "unknown");
+
+    // 4. The score EXCLUDES what it could not measure, rather than counting it
+    //    as ready. Three categories are unknown here, so the denominator is 4.
+    assert.deepEqual(
+      [...r.body.unmeasuredCategories].sort(),
+      ["reservations", "stay", "transport"],
+      "every unmeasured category must be named",
+    );
+    assert.ok(r.body.score <= 100 && r.body.score >= 0);
+    // The precise property that used to fail: an unreadable table cannot raise
+    // the score. Compare against the same trip with the table readable.
+    const { client: healthy } = makeFakeClient({
+      trips: { rows: [baseTrip()] },
+      trip_members: { rows: [ownerMemberRow()] },
+      feature_flags: flagOn(),
+      trip_reservations: { rows: [] },
+    });
+    _setTestClient(healthy, true);
+    const healthyRes = await req(port, "GET", `/trips/${TRIP_ID}/readiness`, { token: "owner-token" });
+    assert.equal(healthyRes.body.categories.reservations, "ready");
+    assert.ok(
+      r.body.score <= healthyRes.body.score,
+      `an unreadable table must not score higher than a readable one (${r.body.score} vs ${healthyRes.body.score})`,
+    );
   });
 
   // ── Arrival board ──────────────────────────────────────────────────────────
@@ -884,4 +1021,398 @@ describe("trip readiness routes", () => {
     assert.equal(r.status, 403);
     assert.equal(r.body.error, "not_member");
   });
+});
+
+// ---------------------------------------------------------------------------
+// §8 — readiness is an explanatory projection, not a gamified truth score
+// (census-trips TR142). The explanation is mechanical over the items.
+// ---------------------------------------------------------------------------
+describe("§8 readiness explained, never scored", () => {
+  const AT = "2026-09-12T10:00:00.000Z";
+  const item = (o: Partial<ReadinessItem> & { category: ReadinessItem["category"] }): ReadinessItem => ({
+    userId: null, status: "action_needed", severity: "normal", title: "x", detail: null, dueAt: null,
+    actionRef: null, dedupeKey: `${o.category}:x`, computedAt: AT, ...o,
+  });
+
+  it("all seven ready: 'Every check is ready', and every category says nothing is outstanding", () => {
+    const s = summarizeReadiness([], AT);
+    assert.equal(s.explanation.headline, "Every check is ready");
+    assert.equal(s.explanation.measured, 7);
+    assert.equal(s.explanation.ready, 7);
+    for (const c of s.explanation.byCategory) {
+      assert.equal(c.status, "ready");
+      assert.equal(c.because, "Nothing outstanding");
+      assert.equal(c.nextAction, null);
+    }
+  });
+
+  it("critical items lead the headline by their own titles; the category's nextAction is the critical one", () => {
+    const s = summarizeReadiness([
+      item({ category: "entry", severity: "critical", title: "Visa required", detail: "Apply 6 weeks ahead", dueAt: "2026-10-01T00:00:00Z", actionRef: { href: "/entry" } }),
+      item({ category: "entry", title: "Passport validity unknown", status: "incomplete" }),
+      item({ category: "stay", title: "No stay for 2 nights" }),
+    ], AT);
+    assert.equal(s.explanation.headline, "1 critical item needs attention: Visa required");
+    const entry = s.explanation.byCategory.find((c) => c.category === "entry")!;
+    assert.equal(entry.because, "Visa required — Apply 6 weeks ahead");
+    assert.deepEqual(entry.nextAction, { title: "Visa required", detail: "Apply 6 weeks ahead", dueAt: "2026-10-01T00:00:00Z", actionRef: { href: "/entry" } });
+    const stay = s.explanation.byCategory.find((c) => c.category === "stay")!;
+    assert.equal(stay.because, "No stay for 2 nights");
+  });
+
+  it("without criticals the headline names the categories, in words, and never a percentage", () => {
+    const s = summarizeReadiness([
+      item({ category: "stay", title: "No stay booked" }),
+      item({ category: "transport", title: "No way there" }),
+      item({ category: "documents", title: "Passport not chosen", status: "incomplete" }),
+    ], AT);
+    assert.equal(s.explanation.headline, "somewhere to stay, transport need action; documents is incomplete");
+    assert.doesNotMatch(s.explanation.headline, /\d+ ?%/);
+    assert.equal(s.score, 57, "the count survives for the snapshot table; it is not the headline");
+  });
+
+  it("what could not be checked is always said — five ready of seven is not 'ready'", () => {
+    const s = summarizeReadiness([
+      item({ category: "reservations", status: "unknown", title: "Reservations could not be read" }),
+      item({ category: "entry", status: "unknown", title: "No verified entry data" }),
+    ], AT);
+    assert.equal(s.explanation.headline, "Every check that could be made is ready; entry requirements, reservations could not be checked");
+    assert.equal(s.explanation.measured, 5);
+    assert.equal(s.explanation.ready, 5);
+    const res = s.explanation.byCategory.find((c) => c.category === "reservations")!;
+    assert.equal(res.status, "unknown");
+    assert.equal(res.because, "Reservations could not be read");
+    // Every category unknown: nothing could be checked, and the headline says so rather than "ready".
+    const none = summarizeReadiness(
+      (["plan", "stay", "transport", "budget", "entry", "documents", "reservations"] as const).map((c) => item({ category: c, status: "unknown", title: "?" })),
+      AT,
+    );
+    assert.equal(none.explanation.headline, "Nothing about this trip could be checked yet");
+    assert.equal(none.score, null);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D11 — swallowed-read inventory, tripReadiness.ts `safeSelect` (:156)
+//
+// Kept in its own suite at the END of the file on purpose: docs/architecture/
+// census-trips.md:6476 cites `src/test/tripReadiness.test.ts:1030#§8 readiness
+// explained, never scored` by line, and inserting these cases higher up shifted
+// that anchor. New declarations go below every cited line.
+// ---------------------------------------------------------------------------
+describe("trip readiness — an unread entry source is not an answer (D11)", () => {
+  let server: Server;
+  let port: number;
+
+  beforeEach(async () => {
+    if (server) server.close();
+    ({ server, port } = await startServer());
+  });
+
+  after(async () => {
+    if (server) server.close();
+  });
+
+// ── D11 / swallowed-read inventory: tripReadiness.ts `safeSelect` ──────────
+//
+// The site is `safeSelect` (tripReadiness.ts:156, SILENT column of
+// docs/architecture/swallowed-read-inventory.md): `if (error) return []`.
+//
+// The helper itself is not the defect — `[]` is an honest answer for a caller
+// that may act on "no rows", and this module already ships the discriminating
+// sibling `safeSelectOrNull` for callers that may not. The defect is realised
+// at the two entry-category call sites, and the test below is what the
+// inventory's question resolves to for each:
+//
+//   passports (:523, trip_traveler_passports) — a failed read made every
+//     accepted crew member look like they had not picked a passport, so the
+//     response asserted `action_needed` "Select your travel passport" for a
+//     whole crew out of a query that never answered.
+//
+//   passportRows (:701, traveler_passports) — worse. A failed join left
+//     `passportCountry` null, the loop `continue`d, and a category with NO
+//     items reads READY (tripReadiness.ts:143, :783). The entry category
+//     said "ready" — nobody's corridor was checked.
+//
+// The fix uses this module's own wire vocabulary, exactly as the
+// reservations test above pins it: status `unknown` + `critical` severity,
+// which keeps the category OUT of the score denominator and names it in
+// `unmeasuredCategories`.
+
+it("reports entry as UNKNOWN — never action_needed — when trip_traveler_passports cannot be read", async () => {
+  const { client } = makeFakeClient(
+    {
+      trips: { rows: [baseTrip()] },
+      trip_members: { rows: [ownerMemberRow()] },
+      feature_flags: flagOn(),
+    },
+    { errorOnTables: ["trip_traveler_passports"] },
+  );
+  _setTestClient(client, true);
+
+  const r = await req(port, "GET", `/trips/${TRIP_ID}/readiness`, { token: "owner-token" });
+  assert.equal(r.status, 200);
+
+  assert.equal(r.body.categories.entry, "unknown");
+  assert.notEqual(r.body.categories.entry, "action_needed");
+
+  const unreadable = findItem(r.body.items, "entry:unreadable");
+  assert.ok(unreadable, "the unreadable passports item must be present");
+  assert.equal(unreadable.status, "unknown");
+  assert.ok(
+    r.body.criticalItems.some((i: any) => /passport/i.test(i.title) && /could not/i.test(i.title)),
+    "an unreadable passport source must ride in criticalItems",
+  );
+
+  // The false per-member claim is gone: nobody is told to "select your travel
+  // passport" on the strength of a read that failed.
+  assert.equal(
+    findItem(r.body.items, `entry:${OWNER_ID}:passport`), undefined,
+    "a failed read must not become a per-member action_needed",
+  );
+  assert.ok(
+    [...r.body.unmeasuredCategories].includes("entry"),
+    "an unmeasured entry category must be named",
+  );
+
+  // Control: the SAME trip with a readable-but-empty table still tells the
+  // member to pick a passport — the fail-closed prompt is not weakened.
+  const { client: healthy } = makeFakeClient({
+    trips: { rows: [baseTrip()] },
+    trip_members: { rows: [ownerMemberRow()] },
+    feature_flags: flagOn(),
+    trip_traveler_passports: { rows: [] },
+  });
+  _setTestClient(healthy, true);
+  const h = await req(port, "GET", `/trips/${TRIP_ID}/readiness`, { token: "owner-token" });
+  const prompt = findItem(h.body.items, `entry:${OWNER_ID}:passport`);
+  assert.ok(prompt, "a genuinely empty passport table still prompts the member");
+  assert.equal(prompt.status, "action_needed");
+  assert.equal(h.body.categories.entry, "action_needed");
+  assert.ok(!h.body.unmeasuredCategories.includes("entry"), "a read table is measured");
+  // The score's denominator shrank rather than counting the unread category
+  // as ready: entry moved out of the measured set entirely.
+  assert.ok(
+    r.body.counts.unknown > h.body.counts.unknown,
+    `the unread run must carry one more unknown category (${r.body.counts.unknown} vs ${h.body.counts.unknown})`,
+  );
+  assert.equal(r.body.counts.actionNeeded, h.body.counts.actionNeeded - 1,
+    "the false per-member action_needed is gone, not merely relabelled");
+});
+
+it("entry never reads READY when the traveler_passports join cannot be read", async () => {
+  // The sharpest form of the site: a member HAS chosen a passport, but its
+  // issuing country lives in `traveler_passports` (canonical 0169 schema).
+  // With that join unread the corridor check was skipped per member, and a
+  // category with no items reads "ready".
+  const tables = () => ({
+    trips: { rows: [baseTrip()] },
+    trip_members: { rows: [ownerMemberRow()] },
+    feature_flags: flagOn(),
+    trip_traveler_passports: { rows: [{ trip_id: TRIP_ID, user_id: OWNER_ID, passport_id: PASS_ID }] },
+    traveler_passports: { rows: [{ id: PASS_ID, issuing_country: "US" }] },
+    entry_requirements: { rows: [{ destination_country: "JP", passport_country: "US", status: "visa_free" }] },
+  });
+
+  const { client } = makeFakeClient(tables(), { errorOnTables: ["traveler_passports"] });
+  _setTestClient(client, true);
+  const r = await req(port, "GET", `/trips/${TRIP_ID}/readiness`, { token: "owner-token" });
+  assert.equal(r.status, 200);
+  assert.notEqual(
+    r.body.categories.entry, "ready",
+    "an unread passport-country join must never produce a clean bill of health",
+  );
+  assert.equal(r.body.categories.entry, "unknown");
+  assert.ok(findItem(r.body.items, "entry:unreadable"), "the failure must be said, not merely absent");
+  assert.ok([...r.body.unmeasuredCategories].includes("entry"));
+
+  // Control: readable join → the corridor IS checked and entry is genuinely ready.
+  const { client: healthy } = makeFakeClient(tables());
+  _setTestClient(healthy, true);
+  const h = await req(port, "GET", `/trips/${TRIP_ID}/readiness`, { token: "owner-token" });
+  assert.equal(h.body.categories.entry, "ready", "visa_free with a readable join is genuinely ready");
+  assert.deepEqual([...h.body.unmeasuredCategories].filter((c: string) => c === "entry"), []);
+});
+
+// ── D11 / swallowed-read inventory, second pass: the three raw reads ────────
+//
+// `trip_plan_items`, `trip_budget` and `trip_documents` were read as
+// `const { data } = await sc...` — the exact shape the inventory names. This
+// module had already ruled on the shape twice (trip_reservations,
+// trip_traveler_passports) and these three were missed by both passes, which
+// is why they are pinned here one source at a time rather than together: each
+// one produces a DIFFERENT false sentence, and a single combined assertion
+// would pass while two of the three were still wrong.
+
+it("reports plan as UNKNOWN — never N open days — when trip_plan_items cannot be read", async () => {
+  const tables = () => ({
+    trips: { rows: [baseTrip({ start_date: "2026-08-01", end_date: "2026-08-03" })] },
+    trip_members: { rows: [ownerMemberRow()] },
+    feature_flags: flagOn(),
+    trip_plan_items: { rows: [
+      { id: "p1", trip_id: TRIP_ID, category: "accommodation", status: "confirmed", day_date: "2026-08-01", starts_at: null, removed_at: null },
+      { id: "p2", trip_id: TRIP_ID, category: "transport", status: "confirmed", day_date: "2026-08-02", starts_at: null, removed_at: null },
+      { id: "p3", trip_id: TRIP_ID, category: "activity", status: "confirmed", day_date: "2026-08-03", starts_at: null, removed_at: null },
+    ] },
+  });
+
+  const { client } = makeFakeClient(tables(), { errorOnTables: ["trip_plan_items"] });
+  _setTestClient(client, true);
+  const r = await req(port, "GET", `/trips/${TRIP_ID}/readiness`, { token: "owner-token" });
+  assert.equal(r.status, 200);
+
+  // 1. The invented sentence is gone. Every one of the three days landed in
+  //    gapDates for want of ROWS, so the old code said "3 open days: Sat, Sun,
+  //    Mon" about a fully planned trip.
+  const gaps = findItem(r.body.items, "plan:gaps");
+  assert.ok(gaps, "the plan slot is still occupied — silence is not the fix");
+  assert.equal(gaps.status, "unknown");
+  assert.notEqual(gaps.status, "action_needed");
+  assert.ok(!/\d+\s+open day/i.test(gaps.title), `a day count must not be invented: ${gaps.title}`);
+  assert.equal(gaps.actionRef, null, "no dates may be handed to a client that would render them");
+
+  // 2. plan is unmeasured, not ready and not action_needed.
+  assert.equal(r.body.categories.plan, "unknown");
+  assert.ok([...r.body.unmeasuredCategories].includes("plan"));
+
+  // 3. The stay/transport sentences name the source that failed. Both were
+  //    covered by a plan item, so both gaps exist ONLY because of the failure.
+  const stay = findItem(r.body.items, "stay:none");
+  assert.ok(stay);
+  assert.equal(stay.status, "unknown");
+  assert.match(stay.detail, /plan items/, "the failing source must be named");
+  const transport = findItem(r.body.items, "transport:none");
+  assert.ok(transport);
+  assert.equal(transport.status, "unknown");
+  assert.match(transport.detail, /plan items/);
+
+  // 4. Control: the same fully planned trip, readable, has NO plan gap item
+  //    and a ready plan category.
+  const { client: healthy } = makeFakeClient(tables());
+  _setTestClient(healthy, true);
+  const h = await req(port, "GET", `/trips/${TRIP_ID}/readiness`, { token: "owner-token" });
+  assert.equal(findItem(h.body.items, "plan:gaps"), undefined, "a readable, complete plan reports no gaps");
+  assert.equal(h.body.categories.plan, "ready");
+  assert.equal(findItem(h.body.items, "stay:none"), undefined, "the accommodation item is seen");
+  assert.equal(findItem(h.body.items, "transport:none"), undefined, "the transport item is seen");
+
+  // 5. An unread plan must not score higher than a read one.
+  assert.ok(r.body.score <= h.body.score, `${r.body.score} vs ${h.body.score}`);
+});
+
+it("reports budget as UNKNOWN — never 'No budget set' — when trip_budget cannot be read", async () => {
+  const tables = () => ({
+    trips: { rows: [baseTrip()] },
+    trip_members: { rows: [ownerMemberRow()] },
+    feature_flags: flagOn(),
+    trip_budget: { rows: [{ trip_id: TRIP_ID, total_budget: 1000, spent: 100, currency: "USD" }] },
+  });
+
+  const { client } = makeFakeClient(tables(), { errorOnTables: ["trip_budget"] });
+  _setTestClient(client, true);
+  const r = await req(port, "GET", `/trips/${TRIP_ID}/readiness`, { token: "owner-token" });
+  assert.equal(r.status, 200);
+
+  const budget = findItem(r.body.items, "budget:none");
+  assert.ok(budget, "the budget slot is still occupied");
+  assert.equal(budget.status, "unknown");
+  assert.notEqual(budget.status, "incomplete");
+  assert.ok(!/No budget set/i.test(budget.title),
+    `a trip WITH a budget must not be told it has none: ${budget.title}`);
+  assert.equal(r.body.categories.budget, "unknown");
+  assert.ok([...r.body.unmeasuredCategories].includes("budget"));
+
+  // Control 1: the budget exists and is under — no item at all.
+  const { client: healthy } = makeFakeClient(tables());
+  _setTestClient(healthy, true);
+  const h = await req(port, "GET", `/trips/${TRIP_ID}/readiness`, { token: "owner-token" });
+  assert.equal(findItem(h.body.items, "budget:none"), undefined);
+  assert.equal(h.body.categories.budget, "ready");
+
+  // Control 2: a genuinely absent budget still says so. The prompt is not weakened.
+  const { client: empty } = makeFakeClient({
+    trips: { rows: [baseTrip()] },
+    trip_members: { rows: [ownerMemberRow()] },
+    feature_flags: flagOn(),
+    trip_budget: { rows: [] },
+  });
+  _setTestClient(empty, true);
+  const e = await req(port, "GET", `/trips/${TRIP_ID}/readiness`, { token: "owner-token" });
+  const prompt = findItem(e.body.items, "budget:none");
+  assert.ok(prompt, "an empty budget table still prompts");
+  assert.equal(prompt.status, "incomplete");
+  assert.match(prompt.title, /No budget set/);
+  assert.ok(!e.body.unmeasuredCategories.includes("budget"), "a read table is measured");
+});
+
+it("reports documents as UNKNOWN — never 'No documents saved' — when trip_documents cannot be read", async () => {
+  const tables = () => ({
+    trips: { rows: [baseTrip()] },
+    trip_members: { rows: [ownerMemberRow()] },
+    feature_flags: flagOn(),
+    trip_documents: { rows: [{ id: "d1", trip_id: TRIP_ID }] },
+  });
+
+  const { client } = makeFakeClient(tables(), { errorOnTables: ["trip_documents"] });
+  _setTestClient(client, true);
+  const r = await req(port, "GET", `/trips/${TRIP_ID}/readiness`, { token: "owner-token" });
+  assert.equal(r.status, 200);
+
+  const docs = findItem(r.body.items, "documents:none");
+  assert.ok(docs, "the documents slot is still occupied");
+  assert.equal(docs.status, "unknown");
+  assert.notEqual(docs.status, "incomplete");
+  assert.ok(!/No documents saved/i.test(docs.title),
+    `a trip WITH a document must not be told it has none: ${docs.title}`);
+  assert.equal(r.body.categories.documents, "unknown");
+  assert.ok([...r.body.unmeasuredCategories].includes("documents"));
+
+  // Control 1: the document is there and read — no item.
+  const { client: healthy } = makeFakeClient(tables());
+  _setTestClient(healthy, true);
+  const h = await req(port, "GET", `/trips/${TRIP_ID}/readiness`, { token: "owner-token" });
+  assert.equal(findItem(h.body.items, "documents:none"), undefined);
+  assert.equal(h.body.categories.documents, "ready");
+
+  // Control 2: genuinely empty still prompts.
+  const { client: empty } = makeFakeClient({
+    trips: { rows: [baseTrip()] },
+    trip_members: { rows: [ownerMemberRow()] },
+    feature_flags: flagOn(),
+    trip_documents: { rows: [] },
+  });
+  _setTestClient(empty, true);
+  const e = await req(port, "GET", `/trips/${TRIP_ID}/readiness`, { token: "owner-token" });
+  const prompt = findItem(e.body.items, "documents:none");
+  assert.ok(prompt);
+  assert.equal(prompt.status, "incomplete");
+  assert.match(prompt.title, /No documents saved/);
+});
+
+it("names BOTH failing sources when the plan and the reservations are unreadable together", async () => {
+  // The two-source sentence: "we cannot tell whether a stay is booked" is a
+  // claim about a plan item AND a reservation, and a reader who is told only
+  // one half failed will draw the wrong conclusion about the other.
+  const { client } = makeFakeClient(
+    {
+      trips: { rows: [baseTrip({ start_date: "2026-08-01", end_date: "2026-08-03" })] },
+      trip_members: { rows: [ownerMemberRow()] },
+      feature_flags: flagOn(),
+    },
+    { errorOnTables: ["trip_plan_items", "trip_reservations"] },
+  );
+  _setTestClient(client, true);
+  const r = await req(port, "GET", `/trips/${TRIP_ID}/readiness`, { token: "owner-token" });
+  assert.equal(r.status, 200);
+  const stay = findItem(r.body.items, "stay:none");
+  assert.ok(stay);
+  assert.equal(stay.status, "unknown");
+  assert.match(stay.detail, /plan items and its reservations/,
+    `both failing sources must be named: ${stay.detail}`);
+  assert.deepEqual(
+    [...r.body.unmeasuredCategories].sort(),
+    ["plan", "reservations", "stay", "transport"],
+    "every unmeasured category must be named",
+  );
+});
 });

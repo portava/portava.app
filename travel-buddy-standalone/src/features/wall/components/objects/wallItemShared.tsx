@@ -38,6 +38,7 @@ import {
 } from '../../services/wallAnalytics.ts';
 import { askCompassFromWall } from '../../services/wallCompass.ts';
 import { sendAction, type WallActionEvent } from '../../services/wallApi.ts';
+import { saveItem, unsaveItem } from '../../../../services/collections.ts';
 import type {
   DisplayMedia,
   PublicActorRef,
@@ -115,6 +116,10 @@ export function resolveActionRoute(
     case 'add_to_trip':
       return '/trips';
     case 'message':
+      // /messages/[id] takes a THREAD id, not a user id, and resolving the
+      // direct thread is an async canonical call — so the Wall hands off to the
+      // messages surface itself rather than inventing a thread route that would
+      // 404. The action is a bridge, never a send.
       return '/messages';
     case 'explore':
       return '/gems';
@@ -127,6 +132,14 @@ export function resolveActionRoute(
     case 'book_buddy':
       return '/availability';
     case 'join':
+      // spec §2 "join". A `join` action names the CANONICAL event it belongs to
+      // (`targetType: 'event'`), and the handoff opens that event's own screen,
+      // where the canonical eligibility / capacity / RSVP gate runs
+      // (routes/events POST /events/:id/join). The Wall never joins on the
+      // viewer's behalf and never re-implements the gate — the transition is
+      // offered, not forced (§40 #6). Without an event target there is nothing
+      // to join, so the object itself is opened instead.
+      if (action.targetType === 'event' && action.targetId) return `/event/${action.targetId}`;
       return `/post/${objId}`;
     default:
       return null;
@@ -147,6 +160,9 @@ export function handoffSurfaceFor(type: WallActionType): WallHandoffSurface | nu
     case 'add_to_trip':
       return 'trip';
     case 'book_buddy':
+      return 'buddy';
+    case 'message':
+      // Messaging a Buddy is a Buddy-surface handoff (spec §19/§32).
       return 'buddy';
     default:
       return null;
@@ -173,6 +189,47 @@ export function realWorldOutcomeFor(type: WallActionType): WallRealWorldOutcome 
   }
 }
 
+/**
+ * Object types whose `canonicalObjectId` IS a `posts` row id, and which therefore
+ * have a canonical save in `post_saves` (routes/mediaFeed POST/DELETE
+ * /posts/:id/save). A shared moment and a Buddy opportunity live in other id
+ * spaces and have no post save, so the Wall must not pretend to save them.
+ */
+const POST_SAVEABLE_TYPES: ReadonlySet<string> = new Set([
+  'social_post',
+  'video',
+  'postcard',
+  'social_update',
+  'discovery',
+]);
+
+/**
+ * Write a save through to the CANONICAL save store (spec §2 "save", §24 "the
+ * projection is never the object"). Returns whether the write landed.
+ *
+ * The Wall previously toggled a `React.useState` boolean and fired analytics, so
+ * the bookmark persisted nothing and reset on remount — `save`, one of §2's
+ * eight named real-world actions, was an animation. The store is
+ * services/collections' `saveItem`/`unsaveItem`, which for `post` entities hit
+ * the dedicated `post_saves` endpoint. The Wall owns neither the store nor the
+ * count; it reports the state the server projected (`viewerSaved`) and writes
+ * through the canonical endpoint.
+ */
+export async function persistWallSave(
+  projection: WallProjection,
+  next: boolean,
+): Promise<boolean> {
+  if (!POST_SAVEABLE_TYPES.has(projection.objectType)) return false;
+  try {
+    return next
+      ? await saveItem('post', projection.canonicalObjectId)
+      : await unsaveItem('post', projection.canonicalObjectId);
+  } catch {
+    // A failed save must never surface as a crash in the feed (spec §34/§40).
+    return false;
+  }
+}
+
 export function runWallAction(action: WallAction, projection: WallProjection): void {
   trackAction(projection, actionEventFor(action.type));
 
@@ -185,6 +242,14 @@ export function runWallAction(action: WallAction, projection: WallProjection): v
   // askCompassFromWall records the compass handoff itself, so return after it.
   if (action.type === 'ask_compass') {
     askCompassFromWall(projection);
+    return;
+  }
+
+  // `save` is a WRITE, not a navigation. It goes to the canonical save store and
+  // returns — there is no surface to push (spec §2/§24).
+  if (action.type === 'save') {
+    const next = !(action.params?.saved === true);
+    void persistWallSave(projection, next);
     return;
   }
 
@@ -351,8 +416,13 @@ export function ContextualActionChips({ projection }: { projection: WallProjecti
   // `open_object` is the whole-card tap, not a chip. `ask_compass` is surfaced by
   // the dedicated AskCompassChip in PlaceLine (spec §21) — excluding it here keeps
   // Compass to a single quiet affordance rather than a duplicate badge (§35).
+  // `save` is the bookmark in SocialActionRow, the same argument: the server
+  // emits the action (spec §2 needs a producer, and it carries the viewer's
+  // current state), but rendering it AGAIN as a chip would put a second Save on
+  // every post in the feed — precisely the "excessive badges" §35 forbids and
+  // the "do not add actions to every object" §7 warns about.
   const actions = (projection.actions ?? []).filter(
-    (a) => a.type !== 'open_object' && a.type !== 'ask_compass',
+    (a) => a.type !== 'open_object' && a.type !== 'ask_compass' && a.type !== 'save',
   );
   if (actions.length === 0) return null;
   return (
@@ -377,7 +447,13 @@ export function ContextualActionChips({ projection }: { projection: WallProjecti
 // ── Standard social action row (keeps it enjoyable as social media, §40) ─────
 
 export function SocialActionRow({ projection }: { projection: WallProjection }) {
-  const [saved, setSaved] = React.useState(false);
+  // Server truth, not component state (spec §2/§37: server-side state is
+  // authoritative; never rely on client-only state). The optimistic flip below
+  // is a rendering courtesy that REVERTS when the canonical write fails.
+  const [saved, setSaved] = React.useState(projection.viewerSaved === true);
+  React.useEffect(() => {
+    setSaved(projection.viewerSaved === true);
+  }, [projection.viewerSaved]);
   const open = () => runWallAction({ type: 'open_object', label: 'Open' }, projection);
   // Stamp/comment measure the distinct engagement (spec §32) then open the
   // canonical object where the interaction actually happens (spec §24).
@@ -390,9 +466,15 @@ export function SocialActionRow({ projection }: { projection: WallProjection }) 
     open();
   };
   const toggleSave = () => {
-    setSaved((v) => !v);
+    const next = !saved;
+    setSaved(next); // optimistic
     trackEngagement(projection, 'save');
     trackAction(projection, 'save');
+    // Write through to the canonical store; revert the optimism if it did not
+    // land, so the icon never claims a save the server does not hold.
+    void persistWallSave(projection, next).then((ok) => {
+      if (!ok) setSaved(!next);
+    });
   };
   const share = () => {
     trackEngagement(projection, 'share');
@@ -459,7 +541,10 @@ export function NotInterestedControl({
       hitSlop={8}
       testID={`wall-not-interested-${projection.projectionId}`}
     >
-      <EyeOff size={icon.s16} color={color.faint} />
+      {/* §36 / WCAG 1.4.11: this icon is the ENTIRE visual of a control — there is
+          no adjacent text — so it has to clear the 3:1 non-text floor. `faint` is
+          2.73:1 on paper; `mute` is 5.27:1 and still reads as understated. */}
+      <EyeOff size={icon.s16} color={color.mute} />
     </Pressable>
   );
 }
@@ -488,7 +573,9 @@ const s = StyleSheet.create({
     paddingVertical: 1,
   },
   buddyTagText: { ...t.stamp, color: color.onInk },
-  meta: { ...t.small, color: color.faint },
+  // §36 contrast: `faint` fails WCAG AA on every Wall surface (2.73:1 on
+  // paper, 2.88:1 on paperRaised). `mute` clears it at 5.27 / 5.55.
+  meta: { ...t.small, color: color.mute },
   placeRow: { flexDirection: 'row', alignItems: 'center', gap: space.xs, marginTop: space.xs },
   placeText: { ...t.small, color: color.deep, flexShrink: 1 },
   compassChip: {
@@ -535,5 +622,5 @@ const s = StyleSheet.create({
   },
   mediaRounded: { borderRadius: radius.md },
   mediaPlaceholder: { alignItems: 'center', justifyContent: 'center' },
-  mediaPlaceholderText: { ...t.small, color: color.faint, fontWeight: '600' },
+  mediaPlaceholderText: { ...t.small, color: color.mute, fontWeight: '600' },
 });

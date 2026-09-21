@@ -1396,3 +1396,545 @@ The following tables existed in the live DB before or were created by this wave.
 - **Why `audit:schema` reads 0 and not 1 afterwards.** `auditMigrationsVsLive.ts:730` suppresses an `rls:` claim whose relation is absent ("declared for a table nobody created" is not drift), so `rls:post_event_links` was **not** among the 9 reported — it becomes a reported gap the instant the table exists without RLS. Creating the table promotes that claim from suppressed to live-checked. The count went 9 → 0 *because* the enable was included; it would have gone 9 → 1 had it been omitted. The audit would have caught it, but only after the table had already sat unprotected.
 - **Three declared RLS policies were NOT applied and remain deliberately unapplied** — `media_assets_public_select`, `media_attachments_public_select` (`20260811_media_rls.sql`) and `users_view_highlight_replies` (`0026_highlights.sql` / `2033_rls_hardening.sql`). They are allowlisted at `auditMigrationsVsLive.ts:221-236` with the reasoning written out in full there; all three are pure widenings or superseded declarations, and their absence is the restrictive direction. Of the twelve objects the 2026-08-10 production audit found declared-but-absent (`docs/schema-reconciliation-2026-08-08.md` §2), **nine are now applied and three are deliberately not**.
 - **Provenance, stated plainly given this file's own header warning.** The apply and the verification were executed by the operator in the Supabase SQL editor and reported back; this session composed the SQL, checked its structure offline, and recorded the outcome. Nothing here was observed by the session that wrote it. The two queries above are the way to re-establish it independently — do that before relying on this row.
+
+---
+
+## 2026-09-15 — The three CI ledger orphans: files restored, and the checksum's meaning pinned down (2311 / 2320 / 2325)
+
+**Nothing was applied to any database by this entry.** It records a repository
+repair and a verification, both performed against `portava-ci`
+(`hwokxgbmezheskbzskfr`) read-only. Production (`ajrurzioarfkagpuxfnb`) was not
+touched and is not described here.
+
+### What was wrong
+
+`public.schema_migration_ledger` on `portava-ci` carried three rows whose
+migration FILE existed on no merged branch — `check:migration-ledger` finding
+#2, *"ledger rows with no file on disk"*. Each row is a real apply made by hand
+on 2026-09-07 to unblock an open PR. **The rows were not deleted**, and deleting
+them was never the remedy: a row records an apply that really happened, so
+removing it would make the ledger assert that a migration which DID run never
+ran — an accurate record of an awkward act replaced by an inaccurate record of
+no act. The file was the thing missing, so the file is what was restored.
+
+### The three, and the verification
+
+Files restored from their source branches, then hashed locally with `sha256sum`
+and compared against the `checksum` column read back from the live ledger:
+
+| file | sha256 (file on disk) | ledger `checksum` | `applied_by` |
+| --- | --- | --- | --- |
+| `2311_intel_claim_reviews.sql` | `18e8899b…e3d985` | identical, all 64 hex | `manual` |
+| `2320_memory_episode_provenance_spine.sql` | `1d13adee…6ab04e` | identical, all 64 hex | `manual` |
+| `2325_telegraph_unsend_before_seen.sql` | `cdb83992…493490` | identical, all 64 hex | `manual` |
+
+All three rows carry `applied_at = 2026-09-07 04:55:22.645066+00`.
+
+### CORRECTION — what that checksum does and does not prove
+
+The commit that restored these files said the matching checksums meant *"these
+are the bytes that were applied."* **That is wrong, and the ledger's own `notes`
+column says so.** Read back verbatim, each row records a transformation:
+
+- 2311 — *"Body applied is the committed file with SQL comments stripped; every
+  DDL statement and postcondition ran verbatim."*
+- 2320 — *"Comments stripped and outer BEGIN/COMMIT removed; all DDL and
+  postconditions ran verbatim, including the erase_memory_for_user widening to
+  5 columns."*
+- 2325 — *"Comments stripped and outer BEGIN/COMMIT removed; all DDL and
+  postconditions ran verbatim."*
+
+So the `checksum` column is the hash of the **committed file**, not of the text
+submitted to the database. The match therefore proves **file identity** — that
+the file now on disk is the one the row names, and not a later edit of it, which
+would have been finding #3 and a worse problem. That is exactly and only what
+finding #2 requires. It proves nothing about transport, and this file's own
+header warning is the reason to say so rather than let the stronger reading
+stand.
+
+### Installed objects, checked separately — the claim the checksum cannot make
+
+Queried directly from `pg_proc` / `pg_class` / `pg_attribute` on `portava-ci`,
+which is a different kind of evidence from either the file hash or the stored
+text:
+
+| object | observed |
+| --- | --- |
+| `public.erase_memory_for_user` | returns **5** columns — `projections_deleted, events_deleted, feedback_deleted, episodes_deleted, evidence_deleted`; `prosecdef = true` |
+| `public.telegraph_unsend_message_before_seen` | present, `(p_message_id uuid, p_actor_id uuid, p_thread_id uuid)`, `prosecdef = true` |
+| `public.intel_claim_reviews` | present, RLS **enabled**, 9 columns |
+| `public.memory_episodes` | present, RLS **enabled**, 22 columns |
+| `public.memory_evidence` | present, RLS **enabled**, 11 columns |
+| `public.messages.unsent_at` | present, `timestamp with time zone`, nullable |
+
+The five-column return is the load-bearing one: it is 2320's single
+non-additive act, and observing it in the catalogue is what turns the notes'
+*"including the erase_memory_for_user widening to 5 columns"* from a claim into
+a reading.
+
+### What is still NOT established
+
+- **`check:migration-ledger` has not run against this tree.** It executes only
+  inside `certify:migrations`, which `live-db.yml` gates on
+  `github.ref == 'refs/heads/main'` — so it cannot run on a pull request at all,
+  and the restore will be exercised by the gate for the first time when the
+  branch merges. Everything above is the evidence available before that.
+- **Nothing here says anything about production.** These three are applied to
+  `portava-ci` only. `check:production-drift` carries all three as `unapplied`,
+  which is the honest classification for a table declared in the tree and absent
+  from production.
+- **No writer came with any of the three.** Each migration's application code
+  stayed on its unmerged branch, so all three objects are inert in this tree.
+
+### Re-establish it independently
+
+    SELECT filename, applied_by, checksum, applied_at, notes
+      FROM public.schema_migration_ledger
+     WHERE filename IN ('2311_intel_claim_reviews.sql',
+                        '2320_memory_episode_provenance_spine.sql',
+                        '2325_telegraph_unsend_before_seen.sql')
+     ORDER BY filename;
+    -- compare each `checksum` against `sha256sum` of the file of the same name
+    -- in artifacts/api-server/src/migrations/
+
+    SELECT pg_get_function_result(p.oid)
+      FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+     WHERE n.nspname = 'public' AND p.proname = 'erase_memory_for_user';
+    -- expect a 5-column TABLE(...), ending episodes_deleted, evidence_deleted
+
+---
+
+## 2026-09-15 — PR #482 merged: 34 of 49 migrations applied to portava-ci, and the one postcondition that stopped the rest
+
+**Project: `portava-ci` (`hwokxgbmezheskbzskfr`). PRODUCTION (`ajrurzioarfkagpuxfnb`)
+WAS NOT TOUCHED BY ANY OF THIS** and is not described here.
+
+PR #482 squash-merged to `main` as `1fe72289b`. That is the ref `live-db.yml`
+gates its apply and certify steps on, so `db:apply-migrations` ran for the first
+time against this branch's 49 pending migrations.
+
+### What applied — 34, each in one transaction with its ledger row
+
+`2745`, `2778`–`2795`, `2800`–`2803`, `2810`–`2813`, `2840`, `2841`, `2850`,
+`2851`, `2860`, `2870`, `2880`. Every one reported `applied + recorded (one
+transaction)`, which is the shape that makes "applied but unrecorded"
+unreachable.
+
+The effect is visible in the audit: `audit:schema` went from **111 missing
+objects across 18 files** before the merge to **6 across 3 files** after.
+
+### What stopped it, and why the stop was correct
+
+    apply-migrations STOPPED at 2890_rank_events_behavior_engine_columns.sql (failed).
+    Management API 400: POSTCONDITION FAILED (2890): 1 row(s) carry a dwell value
+    after a migration that writes none. A dwell measurement was invented.
+
+`2890`'s own postcondition 5 is the data-preservation assertion: *"the file must
+not have invented attention data."* It counts rows where `dwell_ms IS NOT NULL OR
+dwell_kind IS NOT NULL` and refuses if any exist, because the migration adds the
+columns and writes nothing into them.
+
+**The remaining 14 (`2890`–`2970`) were NOT attempted**, deliberately — the
+applier stops at the first failure because later migrations routinely depend on
+earlier ones and continuing invents a schema state no environment has ever had.
+
+### The offending row, and what it actually was
+
+One row, found by direct query:
+
+| field | value |
+| --- | --- |
+| `id` | `0606ea7a-c899-4875-b4a5-16fdf3148f7f` |
+| `item_id` | **`node/REHEARSAL2`** |
+| `dwell_ms` | `0` |
+| `dwell_kind` | `idle` |
+| `served_at` | `2026-09-14 18:19:50.088597+00` |
+| `user_id` | the project's own `@portava` official account |
+
+**A rehearsal probe, not a traveller's data.** Three rehearsal rows exist in
+`rank_events` on this project — `node/REHEARSAL` ×2 and `node/REHEARSAL2` — all
+written in one batch at the same timestamp against the project's own account.
+This is the same class of leftover that `checkMissingLiveColumns.ts`'s allowlist
+already records as the root cause of `CI (live DB)` being red on `main`'s own sha
+across five consecutive scheduled runs.
+
+Counted before acting, so the scope was known rather than assumed:
+
+    rehearsal_rows           3
+    dwell_rows               1
+    dwell_rows_not_rehearsal 0      ← no real row carries a dwell value
+    total_rows             239
+
+### The remediation, and why this one
+
+    UPDATE public.rank_events
+       SET dwell_ms = NULL, dwell_kind = NULL
+     WHERE id = '0606ea7a-c899-4875-b4a5-16fdf3148f7f'
+       AND item_id = 'node/REHEARSAL2'
+       AND (dwell_ms IS NOT NULL OR dwell_kind IS NOT NULL);
+    -- RETURNING confirmed: 1 row, both fields now NULL
+
+**One row, addressed by primary key, with the item_id and the non-null condition
+both re-asserted in the WHERE clause** so the statement could not widen if the
+data had moved under it.
+
+Why clear the fields rather than delete the row: the postcondition's concern is
+an *invented attention measurement*, not the row's existence. Removing the
+invented datum is exactly the remedy it asks for, and it touches the minimum.
+`rank_events` carries no append-only trigger on this project (checked before the
+write), so the UPDATE was permitted rather than forced into a DELETE.
+
+`rank_events_dwell_pairing_check` — `dwell_kind IS NULL OR dwell_ms IS NOT NULL`
+— is satisfied by both being NULL.
+
+### What is still NOT done, stated rather than implied
+
+- **`2890`–`2970` are still unapplied to portava-ci.** The apply must be re-run.
+- **`certify:migrations` has not passed.** It failed at STAGE 1 for the honest
+  reason: 15 files on disk had no ledger row, which is a *symptom* of the stop,
+  not an independent defect. Its own output says so: *"If
+  check:missing-live-columns is red too, the columns it names are a SYMPTOM of
+  the files above — apply these, do not chase the column list."*
+- **`0172_trip_reservations.sql` is missing one policy**
+  (`trip_reservations_owner_delete`) and that is **pre-existing**, unrelated to
+  this merge, and untouched by it.
+- **Nothing was applied to production, and no flag was enabled anywhere.**
+
+### Re-establish any of this independently
+
+    SELECT count(*) FROM public.rank_events
+     WHERE dwell_ms IS NOT NULL OR dwell_kind IS NOT NULL;
+    -- expect 0, which is what 2890's postcondition requires
+
+    SELECT filename, applied_by, applied_at FROM public.schema_migration_ledger
+     WHERE filename LIKE '28%' OR filename LIKE '29%' ORDER BY filename;
+
+
+## 2026-09-15 — Rehearsal rows removed, 2893 reconciled, and a claim retracted (2890 → 2970)
+
+### Applied so far, read from the ledger — NOT inferred
+
+Every migration ID below comes from `public.schema_migration_ledger` on
+portava-ci and from the applier's own execution log. Nothing here is inferred
+from `audit:schema`'s missing-object count, which cannot establish apply order
+or completion and which I misread once already (see the retraction below).
+
+| filename | applied_by | applied_at (UTC) |
+| --- | --- | --- |
+| `2890_rank_events_behavior_engine_columns.sql` | `ci` | 13:16:38 |
+| `2891_rank_events_recommendation_id.sql` | `ci` | 13:32:35 |
+| `2892_place_momentum.sql` | `ci` | 13:32:36 |
+
+All three carry a real sha256. **That is the complete set in the 2890–2999
+range.** The applier's log for run 34972255308 attempt 3 says the same thing in
+its own words: `applied before the stop : 2`, `not attempted : 11`.
+
+### TWO RETRACTIONS
+
+**(1) I claimed an empty table proved a migration never ran. It does not.**
+The previous version of this section said `stamp_definitions` holding zero rows
+was "the proof" that 0081/0082/0145/0179/0189/0198 did not run on portava-ci.
+That is wrong, and wrong in the direction that matters: an empty table
+establishes **missing current data**, nothing more. Rows can be seeded by a
+migration and deleted afterwards by anything at all. The honest statement is
+that the seed data is absent NOW, which is enough to justify naming those files
+to `--apply-unproven` — their INSERTs are `ON CONFLICT (slug) DO NOTHING`, so
+re-running them is safe whether or not they ran before — but it is NOT a finding
+about history.
+
+**(2) I read an apply order out of `audit:schema` and it was fiction.**
+Seeing "6 missing objects across 3 files" I concluded 2891–2940 had all applied.
+The ledger says 2891 and 2892 applied and 2893 stopped the run. `audit:schema`
+reports only *claimed objects that are absent*; a file whose objects happen to
+exist already looks identical to one that applied. Apply order and completion
+come from the ledger and the applier log, and from nowhere else.
+
+### Why the run stopped: 2893, and the state its precondition could not name
+
+    PRECONDITION FAILED (2893): rank_events_surface_check does not permit search,
+    so this database is not on the post-2298 fifteen.
+
+The refusal was correct as written and wrong about this database. Live
+vocabularies, read at the time:
+
+| environment | `rank_events_surface_check` permits |
+| --- | --- |
+| portava-ci | the **eight** — `pulse, discovery, events, compass, live_pulse, living_page, watch_feed, wall` |
+| production | the pre-2298 **fourteen** — the fifteen minus `wall` |
+
+portava-ci is **already at 2893's finished state**. The precondition asked only
+"are you on the fifteen I narrow FROM?", so it could not distinguish a database
+already narrowed from one that never had the fifteen — and those need opposite
+answers. Production is the second case, where the refusal is right and must keep
+firing.
+
+### The fix: three states, decided explicitly
+
+`2893_rank_events_retire_writerless_surfaces.sql` now classifies the live
+constraint into exactly three states:
+
+- **(A) the expected old constraint** — the post-2298 fifteen. Narrow it. The
+  ordinary path, unchanged.
+- **(B) the exact verified target** — the eight, and nothing else. Reconcile:
+  re-assert and continue. A migration whose effect is already present is a
+  no-op, not an error.
+- **(C) anything else** — **refuse**, and say what is actually there rather than
+  asserting "apply 2298 first" about a state nobody has characterised.
+
+**Nothing is skipped in state (B).** The `DROP`/`ADD` still runs, the safety veto
+still counts live rows, and every postcondition in the file still executes. Only
+the verdict on the *starting* state changed. The live constraint was **not**
+widened to satisfy the precondition, at any point.
+
+#### A defect found in my own first draft, by rehearsing it
+
+The first version tested (B) as "all eight present AND none of the seven retired
+present". That is not the same as "the vocabulary is the eight": a constraint
+carrying the eight **plus a label from neither list** satisfies both halves.
+Rehearsed against a synthetic ninth label `quasar`, the draft classified it as
+**(B) RECONCILE** — exactly the unexpected state that must fail. Both tests are
+now exact sorted-array comparisons against the parsed label list, which an
+unexpected member cannot pass.
+
+#### Rehearsed against five vocabularies before being committed
+
+| starting vocabulary | branch |
+| --- | --- |
+| portava-ci live (the eight) | **B — reconcile** |
+| post-2298 fifteen | **A — narrow** |
+| production pre-2298 fourteen | **C — refused** |
+| half-narrowed (eight + `search`) | **C — refused** |
+| eight + unknown label `quasar` | **C — refused** |
+
+The comment-stripped precondition block — the form the applier actually
+executes, since the ledger's `notes` records that comments and the outer
+`BEGIN`/`COMMIT` are removed — was then run whole against portava-ci: it
+compiled, took branch (B), and passed the safety veto with **0** rows on all
+seven retired surfaces. Both (C) cases were re-run under an exception handler to
+confirm they genuinely raise rather than merely being expected to.
+
+2893 is **unapplied on both environments** (`0` ledger rows on each), so editing
+its bytes breaks no recorded checksum. No applied migration's bytes were changed.
+
+### Reconciled state vs. executed migration: what the ledger can and cannot carry
+
+2893 will genuinely **execute** on portava-ci — the DDL runs and the
+postconditions run — so `applied_by='ci'` with a real checksum is the truthful
+row, not a convenience.
+
+Recording *reconciled* as a state distinct from *executed* is *not* available in
+`applied_by` today: 2254 pins it with
+`schema_migration_ledger_applied_by_check` to exactly `ci | manual | backfill`,
+and `apply-migrations.ts` treats anything outside `ci|manual` as **not proof of
+an apply**, so a fourth value would make the file retry forever. The distinction
+therefore lives where the ledger does support it — the migration's own
+`RAISE NOTICE` in the execution log (`2893 RECONCILE:` vs `2893 APPLY:`) and this
+document. Widening the vocabulary would need a migration against 2254's CHECK
+**and** a matching runner change; that is a reviewed change, proposed rather
+than taken unilaterally.
+
+### The rehearsal rows, deleted at source
+
+2890 was cleared one field at a time; the re-run applied it and stopped at 2891
+on the **same three rows**, carrying `recommendation_id = 'AAAAAAAAAAAAAAAAAAAAAA'`
+— twenty-two `A`s, shaped to pass the format check rather than written by any
+writer. With 13 migrations and ~100 postconditions left, clearing one invented
+value per CI round-trip was the wrong strategy; the rows were the defect.
+
+    DELETE FROM public.rank_events
+     WHERE id IN ('826057e7-cdfc-4d27-a7ca-41bebda1137e',
+                  '2768c28e-2e28-4777-b41a-92fab8a5c199',
+                  '0606ea7a-c899-4875-b4a5-16fdf3148f7f')
+       AND item_id ILIKE '%REHEARSAL%'
+     RETURNING id, item_id;
+    -- RETURNING confirmed: exactly 3 rows, all three REHEARSAL/REHEARSAL2
+
+Explicit primary keys with the `item_id` guard re-asserted so the statement could
+not widen; a full JSON snapshot was captured first. All three belonged to the
+project's own `@portava` account, on `surface = 'discovery'`, **portava-ci only**.
+**Production was not touched.**
+
+| measure | before | after |
+| --- | --- | --- |
+| `rank_events` total | 239 | **236** |
+| `item_id ILIKE '%REHEARSAL%'` | 3 | **0** |
+| `recommendation_id IS NOT NULL` | 2 | **0** |
+| `dwell_ms IS NOT NULL` | 0 | **0** |
+
+2893's *"do NOT delete the rows to make the constraint fit"* is a different case:
+it protects rows **on a surface being retired**, which are evidence of a missed
+writer. These three sat on `discovery`, which 2893 **keeps**.
+
+### Still open
+
+- **`2893`–`2970` unapplied.** They apply only from `refs/heads/main`, so the
+  2893 fix must merge before it can run.
+- **2970 needs the stamp seeds**, named explicitly to `--apply-unproven`:
+  `0081`, `0082`, `0145`, `0179`, `0189`, `0198`. All six are idempotent
+  (`CREATE TABLE IF NOT EXISTS`, `INSERT … ON CONFLICT (slug) DO NOTHING`),
+  verified by reading them.
+- **`0172_trip_reservations.sql`** is missing `trip_reservations_owner_delete` —
+  **pre-existing**, unrelated.
+- **Nothing applied to production; no flag enabled anywhere.**
+
+### Re-establish any of this independently
+
+    SELECT filename, applied_by, applied_at FROM public.schema_migration_ledger
+     WHERE filename >= '2890' AND filename < '2999' ORDER BY filename;
+
+    SELECT pg_get_constraintdef(oid) FROM pg_constraint
+     WHERE conrelid = 'public.rank_events'::regclass
+       AND conname = 'rank_events_surface_check';
+
+    SELECT count(*) FROM public.rank_events WHERE item_id ILIKE '%REHEARSAL%';
+    -- expect 0
+
+---
+
+## 2026-09-15 — PR #504 merged: 2972 applied and CERTIFIED, and the stamp write boundary closed
+
+Run [35028484083](https://github.com/portava/portava.app/actions/runs/35028484083),
+`push` on `main` at `0bea333b4`. **No `workflow_dispatch` was used and none was
+needed** — see "Why no dispatch" below.
+
+### What applied
+
+One file. Read from `public.schema_migration_ledger`, not from `audit:schema`:
+
+```
+2972_stamp_family_write_boundary.sql   applied_by=ci   2026-09-15 22:01:48Z   sha256 619402663c61…
+```
+
+`applied_by='ci'` together with a real sha256 is the applier's own definition of
+proof. (For contrast, the 388 rows 2254 seeded carry `applied_by='backfill'` and
+no comparable checksum; they assert only that the filename existed.)
+
+### certify:migrations — all five stages, quoted from the run
+
+```
+certify:migrations PASSED — every stage reached a verdict and every verdict was a pass:
+  ✔ 1 ledger
+  ✔ 2 schema objects
+  ✔ 3 grants and RLS
+  ✔ 4 critical postconditions
+  ✔ 5 app checks
+```
+
+- **1 ledger** — `check:migration-ledger exited 0 — ledger and disk agree.`
+- **2 schema objects** — `1 migration(s) in scope (ledger rows tagged
+  run=35028484083): 2972_stamp_family_write_boundary.sql`. The scope is exactly
+  one file, so this run is **not** the vacuous case where nothing applied and
+  certify certifies nothing. `0 declared object(s) present` is correct and
+  expected: 2972 declares no objects — it revokes privileges.
+- **3 grants and RLS** — passed. **Read the caveat below before quoting this one.**
+- **4 critical postconditions** — `2 assertion block(s) re-run against the
+  committed database`, i.e. 2972's own precondition and postcondition blocks,
+  re-executed after the commit rather than trusted from apply time.
+- **5 app checks** — `audit:schema exited 0` (548 files, 6372 claimed objects,
+  *"Live schema contains every object claimed by the migrations"*) and
+  `check:missing-live-columns PASSED` (551 files, 3779 column declarations).
+
+### CAVEAT — what STAGE 3 does and does not establish here
+
+STAGE 3's verdict sentence is scoped to *"a table these migrations **created**"*.
+2972 creates no tables, so on this scope the stage has almost nothing to look at.
+**STAGE 3's green is not the evidence that the revoke worked**, and citing it as
+such would repeat the very scope illusion that hid this finding for as long as it
+was hidden: STAGE 3 only ever saw the problem because a dispatch replayed 0081,
+the migration that *created* the seven tables.
+
+What does establish it is STAGE 4 — which re-ran 2972's postcondition against the
+committed database, and that block asserts zero remaining client write grants, at
+least one surviving client SELECT grant, and at least one surviving service_role
+write grant — together with the direct measurement below.
+
+### The live state, measured directly after the apply
+
+```
+client write grants remaining (anon/authenticated/public × I/U/D/T × 7 tables) : 0
+client SELECT grants kept                                                      : 14
+service_role write grants                                                      : 28
+tables with RLS enabled                                                        : 7
+admin_all policies kept (stamp_definitions, stamp_campaigns)                   : 2
+stamp_definitions rows                                                         : 56  (unchanged)
+```
+
+### The four access cases, re-verified against the APPLIED state
+
+Not the pre-merge rehearsal — re-run after the apply, in a `DO` block that rolled
+itself back, using `SET LOCAL ROLE` and a synthetic `request.jwt.claims`, with one
+profile transiently promoted to admin:
+
+```
+1 anon INSERT                   : DENIED (42501)
+2 ordinary authenticated INSERT : DENIED (42501)
+3 AUTHENTICATED ADMIN INSERT    : DENIED (42501)   <- was PERMITTED before 2972
+4 service_role INSERT           : PERMITTED
+5 admin SELECT (read must live) : PERMITTED
+6 ordinary user self-promote to role='admin' : DENIED (42501)
+```
+
+The rollback was **verified afterwards, not assumed**: 56 rows, zero probe rows,
+zero admin profiles remaining.
+
+Line 3 is the behaviour change, and it is the intended one. Said precisely: an
+authenticated administrator **is** a client, and what 2972 removes is their
+DIRECT write path. Their capability is untouched, because it runs through the
+server's service-role client — line 4 — which is the only path the application
+actually uses, and `service_role` carries `rolbypassrls`.
+
+### Why no dispatch
+
+`live-db.yml` already fires on `push: branches: [main]`, and its apply steps are
+gated on `github.ref == 'refs/heads/main'`. The merge's own push run therefore
+applies and certifies. A `workflow_dispatch` exists only to pass
+`apply_unproven`, which nothing here needed — and it would have created a NEWER
+run in concurrency group `live-db-refs/heads/main`, which is
+`cancel-in-progress: true`, and so could have cancelled the push run **while it
+held the database**. That is not hypothetical: on 2026-09-15 at 18:01, push run
+`35004922223` was cancelled by dispatch `35004957171` in exactly this way.
+
+### CORRECTIONS to the previous section's "Still open"
+
+Two claims recorded above are now false, and are retracted here rather than
+edited in place:
+
+1. *"**`2893`–`2970` unapplied**"* — **false as of 2026-09-15 18:10**. 2970 and
+   2971 both carry `applied_by='ci'` with real checksums.
+2. *"**2970 needs the stamp seeds**, named explicitly to `--apply-unproven`:
+   `0081`, `0082`, `0145`, `0179`, `0189`, `0198`"* — the apply that actually ran
+   (run 35004957171) named **four**, not six: `0081`, `0082`, `0145`, `0189`.
+   `0179` and `0198` were never replayed.
+
+That second correction also settles a number that was misreported elsewhere:
+`stamp_definitions` holds **56** rows, not 63. The missing seven are exactly
+0179's four and 0198's three — the two seed files that were not in the
+`--apply-unproven` list. The ledger, the document and the row count are
+consistent once that is noticed; the 63 was a prediction, and the prediction was
+what was wrong.
+
+### Still open
+
+- **Production is untouched.** Zero ledger rows at or above 2890 there. 2972 has
+  been applied to **portava-ci only**.
+- The `authz`-vs-`public` name-keying notes `audit:schema` prints on every run
+  (9 function claims resolving in `authz`; `is_accepted_trip_member` existing in
+  both) remain as stated — pre-existing, unrelated to this apply.
+
+### Re-establish any of this independently
+
+    SELECT filename, applied_by, applied_at, left(checksum, 12)
+      FROM public.schema_migration_ledger WHERE filename >= '2970' ORDER BY filename;
+
+    SELECT grantee, privilege_type, table_name
+      FROM information_schema.role_table_grants
+     WHERE table_schema = 'public'
+       AND grantee IN ('anon','authenticated','public')
+       AND privilege_type IN ('INSERT','UPDATE','DELETE','TRUNCATE')
+       AND table_name IN ('stamp_definitions','user_stamps','stamp_award_events',
+                          'stamp_progress','stamp_collections','stamp_collection_items',
+                          'stamp_campaigns');
+    -- expect 0 rows
+
+    SELECT rolname, rolbypassrls FROM pg_roles WHERE rolname = 'service_role';
+    -- expect rolbypassrls = true — this is why the server path is unaffected

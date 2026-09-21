@@ -266,12 +266,20 @@ export async function attachMediaEvidence(
     // unique (observation_id, reference) index that makes the replay detectable
     // rather than merely unlikely; a 23505 is that replay.
     if (String((error as any).code) === "23505") {
-      const { data: existing } = await sc
+      const { data: existing, error: replayErr } = await sc
         .from("intel_evidence")
         .select("*")
         .eq("observation_id", input.observationId)
         .eq("reference", resolved.reference)
         .maybeSingle();
+      // intel_evidence is append-only, so the safe direction on an unconfirmed
+      // replay is the rejection below — never a fabricated success. But the
+      // detail it carried was the 23505, i.e. the *constraint* the replay was
+      // supposed to explain; an unreadable table was reported as a duplicate
+      // key. Name the real fault so a retry storm is diagnosable.
+      if (replayErr) {
+        return reject("db_error", `replay lookup failed: ${String(replayErr.message ?? "")}`);
+      }
       if (existing) return { ok: true, evidence: existing, deduped: true };
     }
     return reject("db_error", String((error as any).message ?? ""));

@@ -122,3 +122,37 @@ export async function isLivePlacesCapabilityEnabled(sc: any, capability: keyof t
   const values = await Promise.all(flags.map((flag) => isFlagEnabled(sc, flag)));
   return values.every(Boolean);
 }
+
+/**
+ * The stop's state could not be established.
+ *
+ * `isKillSwitchEngaged` is fail-closed on a DB error, and every caller was
+ * written believing the whole check was. It was not: each guarded the read
+ * behind a truthiness test on the service client, so an ABSENT client — the
+ * shape a deployment takes when SUPABASE_SERVICE_ROLE_KEY is missing — skipped
+ * the switch entirely and let the write through with a 2xx.
+ *
+ * Both operands of that `&&` are the same fact. This names it, so a door can
+ * treat it as one:
+ *
+ *   const flagSc = getServiceClient();
+ *   if (killSwitchStateUnknown(flagSc)) {
+ *     sendError(res, 'degraded_unavailable', KILL_SWITCH_UNKNOWN_MESSAGE);
+ *     return;
+ *   }
+ *   if (await isKillSwitchEngaged(flagSc!, 'disable_x')) { ... }
+ *
+ * `degraded_unavailable` and NOT `feature_disabled`: nobody engaged a stop. We
+ * could not look, and telling a person their feature is switched off when it
+ * may not be is a different false statement from the one we started with.
+ *
+ * `src/test/verifyFailOpenStopReads.test.ts` is the ratchet that keeps the old
+ * shape from coming back.
+ */
+export function killSwitchStateUnknown(flagSc: unknown): boolean {
+  return !flagSc;
+}
+
+/** What a person is told when the stop's state could not be established. */
+export const KILL_SWITCH_UNKNOWN_MESSAGE =
+  "We could not check whether this is available right now. Please try again shortly.";

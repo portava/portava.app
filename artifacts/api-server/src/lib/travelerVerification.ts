@@ -95,16 +95,169 @@ export function travelerIdentityFromProfile(row: Record<string, any> | null | un
 }
 
 /** Fetch and derive in one call. Fails closed on any error. */
-export async function loadTravelerIdentity(db: any, userId: string): Promise<TravelerIdentity> {
+export async function loadTravelerIdentity(db: any, userId: string): Promise<TravelerIdentityChecked> {
+  const [row, signal] = await Promise.all([
+    readTravelerProfileRow(db, userId),
+    readVerifiedAgeSignal(db, userId),
+  ]);
+  return applyVerifiedAgeSignal(travelerIdentityFromProfile(row), signal);
+}
+
+async function readTravelerProfileRow(db: any, userId: string): Promise<Record<string, any> | null> {
   try {
     const { data, error } = await db
       .from("profiles")
       .select(TRAVELER_IDENTITY_COLUMNS)
       .eq("id", userId)
       .maybeSingle();
-    if (error) return travelerIdentityFromProfile(null);
-    return travelerIdentityFromProfile(data as any);
+    if (error) return null;
+    return (data as any) ?? null;
   } catch {
-    return travelerIdentityFromProfile(null);
+    return null;
   }
 }
+
+/**
+ * ── THE VERIFIED-MINOR CONTRADICTION RULE (IDF-25) ──────────────────────────
+ *
+ * Everything above this line derives age from `profiles.date_of_birth`, which
+ * the user TYPES. `routes/profile.ts` validates it for format, for being in the
+ * past, and for a CLAIMED age of 18 — and nothing else. It is a self-assertion.
+ *
+ * The product also holds, for some users, a provider's answer to the same
+ * question. Both real adapters normalize a result whose failure reason is
+ * `underage` to `isOver18 = false` — both adapters live under
+ * `services/identityVerification/` and this module names neither vendor, because
+ * the vendor is a config decision — and `routes/verification.ts`
+ * writes that boolean to `identity_verifications.is_over_18` on EVERY result
+ * state — the patch object is applied before the `status === "verified"` branch,
+ * so a `failed` / `underage` result persists `is_over_18 = false`.
+ *
+ * Until this rule existed, NOTHING read that column as a gate. A user whose
+ * government document proved they were a minor kept the adult birthday they had
+ * typed and passed every 18+ gate that routes through this helper — including
+ * the Rent-a-Buddy booking gate, which pairs strangers in person. The product
+ * held proof of the contradiction and did nothing with it.
+ *
+ * ── WHY THIS DOES NOT WAIT ON THE OPEN SOURCE-OF-TRUTH QUESTION ─────────────
+ * Whether `is_over_18` or the self-asserted date of birth is the AUTHORITY for
+ * age is an open decision. This rule does not answer it, because it is a
+ * CONTRADICTION rule and it holds under both answers: if the boolean becomes
+ * the gate, a `false` refuses; if the typed date is ratified as the gate, a
+ * provider-verified contradiction of a self-assertion must still win, or the
+ * ratification means the product ignores evidence it paid a vendor for.
+ *
+ * What ELSE should follow — suspending the account, age-restricting it, clearing
+ * the contradicted date of birth — is a separate owner decision and is
+ * deliberately NOT done here. This rule refuses; it does not rewrite the record.
+ * `dateOfBirth` is passed through untouched for exactly that reason.
+ *
+ * ── AND IT IS FAIL-CLOSED, IN BOTH DIRECTIONS ──────────────────────────────
+ * `verifiedMinor` is asserted only from a row that actually says so, so an empty
+ * or missing table never accuses anyone. An UNREADABLE table is a third answer
+ * and is reported as itself: `verificationUnreadable`. A caller must not read
+ * "could not check" as "checked, and clean" — which is what a bare
+ * `catch { return notAMinor }` would have made it.
+ */
+export interface VerifiedAgeSignal {
+  /** A provider result on file states this user is NOT over 18. */
+  verifiedMinor: boolean;
+  /** The check could not be performed. NOT the same as "no contradiction". */
+  verificationUnreadable: boolean;
+}
+
+export interface TravelerIdentityChecked extends TravelerIdentity, VerifiedAgeSignal {}
+
+/**
+ * Columns a caller must SELECT for `verifiedAgeSignalFromRows` to work.
+ * `is_over_18` is the whole signal; `created_at` orders it. NO provider payload,
+ * no document field, and — as the migration's own header commits — no date of
+ * birth exists on that table to select.
+ */
+export const VERIFIED_AGE_COLUMNS = "is_over_18, created_at";
+
+/**
+ * Newest DECIDED result wins.
+ *
+ * "Decided" means `is_over_18` is non-null: a `created` / `pending` session has
+ * the column null and settles nothing, so starting a fresh attempt cannot clear
+ * a standing minor result. And because the newest decided row wins rather than
+ * "any false ever", a user who has since turned 18 and re-verified is no longer
+ * held a minor — the rule tracks the evidence rather than punishing a history.
+ */
+export function verifiedAgeSignalFromRows(
+  rows: Array<Record<string, any>> | null | undefined,
+  error: unknown,
+): VerifiedAgeSignal {
+  if (error) return { verifiedMinor: false, verificationUnreadable: true };
+  if (!Array.isArray(rows)) return { verifiedMinor: false, verificationUnreadable: true };
+
+  let newest: Record<string, any> | null = null;
+  for (const row of rows) {
+    if (typeof row?.["is_over_18"] !== "boolean") continue;
+    if (newest === null || String(row["created_at"] ?? "") > String(newest["created_at"] ?? "")) {
+      newest = row;
+    }
+  }
+  if (newest === null) return { verifiedMinor: false, verificationUnreadable: false };
+  return { verifiedMinor: newest["is_over_18"] === false, verificationUnreadable: false };
+}
+
+/**
+ * Fold the provider signal into the self-asserted identity.
+ *
+ * `age` becomes null — not a number — because there is no age derived from the
+ * typed birthday that may satisfy an 18+ gate once a document has contradicted
+ * it. Every existing consumer of this helper already treats `age === null` as a
+ * refusal, so the four gates that read it fail closed without each having to
+ * learn a new field; `verifiedMinor` is there so a caller that wants to say WHY
+ * can, instead of telling a user their date of birth is missing when it is not.
+ *
+ * `idVerified` becomes false for the same reason: a document check whose answer
+ * was "this holder is a minor" is a FAILED identity check, and treating it as a
+ * passed one is the exact contradiction this rule exists to stop.
+ */
+export function applyVerifiedAgeSignal(
+  identity: TravelerIdentity,
+  signal: VerifiedAgeSignal,
+): TravelerIdentityChecked {
+  const blocked = signal.verifiedMinor || signal.verificationUnreadable;
+  return {
+    ...identity,
+    age: blocked ? null : identity.age,
+    idVerified: signal.verifiedMinor ? false : identity.idVerified,
+    verifiedMinor: signal.verifiedMinor,
+    verificationUnreadable: signal.verificationUnreadable,
+  };
+}
+
+/**
+ * Read the user's decided verification results.
+ *
+ * Deliberately a plain `select/eq/order/limit` list read: no `.not()` filter, so
+ * the undecided rows arrive too and `verifiedAgeSignalFromRows` — which is pure
+ * and directly testable — makes the whole decision. A thrown client (a table the
+ * caller's Supabase client cannot address at all) is `verificationUnreadable`,
+ * not "clean".
+ */
+export async function readVerifiedAgeSignal(db: any, userId: string): Promise<VerifiedAgeSignal> {
+  try {
+    const { data, error } = await db
+      .from("identity_verifications")
+      .select(VERIFIED_AGE_COLUMNS)
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(VERIFIED_AGE_SCAN_LIMIT);
+    return verifiedAgeSignalFromRows(data as any, error);
+  } catch (err) {
+    return verifiedAgeSignalFromRows(null, err ?? new Error("identity_verifications read threw"));
+  }
+}
+
+/**
+ * How many of a user's verification rows are read to find the newest decided
+ * one. `routes/verification.ts` rate-limits session creation to 3 per user per
+ * 24h, so 50 rows is well over two weeks of maximum-rate attempts and the
+ * newest decided row is inside it in every realistic case.
+ */
+const VERIFIED_AGE_SCAN_LIMIT = 50;

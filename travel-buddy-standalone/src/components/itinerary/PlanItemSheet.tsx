@@ -7,7 +7,7 @@ import {
   MapPin, Clock, Tag, FileText, AlertTriangle, Pencil, Trash2, X, CheckCircle2, ChevronDown, Shield, ChevronRight,
 } from 'lucide-react-native';
 import type { TripPlanItem, TripPlanItemStatus, TripPlanCategory, TripPlanLockType } from '../../types/models.ts';
-import { updatePlanItem, removePlanItem } from '../../services/tripPlan.ts';
+import { updatePlanItem, removePlanItem } from '../../features/trips/planning/tripPlan.ts';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import { DatePickerField } from '../DateTimePickerField';
 import { GlobalPlacePicker } from '../selectors/GlobalPlacePicker.tsx';
