@@ -124,8 +124,23 @@ const DICTIONARY_BY_ENTITY: Partial<Record<EntityType, readonly LocalDictionaryE
  * `cached_local`. `recent_only` maps to NOTHING here — that surface is the
  * user's own accepted rows (`localZeroState.ts`), and a shipped dictionary is
  * not a recent.
+ *
+ * ── THIS MAP IS ITSELF A GATE, AND A TEST SAYS SO ────────────────────────────
+ *
+ * It is keyed ONLY by the three surfaces `offlineSurfaceAllowed` licenses, so a
+ * lookup for `server_required` or `unavailable` — or for a surface a newer
+ * server invents that this build cannot name — comes back `undefined` and the
+ * field is answered from nothing. That is the same fail-closed answer the
+ * licence check gives, which is why `localDictionaryFor` does NOT also call it:
+ * a second check that cannot change any outcome is a comment pretending to be
+ * code, and mutating it away proved exactly that — every test stayed green.
+ *
+ * What holds the coupling instead is an assertion, not a second `if`:
+ * `__tests__/localDictionary.test.ts` pins this map's key set to be exactly the
+ * surfaces the authority licenses, so adding `server_required: …` here reddens
+ * both that test and the `server_required` behaviour case.
  */
-const SURFACE_ENTITY_CLASSES: Record<string, ReadonlySet<EntityType>> = {
+export const SURFACE_ENTITY_CLASSES: Readonly<Record<string, ReadonlySet<EntityType>>> = {
   static_dictionary: new Set<EntityType>(['country', 'language', 'interest']),
   cached_local: new Set<EntityType>(['city', 'country', 'language', 'interest']),
   recent_only: new Set<EntityType>(),
@@ -143,9 +158,11 @@ export function localDictionaryFor(
   policy: LocalDictionaryPolicy | null | undefined,
 ): LocalDictionarySource[] {
   if (!policy) return [];
-  if (!offlineSurfaceAllowed(policy.offlinePolicy)) return [];
   if (!isCacheablePrivacyClass(policy.privacyClass)) return [];
   if (!allows(policy, 'entity')) return [];
+  // The licence check lives in the map lookup, not in a separate `if` — see the
+  // `SURFACE_ENTITY_CLASSES` header for why a second one was removed rather
+  // than kept.
   const classes = SURFACE_ENTITY_CLASSES[policy.offlinePolicy as string];
   if (!classes) return [];
   const out: LocalDictionarySource[] = [];

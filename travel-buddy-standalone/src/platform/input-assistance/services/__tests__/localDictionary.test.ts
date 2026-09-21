@@ -18,8 +18,11 @@ import assert from 'node:assert/strict';
 import {
   offlineLocalRows,
   localDictionaryFor,
+  SURFACE_ENTITY_CLASSES,
   type LocalDictionaryPolicy,
 } from '../localDictionary.ts';
+import { offlineSurfaceAllowed } from '../../contexts/policyFallback.ts';
+import type { OfflineInputPolicy } from '../../types/inputContext.ts';
 import { COUNTRY_DICTIONARY } from '../../data/countries.ts';
 import { CITY_INDEX } from '../../data/cities.ts';
 import { LANGUAGE_DICTIONARY } from '../../data/languages.ts';
@@ -145,6 +148,27 @@ test('G212: the dictionary is chosen from the POLICY, not from a hard-coded fiel
   const city = localDictionaryFor(CITY_PICKER).map((d) => d.source);
   assert.ok(city.includes(CITY_INDEX));
   assert.ok(city.includes(COUNTRY_DICTIONARY));
+});
+
+test('§32: the surface map is keyed EXACTLY by the surfaces the authority licenses', () => {
+  // This assertion carries the licence check that `localDictionaryFor` does
+  // NOT duplicate as an `if`. Measured: deleting such an `if` changed no test
+  // result at all, because the map lookup already answers `undefined` for an
+  // unlicensed surface — so the coupling is asserted here instead of restated
+  // in code that cannot fail. Adding `server_required` to that map reddens this
+  // case AND the behavioural case below, which is what a real gate looks like.
+  const ALL: OfflineInputPolicy[] = [
+    'static_dictionary', 'cached_local', 'recent_only', 'server_required', 'unavailable',
+  ];
+  for (const surface of ALL) {
+    assert.equal(
+      surface in SURFACE_ENTITY_CLASSES,
+      offlineSurfaceAllowed(surface),
+      `${surface}: the dictionary map and the authority's licence disagree`,
+    );
+  }
+  // And an unrecognised surface is not a key either — fail-closed by absence.
+  assert.equal('crew_scoped_cache' in SURFACE_ENTITY_CLASSES, false);
 });
 
 test('§32: a field the authority marks server_required gets NO local dictionary', () => {
@@ -318,9 +342,43 @@ function retainedCity(label: string, id: string): InputSuggestion {
 }
 
 /*
- * MUTATION LOG — each applied to the SHIPPED module, watched go red, reverted,
- * and the file compared byte-for-byte afterwards. Recorded at the bottom so the
- * assertions above read as the contract rather than as a changelog.
+ * MUTATION LOG — each applied to the SHIPPED module, run, watched, reverted.
+ * Baseline: 26/26 here, 76/76 across the nine input-assistance component files.
  *
- * (filled in below once each mutation has actually been run — see the report)
+ *  1. localDictionary.ts: delete gate 1 (`offlineSurfaceAllowed`) in
+ *     `offlineLocalRows` → 25/26. "a server_required field does not even get
+ *     its RETAINED rows back from here" goes red. The COMPONENT suite stays
+ *     76/76, because the hook applies the same licence before calling — see 5.
+ *  2. localDictionary.ts: add `server_required` to `SURFACE_ENTITY_CLASSES`
+ *     → 24/26. Both "the surface map is keyed EXACTLY …" and "a field the
+ *     authority marks server_required gets NO local dictionary" go red.
+ *  3. localDictionary.ts: delete the §29 `isCacheablePrivacyClass` gate in
+ *     `offlineLocalRows` → 25/26. The viewer-scoped case goes red.
+ *  4. localDictionary.ts: `allows()` → `return true` → 21/26. Five go red,
+ *     including both raw-query cases and the `recent_only` case.
+ *  5. useInputAssistance.ts: drop the `mayRetain ?` gate on the offline arm →
+ *     76/76 AND 26/26. IT DOES NOT LAND ALONE, and that is recorded rather
+ *     than hidden: since `offlineLocalRows` re-applies the same licence, the
+ *     two are each other's backstop. Removing BOTH (5 + 1) → 75/76, and
+ *     removing all three server_required defences (5 + 1 + 2) → 74/76, with
+ *     both `server_required` component cases red. That last run is what makes
+ *     those two assertions non-vacuous.
+ *  6. localDictionary.ts: `dictionaryRow` gains `entityId`, an `open_entity`
+ *     action and `source: 'canonical'` → 24/26 here and 73/76 component. This
+ *     is G13's mutation: a local row asserting a resolution nobody gave it.
+ *  7. localDictionary.ts: `rows` starts empty instead of `[...retained]`
+ *     → 23/26 here and 72/76 component — including both restated assertions in
+ *     the other lanes' files, which is how those were re-proven after being
+ *     rewritten.
+ *  8. localDictionary.ts: `RANK_EXACT_ALIAS = 3` (an exact alias demoted below
+ *     a label prefix) → 25/26; "uk" starts offering Ukraine first.
+ *     NOT LANDED, recorded: merely swapping the ORDER of the two checks
+ *     without changing the rank values leaves every test green — the ranks are
+ *     the contract, the check order is not.
+ *  9. data/countries.ts: drop the `Ivory Coast` alias → 25/26. The
+ *     passport-map pin goes red, which is the point of it.
+ * 10. data/cities.ts: fold `REGION_CENTROIDS` into the index → 25/26. "cities
+ *     only, no regions" goes red.
+ * 11. useInputAssistance.ts: call `offlineLocalRows` from the TRANSIENT-error
+ *     arm as well → 75/76. "a TRANSIENT error is not offline" goes red.
  */

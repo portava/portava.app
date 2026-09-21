@@ -288,5 +288,29 @@ test('§33: a TRANSIENT error is not offline — nothing shipped is shown for it
 });
 
 /*
- * MUTATION LOG — filled in from the runs recorded in the report.
+ * MUTATION LOG — applied to the shipped modules, run, watched, reverted.
+ * Baseline for this file: 11/11; for the nine component files together, 76/76.
+ * The full log with the pure-suite counts is at the bottom of
+ * services/__tests__/localDictionary.test.ts. What landed HERE:
+ *
+ *   - localDictionary.ts `dictionaryRow` gains `entityId` + an `open_entity`
+ *     action + `source: 'canonical'` → "an offline row is marked LOCAL and
+ *     resolves nothing" goes red (and two cases in the other two hook files).
+ *   - localDictionary.ts `rows` starts empty instead of `[...retained]` →
+ *     "a RETAINED server row still comes first" goes red, plus three cases in
+ *     the localTier and zeroState files.
+ *   - useInputAssistance.ts calls `offlineLocalRows` from the TRANSIENT-error
+ *     arm → "a TRANSIENT error is not offline" goes red.
+ *   - useInputAssistance.ts drops the `mayRetain ?` gate AND localDictionary.ts
+ *     drops its own licence check AND `server_required` is added to the
+ *     surface map → "a SERVER_REQUIRED field renders nothing offline" goes
+ *     red. It takes all three because they are three independent refusals of
+ *     the same thing; no one of them alone changes what this file measures,
+ *     and that is written down rather than left to look like a passing test.
+ *   - REMOVING THE WHOLE TIER (revert the `unavailable` arm to
+ *     `mayRetain ? (local ?? []) : []`, which is exactly what it said before
+ *     this build) → 69/76. Five cases here go red, plus the two restated ones
+ *     in the localTier and zeroState files, which is the honest accounting:
+ *     those two now depend on this tier and would have passed vacuously
+ *     otherwise.
  */
