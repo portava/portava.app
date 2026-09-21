@@ -1,5 +1,31 @@
 /**
- * LayoverMapCard — stop/airport pin tap tests.
+ * LayoverMapCard — the airport element, and stop-pin taps.
+ *
+ * ── CENSUS L123: *"Map element Airport — always visible; return CTA anchor"* ─
+ * Two defects, both closed, and THIS FILE PINNED THE SECOND ONE AS CORRECT
+ * until now. The case below titled "passes the airport pin place to
+ * PlaceDetailSheet when the airport is tapped" asserted, in the requirement's
+ * own words, that the airport is NOT a return CTA anchor: it opened the generic
+ * place sheet — the one that offers "add to plan" — for the airport the
+ * traveller has to get back to. It is rewritten rather than deleted, and the
+ * fact that it used to pass is recorded here rather than quietly dropped.
+ *
+ * The first defect had no test at all: the whole card `return null`-ed when the
+ * airport had no coordinates or coordinates of exactly (0,0), which is what
+ * `buildFallbackProfile` writes for every airport missing from
+ * `airport_profiles`. "Always visible" was false for an entire class of
+ * airports and nothing here noticed.
+ *
+ * ── MUTATIONS RUN, each against PRODUCTION code, reverted and `cmp`-verified ─
+ * Measured over the whole layover client suite (6 files, 51 cases, 51 green
+ * unmutated), because these components only matter mounted:
+ *   1. `if (!hasAirportCoords) return null` restored ............... 7 failed
+ *   2. the airport tap falling back to `PlaceDetailSheet` .......... 1 failed
+ *   3. an ended layover offered a dead return button ............... 1 failed
+ *   4. the footer never switching its primary CTA (L42) ............ 3 failed
+ *   5. the map card mounted but handed no return facts ............. 1 failed
+ *   6. the shared double-press ref guard removed ................... 3 failed
+ *   7. the anchor's minutes invented instead of the server's ....... 1 failed
  *
  * Confirms that tapping a stop pin in the layover map card opens
  * PlaceDetailSheet with the tapped place — onSelectPlace is no longer a no-op.
@@ -15,7 +41,7 @@
  */
 
 import React from 'react';
-import { act, render, screen, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { LayoverMapCard } from '../LayoverMapCard.tsx';
 
 // ── react-native-safe-area-context ─────────────────────────────────────────────
@@ -138,7 +164,9 @@ describe('LayoverMapCard — stop pin tap opens PlaceDetailSheet', () => {
     expect(screen.getByText('Chatuchak Market')).toBeTruthy();
   });
 
-  it('passes the airport pin place to PlaceDetailSheet when the airport is tapped', async () => {
+  it('the AIRPORT pin does NOT open the generic place sheet — it opens the return sheet', async () => {
+    // THE REWRITTEN CASE. Its previous form asserted the opposite and passed,
+    // which is how L123's second half survived a test file named after it.
     const airportPlace = {
       id: 'airport-BKK',
       name: 'BKK — Suvarnabhumi Airport',
@@ -157,7 +185,7 @@ describe('LayoverMapCard — stop pin tap opens PlaceDetailSheet', () => {
       isOpenNow: null,
     };
 
-    await render(<LayoverMapCard airport={AIRPORT as any} stops={[]} />);
+    await render(<LayoverMapCard airport={AIRPORT as any} stops={[]} airportReturn={anchor()} />);
 
     await screen.findByTestId('layover-map-view');
     expect(capturedOnSelectPlace).not.toBeNull();
@@ -167,8 +195,116 @@ describe('LayoverMapCard — stop pin tap opens PlaceDetailSheet', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByTestId('place-detail-sheet')).toBeTruthy();
+      expect(screen.getByTestId('layover-map-airport-sheet')).toBeTruthy();
     });
-    expect(screen.getByText('BKK — Suvarnabhumi Airport')).toBeTruthy();
+    expect(screen.queryByTestId('place-detail-sheet')).toBeNull();
+    expect(screen.getByTestId('layover-map-airport-return-btn')).toBeTruthy();
+  });
+});
+
+// ── L123, first half: ALWAYS VISIBLE ────────────────────────────────────────
+
+const NO_COORDS = {
+  iataCode: 'ZZZ',
+  name: 'ZZZ Airport',
+  city: 'Unknown',
+  country: 'Unknown',
+  lat: 0,
+  lng: 0,
+  timezone: 'UTC',
+};
+
+function anchor(over: Partial<Record<string, unknown>> = {}) {
+  return {
+    hardReturnTime: '2026-09-08T13:40:00.000Z',
+    minutesToHardReturn: 95,
+    returnState: 'RETURN_SOON',
+    canReturn: true,
+    busy: false,
+    onReturnNow: jest.fn(),
+    ...over,
+  } as any;
+}
+
+describe('LayoverMapCard — the airport element is always visible', () => {
+  it('a buildFallbackProfile airport at (0,0) still gets a card, an airport and an explanation', async () => {
+    // THE DEFECT: this rendered NOTHING. Production holds 3,206 airport rows
+    // and every session that misses them runs on buildFallbackProfile, whose
+    // lat/lng default to 0 — so "always visible" was false for all of them.
+    await render(<LayoverMapCard airport={NO_COORDS as any} stops={[]} airportReturn={anchor()} />);
+
+    expect(screen.getByTestId('layover-map-card')).toBeTruthy();
+    expect(screen.getByTestId('layover-map-airport')).toBeTruthy();
+    expect(screen.getByTestId('layover-map-no-coordinates')).toBeTruthy();
+    // Degraded VISIBLY: there is no map, and the card says why rather than
+    // leaving a hole where a map would be.
+    expect(screen.queryByTestId('layover-map-view')).toBeNull();
+  });
+
+  it('a null-coordinate airport is the same case, not a crash', async () => {
+    const nulled = { ...NO_COORDS, lat: null, lng: null };
+    await render(<LayoverMapCard airport={nulled as any} stops={[]} airportReturn={anchor()} />);
+    expect(screen.getByTestId('layover-map-airport')).toBeTruthy();
+    expect(screen.getByTestId('layover-map-no-coordinates')).toBeTruthy();
+  });
+
+  it('the airport element carries the certified deadline even with no map to put it on', async () => {
+    await render(<LayoverMapCard airport={NO_COORDS as any} stops={[]} airportReturn={anchor()} />);
+    expect(screen.getByTestId('layover-map-airport-deadline')).toBeTruthy();
+  });
+});
+
+// ── L123, second half: RETURN CTA ANCHOR ────────────────────────────────────
+
+describe('LayoverMapCard — the airport element anchors the return CTA', () => {
+  it('tapping the airport ROW opens the return sheet and fires the screen\'s one abort', async () => {
+    const onReturnNow = jest.fn();
+    await render(
+      <LayoverMapCard airport={NO_COORDS as any} stops={[]} airportReturn={anchor({ onReturnNow })} />,
+    );
+
+    fireEvent.press(screen.getByTestId('layover-map-airport'));
+    await waitFor(() => expect(screen.getByTestId('layover-map-airport-sheet')).toBeTruthy());
+    expect(screen.getByTestId('layover-map-airport-sheet-time')).toBeTruthy();
+
+    fireEvent.press(screen.getByTestId('layover-map-airport-return-btn'));
+    expect(onReturnNow).toHaveBeenCalledTimes(1);
+  });
+
+  it('while the abort is in flight the control is disabled, so two taps are one POST', async () => {
+    const onReturnNow = jest.fn();
+    await render(
+      <LayoverMapCard
+        airport={NO_COORDS as any}
+        stops={[]}
+        airportReturn={anchor({ onReturnNow, busy: true })}
+      />,
+    );
+    fireEvent.press(screen.getByTestId('layover-map-airport'));
+    await waitFor(() => expect(screen.getByTestId('layover-map-airport-sheet')).toBeTruthy());
+    fireEvent.press(screen.getByTestId('layover-map-airport-return-btn'));
+    expect(onReturnNow).not.toHaveBeenCalled();
+  });
+
+  it('an ENDED layover offers no return control, and says so instead of a dead button', async () => {
+    await render(
+      <LayoverMapCard
+        airport={NO_COORDS as any}
+        stops={[]}
+        airportReturn={anchor({ canReturn: false })}
+      />,
+    );
+    fireEvent.press(screen.getByTestId('layover-map-airport'));
+    await waitFor(() => expect(screen.getByTestId('layover-map-airport-sheet')).toBeTruthy());
+    expect(screen.queryByTestId('layover-map-airport-return-btn')).toBeNull();
+    expect(screen.getByTestId('layover-map-airport-inactive')).toBeTruthy();
+  });
+
+  it('with no certified return the sheet says so rather than inventing a deadline', async () => {
+    await render(<LayoverMapCard airport={NO_COORDS as any} stops={[]} />);
+    fireEvent.press(screen.getByTestId('layover-map-airport'));
+    await waitFor(() => expect(screen.getByTestId('layover-map-airport-sheet')).toBeTruthy());
+    expect(screen.getByTestId('layover-map-airport-no-deadline')).toBeTruthy();
+    expect(screen.queryByTestId('layover-map-airport-deadline')).toBeNull();
   });
 });

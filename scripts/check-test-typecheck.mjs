@@ -34,6 +34,30 @@
 // staleness branch below exits 1. A gate whose baseline is non-zero cannot be
 // satisfied by a compiler incapable of producing output.
 //
+// THIS GATE'S ANSWER DEPENDS ON GENERATED FILES THAT GIT DOES NOT CARRY, and
+// that has already cost three commits of guessing. travel-buddy-standalone's
+// tsconfig.test.json includes `expo-env.d.ts` and `.expo/types/**/*.ts`; both
+// are produced by the Expo tooling and both are GITIGNORED. A working copy
+// that has run `expo` has them, a fresh clone — every CI runner — does not,
+// and their presence changes ambient globals: with `expo-env.d.ts` the
+// DOM-flavoured `setInterval`/`clearInterval` merge in, without it only
+// @types/node's. Source that is clean here can therefore be two diagnostics
+// above its ceiling in CI, in a file nobody touched.
+//
+// To reproduce a CI count locally, move both aside and delete the incremental
+// cache first:
+//
+//   cd travel-buddy-standalone
+//   mv .expo /tmp/expo-types && mv expo-env.d.ts /tmp/expo-env.d.ts
+//   rm -f .test.tsbuildinfo
+//   node ../scripts/check-test-typecheck.mjs --package travel-buddy-standalone
+//   # …then MOVE THEM BACK.
+//
+// The fix for a file caught this way is to stop restating a signature that
+// varies and name it instead (`as unknown as typeof global.setInterval`), not
+// to raise the ceiling — the ratchet fails on a stale baseline too, so a
+// number that is right in one environment is wrong in the other either way.
+//
 // Usage:
 //   node scripts/check-test-typecheck.mjs --package <dir> --project <name> \
 //        --baseline <name> [--update]
@@ -125,6 +149,44 @@ if (run.status !== 0 && total === 0) {
       output.slice(0, 4000),
   );
   process.exit(2);
+}
+
+// ── A RUN THAT MEASURED ALMOST NOTHING IS NOT AN IMPROVEMENT ────────────────
+//
+// TypeScript stops after parsing when a program will not parse, and it does so
+// for the WHOLE PROGRAM — every semantic error in every other file silently
+// disappears. Measured on 2026-09-14 rather than reasoned about: one in-flight
+// file with unquoted-codepoint object keys collapsed the run to "27 diagnostics
+// across 1 files", and this script then reported all 116 baselined files as
+// IMPROVED. `--update` at that moment would have written 864 real ceilings down
+// to nothing, in a file whose own header says counts may only go DOWN — the
+// erasure would have looked exactly like the success it is meant to record, and
+// the next 864 regressions would have sailed through.
+//
+// THE TEST IS THE SHAPE OF THE RESULT, NOT THE ERROR CODE, and that distinction
+// was learned the hard way. The first version of this guard failed on any TS1xxx
+// code. `src/test/geofence.test.ts` carried a TS1117 — a duplicate object key,
+// which tsc reports AFTER a successful parse and alongside full semantic
+// checking — and it was one of the 864 baselined diagnostics all along. A code
+// taxonomy would have failed the build on a diagnostic the ratchet was
+// legitimately counting. So this asks the only question that actually matters:
+// did this run look at the same corpus the baseline did?
+if (existsSync(baselinePath)) {
+  let prior;
+  try { prior = JSON.parse(readFileSync(baselinePath, 'utf8')); } catch { prior = null; }
+  const priorFiles = prior && prior.files ? Object.keys(prior.files) : [];
+  const stillOnDisk = priorFiles.filter((f) => existsSync(join(pkgPath, f)));
+  if (stillOnDisk.length >= 8 && counts.size * 2 < stillOnDisk.length && total * 2 < (prior.total ?? 0)) {
+    console.error(
+      `check-test-typecheck: this run reported diagnostics in ${counts.size} file(s) against a ` +
+        `baseline covering ${stillOnDisk.length} that are still on disk, and ${total} total against ` +
+        `${prior.total}. A corpus does not improve that way all at once — the usual cause is a file ` +
+        'that will not PARSE, which makes TypeScript skip semantic checking for the entire program.\n\n' +
+        'Look for a syntax error first. This is exit 2 — the result could not be established — and ' +
+        'emphatically NOT a baseline that may be recorded with --update.',
+    );
+    process.exit(2);
+  }
 }
 
 const sorted = Object.fromEntries([...counts.entries()].sort(([a], [b]) => (a < b ? -1 : 1)));

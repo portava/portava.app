@@ -13,7 +13,7 @@ import { logger as rootLogger } from "../../lib/logger.js";
 import { NotificationPrivacyGuard, type PrivacyContext } from "./NotificationPrivacyGuard.js";
 import { NotificationPreferenceService } from "./NotificationPreferenceService.js";
 import { NotificationDeduplicationService } from "./NotificationDeduplicationService.js";
-import { renderTemplate, type NotificationCategory, type NotificationChannel, type NotificationPriority } from "./NotificationTemplateService.js";
+import { renderTemplate, getTemplate, type NotificationCategory, type NotificationChannel, type NotificationPriority } from "./NotificationTemplateService.js";
 
 const logger = rootLogger.child({ service: "NotificationService" });
 
@@ -150,6 +150,32 @@ export class NotificationService {
     }
 
     // 3. Privacy guard
+    //
+    // ── isPushPreview MUST ASK THE ORACLE THE ROUTER ASKS ────────────────────
+    // This used to be `channels?.includes('push')`, i.e. the channel list the
+    // CALLER passed (or the template default when the caller passed none).
+    // NotificationRouter does not read that list at all: it re-derives delivery
+    // channels from TEMPLATES and falls back to ['in_app','push'] when the
+    // eventType has no template. So the two disagreed in exactly the case that
+    // matters:
+    //
+    //   eventType with no template  -> renderTemplate() returns null
+    //                               -> `channels` stays undefined
+    //                               -> isPushPreview === undefined (falsy)
+    //                               -> rule 2 of the guard never fires, the
+    //                                  live-share body is stored verbatim…
+    //                               -> …and the router pushes it, because its
+    //                                  own fallback for an unknown template IS
+    //                                  ['in_app','push'].
+    //
+    // A caller passing an explicit `channels: ['in_app']` produced the same
+    // leak for a templated push event. `input.channels` does NOT restrict
+    // delivery — nothing downstream reads it — so it may only ever WIDEN the
+    // push-preview assumption, never narrow it.
+    const deliveryChannels: string[] =
+      (getTemplate(input.eventType)?.defaultChannels as string[] | undefined) ?? ['in_app', 'push'];
+    const isPushPreview = deliveryChannels.includes('push') || (channels ?? []).includes('push');
+
     const privacyCtx: PrivacyContext = {
       recipientId: input.userId,
       senderId:    input.senderId,
@@ -157,7 +183,7 @@ export class NotificationService {
       eventType:   input.eventType,
       tripId:      input.tripId,
       isLiveShare: input.isLiveShare,
-      isPushPreview: channels?.includes('push'),
+      isPushPreview,
     };
     const sanitised = await this.guard.sanitise(title, body, privacyCtx);
     if (sanitised.blocked) {
@@ -240,7 +266,14 @@ export class NotificationService {
       .is('read_at', null)
       .is('dismissed_at', null)
       .or(`expires_at.is.null,expires_at.gt.${now}`) as any);
-    if (error) return 0;
+    // A badge is a display affordance, so 0 stays the fallback rather than an
+    // exception that would 500 the header of every screen. But an UNREADABLE
+    // table used to be indistinguishable from "nothing unread" in the logs as
+    // well as in the response — a traceless zero. It is now recorded.
+    if (error) {
+      logger.error({ err: error, userId }, 'NotificationService.getUnreadCount: read failed; reporting 0 unread');
+      return 0;
+    }
     return count ?? 0;
   }
 

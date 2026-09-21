@@ -46,6 +46,16 @@ import {
 } from "../lib/mapObjects.js";
 import { CLAIM_TYPES, LEGACY_CLAIM_TYPES } from "../lib/intelContracts.js";
 import { mapQuickSignal } from "../lib/quickSignal.js";
+// M179 (see the block at the foot of this file): the §24 gate is asserted on a
+// real projection RESPONSE, not only on the pure function, so the route's own
+// row→zone column mapping is inside the proof.
+import mapProjectionRouter, {
+  _clearProtectedZoneCache,
+  _clearFlowZoneCache,
+  _clearCityZoneCache,
+} from "../routes/mapProjection.js";
+import { startRouterApp, type FakeState } from "./helpers/fakeMapDb.js";
+import { PROTECTED_CATEGORIES, PROTECTION_ACTIONS } from "../lib/protectedLocations.js";
 
 // ── fixtures ──────────────────────────────────────────────────────────────────
 
@@ -880,5 +890,478 @@ describe("projector reads only columns the query returns", () => {
 
   test("an event expires at its end time", () => {
     assert.equal(projectEvent(EVENT, NOW)!.expiresAt, EVENT.ends_at);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// M179 — "Suppress sensitive locations BEFORE data reaches the client."
+//
+// The unit half of this is already pinned in protectedLocations.test.ts. What
+// was NOT pinned is the half the census's criterion actually names: that a
+// PROJECTION RESPONSE, over a viewport containing a curated `protected_zones`
+// row, carries `protection` non-null with at least one object coarsened or
+// withheld — end to end, through `loadProtectedZones`' column mapping, with the
+// row shape migration 2217 stores.
+//
+// THE CENSUS'S WARNING IS THE REASON THERE ARE THREE ARMS, NOT ONE:
+//
+//   "applying the table is necessary and NOT sufficient — an empty
+//    `protected_zones` makes `applyProtection([], …)` an identity pass."
+//
+// So an empty table produces a response that LOOKS exactly like a healthy one:
+// objects present, `enabled: true`, no refusal. A one-arm test over a seeded CI
+// whose `protected_zones` holds 0 rows would be green and would have proven
+// nothing. The three arms below are therefore driven by ONE fixture set and
+// differ ONLY in the state of `protected_zones`:
+//
+//   ARM 1  curated rows present   ⇒ coarsened ≥ 1 AND suppressed ≥ 1
+//   ARM 2  table readable, EMPTY  ⇒ identity pass, asserted AS an identity pass
+//                                   (same objects, same geometry, zero counters)
+//                                   — never "the response was empty, so pass"
+//   ARM 3  table unreadable       ⇒ `protection_unreadable`, NOT an empty success
+//
+// Arm 2 is the one the census says is usually got wrong, so it asserts the
+// POSITIVE fact (these exact objects came through untouched) rather than the
+// absence of a complaint, and it names the arm-1 outcome it must differ from.
+// ═════════════════════════════════════════════════════════════════════════════
+
+const M179_HERE = dirname(fileURLToPath(import.meta.url));
+const M179_VIEWER = "7f000001-0000-4000-8000-00000000d179";
+const M179_TOKEN = "m179-protected-zone-token";
+const M179_BBOX = "108.0,15.9,108.4,16.2";
+
+/**
+ * The curated medical zone's CENTRE, and a place INSIDE it but deliberately NOT
+ * at the centre (~140 m off). The offset is the point: `coarsenForZone` snaps a
+ * Point to the zone anchor, so a fixture sitting exactly on the anchor would
+ * make "the coordinate moved" unfalsifiable — the coarsened and uncoarsened
+ * coordinates would agree to within floating-point noise.
+ */
+const CLINIC_ZONE_CENTRE = { lat: 16.07, lng: 108.22 };
+const CLINIC_SPOT = { lat: 16.071, lng: 108.221 };
+/** Inside the curated residence zone below. */
+const HOUSE_ZONE_CENTRE = { lat: 16.04, lng: 108.18 };
+const HOUSE_SPOT = { lat: 16.0404, lng: 108.1804 };
+/** In the viewport, inside NO zone — the control that must survive every arm. */
+const OPEN_SPOT = { lat: 16.15, lng: 108.35 };
+
+/** What PostgREST answers when 2217 has not been applied. */
+const M179_RELATION_MISSING = {
+  message: 'relation "public.protected_zones" does not exist',
+  code: "42P01",
+};
+
+/**
+ * THE CURATED ROWS, IN THE COLUMN SHAPE `loadProtectedZones` SELECTS.
+ *
+ * Written as DATABASE rows (snake_case, `privacy_floor`, `center_lat`), not as
+ * `ProtectedZone` objects, so the route's own row→zone mapping is exercised
+ * rather than bypassed. A fixture written in the domain shape would have passed
+ * even if that mapping read the wrong column names.
+ *
+ * Every label here is cross-checked against migration 2217's CHECK lists by
+ * "the curated fixture is storable" below. That check exists because this
+ * suite's Supabase double implements a filter as `r[col] === val` and is
+ * structurally incapable of raising 23514 — so a fixture carrying a category
+ * this database would refuse ('homeless_shelter', say) would be green here and
+ * un-seedable there.
+ */
+const CURATED_ZONE_ROWS = [
+  {
+    id: "zone-medical-1",
+    category: "medical_facility",
+    action: null,
+    privacy_floor: null,
+    shape: "circle",
+    center_lat: CLINIC_ZONE_CENTRE.lat,
+    center_lng: CLINIC_ZONE_CENTRE.lng,
+    radius_meters: 250,
+    ring: null,
+    jurisdiction: "VN",
+    policy_ref: "portava/map-spec-24-medical",
+    // NOT decoration, and the reason this whole arm went red first: the route
+    // selects the policy with `.eq("active", true)`. A curated row that omits
+    // this column is filtered out, the zone list comes back EMPTY, and the
+    // response is arm 2's identity pass wearing arm 1's name — the exact false
+    // green the census warns about, arriving through the fixture rather than
+    // through the database. The column is NOT NULL DEFAULT true in 2217, so a
+    // real seeded row always has it; a fixture must say so out loud.
+    active: true,
+  },
+  {
+    id: "zone-residence-1",
+    category: "private_residence",
+    action: null,
+    privacy_floor: null,
+    shape: "circle",
+    center_lat: HOUSE_ZONE_CENTRE.lat,
+    center_lng: HOUSE_ZONE_CENTRE.lng,
+    radius_meters: 120,
+    ring: null,
+    jurisdiction: "VN",
+    policy_ref: "portava/map-spec-24-residence",
+    active: true,
+  },
+];
+
+/** Three places: one in the medical zone, one in the residence zone, one clear. */
+const M179_PLACES = [
+  {
+    id: "p-clinic", name: "Riverside Clinic", primary_category: "clinic", city: "Da Nang",
+    neighborhood: null, country_code: "VN",
+    latitude: CLINIC_SPOT.lat, longitude: CLINIC_SPOT.lng,
+    status: "active", merged_into_place_id: null,
+  },
+  {
+    id: "p-house", name: "Anna's place", primary_category: "residence", city: "Da Nang",
+    neighborhood: null, country_code: "VN",
+    latitude: HOUSE_SPOT.lat, longitude: HOUSE_SPOT.lng,
+    status: "active", merged_into_place_id: null,
+  },
+  {
+    id: "p-open", name: "Han Market", primary_category: "night_market", city: "Da Nang",
+    neighborhood: null, country_code: "VN",
+    latitude: OPEN_SPOT.lat, longitude: OPEN_SPOT.lng,
+    status: "active", merged_into_place_id: null,
+  },
+];
+
+function m179World(protectedZones: unknown): FakeState {
+  return {
+    feature_flags: [{ flag: "map_projection_enabled", enabled: true }],
+    blocks: [],
+    geo_zones: [],
+    event_roles: [],
+    places: M179_PLACES,
+    protected_zones: protectedZones as any,
+  };
+}
+
+describe("M179 — protection applied before serialization, over a curated viewport", () => {
+  async function project(protectedZones: unknown) {
+    _clearProtectedZoneCache();
+    _clearFlowZoneCache();
+    _clearCityZoneCache();
+    const app = await startRouterApp(mapProjectionRouter, m179World(protectedZones), {
+      token: M179_TOKEN, userId: M179_VIEWER,
+    });
+    try {
+      // zoom 16 = the street band, so §31 aggregation leaves individuals alone
+      // and every count below describes THE PROTECTION GATE rather than binning.
+      return await app.projection(`bbox=${M179_BBOX}&zoom=16&kinds=place&limit=200`);
+    } finally {
+      await app.close();
+    }
+  }
+
+  const byId = (body: any, id: string) =>
+    (body.objects as any[]).find((o) => o.id === id) ?? null;
+
+  // ── The fixture's own validity, before any arm leans on it ────────────────
+  test("the curated fixture is storable: every label is one migration 2217 admits", () => {
+    const sql = readFileSync(resolve(M179_HERE, "../migrations/2217_protected_locations.sql"), "utf8");
+    const inList = (col: string): Set<string> => {
+      // `category text NOT NULL CHECK (category IN ( 'a', 'b' ))` — the list may
+      // wrap across lines and carry comments, so take everything to the closing
+      // paren and pull the quoted literals out of it.
+      const at = sql.indexOf(`CHECK (${col} IN (`);
+      assert.ok(at >= 0, `2217 no longer declares a CHECK list for ${col} — this guard is inert`);
+      const tail = sql.slice(at);
+      const close = tail.indexOf("))");
+      assert.ok(close > 0, `could not find the end of ${col}'s CHECK list in 2217`);
+      return new Set([...tail.slice(0, close).matchAll(/'([a-z_]+)'/g)].map((m) => m[1]));
+    };
+
+    const dbCategories = inList("category");
+    const dbActions = inList("action");
+    assert.ok(dbCategories.size > 0 && dbActions.size > 0, "parsed an empty CHECK list");
+
+    for (const row of CURATED_ZONE_ROWS) {
+      assert.ok(
+        dbCategories.has(row.category),
+        `fixture zone ${row.id} uses category '${row.category}', which 2217's CHECK refuses — ` +
+          `this row could never be seeded, so every arm below would be fiction`,
+      );
+      if (row.action !== null) {
+        assert.ok(dbActions.has(row.action!), `fixture zone ${row.id} uses an unstorable action`);
+      }
+    }
+
+    // The runtime vocabulary and the storable vocabulary must agree on
+    // categories, and must DISAGREE on 'allow' exactly — 2217 refuses to store a
+    // protection row that permits, and lib/protectedLocations says so in prose.
+    assert.deepEqual(
+      [...dbCategories].sort(),
+      [...PROTECTED_CATEGORIES].slice().sort(),
+      "2217's storable categories and PROTECTED_CATEGORIES have drifted apart",
+    );
+    assert.ok(
+      (PROTECTION_ACTIONS as readonly string[]).includes("allow") && !dbActions.has("allow"),
+      "'allow' must remain a runtime action and an UNSTORABLE one — a stored 'allow' is a hole",
+    );
+  });
+
+  // ── ARM 1 — curated rows present ──────────────────────────────────────────
+  test("ARM 1: a viewport containing curated zones coarsens one object and withholds another", async () => {
+    const r = await project({ rows: CURATED_ZONE_ROWS });
+
+    assert.equal(r.status, 200);
+    assert.equal(r.body.enabled, true, "the gateway must be SERVING for this arm to mean anything");
+    assert.equal("refusal" in r.body, false);
+
+    // `protection` non-null is half the census's sentence.
+    assert.notEqual(r.body.protection, null, "a serving response must report its protection pass");
+    const report = r.body.protection;
+
+    // …and "at least one object coarsened or withheld" is the other half. Both
+    // directions are asserted, because they are different policies: the medical
+    // zone coarsens (the place stays on the map, less precisely) and the
+    // residence zone suppresses (the place leaves the map entirely).
+    assert.ok(report.coarsened >= 1, `expected at least 1 coarsened, got ${report.coarsened}`);
+    assert.ok(report.suppressed >= 1, `expected at least 1 suppressed, got ${report.suppressed}`);
+    assert.equal(
+      report.evaluated,
+      report.allowed + report.coarsened + report.suppressed + report.safetyExempt,
+      "the report must conserve every object it evaluated",
+    );
+
+    // The withheld one is GONE FROM THE WIRE — not merely counted.
+    assert.equal(
+      byId(r.body, "place:p-house"), null,
+      "the place inside the private-residence zone reached the client",
+    );
+
+    // The coarsened one is present, at a narrower rung, snapped off its point
+    // and ONTO the zone anchor. Asserting the destination — not merely "it
+    // moved" — is what makes this falsifiable: a coarsening that jittered the
+    // coordinate by a metre would satisfy "it moved" and disclose the building.
+    const clinic = byId(r.body, "place:p-clinic");
+    assert.ok(clinic, "the medical-zone place should be coarsened, not deleted");
+    assert.equal(clinic.privacyClass, "approximate", "medical_facility floors at 'approximate'");
+    const [lng, lat] = clinic.geometry.coordinates as [number, number];
+    assert.ok(
+      Math.abs(lng - CLINIC_ZONE_CENTRE.lng) < 1e-9 && Math.abs(lat - CLINIC_ZONE_CENTRE.lat) < 1e-9,
+      `a coarsened object must sit on the zone anchor, not its own point; got ${lng},${lat}`,
+    );
+    assert.notDeepEqual(
+      [lng, lat], [CLINIC_SPOT.lng, CLINIC_SPOT.lat],
+      "the exact source coordinate reached the wire — nothing was coarsened",
+    );
+
+    // The control survives, so arm 1 is not "the gate deleted everything".
+    const open = byId(r.body, "place:p-open");
+    assert.ok(open, "a place inside no zone must be unaffected");
+    assert.equal(open.privacyClass, "place_level");
+    assert.deepEqual(open.geometry.coordinates, [OPEN_SPOT.lng, OPEN_SPOT.lat]);
+  });
+
+  // ── ARM 2 — table readable and EMPTY ──────────────────────────────────────
+  test("ARM 2: with ZERO curated rows applyProtection is an IDENTITY PASS — stated, not inferred", async () => {
+    const r = await project({ rows: [] });
+
+    // This arm's whole point is that it is NOT an empty response. Saying so
+    // first, loudly, is the difference between this test and the false green
+    // the census warns about: an empty `protected_zones` is indistinguishable
+    // from a healthy one unless the identity is asserted positively.
+    assert.equal(r.body.enabled, true);
+    assert.equal("refusal" in r.body, false);
+    assert.equal(
+      r.body.objects.length, M179_PLACES.length,
+      "IDENTITY PASS: every object arm 1 saw must still be here. An empty table " +
+        "means 'no policy exists', never 'nothing may be shown'.",
+    );
+
+    const report = r.body.protection;
+    assert.notEqual(report, null, "an identity pass still reports — a null report hides the no-op");
+    assert.equal(report.evaluated, M179_PLACES.length);
+    assert.equal(report.allowed, M179_PLACES.length, "every object was ALLOWED, explicitly");
+    assert.equal(report.coarsened, 0, "nothing was coarsened, because no policy said to");
+    assert.equal(report.suppressed, 0, "nothing was withheld, because no policy said to");
+
+    // THE NAMED CONTRAST WITH ARM 1. Same viewport, same three places, same
+    // flag, same code path — only `protected_zones` differs. The two objects
+    // arm 1 protected are here at FULL precision, which is precisely why
+    // "2217 applied" is necessary and not sufficient: this response is what a
+    // seeded-but-empty production would serve, and it protects nothing.
+    const clinic = byId(r.body, "place:p-clinic");
+    const house = byId(r.body, "place:p-house");
+    assert.ok(clinic && house, "arm 1 coarsened one of these and withheld the other; both are here");
+    assert.equal(clinic.privacyClass, "place_level", "un-coarsened: arm 1 made this 'approximate'");
+    assert.deepEqual(
+      clinic.geometry.coordinates, [CLINIC_SPOT.lng, CLINIC_SPOT.lat],
+      "un-snapped: arm 1 moved this point to the zone anchor",
+    );
+    assert.deepEqual(
+      house.geometry.coordinates, [HOUSE_SPOT.lng, HOUSE_SPOT.lat],
+      "the private residence arm 1 WITHHELD is on the wire at its exact coordinate",
+    );
+  });
+
+  // ── ARM 3 — table unreadable ──────────────────────────────────────────────
+  test("ARM 3: an unreadable policy is the named refusal, never an empty success", async () => {
+    const r = await project({ error: M179_RELATION_MISSING });
+
+    assert.equal(r.status, 200);
+    assert.equal(r.body.enabled, false, "an unreadable policy must not serve");
+    assert.equal(r.body.refusal, "protection_unreadable");
+    assert.deepEqual(r.body.objects, []);
+    assert.equal(r.body.protection, null);
+
+    // The distinction this arm exists for: arm 2 also returns without
+    // suppressing anything, and the two must not be confusable. "I found no
+    // policy" serves three places with `enabled: true`; "I could not read the
+    // policy" serves nothing with `enabled: false` and a name. A route that
+    // collapsed them would answer `enabled: true, objects: []` — which the
+    // client reads as "this city is empty" and never re-fetches.
+    const empty = await project({ rows: [] });
+    assert.notEqual(
+      r.body.enabled, empty.body.enabled,
+      "unreadable and empty must not produce the same envelope",
+    );
+    assert.ok(empty.body.objects.length > 0 && r.body.objects.length === 0);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// M133 — "Never place raw database rows directly on the map."
+//
+// The census's criterion is a production one: 2217 then 2201 applied and
+// `map_projection_enabled` TRUE there, so `usedGateway` is true on a real
+// device. THE ORDER IS THE REQUIREMENT, not an implementation detail — flipping
+// 2201 before 2217 makes every request answer `protection_unreadable`, which is
+// `enabled: false`, which is the legacy path, which is a blank map for anyone
+// whose client had already committed to the gateway.
+//
+// What is testable here is the SERVER SIDE of the contract the client branches
+// on, in both directions and in both orders:
+//
+//   flag TRUE  + policy readable  ⇒ enabled:true, objects, sources  ⇒ usedGateway
+//   flag TRUE  + policy UNREADABLE⇒ enabled:false + refusal          ⇒ fallback
+//   flag FALSE                    ⇒ enabled:false, no refusal       ⇒ fallback
+//
+// The middle row is the ordering constraint made executable: it is exactly the
+// state a production flip-before-2217 would produce, and it must be the FALLBACK
+// answer rather than a served-but-empty one. The client half — that `usedGateway`
+// follows `enabled` and that the per-layer fetchers run only when it is false —
+// is pinned structurally in src/test/gatewayBypassGuard.test.ts.
+// ═════════════════════════════════════════════════════════════════════════════
+describe("M133 — the gateway serves, or it stands aside; never blank", () => {
+  async function project(over: Partial<FakeState>) {
+    _clearProtectedZoneCache();
+    _clearFlowZoneCache();
+    _clearCityZoneCache();
+    const app = await startRouterApp(
+      mapProjectionRouter,
+      { ...m179World({ rows: CURATED_ZONE_ROWS }), ...over } as FakeState,
+      { token: M179_TOKEN, userId: M179_VIEWER },
+    );
+    try {
+      return await app.projection(`bbox=${M179_BBOX}&zoom=16&kinds=place&limit=200`);
+    } finally {
+      await app.close();
+    }
+  }
+
+  test("SERVING: flag TRUE and policy readable ⇒ enabled:true with objects and named sources", async () => {
+    const r = await project({});
+    assert.equal(r.body.enabled, true);
+    assert.equal("refusal" in r.body, false);
+    assert.ok(r.body.objects.length >= 1, "a serving gateway with matching rows must return objects");
+    assert.ok(
+      Array.isArray(r.body.sources) && r.body.sources.length >= 1,
+      "`sources` names the layers the gateway READ. The client subtracts it from its enabled " +
+        "layers to build `unreadLayers`; an empty list past a serving gateway would mark every " +
+        "layer unread and present a full map as a broken one.",
+    );
+    assert.ok(r.body.sources.includes("places"), `expected the places source, got ${r.body.sources}`);
+
+    // The three fields the client's `usedGateway` computation consumes, asserted
+    // as a set rather than one at a time: `res.ok` (HTTP 200) AND
+    // `res.data.enabled` are what set `gatewayObjects`, and `objects` is what it
+    // is set TO. All three together are what makes usedGateway true.
+    assert.equal(r.status, 200);
+    assert.ok(Array.isArray(r.body.objects));
+  });
+
+  test("ORDER CONSTRAINT: flag TRUE before 2217 ⇒ the FALLBACK answer, not a blank served one", async () => {
+    // This is "flipping 2201 before 2217" reproduced exactly: the flag is on and
+    // `protected_zones` does not exist.
+    const r = await project({
+      protected_zones: { error: { message: 'relation "public.protected_zones" does not exist', code: "42P01" } } as any,
+    });
+    assert.equal(r.body.enabled, false, "must NOT claim to be serving");
+    assert.equal(r.body.refusal, "protection_unreadable", "and must name why, so an operator sees the flip did not take");
+    assert.deepEqual(r.body.objects, []);
+    // The distinction that keeps the map drawn: `enabled:false` sends the client
+    // back to the per-layer path it was already on. `enabled:true, objects:[]`
+    // would have told it "this city is empty" and it would never re-fetch.
+    assert.notEqual(r.body.enabled, true);
+  });
+
+  test("ANTI-VACUITY: flag FALSE ⇒ enabled:false, no refusal, nothing served — the fallback runs", async () => {
+    const r = await project({ feature_flags: [{ flag: "map_projection_enabled", enabled: false }] });
+    assert.equal(r.body.enabled, false);
+    assert.equal("refusal" in r.body, false, "a deliberate off switch is not a refusal");
+    assert.deepEqual(r.body.objects, []);
+    assert.deepEqual(r.body.sources, []);
+    assert.equal(r.body.protection, null);
+    assert.equal(r.body.viewport, null, "the flag-off envelope does not even echo the viewport");
+  });
+
+  test("ANTI-VACUITY: an absent flag ROW is off, not on — fail-closed, not fail-open", async () => {
+    // Production has no `map_projection_enabled` row at all (2201 unapplied).
+    // An unknown flag must read as FALSE; reading it as TRUE would serve the
+    // gateway from a database that has never been told to.
+    const r = await project({ feature_flags: [] });
+    assert.equal(r.body.enabled, false);
+    assert.deepEqual(r.body.objects, []);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// M139 — the client must not reconstruct Portava intelligence rules.
+//
+// The census is explicit that "the guard is not the blocker and never was; it
+// holds today", and that M139 turns red on the same flag flip as M133. So what
+// this adds is the ANTI-VACUITY half the guard could not state about itself:
+// that the projection a serving gateway returns is already normalised — carrying
+// the privacy class, rendering priority and protection the client's own
+// projectors would otherwise have to invent — so there is nothing left for
+// `clientProjection.ts` to do on that path.
+// ═════════════════════════════════════════════════════════════════════════════
+describe("M139 — a served object needs no client-side normalisation", () => {
+  test("every served object already carries what clientProjection would otherwise mint", async () => {
+    _clearProtectedZoneCache();
+    _clearFlowZoneCache();
+    _clearCityZoneCache();
+    const app = await startRouterApp(mapProjectionRouter, m179World({ rows: CURATED_ZONE_ROWS }), {
+      token: M179_TOKEN, userId: M179_VIEWER,
+    });
+    let body: any;
+    try {
+      body = (await app.projection(`bbox=${M179_BBOX}&zoom=16&kinds=place&limit=200`)).body;
+    } finally {
+      await app.close();
+    }
+
+    assert.equal(body.enabled, true);
+    assert.ok(body.objects.length >= 1);
+    for (const o of body.objects as any[]) {
+      // These four are precisely what projectBuddy/projectTrip/projectFriend/
+      // projectGemLocal/projectEventLocal exist to attach on the legacy path.
+      // If a served object arrived without them the client WOULD have to
+      // reconstruct, and §19 would be violated by omission rather than by a
+      // rogue caller.
+      assert.ok(typeof o.id === "string" && o.id.includes(":"), `served object has no namespaced id: ${o.id}`);
+      assert.ok(typeof o.kind === "string", "served object has no kind");
+      assert.ok(typeof o.privacyClass === "string", `served ${o.id} has no privacyClass — the client would have to guess one`);
+      assert.ok(Number.isFinite(o.renderingPriority), `served ${o.id} has no renderingPriority — the client would have to rank it`);
+      assert.ok(o.geometry && typeof o.geometry.type === "string", `served ${o.id} has no geometry`);
+    }
+
+    // And the gate ran: `protection` is the server's statement that §24 was
+    // applied before serialization. A response without it is one the client
+    // cannot tell apart from an ungated one.
+    assert.notEqual(body.protection, null);
   });
 });

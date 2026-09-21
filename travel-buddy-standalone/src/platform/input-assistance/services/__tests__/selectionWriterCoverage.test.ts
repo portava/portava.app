@@ -72,6 +72,13 @@ const EXEMPT: Record<string, string> = {
   // canonical entity pick and must never enter selection memory.
   [join('src', 'hooks', 'useAiWritingAssist.ts')]:
     'ai_suggestion rows are non-recordable by construction (NON_SELECTION_TYPES)',
+  // census-compass CG-01: the Compass screen reads the compass_prompt zero-state
+  // (0 characters) for its starter chips. Every served starter is an
+  // `ai_suggestion` row, refused by selectBody.NON_SELECTION_TYPES, and the
+  // client policy for compass_prompt has allowPersonalization:false — there is
+  // no selection memory for this context to write.
+  [join('app', '(tabs)', 'ai.tsx')]:
+    'compass_prompt starters are ai_suggestion rows (NON_SELECTION_TYPES) on a context with allowPersonalization:false',
   // KNOWN REMAINING GAP, recorded honestly rather than hidden: the Telegraph
   // recipient picker consumes `telegraph_recipient`, whose policy DOES allow
   // personalization, but the gateway serves that context's zero-character

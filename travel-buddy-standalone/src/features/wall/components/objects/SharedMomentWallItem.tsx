@@ -71,6 +71,7 @@ const s = StyleSheet.create({
   tagRow: { flexDirection: 'row', alignItems: 'center', gap: space.xs },
   tag: { ...t.stamp, color: color.deep },
   headline: { ...t.heading, color: color.ink, marginTop: space.sm },
-  sub: { ...t.small, color: color.faint, marginTop: 2 },
+  // §36 contrast: see PostcardWallItem — `faint` is 2.73:1 on paper, `mute` 5.27:1.
+  sub: { ...t.small, color: color.mute, marginTop: 2 },
   media: { marginTop: space.md },
 });

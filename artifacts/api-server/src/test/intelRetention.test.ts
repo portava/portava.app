@@ -5,7 +5,8 @@
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import {
-  runIntelRetentionSweep, startIntelRetentionScheduler, stopIntelRetentionScheduler,
+  runIntelRetentionSweep, runMapTelemetryRetentionSweep,
+  startIntelRetentionScheduler, stopIntelRetentionScheduler,
   INTERVAL_MS, INTEL_RETENTION_SWEEP_INTERVAL_SECONDS,
 } from "../lib/intelRetentionScheduler.js";
 
@@ -102,5 +103,73 @@ describe("intel retention scheduler — expiry-sweep cadence (spec §21: every m
     // applies. Spec §21 requires the expiry sweep to run every minute.
     assert.equal(INTEL_RETENTION_SWEEP_INTERVAL_SECONDS, 60, "default cadence is 60 seconds");
     assert.equal(INTERVAL_MS, 60_000, "60 seconds expressed in ms");
+  });
+});
+
+
+// ── Map telemetry retention (2960) ───────────────────────────────────────────
+//
+// 2202 declared a 90-day expiry on map_telemetry_events / map_telemetry_drops
+// and nothing ever enforced it: `expires_at` was a promise with no keeper,
+// which is the same defect this module's own header records for
+// location_snapshots. These pin the sweep that keeps it.
+
+describe("map telemetry retention — the expiry 2202 declared, enforced", () => {
+  it("purges through the function 2960 declares, and reports the count", async () => {
+    const c = client({ flag: true, purged: "12" });
+    const r = await runMapTelemetryRetentionSweep({ client: c });
+    assert.equal(r.purged, 12);
+    assert.equal(r.skipped, false);
+    assert.equal(r.reason, null);
+    assert.equal(c.state.rpcName, "purge_expired_map_telemetry");
+  });
+
+  it("coerces a bigint arriving as a STRING over PostgREST", async () => {
+    // int8 exceeds JS safe-integer range, so PostgREST does not always emit a
+    // JSON number. A `typeof data === 'number'` guard reported 0 for every
+    // successful purge once already in this file's sibling sweep.
+    const r = await runMapTelemetryRetentionSweep({ client: client({ flag: true, purged: "40000000000" }) });
+    assert.equal(r.purged, 40000000000);
+  });
+
+  it("is gated INDEPENDENTLY of collection, and does not purge when off", async () => {
+    // Its own flag, not map_telemetry_enabled: switching collection off must
+    // not strand rows that are already past their expiry.
+    const c = client({ flag: false, purged: 99 });
+    const r = await runMapTelemetryRetentionSweep({ client: c });
+    assert.equal(r.reason, "disabled");
+    assert.equal(r.purged, 0);
+    assert.equal(c.state.rpcCalled, false, "attempted a purge with the flag off");
+  });
+
+  it("does not purge when the flag row is absent", async () => {
+    const c = client({ flag: null, purged: 99 });
+    const r = await runMapTelemetryRetentionSweep({ client: c });
+    assert.equal(r.reason, "disabled");
+    assert.equal(c.state.rpcCalled, false);
+  });
+
+  it("distinguishes a failing sweep from a disabled one", async () => {
+    // `skipped: true` alone would make a permanently broken job look identical
+    // to a correctly idle one — the shape of the original defect.
+    const failed = await runMapTelemetryRetentionSweep({ client: client({ flag: true, rpcError: true }) });
+    assert.equal(failed.reason, "error");
+    assert.equal(failed.purged, 0);
+  });
+
+  it("reports no_client rather than opening a socket when passed null", async () => {
+    const r = await runMapTelemetryRetentionSweep({ client: null });
+    assert.equal(r.reason, "no_client");
+    assert.equal(r.purged, 0);
+  });
+
+  it("swallows a throwing client and reports error", async () => {
+    const throwing = {
+      from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { enabled: true }, error: null }) }) }) }),
+      rpc: async () => { throw new Error("connection reset"); },
+    };
+    const r = await runMapTelemetryRetentionSweep({ client: throwing });
+    assert.equal(r.reason, "error");
+    assert.equal(r.purged, 0);
   });
 });

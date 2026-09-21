@@ -9,11 +9,14 @@ import { createRequire } from "module";
 import * as Sentry from "@sentry/node";
 import router from "./routes";
 import { logger } from "./lib/logger";
+import { globalErrorHandler } from "./lib/errorEnvelope";
 import { specAliasRewrite } from "./lib/specAliasRewrite";
 import { BOOT_HRTIME } from "./lib/bootTime";
 import { callsWebhookHandler, callsWebhookRawParser } from "./routes/callsWebhook";
 import { webhookHandler as verificationWebhookHandler, webhookRawParser as verificationWebhookRawParser } from "./routes/verification.js";
 import wellKnownShareRouter from "./routes/wellKnownShare.js";
+import { telegraphObservability } from "./middlewares/telegraphObservability.js";
+import telegraphDiagnosticsRouter from "./routes/telegraphDiagnostics.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -169,6 +172,20 @@ app.use("/api/static", express.static(path.join(__dirname, "../static"), {
   immutable: false,
 }));
 
+// ── Telegraph §28 / §30A.17 observability ─────────────────────────────────────
+// Mounted BEFORE the router so it times what the user waits for — routing, body
+// parsing, auth and handler — rather than only the handler. It classifies by
+// method and path shape, records an outcome and a duration, and carries no
+// content: the recorder's signature has no parameter a message body could
+// travel in. See src/middlewares/telegraphObservability.ts for why a refusal is
+// deliberately not counted as an availability failure.
+app.use(telegraphObservability());
+
+// §30A.17 internal support tooling: admin-gated, purpose-scoped, audit-logged
+// delivery and projection diagnostics. Mounted alongside the main router rather
+// than inside it so the Telegraph lane owns one file.
+app.use("/api", telegraphDiagnosticsRouter);
+
 app.use("/api", router);
 
 // ── Frontend catch-all ────────────────────────────────────────────────────────
@@ -215,36 +232,12 @@ Sentry.setupExpressErrorHandler(app);
 // Must be the LAST middleware registered (4-argument signature is required by
 // Express to recognise it as an error handler).  All unhandled async rejections
 // and explicit next(err) calls land here.
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-app.use((err: any, _req: Request, res: Response, _next: NextFunction): void => {
-  const status: number =
-    typeof err?.status    === "number" ? err.status :
-    typeof err?.statusCode === "number" ? err.statusCode :
-    500;
-
-  // Log at error level; skip 4xx noise in production if desired
-  if (status >= 500) {
-    logger.error({ err }, "unhandled error");
-  } else {
-    logger.warn({ err }, "request error");
-  }
-
-  // Do not leak stack traces to the client. In production, additionally
-  // suppress internal error messages (DB errors, stack-adjacent details) for
-  // 5xx responses — the original error is already logged above. Dev keeps the
-  // real message for debuggability. Response JSON shape is unchanged.
-  const isProd = process.env.NODE_ENV === "production";
-  const clientMessage: string =
-    status >= 500 && isProd
-      ? "An unexpected error occurred."
-      : (err?.message ?? "An unexpected error occurred.");
-
-  res.status(status).json({
-    error: {
-      code:    err?.code    ?? "INTERNAL_ERROR",
-      message: clientMessage,
-    },
-  });
-});
+//
+// The body lives in lib/errorEnvelope.ts so the real function — not a
+// hand-copied replica — can be tested, and so the ONE place in the system that
+// does not write through `sendError` is the one place that has to stay in step
+// with it. It now emits the same FLAT `{ error: "<code>", message }` envelope
+// every route emits; see that file for why the nested shape went.
+app.use(globalErrorHandler);
 
 export default app;

@@ -41,6 +41,7 @@ import { NotificationService } from "../services/notifications/NotificationServi
 import { NotificationRouter } from "../services/notifications/NotificationRouter.js";
 import { RealtimeActivityService } from "../services/notifications/RealtimeActivityService.js";
 import { fetchUserTimezone, localHourFor, nowUtcInstant } from "../lib/localTime.js";
+import { resolveCurrentTrip } from "./CompassCurrentTrip.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -174,43 +175,63 @@ export async function getActiveLiveSession(
   }
 }
 
+/**
+ * Is THIS session still open, right now?
+ *
+ * `runLiveCheck` reads the session once and then performs a rolling-context
+ * rebuild, a full Sense evaluation, a settings read and a dedupe read per
+ * candidate before it delivers anything. Every one of those is an await, and
+ * the traveller can press Stop during any of them. The session row read at the
+ * top of the tick is therefore a claim about the past, and a live nudge is
+ * authorized by an OPEN session — so the authority is re-read immediately
+ * before each delivery rather than assumed to have survived.
+ *
+ * FAIL-CLOSED, and that direction is deliberate: this answers "may I disclose
+ * something to this person", and a read that could not be performed is not a
+ * yes. The cost of failing closed is a nudge that does not fire during a
+ * database outage; the cost of failing open is a nudge fired into a session the
+ * traveller has already closed, which is the behaviour this function exists to
+ * prevent. An outage is also exactly when a stop-write is most likely to have
+ * been lost, so "could not check" and "should not send" coincide.
+ */
+export async function liveSessionStillOpen(
+  sc: SupabaseClient,
+  sessionId: string,
+  userId: string,
+): Promise<boolean> {
+  try {
+    const { data, error } = await sc
+      .from("compass_live_sessions")
+      .select("status")
+      .eq("id", sessionId)
+      .eq("user_id", userId)
+      .limit(1);
+    if (error) return false;
+    const row = ((data ?? []) as any[])[0];
+    return row?.status === "active";
+  } catch {
+    return false;
+  }
+}
+
 // ── Rolling context ───────────────────────────────────────────────────────────
 
 async function fetchInProgressTrip(
   sc: SupabaseClient,
   userId: string,
 ): Promise<{ id: string; city: string | null } | null> {
-  try {
-    const [{ data: memberRows }, { data: ownedRows }] = await Promise.all([
-      sc.from("trip_members").select("trip_id").eq("user_id", userId).in("role", ["owner", "member"]),
-      sc.from("trips").select("id").eq("owner_id", userId),
-    ]);
-    const tripIds = Array.from(new Set([
-      ...((memberRows ?? []) as any[]).map((r) => String(r.trip_id)),
-      ...((ownedRows ?? []) as any[]).map((r) => String(r.id)),
-    ]));
-    if (tripIds.length === 0) return null;
-    const { data: trips } = await sc
-      .from("trips")
-      .select("id, destination_city, status")
-      .in("id", tripIds)
-      // `trip_status` is an ENUM: draft | planning | upcoming | active |
-      // completed | cancelled | archived. `in_progress` is NOT a label, and
-      // Postgres rejects an unknown enum literal outright (22P02) rather than
-      // matching nothing — so this read failed WHOLE and `{ data }` was
-      // undefined on every request. Compass Live therefore had no trip
-      // grounding at all: tripId / currentStop / nextItem were permanently
-      // null and no reached_stop or next_item_changed event could ever fire.
-      // `active` is the label every other current-trip reader uses
-      // (CompassTools:415, CompassSocialEngine:296, wall.ts:273, compass.ts:3414).
-      .eq("status", "active")
-      .limit(1);
-    const t = ((trips ?? []) as any[])[0];
-    if (!t) return null;
-    return { id: String(t.id), city: (t.destination_city as string | null) ?? null };
-  } catch {
-    return null;
-  }
+  // ONE current-trip rule for every Compass surface (CT-02). This was a
+  // verbatim third/fourth copy of the owner ∪ accepted-member union, and it
+  // ended in `.limit(1)` — whichever active trip the database returned first —
+  // so Live could ground its context on a different trip from the one
+  // `get_current_trip` calls current, from the same rows. The seam orders by
+  // earliest start, which is what the tool has always done.
+  //
+  // `unread` returns null, preserving this function's existing contract: no
+  // trip grounding rather than grounding on a union we know is incomplete.
+  const resolved = await resolveCurrentTrip(sc, userId, ["active"]);
+  if (resolved.status !== "ok") return null;
+  return { id: resolved.trip.id, city: resolved.trip.destinationCity };
 }
 
 async function fetchTodayPlan(
@@ -415,6 +436,23 @@ function liveOnlyCandidates(
 
 // ── Live check loop ───────────────────────────────────────────────────────────
 
+/**
+ * Has this exact nudge already been delivered inside the dedupe window?
+ *
+ * ── AN UNREADABLE DEDUPE LEDGER IS A DUPLICATE ──────────────────────────────
+ * supabase-js RESOLVES on a DB error, so `const { data } = await …` yielded the
+ * same empty array for "this nudge has not been sent" and for
+ * "compass_sense_nudges could not be read" — and the empty array means SEND,
+ * which is how a user gets the same nudge over and over for as long as the
+ * table is unreadable. Repeat pushes to a phone are the visible half; the
+ * durable half is a duplicate row per tick.
+ *
+ * An unknown ledger therefore answers "duplicate" and the nudge is skipped. The
+ * cost of that direction is bounded and self-correcting: the delivery path
+ * writes its record into this very same table, so if the read failed the write
+ * was almost certainly going to fail too and nothing durable is lost — a
+ * skipped nudge simply reappears on the next tick once the table recovers.
+ */
 async function isDuplicate(
   sc: SupabaseClient,
   userId: string,
@@ -423,16 +461,17 @@ async function isDuplicate(
 ): Promise<boolean> {
   try {
     const sinceIso = new Date(nowMs - LIVE_DEDUPE_WINDOW_MS).toISOString();
-    const { data } = await sc
+    const { data, error } = await sc
       .from("compass_sense_nudges")
       .select("id")
       .eq("user_id", userId)
       .eq("dedupe_key", dedupeKey)
       .gte("created_at", sinceIso)
       .limit(1);
+    if (error) return true; // dedupe state unknown — assume already sent
     return ((data ?? []) as any[]).length > 0;
   } catch {
-    return false;
+    return true;
   }
 }
 
@@ -483,6 +522,11 @@ export async function runLiveCheck(
   const notifRouter = new NotificationRouter(sc);
   const realtimeSvc = new RealtimeActivityService(sc);
 
+  // Once the session is found closed, every remaining candidate is suppressed
+  // for the same reason without re-reading the row per candidate: the authority
+  // does not come back inside one tick.
+  let sessionClosed = false;
+
   for (const nudge of candidates) {
     if (settings.categories[nudge.category] === false) {
       suppressed.push({ dedupeKey: nudge.dedupeKey, type: nudge.type, reason: "category_disabled" });
@@ -494,6 +538,14 @@ export async function runLiveCheck(
     }
     if (sessionDelivered >= LIVE_SESSION_NUDGE_CAP) {
       suppressed.push({ dedupeKey: nudge.dedupeKey, type: nudge.type, reason: "daily_cap" });
+      continue;
+    }
+
+    // LAST GATE BEFORE DISCLOSURE: re-read the session's authority. Everything
+    // above this line was decided from state read before several awaits.
+    if (sessionClosed || !(await liveSessionStillOpen(sc, session.id, userId))) {
+      sessionClosed = true;
+      suppressed.push({ dedupeKey: nudge.dedupeKey, type: nudge.type, reason: "session_ended" });
       continue;
     }
 
@@ -548,6 +600,13 @@ export async function runLiveCheck(
   context.recentEvents = context.recentEvents.slice(-RECENT_EVENTS_CAP);
 
   const nowIso = new Date(nowMs).toISOString();
+  // `.eq("status", "active")` is the whole point of this filter and not
+  // defensive decoration. Without it a tick still in flight when the traveller
+  // presses Stop writes fresh rolling context, a bumped check count and a new
+  // last_check_at onto the row it just ended — resurrecting a session the user
+  // closed, and leaving an ended row that looks like it is still being watched.
+  // The write is scoped to a row that is still open; a stopped session absorbs
+  // nothing from the tick that outlived it.
   await sc
     .from("compass_live_sessions")
     .update({
@@ -557,7 +616,8 @@ export async function runLiveCheck(
       last_check_at: nowIso,
     })
     .eq("id", session.id)
-    .eq("user_id", userId);
+    .eq("user_id", userId)
+    .eq("status", "active");
 
   return {
     active: true,

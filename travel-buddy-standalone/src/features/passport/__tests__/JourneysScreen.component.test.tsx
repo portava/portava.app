@@ -73,6 +73,16 @@ function makeFeatured() {
     ],
     featured: true,
     people: [{ id: 'p1', name: 'Mai', handle: 'mai', avatarUrl: null }],
+    // §14's last two elements (census-passport P75). The server decides what
+    // arrives — it has already applied event visibility and the Hidden Gem
+    // disclosure policy — so the screen's whole job is to render what it gets.
+    events: [
+      { id: 'e1', title: 'Lantern Festival', city: 'Hoi An', country: 'Vietnam', startsAt: '2024-05-12T10:00:00Z', endsAt: '2024-05-12T20:00:00Z', role: 'attendee' as const },
+      { id: 'e2', title: 'Crew Dinner', city: 'Da Nang', country: 'Vietnam', startsAt: '2024-05-20T10:00:00Z', endsAt: '2024-05-20T14:00:00Z', role: 'host' as const },
+    ],
+    recommendations: [
+      { id: 'g1', kind: 'hidden_gem' as const, name: 'Rooftop Noodle Stall', category: 'food', city: 'Da Nang', country: 'Vietnam', neighborhood: 'An Hai', createdAt: '2024-05-08T00:00:00Z' },
+    ],
   };
 }
 
@@ -132,6 +142,39 @@ describe('JourneysScreen', () => {
     // The stamp name also surfaces as a derived "place" chip → appears twice.
     expect(screen.getAllByText('Vietnam Explorer').length).toBeGreaterThan(0);
     expect(screen.getByText('Mai')).toBeTruthy();
+  });
+
+  it('renders the Featured Journey EVENTS and RECOMMENDATIONS sections (§14, P75)', async () => {
+    mockGetJourneys.mockResolvedValue({ ok: true, data: { journeys: makeProjection(), restricted: false } });
+
+    await render(<JourneysScreen />);
+
+    await waitFor(() => expect(screen.getByText('Featured Journey')).toBeTruthy());
+    expect(screen.getByText('Events')).toBeTruthy();
+    expect(screen.getByText('Recommendations')).toBeTruthy();
+    expect(screen.getByText('Lantern Festival')).toBeTruthy();
+    expect(screen.getByText('Crew Dinner')).toBeTruthy();
+    expect(screen.getByText('Rooftop Noodle Stall')).toBeTruthy();
+    // The owner's OWN relationship to each event is the server's answer, shown
+    // verbatim — attended vs hosted is not something this screen guesses.
+    expect(screen.getByText(/Attended · Hoi An · May 2024/)).toBeTruthy();
+    expect(screen.getByText(/Hosted · Da Nang · May 2024/)).toBeTruthy();
+  });
+
+  it('omits both new sections entirely when the server attaches neither (§14, P75)', async () => {
+    // An older server, or a viewer permitted neither, sends no field at all.
+    const projection = makeProjection();
+    delete (projection.featured as Record<string, unknown>).events;
+    delete (projection.featured as Record<string, unknown>).recommendations;
+    mockGetJourneys.mockResolvedValue({ ok: true, data: { journeys: projection, restricted: false } });
+
+    await render(<JourneysScreen />);
+
+    await waitFor(() => expect(screen.getByText('Featured Journey')).toBeTruthy());
+    expect(screen.queryByText('Events')).toBeNull();
+    expect(screen.queryByText('Recommendations')).toBeNull();
+    // …and the sections that WERE there are unaffected.
+    expect(screen.getByText('Memories')).toBeTruthy();
   });
 
   it('shows coarse place but never renders exact coordinates (§23)', async () => {

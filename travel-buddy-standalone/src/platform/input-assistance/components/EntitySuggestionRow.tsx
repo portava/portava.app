@@ -9,13 +9,16 @@
  * `freshness`), and an optional "why this is suggested" reason.
  *
  * Accessibility: role=button, a composed accessibilityLabel announcing the
- * title, type, subtitle and freshness, and `selected` state for keyboard nav.
+ * title, type, subtitle and freshness, `selected` state for keyboard nav, and a
+ * caret glyph that marks the keyboard-active row WITHOUT relying on colour
+ * (§46 "non-color-only state indicators" — see the activeSlot comment below).
  */
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import type { InputSuggestion } from '../types/inputSuggestion.ts';
 import { EntityIcon } from './entityIcon.tsx';
 import { freshnessDisplay } from './freshnessDisplay.ts';
+import { suggestionBadges } from './suggestionBadges.ts';
 import { color, space, radius, type as t, avatar } from '../../../theme/tokens.ts';
 
 export interface EntitySuggestionRowProps {
@@ -32,10 +35,15 @@ function EntitySuggestionRowBase({ suggestion, onPress, active, leading, testID 
   // §31: render ONLY the freshness the server attached — the state label plus the
   // "Updated 4m ago" age, verbatim. Never synthesized; absent ⇒ no chip.
   const fresh = freshnessDisplay(suggestion.freshness).text;
+  // §20 verification / official / Hidden Gem protection. Derived from the SAME
+  // helper the announcement below joins, so a badge can never be visible and
+  // unannounced (or the reverse).
+  const badges = suggestionBadges(suggestion);
   const a11yLabel = [
     suggestion.label,
     suggestion.entityType,
     suggestion.subtitle,
+    ...badges.map((b) => b.label),
     fresh,
   ]
     .filter(Boolean)
@@ -51,6 +59,35 @@ function EntitySuggestionRowBase({ suggestion, onPress, active, leading, testID 
       accessibilityState={{ selected: !!active }}
       testID={testID ?? `ia-entity-row-${suggestion.id}`}
     >
+      {/*
+        §46 "high contrast and NON-COLOUR-ONLY state indicators".
+        The keyboard-active row used to differ from every other row by exactly
+        one property — `backgroundColor` — so a sighted user who cannot resolve
+        that hue against the row ground had no way to tell which row Enter would
+        take. `accessibilityState.selected` (above) serves assistive tech and
+        does nothing for them.
+        This slot is the second, non-colour channel: a caret GLYPH that is
+        present on the active row and absent everywhere else. Presence/absence of
+        a mark survives any colour vision, any contrast setting and a greyscale
+        screenshot. The slot keeps its width whether or not the caret is drawn,
+        so arrowing down the list moves the highlight without shifting the text.
+        It is hidden from assistive tech on purpose: `selected` already carries
+        this to a screen reader, and announcing a decorative caret would be a
+        second, redundant reading of the same fact.
+      */}
+      <View style={styles.activeSlot}>
+        {active ? (
+          <Text
+            style={styles.activeMarker}
+            accessibilityElementsHidden
+            importantForAccessibility="no"
+            testID="ia-row-active-marker"
+          >
+            ▸
+          </Text>
+        ) : null}
+      </View>
+
       <View style={styles.leading}>
         {leading ?? <EntityIcon entityType={suggestion.entityType} tint={color.deep} />}
       </View>
@@ -72,6 +109,17 @@ function EntitySuggestionRowBase({ suggestion, onPress, active, leading, testID 
           <Text style={styles.subtitle} numberOfLines={1}>
             {suggestion.subtitle}
           </Text>
+        ) : null}
+        {badges.length > 0 ? (
+          <View style={styles.badgeLine}>
+            {badges.map((b) => (
+              <View key={b.id} style={styles.badge} testID={`ia-badge-${b.id}`}>
+                <Text style={styles.badgeText} numberOfLines={1}>
+                  {b.label}
+                </Text>
+              </View>
+            ))}
+          </View>
         ) : null}
         {suggestion.reason ? (
           <Text style={styles.reason} numberOfLines={1}>
@@ -96,6 +144,16 @@ const styles = StyleSheet.create({
   },
   rowActive: {
     backgroundColor: color.haze,
+  },
+  /** Fixed width so the caret's presence never reflows the row (§46). */
+  activeSlot: {
+    width: space.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  activeMarker: {
+    ...t.bodyStrong,
+    color: color.deep,
   },
   leading: {
     width: avatar.s32,
@@ -128,6 +186,25 @@ const styles = StyleSheet.create({
     ...t.small,
     color: color.faint,
     marginTop: 1,
+  },
+  badgeLine: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: space.sm,
+    marginTop: 2,
+  },
+  badge: {
+    paddingHorizontal: space.sm,
+    paddingVertical: 1,
+    borderRadius: radius.pill,
+    backgroundColor: color.paper,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: color.haze,
+  },
+  badgeText: {
+    ...t.stamp,
+    color: color.deep,
   },
   freshBadge: {
     paddingHorizontal: space.sm,

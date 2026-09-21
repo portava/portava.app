@@ -23,6 +23,11 @@ import { isUuid } from "../lib/followDecisions";
 import { getServiceClient } from "../lib/supabase";
 import { resolveInteractionPermissions } from "../services/interactionPermissions";
 import { reportRateLimit } from "../lib/rateLimit";
+// ONE vocabulary. These two lists used to be private literals in this file, and
+// POST /api/media/:id/report wrote the same `reports` table from its own,
+// narrower contract — any string, no severity, no rate limit. Two writers of one
+// table cannot each own the list; see lib/reportReasons.ts for what that cost.
+import { REPORT_REASON_CODES, reportSeverityFor } from "../lib/reportReasons";
 
 const router = Router();
 
@@ -30,12 +35,7 @@ const TARGET_TYPES = [
   "user", "profile", "message", "thread", "trip", "post", "place", "event",
 ] as const;
 
-const REASON_CODES = [
-  "harassment", "spam", "hate_speech", "violence",
-  "impersonation", "nudity", "misinformation", "other",
-] as const;
-
-const HIGH_SEVERITY_CODES = new Set<string>(["harassment", "hate_speech", "violence"]);
+const REASON_CODES = REPORT_REASON_CODES;
 
 const CreateReportSchema = z.object({
   target_type:   z.enum(TARGET_TYPES),
@@ -116,7 +116,7 @@ router.post("/reports", async (req, res) => {
     }
   }
 
-  const severity = HIGH_SEVERITY_CODES.has(reason_code) ? "high" : "normal";
+  const severity = reportSeverityFor(reason_code);
 
   const { data: report, error } = await sc
     .from("reports")
@@ -142,15 +142,46 @@ router.post("/reports", async (req, res) => {
   const reportId      = (report as any).id   as string;
   const reportSeverity = (report as any).severity as string;
 
-  // Atomically create report_evidence row from context_type / context_id
-  // (fire-and-forget — evidence creation failure must never block the report itself)
+  // Attach the report_evidence row from context_type / context_id.
+  //
+  // ── `.then(undefined, cb)` IS A REJECTION HANDLER ON A CLIENT THAT RESOLVES ─
+  // supabase-js does not throw on a database error; it resolves as `{ error }`
+  // (even a network failure resolves, because postgrest-js catches fetch errors
+  // itself). So the second argument to `.then` never ran for the failure that
+  // actually happens, and the resolved `{ error }` went nowhere because the
+  // first slot was `undefined`. The evidence row could fail to write with no
+  // log line, no response field and no exception -- for a file whose own header
+  // promises "Evidence preservation".
+  //
+  // What that costs: `context_type`/`context_id` is the pointer from a
+  // harassment report to the thread, message or trip it is ABOUT. Without it a
+  // moderator opens a report that says only "harassment" and cannot see what
+  // was reported, and nobody -- reporter, moderator, operator -- knows the
+  // pointer was ever meant to exist.
+  //
+  // Direction unchanged: the documented decision is that evidence attachment
+  // must never block the report, and it still does not -- the report row is
+  // already committed above and this cannot un-commit it. What changes is that
+  // the failure is OBSERVED: logged at error, and named in the response so the
+  // client and the operator can tell an attached report from a bare one. It is
+  // awaited rather than detached for that reason alone; it is one insert, and a
+  // fire-and-forget result cannot be reported in the response it belongs to.
+  let evidenceAttached: boolean | undefined = undefined;
   if (context_type) {
-    void sc.from("report_evidence").insert({
+    const { error: evidenceErr } = await sc.from("report_evidence").insert({
       report_id:     reportId,
       evidence_type: "context",
       content_ref:   context_id ?? null,
       metadata:      { context_type, context_id: context_id ?? null, auto_attached: true },
-    }).then(undefined, () => {});
+    });
+    evidenceAttached = !evidenceErr;
+    if (evidenceErr) {
+      req.log.error(
+        { err: evidenceErr, reportId, context_type, context_id: context_id ?? null },
+        "report filed, but the context evidence row was NOT attached — " +
+          "a moderator opening this report will not see what it is about",
+      );
+    }
   }
 
   // High-severity report about a PERSON (user OR profile — same id space):
@@ -201,6 +232,7 @@ router.post("/reports", async (req, res) => {
 
   const responseBody: Record<string, unknown> = { reportId, status: "open", severity: reportSeverity };
   if (protectionApplied !== undefined) responseBody.protectionApplied = protectionApplied;
+  if (evidenceAttached !== undefined) responseBody.evidenceAttached = evidenceAttached;
   res.status(201).json(responseBody);
 });
 

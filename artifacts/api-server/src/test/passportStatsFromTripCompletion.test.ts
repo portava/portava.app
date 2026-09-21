@@ -72,8 +72,12 @@ function makeDB(): FakeDB {
         city:                "Paris",
         is_revoked:          false,
         visibility:          "public",
-        // Joined shape buildStats reads: stamp_definitions(category)
-        stamp_definitions:   { category: "trip" },
+        // Joined shape buildStats reads:
+        //   stamp_definitions(category, slug, evidences_presence)
+        // `first_trip_completed` is what awardTripCompletionStamps awards, and
+        // migration 2970 marks it presence-evidencing — a COMPLETED trip is the
+        // occurrence evidence `first_trip_created` never had (§K.4).
+        stamp_definitions:   { category: "trip", slug: "first_trip_completed", evidences_presence: true },
       },
       {
         id:                  STAMP_ID2,
@@ -85,7 +89,7 @@ function makeDB(): FakeDB {
         city:                "Lyon",    // second city, same country
         is_revoked:          false,
         visibility:          "public",
-        stamp_definitions:   { category: "trip" },
+        stamp_definitions:   { category: "trip", slug: "first_trip_completed", evidences_presence: true },
       },
     ],
     // Intentionally empty — no GPS-verified posts were ever made.

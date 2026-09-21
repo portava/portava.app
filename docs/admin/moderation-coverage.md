@@ -65,7 +65,7 @@ The requirement names four media types. Admin coverage differs for each.
 | Profile photo (avatar) | **yes** | **yes** (best-effort) | `src/routes/admin.ts:1407` route, `:1427` `storage.remove` |
 | Profile cover photo | **yes** | **yes** (best-effort) | `src/routes/admin.ts:1438` route, `:1457` `storage.remove` |
 | Postcard image / video | **yes**, but not via an admin route | **yes** | `src/routes/postcards.ts:729` route, `:766` inline admin check, `:787` `storage.remove` |
-| Highlight | **no** | n/a — no storage call at all | `src/routes/highlights.ts:466`, owner-only at `:482` |
+| Highlight | **no** | n/a — no storage call at all | `src/routes/highlights.ts:470`, owner-only at `:486` |
 
 ### Storage trace (specifically requested)
 
@@ -250,7 +250,7 @@ const SUBJECT_TYPES = ["user", "post", "comment", "message", "event", "review", 
 
 Plus specialised intakes with their own tables: hidden gems
 (`hiddenGems.ts:981` → `hidden_gem_reports`), highlights
-(`highlights.ts:782`), place images, place mismatches, airport reports.
+(`highlights.ts:804`), place images, place mismatches, airport reports.
 
 Against the entities the requirement implies:
 

@@ -232,6 +232,26 @@ export function refusalMessage(reason: ViewRequestRefusalReason): string {
 }
 
 /**
+ * PURE: the one calm line shown for a completed Request-a-View.
+ *
+ * THREE outcomes, not two. "No contributors are nearby yet" is a CLAIM about the
+ * contributor registry, and the server only earns it when it actually read that
+ * registry — `recipientsDetermined`. When it could not, the request is still
+ * recorded (nothing failed for the traveller) but the claim is withheld: a zero
+ * that was never counted is not a zero. Pure + exported so the rule is
+ * unit-tested and cannot drift back into a two-way branch on the bare count.
+ */
+export function viewRequestOutcomeLine(outcome: ViewRequestOutcome): string {
+  if (!outcome.ok) return outcome.message;
+  if (outcome.recipientCount > 0) {
+    return 'Asked nearby contributors — fresh perspectives will appear here as they arrive.';
+  }
+  return outcome.recipientsDetermined
+    ? 'Noted. No contributors are nearby yet — we’ll ask as soon as someone can help.'
+    : 'Noted. We couldn’t check who’s nearby just now — we’ll ask as soon as someone can help.';
+}
+
+/**
  * PURE: map an HTTP status + optional error code (from the server's
  * `{ error, message }` body) to a client refusal reason. Kept pure so the whole
  * mapping is unit-tested against the real STATUS table.
@@ -393,6 +413,11 @@ export async function requestView(input: RequestViewInput): Promise<ViewRequestO
         requestId: asString(o.requestId),
         missionCandidateId: asString(o.missionCandidateId),
         recipientCount: asNum(o.recipientCount) ?? 0,
+        // Missing ⇒ false: an absent flag is a determination that was never
+        // recorded, and `recipientCount: 0` is then not a measurement. Same
+        // direction as mapVisualCoverage's `stale` default — withhold the
+        // claim, never fabricate it.
+        recipientsDetermined: asBool(o.recipientsDetermined),
       };
     }
     // Non-2xx → read the server error code when present, map to a calm reason.

@@ -17,12 +17,18 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   buildPassportProjection,
+  buildOwnerCapabilities,
   type ViewerResolution,
   type ViewerPermissions,
 } from "../services/passport/PassportProjectionService.js";
 import { makePassportDb } from "./helpers/fakePassportDb.js";
+
+const TEST_API_SRC = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 const OWNER = "owner-1";
 const VIEWER = "viewer-1";
@@ -70,8 +76,13 @@ function seedDb() {
     // so every real row carries a tier; the projection reads it per-stamp and
     // fails closed on an absent one. Staged explicitly so the fixture matches.
     user_stamps: [
-      { user_id: OWNER, city: "Da Nang", country: "Vietnam", is_revoked: false, visibility: "public", earned_at: "2025-03-30", stamp_definitions: { category: "trip", name: "Vietnam" } },
-      { user_id: OWNER, city: "Bangkok", country: "Thailand", is_revoked: false, visibility: "public", earned_at: "2025-02-01", stamp_definitions: { category: "city", name: "Bangkok" } },
+      // Both stamps EVIDENCE PRESENCE (migration 2970): the Da Nang stamp is
+      // awarded by trip completion (trip-past below is `status: "completed"`),
+      // the Bangkok one by a GPS-verified postcard. Since §K.4 only such stamps
+      // reach `stats.countries` — a destination attached to a stamp earned
+      // without going there is no longer counted as a country visited.
+      { user_id: OWNER, city: "Da Nang", country: "Vietnam", is_revoked: false, visibility: "public", earned_at: "2025-03-30", stamp_definitions: { category: "trip", name: "Vietnam", slug: "first_trip_completed", evidences_presence: true } },
+      { user_id: OWNER, city: "Bangkok", country: "Thailand", is_revoked: false, visibility: "public", earned_at: "2025-02-01", stamp_definitions: { category: "city", name: "Bangkok", slug: "city_explorer", evidences_presence: true } },
     ],
     passport_stamps: [],
     trip_members: [
@@ -129,7 +140,13 @@ describe("buildPassportProjection — self view", () => {
     // Trust — numeric score exposed only on the self view.
     assert.equal(p.trust?.score, 78);
     assert.equal(p.trust?.publicLevel, "trusted_traveler");
-    assert.ok(["low", "medium", "high"].includes(p.trust!.confidence));
+    // P50, 2026-09-14 — CHANGED DELIBERATELY. This fixture's trust_profiles row
+    // carries no `evidence_weight` (pre-migration-2371 shape), so there is no
+    // trust evidence to band. The old assertion passed because `confidence` was
+    // a sum of this fixture's STAMPS and TRIPS; that formula is gone, so the
+    // honest answer is the absent band plus the reason for it.
+    assert.equal(p.trust!.confidence, null);
+    assert.equal(p.trust!.confidenceBasis, "travel_proxy");
 
     // Stats.
     assert.equal(p.stats.countries, 2);
@@ -357,6 +374,12 @@ describe("buildTravelerState — derived §5 activity states with validFrom/vali
   it("with_crew: an active un-expired locate session; never exposes a city", async () => {
     const db = makePassportDb({
       profiles: [{ ...baseProfile }],
+      // §5 with_crew is a read of Locate My Friends storage and is behind the
+      // LOCATE_FRIENDS_CREW_PRESENCE capability (flag + 2219 schema); the fake
+      // client answers the schema probe, so the flag row is what the fixture
+      // has to state. Without it the capability refuses and there is no crew
+      // signal to assert on — which is the point of the gate.
+      feature_flags: [{ flag: "locate_friends_enabled", enabled: true }],
       locate_friends_members: [{ session_id: "s1", user_id: OWNER, left_at: null }],
       locate_friends_sessions: [{ id: "s1", started_at: PAST, expires_at: FUTURE, ended_at: null }],
     });
@@ -371,6 +394,7 @@ describe("buildTravelerState — derived §5 activity states with validFrom/vali
   it("with_crew: a member who has left is not with a crew", async () => {
     const db = makePassportDb({
       profiles: [{ ...baseProfile }],
+      feature_flags: [{ flag: "locate_friends_enabled", enabled: true }],
       locate_friends_members: [{ session_id: "s1", user_id: OWNER, left_at: PAST }],
       locate_friends_sessions: [{ id: "s1", started_at: PAST, expires_at: FUTURE, ended_at: null }],
     });
@@ -406,6 +430,12 @@ describe("buildTravelerState — derived §5 activity states with validFrom/vali
       profiles: [{ ...baseProfile }],
       event_rsvps: [{ event_id: "e1", user_id: OWNER, status: "going" }],
       events: [{ id: "e1", city: "Da Nang", starts_at: PAST, ends_at: FUTURE, state: "started" }],
+      // §5 with_crew is a read of Locate My Friends storage and is behind the
+      // LOCATE_FRIENDS_CREW_PRESENCE capability (flag + 2219 schema); the fake
+      // client answers the schema probe, so the flag row is what the fixture
+      // has to state. Without it the capability refuses and there is no crew
+      // signal to assert on — which is the point of the gate.
+      feature_flags: [{ flag: "locate_friends_enabled", enabled: true }],
       locate_friends_members: [{ session_id: "s1", user_id: OWNER, left_at: null }],
       locate_friends_sessions: [{ id: "s1", started_at: PAST, expires_at: FUTURE, ended_at: null }],
       route_plans: [{ id: "rp1", owner_user_id: OWNER, status: "active" }],
@@ -419,6 +449,12 @@ describe("buildTravelerState — derived §5 activity states with validFrom/vali
     const db = makePassportDb({
       profiles: [{ ...baseProfile }],
       quick_availability_status: [{ user_id: OWNER, status: "busy", expires_at: FUTURE }],
+      // §5 with_crew is a read of Locate My Friends storage and is behind the
+      // LOCATE_FRIENDS_CREW_PRESENCE capability (flag + 2219 schema); the fake
+      // client answers the schema probe, so the flag row is what the fixture
+      // has to state. Without it the capability refuses and there is no crew
+      // signal to assert on — which is the point of the gate.
+      feature_flags: [{ flag: "locate_friends_enabled", enabled: true }],
       locate_friends_members: [{ session_id: "s1", user_id: OWNER, left_at: null }],
       locate_friends_sessions: [{ id: "s1", started_at: PAST, expires_at: FUTURE, ended_at: null }],
     });
@@ -519,5 +555,86 @@ describe("buildAvailability/buildIntent — §8 explicit windows in the aggregat
     });
     const p = (await buildPassportProjection(db, OWNER, OWNER, { resolveViewerContext: resolver(selfRes) }))!;
     assert.equal(p.availability?.explicitWindow, null, "stale window not rendered as current");
+  });
+});
+
+/**
+ * §11's capability list — the six the tree can gate, and the seventh it argues
+ * against (census-passport P59).
+ *
+ * §11 names SEVEN capabilities. Six are derived in `buildOwnerCapabilities`.
+ * The seventh, `canProvideVisaBuddyService`, does not exist anywhere in the
+ * repository, and P59 records it as NOT-BUILT with an owner classification
+ * (`VISA_BUDDY_CAPABILITY`). P59's stated reason — "the tree's only current
+ * posture on visas is Layover disclaimers" — was measured wrong on 2026-09-14;
+ * the real posture is stronger and lives in two shipped policy artefacts, both
+ * pinned below. That is what makes the seventh capability a policy decision
+ * rather than a missing boolean.
+ *
+ * This suite exists so that adding the seventh is a DELIBERATE act that has to
+ * change an assertion which says why. It does not argue for or against adding
+ * it; it refuses to let it appear by accident, and it refuses to let the two
+ * artefacts that frame the decision be deleted quietly.
+ *
+ * MUTATION PROOF (each run): add any seventh key to the object
+ * `buildOwnerCapabilities` returns → case 1 RED naming it; remove the
+ * `VISA_HELP` family from travelScamSignals → case 2 RED; delete the curated
+ * -source sentence from lib/entryRequirements DISCLAIMER → case 3 RED.
+ */
+describe("§11 capabilities — six built, the seventh is a policy decision (census-passport P59)", () => {
+  const SPEC_SIX = [
+    "canJoinPublicTrip",
+    "canHostTrip",
+    "canCreateLargePlan",
+    "canUseCrewLocation",
+    "canContributeLiveIntel",
+    "canBecomeBuddy",
+  ];
+
+  it("buildOwnerCapabilities derives exactly the six §11 capabilities that gate something", () => {
+    const caps = buildOwnerCapabilities({
+      publicLevel: "trusted",
+      verified: true,
+      buddyVerified: false,
+      restrictions: { hosting: false, privatePlan: false, messaging: false, locationPlan: false },
+    });
+    const keys = Object.keys(caps).sort();
+    assert.deepEqual(
+      keys,
+      [...SPEC_SIX].sort(),
+      "the §11 capability set changed. A seventh capability must not appear here until " +
+        "VISA_BUDDY_CAPABILITY is ruled: an owner flag that gates nothing is the " +
+        "unproduced-vocabulary defect, and this one would gate an activity the abuse " +
+        "policy below classifies as a scam signal.",
+    );
+  });
+
+  it("a peer offering visa assistance is a live travel-SCAM family, not a capability", () => {
+    const src = fs.readFileSync(
+      path.join(TEST_API_SRC, "domain/telegraph/policies/travelScamSignals.ts"),
+      "utf8",
+    );
+    assert.match(
+      src,
+      /family:\s*"VISA_HELP"/,
+      "VISA_HELP must remain a scam family: `canProvideVisaBuddyService` would authorise " +
+        "the peer-to-peer behaviour this policy flags, which is why P59 is an owner call",
+    );
+    assert.ok(
+      // The literal pattern SOURCE, not a match against it.
+      src.includes("embassy\\s+(contact|insider|friend)"),
+      "the embassy-insider pattern is the concrete overlap with a 'visa buddy' offer",
+    );
+  });
+
+  it("the tree's built visa posture is curated official sources with a disclaimer", () => {
+    const src = fs.readFileSync(path.join(TEST_API_SRC, "lib/entryRequirements.ts"), "utf8");
+    assert.match(src, /HONESTY CONTRACT/, "entryRequirements must keep its stated contract");
+    assert.match(
+      src,
+      /always confirm with the official government source/,
+      "the shipped answer to a visa question is a curated corridor row plus this disclaimer — " +
+        "not another traveller",
+    );
   });
 });

@@ -33,6 +33,8 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { probeSchemaReadiness } from "../lib/capability/schemaCapability.js";
+import { COMPASS_CONVERSATION_PHASE1 } from "../services/compass/CompassConversationService.js";
 
 // ── Outcome chain ─────────────────────────────────────────────────────────────
 
@@ -104,7 +106,7 @@ export interface RecordOutcomeRequest {
 
 export interface RecordOutcomeResult {
   recorded: boolean;
-  reason?: "no_recommendation" | "duplicate" | "db_unavailable" | "error";
+  reason?: "no_recommendation" | "duplicate" | "db_unavailable" | "error" | "revoked";
   recommendationId?: string;
   predictedMatch?: number | null;
   realizedScore?: number;
@@ -121,37 +123,138 @@ interface ServedRecRow {
 
 // ── Recommendation resolution ─────────────────────────────────────────────────
 
+/**
+ * CPV2-11 — is the lineage schema (2997) applied here? Probed through
+ * lib/capability (memoised per client). `revoked_at` and `weight_nudge` are
+ * named only when this says yes; a build carrying 2997 runs unchanged against
+ * a database without it, and revocation REFUSES rather than pretending.
+ */
+export async function lineageSchemaReady(db: SupabaseClient | any): Promise<boolean> {
+  // The capability rides COMPASS_ENABLED (its `flag`); the probe is the guard.
+  const r = await probeSchemaReadiness(db, COMPASS_CONVERSATION_PHASE1);
+  return r.state === "ready";
+}
+/** The flag the lineage capability is registered under: "COMPASS_ENABLED". */
+export const LINEAGE_CAPABILITY_FLAG: string = COMPASS_CONVERSATION_PHASE1.flag;
+
 async function resolveServedRecommendation(
   db: SupabaseClient,
   userId: string,
   req: RecordOutcomeRequest,
-): Promise<ServedRecRow | null> {
-  const cols = "recommendation_id, item_id, item_type, ranking_factors";
-
+  lineage: boolean,
+): Promise<(ServedRecRow & { revoked_at?: string | null }) | null> {
+  // Two literal column lists (the flag-schema ratchet reads them statically):
+  // the lineage column is named only where the probe found it.
   if (req.recommendationId) {
-    const { data } = await db
-      .from("compass_served_recommendations")
-      .select(cols)
-      .eq("user_id", userId)
-      .eq("recommendation_id", req.recommendationId)
-      .maybeSingle();
+    const { data } = lineage
+      ? await db.from("compass_served_recommendations").select("recommendation_id, item_id, item_type, ranking_factors, revoked_at")
+          .eq("user_id", userId).eq("recommendation_id", req.recommendationId).maybeSingle()
+      : await db.from("compass_served_recommendations").select("recommendation_id, item_id, item_type, ranking_factors")
+          .eq("user_id", userId).eq("recommendation_id", req.recommendationId).maybeSingle();
     return (data as ServedRecRow | null) ?? null;
   }
 
   if (req.itemId) {
     const cutoff = new Date(Date.now() - LINK_WINDOW_DAYS * 86_400_000).toISOString();
-    const { data } = await db
-      .from("compass_served_recommendations")
-      .select(cols)
-      .eq("user_id", userId)
-      .eq("item_id", req.itemId)
-      .gte("created_at", cutoff)
-      .order("created_at", { ascending: false })
-      .limit(1);
+    const { data } = lineage
+      ? await db.from("compass_served_recommendations").select("recommendation_id, item_id, item_type, ranking_factors, revoked_at")
+          .eq("user_id", userId).eq("item_id", req.itemId).gte("created_at", cutoff).order("created_at", { ascending: false }).limit(1)
+      : await db.from("compass_served_recommendations").select("recommendation_id, item_id, item_type, ranking_factors")
+          .eq("user_id", userId).eq("item_id", req.itemId).gte("created_at", cutoff).order("created_at", { ascending: false }).limit(1);
     return ((data as ServedRecRow[] | null) ?? [])[0] ?? null;
   }
 
   return null;
+}
+
+export const REVOCATION_REASONS = ["user_withdrawn", "consent_withdrawn", "place_unavailable", "operator"] as const;
+export type RevocationReason = (typeof REVOCATION_REASONS)[number];
+
+export type RevokeResult =
+  | { revoked: true; recommendationId: string; outcomesRemoved: number; weightsReversed: Record<string, number> }
+  | { revoked: false; reason: "db_unavailable" | "schema_not_applied" | "no_recommendation" | "already_revoked" | "error" };
+
+/**
+ * CPV2-11 — revocation FOLLOWS the lineage. Marking the served row revoked is
+ * the fact; everything derived from it is walked back along the same edge:
+ * the outcome rows are removed (the FK would cascade on a DELETE, but the
+ * served row is kept so the revocation itself is a record), and every ranking
+ * nudge those outcomes applied is reversed by exactly the step each recorded
+ * in `weight_nudge`. A nudge recorded before 2997 (null) cannot be reversed
+ * and is reported as such rather than guessed. Refuses where 2997 is absent.
+ */
+export async function revokeServedRecommendation(
+  db: SupabaseClient | null,
+  userId: string,
+  recommendationId: string,
+  reason: RevocationReason,
+  nowIso: string = new Date().toISOString(),
+): Promise<RevokeResult> {
+  if (!db) return { revoked: false, reason: "db_unavailable" };
+  try {
+    if (!(await lineageSchemaReady(db))) return { revoked: false, reason: "schema_not_applied" };
+    const { data: rec, error: recErr } = await db
+      .from("compass_served_recommendations")
+      .select("recommendation_id, item_type, revoked_at")
+      .eq("user_id", userId)
+      .eq("recommendation_id", recommendationId)
+      .maybeSingle();
+    if (recErr) return { revoked: false, reason: "error" };
+    if (!rec) return { revoked: false, reason: "no_recommendation" };
+    if ((rec as any).revoked_at) return { revoked: false, reason: "already_revoked" };
+
+    const { data: outcomes, error: outErr } = await db
+      .from("compass_outcome_events")
+      .select("id, stage, item_type, weight_nudge")
+      .eq("user_id", userId)
+      .eq("recommendation_id", recommendationId);
+    if (outErr) return { revoked: false, reason: "error" };
+    const rows = (outcomes as Array<{ id: string; item_type: string; weight_nudge: number | null }> | null) ?? [];
+
+    // Reverse the recorded nudges, per category, in one read-modify-write.
+    const reversal: Record<string, number> = {};
+    for (const o of rows) {
+      if (typeof o.weight_nudge === "number" && o.weight_nudge !== 0) {
+        reversal[o.item_type] = (reversal[o.item_type] ?? 0) - o.weight_nudge;
+      }
+    }
+    if (Object.keys(reversal).length > 0) {
+      const { data: prefs, error: prefErr } = await db
+        .from("compass_user_preferences")
+        .select("category_weights")
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (prefErr) return { revoked: false, reason: "error" };
+      const weights: Record<string, number> = ((prefs as any)?.category_weights as Record<string, number>) ?? {};
+      for (const [cat, delta] of Object.entries(reversal)) {
+        weights[cat] = Math.max(-10, Math.min(10, (weights[cat] ?? 0) + delta));
+      }
+      const { error: upErr } = await db
+        .from("compass_user_preferences")
+        .upsert({ user_id: userId, category_weights: weights, updated_at: nowIso }, { onConflict: "user_id" });
+      if (upErr) return { revoked: false, reason: "error" };
+    }
+
+    if (rows.length > 0) {
+      const { error: delErr } = await db
+        .from("compass_outcome_events")
+        .delete()
+        .eq("user_id", userId)
+        .eq("recommendation_id", recommendationId);
+      if (delErr) return { revoked: false, reason: "error" };
+    }
+
+    const { error: markErr } = await db
+      .from("compass_served_recommendations")
+      .update({ revoked_at: nowIso, revocation_reason: reason })
+      .eq("user_id", userId)
+      .eq("recommendation_id", recommendationId);
+    if (markErr) return { revoked: false, reason: "error" };
+
+    return { revoked: true, recommendationId, outcomesRemoved: rows.length, weightsReversed: reversal };
+  } catch {
+    return { revoked: false, reason: "error" };
+  }
 }
 
 function extractPredictedMatch(rankingFactors: Record<string, unknown> | null): number | null {
@@ -196,11 +299,21 @@ async function applyRankingNudge(
   fitDelta: number,
 ): Promise<boolean> {
   try {
-    const { data } = await db
+    // This is a read-modify-WRITE of a whole JSON column. `category_weights` is
+    // upserted back in full a few lines down, so an unchecked read does not
+    // merely lose one nudge: `{ data: null }` from a failed read becomes `{}`,
+    // and the upsert then replaces every category weight this user has
+    // accumulated with a single ±0.x entry for the category that happened to be
+    // nudged. The ranking surface documented above — CompassFeedBuilder,
+    // CompassRecommendationEngine — reads exactly that column, so the user's
+    // learned feed is wiped, not stale. Return false (the caller's "nudge not
+    // applied") and leave the stored weights alone.
+    const { data, error: readErr } = await db
       .from("compass_user_preferences")
       .select("category_weights")
       .eq("user_id", userId)
       .maybeSingle();
+    if (readErr) return false;
     const weights: Record<string, number> =
       ((data as any)?.category_weights as Record<string, number>) ?? {};
     const step = fitDelta > 0 ? WEIGHT_NUDGE_STEP : -WEIGHT_NUDGE_STEP;
@@ -231,8 +344,11 @@ export async function recordOutcome(
   if (!db) return { recorded: false, reason: "db_unavailable" };
 
   try {
-    const rec = await resolveServedRecommendation(db, userId, req);
+    const lineage = await lineageSchemaReady(db);
+    const rec = await resolveServedRecommendation(db, userId, req, lineage);
     if (!rec) return { recorded: false, reason: "no_recommendation" };
+    // CPV2-11: a revoked recommendation accrues nothing — the lineage is closed.
+    if (lineage && rec.revoked_at) return { recorded: false, reason: "revoked", recommendationId: rec.recommendation_id };
 
     // Dedupe: one row per user + recommendation + stage
     const { data: existing } = await db
@@ -275,6 +391,16 @@ export async function recordOutcome(
     let weightAdjusted = false;
     if (fitDelta != null && Math.abs(fitDelta) >= FIT_DELTA_THRESHOLD) {
       weightAdjusted = await applyRankingNudge(db, userId, rec.item_type, fitDelta);
+      // CPV2-11: record the step THIS outcome applied, so a revocation can
+      // reverse exactly it. Named only where 2997 is applied.
+      if (weightAdjusted && lineage) {
+        await db
+          .from("compass_outcome_events")
+          .update({ weight_nudge: fitDelta > 0 ? WEIGHT_NUDGE_STEP : -WEIGHT_NUDGE_STEP })
+          .eq("user_id", userId)
+          .eq("recommendation_id", rec.recommendation_id)
+          .eq("stage", req.stage);
+      }
     }
 
     return {

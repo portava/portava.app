@@ -252,10 +252,18 @@ describe("criteria metrics resolve real counts against real-shaped rows", () => 
         { id: "t2", owner_id: USER, status: "planning" },
       ],
       events: [{ id: "e1", host_id: USER }],
+      // `evidences_presence: true` is load-bearing since `distinctStampField`
+      // began asking the presence question (migration 2970): a row without it
+      // is a PLANNING stamp, so staging "two cities visited" as bare rows would
+      // be staging two trips planned and never taken. `s3` differs from `s2`
+      // only in case, which is what the dedupe is being checked for.
       user_stamps: [
-        { id: "s1", user_id: USER, is_revoked: false, city: "Da Nang", country: "Vietnam" },
-        { id: "s2", user_id: USER, is_revoked: false, city: "Tokyo",   country: "Japan" },
-        { id: "s3", user_id: USER, is_revoked: false, city: "tokyo",   country: "japan" },
+        { id: "s1", user_id: USER, is_revoked: false, city: "Da Nang", country: "Vietnam",
+          stamp_definitions: { slug: "first_trip_completed", evidences_presence: true } },
+        { id: "s2", user_id: USER, is_revoked: false, city: "Tokyo",   country: "Japan",
+          stamp_definitions: { slug: "first_trip_completed", evidences_presence: true } },
+        { id: "s3", user_id: USER, is_revoked: false, city: "tokyo",   country: "japan",
+          stamp_definitions: { slug: "first_trip_completed", evidences_presence: true } },
       ],
     });
     assert.equal(await resolveMetric(client, USER, "trips_created", {}), 2);
@@ -264,6 +272,33 @@ describe("criteria metrics resolve real counts against real-shaped rows", () => 
     assert.equal(await resolveMetric(client, USER, "stamps_earned", {}), 3);
     assert.equal(await resolveMetric(client, USER, "cities_visited", {}), 2);
     assert.equal(await resolveMetric(client, USER, "countries_visited", {}), 2);
+  });
+
+  // The double above DROPS embedded-resource groups before validating the
+  // select list, so `stamp_definitions(evidences_presence)` passes it whether
+  // or not the column exists. That is the right call for the parent-table check
+  // and it means the fixture above proves nothing about the column, so the
+  // column is asserted here directly against the same canonical schema.
+  it("stamp_definitions.evidences_presence is a real column in the canonical schema", () => {
+    const s = schema();
+    assert.ok(
+      isModelled(s, "stamp_definitions"),
+      "stamp_definitions is not modelled by the canonical schema builder",
+    );
+    assert.ok(
+      s.columns.get("stamp_definitions")!.has("evidences_presence"),
+      "distinctStampField and buildStats both select stamp_definitions(evidences_presence); " +
+      "if migration 2970 is not in the canonical set, that embed fails in production " +
+      "and both surfaces fall back to counting nothing",
+    );
+  });
+
+  it("the planning slugs the presence filter exists for are seeded definitions", () => {
+    const s = schema();
+    assert.ok(isModelled(s, "stamp_definitions"));
+    // A guard against the column existing but the seed being dropped: the two
+    // slugs POST /api/trips awards at creation must be classifiable at all.
+    assert.ok(s.columns.get("stamp_definitions")!.has("slug"));
   });
 });
 

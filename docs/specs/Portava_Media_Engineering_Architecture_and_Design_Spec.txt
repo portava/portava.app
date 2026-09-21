@@ -1,0 +1,473 @@
+
+PORTAVA
+Media Engineering Architecture& Design Specification
+Media v2 — Discovery + Live Intelligence Network
+Canonical developer specification
+“See the world. Understand it. Experience it.”
+Product rule
+Portava Media is the visual layer of the real world. It lets users see what places, experiences, people, and hidden gems are like now; understand what is changing; act on what they see; contribute back to the intelligence network; and preserve what happened afterward.
+Design constraint
+Media must not visually or behaviorally resemble Facebook, Instagram, TikTok, or YouTube. The organizing hierarchy is World → Experience → Place → Time → People → Media, not Creator → Post → Engagement.
+
+1. Executive Summary
+Media v2 preserves the canonical media foundation and changes the product from a feed-first destination into Portava’s visual discovery and real-world intelligence layer.
+Surface
+Primary question
+Pulse
+What matters right now?
+Discovery
+What could I do?
+Map
+Where is it happening?
+Media
+What does the world actually look and feel like?
+Compass
+What should I do next?
+Trips
+What am I planning or doing?
+Passport
+Who am I as a traveler?
+Telegraph
+How do we coordinate?
+Memory
+What happened and what mattered?
+2. Non-Negotiable Product Principles
+World-first, not creator-first.
+No infinite-feed dependency.
+Media does not own truth; Live Intelligence owns current claims and confidence.
+A photo or video may become an evidence candidate but never becomes truth automatically.
+Observed, inferred, user-claimed, generated, and predicted information remain distinguishable.
+Every meaningful media object connects to action or context.
+Authentic media outranks generated fallback media.
+Privacy, location precision, blocks, trust, and eligibility resolve before client projection.
+Hidden Gems are first-class and require stronger protection than normal Places.
+Success is measured by useful real-world outcomes, not merely minutes watched.
+3. Primary Navigation
+NOW   |   PLACES   |   EXPERIENCES   |   HIDDEN GEMS   |   PEOPLE   |   MY WORLD
+Lens
+Purpose
+Typical output
+NOW
+Current visual state around the viewer.
+City visual pulse, changing-now zones, relevant opportunities.
+PLACES
+Visual reality organized around canonical Places.
+Current View mosaics, time rail, place state, actions.
+EXPERIENCES
+Media organized around real-world experiences.
+Events, routes, activities, temporary experience clusters.
+HIDDEN GEMS
+Protected discovery and current Gem state.
+Recently confirmed, worth the detour, seasonal, access-changed.
+PEOPLE
+Explicitly social lens.
+Following, Trip Crew, creators, Shared Moment participants.
+MY WORLD
+Owner library and personal experience history.
+Grid, Timeline, Map, Trips, Memories, Postcards, Tagged, Gems.
+4. Screen Architecture
+Media World / NOW
+Media Places
+Media Experience
+Hidden Gems Media
+People Media
+My World Media
+Media Viewer
+Media Map
+Media Timeline / Time Rail
+Media Search
+Media Contribution
+4.1 Media World / NOW
+MEDIADa Nang · Right Now[NOW] [PLACES] [EXPERIENCES] [GEMS] [PEOPLE] [MY WORLD]CITY VISUAL STATEAn Thuong       ↑ BuildingBeach Festival  ● PeakRiverside       ↑ StartingMy Khe          ● ModerateFOR YOU NOWNightlife · 18 fresh perspectivesFood · 9 fresh perspectivesHidden Gems · 6 recently confirmedCHANGING NOW...
+The default page is a visual dashboard of the world, not a list of creator posts.
+5. Presentation Modes
+Lens
+Supported modes
+NOW
+Overview · Map · Time
+PLACES
+Overview · Visual · Map · Time
+EXPERIENCES
+Overview · Visual · Map
+HIDDEN GEMS
+Overview · Visual · Map
+PEOPLE
+Visual
+MY WORLD
+Grid · Timeline · Map
+
+6. Canonical Media Domain Model
+interface MediaAsset {  id: string;  ownerUserId: string;  uploaderUserId: string;  mediaType: 'image' | 'video';  storageBucket: string;  storagePath: string;  thumbnailPath?: string;  mimeType: string;  width?: number;  height?: number;  durationMs?: number;  sizeBytes: number;  capturedAt?: string;  uploadedAt: string;  sourceType:    | 'camera' | 'library' | 'provider' | 'official'    | 'community' | 'generated' | 'screenshot' | 'derivative';  processingStatus: MediaProcessingStatus;  moderationStatus: MediaModerationStatus;  visibility: MediaVisibility;  locationVisibility: LocationVisibility;  provenance: MediaProvenance;  intelligenceEligibility: IntelligenceEligibility;  version: number;}
+6.1 Attachment Model
+interface MediaAttachment {  id: string;  mediaAssetId: string;  entityType:    | 'post' | 'postcard' | 'memory' | 'trip'    | 'place' | 'event' | 'hidden_gem'    | 'shared_moment' | 'observation';  entityId: string;  position: number;  isCover: boolean;  visibilityOverride?: MediaVisibility;}
+A single asset can participate in multiple product objects without duplicating the underlying file.
+7. Context Graph
+MediaAsset   ├─ Person   ├─ Place   ├─ Neighborhood   ├─ Event   ├─ Trip   ├─ Hidden Gem   ├─ Shared Moment   ├─ Time   └─ Observation
+Context resolution is server-side.
+8. Four-Layer Media Model
+Layer
+Contains
+Ownership
+Social
+Creator, caption, Stamp, comments, shares.
+Media/Post systems
+Context
+Place, area, Event, Trip, people, time.
+Canonical entity systems
+Provenance
+Source, capture time, edits, location confidence, moderation, trust context.
+Media + Trust
+Intelligence
+Evidence role, freshness, confidence, corroboration, observations, expiration.
+Live Intelligence
+9. Media Intelligence Pipeline
+CAPTURE / UPLOAD       ↓PROVENANCE       ↓CONTEXT RESOLUTION       ↓PRIVACY / ELIGIBILITY       ↓EVIDENCE EXTRACTION       ↓QUALIFICATION       ↓OBSERVATION       ↓CLAIM SYSTEM       ↓LIVE INTELLIGENCE       ↓MEDIA / DISCOVERY / MAP / COMPASS
+PHOTO ≠ TRUTHVIDEO ≠ TRUTHCAPTION ≠ TRUTHVISUAL INFERENCE ≠ VERIFIED FACT
+10. Intelligence Eligibility
+interface IntelligenceEligibility {  eligible: boolean;  reasons: string[];  freshnessClass: 'live' | 'fresh' | 'recent' | 'historical';  captureConfidence: number;  locationConfidence: number;  provenanceConfidence: number;  expiresAt?: string;}
+11. Separate Social and Intelligence Lifetimes
+interface MediaTemporalState {  socialExpiresAt?: string;  intelligenceExpiresAt?: string;  locationDisclosureExpiresAt?: string;}
+A media item can remain social or memorial content after its operational intelligence value expires.
+
+12. Perspectives
+Perspective is a permitted visual contribution showing an aspect of a place or experience. Do not confuse it with analytics views.
+24 fresh perspectives · 8 contributors · 3 independent sources
+Entity type
+Perspective groups
+Nightclub
+Entrance · Queue · Street · Main Room · Stage · Bar · VIP · Outside
+Festival
+Main Gate · Stage A · Stage B · Food · Bathrooms · Meeting Area · Exit
+Beach
+Water · Crowd · Weather · Beachfront · Food · Sunset · Access
+Restaurant
+Exterior · Entrance · Seating · Food · View · Queue · Menu context
+13. Place Current View
+AN THUONGGetting busier ↑Updated 2m agoStrong current picture24 fresh perspectives8 contributorsCURRENT VIEW[Street] [Entrance] [Rooftops] [Clubs] [Food]WHAT'S CHANGING[activity curve]Explore Place     Compass
+14. Media Viewer
+The viewer is contextual, not a TikTok-style vertical stranger-video feed.
+← An Thuong                                  •••[                 MEDIA                    ]Perspective: Street · 4 min agoStrong current pictureGetting busier ↑Maya ✓Trusted nightlife contributor"It's filling up fast."Stamp · Comment · Share · SaveView Place   Ask Compass   Go ThereRELATED PERSPECTIVES[Entrance] [Rooftop] [Street] [Club]
+Entry context
+Swipe collection
+Place
+Other perspectives from that Place
+Event
+Other Event perspectives
+People
+That person/social context
+Trip
+Trip media
+Map
+Current geographic cluster
+15. Media Actions
+Go There / Show on Map / Directions
+Ask Compass
+Save Place
+Add to Trip
+Create Plan
+Meet Here
+Invite People
+Find Similar / Cheaper / Quieter / Busier
+See Nearby
+View Event / Passport
+Share through Telegraph
+Report / Not Relevant
+15.1 I Want This
+Intent action: use this visual experience as a signal for what the user wants to do. It is not a Like.
+15.2 Do This Experience
+Converts an eligible Trail, Trip recap, creator itinerary, or experience collection into an executable Compass plan.
+
+16. Hidden Gems — First-Class Media Architecture
+HIDDEN GEMS · DA NANGRecently confirmedWorth the detourQuiet right nowFrom people you trustNear your TripSeasonal
+type HiddenGemState =  | 'recently_confirmed'  | 'still_hidden'  | 'quiet_now'  | 'getting_discovered'  | 'seasonal'  | 'hard_to_find'  | 'access_changed'  | 'temporarily_unavailable'  | 'overcrowding_risk'  | 'no_longer_hidden';
+16.1 Hidden Gem Intelligence Pipeline
+DISCOVERY   ↓SUBMISSION   ↓ENTITY RESOLUTION   ↓DUPLICATE CHECK   ↓SENSITIVE LOCATION CHECK   ↓MEDIA / PROVENANCE   ↓COMMUNITY CONFIRMATION   ↓GEM CONFIDENCE   ↓CURRENT GEM STATE   ↓DISCOVERY / MAP / MEDIA / COMPASS   ↓VISIT   ↓OUTCOME   ↓MEMORY / PASSPORT
+16.2 Gem Protection
+Exact location may remain hidden until deliberate open.
+Approximate area only for sensitive/fragile locations.
+Sensitive natural-site and protected-place rules.
+Capacity and overcrowding awareness.
+No popularity-first ranking.
+Paid promotion never increases factual confidence.
+Access restrictions and seasonality.
+Suppress aggressive recommendations if a small place is being overloaded.
+16.3 Gem Contributions
+Still here
+Still worth it
+Access changed
+Closed
+Too crowded
+Seasonal
+Harder to reach
+Better entrance
+No longer hidden
+Each is an observation, not an immediate canonical state change.
+17. Time Architecture
+EARLIER ───────── ● ─────── NOW ───────── LATER
+Support Earlier, Now, Typical, and Likely Next. Historical and forecast states must be visually distinct and forecasts carry confidence.
+18. Visual Consensus and Contradiction
+Media Perspective Resolver        ↓Independent Sources        ↓Coverage Analysis        ↓Corroboration        ↓Contradiction        ↓Visual Consensus Projection
+When reports disagree, surface uncertainty such as “Mixed reports — conditions may be changing” and optionally request another observation.
+19. Media Missions and Request a View
+Last visual update 28m agoShow what's happening?Is the entrance still busy?[Quiet] [Moderate] [Busy] [Take Photo]
+Future: Request a View lets a user request a specific current perspective. Use opt-in contributor eligibility, throttling, safety, and anti-spam controls.
+20. World / City Visual Pulse
+DA NANG · NOWAn Thuong        Building ↑Beach Festival   Peak ●Riverside        Starting ↑My Khe           Moderate ●
+21. Media Map
+Media Map consumes the canonical Map projection system; it does not own a second location engine.
+Da Nang61 perspectives   Beach Festival24 perspectives   An Thuong8 perspectives    Riverside6 perspectives    My Khe3 perspectives    Hidden Gem
+22. Crowd Flow Integration
+WHERE THE NIGHT IS MOVINGBeachfront[recent perspectives]        ↓An Thuong[recent perspectives]Activity appears to be moving toward An Thuong
+Never expose individual routes.
+
+23. Experience Projections
+interface MediaExperienceProjection {  id: string;  title: string;  placeIds: string[];  eventId?: string;  tripId?: string;  startedAt?: string;  expectedEndAt?: string;  currentState?: ExperienceState;  perspectiveCount: number;  contributorCount: number;  freshness: FreshnessState;  confidence?: ConfidenceState;  heroMedia: MediaProjection[];}
+Examples: Sunset at My Khe; Beach Festival; Friday Night An Thuong; Hoi An Evening; Dragon Bridge Fire Show.
+23.1 Experience Chains
+Dinner → Rooftop → Nightclub
+Actions: Follow This Night, Save Route, Add to Trip, Remix, Ask Compass.
+24. Ranking
+Viewer intent+ Current location+ Trip context+ Availability+ Travel preferences+ Follow graph+ Discovery behavior+ Live state+ Freshness+ Place relevance+ Media quality+ Trust / provenance+ Social relevance+ Novelty+ Privacy+ Safety+ Diversity
+Expected Real-World Utility+ Experience Fit+ Useful Social Connection+ Contribution Value+ Narrative Value- Repetition- Staleness- Low-confidence Live Claims
+25. Creator Popularity vs Intelligence Trust
+Dimension
+Meaning
+Creator Popularity
+Audience reach / social popularity.
+Creator Engagement
+Stamps, comments, shares, saves.
+Contributor Reliability
+Usefulness and historical acceptance of structured observations.
+Place Expertise
+Evidence-backed experience in a place/category.
+Live Accuracy
+How often current observations are corroborated.
+Trip Expertise
+Relevant journey history.
+Buddy Reputation
+Separate service-context reputation.
+26. Outcome-Oriented Impact Metrics
+People saved this place
+Added to Trips
+Asked Compass
+Created plans
+Started directions
+Arrived/completed experience where safely measurable
+Views, Stamps, comments, and shares remain social analytics but do not dominate the hierarchy.
+27. People Lens
+The People lens is explicitly social and prioritizes followed users, Trip Crew, Shared Moment participants, and relevant creators. Uploading media does not imply precise live location.
+28. Object Semantics
+Object
+Definition
+MediaAsset
+Photo or video file.
+Post
+Social publication.
+Postcard
+Curated travel narrative and Passport-facing media expression.
+Memory
+Preserved meaningful experience.
+Shared Moment
+Permitted shared real-world experience.
+Perspective
+Visual contribution to world context.
+Observation
+Structured intelligence input.
+29. Passport Boundary
+Passport continues to use Postcards as its primary media expression. Do not duplicate the full Media product inside Passport.
+30. My World
+MY WORLDAll · Posts · Postcards · Memories · Trips · Tagged · Hidden GemsGrid · Timeline · MapSearch my worldOwner-only:Drafts · Archived · Uploads · Processing
+31. Memory Integration
+Visited Hidden Gem
+Discovered Hidden Gem
+Returned to Place
+Night out with Trip Crew
+Favorite atmosphere
+Saved visual inspiration
+Experience matched expectation
+31.1 Hidden Gem Memory
+You discovered this Gem.
+You were an early contributor.
+You brought your Trip Crew here.
+You confirmed it twice.
+You visited before it became popular.
+32. Compass Integration
+interface CompassMediaContext {  mediaAssetId: string;  entityRefs: EntityRef[];  viewerContext: ViewerContext;  permittedIntelligenceRefs: string[];}
+Is this worth going to now?
+Find somewhere like this.
+Is this still busy?
+Where is this?
+Build a plan around this.
+What's nearby?
+Where should we go after this?
+Find a quieter or cheaper version.
+Add this to my Trip.
+
+33. Privacy Model
+type MediaVisibility =  | 'public' | 'followers' | 'following'  | 'trip_crew' | 'shared_moment' | 'private';type LocationVisibility =  | 'hidden' | 'country' | 'city'  | 'neighborhood' | 'place' | 'precise_private';
+Media visibility and location visibility are independent. Exact GPS is not normal public media metadata.
+34. Delayed Publishing
+Publish now
+Publish after I leave
+Hide exact place
+Show neighborhood only
+Show city only
+35. Evidence-Safe Editing
+Original → Crop / Brightness → EligibleOriginal → Major generative alteration                    ↓           Still valid social media                    ↓        Not eligible as live evidence
+36. Moderation
+Upload  ↓File validation  ↓Processing  ↓Safety moderation  ↓Privacy validation  ↓Context qualification  ↓Intelligence eligibility  ↓Distribution
+type MediaModerationStatus =  | 'processing'  | 'active'  | 'limited'  | 'rejected'  | 'removed'  | 'owner_deleted';
+37. Video Requirements
+Thumbnail generation
+Duration metadata
+Adaptive playback
+Mute state
+Seek
+Captions
+Upload resume / retry
+Compression/transcoding
+Moderation
+Background upload
+Playback recovery
+Do not make endless vertical autoplay the primary Media IA.
+38. Search
+What does An Thuong look like right now?
+Show hidden beaches near Da Nang.
+Nightlife that looks social tonight.
+Show my Bangkok rooftop photos.
+Where was this photo taken?
+Show festival media from my Vietnam Trip.
+Find places that look like this.
+Result types: Media, Places, Hidden Gems, Events, Trips, Experiences, People.
+39. Offline / Degraded Mode
+Cache Trip media
+Saved Places
+Hidden Gems where permitted
+Event checkpoint visuals
+Recent relevant Place perspectives
+Map thumbnails
+Crew-relevant permitted media
+Cached intelligence must show last-updated time and never be presented as live.
+40. Mobile Client Structure
+/features/media  /screens    MediaWorldScreen.tsx    MediaPlaceScreen.tsx    MediaExperienceScreen.tsx    HiddenGemsMediaScreen.tsx    MediaPeopleScreen.tsx    MyWorldMediaScreen.tsx    MediaViewerScreen.tsx    MediaMapScreen.tsx    MediaTimelineScreen.tsx    MediaSearchScreen.tsx    MediaContributionScreen.tsx  /components    MediaWorldHeader.tsx    CityVisualPulse.tsx    ExperienceMosaic.tsx    PerspectiveTile.tsx    PerspectiveMosaic.tsx    CurrentPictureBadge.tsx    FreshnessBadge.tsx    IntelligenceStrip.tsx    MediaTimeRail.tsx    ChangingNowCard.tsx    HiddenGemCard.tsx    MediaContextSheet.tsx    MediaActionRail.tsx    MediaContributionSheet.tsx    WhyThisSheet.tsx  /services    mediaProjection.ts    mediaUpload.ts    mediaProcessing.ts    mediaPrivacy.ts    mediaContext.ts    mediaIntelligence.ts    mediaSearch.ts    mediaCache.ts    mediaActions.ts  /state    mediaWorldStore.ts    mediaViewerStore.ts    mediaMapStore.ts    mediaTimeStore.ts    mediaFilterStore.ts    myMediaStore.ts  /types    media.ts    perspective.ts    mediaExperience.ts    mediaContext.ts    hiddenGemMedia.ts
+41. Server-Side Domain Services
+MediaAssetServiceMediaAttachmentServiceMediaProjectionServiceMediaContextResolverMediaPrivacyGatewayMediaProvenanceServiceMediaEvidenceQualifierMediaPerspectiveServiceMediaExperienceResolverHiddenGemMediaServiceMediaRankingServiceMediaSearchServiceMediaActionResolverMediaModerationServiceMediaProcessingService
+42. Projection Architecture
+Canonical Systems      ├─ Media      ├─ Places      ├─ Events      ├─ Trips      ├─ Hidden Gems      ├─ Social Graph      ├─ Presence      ├─ Live Intelligence      ├─ Memory      └─ Trust             ↓      Media Context Gateway             ↓       Viewer Eligibility             ↓       Media Projection             ↓        Media Ranking             ↓           Client
+43. Suggested API Shape
+GET  /media/worldGET  /media/places/:placeIdGET  /media/experiences/:experienceIdGET  /media/gemsGET  /media/peopleGET  /media/meGET  /media/:mediaIdGET  /media/:mediaId/actionsGET  /media/mapGET  /media/timelineGET  /media/searchPOST /mediaPOST /media/:id/attachmentsPOST /media/:id/contributionPOST /media/:id/reportPOST /media/request-view
+
+44. Analytics and Product Telemetry
+Outcome signals
+Social signals
+Visual opportunity opened
+Stamp
+Place explored
+Comment
+Hidden Gem opened
+Share
+Compass invoked
+Save
+Directions started
+Qualified view
+Added to Trip
+Completion
+Plan created
+Rewatch
+Invite sent
+Profile open
+Experience completed
+
+Contribution submitted / accepted
+
+Correction submitted
+
+Memory / Postcard created
+
+45. North-Star Metrics
+Media → Place OpenMedia → CompassMedia → RouteMedia → Trip AddMedia → PlanMedia → Real-World ArrivalMedia → ContributionMedia → Useful Correction
+Do not optimize primarily for minutes watched, infinite scroll depth, or forced autoplay completion.
+46. Visual Design Specification
+Dark/night-friendly primary foundation with high contrast and clear state labels.
+Large place/world imagery and spatial mosaics instead of repeated stacked cards.
+Geographic context and Map integration.
+Time rails and temporal state as first-class UI.
+Subtle current-state pulses; no fake-live treatment.
+Minimal visible vanity metrics.
+Clear freshness/confidence language.
+Observed, inferred, and predicted states use distinct visual treatments.
+Hidden Gems use distinct discovery/protection visual language.
+Compass is a primary intelligence/action control.
+Creator identity is visible but secondary in world-first lenses.
+46.1 Hidden Gem Visual Language
+Gem icon or geometric discovery marker
+Subtle edge glow or contour treatment
+Map discovery contour / approximate zone treatment
+Recently Confirmed / Worth the Detour / Still Hidden / Seasonal labels
+Avoid Viral / Trending / Hot / popularity-counter language
+46.2 Anti-Patterns
+TikTok-style endless vertical video feed
+Instagram-style creator-first stacked posts
+YouTube thumbnail/title/channel list
+Facebook-style newsfeed cards
+Follower/view counts dominating Media
+Heart/Like as primary hierarchy
+Autoplay as primary navigation
+Random engagement-ranked viral feed
+Full-screen stranger video immediately on Media open
+47. Why This? Explanations
+WHY YOU'RE SEEING THIS• Nightlife matches your current intent• 7 minutes away• Fresh perspectives from the last 10 minutes• Area activity is increasing• You've saved nearby places
+48. State Ownership
+Domain
+Owns
+Media
+Asset, provenance, media presentation
+Places
+Canonical Place identity
+Hidden Gems
+Gem identity and Gem-specific state
+Trips
+Trip context
+Events
+Event identity and lifecycle
+Live Intelligence
+Current claims, evidence, confidence, freshness
+Discovery
+Opportunity ranking
+Compass
+Recommendation and decision support
+Map
+Geographic projection
+Trust
+Contributor/evidence reliability
+Memory
+Experience projection
+Passport
+Travel identity
+49. Implementation Phases
+Phase
+Deliverable
+1 — Canonical Foundation
+Audit MediaAsset, attachments, upload, processing, storage, visibility, moderation.
+2 — New Media Shell
+NOW · PLACES · EXPERIENCES · HIDDEN GEMS · PEOPLE · MY WORLD.
+3 — Context Projection
+Wire Places, Events, Trips, People, Hidden Gems.
+4 — Perspectives
+Mosaics, perspective groups, current picture, freshness.
+5 — Intelligence
+Evidence qualification → observations/claims with provenance boundaries.
+6 — Discovery + Compass
+Show Me Now, Why This, Find Similar, Go There, Ask Compass, I Want This.
+7 — Time
+Earlier/Now/Typical + forecasts with observed-vs-predicted styling.
+8 — Hidden Gem Intelligence
+Protection, confirmation, access/crowd state, contributor flows.
+9 — My World + Memory
+Grid/Timeline/Map, experience grouping, Memories/Postcards.
+10 — Human Network
+Media missions, Request a View, contributor reputation, coverage gaps.
+50. End-to-End North Star
+SEE ↓UNDERSTAND ↓VERIFY ↓DISCOVER ↓WANT ↓ASK ↓DECIDE ↓PLAN / COORDINATE ↓GO ↓EXPERIENCE ↓CAPTURE ↓CONTRIBUTE ↓CORRECT ↓REMEMBER ↓LEARN
+Engineering north star
+Portava Media is not where users go to consume content. It is where they look through the Portava network to understand the physical world, find experiences worth having, act on them, contribute fresh human intelligence, and preserve what happened afterward.
