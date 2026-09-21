@@ -639,6 +639,31 @@ const RUNTIME_TARGET_GATES = [
     ],
     provedBy: 'src/test/mapProjectionLiveDb.test.ts',
   },
+  {
+    file: 'src/test/mapProjectionPerf.test.ts',
+    reason:
+      'M256(a), the projection latency harness, which is REGISTERED and therefore runs on every CI suite ' +
+      'pass — in its in-process arm, where it constructs no client at all and names no target. It acquires ' +
+      'the ability to reach a database only when BOTH PORTAVA_PERF_SUPABASE_URL and ' +
+      'PORTAVA_PERF_SERVICE_ROLE_KEY are set, and that request is gated at module scope before any ' +
+      'Supabase code loads: PORTAVA_PERF_LOCAL_DB_URL selects LOCAL and ' +
+      'assertDisposableLocalBenchmarkTarget refuses a missing, blank, remote, production or mismatched ' +
+      'target while opening the shared write latch only on success; every other named live target is ' +
+      'REMOTE and takes the unweakened front door, exiting 2. A bare loopback URL nobody configured is ' +
+      'NOT local mode. This harness WRITES — 120 fixture places and a feature flag — so the latch matters ' +
+      'here as much as it does for the corpus helpers, and the flag write additionally refuses to create a ' +
+      'row that does not already exist. Until 2026-09-21 the two live variables were read only to compute ' +
+      'the printed arm LABEL while the double ran regardless, so a live label over fake numbers was the ' +
+      'defect being fixed, not a hypothetical.',
+    requires: [
+      'const CONFIGURED_LOCAL_DB = process.env["PORTAVA_PERF_LOCAL_DB_URL"] ?? "";',
+      'const LOCAL_MODE_SELECTED = LIVE_REQUESTED && CONFIGURED_LOCAL_DB.trim() !== "";',
+      'const REMOTE_TARGET_NAMED = LIVE_REQUESTED && !LOCAL_MODE_SELECTED;',
+      'assertDisposableLocalBenchmarkTarget(LIVE_URL, CONFIGURED_LOCAL_DB);',
+      'await import("../lib/ciSupabaseGuard.mjs");',
+    ],
+    provedBy: 'src/test/mapProjectionPerf.test.ts',
+  },
 ];
 
 /**

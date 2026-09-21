@@ -161,3 +161,72 @@ export async function setExistingFlag(
   const { error } = await pub.from("feature_flags").update({ enabled }).eq("flag", flag);
   if (error) throw new Error(`liveMapCorpus: could not set ${flag} — ${error.message}`);
 }
+
+// ── M256(a)'s live arm ───────────────────────────────────────────────────────
+//
+// A lattice of places inside the perf bbox, identical in shape and count to the
+// in-process double's `seededPlaces()`, so the two arms describe the same world
+// and their numbers are comparable. The ids are real uuids because `places.id`
+// is a uuid column with real foreign keys; the double's `perf-place-N` strings
+// cannot be inserted.
+
+/** The marker the perf lattice carries, inside the `mlive-` family. */
+export const MAP_PERF_NS = `${MAP_FIXTURE_NS}-perf`;
+
+/** Deterministic uuid for row `i` — reproducible, and identifiable if orphaned. */
+function perfPlaceId(i: number): string {
+  const n = i.toString(16).padStart(12, "0");
+  return `bb000256-0000-4000-8000-${n}`;
+}
+
+/**
+ * The same fixed lattice the double uses: `(i*7)%20` across, `(i*11)%20` down,
+ * inset 0.02° from each edge. No RNG and no clock, so a rerun measures the same
+ * geometry.
+ */
+export function perfPlaceRows(
+  count: number,
+  bbox: { west: number; south: number; east: number; north: number },
+): Array<Record<string, unknown>> {
+  const rows: Array<Record<string, unknown>> = [];
+  for (let i = 0; i < count; i++) {
+    const fx = ((i * 7) % 20) / 20;
+    const fy = ((i * 11) % 20) / 20;
+    rows.push({
+      id: perfPlaceId(i),
+      name: `Perf Place ${i}`,
+      normalized_name: `${MAP_PERF_NS}-${i}`,
+      primary_category: i % 2 === 0 ? "cafe" : "night_market",
+      latitude: bbox.south + 0.02 + fy * (bbox.north - bbox.south - 0.04),
+      longitude: bbox.west + 0.02 + fx * (bbox.east - bbox.west - 0.04),
+      status: "active",
+    });
+  }
+  return rows;
+}
+
+export async function teardownPerfCorpus(pub: AnyClient): Promise<void> {
+  requireApprovedTarget("teardownPerfCorpus");
+  const { error } = await pub
+    .from("places")
+    .delete()
+    .like("normalized_name", `${MAP_PERF_NS}-%`);
+  if (error) throw new Error(`liveMapCorpus: perf teardown failed — ${error.message}`);
+}
+
+export async function seedPerfCorpus(
+  pub: AnyClient,
+  count: number,
+  bbox: { west: number; south: number; east: number; north: number },
+): Promise<number> {
+  requireApprovedTarget("seedPerfCorpus");
+  // Heal first, for the same reason seedMapCorpus does: a run killed mid-flight
+  // would otherwise leave rows the NEXT run measures, and a perf harness that
+  // silently measures 240 places instead of 120 reports a regression that is
+  // really a leak.
+  await teardownPerfCorpus(pub);
+  const rows = perfPlaceRows(count, bbox);
+  const { error } = await pub.from("places").insert(rows);
+  if (error) throw new Error(`liveMapCorpus: perf seed failed — ${error.message}`);
+  return rows.length;
+}

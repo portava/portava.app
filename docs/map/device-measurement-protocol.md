@@ -1,4 +1,4 @@
-# Map device measurement protocol — M254, M255, M258, M292
+# Map device measurement protocol — M254, M255, M258, M292, M88, M89
 
 **Written:** 2026-09-20 · **Branch:** `claude/portava-continuation-uqta94`
 **Covers:** census-map **M254** (initial usable map < 2 s), **M255** (pan
@@ -43,7 +43,7 @@ RUN**, not a failure.
 | # | Prerequisite | Why it is not negotiable |
 |---|---|---|
 | P1 | One **mid-tier Android handset**, physical. | The census names the device class. A flagship measures the wrong product and an emulator measures the host. |
-| P2 | An **EAS `preview` build**, not a dev client. | A dev client ships the Metro bundler client and an unminified bundle; its cold start is not the product's. Record the build id. |
+| P2 | An **EAS `preview` build**, not a dev client. Exactly: `cd travel-buddy-standalone && npx eas build --profile preview --platform android` (the `preview` profile in `eas.json`: `distribution: internal`, no `developmentClient`). Record the build id EAS prints. | A dev client ships the Metro bundler client and an unminified bundle; its cold start is not the product's. The command is written out because "an EAS preview build" has been read as `--profile development` before, and that build measures the bundler. |
 | P3 | Target is a **seeded `portava-ci`**, never production. | M255 and M292 both state this. Production is also the wrong target for a different reason: §6's zone layers must actually be drawn, and production's `geo_zones` holds 0 rows. |
 | P4 | CI seeded with curated `geo_zones`, `protected_zones`, `intel_*` snapshots, and `map_projection_enabled` TRUE. | With an empty zone table the pan is measured over an empty map, which is the §42.7 mutation-B5 trap in physical form: a map that draws nothing is very fast. |
 | P5 | **Network shaping at ~1.6 Mbit/s down, 300 ms RTT** for M254. | "A normal connection" is the claim under test. Record the shaping tool and its settings. |
@@ -358,6 +358,88 @@ took.
 
 ---
 
+## 6. M88 / M89 — the BLE rungs, and why there is no procedure yet
+
+### 6.1 The state, checked rather than remembered
+
+M88 (§12 rung 3, local device proximity) and M89 (rung 4, peer relay /
+checkpoint) are graded **N**, not W, and that grade is correct: the ladder slot
+exists and the sensor does not. Verified on this branch, 2026-09-21:
+
+| Fact | Checked how | Result |
+|---|---|---|
+| `CURRENT_STACK_CAPABILITIES` | `src/features/map/presence/presenceLadder.ts` | `bleScan`, `bleAdvertise`, `backgroundBle`, `uwb`, `localPeer` all **false** (`backgroundLocation` is the only true one) |
+| A BLE package in the client | every dependency and devDependency in `travel-buddy-standalone/package.json` matched against `/ble\|bluetooth\|nearby\|multipeer/i` | **none** |
+| The unreachable rungs | `src/features/map/presence/locateFriends.ts` `unsupportedRungs()` | rungs 3 and 4 reported unsupported, by name — and they fail on DIFFERENT capabilities: `RUNG_POLICY.local_proximity.requires` is `bleScan`, `RUNG_POLICY.peer_relay.requires` is `localPeer`. A module that gives one does not give the other. |
+
+So there is nothing to point a handset at. A device session that "tested BLE"
+today would be testing a refusal path, and a ledger row recording it as a BLE
+measurement would be false.
+
+### 6.2 What has to be true before a procedure can exist
+
+Three things, in order, and none of them is a measurement:
+
+1. **A product decision** to put a radio in the app at all. §12 is opt-in,
+   group-scoped and auto-expiring, and BLE advertising is a different privacy
+   surface from anything Portava ships today — a device that advertises is
+   discoverable by anything listening, not only by the group.
+2. **A BLE module** in the client (`react-native-ble-plx` or Expo's
+   `expo-bluetooth` when it leaves preview), plus the iOS and Android
+   background-mode entitlements, which a `preview` build must actually carry —
+   a `preview` build without the background modes measures foreground-only BLE
+   and reports a ceiling that is not the product's.
+3. **`CURRENT_STACK_CAPABILITIES` flipped to match**, on both the client mirror
+   above and the server record it mirrors — `bleScan` for M88, `localPeer` for
+   M89, and `backgroundBle` before either can answer with the app backgrounded,
+   which is the case §12 actually cares about. The census rows turn red on the
+   module plus the capability and not before; flipping the constant without the
+   module is the exact move the rows' "turns red when" clauses are written to
+   prevent, and `unsupportedRungs()` would then report a rung the device cannot
+   supply.
+
+### 6.3 The procedure that WOULD run, written now so nobody invents it later
+
+Recorded at the same standard as §2–§5 so the day the module lands, the
+measurement is a checklist rather than a design exercise. It is **NOT RUN** and
+cannot be run.
+
+**Prerequisites, additional to P1–P6:** two physical handsets (P1 gives one),
+both on the same EAS `preview` build id, Bluetooth on, location permission
+granted at "while using" or better on both, and a room where the two can be
+placed at a measured distance with no obstruction.
+
+| Step | Action | What is recorded |
+|---|---|---|
+| B1 | Both devices sign in as members of the SAME temporary Locate group, with `locate_friends_enabled` TRUE on the seeded CI target (P3/P4). | group id, both account ids, TTL |
+| B2 | Put the devices 2 m apart. Disable Wi-Fi and cellular on BOTH, so rungs 1 and 2 cannot answer and the ladder must fall to rung 3. | the airplane-mode state of each |
+| B3 | Open Locate My Friends on device A. Wait for a rung-3 fix. | time from open to first rung-3 reading, and the reading itself |
+| B4 | Repeat at 10 m, then at 30 m with one wall between. | reading and rung at each distance |
+| B5 | Kill the app on device B; leave A open. | whether A degrades to rung 5 (last known) or reports rung 4 via a relay |
+| B6 | Restore network on A only. | whether A returns to rung 1 and how long that takes |
+
+**Pass condition, M88:** at 2 m and at 10 m, device A reports rung 3 with a
+distance band, and the band is one §12 names (`Nearby ~40-80m` and its
+siblings) — not a raw metre figure, which §12 deliberately does not surface.
+Fewer than five completed reads at a distance reports **NOT RUN**, not PASS.
+
+**Pass condition, M89:** with B unreachable directly, A reports rung 4 through a
+third device or an explicit checkpoint, and the UI says so rather than
+presenting a stale rung-3 reading as current. A rung that silently keeps showing
+the last BLE fix is a FAIL, not a pass — that is the same staleness defect §10's
+presence expiry exists to prevent.
+
+### 6.4 Ledger
+
+| Measurement | Distance | Rung reported | Band shown | Reads | Verdict | Evidence |
+|---|---|---|---|---|---|---|
+| M88 proximity | 2 m | — | — | — | **NOT RUN** (no BLE module in the stack) | — |
+| M88 proximity | 10 m | — | — | — | **NOT RUN** (no BLE module in the stack) | — |
+| M88 proximity | 30 m + wall | — | — | — | **NOT RUN** (no BLE module in the stack) | — |
+| M89 peer relay | B unreachable | — | — | — | **NOT RUN** (no BLE module in the stack) | — |
+
+---
+
 ## 7. Open blockers
 
 | Blocker | Strands | What it would take |
@@ -366,3 +448,4 @@ took.
 | `docs/architecture/map-sensing-certification.md` absent from this branch (plan blocker 6) | the certification ledger these four report into | Port it from `3c5a76fd2`. Integration owner's. |
 | CI not seeded (plan B3) | M255 P4, M292 Q3 | Curated `geo_zones` / `protected_zones` / `intel_*` rows. Ops, not a migration. |
 | `map_telemetry_enabled` on CI (plan B2) | M292 Q1 | Lane C's flip. Four lanes share one CI database — serialise it. |
+| No BLE radio in the stack (§6) | M88, M89 | A product decision, a BLE module with background entitlements, and `CURRENT_STACK_CAPABILITIES` flipped to match — in that order. Not a device session: a second handset alone changes nothing. |

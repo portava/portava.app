@@ -369,6 +369,52 @@ because the aggregator caught the row on the way out. The case now also asserts
 SQL filter removed → RED; aggregator drop removed → GREEN, correctly, since the
 other gate still stands; both removed → RED.
 
+## M256(a): the live arm existed only as a LABEL, and now it exists
+
+`mapProjectionPerf.test.ts` printed `arm=live-supabase` whenever
+`PORTAVA_PERF_SUPABASE_URL` and `PORTAVA_PERF_SERVICE_ROLE_KEY` were set. Those
+two variables were read in exactly one place — to compute that label — while
+`startRouterApp` went on building the in-process double regardless. Its header
+claimed "pointing it at a real seeded `portava-ci` is a one-variable change and
+the harness supports it". It did not. A harness that mislabels its own arm is
+worse than one with no live arm, because the number then looks like evidence.
+
+**Fixed, and the live arm is real.** `mountRouterApp` takes a caller-built
+client, so everything below the client is byte-identical between the arms and a
+difference in the numbers is a difference in the database. The live arm seeds
+the SAME 120-place lattice through the real schema (real uuids, because
+`places.id` is a uuid column — the double's `perf-place-N` strings cannot be
+inserted) and turns the gateway on through a real `feature_flags` row.
+
+**The numbers, five runs on a quiet box:**
+
+| | run 1 | 2 | 3 | 4 | 5 | median |
+|---|---|---|---|---|---|---|
+| p50 | 33.8 | 33.7 | 33.2 | 33.7 | 33.5 | **33.7 ms** |
+| p95 | 43.1 | 42.2 | 42.7 | 40.8 | 48.0 | **42.7 ms** |
+
+against the in-process double's p50 ~3 ms / p95 ~7 ms on the same box — about an
+order of magnitude, which is the gap the old label was hiding. All four
+anti-vacuity guards hold on the live arm: every one of the 55 responses served
+(V1), carried all 120 objects (V2), and reported `protection.evaluated === 120`
+(V3), and the run issued real `places` and `protected_zones` reads (V4).
+
+**M256 IS NOT CLOSED BY THIS, and the reason is the row's own wording.** Its
+criterion says "on a seeded `portava-ci`". This is a disposable local
+PostgreSQL. It is a real-schema, real-planner measurement and it is strictly
+better evidence than the double, but it is not the database the criterion
+names, and half (b) still needs a handset. Recorded as measured, not graded.
+
+**Because the live arm WRITES — 120 places and a flag — it carries the same
+target decision as the other live harnesses.** `PORTAVA_PERF_LOCAL_DB_URL`
+selects the one disposable database; anything else takes the unweakened front
+door and exits 2 before a client exists. Four database-free refusal cases run in
+every mode and assert the reason code and that the latch did not move. Verified
+by hand as well: a production-shaped URL exits 2, a mismatched local target
+raises `target_mismatch`, and a bare loopback URL nobody configured is not local
+mode and also exits 2. Teardown hands the database back as found — flag FALSE,
+zero leftover rows, checked after the run.
+
 ## Blockers that are not decisions
 
 - **Production migration chain 2217 → 2201 → 2218 → 2224 → 2295 is BLOCKED by

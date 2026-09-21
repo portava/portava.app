@@ -59,12 +59,38 @@
  * production latency, because it contains no network, no TLS, no real
  * PostgreSQL planner and no cold start.
  *
- * Pointing it at a real seeded `portava-ci` is a one-variable change and the
- * harness supports it: set PORTAVA_PERF_SUPABASE_URL and
- * PORTAVA_PERF_SERVICE_ROLE_KEY and the same 50 requests run against that
- * project's client instead. Without them the in-process arm runs and SAYS SO in
- * its output, so a reader can never mistake one for the other. The lane report
- * states which arm produced the committed numbers.
+ * THE LIVE ARM IS REAL NOW, AND IT WAS NOT BEFORE. This paragraph used to say
+ * that pointing the harness at a real database was "a one-variable change and
+ * the harness supports it". It did not: PORTAVA_PERF_SUPABASE_URL and
+ * PORTAVA_PERF_SERVICE_ROLE_KEY were read in exactly one place, to compute the
+ * arm LABEL, while `startRouterApp` went on building the in-process double. So
+ * setting them printed `arm=live-supabase` over the fake's numbers. A harness
+ * that mislabels its own arm is worse than one with no live arm, because the
+ * number then looks like evidence.
+ *
+ * Today the live arm mounts the same router over a real client
+ * (`mountRouterApp`), seeds the SAME 120-place lattice through the real schema,
+ * and turns the gateway on through a real `feature_flags` row. Everything below
+ * the client is byte-identical between the arms, so a difference in the numbers
+ * is a difference in the database. Measured against a loopback PostgREST over a
+ * disposable PostgreSQL 16, five runs on a quiet box:
+ *
+ *   p50  33.2 / 33.5 / 33.7 / 33.7 / 33.8 ms   median 33.7 ms
+ *   p95  40.8 / 42.2 / 42.7 / 43.1 / 48.0 ms   median 42.7 ms
+ *
+ * against the in-process double's p50 ~3 ms / p95 ~7 ms on the same box. Call
+ * it an order of magnitude — which is exactly the gap the old label was hiding,
+ * and the reason a "live" number that was really the fake's would have been
+ * worse than no number at all. The median of five is the figure to quote; the
+ * first run taken here read p50 38.1 / p95 51.9 ms and was measured while the
+ * box was busy, so it is not.
+ *
+ * Because it WRITES (120 fixture places and a flag), it carries the same target
+ * decision as the other live harnesses: PORTAVA_PERF_LOCAL_DB_URL selects the
+ * one disposable local database, anything else takes the unweakened front door
+ * and exits 2 before a client exists. Without any of them the in-process arm
+ * runs and SAYS SO in its output, so a reader can never mistake one for the
+ * other.
  *
  * Run:
  *   SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy \
@@ -78,7 +104,23 @@ import mapProjectionRouter, {
   _clearFlowZoneCache,
   _clearCityZoneCache,
 } from "../routes/mapProjection.js";
-import { startRouterApp, type FakeState, type ProjectionApp } from "./helpers/fakeMapDb.js";
+import {
+  mountRouterApp,
+  startRouterApp,
+  type FakeState,
+  type ProjectionApp,
+} from "./helpers/fakeMapDb.js";
+import {
+  approvedDisposableTarget,
+  assertDisposableLocalBenchmarkTarget,
+  DisposableTargetError,
+} from "./helpers/liveWallCorpus.js";
+import {
+  readFlag,
+  seedPerfCorpus,
+  setExistingFlag,
+  teardownPerfCorpus,
+} from "./helpers/liveMapCorpus.js";
 import { benchmark, formatBenchmark, percentile } from "./helpers/benchmark.js";
 
 // ── The budget ───────────────────────────────────────────────────────────────
@@ -165,13 +207,68 @@ function perfWorld(): FakeState {
   };
 }
 
-/** Which arm produced the numbers, so the output can never be misread. */
-const LIVE_URL = process.env.PORTAVA_PERF_SUPABASE_URL ?? "";
-const LIVE_KEY = process.env.PORTAVA_PERF_SERVICE_ROLE_KEY ?? "";
-const ARM = LIVE_URL && LIVE_KEY ? "live-supabase" : "in-process-double";
+// ── WHICH ARM, AND THE TARGET DECISION THAT GOES WITH IT ────────────────────
+//
+// FIXED 2026-09-21, and the defect is worth recording because it is the exact
+// failure mode this harness's own header warns about. These two variables used
+// to be read HERE AND NOWHERE ELSE — solely to compute the label below.
+// `startRouterApp` always built the in-process double, so setting them printed
+// `arm=live-supabase` over numbers produced entirely by the fake, and the
+// header's claim that "pointing it at a real seeded portava-ci is a
+// one-variable change and the harness supports it" was false. A measurement
+// harness that mislabels its own arm is worse than one that has no live arm at
+// all, because the number looks like evidence.
+//
+// The live arm is now real: `mountRouterApp` takes a caller-built client, so
+// everything below the client is byte-identical between the arms and a
+// difference in the numbers is a difference in the DATABASE.
+//
+// It carries the same target decision as the other live harnesses, for the same
+// reason — this one WRITES (120 fixture places and a feature flag):
+//   LOCAL   PORTAVA_PERF_LOCAL_DB_URL names the one disposable local database,
+//           and assertDisposableLocalBenchmarkTarget refuses anything else,
+//           opening the corpus write latch only on success.
+//   REMOTE  any other named live target takes the unweakened front door and
+//           exits 2 before a client is constructed.
+const LIVE_URL = process.env["PORTAVA_PERF_SUPABASE_URL"] ?? "";
+const LIVE_KEY = process.env["PORTAVA_PERF_SERVICE_ROLE_KEY"] ?? "";
+const CONFIGURED_LOCAL_DB = process.env["PORTAVA_PERF_LOCAL_DB_URL"] ?? "";
+const LIVE_REQUESTED = LIVE_URL.trim() !== "" && LIVE_KEY.trim() !== "";
+const LOCAL_MODE_SELECTED = LIVE_REQUESTED && CONFIGURED_LOCAL_DB.trim() !== "";
+const REMOTE_TARGET_NAMED = LIVE_REQUESTED && !LOCAL_MODE_SELECTED;
+
+if (LOCAL_MODE_SELECTED) {
+  assertDisposableLocalBenchmarkTarget(LIVE_URL, CONFIGURED_LOCAL_DB);
+} else if (REMOTE_TARGET_NAMED) {
+  await import("../lib/ciSupabaseGuard.mjs");
+}
+
+const ARM = LIVE_REQUESTED ? "live-supabase" : "in-process-double";
+
+// The label is now BOUND to the thing it labels. If the live arm is asked for
+// and the latch is shut, this module refuses rather than quietly measuring the
+// double under a live label — which is the defect above, reintroduced.
+//
+// UNREACHABLE TODAY, and kept deliberately: every live request is either
+// LOCAL_MODE_SELECTED (where assertDisposableLocalBenchmarkTarget either opens
+// the latch or throws) or REMOTE_TARGET_NAMED (where the front door exits 2),
+// so no mutation of the three branches above reaches this throw. It is here
+// because the thing it refuses is the exact defect this file just had, and the
+// cheapest way for that defect to come back is a fourth branch nobody thought
+// about. Stated rather than dressed up as an armed guard.
+if (ARM === "live-supabase" && approvedDisposableTarget() === null && !REMOTE_TARGET_NAMED) {
+  throw new Error(
+    "M256(a): the live arm was requested but no disposable target was approved. Refusing to " +
+      "print live-supabase numbers that the in-process double produced.",
+  );
+}
 
 describe("M256(a) — GET /api/map/projection, 50 warm-cache requests", () => {
   let app: ProjectionApp | null = null;
+  /** Set only on the live arm; the fixtures it wrote are removed in after(). */
+  let liveClient: any = null;
+  /** The projection flag as the live arm FOUND it, so after() can put it back. */
+  let liveFlagWasEnabled: boolean | null = null;
   /**
    * Table reads issued across the whole run, COUNTED PER TABLE (V4).
    *
@@ -197,7 +294,22 @@ describe("M256(a) — GET /api/map/projection, 50 warm-cache requests", () => {
     _clearProtectedZoneCache();
     _clearFlowZoneCache();
     _clearCityZoneCache();
-    app = await startRouterApp(mapProjectionRouter, perfWorld(), { token: TOKEN, userId: VIEWER });
+    if (ARM === "live-supabase") {
+      // Real client, real schema, real planner. Seed the SAME lattice the
+      // double uses, and turn the gateway on through the real flag row — which
+      // must already exist; setExistingFlag refuses to invent one.
+      const { createClient } = await import("@supabase/supabase-js");
+      liveClient = createClient(LIVE_URL, LIVE_KEY, {
+        auth: { persistSession: false, autoRefreshToken: false },
+        global: { headers: { "X-Fixture-Viewer": VIEWER } },
+      });
+      liveFlagWasEnabled = await readFlag(liveClient, "map_projection_enabled");
+      await seedPerfCorpus(liveClient, SEEDED_PLACES, BBOX);
+      await setExistingFlag(liveClient, "map_projection_enabled", true);
+      app = await mountRouterApp(mapProjectionRouter, liveClient, { token: TOKEN, userId: VIEWER });
+    } else {
+      app = await startRouterApp(mapProjectionRouter, perfWorld(), { token: TOKEN, userId: VIEWER });
+    }
 
     // Instrument the installed client in place. `getServiceClient()` hands the
     // route this exact object, so every `from(...)` the handler issues passes
@@ -212,6 +324,21 @@ describe("M256(a) — GET /api/map/projection, 50 warm-cache requests", () => {
   });
 
   after(async () => {
+    if (liveClient) {
+      // Hand the database back as found. A perf run that leaves 120 places and
+      // a Map flag ON is how the NEXT suite passes for the wrong reason.
+      await teardownPerfCorpus(liveClient).catch(() => {});
+      // RESTORED, not forced false. Forcing it would be the safe direction on a
+      // disposable database and the wrong habit anywhere else: a harness that
+      // decides what a flag should be is a harness that can silently turn a
+      // feature off for whatever runs next. setExistingFlag refuses an absent
+      // row, so a null here means the read failed and there is nothing to put
+      // back.
+      if (liveFlagWasEnabled !== null) {
+        await setExistingFlag(liveClient, "map_projection_enabled", liveFlagWasEnabled).catch(() => {});
+      }
+      liveClient = null;
+    }
     if (app) await app.close();
     app = null;
   });
@@ -327,4 +454,70 @@ describe("M256(a) — GET /api/map/projection, 50 warm-cache requests", () => {
 
     assert.ok(totalReads() > 0, "no table was read at all");
   });
+});
+
+// ── The live arm's target decision, proven WITHOUT a database ────────────────
+//
+// These run in every mode, including the ordinary `npm test` pass where no live
+// variable is set. They exist because the defect this file just carried was a
+// LABEL that outran its target, and the fix is only worth what its refusals are
+// worth. Every case below drives the real assertion with the real strings; none
+// of them opens the latch, because every one is a refusal.
+/**
+ * The latch as it stood once the module's own target decision had run: null on
+ * the in-process arm, the approved URL on the live one. The refusal cases below
+ * assert they leave it exactly here.
+ */
+const LATCH_AT_LOAD = approvedDisposableTarget();
+
+describe("M256(a) — the live arm refuses every target but the configured one", () => {
+  /** Each case: what an operator set, and the refusal reason it must produce. */
+  const REFUSALS: Array<{ why: string; runtime: string; configured: string; reason: string }> = [
+    {
+      why: "no disposable database configured — a bare live URL is not consent",
+      runtime: "http://127.0.0.1:4002",
+      configured: "",
+      reason: "missing_configured_target",
+    },
+    {
+      why: "the configured target is remote",
+      runtime: "http://127.0.0.1:4002",
+      configured: "https://ajrurzioarfkagpuxfnb.supabase.co",
+      reason: "configured_target_not_loopback",
+    },
+    {
+      why: "the runtime target is production while a local one is configured",
+      runtime: "https://ajrurzioarfkagpuxfnb.supabase.co",
+      configured: "http://127.0.0.1:4002",
+      reason: "runtime_target_not_loopback",
+    },
+    {
+      why: "two different loopback targets is ambiguous, so it is refused rather than guessed",
+      runtime: "http://127.0.0.1:4002",
+      configured: "http://127.0.0.1:4000",
+      reason: "target_mismatch",
+    },
+  ];
+
+  for (const c of REFUSALS) {
+    test(`refused: ${c.why}`, () => {
+      assert.throws(
+        () => assertDisposableLocalBenchmarkTarget(c.runtime, c.configured),
+        (err: unknown) => {
+          // The TYPE and the REASON CODE, not the wording: a message-only check
+          // would pass on a plain Error carrying the same sentence, and a
+          // reason-less refusal cannot be told apart from a different refusal.
+          assert.ok(err instanceof DisposableTargetError, "the refusal is a DisposableTargetError");
+          assert.equal((err as DisposableTargetError).reason, c.reason);
+          return true;
+        },
+      );
+      // And the refusal did not OPEN the latch, which is the property that
+      // actually matters: a refusal that opened it would be worse than none.
+      // Compared against the state at module load rather than against null,
+      // because on the live arm the latch is legitimately already open — the
+      // claim is that these calls do not change it, not that it is shut.
+      assert.equal(approvedDisposableTarget(), LATCH_AT_LOAD);
+    });
+  }
 });
