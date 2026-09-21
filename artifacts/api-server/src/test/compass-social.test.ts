@@ -22,10 +22,10 @@ import {
   aggregateGroupPreferences,
   buildGroupRankingProfile,
   eventSatisfiesGroup,
-  ageFromDob,
 } from "../compass/CompassSocialEngine.js";
 import { loadCircleMemoryPreferenceTags } from "../compass/CompassRecommendationEngine.js";
 import type { CompassProfile } from "../compass/types.js";
+import type { GroupMemberPrefs } from "../compass/CompassSocialEngine.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -203,9 +203,12 @@ describe("A. computeTravelCompatibility", () => {
 // ── B. Group aggregation + event constraints ─────────────────────────────────
 
 describe("B. Group aggregation", () => {
-  const members = [
-    { userId: ALICE_ID, handle: "alice", interests: ["food", "diving"], travelStyles: ["backpacker"], budgetStyle: "luxury", travelPace: "balanced", verified: true,  age: 30 },
-    { userId: BOB_ID,   handle: "bob",   interests: ["food", "hiking"], travelStyles: [],             budgetStyle: "budget", travelPace: "slow",     verified: false, age: 22 },
+  // Members now carry a RESOLVED `GateAge`, not a bare number — see
+  // CompassSocialEngine.GroupMemberPrefs. `ok` is "nothing contradicts the
+  // profile"; the refusal arms are exercised in ageGateGroupTravel.test.ts.
+  const members: GroupMemberPrefs[] = [
+    { userId: ALICE_ID, handle: "alice", interests: ["food", "diving"], travelStyles: ["backpacker"], budgetStyle: "luxury", travelPace: "balanced", verified: true,  ageGate: { state: "ok", age: 30, dateOfBirth: "1996-01-15" } },
+    { userId: BOB_ID,   handle: "bob",   interests: ["food", "hiking"], travelStyles: [],             budgetStyle: "budget", travelPace: "slow",     verified: false, ageGate: { state: "ok", age: 22, dateOfBirth: "2004-05-02" } },
   ];
 
   it("aggregates most-restrictive budget, shared interests, youngest age, all-verified", () => {
@@ -227,7 +230,9 @@ describe("B. Group aggregation", () => {
   });
 
   it("age gate fails CLOSED when no member age is known", () => {
-    const agg = aggregateGroupPreferences(members.map((m) => ({ ...m, age: null })));
+    const agg = aggregateGroupPreferences(
+      members.map((m) => ({ ...m, ageGate: { state: "ok", age: null, dateOfBirth: null } as const })),
+    );
     assert.equal(agg.youngestAge, null);
     assert.equal(eventSatisfiesGroup({ age_min: 18 }, agg).ok, false);
   });
@@ -240,11 +245,20 @@ describe("B. Group aggregation", () => {
     assert.equal(gp.viewerAge, 22, "youngest age drives age-gated eligibility");
   });
 
-  it("ageFromDob computes server-side age and rejects garbage", () => {
-    assert.equal(ageFromDob("not-a-date"), null);
-    assert.equal(ageFromDob(null), null);
-    const age = ageFromDob("2000-01-01");
-    assert.ok(typeof age === "number" && age >= 25 && age <= 27);
+  // The `ageFromDob` unit test that stood here is GONE WITH ITS SUBJECT. This
+  // file's private date-of-birth arithmetic was deleted: an age now arrives
+  // already resolved through lib/gateAge.ts, whose own arithmetic
+  // (lib/ageEligibility.ts#calculateUserAge) is tested where it lives. Testing a
+  // second copy here is what made the copy look maintained.
+  it("one member with no age at all closes the age gate for the WHOLE group", () => {
+    // The half that a per-member `age: null` alone never covered: the OTHER
+    // member is a known adult, and the group is still refused.
+    const agg = aggregateGroupPreferences([
+      members[0]!,
+      { ...members[1]!, ageGate: { state: "ok", age: null, dateOfBirth: null } },
+    ]);
+    assert.equal(agg.youngestAge, null, "an unresolved member is not skipped over");
+    assert.equal(eventSatisfiesGroup({ age_min: 18 }, agg).ok, false);
   });
 });
 

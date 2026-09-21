@@ -600,7 +600,7 @@ function PassportContent({
           />
         )}
         {tab === 'memories' && (
-          <MemoriesTab memories={memories} onReload={reload} />
+          <MemoriesTab memories={memories} onReload={reload} trips={trips} />
         )}
         {tab === 'plans' && (
           <TripsTab trips={trips} isOwner loading={!tripsLoaded} />

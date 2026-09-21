@@ -547,9 +547,14 @@ const FULL_RAIL: FakeState = {
     id: BUDDY_PROFILE_ID, user_id: BOB_ID, city: "Manila",
     bio: "Local guide", admin_status: "active",
   }],
+  // sensitivity_level is NOT NULL on hidden_gems, and the Live Pulse gem rails
+  // run every row through HiddenGemPrivacyGuard.mayDiscloseGemIdentity, which
+  // refuses an absent value. Omitting it here would drop both gems and make
+  // these telemetry cases pass or fail for a reason that has nothing to do with
+  // telemetry.
   hidden_gems: [
-    { id: GEM_MNL_ID, name: "Secret Beach", city: "Manila", category: "nature", save_count: 40, status: "active" },
-    { id: GEM_CEB_ID, name: "Hidden Cave",  city: "Cebu",   category: "nature", save_count: 30, status: "active" },
+    { id: GEM_MNL_ID, name: "Secret Beach", city: "Manila", category: "nature", save_count: 40, status: "active", sensitivity_level: "public", submitted_by: null },
+    { id: GEM_CEB_ID, name: "Hidden Cave",  city: "Cebu",   category: "nature", save_count: 30, status: "active", sensitivity_level: "public", submitted_by: null },
   ],
   compass_user_profiles: [{ user_id: ALICE_ID, current_city: "Cebu", preferred_cities: [] }],
 };

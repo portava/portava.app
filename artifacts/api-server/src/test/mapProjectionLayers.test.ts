@@ -241,7 +241,11 @@ async function bothPaths(state: FakeState) {
 }
 
 /** The equivalence assertion, in one place so every scenario checks the same thing. */
-async function assertEquivalent(name: string, state: FakeState) {
+async function assertEquivalent(
+  name: string,
+  state: FakeState,
+  opts: { banGateRefusesFirst?: boolean } = {},
+) {
   const { route, direct } = await bothPaths(state);
   if (direct.ok) {
     assert.equal(route.status, 200, `${name}: route should succeed when the reader does`);
@@ -257,13 +261,27 @@ async function assertEquivalent(name: string, state: FakeState) {
     // sanitized one (sendError redacts db_error detail so PostgREST text cannot
     // leak table/column names), which is why the reader returns the underlying
     // message separately: callers log it, they do not serve it.
-    assert.equal(route.status, 500, `${name}: a read failure must not answer 200`);
-    assert.equal(route.body.error, "db_error", `${name}: error code`);
-    assert.equal(
-      route.body.message,
-      "A database error occurred. Please try again.",
-      `${name}: db_error detail must stay sanitized on the wire`,
-    );
+    if (opts.banGateRefusesFirst) {
+      // `profiles` is not only this reader's input — it is `requireUser`'s ban
+      // gate (lib/http.ts). Since A1, an unreadable `account_status` is refused
+      // BEFORE the route body runs, with the code this codebase reserves for
+      // "the permission check was not performed": 503 `degraded_unavailable`,
+      // retryable. The property this suite exists for is unchanged and is still
+      // asserted — a read failure must not answer 200 — but the refusal now
+      // happens one layer earlier and says something more precise than
+      // `db_error`, so the route never reaches its own envelope.
+      assert.equal(route.status, 503, `${name}: a read failure must not answer 200`);
+      assert.equal(route.body.error, "degraded_unavailable", `${name}: error code`);
+      assert.equal(route.body.retryable, true, `${name}: the ban-gate refusal is retryable`);
+    } else {
+      assert.equal(route.status, 500, `${name}: a read failure must not answer 200`);
+      assert.equal(route.body.error, "db_error", `${name}: error code`);
+      assert.equal(
+        route.body.message,
+        "A database error occurred. Please try again.",
+        `${name}: db_error detail must stay sanitized on the wire`,
+      );
+    }
     assert.ok(direct.message.length > 0, `${name}: reader must carry the loggable detail`);
   }
   return direct;
@@ -434,13 +452,16 @@ describe("circle-locations extraction is behaviour-preserving", () => {
     ["privacy_settings", "user_privacy_settings"],
     ["location_state", "user_location_state"],
     // profiles carries account_status now, so its failure is fail-closed
-    // (db_error) rather than the old silent degradation to nameless rows.
+    // rather than the old silent degradation to nameless rows — and since A1 it
+    // is `requireUser`'s ban gate that refuses first, with 503
+    // `degraded_unavailable` instead of the route's 500 `db_error`.
     ["profiles", "profiles"],
   ] as const) {
-    it(`agrees on a ${table} read failure (db_error, not an empty list)`, async () => {
+    it(`agrees on a ${table} read failure (refused, not an empty list)`, async () => {
       const d = await assertEquivalent(
         `${table} failure`,
         circleState({ [table]: { error: { message: `${table} down` } } }),
+        { banGateRefusesFirst: table === "profiles" },
       );
       assert.equal(d.ok, false);
       assert.equal(d.ok === false && d.stage, stage);
@@ -729,5 +750,76 @@ describe("GET /api/map/projection — kinds gating", () => {
     assert.deepEqual([...r.body.sources].sort(), ["circle", "trips"]);
     const ids = r.body.objects.map((o: any) => o.id).sort();
     assert.deepEqual(ids, [`friend:${MEM_A}`, "trip:t1"]);
+  });
+});
+
+// ── `sources` must not claim a layer the route never read ────────────────────
+//
+// WHY THIS MATTERS MORE THAN IT LOOKS
+// ===================================
+// `sources` is the ONLY signal that distinguishes "there is nothing here" from
+// "this layer could not be read". useMapEntities turns it into `unreadLayers`
+// and keeps the layer's absence visible to the user; a layer named in
+// `sources` is reported as an authoritative empty answer, and the client does
+// NOT fall back to its own transport for it (the gateway owning every layer it
+// answers is deliberate — re-fetching one it declined would route around a
+// fail-closed decision through a fail-open transport).
+//
+// Three layers kept the old `.catch(() => [])` + unconditional `sources.push`
+// shape after the rest of the route had been fixed: travelers, gems and
+// events. Each one turned a failed read into "no travelers / no gems / no
+// events in this viewport", with no fallback and nothing logged at the client.
+// The gems case was the worst of the three: the failure could come from
+// `applyGemPrivacyBatch`, so a viewer whose gem PRIVACY could not be resolved
+// was told authoritatively that the area has no gems.
+//
+// Each test below fails against the pre-fix route, which answers `sources`
+// with the layer named and `objects: []`.
+
+describe("GET /api/map/projection — a failed read is never reported as an empty layer", () => {
+  it("does not claim the travelers source when the traveler read failed", async () => {
+    const r = await projection(
+      "social_zone",
+      projectionState({ user_location_state: { error: { message: "travelers down" } } }),
+    );
+    assert.equal(r.status, 200, "a partial outage must still serve the rest of the map");
+    assert.ok(!r.body.sources.includes("travelers"), "claimed a travelers read that failed");
+  });
+
+  it("does not claim the gems source when the gem read failed", async () => {
+    const r = await projection(
+      "hidden_gem",
+      projectionState({ hidden_gems: { error: { message: "gems down" } } }),
+    );
+    assert.equal(r.status, 200);
+    assert.ok(!r.body.sources.includes("gems"), "claimed a gems read that failed");
+  });
+
+  it("does not claim the events source when the event read failed", async () => {
+    const r = await projection(
+      "event",
+      projectionState({ events: { error: { message: "events down" } } }),
+    );
+    assert.equal(r.status, 200);
+    assert.ok(!r.body.sources.includes("events"), "claimed an events read that failed");
+  });
+
+  it("still claims a layer that genuinely read zero rows", async () => {
+    // The other half of the contract, and the reason this cannot be fixed by
+    // simply never pushing: an EMPTY viewport must still name its sources, or
+    // the client would fall back on every quiet area of the map.
+    const r = await projection("event", projectionState({ events: [] }));
+    assert.equal(r.status, 200);
+    assert.ok(r.body.sources.includes("events"), "an empty-but-successful read must name its source");
+    assert.deepEqual(r.body.objects, []);
+  });
+
+  it("one failed layer does not suppress the layers that succeeded", async () => {
+    const r = await projection(
+      "event,trip_stop",
+      projectionState({ events: { error: { message: "events down" } } }),
+    );
+    assert.ok(!r.body.sources.includes("events"));
+    assert.ok(r.body.sources.includes("trips"), "a healthy layer was dropped with the failing one");
   });
 });

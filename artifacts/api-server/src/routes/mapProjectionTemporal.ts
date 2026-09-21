@@ -52,7 +52,7 @@ import { loadNearbyEvents } from "./mapSearch.js";
 import { applyProtection, type ProtectedZone } from "../lib/protectedLocations.js";
 import { aggregateForViewport, bboxContains, type BBox } from "../lib/mapAggregation.js";
 import { deriveGroupKey, type GroupIdentity } from "../lib/intelGroupKey.js";
-import { type MapObject, type MapObjectKind } from "../lib/mapObjects.js";
+import { isForecastKind, type MapObject, type MapObjectKind } from "../lib/mapObjects.js";
 import {
   bboxToCenterRadius,
   buildFlowZoneModel,
@@ -576,7 +576,11 @@ router.get(
     if (zones === null) {
       // An unreadable §24 policy is NOT an absent policy — serve nothing.
       res.json({
-        enabled: true,
+        enabled: false,
+        // Same rule as routes/mapProjection.ts: an unreadable §24 policy answers
+        // `enabled: false` with a named refusal so the client keeps its legacy
+        // path instead of drawing a blank Time Machine.
+        refusal: "protection_unreadable",
         objects: [],
         viewport: { bbox, zoom },
         target: { at: new Date(target.at).toISOString(), mode: target.mode },
@@ -585,8 +589,34 @@ router.get(
         sources: [],
         aggregation: null,
         protection: null,
-        forecast: forecastReport,
-        history: historyReport,
+        // NULL, NOT THE REPORTS THIS HANDLER HAD ALREADY BUILT.
+        //
+        // They used to be `forecastReport` / `historyReport` here, and that was
+        // a fail-OPEN inside the one branch that exists because §24 could not be
+        // consulted. Three things were wrong with it:
+        //
+        //   • It contradicted its own envelope. `sources: []`, `aggregation:
+        //     null` and `protection: null` on the same object say "I read
+        //     nothing and gated nothing", while `forecast: { events: 1, … }`
+        //     says the opposite.
+        //   • `forecast.plan` carries COHORT ARITHMETIC — `published`,
+        //     `withheld` and a per-zone `refusals` map — derived from
+        //     `route_plans` rows belonging to real people under
+        //     `route_flow_contribution_consent`. Those counts are produced
+        //     BEFORE `withholdCoarsenableAggregates` and `applyProtection` run,
+        //     so on this branch they have passed through no §24 gate at all.
+        //     "How many people are due to arrive in this viewport" is exactly
+        //     the §24 association disclosure, one aggregation level up, and
+        //     publishing it from a fail-closed branch is the leak the branch
+        //     was added to prevent.
+        //   • routes/mapProjection.ts's sibling branch already nulls every
+        //     report it holds. Two routes answering the same refusal
+        //     differently is how one of them stays wrong.
+        //
+        // The client loses nothing: `enabled: false` means it is on the legacy
+        // path and is not reading these fields.
+        forecast: null,
+        history: null,
         generatedAt,
       });
       return;
@@ -617,6 +647,17 @@ router.get(
     if (predictionGate.withheld > 0) {
       protection.report.evaluated += predictionGate.withheld;
       protection.report.suppressed += predictionGate.withheld;
+    }
+
+    // ── Sensing §7 SX-07: "visually distinguish predicted from observed" ────
+    // Every forecast object is already a FORECAST_KIND with a `basis`; behind
+    // `map_experience_state_enabled` (migration 2350, seeded OFF) it also
+    // carries the §5.1 class a renderer switches on, `truthClass: 'predicted'`.
+    // Forecast objects ONLY — the historical arm's snapshots are observations
+    // and are left without a class rather than given a guessed one. A LITERAL,
+    // so check:flag-polarity resolves the read. Off ⇒ untouched.
+    if (await isFlagEnabled(sc, "map_experience_state_enabled")) {
+      objects = objects.map((o) => (isForecastKind(o.kind) ? { ...o, truthClass: "predicted" } : o));
     }
 
     const aggregation = aggregateForViewport(objects, { bbox, zoom });

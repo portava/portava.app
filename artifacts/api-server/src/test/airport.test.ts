@@ -451,6 +451,15 @@ describe("LayoverSafetyEngine", () => {
     ];
     const ranked = rankActivities(airport, session, candidates);
     assert.equal(ranked[0].title, "Airport cafe", "inside-airport should rank first");
+    // ── THIS CASE DOES NOT PIN ITS OWN TITLE, MEASURED 2026-09-13 ────────────
+    // Every candidate above is ordered the same way by rating and by travel
+    // time, so the SECONDARY key alone reproduces this expectation and the
+    // PRIMARY (rating) key is unpinned here: neutralising it in the function
+    // (`const rDiff = 0`) left this file at 57 pass / 0 fail. Deliberately not
+    // "fixed" by bolting another aligned assertion on — a second assertion the
+    // travel-time key also satisfies would only look stronger. The
+    // discriminating case, where safe and shorter-travel DISAGREE, is
+    // `src/test/layoverRecommendationGate.test.ts`, and that one goes red.
   });
 
   it("safetyLabel returns correct wording per rating", () => {

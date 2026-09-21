@@ -15,8 +15,10 @@
 import { Router } from "express";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireUser, sendError } from "../lib/http.js";
+import { requireAdmin, isAdmin } from "../lib/requireAdmin.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { loadTravelerIdentity } from "../lib/travelerVerification.js";
+import { isFlagEnabled, isKillSwitchEngaged } from "../lib/featureFlags.js";
 
 const router = Router();
 
@@ -51,7 +53,7 @@ const KNOWN_CITY_STATUSES = new Set<string>([
 // (see the cancel route in rentABuddy.ts); bare `cancelled` is produced only by
 // admin dispute-resolution. Counting only bare `cancelled` undercounted the real
 // cancel rate to ~zero, making the graduation gate falsely lenient.
-const CANCELLED_BOOKING_STATUSES = new Set<string>([
+export const CANCELLED_BOOKING_STATUSES = new Set<string>([
   "cancelled", "cancelled_by_traveler", "cancelled_by_buddy",
 ]);
 
@@ -81,25 +83,81 @@ export function invalidateSuggestedCityCache(): void {
   _scCacheTs = 0;
 }
 
+/**
+ * The controls object for a singleton row that has never been CONFIGURED.
+ *
+ * A missing row is not an unreadable row. maybeSingle() answers `{data: null,
+ * error: null}` for "no such row", which means "no global control has been set"
+ * — the same distinction lib/featureFlags.ts draws for an absent kill-switch
+ * row, and for the same reason: making an ABSENT row mean "paused" would turn
+ * every freshly restored project into an outage.
+ */
+const GC_UNCONFIGURED = {
+  id: 1,
+  all_bookings_paused: false,
+  applications_paused: false,
+  cash_balance_paused: false,
+  nightlife_paused: false,
+  force_full_in_app: false,
+  force_public_meetup: false,
+} as const;
+
+/**
+ * The controls object for a singleton row that could not be READ.
+ *
+ * ── WHY EVERY SWITCH IS TRUE HERE ────────────────────────────────────────────
+ * These six columns are Rent-a-Buddy's platform-wide kill switches. Each one
+ * INVERTS the meaning of its value: `all_bookings_paused = true` means STOP. So
+ * the old `data ?? {…all false}` — which took the same branch for "row absent"
+ * and "read failed", because the read's `error` was never looked at — did not
+ * degrade to a safe default. It DISENGAGED every kill switch at precisely the
+ * moment the database was unhealthy, i.e. the moment an operator is most likely
+ * to be reaching for one. And it then wrote that fallback into `_gcCache`, so a
+ * SINGLE failed read held every switch off for the full 30-second TTL, long
+ * after the database recovered.
+ *
+ * A state that could not be established is therefore treated as "stopped", and
+ * the fail-closed object is NEVER cached: the next call re-reads, so the pause
+ * lifts the instant the row becomes readable again. `unavailable` rides along
+ * so the admin GET can say "could not be read" instead of asserting that an
+ * operator paused the platform.
+ */
+const GC_UNREADABLE = {
+  ...GC_UNCONFIGURED,
+  all_bookings_paused: true,
+  applications_paused: true,
+  cash_balance_paused: true,
+  nightlife_paused: true,
+  force_full_in_app: true,
+  force_public_meetup: true,
+  unavailable: true,
+} as const;
+
 async function getGlobalControls(sc: any): Promise<any> {
   const now = Date.now();
   if (_gcCache && now - _gcCacheTs < GC_TTL_MS) return _gcCache;
 
-  const { data } = await sc
-    .from("rent_buddy_global_controls")
-    .select("*")
-    .eq("id", 1)
-    .maybeSingle();
+  let data: any = null;
+  let unreadable = false;
+  try {
+    const res: any = await sc
+      .from("rent_buddy_global_controls")
+      .select("*")
+      .eq("id", 1)
+      .maybeSingle();
+    // supabase-js RESOLVES on a DB error, so the failure exists only in `error`.
+    if (res?.error) unreadable = true;
+    else data = res?.data ?? null;
+  } catch {
+    unreadable = true;
+  }
 
-  _gcCache = data ?? {
-    id: 1,
-    all_bookings_paused: false,
-    applications_paused: false,
-    cash_balance_paused: false,
-    nightlife_paused: false,
-    force_full_in_app: false,
-    force_public_meetup: false,
-  };
+  // Fail closed, and do NOT cache: caching this would extend one failed read
+  // into 30 seconds of platform-wide pause the operator never asked for, and
+  // (before this change) 30 seconds of every kill switch being off.
+  if (unreadable) return { ...GC_UNREADABLE };
+
+  _gcCache = data ?? { ...GC_UNCONFIGURED };
   _gcCacheTs = now;
   return _gcCache;
 }
@@ -110,39 +168,49 @@ export function invalidateGcCache(): void {
 
 // ── Feature flag helpers ───────────────────────────────────────────────────────
 
-async function getFlag(sc: any, flag: string): Promise<boolean> {
-  const { data } = await sc
-    .from("feature_flags")
-    .select("enabled")
-    .eq("flag", flag)
-    .maybeSingle();
-  return !!data?.enabled;
-}
+/**
+ * ── WHICH READER, AND WHY IT MUST BE A LITERAL ───────────────────────────────
+ *
+ * Every feature_flags read below names its flag as a LITERAL and picks its
+ * reader by that flag's POLARITY. There used to be one local helper taking the
+ * flag name as a parameter and destructuring only `data`, so every flag in this
+ * file was read with capability polarity — false on a DB error — whatever the
+ * flag actually meant.
+ *
+ * CAPABILITY flags (`true` OPENS something) go through `isFlagEnabled`: an
+ * unreadable flag leaves the capability shut, which is the safe answer.
+ *
+ * RESTRICTION flags (`true` CLOSES something down) go through
+ * `isKillSwitchEngaged`: they invert the meaning of the value, so they invert
+ * the safe failure too. Read through the capability reader they returned false
+ * on a DB error and LIFTED — RENT_BUDDY_ADMIN_ONLY_MODE, RENT_BUDDY_MVP_MODE and
+ * RENT_BUDDY_BETA_ONLY_MODE all disengaging together on one failed read, opening
+ * the whole surface to everybody. `isKillSwitchEngaged` exists for exactly this
+ * polarity: error ⇒ engaged, absent row ⇒ not configured, so nothing changes for
+ * a healthy database.
+ *
+ * A wrapper taking the flag name as a PARAMETER cannot express that split, and
+ * makes the read unattributable to `scripts/check-flag-polarity.mjs` — the thing
+ * that VERIFIES this property rather than merely asserting it. Hence a literal
+ * at every call site and no indirection.
+ */
 
 // ── Admin guard ────────────────────────────────────────────────────────────────
 
-async function requireAdmin(
-  req: any,
-  res: any,
-): Promise<{ userId: string; sc: any; role: string } | null> {
-  const auth = await requireUser(req, res);
-  if (!auth) return null;
-  const { user } = auth;
-  const serviceClient = getServiceClient() ?? auth.client;
-
-  const { data } = await serviceClient
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  const role = (data as any)?.role ?? "";
-  if (!data || (role !== "admin" && role !== "owner")) {
-    res.status(403).json({ error: "forbidden", message: "Admin role required" });
-    return null;
-  }
-  return { userId: user.id, sc: serviceClient, role };
-}
+/**
+ * This route group's admin guard is the shared one, opened to the WIDER role
+ * set it has always accepted: 'admin' OR 'owner'. That divergence is the exact
+ * reason `RequireAdminOptions.roles` exists (see lib/requireAdmin.ts) — folding
+ * this onto the default would silently revoke `owner`, and folding everything
+ * onto this would silently grant `owner` admin rights everywhere else.
+ *
+ * Note that no `owner` row can currently exist — `profiles_role_check` is
+ * CHECK (role = ANY (ARRAY['user','admin'])) — so in practice this admits
+ * exactly what the default would. The option is kept because narrowing it here
+ * would be an authorisation change smuggled in as a refactor, and the
+ * constraint is the thing that would have to change first.
+ */
+const ROLLOUT_ADMIN_ROLES = ["admin", "owner"] as const;
 
 // ── checkRentBuddyAccess — exported for use by rentABuddy routes ───────────────
 
@@ -170,20 +238,22 @@ export async function checkRentBuddyAccess(opts: {
   const { sc, userId, city, category, action = "read", isTestUser = false } = opts;
 
   // 1. Global feature flag
-  const rentBuddyEnabled = await getFlag(sc, "rent_buddy_enabled");
+  const rentBuddyEnabled = await isFlagEnabled(sc, "rent_buddy_enabled");
   if (!rentBuddyEnabled) {
     return { allowed: false, code: "feature_disabled", message: "Rent a Buddy is not available yet.", httpStatus: 403 };
   }
 
   // 2. Admin-only mode
-  const adminOnlyMode = await getFlag(sc, "RENT_BUDDY_ADMIN_ONLY_MODE");
+  const adminOnlyMode = await isKillSwitchEngaged(sc, "RENT_BUDDY_ADMIN_ONLY_MODE");
   if (adminOnlyMode && !isTestUser) {
     if (!userId) {
       return { allowed: false, code: "unauthenticated", message: "Sign in to access Rent a Buddy.", httpStatus: 401 };
     }
-    const { data: profile } = await sc.from("profiles").select("role").eq("id", userId).maybeSingle();
-    const profileRole = (profile as any)?.role ?? "";
-    if (!profile || (profileRole !== "admin" && profileRole !== "owner")) {
+    // Same role question, same answer, one implementation: `isAdmin` is the
+    // predicate form of the shared guard — it sends nothing, so this function
+    // keeps ownership of its own AccessDecision. Fails closed on a query error
+    // exactly as the inline read did (supabase-js resolves `{data:null,error}`).
+    if (!(await isAdmin(sc, userId, ROLLOUT_ADMIN_ROLES))) {
       return { allowed: false, code: "admin_only", message: "Rent a Buddy is currently in admin-only mode.", httpStatus: 403 };
     }
   }
@@ -238,7 +308,7 @@ export async function checkRentBuddyAccess(opts: {
   }
 
   // 4. MVP mode — category whitelist
-  const mvpMode = await getFlag(sc, "RENT_BUDDY_MVP_MODE");
+  const mvpMode = await isKillSwitchEngaged(sc, "RENT_BUDDY_MVP_MODE");
   if (mvpMode && category && !MVP_ALLOWED_CATEGORIES.has(category)) {
     return {
       allowed: false,
@@ -250,7 +320,7 @@ export async function checkRentBuddyAccess(opts: {
 
   // 4b. MVP mode — group bookings gate
   if (mvpMode && action === "book" && (category === "group" || (opts.groupSize != null && opts.groupSize > 4))) {
-    const groupEnabled = await getFlag(sc, "RENT_BUDDY_GROUP_BOOKINGS_ENABLED");
+    const groupEnabled = await isFlagEnabled(sc, "RENT_BUDDY_GROUP_BOOKINGS_ENABLED");
     if (!groupEnabled) {
       return {
         allowed: false,
@@ -263,7 +333,7 @@ export async function checkRentBuddyAccess(opts: {
 
   // 4c. MVP mode — package bookings gate
   if (mvpMode && action === "package-book") {
-    const packagesEnabled = await getFlag(sc, "RENT_BUDDY_PACKAGES_ENABLED");
+    const packagesEnabled = await isFlagEnabled(sc, "RENT_BUDDY_PACKAGES_ENABLED");
     if (!packagesEnabled) {
       return {
         allowed: false,
@@ -276,7 +346,7 @@ export async function checkRentBuddyAccess(opts: {
 
   // 4d. MVP mode — offer bookings gate
   if (mvpMode && action === "offer-accept") {
-    const offersEnabled = await getFlag(sc, "RENT_BUDDY_OFFERS_ENABLED");
+    const offersEnabled = await isFlagEnabled(sc, "RENT_BUDDY_OFFERS_ENABLED");
     if (!offersEnabled) {
       return {
         allowed: false,
@@ -308,7 +378,7 @@ export async function checkRentBuddyAccess(opts: {
 
   // 5. Nightlife global flag
   if (category === "nightlife") {
-    const nightlifeEnabled = await getFlag(sc, "RENT_BUDDY_NIGHTLIFE_ENABLED");
+    const nightlifeEnabled = await isFlagEnabled(sc, "RENT_BUDDY_NIGHTLIFE_ENABLED");
     if (!nightlifeEnabled || gc.nightlife_paused) {
       return {
         allowed: false,
@@ -414,7 +484,7 @@ export async function checkRentBuddyAccess(opts: {
   }
 
   // 7. Beta-only mode (global) — blocks all non-read actions for non-beta users
-  const betaOnlyMode = await getFlag(sc, "RENT_BUDDY_BETA_ONLY_MODE");
+  const betaOnlyMode = await isKillSwitchEngaged(sc, "RENT_BUDDY_BETA_ONLY_MODE");
   if (betaOnlyMode && action !== "read" && !isTestUser) {
     if (!userId) {
       return { allowed: false, code: "unauthenticated", message: "Sign in to access Rent a Buddy.", httpStatus: 401 };
@@ -501,7 +571,7 @@ function nextStatus(current: CityRolloutStatus): CityRolloutStatus | null {
 
 // GET /api/admin/rent-buddy/rollout/cities
 router.get("/admin/rent-buddy/rollout/cities", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { roles: ROLLOUT_ADMIN_ROLES });
   if (!admin) return;
 
   const { data, error } = await admin.sc
@@ -515,7 +585,7 @@ router.get("/admin/rent-buddy/rollout/cities", asyncHandler(async (req, res) => 
 
 // POST /api/admin/rent-buddy/rollout/cities
 router.post("/admin/rent-buddy/rollout/cities", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { roles: ROLLOUT_ADMIN_ROLES });
   if (!admin) return;
 
   const { city, country, targetLaunchDate, buddyCap, notes } = req.body ?? {};
@@ -556,7 +626,7 @@ router.post("/admin/rent-buddy/rollout/cities", asyncHandler(async (req, res) =>
 
 // GET /api/admin/rent-buddy/rollout/cities/:id
 router.get("/admin/rent-buddy/rollout/cities/:id", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { roles: ROLLOUT_ADMIN_ROLES });
   if (!admin) return;
 
   const { data, error } = await admin.sc
@@ -572,7 +642,7 @@ router.get("/admin/rent-buddy/rollout/cities/:id", asyncHandler(async (req, res)
 
 // PATCH /api/admin/rent-buddy/rollout/cities/:id
 router.patch("/admin/rent-buddy/rollout/cities/:id", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { roles: ROLLOUT_ADMIN_ROLES });
   if (!admin) return;
 
   const { targetLaunchDate, buddyCap, notes, country } = req.body ?? {};
@@ -601,7 +671,7 @@ router.patch("/admin/rent-buddy/rollout/cities/:id", asyncHandler(async (req, re
 
 // POST /api/admin/rent-buddy/rollout/cities/:id/advance-status
 router.post("/admin/rent-buddy/rollout/cities/:id/advance-status", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { roles: ROLLOUT_ADMIN_ROLES });
   if (!admin) return;
 
   const { overrideReason } = req.body ?? {};
@@ -687,7 +757,7 @@ router.post("/admin/rent-buddy/rollout/cities/:id/advance-status", asyncHandler(
 
 // POST /api/admin/rent-buddy/rollout/cities/:id/pause
 router.post("/admin/rent-buddy/rollout/cities/:id/pause", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { roles: ROLLOUT_ADMIN_ROLES });
   if (!admin) return;
 
   const { reason } = req.body ?? {};
@@ -721,7 +791,7 @@ router.post("/admin/rent-buddy/rollout/cities/:id/pause", asyncHandler(async (re
 
 // POST /api/admin/rent-buddy/rollout/cities/:id/resume
 router.post("/admin/rent-buddy/rollout/cities/:id/resume", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { roles: ROLLOUT_ADMIN_ROLES });
   if (!admin) return;
 
   const { resumeStatus } = req.body ?? {};
@@ -759,7 +829,7 @@ router.post("/admin/rent-buddy/rollout/cities/:id/resume", asyncHandler(async (r
 
 // GET /api/admin/rent-buddy/rollout/cities/:id/metrics
 router.get("/admin/rent-buddy/rollout/cities/:id/metrics", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { roles: ROLLOUT_ADMIN_ROLES });
   if (!admin) return;
 
   const { data: rollout } = await admin.sc
@@ -874,7 +944,7 @@ router.get("/admin/rent-buddy/rollout/cities/:id/metrics", asyncHandler(async (r
 
 // GET /api/admin/rent-buddy/beta-access
 router.get("/admin/rent-buddy/beta-access", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { roles: ROLLOUT_ADMIN_ROLES });
   if (!admin) return;
 
   const { city, status } = req.query as Record<string, string>;
@@ -894,7 +964,7 @@ router.get("/admin/rent-buddy/beta-access", asyncHandler(async (req, res) => {
 
 // POST /api/admin/rent-buddy/beta-access
 router.post("/admin/rent-buddy/beta-access", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { roles: ROLLOUT_ADMIN_ROLES });
   if (!admin) return;
 
   const { userId, city, accessType = "invited", notes } = req.body ?? {};
@@ -931,7 +1001,7 @@ router.post("/admin/rent-buddy/beta-access", asyncHandler(async (req, res) => {
 
 // PATCH /api/admin/rent-buddy/beta-access/:id
 router.patch("/admin/rent-buddy/beta-access/:id", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { roles: ROLLOUT_ADMIN_ROLES });
   if (!admin) return;
 
   const { accessType, notes } = req.body ?? {};
@@ -950,7 +1020,7 @@ router.patch("/admin/rent-buddy/beta-access/:id", asyncHandler(async (req, res) 
 
 // POST /api/admin/rent-buddy/beta-access/:id/revoke
 router.post("/admin/rent-buddy/beta-access/:id/revoke", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { roles: ROLLOUT_ADMIN_ROLES });
   if (!admin) return;
 
   const now = new Date().toISOString();
@@ -982,7 +1052,7 @@ router.post("/admin/rent-buddy/beta-access/:id/revoke", asyncHandler(async (req,
 
 // GET /api/admin/rent-buddy/qa/checklists
 router.get("/admin/rent-buddy/qa/checklists", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { roles: ROLLOUT_ADMIN_ROLES });
   if (!admin) return;
 
   const { cityRolloutId } = req.query as Record<string, string>;
@@ -996,7 +1066,7 @@ router.get("/admin/rent-buddy/qa/checklists", asyncHandler(async (req, res) => {
 
 // POST /api/admin/rent-buddy/qa/checklists
 router.post("/admin/rent-buddy/qa/checklists", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { roles: ROLLOUT_ADMIN_ROLES });
   if (!admin) return;
 
   const { cityRolloutId, notes } = req.body ?? {};
@@ -1017,7 +1087,7 @@ router.post("/admin/rent-buddy/qa/checklists", asyncHandler(async (req, res) => 
 
 // PATCH /api/admin/rent-buddy/qa/checklists/:id
 router.patch("/admin/rent-buddy/qa/checklists/:id", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { roles: ROLLOUT_ADMIN_ROLES });
   if (!admin) return;
 
   const allowed = [
@@ -1042,7 +1112,7 @@ router.patch("/admin/rent-buddy/qa/checklists/:id", asyncHandler(async (req, res
 
 // POST /api/admin/rent-buddy/qa/checklists/:id/mark-passed
 router.post("/admin/rent-buddy/qa/checklists/:id/mark-passed", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { roles: ROLLOUT_ADMIN_ROLES });
   if (!admin) return;
 
   const now = new Date().toISOString();
@@ -1073,7 +1143,7 @@ router.post("/admin/rent-buddy/qa/checklists/:id/mark-passed", asyncHandler(asyn
 
 // POST /api/admin/rent-buddy/qa/checklists/:id/mark-failed
 router.post("/admin/rent-buddy/qa/checklists/:id/mark-failed", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { roles: ROLLOUT_ADMIN_ROLES });
   if (!admin) return;
 
   const { reason } = req.body ?? {};
@@ -1108,16 +1178,21 @@ router.post("/admin/rent-buddy/qa/checklists/:id/mark-failed", asyncHandler(asyn
 
 // GET /api/admin/rent-buddy/global-controls
 router.get("/admin/rent-buddy/global-controls", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { roles: ROLLOUT_ADMIN_ROLES });
   if (!admin) return;
 
   const controls = await getGlobalControls(admin.sc);
-  return res.json({ controls });
+  // `unavailable` is the honest answer when the singleton row could not be read:
+  // the switches in `controls` are then the fail-closed ones this process is
+  // ENFORCING, not values an operator set. Saying so keeps the admin UI from
+  // reporting "an operator paused the platform" when the truth is "the controls
+  // row is unreadable, so bookings are paused until it can be read".
+  return res.json({ controls, unavailable: controls?.unavailable === true });
 }));
 
 // PATCH /api/admin/rent-buddy/global-controls
 router.patch("/admin/rent-buddy/global-controls", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { roles: ROLLOUT_ADMIN_ROLES });
   if (!admin) return;
 
   const allowed = [
@@ -1133,10 +1208,36 @@ router.patch("/admin/rent-buddy/global-controls", asyncHandler(async (req, res) 
     if ((req.body ?? {})[field] !== undefined) patch[field] = (req.body as any)[field];
   }
 
-  await admin.sc
+  // `all_bookings_paused` and its siblings are the platform-wide kill switches
+  // for Rent-A-Buddy. This UPDATE targets the singleton row id = 1, and if that
+  // row is not there it matches nothing — which PostgREST reports with NO error
+  // at all, so neither the missing error check nor the missing affected-row
+  // check would have said a word. Worse, getGlobalControls() above falls back to
+  // an all-false object when the row is absent, so the switch an admin just
+  // "set" reads back as OFF: bookings keep flowing while {ok:true} and a
+  // "global_controls_updated" audit row say the platform was paused.
+  //
+  // `.select("id")` makes the statement RETURNING so the rows it touched can be
+  // counted. Nothing touched => refuse, and write no audit row for a pause that
+  // did not happen.
+  const { data: controlRows, error: controlsErr } = await admin.sc
     .from("rent_buddy_global_controls")
     .update(patch)
-    .eq("id", 1);
+    .eq("id", 1)
+    .select("id");
+  if (controlsErr) { sendError(res, "db_error", controlsErr.message); return; }
+  if (!Array.isArray(controlRows) || controlRows.length === 0) {
+    req.log?.error(
+      { adminId: admin.userId, patch },
+      "rent-buddy global controls PATCH matched no row (id = 1 missing) — NO control was changed",
+    );
+    sendError(
+      res,
+      "not_found",
+      "The rent_buddy_global_controls singleton (id = 1) does not exist, so no control was changed.",
+    );
+    return;
+  }
 
   invalidateGcCache();
 
@@ -1155,7 +1256,7 @@ router.patch("/admin/rent-buddy/global-controls", asyncHandler(async (req, res) 
 
 // GET /api/admin/rent-buddy/audit-log
 router.get("/admin/rent-buddy/audit-log", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { roles: ROLLOUT_ADMIN_ROLES });
   if (!admin) return;
 
   const { cityRolloutId, adminId, action, page = "1", perPage = "50" } = req.query as Record<string, string>;

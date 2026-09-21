@@ -25,6 +25,42 @@
  * It is deliberately small: enough filtering to drive a read path, no joins, no
  * writes. Use it where the question is "does this predicate name real values",
  * not "does this route work end to end".
+*
+ * ── CHECKED AGAINST THE REAL CLIENT ─────────────────────────────────────────
+ * `src/test/supabaseContract.test.ts` runs this double and the REAL installed
+ * supabase-js client through the same scenarios every CI run and fails if they
+ * disagree anywhere not listed below. Do not "improve" this file by making a
+ * scenario pass more loosely; change the scenario, or declare a gap here.
+ *
+ * MODELLED EXACTLY (measured, not assumed): thenable execution — a builder with
+ * no `.then`/`await` performs NOTHING; `.single()`/`.maybeSingle()` cardinality
+ * including the RESOLVED PGRST116 for more than one row; failures arriving
+ * RESOLVED as `{ data: null, error }`, never thrown; `count` null unless asked.
+ *
+ * NOT MODELLED — every entry below is enforced: the contract suite fails if the
+ * behaviour silently starts agreeing, and fails if a listed operation stops
+ * refusing:
+ *
+ *   thenable/no-continuation, thenable/then-continuation, thenable/awaited,
+ *   insert/no-select-returns-null, insert/with-select-returns-rows,
+ *   insert/with-select-single, insert/unique-violation-23505,
+ *   update/zero-rows-no-select, update/many-rows-no-select,
+ *   update/zero-rows-with-select, update/many-rows-with-select,
+ *   delete/many-rows-no-select, delete/many-rows-with-select,
+ *   failure/write-error-resolves, write/read-after-write-visible,
+ *   rls/denied-write-yields-42501 — this is a READ double. Every write verb
+ *     THROWS: there is no RETURNING and no affected-row count here.
+ *   failure/read-error-resolves, failure/read-error-under-maybeSingle,
+ *   transport/aborted-request — the only error this double can raise is the
+ *     22P02 it exists for. A read cannot otherwise be made to fail; use
+ *     failClosedSupabase.
+ *   error/unknown-column-42703 — it validates VALUES, not column names. Use
+ *     schemaStrictSupabase.
+ *   rls/denied-read-yields-zero-rows — one seed, no policies, no
+ *     service-vs-user distinction. Use failClosedSupabase.
+ *   select/count-exact — no count surface; `count` is always absent.
+ *   rpc/success, rpc/error-resolves, rpc/unknown-function — no rpc surface.
+ *     `.rpc()` THROWS.
  */
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -106,8 +142,27 @@ export function makeEnumAwareClient(data: Record<string, Row[]>): any {
       return true;
     };
 
+    const refuse = (what: string, why: string) => () => {
+      throw new Error(`enumAwareSupabase does not model ${what}: ${why}`);
+    };
+
+    /** PostgREST's answer when `application/vnd.pgrst.object+json` sees != 1 row. */
+    const pgrst116 = (n: number) => ({
+      data: null,
+      error: {
+        code: "PGRST116",
+        details: `Results contain ${n} rows, application/vnd.pgrst.object+json requires 1 row`,
+        hint: null,
+        message: "JSON object requested, multiple (or no) rows returned",
+      },
+    });
+
     const b: any = {
       select: (fields?: string) => { projection = projectionKeys(fields); return b; },
+      insert: refuse("writes (.insert)", "it is a READ double for predicate vocabulary; use fakeLayoverDb or failClosedSupabase"),
+      upsert: refuse("writes (.upsert)", "it is a READ double for predicate vocabulary; use fakeLayoverDb or failClosedSupabase"),
+      update: refuse("writes (.update)", "it is a READ double for predicate vocabulary; use fakeLayoverDb or failClosedSupabase"),
+      delete: refuse("writes (.delete)", "it is a READ double for predicate vocabulary; use fakeLayoverDb or failClosedSupabase"),
       order: () => b,
       range: () => b,
       gte: () => b,
@@ -152,13 +207,29 @@ export function makeEnumAwareClient(data: Record<string, Row[]>): any {
         }
         return b;
       },
-      maybeSingle: () => Promise.resolve(error ? { data: null, error } : { data: narrowOne(rows[0] ?? null), error: null }),
-      single: () => Promise.resolve(error ? { data: null, error } : { data: narrowOne(rows[0] ?? null), error: null }),
+      maybeSingle: () => {
+        if (error) return Promise.resolve({ data: null, error });
+        if (rows.length > 1) return Promise.resolve(pgrst116(rows.length));
+        return Promise.resolve({ data: narrowOne(rows[0] ?? null), error: null });
+      },
+      single: () => {
+        if (error) return Promise.resolve({ data: null, error });
+        if (rows.length !== 1) return Promise.resolve(pgrst116(rows.length));
+        return Promise.resolve({ data: narrowOne(rows[0]), error: null });
+      },
       then: (onF: any, onR: any) =>
         Promise.resolve(error ? { data: null, error } : { data: narrow(rows), error: null }).then(onF, onR),
     };
     return b;
   };
 
-  return { from: (table: string) => builder(table) };
+  return {
+    from: (table: string) => builder(table),
+    rpc(fn: string) {
+      throw new Error(
+        `enumAwareSupabase does not model rpc (called "${fn}"): its subject is predicate vocabulary, ` +
+          "not stored procedures. Use failClosedSupabase or fakeMapDb, which take explicit handlers.",
+      );
+    },
+  };
 }

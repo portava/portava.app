@@ -369,6 +369,14 @@ export function extractTemporal(
  * Combined "proximity + explicit anchor" phrases are matched first so
  * "near my hotel" resolves the hotel anchor rather than a stray place capture.
  */
+/**
+ * The "along" family. Shared by {@link extractGeo} (which reads the relationship
+ * off it) and {@link SEQUENCE_SPLIT_RE} (which consumes it as a §18 sequence
+ * separator), so the two can never drift into disagreeing about which phrases
+ * are the same operator.
+ */
+const ALONG_RE = /\balong\s+the\s+way\b|\bon\s+the\s+way\b|\balong\s+our\s+route\b/;
+
 export function extractGeo(
   text: string,
 ): { relationship?: Relationship; anchor?: Anchor; stripped: string } {
@@ -410,9 +418,18 @@ export function extractGeo(
     relationship = 'between';
     strip(/\bbetween\s+us\b|\bhalfway\b|\bmidway\b|\bbetween\s+me\s+and\b/);
   }
-  if (!relationship && /\balong\s+the\s+way\b|\bon\s+the\s+way\b|\balong\s+our\s+route\b/.test(work)) {
+  // §18 lists "on the way" under BOTH operator families: it is a relationship
+  // ("along") and a SEQUENCE operator ("then; after; before; on the way; next").
+  // It used to be consumed here — `strip`ped out of `work` before `splitSequence`
+  // ever saw it — so "food on the way to the club" parsed as ONE stage with an
+  // `along` relationship and the sequence half of the operator was unreachable
+  // by construction. The relationship is still recorded, and the phrase is now
+  // LEFT IN PLACE for `splitSequence`, which is the only thing that may consume
+  // it. That splitter drops its own separators, so a query with no second stage
+  // ("coffee along the way") still yields one segment and the identical residual
+  // text — the change is visible only where a stage actually follows.
+  if (!relationship && ALONG_RE.test(work)) {
     relationship = 'along';
-    strip(/\balong\s+the\s+way\b|\bon\s+the\s+way\b|\balong\s+our\s+route\b/);
   }
   if (!relationship && /\bwith\s+(?:my\s+|the\s+)?(?:trip\s+)?crew\b|\bwith\s+my\s+(?:friends|group|people|travel\s+buddies)\b/.test(work)) {
     relationship = 'with_crew';
@@ -482,10 +499,20 @@ export function extractCategoryExperience(text: string): {
 
 // ── Sequence splitting (§18) ───────────────────────────────────────────────────
 
-// then / and then / after that / next / before / followed by. Bare "after" is
-// intentionally NOT a splitter — the temporal pass already consumed "after
-// dinner" etc., and a lone "after" is too ambiguous to split on deterministically.
-const SEQUENCE_SPLIT_RE = /\b(?:and\s+then|then|after\s+that|afterwards?|followed\s+by|next|before)\b/g;
+// then / and then / after that / next / before / followed by / on the way.
+// Bare "after" is intentionally NOT a splitter — the temporal pass already
+// consumed "after dinner" etc., and a lone "after" is too ambiguous to split on
+// deterministically.
+//
+// `ALONG_RE`'s alternatives are spliced in because §18 names "on the way" as a
+// sequence operator and `extractGeo` names it a relationship operator. It is
+// both, and it reaches here un-stripped precisely so this splitter can consume
+// it. Sourced from the one regex rather than retyped so the two readings can
+// never cover different phrases.
+const SEQUENCE_SPLIT_RE = new RegExp(
+  `\\b(?:and\\s+then|then|after\\s+that|afterwards?|followed\\s+by|next|before)\\b|${ALONG_RE.source}`,
+  'g',
+);
 
 export function splitSequence(text: string): string[] {
   const parts = text

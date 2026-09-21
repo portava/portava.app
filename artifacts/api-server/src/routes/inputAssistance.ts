@@ -34,6 +34,12 @@ import {
 } from '../lib/inputAssistance/policyRegistry';
 import { generateSuggestions } from '../lib/inputAssistance/gateway';
 import { recordSelection } from '../lib/inputAssistance/personalization';
+import {
+  rebuildTelemetryEvent,
+  recordTelemetryEvents,
+  type RawTelemetryEvent,
+  type TelemetryRow,
+} from '../lib/inputAssistance/telemetry';
 import type {
   SuggestResponse,
   SuggestSessionContext,
@@ -159,6 +165,14 @@ router.post(
 
     const requestId = crypto.randomUUID();
 
+    // §44/§57 P95 suggestion latency (census G372: "No latency instrumentation
+    // anywhere; the response carries no server timing"). The serve measures
+    // ITSELF — the one number no client can compute, because a device only ever
+    // sees server time plus network. It travels on the envelope and the client
+    // hands it back on `suggestion_request_completed`, where it lands in the
+    // serve log beside the round trip the device actually saw.
+    const startedAt = Date.now();
+
     try {
       const suggestions = await generateSuggestions(sc, {
         context,
@@ -175,24 +189,33 @@ router.post(
         aiAssist,
       });
 
+      const serverMs = Date.now() - startedAt;
       const payload: SuggestResponse = {
         requestId,
         policyVersion: POLICY_VERSION,
         context,
         fieldId,
         suggestions,
+        serverMs,
       };
+      // Instrumented on the server's own side too, so the quantile is
+      // computable from logs even where the client transport is not attached.
+      logger.info(
+        { requestId, context, fieldId, serverMs, count: suggestions.length },
+        'input-assistance/suggest served',
+      );
       res.status(200).json(payload);
     } catch (err) {
       // Typeahead must never surface an error mid-keystroke — fail soft to an
       // empty, well-formed envelope (still carries policyVersion + requestId).
-      logger.warn({ err, context }, 'input-assistance/suggest failed');
+      logger.warn({ err, context, serverMs: Date.now() - startedAt }, 'input-assistance/suggest failed');
       const payload: SuggestResponse = {
         requestId,
         policyVersion: POLICY_VERSION,
         context,
         fieldId,
         suggestions: [],
+        serverMs: Date.now() - startedAt,
       };
       res.status(200).json(payload);
     }
@@ -280,6 +303,116 @@ router.post(
     );
 
     res.status(200).json({ ok: true, recorded: result.recorded, policyVersion: POLICY_VERSION });
+  }),
+);
+
+// ── POST /api/input-assistance/telemetry — the §44 serve log ingest ───────────
+//
+// THE DESTINATION THE CLIENT NEVER HAD
+// ====================================
+// `platform/input-assistance/services/inputTelemetry.ts` has declared fourteen
+// §44 event names since Phase 1 and has had real call sites for nine of them
+// since Phase 11 — every one handed to a sink that is `() => {}`. The census
+// records that at G263 ("Emission is not measurement: in production these
+// events are now produced and dropped"), at G292 ("There is no server-side
+// telemetry service, no serve log, no impression record"), and again at G306,
+// G355, G365, G366 and G367, each naming the same missing piece: somewhere for
+// the events to LAND.
+//
+// This is that somewhere. It is a route and not a client repoint because there
+// was nothing to repoint the events AT.
+//
+// THE PAYLOAD IS REBUILT, THE POLICY IS ENFORCED, THE ERROR IS BOUND
+// =================================================================
+// All three live in lib/inputAssistance/telemetry.ts and are argued there. In
+// summary: an event is rebuilt from a per-name prop allow-list (an unknown key
+// cannot ride along under any spelling), an event the field's own
+// `telemetryPolicy` does not declare is REFUSED and counted, and a PostgREST
+// write failure answers 503 + `retryable: true` rather than `{ok:true,
+// accepted:0}` — because migration 2950 is unapplied and that failure is the
+// state this route is actually in today. A telemetry endpoint that reports a
+// broken ingest as "no usage" is worse than no endpoint at all.
+//
+// NO ACTOR IS STORED. `requireUser` runs — to refuse anonymous writers and to
+// key the rate limit — and the resulting user id is then deliberately NOT
+// persisted. Migration 2950's header argues that at length; the short version
+// is that every §57 metric over this table is a rate or a quantile, so an
+// account id would be captured unnecessarily, which is the thing §44 forbids.
+// The `sessionId` the client supplies is a pseudonymous correlator and is
+// bounded to a token.
+const MAX_TELEMETRY_BATCH = 50;
+
+router.post(
+  '/input-assistance/telemetry',
+  asyncHandler(async (req, res) => {
+    const auth = await requireUser(req, res);
+    if (!auth) return;
+    const { user } = auth;
+
+    const body = (req.body ?? {}) as Record<string, unknown>;
+
+    const sessionIdRaw = typeof body.sessionId === 'string' ? body.sessionId.trim() : '';
+    if (!sessionIdRaw || sessionIdRaw.length > 64 || !/^[A-Za-z0-9_.:-]+$/.test(sessionIdRaw)) {
+      sendError(res, 'invalid_payload', 'sessionId must be a bounded opaque token');
+      return;
+    }
+
+    const events = body.events;
+    if (!Array.isArray(events) || events.length === 0) {
+      sendError(res, 'invalid_payload', 'events must be a non-empty array');
+      return;
+    }
+    // Refused WHOLE, not truncated. A silently truncated batch is a funnel with
+    // a hole in it that nothing reports.
+    if (events.length > MAX_TELEMETRY_BATCH) {
+      sendError(res, 'invalid_payload', `events must contain at most ${MAX_TELEMETRY_BATCH} entries`);
+      return;
+    }
+
+    const rl = checkRateLimit('input_assist_telemetry', user.id, 120, 60_000);
+    if (!rl.allowed) {
+      res.setHeader('Retry-After', Math.ceil(rl.retryAfterMs / 1000).toString());
+      sendError(res, 'rate_limited', 'Too many telemetry batches. Please wait.');
+      return;
+    }
+
+    const sc = getServiceClient();
+    if (!sc) {
+      sendError(res, 'server_not_configured', 'Service client not ready');
+      return;
+    }
+
+    const now = Date.now();
+    const rows: TelemetryRow[] = [];
+    let rejected = 0;
+    for (const raw of events as RawTelemetryEvent[]) {
+      const ctx = raw && typeof raw === 'object' ? (raw as { context?: unknown }).context : undefined;
+      const fid =
+        raw && typeof raw === 'object' && typeof (raw as { fieldId?: unknown }).fieldId === 'string'
+          ? ((raw as { fieldId: string }).fieldId)
+          : undefined;
+      // An unregistered context resolves to no policy, and no policy is a
+      // refusal — "declared nothing" is not "declared everything".
+      const policy = isKnownContext(ctx) ? resolvePolicy(ctx, fid) : null;
+      const outcome = rebuildTelemetryEvent(raw, sessionIdRaw, policy ?? null, POLICY_VERSION, now);
+      if (outcome.ok) rows.push(outcome.row);
+      else rejected += 1;
+    }
+
+    const result = await recordTelemetryEvents(sc, rows, logger);
+    if ('refusal' in result) {
+      res.setHeader('Retry-After', '60');
+      res.status(503).json({
+        ok: false,
+        retryable: result.refusal.retryable,
+        reason: result.refusal.reason,
+        accepted: 0,
+        rejected,
+      });
+      return;
+    }
+
+    res.status(200).json({ ok: true, accepted: result.recorded, rejected });
   }),
 );
 

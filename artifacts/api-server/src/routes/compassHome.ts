@@ -148,6 +148,47 @@ function nowUtcInstant(): Date {
   return sharedNowUtcInstant();
 }
 
+/**
+ * PER-SECTION AVAILABILITY — the difference between "nothing" and "we could not look".
+ *
+ * Every section of this payload is built inside its own try, so one failing
+ * source leaves the others intact. That half was always right. The half that
+ * was not: a failure returned `null` (or `[]`), which is the SAME value a
+ * genuine empty result returns. A traveller whose Circle presence service is
+ * down was told, in identical bytes, that nobody is around.
+ *
+ * The upgrade specification names this exactly — "partial source outage
+ * preserves unaffected content with accurate availability" — and the framing
+ * document states the rule it rests on twice: "distinguish authorized empty
+ * results from dependency failure internally and give an honest user-facing
+ * limitation", and "unknown is not zero, no coverage is not quiet".
+ *
+ * So each section now reports which of the two it is. This is ADDITIVE: the
+ * section fields keep their existing shapes and values, an older client that
+ * ignores `sources` behaves exactly as before, and nothing new is fabricated —
+ * an unavailable source still returns null, it just stops claiming that null
+ * means empty.
+ */
+export type SectionAvailability = "ok" | "unavailable";
+
+/** The five sections whose availability is reported. */
+export const HOME_SECTIONS = [
+  "bestNextMove",
+  "circleActivity",
+  "startingSoon",
+  "tonightVibe",
+  "weatherWindow",
+] as const;
+export type HomeSection = (typeof HOME_SECTIONS)[number];
+
+export type HomeSources = Record<HomeSection, SectionAvailability>;
+
+/** A section's result and whether its source could be read at all. */
+interface Sourced<T> { value: T; ok: boolean }
+
+const sourced  = <T,>(value: T): Sourced<T> => ({ value, ok: true });
+const unusable = <T,>(value: T): Sourced<T> => ({ value, ok: false });
+
 export type TimeOfDay = "morning" | "afternoon" | "evening" | "night";
 
 export function timeOfDayForHour(hour: number): TimeOfDay {
@@ -173,7 +214,7 @@ function hiddenUserIds(profile: CompassProfile | null): Set<string> {
  * Same visibility/state guards as the search_events Compass tool. Hidden
  * (blocked/blocker/muted) hosts are filtered out before anything surfaces.
  */
-interface HomeEvent {
+export interface HomeEvent {
   id: string;
   title: string;
   city: string | null;
@@ -188,7 +229,7 @@ async function fetchUpcomingEvents(
   fromIso: string,
   toIso: string,
   limit: number,
-): Promise<HomeEvent[]> {
+): Promise<Sourced<HomeEvent[]>> {
   try {
     let q: any = sc
       .from("events")
@@ -206,9 +247,11 @@ async function fetchUpcomingEvents(
       .order("starts_at", { ascending: true });
     if (profile?.currentCity) q = q.ilike("city", `%${profile.currentCity}%`);
     const { data, error } = await q.limit(limit * 3);
-    if (error) return [];
+    // A read that errored is not an empty calendar. Both still surface as no
+    // events; only one of them is a fact about the world.
+    if (error) return unusable([]);
     const hidden = hiddenUserIds(profile);
-    return ((data ?? []) as any[])
+    return sourced(((data ?? []) as any[])
       .filter((e) => !hidden.has(e.host_id as string))
       .slice(0, limit)
       .map((e) => ({
@@ -218,9 +261,9 @@ async function fetchUpcomingEvents(
         country: (e.country as string | null) ?? null,
         startsAt: (e.starts_at as string | null) ?? null,
         category: (e.category as string | null) ?? null,
-      }));
+      })));
   } catch {
-    return [];
+    return unusable([]);
   }
 }
 
@@ -244,7 +287,7 @@ function buildTonightVibe(events: HomeEvent[]): { headline: string; events: Home
 }
 
 /* ── Tomorrow's weather window ──────────────────────────────────────────────── */
-interface WeatherWindow {
+export interface WeatherWindow {
   city: string;
   date: string;
   summary: string;
@@ -254,19 +297,22 @@ interface WeatherWindow {
   headline: string;
 }
 
-async function fetchWeatherWindow(profile: CompassProfile | null): Promise<WeatherWindow | null> {
+async function fetchWeatherWindow(profile: CompassProfile | null): Promise<Sourced<WeatherWindow | null>> {
   const city = profile?.currentCity;
-  if (!city) return null;
+  // No city is an authorized empty result, not an outage: there is nothing to
+  // forecast for, and the traveller can fix it by setting a city.
+  if (!city) return sourced(null);
   try {
     const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1_000).toISOString().slice(0, 10);
     const wx = await getWeatherContext(city, tomorrow, tomorrow);
     const f = wx?.forecasts?.find((d) => d.date === tomorrow) ?? wx?.forecasts?.[0];
-    if (!f) return null;
+    // The provider answered with no usable day — reachable, but nothing to say.
+    if (!f) return sourced(null);
     const rainy = f.precipMm > 2 || f.weatherCode >= 51;
     const headline = rainy
       ? `${f.summary} tomorrow — plan an indoor window`
       : `${f.summary} tomorrow — good window for outdoor plans`;
-    return {
+    return sourced({
       city,
       date: f.date,
       summary: f.summary,
@@ -274,9 +320,9 @@ async function fetchWeatherWindow(profile: CompassProfile | null): Promise<Weath
       minTempC: f.minTempC,
       precipMm: f.precipMm,
       headline,
-    };
+    });
   } catch {
-    return null;
+    return unusable(null);
   }
 }
 
@@ -318,7 +364,75 @@ router.get("/compass/home", asyncHandler(async (req, res) => {
   }
 
   try {
-    const profile = await getCompassProfile(sc, user.id);
+    const projection = await buildCompassHomeProjection(sc, user.id, { localHour });
+    const payload = { compassEnabled: true, fallback: false, ...projection };
+    // A DEGRADED PAYLOAD IS NOT CACHED. The cache exists to spare a repeat open
+    // an expensive rebuild, and caching an outage would pin it for the whole TTL
+    // — the traveller would keep being told a source is unavailable for up to
+    // 45 s after it recovered, and a retry could not clear it. The header above
+    // already restricts caching to "successful, non-fallback payloads"; a
+    // payload with a dead source is not one, and now says so.
+    if (!projection.degraded) setCachedHome(cacheKey, payload);
+    res.json(payload);
+  } catch (err) {
+    req.log.error({ err }, "compass/home: build failed, returning fallback");
+    res.json({ compassEnabled: true, fallback: true });
+  }
+}));
+
+/**
+ * The server-built current-context projection Compass Home renders — and, since
+ * census-compass CCL-06, the projection `/compass/ask` READS rather than
+ * rebuilding its own (`docs/specs/upgrades-v2/01-COMPASS-v2.md` "Home consumes
+ * a server-built UserNow … Compass consumes the current-context projection").
+ * ONE implementation: the route above is one caller of two.
+ *
+ * Honesty rule inherited from the route: every section is `Sourced` — a value
+ * with `ok: true`, or `unusable` when its source could not answer — and
+ * `sources` says which, so a consumer can tell "nobody is around" from "presence
+ * could not be resolved". A consumer that drops `sources` is lying by omission.
+ */
+export interface CompassHomeProjection {
+  timeOfDay: TimeOfDay;
+  contextState: string;
+  city: string | null;
+  bestNextMove: HomeBestNextMove | null;
+  circleActivity: { people: HomePerson[] } | null;
+  startingSoon: HomeEvent[] | null;
+  tonightVibe: ReturnType<typeof buildTonightVibe> | null;
+  weatherWindow: WeatherWindow | null;
+  sources: HomeSources;
+  degraded: boolean;
+}
+
+export interface HomeBestNextMove {
+  id: string;
+  type: string;
+  title: string | null;
+  category: string | null;
+  city: string | null;
+  data: unknown;
+  explanationKey: string | null;
+}
+
+export interface HomePerson {
+  label: string;
+  handle: string | null;
+  status: string;
+  statusLabel: string | null;
+  approximateArea: string | null;
+  venue: string | null;
+  context: string | null;
+}
+
+export async function buildCompassHomeProjection(
+  sc: any,
+  userId: string,
+  opts: { localHour: number },
+): Promise<CompassHomeProjection> {
+  const { localHour } = opts;
+  {
+    const profile = await getCompassProfile(sc, userId);
     const timeOfDay = timeOfDayForHour(localHour);
     const signals = { ...defaultSignals(profile), hourUtc: localHour };
     const context = buildCompassContext(profile, signals);
@@ -334,11 +448,11 @@ router.get("/compass/home", asyncHandler(async (req, res) => {
         (async () => {
           try {
             const items = await hydrateCompassItems(sc, profile);
-            if (items.length === 0) return null;
+            if (items.length === 0) return sourced(null);
             const result = await buildSection("for_you", items, profile, context, sc, null);
             const top: any = result.section?.items?.[0] ?? null;
-            if (!top?.item) return null;
-            return {
+            if (!top?.item) return sourced(null);
+            return sourced({
               id: String(top.item.id),
               type: String(top.item.type ?? ""),
               title: (top.item.title as string | undefined) ?? null,
@@ -346,17 +460,19 @@ router.get("/compass/home", asyncHandler(async (req, res) => {
               city: (top.item.city as string | undefined) ?? null,
               data: top.item.data ?? null,
               explanationKey: top.explanationKey ?? null,
-            };
+            });
           } catch {
-            return null;
+            // The ranking pipeline threw. "No best move right now" and "the
+            // engine that decides is down" are different answers.
+            return unusable(null);
           }
         })(),
         // Circle activity — Phase 9 who's-around, consent-gated per target
         (async () => {
           try {
-            const { people } = await getWhosAround(sc, user.id, hiddenUserIds(profile));
-            if (people.length === 0) return null;
-            return {
+            const { people } = await getWhosAround(sc, userId, hiddenUserIds(profile));
+            if (people.length === 0) return sourced(null);
+            return sourced({
               people: people.slice(0, 5).map((p: any) => ({
                 label: p.label,
                 handle: p.handle ?? null,
@@ -366,9 +482,11 @@ router.get("/compass/home", asyncHandler(async (req, res) => {
                 venue: p.venue ?? null,
                 context: p.context ?? null,
               })),
-            };
+            });
           } catch {
-            return null;
+            // Presence could not be resolved. Reporting this as "nobody is
+            // around" is the single most misleading thing this endpoint can do.
+            return unusable(null);
           }
         })(),
         // Starting soon — public events in the next 6 hours
@@ -376,28 +494,39 @@ router.get("/compass/home", asyncHandler(async (req, res) => {
         // Tonight — events within 12 hours, only assembled in evening/night hours
         isEveningOrNight
           ? fetchUpcomingEvents(sc, profile, now.toISOString(), in12h.toISOString(), 8)
-          : Promise.resolve([] as HomeEvent[]),
+          : Promise.resolve(sourced([] as HomeEvent[])),
         fetchWeatherWindow(profile),
       ]);
 
-    const payload = {
-      compassEnabled: true,
-      fallback: false,
+    // `tonightVibe` is assembled from the same read as `startingSoon`'s sibling
+    // window, so it inherits that read's availability. Outside evening/night it
+    // is not attempted at all — an authorized absence, reported `ok`.
+    const tonightAvailable = isEveningOrNight ? tonightEvents.ok : true;
+
+    const sources: HomeSources = {
+      bestNextMove:   bestNextMove.ok   ? "ok" : "unavailable",
+      circleActivity: circleActivity.ok ? "ok" : "unavailable",
+      startingSoon:   startingSoon.ok   ? "ok" : "unavailable",
+      tonightVibe:    tonightAvailable  ? "ok" : "unavailable",
+      weatherWindow:  weatherWindow.ok  ? "ok" : "unavailable",
+    };
+    const degraded = HOME_SECTIONS.some((k) => sources[k] === "unavailable");
+
+    return {
       timeOfDay,
       contextState: context.contextState,
       city: profile.currentCity ?? null,
-      bestNextMove,
-      circleActivity,
-      startingSoon: startingSoon.length > 0 ? startingSoon : null,
-      tonightVibe: isEveningOrNight ? buildTonightVibe(tonightEvents) : null,
-      weatherWindow,
+      bestNextMove:   bestNextMove.value,
+      circleActivity: circleActivity.value,
+      startingSoon: startingSoon.value.length > 0 ? startingSoon.value : null,
+      tonightVibe: isEveningOrNight ? buildTonightVibe(tonightEvents.value) : null,
+      weatherWindow: weatherWindow.value,
+      /** Per-section: did the source answer, or could it not be read? */
+      sources,
+      /** True when at least one section is `unavailable`. */
+      degraded,
     };
-    setCachedHome(cacheKey, payload);
-    res.json(payload);
-  } catch (err) {
-    req.log.error({ err }, "compass/home: build failed, returning fallback");
-    res.json({ compassEnabled: true, fallback: true });
   }
-}));
+}
 
 export default router;

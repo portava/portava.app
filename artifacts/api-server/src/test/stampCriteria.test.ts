@@ -12,13 +12,15 @@ import assert from "node:assert/strict";
 import { referencedMetrics, CRITERIA_SCHEMA_VERSION } from "../lib/stamps/criteria/schema.js";
 import { resolveMetric, isKnownMetric } from "../lib/stamps/criteria/metrics.js";
 import { evaluateCriteria } from "../lib/stamps/criteria/evaluator.js";
-import { criteriaGate, evaluateAndAwardCriteria } from "../lib/stamps/criteria/index.js";
+import { criteriaGate, evaluateAndAwardCriteria, CriteriaDefinitionsUnavailableError } from "../lib/stamps/criteria/index.js";
 
 // ── Fake Supabase: count-head queries + jsonb-not-null + flag ─────────────────
 
 interface FakeOpts {
   counts?: Record<string, number>;      // table → count for head queries
   distinct?: Record<string, string[]>;  // "user_stamps.city" → values
+  /** FALSE stages those values as PLANNING stamps (evidences_presence: false). */
+  distinctEvidencesPresence?: boolean;
   flagOn?: boolean;
   defs?: any[];                         // stamp_definitions rows
 }
@@ -30,7 +32,15 @@ function makeSc(opts: FakeOpts = {}) {
       const b: any = {
         _filters: [] as Array<[string, any]>,
         _notNull: false,
-        select(_f: string, o?: any) { b._head = o?.head === true; b._field = _f; return b; },
+        // `distinctStampField` now selects `"<col>, stamp_definitions(evidences_presence)"`
+        // rather than a bare column, so take the FIRST top-level name as the
+        // field this double is staging values for.
+        select(_f: string, o?: any) {
+          b._head = o?.head === true;
+          b._select = _f;
+          b._field = String(_f ?? "").split(",")[0]!.trim();
+          return b;
+        },
         eq(k: string, v: any) { b._filters.push([k, v]); return b; },
         in(_k: string, _v: any[]) { return b; },
         not(_k: string, _op: string, _v: any) { b._notNull = true; return b; },
@@ -45,7 +55,15 @@ function makeSc(opts: FakeOpts = {}) {
         then(resolve: any) {
           if (b._head) { resolve({ count: counts[table] ?? 0, error: null }); return; }
           if (table === "user_stamps" && b._field && opts.distinct) {
-            const vals = (opts.distinct[`user_stamps.${b._field}`] ?? []).map((v) => ({ [b._field]: v }));
+            // Each staged value becomes a row carrying an embedded definition.
+            // `evidences_presence` defaults TRUE here because every existing
+            // case in this file stages places the traveller HAS visited; the
+            // planning case below sets it false explicitly.
+            const presence = opts.distinctEvidencesPresence !== false;
+            const vals = (opts.distinct[`user_stamps.${b._field}`] ?? []).map((v) => ({
+              [b._field]: v,
+              stamp_definitions: { slug: presence ? "first_trip_completed" : "trip_planner", evidences_presence: presence },
+            }));
             resolve({ data: vals, error: null }); return;
           }
           if (table === "stamp_definitions") {
@@ -84,6 +102,16 @@ describe("metric resolution", () => {
   it("resolves distinct stamp fields (cities_visited)", async () => {
     const sc = makeSc({ distinct: { "user_stamps.city": ["Cebu", "cebu", "Tokyo", ""] } });
     assert.equal(await resolveMetric(sc, U, "cities_visited", {}), 2); // dedup case-insensitive, drop blank
+  });
+  it("PLANNED-NEVER-TAKEN: the same places as planning stamps resolve to 0", async () => {
+    // `POST /api/trips` awards first_trip_created / trip_planner AT CREATION
+    // with the destination attached. Counting those made "cities_visited" a
+    // claim the traveller had been somewhere they had only thought about.
+    const sc = makeSc({
+      distinct: { "user_stamps.city": ["Cebu", "cebu", "Tokyo", ""] },
+      distinctEvidencesPresence: false,
+    });
+    assert.equal(await resolveMetric(sc, U, "cities_visited", {}), 0);
   });
   it("context wins over DB and coerces booleans", async () => {
     const sc = makeSc({ counts: { user_follows: 99 } });
@@ -215,4 +243,81 @@ describe("evaluateAndAwardCriteria", () => {
 
 describe("schema version constant", () => {
   it("is 1", () => assert.equal(CRITERIA_SCHEMA_VERSION, 1));
+});
+
+// ── D11 / swallowed-read inventory: stamps/criteria/index.ts:109 ─────────────
+//
+// The site: `if (error || !Array.isArray(data)) return [];` on the
+// `stamp_definitions` read inside evaluateAndAwardCriteria (SILENT column of
+// docs/architecture/swallowed-read-inventory.md).
+//
+// Owner's question — may the caller act on this emptiness as if it were an
+// answer? NO. `[]` already carries the legitimate meanings "the engine flag is
+// off" and "no active automatic definition has authored criteria", and
+// routes/stampCatalog.ts:1472 serialises the result straight into the admin
+// response as `{ dryRun: false, outcomes: [] }` — an operator reads that as
+// "there was nothing to award" and stops looking. routes/events.ts:2954 and
+// routes/posts.ts:771 use it to decide which stamps to award and notify.
+//
+// Fail-closed direction kept: nothing is awarded and nothing is claimed
+// awarded. Both event/post call sites already run inside `try { … } catch {}`,
+// so their behaviour is byte-identical to today; the admin route's
+// asyncHandler turns the rejection into an error response, which is the
+// caller being told rather than an operator maybe seeing a log.
+//
+// NOT part of this ruling: `flagOn`'s `if (error) return false` (:37). That
+// returns a boolean (outside the inventory's []/{}-only classifier) and
+// "flag unreadable ⇒ engine off" is the deliberate, tree-wide fail-closed
+// reading of a feature flag. It is left exactly as it is.
+
+function defsFake(opts: { flagOn: boolean; defsError?: unknown; defs?: any[] }) {
+  return {
+    from(table: string) {
+      const b: any = {};
+      for (const fn of ["select", "eq", "in", "not", "is", "order", "limit"]) b[fn] = () => b;
+      b.maybeSingle = async () =>
+        table === "feature_flags"
+          ? { data: { enabled: opts.flagOn }, error: null }
+          : { data: null, error: null };
+      b.then = (resolve: any) => {
+        if (table === "stamp_definitions" && opts.defsError) {
+          resolve({ data: null, error: opts.defsError });
+          return;
+        }
+        resolve({ data: table === "stamp_definitions" ? (opts.defs ?? []) : [], error: null });
+      };
+      return b;
+    },
+  } as any;
+}
+
+describe("D11 — an unreadable stamp_definitions is not 'nothing to award'", () => {
+  it("a genuine empty definition set is still an answer", async () => {
+    const out = await evaluateAndAwardCriteria(defsFake({ flagOn: true, defs: [] }), U, {});
+    assert.deepEqual(out, [], "no criteria-bearing definitions is a real, reportable emptiness");
+  });
+
+  it("the flag being off is still an answer", async () => {
+    const out = await evaluateAndAwardCriteria(defsFake({ flagOn: false, defs: [] }), U, {});
+    assert.deepEqual(out, [], "engine disabled keeps its existing no-op contract");
+  });
+
+  it("a failed definitions read is NOT byte-identical to either of them", async () => {
+    await assert.rejects(
+      () => evaluateAndAwardCriteria(
+        defsFake({ flagOn: true, defsError: { code: "57014", message: "statement timeout" } }), U, {},
+      ),
+      (e: unknown) => e instanceof CriteriaDefinitionsUnavailableError,
+      "an unread definition table must not answer 'nothing to award'",
+    );
+  });
+
+  it("nothing is claimed awarded when the definitions could not be read (fail-closed)", async () => {
+    const awarded: string[] = [];
+    await assert.rejects(() => evaluateAndAwardCriteria(
+      defsFake({ flagOn: true, defsError: { message: "boom" } }), U,
+      { awardFn: async ({ definitionSlug }) => { awarded.push(definitionSlug); return { awarded: true, reason: "x" }; } },
+    ));
+    assert.deepEqual(awarded, [], "a failed read must not become an award");
+  });
 });

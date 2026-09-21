@@ -9,6 +9,7 @@ import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import { authorizeMediaAccess, ownerFromPath, _clearMediaAccessCache } from "../lib/mediaAccess.js";
+import { authorizeMediaAttachment, authorizeMediaContext } from "../lib/mediaVisibility.js";
 import mediaFileRouter from "../routes/mediaFile.js";
 
 const SB = "http://sb.example.test";
@@ -46,6 +47,58 @@ interface FakeState {
   events?: any[];
   eventRsvps?: any[];
   eventRoles?: any[];
+  // contextual visibility (lib/mediaVisibility)
+  visibilityOverrides?: any[];
+  attachments?: any[];
+}
+
+/**
+ * Tables whose SELECT LIST this fake enforces against the LIVE column set.
+ *
+ * A mock that ignores `select()` answers a query naming a column the table does
+ * not have exactly as it answers a correct one, so it cannot fail on the single
+ * most common defect in this tree: a read spelled against a column that is not
+ * there. PostgREST does not throw for that — it RESOLVES `{ data: null, error:
+ * 42703 }`, which every `!error && Boolean(data)` site in the codebase then
+ * reads as a clean "no row". Naming a column outside the set below therefore
+ * produces that exact shape here.
+ *
+ * `user_follows` is the one that matters right now: it is
+ * (follower_id, following_id, created_at) in BOTH production and CI, with no
+ * `id`, and lib/mediaVisibility used to select one.
+ */
+const LIVE_COLUMNS: Record<string, readonly string[]> = {
+  user_follows: ["follower_id", "following_id", "created_at"],
+  // `post_media` has NO `media_asset_id`. Naming one here would fail the whole
+  // 3a read, and 3a binds its error and denies — so the mistake would take
+  // every post-media object with it rather than degrading quietly.
+  post_media: [
+    "id", "post_id", "user_id", "media_type", "mime_type", "storage_bucket",
+    "storage_path", "public_url", "thumbnail_storage_path", "thumbnail_url",
+    "feed_storage_path", "feed_url", "width", "height", "duration_seconds",
+    "file_size_bytes", "sort_order", "moderation_status", "processing_status",
+    "phash", "dedup_processed", "canonical_place_id", "stamp_overlay",
+    "created_at", "updated_at",
+  ],
+  media_attachments: [
+    "id", "media_asset_id", "entity_type", "entity_id",
+    "position", "is_cover", "visibility_override", "created_at",
+  ],
+  circle_member_visibility_overrides: [
+    "id", "user_id", "target_user_id", "context_type",
+    "context_id", "direction", "hidden", "created_at",
+  ],
+};
+
+/** The PostgREST shape for "column does not exist" — resolved, never thrown. */
+function undefinedColumn(table: string, column: string) {
+  return {
+    data: null,
+    error: {
+      code: "42703",
+      message: `column ${table}.${column} does not exist`,
+    },
+  };
 }
 
 function makeClient(state: FakeState = {}) {
@@ -72,7 +125,9 @@ function makeClient(state: FakeState = {}) {
       table === "generated_visuals" ? state.generatedVisuals ?? [] :
       table === "events" ? state.events ?? [] :
       table === "event_rsvps" ? state.eventRsvps ?? [] :
-      table === "event_roles" ? state.eventRoles ?? [] : [];
+      table === "event_roles" ? state.eventRoles ?? [] :
+      table === "circle_member_visibility_overrides" ? state.visibilityOverrides ?? [] :
+      table === "media_attachments" ? state.attachments ?? [] : [];
     // Column projection for "profiles" only: the avatar-gating tests below
     // must actually exercise the SELECT string in mediaAccess.ts, not just
     // the row data — a mock that ignores select() and always returns full
@@ -80,6 +135,8 @@ function makeClient(state: FakeState = {}) {
     // it gates on. Other tables aren't projected (nothing here reads a
     // column via select() and checks its own row shape beyond truthiness).
     let profileCols: string[] | null = null;
+    /** Set when this query named a column the live table does not have. */
+    let unknownColumn: string | null = null;
     const rows = () => {
       const base = src().filter((r: any) => filters.every((f) => f(r)));
       if (table !== "profiles" || !profileCols) return base;
@@ -89,8 +146,13 @@ function makeClient(state: FakeState = {}) {
     };
     const b: any = {
       select(cols?: string) {
-        if (table === "profiles" && typeof cols === "string" && cols !== "*") {
-          profileCols = cols.split(",").map((c) => c.trim());
+        if (typeof cols === "string" && cols !== "*") {
+          const named = cols.split(",").map((c) => c.trim()).filter(Boolean);
+          if (table === "profiles") profileCols = named;
+          const live = LIVE_COLUMNS[table];
+          if (live) {
+            unknownColumn = named.find((c) => !live.includes(c)) ?? null;
+          }
         }
         return b;
       },
@@ -138,8 +200,14 @@ function makeClient(state: FakeState = {}) {
         return b;
       },
       limit() { return b; }, not() { return b; }, order() { return b; },
-      maybeSingle() { return Promise.resolve({ data: rows()[0] ?? null, error: null }); },
-      then(onF: any, onR: any) { return Promise.resolve({ data: rows(), error: null }).then(onF, onR); },
+      maybeSingle() {
+        if (unknownColumn) return Promise.resolve(undefinedColumn(table, unknownColumn));
+        return Promise.resolve({ data: rows()[0] ?? null, error: null });
+      },
+      then(onF: any, onR: any) {
+        if (unknownColumn) return Promise.resolve(undefinedColumn(table, unknownColumn)).then(onF, onR);
+        return Promise.resolve({ data: rows(), error: null }).then(onF, onR);
+      },
     };
     return b;
   }
@@ -276,11 +344,43 @@ describe("authorizeMediaAccess — bare-key column values (post-2081)", () => {
   });
 
   it("3c messages.media_url — bare key authorizes a thread member", async () => {
+    // `sender_id` is OWNER because `path` is OWNER's key and `messages.sender_id`
+    // is NOT NULL: a row where the sender did not own the object it carries is the
+    // attack below, not a shape this fixture should have modelled.
     const sc = makeClient({
-      messages: [{ thread_id: THREAD, media_url: bare, media_thumbnail_url: null }],
+      messages: [{ thread_id: THREAD, sender_id: OWNER, media_url: bare, media_thumbnail_url: null }],
       threadMembers: [{ thread_id: THREAD, user_id: VIEWER, left_at: null }],
     });
     assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", path), true);
+  });
+
+  it("3c a message carrying ANOTHER user's object does NOT authorize the thread (MEDIA-2)", async () => {
+    // The last of the four branches to get the ownership test 3b/3d/3e carry.
+    // ATTACKER writes a message into a thread they are in, whose media_url is
+    // OWNER's private storage key, then asks for the object. `post-media` is a
+    // PRIVATE bucket, so what is at stake is the BYTES, not a preview.
+    const ATTACKER = "99999999-9999-4999-8999-999999999999";
+    const sc = makeClient({
+      messages: [{ thread_id: THREAD, sender_id: ATTACKER, media_url: bare, media_thumbnail_url: null }],
+      threadMembers: [
+        { thread_id: THREAD, user_id: ATTACKER, left_at: null },
+        { thread_id: THREAD, user_id: VIEWER, left_at: null },
+      ],
+    });
+    assert.equal(await authorizeMediaAccess(sc, ATTACKER, "post-media", path), false);
+    _clearMediaAccessCache();
+    assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", path), false);
+  });
+
+  it("3c an UNATTRIBUTABLE object is denied rather than given the benefit of the doubt", async () => {
+    // No media_assets row and a path whose first segment is not a uuid, so
+    // `owner` is null. 3d and 3e already deny that; 3c now agrees.
+    const orphan = "misc/no-owner-here.jpg";
+    const sc = makeClient({
+      messages: [{ thread_id: THREAD, sender_id: OWNER, media_url: `${SB}/storage/v1/object/public/post-media/${orphan}`, media_thumbnail_url: null }],
+      threadMembers: [{ thread_id: THREAD, user_id: VIEWER, left_at: null }],
+    });
+    assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", orphan), false);
   });
 
   it("an object referenced by nothing is still denied in either encoding", async () => {
@@ -451,6 +551,111 @@ describe("authorizeMediaAccess — the matrix", () => {
     assert.equal(await authorizeMediaAccess(mk([]), VIEWER, "post-media", path), false);
   });
 
+  /**
+   * The circle override binds on EVERY post attached to a trip, not only on
+   * `trip_only` ones. Both directions, through the full decide() path.
+   */
+  it("a PUBLIC post attached to a trip is denied when either circle override is set", async () => {
+    const path = `${OWNER}/p5.jpg`;
+    const post = {
+      author_id: OWNER, visibility: "public", status: "active",
+      post_status: "published", trip_id: TRIP, media_urls: [pub(path)],
+    };
+    const hideFromMe = makeClient({
+      posts: [post],
+      visibilityOverrides: [{
+        user_id: VIEWER, target_user_id: OWNER, context_type: "trip",
+        context_id: TRIP, direction: "hide_from_me", hidden: true,
+      }],
+    });
+    assert.equal(await authorizeMediaAccess(hideFromMe, VIEWER, "post-media", path), false);
+    _clearMediaAccessCache();
+    const hideMeFrom = makeClient({
+      posts: [post],
+      visibilityOverrides: [{
+        user_id: OWNER, target_user_id: VIEWER, context_type: "trip",
+        context_id: TRIP, direction: "hide_me_from", hidden: true,
+      }],
+    });
+    assert.equal(await authorizeMediaAccess(hideMeFrom, VIEWER, "post-media", path), false);
+    _clearMediaAccessCache();
+    // Positive control: with no override row the same public post authorizes,
+    // so the two denials above are the override and not the trip_id.
+    assert.equal(await authorizeMediaAccess(makeClient({ posts: [post] }), VIEWER, "post-media", path), true);
+  });
+
+  /**
+   * MUTATION-PROOF for the allow-cache scoping. `post-media` decisions depend on
+   * override rows a DIFFERENT process writes, so they must not be cached: a
+   * cached allow would keep serving the bytes after the owner hid themselves.
+   * Re-enable caching for this bucket and the second assertion goes green for
+   * the wrong reason.
+   */
+  it("a post-media allow is NOT cached, so a later override takes effect immediately", async () => {
+    const path = `${OWNER}/p6.jpg`;
+    const post = {
+      author_id: OWNER, visibility: "public", status: "active",
+      post_status: "published", trip_id: TRIP, media_urls: [pub(path)],
+    };
+    assert.equal(await authorizeMediaAccess(makeClient({ posts: [post] }), VIEWER, "post-media", path), true);
+    // NO _clearMediaAccessCache() here — that is the whole point.
+    const hidden = makeClient({
+      posts: [post],
+      visibilityOverrides: [{
+        user_id: OWNER, target_user_id: VIEWER, context_type: "trip",
+        context_id: TRIP, direction: "hide_me_from", hidden: true,
+      }],
+    });
+    assert.equal(await authorizeMediaAccess(hidden, VIEWER, "post-media", path), false);
+  });
+
+  /**
+   * A `private` §6.1 attachment narrows a PUBLIC post. The attachment is keyed
+   * by the canonical `media_assets.id`, which branch 3a reads off the
+   * `post_media` row (falling back to the asset looked up by storage key).
+   */
+  it("a private attachment override denies a non-owner a public post's media", async () => {
+    const path = `${OWNER}/post10/m1.jpg`;
+    const asset = "d2000000-0000-4000-a000-000000000001";
+    const base = {
+      mediaAssets: [{ id: asset, owner_user_id: OWNER, storage_bucket: "post-media", storage_path: path }],
+      postMedia: [{ storage_path: path, post_id: "post10", moderation_status: "approved", processing_status: "ready" }],
+      posts: [{ id: "post10", author_id: OWNER, visibility: "public", status: "active", post_status: "published", trip_id: null }],
+    };
+    assert.equal(await authorizeMediaAccess(makeClient(base), VIEWER, "post-media", path), true);
+    _clearMediaAccessCache();
+    const narrowed = {
+      ...base,
+      attachments: [{ media_asset_id: asset, entity_type: "post", entity_id: "post10", visibility_override: "private" }],
+    };
+    assert.equal(await authorizeMediaAccess(makeClient(narrowed), VIEWER, "post-media", path), false);
+  });
+
+  /**
+   * REGRESSION for the shape of branch 3a, not for a rule.
+   *
+   * The contextual checks were slotted in ahead of the loop's `allow`/`trip`
+   * arms. Written as a straight-line sequence they leave `deny` — a private or
+   * unpublished parent post — falling past both arms into the attachment check,
+   * which answers TRUE when there is no attachment to narrow by. That turns a
+   * private post's media into public bytes. The loop keeps `deny` as a
+   * `continue` and lets the `decidable` gate answer.
+   */
+  it("a PRIVATE parent post still denies its media once the contextual checks are in the loop", async () => {
+    const path = `${OWNER}/post11/m1.jpg`;
+    const asset = "d2000000-0000-4000-a000-000000000002";
+    const mk = (visibility: string, postStatus = "published") => makeClient({
+      mediaAssets: [{ id: asset, owner_user_id: OWNER, storage_bucket: "post-media", storage_path: path }],
+      postMedia: [{ storage_path: path, post_id: "post11", moderation_status: "approved", processing_status: "ready" }],
+      posts: [{ id: "post11", author_id: OWNER, visibility, status: "active", post_status: postStatus, trip_id: null }],
+    });
+    assert.equal(await authorizeMediaAccess(mk("private"), VIEWER, "post-media", path), false);
+    _clearMediaAccessCache();
+    assert.equal(await authorizeMediaAccess(mk("followers"), VIEWER, "post-media", path), false);
+    _clearMediaAccessCache();
+    assert.equal(await authorizeMediaAccess(mk("public", "scheduled"), VIEWER, "post-media", path), false);
+  });
+
   it("postcard media follows the parent post; rejected media denied outright", async () => {
     const path = `${OWNER}/post9/m1.jpg`;
     const base = {
@@ -466,7 +671,7 @@ describe("authorizeMediaAccess — the matrix", () => {
   it("message media: thread member allowed, outsider denied", async () => {
     const path = `${OWNER}/dm1.jpg`;
     const mk = (members: any[]) => makeClient({
-      messages: [{ thread_id: THREAD, media_url: pub(path), media_thumbnail_url: null }],
+      messages: [{ thread_id: THREAD, sender_id: OWNER, media_url: pub(path), media_thumbnail_url: null }],
       threadMembers: members,
     });
     assert.equal(await authorizeMediaAccess(mk([{ thread_id: THREAD, user_id: VIEWER, left_at: null }]), VIEWER, "post-media", path), true);
@@ -548,6 +753,141 @@ describe("authorizeMediaAccess — the matrix", () => {
       blocks: [{ blocker_id: OWNER, blocked_id: VIEWER }],
     });
     assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", gvTripPath), false);
+  });
+});
+
+describe("MD43 — attachment and circle visibility overrides", () => {
+  const ASSET  = "d1000000-0000-4000-a000-000000000001";
+  const POST   = "e1000000-0000-4000-a000-000000000001";
+
+  it("honors hide_from_me and hide_me_from in either direction", async () => {
+    const context = { contextType: "trip" as const, contextId: TRIP };
+    assert.equal(await authorizeMediaContext(makeClient({
+      visibilityOverrides: [{
+        user_id: VIEWER, target_user_id: OWNER, context_type: "trip", context_id: TRIP,
+        direction: "hide_from_me", hidden: true,
+      }],
+    }) as any, VIEWER, OWNER, context), false);
+    assert.equal(await authorizeMediaContext(makeClient({
+      visibilityOverrides: [{
+        user_id: OWNER, target_user_id: VIEWER, context_type: "trip", context_id: TRIP,
+        direction: "hide_me_from", hidden: true,
+      }],
+    }) as any, VIEWER, OWNER, context), false);
+    assert.equal(await authorizeMediaContext(makeClient({
+      visibilityOverrides: [{
+        user_id: VIEWER, target_user_id: OWNER, context_type: "trip", context_id: TRIP,
+        direction: "hide_from_me", hidden: false,
+      }],
+    }) as any, VIEWER, OWNER, context), true);
+  });
+
+  it("applies attachment private/public overrides while preserving owner access", async () => {
+    const sc = makeClient({
+      attachments: [{
+        media_asset_id: ASSET, entity_type: "post", entity_id: POST,
+        visibility_override: "private",
+      }],
+    }) as any;
+    assert.equal(await authorizeMediaAttachment(
+      sc, VIEWER, OWNER, ASSET, { entityType: "post", entityId: POST },
+    ), false);
+    assert.equal(await authorizeMediaAttachment(
+      sc, OWNER, OWNER, ASSET, { entityType: "post", entityId: POST },
+    ), true);
+  });
+
+  /**
+   * REGRESSION, and the reason this fake now enforces a select list.
+   *
+   * `authorizeMediaAttachment` resolved the `followers` and `following`
+   * audiences with `.from("user_follows").select("id")`. `user_follows` is
+   * (follower_id, following_id, created_at) in production AND in CI — there is
+   * no `id`. PostgREST RESOLVED that as `{ data: null, error: 42703 }`, and
+   * `return !error && Boolean(data)` turned it into FALSE for every viewer, so
+   * a genuine follower was denied a `followers` attachment and the audience
+   * resolved for NOBODY.
+   *
+   * It failed CLOSED, so it was never a leak — which is exactly why nothing
+   * noticed. Restore `select("id")` and the first two assertions below go red.
+   */
+  it("resolves the followers/following audiences against the real user_follows columns", async () => {
+    const follows = [{ follower_id: VIEWER, following_id: OWNER }];
+    const attachment = (override: string) => ({
+      attachments: [{
+        media_asset_id: ASSET, entity_type: "post", entity_id: POST,
+        visibility_override: override,
+      }],
+      userFollows: follows,
+    });
+
+    // VIEWER follows OWNER → OWNER's `followers` attachment is visible.
+    assert.equal(await authorizeMediaAttachment(
+      makeClient(attachment("followers")) as any,
+      VIEWER, OWNER, ASSET, { entityType: "post", entityId: POST },
+    ), true, "a genuine follower must see a `followers` attachment");
+
+    // `following` asks the opposite direction: OWNER follows VIEWER. The one
+    // row above is VIEWER→OWNER, so this must still deny.
+    assert.equal(await authorizeMediaAttachment(
+      makeClient(attachment("following")) as any,
+      VIEWER, OWNER, ASSET, { entityType: "post", entityId: POST },
+    ), false, "`following` is the other direction and must not be satisfied by a reverse follow");
+
+    // …and it resolves when the row IS the other direction.
+    assert.equal(await authorizeMediaAttachment(
+      makeClient({
+        ...attachment("following"),
+        userFollows: [{ follower_id: OWNER, following_id: VIEWER }],
+      }) as any,
+      VIEWER, OWNER, ASSET, { entityType: "post", entityId: POST },
+    ), true);
+
+    // A non-follower is denied — the fix widens nothing.
+    assert.equal(await authorizeMediaAttachment(
+      makeClient({ ...attachment("followers"), userFollows: [] }) as any,
+      VIEWER, OWNER, ASSET, { entityType: "post", entityId: POST },
+    ), false, "a non-follower must still be denied");
+  });
+
+  it("denies an override this module does not model rather than guessing", async () => {
+    const sc = makeClient({
+      attachments: [{
+        media_asset_id: ASSET, entity_type: "post", entity_id: POST,
+        visibility_override: "friends_only",
+      }],
+    }) as any;
+    assert.equal(await authorizeMediaAttachment(
+      sc, VIEWER, OWNER, ASSET, { entityType: "post", entityId: POST },
+    ), false);
+  });
+
+  it("treats a missing attachment as nothing-to-narrow-by, not as a denial", async () => {
+    assert.equal(await authorizeMediaAttachment(
+      makeClient() as any, VIEWER, OWNER, ASSET, { entityType: "post", entityId: POST },
+    ), true, "legacy media with no canonical attachment keeps the post's own rules");
+    assert.equal(await authorizeMediaAttachment(
+      makeClient() as any, VIEWER, OWNER, null, { entityType: "post", entityId: POST },
+    ), true, "a null asset id means the canonical layer is dark, not that access is denied");
+  });
+
+  it("fails closed when override resolution errors and never treats a storage key as ownership", async () => {
+    const errorClient = {
+      from() {
+        const b: any = {
+          select() { return b; }, eq() { return b; }, maybeSingle() {
+            return Promise.resolve({ data: null, error: new Error("db unavailable") });
+          },
+        };
+        return b;
+      },
+    } as any;
+    assert.equal(await authorizeMediaContext(errorClient, VIEWER, OWNER, {
+      contextType: "event", contextId: TRIP,
+    }), false);
+    assert.equal(await authorizeMediaAttachment(errorClient, VIEWER, OWNER, "asset", {
+      entityType: "post", entityId: TRIP,
+    }), false);
   });
 });
 

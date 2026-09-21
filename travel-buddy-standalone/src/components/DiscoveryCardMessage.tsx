@@ -6,6 +6,16 @@
  * - Title
  * - Blurb snippet
  * - Action row: View / Add to Plan / Save
+ *
+ * TELEGRAPH §5.3 — REVOCATION. This card used to be a frozen snapshot: parse
+ * the sender's JSON, render it, no refetch, no authorization call — so a place
+ * made private or a gem withdrawn after sharing still rendered in full inside
+ * the thread forever. When a `threadId` is supplied and the payload's
+ * `sourceType` maps to a §5 object family, the card re-resolves FOR THIS
+ * VIEWER on mount (`features/telegraph/sharing/useShareRevocation.ts`) and
+ * renders a revoked notice instead of the snapshot when the source is gone.
+ * A card with no threadId, or an unmappable sourceType, behaves exactly as it
+ * did before — `unknown` is its own state and is never read as "revoked".
  */
 import React, { useState } from 'react';
 import {
@@ -22,6 +32,8 @@ import { color, space, radius, type as t } from '../theme/tokens.ts';
 import { TG } from '../theme/telegraphTokens.ts';
 import { TripWishlistPicker, type AddToTripPayload } from './discovery/TripWishlistPicker.tsx';
 import { toggleSave } from '../services/discoveryBookmarks.ts';
+import { useShareRevocation, revokedLabel } from '../features/telegraph/sharing/useShareRevocation.ts';
+import { legacySourceTypeToObjectType } from '../features/telegraph/sharing/shareApi.ts';
 
 export interface DiscoveryCardPayload {
   sourceId: string;
@@ -63,11 +75,30 @@ const CATEGORY_COLORS: Record<string, string> = {
 interface Props {
   body: string;
   mine: boolean;
+  /** §5.3: supply this and the card becomes revocable. Omit it and nothing changes. */
+  threadId?: string | null;
+  messageId?: string | null;
 }
 
-export function DiscoveryCardMessage({ body, mine }: Props) {
+export function DiscoveryCardMessage({ body, mine, threadId = null, messageId = null }: Props) {
   const payload = parsePayload(body);
   const [pickerVisible, setPickerVisible] = useState(false);
+
+  const mappedType = legacySourceTypeToObjectType(payload?.sourceType);
+  const revocation = useShareRevocation(
+    threadId,
+    mappedType && payload?.sourceId ? { objectType: mappedType, objectId: payload.sourceId, messageId } : null,
+  );
+
+  if (revocation.state === 'unavailable') {
+    return (
+      <View style={[card.wrap, card.wrapRevoked, mine && card.wrapMine]} testID="discovery-card-revoked">
+        <Text style={[card.fallback, mine && { color: color.onInk + 'AA' }]}>
+          {revokedLabel(revocation.reason)}
+        </Text>
+      </View>
+    );
+  }
 
   if (!payload) {
     return (
@@ -221,6 +252,11 @@ const card = StyleSheet.create({
     borderColor: color.signal,
     borderBottomLeftRadius: radius.lg,
     borderBottomRightRadius: 4,
+  },
+  /** §5.3 revoked state — dashed, unfilled, carrying nothing from the source. */
+  wrapRevoked: {
+    borderStyle: 'dashed',
+    backgroundColor: 'transparent',
   },
   fallback: { ...t.small, color: color.mute, fontStyle: 'italic' },
   thumbnail: {

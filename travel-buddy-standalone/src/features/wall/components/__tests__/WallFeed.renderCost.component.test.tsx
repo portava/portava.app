@@ -28,6 +28,8 @@
  */
 
 import React from 'react';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { render, screen } from '@testing-library/react-native';
 
 // NOTE: exhaustive-by-design mock — the wall item tree pulls wallAnalytics →
@@ -166,6 +168,48 @@ describe('WallFeed render cost (§33 / TABLE 4)', () => {
     // A mount-time state update inside the item tree doubles the work of the
     // very first frame — the one the viewer waits for. Each body must run once.
     expect(itemRenders.ids).toEqual([...new Set(itemRenders.ids)]);
+  });
+
+  /**
+   * The windowing props, read out of the source.
+   *
+   * WHY A SOURCE PIN AND NOT A RENDER ASSERTION. Only ONE of these four numbers
+   * is observable from a jest render: `initialNumToRender` decides the first
+   * mount and the bound above catches a widening of it. The other three —
+   * `maxToRenderPerBatch`, `updateCellsBatchingPeriod`, `windowSize` — only take
+   * effect while SCROLLING, and RN's VirtualizedList never scrolls here because
+   * no layout events arrive. Widening `windowSize` from 7 to 21 triples the
+   * number of cells retained around the viewport on a device and changes NOTHING
+   * that any test in this repository can see. That is the gap.
+   *
+   * These numbers are the product decision WallFeed's own comment says they are
+   * ("how much work a frame may do"). Pinning them is not a frame-rate
+   * measurement and W149 stays CANNOT-VERIFY — see the census entry for what a
+   * frame-rate measurement would actually take. It makes the decision explicit
+   * enough that changing it is a deliberate act with a red test attached.
+   */
+  it('the declared scroll-windowing budget has not been silently widened', () => {
+    const src = readFileSync(
+      join(process.cwd(), 'src', 'features', 'wall', 'components', 'WallFeed.tsx'),
+      'utf8',
+    );
+    const prop = (name: string): number | null => {
+      const m = src.match(new RegExp(`${name}=\\{(\\d+)\\}`));
+      return m ? Number(m[1]) : null;
+    };
+    // Guard against a vacuous pass: if the regex stops matching, every bound
+    // below compares null to a number and the failure names the prop.
+    expect({
+      initialNumToRender: prop('initialNumToRender'),
+      maxToRenderPerBatch: prop('maxToRenderPerBatch'),
+      updateCellsBatchingPeriod: prop('updateCellsBatchingPeriod'),
+      windowSize: prop('windowSize'),
+    }).toEqual({
+      initialNumToRender: 10,
+      maxToRenderPerBatch: 5,
+      updateCellsBatchingPeriod: 50,
+      windowSize: 7,
+    });
   });
 
   it('mounts no inline video player for a feed nobody has scrolled yet', async () => {

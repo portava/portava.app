@@ -20,7 +20,7 @@ import { Video, ResizeMode, type AVPlaybackStatus } from 'expo-av';
 import { getMediaFilter, buildCssFilter } from '../lib/media/filters.ts';
 import { DisplayMediaImage, AvatarImage } from './ui/DisplayMediaImage.tsx';
 import { useHydratedMedia } from '../services/mediaUrl.ts';
-import { X, MessageCircle, Flag, Eye, Plus, Trash2, Volume2, VolumeX } from 'lucide-react-native';
+import { X, MessageCircle, Flag, Eye, Plus, Trash2, Volume2, VolumeX, Lock, Pin } from 'lucide-react-native';
 import { ActionStampIcon, ActionShareIcon } from './ui/ActionRowIcon.tsx';
 import { POST_ACTION_ICON_SIZE } from './PostActionRow.tsx';
 import { SaveButton } from './SaveButton.tsx';
@@ -40,6 +40,15 @@ import {
 import { markHighlightsViewed } from '../services/messaging.ts';
 import { markViewed, invalidateHighlightCache } from '../hooks/useHighlightRingState.ts';
 import { HighlightViewersSheet } from './HighlightViewersSheet.tsx';
+// §10 / §11 — the owner's privacy controls. Both control tables have been
+// deployed since 2026-09-15 and the server enforces what they hold on every
+// read; until this sheet was wired here there was no way for the person they
+// protect to put anything in them (census §O.2).
+import { HighlightPrivacySheet } from '../features/highlights/HighlightPrivacySheet.tsx';
+// §12 manual_pin / §17 UNPIN_HIGHLIGHT. `pinned_at` has been on
+// public.highlights since migration 2723 landed on 2026-09-15 with no writer
+// and no client (census H142/H143); these are the writer's callers.
+import { pinHighlight, unpinHighlight } from '../features/highlights/lifetimeApi.ts';
 import { EngagementUserListSheet } from './EngagementUserListSheet.tsx';
 import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
 
@@ -80,6 +89,10 @@ export function HighlightViewer({
   const [likeMap, setLikeMap] = useState<Record<string, { liked: boolean; count: number }>>({});
   const [likerHighlightId, setLikerHighlightId] = useState<string | null>(null);
   const [viewersOpen, setViewersOpen] = useState(false);
+  const [privacyOpen, setPrivacyOpen] = useState(false);
+  // Keyed by highlight id so the state survives advancing through the set.
+  const [pinState, setPinState] = useState<Record<string, string | null>>({});
+  const [pinBusy, setPinBusy] = useState(false);
   const [replyOpen, setReplyOpen] = useState(false);
   const [replyText, setReplyText] = useState('');
   const [replying, setReplying] = useState(false);
@@ -261,6 +274,34 @@ export function HighlightViewer({
         },
       ],
     );
+  }
+
+  /**
+   * §12 pin / §17 unpin.
+   *
+   * The local state is set from the SERVER'S answer, never optimistically. A
+   * pin that springs back silently is how somebody concludes a Highlight is
+   * pinned when the write never landed — and `feature_disabled` (this build has
+   * no `pinned_at`) is reported as itself rather than as a retryable failure,
+   * because retrying will never work on that deployment.
+   */
+  async function handlePinToggle() {
+    if (!current || !isOwner || pinBusy) return;
+    const id = current.id;
+    const currentlyPinned = (pinState[id] ?? (current as any).pinnedAt ?? null) != null;
+    setPinBusy(true);
+    const result = currentlyPinned ? await unpinHighlight(id) : await pinHighlight(id);
+    setPinBusy(false);
+    if (!result.ok) {
+      Alert.alert(
+        currentlyPinned ? 'Could not unpin' : 'Could not pin',
+        result.kind === 'not_available'
+          ? 'Pinning isn\u2019t available on this version of Portava yet.'
+          : result.detail,
+      );
+      return;
+    }
+    setPinState((m) => ({ ...m, [id]: (result.data as any).pinnedAt ?? null }));
   }
 
   const toggleMute = useCallback(() => {
@@ -557,6 +598,45 @@ export function HighlightViewer({
             )}
 
             {isOwner && (
+              <Pressable
+                onPress={() => void handlePinToggle()}
+                style={s.actionBtn}
+                hitSlop={HIT_SLOP}
+                accessibilityRole="button"
+                accessibilityState={{
+                  selected: ((pinState[current.id] ?? (current as any).pinnedAt ?? null) != null),
+                  disabled: pinBusy,
+                }}
+                accessibilityLabel={
+                  (pinState[current.id] ?? (current as any).pinnedAt ?? null) != null
+                    ? 'Unpin this highlight'
+                    : 'Pin this highlight'
+                }
+              >
+                <Pin
+                  size={POST_ACTION_ICON_SIZE}
+                  color={
+                    (pinState[current.id] ?? (current as any).pinnedAt ?? null) != null
+                      ? color.signal
+                      : 'rgba(255,255,255,0.85)'
+                  }
+                />
+              </Pressable>
+            )}
+
+            {isOwner && (
+              <Pressable
+                onPress={() => setPrivacyOpen(true)}
+                style={s.actionBtn}
+                hitSlop={HIT_SLOP}
+                accessibilityRole="button"
+                accessibilityLabel="Privacy controls for this highlight"
+              >
+                <Lock size={POST_ACTION_ICON_SIZE} color="rgba(255,255,255,0.85)" />
+              </Pressable>
+            )}
+
+            {isOwner && (
               <Pressable onPress={handleDelete} style={s.actionBtn} hitSlop={HIT_SLOP}>
                 <Trash2 size={POST_ACTION_ICON_SIZE} color="rgba(255,255,255,0.7)" />
               </Pressable>
@@ -600,6 +680,19 @@ export function HighlightViewer({
         highlightId={current.id}
         onClose={() => setViewersOpen(false)}
       />
+
+      {isOwner && (
+        <HighlightPrivacySheet
+          visible={privacyOpen}
+          highlightId={current.id}
+          onClose={() => setPrivacyOpen(false)}
+          // The viewer holds its own copy of the list, so a control that
+          // suppresses this Highlight has to be reflected by whoever owns the
+          // feed. `onDeleted` is the existing "this list is stale" signal and
+          // is reused rather than inventing a second one.
+          onChanged={() => onDeleted?.()}
+        />
+      )}
 
       {likerHighlightId !== null && (
         <EngagementUserListSheet

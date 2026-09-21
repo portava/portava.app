@@ -7,25 +7,48 @@
  * ask "is KYC actually working right now?" cannot use a throwing factory —
  * hence this non-throwing probe.
  *
- * Why this exists (audit P1 item 8): production has no working KYC. Both the
- * Stripe and Persona adapters in providers.ts are stubs whose every method
- * throws, and the mock provider is refused in production. So no user can
- * complete verification, `profiles.verification_level` can never legitimately
- * advance, and `rent_buddy_profiles.id_verified` can never become true through
- * a real check. Rent-a-Buddy pairs strangers in person, so booking creation
- * must be tied to this fact directly rather than relying on someone remembering
- * to keep a launch-control checkbox ticked.
+ * Why this exists (audit P1 item 8): production has no working KYC. The mock
+ * provider is refused in production, so no user can complete verification,
+ * `profiles.verification_level` can never legitimately advance, and
+ * `rent_buddy_profiles.id_verified` can never become true through a real check.
+ * Rent-a-Buddy pairs strangers in person, so booking creation must be tied to
+ * this fact directly rather than relying on someone remembering to keep a
+ * launch-control checkbox ticked.
+ *
+ * ── WHAT CHANGED, AND WHY THE GATE DID NOT ──────────────────────────────────
+ * This header, the set below and the message it produces all used to say the
+ * Stripe and Persona adapters "are stubs whose every method throws". That
+ * stopped being true (census-trust §14, TV-6b): both are implemented, and their
+ * webhook signature verification is proven by
+ * `src/test/verificationWebhookSignature.test.ts`.
+ *
+ * The gate is unchanged anyway, and the distinction matters more than it looks.
+ * "Implemented" is not "certified": the PAYLOAD mapping in each adapter is read
+ * off the vendor's published shapes and has never been run against the vendor,
+ * so the first sandbox transcript is as likely to correct it as to confirm it.
+ * A probe that reported operational on code alone would re-open a gate that
+ * pairs strangers in person on the strength of a document someone read.
+ *
+ * So the SET is the switch and the EVIDENCE is a sandbox run — and the reason
+ * string says so, because the reason string is what an operator reads when they
+ * ask why KYC is off. Telling them to go implement an adapter that already
+ * exists would send them to the wrong work.
  */
 
 /**
  * Providers whose adapter in providers.ts is actually implemented.
  *
- * ── ADD YOUR PROVIDER HERE WHEN YOU IMPLEMENT IT ────────────────────────────
+ * ── ADD YOUR PROVIDER HERE WHEN A SANDBOX RUN HAS CERTIFIED IT ──────────────
  * This set is the single switch that tells the rest of the server KYC works.
- * When the Stripe or Persona adapter stops throwing, add its name here and set
- * the matching env var; booking creation then re-opens on its own, with no
- * other code change. Leaving a stub out of this set is what keeps the
- * Rent-a-Buddy booking gate closed.
+ * Adding a name here re-opens Rent-a-Buddy booking creation on its own, with no
+ * other code change — which is why the bar is NOT "the adapter is written".
+ *
+ * The bar is a sandbox transcript: session created -> hosted flow completed ->
+ * signed webhook received and verified -> the `identity_verifications` row
+ * reaches `verified` -> `profiles.verification_level` is set. That run is what
+ * proves the payload mapping, which is the half of each adapter no test in this
+ * repository can reach. Both adapters are implemented and neither has been run
+ * against its vendor, so both stay out.
  */
 const IMPLEMENTED_PROVIDERS = new Set<string>(["mock"]);
 
@@ -62,7 +85,10 @@ export function identityProviderStatus(
       operational: false,
       provider,
       reason: known
-        ? `IDENTITY_PROVIDER=${provider} but that adapter in services/identityVerification/providers.ts is still a stub (every method throws). Implement it and add it to IMPLEMENTED_PROVIDERS.`
+        ? `IDENTITY_PROVIDER=${provider} but that adapter has not been certified against the vendor. ` +
+          `It IS implemented in services/identityVerification/ (signature verification proven by ` +
+          `src/test/verificationWebhookSignature.test.ts); what is missing is a sandbox end-to-end run ` +
+          `proving the payload mapping. Run one, then add "${provider}" to IMPLEMENTED_PROVIDERS.`
         : `Unknown IDENTITY_PROVIDER=${provider}.`,
     };
   }

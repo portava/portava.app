@@ -1,0 +1,329 @@
+/**
+ * P12 - the stamp award is one-shot under a REAL race, not just under a fake
+ * that serialises by construction.
+ *
+ * WHAT WAS AND WAS NOT ALREADY PROVEN
+ * -----------------------------------
+ * `stampAwardEngine.test.ts` has a case named "concurrent duplicate (DB 23505
+ * uniqueness error) is handled as already_awarded". It is SEQUENTIAL:
+ *
+ *     await awardStamp(sc, input);
+ *     const second = await awardStamp(sc, input);
+ *
+ * The second call finds the committed row in step 3's idempotency read and
+ * returns `already_awarded` BEFORE it ever reaches step 6's insert. So the
+ * 23505 branch that migration 2076 and the
+ * `stamp_award_events_idempotency_key_key` index exist to feed is never
+ * entered, and the fake's unique-index emulation is not what makes the test
+ * pass. It measures the app-level read, which is not the thing that keeps a
+ * passport honest under load - that read is a check-then-act with a window in
+ * it, and closing that window is precisely what the two indexes are for.
+ *
+ * The interesting case is the one where the window is OPEN: several awards of
+ * the same (user, definition, source) all complete step 3 seeing nothing, and
+ * all walk on to the write. Then and only then does the constraint decide.
+ *
+ * HOW THIS IS MEASURED, NOT ASSUMED
+ * ---------------------------------
+ * Test 1 refuses to pass unless the race ACTUALLY HAPPENED: it counts insert
+ * ATTEMPTS on stamp_award_events and fails if fewer than two calls reached the
+ * write. A run where the engine happened to serialise proves nothing about
+ * one-shot-ness and must not be reported as proof.
+ *
+ * Test 3 is the load-bearing control: with the unique indexes REMOVED from the
+ * double, the same interleaving must produce duplicate rows. If it did not,
+ * this file would not be exercising the mechanism it claims to and every other
+ * assertion here would be decoration.
+ *
+ * The double models both indexes as Postgres enforces them, including
+ * migration 2076's COALESCE + partial (live-rows-only) predicate, and reports a
+ * violation as a RESOLVED `{ data: null, error: { code: "23505" } }` - never a
+ * throw, because that is how supabase-js reports it and a test that passed on a
+ * thrown error would be exercising a path production does not take.
+ */
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { awardStamp } from "../services/passport/StampAwardEngine.js";
+
+const USER = "11111111-1111-4111-8111-111111111111";
+const DEF_ID = "22222222-2222-4222-8222-222222222222";
+const TRIP_ID = "33333333-3333-4333-8333-333333333333";
+
+const DEFINITION = {
+  id: DEF_ID,
+  slug: "first_trip_completed",
+  name: "First trip",
+  stamp_type: "trip",
+  is_active: true,
+  is_repeatable: false,
+  max_awards_per_user: null,
+  visibility_default: "public",
+  criteria_type: "count",
+  criteria: null,
+};
+
+interface Ops {
+  awardEventInsertAttempts: number;
+  awardEventConflicts: number;
+  userStampInsertAttempts: number;
+  userStampConflicts: number;
+}
+
+type Row = Record<string, any>;
+
+/** Live-award key, exactly as migration 2076's partial unique index computes it. */
+function liveAwardKey(r: Row): string {
+  return [
+    r["user_id"],
+    r["stamp_definition_id"],
+    r["source_type"] ?? "",
+    r["source_id"] ?? "",
+  ].join("|");
+}
+
+const CONFLICT = (constraint: string) => ({
+  data: null,
+  error: {
+    code: "23505",
+    message: `duplicate key value violates unique constraint "${constraint}"`,
+    details: null,
+    hint: null,
+  },
+  count: null,
+});
+
+/**
+ * A double that ENFORCES the two unique indexes the award path relies on.
+ *
+ * `uniqueIndexes: false` drops them - the control that shows the indexes, not
+ * the app-level read, are what make the award one-shot under a race.
+ */
+function makeRacingClient(opts: { uniqueIndexes?: boolean } = {}) {
+  const uniqueIndexes = opts.uniqueIndexes !== false;
+  const db: Record<string, Row[]> = {
+    feature_flags: [{ flag: "stamp_system_v2_enabled", enabled: true }],
+    stamp_definitions: [DEFINITION],
+    trips: [{ id: TRIP_ID, status: "completed" }],
+    stamp_award_events: [],
+    user_stamps: [],
+    stamp_progress: [],
+  };
+  const ops: Ops = {
+    awardEventInsertAttempts: 0,
+    awardEventConflicts: 0,
+    userStampInsertAttempts: 0,
+    userStampConflicts: 0,
+  };
+  let seq = 1;
+
+  function from(table: string) {
+    const rows = (db[table] ??= []);
+    const filters: Array<{ col: string; op: string; val: unknown }> = [];
+    let insertRow: Row | null = null;
+    let countMode = false;
+
+    const matched = () =>
+      rows.filter((r) =>
+        filters.every(({ col, op, val }) => {
+          const v = r[col];
+          if (op === "is") return val === null ? v == null : v === val;
+          return String(v) === String(val);
+        }),
+      );
+
+    function settleInsert() {
+      const row = insertRow as Row;
+      if (table === "stamp_award_events") {
+        ops.awardEventInsertAttempts++;
+        if (uniqueIndexes && row["idempotency_key"] != null &&
+            rows.some((r) => r["idempotency_key"] === row["idempotency_key"])) {
+          ops.awardEventConflicts++;
+          return CONFLICT("stamp_award_events_idempotency_key_key");
+        }
+      }
+      if (table === "user_stamps") {
+        ops.userStampInsertAttempts++;
+        // Migration 2076: partial unique index over the COALESCEd tuple,
+        // WHERE is_revoked = false.
+        if (uniqueIndexes && row["is_revoked"] === false &&
+            rows.some((r) => r["is_revoked"] === false && liveAwardKey(r) === liveAwardKey(row))) {
+          ops.userStampConflicts++;
+          return CONFLICT("user_stamps_live_award_unique");
+        }
+      }
+      const stored = { id: `row-${seq++}`, created_at: new Date().toISOString(), ...row };
+      rows.push(stored);
+      return { data: [stored], error: null, count: 1 };
+    }
+
+    const b: any = {
+      select(_c?: string, o?: { count?: string; head?: boolean }) {
+        if (o?.count) countMode = true;
+        return b;
+      },
+      insert(row: Row) { insertRow = row; return b; },
+      update() { return b; },
+      upsert() { return b; },
+      eq(col: string, val: unknown) { filters.push({ col, op: "eq", val }); return b; },
+      is(col: string, val: unknown) { filters.push({ col, op: "is", val }); return b; },
+      neq() { return b; },
+      not() { return b; },
+      in() { return b; },
+      gte() { return b; },
+      lte() { return b; },
+      gt() { return b; },
+      lt() { return b; },
+      order() { return b; },
+      limit() { return b; },
+      or() { return b; },
+      maybeSingle() {
+        if (insertRow) {
+          const r = settleInsert();
+          return Promise.resolve(
+            r.error ? r : { data: (r.data as Row[])[0], error: null, count: null },
+          );
+        }
+        if (table === "feature_flags") {
+          const flag = filters.find((f) => f.col === "flag")?.val;
+          const row = rows.find((r) => r["flag"] === flag) ?? null;
+          return Promise.resolve({ data: row, error: null, count: null });
+        }
+        const list = matched();
+        return Promise.resolve({ data: list[0] ?? null, error: null, count: null });
+      },
+      single() {
+        if (insertRow) {
+          const r = settleInsert();
+          return Promise.resolve(
+            r.error ? r : { data: (r.data as Row[])[0], error: null, count: null },
+          );
+        }
+        const list = matched();
+        return Promise.resolve({ data: list[0] ?? null, error: null, count: null });
+      },
+      then(onF: any, onR?: any) {
+        const settle = () => {
+          if (insertRow) return settleInsert();
+          const list = matched();
+          if (countMode) return { data: null, error: null, count: list.length };
+          return { data: list, error: null, count: list.length };
+        };
+        return Promise.resolve().then(settle).then(onF, onR);
+      },
+    };
+    return b;
+  }
+
+  return {
+    client: { from, rpc: () => Promise.resolve({ data: null, error: null }) } as any,
+    db,
+    ops,
+  };
+}
+
+const INPUT = {
+  userId: USER,
+  definitionSlug: "first_trip_completed",
+  sourceType: "trips",
+  sourceId: TRIP_ID,
+  city: "Hanoi",
+  country: "Vietnam",
+};
+
+const N = 8;
+
+test("1. N concurrent awards of the SAME action produce exactly one stamp - and the race really happened", async () => {
+  const { client, db, ops } = makeRacingClient();
+
+  const results = await Promise.all(
+    Array.from({ length: N }, () => awardStamp(client, { ...INPUT })),
+  );
+
+  // THE VACUITY GUARD. If the engine happened to serialise - every call after
+  // the first short-circuiting on step 3's idempotency read - then the unique
+  // index was never consulted and this test proves nothing about one-shot-ness.
+  assert.ok(
+    ops.awardEventInsertAttempts >= 2,
+    `no race occurred: only ${ops.awardEventInsertAttempts} call(s) reached the award-event INSERT, ` +
+    `so the uniqueness backstop was never exercised and this test would be vacuous`,
+  );
+  assert.ok(ops.awardEventConflicts >= 1, "no 23505 was raised - the index was not the thing that decided");
+
+  const awarded = results.filter((r) => r.awarded);
+  assert.equal(awarded.length, 1, `exactly one award may succeed, got ${awarded.length}`);
+  assert.equal(db["user_stamps"]!.length, 1, "exactly one passport row");
+  assert.equal(db["stamp_award_events"]!.length, 1, "exactly one award event");
+
+  // The losers must say so honestly - never a generic failure, never a success.
+  for (const r of results.filter((x) => !x.awarded)) {
+    assert.ok(
+      ["already_awarded", "already_earned"].includes(r.reason),
+      `a lost race must read as already-awarded, got "${r.reason}"`,
+    );
+  }
+  assert.equal(results.length, N);
+});
+
+test("2. replaying the same award after the race still yields exactly one stamp", async () => {
+  const { client, db } = makeRacingClient();
+  await Promise.all(Array.from({ length: N }, () => awardStamp(client, { ...INPUT })));
+  const replay = await awardStamp(client, { ...INPUT });
+
+  assert.equal(replay.awarded, false);
+  assert.ok(
+    ["already_awarded", "already_earned"].includes(replay.reason),
+    `a replay must read as already-awarded, got "${replay.reason}"`,
+  );
+  assert.equal(db["user_stamps"]!.length, 1, "a replay must not add a second passport row");
+  assert.equal(db["stamp_award_events"]!.length, 1);
+});
+
+test("3. CONTROL - with the unique indexes dropped, the same interleaving DOES duplicate", async () => {
+  // This is what makes tests 1-2 mean something. The app-level check in steps
+  // 3-5 is a check-then-act with a window; if removing the indexes still
+  // produced one row, the window would be closed by something else and the
+  // indexes would not be load-bearing. It is not, and they are.
+  const { client, db, ops } = makeRacingClient({ uniqueIndexes: false });
+
+  const results = await Promise.all(
+    Array.from({ length: N }, () => awardStamp(client, { ...INPUT })),
+  );
+
+  assert.ok(
+    ops.awardEventInsertAttempts >= 2,
+    "the control needs the same race; it did not occur",
+  );
+  assert.ok(
+    db["user_stamps"]!.length > 1,
+    `without the unique indexes the race must duplicate - got ${db["user_stamps"]!.length} row(s), ` +
+    `which would mean the constraints are not what keeps the award one-shot`,
+  );
+  assert.ok(
+    results.filter((r) => r.awarded).length > 1,
+    "more than one award reported success once nothing refused the second write",
+  );
+});
+
+test("4. two DIFFERENT sources are not collapsed by the live-award index", async () => {
+  // The one-shot key is (user, definition, source_type, source_id). A guard
+  // that keyed on (user, definition) alone would be one-shot AND wrong - it
+  // would swallow a genuine second earning for a repeatable definition. The
+  // non-repeatable definition used here still refuses the second, on the
+  // DEFINITION rule, which is the correct reason; what must NOT happen is a
+  // 23505 from the index, because the two tuples genuinely differ.
+  const { client, db, ops } = makeRacingClient();
+  const OTHER_TRIP = "44444444-4444-4444-8444-444444444444";
+  db["trips"]!.push({ id: OTHER_TRIP, status: "completed" });
+
+  const first = await awardStamp(client, { ...INPUT });
+  assert.equal(first.awarded, true);
+
+  const second = await awardStamp(client, { ...INPUT, sourceId: OTHER_TRIP });
+  assert.equal(second.awarded, false);
+  assert.equal(
+    second.reason, "already_earned",
+    "a non-repeatable definition refuses the second on the DEFINITION rule",
+  );
+  assert.equal(ops.userStampConflicts, 0, "the live-award index must not collide across different sources");
+  assert.equal(db["user_stamps"]!.length, 1);
+});
