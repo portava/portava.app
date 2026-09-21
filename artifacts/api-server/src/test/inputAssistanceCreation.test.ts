@@ -543,6 +543,10 @@ describe("§37 new-entity creation under policy (G240)", () => {
 
   it("the creation row is UNDER POLICY: a policy that does not name the entity type offers none", () => {
     const policy = resolvePolicy("hidden_gem_location");
+    // resolvePolicy returns null for a context the registry does not carry. If
+    // that ever happens here the rest of this test would assert nothing, so the
+    // absence is a failure rather than a narrowing convenience.
+    assert.ok(policy, "hidden_gem_location must be in the policy registry");
     // Same context, same text — only the policy's declared entityTypes change.
     const withGem = buildUnresolvedAddress("hidden_gem_location", policy, POLICY_VERSION, "Unlisted Rooftop");
     const withoutGem = buildUnresolvedAddress(
@@ -562,6 +566,7 @@ describe("§37 new-entity creation under policy (G240)", () => {
 
   it("an empty query produces no creation row (nothing to name)", () => {
     const policy = resolvePolicy("place_picker");
+    assert.ok(policy, "place_picker must be in the policy registry");
     assert.equal(createRows(buildUnresolvedAddress("place_picker", policy, POLICY_VERSION, "   ")).length, 0);
   });
 });

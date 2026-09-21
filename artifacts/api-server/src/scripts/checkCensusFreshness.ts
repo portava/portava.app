@@ -2070,6 +2070,16 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   // paths resolve) and the most client-weighted: its subject is the typing
   // surface, so the hooks ARE the measurement, not evidence about it.
   "census-input-intelligence.md": [
+    // ── ADDED 2026-09-21 by the INTEGRATING LANE, for the seven-lane wave ────
+    // Five files that rows this wave MOVED now cite. Leaving them cited but
+    // unwatched is the inversion check:census-scope-coverage exists to catch:
+    // the rows saying something IS right would be the unguarded half. Coverage
+    // 96% -> back above its floor; the 98% floor was NOT lowered.
+    "travel-buddy-standalone/src/platform/input-assistance/services/localZeroState.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/services/__tests__/localZeroState.test.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.zeroState.component.test.tsx",
+    "artifacts/api-server/src/test/inputAssistanceSelectionMemoryLiveDbStatus.test.ts",
+    "travel-buddy-standalone/scripts/run-node-tests.mjs",
     // ── ADDED 2026-09-21 by §14 (the scattered §27–§56 rows) ────────────────
     // Every path below is cited as EVIDENCE by a row §14 moved or re-read, and
     // scope-coverage measured the census at exactly its 98% floor before them:
