@@ -278,7 +278,11 @@ human decides per file (`:908-931`).
    (`certifyMigrations.ts:6-11`). Five stages, stopping at the first failure: ledger parity
    (delegated to `check:migration-ledger`, never reimplemented), declared objects, grants + RLS,
    the migrations' **own postcondition `DO` blocks re-run after the commit**, then the repo-wide
-   live checks (`certifyMigrations.ts:26-44`).
+   live checks (`certifyMigrations.ts:33-52`). Stage 4 re-runs postconditions only: a
+   `DO $pre$ … $pre$;` block is held back and counted, because 23 of the 32 files carrying one
+   refuse a SECOND apply, so after the commit it is false by construction and would fail the
+   migration that just worked (`migrationSqlBlocks.ts:165-223`). It did, on main run
+   `35581577283`, to 2965.
 5. **`audit:schema`**, **`check:media-objects`**, **`audit:shadow-append-only`** — every ref
    (`:727,734,755`).
 

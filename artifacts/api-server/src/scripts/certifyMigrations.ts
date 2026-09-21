@@ -21,6 +21,15 @@
  * that could change anything is refused rather than run — see
  * isAssertionOnlyDoBlock() below.
  *
+ * POSTconditions, not every assertion. A `DO $pre$ … $pre$;` block states what
+ * had to be true BEFORE the apply, and 23 of the 32 files carrying one guard
+ * against a second apply ("… already exists; this migration is not idempotent
+ * by design"). Such a block is FALSE after a successful apply by construction,
+ * so re-running it here would fail the migrations that worked. Stage 4 holds
+ * those blocks back, counts them in its report, and leaves them to the applier,
+ * which runs them in the migration's own transaction where they belong — see
+ * isPreconditionDoBlock().
+ *
  * THE STAGES, IN ORDER, STOPPING AT THE FIRST FAILURE
  * ==================================================
  *
@@ -36,9 +45,10 @@
  *                    privilege that no certified migration granted; and no
  *                    policy in the database has either of the two shapes that
  *                    have already shipped here as production defects.
- *   4. postconditions — the migrations' own assertions, re-run AFTER the
- *                    commit, which is the only place they can observe what
- *                    persisted.
+ *   4. postconditions — the migrations' own POST-apply assertions, re-run AFTER
+ *                    the commit, which is the only place they can observe what
+ *                    persisted. `$pre$` blocks are held back and counted, not
+ *                    re-run; isPreconditionDoBlock() says why.
  *   5. app checks  — the existing repo checks that read the live schema.
  *
  * Stopping at the first failure is deliberate. Stage 3's grant claims are
@@ -88,6 +98,15 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import {
+  MUTATION_KEYWORD_RE,
+  isAssertionOnlyDoBlock,
+  isPreconditionDoBlock,
+  maskForKeywordScan,
+  maskNonCode,
+  topLevelStatements,
+} from "./lib/migrationSqlBlocks.js";
+
 const __dir = dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = resolve(__dir, "../..");
 const MIGRATIONS_DIR = resolve(__dir, "../migrations");
@@ -133,169 +152,9 @@ async function query<T = Record<string, unknown>>(sql: string): Promise<T[]> {
   return (await res.json()) as T[];
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// SQL text helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Blank comments and quoted literals, KEEPING dollar-quoted bodies (which are
- * executable code). Used for every keyword scan below, so that a `CREATE TABLE`
- * inside a `DO $$ … $$` block is seen and a `'DELETE'` inside a string literal
- * is not.
- */
-function maskForKeywordScan(sql: string): string {
-  let out = "";
-  let i = 0;
-  while (i < sql.length) {
-    const ch = sql[i];
-    if (ch === "-" && sql[i + 1] === "-") {
-      while (i < sql.length && sql[i] !== "\n") i++;
-      out += " ";
-      continue;
-    }
-    if (ch === "/" && sql[i + 1] === "*") {
-      let depth = 0;
-      do {
-        if (sql[i] === "/" && sql[i + 1] === "*") {
-          depth++;
-          i += 2;
-        } else if (sql[i] === "*" && sql[i + 1] === "/") {
-          depth--;
-          i += 2;
-        } else i++;
-      } while (i < sql.length && depth > 0);
-      out += " ";
-      continue;
-    }
-    if (ch === "'") {
-      i++;
-      while (i < sql.length) {
-        if (sql[i] === "'" && sql[i + 1] === "'") i += 2;
-        else if (sql[i] === "'") {
-          i++;
-          break;
-        } else i++;
-      }
-      out += " ";
-      continue;
-    }
-    if (ch === "$") {
-      const m = /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/.exec(sql.slice(i));
-      if (m) {
-        const tag = m[0];
-        const bodyStart = i + tag.length;
-        const end = sql.indexOf(tag, bodyStart);
-        const bodyEnd = end === -1 ? sql.length : end;
-        out += " " + maskForKeywordScan(sql.slice(bodyStart, bodyEnd)) + " ";
-        i = end === -1 ? sql.length : end + tag.length;
-        continue;
-      }
-    }
-    out += ch;
-    i++;
-  }
-  return out;
-}
-
-/** Blank comments, literals AND dollar-quoted bodies, preserving offsets. */
-function maskNonCode(sql: string): string {
-  const out = sql.split("");
-  const blank = (from: number, to: number) => {
-    for (let k = from; k < to && k < sql.length; k++) {
-      out[k] = sql[k] === "\n" ? "\n" : " ";
-    }
-  };
-  let i = 0;
-  while (i < sql.length) {
-    const ch = sql[i];
-    if (ch === "-" && sql[i + 1] === "-") {
-      const s = i;
-      while (i < sql.length && sql[i] !== "\n") i++;
-      blank(s, i);
-      continue;
-    }
-    if (ch === "/" && sql[i + 1] === "*") {
-      const s = i;
-      let depth = 0;
-      do {
-        if (sql[i] === "/" && sql[i + 1] === "*") {
-          depth++;
-          i += 2;
-        } else if (sql[i] === "*" && sql[i + 1] === "/") {
-          depth--;
-          i += 2;
-        } else i++;
-      } while (i < sql.length && depth > 0);
-      blank(s, i);
-      continue;
-    }
-    if (ch === "'") {
-      const s = i;
-      i++;
-      while (i < sql.length) {
-        if (sql[i] === "'" && sql[i + 1] === "'") i += 2;
-        else if (sql[i] === "'") {
-          i++;
-          break;
-        } else i++;
-      }
-      blank(s, i);
-      continue;
-    }
-    if (ch === '"') {
-      const s = i;
-      i++;
-      while (i < sql.length && sql[i] !== '"') i++;
-      i++;
-      blank(s, i);
-      continue;
-    }
-    if (ch === "$") {
-      const m = /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/.exec(sql.slice(i));
-      if (m) {
-        const s = i;
-        const tag = m[0];
-        const end = sql.indexOf(tag, i + tag.length);
-        i = end === -1 ? sql.length : end + tag.length;
-        blank(s, i);
-        continue;
-      }
-    }
-    i++;
-  }
-  return out.join("");
-}
-
-const MUTATION_KEYWORD_RE =
-  /\b(CREATE|ALTER|DROP|INSERT|UPDATE|DELETE|TRUNCATE|GRANT|REVOKE|COMMENT|REFRESH|REINDEX|CALL|COPY|EXECUTE)\b/i;
-
-/**
- * True when `stmt` is a `DO` block that raises and changes nothing.
- *
- * `EXECUTE` is on the mutation list even though it is not itself a change:
- * inside plpgsql it runs a string this scan cannot see, so a block containing
- * it is not something this script can certify as read-only.
- */
-function isAssertionOnlyDoBlock(stmt: string): boolean {
-  const masked = maskForKeywordScan(stmt);
-  if (!/^\s*DO\b/i.test(masked)) return false;
-  if (!/\bRAISE\b/i.test(masked)) return false;
-  return !MUTATION_KEYWORD_RE.test(masked);
-}
-
-/** Split into top-level statements (semicolons outside literals and bodies). */
-function topLevelStatements(sql: string): string[] {
-  const masked = maskNonCode(sql);
-  const out: string[] = [];
-  let start = 0;
-  for (let i = 0; i < masked.length; i++) {
-    if (masked[i] !== ";") continue;
-    const raw = sql.slice(start, i + 1);
-    if (masked.slice(start, i).trim() !== "") out.push(raw);
-    start = i + 1;
-  }
-  return out;
-}
+// ───────────────────────────────────────────────────────────────────────────
+// SQL text helpers — see ./lib/migrationSqlBlocks.ts, imported above.
+// ───────────────────────────────────────────────────────────────────────────
 
 const stripQuotes = (s: string) => s.replace(/^"|"$/g, "").toLowerCase();
 const unqualify = (s: string) => stripQuotes(s.split(".").pop() ?? s);
@@ -311,7 +170,16 @@ interface Declarations {
   rlsEnabled: Set<string>;
   /** "table|role|PRIVILEGE" triples a migration explicitly grants. */
   grants: Set<string>;
-  assertions: string[];
+  /**
+   * Assertion-only `DO` blocks that are NOT tagged `$pre$`. Stage 4 re-runs
+   * these against the committed database.
+   */
+  postconditions: string[];
+  /**
+   * Assertion-only `DO $pre$ … $pre$;` blocks. Held separately and never
+   * re-run — see isPreconditionDoBlock() for why that is not a weakening.
+   */
+  preconditions: string[];
 }
 
 const IDENT = String.raw`(?:"[^"]+"|[A-Za-z_][A-Za-z0-9_]*)`;
@@ -325,7 +193,8 @@ function declarationsOf(sql: string): Declarations {
     indexes: new Set(),
     rlsEnabled: new Set(),
     grants: new Set(),
-    assertions: [],
+    postconditions: [],
+    preconditions: [],
   };
 
   for (const m of code.matchAll(
@@ -396,7 +265,9 @@ function declarationsOf(sql: string): Declarations {
   }
 
   for (const stmt of topLevelStatements(sql)) {
-    if (isAssertionOnlyDoBlock(stmt)) d.assertions.push(stmt);
+    if (!isAssertionOnlyDoBlock(stmt)) continue;
+    if (isPreconditionDoBlock(stmt)) d.preconditions.push(stmt);
+    else d.postconditions.push(stmt);
   }
 
   return d;
@@ -899,6 +770,13 @@ function stagePolicyShape(): StageResult {
  * Each block is proven read-only before it is sent. A migration whose
  * "postcondition" mutates is REFUSED, not run — certification that can mutate
  * is not certification.
+ *
+ * `$pre$` blocks are held back rather than re-run, for the reason set out at
+ * isPreconditionDoBlock(): a precondition is a claim about the state BEFORE the
+ * apply, and the commonest kind here refuses a second apply, so after the
+ * commit it must be false. The count is printed, and a scoped migration that
+ * declares preconditions ONLY is named, so that a file this stage asserted
+ * nothing about is never mistaken for one it certified.
  */
 async function stagePostconditions(
   files: string[],
@@ -907,16 +785,24 @@ async function stagePostconditions(
   if (files.length === 0) return { ok: true, detail: ["nothing in scope."] };
 
   let ran = 0;
+  let preHeld = 0;
   const problems: string[] = [];
   const withNone: string[] = [];
+  const preOnly: string[] = [];
 
   for (const f of files) {
-    const blocks = declared.get(f)!.assertions;
-    if (blocks.length === 0) {
-      withNone.push(f);
+    const d = declared.get(f)!;
+    preHeld += d.preconditions.length;
+
+    if (d.postconditions.length === 0) {
+      // A file with `$pre$` blocks and nothing else has declared preconditions
+      // only. This stage does no work for it — reported on its own line rather
+      // than folded into "declares no assertions", because only one of those
+      // two is the author having written nothing.
+      (d.preconditions.length > 0 ? preOnly : withNone).push(f);
       continue;
     }
-    for (const block of blocks) {
+    for (const block of d.postconditions) {
       if (!isAssertionOnlyDoBlock(block)) {
         problems.push(`${f}: a postcondition block is not read-only; REFUSED rather than run.`);
         continue;
@@ -937,6 +823,24 @@ async function stagePostconditions(
         "Stage 2 and stage 3 are what covers those."
       : "every scoped migration declared at least one assertion.",
   ];
+  // Counted and printed, never silent: an exclusion nobody can see in the
+  // report is an exemption, and this one has to stay auditable.
+  if (preHeld > 0) {
+    detail.push(
+      `${preHeld} \`$pre$\` precondition block(s) held back from the re-run — a ` +
+        "precondition describes the state BEFORE the apply, so after the commit it " +
+        "is a tautology or a false alarm. The applier ran every one of them inside " +
+        "the migration's own transaction, where a raise aborts the apply. Reasoning " +
+        "in isPreconditionDoBlock().",
+    );
+  }
+  if (preOnly.length > 0) {
+    detail.push(
+      `${preOnly.length} scoped migration(s) declare PRECONDITIONS ONLY, so this stage ` +
+        `asserted nothing of its own about them: ${preOnly.join(", ")}. Stage 2 and ` +
+        "stage 3 are what covers those.",
+    );
+  }
   if (problems.length > 0) return { ok: false, detail: [...detail, ...problems] };
   return { ok: true, detail };
 }
