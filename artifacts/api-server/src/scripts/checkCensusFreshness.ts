@@ -2070,6 +2070,42 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   // paths resolve) and the most client-weighted: its subject is the typing
   // surface, so the hooks ARE the measurement, not evidence about it.
   "census-input-intelligence.md": [
+    // ── ADDED 2026-09-21 by §14 (the scattered §27–§56 rows) ────────────────
+    // Every path below is cited as EVIDENCE by a row §14 moved or re-read, and
+    // scope-coverage measured the census at exactly its 98% floor before them:
+    // four new citations took it to 95%. A census must watch the file its
+    // evidence names, so they are added rather than the floor lowered — which
+    // the checker's own error text calls "the one response that is never
+    // right". Kept as one dated block so a parallel lane's additions merge
+    // beside it instead of into it.
+    "travel-buddy-standalone/src/platform/input-assistance/components/ZeroStatePanel.tsx",
+    "travel-buddy-standalone/src/platform/input-assistance/components/SuggestionList.tsx",
+    "travel-buddy-standalone/src/platform/input-assistance/components/SuggestionGroup.tsx",
+    "travel-buddy-standalone/src/platform/input-assistance/components/__tests__/overlaySurfaces.component.test.tsx",
+    "travel-buddy-standalone/src/platform/input-assistance/components/__tests__/suggestionKeyboardNav.component.test.tsx",
+    "travel-buddy-standalone/src/platform/input-assistance/components/__tests__/telemetryLinkage.component.test.tsx",
+    "travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.localTier.component.test.tsx",
+    "travel-buddy-standalone/src/platform/input-assistance/search/__tests__/smartActions.test.ts",
+    // §43/G305's dispatcher and its end-to-end proof live in the app tree: the
+    // row is only closed BECAUSE a screen acts on the action, so a change to
+    // that screen is exactly the change that must age this census.
+    "travel-buddy-standalone/app/search.tsx",
+    "travel-buddy-standalone/app/__tests__/search.openCompassDispatch.component.test.tsx",
+    // §40/G277's resolver and the test that refutes the row's fifth clause.
+    "artifacts/api-server/src/lib/countryCodes.ts",
+    "artifacts/api-server/src/test/discoveryCountryRegistry.test.ts",
+    // §37/G240's creation-fallback proof.
+    "artifacts/api-server/src/test/inputAssistanceCreation.test.ts",
+    // §13.1 names this module as the proof that the country registry is
+    // CONSUMED rather than duplicated — the load-bearing half of G277's
+    // clause 1 — so it belongs in scope with the registry itself.
+    "artifacts/api-server/src/lib/stamps/countryLookup.ts",
+    // The two halves of the telemetry transport §12.6 says four rows wait on.
+    // They were the only two files this census cited and did not watch before
+    // this block; they are the telemetry lane's to CHANGE and this census's to
+    // WATCH, which are different things.
+    "travel-buddy-standalone/src/platform/input-assistance/services/telemetryBatcher.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/services/telemetryTransport.ts",
     // ── ADDED 2026-09-14 by the scope-coverage finding ──────────────────────
     // `app/_layout.tsx` is the one line §12.6 says four rows wait on, so a
     // change to it is exactly the change that must age this census.
