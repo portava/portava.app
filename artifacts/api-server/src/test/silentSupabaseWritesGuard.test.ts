@@ -216,9 +216,9 @@ describe("the guard is enforced, not merely tested", () => {
     );
   });
 
-  it("the subject has not vanished — 29 file entries, 39 sites", () => {
+  it("the subject has not vanished — 16 file entries, 21 sites", () => {
     // A scan that finds nothing passes `newViolations: []` trivially. The stale
-    // check already catches a fully broken walk (all 29 entries would read as
+    // check already catches a fully broken walk (all 16 entries would read as
     // stale), but not a walk that silently loses SOME of the tree. Pinning both
     // totals means a scanner that quietly stops seeing files fails here rather
     // than reporting a clean repository.
@@ -227,8 +227,8 @@ describe("the guard is enforced, not merely tested", () => {
     // baseline count because a site was genuinely fixed is expected — update
     // both numbers in the same commit, and never raise either.
     const b = baseline();
-    assert.equal(Object.keys(b).length, 29, "baseline file entries");
-    assert.equal(Object.values(b).reduce((a, n) => a + n, 0), 39, "baselined sites");
-    assert.equal(scanTree().length, 39, "sites actually found in the tree");
+    assert.equal(Object.keys(b).length, 16, "baseline file entries");
+    assert.equal(Object.values(b).reduce((a, n) => a + n, 0), 21, "baselined sites");
+    assert.equal(scanTree().length, 21, "sites actually found in the tree");
   });
 });
