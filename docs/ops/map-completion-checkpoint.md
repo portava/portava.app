@@ -415,6 +415,36 @@ raises `target_mismatch`, and a bare loopback URL nobody configured is not local
 mode and also exits 2. Teardown hands the database back as found — flag FALSE,
 zero leftover rows, checked after the run.
 
+## Was the collection-off defect isolated, or systemic? Swept, and it is isolated
+
+Fixing one route's flag-off write is worth little if the same mistake sits in
+its neighbours, so every Map route was swept for write sites against its own
+flag gates. The result BOUNDS the defect rather than just closing it.
+
+| Route | Write sites | Flag reads | Verdict |
+|---|---|---|---|
+| `mapTelemetry.ts` | 2 | 1 | the flag-off one was the defect (now 2964's counter); the other is on the ENABLED path and is 2202's intended client-drop accounting |
+| `mapProjection.ts` | 0 | 7 | reads only |
+| `mapProjectionTemporal.ts` | 0 | 3 | reads only |
+| `mapSearch.ts` | 0 | 2 | reads only |
+| `locateFriends.ts` | 4 | 3 | see below |
+
+`locateFriends.ts`'s four writes: three are in `startOrJoinSession` and one in
+`publishPosition`, and every caller of those is a route that gates on
+`locate_friends_enabled` first. The ONE ungated write in the whole Map surface
+is `DELETE /locate-friends/sessions/:id/membership`, and it is ungated
+**deliberately**, with the reason stated in the code: *"revocation must not
+depend on a capability switch."*
+
+That is the correct polarity and the opposite of the defect §3 fixed. A leave is
+a data-MINIMISING act — it closes a membership and deletes a position — so
+gating it would strand a user inside a session they asked to leave, on the day
+somebody switched the feature off. A collection control should never be able to
+disable a revocation.
+
+So the flag-off write was one site, not a pattern. Nothing else on the Map
+surface writes while its own control is off.
+
 ## Blockers that are not decisions
 
 - **Production migration chain 2217 → 2201 → 2218 → 2224 → 2295 is BLOCKED by
