@@ -8,12 +8,12 @@
  * skipping) the audit.
  *
  * `moderation_actions.target_user_id` is a NOT NULL FK to profiles(id), so a row
- * can only name a user. Owner resolution goes through resolveContentOwner; when
- * the reported content has no accountable user, the user-scoped row is skipped
- * rather than fabricated — see auditReportAction's doc comment.
+ * can only name a user. Owner resolution goes through resolveContentOwnerDetailed;
+ * when the reported content has no accountable user, the user-scoped row is
+ * skipped rather than fabricated — see auditReportAction's doc comment.
  */
 
-import { resolveContentOwner, type ModerationMetadata } from "./contentOwner.js";
+import { resolveContentOwnerDetailed, type ModerationMetadata } from "./contentOwner.js";
 
 export async function logModerationAction(
   sc: any,
@@ -72,8 +72,52 @@ export async function auditReportAction(
     actionType: string;
     reason: string | null;
   },
-): Promise<{ ok: true; audit: string } | { ok: false; error: string }> {
-  const ownerUserId = await resolveContentOwner(sc, opts.targetType, opts.targetId);
+): Promise<
+  | { ok: true; audit: "recorded"; id?: string; ownerUserId: string; metadata: ModerationMetadata }
+  | { ok: true; audit: "skipped_no_owner"; id?: undefined; ownerUserId: null; metadata: ModerationMetadata }
+  | { ok: true; audit: "skipped_owner_lookup_failed"; id?: undefined; ownerUserId: null; metadata: ModerationMetadata }
+  | { ok: false; error: string }
+> {
+  // `id` and `ownerUserId` are returned (additively) so an adjudicated trust
+  // charge can name the accountable user as its subject and record the audit
+  // row it rides on — routes/admin.ts hide-content and report resolve. The
+  // skipped_* branches return ownerUserId: null, and a caller must NOT charge
+  // anyone in either case, for the same reason the audit row is skipped.
+  //
+  // ── WHY THE DETAILED RESOLVER, AND WHY A SECOND SKIP VARIANT ─────────────
+  // This used to call the thin `resolveContentOwner`, which collapses four
+  // distinct outcomes into `string | null`. So an unreadable `posts` table and
+  // a post that genuinely no longer exists arrived here identically, and this
+  // function answered `skipped_no_owner` for both — a claim that NO ACCOUNTABLE
+  // OWNER EXISTS, said about a table it could not read. routes/admin.ts
+  // `/reports/:id/dismiss` returns that string to a human operator as `audit`,
+  // and `metadata.owner_unresolved = true` wrote the same claim into the
+  // append-only audit trail as a FACT about the content.
+  //
+  // `lookup_failed` is not a fact about the content; it is an operations event.
+  // It gets its own variant, its own metadata field (`owner_lookup_failed`, a
+  // field lib/contentOwner.ts had already DECLARED and documented for exactly
+  // this and which nothing set), and an ERROR-level log rather than a WARN —
+  // the operator reading "no accountable owner" needs to know the difference
+  // between "nobody to file this under" and "ask me again".
+  //
+  // ── `metadata` IS NOW RETURNED, because setting it was doing nothing ─────
+  // `metadata.owner_unresolved = true` was assigned on the skip path and then
+  // immediately returned past — the object is only ever passed to
+  // logModerationAction on the RECORDED path, which the skip does not reach. So
+  // the flag lib/contentOwner.ts describes as "recorded into the audit trail as
+  // a FACT" was in truth written to a local and discarded; there was no trail
+  // entry to be wrong in. The same would have been true of `owner_lookup_failed`
+  // if it were only assigned here. Returning `metadata` gives both flags
+  // somewhere to actually go: a caller can log or surface them (see
+  // routes/adminMedia.ts), which is the point of recording a skip at all.
+  //
+  // ADDITIVE ON PURPOSE. `src/scripts/verifyModerationFkE2E.ts:218` asserts
+  // `audit === "recorded"`, and every caller branches on `=== "recorded"`
+  // (routes/admin.ts:2207, :2410) or on `ok`. The recorded path is untouched;
+  // the new variant only splits what used to be one skip into two.
+  const resolution = await resolveContentOwnerDetailed(sc, opts.targetType, opts.targetId);
+  const ownerUserId = resolution.ownerUserId;
 
   const metadata: ModerationMetadata = {
     report_id: opts.reportId,
@@ -81,19 +125,34 @@ export async function auditReportAction(
     target_id: opts.targetId,
   };
 
+  if (resolution.outcome === "lookup_failed") {
+    metadata.owner_lookup_failed = true;
+    req?.log?.error?.(
+      {
+        err: resolution.error,
+        reportId: opts.reportId,
+        targetType: opts.targetType,
+        targetId: opts.targetId,
+      },
+      "moderation audit: the owner lookup COULD NOT RUN — the user-scoped audit row is " +
+        "skipped because the database was unreadable, NOT because the content is unowned",
+    );
+    return { ok: true, audit: "skipped_owner_lookup_failed", ownerUserId: null, metadata };
+  }
+
   if (!ownerUserId) {
     metadata.owner_unresolved = true;
     req?.log?.warn?.(
-      { reportId: opts.reportId, targetType: opts.targetType, targetId: opts.targetId },
+      { reportId: opts.reportId, targetType: opts.targetType, targetId: opts.targetId, outcome: resolution.outcome },
       "moderation audit: no accountable user for reported content — " +
         "user-scoped audit row skipped (see auditReportAction)",
     );
-    return { ok: true, audit: "skipped_no_owner" };
+    return { ok: true, audit: "skipped_no_owner", ownerUserId: null, metadata };
   }
 
   const r = await logModerationAction(
     sc, ownerUserId, opts.adminUserId, opts.actionType, opts.reason, metadata,
   );
   if (!r.ok) return { ok: false, error: r.error ?? "unknown" };
-  return { ok: true, audit: "recorded" };
+  return { ok: true, audit: "recorded", id: r.id, ownerUserId, metadata };
 }

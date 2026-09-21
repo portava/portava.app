@@ -62,6 +62,13 @@ import type {
   LiveObjectType,
   PublicPlaceRef,
   WallAction,
+  WallCoverage,
+  WallTruthClass,
+} from "../../lib/wallProjection.js";
+import {
+  coverageFromBucket,
+  deriveWallTruthClass,
+  promotionLabelFor,
 } from "../../lib/wallProjection.js";
 
 /** Absolute ceiling on strip size (spec §4: "normally 2–4 items"). */
@@ -110,6 +117,15 @@ export interface ResolvedLiveFact {
   /** Freshness horizon — past ⇒ the fact is stale and never shown. */
   validUntil: string;
   conflictState?: "none" | "minor" | "material";
+  /**
+   * Sensing §108 truth class of THIS fact. Required on every resolved producer:
+   * a schedule is `predicted`, a self-declared availability flag is `observed`,
+   * a count of independent public posts is `corroborated`. There is no default —
+   * a producer that does not state a class gets `unknown`, never `observed`.
+   */
+  truthClass?: WallTruthClass;
+  /** Sensing §108 coverage bucket. Absent ⇒ `unknown` (which is not "none"). */
+  coverage?: WallCoverage;
 }
 
 export interface LiveForYouCandidate {
@@ -124,6 +140,14 @@ export interface LiveForYouCandidate {
    * envelope for `subjectId` as before.
    */
   resolved?: ResolvedLiveFact;
+  /**
+   * A producer-supplied tap action that OVERRIDES the per-kind default in
+   * `actionFor`. Used where the canonical object behind the item admits a real
+   * real-world action the kind alone cannot name — an `event_state` item carries
+   * a `join` into the canonical event surface (spec §2), where the event's OWN
+   * eligibility/capacity gate runs. The Wall never re-implements that gate.
+   */
+  action?: WallAction;
 }
 
 export interface BuildLiveForYouOptions {
@@ -157,8 +181,10 @@ function labelFor(cand: LiveForYouCandidate, env: LiveClaimEnvelope): string {
   return valueStr ? `${name} · ${valueStr}` : name;
 }
 
-/** The single tap action for a live item, by kind (spec §4/§8). */
+/** The single tap action for a live item, by kind (spec §4/§8). A producer may
+ *  override the per-kind default with a canonical action of its own. */
 function actionFor(cand: LiveForYouCandidate): WallAction | undefined {
+  if (cand.action) return cand.action;
   switch (cand.liveObjectType) {
     case "place_state":
     case "event_state":
@@ -246,6 +272,10 @@ export async function buildLiveForYou(
         conflictState: r.conflictState ?? "none",
         observedAt: r.observedAt,
         validUntil: r.validUntil,
+        // §108: the producer states its own epistemic class. Absent ⇒ unknown —
+        // never silently "observed".
+        truthClass: r.truthClass ?? "unknown",
+        coverage: r.coverage ?? "unknown",
         action: actionFor(cand),
       });
       continue;
@@ -268,6 +298,21 @@ export async function buildLiveForYou(
       conflictState: env.conflictState,
       observedAt: env.observedAt,
       validUntil: env.validUntil,
+      // §108: derived from the CANONICAL intel vocabulary (source class + §10
+      // conflict state + freshness + the coarse cohort bucket) — the Wall does
+      // not invent a class and cannot promote a prediction into an observation.
+      truthClass: deriveWallTruthClass({
+        sourceClass: env.sourceClass,
+        conflictState: env.conflictState,
+        freshness,
+        coverage: coverageFromBucket(env.sourceCountBucket),
+      }),
+      coverage: coverageFromBucket(env.sourceCountBucket),
+      // §37: derived from the same `env.sourceClass` as truthClass above, so a
+      // sponsored claim cannot be quietly downgraded without also being named.
+      ...(promotionLabelFor(env.sourceClass) !== null
+        ? { promotionLabel: promotionLabelFor(env.sourceClass) as string }
+        : {}),
       action: actionFor(cand),
     });
   }
@@ -340,7 +385,7 @@ export async function buildGemLiveCandidates(
       )
       .in("canonical_place_id", [...byPlace.keys()])
       .eq("status", "active");
-    if (error || !Array.isArray(data)) return [];
+    if (error || !Array.isArray(data)) return []; // D11: ruled — see LIVE_STRIP_EMPTINESS_RULING at the foot of this file
     const out: LiveForYouCandidate[] = [];
     for (const row of data as any[]) {
       const placeId = row.canonical_place_id ? String(row.canonical_place_id) : null;
@@ -365,6 +410,10 @@ export async function buildGemLiveCandidates(
           confidence: projection.gemConfidence.score,
           observedAt,
           validUntil: new Date((Number.isNaN(updatedMs) ? now.getTime() : updatedMs) + GEM_FRESH_MS).toISOString(),
+          // §108: a gem STATE is derived from contributor evidence about the
+          // gem, not from an observation of conditions right now — inferred.
+          truthClass: "inferred",
+          coverage: "unknown",
         },
       });
     }
@@ -405,7 +454,7 @@ export async function buildSocialPresenceLiveCandidates(
       .in("author_id", [...followedCreatorIds].slice(0, 500))
       .gte("created_at", cutoff)
       .limit(500);
-    if (error || !Array.isArray(data)) return [];
+    if (error || !Array.isArray(data)) return []; // D11: ruled — see LIVE_STRIP_EMPTINESS_RULING at the foot of this file
     // distinct followed authors per place + newest post per place.
     const distinctByPlace = new Map<string, Set<string>>();
     const newestByPlace = new Map<string, number>();
@@ -434,6 +483,12 @@ export async function buildSocialPresenceLiveCandidates(
           confidence: 0.8,
           observedAt: new Date(newest).toISOString(),
           validUntil: new Date(newest + SOCIAL_PRESENCE_DAYS * 24 * 60 * 60 * 1000).toISOString(),
+          // §108: each contributing post is a firsthand public disclosure by its
+          // own author, and the k-anonymity floor guarantees at least two
+          // INDEPENDENT authors — so the count is corroborated, not a single
+          // observation. It is a record of the past, never a claim about now.
+          truthClass: "corroborated",
+          coverage: count >= 5 ? "many" : count >= 3 ? "several" : "few",
         },
       });
     }
@@ -481,7 +536,7 @@ export async function buildBuddyLiveCandidates(
       .eq("available_now", true)
       .in("city", [...cities.keys()])
       .limit(50);
-    if (error || !Array.isArray(data)) return [];
+    if (error || !Array.isArray(data)) return []; // D11: ruled — see LIVE_STRIP_EMPTINESS_RULING at the foot of this file
     const nightlifeByCity = new Map<string, boolean>();
     const seenCity = new Set<string>();
     for (const row of data as any[]) {
@@ -505,6 +560,11 @@ export async function buildBuddyLiveCandidates(
           confidence: 0.7,
           observedAt: now.toISOString(),
           validUntil: new Date(now.getTime() + BUDDY_AVAILABILITY_MS).toISOString(),
+          // §108: a Buddy's own `available_now` flag is a firsthand declaration
+          // about themselves — a real observation, but a single non-independent
+          // party, so it can never read as corroborated.
+          truthClass: "observed",
+          coverage: "few",
         },
       });
     }
@@ -717,6 +777,22 @@ export async function buildEventStateLiveCandidates(
           validUntil: new Date(
             best.phase === "ongoing" ? eventEndMs(best.ev, startMs) : startMs,
           ).toISOString(),
+          // §108, and the §37 truth boundary above: an event schedule states
+          // what someone INTENDS, not what is observably happening. It is a
+          // PREDICTION and the client must never render it as an observation.
+          truthClass: "predicted",
+          coverage: "unknown",
+        },
+        // spec §2 "join": the one real-world action an event admits. It hands the
+        // viewer to the CANONICAL event surface, where the event's own
+        // eligibility / capacity / RSVP gate runs (routes/events.ts
+        // POST /events/:id/join). The Wall never re-implements that gate and
+        // never joins on the viewer's behalf — the transition is not forced (§40).
+        action: {
+          type: "join",
+          label: "Join",
+          targetType: "event",
+          targetId: String(best.ev.id),
         },
       });
     }
@@ -968,6 +1044,9 @@ export async function buildTripSignalLiveCandidates(
           confidence: null,
           observedAt: now.toISOString(),
           validUntil: new Date(e.expiresMs).toISOString(),
+          // §108: a trip plan item is an intention on a schedule — predicted.
+          truthClass: "predicted",
+          coverage: "unknown",
         },
       });
     }
@@ -977,3 +1056,48 @@ export async function buildTripSignalLiveCandidates(
     return [];
   }
 }
+
+/**
+ * ── D11 RULING: THE THREE PRODUCER READS MAY ANSWER `[]` ON A FAILURE ────────
+ *
+ * `LIVE_STRIP_EMPTINESS_RULING`. Three reads in this file — hidden_gems in
+ * buildGemLiveCandidates, posts in buildSocialPresenceLiveCandidates,
+ * rent_buddy_profiles in buildBuddyLiveCandidates — return `[]` when the read
+ * FAILED, which is also what they return when there is genuinely nothing to
+ * show. That is the swallowed-read class, and on a feed surface it is as well
+ * camouflaged as it gets: "no gem here", "nobody you follow was here", "no
+ * Buddy available" are the ordinary answers, so nothing about an empty strip
+ * looks wrong. The ruling below is that the camouflage is nonetheless harmless,
+ * and it is a ruling about the CALLERS, not about the reads.
+ *
+ *  1. AN ABSENT STRIP ITEM ASSERTS NOTHING. The strip's contract is 0..4 items
+ *     assembled in priority order. It is not an enumeration ("these are your
+ *     trips"), not a gate ("this is not a duplicate") and not a count that
+ *     anything reports. A missing item removes a claim from the page; it does
+ *     not add a false one. That is the difference between this site and
+ *     `eligibleTripIds: []` in MediaActionResolver, which WAS fixed.
+ *
+ *  2. THE CALLER HAS ALREADY RULED, IN ADVANCE, IN WRITING. Spec §34 / TABLE 5:
+ *     Live Intelligence unavailable ⇒ degrade the strip, social feed stays
+ *     normal. routes/wall.ts implements exactly that and nothing else: each
+ *     producer call is wrapped in `.catch(err => { logger.warn(...); return [] })`,
+ *     and buildLiveStrip wraps the assembly in the same. The caller's whole
+ *     decision, for a failure it CAN see, is "log it and carry on with []" —
+ *     so telling it about this failure buys a behaviour it already performs.
+ *
+ *  3. THE ONE DOWNSTREAM CONSUMER MOVES THE PERMISSIVE WAY, HARMLESSLY. The
+ *     strip's items seed `liveStripSubjectIds` / `liveStripSignals`, which only
+ *     SUPPRESS a Context Thread that would repeat a strip item. An empty strip
+ *     suppresses nothing, so the failure mode is "the same fact may appear
+ *     twice" — never a fact asserted that was not read.
+ *
+ * WHAT WOULD CHANGE THIS RULING: a surface that reports the strip's emptiness
+ * as a fact ("nothing is live near you"), or a consumer that reads an empty
+ * strip as coverage rather than as no-suppression. Neither exists today.
+ *
+ * WHAT IS EXPLICITLY NOT THE FIX: adding a `logger.warn` to the three branches.
+ * Each producer's catch already logs — a THROWN failure is logged, a RESOLVED
+ * one is not — so a log here would only close the asymmetry for operators, and
+ * an operator seeing it is not the caller being told. Left alone on purpose.
+ */
+export const LIVE_STRIP_EMPTINESS_RULING = "spec §34 / TABLE 5: an unavailable producer degrades the strip; an absent strip item asserts nothing" as const;

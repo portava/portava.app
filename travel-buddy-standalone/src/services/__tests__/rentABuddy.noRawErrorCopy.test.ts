@@ -39,7 +39,7 @@ const OTHER_ROOTS = [
   'src/components/TelegraphInboxScreen.tsx',
   'src/components/TagPreviewSheet.tsx',
   'src/components/RichText.tsx',
-  'src/components/tripCrew/CrewMapSection.tsx',
+  'src/features/trips/crew/CrewMapSection.tsx',
   'src/components/circle/CircleMemberRow.tsx',
   'app/u/[username].tsx',
 ];

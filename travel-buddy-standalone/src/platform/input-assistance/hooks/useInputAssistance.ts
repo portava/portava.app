@@ -27,9 +27,9 @@ import type { InputFieldPolicy } from '../types/fieldPolicy.ts';
 import type { InputSuggestion, InputSessionContext, WritingDraft } from '../types/inputSuggestion.ts';
 import { resolveFieldPolicy } from '../contexts/fieldRegistry.ts';
 import { requestSuggestions } from '../services/inputAssistance.ts';
-import { sharedSuggestionCache, SuggestionCache } from '../services/suggestionCache.ts';
+import { sharedSuggestionCache, SuggestionCache, isCacheablePrivacyClass } from '../services/suggestionCache.ts';
 import { createSequenceGuard } from '../services/raceGuard.ts';
-import { finalizeSuggestions } from '../services/suggestionRanking.ts';
+import { finalizeSuggestions, narrowToQuery } from '../services/suggestionRanking.ts';
 import { emitInputEvent } from '../services/inputTelemetry.ts';
 
 export interface UseInputAssistanceOptions {
@@ -65,6 +65,16 @@ export interface UseInputAssistanceResult {
   unavailable: boolean;
   /** The resolved policy (null when the field is unregistered + no fallback). */
   policy: InputFieldPolicy | null;
+  /**
+   * §44 — the `requestId` of the serve that produced `suggestions`, or null
+   * when nothing has been served yet (zero-character state, local tier only,
+   * or a failed request).
+   *
+   * Census G355: "`requestId` is generated per request and no event carries it
+   * back, so an impression still cannot be joined to the selection that
+   * followed it." Returning it is the hook's half of closing that.
+   */
+  requestId: string | null;
 }
 
 export function useInputAssistance(
@@ -80,6 +90,12 @@ export function useInputAssistance(
   const [suggestions, setSuggestions] = useState<InputSuggestion[]>([]);
   const [loading, setLoading] = useState(false);
   const [unavailable, setUnavailable] = useState(false);
+  // §44 ACTION/RESULT LINKAGE (census G355). The suggest response has always
+  // carried a `requestId` and this hook has always thrown it away, so an
+  // impression could never be joined to the selection that followed it. It is
+  // now state: SmartInput puts it on the field's TelemetryField and every event
+  // the field emits names the serve it belongs to.
+  const [requestId, setRequestId] = useState<string | null>(null);
 
   // Per-instance sequence guard + abort controller + debounce timer.
   const guardRef = useRef(createSequenceGuard());
@@ -140,13 +156,52 @@ export function useInputAssistance(
     // field's non-AI cache entry for the same text.
     const cacheFieldId = aiAssist === true ? `${fieldId}::ai:${aiKey}` : fieldId;
     const cacheKey = SuggestionCache.key(cacheFieldId, trimmed, latKey, lngKey);
-    const cached = sharedSuggestionCache.get(cacheKey);
+    // §29 — the field's declared privacyClass decides whether its suggestions
+    // may live in the process-global cache at all. A `personal` / `sensitive` /
+    // `private_message` field never reads from it and never writes to it, so a
+    // viewer-scoped list (recipients, a sensitive location) is not retained
+    // under the raw text that produced it. See suggestionCache.ts.
+    const cacheable = isCacheablePrivacyClass(policy.privacyClass);
+    const cached = cacheable ? sharedSuggestionCache.get(cacheKey) : null;
     if (cached) {
       guardRef.current.invalidate();
       setSuggestions(cached);
       setLoading(false);
       setUnavailable(false);
       return;
+    }
+
+    // ── §33 TIER 1 / §34 — the LOCAL prefix tier ────────────────────────────
+    // The ladder in this file's own header claims three tiers; until now there
+    // were two. `minChars` was checked, the exact-string cache was probed, and a
+    // miss went straight to the network — so typing forward ("ba" → "ban" →
+    // "bang") was a round trip per keystroke even though the answer for the
+    // shorter prefix was in the map, and §34's "prefer local: cached city prefix
+    // matching" had nothing behind it.
+    //
+    // This is that tier. It reuses the longest cached PREFIX of the typed text
+    // and narrows it on-device to the rows that still match. It is subtractive
+    // only (`narrowToQuery` cannot invent, reorder or re-score a row), so the
+    // server remains the authority (§42) — this just stops the field going blank
+    // between keystrokes, and is the list retained when the network dies below.
+    //
+    // Privacy is the same gate as the exact-string cache: an uncacheable field
+    // (personal / sensitive / private_message) neither wrote to the cache nor
+    // reads from it here, so no viewer-scoped list is ever re-shown locally.
+    const localTier = cacheable
+      ? (() => {
+          const hit = sharedSuggestionCache.longestPrefix(cacheFieldId, trimmed, latKey, lngKey);
+          if (!hit) return null;
+          const narrowed = finalizeSuggestions(
+            narrowToQuery(hit.suggestions, trimmed),
+            policy.maxSuggestions,
+          );
+          return narrowed.length > 0 ? narrowed : null;
+        })()
+      : null;
+    if (localTier) {
+      setSuggestions(localTier);
+      setUnavailable(false);
     }
 
     setLoading(true); // keep previous suggestions visible while fetching
@@ -159,6 +214,7 @@ export function useInputAssistance(
       abortRef.current = ctrl;
 
       emitInputEvent('suggestion_request_started', fieldId, policy.context, undefined, policy.telemetryPolicy);
+      const sentAt = Date.now();
 
       void requestSuggestions(
         {
@@ -180,17 +236,38 @@ export function useInputAssistance(
 
         if (res.ok) {
           const finalized = finalizeSuggestions(res.suggestions, policy.maxSuggestions);
-          sharedSuggestionCache.set(cacheKey, finalized);
+          if (cacheable) sharedSuggestionCache.set(cacheKey, finalized);
           setSuggestions(finalized);
           setUnavailable(false);
           setLoading(false);
-          emitInputEvent('suggestion_request_completed', fieldId, policy.context, { count: finalized.length }, policy.telemetryPolicy);
+          setRequestId(res.requestId || null);
+          // §57 P95 suggestion latency. `clientMs` is the round trip this
+          // device saw; `serverMs` is what the serve itself cost. Both, because
+          // the difference between them is the network, and neither side can
+          // measure that alone. `serverMs` is omitted rather than zeroed when
+          // the deployment does not send it — see services/inputAssistance.ts.
+          emitInputEvent(
+            'suggestion_request_completed',
+            fieldId,
+            policy.context,
+            { count: finalized.length, clientMs: Date.now() - sentAt, serverMs: res.serverMs },
+            policy.telemetryPolicy,
+            res.requestId || null,
+          );
         } else if (res.aborted) {
           // Newer request in flight — do nothing (never flash empty).
         } else if (res.unavailable) {
-          // Endpoint missing / offline → degrade to no suggestions, no error.
+          // §33 "network loss: RETAIN local/cached suggestions" + explicit
+          // degraded behaviour. This branch used to `setSuggestions([])`, which
+          // is the exact opposite of the requirement: it discarded the last good
+          // rows at the one moment the user cannot get new ones. The degraded
+          // STATE is still set (the overlay shows its quiet note, never an
+          // error) — what changes is that the local tier computed above survives
+          // it. `localTier` is already narrowed to the typed text, so this
+          // retains rows that still match rather than freezing a stale list.
+          // With nothing local to retain it is `[]`, the old behaviour.
           setUnavailable(true);
-          setSuggestions([]);
+          setSuggestions(localTier ?? []);
           setLoading(false);
         } else {
           // Transient error: keep whatever is on screen, just stop the spinner.
@@ -210,5 +287,5 @@ export function useInputAssistance(
   // Abort any in-flight request on unmount.
   useEffect(() => () => { abortRef.current?.abort(); }, []);
 
-  return { suggestions, loading, unavailable, policy };
+  return { suggestions, loading, unavailable, policy, requestId };
 }

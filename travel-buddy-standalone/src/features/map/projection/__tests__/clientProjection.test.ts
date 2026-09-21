@@ -31,9 +31,13 @@ import {
   projectFriend,
   projectGemLocal,
   projectTrip,
+  mapProjectionCacheScope,
+  isPlaceIntelCacheSafe,
+  PLACE_INTEL_CACHEABLE_KINDS,
 } from '../clientProjection.ts';
 import {
   KIND_DEFAULT_PRIORITY,
+  MAP_OBJECT_KINDS,
   isRenderable,
   mayRenderIdentity,
   type MapObject,
@@ -597,5 +601,132 @@ describe('projectCompassResult', () => {
     const obj = projectCompassResult({ ...REC, title: null })!;
     assert.equal(obj.title, REC.category);
     assert.ok(isRenderable(projectCompassResult({ ...REC, title: null, category: null })!));
+  });
+});
+
+// ── The place_intel cache boundary ────────────────────────────────────────────
+//
+// These are regression tests for a LIVE cross-account leak, not for a design
+// preference. Before this change `useMapEntities` wrote its whole merged object
+// list — trips, crew, buddies, travelers, memories — into the `place_intel`
+// cache under the bare city name, and read it back the same way. AsyncStorage
+// survives sign-out, so the next account to open the map in that city was
+// seeded from the previous account's private objects.
+//
+// Each test below fails against the old `city ?? 'unknown'` keying.
+
+describe('projection cache scope', () => {
+  const base = {
+    accountId: 'account-a',
+    city: 'Da Nang',
+    lat: 16.0544,
+    lng: 108.2022,
+    zoom: 12,
+    radiusKm: 50,
+    enabledLayers: ['events', 'gems'] as const,
+  };
+
+  test('never shares a projection across accounts', () => {
+    assert.notEqual(
+      mapProjectionCacheScope(base),
+      mapProjectionCacheScope({ ...base, accountId: 'account-b' }),
+    );
+  });
+
+  // The load-bearing one. A fallback bucket for "no account yet" would be read
+  // and written by EVERY signed-in viewer during SessionContext's async
+  // hydration window, not just by signed-out ones — i.e. it would restore the
+  // original defect exactly when identity is least certain. Matches
+  // hooks/useSnapshotCache.ts, which refuses to build a key without a userId.
+  test('refuses to produce a key at all when there is no account', () => {
+    assert.equal(mapProjectionCacheScope({ ...base, accountId: null }), null);
+    assert.equal(mapProjectionCacheScope({ ...base, accountId: '' }), null);
+    assert.equal(mapProjectionCacheScope({ ...base, accountId: '   ' }), null);
+  });
+
+  test('is stable when layer order changes', () => {
+    assert.equal(
+      mapProjectionCacheScope(base),
+      mapProjectionCacheScope({ ...base, enabledLayers: ['gems', 'events'] }),
+    );
+  });
+
+  test('separates different cameras, zooms, radii and layer sets', () => {
+    const scope = mapProjectionCacheScope(base);
+    assert.notEqual(scope, mapProjectionCacheScope({ ...base, lat: 16.2 }));
+    assert.notEqual(scope, mapProjectionCacheScope({ ...base, zoom: 14 }));
+    assert.notEqual(scope, mapProjectionCacheScope({ ...base, radiusKm: 10 }));
+    assert.notEqual(scope, mapProjectionCacheScope({ ...base, enabledLayers: ['events'] }));
+  });
+
+  test('separates viewports that differ only in the §16 optional layers', () => {
+    const scope = mapProjectionCacheScope(base);
+    assert.notEqual(scope, mapProjectionCacheScope({ ...base, optionalLayers: ['memories'] }));
+    assert.notEqual(
+      mapProjectionCacheScope({ ...base, optionalLayers: ['memories'] }),
+      mapProjectionCacheScope({ ...base, optionalLayers: ['saved'] }),
+    );
+    // Order-insensitive, like enabledLayers.
+    assert.equal(
+      mapProjectionCacheScope({ ...base, optionalLayers: ['memories', 'saved'] }),
+      mapProjectionCacheScope({ ...base, optionalLayers: ['saved', 'memories'] }),
+    );
+  });
+
+  test('coordinate-only deep links get a reusable non-"unknown" scope', () => {
+    const scope = mapProjectionCacheScope({ ...base, city: null });
+    assert.ok(scope !== null);
+    assert.match(scope, /^account:account-a\|16\.054,108\.202\|/);
+    assert.ok(!scope.includes('unknown'));
+    // Two different coordinate-only deep links must not collide, which is
+    // exactly what `city ?? 'unknown'` did to all of them.
+    assert.notEqual(
+      scope,
+      mapProjectionCacheScope({ ...base, city: null, lat: 48.85, lng: 2.35 }),
+    );
+  });
+
+  test('a city-only viewport still keys on the city, case-insensitively', () => {
+    const cityOnly = { ...base, lat: null, lng: null };
+    assert.equal(
+      mapProjectionCacheScope(cityOnly),
+      mapProjectionCacheScope({ ...cityOnly, city: 'DA NANG' }),
+    );
+    assert.notEqual(
+      mapProjectionCacheScope(cityOnly),
+      mapProjectionCacheScope({ ...cityOnly, city: 'Hoi An' }),
+    );
+  });
+});
+
+describe('place-intelligence cache privacy', () => {
+  test('refuses the viewer\'s own trips and the people around them', () => {
+    assert.equal(isPlaceIntelCacheSafe(projectTrip(TRIP)!), false);
+    assert.equal(isPlaceIntelCacheSafe(projectFriend(FRIEND)!), false);
+    assert.equal(isPlaceIntelCacheSafe(projectBuddy(BUDDY)!), false);
+  });
+
+  test('refuses every other viewer-scoped kind by name', () => {
+    for (const kind of [
+      'crew_member', 'social_zone', 'buddy_zone', 'trip_stop',
+      'meeting_point', 'memory', 'saved_place', 'personal_city', 'prediction',
+    ] as const) {
+      assert.equal(isPlaceIntelCacheSafe({ kind }), false, `${kind} must not be cached`);
+    }
+  });
+
+  test('allows fixed public place/event intelligence', () => {
+    assert.equal(isPlaceIntelCacheSafe(projectGemLocal(GEM)!), true);
+    assert.equal(isPlaceIntelCacheSafe(projectEventLocal(EVENT, NOW)!), true);
+  });
+
+  // The allowlist is the safety property: a kind added to MAP_OBJECT_KINDS
+  // later must be excluded until somebody deliberately adds it, so this pins
+  // the direction of the default rather than the contents of the list.
+  test('is an allowlist — an unrecognised kind is refused', () => {
+    assert.equal(isPlaceIntelCacheSafe({ kind: 'not_a_real_kind' as any }), false);
+    for (const kind of PLACE_INTEL_CACHEABLE_KINDS) {
+      assert.ok(MAP_OBJECT_KINDS.includes(kind), `${kind} is not a real MapObjectKind`);
+    }
   });
 });

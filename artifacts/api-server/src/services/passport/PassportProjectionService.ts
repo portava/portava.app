@@ -31,14 +31,15 @@ import {
   type OwnerFieldVisibility,
 } from "./PassportPrivacyGuard.js";
 import { getSafeTrustSummary, getPublicTrustBadge } from "../trust/TrustPrivacyGuard.js";
-import { getDisplayTrustScore, getTrustProfile } from "../trust/TrustScoreService.js";
+import { buildExperienceGraphProjection, type ExperienceGraphProjection } from "./PassportExperienceGraphService.js";
+import { getDisplayTrustScore, getTrustProfileResult, type TrustProfileRead } from "../trust/TrustScoreService.js";
 import { getRestrictionState, type RestrictionState } from "../trust/TrustRestrictionService.js";
 import { buildStats } from "./PassportMapService.js";
 import { buildUnifiedStamps, filterUnifiedStamps, type UnifiedStamp, type StampSource } from "./UnifiedStampService.js";
-import { loadMemories } from "./PassportMemoryService.js";
+import { loadMemoriesRead } from "./PassportMemoryService.js";
 import { filterMemories } from "./PassportPrivacyGuard.js";
-import { countUserTrips } from "../../lib/tripCounts.js";
-import { nameVisibilitySet, sanitizeIdentity } from "../../lib/publicIdentity.js";
+import { countUserTrips } from "../../domain/trips/services/tripCounts.js";
+import { nameVisibilitySet, presentedName, sanitizeIdentity } from "../../lib/publicIdentity.js";
 import { buildFeaturedJourney, type JourneyProjection, type JourneyPermissions } from "./PassportJourneyService.js";
 import {
   buildSharedContext,
@@ -61,6 +62,10 @@ import {
   type ViewerRelationship as WindowViewerRelationship,
 } from "./OpenToPlansService.js";
 import { isFlagEnabled } from "../../lib/featureFlags.js";
+import { LOCATE_FRIENDS_CREW_PRESENCE } from "../../lib/capability/registry.js";
+import { resolveCapability } from "../../lib/capability/schemaCapability.js";
+import { logger as rootLogger } from "../../lib/logger.js";
+import { THREAD_ALLOWED_STATUSES, isOneOf } from "../../lib/rentBuddyBookingStatus.js";
 
 // The TABLE 24 owner field opt-outs now live in PassportPrivacyGuard so the
 // projection and Shared Context share ONE reader. Re-exported for callers that
@@ -233,8 +238,54 @@ export interface DomainTrust {
   domain: string;
   /** Presentation word, e.g. "Excellent" | "Strong" | "Established" | "Building" | "New" | "Not applicable". */
   presentation: string;
-  /** False when the domain does not apply to this user (e.g. Buddy for a non-buddy). */
+  /**
+   * False when the domain does not apply to this user (e.g. Buddy for a
+   * non-buddy). It has exactly this ONE meaning. "Not measured" is a different
+   * statement about a person and lives in `basis` — repurposing this flag for
+   * it would change the word a real person is shown, which is an owner
+   * decision rather than a field.
+   */
   applicable: boolean;
+  /** What this domain's word rests on. See `domainTrustBasis`. */
+  basis: DomainTrustBasis;
+}
+
+/**
+ * WHAT ONE DOMAIN'S PRESENTATION WORD RESTS ON (§9/§10 "explainable").
+ *
+ *   unavailable     `trust_profiles` could not be READ. Whatever the word says,
+ *                   it is not a statement about this person's trust.
+ *   measured        every category the domain averages was present on the
+ *                   profile — the word is a measurement.
+ *   partial         some were present and some were the neutral substitution.
+ *                   A mean of three real scores and one default is neither a
+ *                   measurement nor a default, and saying so is the point.
+ *   substituted     NONE was present. The word is the neutral 50's word — the
+ *                   56-of-58 production case census-passport §3 measured.
+ *   not_applicable  the domain does not apply at all (Buddy for a non-buddy).
+ *                   Zero-of-zero inputs is vacuously "all measured", and
+ *                   reporting THAT as `measured` would claim a domain nobody
+ *                   scored had been scored.
+ *
+ * EXPORTED so its test exercises the shipped predicate rather than a copy of
+ * it, for the same reason `trustConfidenceBasis` is.
+ */
+export type DomainTrustBasis =
+  | "measured"
+  | "partial"
+  | "substituted"
+  | "unavailable"
+  | "not_applicable";
+
+export function domainTrustBasis(
+  state: TrustProfileRead["state"],
+  measuredInputs: number,
+  totalInputs: number,
+): DomainTrustBasis {
+  if (state === "unavailable") return "unavailable";
+  if (totalInputs <= 0) return "not_applicable";
+  if (measuredInputs <= 0) return "substituted";
+  return measuredInputs >= totalInputs ? "measured" : "partial";
 }
 
 export interface TrustProjection {
@@ -242,10 +293,50 @@ export interface TrustProjection {
   publicLevel: string;
   /** Numeric 0–100 exposed only where appropriate (§9) — self view. */
   score: number | null;
-  confidence: "low" | "medium" | "high";
+  /** Band, or `null` = NOT MEASURED (P50). See `passportTrustConfidence` at the foot of this file. */
+  confidence: TrustConfidenceBand | null;
+  /**
+   * WHAT `confidence` WAS COMPUTED FROM. Added 2026-09-09 for census-trust P45
+   * ("domain-specific/confidence-aware/explainable") and P50 ("an 82 with high
+   * evidence is not an 82 with little").
+   *
+   * `confidence` USED TO BE derived from TRAVEL statistics — `stats.stamps +
+   * stats.trips * 2 + verified` — under a comment that called it
+   * "evidence-aware". It was aware of evidence about TRAVEL, not about TRUST: a
+   * traveller with twenty stamps and zero trust events read `confidence:
+   * "high"` over a trust score that was entirely the substituted neutral 50.
+   * That formula is GONE (P50). `confidence` now comes only from migration
+   * 2371's `evidence_weight` — the trust engine's own decay-weighted measure,
+   * written by `measureEvidence` — through `passportTrustConfidence`.
+   *
+   * This field therefore no longer distinguishes two live derivations; it
+   * reports WHICH ABSENCE produced a `null` band, which is the part a consumer
+   * cannot recover from the band itself:
+   *
+   *   trust_evidence  a band was produced, and it is a measurement.
+   *   travel_proxy    the profile was READ and the engine has recorded no
+   *                   evidence measure at all (a pre-2371 row). The name is
+   *                   kept because it is on the wire and a client types it;
+   *                   nothing derives from travel any more.
+   *   unavailable     `trust_profiles` could not be read. Nothing here is a
+   *                   statement about this person.
+   */
+  confidenceBasis: "trust_evidence" | "travel_proxy" | "unavailable";
+  /** `trust_profiles.evidence_weight` when the profile was read; null otherwise. */
+  evidenceWeight?: number | null;
+  /** `trust_profiles.evidence_count` when the profile was read; null otherwise. */
+  evidenceCount?: number | null;
   strengths: string[];
   /** TABLE 12 per-domain trust presentations (never raw scores). */
   domains: DomainTrust[];
+  /**
+   * True when `label`, `publicLevel`, `strengths` and `domains` are the
+   * NEW-ACCOUNT / neutral-50 defaults because `trust_profiles` could not be
+   * READ — not because this traveller has no history. `unreadable` carries the
+   * same fact at the projection level; this one rides with the section so a
+   * consumer holding only the trust block still knows.
+   */
+  degraded?: boolean;
 }
 
 export interface CredentialProjection {
@@ -298,6 +389,15 @@ export interface MemoryProjection {
 }
 
 /** §29 aggregate (TABLE 28), plus a server-side `restricted` discriminator. */
+/**
+ * A section of the projection whose underlying read FAILED.
+ *
+ * Every name here corresponds to a field that is a CLAIM ABOUT A PERSON, and
+ * whose failure mode is a zero or an empty array indistinguishable from the
+ * truthful version of the same value.
+ */
+export type PassportUnreadableSection = "stats" | "stamps" | "memories" | "trust" | "trips" | "experience_graph";
+
 export interface PassportProjection {
   userId: string;
   identity: PassportIdentity;
@@ -313,8 +413,34 @@ export interface PassportProjection {
   memories: MemoryProjection[];
   travelIdentity?: TravelIdentityProjection;
   sharedContext?: SharedContextProjection;
+  /** P159 — the owner's own shape in CompassGraphEngine's Experience Graph; absent for every other viewer. */
+  experienceGraph?: ExperienceGraphProjection;
   capabilities: PassportActionCapabilities;
   viewerContext: PassportViewerContext;
+  /**
+   * Sections whose underlying read FAILED, so the value carried for them is a
+   * placeholder rather than a measurement.
+   *
+   * ── WHY A PASSPORT NEEDS THIS FIELD ──────────────────────────────────────
+   * Absent it, `stats: { countries: 0, stamps: 0 }` and `memories: []` were the
+   * projection's answer to BOTH "this traveller has earned nothing" and "the
+   * table could not be read". They are not the same statement: the first is a
+   * claim about a person and the second is a claim about our infrastructure,
+   * and rendering the second as the first tells a traveller their record is
+   * empty when it is merely unavailable.
+   *
+   * The reason it could go unnoticed for so long is mechanical: supabase-js
+   * RESOLVES on a database error rather than rejecting, so a failed read
+   * arrives as `{ data: null, error }`, the `?? []` turns it into an empty
+   * collection, and the `try/catch` wrapped around it is dead code that never
+   * fires. Nothing throws; nothing logs at the call site; the number is simply
+   * wrong and confident.
+   *
+   * ABSENT when every read succeeded. Never used to widen or narrow what a
+   * viewer may see — a degraded read stays fail-closed exactly as before; this
+   * only stops the result being PRESENTED as a fact.
+   */
+  unreadable?: PassportUnreadableSection[];
   /** Present when privacy/blocking reduced the projection to a minimal card. */
   restricted?: { reason: string };
 }
@@ -395,29 +521,77 @@ async function resolveSharedTripRole(
   }
 }
 
-/** Determine a buddy service relationship between owner and viewer, if any. */
-async function resolveBuddyRole(
+/**
+ * Booking statuses that mean a REAL buddy service relationship exists between
+ * two people — the question `resolveBuddyRole` is actually asking.
+ *
+ * ── WHY THIS IS NOT A LOCAL LITERAL ANY MORE ────────────────────────────────
+ * It used to be `["confirmed", "active", "completed", "in_progress"]`, and two
+ * of those four are fiction:
+ *
+ *   • `active` is not a label of the `rent_buddy_booking_status` enum at all.
+ *     The enum's fourteen labels are pending, confirmed, in_progress, completed,
+ *     cancelled, disputed, declined, expired, cancelled_by_traveler,
+ *     cancelled_by_buddy, completed_pending_traveler_confirmation, scheduled,
+ *     requested, no_show_pending. Because this membership test runs in JS and
+ *     not in the predicate, `active` did not raise 22P02 the way the same
+ *     literal did in CompassAbuseDefenseEngine and interactionPermissions — it
+ *     simply never matched anything. A dead literal, silent.
+ *
+ *   • `confirmed` is written by NO route in src/. `lib/rentBuddyBookingStatus.ts`
+ *     records this: accept writes `scheduled` (rentABuddy.ts:2396). It is
+ *     retained only because pre-existing rows may carry it.
+ *
+ * And the set OMITTED `scheduled` — the one and only status a canonically
+ * accepted booking has. So for a booking between the two parties that had been
+ * accepted but not yet started, this returned null and the viewer never reached
+ * `buddy_provider` / `buddy_customer` at all. The three live values it did admit
+ * (completed, in_progress) plus dead `confirmed` covered the session and after,
+ * never the window between acceptance and start.
+ *
+ * The canonical set is `THREAD_ALLOWED_STATUSES` — the same statuses under which
+ * the two parties are allowed a booking chat thread, which is precisely
+ * "these two are in a service relationship". Reusing it rather than spelling a
+ * fifth hand-rolled list is the point: this file has now been one of eight
+ * places that got this enum wrong.
+ */
+export const BUDDY_RELATIONSHIP_STATUSES = THREAD_ALLOWED_STATUSES;
+
+/**
+ * Determine a buddy service relationship between owner and viewer, if any.
+ *
+ * FAIL-CLOSED ON AN UNREADABLE TABLE. `buddyRole` only ever ADDS context
+ * (`classifyViewerContext` promotes to `buddy_provider` / `buddy_customer`), so
+ * `null` is the least-privileged answer and is the right one when the read
+ * fails. What was wrong before is that the failure was INVISIBLE: `.error` was
+ * never bound, so supabase-js's resolved-error result was indistinguishable
+ * from "no bookings", and the `try/catch` around it was dead code — a PostgREST
+ * failure resolves, it does not throw. The error is now bound and logged.
+ */
+export async function resolveBuddyRole(
   sc: SupabaseClient,
   ownerId: string,
   viewerId: string,
 ): Promise<"provider" | "customer" | null> {
-  const active = ["confirmed", "active", "completed", "in_progress"];
-  try {
-    const { data } = await sc
-      .from("rent_buddy_bookings")
-      .select("buddy_id, traveler_id, status")
-      .or(
-        `and(buddy_id.eq.${ownerId},traveler_id.eq.${viewerId}),and(buddy_id.eq.${viewerId},traveler_id.eq.${ownerId})`,
-      );
-    for (const r of ((data as any[]) ?? [])) {
-      if (!active.includes(String(r.status))) continue;
-      if (r.buddy_id === ownerId && r.traveler_id === viewerId) return "provider"; // owner provides
-      if (r.traveler_id === ownerId && r.buddy_id === viewerId) return "customer"; // owner is customer
-    }
-    return null;
-  } catch {
+  const { data, error } = await sc
+    .from("rent_buddy_bookings")
+    .select("buddy_id, traveler_id, status")
+    .or(
+      `and(buddy_id.eq.${ownerId},traveler_id.eq.${viewerId}),and(buddy_id.eq.${viewerId},traveler_id.eq.${ownerId})`,
+    );
+  if (error) {
+    rootLogger.warn(
+      { table: "rent_buddy_bookings", op: "select", code: (error as any).code ?? null, message: error.message },
+      "resolveBuddyRole read failed — viewer context degrades to non-buddy (fail-closed)",
+    );
     return null;
   }
+  for (const r of ((data as any[]) ?? [])) {
+    if (!isOneOf(BUDDY_RELATIONSHIP_STATUSES, r.status)) continue;
+    if (r.buddy_id === ownerId && r.traveler_id === viewerId) return "provider"; // owner provides
+    if (r.traveler_id === ownerId && r.buddy_id === viewerId) return "customer"; // owner is customer
+  }
+  return null;
 }
 
 /**
@@ -682,7 +856,12 @@ function buildIdentity(
   const named = sanitizeIdentity(profile, nameAllowed, viewerId);
   return {
     userId: profile.id,
-    name: named.display_name ?? named.name ?? null,
+    // census-compass CP-02: compose the CANONICAL rule rather than rebuilding it.
+    // `named` has already had the viewer short-circuit and redaction applied by
+    // sanitizeIdentity, so `allowed` is true here; presentedName adds the blank
+    // check this site used to drop, which let a whitespace-only display_name
+    // reach every consumer variant as a nameless person.
+    name: presentedName(named, true),
     handle: profile.handle ?? profile.username ?? null,
     avatarUrl: showAvatar ? (profile.avatar_url ?? null) : null,
     coverUrl: profile.cover_photo_url ?? null,
@@ -952,55 +1131,156 @@ function buildDomainTrust(
   overallScore: number,
   categories: Record<string, number> | null | undefined,
   isBuddy: boolean,
+  state: TrustProfileRead["state"],
+  overallMeasured: boolean,
 ): DomainTrust[] {
   const c = (k: string): number => {
     const v = Number((categories as Record<string, number> | undefined)?.[k]);
     return Number.isFinite(v) ? v : 50;
   };
+  // The SAME test `c` applies, asked separately so the answer does not depend on
+  // the order the domains happen to read their categories in — `respect_safety`
+  // feeds three domains and must report identically to each.
+  const isMeasured = (k: string): boolean =>
+    Number.isFinite(Number((categories as Record<string, number> | undefined)?.[k]));
+  const basisOf = (...keys: string[]): DomainTrustBasis =>
+    domainTrustBasis(state, keys.filter(isMeasured).length, keys.length);
+
   const domains: DomainTrust[] = [
-    { key: "overall",     domain: "Overall",     presentation: presentationWord(overallScore), applicable: true },
-    { key: "traveler",    domain: "Traveler",    presentation: presentationWord(mean(c("respect_safety"), c("communication"), c("location_honesty"), c("passport_authenticity"))), applicable: true },
-    { key: "trip_guest",  domain: "Trip Guest",  presentation: presentationWord(mean(c("plan_attendance"), c("respect_safety"), c("communication"))), applicable: true },
-    { key: "trip_host",   domain: "Trip Host",   presentation: presentationWord(c("host_quality")), applicable: true },
-    { key: "contributor", domain: "Contributor", presentation: presentationWord(mean(c("content_quality"), c("community_value"), c("guide_accuracy"))), applicable: true },
+    { key: "overall",     domain: "Overall",     presentation: presentationWord(overallScore), applicable: true, basis: domainTrustBasis(state, overallMeasured ? 1 : 0, 1) },
+    { key: "traveler",    domain: "Traveler",    presentation: presentationWord(mean(c("respect_safety"), c("communication"), c("location_honesty"), c("passport_authenticity"))), applicable: true, basis: basisOf("respect_safety", "communication", "location_honesty", "passport_authenticity") },
+    { key: "trip_guest",  domain: "Trip Guest",  presentation: presentationWord(mean(c("plan_attendance"), c("respect_safety"), c("communication"))), applicable: true, basis: basisOf("plan_attendance", "respect_safety", "communication") },
+    { key: "trip_host",   domain: "Trip Host",   presentation: presentationWord(c("host_quality")), applicable: true, basis: basisOf("host_quality") },
+    { key: "contributor", domain: "Contributor", presentation: presentationWord(mean(c("content_quality"), c("community_value"), c("guide_accuracy"))), applicable: true, basis: basisOf("content_quality", "community_value", "guide_accuracy") },
     // Buddy is a contextual projection (§20): "Not applicable" unless the user
-    // actually offers a buddy service.
+    // actually offers a buddy service. A domain that does not apply has no
+    // inputs, so `basisOf()` reports not_applicable rather than a vacuous
+    // "measured".
     isBuddy
-      ? { key: "buddy", domain: "Buddy", presentation: presentationWord(mean(c("host_quality"), c("respect_safety"), c("communication"))), applicable: true }
-      : { key: "buddy", domain: "Buddy", presentation: "Not applicable", applicable: false },
+      ? { key: "buddy", domain: "Buddy", presentation: presentationWord(mean(c("host_quality"), c("respect_safety"), c("communication"))), applicable: true, basis: basisOf("host_quality", "respect_safety", "communication") }
+      : { key: "buddy", domain: "Buddy", presentation: "Not applicable", applicable: false, basis: basisOf() },
   ];
   return domains;
 }
 
+/**
+ * What `confidence` rests on. EXPORTED so its test exercises the shipped
+ * predicate rather than a copy of it — a test that reimplements the rule it is
+ * checking passes whatever the rule does.
+ *
+ *   unavailable    trust_profiles could not be READ. Whatever `confidence`
+ *                  says, it is not a statement about this person's trust.
+ *   trust_evidence the profile was read AND carries migration 2371's own
+ *                  measure. Includes ZERO: a profile that was read and holds no
+ *                  evidence HAS been measured, which is a different answer from
+ *                  never having been measured, and collapsing the two is the
+ *                  conflation this field exists to prevent.
+ *   travel_proxy   no trust evidence available, so `confidence` came from
+ *                  stamps/trips/verified — evidence about TRAVEL, not trust.
+ */
+export function trustConfidenceBasis(
+  state: TrustProfileRead["state"],
+  evidenceWeight: number | null | undefined,
+  evidenceCount: number | null | undefined,
+): TrustProjection["confidenceBasis"] {
+  if (state === "unavailable") return "unavailable";
+  if (state !== "ok") return "travel_proxy";
+  return evidenceCount != null || evidenceWeight != null ? "trust_evidence" : "travel_proxy";
+}
+
+/**
+ * P50 — `stats` is DELIBERATELY NOT A PARAMETER. Travel statistics used to be
+ * the input this function measured trust from; removing them from the
+ * signature is what makes the fabricated formula unreconstructable here rather
+ * than merely unused. `verified` survives only as a LABEL suffix, never as a
+ * term in a score.
+ */
 async function buildTrust(
   sc: SupabaseClient,
   userId: string,
   context: PassportViewerContext,
-  stats: TravelStats,
   verified: boolean,
   isBuddy: boolean,
 ): Promise<TrustProjection> {
-  // Confidence is evidence-aware (§9/§10): a score built on many stamps/trips is
-  // more trustworthy than the same number on a brand-new account.
-  const evidence = stats.stamps + stats.trips * 2 + (verified ? 3 : 0);
-  const confidence: TrustProjection["confidence"] = evidence >= 12 ? "high" : evidence >= 4 ? "medium" : "low";
+  // P50. `confidence` is NOT computed here any more. It used to be a weighted
+  // sum of stamps, trips and the verified flag — travel volume dressed as trust
+  // evidence — and it is now read from the trust engine's own measure BELOW,
+  // after the profile read, by `passportTrustConfidence`. `stats` and
+  // `verified` no longer reach it at all, which is the point: this service has
+  // no business measuring trust.
 
   // The canonical category scores + overall drive the TABLE 12 per-domain
   // presentation for EVERY context (public included) — domains carry only words,
   // never numbers, so they are safe to project to any viewer (§9/§10).
-  const profile = await getTrustProfile(sc, userId).catch(() => null);
-  const overallForDomains = profile && Number.isFinite(Number(profile.overall_score)) ? Number(profile.overall_score) : 50;
-  const domains = buildDomainTrust(overallForDomains, profile?.categories as Record<string, number> | undefined, isBuddy);
+  // The `.catch` arm is the LAST resort, not the failure path: a PostgREST
+  // failure RESOLVES, so it fires only on a genuine throw. The unreadable case
+  // now arrives as `state: "unavailable"` and is REPORTED (`degraded`) rather
+  // than silently taking the new-account default — a Highly Trusted traveller
+  // shown to their peers as "New Traveler" is a claim about a person made out
+  // of a database hiccup.
+  const profileRead = await getTrustProfileResult(sc, userId).catch(
+    () => ({ state: "unavailable", reason: "threw" }) as TrustProfileRead,
+  );
+  const profile = profileRead.state === "ok" ? profileRead.profile : null;
+  const degraded = profileRead.state === "unavailable";
+
+  // `null` evidence on an `ok` profile is a pre-2371 row — "not measured" is a
+  // different answer from "measured, nothing there".
+  const evidenceWeight = profileRead.state === "ok" ? profileRead.profile.evidenceWeight : null;
+  const evidenceCount = profileRead.state === "ok" ? profileRead.profile.evidenceCount : null;
+  const confidenceBasis = trustConfidenceBasis(profileRead.state, evidenceWeight, evidenceCount);
+  // P50 — the band, from the trust engine's own decay-weighted evidence, or
+  // `null` when there is no measurement to band. `confidenceBasis` says which
+  // of the two "not measured" reasons applies (`unavailable` vs
+  // `travel_proxy`, whose name now means "the engine recorded no evidence"),
+  // and `degraded` says so again at the section level.
+  const confidence = passportTrustConfidence(profileRead.state, evidenceWeight);
+  const overallMeasured = !!profile && Number.isFinite(Number(profile.overall_score));
+  const overallForDomains = overallMeasured ? Number(profile!.overall_score) : 50;
+  // Explainability at the level the words are SHOWN. `presentation` is
+  // unchanged on every branch — see `DomainTrust.applicable` for why the
+  // substituted domains keep both their word and their flag.
+  const domains = buildDomainTrust(
+    overallForDomains,
+    profile?.categories as Record<string, number> | undefined,
+    isBuddy,
+    profileRead.state,
+    overallMeasured,
+  );
 
   if (context === "public") {
     const badge = await getPublicTrustBadge(sc, userId);
-    // Non-stigmatizing copy for low-evidence accounts (§10).
-    const label = confidence === "low" ? (verified ? "New Traveler · Verified" : "New Traveler") : badge.label;
-    return { label, publicLevel: badge.level, score: null, confidence, strengths: badge.strengths, domains };
+    // Non-stigmatizing copy for a NEW TRAVELLER (§10) — decided by the
+    // authoritative public level, not by a travel-volume sum.
+    //
+    // P50, the server half of P45's defect. This line used to read
+    // `confidence === "low"`, so the fabricated band OVERRODE the measured
+    // verdict: a traveller whose `trust_profiles` row says `trusted` but who
+    // had few stamps was published to the world as "New Traveler". The
+    // vocabulary is unchanged — `publicTrustLabel("new_traveler")` IS
+    // "New Traveler", so for a genuine new traveller this selects the same
+    // string `badge.label` already carried; what changes is that a MEASURED
+    // level now wins over a constant. Choosing different WORDS for these bands
+    // is the owner's standing D-WORD decision and is untouched here.
+    const label = badge.level === "new_traveler"
+      ? (verified ? "New Traveler · Verified" : "New Traveler")
+      : badge.label;
+    return {
+      label, publicLevel: badge.level, score: null, confidence,
+      confidenceBasis, evidenceWeight, evidenceCount,
+      strengths: badge.strengths, domains,
+      ...(degraded || badge.profileUnavailable ? { degraded: true } : {}),
+    };
   }
 
   const summary = await getSafeTrustSummary(sc, userId);
-  const label = confidence === "low" && summary.publicLevel === "new_traveler"
+  // The `confidence === "low" &&` conjunct that used to stand here was
+  // REDUNDANT, not load-bearing: when `publicLevel` is `new_traveler` the
+  // title-cased fallback spells "New Traveler" too, so dropping the fabricated
+  // band changes this branch's output for NO input. The `· Verified` suffix is
+  // the only difference the conjunct ever made, and it made it on travel
+  // volume rather than on whether the account is verified.
+  const label = summary.publicLevel === "new_traveler"
     ? (verified ? "New Traveler · Verified" : "New Traveler")
     : (summary.publicLevel.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()));
 
@@ -1018,7 +1298,12 @@ async function buildTrust(
     }
   }
 
-  return { label, publicLevel: summary.publicLevel, score, confidence, strengths: summary.strengths, domains };
+  return {
+    label, publicLevel: summary.publicLevel, score, confidence,
+    confidenceBasis, evidenceWeight, evidenceCount,
+    strengths: summary.strengths, domains,
+    ...(degraded || summary.profileUnavailable ? { degraded: true } : {}),
+  };
 }
 
 function buildCredentials(
@@ -1134,17 +1419,39 @@ async function loadBuddyReputation(sc: SupabaseClient, userId: string): Promise<
 }
 
 /** Load passport visibility preferences (best-effort). */
-async function loadVisibilityPrefs(sc: SupabaseClient, userId: string): Promise<Record<string, any> | null> {
-  try {
-    const { data } = await sc
-      .from("passport_visibility_preferences")
-      .select("stamps_visible, memories_visible")
-      .eq("user_id", userId)
-      .maybeSingle();
-    return (data as any) ?? null;
-  } catch {
-    return null;
+/**
+ * The THREE-state read of the owner's collection visibility preferences.
+ *
+ * `prefs: null, readFailed: false` means the owner never set a preference —
+ * the documented default is "public", so `tierPermits` admits everyone. That
+ * default is only defensible when the row was actually LOOKED FOR and was not
+ * there. supabase-js RESOLVES on a database error, so before `readFailed`
+ * existed a failed read arrived as `{ data: null, error }`, `?? null` collapsed
+ * it onto the same `null`, and the shelf of an owner who set
+ * `stamps_visible = 'private'` was projected to a stranger — built entirely
+ * out of a database hiccup. The `try/catch` that used to wrap this read never
+ * fired, because nothing was ever thrown.
+ */
+interface VisibilityPrefsRead {
+  prefs: Record<string, any> | null;
+  /** True when the preference row could not be READ (not merely absent). */
+  readFailed: boolean;
+}
+
+async function loadVisibilityPrefs(sc: SupabaseClient, userId: string): Promise<VisibilityPrefsRead> {
+  const { data, error } = await sc
+    .from("passport_visibility_preferences")
+    .select("stamps_visible, memories_visible")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) {
+    rootLogger.warn(
+      { err: error, userId },
+      "passport: passport_visibility_preferences unreadable — collections withheld from non-owners",
+    );
+    return { prefs: null, readFailed: true };
   }
+  return { prefs: (data as any) ?? null, readFailed: false };
 }
 
 /**
@@ -1157,13 +1464,46 @@ async function loadVisibilityPrefs(sc: SupabaseClient, userId: string): Promise<
  * only composes them, so a viewer can never be shown more by the aggregate than
  * by the yearbook or the reverse.
  *
- * Fail-closed inputs: an unreadable preference row resolves to `null`, which
- * `tierPermits` treats as the default "public" tier — exactly as the aggregate
- * already does, so the two surfaces stay identical even in the degraded case.
+ * Fail-closed inputs: an unreadable preference row withholds BOTH collections
+ * from every non-owner caller and says so via `readFailed` — exactly as the
+ * aggregate does, so the two surfaces stay identical even in the degraded case.
+ * (This paragraph used to claim "fail-closed" while describing the opposite:
+ * the null it produced took the default "public" tier and SHOWED the shelf.)
  */
 export interface PassportCollectionVisibility {
   stamps: boolean;
   memories: boolean;
+  /**
+   * True when the answer above is a REFUSAL forced by an unreadable preference
+   * row, not the owner's setting. A caller that flattens this into "the owner
+   * hid it" tells the viewer something about a PERSON that is actually a
+   * statement about the database.
+   */
+  readFailed?: boolean;
+}
+
+/**
+ * The one place the preference read is turned into a visibility answer, so the
+ * aggregate (step 7/9) and the §9 Yearbook cannot drift.
+ *
+ * FAIL-CLOSED on an unreadable preference row, and deliberately so: the value
+ * withheld is the owner's own privacy choice, and "public" is the only default
+ * that can LEAK. The owner still sees their own shelf — `tierPermits` never
+ * consults the tier for the owner — so the degraded case costs a stranger a
+ * view, never the owner their passport.
+ */
+function visibilityFromPrefs(
+  read: VisibilityPrefsRead,
+  caller: CallerContext,
+): PassportCollectionVisibility {
+  if (read.readFailed) {
+    const own = caller === "owner";
+    return { stamps: own, memories: own, readFailed: true };
+  }
+  return {
+    stamps: tierPermits(read.prefs?.stamps_visible, caller),
+    memories: tierPermits(read.prefs?.memories_visible, caller),
+  };
 }
 
 export async function loadCollectionVisibility(
@@ -1171,11 +1511,7 @@ export async function loadCollectionVisibility(
   userId: string,
   caller: CallerContext,
 ): Promise<PassportCollectionVisibility> {
-  const prefs = await loadVisibilityPrefs(sc, userId);
-  return {
-    stamps: tierPermits(prefs?.stamps_visible, caller),
-    memories: tierPermits(prefs?.memories_visible, caller),
-  };
+  return visibilityFromPrefs(await loadVisibilityPrefs(sc, userId), caller);
 }
 
 /** Does a collection-level "public|friends_only|private" tier permit this caller? */
@@ -1332,25 +1668,117 @@ async function loadActiveRsvpEvent(
   return { city: e.city ?? null, startsAt: e.starts_at ?? null, endsAt: String(e.ends_at) };
 }
 
-/** An active, un-expired Locate/crew session the user has opted into and not left. */
+// ─────────────────────────────────────────────────────────────────────────────
+// The §5 `with_crew` signal — a read of ANOTHER FEATURE'S storage
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// `locate_friends_members` / `locate_friends_sessions` belong to Locate My
+// Friends (Map spec §12), created and flagged by migration
+// 2219_locate_friends_sessions.sql. This file is OUTSIDE that feature, so every
+// read of them here is a cross-feature read and is subject to the capability
+// contract in lib/capability:
+//
+//     capability = FLAG_ENABLED && SCHEMA_CAPABILITY_READY,   fail-closed
+//
+// Until this gate existed the read was unconditional. Because the Passport
+// assembler is shared, that meant Safe Return — whose route reaches this file
+// through buildConsumerProjection(db, "safety", …) — issued a SELECT against a
+// disabled feature's storage on every safety-contact passport request, and then
+// discarded the result (the safety variant projects handle/verified/blocked and
+// no traveler state at all). Applying 2219 to production on 2026-09-08 made
+// that SELECT succeed. It did not make it authorised.
+//
+// THREE GATES, IN THIS ORDER, ALL FAIL-CLOSED:
+//
+//   1. CONSUMER CONTRACT.  A caller that does not project a traveler state
+//      declares `crewSignal: "excluded"` and the read never happens on its
+//      path, flag or no flag. Safe Return does exactly this — it is the
+//      OWNERSHIP half of the fix: Safe Return does not depend on Locate My
+//      Friends, so its contract says so instead of relying on a flag that
+//      someone may one day turn on.
+//   2. AUDIENCE.  `with_crew` is Map spec §23 purpose-bound Presence: "this
+//      person is inside a temporary group location-sharing session right now,
+//      from X until Y". A viewer who may not see the owner's location context
+//      (§23 / TABLE 24 `show_current_city`) does not get a location-derived
+//      state either — the label is not a city, but it is still built out of
+//      location storage.
+//   3. CAPABILITY.  `locate_friends_enabled` ON **and** 2219's tables and
+//      columns present. `off` / `absent` / `unreadable` / `missing` /
+//      `unknown` all refuse; see lib/capability/schemaCapability.ts.
+//
+// A refusal is not an error state: the traveler state simply falls through to
+// its non-crew derivation, which touches no Locate storage.
+
+/**
+ * Where a projection may take the `with_crew` signal from.
+ *
+ *   "capability" — Locate My Friends storage MAY be read, behind gates 2 and 3.
+ *   "excluded"   — it may not be read at all, on any path, for this projection.
+ */
+export type CrewSignalSource = "capability" | "excluded";
+
+/**
+ * The flag the crew signal is gated on, named here as a literal on purpose:
+ * this module is the registered consumer of that capability, and a consumer
+ * that reaches its flag only through an imported object cannot be checked
+ * against the flag it claims to honour. The assertion below fails loudly if the
+ * registry entry is ever repointed at a different flag.
+ */
+const LOCATE_FRIENDS_CAPABILITY_FLAG = "locate_friends_enabled";
+if (LOCATE_FRIENDS_CREW_PRESENCE.flag !== LOCATE_FRIENDS_CAPABILITY_FLAG) {
+  throw new Error(
+    `PassportProjectionService gates the §5 crew signal on ${LOCATE_FRIENDS_CAPABILITY_FLAG}, but ` +
+      `lib/capability/registry.ts declares LOCATE_FRIENDS_CREW_PRESENCE.flag = ${LOCATE_FRIENDS_CREW_PRESENCE.flag}.`,
+  );
+}
+
+/**
+ * Gate 3. `true` only when `locate_friends_enabled` is ON in this database AND
+ * 2219's schema answers the probe. Never throws: `resolveCapability` classifies
+ * every failure as a refusal, and a thrown client is caught here as one too.
+ */
+async function locateFriendsCrewCapabilityEnabled(sc: SupabaseClient): Promise<boolean> {
+  try {
+    const verdict = await resolveCapability(sc as any, LOCATE_FRIENDS_CREW_PRESENCE);
+    return verdict.enabled === true;
+  } catch (err) {
+    rootLogger.error(
+      { err, capability: LOCATE_FRIENDS_CAPABILITY_FLAG },
+      "passport: crew-presence capability could not be resolved — the §5 with_crew signal is REFUSED (fail-closed)",
+    );
+    return false;
+  }
+}
+
+/**
+ * An active, un-expired Locate/crew session the user has opted into and not
+ * left. CALLERS MUST HAVE CLEARED ALL THREE GATES — `loadTravelerActivity` is
+ * the only caller and does exactly that.
+ *
+ * A driver error is NOT "no session": it is an unusable answer, so it refuses
+ * explicitly rather than falling out of an ignored `error` field as an empty
+ * list. Both are fail-closed for disclosure; only one says so.
+ */
 async function loadActiveCrewSession(
   sc: SupabaseClient,
   userId: string,
   nowIso: string,
 ): Promise<TravelerActivity["withCrew"]> {
-  const { data: members } = await sc
+  const { data: members, error: membersError } = await sc
     .from("locate_friends_members")
     .select("session_id, left_at")
     .eq("user_id", userId)
     .is("left_at", null);
+  if (membersError) return null;
   const ids = ((members as any[]) ?? []).map((m) => m.session_id).filter(Boolean);
   if (ids.length === 0) return null;
-  const { data: sessions } = await sc
+  const { data: sessions, error: sessionsError } = await sc
     .from("locate_friends_sessions")
     .select("id, started_at, expires_at, ended_at")
     .in("id", ids)
     .is("ended_at", null)
     .gt("expires_at", nowIso);
+  if (sessionsError) return null;
   const active = ((sessions as any[]) ?? []).filter((s) => typeof s.expires_at === "string");
   if (active.length === 0) return null;
   // Soonest-expiring active session bounds the state.
@@ -1394,12 +1822,45 @@ async function loadActiveTripStop(
   };
 }
 
-/** Load all three activity signals in parallel; any failure degrades to "no signal". */
-async function loadTravelerActivity(sc: SupabaseClient, userId: string): Promise<TravelerActivity> {
+/** What `loadTravelerActivity` needs to decide whether the crew signal is loadable. */
+export interface CrewSignalGate {
+  /** Gate 1 — the consumer's declared contract. */
+  readonly source: CrewSignalSource;
+  /** Gate 2 — may this viewer receive location-derived context about the owner? */
+  readonly viewerMaySeePresence: boolean;
+}
+
+/**
+ * Gates 1 and 2, as a pure function so the decision is testable without a
+ * database and cannot drift from the comment above. `true` means "the
+ * capability may now be resolved", never "the read may happen".
+ */
+export function crewSignalMayBeLoaded(gate: CrewSignalGate): boolean {
+  return gate.source === "capability" && gate.viewerMaySeePresence;
+}
+
+/**
+ * Load the activity signals in parallel; any failure degrades to "no signal".
+ *
+ * The crew signal is loaded ONLY when gates 1 and 2 pass and the Locate My
+ * Friends capability resolves enabled. Everything else here reads Passport's
+ * own storage (`event_rsvps`/`events`, `route_plans`/`route_stops`) and is
+ * unaffected.
+ */
+async function loadTravelerActivity(
+  sc: SupabaseClient,
+  userId: string,
+  gate: CrewSignalGate,
+): Promise<TravelerActivity> {
   const nowIso = new Date().toISOString();
+  const crew = crewSignalMayBeLoaded(gate)
+    ? locateFriendsCrewCapabilityEnabled(sc).then((ok) =>
+        ok ? loadActiveCrewSession(sc, userId, nowIso) : null,
+      )
+    : Promise.resolve(null);
   const [atEvent, withCrew, exploring] = await Promise.all([
     loadActiveRsvpEvent(sc, userId, nowIso).catch(() => null),
-    loadActiveCrewSession(sc, userId, nowIso).catch(() => null),
+    crew.catch(() => null),
     loadActiveTripStop(sc, userId, nowIso).catch(() => null),
   ]);
   return { atEvent, withCrew, exploring };
@@ -1450,6 +1911,16 @@ export interface BuildProjectionOptions {
   ) => Promise<ViewerResolution>;
   /** Pre-loaded profile row (avoids a round trip when the caller has it). */
   profileRow?: Record<string, any> | null;
+  /**
+   * Whether this projection may take its §5 `with_crew` signal from Locate My
+   * Friends storage at all. Defaults to `"capability"` (read it, behind the
+   * flag + schema capability and the viewer's location gate).
+   *
+   * A consumer that does not project a traveler state must pass `"excluded"`,
+   * so the cross-feature read never happens on its path even if
+   * `locate_friends_enabled` is later turned on. `routes/safeReturn.ts` does.
+   */
+  crewSignal?: CrewSignalSource;
 }
 
 /**
@@ -1514,10 +1985,22 @@ export async function buildPassportProjection(
   }
 
   // 4. Shared canonical reads (in parallel).
-  const [statsRaw, tripCount, unified, quick, prefs, restrictionState, reputation, buddyRep] = await Promise.all([
-    buildStats(sc, userId).catch(() => ({ countries: 0, cities: 0, hiddenGemStamps: 0, totalStamps: 0 } as any)),
-    countUserTrips(sc, userId).catch(() => ({ count: 0 })),
-    buildUnifiedStamps(sc, userId).catch(() => ({ stamps: [] as UnifiedStamp[], count: 0 } as any)),
+  const [statsRaw, tripCount, unified, quick, prefsRead, restrictionState, reputation, buddyRep] = await Promise.all([
+    // The `.catch` arms below are the LAST resort, not the failure path: a
+    // PostgREST failure resolves, so these fire only on a genuine throw. Both
+    // now report `readFailed` so the two ways of not-seeing-the-data converge
+    // on the same honest answer instead of on a confident zero.
+    buildStats(sc, userId).catch(
+      () => ({ countries: 0, cities: 0, hiddenGemStamps: 0, totalStamps: 0, readFailed: true } as any),
+    ),
+    // `count: null` is the honest answer countUserTrips now gives when a
+    // source read failed. The `.catch` arm matches it rather than the old
+    // confident zero: a thrown client and a failed query are the same
+    // not-knowing, and neither is "this traveller has taken no trips".
+    countUserTrips(sc, userId).catch(() => ({ count: null, unavailable: true as const })),
+    buildUnifiedStamps(sc, userId).catch(
+      () => ({ stamps: [] as UnifiedStamp[], count: 0, readFailed: true } as any),
+    ),
     loadQuickStatus(sc, userId),
     loadVisibilityPrefs(sc, userId),
     // The owner's ACTIVE trust restrictions — never throws (degraded reads
@@ -1534,13 +2017,49 @@ export async function buildPassportProjection(
     countries: statsRaw.countries ?? 0,
     cities: statsRaw.cities ?? 0,
     stamps: unified.count ?? 0,
+    // Still a number on the wire — the field is typed `number` and every
+    // consumer renders it. The ZERO is what `unreadable` below qualifies, so a
+    // client can show "—" instead of "0 trips" for someone with nine.
     trips: tripCount.count ?? 0,
   };
 
+  // Sections whose numbers above are placeholders because the read did not
+  // happen. Collected here, next to the reads, rather than inferred later from
+  // a zero — a zero is exactly the thing that cannot be distinguished.
+  const unreadable: PassportUnreadableSection[] = [];
+  const markUnreadable = (s: PassportUnreadableSection) => {
+    if (!unreadable.includes(s)) unreadable.push(s);
+  };
+  if (statsRaw.readFailed === true) markUnreadable("stats");
+  if (unified.readFailed === true) markUnreadable("stamps");
+  // A trip count that could not be determined. `trips: 0` above is a
+  // placeholder, and this is what says so — the Passport's whole purpose is to
+  // be a record of where someone has been, and telling them they have been
+  // nowhere is the one wrong answer that surface must not give.
+  if (tripCount.count === null) markUnreadable("trips");
+
+  // The owner's COLLECTION-level visibility, resolved through the same helper
+  // the Yearbook uses. An unreadable preference row withholds both collections
+  // from a non-owner (see visibilityFromPrefs) — and that withholding is named
+  // here rather than left to look like "this traveller has no stamps".
+  const collectionVisibility = visibilityFromPrefs(prefsRead, callerCtx);
+  if (collectionVisibility.readFailed === true) {
+    if (!collectionVisibility.stamps) markUnreadable("stamps");
+    if (!collectionVisibility.memories) markUnreadable("memories");
+  }
+
   // 5. Traveler state + availability + intent (availability/intent gated).
+  // Gate 2 for the crew signal: the SAME location test `buildTravelerState`
+  // applies to a city (§23 / TABLE 24), resolved here because the read has to
+  // be decided before it is issued, not filtered after.
+  const viewerMaySeePresence =
+    isSelf || (permissions.canSeeLocationContext && ownerVisibility.showCurrentCity);
   const [activeTripCity, activity] = await Promise.all([
     loadActiveTripCity(sc, userId),
-    loadTravelerActivity(sc, userId),
+    loadTravelerActivity(sc, userId, {
+      source: opts.crewSignal ?? "capability",
+      viewerMaySeePresence,
+    }),
   ]);
   const travelerState = buildTravelerState(profile, quick, activeTripCity, activity, permissions, ownerVisibility);
 
@@ -1555,8 +2074,18 @@ export async function buildPassportProjection(
   }
 
   // 6. Trust + credentials.
-  const trust = await buildTrust(sc, userId, context, stats, identity.verified, buddyRep !== null);
+  const trust = await buildTrust(sc, userId, context, identity.verified, buddyRep !== null);
+  // A trust block built from an unreadable `trust_profiles` is the new-account
+  // default, not a reading — and `buildProjectionCachePolicy` must not cache it
+  // as though it were.
+  if (trust.degraded === true) markUnreadable("trust");
   const credentials = buildCredentials(profile, trust, stats, reputation, buddyRep);
+
+  // 6b. P159 — the traveller's own shape in the Experience Graph. Reads the
+  //     edges CompassGraphEngine already writes; builds no graph of its own.
+  //     `null` for every viewer but the owner (the unruled half of P159).
+  const experienceGraph = (await buildExperienceGraphProjection(sc, userId, context)) ?? undefined;
+  if (experienceGraph?.unreadable === true) markUnreadable("experience_graph");
 
   // 7. Stamps — BOTH gates, in order (§22):
   //      a) the collection-level tier the owner set on the whole stamp shelf, and
@@ -1565,7 +2094,7 @@ export async function buildPassportProjection(
   //    private / circle_only was projected to any viewer that cleared (a).
   //    filterUnifiedStamps fails closed on an absent/unknown tier.
   let stamps: StampProjection[] = [];
-  if (tierPermits(prefs?.stamps_visible, callerCtx)) {
+  if (collectionVisibility.stamps) {
     stamps = filterUnifiedStamps(unified.stamps as UnifiedStamp[], callerCtx)
       .slice(0, 24)
       .map(mapStamp);
@@ -1589,10 +2118,11 @@ export async function buildPassportProjection(
 
   // 9. Memories (privacy-guarded per item + collection tier).
   let memories: MemoryProjection[] = [];
-  if (tierPermits(prefs?.memories_visible, callerCtx)) {
+  if (collectionVisibility.memories) {
     try {
-      const raw = await loadMemories(sc, userId);
-      const guarded = filterMemories(raw as any[], callerCtx);
+      const memRead = await loadMemoriesRead(sc, userId);
+      if (memRead.readFailed) markUnreadable("memories");
+      const guarded = filterMemories(memRead.rows as any[], callerCtx);
       memories = guarded.slice(0, 24).map((m: any) => ({
         id: m.id,
         title: m.title ?? null,
@@ -1605,6 +2135,7 @@ export async function buildPassportProjection(
       }));
     } catch {
       memories = [];
+      if (!unreadable.includes("memories")) unreadable.push("memories");
     }
   }
 
@@ -1661,8 +2192,12 @@ export async function buildPassportProjection(
     memories,
     travelIdentity,
     sharedContext,
+    ...(experienceGraph ? { experienceGraph } : {}),
     capabilities,
     viewerContext: context,
+    // Absent when everything was read. Present only to stop a placeholder being
+    // shown as a fact; it never changes what this viewer is allowed to see.
+    ...(unreadable.length > 0 ? { unreadable } : {}),
   };
   return projection;
 }
@@ -1730,7 +2265,97 @@ export function buildProjectionCachePolicy(projection: PassportProjection): Proj
   // A restricted (blocked/unavailable) card carries a relationship-dependent
   // `restricted` marker — never cache it beyond the dynamic horizon.
   if (projection.restricted) sections.restricted = PASSPORT_DYNAMIC_MAX_AGE;
+  // A DEGRADED projection must not be cached at the static hour. `stamps` and
+  // `stats` are static-tier precisely because a stamp shelf changes rarely —
+  // but a shelf that reads empty because the table was unreachable changes the
+  // moment the table comes back, and caching it for an hour turns a transient
+  // failure into an hour of telling a traveller they have earned nothing.
+  // Every unreadable section drops to the dynamic horizon, which pulls the
+  // whole response's max-age down with it.
+  for (const section of projection.unreadable ?? []) {
+    sections[section] = PASSPORT_DYNAMIC_MAX_AGE;
+  }
   const ttls = Object.values(sections);
   const maxAge = ttls.length ? Math.min(...ttls) : PASSPORT_DYNAMIC_MAX_AGE;
   return { maxAge, sections };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P50 — trust confidence, derived from the trust engine's own evidence measure
+//
+// Declared HERE, at the foot of the file, rather than beside `TrustProjection`:
+// this module is cited by line number from a dozen places in
+// docs/architecture/**, and adding seventy lines in the middle of it moves
+// every one of them. Function declarations hoist, so `buildTrust` above reads
+// this exactly as if it stood there.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The three measured evidence bands. `null` beside this type means NOT measured. */
+export type TrustConfidenceBand = "low" | "medium" | "high";
+
+/**
+ * MIRROR of `EARN_CONFIDENCE_WEIGHT` in
+ * `services/trust/TrustScoreService.ts` — the decay-weighted evidence at which
+ * the trust engine grants a category FULL positive credit. That module owns the
+ * number and does not export it, and this lane may not modify
+ * `services/trust/**`, so it is mirrored here WITH A DRIFT GUARD:
+ * `src/test/passportTrustEvidenceConfidence.test.ts` reads
+ * `TrustScoreService.ts` and fails if the two ever disagree. A mirror with a
+ * guard is not a second scoring system; a second constant nobody compares is.
+ */
+export const TRUST_EARN_CONFIDENCE_WEIGHT = 5;
+
+/**
+ * P50 — "an 82 with high evidence is not equivalent to an 82 with little".
+ *
+ * WHAT THIS REPLACED, AND WHY IT HAD TO GO. `confidence` used to be
+ *
+ *     REMOVED 2026-09-14 — evidence = stamps + trips×2 + (verified ? 3 : 0)
+ *     evidence >= 12 ? "high" : evidence >= 4 ? "medium" : "low";
+ *
+ * — a weighted sum invented in a projection service, over TRAVEL volume, sold
+ * as a statement about TRUST. Nothing anywhere ratified 2, 3, 12 or 4; no trust
+ * event, cap or score reached it; and a traveller with twenty stamps and zero
+ * trust events read `"high"` over a trust score that was entirely the
+ * substituted neutral 50. It was the fabricated central number P154 names.
+ *
+ * WHAT IT IS NOW. The trust engine's OWN measure and nothing else:
+ * `trust_profiles.evidence_weight`, written by `measureEvidence`
+ * (`TrustScoreService.ts`) as the decay-weighted count of applied/confirmed
+ * trust events, read through `getTrustProfileResult`. The band is the engine's
+ * own ramp read at its own three structural points — the same
+ * complete / partial / empty split `domainTrustBasis` already ships:
+ *
+ *   high    the ramp is COMPLETE: weight ≥ TRUST_EARN_CONFIDENCE_WEIGHT, the
+ *           engine's own point of full positive credit.
+ *   medium  the ramp is PARTIAL: some decayed evidence, not yet full credit.
+ *   low     MEASURED AND EMPTY: the profile was read and the engine recorded
+ *           zero evidence. That is a measurement, not an absence.
+ *   null    NOT MEASURED. `trust_profiles` was unreadable, or absent, or is a
+ *           pre-2371 row with no `evidence_weight` at all. No band is emitted,
+ *           because there is nothing to band. This is the P50 requirement that
+ *           absence must never become invented certainty.
+ *
+ * No numeric cut point is invented here: the only threshold is the engine's,
+ * mirrored under a drift guard, and the other two boundaries are zero and
+ * "greater than zero".
+ *
+ * EXPORTED so its test exercises the shipped predicate rather than a copy of
+ * it, for the same reason `trustConfidenceBasis` and `domainTrustBasis` are.
+ */
+export function passportTrustConfidence(
+  state: TrustProfileRead["state"],
+  evidenceWeight: number | null | undefined,
+): TrustConfidenceBand | null {
+  // Unreadable and absent are BOTH "not measured" here. They differ in what a
+  // consumer should say about them — `confidenceBasis` and `degraded` carry
+  // that difference — but neither of them is evidence, so neither may produce
+  // a band.
+  if (state !== "ok") return null;
+  if (evidenceWeight === null || evidenceWeight === undefined) return null;
+  const w = Number(evidenceWeight);
+  // A non-finite or negative weight is a corrupt measurement, not a weak one.
+  if (!Number.isFinite(w) || w < 0) return null;
+  if (w >= TRUST_EARN_CONFIDENCE_WEIGHT) return "high";
+  return w > 0 ? "medium" : "low";
 }

@@ -13,6 +13,49 @@
  * Pure module (no React, no network, no RN) — unit-tested under node:test.
  */
 import type { InputSuggestion } from '../types/inputSuggestion.ts';
+import type { PrivacyClass } from '../types/inputContext.ts';
+
+/**
+ * §29/§32 — the privacy classes whose suggestions must NOT be held in the
+ * process-wide cache.
+ *
+ * `privacyClass` was declared on every one of the 29 contexts and READ BY
+ * NOTHING: `sensitive` on `hidden_gem_location`, `personal` on
+ * `telegraph_recipient` and `compass_prompt`, `private_message` on the
+ * message body. No production path branched on it, and deleting the field
+ * would have changed no behaviour. This is its first reader.
+ *
+ * What it changes, concretely. `sharedSuggestionCache` is ONE process-global
+ * map keyed by (fieldId, typed text, coarse coords), living for the life of the
+ * app process and holding whole suggestion lists. For `telegraph_recipient`
+ * that list is PEOPLE — who the viewer is eligible to message — retained under
+ * the raw prefix they typed, minutes after the sheet closed, and served back
+ * without a round trip that could re-check eligibility. `public` fields
+ * (a city, a country, a place) carry none of that: the same list is the same
+ * for everyone, which is exactly why the cache is safe there and only there.
+ *
+ * A refused field is not degraded, only slower: it re-requests, and the gateway
+ * re-runs the block/age gate on every keystroke — which is the behaviour a
+ * viewer-scoped list should have had all along.
+ */
+const UNCACHEABLE_PRIVACY_CLASSES: ReadonlySet<PrivacyClass> = new Set<PrivacyClass>([
+  'personal',
+  'sensitive',
+  'private_message',
+]);
+
+/**
+ * True when a field's suggestions may be held in the shared cache.
+ *
+ * Fail-CLOSED on an unknown or missing class: a field whose policy could not be
+ * resolved is treated as uncacheable, because the cost of being wrong in that
+ * direction is one extra request and the cost of being wrong in the other is a
+ * retained list of people.
+ */
+export function isCacheablePrivacyClass(privacyClass: PrivacyClass | null | undefined): boolean {
+  if (privacyClass == null) return false;
+  return !UNCACHEABLE_PRIVACY_CLASSES.has(privacyClass);
+}
 
 export interface SuggestionCacheOptions {
   /** Entry lifetime in ms. Default 60_000 (matches legacy search cache). */
@@ -81,6 +124,47 @@ export class SuggestionCache {
   /** True when a fresh (unexpired) entry exists for the key. */
   has(key: string): boolean {
     return this.get(key) !== null;
+  }
+
+  /**
+   * §33 tier 1 / §34 "prefer local: cached city prefix matching" — the entry for
+   * the LONGEST cached query that is a strict prefix of `query`, or null.
+   *
+   * WHY THIS EXISTS. Until it did, the cache was keyed by the WHOLE query
+   * string, so it only ever answered a query the user had typed before,
+   * character for character. Typing forward — "ba" → "ban" → "bang" — missed on
+   * every keystroke even though the answer for "ba" was sitting in the map, and
+   * §33's middle tier ("1 char → local/cache prefix match") had no substrate at
+   * all: a cache miss went straight to the network. The empty prefix is included
+   * deliberately, because a field's zero-state entry is cached under `''` and is
+   * exactly the local list a 1-character query should be narrowed out of.
+   *
+   * The search is by CONSTRUCTED KEY, never by parsing keys back apart: the
+   * fieldId segment can itself contain the `|` separator (the §22 AI variant
+   * appends a JSON blob), so splitting a key is not safe. At most
+   * `query.length` map lookups, each O(1), longest prefix first — so the most
+   * specific cached answer wins and the scan stops there.
+   *
+   * The rows this returns were the server's answer for a SHORTER query and are
+   * therefore a superset, never a subset: they must be narrowed to the typed
+   * text before being shown. `narrowToQuery` (suggestionRanking.ts) is that
+   * step, and this method deliberately does not do it — a cache should not know
+   * how a suggestion row matches.
+   */
+  longestPrefix(
+    fieldId: string,
+    query: string,
+    lat?: number | null,
+    lng?: number | null,
+  ): { query: string; suggestions: InputSuggestion[] } | null {
+    const q = query.trim().toLowerCase();
+    // Strictly shorter than `q` — the exact key is the caller's own SWR hit.
+    for (let n = q.length - 1; n >= 0; n--) {
+      const prefix = q.slice(0, n);
+      const hit = this.get(SuggestionCache.key(fieldId, prefix, lat, lng));
+      if (hit) return { query: prefix, suggestions: hit };
+    }
+    return null;
   }
 
   clear(): void {

@@ -76,14 +76,28 @@ export async function recordGemContribution(
   }
 
   // Was this (gem,user,type) already observed? Purely to report alreadyObserved
-  // to the caller; the upsert below is authoritative either way.
-  const { data: existing } = await db
+  // to the caller; the upsert below is authoritative either way — the onConflict
+  // key means a failed read cannot produce a duplicate row, so this one is
+  // genuinely best-effort and must NOT abort the contribution.
+  //
+  // It is still not free: `alreadyObserved` is returned to the client verbatim
+  // by POST /hidden-gems/:id/contribute, so an unreadable table makes a repeat
+  // observation report itself as a first one. Log it rather than leaving the
+  // wrong boolean unexplained.
+  const { data: existing, error: existingErr } = await db
     .from("hidden_gem_contributions")
     .select("id")
     .eq("gem_id", gemId)
     .eq("user_id", userId)
     .eq("contribution_type", contributionType)
     .maybeSingle();
+
+  if (existingErr) {
+    logger.warn(
+      { err: existingErr, gemId, userId, contributionType },
+      "recordGemContribution: prior-observation lookup failed — alreadyObserved reported as false",
+    );
+  }
 
   const nowIso = new Date().toISOString();
   const { data: upserted, error: upsertErr } = await db

@@ -126,6 +126,21 @@ export {
   type InputTelemetryEvent,
   type TelemetrySink,
 } from './services/inputTelemetry.ts';
+// §44 TRANSPORT. The batcher is pure and node-testable; the transport is the
+// fetch/token wiring. NEITHER is installed by default — starting background
+// network traffic is an application decision, and the file that makes it
+// (app/_layout.tsx) is outside this layer. One line at bootstrap attaches it:
+//   setTelemetrySink(installInputTelemetryTransport().sink)
+// Until then the §44 events are still produced and dropped (census G263).
+export {
+  createTelemetryBatcher,
+  newTelemetrySessionId,
+  type TelemetryBatch,
+  type TelemetryBatcher,
+  type TelemetryPoster,
+  type WireTelemetryEvent,
+} from './services/telemetryBatcher.ts';
+export { installInputTelemetryTransport } from './services/telemetryTransport.ts';
 
 // ── components ───────────────────────────────────────────────────────────────
 export { SmartInput, type SmartInputProps } from './components/SmartInput.tsx';
@@ -259,11 +274,9 @@ export {
   type AiWritingProposal,
 } from './compass/aiWriting.ts';
 export {
-  COMPASS_STARTERS,
-  buildCompassStarters,
+  startersFromSuggestions,
   isCompassPromptContext,
   type CompassStarter,
-  type BuildCompassStartersOptions,
 } from './compass/compassPrompt.ts';
 export {
   registerCompassFields,
@@ -276,3 +289,43 @@ export {
 } from './compass/compassFields.ts';
 export { AiWritingAssist, type AiWritingAssistProps } from './compass/AiWritingAssist.tsx';
 export { CompassStarters, type CompassStartersProps } from './compass/CompassStarters.tsx';
+
+// ── voice intake (census-wall W71) ────────────────────────────────────────────
+// W71: "Voice input and typo normalization use the same global engine." The
+// typo half is proven at the Wall; this is the voice half's provider-independent
+// seam — a transcript becomes the SAME request typed text becomes, through the
+// SAME gateway entry point. NO speech-to-text provider is bound: the port's
+// default reports unavailable and never fabricates a transcript. A device build
+// installs one at bootstrap with `installTranscriptionPort(...)`.
+export {
+  VOICE_INTAKE_STATES,
+  MIN_TRANSCRIPT_CONFIDENCE,
+  type TranscriptionResult,
+  type VoiceIntakeState,
+  type VoiceRefusalReason,
+  type VoiceUnavailableReason,
+} from './voice/types.ts';
+export {
+  NO_TRANSCRIPTION_PROVIDER,
+  installTranscriptionPort,
+  clearTranscriptionPort,
+  installedTranscriptionPort,
+  resolveTranscriptionPort,
+  isVoiceInputAvailable,
+  type AudioCapturePort,
+  type CapturedAudio,
+  type TranscriptionPort,
+  type TranscriptionRequest,
+  type TranscriptionOutcome,
+} from './voice/transcriptionPort.ts';
+export {
+  assistanceRequestFor,
+  voiceIntakeRequest,
+  submitVoiceIntake,
+  voiceIntakeFromCapture,
+  type SuggestSubmitter,
+  type VoiceIntakeOptions,
+  type VoiceIntakeOutcome,
+  type VoiceIntakeDeps,
+  type VoiceSubmission,
+} from './voice/voiceIntake.ts';

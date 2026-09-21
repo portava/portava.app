@@ -24,20 +24,49 @@
 
 import { Router } from 'express';
 import { isBlockedBetween } from '../lib/blockGuard.js';
+// Telegraph §22 — the six travel-scam families and link reputation, computed
+// for the recipient at read time. Pure; no I/O, no clock.
+import { messageSafetySignals } from '../domain/telegraph/policies/travelScamSignals.js';
+// Telegraph §13.2 safety.reported — reporter-only, audience decided once.
+import { emitSafetyReported } from '../lib/telegraphEvents.js';
+// Telegraph §22 — the send step's adaptive rate limit (T279's missing half).
+import { checkSendRateLimit } from '../domain/telegraph/policies/sendRateLimit.js';
+// Telegraph §19 — "12 unread · 1 needs action". The second half.
+import { resolveNeedsAction } from '../domain/telegraph/policies/needsAction.js';
+// Telegraph §22 — restricted moderation storage for reported content.
+import { captureMessageEvidence, captureThreadEvidence } from '../services/telegraphReportEvidence.js';
+// Telegraph §22 — why a stranger is reaching out, and whether we can prove it.
+import {
+  parseOriginClaim, resolveRequestOrigin, requestOriginEnabled,
+  originInsertColumns, originSelect, originForWire,
+} from '../domain/telegraph/policies/requestOrigin.js';
+// Telegraph §22 — "stranger media ... until accepted": the server decides who
+// is a stranger; the client renders the shield.
+import { resolveSenderConnectedness } from '../domain/telegraph/policies/senderConnectedness.js';
+// Telegraph §24 — `ConversationProjection` is "a renderable ordered thread WITH
+// CURRENT PERMISSIONS". The permissions half is §14.1's ConversationCapabilities
+// and it already exists, resolved and tested, behind its own route. It is
+// imported rather than re-derived so the projection cannot disagree with the
+// gate: two implementations of "may this person call" is the defect §30A.1
+// names, not a redundancy.
+import { resolveConversationCapabilities } from '../domain/telegraph/policies/conversationCapabilityPolicy.js';
 import { z } from 'zod';
 import { requireUser, sendError } from '../lib/http';
 import { canMessage } from '../lib/messagingPermissions';
-import { nameVisibilitySet, sanitizeIdentity, resolveHandle, presentedName } from '../lib/publicIdentity';
+import { nameVisibilitySet, sanitizeIdentity, resolveHandle, presentedName, actorHandleFrom } from '../lib/publicIdentity';
 import { getServiceClient } from '../lib/supabase';
 import { resolveInteractionPermissions } from '../services/interactionPermissions.js';
 import { isKillSwitchEngaged } from '../lib/featureFlags.js';
 import { appStorageUrlInfo } from '../lib/mediaUrl.js';
+import { classifyMemoryMediaUrl } from '../services/memory/memoryMediaOrigin.js';
+import { messagingStopUnknownRefusal } from '../lib/telegraphThreadWrite.js';
 import { isUuid } from '../lib/followDecisions';
 import {
   translateMessageForThread,
   markTranslationsPending,
   buildDisplayFields,
   retranslateForUser,
+  senderLanguageFrom,
   type TranslationStatusValue,
 } from '../services/messageTranslation';
 import { shouldRetranslateOnLanguageChange } from '../lib/retranslateGate';
@@ -45,6 +74,12 @@ import {
   syncTripChatMembers,
   syncCircleChatMembers,
 } from '../services/groupChatSync';
+import {
+  historyBoundEnabled,
+  membershipSelect,
+  visibleFromOf,
+  withinWindow,
+} from '../services/groupChatHistoryBound';
 import { publishToThread, publishToUsers } from '../lib/telegraphEvents';
 import { invalidate as invalidateCompassCache } from '../compass/CompassCacheEngine.js';
 import { recordTrustEvent } from '../services/trust/TrustEventService.js';
@@ -54,6 +89,7 @@ import { enrichSpans } from '../lib/enrichSpans';
 import { circleThreadTitle } from '../lib/displayName';
 import { NotificationService } from '../services/notifications/NotificationService.js';
 import { NotificationRouter } from '../services/notifications/NotificationRouter.js';
+import { readBlockExclusions, isExcluded } from '../lib/exclusionSet.js';
 
 const router = Router();
 
@@ -86,6 +122,178 @@ const LanguageSettingsPatchSchema = z.object({
   auto_translate_messages: z.boolean().optional(),
   show_original_messages: z.boolean().optional(),
 });
+
+/* ---------------------------------------------------------------------------
+ * Off-app solicitation control — tunables
+ * ---------------------------------------------------------------------------
+ */
+
+/**
+ * Hard cap on how many of a buddy's bookings are pulled when computing the
+ * booking-scoped offense count.
+ *
+ * PostgREST caps every unbounded collection response at `db-max-rows` (Supabase
+ * ships 1000). A `.select('id')` with no `.limit()` therefore returns a
+ * TRUNCATED list, and the `.in(...)` count built from it silently under-counts —
+ * the more bookings a buddy has, the more offenses go missing. Naming our own
+ * bound makes the truncation point ours, deterministic and testable, rather than
+ * a server-side default nobody in this process can observe.
+ */
+export const BUDDY_BOOKING_SCAN_CAP = 1000;
+
+/**
+ * Hard cap on the thread-membership scans that find an EXISTING direct thread
+ * between two people. Same PostgREST row cap as above (Supabase ships
+ * db-max-rows = 1000): an unbounded scan is truncated server-side, the existing
+ * DM falls off the end, and the caller then CREATES A SECOND one — permanently
+ * splitting a conversation. The cap is ours and hitting it is reported.
+ */
+const DM_THREAD_SCAN_CAP = 1000;
+
+/** Default number of cumulative offenses (including the current one) that suspends a buddy. */
+export const OFF_APP_SUSPENSION_THRESHOLD_DEFAULT = 3;
+
+/**
+ * ── AN UNREADABLE AUTHORIZATION TABLE IS NOT A SETTLED REFUSAL ───────────────
+ * census §20.7, named there and declined; executed for `routes/telegraphChat.ts`
+ * and `routes/telegraphStream.ts` by §22.3 and for this file here.
+ *
+ * supabase-js RESOLVES on a database failure, so `const { data: membership } =
+ * await …` arrived as `data: null` — byte-identical to a genuine non-member —
+ * and nine gates in this file answered 403 "Not a member of this thread". That
+ * is SAFE (it denies rather than admits) and it is FALSE: the server did not
+ * perform the check and says it did, by name, to a person looking at their own
+ * conversation. A 403 is the refusal a client acts on by GIVING UP; it will not
+ * recover when the table does.
+ *
+ * §20.7's stated hesitation was that `degraded_unavailable` is the only code
+ * `lib/http.ts` marks retryable, so the change alters the retry behaviour of
+ * live routes. That is true, and it is the same contract change this file
+ * ALREADY made for the ten dropped-error reads §18 closed and for the roster
+ * read at the send step. A genuine non-member still receives the identical 403
+ * with the identical words — every case in
+ * `src/test/telegraphMembershipHonesty.test.ts` asserts both halves.
+ *
+ * One refusal, so nine call sites cannot drift apart.
+ */
+function refuseUnreadableAccess(
+  req: any,
+  res: any,
+  table: string,
+  ctx: Record<string, unknown>,
+): void {
+  req.log.error(
+    { ...ctx, table },
+    `${table} read failed — refusing rather than asserting the caller is not entitled`,
+  );
+  sendError(
+    res,
+    'degraded_unavailable',
+    'We could not check your access to this conversation right now. Please try again shortly.',
+  );
+}
+
+interface ThresholdLogger { error: (obj: unknown, msg: string) => void }
+
+/**
+ * Resolve OFF_APP_SUSPENSION_THRESHOLD. A malformed value used to become NaN,
+ * and `n >= NaN` is false for every n — a typo in an env var switched the
+ * suspension off for good with no error anywhere. A value that cannot be read as
+ * a positive integer is reported and the default is used instead.
+ */
+export function offAppSuspensionThreshold(log?: ThresholdLogger): number {
+  const raw = process.env['OFF_APP_SUSPENSION_THRESHOLD'];
+  if (raw === undefined || raw === '') return OFF_APP_SUSPENSION_THRESHOLD_DEFAULT;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    log?.error(
+      { raw, fallback: OFF_APP_SUSPENSION_THRESHOLD_DEFAULT },
+      'OFF_APP_SUSPENSION_THRESHOLD is not a positive integer — falling back to the default instead of disabling suspension',
+    );
+    return OFF_APP_SUSPENSION_THRESHOLD_DEFAULT;
+  }
+  return parsed;
+}
+
+interface DedupeLogger { error: (obj: unknown, msg: string) => void; warn: (obj: unknown, msg: string) => void }
+
+/**
+ * Find an existing 1:1 direct thread shared by two people.
+ *
+ * Returns `{ threadId }` on a decided answer (a thread, or a proven absence) and
+ * `{ undecided: true }` when a read failed. The distinction is the whole point:
+ * all three reads used to drop their `.error`, so a single unreadable table
+ * produced "no existing thread" — and both callers respond to that by CREATING
+ * one. A transient database blip therefore left two people with two DM threads
+ * and their history split across both, which no user action undoes. Absence of
+ * evidence was being spent as evidence of absence, irreversibly.
+ */
+export async function findDirectThreadBetween(
+  sc: any,
+  userA: string,
+  userB: string,
+  log: DedupeLogger,
+): Promise<{ threadId: string | null } | { undecided: true }> {
+  const { data: aMemberships, error: aErr } = await sc
+    .from('message_thread_members')
+    .select('thread_id')
+    .eq('user_id', userA)
+    .limit(DM_THREAD_SCAN_CAP);
+  if (aErr) {
+    log.error({ err: aErr, userA }, 'direct-thread lookup: membership read failed — cannot prove no thread exists');
+    return { undecided: true };
+  }
+
+  const aThreadIds = ((aMemberships ?? []) as any[]).map((m) => m.thread_id as string);
+  if (aThreadIds.length === 0) return { threadId: null };
+  if (aThreadIds.length >= DM_THREAD_SCAN_CAP) {
+    // Beyond the cap the scan can no longer prove absence, and the caller's
+    // response to "absent" is to create a duplicate. Refuse instead.
+    log.error({ userA, cap: DM_THREAD_SCAN_CAP },
+      'direct-thread lookup: membership scan hit the cap — cannot prove no thread exists, refusing rather than creating a duplicate');
+    return { undecided: true };
+  }
+
+  const { data: allMembers, error: mErr } = await sc
+    .from('message_thread_members')
+    .select('thread_id, user_id')
+    .in('thread_id', aThreadIds);
+  if (mErr) {
+    log.error({ err: mErr, userA, userB }, 'direct-thread lookup: roster read failed — cannot prove no thread exists');
+    return { undecided: true };
+  }
+
+  const membersByThread: Record<string, string[]> = {};
+  for (const m of (allMembers ?? []) as any[]) {
+    if (!membersByThread[m.thread_id]) membersByThread[m.thread_id] = [];
+    membersByThread[m.thread_id]!.push(m.user_id);
+  }
+
+  const candidateIds: string[] = [];
+  for (const [tid, members] of Object.entries(membersByThread)) {
+    if (members.length === 2 && members.includes(userA) && members.includes(userB)) {
+      candidateIds.push(tid);
+    }
+  }
+  if (candidateIds.length === 0) return { threadId: null };
+
+  // Only reuse true DM threads. Trip/circle group threads can also have exactly
+  // two members — matching those would hijack a group chat as the DM. The create
+  // paths rely on the DB default thread_type='direct', so accept 'direct' (or
+  // NULL for legacy rows).
+  const { data: candidateThreads, error: tErr } = await sc
+    .from('message_threads')
+    .select('id, thread_type')
+    .in('id', candidateIds);
+  if (tErr) {
+    log.error({ err: tErr, userA, userB }, 'direct-thread lookup: thread-type read failed — cannot prove no thread exists');
+    return { undecided: true };
+  }
+  const direct = ((candidateThreads ?? []) as any[]).find(
+    (t) => t.thread_type === 'direct' || t.thread_type == null,
+  );
+  return { threadId: direct ? (direct.id as string) : null };
+}
 
 /* ---------------------------------------------------------------------------
  * GET /api/me/message-settings
@@ -202,11 +410,11 @@ router.patch('/me/language-settings', async (req, res) => {
   const patch: Record<string, unknown> = { ...parsed.data, translation_updated_at: new Date().toISOString() };
 
   // Capture the current preferred_language before updating so we can detect a change.
-  const { data: before } = await client
-    .from('profiles')
-    .select('preferred_language')
-    .eq('id', user.id)
-    .single();
+  const { data: before, error: beforeErr } = await client.from('profiles').select('preferred_language').eq('id', user.id).single();
+  // T344: this error was DISCARDED. supabase-js RESOLVES on a database failure, so an unreadable `profiles` arrived as `before: null`,
+  // the retranslate gate below read `oldLanguage: null` — A CHANGE from whatever the language really was — and EVERY FAILING SAVE billed
+  // a sweep of up to 200 messages through the PAID translation provider for a change nobody had made. Bound, logged, and gated on below.
+  if (beforeErr) req.log.warn({ err: beforeErr }, 'language-settings: prior preferred_language unreadable — saving the settings, firing no retranslation sweep');
 
   const { data, error } = await client
     .from('profiles')
@@ -224,10 +432,10 @@ router.patch('/me/language-settings', async (req, res) => {
   // Fire-and-forget re-translation sweep when the translation target changes.
   const newLang = (data as any).preferred_language as string | null;
   const oldLang = (before as any)?.preferred_language as string | null;
-  // Gated on auto_translate_messages. Ungated, changing the display language
-  // fired a sweep of up to 200 messages at the translation provider for users
-  // who had never asked for message translation at all.
-  if (newLang && shouldRetranslateOnLanguageChange({
+  // Gated on auto_translate_messages — ungated, changing the DISPLAY language fired a sweep of up to 200 messages at the translation
+  // provider for users who had never asked for message translation at all — and, since T344, on the prior language having actually been
+  // READ. An unreadable prior language is not evidence of a change, and `beforeErr` is the only thing that tells it from a real null.
+  if (newLang && !beforeErr && shouldRetranslateOnLanguageChange({
     newLanguage: newLang,
     oldLanguage: oldLang,
     autoTranslateMessages: (data as any).auto_translate_messages,
@@ -266,6 +474,11 @@ router.get('/users/:userId/message-permission', async (req, res) => {
     allowed: verdict.allowed,
     reason: verdict.reason ?? null,
     relationship_context: verdict.relationship_context,
+    // `relationship_context` is a floor, not the truth, when a relationship read
+    // failed. The client renders this context as statements about a person ("you
+    // are not connected"), so it needs to be able to tell "false" from "we could
+    // not find out" and stay silent rather than assert something untrue.
+    degraded: verdict.degraded === true,
   });
 });
 
@@ -302,57 +515,40 @@ router.post('/users/:userId/open-thread', async (req, res) => {
     return;
   }
 
-  const { data: myMemberships } = await sc
-    .from('message_thread_members')
-    .select('thread_id')
-    .eq('user_id', user.id);
-
-  const myThreadIds = (myMemberships ?? []).map((m: any) => m.thread_id);
-
-  let existingThreadId: string | null = null;
-  if (myThreadIds.length > 0) {
-    const { data: allMembers } = await sc
-      .from('message_thread_members')
-      .select('thread_id, user_id')
-      .in('thread_id', myThreadIds);
-
-    const membersByThread: Record<string, string[]> = {};
-    for (const m of (allMembers ?? []) as any[]) {
-      if (!membersByThread[m.thread_id]) membersByThread[m.thread_id] = [];
-      membersByThread[m.thread_id].push(m.user_id);
-    }
-
-    const candidateIds: string[] = [];
-    for (const [threadId, members] of Object.entries(membersByThread)) {
-      if (members.length === 2 && members.includes(user.id) && members.includes(recipientId)) {
-        candidateIds.push(threadId);
-      }
-    }
-
-    // Only reuse true DM threads. Trip/circle group threads can also have exactly
-    // two members — matching those would hijack a group chat as the DM. The DM
-    // create path below relies on the DB default thread_type='direct', so accept
-    // 'direct' (or NULL for legacy rows).
-    if (candidateIds.length > 0) {
-      const { data: candidateThreads } = await sc
-        .from('message_threads')
-        .select('id, thread_type')
-        .in('id', candidateIds);
-      const direct = ((candidateThreads ?? []) as any[]).find(
-        (t) => t.thread_type === 'direct' || t.thread_type == null,
-      );
-      if (direct) existingThreadId = direct.id;
-    }
+  const lookup = await findDirectThreadBetween(sc, user.id, recipientId, req.log);
+  if ('undecided' in lookup) {
+    sendError(res, 'degraded_unavailable', 'We could not open this conversation right now. Please try again shortly.');
+    return;
   }
+  const existingThreadId: string | null = lookup.threadId;
 
   if (existingThreadId) {
     // Reusing a thread one (or both) parties previously left: reset left_at so
     // the conversation is usable again for both sides.
-    await sc
+    //
+    // ── THIS WRITE IS THE DIFFERENCE BETWEEN A THREAD AND A 403 ───────────────
+    // It was issued blind: no `{ error }`. supabase-js RESOLVES on a database
+    // error, so a rejoin that never landed answered exactly like one that did,
+    // and the handler replied 200 `{ threadId, created: false }`. The client
+    // then opens a thread in which every send and every media upload is refused
+    // — `left_at !== null` is checked explicitly in those handlers and answers
+    // 403 "You no longer have access to this thread". The endpoint's whole
+    // contract is "here is a conversation you can use", so a failure here has to
+    // be reported rather than papered over with the thread id.
+    const { error: rejoinErr } = await sc
       .from('message_thread_members')
       .update({ left_at: null })
       .eq('thread_id', existingThreadId)
       .in('user_id', [user.id, recipientId]);
+
+    if (rejoinErr) {
+      req.log.error(
+        { err: rejoinErr, threadId: existingThreadId },
+        'open-thread: left_at reset failed — the thread would 403 on every send; refusing instead of returning it',
+      );
+      sendError(res, 'db_error', rejoinErr.message ?? 'Failed to reopen this conversation');
+      return;
+    }
 
     res.status(200).json({ threadId: existingThreadId, created: false });
     return;
@@ -436,7 +632,21 @@ router.post('/users/:userId/message-request', async (req, res) => {
   if (!isUuid(recipientId)) { sendError(res, 'invalid_payload', 'Invalid user id'); return; }
   if (recipientId === user.id) { sendError(res, 'invalid_payload', 'You cannot send a message request to yourself'); return; }
 
-  const { data: profile } = await client.from('profiles').select('id').eq('id', recipientId).maybeSingle();
+  const { data: profile, error: profileErr } = await client.from('profiles').select('id').eq('id', recipientId).maybeSingle();
+
+  // T344/T363, §17.8. supabase-js RESOLVES on a database failure, so a dropped
+  // error arrived here as `data: null` — indistinguishable from a user who does not exist — and
+  // this route answered a confident 404. A 404 is the one refusal a caller acts
+  // on by GIVING UP; an outage is not a deletion. `degraded_unavailable` is this
+  // codebase's own code for "the check was NOT PERFORMED" and the only code
+  // marked retryable (lib/http.ts RETRYABLE_CODES). A genuinely absent user
+  // still gets the 404 it deserves, one line below.
+  if (profileErr) {
+    req.log.error({ err: profileErr, recipientId },
+      'profiles read failed — refusing rather than reporting the recipient as nonexistent');
+    sendError(res, 'degraded_unavailable', 'We could not check that account right now. Please try again shortly.');
+    return;
+  }
   if (!profile) { sendError(res, 'not_found', 'User not found'); return; }
 
   const sc = getServiceClient();
@@ -500,12 +710,29 @@ router.post('/users/:userId/message-request', async (req, res) => {
     return;
   }
 
-  const { data: existing } = await sc
+  // One request per (sender, recipient) is the anti-harassment property of this
+  // endpoint: a pending or accepted row short-circuits to a 200 instead of
+  // delivering another request to the recipient. supabase-js resolves on a DB
+  // error, so an unreadable message_requests returns the same `null` a
+  // first-ever request does, and the INSERT below then delivers a SECOND
+  // unsolicited request from the same sender. That reaches another person and
+  // cannot be recalled, so an unreadable table refuses the send.
+  const { data: existing, error: existingErr } = await sc
     .from('message_requests')
     .select('id, status')
     .eq('sender_id', user.id)
     .eq('recipient_id', recipientId)
     .maybeSingle();
+
+  if (existingErr) {
+    req.log.error({ err: existingErr, recipientId }, 'message-request: existing-request check unavailable');
+    sendError(
+      res,
+      'degraded_unavailable',
+      'We could not check your existing requests right now. Please try again shortly.',
+    );
+    return;
+  }
 
   if (existing) {
     const ex = existing as any;
@@ -523,9 +750,31 @@ router.post('/users/:userId/message-request', async (req, res) => {
     ? req.body.previewText.slice(0, 280)
     : null;
 
+  // Telegraph §22: record WHY this person is reaching out, and record separately
+  // whether the server established it. The sender asserts the origin; a sender
+  // who wants to look safe asserts "Trip". Only `trip` can be checked today
+  // (both parties accepted members), and everything else is stored as a claim.
+  //
+  // The flag gates the COLUMNS, not just the feature: 2813 is on no database,
+  // and PostgREST answers an unknown column with 42703 and fails the whole
+  // insert — which would lose the message request, not just its origin.
+  const originOn = await requestOriginEnabled(sc);
+  const resolvedOrigin = originOn
+    ? await resolveRequestOrigin(sc, {
+        senderId: user.id,
+        recipientId,
+        claim: parseOriginClaim(req.body),
+      })
+    : null;
+
   const { data: newReq, error } = await sc
     .from('message_requests')
-    .insert({ sender_id: user.id, recipient_id: recipientId, preview_text: previewText })
+    .insert({
+      sender_id: user.id,
+      recipient_id: recipientId,
+      preview_text: previewText,
+      ...originInsertColumns(resolvedOrigin, originOn),
+    })
     .select('id')
     .single();
 
@@ -556,9 +805,13 @@ router.get('/me/message-requests', async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
+  // §22's origin, under the same flag as the write. No-op while OFF: the select
+  // list is then exactly the one that ran before 2813.
+  const originOn = await requestOriginEnabled(sc);
+
   const { data, error } = await sc
     .from('message_requests')
-    .select('id, sender_id, preview_text, created_at')
+    .select(originSelect('id, sender_id, preview_text, created_at', originOn))
     .eq('recipient_id', user.id)
     .eq('status', 'pending')
     .order('created_at', { ascending: false });
@@ -573,16 +826,33 @@ router.get('/me/message-requests', async (req, res) => {
   let profileMap: Record<string, any> = {};
   let locationMap: Record<string, string | null> = {};
   if (senderIds.length > 0) {
-    const { data: profiles } = await sc
+    /*
+      T344. An unreadable `profiles` made every pending request render with
+      `sender: null` — a request list that names nobody, which reads as a
+      corrupt inbox rather than as a failure. It refuses instead.
+    */
+    const { data: profiles, error: profilesErr } = await sc
       .from('profiles')
       .select('id, handle, name, username, full_name, avatar_url, default_language')
       .in('id', senderIds);
+    if (profilesErr) {
+      req.log.error({ err: profilesErr },
+        'me/message-requests: sender profiles unreadable — refusing rather than listing requests from nobody');
+      sendError(res, 'db_error', profilesErr.message);
+      return;
+    }
     for (const p of profiles ?? []) profileMap[(p as any).id] = p;
 
-    const { data: locations } = await sc
+    // The city is decoration on the same row and its absence is already a
+    // normal state (a sender with no location). Logged, not refused — but no
+    // longer dropped.
+    const { data: locations, error: locationsErr } = await sc
       .from('user_location_state')
       .select('user_id, city')
       .in('user_id', senderIds);
+    if (locationsErr) {
+      req.log.warn({ err: locationsErr }, 'me/message-requests: sender cities unreadable — omitted');
+    }
     for (const l of locations ?? []) locationMap[(l as any).user_id] = (l as any).city ?? null;
   }
 
@@ -592,6 +862,12 @@ router.get('/me/message-requests', async (req, res) => {
       requestId: r.id,
       previewText: r.preview_text ?? null,
       createdAt: r.created_at,
+      // §22's origin. `verified` travels to the client because the client has
+      // to render two different sentences — "they are in your trip crew" and
+      // "they say they found you nearby" — and flattening it here would move
+      // the decision somewhere with less information. null while the flag is
+      // off, which the client renders as it always did: nothing.
+      origin: originForWire(r, originOn),
       sender: p
         ? {
             id: p.id,
@@ -622,12 +898,25 @@ router.post('/message-requests/:requestId/accept', async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
-  const { data: mr } = await sc
+  const { data: mr, error: mrErr } = await sc
     .from('message_requests')
     .select('id, sender_id, recipient_id, status, preview_text')
     .eq('id', requestId)
     .maybeSingle();
 
+  // T344/T363, §17.8. supabase-js RESOLVES on a database failure, so a dropped
+  // error arrived here as `data: null` — indistinguishable from a request that does not exist — and
+  // this route answered a confident 404. A 404 is the one refusal a caller acts
+  // on by GIVING UP; an outage is not a deletion. `degraded_unavailable` is this
+  // codebase's own code for "the check was NOT PERFORMED" and the only code
+  // marked retryable (lib/http.ts RETRYABLE_CODES). A genuinely absent request
+  // still gets the 404 it deserves, one line below.
+  if (mrErr) {
+    req.log.error({ err: mrErr, requestId },
+      'message_requests read failed on accept — refusing rather than reporting the request as nonexistent');
+    sendError(res, 'degraded_unavailable', 'We could not open that message request right now. Please try again shortly.');
+    return;
+  }
   if (!mr) { sendError(res, 'not_found', 'Message request not found'); return; }
   const req_ = mr as any;
   if (req_.recipient_id !== user.id) { sendError(res, 'forbidden', 'Only the recipient can accept this request'); return; }
@@ -652,61 +941,22 @@ router.post('/message-requests/:requestId/accept', async (req, res) => {
   }
 
   if (!casRows || (casRows as any[]).length === 0) {
-    // Lost the race — another submit already transitioned this request.
-    const { data: current } = await sc
-      .from('message_requests')
-      .select('status')
-      .eq('id', requestId)
-      .maybeSingle();
-    sendError(res, 'invalid_payload', `Request is already ${(current as any)?.status ?? 'accepted'}`);
+    // Lost the race — another submit already transitioned this request. T344/T363:
+    const { data: current, error: currentErr } = await sc.from('message_requests').select('status').eq('id', requestId).maybeSingle();
+    // supabase-js RESOLVES on a database failure, so the old `?? 'accepted'` asserted THE OTHER PARTY'S DECISION out of a read that never happened — and `declined` is one of the two ways a request leaves 'pending', so the guess was wrong about a refusal roughly as often as it was right. Telling someone their request was accepted when it was refused is not a degraded answer, it is a false one.
+    // THE 4xx CONTRACT IS DELIBERATELY KEPT for the case it was written for: the status WAS read, so it is named, and that stays a 400. An unreadable status is a different case and gets `degraded_unavailable` — the one code lib/http.ts marks retryable — because the true sentence is "this was already answered and we cannot tell you how", and a retry re-runs the guard at the top of this handler, which names the real status the moment the table is back. A 500 would be wrong for the same reason: it is not retryable and the caller would give up. A row that has VANISHED is absent rather than accepted, and gets the same 404 the pre-read above gives.
+    if (currentErr) { req.log.error({ err: currentErr, requestId }, 'message-request accept: lost the swap and the status is unreadable — refusing to name a status'); sendError(res, 'degraded_unavailable', 'This request has already been answered, but we could not read how. Please open it again in a moment.'); return; }
+    if (!current) { sendError(res, 'not_found', 'Message request not found'); return; }
+    sendError(res, 'invalid_payload', `Request is already ${(current as any).status}`);
     return;
   }
 
-  const { data: senderMemberships } = await sc
-    .from('message_thread_members')
-    .select('thread_id')
-    .eq('user_id', req_.sender_id);
-
-  const senderThreadIds = (senderMemberships ?? []).map((m: any) => m.thread_id);
-
-  let existingDirectThreadId: string | null = null;
-  if (senderThreadIds.length > 0) {
-    const { data: allMembers } = await sc
-      .from('message_thread_members')
-      .select('thread_id, user_id')
-      .in('thread_id', senderThreadIds);
-
-    const membersByThread: Record<string, string[]> = {};
-    for (const m of (allMembers ?? []) as any[]) {
-      if (!membersByThread[m.thread_id]) membersByThread[m.thread_id] = [];
-      membersByThread[m.thread_id].push(m.user_id);
-    }
-
-    const candidateIds: string[] = [];
-    for (const [tid, members] of Object.entries(membersByThread)) {
-      if (
-        members.length === 2 &&
-        members.includes(req_.sender_id) &&
-        members.includes(req_.recipient_id)
-      ) {
-        candidateIds.push(tid);
-      }
-    }
-
-    // Only reuse true DM threads — trip/circle group threads can also have
-    // exactly two members. DM threads carry thread_type='direct' (DB default)
-    // or NULL on legacy rows.
-    if (candidateIds.length > 0) {
-      const { data: candidateThreads } = await sc
-        .from('message_threads')
-        .select('id, thread_type')
-        .in('id', candidateIds);
-      const direct = ((candidateThreads ?? []) as any[]).find(
-        (t) => t.thread_type === 'direct' || t.thread_type == null,
-      );
-      if (direct) existingDirectThreadId = direct.id;
-    }
+  const acceptLookup = await findDirectThreadBetween(sc, req_.sender_id, req_.recipient_id, req.log);
+  if ('undecided' in acceptLookup) {
+    sendError(res, 'degraded_unavailable', 'We could not accept this request right now. Please try again shortly.');
+    return;
   }
+  const existingDirectThreadId: string | null = acceptLookup.threadId;
 
   let threadId: string;
 
@@ -714,11 +964,44 @@ router.post('/message-requests/:requestId/accept', async (req, res) => {
     threadId = existingDirectThreadId;
     // Reusing a thread one (or both) parties previously left: reset left_at so
     // the conversation is usable again for both sides.
-    await sc
+    //
+    // Same blind write as POST /users/:id/open-thread carried: an unobserved
+    // failure here hands both parties a thread whose send handlers answer 403
+    // "You no longer have access to this thread" on `left_at !== null`, while
+    // the response says the request was accepted and names the thread.
+    const { error: rejoinErr } = await sc
       .from('message_thread_members')
       .update({ left_at: null })
       .eq('thread_id', threadId)
       .in('user_id', [req_.sender_id, req_.recipient_id]);
+
+    if (rejoinErr) {
+      req.log.error(
+        { err: rejoinErr, threadId, requestId },
+        'message-request accept: left_at reset failed — the reused thread would 403 on every send',
+      );
+      // The compare-and-swap above has ALREADY moved this request to 'accepted',
+      // and the status check at the top of the handler refuses anything that is
+      // not 'pending' — so returning here without undoing it would leave the
+      // recipient with an accepted request, no usable thread, and no way to try
+      // again. Put the request back the way we found it so the accept is
+      // genuinely retryable, exactly as the orphan-thread branch below rolls
+      // back the thread it created. If the rollback itself fails there is
+      // nothing further to try; it is logged rather than swallowed.
+      const { error: rollbackErr } = await sc
+        .from('message_requests')
+        .update({ status: 'pending', responded_at: null })
+        .eq('id', requestId)
+        .eq('status', 'accepted');
+      if (rollbackErr) {
+        req.log.error(
+          { err: rollbackErr, requestId },
+          'message-request accept: could not roll the request back to pending after a failed rejoin — it is stuck accepted with no usable thread',
+        );
+      }
+      sendError(res, 'db_error', rejoinErr.message ?? 'Failed to reopen this conversation');
+      return;
+    }
   } else {
     const { data: thread, error: tErr } = await sc
       .from('message_threads')
@@ -793,25 +1076,46 @@ router.post('/message-requests/:requestId/accept', async (req, res) => {
   // request can be accepted into a reused existing direct thread that is e2ee;
   // inserting the plaintext preview_text there would break the E2EE invariant
   // (audit MSG-3). Skip the preview insert for e2ee threads.
-  const { data: acceptThreadMeta } = await sc
+  //
+  // The E2EE invariant makes this read a WRITE PRECONDITION, and the unsafe
+  // direction is the permissive one: supabase-js resolves on a DB error, so an
+  // unreadable message_threads yields `{ data: null }`, `?.is_e2ee === true`
+  // evaluates to FALSE, and the plaintext preview is inserted into what may
+  // well be an e2ee thread — server-readable plaintext persisted into an
+  // end-to-end-encrypted conversation, exactly the breach MSG-3 forbids, and
+  // not undoable once written. Treat "cannot prove this thread is not e2ee" as
+  // e2ee and skip the preview; the accept itself has already succeeded and been
+  // responded to, so nothing else is lost.
+  const { data: acceptThreadMeta, error: acceptThreadMetaErr } = await sc
     .from('message_threads')
     .select('is_e2ee')
     .eq('id', threadId)
     .maybeSingle();
+  if (acceptThreadMetaErr) {
+    req.log.error(
+      { err: acceptThreadMetaErr, threadId },
+      'message-request accept: could not read thread e2ee flag; skipping preview insert',
+    );
+    return;
+  }
   const threadIsE2ee = (acceptThreadMeta as any)?.is_e2ee === true;
   if (previewBody && !threadIsE2ee) {
-    const { data: senderProfile } = await sc
+    const { data: senderProfile, error: senderProfileErr } = await sc
       .from('profiles')
       .select('preferred_language, preferred_message_language')
       .eq('id', req_.sender_id)
       .maybeSingle();
-    const senderLanguage = (senderProfile as any)?.preferred_language ?? (senderProfile as any)?.preferred_message_language ?? 'en';
+    // T344/T363 — the error is BOUND. supabase-js RESOLVES on a database
+    // failure, so the old `?? 'en'` turned an unreadable `profiles` into a
+    // durable stored claim that this sender had chosen English. One shared
+    // interpreter now decides what the read actually established.
+    const senderLanguage = senderLanguageFrom(senderProfile, senderProfileErr);
 
-    const { data: previewMsg } = await sc
-      .from('messages')
-      .insert({ thread_id: threadId, sender_id: req_.sender_id, body: previewBody, created_at: now })
-      .select('id')
-      .single();
+    const { data: previewMsg, error: previewErr } = await sc.from('messages').insert({ thread_id: threadId, sender_id: req_.sender_id, body: previewBody, created_at: now }).select('id').single();
+    // T344/T363 — the insert's error is BOUND. The 200 was ALREADY sent further up this handler, so this log is the only record this
+    // write can leave: with the error discarded, a preview that never landed left the thread created, the accept reported, the first
+    // message missing, and nothing anywhere saying why. It stays best-effort — the accept has succeeded and is not undone by this.
+    if (previewErr) req.log.error({ err: previewErr, threadId, requestId }, 'message-request accept: preview message insert failed — the thread exists but carries no first message');
 
     await sc
       .from('message_threads')
@@ -824,7 +1128,8 @@ router.post('/message-requests/:requestId/accept', async (req, res) => {
         body: previewBody,
         senderId: req_.sender_id,
         threadId,
-        senderPreferredLanguage: senderLanguage,
+        senderPreferredLanguage: senderLanguage.preferredLanguage,
+        senderPreferenceUnreadable: senderLanguage.unreadable,
         logger: req.log,
       }).catch(() => {});
     }
@@ -845,23 +1150,84 @@ router.post('/message-requests/:requestId/decline', async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
-  const { data: mr } = await sc
+  const { data: mr, error: mrErr } = await sc
     .from('message_requests')
     .select('id, sender_id, recipient_id, status')
     .eq('id', requestId)
     .maybeSingle();
 
+  // T344/T363, §17.8. supabase-js RESOLVES on a database failure, so a dropped
+  // error arrived here as `data: null` — indistinguishable from a request that does not exist — and
+  // this route answered a confident 404. A 404 is the one refusal a caller acts
+  // on by GIVING UP; an outage is not a deletion. `degraded_unavailable` is this
+  // codebase's own code for "the check was NOT PERFORMED" and the only code
+  // marked retryable (lib/http.ts RETRYABLE_CODES). A genuinely absent request
+  // still gets the 404 it deserves, one line below.
+  if (mrErr) {
+    req.log.error({ err: mrErr, requestId },
+      'message_requests read failed on decline — refusing rather than reporting the request as nonexistent');
+    sendError(res, 'degraded_unavailable', 'We could not open that message request right now. Please try again shortly.');
+    return;
+  }
   if (!mr) { sendError(res, 'not_found', 'Message request not found'); return; }
   const req_ = mr as any;
   if (req_.recipient_id !== user.id) { sendError(res, 'forbidden', 'Only the recipient can decline this request'); return; }
   if (req_.status !== 'pending') { sendError(res, 'invalid_payload', `Request is already ${req_.status}`); return; }
 
   const now = new Date().toISOString();
-  await sc.from('message_requests').update({ status: 'declined', responded_at: now }).eq('id', requestId);
+
+  // ── THE DECLINE IS THE WHOLE ENDPOINT, AND IT WAS ISSUED BLIND ──────────────
+  // This used to be a bare `await sc.from(...).update(...).eq('id', requestId)`
+  // — no `.select()`, no `{ error }`. supabase-js RESOLVES on a database error,
+  // so an UPDATE that never landed returned exactly what a successful one
+  // returns, and the handler went on to answer HTTP 200 `{ status: 'declined' }`
+  // AND publish a `request.declined` realtime event to the sender — for a
+  // request still sitting at `pending` in the table. Three parties then disagree
+  // about one fact: the recipient's client drops the card, the sender is told
+  // they were turned down, and the next GET /message-requests hands the
+  // recipient the very same request back. Nothing retries, because nothing
+  // observed a failure.
+  //
+  // The `status !== 'pending'` check above is a READ, and the write below used to
+  // trust it. Between the two, a second decline — or an accept — can land, and
+  // both requests then answer 200 for a transition only one of them made. The
+  // transition is now a COMPARE-AND-SWAP: `.eq('status','pending')` moves the
+  // test into the write itself, and `.select('id')` is what makes the outcome
+  // observable, because without it PostgREST returns data: null and a caller
+  // cannot tell one affected row from none.
+  //
+  // This is the fix Lane Y measured and then had to withdraw, because the fake
+  // in telegraphStreamEndpoints.test.ts answered {data: null} for EVERY update
+  // and read the swap as "matched nothing". The fake was taught the client's
+  // actual behaviour in the same change; a double that cannot express a client
+  // behaviour will otherwise veto the repair of a real defect.
+  const { data: declined, error: declineErr } = await sc
+    .from('message_requests')
+    .update({ status: 'declined', responded_at: now })
+    .eq('id', requestId)
+    .eq('status', 'pending')
+    .select('id');
+
+  if (declineErr) {
+    req.log.error({ err: declineErr, requestId }, 'message_requests decline update failed');
+    sendError(res, 'db_error', declineErr.message);
+    return;
+  }
+
+  if (!Array.isArray(declined) || declined.length === 0) {
+    // Zero rows means the request stopped being `pending` between the read and
+    // the write. Nothing was changed, so nothing may be reported as changed —
+    // and in particular the realtime `request.declined` below must not fire.
+    req.log.warn({ requestId }, 'message_requests decline lost a race — no longer pending');
+    sendError(res, 'invalid_payload', 'Request is no longer pending');
+    return;
+  }
 
   res.status(200).json({ status: 'declined', requestId });
 
   // Realtime: notify the original sender their request was declined.
+  // Reached only on a decline this handler WATCHED land, so the event can no
+  // longer announce a state change the table does not carry.
   if (req_.sender_id) {
     void publishToUsers([req_.sender_id], {
       type: 'request.declined',
@@ -884,18 +1250,57 @@ router.post('/message-requests/:requestId/cancel', async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
-  const { data: mr } = await sc
+  const { data: mr, error: mrErr } = await sc
     .from('message_requests')
     .select('id, sender_id, status')
     .eq('id', requestId)
     .maybeSingle();
 
+  // T344/T363, §17.8. supabase-js RESOLVES on a database failure, so a dropped
+  // error arrived here as `data: null` — indistinguishable from a request that does not exist — and
+  // this route answered a confident 404. A 404 is the one refusal a caller acts
+  // on by GIVING UP; an outage is not a deletion. `degraded_unavailable` is this
+  // codebase's own code for "the check was NOT PERFORMED" and the only code
+  // marked retryable (lib/http.ts RETRYABLE_CODES). A genuinely absent request
+  // still gets the 404 it deserves, one line below.
+  if (mrErr) {
+    req.log.error({ err: mrErr, requestId },
+      'message_requests read failed on cancel — refusing rather than reporting the request as nonexistent');
+    sendError(res, 'degraded_unavailable', 'We could not open that message request right now. Please try again shortly.');
+    return;
+  }
   if (!mr) { sendError(res, 'not_found', 'Message request not found'); return; }
   const req_ = mr as any;
   if (req_.sender_id !== user.id) { sendError(res, 'forbidden', 'Only the sender can cancel this request'); return; }
   if (req_.status !== 'pending') { sendError(res, 'invalid_payload', `Request is already ${req_.status}`); return; }
 
-  await sc.from('message_requests').update({ status: 'cancelled' }).eq('id', requestId);
+  // Same blind write as decline had: no `{ error }`. A failed UPDATE was
+  // reported to the sender as HTTP 200 `{ status: 'cancelled' }` while the
+  // request stayed `pending` and kept sitting in the recipient's inbox — a
+  // withdrawal the recipient never saw withdrawn.
+  // Compare-and-swap, for the same reason as decline: the `status !== 'pending'`
+  // test above is a READ, and an accept or decline can land between it and this
+  // write. `.eq('status','pending')` moves the test into the write;
+  // `.select('id')` is what makes the outcome observable at all, since PostgREST
+  // returns data: null without it.
+  const { data: cancelled, error: cancelErr } = await sc
+    .from('message_requests')
+    .update({ status: 'cancelled' })
+    .eq('id', requestId)
+    .eq('status', 'pending')
+    .select('id');
+
+  if (cancelErr) {
+    req.log.error({ err: cancelErr, requestId }, 'message_requests cancel update failed');
+    sendError(res, 'db_error', cancelErr.message);
+    return;
+  }
+
+  if (!Array.isArray(cancelled) || cancelled.length === 0) {
+    req.log.warn({ requestId }, 'message_requests cancel lost a race — no longer pending');
+    sendError(res, 'invalid_payload', 'Request is no longer pending');
+    return;
+  }
 
   res.status(200).json({ status: 'cancelled', requestId });
 });
@@ -920,11 +1325,15 @@ router.get('/me/unread-counts', async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
+  // Telegraph §14.3: the unread badge counts only messages inside the caller's
+  // per-thread window (visible_from_at, migration 2400), flag-gated.
+  const boundOn = await historyBoundEnabled(sc);
+
   // ── Run messages query and notifications queries in parallel ──────────────
   const [membershipsResult, profileResult] = await Promise.all([
     sc
       .from('message_thread_members')
-      .select('thread_id, last_read_at')
+      .select(membershipSelect('thread_id, last_read_at', boundOn))
       .eq('user_id', user.id)
       .is('left_at', null),
     sc
@@ -934,7 +1343,11 @@ router.get('/me/unread-counts', async (req, res) => {
       .maybeSingle(),
   ]);
 
-  let { data: memberships, error: mErr } = membershipsResult;
+  // The membership select is built by membershipSelect() (a runtime string),
+  // so supabase-js cannot infer the row type; the rows are the same shape
+  // they always were.
+  let memberships: any[] | null = (membershipsResult.data as any[] | null);
+  let mErr: any = membershipsResult.error;
 
   // Migration 0016 adds last_read_at to message_thread_members. If it hasn't
   // been applied yet (pg error 42703 = undefined column), fall back to a query
@@ -969,9 +1382,11 @@ router.get('/me/unread-counts', async (req, res) => {
 
   if (threadIds.length > 0) {
     const readAtByThread: Record<string, string | null> = {};
+    const visibleFromByThread: Record<string, string | null> = {};
     for (const m of memberships ?? []) {
       // last_read_at may be absent if migration 0016 is pending; default null
       readAtByThread[(m as any).thread_id] = (m as any).last_read_at ?? null;
+      visibleFromByThread[(m as any).thread_id] = visibleFromOf(m as any, boundOn);
     }
 
     const { data: threads, error: tErr } = await sc
@@ -1010,6 +1425,9 @@ router.get('/me/unread-counts', async (req, res) => {
 
       const lastMsgByThread: Record<string, any> = {};
       for (const m of lastMsgs ?? []) {
+        // §14.3: a message outside the caller's window for its thread is not
+        // theirs to count as unread. No-op while the flag is OFF.
+        if (!withinWindow((m as any).created_at, visibleFromByThread[(m as any).thread_id] ?? null)) continue;
         if (!lastMsgByThread[(m as any).thread_id]) {
           lastMsgByThread[(m as any).thread_id] = m;
         }
@@ -1050,11 +1468,20 @@ router.get('/me/unread-counts', async (req, res) => {
   // Upcoming confirmed meetups where user RSVP'd going/maybe — runs in parallel
   const meetupCountPromise = (async (): Promise<number> => {
     const now = new Date().toISOString();
-    const { data: upcoming } = await sc
+    // T344: an unreadable `meetups` used to report "no upcoming meetups", which
+    // is a number a person acts on. It is logged and reported as zero-by-
+    // failure rather than zero-by-fact; the badge under-reports, exactly as the
+    // block-set read below already chooses to, and the log is the difference
+    // between a known gap and a silent one.
+    const { data: upcoming, error: upcomingErr } = await sc
       .from('meetups')
       .select('id')
       .eq('status', 'confirmed')
       .gt('starts_at', now);
+    if (upcomingErr) {
+      req.log.warn({ err: upcomingErr }, 'unread-counts: meetups unreadable — badge under-reports');
+      return 0;
+    }
     const ids = (upcoming ?? []).map((m: any) => m.id as string);
     if (ids.length === 0) return 0;
     const { count } = await (sc as any)
@@ -1091,23 +1518,37 @@ router.get('/me/unread-counts', async (req, res) => {
     const now = new Date().toISOString();
 
     // 1. Get IDs of users blocked in either direction.
-    const [blockedByMe, blockingMe] = await Promise.all([
-      sc.from('blocks').select('blocked_id').eq('blocker_id', user.id),
-      sc.from('blocks').select('blocker_id').eq('blocked_id', user.id),
-    ]);
-    const blockedSet = new Set<string>([
-      ...((blockedByMe.data ?? []).map((r: any) => r.blocked_id as string)),
-      ...((blockingMe.data ?? []).map((r: any) => r.blocker_id as string)),
-    ]);
+    //
+    // FAIL-CLOSED, shape 2 (lib/exclusionSet.ts): the block set scopes ONE of
+    // the four numbers this endpoint returns. `messages`, `notifications` and
+    // `meetups` are not block-scoped and are already computed above, so the
+    // narrow honest answer is to leave `newHighlights` at its 0 default rather
+    // than 503 the whole badge endpoint. `isExcluded` returns true for every id
+    // when the set is unreadable, so `circleIds` empties, the highlights count
+    // is skipped, and the badge under-reports instead of surfacing a highlight
+    // from someone the caller blocked. Previously `(x.data ?? [])` turned a
+    // resolved DB error into an empty block set and the count included them.
+    const blockSet = await readBlockExclusions(sc, user.id);
+    if (!blockSet.ok) {
+      req.log.warn(
+        { reason: blockSet.reason },
+        'unread-counts: block list unreadable — newHighlights reported as 0',
+      );
+    }
 
     // 2. Get IDs of users in the caller's circle.
-    const { data: circleRows } = await sc
+    // T344: same class as the block-set read above, same narrow answer — an
+    // unreadable circle is reported as zero new highlights, and said so.
+    const { data: circleRows, error: circleErr } = await sc
       .from('circle_memberships')
       .select('other_id')
       .eq('user_id', user.id);
+    if (circleErr) {
+      req.log.warn({ err: circleErr }, 'unread-counts: circle membership unreadable — newHighlights reported as 0');
+    }
     const circleIds = (circleRows ?? [])
       .map((r: any) => r.other_id as string)
-      .filter((id: string) => !blockedSet.has(id));
+      .filter((id: string) => !isExcluded(blockSet, id));
 
     if (circleIds.length > 0) {
       // 3. Count active highlights from circle members posted after last view.
@@ -1121,8 +1562,8 @@ router.get('/me/unread-counts', async (req, res) => {
       if (highlightsViewedAt) {
         q = q.gt('created_at', highlightsViewedAt);
       }
-      const { count: hCount } = await q;
-      newHighlights = hCount ?? 0;
+      const { count: hCount, error: hCountErr } = await q; // T344: the last unbound read in this block; its two neighbours above already log.
+      if (hCountErr) req.log.warn({ err: hCountErr }, 'unread-counts: highlights count unreadable — newHighlights reported as 0'); else newHighlights = hCount ?? 0;
     }
   } catch (e) {
     req.log.warn({ err: e }, 'unread-counts newHighlights query failed — defaulting to 0');
@@ -1196,8 +1637,42 @@ router.post('/me/highlights/mark-viewed', async (req, res) => {
 /* ---------------------------------------------------------------------------
  * POST /api/threads/:threadId/read
  * ---------------------------------------------------------------------------
- * Marks the thread as read for the current user by updating last_read_at.
- * Idempotent — safe to call on every thread open.
+ * Marks the thread as read for the current user, up to a THRESHOLD the server
+ * can check. Idempotent — safe to call on every thread open.
+ *
+ * ── §7.2 / census T70: `now()` IS NOT A THRESHOLD ───────────────────────────
+ * This handler used to write `last_read_at = new Date()` for any authenticated
+ * caller, with no membership check at all. T70's verdict quoted that line
+ * directly — *"seen is whatever the client asserts"* — and §21.5 recorded it as
+ * the ONE half of the row still open after `POST /threads/:id/seen` was built:
+ *
+ *   > "while both paths exist, seen is still whatever the client asserts on the
+ *   > one that is wired into the app."
+ *
+ * This is the path the app calls (`markThreadRead`). Three things were wrong
+ * with a clock reading, and they are different from each other:
+ *
+ *  1. It claims the caller saw messages that DO NOT EXIST. `now()` is later
+ *     than every message in the thread, so the marker asserts a position past
+ *     the end of the conversation. Every consumer of the marker — the unread
+ *     count, the group "seen by" row — reads it as a fact about messages.
+ *  2. It ignores §14.3. A member added yesterday, whose window starts
+ *     yesterday, was marked as having read a month of history they cannot load.
+ *  3. It answered `{ ok: true }` to a stranger. The update matched zero rows,
+ *     so nothing was written — but the caller was told it was, and the thread
+ *     got a `read.updated` broadcast naming a person who is not in it.
+ *
+ * The threshold is now the newest NON-DELETED message inside the caller's own
+ * §14.3 window, which is the only value whose existence the server can verify,
+ * and it NEVER moves backwards. Those are `routes/telegraphLifecycle.ts`'s two
+ * rules, taken from there rather than invented here, so the two paths cannot
+ * disagree about what "seen" means.
+ *
+ * "Active foreground conversation" is T71 and remains unanswerable: the server
+ * cannot observe foreground and nothing here pretends to.
+ *
+ * Every read binds its error. An unreadable membership is not a non-member and
+ * an unreadable `messages` is not an empty conversation — §20.7.
  */
 router.post('/threads/:threadId/read', async (req, res) => {
   const auth = await requireUser(req, res);
@@ -1209,10 +1684,64 @@ router.post('/threads/:threadId/read', async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
-  const now = new Date().toISOString();
+  const boundOn = await historyBoundEnabled(sc);
+
+  const { data: membership, error: membershipErr } = await sc
+    .from('message_thread_members')
+    .select(membershipSelect('user_id, left_at, last_read_at', boundOn))
+    .eq('thread_id', threadId)
+    .eq('user_id', user.id)
+    .maybeSingle();
+
+  if (membershipErr) { refuseUnreadableAccess(req, res, 'message_thread_members', { err: membershipErr, threadId, userId: user.id }); return; }
+  if (!membership) { sendError(res, 'forbidden', 'Not a member of this thread'); return; }
+  if ((membership as any).left_at !== null) { sendError(res, 'forbidden', 'You no longer have access to this thread'); return; }
+
+  const visibleFrom = visibleFromOf(membership as any, boundOn);
+  const previous = ((membership as any).last_read_at ?? null) as string | null;
+
+  // The threshold: the newest message this member is entitled to have loaded.
+  let newestQuery = sc
+    .from('messages')
+    .select('id, created_at')
+    .eq('thread_id', threadId)
+    .is('deleted_at', null)
+    .order('created_at', { ascending: false })
+    .limit(1);
+  if (visibleFrom) newestQuery = newestQuery.gte('created_at', visibleFrom);
+  const { data: newestRows, error: newestErr } = await newestQuery;
+
+  // An unreadable `messages` must NOT collapse to "there is nothing to mark
+  // read" — that is silent, and the caller is told `ok: true` for a read that
+  // never happened.
+  if (newestErr) {
+    req.log.error({ err: newestErr, threadId, userId: user.id },
+      'read marker: messages read failed — refusing rather than reporting an empty conversation');
+    sendError(res, 'degraded_unavailable', 'We could not update your place in this conversation right now. Please try again shortly.');
+    return;
+  }
+
+  const threshold = ((newestRows ?? [])[0] as any)?.created_at as string | undefined;
+  if (!threshold) {
+    res.status(200).json({ ok: true, threadId, lastReadAt: previous, advanced: false, reason: 'nothing_visible_to_mark' });
+    return;
+  }
+
+  const thresholdMs = Date.parse(String(threshold));
+  const previousMs = previous ? Date.parse(previous) : null;
+  if (Number.isNaN(thresholdMs)) {
+    req.log.error({ threadId, threshold }, 'read marker: unparseable message timestamp — leaving the marker alone');
+    res.status(200).json({ ok: true, threadId, lastReadAt: previous, advanced: false, reason: 'nothing_visible_to_mark' });
+    return;
+  }
+  if (previousMs !== null && !Number.isNaN(previousMs) && previousMs >= thresholdMs) {
+    res.status(200).json({ ok: true, threadId, lastReadAt: previous, advanced: false, reason: 'already_past_this_message' });
+    return;
+  }
+
   const { error } = await sc
     .from('message_thread_members')
-    .update({ last_read_at: now })
+    .update({ last_read_at: threshold })
     .eq('thread_id', threadId)
     .eq('user_id', user.id);
 
@@ -1222,13 +1751,15 @@ router.post('/threads/:threadId/read', async (req, res) => {
     return;
   }
 
-  res.status(200).json({ ok: true, threadId, lastReadAt: now });
+  res.status(200).json({ ok: true, threadId, lastReadAt: threshold, advanced: true });
 
-  // Realtime: let other members update read receipts for this user.
+  // Realtime: let other members update read receipts for this user. The
+  // THRESHOLD is broadcast, not the wall clock — a receipt that named `now()`
+  // told every other member the caller had read past the end of the thread.
   void publishToThread(
     sc,
     threadId,
-    { type: 'read.updated', payload: { userId: user.id, lastReadAt: now } },
+    { type: 'read.updated', payload: { userId: user.id, lastReadAt: threshold } },
     { excludeUserId: user.id },
   );
 });
@@ -1266,19 +1797,47 @@ router.post('/threads/:threadId/e2ee', async (req, res) => {
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
   // Membership — thread access is gated only by message_thread_members.
-  const { data: member } = await sc
+  const { data: member, error: memberErr } = await sc
     .from('message_thread_members')
     .select('user_id')
     .eq('thread_id', threadId)
     .eq('user_id', user.id)
     .maybeSingle();
+
+  // T344/T363, §17.8. supabase-js RESOLVES on a database failure, so a dropped
+  // error arrived here as `data: null` — indistinguishable from a caller who is not a member — and
+  // this route answered a confident 404. A 404 is the one refusal a caller acts
+  // on by GIVING UP; an outage is not a deletion. `degraded_unavailable` is this
+  // codebase's own code for "the check was NOT PERFORMED" and the only code
+  // marked retryable (lib/http.ts RETRYABLE_CODES). A genuinely absent membership
+  // still gets the 404 it deserves, one line below.
+  if (memberErr) {
+    req.log.error({ err: memberErr, threadId, userId: user.id },
+      'message_thread_members read failed — refusing rather than reporting the thread as nonexistent');
+    sendError(res, 'degraded_unavailable', 'We could not open this conversation right now. Please try again shortly.');
+    return;
+  }
   if (!member) { sendError(res, 'not_found', 'Thread not found'); return; }
 
-  const { data: thread } = await sc
+  const { data: thread, error: threadErr } = await sc
     .from('message_threads')
     .select('id, thread_type, is_e2ee')
     .eq('id', threadId)
     .maybeSingle();
+
+  // T344/T363, §17.8. supabase-js RESOLVES on a database failure, so a dropped
+  // error arrived here as `data: null` — indistinguishable from a thread that does not exist — and
+  // this route answered a confident 404. A 404 is the one refusal a caller acts
+  // on by GIVING UP; an outage is not a deletion. `degraded_unavailable` is this
+  // codebase's own code for "the check was NOT PERFORMED" and the only code
+  // marked retryable (lib/http.ts RETRYABLE_CODES). A genuinely absent thread
+  // still gets the 404 it deserves, one line below.
+  if (threadErr) {
+    req.log.error({ err: threadErr, threadId },
+      'message_threads read failed — refusing rather than reporting the thread as nonexistent');
+    sendError(res, 'degraded_unavailable', 'We could not open this conversation right now. Please try again shortly.');
+    return;
+  }
   if (!thread) { sendError(res, 'not_found', 'Thread not found'); return; }
 
   // Already encrypted — idempotent success so a retry is safe.
@@ -1293,7 +1852,7 @@ router.post('/threads/:threadId/e2ee', async (req, res) => {
   }
 
   // THE PRECONDITION. No Welcome, no flag.
-  const { data: welcome } = await sc
+  const { data: welcome, error: welcomeErr } = await sc
     .from('messages')
     .select('id')
     .eq('thread_id', threadId)
@@ -1302,6 +1861,13 @@ router.post('/threads/:threadId/e2ee', async (req, res) => {
     .limit(1)
     .maybeSingle();
 
+  // §20.7. This precondition exists to stop a thread being stranded — the flag
+  // is never un-set, so flipping it before the Welcome lands makes the thread
+  // permanently unreadable. An unreadable `messages` used to ASSERT that the
+  // Welcome had not been delivered, refusing a person's own key exchange on
+  // evidence nobody has. Refusing retryably keeps the ordering guarantee and
+  // stops claiming to know why.
+  if (welcomeErr) { refuseUnreadableAccess(req, res, 'messages', { err: welcomeErr, threadId, userId: user.id }); return; }
   if (!welcome) {
     sendError(
       res,
@@ -1334,9 +1900,14 @@ router.get('/me/threads', async (req, res) => {
   if (!auth) return;
   const { client, user } = auth;
 
+  // Telegraph §14.3: the inbox preview and unread count are reads of message
+  // history too, so they honour the same per-membership bound as the thread
+  // read (visible_from_at, migration 2400), under the same flag.
+  const boundOn = await historyBoundEnabled(client);
+
   const { data: memberships, error: mErr } = await client
     .from('message_thread_members')
-    .select('thread_id, muted_at, archived_at, left_at, last_read_at')
+    .select(membershipSelect('thread_id, muted_at, archived_at, left_at, last_read_at', boundOn))
     .eq('user_id', user.id)
     .is('left_at', null);
 
@@ -1375,20 +1946,60 @@ router.get('/me/threads', async (req, res) => {
       .in('thread_id', threadIds),
   ]);
 
+  /*
+    Telegraph §30A / census T344, T363, T438: "schema/permission failures must
+    never be swallowed into plausible empty inboxes."
+
+    THESE THREE READS ARE THE WORST INSTANCE OF THAT CLASS IN THE FILE and the
+    census did not name them — it named four `const { data: x } = await` reads,
+    and the ratchet that measures the defect
+    (test/telegraphRlsAuthorizationMatrix.test.ts, LDB-05) counts that exact
+    destructuring shape, which `threadsRes.data` is not. supabase-js RESOLVES
+    on a database error, so before this change `threadsRes.data ?? []` turned
+    an unreadable `message_threads` into AN INBOX WITH NO CONVERSATIONS, and an
+    unreadable `messages` into every thread reporting zero unread. Both are
+    indistinguishable from the truth and both are wrong.
+
+    A refusal is not a plausible empty state, so all three refuse. These are the
+    inbox's own core tables read through the service client; if one is
+    unreadable the endpoint cannot build an inbox, and saying so is the only
+    honest answer available.
+  */
+  for (const [label, r] of [
+    ['message_threads', threadsRes],
+    ['messages', lastMsgRes],
+    ['message_thread_members', allMembersRes],
+  ] as const) {
+    const e = (r as any).error;
+    if (e) {
+      req.log.error({ err: e, table: label }, 'me/threads: inbox read failed — refusing rather than reporting an empty inbox');
+      sendError(res, 'db_error', e.message ?? `${label} unreadable`);
+      return;
+    }
+  }
+
   // Universal display-name rule: member names show only when opted in.
   // Profiles are fetched as a separate batched query (not an embedded FK
   // join) so a schema/alias drift on the join can't silently return every
-  // member with no profile at all — it would surface as a hard fetch error
-  // for the offending profile ids instead.
+  // member with no profile at all — it surfaces as a hard fetch error for the
+  // offending profile ids instead. That sentence described an INTENT rather
+  // than the code until census T344 was executed: the error was destructured
+  // away, and a drift really did return every member with no profile. It is
+  // now the refusal the comment always claimed.
   {
     const memberRows = ((allMembersRes as any).data ?? []) as any[];
     const memberUserIds = Array.from(new Set(memberRows.map((m: any) => m.user_id).filter(Boolean)));
     let profilesById: Record<string, any> = {};
     if (memberUserIds.length > 0) {
-      const { data: profileRows } = await sc
+      const { data: profileRows, error: profileErr } = await sc
         .from('profiles')
         .select(PROFILE_PUBLIC)
         .in('id', memberUserIds);
+      if (profileErr) {
+        req.log.error({ err: profileErr }, 'me/threads: member profiles unreadable — refusing rather than returning an anonymous inbox');
+        sendError(res, 'db_error', profileErr.message);
+        return;
+      }
       for (const p of (profileRows ?? []) as any[]) profilesById[p.id] = p;
     }
     const allowedMemberNames = await nameVisibilitySet(sc, memberUserIds);
@@ -1398,9 +2009,21 @@ router.get('/me/threads', async (req, res) => {
     }
   }
 
+  // §14.3 window per thread: a message created before the caller's
+  // visible_from_at for that thread is not the caller's to preview or count.
+  // Applied once here so the preview (lastMsgByThread) and the unread count
+  // (msgsByThread, below) agree. No-op while the flag is OFF (visibleFrom null).
+  const visibleFromByThread: Record<string, string | null> = {};
+  for (const m of memberships ?? []) {
+    visibleFromByThread[(m as any).thread_id] = visibleFromOf(m as any, boundOn);
+  }
+  const windowedMsgs = ((lastMsgRes.data ?? []) as any[]).filter((m) =>
+    withinWindow(m.created_at, visibleFromByThread[m.thread_id] ?? null),
+  );
+
   // Last message per thread.
   const lastMsgByThread: Record<string, any> = {};
-  for (const m of (lastMsgRes.data ?? []) as any[]) {
+  for (const m of windowedMsgs) {
     if (!lastMsgByThread[m.thread_id]) lastMsgByThread[m.thread_id] = m;
   }
 
@@ -1411,13 +2034,27 @@ router.get('/me/threads', async (req, res) => {
     .filter(Boolean);
 
   let translationsByMsgId: Record<string, any> = {};
+  /*
+    T344/T363/T438, the secondary half. An unreadable `message_translations` is
+    NOT grounds to refuse the whole inbox — the conversations are real and the
+    caller can still use them — but it must not silently look like "nothing
+    needed translating" either. The preview then carries
+    `previewTranslationStatus: 'failed'`, which is the SAME vocabulary the
+    per-message path already uses for a translation that did not happen, so the
+    client has one thing to render rather than two.
+  */
+  let previewTranslationsDegraded = false;
   if (lastMsgIds.length > 0) {
-    const { data: tRows } = await sc
+    const { data: tRows, error: tErr } = await sc
       .from('message_translations')
       .select('message_id, translated_body, status, source_language')
       .in('message_id', lastMsgIds)
       .eq('recipient_id', user.id);
 
+    if (tErr) {
+      previewTranslationsDegraded = true;
+      req.log.warn({ err: tErr }, 'me/threads: preview translations unreadable — previews marked failed, not silently original');
+    }
     for (const t of tRows ?? []) {
       translationsByMsgId[(t as any).message_id] = t;
     }
@@ -1439,9 +2076,9 @@ router.get('/me/threads', async (req, res) => {
   const membershipMap: Record<string, any> = {};
   for (const m of memberships ?? []) membershipMap[(m as any).thread_id] = m;
 
-  // Group all messages by thread for unread counts.
+  // Group all messages by thread for unread counts (inside the §14.3 window).
   const msgsByThread: Record<string, any[]> = {};
-  for (const m of (lastMsgRes.data ?? []) as any[]) {
+  for (const m of windowedMsgs) {
     if (!msgsByThread[m.thread_id]) msgsByThread[m.thread_id] = [];
     msgsByThread[m.thread_id].push(m);
   }
@@ -1452,11 +2089,19 @@ router.get('/me/threads', async (req, res) => {
     .map((t: any) => t.trip_id as string);
 
   const tripCityMap: Record<string, string | null> = {};
+  // T344: `undefined` (omitted from JSON) means "not known", which is a
+  // different statement from `null` ("this trip has no city") and must stay
+  // different on the wire — the same rule `needsActionCount` follows below.
+  let tripCityDegraded = false;
   if (tripIds.length > 0) {
-    const { data: tripRows } = await sc
+    const { data: tripRows, error: tripErr } = await sc
       .from('trips')
       .select('id, destination_city')
       .in('id', tripIds);
+    if (tripErr) {
+      tripCityDegraded = true;
+      req.log.warn({ err: tripErr }, 'me/threads: trip context unreadable — omitting tripCity rather than reporting none');
+    }
     for (const tr of tripRows ?? []) {
       tripCityMap[(tr as any).id] = (tr as any).destination_city ?? null;
     }
@@ -1468,16 +2113,33 @@ router.get('/me/threads', async (req, res) => {
     .map((t: any) => t.id as string);
 
   const bookingIdByThread: Record<string, string> = {};
+  let bookingIdDegraded = false;
   if (rentBuddyThreadIds.length > 0) {
-    const { data: bookingRows } = await sc
+    const { data: bookingRows, error: bookingErr } = await sc
       .from('rent_buddy_bookings')
       .select('id, telegraph_thread_id')
       .in('telegraph_thread_id', rentBuddyThreadIds);
+    if (bookingErr) {
+      bookingIdDegraded = true;
+      req.log.warn({ err: bookingErr }, 'me/threads: booking context unreadable — omitting bookingId rather than reporting none');
+    }
     for (const bk of bookingRows ?? []) {
       if ((bk as any).telegraph_thread_id) {
         bookingIdByThread[(bk as any).telegraph_thread_id] = (bk as any).id;
       }
     }
+  }
+
+  // Telegraph §19's inbox line is "12 unread · 1 needs action". The unread half
+  // is below; this is the other half, and it is deliberately NOT derived from
+  // messages: it counts meetups in these threads that are waiting on an answer
+  // from the caller (a pending RSVP, or a time poll they have not voted in).
+  // A failed read comes back `degraded`, and the field is then OMITTED rather
+  // than sent as 0 — see the header of needsAction.ts for why zero is the one
+  // answer that must never be guessed here.
+  const needsAction = await resolveNeedsAction(sc, { viewerId: user.id, threadIds });
+  if (needsAction.degraded) {
+    req.log.warn({ userId: user.id }, 'me/threads: needs-action inputs unreadable — omitting the count rather than reporting zero');
   }
 
   const threads = (threadsRes.data ?? []).map((t: any) => {
@@ -1513,6 +2175,13 @@ router.get('/me/threads', async (req, res) => {
         createdAt: lm.created_at,
         msgType: lm.msg_type ?? 'text',
         subtype: lm.subtype ?? null,
+        // T344: present ONLY when the translations table could not be read, so
+        // an untranslated preview is a stated failure rather than a silent one.
+        // Omitted in the normal case — a field that is always there says
+        // nothing.
+        ...(previewTranslationsDegraded && lm.sender_id !== user.id
+          ? { previewTranslationStatus: 'failed' as const }
+          : {}),
       };
     }
 
@@ -1533,9 +2202,13 @@ router.get('/me/threads', async (req, res) => {
       otherMembers: membersByThread[t.id] ?? [],
       lastMessagePreview,
       unreadCount,
-      tripCity,
+      // undefined (omitted from JSON) means "not known", which is a different
+      // statement from 0 and must stay different on the wire.
+      needsActionCount: needsAction.degraded ? undefined : (needsAction.byThread.get(t.id)?.count ?? 0),
+      needsActionReasons: needsAction.degraded ? undefined : (needsAction.byThread.get(t.id)?.reasons ?? []),
+      tripCity: tripCityDegraded ? undefined : tripCity,
       isAiLastMessage,
-      bookingId: bookingIdByThread[t.id] ?? null,
+      bookingId: bookingIdDegraded ? undefined : (bookingIdByThread[t.id] ?? null),
     };
   });
 
@@ -1555,22 +2228,46 @@ router.get('/threads/:threadId/messages', async (req, res) => {
   const { threadId } = req.params;
   if (!isUuid(threadId)) { sendError(res, 'invalid_payload', 'Invalid thread id'); return; }
 
-  const { data: membership } = await client
+  // Telegraph §14.3 / §26: "New member reads pre-membership history without
+  // policy → DENY". The bound lives on the caller's OWN membership row
+  // (visible_from_at, migration 2400) and is honoured only while
+  // telegraph_history_bound_enabled is TRUE; while OFF this read is exactly
+  // the query it was before 2400, column list included.
+  const boundOn = await historyBoundEnabled(client);
+
+  const { data: membership, error: membershipErr } = await client
     .from('message_thread_members')
-    .select('user_id, left_at')
+    .select(membershipSelect('user_id, left_at', boundOn))
     .eq('thread_id', threadId)
     .eq('user_id', user.id)
     .is('left_at', null)
     .maybeSingle();
 
+  if (membershipErr) { refuseUnreadableAccess(req, res, 'message_thread_members', { err: membershipErr, threadId, userId: user.id }); return; }
   if (!membership) { sendError(res, 'forbidden', 'Not a member of this thread'); return; }
   if ((membership as any).left_at !== null) { sendError(res, 'forbidden', 'You no longer have access to this thread'); return; }
+
+  const visibleFrom = visibleFromOf(membership as any, boundOn);
 
   const before = req.query.before as string | undefined;
   const limit = Math.min(Number(req.query.limit ?? 50), 100);
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
+
+  // Telegraph §22 stranger-media input: a trip or circle roster is itself the
+  // acceptance, so the thread's own type decides whether the social graph has
+  // to be consulted at all. An unreadable thread row leaves `thread_type`
+  // undefined, which the resolver reads as 'direct' — the side that shields.
+  const { data: threadMetaForShield, error: threadMetaShieldErr } = await sc
+    .from('message_threads')
+    .select('thread_type')
+    .eq('id', threadId)
+    .maybeSingle();
+  if (threadMetaShieldErr) {
+    req.log.warn({ err: threadMetaShieldErr, threadId },
+      'thread type unreadable — stranger-media shielding will treat this thread as direct');
+  }
 
   let query = sc
     .from('messages')
@@ -1580,6 +2277,8 @@ router.get('/threads/:threadId/messages', async (req, res) => {
     .limit(limit);
 
   if (before) query = query.lt('created_at', before);
+  // The §14.3 window, applied in the query so pagination cannot walk past it.
+  if (visibleFrom) query = query.gte('created_at', visibleFrom);
 
   const { data, error } = await query;
   if (error) {
@@ -1605,12 +2304,36 @@ router.get('/threads/:threadId/messages', async (req, res) => {
 
   let translationMap: Record<string, any> = {};
   if (incomingMsgIds.length > 0) {
-    const { data: tRows } = await sc
+    const { data: tRows, error: tErr } = await sc
       .from('message_translations')
       .select('message_id, source_language, target_language, translated_body, status')
       .in('message_id', incomingMsgIds)
       .eq('recipient_id', user.id);
 
+    if (tErr) {
+      /*
+        T344/T363/T438. An unreadable `message_translations` used to be
+        indistinguishable from "no translation exists": every incoming message
+        rendered as its original with `translationStatus: null`, which is the
+        same payload a same-language thread produces. §18 already has a word
+        for "we did not translate this" — `failed` — and it already reaches the
+        client with a retry affordance, so the honest answer is to say that
+        word rather than to invent a monolingual thread. The message is still
+        delivered; only the claim about translation changes.
+      */
+      req.log.warn({ err: tErr, threadId },
+        'thread read: translations unreadable — reporting failed rather than untranslated');
+      for (const id of incomingMsgIds) {
+        const row = rows.find((m) => m.id === id);
+        translationMap[id] = {
+          message_id: id,
+          source_language: (row?.original_language as string | null) ?? 'und',
+          target_language: 'und',
+          translated_body: null,
+          status: 'failed' as TranslationStatusValue,
+        };
+      }
+    }
     for (const t of tRows ?? []) {
       translationMap[(t as any).message_id] = t;
     }
@@ -1624,8 +2347,36 @@ router.get('/threads/:threadId/messages', async (req, res) => {
     ? await enrichSpans(sc, 'message', nonDeletedMsgItems, user.id)
     : {};
 
+  // Telegraph §22 — "Stranger media can be blurred / no autoplay until
+  // accepted." Resolved ONCE for the page over the distinct non-self senders
+  // (the answer is the same for every message from the same person), and
+  // fail-closed: an unreadable relationship table shields everyone rather than
+  // silently switching the control off. The thread's own type is passed in
+  // because a trip or circle roster IS the acceptance.
+  const senderConnectedness = await resolveSenderConnectedness(
+    sc,
+    user.id,
+    rows.map((r: any) => String(r.sender_id)),
+    String((threadMetaForShield as any)?.thread_type ?? 'direct'),
+  );
+
   // Fetch reply_to_id values and quoted context.
   // Wrapped in try/catch: silently skipped if migration 0057 is not yet applied.
+  //
+  // ── THE HALF §14 LEFT ON THE WIRE ────────────────────────────────────────
+  // census T344/T363. §14 made both reads below LOG, and §14.6 recorded the
+  // limit of that in the same breath: "a reply whose quote could not be read is
+  // still indistinguishable on the wire from a message that quoted nothing".
+  // The log is for us; the payload is what the client acts on, and the payload
+  // said the same thing in both worlds. These two flags are what carries the
+  // difference out to the caller.
+  //
+  // They are kept apart because they degrade different claims. `reply_to_id`
+  // unreadable means we do not know WHICH messages are replies, so `replyToId`
+  // itself may not be reported. The quoted bodies unreadable means we know the
+  // linkage and cannot show the quote.
+  let replyLinkageUnreadable = false;
+  let replyQuotesUnreadable = false;
   let replyToIdMap: Record<string, string | null> = {};
   let replyContextMap: Record<string, { body: string; senderName: string | null }> = {};
   try {
@@ -1635,16 +2386,47 @@ router.get('/threads/:threadId/messages', async (req, res) => {
         .from('messages')
         .select('id, reply_to_id')
         .in('id', allIds);
+      if (replyIdErr) {
+        // T344: still skipped — reply threading genuinely predates migration
+        // 0057 on some deployments and an absent column is a legitimate state
+        // — but no longer SILENTLY. A reply whose quote vanished and a message
+        // that was never a reply look identical on the wire, so the only place
+        // the difference can survive is the log.
+        req.log.warn({ err: replyIdErr, threadId },
+          'thread read: reply_to_id unreadable — replies will render without their quote');
+        replyLinkageUnreadable = true;
+      }
       if (!replyIdErr && replyIdRows) {
         for (const r of replyIdRows as any[]) {
           if (r.reply_to_id) replyToIdMap[r.id] = r.reply_to_id;
         }
         const replyIds = Object.values(replyToIdMap).filter(Boolean) as string[];
         if (replyIds.length > 0) {
-          const { data: quotedRows } = await sc
+          // A reply to a message outside the caller's §14.3 window must not
+          // quote it back in — the quoted body is retrieval by another name.
+          //
+          // `thread_id` is the SECOND lock on the same door and it is here
+          // deliberately. Every send path checks that a reply reference lives in
+          // the thread being written to, so a foreign `reply_to_id` should not be
+          // storable at all — but this query runs on `sc`, the service client,
+          // which is BYPASSRLS, and what it returns is a message BODY attributed
+          // to its ORIGINAL AUTHOR. A single missed write-side check, now or in
+          // a send path written later, would turn that into a way to make a named
+          // third party appear to have spoken in a room they never wrote in.
+          // The predicate costs nothing and makes the read incapable of it
+          // regardless of what is in the column.
+          let quotedQuery = sc
             .from('messages')
             .select(`id, body, sender_id, profile:profiles!messages_sender_id_fkey(name, handle, username, full_name)`)
+            .eq('thread_id', threadId)
             .in('id', replyIds);
+          if (visibleFrom) quotedQuery = quotedQuery.gte('created_at', visibleFrom);
+          const { data: quotedRows, error: quotedErr } = await quotedQuery;
+          if (quotedErr) {
+            req.log.warn({ err: quotedErr, threadId },
+              'thread read: quoted reply context unreadable — quotes omitted, not invented');
+            replyQuotesUnreadable = true;
+          }
           // Universal display-name rule: quoted sender shows @handle unless opted in.
           const qAllowed = await nameVisibilitySet(sc, ((quotedRows as any[]) ?? []).map((q: any) => q.sender_id));
           for (const qr of quotedRows as any[] ?? []) {
@@ -1660,7 +2442,15 @@ router.get('/threads/:threadId/messages', async (req, res) => {
         }
       }
     }
-  } catch { /* migration 0057 not applied — reply context unavailable */ }
+  } catch (replyCtxErr) {
+    // Migration 0057 not applied is the case this catch was written for, and it
+    // is a legitimate deploy state. Anything else reaching here is not, and the
+    // block swallowed both without distinction: the caller could not tell a
+    // thread with no replies from a thread whose reply context threw.
+    req.log.warn({ err: replyCtxErr, threadId },
+      'thread read: reply context unavailable — replies will render without their quote');
+    replyLinkageUnreadable = true;
+  }
 
   const messages = rows.map((m) => {
     const p = m.profile ?? {};
@@ -1710,18 +2500,102 @@ router.get('/threads/:threadId/messages', async (req, res) => {
       // Rich-text span metadata (absent for deleted messages)
       ...(spans ? { tags: spans.tags, hashtagUsages: spans.hashtagUsages } : {}),
       // Reply threading (populated after migration 0057_reply_to_messages.sql)
-      replyToId: replyToIdMap[m.id] ?? null,
-      replyToBody: replyToIdMap[m.id] ? (replyContextMap[replyToIdMap[m.id]!]?.body ?? null) : null,
-      replyToSenderName: replyToIdMap[m.id] ? (replyContextMap[replyToIdMap[m.id]!]?.senderName ?? null) : null,
-      // Media fields (migration 0152_messages_media.sql)
-      mediaUrl: (m as any).media_url ?? null,
-      mediaType: (m as any).media_type ?? null,
-      mediaThumbnailUrl: (m as any).media_thumbnail_url ?? null,
-      mediaDurationSeconds: (m as any).media_duration_seconds ?? null,
+      //
+      // census T344/T363. The three fields below are OMITTED rather than sent
+      // as null whenever the read that would have filled them failed, and are
+      // replaced by `replyContext: 'unavailable'`. §14 drew this line for
+      // `tripCity` and the reason is the same: `undefined` is "not known" and
+      // `null` is a positive claim — here, "this message quoted nothing" and
+      // "there is no quoted body to show you". A `null` quote is a REAL state
+      // (the quoted message is deleted, or sits outside this member's §14.3
+      // history window) and must stay distinguishable from a failed read.
+      //
+      // `replyContext` is additive and absent in the normal case, the same
+      // posture §14 took with `previewTranslationStatus`: a marker that is
+      // always present says nothing.
+      ...(replyLinkageUnreadable
+        ? { replyContext: 'unavailable' as const }
+        : replyToIdMap[m.id] && replyQuotesUnreadable
+          ? { replyToId: replyToIdMap[m.id], replyContext: 'unavailable' as const }
+          : {
+              replyToId: replyToIdMap[m.id] ?? null,
+              replyToBody: replyToIdMap[m.id] ? (replyContextMap[replyToIdMap[m.id]!]?.body ?? null) : null,
+              replyToSenderName: replyToIdMap[m.id] ? (replyContextMap[replyToIdMap[m.id]!]?.senderName ?? null) : null,
+            }),
+      // Media fields (migration 0152_messages_media.sql).
+      //
+      // Telegraph §7.2, census T79: a deleted message is removed from NORMAL
+      // RETRIEVAL. `body` above is already nulled on `deleted_at`; these four
+      // were not, so deleting a photo redacted the caption and left the asset
+      // addressable — the URL is a live, directly fetchable object. The
+      // tombstone still says a message was here (deleted: true) and still
+      // carries its time and its sender, which is what a tombstone is for; it
+      // carries no route to the content. `mediaType` goes with the rest
+      // deliberately: "this was a video" is a fact about the deleted content,
+      // and the renderer needs no type for a message with no media.
+      mediaUrl: isDeleted ? null : ((m as any).media_url ?? null),
+      mediaType: isDeleted ? null : ((m as any).media_type ?? null),
+      mediaThumbnailUrl: isDeleted ? null : ((m as any).media_thumbnail_url ?? null),
+      mediaDurationSeconds: isDeleted ? null : ((m as any).media_duration_seconds ?? null),
+      // Telegraph §22 — travel scam signals and link reputation, for the
+      // RECIPIENT only. A sender who could see their own signals would tune
+      // their wording against the detector; a recipient gets the second
+      // opinion a scam depends on them not having. Nothing is blocked and
+      // nothing is hidden: the annotation is advisory, and deleted messages
+      // carry no body to scan.
+      ...(!isDeleted && m.sender_id !== user.id
+        ? (() => {
+            const sig = messageSafetySignals(m.body as string | null);
+            return sig ? { safetySignals: sig } : {};
+          })()
+        : {}),
+      // Telegraph §22 — the stranger-media shield. The client renders this; it
+      // does not decide it. `true` for the caller's own messages, because a
+      // person is not a stranger to themselves.
+      senderConnected: m.sender_id === user.id || senderConnectedness.connected.has(m.sender_id as string),
+      senderConnectednessDegraded: senderConnectedness.degraded,
     };
   });
 
-  res.status(200).json({ messages, threadId });
+  // ── §24's second half: WITH CURRENT PERMISSIONS ────────────────────────────
+  //
+  // §24 asks for "a renderable ordered thread with current permissions" and
+  // this endpoint carried only the first clause. A client that renders a Call
+  // button, a Create Plan button and a Share Location button has to decide
+  // whether to show them, and with no permissions block it had three choices:
+  // show everything and let the action fail, hide everything, or re-derive the
+  // rules client-side from membership and block state. The third is the one
+  // §30A.1 names as the anti-pattern, and it is what a client with no answer
+  // eventually does.
+  //
+  // THIS BLOCK IS NOT A GATE, AND THAT IS LOAD-BEARING. §14.1's last sentence
+  // is that capabilities are computed, never assumed, and every capability is
+  // separately enforced where the operation lives —
+  // `CAPABILITY_ENFORCEMENT_SITES` names each site. Sending this block does not
+  // move any refusal here; a client that ignores it still cannot call, and a
+  // client that trusts it still gets refused if the answer went stale between
+  // the read and the act.
+  //
+  // `degraded` travels with it for the reason the contract states: a capability
+  // set computed over an unreadable `blocks` table is a FLOOR, not the truth.
+  // Shipping the booleans without it would hand a client a confident false and
+  // recreate, one layer up, the exact defect §30A.16 forbids.
+  const resolvedCapabilities = await resolveConversationCapabilities(sc, {
+    viewerId: user.id,
+    conversationId: threadId,
+  });
+
+  res.status(200).json({
+    messages,
+    threadId,
+    permissions: {
+      capabilities: resolvedCapabilities.capabilities,
+      reasons: resolvedCapabilities.reasons,
+      inputsRead: resolvedCapabilities.inputsRead,
+      degraded: resolvedCapabilities.degraded,
+      degradedReasons: resolvedCapabilities.degradedReasons,
+    },
+  });
 });
 
 /* ---------------------------------------------------------------------------
@@ -1746,9 +2620,19 @@ router.post('/threads/:threadId/messages', async (req, res) => {
   // body assignment deferred — E2EE threads force body=null (resolved after is_e2ee check below)
   let body = bodyRaw;
 
-  // Emergency kill switch: disable_messaging — fail-CLOSED on DB error
+  // Emergency kill switch: disable_messaging — fail-CLOSED on DB error AND on
+  // an absent service client. Guarding the stop read behind a truthiness test on
+  // the client READ as fail-closed and was not: both operands of that `&&` are the same
+  // fact — the stop's state could not be established — and only one was treated
+  // that way. An unreadable feature_flags engaged the stop; a null client
+  // skipped the check and WROTE THE MESSAGE, returning 201, with nothing logged
+  // and nothing returned. This is the highest-traffic door in Telegraph.
   const flagSc = getServiceClient();
-  if (flagSc && await isKillSwitchEngaged(flagSc, 'disable_messaging')) {
+  {
+    const unknown = messagingStopUnknownRefusal(flagSc);
+    if (unknown) { sendError(res, unknown.code, unknown.message); return; }
+  }
+  if (await isKillSwitchEngaged(flagSc!, 'disable_messaging')) {
     sendError(res, 'feature_disabled', 'Messaging is temporarily disabled');
     return;
   }
@@ -1760,7 +2644,7 @@ router.post('/threads/:threadId/messages', async (req, res) => {
   // server message (echoed in the response and in the realtime event).
   const clientId = typeof req.body?.clientId === 'string' ? req.body.clientId.slice(0, 64) : null;
 
-  const { data: membership } = await client
+  const { data: membership, error: membershipErr } = await client
     .from('message_thread_members')
     .select('user_id, left_at')
     .eq('thread_id', threadId)
@@ -1768,8 +2652,29 @@ router.post('/threads/:threadId/messages', async (req, res) => {
     .is('left_at', null)
     .maybeSingle();
 
+  if (membershipErr) { refuseUnreadableAccess(req, res, 'message_thread_members', { err: membershipErr, threadId, userId: user.id }); return; }
   if (!membership) { sendError(res, 'forbidden', 'Not a member of this thread'); return; }
   if ((membership as any).left_at !== null) { sendError(res, 'forbidden', 'You no longer have access to this thread'); return; }
+
+  // Telegraph §22 — the send step's adaptive rate limit. census T279: "Message
+  // sending has no rate limit at all." It is placed AFTER membership so a
+  // non-member cannot spend a member's bucket, and BEFORE every other read so
+  // a burst costs one cached tier lookup rather than the whole send pipeline.
+  // The tier falls to the strictest on an unreadable input, which is a pause
+  // and never a block — see the module header for why that direction is safe.
+  {
+    const limiterSc = getServiceClient() ?? client;
+    const decision = await checkSendRateLimit(limiterSc, user.id);
+    if (!decision.allowed) {
+      req.log.warn(
+        { userId: user.id, threadId, tier: decision.tier, limit: decision.limit, reasons: decision.reasons },
+        'telegraph send rate limit reached',
+      );
+      res.setHeader('Retry-After', String(Math.ceil(decision.retryAfterMs / 1000)));
+      sendError(res, 'rate_limited', 'You are sending messages very quickly. Please wait a moment.');
+      return;
+    }
+  }
 
   // Block guard for 1:1 threads. Blocking (blocks.ts) tears down follow/friend
   // edges and pending message-requests but never closes an EXISTING thread, so
@@ -1779,12 +2684,26 @@ router.post('/threads/:threadId/messages', async (req, res) => {
   // isBlockedBetween (a blocks-table error is treated as blocked).
   {
     const blockSc = getServiceClient() ?? client;
-    const { data: otherMembers } = await client
+    const { data: otherMembers, error: otherMembersErr } = await client
       .from('message_thread_members')
       .select('user_id')
       .eq('thread_id', threadId)
       .is('left_at', null)
       .neq('user_id', user.id);
+    // isBlockedBetween IS fail-closed — but it is only REACHED when the roster
+    // read produced exactly one other member. supabase-js resolves on a database
+    // error, so an unreadable message_thread_members gave `data: null`, an empty
+    // roster, and the guard was skipped entirely: the fail-closed block check
+    // was never called, and the message went to someone who may have blocked the
+    // sender. A guard's posture is worth nothing if its INPUT can silently make
+    // it unreachable. Whether this is a 1:1 thread is now something we must
+    // KNOW, not something we assume from an empty result.
+    if (otherMembersErr) {
+      req.log.error({ err: otherMembersErr, threadId },
+        'thread roster read failed — cannot determine whether this is a blocked 1:1 thread; refusing the send');
+      sendError(res, 'degraded_unavailable', 'We could not verify this conversation right now. Please try again shortly.');
+      return;
+    }
     const others = ((otherMembers as any[]) ?? []).map((m) => m.user_id as string);
     if (others.length === 1 && others[0] && await isBlockedBetween(blockSc, user.id, others[0])) {
       sendError(res, 'forbidden', 'You cannot message this user'); return;
@@ -1792,11 +2711,22 @@ router.post('/threads/:threadId/messages', async (req, res) => {
   }
 
   // E-2: check thread E2EE flag.
-  const { data: threadMeta } = await client
+  // This flag decides whether the server is allowed to STORE PLAINTEXT. An
+  // unchecked `.error` made an unreadable message_threads read as
+  // `is_e2ee: false`, and the handler below then demanded a plaintext body and
+  // wrote it into a thread whose whole promise is that the server never sees
+  // one. "We could not read the flag" is not "the flag is false".
+  const { data: threadMeta, error: threadMetaErr } = await client
     .from('message_threads')
     .select('is_e2ee')
     .eq('id', threadId)
     .maybeSingle();
+  if (threadMetaErr) {
+    req.log.error({ err: threadMetaErr, threadId },
+      'thread E2EE flag read failed — refusing rather than risking plaintext storage in an E2EE thread');
+    sendError(res, 'degraded_unavailable', 'We could not verify this conversation right now. Please try again shortly.');
+    return;
+  }
   const isE2ee = (threadMeta as any)?.is_e2ee === true;
 
   if (isE2ee) {
@@ -1811,12 +2741,16 @@ router.post('/threads/:threadId/messages', async (req, res) => {
   const sc = client;
 
   // Fetch sender's language preference (for detection fallback).
-  const { data: senderProfile } = await sc
+  const { data: senderProfile, error: senderProfileErr } = await sc
     .from('profiles')
     .select('preferred_language, preferred_message_language')
     .eq('id', user.id)
     .maybeSingle();
-  const senderLanguage = (senderProfile as any)?.preferred_language ?? (senderProfile as any)?.preferred_message_language ?? 'en';
+  // T344/T363 — the error is BOUND. supabase-js RESOLVES on a database
+  // failure, so the old `?? 'en'` turned an unreadable `profiles` into a
+  // durable stored claim that this sender had chosen English. One shared
+  // interpreter now decides what the read actually established.
+  const senderLanguage = senderLanguageFrom(senderProfile, senderProfileErr);
 
   const now = new Date().toISOString();
 
@@ -1825,12 +2759,28 @@ router.post('/threads/:threadId/messages', async (req, res) => {
 
   // Validate reply reference belongs to the same thread (prevents cross-thread metadata exposure).
   if (replyToId) {
-    const { data: refMsg } = await sc
+    // An unreadable `messages` resolves as `{ data: null }`, which is also what
+    // a genuinely cross-thread replyToId returns. The refusal is right either
+    // way — the reply reference must never be persisted unverified — but the
+    // two must not wear the same clothes: telling the sender their message
+    // reference is invalid, when in truth the check could not run, makes them
+    // edit a message that was fine. 503 + retryable says "try again"; 400 says
+    // "this is wrong".
+    const { data: refMsg, error: refMsgErr } = await sc
       .from('messages')
       .select('id')
       .eq('id', replyToId)
       .eq('thread_id', threadId)
       .maybeSingle();
+    if (refMsgErr) {
+      req.log.error({ err: refMsgErr, threadId, replyToId }, 'reply-reference check unavailable');
+      sendError(
+        res,
+        'degraded_unavailable',
+        'We could not verify the message you are replying to. Please try again shortly.',
+      );
+      return;
+    }
     if (!refMsg) {
       sendError(res, 'invalid_payload', 'Referenced message does not belong to this thread');
       return;
@@ -1862,8 +2812,17 @@ router.post('/threads/:threadId/messages', async (req, res) => {
   // E-2: skip for E2EE threads — server cannot read ciphertext.
   // Scans the message body for off-app payment solicitation phrases. On match:
   //   1. Logs a buddy_booking_events row (event=off_app_solicitation_warning, admin_only).
-  //   2. After OFF_APP_SUSPENSION_THRESHOLD cumulative offenses for the buddy, suspends
-  //      the buddy profile and logs an auto-suspension event for admin review.
+  //   2. Counts the buddy's CUMULATIVE offenses INCLUDING the one being handled, and at
+  //      OFF_APP_SUSPENSION_THRESHOLD (default 3) suspends the buddy profile and logs an
+  //      auto-suspension event for admin review. "Three strikes": the third flagged
+  //      message is the one that suspends. The old local was named `priorCount` while
+  //      being read AFTER the warning insert, so it never held prior offenses at all —
+  //      the name lied about a number that decides whether an account is disabled. The
+  //      three-strikes BEHAVIOUR is what the surrounding prose, the operator-facing
+  //      threshold name and the existing acceptance test all describe, so the behaviour
+  //      is kept and the name is corrected to `offenseCount`; renaming rather than
+  //      re-basing the comparison also avoids silently converting this control into
+  //      four-strikes, which would weaken an abuse guard to satisfy a variable name.
   // Normal travel phrases do not trigger (patterns require explicit off-platform wording).
   const OFF_APP_PATTERNS = [
     /\boff[-\s]?app\b/i, /\bpay\s+outside\b/i, /\bcash\s+only\b.*\boutside\b/i,
@@ -1877,62 +2836,138 @@ router.post('/threads/:threadId/messages', async (req, res) => {
       try {
         const svcClient = getServiceClient();
         if (!svcClient) return;
-        const { data: booking } = await svcClient
+        // Every read below is an input to a decision that can DISABLE an account.
+        // supabase-js RESOLVES on a database error, so an unchecked `.error` reads
+        // as "no booking / no profile / no offenses" and silently switches the whole
+        // control off. Each one is checked and each failure is logged with what was
+        // lost, because a control that turns itself off during a bad database minute
+        // is worse than one that is absent: nobody knows it stopped.
+        const { data: booking, error: bookingErr } = await svcClient
           .from('rent_buddy_bookings')
           .select('id, buddy_id')
           .eq('telegraph_thread_id', threadId)
           .maybeSingle();
+        if (bookingErr) {
+          req.log.error({ err: bookingErr, threadId, messageId: (msg as any).id },
+            'off-app solicitation: booking lookup FAILED — flagged message not attributed to any buddy');
+          return;
+        }
         if (!booking) return;
         const bookingId = (booking as any).id as string;
         const buddyProfileId = (booking as any).buddy_id as string;
         // Only attribute the offense when the sender IS the buddy account.
         // A traveler can write off-app phrases without triggering buddy suspension.
-        const { data: buddySenderProfile } = await svcClient
+        const { data: buddySenderProfile, error: buddyProfErr } = await svcClient
           .from('rent_buddy_profiles')
           .select('id, user_id')
           .eq('id', buddyProfileId)
           .maybeSingle();
+        if (buddyProfErr) {
+          req.log.error({ err: buddyProfErr, buddyProfileId, bookingId },
+            'off-app solicitation: buddy profile lookup FAILED — offense not attributed');
+          return;
+        }
         if (!buddySenderProfile || (buddySenderProfile as any).user_id !== user.id) return;
-        await svcClient.from('buddy_booking_events').insert({
+        const { error: warnErr } = await svcClient.from('buddy_booking_events').insert({
           booking_id: bookingId,
           actor_user_id: user.id,
           event: 'off_app_solicitation_warning',
           metadata: { message_id: (msg as any).id, thread_id: threadId, excerpt: body.slice(0, 120), visibility: 'admin_only' },
         });
-        const { data: buddyBookings } = await svcClient
+        if (warnErr) {
+          req.log.error({ err: warnErr, bookingId, buddyProfileId, messageId: (msg as any).id },
+            'off-app solicitation warning insert FAILED — offense unaudited');
+        }
+
+        const threshold = offAppSuspensionThreshold(req.log);
+
+        // OFFENSE COUNT — two independent counts, neither of which may silently
+        // under-report.
+        //
+        // (A) actor-scoped: every off_app_solicitation_warning this user has ever
+        //     accrued. One equality filter, no id list, so PostgREST's row cap
+        //     cannot touch it. This is the authoritative count.
+        // (B) booking-scoped: the historical shape (warnings on any booking held by
+        //     this buddy PROFILE). It needs a booking-id list, and that list was
+        //     UNBOUNDED — PostgREST applies a default row cap (Supabase ships
+        //     db-max-rows = 1000), so a busy buddy's older bookings fell off the end
+        //     and the count was computed over a truncated set: the more bookings the
+        //     buddy had, the fewer offenses were counted. The cap is now OURS and
+        //     explicit, and hitting it is reported instead of being invisible; when
+        //     it is hit, (B) is a floor and (A) carries the answer.
+        //
+        // The decision uses max(A, B): (A) also aggregates across multiple buddy
+        // profiles owned by one user, and (B) still counts any legacy warning row
+        // whose actor was cleared (actor_user_id is ON DELETE SET NULL). Taking the
+        // max can only ever count more offenses, never fewer, so neither leg can
+        // make suspension easier to escape.
+        const { count: actorOffenses, error: actorCountErr } = await svcClient
+          .from('buddy_booking_events')
+          .select('id', { count: 'exact', head: true })
+          .eq('event', 'off_app_solicitation_warning')
+          .eq('actor_user_id', user.id);
+        if (actorCountErr || actorOffenses == null) {
+          req.log.error({ err: actorCountErr, buddyProfileId, threshold },
+            'off-app solicitation: offense count read FAILED — suspension decision SKIPPED, repeat offender stays active');
+          return;
+        }
+
+        const { data: buddyBookings, error: bookingsErr } = await svcClient
           .from('rent_buddy_bookings')
           .select('id')
-          .eq('buddy_id', buddyProfileId);
+          .eq('buddy_id', buddyProfileId)
+          .limit(BUDDY_BOOKING_SCAN_CAP);
+        if (bookingsErr) {
+          req.log.error({ err: bookingsErr, buddyProfileId },
+            'off-app solicitation: buddy booking list read FAILED — booking-scoped offense count unavailable, using actor-scoped count only');
+        }
         const buddyBookingIds = (buddyBookings ?? []).map((r: any) => r.id as string);
+        if (buddyBookingIds.length >= BUDDY_BOOKING_SCAN_CAP) {
+          req.log.warn({ buddyProfileId, cap: BUDDY_BOOKING_SCAN_CAP },
+            'off-app solicitation: buddy booking list hit the scan cap — booking-scoped offense count is a LOWER BOUND');
+        }
+        let bookingOffenses = 0;
         if (buddyBookingIds.length > 0) {
-          const { count: priorCount } = await svcClient
+          const { count: scoped, error: scopedErr } = await svcClient
             .from('buddy_booking_events')
-            .select('id', { count: 'exact' })
+            .select('id', { count: 'exact', head: true })
             .eq('event', 'off_app_solicitation_warning')
             .in('booking_id', buddyBookingIds);
-          const threshold = Number(process.env['OFF_APP_SUSPENSION_THRESHOLD'] ?? '3');
-          if ((priorCount ?? 0) >= threshold) {
-            // SAFETY enforcement: supabase-js resolves rather than throws on a DB
-            // error, so these results must be checked — a silently failed update
-            // here leaves a repeat off-app solicitor ACTIVE with no trace.
-            const { error: suspErr } = await svcClient
-              .from('rent_buddy_profiles')
-              .update({ status: 'suspended', admin_status: 'under_review', updated_at: new Date().toISOString() })
-              .eq('id', buddyProfileId);
-            if (suspErr) {
-              req.log.error({ err: suspErr, buddyProfileId, priorCount },
-                'off-app auto-suspension UPDATE failed — repeat offender remains active');
-            }
-            const { error: evErr } = await svcClient.from('buddy_booking_events').insert({
-              booking_id: bookingId,
-              actor_user_id: user.id,
-              event: 'buddy_auto_suspended',
-              metadata: { reason: 'repeated_off_app_solicitation', offense_count: priorCount, visibility: 'admin_only' },
-            });
-            if (evErr) {
-              req.log.error({ err: evErr, buddyProfileId },
-                'buddy_auto_suspended event insert failed — suspension unaudited');
-            }
+          if (scopedErr) {
+            req.log.error({ err: scopedErr, buddyProfileId },
+              'off-app solicitation: booking-scoped offense count FAILED — using actor-scoped count only');
+          } else {
+            bookingOffenses = scoped ?? 0;
+          }
+        }
+
+        // Cumulative offenses INCLUDING this message. The warning row was inserted
+        // above, so a successful insert is already in the count; when the insert
+        // failed the offense still happened and is added back explicitly, so a
+        // broken audit write cannot buy a repeat offender an extra strike.
+        const offenseCount = Math.max(actorOffenses, bookingOffenses) + (warnErr ? 1 : 0);
+
+        if (offenseCount >= threshold) {
+          // SAFETY enforcement: supabase-js resolves rather than throws on a DB
+          // error, so these results must be checked — a silently failed update
+          // here leaves a repeat off-app solicitor ACTIVE with no trace.
+          const { error: suspErr } = await svcClient
+            .from('rent_buddy_profiles')
+            .update({ status: 'suspended', admin_status: 'under_review', updated_at: new Date().toISOString() })
+            .eq('id', buddyProfileId);
+          if (suspErr) {
+            req.log.error({ err: suspErr, buddyProfileId, offenseCount },
+              'off-app auto-suspension UPDATE failed — repeat offender remains active');
+          }
+          const { error: evErr } = await svcClient.from('buddy_booking_events').insert({
+            booking_id: bookingId,
+            actor_user_id: user.id,
+            event: 'buddy_auto_suspended',
+            metadata: { reason: 'repeated_off_app_solicitation', offense_count: offenseCount, visibility: 'admin_only' },
+          });
+          if (evErr) {
+            req.log.error({ err: evErr, buddyProfileId },
+              'buddy_auto_suspended event insert failed — suspension unaudited');
           }
         }
       } catch (err) {
@@ -1964,12 +2999,39 @@ router.post('/threads/:threadId/messages', async (req, res) => {
         logger: req.log,
       });
       if (taggedIds.length > 0) {
-        const { data: taggerProfile } = await sc
+        // census T344/T363, the third of §15.2's named consequences and the one
+        // §16.4 declined with its reason written down: this read used
+        // `.single()`, which errors when NO ROW MATCHES as well as when the
+        // table is unreadable, so binding its error would have moved the
+        // conflation one step along instead of removing it. `.maybeSingle()`
+        // separates the two, and `actorHandleFrom` is the one place the three
+        // worlds are told apart — the same shape as `senderLanguageFrom`.
+        //
+        // WHAT EACH WORLD NOW SAYS, and why the third needs its own sentence.
+        // The template renders `@${taggerHandle ?? 'someone'} mentioned you`,
+        // so simply passing nothing would have printed `@someone` — the same
+        // claim, made by the template instead of the route. `'someone'` is TRUE
+        // of a tagger who has no handle and FALSE of a `profiles` outage, where
+        // the tagger may well have one and we did not read it. The unreadable
+        // arm therefore supplies its own title, which names nobody and asserts
+        // only what is in evidence: a mention happened, in a message.
+        //
+        // NOT TAKEN, and left open deliberately: whether the product wants the
+        // unreadable case to look different to the user at all, or to carry a
+        // retry. `taggerHandleUnreadable` goes in `metadata` — which is what
+        // `NotificationService.create` PERSISTS; `params` only feeds the
+        // template and is not stored — so that decision can later be made from
+        // data rather than from memory.
+        const { data: taggerProfile, error: taggerProfileErr } = await sc
           .from('profiles')
           .select('handle, username')
           .eq('id', user.id)
-          .single();
-        const taggerHandle = resolveHandle(taggerProfile as any) ?? 'someone';
+          .maybeSingle();
+        const tagger = actorHandleFrom(taggerProfile as any, taggerProfileErr);
+        if (tagger.unreadable) {
+          req.log.warn({ err: taggerProfileErr, messageId: m.id },
+            'mention notification: tagger profile unreadable — naming nobody rather than @someone');
+        }
         const notifSvc    = new NotificationService(sc);
         const notifRouter  = new NotificationRouter(sc);
         await Promise.allSettled(
@@ -1980,7 +3042,18 @@ router.post('/threads/:threadId/messages', async (req, res) => {
               actorId: user.id,
               sourceType: 'message',
               sourceId: m.id,
-              params: { taggerHandle, context: `@${taggerHandle} mentioned you in a message.` },
+              ...(tagger.unreadable
+                ? {
+                    title: 'You were mentioned in a message',
+                    metadata: { taggerHandleUnreadable: true },
+                  }
+                : {}),
+              params: tagger.unreadable
+                ? { context: 'You were mentioned in a message.' }
+                : {
+                    taggerHandle: tagger.handle ?? 'someone',
+                    context: `@${tagger.handle ?? 'someone'} mentioned you in a message.`,
+                  },
             });
             if (row) await notifRouter.route(row);
           }),
@@ -2048,7 +3121,8 @@ router.post('/threads/:threadId/messages', async (req, res) => {
     body,
     senderId: user.id,
     threadId,
-    senderPreferredLanguage: senderLanguage,
+    senderPreferredLanguage: senderLanguage.preferredLanguage,
+    senderPreferenceUnreadable: senderLanguage.unreadable,
     logger: req.log,
   }).catch(() => {
     // Outer safety net — translateMessageForThread already catches internally.
@@ -2094,13 +3168,20 @@ router.post('/threads/:threadId/media', async (req, res) => {
   const clientId = typeof req.body?.clientId === 'string' ? req.body.clientId.slice(0, 64) : null;
 
   // Emergency kill switches (media one previously ignored here — audit).
-  // Fail-CLOSED: an unreadable stop engages.
+  // Fail-CLOSED: an unreadable stop engages, AND a service client we do not have
+  // is the same unknown rather than a pass. See the note on the text-send door
+  // above; `degraded_unavailable` and not `feature_disabled`, because nobody
+  // engaged a stop — we could not look.
   const flagSc = getServiceClient();
-  if (flagSc && await isKillSwitchEngaged(flagSc, 'disable_messaging')) {
+  {
+    const unknown = messagingStopUnknownRefusal(flagSc);
+    if (unknown) { sendError(res, unknown.code, unknown.message); return; }
+  }
+  if (await isKillSwitchEngaged(flagSc!, 'disable_messaging')) {
     sendError(res, 'feature_disabled', 'Messaging is temporarily disabled');
     return;
   }
-  if (flagSc && await isKillSwitchEngaged(flagSc, 'disable_media_uploads')) {
+  if (await isKillSwitchEngaged(flagSc!, 'disable_media_uploads')) {
     sendError(res, 'feature_disabled', 'Media uploads are temporarily disabled');
     return;
   }
@@ -2117,7 +3198,7 @@ router.post('/threads/:threadId/media', async (req, res) => {
   }
 
   // Verify thread membership
-  const { data: membership } = await client
+  const { data: membership, error: membershipErr } = await client
     .from('message_thread_members')
     .select('user_id, left_at')
     .eq('thread_id', threadId)
@@ -2125,6 +3206,7 @@ router.post('/threads/:threadId/media', async (req, res) => {
     .is('left_at', null)
     .maybeSingle();
 
+  if (membershipErr) { refuseUnreadableAccess(req, res, 'message_thread_members', { err: membershipErr, threadId, userId: user.id }); return; }
   if (!membership) { sendError(res, 'forbidden', 'Not a member of this thread'); return; }
   if ((membership as any).left_at !== null) { sendError(res, 'forbidden', 'You no longer have access to this thread'); return; }
 
@@ -2134,12 +3216,26 @@ router.post('/threads/:threadId/media', async (req, res) => {
   // Fail-closed via isBlockedBetween.
   {
     const blockSc = getServiceClient() ?? client;
-    const { data: otherMembers } = await client
+    const { data: otherMembers, error: otherMembersErr } = await client
       .from('message_thread_members')
       .select('user_id')
       .eq('thread_id', threadId)
       .is('left_at', null)
       .neq('user_id', user.id);
+    // isBlockedBetween IS fail-closed — but it is only REACHED when the roster
+    // read produced exactly one other member. supabase-js resolves on a database
+    // error, so an unreadable message_thread_members gave `data: null`, an empty
+    // roster, and the guard was skipped entirely: the fail-closed block check
+    // was never called, and the message went to someone who may have blocked the
+    // sender. A guard's posture is worth nothing if its INPUT can silently make
+    // it unreachable. Whether this is a 1:1 thread is now something we must
+    // KNOW, not something we assume from an empty result.
+    if (otherMembersErr) {
+      req.log.error({ err: otherMembersErr, threadId },
+        'thread roster read failed — cannot determine whether this is a blocked 1:1 thread; refusing the send');
+      sendError(res, 'degraded_unavailable', 'We could not verify this conversation right now. Please try again shortly.');
+      return;
+    }
     const others = ((otherMembers as any[]) ?? []).map((m) => m.user_id as string);
     if (others.length === 1 && others[0] && await isBlockedBetween(blockSc, user.id, others[0])) {
       sendError(res, 'forbidden', 'You cannot message this user'); return;
@@ -2149,11 +3245,67 @@ router.post('/threads/:threadId/media', async (req, res) => {
   // Finding #14 fix: E2EE threads must never accept plaintext media messages.
   // This endpoint has no attachment-encryption path yet, so fail closed —
   // same posture as the text handler's ciphertext-required guard above.
-  const { data: threadMetaForMedia } = await client
+  // ORDERING: AUTHORIZATION FIRST, PAYLOAD SEMANTICS AFTER.
+  //
+  // This block sat ABOVE the membership check when it was written, and
+  // src/test/telegraphMembershipHonesty.test.ts caught it: a genuine non-member
+  // sending a foreign storage key got `400 invalid_payload` where every other
+  // site in that fourteen-site table answers `403 forbidden`. Two things were
+  // wrong with that. The refusal a stranger sees must not depend on what they
+  // sent — §20.7's control asserts exactly that, "refused with the same words" —
+  // and answering "that upload belongs to someone else" to a caller who may not
+  // write to this thread at all tells them something about an object they have
+  // no standing to ask about. A member who sends a foreign key still gets the
+  // 400 below; a non-member never reaches it.
+
+  // OUR HOST IS NOT YOUR OBJECT. `appStorageUrlInfo` answers only the first
+  // question, and the comment above named "other-user-object injection" as
+  // something it had closed — it had not. A sender could store ANOTHER user's
+  // private storage key here, and `lib/mediaAccess.ts` branch 3c then resolved
+  // the object BY media_url and authorised every member of this thread. Since
+  // `post-media` is a PRIVATE bucket, that composed into a read of someone
+  // else's bytes, not merely a misleading preview.
+  //
+  // `accountDeletionOrphanedMedia.test.ts` has described this write in exactly
+  // those terms for as long as the deletion collector has had to defend against
+  // it: "a sender can store a key belonging to somebody else and the row is
+  // entirely legitimate". It is no longer legitimate.
+  //
+  // THREE VERDICTS, and only one of them refuses.
+  //   foreign_storage        — a uuid segment that is not the sender. REFUSED.
+  //   unattributable_storage — no uuid segment at all (`dm/photo.jpg` and every
+  //                            other non-uuid prefix). ACCEPTED: it names no
+  //                            victim, and refusing it would break objects this
+  //                            product has always written.
+  //   own_storage / external — accepted; `external` cannot reach here because
+  //                            appStorageUrlInfo has refused it above.
+  // The refusal names no other user's id, so it is not an ownership oracle.
+  for (const [field, url] of [['mediaUrl', mediaUrl], ['thumbnailUrl', thumbnailUrl]] as const) {
+    if (!url) continue;
+    const origin = classifyMemoryMediaUrl(url, user.id);
+    if (origin.verdict === 'foreign_storage') {
+      req.log.warn(
+        { field, threadId, senderId: user.id, bucket: origin.bucket },
+        'thread media send refused: the storage key belongs to another user',
+      );
+      sendError(res, 'invalid_payload', `${field} is someone else's upload. Upload your own file first.`);
+      return;
+    }
+  }
+
+  const { data: threadMetaForMedia, error: threadMetaForMediaErr } = await client
     .from('message_threads')
     .select('is_e2ee')
     .eq('id', threadId)
     .maybeSingle();
+  if (threadMetaForMediaErr) {
+    // An unreadable flag read as `is_e2ee: false` and let a plaintext media
+    // message through the one gate that exists to stop it.
+    req.log.error({ err: threadMetaForMediaErr, threadId },
+      'thread E2EE flag read failed on the media path — refusing rather than admitting plaintext media to an E2EE thread');
+    sendError(res, 'degraded_unavailable', 'We could not verify this conversation right now. Please try again shortly.');
+    return;
+  }
   if ((threadMetaForMedia as any)?.is_e2ee === true) {
     sendError(res, 'e2ee_thread', 'Media messages are not supported on end-to-end encrypted threads');
     return;
@@ -2257,44 +3409,74 @@ router.post('/messages/:messageId/translate/retry', async (req, res) => {
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
   // Fetch message + verify membership.
-  const { data: msgRow } = await sc
+  const { data: msgRow, error: msgErr } = await sc
     .from('messages')
     .select('id, thread_id, sender_id, body, deleted_at, original_language')
     .eq('id', messageId)
     .maybeSingle();
 
+  // T344/T363, §17.8. supabase-js RESOLVES on a database failure, so a dropped
+  // error arrived here as `data: null` — indistinguishable from a message that does not exist — and
+  // this route answered a confident 404. A 404 is the one refusal a caller acts
+  // on by GIVING UP; an outage is not a deletion. `degraded_unavailable` is this
+  // codebase's own code for "the check was NOT PERFORMED" and the only code
+  // marked retryable (lib/http.ts RETRYABLE_CODES). A genuinely absent message
+  // still gets the 404 it deserves, one line below.
+  if (msgErr) {
+    req.log.error({ err: msgErr, messageId },
+      'messages read failed on translate retry — refusing rather than reporting the message as nonexistent');
+    sendError(res, 'degraded_unavailable', 'We could not read that message right now. Please try again shortly.');
+    return;
+  }
   if (!msgRow) { sendError(res, 'not_found', 'Message not found'); return; }
   const m = msgRow as any;
   if (m.deleted_at) { sendError(res, 'invalid_payload', 'Cannot retry translation on a deleted message'); return; }
 
   // E-2: refuse translation for E2EE threads — server cannot read ciphertext.
-  const { data: threadMetaForTranslate } = await sc
+  // Third instance of the same shape as the two send paths: an unchecked
+  // `.error` made an unreadable message_threads read as `is_e2ee: false` and
+  // the gate was skipped, running the translation pipeline over a message from
+  // a thread whose contract is that the server never processes its contents.
+  // That the ciphertext column would probably yield nothing useful is not the
+  // guarantee; the gate is.
+  const { data: threadMetaForTranslate, error: threadMetaForTranslateErr } = await sc
     .from('message_threads')
     .select('is_e2ee')
     .eq('id', m.thread_id)
     .maybeSingle();
+  if (threadMetaForTranslateErr) {
+    req.log.error({ err: threadMetaForTranslateErr, threadId: m.thread_id, messageId },
+      'thread E2EE flag read failed on the translate path — refusing rather than translating a possibly E2EE message');
+    sendError(res, 'degraded_unavailable', 'We could not verify this conversation right now. Please try again shortly.');
+    return;
+  }
   if ((threadMetaForTranslate as any)?.is_e2ee === true) {
     sendError(res, 'e2ee_thread', 'Translation is unavailable for end-to-end encrypted messages');
     return;
   }
 
-  const { data: mem } = await client
+  const { data: mem, error: memErr } = await client
     .from('message_thread_members')
     .select('user_id')
     .eq('thread_id', m.thread_id)
     .eq('user_id', user.id)
     .maybeSingle();
 
+  if (memErr) { refuseUnreadableAccess(req, res, 'message_thread_members', { err: memErr, threadId: m.thread_id, userId: user.id }); return; }
   if (!mem) { sendError(res, 'forbidden', 'Not a member of this thread'); return; }
 
   // Check this user has a failed translation row.
-  const { data: tRow } = await sc
+  const { data: tRow, error: tRowErr } = await sc
     .from('message_translations')
     .select('id, status')
     .eq('message_id', messageId)
     .eq('recipient_id', user.id)
     .maybeSingle();
 
+  // §20.7. "No failed translation to retry" is a statement about what exists. An
+  // unreadable `message_translations` used to make it, and the caller — whose
+  // message really did fail to translate — was told there was nothing to retry.
+  if (tRowErr) { refuseUnreadableAccess(req, res, 'message_translations', { err: tRowErr, messageId, userId: user.id }); return; }
   if (!tRow || (tRow as any).status === 'translated' || (tRow as any).status === 'skipped') {
     sendError(res, 'invalid_payload', 'No failed translation to retry');
     return;
@@ -2305,19 +3487,24 @@ router.post('/messages/:messageId/translate/retry', async (req, res) => {
   // Reset to pending and re-run.
   await markTranslationsPending(sc, messageId);
 
-  const { data: senderProfile } = await sc
+  const { data: senderProfile, error: senderProfileErr } = await sc
     .from('profiles')
     .select('preferred_language, preferred_message_language')
     .eq('id', m.sender_id)
     .maybeSingle();
-  const senderLanguage = (senderProfile as any)?.preferred_language ?? (senderProfile as any)?.preferred_message_language ?? 'en';
+  // T344/T363 — the error is BOUND. supabase-js RESOLVES on a database
+  // failure, so the old `?? 'en'` turned an unreadable `profiles` into a
+  // durable stored claim that this sender had chosen English. One shared
+  // interpreter now decides what the read actually established.
+  const senderLanguage = senderLanguageFrom(senderProfile, senderProfileErr);
 
   translateMessageForThread(sc, {
     messageId,
     body: m.body,
     senderId: m.sender_id,
     threadId: m.thread_id,
-    senderPreferredLanguage: senderLanguage,
+    senderPreferredLanguage: senderLanguage.preferredLanguage,
+    senderPreferenceUnreadable: senderLanguage.unreadable,
     logger: req.log,
   }).catch(() => {});
 });
@@ -2341,25 +3528,39 @@ router.patch('/threads/:threadId/messages/:messageId', async (req, res) => {
   if (newBody.length > 4000) { sendError(res, 'invalid_payload', 'body must be 4000 characters or fewer'); return; }
 
   // Verify thread membership.
-  const { data: mem } = await client
+  const { data: mem, error: memErr } = await client
     .from('message_thread_members')
     .select('user_id')
     .eq('thread_id', threadId)
     .eq('user_id', user.id)
     .maybeSingle();
+  if (memErr) { refuseUnreadableAccess(req, res, 'message_thread_members', { err: memErr, threadId, userId: user.id }); return; }
   if (!mem) { sendError(res, 'forbidden', 'Not a member of this thread'); return; }
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
   // Fetch message — must exist, belong to this thread, not deleted, and be owned by caller.
-  const { data: msgRow } = await sc
+  const { data: msgRow, error: msgErr } = await sc
     .from('messages')
     .select('id, thread_id, sender_id, body, deleted_at')
     .eq('id', messageId)
     .eq('thread_id', threadId)
     .maybeSingle();
 
+  // T344/T363, §17.8. supabase-js RESOLVES on a database failure, so a dropped
+  // error arrived here as `data: null` — indistinguishable from a message that does not exist — and
+  // this route answered a confident 404. A 404 is the one refusal a caller acts
+  // on by GIVING UP; an outage is not a deletion. `degraded_unavailable` is this
+  // codebase's own code for "the check was NOT PERFORMED" and the only code
+  // marked retryable (lib/http.ts RETRYABLE_CODES). A genuinely absent message
+  // still gets the 404 it deserves, one line below.
+  if (msgErr) {
+    req.log.error({ err: msgErr, messageId, threadId },
+      'messages read failed on edit — refusing rather than reporting the message as nonexistent');
+    sendError(res, 'degraded_unavailable', 'We could not read that message right now. Please try again shortly.');
+    return;
+  }
   if (!msgRow) { sendError(res, 'not_found', 'Message not found'); return; }
   const m = msgRow as any;
   if (m.deleted_at) { sendError(res, 'invalid_payload', 'Cannot edit a deleted message'); return; }
@@ -2397,19 +3598,24 @@ router.patch('/threads/:threadId/messages/:messageId', async (req, res) => {
   // Invalidate existing translations and regenerate for updated body.
   await markTranslationsPending(sc, messageId);
 
-  const { data: senderProfile } = await sc
+  const { data: senderProfile, error: senderProfileErr } = await sc
     .from('profiles')
     .select('preferred_language, preferred_message_language')
     .eq('id', user.id)
     .maybeSingle();
-  const senderLanguage = (senderProfile as any)?.preferred_language ?? (senderProfile as any)?.preferred_message_language ?? 'en';
+  // T344/T363 — the error is BOUND. supabase-js RESOLVES on a database
+  // failure, so the old `?? 'en'` turned an unreadable `profiles` into a
+  // durable stored claim that this sender had chosen English. One shared
+  // interpreter now decides what the read actually established.
+  const senderLanguage = senderLanguageFrom(senderProfile, senderProfileErr);
 
   translateMessageForThread(sc, {
     messageId,
     body: newBody,
     senderId: user.id,
     threadId,
-    senderPreferredLanguage: senderLanguage,
+    senderPreferredLanguage: senderLanguage.preferredLanguage,
+    senderPreferenceUnreadable: senderLanguage.unreadable,
     logger: req.log,
   }).catch(() => {});
 });
@@ -2430,7 +3636,7 @@ router.get('/trips/:tripId/chat', async (req, res) => {
   if (!isUuid(tripId)) { sendError(res, 'invalid_payload', 'Invalid trip id'); return; }
 
   // Verify caller is an accepted trip member.
-  const { data: tripMembership } = await sc
+  const { data: tripMembership, error: tripMembershipErr } = await sc
     .from('trip_members')
     .select('role')
     .eq('trip_id', tripId)
@@ -2438,18 +3644,32 @@ router.get('/trips/:tripId/chat', async (req, res) => {
     .in('role', ['owner', 'member'])
     .maybeSingle();
 
+  if (tripMembershipErr) { refuseUnreadableAccess(req, res, 'trip_members', { err: tripMembershipErr, tripId, userId: user.id }); return; }
   if (!tripMembership) {
     sendError(res, 'forbidden', 'You must be an accepted trip member to access the trip chat');
     return;
   }
 
   // Get trip metadata for response.
-  const { data: trip } = await sc
+  const { data: trip, error: tripErr } = await sc
     .from('trips')
     .select('id, title, destination_city')
     .eq('id', tripId)
     .maybeSingle();
 
+  // T344/T363, §17.8. supabase-js RESOLVES on a database failure, so a dropped
+  // error arrived here as `data: null` — indistinguishable from a trip that does not exist — and
+  // this route answered a confident 404. A 404 is the one refusal a caller acts
+  // on by GIVING UP; an outage is not a deletion. `degraded_unavailable` is this
+  // codebase's own code for "the check was NOT PERFORMED" and the only code
+  // marked retryable (lib/http.ts RETRYABLE_CODES). A genuinely absent trip
+  // still gets the 404 it deserves, one line below.
+  if (tripErr) {
+    req.log.error({ err: tripErr, tripId },
+      'trips read failed — refusing rather than reporting the trip as nonexistent');
+    sendError(res, 'degraded_unavailable', 'We could not open this trip chat right now. Please try again shortly.');
+    return;
+  }
   if (!trip) { sendError(res, 'not_found', 'Trip not found'); return; }
 
   try {
@@ -2487,13 +3707,14 @@ router.get('/circles/:circleOwnerId/chat', async (req, res) => {
   // Verify caller is the owner or an accepted member of this circle.
   const isOwner = user.id === circleOwnerId;
   if (!isOwner) {
-    const { data: circleMembership } = await sc
+    const { data: circleMembership, error: circleMembershipErr } = await sc
       .from('circle_memberships')
       .select('other_id')
       .eq('user_id', circleOwnerId)
       .eq('other_id', user.id)
       .maybeSingle();
 
+    if (circleMembershipErr) { refuseUnreadableAccess(req, res, 'circle_memberships', { err: circleMembershipErr, circleOwnerId, userId: user.id }); return; }
     if (!circleMembership) {
       sendError(res, 'forbidden', 'You must be a member of this circle to access the circle chat');
       return;
@@ -2501,12 +3722,31 @@ router.get('/circles/:circleOwnerId/chat', async (req, res) => {
   }
 
   // Get owner profile for title.
-  const { data: ownerProfile } = await sc
+  //
+  // T344/T363, the second of §15.2's named consequences. The error was dropped,
+  // and supabase-js RESOLVES on a database failure, so an unreadable `profiles`
+  // arrived here as `data: null` — indistinguishable from a circle owner who
+  // does not exist — and this route answered "Circle owner not found". That is
+  // a confident statement about the world made from a read that never happened,
+  // and the caller acts on it: a 404 tells them the circle is gone, so they stop
+  // asking. A `profiles` outage is not the deletion of a circle.
+  //
+  // `degraded_unavailable` is this codebase's own code for "the check was NOT
+  // PERFORMED" and the only code marked retryable (lib/http.ts RETRYABLE_CODES);
+  // the same posture the E2EE-flag and thread-roster reads in this file already
+  // take. A genuinely absent owner still gets the 404 it deserves.
+  const { data: ownerProfile, error: ownerProfileErr } = await sc
     .from('profiles')
     .select('id, name, handle, username, full_name')
     .eq('id', circleOwnerId)
     .maybeSingle();
 
+  if (ownerProfileErr) {
+    req.log.error({ err: ownerProfileErr, circleOwnerId },
+      'circle owner profile read failed — refusing rather than reporting the circle owner as nonexistent');
+    sendError(res, 'degraded_unavailable', 'We could not open this circle chat right now. Please try again shortly.');
+    return;
+  }
   if (!ownerProfile) { sendError(res, 'not_found', 'Circle owner not found'); return; }
 
   try {
@@ -2545,7 +3785,7 @@ router.patch('/threads/:threadId/mute', async (req, res) => {
   const muted = req.body?.muted === true;
   const now = new Date().toISOString();
 
-  const { data: member } = await sc
+  const { data: member, error: memberErr } = await sc
     .from('message_thread_members')
     .select('user_id')
     .eq('thread_id', threadId)
@@ -2553,6 +3793,7 @@ router.patch('/threads/:threadId/mute', async (req, res) => {
     .is('left_at', null)
     .maybeSingle();
 
+  if (memberErr) { refuseUnreadableAccess(req, res, 'message_thread_members', { err: memberErr, threadId, userId: user.id }); return; }
   if (!member) { sendError(res, 'forbidden', 'Not a member of this thread'); return; }
 
   const { error } = await sc
@@ -2622,7 +3863,7 @@ router.post('/threads/:threadId/report', async (req, res) => {
   const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim().slice(0, 200) : '';
   if (!reason) { sendError(res, 'invalid_payload', 'reason is required'); return; }
 
-  const { error } = await sc
+  const { data: filedThreadReport, error } = await sc
     .from('reports')
     .insert({
       reporter_id: user.id,
@@ -2631,7 +3872,9 @@ router.post('/threads/:threadId/report', async (req, res) => {
       reason_code: 'other',
       reason_detail: reason,
       severity: 'normal',
-    });
+    })
+    .select('id')
+    .maybeSingle();
 
   if (error) {
     req.log.warn({ err: error }, 'thread report insert failed');
@@ -2639,10 +3882,159 @@ router.post('/threads/:threadId/report', async (req, res) => {
     return;
   }
 
+  // Telegraph §22: snapshot the reported conversation into restricted
+  // moderation storage BEFORE responding, because the content can be deleted
+  // the moment the reported party notices. T284 measured what happens without
+  // this: deletion blanks `messages.body` in place, so reported content is
+  // destroyed rather than restricted.
+  //
+  // Awaited, but never fatal: a person who has just reported harassment must
+  // not be told "could not file report" because a snapshot table was slow. The
+  // report is already written; evidence improves it and does not gate it.
+  try {
+    await captureThreadEvidence(sc, {
+      reportId: (filedThreadReport as any)?.id ?? null,
+      threadId,
+      log: req.log,
+    });
+  } catch (err) {
+    req.log.error({ err, threadId }, 'report evidence: thread capture threw — the report stands without content');
+  }
+
   // Compass: reporter's cache should no longer surface content from this thread
   await invalidateCompassCache(sc, user.id, "thread_report");
 
   res.status(201).json({ ok: true });
+
+  // Telegraph §13.2 `safety.reported`, to the REPORTER ONLY. census T194:
+  // "Not in the union; reports write a row and emit nothing."
+  //
+  // Not published to the thread, and that is the point. Telling the reported
+  // party is the fastest way to get a reporter hurt; telling a group turns a
+  // safety action into a public accusation. The reporter gets it because a
+  // report whose only feedback is a toast that has already gone is a report
+  // people file twice. The payload carries no target identity.
+  emitSafetyReported(user.id, {
+    reportId: (filedThreadReport as any)?.id ?? null,
+    targetType: 'thread',
+    filedAt: new Date().toISOString(),
+  });
+});
+
+// ── Saved messages ─────────────────────────────────────────────────────────────
+
+/**
+ * GET /api/me/saved-messages?limit=50
+ *
+ * The READ half of saved_messages. Until this route existed the table was
+ * write-only: both client surfaces offer "Save", the handler below persists it,
+ * and nothing anywhere read it back (Telegraph census T119, "persists into a
+ * hole"). This is not yet §10.2's "private Memory draft" — it is the projection
+ * that makes the save observable at all; promoting a save into a Memory is an
+ * owner decision this route does not make.
+ *
+ * §14.2 "Read authorization is dynamic": a save is not a permanent grant. Every
+ * item is RE-AUTHORIZED at read time, against the same rules the thread read
+ * applies —
+ *   - the caller is still an ACTIVE member of the message's thread
+ *     (a departed member's saves stay in the table and stop being returned);
+ *   - the message is not deleted / unsent (§7.4 "remove from normal
+ *     retrieval/search/projections");
+ *   - the message is inside the caller's §14.3 window when the history bound
+ *     is enabled.
+ * Every read is error-checked and fails CLOSED: supabase-js resolves rather
+ * than throws, and a failed read must never be reported as an empty collection
+ * (§29 "No silent schema failures that become plausible empty state").
+ *
+ * INERT: no client calls this route; nothing existing changes shape.
+ */
+router.get('/me/saved-messages', async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
+
+  const limitRaw = Number(req.query.limit ?? 50);
+  const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(Math.floor(limitRaw), 200) : 50;
+
+  const { data: savedRows, error: savedErr } = await sc
+    .from('saved_messages')
+    .select('message_id, saved_at')
+    .eq('user_id', user.id)
+    .order('saved_at', { ascending: false })
+    .limit(limit);
+
+  if (savedErr) {
+    req.log.error({ err: savedErr }, 'saved_messages read failed');
+    sendError(res, 'db_error', savedErr.message);
+    return;
+  }
+
+  const saved = ((savedRows ?? []) as any[]);
+  if (saved.length === 0) { res.status(200).json({ saved: [] }); return; }
+
+  const savedAtById: Record<string, string> = {};
+  for (const s of saved) savedAtById[s.message_id as string] = s.saved_at as string;
+
+  const { data: msgRows, error: msgErr } = await sc
+    .from('messages')
+    .select('id, thread_id, sender_id, body, deleted_at, created_at, msg_type, subtype, media_url, media_type, media_thumbnail_url')
+    .in('id', Object.keys(savedAtById))
+    .is('deleted_at', null);
+
+  if (msgErr) {
+    req.log.error({ err: msgErr }, 'saved_messages: messages read failed');
+    sendError(res, 'db_error', msgErr.message);
+    return;
+  }
+
+  const msgs = ((msgRows ?? []) as any[]);
+  if (msgs.length === 0) { res.status(200).json({ saved: [] }); return; }
+
+  const threadIds = Array.from(new Set(msgs.map((m) => m.thread_id as string)));
+
+  const boundOn = await historyBoundEnabled(sc);
+  const { data: memRows, error: memErr } = await sc
+    .from('message_thread_members')
+    .select(membershipSelect('thread_id', boundOn))
+    .eq('user_id', user.id)
+    .in('thread_id', threadIds)
+    .is('left_at', null);
+
+  if (memErr) {
+    req.log.error({ err: memErr }, 'saved_messages: membership read failed');
+    sendError(res, 'db_error', memErr.message);
+    return;
+  }
+
+  const visibleFromByThread: Record<string, string | null> = {};
+  const activeThreads = new Set<string>();
+  for (const m of ((memRows ?? []) as any[])) {
+    activeThreads.add(m.thread_id as string);
+    visibleFromByThread[m.thread_id as string] = visibleFromOf(m, boundOn);
+  }
+
+  const items = msgs
+    .filter((m) => activeThreads.has(m.thread_id as string))
+    .filter((m) => withinWindow(m.created_at, visibleFromByThread[m.thread_id as string] ?? null))
+    .map((m) => ({
+      messageId: m.id as string,
+      threadId: m.thread_id as string,
+      senderId: (m.sender_id as string | null) ?? null,
+      body: (m.body as string | null) ?? null,
+      createdAt: m.created_at as string,
+      savedAt: savedAtById[m.id as string],
+      msgType: (m.msg_type as string) ?? 'text',
+      subtype: (m.subtype as string | null) ?? null,
+      mediaUrl: (m.media_url as string | null) ?? null,
+      mediaType: (m.media_type as string | null) ?? null,
+      mediaThumbnailUrl: (m.media_thumbnail_url as string | null) ?? null,
+    }))
+    .sort((a, b) => (a.savedAt < b.savedAt ? 1 : a.savedAt > b.savedAt ? -1 : 0));
+
+  res.status(200).json({ saved: items });
 });
 
 // ── Report message ────────────────────────────────────────────────────────────
@@ -2661,18 +4053,33 @@ router.post('/threads/:threadId/messages/:messageId/save', async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
-  const { data: membership } = await sc
+  const { data: membership, error: membershipErr } = await sc
     .from('message_thread_members').select('user_id')
     .eq('thread_id', threadId).eq('user_id', user.id).is('left_at', null).maybeSingle();
+  if (membershipErr) { refuseUnreadableAccess(req, res, 'message_thread_members', { err: membershipErr, threadId, userId: user.id }); return; }
   if (!membership) { sendError(res, 'forbidden', 'Not a member of this thread'); return; }
 
   // Verify message belongs to this thread (prevents cross-thread saves).
-  const { data: msgRow } = await sc
+  const { data: msgRow, error: msgErr } = await sc
     .from('messages')
     .select('id')
     .eq('id', messageId)
     .eq('thread_id', threadId)
     .maybeSingle();
+
+  // T344/T363, §17.8. supabase-js RESOLVES on a database failure, so a dropped
+  // error arrived here as `data: null` — indistinguishable from a message that is not in this thread — and
+  // this route answered a confident 404. A 404 is the one refusal a caller acts
+  // on by GIVING UP; an outage is not a deletion. `degraded_unavailable` is this
+  // codebase's own code for "the check was NOT PERFORMED" and the only code
+  // marked retryable (lib/http.ts RETRYABLE_CODES). A genuinely absent message
+  // still gets the 404 it deserves, one line below.
+  if (msgErr) {
+    req.log.error({ err: msgErr, messageId, threadId },
+      'messages read failed on save — refusing rather than reporting the message as nonexistent');
+    sendError(res, 'degraded_unavailable', 'We could not save that message right now. Please try again shortly.');
+    return;
+  }
   if (!msgRow) { sendError(res, 'not_found', 'Message not found in this thread'); return; }
 
   const now = new Date().toISOString();
@@ -2705,7 +4112,7 @@ router.post('/messages/:messageId/report', async (req, res) => {
   const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim().slice(0, 200) : '';
   if (!reason) { sendError(res, 'invalid_payload', 'reason is required'); return; }
 
-  const { error } = await sc
+  const { data: filedMessageReport, error } = await sc
     .from('reports')
     .insert({
       reporter_id: user.id,
@@ -2714,7 +4121,9 @@ router.post('/messages/:messageId/report', async (req, res) => {
       reason_code: 'other',
       reason_detail: reason,
       severity: 'normal',
-    });
+    })
+    .select('id')
+    .maybeSingle();
 
   if (error) {
     req.log.warn({ err: error }, 'message report insert failed');
@@ -2722,10 +4131,30 @@ router.post('/messages/:messageId/report', async (req, res) => {
     return;
   }
 
+  // Telegraph §22 — see the thread-report handler above for why this is awaited
+  // before the response and why it can never fail the report.
+  try {
+    await captureMessageEvidence(sc, {
+      reportId: (filedMessageReport as any)?.id ?? null,
+      messageId,
+      log: req.log,
+    });
+  } catch (err) {
+    req.log.error({ err, messageId }, 'report evidence: message capture threw — the report stands without content');
+  }
+
   // Compass: reporter's cache should no longer surface content from this message author
   await invalidateCompassCache(sc, user.id, "message_report");
 
   res.status(201).json({ ok: true });
+
+  // Telegraph §13.2 `safety.reported` — reporter only. See the thread-report
+  // handler above for why the audience is one person.
+  emitSafetyReported(user.id, {
+    reportId: (filedMessageReport as any)?.id ?? null,
+    targetType: 'message',
+    filedAt: new Date().toISOString(),
+  });
 });
 
 export default router;

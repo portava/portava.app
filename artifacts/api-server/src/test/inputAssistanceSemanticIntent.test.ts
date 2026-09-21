@@ -37,6 +37,7 @@ import {
   parseSmartAction,
   extractTemporal,
   extractGeo,
+  splitSequence,
   shouldProjectStructured,
   confidenceBand,
   SEMANTIC_MIN_CONFIDENCE,
@@ -303,6 +304,47 @@ describe("§18 — sequence operators", () => {
     const before = parseSemanticIntent("coffee before lunch");
     assert.equal(before.sequence, true);
     assert.equal(before.stages.length, 2);
+  });
+
+  // §18 lists SIX sequence operators: "then; after; before; on the way; next".
+  // Five of them split. "on the way" did not — and could not: `extractGeo` runs
+  // on the whole query BEFORE the split and used to `strip` the phrase out as
+  // its `along` relationship, so by the time `splitSequence` ran there was
+  // nothing left to split on. The operator now survives extractGeo and is
+  // consumed HERE, and the relationship is still recorded, because §18 names it
+  // under both families and it genuinely is both.
+  //
+  // MUTATION (applied, watched go red, reverted, `cmp` byte-identical):
+  //   - semanticParser.ts: restore `strip(ALONG_RE)` in the `along` branch →
+  //     the two-stage assertions below go red (one stage, sequence false).
+  //   - semanticParser.ts: drop `${ALONG_RE.source}` from SEQUENCE_SPLIT_RE →
+  //     same failure, from the other end.
+  it("§18: 'on the way' splits a sequence AND still records the along relationship", () => {
+    const p = parseSemanticIntent("food on the way to the club");
+    assert.equal(p.sequence, true, "'on the way' is a §18 sequence operator");
+    assert.equal(p.stages.length, 2);
+    assert.equal(p.stages[0].category, "food");
+    assert.equal(p.stages[1].category, "nightclub", "the stage AFTER the operator is parsed too");
+    assert.equal(p.relationship, "along", "it is still the geographic relationship it always was");
+    assert.ok(p.matchedOperators.includes("sequence"));
+    assert.ok(p.matchedOperators.includes("relationship"));
+  });
+
+  it("§18: 'along the way' with no following stage is UNCHANGED", () => {
+    // The regression guard for the fix above: consuming the operator in the
+    // splitter rather than in extractGeo must not alter a one-stage query.
+    const p = parseSemanticIntent("coffee along the way");
+    assert.equal(p.sequence, false, "one stage is not a sequence");
+    assert.equal(p.stages.length, 1);
+    assert.equal(p.stages[0].raw, "coffee", "the operator is consumed, not left in the stage text");
+    assert.equal(p.stages[0].category, "cafe");
+    assert.equal(p.relationship, "along");
+  });
+
+  it("§18: splitSequence consumes the operator itself, never leaving it in a stage", () => {
+    assert.deepEqual(splitSequence("food on the way to the club"), ["food", "to the club"]);
+    assert.deepEqual(splitSequence("drinks along our route home"), ["drinks", "home"]);
+    assert.deepEqual(splitSequence("coffee along the way"), ["coffee"]);
   });
 });
 
