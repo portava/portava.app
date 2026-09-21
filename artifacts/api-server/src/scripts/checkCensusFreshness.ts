@@ -2070,6 +2070,14 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   // paths resolve) and the most client-weighted: its subject is the typing
   // surface, so the hooks ARE the measurement, not evidence about it.
   "census-input-intelligence.md": [
+    // ── ADDED 2026-09-21 by the INTEGRATING LANE, for the §44/§57 lane ───────
+    // Cited as evidence by rows that lane moved. `routes/locations.ts` enters
+    // because G232's own account names it as the entry point the alias-append
+    // guard sits behind, and a census must watch the file its evidence names.
+    // The 98% floor was not touched.
+    "artifacts/api-server/src/test/inputAssistanceMetrics.test.ts",
+    "travel-buddy-standalone/src/components/discovery/__tests__/TripWishlistPicker.actionCompleted.component.test.tsx",
+    "artifacts/api-server/src/routes/locations.ts",
     // ── ADDED 2026-09-21 by the INTEGRATING LANE, for the seven-lane wave ────
     // Five files that rows this wave MOVED now cite. Leaving them cited but
     // unwatched is the inversion check:census-scope-coverage exists to catch:
