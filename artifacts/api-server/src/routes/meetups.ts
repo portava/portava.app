@@ -21,7 +21,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireUser, isAcceptedTripMember, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
-import { isKillSwitchEngaged } from "../lib/featureFlags.js";
+import { isKillSwitchEngaged, killSwitchStateUnknown, KILL_SWITCH_UNKNOWN_MESSAGE } from '../lib/featureFlags.js';
 import { enrichSpans } from "../lib/enrichSpans.js";
 import { sendPushWithRetry } from "../lib/pushWithRetry.js";
 import {
@@ -29,6 +29,12 @@ import {
   formatAgeLimitLabel,
   validateAgeRange,
 } from "../lib/ageEligibility.js";
+import {
+  resolveGateAge,
+  resolveGateAges,
+  AGE_NOT_VERIFIED_ADULT_MESSAGE,
+  AGE_CHECK_UNAVAILABLE_MESSAGE,
+} from "../lib/gateAge.js";
 import { nameVisibilitySet, nameVisibleFor } from "../lib/publicIdentity.js";
 import { truncateDisplayName } from "../lib/displayName.js";
 
@@ -130,7 +136,15 @@ router.post("/meetups", async (req, res) => {
 
   // Emergency stop: disable_new_event_creation — fail-CLOSED on DB error
   const flagSc = getServiceClient();
-  if (flagSc && await isKillSwitchEngaged(flagSc, 'disable_new_event_creation')) {
+  // An ABSENT service client is the same unknown as an unreadable
+  // feature_flags, and until this line it was not treated as one: the stop
+  // was skipped and the write went through with a 2xx. degraded_unavailable
+  // rather than feature_disabled, because nobody engaged a stop.
+  if (killSwitchStateUnknown(flagSc)) {
+    sendError(res, 'degraded_unavailable', KILL_SWITCH_UNKNOWN_MESSAGE);
+    return;
+  }
+  if (await isKillSwitchEngaged(flagSc!, 'disable_new_event_creation')) {
     sendError(res, 'feature_disabled', 'New event creation is temporarily disabled');
     return;
   }
@@ -643,18 +657,21 @@ router.post("/meetups/:meetupId/invites", async (req, res) => {
   if ((meetup as any).age_limit_enabled && toInvite.length > 0) {
     const sc = getServiceClient();
     if (sc) {
-      const { data: profiles } = await sc
-        .from("profiles")
-        .select("id, date_of_birth")
-        .in("id", toInvite);
-      const dobByUser: Record<string, string | null> = {};
-      for (const row of profiles ?? []) {
-        dobByUser[(row as any).id] = (row as any).date_of_birth ?? null;
-      }
+      // THROUGH THE SEAM (lib/gateAge.ts), and batched: ONE profiles read and
+      // ONE identity_verifications read for the whole invitee list, whatever
+      // its length. Reading the verification per invitee would have been the
+      // N+1 the batched `profiles` read here already avoids.
+      //
+      // An invitee whose government document says they are a minor is
+      // age-ineligible for an 18+ meetup no matter what birthday they typed —
+      // which is what this pre-check missed entirely until the seam existed.
+      const resolved = await resolveGateAges(sc, toInvite);
       const eligible: string[] = [];
       for (const uid of toInvite) {
-        const dob = dobByUser[uid] ?? null;
-        const result = getAgeEligibilityReason(dob, true, (meetup as any).min_age, (meetup as any).max_age);
+        const gate = resolved.get(uid) ?? { state: "unreadable" as const };
+        const result = gate.state === "ok"
+          ? getAgeEligibilityReason(gate.dateOfBirth, true, (meetup as any).min_age, (meetup as any).max_age)
+          : { eligible: false };
         if (result.eligible) {
           eligible.push(uid);
         } else {
@@ -698,15 +715,43 @@ router.post("/meetups/:meetupId/rsvp", async (req, res) => {
   if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
 
   if (meetupRow.age_limit_enabled && parsed.data.status !== "declined") {
+    // FAIL CLOSED. This block used to be `if (sc) { … }` with no else: when
+    // getServiceClient() answered null the age gate was SKIPPED ENTIRELY and the
+    // RSVP was written. A safety gate that cannot run has not found the caller
+    // eligible — it has not run. Every other route in this file refuses when the
+    // service client is missing; this one admitted.
     const sc = getServiceClient();
-    if (sc) {
-      const { data: profileRow } = await sc
-        .from("profiles")
-        .select("date_of_birth")
-        .eq("id", user.id)
-        .maybeSingle();
-      const dob = (profileRow as any)?.date_of_birth ?? null;
-      const eligibility = getAgeEligibilityReason(dob, true, meetupRow.min_age, meetupRow.max_age);
+    if (!sc) {
+      sendError(res, "degraded_unavailable", "Age check is temporarily unavailable for this meetup");
+      return;
+    }
+    {
+      // `.error` is checked for the same reason: supabase-js RESOLVES on a
+      // database error, so an unreadable `profiles` produced `data: null` — the
+      // exact shape "this user has no date of birth" has. It happened to deny
+      // (a null DOB is `dob_missing`), but it denied with a FABRICATED verdict
+      // about the caller's own profile, telling them to add a date of birth they
+      // may well already have. A check that could not run says so, and says it
+      // retryably.
+      // THROUGH THE SEAM (lib/gateAge.ts). The `profiles` read and the
+      // `identity_verifications` read are issued together, so this gate costs
+      // the same one round trip it always did.
+      //
+      // The seam keeps the distinction this block already fought for and adds
+      // one: `unreadable` covers a failed read of EITHER table and is refused
+      // retryably without a word about the caller's record, and
+      // `verified_minor` refuses with the age requirement rather than with the
+      // missing-date-of-birth message — because the date of birth is present,
+      // and contradicted.
+      const gateAge = await resolveGateAge(sc, user.id);
+      if (gateAge.state === "unreadable") {
+        req.log?.warn?.({ meetupId }, "age gate: age could not be resolved — RSVP refused, not admitted");
+        sendError(res, "degraded_unavailable", AGE_CHECK_UNAVAILABLE_MESSAGE);
+        return;
+      }
+      const eligibility = gateAge.state === "verified_minor"
+        ? { eligible: false, reason: "not_verified_adult", publicMessage: AGE_NOT_VERIFIED_ADULT_MESSAGE }
+        : getAgeEligibilityReason(gateAge.dateOfBirth, true, meetupRow.min_age, meetupRow.max_age);
       if (!eligibility.eligible) {
         // Write audit log (best-effort)
         void (async () => {

@@ -169,8 +169,12 @@ function sendCaptureResult(res: any, result: CaptureResult): void {
 router.get("/v1/intel/consent", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const state = await getIntelConsentState(getServiceClient()!, auth.user.id);
-  res.json(state);
+  // An unreadable consent row must not render as "you have never consented" —
+  // see lib/intelConsent.getIntelConsentState. The client's toggle would then
+  // re-stamp a consent the person already gave.
+  const out = await getIntelConsentState(getServiceClient()!, auth.user.id);
+  if (!out.ok) return sendError(res, "db_error", "could not read your consent state");
+  res.json(out.state);
 }));
 
 router.put("/v1/intel/consent", asyncHandler(async (req, res) => {
@@ -244,7 +248,19 @@ const handleProposeClaim = asyncHandler(async (req: Request, res: Response) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const sc = getServiceClient()!;
-  const { data: obs } = await sc.from("intel_observations").select("*").eq("id", req.params.id).eq("actor_id", auth.user.id).maybeSingle();
+  // OBSERVE THE READ. supabase-js RESOLVES on a database error, so an unchecked
+  // `.error` here came back as `data: null` — indistinguishable from "no such
+  // row". This lookup is already narrowed to `actor_id = the caller`, so the
+  // answer it produced was "you have no observation with that id": the server
+  // telling a person their own contribution does not exist, because the server
+  // could not read the table. That is a wrong answer about them, not a harmless
+  // empty one, and it is unrecoverable from the client's side — a retry looks
+  // identical. A rejected read is a db_error, and only a successful read that
+  // returned nothing is a not_found.
+  const { data: obs, error: obsErr } = await sc
+    .from("intel_observations").select("*")
+    .eq("id", req.params.id).eq("actor_id", auth.user.id).maybeSingle();
+  if (obsErr) return sendError(res, "db_error", "could not read the observation");
   if (!obs) return sendError(res, "not_found", "observation not found");
   const out = await proposeClaim(sc, obs);
   if (!out.ok) {

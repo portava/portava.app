@@ -240,10 +240,28 @@ export async function updateMemory(
 /**
  * Load active memories for a user.
  */
-export async function loadMemories(
+export interface MemoriesRead {
+  rows: any[];
+  /**
+   * TRUE when `passport_memories` could not be read, so `rows` is empty for a
+   * reason that has nothing to do with the traveller.
+   *
+   * `loadMemories` answers both cases with `[]`, and supabase-js RESOLVES on a
+   * database error so no caller could ever have told them apart. A memories
+   * shelf shown as empty is a statement about a person's life; a failed read
+   * rendered as an empty shelf is a false one. Callers that put the result in
+   * front of a human should use this reader, not the array one.
+   */
+  readFailed: boolean;
+}
+
+/**
+ * Load a user's ACTIVE memories, and say whether the read happened at all.
+ */
+export async function loadMemoriesRead(
   db: SupabaseClient,
   userId: string,
-): Promise<any[]> {
+): Promise<MemoriesRead> {
   const { data, error } = await db
     .from("passport_memories")
     .select("id, status, title, description, country, city, neighborhood, category, visibility, verification_level, source_type, source_id, photo_url, media_type, plan_id, trip_id, place_id, suggestion_reason, earned_at, created_at")
@@ -254,9 +272,21 @@ export async function loadMemories(
 
   if (error) {
     logger.error({ table: "passport_memories", op: "select", message: error.message }, "loadMemories failed");
-    return [];
+    return { rows: [], readFailed: true };
   }
-  return data ?? [];
+  return { rows: data ?? [], readFailed: false };
+}
+
+/**
+ * Array-only view of {@link loadMemoriesRead}, kept for the callers that only
+ * ever iterate the rows (the featured-journey builders). A caller that RENDERS
+ * the result as a count or an empty state should use `loadMemoriesRead`.
+ */
+export async function loadMemories(
+  db: SupabaseClient,
+  userId: string,
+): Promise<any[]> {
+  return (await loadMemoriesRead(db, userId)).rows;
 }
 
 /**

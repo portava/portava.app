@@ -4,6 +4,8 @@ import http from "node:http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import memoriesRouter from "../routes/memories.js";
+import { logger } from "../lib/logger.js";
+import { asHistoricalMemoryPayload } from "../services/memory/historicalTruth.js";
 
 /**
  * Backend tests for the Memory System API.
@@ -97,9 +99,19 @@ function makeClient(state: FakeState) {
     let pendingDelete = false;
     let countMode = false;
 
+    // PostgREST returns the AFFECTED ROWS from a write when the caller chains
+    // .select() (supabase-js sends Prefer: return=representation for it), and
+    // returns nothing when it does not. The fake modelled only the second half:
+    // `.delete().select("id")` came back as `data: []`, which is the signature
+    // of a delete that matched NOTHING. Routes that check the row count to tell
+    // "removed" from "matched nothing" would have been forced to weaken
+    // themselves to satisfy the double, so the double is fixed instead.
+    let selectedAfterWrite = false;
+
     const builder: any = {
       select(_cols?: string, opts?: any) {
         if (opts?.count === "exact" && opts?.head) countMode = true;
+        if (pendingInsert || pendingUpdate || pendingUpsert || pendingDelete) selectedAfterWrite = true;
         return builder;
       },
       insert(row: any) { pendingInsert = row; return builder; },
@@ -110,6 +122,27 @@ function makeClient(state: FakeState) {
       neq(col: string, val: any) { filters.push((r) => r[col] !== val); return builder; },
       in(col: string, vals: any[]) { filters.push((r) => vals.includes(r[col])); return builder; },
       lt(col: string, val: any)  { filters.push((r) => r[col] < val); return builder; },
+      gt(col: string, val: any)  { filters.push((r) => r[col] > val); return builder; },
+      // PostgREST negations used by the discovery feed's pre-filters:
+      //   .not("hidden_user_ids", "cs", "{uuid}")  — array does NOT contain
+      //   .not("owner_id", "in", "(a,b)")          — value NOT in list
+      not(col: string, op: string, val: any) {
+        if (op === "cs") {
+          const wanted = String(val).replace(/^\{|\}$/g, "").split(",").filter(Boolean);
+          filters.push((r) => {
+            const arr: any[] = r[col] ?? [];
+            return !wanted.some((w) => arr.includes(w));
+          });
+        } else if (op === "in") {
+          // PostgREST accepts quoted and bare list members; strip either.
+          const list = String(val).replace(/^\(|\)$/g, "").split(",")
+            .map((x) => x.trim().replace(/^"|"$/g, "")).filter(Boolean);
+          filters.push((r) => !list.includes(r[col]));
+        } else {
+          filters.push((r) => r[col] !== val);
+        }
+        return builder;
+      },
       order()  { return builder; },
       limit()  { return builder; },
       maybeSingle() { return resolveSingle(true); },
@@ -143,9 +176,9 @@ function makeClient(state: FakeState) {
       }
       if (pendingDelete) {
         const arr: FakeRow[] = (state as any)[table] ?? [];
-        const keep = arr.filter((r) => !filters.every((f) => f(r)));
-        (state as any)[table] = keep;
-        return { data: null, error: null, count: null };
+        const gone = arr.filter((r) => filters.every((f) => f(r)));
+        (state as any)[table] = arr.filter((r) => !filters.every((f) => f(r)));
+        return { data: selectedAfterWrite ? (gone[0] ?? null) : null, error: null, count: null };
       }
       const matched = rows();
       if (countMode) return { data: null, error: null, count: matched.length };
@@ -168,9 +201,10 @@ function makeClient(state: FakeState) {
       }
       if (pendingDelete) {
         const arr: FakeRow[] = (state as any)[table] ?? [];
-        const keep = arr.filter((r) => !filters.every((f) => f(r)));
-        (state as any)[table] = keep;
-        return { data: [], error: null, count: 0 };
+        const gone = arr.filter((r) => filters.every((f) => f(r)));
+        (state as any)[table] = arr.filter((r) => !filters.every((f) => f(r)));
+        // With .select() PostgREST returns the deleted rows; without it, nothing.
+        return { data: selectedAfterWrite ? gone : null, error: null, count: gone.length };
       }
       const matched = rows();
       if (countMode) return { data: null, error: null, count: matched.length };
@@ -775,5 +809,320 @@ describe("GET /api/trips/:tripId/memory", () => {
       const { status } = await get(app.baseUrl, `/api/trips/${TRIP_ID}/memory`, auth("owner-tok"));
       assert.equal(status, 404);
     } finally { await app.close(); }
+  });
+});
+
+// ── §1 / §14 — a Memory the domain serves says it is a record of the past ─────
+//
+// Highlights/Memories spec §1: "Historical truth and current-world truth are
+// separate. A place remembered as visited in 2026 does not establish that it is
+// open now." §14 restates it as the fusion invariant, and §16 as a rule the LLM
+// may not break.
+//
+// census-highlights-memories H5 held this BUILT-BUT-WRONG with a precise
+// complaint: the boundary was encoded in services/memory/historicalTruth.ts and
+// route-reachable, "but on ONE consumer … routes/memories.ts still serializes
+// Memory rows with no truth class on them, so the separation is a property of
+// the Compass surface rather than of the Memory domain."
+//
+// These tests are about the DOMAIN, so they drive the REST routes rather than
+// the helper: the marking has to arrive on the wire, on every read shape, or it
+// is a property of a function nobody called.
+/**
+ * The shape `routes/memories.ts` serves, declared rather than inferred.
+ *
+ * The helpers above return `body` as `unknown` (fetch's `.json()` does), and
+ * `pnpm typecheck:tests` refuses a fixture describing a shape production never
+ * emits — which is the gate working, not an obstacle. So the shape is WRITTEN
+ * DOWN here, against `mapMemory`'s return type, and read through it. `any`
+ * would have passed the gate by switching it off.
+ */
+interface SerializedMemory {
+  id: string;
+  ownerId: string;
+  truthClass: string;
+  establishesCurrentStatus: boolean;
+}
+interface MemoryBody { memory: SerializedMemory }
+interface MemoryListBody { memories: SerializedMemory[] }
+const one = (b: unknown): MemoryBody => b as MemoryBody;
+const many = (b: unknown): MemoryListBody => b as MemoryListBody;
+
+describe("§1 historical truth class on canonical Memory payloads", () => {
+  it("a single Memory read carries truthClass historical and establishesCurrentStatus false", async () => {
+    const app = await startApp(baseState());
+    try {
+      const { status, body } = await get(app.baseUrl, `/api/memories/${MEM_ID}`, auth("owner-tok"));
+      assert.equal(status, 200);
+      assert.equal(one(body).memory.truthClass, "historical");
+      assert.equal(one(body).memory.establishesCurrentStatus, false,
+        "the caveat rides on the datum — a consumer cannot drop it without dropping a field");
+    } finally { await app.close(); }
+  });
+
+  it("a stranger's read of the same Memory carries it too — it is not an owner-only field", async () => {
+    const app = await startApp(baseState());
+    try {
+      const { status, body } = await get(app.baseUrl, `/api/memories/${MEM_ID}`, auth("stranger-tok"));
+      assert.equal(status, 200);
+      assert.equal(one(body).memory.truthClass, "historical");
+      assert.equal(one(body).memory.establishesCurrentStatus, false);
+    } finally { await app.close(); }
+  });
+
+  it("the discovery feed, the profile listing and the trip recap all carry it", async () => {
+    const app = await startApp(baseState());
+    try {
+      const feed = await get(app.baseUrl, "/api/memories", auth("owner-tok"));
+      assert.equal(feed.status, 200);
+      assert.ok(many(feed.body).memories.length > 0, "precondition: the feed returned a Memory");
+      for (const m of many(feed.body).memories) {
+        assert.equal(m.truthClass, "historical", `feed memory ${m.id} is unmarked`);
+        assert.equal(m.establishesCurrentStatus, false);
+      }
+
+      const profile = await get(app.baseUrl, `/api/users/${USER_ID}/memories`, auth("owner-tok"));
+      assert.equal(profile.status, 200);
+      assert.ok(many(profile.body).memories.length > 0, "precondition: the profile listing returned a Memory");
+      for (const m of many(profile.body).memories) {
+        assert.equal(m.truthClass, "historical", `profile memory ${m.id} is unmarked`);
+        assert.equal(m.establishesCurrentStatus, false);
+      }
+
+      const trip = await get(app.baseUrl, `/api/trips/${TRIP_ID}/memory`, auth("owner-tok"));
+      assert.equal(trip.status, 200);
+      assert.equal(one(trip.body).memory.truthClass, "historical");
+      assert.equal(one(trip.body).memory.establishesCurrentStatus, false);
+    } finally { await app.close(); }
+  });
+
+  it("a WRITE answers with the marking too — create and patch, not only reads", async () => {
+    const app = await startApp(baseState());
+    try {
+      const created = await post(app.baseUrl, "/api/memories", auth("owner-tok"), { title: "Dinner" });
+      assert.equal(created.status, 201);
+      assert.equal(one(created.body).memory.truthClass, "historical");
+      assert.equal(one(created.body).memory.establishesCurrentStatus, false);
+
+      const patched = await patch(app.baseUrl, `/api/memories/${MEM_ID}`, auth("owner-tok"), { title: "Dinner, corrected" });
+      assert.equal(patched.status, 200);
+      assert.equal(one(patched.body).memory.truthClass, "historical");
+      assert.equal(one(patched.body).memory.establishesCurrentStatus, false);
+    } finally { await app.close(); }
+  });
+
+  it("a payload that arrives already claiming to be current_world has the claim REMOVED, not merged", () => {
+    // THIS TEST WAS VACUOUS ON ITS FIRST WRITING AND A MUTATION SAID SO.
+    // It drove the ROUTE with a `truthClass: "current_world"` column on the
+    // fixture row and asserted the response said "historical" — and it passed
+    // with the override deliberately broken, because `mapMemory` builds its
+    // payload from an explicit field list and never copies an unknown column.
+    // The route could not reach the branch under test, so the green meant
+    // nothing. Asserted on the function, where the property is real.
+    const marked = asHistoricalMemoryPayload({ id: MEM_ID, truthClass: "current_world", establishesCurrentStatus: true });
+    assert.equal(marked.truthClass, "historical",
+      "a canonical Memory is a record of the past whatever the payload claims");
+    assert.equal(marked.establishesCurrentStatus, false);
+    assert.equal(marked.id, MEM_ID, "everything else on the payload survives");
+  });
+});
+
+// ── §24 the source version actually reaches the log from the route ───────────
+//
+// FOUND BY A SURVIVING MUTATION. Deleting `sourceVersion: existing.updated_at`
+// from the PATCH dispatch broke nothing: the audit-line tests build a
+// CommandAudit by hand, so they prove auditCommand logs whatever it is handed
+// and say nothing about whether the route hands it anything. A field wired only
+// in a unit test is not wired.
+describe("§24 source version, from the route", () => {
+  function captureLines(): { lines: Array<Record<string, unknown>>; restore: () => void } {
+    const lines: Array<Record<string, unknown>> = [];
+    const realInfo = logger.info.bind(logger);
+    const realWarn = logger.warn.bind(logger);
+    (logger as any).info = (obj: any) => { lines.push(obj); };
+    (logger as any).warn = (obj: any) => { lines.push(obj); };
+    return { lines, restore: () => { (logger as any).info = realInfo; (logger as any).warn = realWarn; } };
+  }
+
+  it("a PATCH logs the updated_at the row had BEFORE the write", async () => {
+    const state = baseState();
+    const priorVersion = "2026-01-02T03:04:05.000Z";
+    state.memories[0]!.updated_at = priorVersion;
+    const app = await startApp(state);
+    const cap = captureLines();
+    try {
+      const { status } = await patch(app.baseUrl, `/api/memories/${MEM_ID}`, auth("owner-tok"), { title: "Corrected" });
+      assert.equal(status, 200);
+    } finally {
+      cap.restore();
+      await app.close();
+    }
+    const audit = cap.lines.find((l) => "commandId" in l && "failureClass" in l);
+    assert.ok(audit, "the PATCH emitted no §24 audit line");
+    assert.equal(audit!.sourceVersion, priorVersion,
+      "the audit names the version the command acted on, not the one it produced");
+    assert.equal(audit!.commandType, "UPDATE_MEMORY");
+  });
+
+  it("a CREATE logs a null source version — there was no prior row to version", async () => {
+    const app = await startApp(baseState());
+    const cap = captureLines();
+    try {
+      const { status } = await post(app.baseUrl, "/api/memories", auth("owner-tok"), { title: "New" });
+      assert.equal(status, 201);
+    } finally {
+      cap.restore();
+      await app.close();
+    }
+    const audit = cap.lines.find((l) => l.commandType === "CREATE_MEMORY");
+    assert.ok(audit, "the CREATE emitted no §24 audit line");
+    assert.equal(audit!.sourceVersion, null,
+      "'there was no prior version' is a state, and it is not a fabricated timestamp");
+    assert.ok("sourceVersion" in audit!, "the key is present even when empty");
+  });
+});
+
+/* ============================================================================
+ * §10 / §23 — the person visibility ladder ON THE ROUTES
+ *
+ * The decision itself is tested in src/test/memoryParticipantLadder.test.ts.
+ * What is asserted here is the thing that was actually wrong: BOTH routes that
+ * return a Memory's participants used to return every `memory_tags` row, user
+ * id and all, to every viewer permitted to read the Memory, with no filter on
+ * `status`. A person who had not consented was profile-linked to the Memory,
+ * and a person who had REMOVED their own tag was still shipped by id.
+ * ==========================================================================*/
+
+/** The participant shape these two routes now emit. Spelled out rather than
+ *  reached for as `any`, so a fixture describing a shape production never emits
+ *  stops compiling — which is what check-test-typecheck exists for. */
+interface TagView {
+  userId: string;
+  status: string | null;
+  createdAt?: string | null;
+  rung: string;
+  name: string | null;
+  handle: string | null;
+}
+interface MemoryReadBody { memory: { tags: TagView[]; anonymousParticipants: number } }
+interface TagsListBody { tags: TagView[]; anonymousParticipants: number }
+
+describe("§10 person visibility ladder — GET /api/memories/:id", () => {
+  it("a stranger gets no id for a participant who has not consented, and a count instead", async () => {
+    const state = baseState();
+    state.memory_tags.push({ memory_id: MEM_ID, tagged_user_id: FRIEND_ID, status: "pending" });
+    const app = await startApp(state);
+    try {
+      const { status, body: raw } = await get(app.baseUrl, `/api/memories/${MEM_ID}`, auth("stranger-tok"));
+      const body = raw as MemoryReadBody;
+      assert.equal(status, 200);
+      const serialized = JSON.stringify(body);
+      assert.ok(!serialized.includes(FRIEND_ID),
+        "a pending participant's user id must not reach a third party — §5 admits a participant only after consent");
+      assert.equal(body.memory.tags.length, 0);
+      assert.equal(body.memory.anonymousParticipants, 1,
+        "ANONYMOUS_COUNT is a count; dropping it entirely would understate who was there");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("a stranger gets nothing at all for a participant who removed their tag", async () => {
+    const state = baseState();
+    state.memory_tags.push({ memory_id: MEM_ID, tagged_user_id: FRIEND_ID, status: "removed" });
+    const app = await startApp(state);
+    try {
+      const { body: raw } = await get(app.baseUrl, `/api/memories/${MEM_ID}`, auth("stranger-tok"));
+      const body = raw as MemoryReadBody;
+      assert.ok(!JSON.stringify(body).includes(FRIEND_ID), "a withdrawn participant is not disclosed");
+      assert.equal(body.memory.tags.length, 0);
+      assert.equal(body.memory.anonymousParticipants, 0,
+        "and is not counted either — a count would leak the withdrawal as an arithmetic difference");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("an APPROVED participant is disclosed, at PROFILE_LINKED, with the rung named", async () => {
+    const state = baseState();
+    state.memory_tags.push({ memory_id: MEM_ID, tagged_user_id: FRIEND_ID, status: "approved" });
+    const app = await startApp(state);
+    try {
+      const { body: raw } = await get(app.baseUrl, `/api/memories/${MEM_ID}`, auth("stranger-tok"));
+      const body = raw as MemoryReadBody;
+      assert.equal(body.memory.tags.length, 1, "positive control: the ladder is not 'refuse everyone'");
+      assert.equal(body.memory.tags[0].userId, FRIEND_ID);
+      assert.equal(body.memory.tags[0].rung, "PROFILE_LINKED");
+      assert.equal(body.memory.tags[0].name, null, "no real-name opt-in row ⇒ no name");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("the OWNER still sees their pending tags — tag management does not break", async () => {
+    const state = baseState();
+    state.memory_tags.push({ memory_id: MEM_ID, tagged_user_id: FRIEND_ID, status: "pending" });
+    const app = await startApp(state);
+    try {
+      const { body: raw } = await get(app.baseUrl, `/api/memories/${MEM_ID}`, auth("owner-tok"));
+      const body = raw as MemoryReadBody;
+      assert.equal(body.memory.tags.length, 1);
+      assert.equal(body.memory.tags[0].userId, FRIEND_ID);
+      assert.equal(body.memory.tags[0].status, "pending");
+    } finally {
+      await app.close();
+    }
+  });
+});
+
+describe("§10 person visibility ladder — GET /api/memories/:id/tags", () => {
+  it("applies the same ladder as the single read, not a second copy of the old rule", async () => {
+    const state = baseState();
+    state.memory_tags.push(
+      { memory_id: MEM_ID, tagged_user_id: FRIEND_ID, status: "pending", created_at: "2026-01-01T00:00:00Z" },
+      { memory_id: MEM_ID, tagged_user_id: STRANGER_ID, status: "approved", created_at: "2026-01-02T00:00:00Z" },
+    );
+    const app = await startApp(state);
+    try {
+      const { status, body: raw } = await get(app.baseUrl, `/api/memories/${MEM_ID}/tags`, auth("stranger-tok"));
+      const body = raw as TagsListBody;
+      assert.equal(status, 200);
+      assert.ok(!JSON.stringify(body).includes(FRIEND_ID), "the pending participant is not disclosed here either");
+      assert.deepEqual(body.tags.map((t) => t.userId), [STRANGER_ID]);
+      assert.equal(body.anonymousParticipants, 1);
+      assert.equal(body.tags[0].createdAt, "2026-01-02T00:00:00Z", "the field the route already served survives the ladder");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("a participant always sees their own tag, even before they approve it", async () => {
+    const state = baseState();
+    state.memory_tags.push({ memory_id: MEM_ID, tagged_user_id: FRIEND_ID, status: "pending" });
+    const app = await startApp(state);
+    try {
+      const { body: raw } = await get(app.baseUrl, `/api/memories/${MEM_ID}/tags`, auth("friend-tok"));
+      const body = raw as TagsListBody;
+      assert.deepEqual(body.tags.map((t) => t.userId), [FRIEND_ID],
+        "a person must be able to see the tag they are being asked to approve");
+      assert.equal(body.tags[0].rung, "NAMED");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("a blocked participant is dropped from the roster and is not counted", async () => {
+    const state = baseState();
+    state.memory_tags.push({ memory_id: MEM_ID, tagged_user_id: FRIEND_ID, status: "approved" });
+    state.blocks.push({ blocker_id: STRANGER_ID, blocked_id: FRIEND_ID });
+    const app = await startApp(state);
+    try {
+      const { body: raw } = await get(app.baseUrl, `/api/memories/${MEM_ID}/tags`, auth("stranger-tok"));
+      const body = raw as TagsListBody;
+      assert.equal(body.tags.length, 0, "§10: blocking must unlink profile identity");
+      assert.equal(body.anonymousParticipants, 0);
+    } finally {
+      await app.close();
+    }
   });
 });

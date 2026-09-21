@@ -203,11 +203,26 @@ async function flushDecayForUser(
   if (signalRows.length === 0) return { weightUpdated: false, rowsReset: 0 };
 
   // 2. Fetch stored category_weights.
-  const { data: prefData } = await db
+  //
+  // Checked for the same reason step 5's upsert failure is: an unreadable
+  // compass_user_preferences resolves as `{ data: null }` and collapses to `{}`,
+  // so applySearchDecay has nothing to decay, hasWeightsChanged reports "no
+  // change", the upsert is skipped — and step 6 then advances every log row's
+  // search_weight and last_nudge_at to the freshly computed baseline anyway.
+  // That is precisely the loss the comment in step 5 refuses to accept: the
+  // decay contribution the read-side getDecayedWeights would still have derived
+  // is erased from compass_search_signal_log and never reaches the stored
+  // weights. Bail like the signal-row read above does; the next pass retries.
+  const { data: prefData, error: prefErr } = await db
     .from("compass_user_preferences")
     .select("category_weights")
     .eq("user_id", userId)
     .maybeSingle();
+
+  if (prefErr) {
+    logger.warn({ err: prefErr, userId }, "CompassSearchDecayFlush: weight read failed — log baselines left intact");
+    return { weightUpdated: false, rowsReset: 0 };
+  }
 
   const storedWeights: Record<string, number> =
     ((prefData as any)?.category_weights as Record<string, number>) ?? {};

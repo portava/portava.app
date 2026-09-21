@@ -51,18 +51,44 @@ const BOOKING_BASE = {
  * - Returns singleData via .maybeSingle() and .single()
  * - Returns [] for array results when .in() was called; [singleData] otherwise
  */
+/**
+ * A builder that models the two things this file's assertions now depend on.
+ *
+ *  READS   `.in()` marks the conflict-detection query, which must come back
+ *          empty; every other read returns the canned row.
+ *
+ *  WRITES  the booking transitions are COMPARE-AND-SET: the required source
+ *          status rides in the same UPDATE as the write, and `.select("id")`
+ *          makes the statement RETURNING. PostgREST then answers with the rows
+ *          it actually CHANGED, so a predicate that matches nothing comes back
+ *          as an empty array rather than as a silent success. The old builder
+ *          answered every `.in()` chain with `[]` regardless of verb, which
+ *          made a valid accept look like a lost race.
+ */
 function makeTrackingBuilder(singleData: any): any {
   let hasIn = false;
+  let isWrite = false;
+  const eqs: Array<[string, any]> = [];
+  const ins: Array<[string, any[]]> = [];
+
+  /** Does the canned row satisfy every predicate this statement carries? */
+  const predicatesMatch = (): boolean => {
+    if (singleData == null) return false;
+    // `id` identifies the row the fixture already is, so it is not re-checked;
+    // every other predicate is evaluated against the canned row's own columns.
+    return eqs.every(([col, val]) => col === "id" || (singleData as any)[col] === val)
+        && ins.every(([col, vals]) => vals.includes((singleData as any)[col]));
+  };
 
   const b: any = {
     select: () => b,
-    insert: () => b,
-    update: () => b,
-    upsert: () => b,
-    delete: () => b,
-    eq: () => b,
+    insert: () => { isWrite = true; return b; },
+    update: () => { isWrite = true; return b; },
+    upsert: () => { isWrite = true; return b; },
+    delete: () => { isWrite = true; return b; },
+    eq: (col: string, val: any) => { eqs.push([col, val]); return b; },
     neq: () => b,
-    in: () => { hasIn = true; return b; },
+    in: (col: string, vals: any[]) => { hasIn = true; ins.push([col, vals]); return b; },
     not: () => b,
     is: () => b,
     gte: () => b,
@@ -79,7 +105,9 @@ function makeTrackingBuilder(singleData: any): any {
     single: () => Promise.resolve({ data: singleData, error: null }),
     maybeSingle: () => Promise.resolve({ data: singleData, error: null }),
     then: (resolve: (r: any) => any) => {
-      const data = hasIn ? [] : (singleData == null ? [] : [singleData]);
+      const data = isWrite
+        ? (predicatesMatch() ? [{ id: (singleData as any).id }] : [])
+        : (hasIn ? [] : (singleData == null ? [] : [singleData]));
       return Promise.resolve({ data, error: null }).then(resolve);
     },
   };

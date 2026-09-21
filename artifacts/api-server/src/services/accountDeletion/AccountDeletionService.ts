@@ -128,6 +128,7 @@
 import { logger as rootLogger } from "../../lib/logger.js";
 import { resolveStoragePath } from "../../lib/storagePath.js";
 import { ownerFromPath } from "../../lib/mediaAccess.js";
+import { requestProviderDeletionForUser } from "../identityVerification/providerErasure.js";
 
 const logger = rootLogger.child({ service: "AccountDeletionService" });
 
@@ -459,6 +460,16 @@ function chunkIds(ids: string[]): string[][] {
   const out: string[][] = [];
   for (let i = 0; i < ids.length; i += IN_LIST_CHUNK) out.push(ids.slice(i, i + IN_LIST_CHUNK));
   return out;
+}
+
+/**
+ * A database that does not have migration 2956 applied. PostgREST answers
+ * PGRST205 for an unknown relation and Postgres answers 42P01; neither is an
+ * erasure failure, so neither may abort the run.
+ */
+function isMissingSensingRelation(err: any): boolean {
+  const code = err?.code ?? err?.details?.code;
+  return code === "42P01" || code === "PGRST205";
 }
 
 /**
@@ -841,22 +852,56 @@ export async function executeAccountDeletion(
   const tombstonedCounts: Record<string, number> = {};
   const deletedCounts: Record<string, number> = {};
 
+  //
+  // THIS FUNCTION DECIDES BETWEEN TOMBSTONE AND HARD DELETE, so its two reads
+  // are preconditions for an IRREVERSIBLE action and their `.error` is
+  // load-bearing. supabase-js RESOLVES on a DB error: `const { data } = await …`
+  // returned the same empty array for "nobody else commented / nobody reported
+  // this post" and for "posts_comments (or moderation_reports) could not be
+  // read", and the empty array routes the post to the else-branch — a hard
+  // DELETE that cascades away other people's comments, and takes a REPORTED
+  // post together with the evidence a moderator was going to look at. There is
+  // no undo and no second chance: the false "no third-party interest" is only
+  // ever discovered by the person whose comment vanished.
+  //
+  // It THROWS rather than answering. The caller already wraps each post in
+  // try/catch, collects the message into `postFailures`, keeps going with the
+  // other posts, and finally throws once so the step — and therefore the
+  // deletion request — is recorded as failed instead of reported complete. That
+  // is the honest outcome: the post is left exactly as it was, nothing is
+  // destroyed on an unread precondition, and the operator sees why.
+  //
+  // Note the asymmetry that makes throwing the only safe direction: guessing
+  // "true" here (tombstone everything) would over-retain but is recoverable;
+  // guessing "false" is not; and a deletion the user asked for that quietly
+  // failed is visible in the receipt, whereas a comment thread destroyed by a
+  // read blip is not visible anywhere.
   async function hasThirdPartyInterest(postId: string): Promise<boolean> {
-    const { data: otherComments } = await sc
+    const { data: otherComments, error: commentsErr } = await sc
       .from("posts_comments")
       .select("id")
       .eq("post_id", postId)
       .not("user_id", "is", null)
       .neq("user_id", userId)
       .limit(1);
+    if (commentsErr) {
+      throw new Error(
+        `third-party interest for post ${postId} is unknown: posts_comments unreadable (${commentsErr.message}) — refusing to hard-delete`,
+      );
+    }
     if (((otherComments as any[]) ?? []).length > 0) return true;
 
-    const { data: reports } = await sc
+    const { data: reports, error: reportsErr } = await sc
       .from("moderation_reports")
       .select("id")
       .eq("subject_type", "post")
       .eq("subject_id", postId)
       .limit(1);
+    if (reportsErr) {
+      throw new Error(
+        `third-party interest for post ${postId} is unknown: moderation_reports unreadable (${reportsErr.message}) — refusing to hard-delete`,
+      );
+    }
     return ((reports as any[]) ?? []).length > 0;
   }
 
@@ -931,6 +976,41 @@ export async function executeAccountDeletion(
     must(await sc.from("messages").delete().eq("sender_id", userId), "delete messages");
   });
   if (!msgOk) warnings.push("message ciphertext may remain");
+
+  // ── Provider erasure FIRST, then our rows. The order is the requirement ────
+  //
+  // verified-foundation-plan.md V-7: "Account-deletion flow calls
+  // `provider.requestProviderDeletion()` THEN deletes the user's
+  // `identity_verifications` rows."
+  //
+  // `provider_verification_ref` is the only handle anyone has on the provider's
+  // copy of the government-ID check. The delete below destroys it, so after
+  // that line the images at Stripe or Persona are unredactable — by us and by
+  // the user, permanently. Until now this step did not exist at all:
+  // `requestProviderDeletion` was declared, stubbed, mapped for both vendors in
+  // comments, and called from nowhere, so erasure removed our opaque reference
+  // and left the document with the vendor.
+  //
+  // A provider that is down does NOT block the erasure. The user's right to
+  // have Portava's copy deleted does not depend on a third party being up, and
+  // refusing would keep their data here indefinitely for a reason that is not
+  // theirs. But it is not swallowed either: the step records the failure with
+  // the refs in its message — which may be the only surviving record of what
+  // still needs redacting once the rows below are gone — and the warning
+  // carries them to the caller.
+  let providerErasureRefs: string[] = [];
+  const provErasureOk = await step(steps, "request_provider_verification_deletion", async () => {
+    const r = await requestProviderDeletionForUser(sc, userId);
+    providerErasureRefs = r.refs;
+    return r.requested;
+  });
+  if (!provErasureOk) {
+    warnings.push(
+      providerErasureRefs.length > 0
+        ? `provider copy of identity verification may remain; redact by hand: ${providerErasureRefs.join(", ")}`
+        : "provider copy of identity verification may remain (references unavailable — see the step error)",
+    );
+  }
 
   // Verification rows: provider reference, over-18 flag, document country.
   const verOk = await step(steps, "delete_identity_verifications", async () => {
@@ -1204,6 +1284,31 @@ export async function executeAccountDeletion(
 
   if (opts.contentOnly) {
     return { ok: steps.every((s) => s.ok), userId, executedAt, steps, warnings, deletedCounts, tombstonedCounts };
+  }
+
+  // ── Sensing capability state (migration 2956) ─────────────────────────────
+  // FK cascades cannot reach this. Deletion here ends in a TOMBSTONE profile
+  // row, not a deleted one, so `actor_id` stays referentially valid and
+  // intel_sensing_credentials / intel_sensing_device_eligibility survive the
+  // cascade intact — a device-linked token digest and an eligibility grant
+  // belonging to an account that no longer exists. Erase both explicitly.
+  //
+  // FATAL, like erase_derived_memory above and for the same reason: leaving a
+  // live sensing capability behind a deleted account is a privacy failure, not a
+  // warning. The step is idempotent, so a retry is safe.
+  const sensingOk = await step(steps, "erase_sensing_credentials_and_devices", async () => {
+    let removed = 0;
+    for (const table of ["intel_sensing_credentials", "intel_sensing_device_eligibility"]) {
+      const result = await sc.from(table).delete().eq("actor_id", userId);
+      if (result?.error && isMissingSensingRelation(result.error)) continue;
+      must(result, `delete ${table}`);
+      removed += 1;
+    }
+    return removed;
+  });
+  if (!sensingOk) {
+    warnings.push("sensing capability state may remain — deletion aborted before profile anonymisation; retry is safe");
+    return { ok: false, userId, executedAt, steps, warnings, deletedCounts, tombstonedCounts };
   }
 
   // ── 4. Anonymise the tombstone profile (FATAL on failure) ─────────────────

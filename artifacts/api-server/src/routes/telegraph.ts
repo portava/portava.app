@@ -13,11 +13,13 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
-import { openai } from "../lib/openai";
+import { getOpenAI } from "../lib/openai";
 import { getWeatherContext } from "../lib/weatherCache.js";
 import { buildCompassContext } from "../services/location/CompassLocationContext";
 import type { SpanHashtag, SpanTag } from "../lib/enrichSpans";
 import { makeConfidence } from "../lib/liveIntelligence.js";
+import { buildConsumerProjection } from "../services/passport/PassportConsumerProjections.js";
+import { allowTelegraphHeader } from "../services/passport/PassportConsumerAccess.js";
 
 const router = Router();
 
@@ -166,7 +168,7 @@ ${weatherBrief ? "Important: factor in the weather forecast when writing 'reason
 }`;
 
   try {
-    const completion = await openai.chat.completions.create({
+    const completion = await getOpenAI().chat.completions.create({
       model: "gpt-5-mini",
       max_completion_tokens: 1024,
       messages: [
@@ -246,11 +248,26 @@ ${weatherBrief ? "Important: factor in the weather forecast when writing 'reason
             // An empty result means "none of these profiles is blocked"; a
             // rejected one (a malformed or() filter is the usual cause here,
             // since this predicate is string-built) means "we did not check".
-            // Both leave blockedSet empty and both let blocked users through.
+            //
+            // `blocks` is an EXCLUSION TABLE: a row means DENY, so an empty read
+            // means ALLOW and the two worlds are not interchangeable. This site
+            // used to BIND the error, LOG it, and then carry on with an empty
+            // `blockedSet` — the ERROR-INERT shape that
+            // `scripts/checkUncheckedSupabaseReads.ts` names in its own header as
+            // the class it cannot see, which is why it counted this file as
+            // clean. The consequence was a resolved `tagSpans` entry — a user id,
+            // a handle and a character range the client renders as a live
+            // mention — for somebody the caller may have blocked, or who may have
+            // blocked the caller. A log line is not a guard.
+            //
+            // An unreadable block list must SUPPRESS, never admit. No mention
+            // span is emitted at all on a read error. Hashtag spans are left
+            // alone: they do not consult the block set, and dropping them too
+            // would be a blanket answer rather than a scoped one.
             if (blockErr) {
               req.log?.warn(
                 { userId: auth.user.id, code: (blockErr as any)?.code, err: blockErr },
-                "telegraph: block-state read failed — blocked users are NOT being filtered from suggestions",
+                "telegraph: block-state read failed — mentions SUPPRESSED (cannot establish who is blocked)",
               );
             }
             for (const row of (blockRows ?? []) as any[]) {
@@ -275,6 +292,7 @@ ${weatherBrief ? "Important: factor in the weather forecast when writing 'reason
             }
 
             for (const p of (profiles ?? []) as any[]) {
+              if (blockErr)              break;    // block state unknown — admit nobody
               if (!p.handle) continue;
               const uid  = p.id as string;
               const perm = (p.tag_permission ?? "anyone") as string;
@@ -333,6 +351,44 @@ ${weatherBrief ? "Important: factor in the weather forecast when writing 'reason
   } catch (err) {
     req.log.error({ err }, "Telegraph recommend: OpenAI call failed");
     sendError(res, "db_error", "Telegraph recommendation service unavailable", { exposeDetail: true });
+  }
+});
+
+// ── GET /api/telegraph/threads/:threadId/header/:userId ───────────────────────
+//
+// §21 TABLE 22, Telegraph row: "identity + relevant shared context in
+// conversation header". The `telegraph` variant is exactly that shape — identity,
+// the permitted shared context, and the three server-projected header actions
+// (can_message / can_make_plan / can_follow). §30: the header renders those
+// flags, it does not re-derive who may message whom.
+//
+// Authorisation is the conversation itself: both people must be present members
+// of THIS thread (`allowTelegraphHeader`). A blocked counterpart still returns a
+// header — the assembler's restricted shape, identity plus action flags with no
+// shared context — because a thread that already exists must still render, and
+// §24 propagation is what decides what it renders, not this route.
+router.get("/telegraph/threads/:threadId/header/:userId", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { threadId, userId } = req.params;
+  if (!/^[0-9a-f-]{36}$/i.test(threadId)) { sendError(res, "invalid_payload", "Invalid thread id"); return; }
+  if (!/^[0-9a-f-]{36}$/i.test(userId))   { sendError(res, "invalid_payload", "Invalid user id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const gate = await allowTelegraphHeader(sc, threadId, user.id, userId);
+  if (!gate.allowed) { sendError(res, "forbidden", "Not a member of this conversation"); return; }
+
+  try {
+    const header = await buildConsumerProjection(sc, "telegraph", userId, user.id);
+    if (!header) { sendError(res, "not_found", "User not found"); return; }
+    res.status(200).json({ header });
+  } catch (err) {
+    req.log.error({ err, threadId }, "telegraph header projection failed");
+    sendError(res, "db_error", "Could not load conversation header");
   }
 });
 

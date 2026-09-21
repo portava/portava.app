@@ -131,7 +131,7 @@ the same reason.
 |---|---|---|
 | an item was served, to an authenticated user | `rank_events` via `logImpression` / `logDiscoveryServe` | **until an outcome overwrites it** |
 | which of the **10** serve points served it | `features.servePoint` (Stage 0). *Corrected 2026-09-05: it was 9 when this was written; `COMMUNITY` (10) was added to `DiscoveryServePoint` afterwards* | live |
-| ranking features for the item | `features` jsonb — **only where `logImpression` is handed scored candidates**: serve point 6 today, and cache-A serve points 1–3 under mode `pde`, which is off (`routes/discovery.ts:1705`, `:2021`). `{}` on every other serve point | partial |
+| ranking features for the item | `features` jsonb — **only where `logImpression` is handed scored candidates**: serve point 6 today, and cache-A serve points 1–3 under mode `pde`, which is off (`routes/discovery.ts:1744`, `:2021`). `{}` on every other serve point | partial |
 | destination / category / cache level / engine mode | `features` context | live |
 | the served **page** under shadow mode | `discovery_shadow_serves.legacy_ids` / `pde_ids` | append-only ✓ |
 | **anything about a candidate that was not served** | — | **nothing** |

@@ -966,9 +966,28 @@ export interface CompassRecommendation {
   data?:    Record<string, unknown>;
 }
 
+/**
+ * Trips §17.2 (census-trips TR319): the trip's priority switch as the brief
+ * consulted it. `suppressed` means commercial and entertainment items were
+ * withheld because the trip needs attention; `consulted: false` means the
+ * switch could not be read and nothing was withheld.
+ */
+export interface CompassBriefAttention {
+  consulted: boolean;
+  tripId: string | null;
+  mode: 'NORMAL' | 'AT_RISK' | 'SAFETY_EVENT' | null;
+  suppressed: boolean;
+  reason: 'TRIP_DISRUPTION_SUPPRESSED' | null;
+  withheld: number;
+  detail: string | null;
+  info: string | null;
+}
+
 export interface CompassRecommendationsResponse {
   recommendations: CompassRecommendation[];
   surface: string;
+  /** Present only on the trip surface. */
+  attention?: CompassBriefAttention;
 }
 
 export async function fetchCompassRecommendations(params: {

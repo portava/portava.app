@@ -175,3 +175,103 @@ describe("passport_stamps.stamp_type vocabulary", () => {
     assert.match(sql, /DROP CONSTRAINT IF EXISTS/, "must be re-runnable");
   });
 });
+
+/**
+ * §12's eleven stamp types, PRODUCER side — what exists, and the one that does
+ * not (census-passport P61).
+ *
+ * P61 scored the vocabulary "nine of eleven", missing Place AND Contributor.
+ * Re-executed 2026-09-14, the Contributor half is wrong: `place_contributor`
+ * is a seeded catalog type with a live award path. These cases pin the two
+ * halves of that producer so the claim cannot rot back:
+ *
+ *   1. the definitions exist, in a migration, with that stamp_type;
+ *   2. a shipped worker awards them by slug.
+ *
+ * The remaining gap is PLACE, and it is not a plumbing gap: `createStamp`
+ * already writes `place_id`, so what is missing is a label in the CHECK
+ * vocabulary and a caller that passes one — a migration plus a product
+ * decision, both recorded as D-STAMP. Case 3 pins the plumbing so the next
+ * pass does not rebuild it.
+ *
+ * MUTATION PROOF (each run): delete a `place_contributor` row from migration
+ * 0198 → case 1 RED; change `definitionSlug: "place_contributor"` in
+ * placeCollectionsWorker → case 2 RED; delete `place_id: placeId ?? null` from
+ * createStamp's insert → case 3 RED.
+ */
+describe("§12 stamp types — Contributor exists, Place does not (census-passport P61)", () => {
+  it("migration 0198 seeds three place_contributor definitions", () => {
+    const sql = fs.readFileSync(
+      path.join(MIGRATIONS, "0198_place_contributor_stamps.sql"),
+      "utf8",
+    );
+    for (const slug of [
+      "place_contributor_bronze",
+      "place_contributor_silver",
+      "place_contributor_gold",
+    ]) {
+      assert.ok(sql.includes(`'${slug}'`), `0198 must seed the ${slug} definition`);
+    }
+    const typeRows = [...sql.matchAll(/'place_contributor'/g)];
+    assert.equal(
+      typeRows.length,
+      3,
+      "all three tiers must carry stamp_type 'place_contributor' — the label §12 calls Contributor",
+    );
+  });
+
+  it("a shipped worker awards them, so the type has a producer and not only a seed", () => {
+    const worker = fs.readFileSync(
+      path.join(API_SERVER, "src/lib/places/placeCollectionsWorker.ts"),
+      "utf8",
+    );
+    assert.match(
+      worker,
+      /definitionSlug:\s*"place_contributor"/,
+      "placeCollectionsWorker must still award the Contributor stamp — a seeded definition " +
+        "with no producer is the unproduced-vocabulary defect this repo already tracks",
+    );
+    assert.match(
+      worker,
+      /STAMP_THRESHOLDS/,
+      "the award must stay threshold-driven (10/50/100 posts), not unconditional",
+    );
+  });
+
+  it("the Place gap is a label and a caller, not missing plumbing — createStamp writes place_id", () => {
+    const svc = fs.readFileSync(
+      path.join(API_SERVER, "src/services/passport/PassportStampService.ts"),
+      "utf8",
+    );
+    assert.match(
+      svc,
+      /place_id:\s*placeId\s*\?\?\s*null/,
+      "createStamp's INSERT must still carry place_id: the Place stamp needs a vocabulary " +
+        "label and a caller that supplies one, not a new column",
+    );
+    // THE TRIPWIRE THIS CASE CARRIED HAS BEEN COME PAST, DELIBERATELY.
+    //
+    // It asserted `!labels.includes("place")` so the migration adding the label
+    // could not arrive by accident. `2880_passport_stamps_place_vocabulary.sql`
+    // now adds it, and that file was written having re-read P61 and the D-STAMP
+    // blocker exactly as the old message demanded. What the re-read established
+    // is recorded in 2880's header and pinned by
+    // src/test/passportStampPlaceVocabulary.test.ts:
+    //
+    //   * `place` and `place_contributor` are NOT one concept under two names,
+    //     so the row could not be closed by aliasing them;
+    //   * the label is STAGED and applied to nothing;
+    //   * it still has NO PRODUCER, because what earns a Place stamp exists in
+    //     no spec and is an owner decision.
+    //
+    // The assertion is inverted rather than deleted: the tree must now carry the
+    // label, and the NEW tripwire — that nothing may start writing it before the
+    // owner rules — lives in passportStampPlaceVocabulary.test.ts.
+    const { labels } = liveVocabulary();
+    assert.ok(
+      labels.includes("place"),
+      "migration 2880 is gone: the 'place' label has left the vocabulary. Either the file " +
+        "was reverted or its ARRAY edited — P61's engineering half is no longer staged.",
+    );
+  });
+});

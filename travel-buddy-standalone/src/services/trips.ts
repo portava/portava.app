@@ -126,6 +126,43 @@ function mapTripApiRow(r: any): TripRow {
   };
 }
 
+/**
+ * A Trips read did not answer.
+ *
+ * WHY THIS EXISTS RATHER THAN ANOTHER `return []`
+ * ===============================================
+ * `listMyTrips`, `getPendingTripInvites` and `getInviteLinks` each used to
+ * answer a failed request with an empty array. Every caller renders an empty
+ * array as a FACT: "you have no trips", "no pending invites", "no invite links
+ * exist for this trip". None of those is something a request that never
+ * answered is entitled to say, and the invite-link one is the worst of the
+ * three — a trip owner auditing who can still join their trip was shown a
+ * clean, empty list when the read failed.
+ *
+ * Throwing puts the third state where the callers already have somewhere to
+ * put it: `useMyTrips`, `TripWishlistPicker` and `TripInvitePickerSheet` all
+ * already had an error branch that this fallback made unreachable.
+ *
+ * NOT thrown for a missing auth token. `freshToken()` returns null both for
+ * "signed out" and for "the refresh failed", and those are different facts;
+ * collapsing them is a real defect but it lives in services/apiToken.ts and is
+ * shared by every service module in the app, so it is recorded in
+ * docs/architecture/blocker-ledger.md (API_TOKEN_SIGNED_OUT_VS_UNREADABLE)
+ * rather than half-fixed here. Trips keeps the existing signed-out behaviour.
+ */
+export class TripsReadUnavailableError extends Error {
+  readonly what: string;
+  readonly status: number | null;
+  constructor(what: string, status: number | null) {
+    super(
+      `${what} could not be read${status === null ? '' : ` (HTTP ${status})`} — refusing to report it as empty`,
+    );
+    this.name = 'TripsReadUnavailableError';
+    this.what = what;
+    this.status = status;
+  }
+}
+
 export async function listMyTrips(): Promise<TripRow[]> {
   if (!isSupabaseConfigured) return [];
   // Must go through GET /api/trips/me, which scopes by trip_members
@@ -140,9 +177,13 @@ export async function listMyTrips(): Promise<TripRow[]> {
   const res = await fetch(`${apiBase}/api/trips/me`, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  if (!res.ok) return [];
+  if (!res.ok) throw new TripsReadUnavailableError('Your trips', res.status);
   const data = await res.json().catch(() => null);
-  const trips = (data?.trips ?? []) as any[];
+  // A body that would not parse is the same failure one step later: `data`
+  // is null, `data?.trips ?? []` is [], and the caller is told the user has
+  // no trips. Only an ACTUAL array of trips may be reported as trips.
+  if (!data || !Array.isArray(data.trips)) throw new TripsReadUnavailableError('Your trips', null);
+  const trips = data.trips as any[];
   return trips
     .map(mapTripApiRow)
     .sort((a, b) => (a.startDate ?? '').localeCompare(b.startDate ?? ''));
@@ -318,9 +359,12 @@ export async function getPendingTripInvites(): Promise<TripInvite[]> {
   const res = await fetch(`${apiBase}/api/me/trip-invites/pending`, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  if (!res.ok) return [];
-  const data = await res.json();
-  return (data.invites ?? []) as TripInvite[];
+  if (!res.ok) throw new TripsReadUnavailableError('Your pending trip invites', res.status);
+  const data = await res.json().catch(() => null);
+  if (!data || !Array.isArray(data.invites)) {
+    throw new TripsReadUnavailableError('Your pending trip invites', null);
+  }
+  return data.invites as TripInvite[];
 }
 
 export async function acceptTripInvite(tripId: string): Promise<void> {
@@ -580,8 +624,13 @@ export async function getInviteLinks(tripId: string): Promise<InviteLinkUsage[]>
   const res = await fetch(`${apiBase}/api/trips/${tripId}/invite-links`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
-  if (!res.ok) return [];
-  return res.json().catch(() => []);
+  // Security-relevant: this list is how a trip owner sees who can still join
+  // their trip. An empty list means "no live invite links"; a failed read must
+  // not be able to say that.
+  if (!res.ok) throw new TripsReadUnavailableError('This trip\'s invite links', res.status);
+  const body = await res.json().catch(() => null);
+  if (!Array.isArray(body)) throw new TripsReadUnavailableError('This trip\'s invite links', null);
+  return body as InviteLinkUsage[];
 }
 
 /**

@@ -69,6 +69,32 @@ export interface CoverageBreakdown {
   sourceDiversityGap: number;
 }
 
+export type CoverageState = "covered" | "no_coverage" | "unknown";
+
+/**
+ * Coverage is epistemic, not activity. A quiet place may be covered by a
+ * recent qualifying observation, while a busy place can still have no coverage.
+ * Missing/invalid inputs remain unknown rather than being relabelled quiet.
+ *
+ * The three values are exactly migration 2958's CHECK vocabulary
+ * ('covered','no_coverage','unknown') for intel_coverage_snapshots.coverage_state,
+ * and every input — including NaN, Infinity, null and a non-boolean
+ * claimMissing — has to land on one of them, because the column is NOT NULL and
+ * a rejected INSERT would lose the whole snapshot batch.
+ */
+export function coverageState(input: {
+  claimMissing: boolean;
+  freshestAgeRatio?: number | null;
+  maxFreshnessRatio?: number;
+}): CoverageState {
+  if (typeof input.claimMissing !== "boolean") return "unknown";
+  if (input.claimMissing) return "no_coverage";
+  if (input.freshestAgeRatio == null || !Number.isFinite(input.freshestAgeRatio)) return "unknown";
+  const max = input.maxFreshnessRatio ?? 1;
+  if (!Number.isFinite(max) || max < 0) return "unknown";
+  return input.freshestAgeRatio <= max ? "covered" : "no_coverage";
+}
+
 export function demandWeight(demandEvents: number): number {
   return clamp01(demandEvents / DEMAND_SATURATION);
 }

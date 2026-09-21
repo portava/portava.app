@@ -20,6 +20,7 @@ import messagingRouter from "../routes/messaging.js";
 
 const ALICE_ID  = "aaaaaaaa-0000-0000-0000-000000000001";
 const BOB_ID    = "bbbbbbbb-0000-0000-0000-000000000002";
+const CAROL_ID  = "cccccccc-0000-0000-0000-000000000003"; // in no thread: the non-member control
 const REQ_ID    = "rrrrrrrr-0000-0000-0000-000000000001";
 const THREAD_ID = "tttttttt-0000-0000-0000-000000000001";
 
@@ -674,6 +675,85 @@ describe("POST /api/threads/:threadId/media — Finding 14: E2EE plaintext-media
     assert.equal(status, 422, `expected the E2EE guard to reject the request, got ${status}: ${JSON.stringify(body)}`);
     assert.equal(body.error, "e2ee_thread");
     void client;
+  });
+
+  it("a NON-MEMBER is refused with the same words whatever they sent — authorization precedes payload", async () => {
+    // The ordering this pins was wrong for one commit: the ownership guard sat
+    // above the membership check, so a stranger sending a foreign storage key
+    // got 400 invalid_payload where every other site in §20.7's fourteen-site
+    // table answers 403 forbidden. src/test/telegraphMembershipHonesty.test.ts
+    // caught it. Pinned HERE too, beside the guard itself, because that file
+    // tests the property across fourteen routes and this one is where somebody
+    // editing this handler will look.
+    _setTestClient(makeClient(threadFixture(false), CAROL_ID) as any, true);
+
+    const { status, body } = await callApi("POST", `/api/threads/${E2EE_THREAD_ID}/media`, {
+      mediaUrl: `${SB}/storage/v1/object/public/post-media/${BOB_ID}/theirs.jpg`,
+      mediaType: "image",
+    });
+
+    assert.equal(status, 403, `a non-member must be refused before the payload is judged: ${JSON.stringify(body)}`);
+    assert.equal(body.error, "forbidden");
+    // And the refusal must not have told them anything about the object.
+    assert.ok(!JSON.stringify(body).includes(BOB_ID));
+    assert.ok(!/upload/i.test(JSON.stringify(body)), `the refusal leaked payload semantics: ${JSON.stringify(body)}`);
+  });
+
+  it("REFUSES a mediaUrl whose storage key belongs to another user (MEDIA-2, write half)", async () => {
+    // `appStorageUrlInfo` answers "is this OUR storage host", never "is this YOUR
+    // object". Until this guard, ALICE could store BOB's private key on her own
+    // message; `lib/mediaAccess.ts` branch 3c then resolved the object BY
+    // media_url and authorised every member of ALICE's thread, so the row was a
+    // reader for BOB's bytes out of a PRIVATE bucket.
+    // `accountDeletionOrphanedMedia.test.ts` has documented this write in those
+    // words ("a sender can store a key belonging to somebody else and the row is
+    // entirely legitimate") since the deletion collector had to defend against it.
+    _setTestClient(makeClient(threadFixture(false), ALICE_ID) as any, true);
+
+    const { status, body } = await callApi("POST", `/api/threads/${E2EE_THREAD_ID}/media`, {
+      mediaUrl: `${SB}/storage/v1/object/public/post-media/${BOB_ID}/theirs.jpg`,
+      mediaType: "image",
+      body: "look at this view",
+    });
+
+    assert.equal(status, 400, `expected a foreign storage key to be refused, got ${status}: ${JSON.stringify(body)}`);
+    assert.equal(body.error, "invalid_payload");
+    // The refusal must not confirm whose object it is.
+    assert.ok(!JSON.stringify(body).includes(BOB_ID), "the refusal must name no other user's id");
+  });
+
+  it("REFUSES a foreign key in thumbnailUrl too — the poster frame is a second object", async () => {
+    _setTestClient(makeClient(threadFixture(false), ALICE_ID) as any, true);
+
+    const { status, body } = await callApi("POST", `/api/threads/${E2EE_THREAD_ID}/media`, {
+      mediaUrl: `${SB}/storage/v1/object/public/post-media/${ALICE_ID}/mine.mp4`,
+      thumbnailUrl: `${SB}/storage/v1/object/public/post-media/${BOB_ID}/theirs.thumb.jpg`,
+      mediaType: "video",
+      body: "clip",
+    });
+
+    assert.equal(status, 400, `expected a foreign thumbnail key to be refused, got ${status}: ${JSON.stringify(body)}`);
+    assert.ok(!JSON.stringify(body).includes(BOB_ID), "the refusal must name no other user's id");
+  });
+
+  it("ACCEPTS the sender's own key, and an unattributable key, unchanged", async () => {
+    // `own_storage` is the ordinary case. `unattributable_storage` — a path whose
+    // first segment is not a uuid, like the `dm/` fixture this file has always
+    // used — is ACCEPTED rather than refused: it names no victim, and refusing it
+    // would break every object written under a non-uuid prefix.
+    _setTestClient(makeClient(threadFixture(false), ALICE_ID) as any, true);
+    const own = await callApi("POST", `/api/threads/${E2EE_THREAD_ID}/media`, {
+      mediaUrl: `${SB}/storage/v1/object/public/post-media/${ALICE_ID}/mine.jpg`,
+      mediaType: "image",
+    });
+    assert.equal(own.status, 201, `own key must still send: ${JSON.stringify(own.body)}`);
+
+    _setTestClient(makeClient(threadFixture(false), ALICE_ID) as any, true);
+    const unattributable = await callApi("POST", `/api/threads/${E2EE_THREAD_ID}/media`, {
+      mediaUrl: MEDIA_URL,
+      mediaType: "image",
+    });
+    assert.equal(unattributable.status, 201, `unattributable key must still send: ${JSON.stringify(unattributable.body)}`);
   });
 
   it("still accepts a media message on a non-E2EE thread (no regression to the normal photo-send flow)", async () => {

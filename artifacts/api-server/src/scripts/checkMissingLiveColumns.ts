@@ -67,6 +67,7 @@ import "../lib/ciProdReadOnlyAuditGuard.mjs";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isOptionAInForce } from "./lib/sensingPostureOnDisk.js";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = resolve(__dir, "../migrations");
@@ -107,6 +108,24 @@ const ALLOWLIST = new Set<string>([
   "highlight_replies.user_id",          // live: replier_id
   "highlight_replies.body",             // does not exist live (thread-based replies)
   "highlight_replies.deleted_at",       // does not exist live
+  // 2996_compass_conversations_phase1_schema.sql AND
+  // 2997_compass_recommendation_lineage.sql USED TO BE ALLOWLISTED HERE — five
+  // entries: compass_conversations.trip_id / .status,
+  // compass_served_recommendations.revoked_at / .revocation_reason and
+  // compass_outcome_events.weight_nudge.
+  //
+  // REMOVED 2026-09-20 under this list's own rule ("Remove the entry once the
+  // migration is applied and verified live"). Both files were already on
+  // portava-ci (2026-09-19, ledger rows) and both reached PRODUCTION on
+  // 2026-09-20 — 2996 at 19:46:26 UTC, 2997 at 19:49:28, each rehearsed in a
+  // rolled-back transaction first and each carrying a schema_migration_ledger
+  // row. All five columns are read back in
+  // snapshots/20260920-production-schema.json, so this check now passes on them
+  // because they are PRESENT, not because they are excused — which is the only
+  // reason to remove an entry from this list, exactly as the 2970 note below
+  // states. 2997's validated cascading FK from compass_outcome_events to
+  // compass_served_recommendations is not this check's scope (columns only);
+  // audit:schema owns it.
   "plan_checkins.plan_item_id",         // live: plan_geofence_id
   "plan_attendance_events.plan_item_id", // live: plan_geofence_id
   "plan_attendance_events.metadata",    // live: details
@@ -120,6 +139,24 @@ const ALLOWLIST = new Set<string>([
   "passport_visibility_preferences.map_visibility",    // live: map_visible
   "tags.tagged_at",                     // does not exist live
   "hashtags.normalized_name",           // live: slug
+
+  // 2970_stamp_definitions_evidences_presence.sql USED TO BE ALLOWLISTED HERE.
+  // It was removed on 2026-09-15: 2970 applied to portava-ci at 18:10:28Z with
+  // `applied_by='ci'` and a real sha256, and `stamp_definitions.evidences_presence`
+  // is now a live column. This check passes on that entry because the column is
+  // PRESENT, not because it is excused — which is the only reason to remove an
+  // entry from this list.
+  //
+  // Said exactly: the removal condition written here was "once the merge-to-main
+  // apply is certified in docs/migrations.md". The apply is recorded there under
+  // 2026-09-15 / PR #504, and `audit:schema` — which reads ALL 548 migration
+  // files against the live schema, not just a run's scope — reports "Live schema
+  // contains every object claimed by the migrations". What is NOT true, and is
+  // worth saying so nobody later reads more into this than it holds, is that a
+  // `certify:migrations` run ever had 2970 in its per-run scope: 2970's own apply
+  // run failed at STAGE 3 on 0081's grants, and the run that passed all five
+  // stages scoped only 2972. The evidence for this removal is the live column
+  // plus audit:schema, not a certify stage naming 2970.
 
   // ── Pending live apply: 2273_intel_replayable_projection.sql (IG unit I1) ──
   // Table-17 lineage columns on the current-state snapshot. Applied to the CI
@@ -137,7 +174,137 @@ const ALLOWLIST = new Set<string>([
   "intel_claims.lineage",
   "intel_claims.updated_at",
   "intel_claims.version",
+
+  // ── Pending live apply: Trips §41 batch, 2780/2783/2784/2785 ──────────────
+  // Columns on tables portava-ci already carries (2760-2763 block + the older
+  // trip_plan_items / trip_crew_location_sessions / trip_reservations /
+  // trip_members). This branch is not on main and live-db.yml applies only
+  // from main, so they are absent from BOTH databases until it merges. Every
+  // reader is behind trip_operational_projections_enabled (FALSE everywhere).
+  // Remove each entry once the merge-to-main apply is certified in
+  // docs/migrations.md.
+  "trip_plan_items.subgroup_id",            // 2780 — subgroup-scoped plan items
+  "trip_crew_location_sessions.subgroup_id", // 2780 — subgroup-scoped live shares
+  "trip_goals.scope",                       // 2783 — 'shared' | 'personal'
+  "trip_goals.owner_user_id",               // 2783 — owner of a personal goal
+  "trip_goals.weight",                      // 2783 — §8 weighting
+  "trip_members.permissions_version",       // 2783 — bumped on role change
+  "trip_reservations.version",              // 2784 — If-Match row version
+  "trip_reservations.cancelled_at",         // 2784 — DELETE = cancel, not erase
+  "safe_return_sessions.subgroup_id",       // 2794 — §17.4 Safe Return on a subgroup (Trips §52)
+  // Trips §46 / §47 retention columns, read only by the retention sweep
+  // (server/trips/projectionWorkers/tripRetentionScheduler.ts, behind trip_retention_sweep_enabled FALSE)
+  // and by the RPCs 2789 / 2791 define; absent from portava-ci until this
+  // branch reaches main. Remove each once its apply is certified.
+  "trip_activity_log.retain_until",          // 2789 — §21.3 activity-log retention (Trips §46)
+  "trip_reservations.raw_text_retain_until", // 2791 — §21.3 raw_text retention deadline (Trips §47)
+  "trip_commitments.at_risk_reason",        // 2785 — §7.2 derived at-risk state
+  "trip_commitments.at_risk_at",            // 2785
+  "trip_commitments.at_risk_shortfall_minutes", // 2785
+
+  // ── Pending live apply: Telegraph §12–§22 batch, 2810 / 2813 ───────────────
+  // The §12.1/§13.3/§17.1 message kernel (2810) and §22's request origin (2813).
+  // Every one is declared by a migration on this branch and absent from
+  // portava-ci, because applying an unmerged branch's migrations to the shared
+  // CI database would leave it ahead of main with no commit accounting for it —
+  // the same rule that keeps the schema-drift audit red here by design.
+  //
+  // WHAT IS AND IS NOT BROKEN WHILE THESE ARE ALLOWLISTED, stated rather than
+  // implied: every reader of these columns is behind a flag seeded FALSE, so no
+  // traveler reaches one today. The two that would matter the moment the flags
+  // go on are message_requests.origin_* (a request with no origin renders as
+  // "they say", which is what the census records) and messages.lifecycle_state
+  // (unsend has nothing to write to). Remove each entry once its apply is
+  // certified in docs/migrations.md — NOT when the migration merges.
+  "messages.sequence",                       // 2810 — the per-thread order §12.1 names
+  "messages.client_message_id",              // 2810 — the sender's id, for dedupe
+  "messages.idempotency_key",                // 2810 — one canonical row per key
+  "messages.content_ref",                    // 2810 — body indirection
+  "messages.lifecycle_state",                // 2810 — §7's unsend/deleted states
+  "message_threads.last_sequence",           // 2810 — the thread's high-water mark
+  "message_threads.policy_id",               // 2810 — §14.1's capability policy
+  "message_threads.policy_version",          // 2810 — bumped when the policy changes
+  "message_thread_members.visible_from_sequence",  // 2810 — §14.3's history bound
+  "message_thread_members.visible_until_sequence", // 2810 — a departed member's bound
+  "message_thread_members.delivered_sequence",     // 2810 — §7.3 receipts
+  "message_thread_members.seen_sequence",          // 2810 — §7.3 receipts
+  "message_requests.origin_type",            // 2813 — §22 how this request reached you
+  "message_requests.origin_id",              // 2813 — the referent, when there is one
+  "message_requests.origin_verified",        // 2813 — whether the server checked it
+
+  // ── Pending live apply: 2745_layover_recommendation_travel_provenance.sql ──
+  // Added by this branch for Discovery A14 / the Layover travel-provenance
+  // obligation, and absent from BOTH databases: it is not on main, and
+  // live-db.yml applies only from main.
+  //
+  // NOT hand-applied to portava-ci, for the reason the 2970 entry above states
+  // in full — hand-applying an unmerged branch's migrations to the shared CI
+  // database is the recorded root cause of `CI (live DB)` being red on main's
+  // own sha across five consecutive scheduled runs, and trading this visible
+  // red for that invisible one is not a fix.
+  //
+  // WHAT IS AND IS NOT BROKEN WHILE THIS IS ALLOWLISTED, stated rather than
+  // implied — and here the honest answer is NOTHING, which is unusual enough to
+  // show rather than assert. `travelTimeProvenanceColumn`
+  // (services/airport/LayoverTravelTime.ts) returns the key ONLY for a
+  // provenance the row cannot reconstruct from its own columns. On this tree
+  // every landside leg is `unmeasured` and every airside one is
+  // `inside_airport`, both of which ROW_FACTS_RECOVER marks recoverable, so it
+  // returns `{}` for every row written today and no insert carries the key.
+  // That matters because supabase-js sends every key in the payload, so a
+  // column the database lacks fails the WHOLE insert — the hazard 2410's header
+  // documents. The read side is equally tolerant:
+  // LayoverRecommendationService reads `row.travel_time_source ?? null`.
+  //
+  // The day a routed provider is assigned, the key starts appearing — and on a
+  // database that still lags 2745 the insert would begin failing. So this entry
+  // is not merely paperwork: it is safe because no routed provider is
+  // configured, which is the same missing measurement that keeps A14 at `W`.
+  //
+  // Remove this entry once the merge-to-main apply is certified in
+  // docs/migrations.md — NOT when the migration merges.
+  "layover_recommendations.travel_time_source",  // 2745 — where the row's travel figure came from
 ]);
+
+// ── 2481: NOT PENDING AN APPLY — PENDING NEVER ───────────────────────────────
+//
+// Every other entry above means "this column is coming; remove the entry when
+// the apply is certified". This one is the opposite and is kept separate so it
+// cannot be read as the same kind of promise.
+// `sensing_contribution_sessions.issued_to_profile_id` is declared by
+// 2481_sensing_sessions_option_a_issuer.sql, whose first line reads "OPTION A
+// ONLY ... Do NOT apply under Option B; under Option B this file is never run
+// and the column never exists." The owner took Option B in #510. The column is
+// absent live because it MUST be absent, and it is never coming while the
+// posture holds.
+//
+// The check reads migrations on disk and columns in the live schema and cannot
+// know a file must never run, so it reports this one as missing on every run —
+// the second half of main's standing 2481 red (the other half is
+// auditMigrationsVsLive.ts, which carries the same reasoning at more length,
+// including why the stale-looking schema_migration_ledger row for 2481 is
+// load-bearing and must not be pruned).
+//
+// DERIVED FROM THE POSTURE, NOT PINNED. Under Option A this column must exist
+// and its absence is a real finding, so the entry is conditional on the
+// constant that decides which posture is in force. Flip
+// lib/sensingAuthPosture.ts back to `authenticated_only` and this allowance
+// disappears on the next run rather than silently outliving the decision that
+// justified it. The constant is read as TEXT rather than imported — importing it
+// would widen the sensing stack's importer set, which §9.1 guards on purpose;
+// scripts/lib/sensingPostureOnDisk.ts carries the reasoning and fails closed.
+//
+// WHAT IS AND IS NOT BROKEN WHILE THIS IS ALLOWED: nothing, and structurally so
+// rather than by luck. Under Option B no session is profile-issued, so there is
+// no value this column would hold; §3's rule is that a contribution record must
+// not carry a permanent account key, and 2481 was the narrowly-justified
+// exception Option A needed. Without Option A the exception is not needed and
+// not taken. VERIFIED ON portava-ci 2026-09-21: the column, both constraints,
+// the index and revoke_sensing_sessions_for_profile are all absent, while
+// 2480's own table is present.
+if (!isOptionAInForce()) {
+  ALLOWLIST.add("sensing_contribution_sessions.issued_to_profile_id");
+}
 
 // ── Superseded / known-drifted migration files ────────────────────────────────
 //
@@ -148,6 +315,33 @@ const SKIP_FILES = new Set<string>([
   // Superseded by 0134_rent_buddy_schema_rebuild.sql — the buddy_* compat
   // views still exist live but the columns declared here were renamed.
   "0050_rent_a_buddy.sql",
+  // 2481_sensing_sessions_option_a_issuer.sql — OPTION A ONLY; DELIBERATELY NOT
+  // APPLIED, AND MUST NOT BE. The file declares exactly one column,
+  // sensing_contribution_sessions.issued_to_profile_id, and its absence is the
+  // posture rather than a lag.
+  //
+  // THE FILE, not the column, is the unit here — which is why this is a
+  // SKIP_FILES entry and not an ALLOWLIST one. ALLOWLIST says "this column is
+  // pending a live apply, remove the entry once the apply is certified"; 2481
+  // is never to be applied, so an entry phrased that way would be waiting for
+  // something that must not happen. On 2026-09-16 the owner put Sensing on
+  // Option B staged (SENSING_AUTH_POSTURE = `anonymous_capable`,
+  // src/lib/sensingAuthPosture.ts), under which the file is never run: the
+  // second conjunct of its CHECK is `issuance_class = 'authenticated_profile'`,
+  // which makes attested- and unattested-device sessions unrepresentable
+  // although production accepts all three, and it hangs a `profiles` foreign key
+  // off a sensing table Option B exists to keep free of account identity.
+  // portava-ci carried 2481 from an earlier Option A rehearsal; that revert has
+  // since happened, and 2480's own objects (the table included) remain applied
+  // and are still checked here.
+  //
+  // This entry and the one in src/scripts/auditMigrationsVsLive.ts are the same
+  // ruling stated to two name-keyed checkers; the fuller version is there.
+  // DELETE BOTH IF SENSING EVER MOVES TO OPTION A — i.e. if
+  // SENSING_AUTH_POSTURE becomes `authenticated_only` and 2481 is applied. From
+  // that moment this column must exist live, and this entry would hide its
+  // absence. See docs/architecture/census-sensing.md.
+  "2481_sensing_sessions_option_a_issuer.sql",
 ]);
 
 // Tables entirely absent from live (migrations reference them but they haven't

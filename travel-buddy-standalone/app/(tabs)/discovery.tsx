@@ -647,6 +647,16 @@ function DiscoveryHubScreen() {
       title:        place.name,
       category:     place.category,
       locationName: place.address ?? undefined,
+      // Every place that reaches this handler was served by this screen, whose
+      // impressions are written with surface='discovery' (the same value
+      // PlaceCard and PlaceDetailSheet report tap/save under). Handing it here
+      // is what lets the picker close the funnel's trip_add rung against the
+      // right impression row; without it the report has no served context and
+      // useRankOutcome drops it rather than guessing.
+      //
+      // GET /discovery returns no session_id, so no rankSessionId is passed —
+      // absent, not null, exactly as the tap/save reports from this screen.
+      rankSurface:  'discovery',
     });
   }, [openPlanPicker]);
 

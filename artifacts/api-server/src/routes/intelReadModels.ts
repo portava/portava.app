@@ -49,6 +49,7 @@ import { getServiceClient } from "../lib/supabase.js";
 import { liveLabelsServable, resolvePlaceIntelState } from "../lib/liveClaimRead.js";
 import { confidenceBand, mayCountAsConsensus } from "../lib/intelContracts.js";
 import { sourceCountBucket } from "../lib/liveClaimRead.js";
+import { truthOfEnvelope, truthOfEnvelopes } from "../lib/liveEnvelopeTruth.js";
 import { computeNeighborhoodPulse, type PulseSnapshotInput } from "../lib/intelPulse.js";
 import { shouldPrompt, PROMPT_THROTTLE_WINDOW_MS, type RecentObservation } from "../lib/intelThrottle.js";
 import { logger } from "../lib/logger.js";
@@ -176,6 +177,27 @@ router.get("/v1/experiences/:id/live-state", asyncHandler(async (req, res) => {
   if (notModified(req, res, etag)) return;
   res.set("ETag", etag);
 
+  // §5.1 / census S49 — "every server-built state consumed by Map / Discovery /
+  // Wall / Compass carries truth class, confidence, freshness AND coverage".
+  // Derived by lib/liveEnvelopeTruth, the ONE derivation compassDecision,
+  // crowdState, safetyCandidate, liveReference, wallMoments and contextKernelRead
+  // already share, so this spec-literal read model cannot disagree with the
+  // surfaces about what a claim's standing is. It is a RESTATEMENT, not a new
+  // disclosure: `coverage` is coverageFromBucket(sourceCountBucket), and the
+  // bucket is already in every served claim. Per claim AND composed for the
+  // answer as a whole, because composition is fail-weak (weakest on every axis)
+  // and a caller that reads only the top block must not be told the strongest
+  // member's standing.
+  //
+  // AS-OF `generated_at`, NOT LIVE. `truth.freshness` is derived from the clock,
+  // so it is a reading taken at the instant in `generated_at` and nothing more —
+  // a client holding a 304'd body still holds the freshness of the response it
+  // cached. `valid_until` is the field a client degrades on, exactly as before
+  // this block existed; `state_version` deliberately does not vary with the
+  // clock, or every poll would be a 200.
+  const nowMs = now.getTime();
+  const claims = resolved.claims.map((c) => ({ ...c, truth: truthOfEnvelope(c, nowMs) }));
+
   res.json({
     schema_version: SCHEMA_VERSION,
     source_label: stateSourceLabel(resolved.state),
@@ -190,7 +212,11 @@ router.get("/v1/experiences/:id/live-state", asyncHandler(async (req, res) => {
     // §19 "valid_until where operational" — the earliest horizon in the set, i.e.
     // when this answer first stops being wholly current. Null when there is none.
     valid_until: earliestValidUntil,
-    claims: resolved.claims,
+    // The whole answer's standing: weakest on every axis over the served set,
+    // and the floor (unknown / unknown) when the set is empty — "no coverage is
+    // not quiet" (§2), stated rather than left to the caller to infer.
+    truth: truthOfEnvelopes(resolved.claims, nowMs),
+    claims,
   });
 }));
 

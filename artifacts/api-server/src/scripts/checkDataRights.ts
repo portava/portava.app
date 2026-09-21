@@ -160,7 +160,10 @@ function main(): void {
     for (const p of problems) console.error(`  • ${p.kind}: ${p.detail}`);
     process.exit(1);
   }
-  console.log("✓ every intel column has a stated ownership class.\n");
+  console.log(
+    `check-data-rights — ${FIELD_RIGHTS.length} intel column(s) inspected; ` +
+      `every one has a stated ownership class.\n`,
+  );
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) main();

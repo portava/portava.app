@@ -44,8 +44,11 @@ import { makeConfidence, type Confidence } from "../lib/liveIntelligence.js";
 import { isQuietHours } from "./CompassNotificationEngine.js";
 import { getWeatherContext } from "../lib/weatherCache.js";
 import { NotificationService } from "../services/notifications/NotificationService.js";
+import { freeGapFromPlan } from "../domain/trips/invariants/TripFreedomEngine.js";
 import { NotificationRouter } from "../services/notifications/NotificationRouter.js";
 import { fetchUserTimezone, localHourFor, nowUtcInstant } from "../lib/localTime.js";
+import { resolveCurrentTrip } from "./CompassCurrentTrip.js";
+import { compassPolicyContract, type CompassPolicy } from "../lib/compassPolicy.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -67,8 +70,28 @@ export const AWARE_CATEGORIES: ReadonlySet<SenseCategory> = new Set([
   "weather",
 ]);
 
+/**
+ * The shipped defaults, kept as literals because `census-compass.md` cites this
+ * exact text as evidence for CCL-15. They are the SAME numbers the policy
+ * contract defaults to, and a drift between the two is caught by a test rather
+ * than prevented by a shared constant — `compassCensusClosure.test.ts` G7
+ * asserts the equality, so a number changed in one place and not the other goes
+ * red instead of shipping two truths.
+ */
 export const AWARE_DAILY_CAP = 3;
 export const ACTIVE_DAILY_CAP = 6;
+
+/**
+ * The cap this presence level actually applies, resolved from configuration at
+ * call time. `passive` never reaches here — it returns before any cap is read —
+ * so the two levels that can deliver are the two this answers for.
+ */
+export function senseDailyCap(
+  level: PresenceLevel,
+  policy: CompassPolicy = compassPolicyContract(),
+): number {
+  return level === "active" ? policy.activeDailyCap : policy.awareDailyCap;
+}
 export const DEDUPE_WINDOW_MS = 24 * 60 * 60 * 1_000;
 
 export interface SenseSettings {
@@ -101,7 +124,25 @@ export interface SuppressedNudge {
     | "category_disabled"
     | "quiet_hours"
     | "duplicate"
-    | "daily_cap";
+    | "daily_cap"
+    /**
+     * The traveller's permission changed BETWEEN the snapshot this run started
+     * from and this candidate's delivery. `runSense` reads settings once and
+     * then awaits an evaluation pass and a dedupe read per candidate, so the
+     * snapshot is already stale by the time anything is sent; a presence switch
+     * to `passive`, or a category turned off, must stop the send rather than
+     * lose a race with it. Revalidating is what the upgrade specification asks
+     * for in its own words — authorization is rechecked before a consequential
+     * action, and a notification is a disclosure.
+     */
+    | "revoked_mid_run"
+    /**
+     * The live session was stopped between the tick reading it and this
+     * candidate's delivery. Same race, different authority: a live nudge is
+     * authorized by an OPEN session, so a closed one withdraws the authority
+     * for every candidate still queued behind it.
+     */
+    | "session_ended";
 }
 
 export interface SenseRunResult {
@@ -301,33 +342,18 @@ async function fetchActiveTrip(
   sc: SupabaseClient,
   userId: string,
 ): Promise<{ id: string; city: string | null } | null> {
-  try {
-    const [{ data: memberRows }, { data: ownedRows }] = await Promise.all([
-      sc.from("trip_members").select("trip_id").eq("user_id", userId).in("role", ["owner", "member"]),
-      sc.from("trips").select("id").eq("owner_id", userId),
-    ]);
-    const tripIds = Array.from(new Set([
-      ...((memberRows ?? []) as any[]).map((r) => String(r.trip_id)),
-      ...((ownedRows ?? []) as any[]).map((r) => String(r.id)),
-    ]));
-    if (tripIds.length === 0) return null;
-    const { data: trips } = await sc
-      .from("trips")
-      .select("id, destination_city, status")
-      .in("id", tripIds)
-      // `in_progress` is not a label of the `trip_status` enum (draft |
-      // planning | upcoming | active | completed | cancelled | archived), so
-      // PostgREST rejected the literal 22P02 and this read failed whole — the
-      // two trip-grounded Sense nudges could never fire. `active` is the label
-      // every other current-trip reader uses.
-      .eq("status", "active")
-      .limit(1);
-    const t = ((trips ?? []) as any[])[0];
-    if (!t) return null;
-    return { id: String(t.id), city: (t.destination_city as string | null) ?? null };
-  } catch {
-    return null;
-  }
+  // ONE current-trip rule for every Compass surface (CT-02). This was a
+  // verbatim third/fourth copy of the owner ∪ accepted-member union, and it
+  // ended in `.limit(1)` — whichever active trip the database returned first —
+  // so Sense could ground its context on a different trip from the one
+  // `get_current_trip` calls current, from the same rows. The seam orders by
+  // earliest start, which is what the tool has always done.
+  //
+  // `unread` returns null, preserving this function's existing contract: no
+  // trip grounding rather than grounding on a union we know is incomplete.
+  const resolved = await resolveCurrentTrip(sc, userId, ["active"]);
+  if (resolved.status !== "ok") return null;
+  return { id: resolved.trip.id, city: resolved.trip.destinationCity };
 }
 
 /** Today's plan items for a trip (non-cancelled, not removed). */
@@ -450,17 +476,17 @@ async function evalFreeTimeBlock(
   if (!trip) return [];
   const today = new Date(nowMs).toISOString().slice(0, 10);
   const items = await fetchTodayPlanItems(sc, trip.id, today);
-  // A free block is only meaningful on a day that HAS a plan — an entirely
-  // unplanned day is normal, not a signal.
-  const timed = items.filter((i) => i.starts_at).map((i) => new Date(i.starts_at!).getTime());
-  if (timed.length === 0) return [];
-  const upcoming = timed.filter((t) => t > nowMs).sort((a, b) => a - b);
-  const nextMs = upcoming[0] ?? null;
-  const gapMs = nextMs === null ? Infinity : nextMs - nowMs;
+  // census-compass CT-03: the gap is the Temporal Freedom Engine's answer
+  // (domain/trips/invariants/TripFreedomEngine `freeGapFromPlan`), not a
+  // derivation of this engine's own. A day with no timed plan claims no gap —
+  // an entirely unplanned day is normal, not a signal.
+  const gap = freeGapFromPlan(items.map((i) => ({ id: i.id, startsAt: i.starts_at })), nowMs);
+  if (gap.timedCount === 0) return [];
+  const gapMs = gap.gapMinutes === null ? Infinity : gap.gapMinutes * 60_000;
   if (gapMs < FREE_BLOCK_MIN_GAP_MS) return [];
-  const gapLabel = nextMs === null
+  const gapLabel = gap.gapMinutes === null
     ? "the rest of today"
-    : `about ${Math.floor(gapMs / 3_600_000)} hours`;
+    : `about ${Math.floor(gap.gapMinutes / 60)} hours`;
   return [{
     type: "free_time_block",
     category: "free_time",
@@ -514,6 +540,16 @@ async function loadQuietWindow(
   }
 }
 
+/**
+ * Has this exact nudge already been delivered inside the dedupe window?
+ *
+ * Same rule, same reasoning as CompassLiveEngine.isDuplicate: supabase-js
+ * RESOLVES on a DB error, so a dropped `.error` made "compass_sense_nudges
+ * could not be read" indistinguishable from "no such nudge yet" — and the
+ * latter means SEND. An unknown dedupe ledger answers "duplicate": the delivery
+ * record is written to this same table, so a read failure would have been a
+ * write failure too, and the nudge simply reappears on the next tick.
+ */
 async function isDuplicateNudge(
   sc: SupabaseClient,
   userId: string,
@@ -522,16 +558,17 @@ async function isDuplicateNudge(
 ): Promise<boolean> {
   try {
     const sinceIso = new Date(nowMs - DEDUPE_WINDOW_MS).toISOString();
-    const { data } = await sc
+    const { data, error } = await sc
       .from("compass_sense_nudges")
       .select("id")
       .eq("user_id", userId)
       .eq("dedupe_key", dedupeKey)
       .gte("created_at", sinceIso)
       .limit(1);
+    if (error) return true; // dedupe state unknown — assume already sent
     return ((data ?? []) as any[]).length > 0;
   } catch {
-    return false;
+    return true;
   }
 }
 
@@ -586,7 +623,7 @@ export async function runSense(
   const suppressed: SuppressedNudge[] = [];
 
   const quiet = await loadQuietWindow(sc, userId);
-  const cap = settings.presenceLevel === "active" ? ACTIVE_DAILY_CAP : AWARE_DAILY_CAP;
+  const cap = senseDailyCap(settings.presenceLevel);
   let deliveredToday = await countDeliveredToday(sc, userId, nowMs);
 
   const notifSvc = new NotificationService(sc);
@@ -611,6 +648,30 @@ export async function runSense(
     }
     if (deliveredToday >= cap) {
       suppressed.push({ dedupeKey: nudge.dedupeKey, type: nudge.type, reason: "daily_cap" });
+      continue;
+    }
+
+    // LAST GATE BEFORE DISCLOSURE. Everything above this line was decided from
+    // `settings`, read once at the top of this run and now several awaits old —
+    // an evaluation pass over the traveller's trips, events and plan items, a
+    // quiet-window read, and one dedupe read per candidate. A traveller who
+    // switches to `passive` or turns this category off during that window has
+    // revoked the permission this send depends on, and the snapshot cannot know
+    // it. So the permission is re-read here, immediately before the notification
+    // exists, rather than inferred from state that predates the revocation.
+    //
+    // FAIL-CLOSED on an unreadable settings row: `getSenseSettings` already
+    // resolves an unreadable row to the `passive` default (its own fail-closed
+    // posture), so "could not check" arrives here as "do not send". That is the
+    // correct direction for a disclosure — a nudge withheld during an outage is
+    // recoverable, a nudge sent into a revoked permission is not.
+    const nowSettings = await getSenseSettings(sc, userId);
+    const stillPermitted =
+      nowSettings.presenceLevel !== "passive" &&
+      nowSettings.categories[nudge.category] !== false &&
+      !(nowSettings.presenceLevel === "aware" && !AWARE_CATEGORIES.has(nudge.category));
+    if (!stillPermitted) {
+      suppressed.push({ dedupeKey: nudge.dedupeKey, type: nudge.type, reason: "revoked_mid_run" });
       continue;
     }
 

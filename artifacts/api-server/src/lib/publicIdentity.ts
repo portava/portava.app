@@ -42,6 +42,55 @@ export function resolveHandle(row: IdentityRow | null | undefined): string | nul
 }
 
 /**
+ * What a single profile read established about an ACTOR's handle.
+ *
+ * `handle: null` means NO HANDLE IS KNOWN, and `unreadable` says which kind of
+ * not-known it is — the same two-field shape, and the same house rule (AN
+ * UNREADABLE X IS NOT AN EMPTY X), that `SenderLanguagePreference` uses one
+ * layer down in `services/messageTranslation.ts`.
+ */
+export interface ActorHandleClaim {
+  /** The handle we may print, or null when none is known. */
+  readonly handle: string | null;
+  /** True ONLY when the read failed — never "this user has no handle". */
+  readonly unreadable: boolean;
+}
+
+/**
+ * actorHandleFrom — the interpreter of a "who did this?" profile read.
+ *
+ * WHAT THIS REPLACES, at the mention-notification site in `routes/messaging.ts`:
+ *
+ *     const { data: taggerProfile } = await sc.from('profiles')
+ *       .select('handle, username').eq('id', user.id).single();
+ *     const taggerHandle = resolveHandle(taggerProfile as any) ?? 'someone';
+ *
+ * supabase-js RESOLVES on a database error, so `data` was null and the error was
+ * never bound, and `'someone'` was then written into a notification that every
+ * mentioned user reads. Three worlds arrived at that literal: the tagger has no
+ * handle, the tagger has no profile row, and `profiles` COULD NOT BE READ.
+ *
+ * `.single()` is why binding the error is not on its own enough, and it is the
+ * reason census-telegraph §16.4 left this site alone: `.single()` returns
+ * PGRST116 when NO ROW MATCHES as well as when the table is unreadable, so a
+ * caller that merely checked `error` would report a handle-less tagger as an
+ * outage. The call site moves to `.maybeSingle()` and asks this function, which
+ * is the only place the three worlds are told apart.
+ *
+ * `error` is typed `unknown` on purpose: callers pass a PostgrestError and the
+ * only thing this needs from it is whether it is there.
+ */
+export function actorHandleFrom(
+  row: IdentityRow | null | undefined,
+  error: unknown,
+): ActorHandleClaim {
+  // The read failed. We do not know who this is, and no handle may be claimed
+  // from a row we cannot trust — including one a caller happened to pass in.
+  if (error) return { handle: null, unreadable: true };
+  return { handle: resolveHandle(row), unreadable: false };
+}
+
+/**
  * Batched lookup: which of these users have opted in to showing their name?
  * One query regardless of list size. Errors → empty set (fail closed).
  */
