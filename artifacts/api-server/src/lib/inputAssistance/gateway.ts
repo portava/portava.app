@@ -57,7 +57,7 @@ import {
   EMPTY_TASK_CONSTRAINT,
   type TaskConstraint,
 } from './taskContext';
-import { applyDiversity } from './rankingSignals';
+import { applyDiversity, applyImpersonationRisk } from './rankingSignals';
 import { extractTemporal } from './semanticParser';
 import type { TemporalWindow } from './rankingSignals';
 import { buildAiAssistedWriting, isAiTextContext } from './aiWriting';
@@ -762,14 +762,23 @@ export async function generateSuggestions(
   // removal — two real venues can share a name.
   const diversified = applyDiversity(withLive);
 
+  // ── §36 Impersonation (within-response) ─────────────────────────────────────
+  // A person row that is neither verified nor official, whose handle folds to
+  // the same confusable signature as a verified/official row IN THIS ANSWER, is
+  // demoted below it. Applied AFTER diversity and BEFORE the rank so the
+  // demotion reaches the ordering; identity on every response that contains no
+  // verified person row, which is almost all of them. See rankingSignals.ts for
+  // what this deliberately does not cover (census G233).
+  const antiImpersonation = applyImpersonationRisk(diversified);
+
   // ── Rank + cap (§9 trust order, §15 tie-break by confidence) ────────────────
   // When the field carries query completions (§13 "SEARCH FOR" rows — global_
   // search, buddy_service, hashtag), reserve a slot so a submittable-search row
   // is never capped out by a full page of entity matches. Otherwise a plain cap.
   const cap = Math.min(limit, policy.maxSuggestions);
   const ranked = policy.allowedSuggestionTypes.includes('completion')
-    ? orderSuggestionsReserving(diversified, cap, COMPLETION_RESERVED_TYPES, 1)
-    : orderSuggestions(diversified, cap);
+    ? orderSuggestionsReserving(antiImpersonation, cap, COMPLETION_RESERVED_TYPES, 1)
+    : orderSuggestions(antiImpersonation, cap);
 
   // §13 "no dead rows": final safety net — every returned row must resolve to an
   // action, a canonical entity, or a routable destination.

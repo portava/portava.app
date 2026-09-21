@@ -26,10 +26,12 @@ import type { InputContext } from '../types/inputContext.ts';
 import type { InputFieldPolicy } from '../types/fieldPolicy.ts';
 import type { InputSuggestion, InputSessionContext, WritingDraft } from '../types/inputSuggestion.ts';
 import { resolveFieldPolicy } from '../contexts/fieldRegistry.ts';
+import { getContextDescriptor } from '../contexts/inputContexts.ts';
 import { requestSuggestions } from '../services/inputAssistance.ts';
 import { sharedSuggestionCache, SuggestionCache, isCacheablePrivacyClass } from '../services/suggestionCache.ts';
 import { createSequenceGuard } from '../services/raceGuard.ts';
 import { finalizeSuggestions, narrowToQuery } from '../services/suggestionRanking.ts';
+import { localZeroState } from '../services/localZeroState.ts';
 import { emitInputEvent } from '../services/inputTelemetry.ts';
 
 export interface UseInputAssistanceOptions {
@@ -139,9 +141,30 @@ export function useInputAssistance(
       return;
     }
 
+    // ── The ZERO-STATE TIER, and the gate that had no reader ────────────────
+    // `zeroStateAssistance` is declared on all 29 context descriptors
+    // (`contexts/inputContexts.ts`) — `true` on every geographic picker,
+    // `global_search` and `hashtag` — and `buildDefaultPolicy` DROPS it: it is
+    // not a member of `InputFieldPolicy`, so nothing on either side has ever
+    // read it. The consequence was not cosmetic. `minChars` is 1 or 2 on every
+    // one of those contexts, so the branch below returned on an EMPTY field and
+    // no request was made — which means the server's §14 zero-character
+    // answer (`gateway.ts` `zeroCharGeoDefaults`: the viewer's current city and
+    // their Trip destinations) was built for a request this client never sends,
+    // and §34's "prefer local: immediate zero-state" had no tier to be local
+    // in. Opening a city picker showed an empty panel, always.
+    //
+    // `minChars` governs TYPED queries — "how much text before we search". The
+    // zero-character tier is a different question, and the descriptor already
+    // answers it per context. Read from the descriptor rather than the policy
+    // so this needs no change to `InputFieldPolicy` or `buildDefaultPolicy`,
+    // whose shapes other sections' rows cite.
+    const zeroStateTier =
+      trimmed.length === 0 && getContextDescriptor(policy.context).zeroStateAssistance === true;
+
     // Below the field's threshold → clear (nothing to assist yet). minChars 0
     // means "assist even at zero characters" (zero-state, §14).
-    if (trimmed.length < policy.minChars) {
+    if (trimmed.length < policy.minChars && !zeroStateTier) {
       abortRef.current?.abort();
       abortRef.current = null;
       guardRef.current.invalidate();
@@ -199,8 +222,33 @@ export function useInputAssistance(
           return narrowed.length > 0 ? narrowed : null;
         })()
       : null;
-    if (localTier) {
-      setSuggestions(localTier);
+
+    // ── §34 "prefer local: IMMEDIATE ZERO-STATE" ────────────────────────────
+    // `longestPrefix` above is a STRICT-prefix scan, so an empty field gets
+    // nothing from it: there is no shorter query to reuse. That left the one
+    // case §34 names by itself — the zero-character open — as a pure server
+    // round trip, and a cold or offline open of a picker showed an empty panel
+    // even when the user had accepted a row in that same field moments before.
+    //
+    // This is the local answer for that case: this session's explicit accepts
+    // for the field's context, replayed verbatim as `recent` rows. It is gated
+    // by the SAME privacy predicate as the cache (see localZeroState.ts), so a
+    // viewer-scoped field retains nothing and reads nothing back.
+    //
+    // It does NOT cancel the request below. The server's zero-state is richer
+    // than this session's memory (current city, Trip destinations, the §35
+    // cross-device recents) and it is the authority on eligibility — so the
+    // local list is what the field shows WHILE that answer is fetched, and what
+    // it keeps if the answer never arrives.
+    const local = localTier
+      ?? (zeroStateTier || (trimmed.length === 0 && policy.minChars === 0)
+        ? (() => {
+            const rows = finalizeSuggestions(localZeroState(policy), policy.maxSuggestions);
+            return rows.length > 0 ? rows : null;
+          })()
+        : null);
+    if (local) {
+      setSuggestions(local);
       setUnavailable(false);
     }
 
@@ -263,11 +311,13 @@ export function useInputAssistance(
           // rows at the one moment the user cannot get new ones. The degraded
           // STATE is still set (the overlay shows its quiet note, never an
           // error) — what changes is that the local tier computed above survives
-          // it. `localTier` is already narrowed to the typed text, so this
-          // retains rows that still match rather than freezing a stale list.
-          // With nothing local to retain it is `[]`, the old behaviour.
+          // it. `local` is either the prefix tier — already narrowed to the
+          // typed text, so this retains rows that still match rather than
+          // freezing a stale list — or, for an empty field, the §34 local
+          // zero-state. With nothing local to retain it is `[]`, the old
+          // behaviour.
           setUnavailable(true);
-          setSuggestions(localTier ?? []);
+          setSuggestions(local ?? []);
           setLoading(false);
         } else {
           // Transient error: keep whatever is on screen, just stop the spinner.
