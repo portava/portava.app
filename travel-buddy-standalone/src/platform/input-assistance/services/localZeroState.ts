@@ -35,11 +35,23 @@
  *
  * ── WHAT THIS IS NOT ─────────────────────────────────────────────────────────
  *
- * It is NOT persistence. The store is in-memory and dies with the process, so a
- * cold APP START still has nothing local — that is §32's device-local recents
- * (census G199), which needs a storage backend and is not built here. What this
- * closes is the within-session case: the second and later opens of a field are
- * answered on-device, immediately, and survive the network dying.
+ * ── PERSISTENCE ARRIVED AFTERWARDS, AS A PORT (census G199) ──────────────────
+ *
+ * This paragraph used to read "It is NOT persistence … a cold APP START still
+ * has nothing local — that is §32's device-local recents (census G199), which
+ * needs a storage backend and is not built here." The backend is built now, and
+ * it is OPTIONAL and INJECTED rather than imported: `attachLocalRecents` binds
+ * a two-method port, and an unattached process behaves exactly as it did
+ * before, which is what keeps this module importable from node:test.
+ *
+ * The gate discipline does not change, and one half of it becomes load-bearing
+ * in a way it was not before. Retention is still refused at the WRITE, so a
+ * viewer-scoped field puts nothing on the device. The READ gate is now the one
+ * that matters most: a blob outlives the policy that licensed it, so
+ * `localZeroState` re-asks `mayRetainLocally` against the LIVE policy on every
+ * call, and a field the authority has since reclassified serves nothing however
+ * warm the disk is. `localRecentsStore.ts` holds the third: what a blob has to
+ * look like before this build will vouch for a row in it.
  *
  * It is NOT re-ranking. The rows are replayed in recency order exactly as the
  * server projected them (§42) — nothing is re-scored, and no row the server did
@@ -51,6 +63,12 @@ import type { InputSuggestion } from '../types/inputSuggestion.ts';
 import type { InputContext, PrivacyClass } from '../types/inputContext.ts';
 import { recordSelection } from './suggestionHistory.ts';
 import { isCacheablePrivacyClass } from './suggestionCache.ts';
+import {
+  LOCAL_RECENTS_STORAGE_KEY,
+  decodeLocalRecents,
+  encodeLocalRecents,
+  type LocalRecentsStorage,
+} from './localRecentsStore.ts';
 
 /**
  * The accepted ROWS, most-recent first per context. Capped like
@@ -80,6 +98,84 @@ function rowKey(s: InputSuggestion): string {
 export function clearLocalZeroState(context?: InputContext): void {
   if (context) rowStore.delete(context);
   else rowStore.clear();
+}
+
+// ── §32 G199 — the DEVICE-LOCAL half ────────────────────────────────────────
+
+/** The bound storage backend, or null when this process has none. */
+let storage: LocalRecentsStorage | null = null;
+/** The in-flight write, so `flushLocalRecents` can be awaited in a test and a
+ *  burst of accepts coalesces into one trailing write rather than N. */
+let pendingWrite: Promise<void> = Promise.resolve();
+
+/**
+ * Bind a storage backend and HYDRATE from it.
+ *
+ * Resolves when hydration has finished, whatever the outcome: a missing,
+ * malformed, expired or unreadable blob restores nothing and is not an error.
+ * A backend that throws costs the user nothing — the process simply behaves as
+ * an unattached one.
+ *
+ * THE SESSION WINS. A context this process has ALREADY recorded into is left
+ * alone, so a hydration that lands after the user has picked something cannot
+ * displace or reorder what they just did.
+ */
+export async function attachLocalRecents(next: LocalRecentsStorage): Promise<void> {
+  storage = next;
+  let raw: string | null = null;
+  try {
+    raw = await next.getItem(LOCAL_RECENTS_STORAGE_KEY);
+  } catch {
+    return; // unreadable device — an unattached process, in effect
+  }
+  const restored = decodeLocalRecents(raw, Date.now());
+  for (const [context, rows] of restored) {
+    if (rowStore.has(context)) continue;
+    rowStore.set(context, rows.slice(0, MAX_PER_CONTEXT));
+  }
+}
+
+/** Unbind the backend WITHOUT touching what is on the device. Tests, and the
+ *  teardown half of the app-root mount. */
+export function detachLocalRecents(): void {
+  storage = null;
+  pendingWrite = Promise.resolve();
+}
+
+/**
+ * Drop the device-local recents AND the process copy.
+ *
+ * §29: this is what an account change calls. `sharedSuggestionCache.clear()`
+ * already existed for the process-global suggestion cache and is wired to the
+ * same event; a store that survives on the DEVICE is the stronger version of
+ * the same problem, because the next person to sign in on this phone would
+ * otherwise open a picker onto the last person's choices.
+ */
+export function clearLocalRecents(): void {
+  rowStore.clear();
+  const backend = storage;
+  if (!backend) return;
+  pendingWrite = pendingWrite
+    .then(() => backend.removeItem(LOCAL_RECENTS_STORAGE_KEY))
+    .catch(() => {});
+}
+
+/** Await the trailing write. Tests only — production is fire-and-forget. */
+export async function flushLocalRecents(): Promise<void> {
+  await pendingWrite;
+}
+
+/** Queue a write of the whole snapshot. Never throws, never awaited by a
+ *  caller in the app: a selection must not wait on a disk. */
+function schedulePersist(): void {
+  const backend = storage;
+  if (!backend) return;
+  pendingWrite = pendingWrite
+    .then(() => backend.setItem(
+      LOCAL_RECENTS_STORAGE_KEY,
+      encodeLocalRecents(rowStore, Date.now()),
+    ))
+    .catch(() => {});
 }
 
 /**
@@ -137,6 +233,9 @@ export function recordLocalSelection(
   // dedupe-and-promote semantics — kept in step so a later persistent store can
   // take this tier over rather than fork from it.
   recordSelection(context, { value: s.entityId ?? s.replacementText ?? s.id, label });
+  // §32 G199 — and onto the DEVICE, when one is attached. Queued, never
+  // awaited: the selection has already happened and must not wait on a disk.
+  schedulePersist();
 }
 
 /**

@@ -132,6 +132,38 @@ export {
   clearRecentSelections,
   type RecentSelection,
 } from './services/suggestionHistory.ts';
+// §32/§34 — the LOCAL tiers. `localZeroState` replays this session's explicit
+// accepts (G216); `installLocalRecents` makes that memory survive a restart
+// (G199) by binding AsyncStorage to the port in `localRecentsStore.ts`;
+// `offlineLocalRows` is the shipped-artifact tier the authority's
+// `static_dictionary` / `cached_local` surfaces open onto (G197/G198/G212).
+export {
+  localZeroState,
+  recordLocalSelection,
+  mayRetainLocally,
+  clearLocalZeroState,
+  clearLocalRecents,
+  attachLocalRecents,
+  detachLocalRecents,
+  type LocalZeroStatePolicy,
+} from './services/localZeroState.ts';
+export { installLocalRecents } from './services/installLocalRecents.ts';
+export {
+  LOCAL_RECENTS_STORAGE_KEY,
+  LOCAL_RECENTS_MAX_AGE_MS,
+  type LocalRecentsStorage,
+} from './services/localRecentsStore.ts';
+export {
+  offlineLocalRows,
+  localDictionaryFor,
+  type LocalDictionaryPolicy,
+  type LocalDictionarySource,
+} from './services/localDictionary.ts';
+export { COUNTRY_DICTIONARY } from './data/countries.ts';
+export { CITY_INDEX } from './data/cities.ts';
+export { LANGUAGE_DICTIONARY } from './data/languages.ts';
+export { INTEREST_DICTIONARY } from './data/interests.ts';
+export type { LocalDictionaryEntry } from './data/types.ts';
 // Phase 8 (Personalization, §35/§15/§14) — explicit-selection recorder. The pure
 // predicate + body builder + fail-soft core (selectBody.ts, node:test-safe) and
 // the RN fire-and-forget wiring (selectionRecorder.ts).

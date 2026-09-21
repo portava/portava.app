@@ -36,6 +36,8 @@ export type PolicyRefreshOutcome = 'installed' | 'skipped' | 'failed';
 export interface PolicySyncDeps {
   store?: PolicyStore;
   cache?: { clear: () => void };
+  /** §32 G199 — the device-local recents store, erased on an account change. */
+  recents?: { clear: () => void };
   fetchPolicies?: (signal?: AbortSignal) => Promise<PolicyFetchResult>;
   subscribeAuth?: (cb: (userId: string | null) => void) => () => void;
   currentUserId?: () => Promise<string | null>;
@@ -69,19 +71,37 @@ export async function refreshPolicies(
 }
 
 /**
- * Apply an auth-state report to the store and cache.
+ * Apply an auth-state report to the store, the cache and the device-local
+ * recents.
  *
- * Returns whether the account actually CHANGED, because the two callers care:
+ * Returns whether the account actually CHANGED, because the callers care:
  * a token refresh reporting the same user must not throw away a warm
- * suggestion cache, while a real switch must throw away both.
+ * suggestion cache, while a real switch must throw away all of it.
+ *
+ * ── WHY `recents` JOINED THIS FUNCTION (§29, census G199) ───────────────────
+ *
+ * `cache.clear()` is here because `sharedSuggestionCache` is a process-global
+ * map of suggestion lists keyed by the text that produced them, and two people
+ * signing in on one device must not share it. The device-local recents store
+ * is the STRONGER version of the same problem: it is the same kind of data,
+ * written by the same explicit accepts, and it survives the process as well as
+ * the session. Clearing one and not the other would mean the second viewer's
+ * picker opened onto the first viewer's chosen cities.
+ *
+ * It is optional so that every existing caller and test keeps working
+ * unchanged; the app's installer passes it.
  */
 export function applyAccountChange(
   userId: string | null,
   store: PolicyStore,
   cache: { clear: () => void },
+  recents?: { clear: () => void },
 ): boolean {
   const changed = store.activeAccount() !== userId;
   store.setActiveAccount(userId);
-  if (changed) cache.clear();
+  if (changed) {
+    cache.clear();
+    recents?.clear();
+  }
   return changed;
 }
