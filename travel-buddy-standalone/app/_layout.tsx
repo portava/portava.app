@@ -68,6 +68,7 @@ import {
 import { createWallAnalyticsTransport } from '../src/features/wall/services/wallAnalyticsTransport';
 import { installPassportTelemetry } from '../src/features/passport/installPassportTelemetry';
 import { installInputTelemetry } from '../src/platform/input-assistance/services/installInputTelemetry';
+import { installInputPolicySync } from '../src/platform/input-assistance/services/installInputPolicySync';
 import { installInputTelemetryTransport } from '../src/platform/input-assistance/services/telemetryTransport';
 import { registerGeographicFields } from '../src/platform/input-assistance/geographic/geoFields';
 
@@ -154,6 +155,35 @@ function PassportTelemetrySetup() {
  * revised. Note that migration 2950 is still unapplied everywhere, so today the
  * ingest refuses the batch with 503 and the batcher drops and COUNTS it.
  */
+/**
+ * §48 / G340 — attach the policy sync once at boot.
+ *
+ * THIS IS THE LINE THAT MAKES THE CLIENT OBEY THE SERVER. Without it,
+ * `sharedPolicyStore` is never filled and every context resolves to the
+ * conservative policy forever: fields render as plain inputs and no assistance
+ * ever appears. That is a safe failure, not a silent one — but it IS the whole
+ * feature, so this mount is load-bearing in a way the telemetry mount is not.
+ *
+ * It also owns the other direction. On sign-out and on account switch the sync
+ * drops the policy snapshot AND clears `sharedSuggestionCache`, whose `clear()`
+ * previously had no caller anywhere in the app. Before this, two people signing
+ * in on the same device shared one process-global map of suggestion lists keyed
+ * by the text that produced them.
+ *
+ * Mounted ABOVE the field registrations below on purpose: those build policies
+ * from context descriptors, and a descriptor is only non-conservative once this
+ * has run. Ordering is not load-bearing for correctness (a field re-resolves
+ * its policy when the store changes), but it avoids a needless conservative
+ * pass on the very first frame.
+ */
+function InputPolicySyncSetup() {
+  useEffect(() => {
+    const unsubscribe = installInputPolicySync();
+    return () => unsubscribe();
+  }, []);
+  return null;
+}
+
 function InputTelemetrySetup() {
   useEffect(() => {
     const handle = installInputTelemetry({
@@ -312,6 +342,7 @@ export default function RootLayout() {
                       <PushSetup />
                       <CryptoSetup />
                       <PassportTelemetrySetup />
+                      <InputPolicySyncSetup />
                       <InputTelemetrySetup />
                       <GeographicFieldsSetup />
                       <CompassFrontloadSetup />
