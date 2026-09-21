@@ -2083,7 +2083,23 @@ verbatim in `artifacts/api-server/src/test/fixtures/global_journey_shadow_stop_v
 ### Applied to production 2026-09-21, and verified independently
 
 Recorded in `schema_migration_ledger` with `applied_by='manual'` and the file's
-real SHA-256 `b28ddcb9052196285ca379e5674974bfa663631611051fbb7c7b37ee5c1ca3a4`.
+real SHA-256. **That checksum has since been re-recorded**, and deliberately so:
+the chain-replayability repair above changed the file, so the sha256 on the row
+(`b28ddcb9…`) no longer named any file on `main`. It is now
+`3c080a723b9adf06f7c16dacf157837384877a6b5afa0baba9dfd25ca1d67437`, with the
+supersession, the old value and the reason appended to the row's own `notes`.
+
+**A ledger row naming a checksum no file has is the exact failure mode this
+document keeps cataloguing**, so it was corrected rather than left to rot — and
+the correction is a metadata write only. **No DDL was run on production for it.**
+
+**What changed is the migration, not the object**, and that is measured rather
+than asserted. Production still reads `md5(pg_get_functiondef)` =
+`ff476d8897d0ffac32e439800edc33e9`, length **4218**, `proacl`
+`{postgres=X/postgres,service_role=X/postgres}` — identical to what the row
+recorded on apply. The *repaired* file, replayed onto a local PostgreSQL 16.13
+carrying the captured pre-image, produces **exactly those bytes**, so the new
+file text still describes the installed object byte for byte.
 
 **Delivery differences, stated rather than implied:** the Management API supplies
 its own transaction, so the file's self-wrapped `BEGIN;`/`COMMIT;` was omitted
@@ -2262,4 +2278,5 @@ a *local* PostgreSQL 16 is itself the check that the capture is faithful.
     SELECT filename, applied_by, left(checksum, 12)
       FROM public.schema_migration_ledger
      WHERE filename = '2976_journey_shadow_global_stop_delete_scope.sql';
-    -- expect applied_by='manual', checksum b28ddcb90521
+    -- expect applied_by='manual', checksum 3c080a723b9a (was b28ddcb90521 before the
+    --        chain-replayability repair; the row's notes record the supersession)
