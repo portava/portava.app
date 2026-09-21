@@ -394,6 +394,7 @@ describe("loadCandidates: `followingReachedEnd` is never inferred from an unread
     upcomingTripCities: new Set<string>(),
     preferredCities: new Set<string>(),
     interests: new Set<string>(),
+    followGraphKnown: true,
   });
 
   it("a viewer who genuinely follows nobody HAS reached the end", async () => {
@@ -411,7 +412,7 @@ describe("loadCandidates: `followingReachedEnd` is never inferred from an unread
     const loaded = await loadCandidates(
       quietClient(),
       "following",
-      { ...baseViewer(), followGraphFailed: true },
+      { ...baseViewer(), followGraphKnown: false },
       { discoveryEnabled: false },
     );
     assert.equal(

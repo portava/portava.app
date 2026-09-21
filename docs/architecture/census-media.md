@@ -1219,7 +1219,7 @@ vocabulary —
 — adding `limited`, `removed` and `owner_deleted`, and the deny-list was never extended. A
 restricted item, a **taken-down** item and an **owner-deleted** item all read as
 distributable to the gate this document calls fail-closed. The strict list the row cites,
-`artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:1120#const QUICK_MEDIA_BLOCKED_MODERATION`,
+`artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:1156#const QUICK_MEDIA_BLOCKED_MODERATION`,
 blocks four of them — but it runs on `media_assets`, the dark canonical layer, not on
 `post_media`, where the live gate is. The repository held two answers to one question, in
 two files, and the census quoted the strict one while the lax one ran.

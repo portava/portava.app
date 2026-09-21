@@ -224,20 +224,6 @@ export interface WallViewerContext {
   preferredCities: Set<string>;
   /** Lowercased interest tokens (categories the viewer cares about). */
   interests: Set<string>;
-  /**
-   * True when the `user_follows` read FAILED (as opposed to returning nobody).
-   *
-   * This is the single most consequential distinction in the whole feed: an
-   * empty `followedCreatorIds` short-circuits Following straight to "there is
-   * nothing to show, and that IS the true end". Reached because the viewer
-   * follows nobody, that is honest; reached because the graph was unreadable,
-   * it is an outage wearing the "you're all caught up" badge.
-   *
-   * Optional so a test/consumer building a context literal is unaffected;
-   * absent reads as "the graph was read fine", which is the pre-existing
-   * assumption everywhere else.
-   */
-  followGraphFailed?: boolean;
 }
 
 // Exported as a TEST SEAM only (see src/test/wallViewerLocationRead.test.ts).
@@ -1104,7 +1090,7 @@ router.get(
     //    absent `degraded` is a positive statement that the feed is honestly
     //    empty rather than broken.
     const degradedLanes: WallLane[] = [];
-    if (viewer.followGraphFailed) degradedLanes.push("follow_graph");
+    if (!viewer.followGraphKnown) degradedLanes.push("follow_graph");
     if (loaded.spineFailed) degradedLanes.push("spine");
     if (postcardsLoaded.failed) degradedLanes.push("postcards");
     if (mediaLoaded.failed) degradedLanes.push("media");
@@ -1313,7 +1299,7 @@ router.get(
         // no subject set — "no live signals" would be an answer to a question
         // that was never asked. Surfacing it as a failure is what lets the
         // route report `degraded` instead of a confident empty strip.
-        if (viewer.followGraphFailed || loaded.spineFailed) {
+        if (!viewer.followGraphKnown || loaded.spineFailed) {
           throw new Error("wall/live: the strip's place source could not be read");
         }
         const seen = new Set<string>();
