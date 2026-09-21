@@ -3276,7 +3276,7 @@ there) nor routed anywhere (feasibility is declared unverified, by design).
 
 ### 26.13 CG-01 — the client consumes the shared layer's starters
 
-The server's set is the one set: `artifacts/api-server/src/lib/inputAssistance/projection.ts:303#export const COMPASS_STARTER_SET` (nine),
+The server's set is the one set: `artifacts/api-server/src/lib/inputAssistance/projection.ts:318#export const COMPASS_STARTER_SET` (nine),
 served through the ordinary gateway at zero characters, each row carrying its `starterId`. The
 client's own list and builder are gone; `travel-buddy-standalone/src/platform/input-assistance/compass/compassPrompt.ts:33#export function startersFromSuggestions`
 adapts served rows to chips and the screen reads them through the shared hook

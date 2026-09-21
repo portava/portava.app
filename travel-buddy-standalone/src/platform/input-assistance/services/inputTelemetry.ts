@@ -5,7 +5,7 @@
  * private text." This defines the §44 event names and a pluggable sink. By
  * default it is a no-op (Phase 1 wires the taxonomy; a later phase attaches a
  * real analytics transport). The privacy rule is enforced HERE: when a field's
- * telemetry policy says `captureRawText: false`, any `text`/`query` payload is
+ * telemetry policy says `logRawText: false`, any `text`/`query` payload is
  * dropped before the event leaves this module — a caller cannot leak a private
  * message by accident.
  *
@@ -68,7 +68,7 @@ function scrubProps(
   policy: InputTelemetryPolicy | undefined,
 ): InputTelemetryEvent['props'] {
   if (!props) return props;
-  if (policy?.captureRawText) return props;
+  if (policy?.logRawText) return props;
   const out: NonNullable<InputTelemetryEvent['props']> = {};
   for (const [k, v] of Object.entries(props)) {
     if (RAW_TEXT_KEYS.has(k)) continue; // drop raw text for private/sensitive fields
@@ -82,7 +82,9 @@ function isEventAllowed(
   policy: InputTelemetryPolicy | undefined,
 ): boolean {
   if (!policy) return true;
-  if (policy.events === 'all') return true;
+  // An explicit list on both sides since 2026-09-21 (census G33). The old
+  // `'all'` sentinel had no server counterpart, so a server policy that
+  // NARROWED a field's vocabulary could not be expressed on this side at all.
   return policy.events.includes(name);
 }
 
@@ -229,13 +231,29 @@ export function emitCorrectionAccepted(f: TelemetryField, s: InputSuggestion): v
   );
 }
 
-/** §44 `disambiguation_selected` — a §19 ranked CHOICE was resolved by the user. */
+/**
+ * §44 `disambiguation_selected` — a §19 ranked CHOICE was resolved by the user.
+ *
+ * `resolvedExisting` is §57's DUPLICATE-PREVENTION COUNT (census G369), and it
+ * is a recorded fact rather than an inference. §55's duplicate rows are
+ * projected as `disambiguation` carrying a `resolve_existing` structured value
+ * (`lib/inputAssistance/creation.ts#projectDuplicate`), and §19's ordinary
+ * ambiguity rows are projected as `disambiguation` too. From the event alone the
+ * two were indistinguishable, so "duplicate creation prevented" could only ever
+ * have been guessed at from the CONTEXT the event happened in — which is not the
+ * same claim. The suggestion the user pressed knows which it was; this carries
+ * that one bit and nothing else. It is a boolean, so it adds no identifier and
+ * no text to a payload that the ingest rebuilds from an allow-list anyway.
+ */
 export function emitDisambiguationSelected(f: TelemetryField, s: InputSuggestion): void {
+  const sv = s.structuredValue;
+  const resolvedExisting =
+    typeof sv === 'object' && sv !== null && (sv as { kind?: unknown }).kind === 'resolve_existing';
   emitInputEvent(
     'disambiguation_selected',
     f.fieldId,
     f.context,
-    { entityType: s.entityType ?? null, confidence: s.confidence ?? null },
+    { entityType: s.entityType ?? null, confidence: s.confidence ?? null, resolvedExisting },
     f.policy,
     f.requestId,
   );

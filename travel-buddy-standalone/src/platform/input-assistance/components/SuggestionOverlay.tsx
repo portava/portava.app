@@ -5,26 +5,105 @@
  *
  * Responsibilities:
  *  - render grouped sections (or a flat list) in an internally-scrolling card,
- *    capped in height and virtualized-friendly, so it never grows unbounded;
+ *    capped in height and VIRTUALIZED, so neither the row count nor the
+ *    available screen space can make it grow unbounded;
  *  - keep taps working while the software keyboard is up
  *    (keyboardShouldPersistTaps="handled") — the "no overlay trapped behind the
  *    keyboard" guarantee (§46) is met by keeping this INLINE below the field
- *    rather than in a modal;
+ *    rather than in a modal, AND by the height budget below, which measures the
+ *    obstruction instead of arguing about it;
  *  - announce loading + result count to screen readers via a polite live region
  *    (§46 "announce suggestion count");
- *  - present a context-dependent empty / no-match state (§37) and a quiet
- *    "assistance unavailable" degraded note (§38) — never an error that
- *    collapses the input.
+ *  - present the §27 ZERO-STATE PANEL before typing, a context-dependent
+ *    empty / no-match state (§37) and a quiet "assistance unavailable" degraded
+ *    note (§38) — never an error that collapses the input.
  *
  * This component is presentational: it does not fetch. `SmartInput` (or any
  * consumer) feeds it the hook output.
  */
-import React from 'react';
-import { View, Text, ScrollView, ActivityIndicator, StyleSheet } from 'react-native';
+import React, { useContext, useEffect, useMemo, useState } from 'react';
+import {
+  View,
+  Text,
+  FlatList,
+  Keyboard,
+  ActivityIndicator,
+  StyleSheet,
+  useWindowDimensions,
+} from 'react-native';
+import { SafeAreaInsetsContext } from 'react-native-safe-area-context';
 import type { InputSuggestion } from '../types/inputSuggestion.ts';
-import { SuggestionGroup, groupSuggestions, type SuggestionSection } from './SuggestionGroup.tsx';
-import { SuggestionList } from './SuggestionList.tsx';
+import { groupSuggestions, SuggestionSectionHeader, type SuggestionSection } from './SuggestionGroup.tsx';
+import { SuggestionRow } from './SuggestionList.tsx';
+import { ZeroStatePanel } from './ZeroStatePanel.tsx';
 import { color, space, radius, type as t, shadow } from '../../../theme/tokens.ts';
+
+/**
+ * §33 "stable layout under the mobile keyboard" / §27 "safe-area behaviour".
+ *
+ * The card must never be taller than the space that is actually free. Two
+ * obstructions can eat the bottom of the screen and only one of them is ever
+ * present at a time: the software keyboard (which also covers the home
+ * indicator), or, when it is down, the bottom safe-area inset. `reserved` is
+ * therefore a max, not a sum — adding them would shrink the card by a gesture
+ * bar that is currently behind a keyboard.
+ *
+ * Pure, exported and unit-tested, because the alternative is asserting the
+ * guarantee in a comment. That is exactly what this overlay used to do: it
+ * claimed the keyboard guarantee followed from being inline, with no inset read
+ * and no keyboard listener anywhere in the layer.
+ */
+export const OVERLAY_MIN_HEIGHT = 96;
+/** Space kept between the card's bottom edge and whatever is under it. */
+export const OVERLAY_GUTTER = 24;
+
+export function overlayHeightBudget(params: {
+  requestedMaxHeight: number;
+  windowHeight: number;
+  keyboardHeight: number;
+  bottomInset: number;
+}): number {
+  const { requestedMaxHeight, windowHeight, keyboardHeight, bottomInset } = params;
+  if (!Number.isFinite(windowHeight) || windowHeight <= 0) return requestedMaxHeight;
+  const reserved = keyboardHeight > 0 ? keyboardHeight : Math.max(0, bottomInset);
+  const available = windowHeight - reserved - OVERLAY_GUTTER;
+  // Never below the floor: a card squeezed to nothing is a worse failure than a
+  // card that overlaps, because it removes the escape route (§38 "must not
+  // collapse the input UI").
+  return Math.max(OVERLAY_MIN_HEIGHT, Math.min(requestedMaxHeight, available));
+}
+
+/** Current software-keyboard height, 0 when it is down. */
+export function useKeyboardHeight(): number {
+  const [height, setHeight] = useState(0);
+  useEffect(() => {
+    const show = Keyboard.addListener('keyboardDidShow', (e: any) => {
+      const h = e?.endCoordinates?.height;
+      setHeight(typeof h === 'number' && h > 0 ? h : 0);
+    });
+    const hide = Keyboard.addListener('keyboardDidHide', () => setHeight(0));
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
+  return height;
+}
+
+type OverlayRow =
+  | { key: string; kind: 'header'; label: string }
+  | { key: string; kind: 'row'; suggestion: InputSuggestion };
+
+/** Flatten sections into one virtualizable stream of rows. */
+export function flattenSections(sections: SuggestionSection[]): OverlayRow[] {
+  const out: OverlayRow[] = [];
+  sections.forEach((section, i) => {
+    if (section.suggestions.length === 0) return;
+    if (section.label) out.push({ key: `h:${section.label}:${i}`, kind: 'header', label: section.label });
+    for (const s of section.suggestions) out.push({ key: `s:${s.id}`, kind: 'row', suggestion: s });
+  });
+  return out;
+}
 
 export interface SuggestionOverlayProps {
   visible: boolean;
@@ -42,7 +121,16 @@ export interface SuggestionOverlayProps {
   grouped?: boolean;
   /** Context-dependent fallback actions for the no-match state (§37). */
   emptyState?: React.ReactNode;
-  /** Cap on the overlay height. */
+  /**
+   * §27 — the field is EMPTY, so whatever rows are present are the "before
+   * typing" set and belong in the zero-state panel, not in a results list.
+   */
+  zeroState?: boolean;
+  /** Heading for the zero-state panel (e.g. "Recent", "Nearby"). */
+  zeroStateTitle?: string;
+  /** Pre-typing hint shown when the zero-state set is empty. */
+  zeroStateHint?: string;
+  /** Cap on the overlay height. The real cap is the min of this and the budget. */
   maxHeight?: number;
   testID?: string;
 }
@@ -58,15 +146,42 @@ export function SuggestionOverlay({
   renderLeading,
   grouped = true,
   emptyState,
+  zeroState,
+  zeroStateTitle,
+  zeroStateHint,
   maxHeight = 320,
   testID,
 }: SuggestionOverlayProps) {
-  if (!visible) return null;
+  // Hooks run before the early return — a conditional hook would break the
+  // order on the render where the overlay hides.
+  const keyboardHeight = useKeyboardHeight();
+  // CONTEXT, not `useSafeAreaInsets()`: that hook THROWS when no
+  // SafeAreaProvider is above it, and this overlay is mounted by whatever screen
+  // owns the field. An input that cannot render because a provider is missing
+  // would be a worse regression than an un-inset card, and §38 forbids the
+  // assistance layer collapsing the input UI. `null` ⇒ inset 0.
+  const insets = useContext(SafeAreaInsetsContext);
+  const { height: windowHeight } = useWindowDimensions();
 
   const flat = suggestions ?? [];
-  const resolvedSections: SuggestionSection[] =
-    sections ?? (grouped ? groupSuggestions(flat) : [{ label: '', suggestions: flat }]);
-  const total = resolvedSections.reduce((n, s) => n + s.suggestions.length, 0);
+  const resolvedSections: SuggestionSection[] = useMemo(
+    () => sections ?? (grouped ? groupSuggestions(flat) : [{ label: '', suggestions: flat }]),
+    // `flat` is a fresh array each render when `suggestions` is; addressing it
+    // through `suggestions` keeps the memo keyed on the caller's identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sections, grouped, suggestions],
+  );
+  const rows = useMemo(() => flattenSections(resolvedSections), [resolvedSections]);
+  const total = rows.reduce((n, r) => n + (r.kind === 'row' ? 1 : 0), 0);
+
+  const budget = overlayHeightBudget({
+    requestedMaxHeight: maxHeight,
+    windowHeight,
+    keyboardHeight,
+    bottomInset: insets?.bottom ?? 0,
+  });
+
+  if (!visible) return null;
 
   const status = loading
     ? 'Loading suggestions'
@@ -74,10 +189,60 @@ export function SuggestionOverlay({
       ? `${total} suggestion${total === 1 ? '' : 's'}`
       : unavailable
         ? 'Suggestions unavailable'
-        : 'No suggestions';
+        : zeroState
+          ? 'No suggestions yet'
+          : 'No suggestions';
+
+  // §33 "virtualize large suggestion groups". This used to be a ScrollView,
+  // which mounts every row in the group no matter how many there are. The cap
+  // (§33's other half) is enforced server-side and again in the client ranker,
+  // so today the list is short — but the cap is a POLICY value and the
+  // mechanism has to hold when a context raises it. A FlatList mounts a window.
+  const list = (
+    <FlatList
+      testID="ia-suggestion-scroll"
+      data={rows}
+      keyExtractor={(r) => r.key}
+      renderItem={({ item }) =>
+        item.kind === 'header' ? (
+          <SuggestionSectionHeader label={item.label} />
+        ) : (
+          <SuggestionRow
+            suggestion={item.suggestion}
+            onSelect={onSelect}
+            activeId={activeId}
+            renderLeading={renderLeading}
+          />
+        )
+      }
+      // A VirtualizedList memoizes its mounted cells, and `rows` is stable
+      // while the suggestion list is — so a cell would not re-render for a
+      // changed `activeId` on `data` identity alone. NOT CURRENTLY PROVEN:
+      // removing this line leaves the keyboard-navigation suite green, because
+      // `renderItem` below is an inline arrow whose identity changes every
+      // render and busts the memo by accident. It is kept because that accident
+      // is exactly what a future `useCallback` around `renderItem` would
+      // remove, silently freezing the highlight — and `extraData` is the
+      // documented way to say what a cell depends on.
+      extraData={activeId}
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator
+      initialNumToRender={8}
+      windowSize={3}
+      maxToRenderPerBatch={8}
+      style={styles.scroll}
+      contentContainerStyle={[
+        styles.scrollContent,
+        // §27 safe-area behaviour: when the keyboard is DOWN the card can sit
+        // over the home indicator, so the last row gets the inset as padding
+        // and stays tappable. With the keyboard up the inset is behind it.
+        { paddingBottom: space.xs + (keyboardHeight > 0 ? 0 : Math.max(0, insets?.bottom ?? 0)) },
+      ]}
+    />
+  );
 
   return (
-    <View style={[styles.card, { maxHeight }]} testID={testID ?? 'ia-suggestion-overlay'}>
+    <View style={[styles.card, { maxHeight: budget }]} testID={testID ?? 'ia-suggestion-overlay'}>
       {/* Polite live region — announces count / loading to screen readers (§46). */}
       <Text
         style={styles.srStatus}
@@ -95,33 +260,13 @@ export function SuggestionOverlay({
         </View>
       ) : null}
 
-      {total > 0 ? (
-        <ScrollView
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator
-          style={styles.scroll}
-          contentContainerStyle={styles.scrollContent}
-        >
-          {resolvedSections.map((section, i) =>
-            section.label ? (
-              <SuggestionGroup
-                key={`${section.label}-${i}`}
-                section={section}
-                onSelect={onSelect}
-                activeId={activeId}
-                renderLeading={renderLeading}
-              />
-            ) : (
-              <SuggestionList
-                key={`flat-${i}`}
-                suggestions={section.suggestions}
-                onSelect={onSelect}
-                activeId={activeId}
-                renderLeading={renderLeading}
-              />
-            ),
-          )}
-        </ScrollView>
+      {/* §27 zero-state panel — before typing, the rows are framed as the
+          pre-typing set rather than as results, and their absence is a
+          different sentence from "no matches". */}
+      {zeroState && !loading && !unavailable ? (
+        <ZeroStatePanel title={zeroStateTitle} hint={zeroStateHint} count={total} body={list} />
+      ) : total > 0 ? (
+        list
       ) : !loading ? (
         <View style={styles.empty}>
           {emptyState ?? (
@@ -153,7 +298,7 @@ const styles = StyleSheet.create({
     flexGrow: 0,
   },
   scrollContent: {
-    paddingVertical: space.xs,
+    paddingTop: space.xs,
   },
   loadingRow: {
     flexDirection: 'row',
