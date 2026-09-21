@@ -115,6 +115,38 @@ function refuseUnlessMember(res: any, membership: ThreadMembership, deniedMessag
   return true;
 }
 
+/**
+ * Retire a suggestion after its action succeeded.
+ *
+ * The action's primary side effect (plan item, prefill, poll message) has
+ * already been committed by the time this runs, so a failure here must NOT turn
+ * into a refusal: the caller would retry and duplicate that side effect. It must
+ * also not be swallowed — an un-retired card stays on screen and invites exactly
+ * that duplicate. So the failure is logged and reported to the caller as
+ * `suggestionRetired: false` alongside the successful primary result.
+ *
+ * This is the one silent write in this file that `refuseUnlessMember`'s
+ * `degraded_unavailable` posture does NOT fit: everything else here fails before
+ * it has changed anything, and may honestly ask the client to retry. This one
+ * cannot.
+ */
+async function markSuggestionActed(
+  client: any,
+  suggestionId: string,
+  userId: string,
+): Promise<boolean> {
+  const { error } = await client
+    .from("telegraph_chat_suggestions")
+    .update({ status: "acted", acted_on_at: new Date().toISOString() })
+    .eq("id", suggestionId)
+    .eq("user_id", userId);
+  if (error) {
+    chatLogger.error({ err: error, suggestionId, userId }, "suggestion acted-status update failed");
+    return false;
+  }
+  return true;
+}
+
 // ── GET /api/threads/:threadId/telegraph/suggestions ─────────────────────────
 
 router.get("/threads/:threadId/telegraph/suggestions", async (req, res) => {
@@ -170,7 +202,23 @@ router.get("/threads/:threadId/telegraph/suggestions", async (req, res) => {
               time_context: c.time_context ?? null,
               status: "shown",
             }));
-            await client.from("telegraph_chat_suggestions").insert(rows);
+            // The generated cards are only ever surfaced by re-reading this
+            // table below. A discarded insert error therefore renders as an
+            // empty suggestion list — indistinguishable from "nothing to
+            // suggest" — so the write must be checked and surfaced.
+            const { error: insertErr } = await client
+              .from("telegraph_chat_suggestions")
+              .insert(rows);
+            if (insertErr) {
+              chatLogger.error(
+                { err: insertErr, threadId, userId: user.id, count: rows.length },
+                "telegraph suggestion insert failed",
+              );
+              sendError(res, "db_error", "Failed to store Telegraph suggestions", {
+                exposeDetail: true,
+              });
+              return;
+            }
           }
         }
       }
@@ -232,6 +280,22 @@ router.post(
     if (suggestionErr) {
       chatLogger.error({ err: suggestionErr, suggestionId, threadId },
         "dismiss preference read failed — no preference event will be written, and that is a failure, not an absent suggestion");
+    }
+
+    // The UPDATE below is scoped by (id, user_id, thread_id) and matches zero
+    // rows when the suggestion does not exist or belongs to someone else — no
+    // error, so the handler used to answer `ok: true` for a dismissal that
+    // never happened. Every sibling action already 404s here; so does this one.
+    //
+    // `!suggestionErr &&` is load-bearing, and it is what the branch above buys:
+    // a FAILED read ALSO leaves `suggestion` null, and 404-ing on that would
+    // trade one false report ("dismissed") for another ("no such suggestion"),
+    // both made from a read that never happened. An unreadable suggestion is not
+    // an absent one, so the dismiss proceeds and answers for its own write —
+    // which is the posture main chose for this handler deliberately.
+    if (!suggestionErr && !suggestion) {
+      sendError(res, "not_found", "Suggestion not found");
+      return;
     }
 
     const { error } = await client
@@ -400,14 +464,9 @@ router.post(
       return;
     }
 
-    // Mark suggestion as acted
-    await client
-      .from("telegraph_chat_suggestions")
-      .update({ status: "acted", acted_on_at: new Date().toISOString() })
-      .eq("id", suggestionId)
-      .eq("user_id", user.id);
+    const retired = await markSuggestionActed(client, suggestionId, user.id);
 
-    res.status(200).json({ ok: true, planItem });
+    res.status(200).json({ ok: true, planItem, suggestionRetired: retired });
   },
 );
 
@@ -456,14 +515,9 @@ router.post(
       threadId,
     };
 
-    // Mark as acted
-    await client
-      .from("telegraph_chat_suggestions")
-      .update({ status: "acted", acted_on_at: new Date().toISOString() })
-      .eq("id", suggestionId)
-      .eq("user_id", user.id);
+    const retired = await markSuggestionActed(client, suggestionId, user.id);
 
-    res.status(200).json({ ok: true, prefill });
+    res.status(200).json({ ok: true, prefill, suggestionRetired: retired });
   },
 );
 
@@ -568,14 +622,9 @@ router.post(
       return;
     }
 
-    // Mark suggestion as acted
-    await client
-      .from("telegraph_chat_suggestions")
-      .update({ status: "acted", acted_on_at: new Date().toISOString() })
-      .eq("id", suggestionId)
-      .eq("user_id", user.id);
+    const retired = await markSuggestionActed(client, suggestionId, user.id);
 
-    res.status(200).json({ ok: true, messageId: (msg as any).id, options });
+    res.status(200).json({ ok: true, messageId: (msg as any).id, options, suggestionRetired: retired });
   },
 );
 

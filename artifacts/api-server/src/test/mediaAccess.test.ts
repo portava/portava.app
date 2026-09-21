@@ -354,6 +354,37 @@ describe("authorizeMediaAccess — bare-key column values (post-2081)", () => {
     assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", path), true);
   });
 
+  it("3c messages.media_url — an UNSENT message no longer authorizes its media", async () => {
+    // Unsend previously wrote only deleted_at + body:'' and left media_url in
+    // place, so this branch kept handing thread members a signed URL for a
+    // photo the sender had deleted. The write now clears the media columns;
+    // this filter closes the same hole for rows tombstoned before that shipped.
+    //
+    // `sender_id: OWNER` is what keeps this test about the `deleted_at` filter
+    // and nothing else. main added an ownership test to this branch (MEDIA-2,
+    // in the case below), so a row with no sender_id is now denied for a SECOND
+    // reason and the assertion would still hold with the deleted_at filter
+    // removed. With the sender owning the object, the tombstone is the only
+    // thing left refusing it.
+    const sc = makeClient({
+      messages: [
+        {
+          thread_id: THREAD,
+          sender_id: OWNER,
+          media_url: bare,
+          media_thumbnail_url: null,
+          deleted_at: "2026-01-02T00:00:00Z",
+        },
+      ],
+      threadMembers: [{ thread_id: THREAD, user_id: VIEWER, left_at: null }],
+    });
+    assert.equal(
+      await authorizeMediaAccess(sc, VIEWER, "post-media", path),
+      false,
+      "a deleted message must not keep granting access to its attachment",
+    );
+  });
+
   it("3c a message carrying ANOTHER user's object does NOT authorize the thread (MEDIA-2)", async () => {
     // The last of the four branches to get the ownership test 3b/3d/3e carry.
     // ATTACKER writes a message into a thread they are in, whose media_url is
