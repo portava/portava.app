@@ -468,7 +468,10 @@ of the field→mode table.
 | --- | --- | --- | --- |
 | G55 | Unicode normalization and safe whitespace folding | C | `lib/canonicalLocations.ts:90-101` (NFD + collapse); client `services/queryNormalization.ts:38-52`. |
 | G56 | Case-insensitive matching | C ᵖ | `routes/discoverySearchHelpers.ts:163-179` `matchTier` lowercases both sides; every DB predicate is `ilike`. Pre-existing Discovery work. |
-| G57 | Diacritic-insensitive matching while preserving display spelling | W | The fold is correct in code — `canonicalLocations.ts:117#STROKE_FOLD` is an explicit stroke-letter map (`đ→d`, `ø→o`, `ł→l`, …) because NFD does not decompose them, and `canonicalLocations.ts:150#searchKey` composes it with the diacritic strip. The **stored** side needs the `search_key` column from migration 2220, and this is now a MEASURED production fact rather than an inference: read against the live production database on 2026-09-21, `canonical_locations.search_key` is ABSENT, `input_normalize_city_key` is ABSENT, and `pg_trgm` is NOT installed; `canonical_locations` itself exists with 31 rows and only the legacy `normalized_name`. The `schema_migration_ledger` DOES carry `2220_canonical_locations_search_key.sql`, but with `applied_by='backfill'` and its own note that the row "asserts only that this filename existed in src/migrations/" — schema and ledger agree, and **the ledger is not evidence of application**. `2220_canonical_locations_search_key.sql:9-18` records that the legacy key for "Đà Nẵng" is the broken string `"a nang"`. `canonicalLocations.ts:714#suggestCanonicalLocationsFolded` queries both columns and tolerates the missing one, so in production the fold silently degrades to a column that cannot match. **The gap is deployment, not code, and this lane must not author a replay of 2220.** WHAT WOULD TURN THIS RED: 2220 applied to production (the integrating agent is doing this) plus a post-apply read showing `search_key` present and a typed "da nang" resolving "Đà Nẵng" through the stored column, not through the application-side alias table. |
+| G57 | Diacritic-insensitive matching while preserving display spelling | **C** | **CLOSED 2026-09-21 on all three clauses this row wrote for itself, each MEASURED.** The previous entry said what would turn it red: *"2220 applied to production plus a post-apply read showing `search_key` present and a typed \"da nang\" resolving \"Đà Nẵng\" through the stored column, not through the application-side alias table."* **(1) APPLIED.** 2220 reached production on 2026-09-21 at 10:52, rehearsed first on a throwaway PostgreSQL 16. **(2) THE POST-APPLY READ, taken against production rather than inherited from the apply's own postconditions:** `canonical_locations.search_key` is present and `is_generated = ALWAYS` (a STORED column, not a view or a trigger), `input_normalize_city_key` exists, `pg_trgm` is installed, and the table still holds its 31 rows — the three facts this row previously recorded as ABSENT are now all true, and no data was lost. **(3) THE DISCRIMINATION, which is the clause that actually matters.** Production holds two Da Nang rows, and they answer the question by themselves:
+&nbsp;&nbsp;• `Da Nang` — `normalized_name` `da nang`, `search_key` `da nang`
+&nbsp;&nbsp;• `Thành phố Đà Nẵng` — `normalized_name` **`thanh pho a nang`**, `search_key` **`thanh pho da nang`**
+A typed `da nang` matches BOTH through `search_key` and only the first through `normalized_name`. The Vietnamese-spelled row is reachable **only** through the stored fold, because `đ` has no NFD decomposition and the legacy normaliser dropped it entirely — storing a key no user will ever type. That is the exact case 2220's own header cites (`2220_canonical_locations_search_key.sql:9-18`). **AND IT IS NOT THE ALIAS TABLE:** `CITY_GEO_ALIASES` carries no `da nang` entry and `resolveGeoAlias('da nang')` returns `da nang` unchanged, so the key reaching the database is the plain fold and the match can only be the column (`canonicalLocations.ts:714#suggestCanonicalLocationsFolded` queries both columns and tolerates a missing one). **DISPLAY SPELLING IS PRESERVED** — `name` is still `Thành phố Đà Nẵng`; the fold is a KEY, never a rewrite. **EVIDENCE:** four cases in `artifacts/api-server/src/test/canonicalSearchKeyProductionShape.test.ts`, whose fixture is those two production rows verbatim rather than invented, pinning `searchKey()` against what the generated column actually stores and reading 2220 to check the SQL folds the same stroke letters. Mutation-proven three ways: removing `đ`/`Đ` from `STROKE_FOLD` reproduces the production defect exactly and reddens a case; making `searchKey` skip the fold reddens one; removing `đ` from the migration reddens one. **WHAT IS NOT CLAIMED:** that the resolver FUNCTION was executed against production — it cannot be, since production's PostgREST answers 403 to CONNECT from this environment. Its two predicates were run directly against the production database instead, which is what the criterion asks: the function's logic is covered by its own suite, and what was previously unknown was the DATA, which is now measured. |
 | G58 | Alias resolution and known abbreviations | C | `canonicalLocations.ts:177-192` `CITY_GEO_ALIASES` — `hcmc`/`saigon`/`sai gon`/`hochiminh` → `ho chi minh`, `danang` → `da nang`, `krung thep` → `bangkok`; applied in application code at `:199-202`, so it works with or without 2220. |
 | G59 | Common misspelling tolerance | C ᵖ | `discoverySearchHelpers.ts:63-95` `SEARCH_ALIASES` (~30 curated travel-domain misspellings) plus `canonicalLocations.ts:161-164` (`siargoa`, `nyc`) and `:186` (`phu qouc`, the spec's own example). The bulk is pre-existing Discovery work. |
 | G60 | Local-language and English-name variants | C | `canonicalLocations.ts:180-191` — `saigon`, `sai gon`, `krung thep` resolve to the English canonical row. |
@@ -4063,3 +4066,70 @@ The denominator is unchanged and no requirement was added, removed or
 reclassified: exactly one row moved `W → C`, so C rises by one and W falls by
 one. `CONSTRUCTED%` is unchanged because C+W is unchanged — which is the point
 of keeping both figures.
+
+## 26. G57 closes on a production measurement, not on the apply
+
+The second verdict move of the day, and it needed no new code at all — 2220 had
+been applied to production at 10:52 and nobody had gone back to read what that
+did. **An applied migration is not a closed requirement**, which is why this row
+stayed `W` through the apply and is closed only now, against the three clauses
+it wrote for itself.
+
+**WHAT THE PRODUCTION READ FOUND.** `search_key` present and
+`is_generated = ALWAYS` — a STORED column, which matters because a view or a
+trigger would be a different guarantee. `input_normalize_city_key` present,
+`pg_trgm` installed, 31 rows intact. The three facts the row had recorded as
+ABSENT are all true, and the row count is unchanged, so nothing was lost.
+
+**AND THE TWO ROWS THAT SETTLE IT.** Production holds two Da Nang entries:
+
+| name | `normalized_name` (legacy) | `search_key` (2220) |
+| --- | --- | --- |
+| `Da Nang` | `da nang` | `da nang` |
+| `Thành phố Đà Nẵng` | **`thanh pho a nang`** | **`thanh pho da nang`** |
+
+A typed `da nang` matches both through `search_key` and only the first through
+`normalized_name`. The Vietnamese-spelled row is reachable **only** through the
+stored fold, because `đ` has no NFD decomposition: the legacy normaliser dropped
+it and stored a key no user will ever type. That is precisely the case 2220's
+own header cites, still sitting in the production data, now answerable.
+
+**THE ISOLATION WAS CHECKED RATHER THAN ASSUMED**, because it is the clause that
+could have been faked: the requirement is that the match come from the STORED
+COLUMN and not from the application-side alias table. `CITY_GEO_ALIASES` has no
+`da nang` entry and `resolveGeoAlias('da nang')` returns `da nang` unchanged, so
+the key reaching the database is the plain fold. There is nothing else it could
+be.
+
+**THE TEST'S FIXTURE IS THE PRODUCTION DATA, VERBATIM.** Two implementations of
+one rule — the SQL in 2220 and `searchKey()` in TypeScript — is the arrangement
+that rots, because the SQL is applied once and never read again while the
+TypeScript is edited whenever a new caller needs folding. The new suite pins
+them together against what production actually stores. Mutation-proven three
+ways: removing `đ`/`Đ` from `STROKE_FOLD` reproduces the production defect
+exactly; making `searchKey` skip the fold reddens a case; removing `đ` from the
+migration reddens a case. 2220 was restored byte-identical after that last one —
+its checksum is recorded on portava-ci and an edit would drift it.
+
+**WHAT IS NOT CLAIMED.** That the resolver FUNCTION ran against production. It
+cannot: production's PostgREST answers 403 to CONNECT from this environment, the
+same wall as G306. Its two predicates were run directly against the production
+database instead, which is what the criterion asks for — the function's logic is
+covered by its own suite, and what was previously unknown was the DATA.
+
+### 26.1 Headline, restated from the rows
+
+| Measure | Value |
+| --- | --- |
+| **Denominator — testable requirements** | **373** |
+| BUILT-AND-CORRECT | **279** |
+| BUILT-BUT-WRONG | **49** |
+| NOT-BUILT | **41** |
+| CANNOT-VERIFY | **4** |
+| **CONSTRUCTED%** = (C+W)/373 | **328 / 373 = 87.9 %** |
+| **CORRECT%** (raw) = C/373 | **279 / 373 = 74.8 %** |
+| **THE GAP** = W/373 | **49 / 373 = 13.1 %** |
+| CANNOT-VERIFY share | **4 / 373 = 1.1 %** |
+
+Denominator unchanged, nothing added or reclassified: one row moved `W → C`, so
+C rises by one and W falls by one. `CONSTRUCTED%` is unchanged because C+W is.
