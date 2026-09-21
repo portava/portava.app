@@ -156,6 +156,28 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
   // the feature is not on. docs/TRIPS-PRODUCTION-ACTIVATION.md keeps those two
   // states in separate columns for this reason.
 
+  // ── Map §35, the collection-off correction ────────────────────────────────
+  map_telemetry_disabled_discards: {
+    classification: "unapplied",
+    note:
+      "Map §35 (2964) — the hourly, viewer-less counter that replaced the " +
+      "viewer-linked `map_telemetry_drops` row routes/mapTelemetry.ts used to " +
+      "write while `map_telemetry_enabled` was FALSE. 2202 promises \"nothing is " +
+      "collected until switched on\", and a row naming an account and a map " +
+      "session broke that promise; this table keeps the 63772b76c discard " +
+      "diagnostic with no identity column to fill. REHEARSED on a throwaway " +
+      "PostgreSQL 16 (apply, re-apply, all postconditions, and all four privacy " +
+      "guards armed: an added identity column, a non-hour bucket_hour, a direct " +
+      "service_role INSERT and an authenticated EXECUTE are each refused). NOT " +
+      "yet applied to production because 2964 travels with the rest of the Map " +
+      "migration chain, whose application is the deployment step this branch has " +
+      "not reached. The route is SAFE in production without it: the RPC 404s, " +
+      "the error is logged non-fatally, and the collection-off path writes " +
+      "nothing at all — which is the promise being kept, just without the " +
+      "counter. Strike this off in the same change that applies 2964 and " +
+      "refreshes the two production snapshots.",
+  },
+
   // ── Trips §23, the one Trips table that is genuinely NOT in production ─────
   trip_commitment_recurrences: {
     classification: "unapplied",

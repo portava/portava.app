@@ -218,12 +218,16 @@ describe("stripActorKeys — the actor is stamped, never accepted", () => {
 //   * flag TRUE  — the event produces EXACTLY ONE row, its `event_name` equals
 //     the §35 name, and its `map_session_id` is the session `map_opened`
 //     minted (not a second session, not null, not the event's own name).
-//   * flag FALSE — ZERO event rows, AND the discard is recorded in
-//     `map_telemetry_drops`. The second half is the point: commit 63772b76c
-//     found that "every production map telemetry event was silently
-//     discarded", and a flag that discards in silence is exactly how that
-//     stayed unnoticed. A discard that writes a counter row is a discard
-//     somebody can see.
+//   * flag FALSE — ZERO rows of ANY kind, and nothing carrying the viewer or
+//     the session, because 2202 promises "nothing is collected until switched
+//     on"; AND the discard is still counted, through 2964's
+//     `record_map_telemetry_disabled_discard`, whose whole argument list is an
+//     event count. Both halves are the point: commit 63772b76c found that
+//     "every production map telemetry event was silently discarded", and a
+//     flag that discards in silence is exactly how that stayed unnoticed — but
+//     the first fix for it bought visibility by writing a per-account,
+//     per-session row while collection was off, which is the defect these
+//     cases now hold shut from the other side.
 //
 // ── ON THE FAKE CLIENT, AND WHAT IT CANNOT BE ASKED ────────────────────────
 // The double below is a recorder; like every fake in this repo it answers
@@ -263,6 +267,8 @@ const OTHER_SESSION = "mse_not_the_minted_one";
 
 /** Every insert the route issued, in order: the whole observable effect. */
 let inserts: Array<{ table: string; rows: any[] }> = [];
+/** Every RPC the route issued, in order, with the arguments it passed. */
+let rpcCalls: Array<{ fn: string; args: any }> = [];
 let flagEnabled = false;
 
 function rowsInto(table: string): any[] {
@@ -305,6 +311,15 @@ const fakeClient = {
         : { data: { user: null }, error: { message: "Unauthorized" } },
   },
   from: (table: string) => builder(table),
+  // Recorded, not executed. This fixture cannot tell you that
+  // `record_map_telemetry_disabled_discard` exists or that it stores only a
+  // count — 2964's own postconditions and its psql arming do that. What it CAN
+  // tell you is what this route handed the database, which is the half the
+  // route owns: the function name, and every argument value.
+  rpc: async (fn: string, args: any) => {
+    rpcCalls.push({ fn, args });
+    return { data: null, error: null };
+  },
 };
 
 let server: http.Server;
@@ -371,6 +386,7 @@ after(async () => {
 
 beforeEach(() => {
   inserts = [];
+  rpcCalls = [];
   flagEnabled = false;
   _setTestClient(fakeClient as any, true);
   _setTestServiceClient(fakeClient as any);
@@ -526,32 +542,87 @@ describe("with map_telemetry_enabled FALSE", () => {
     assert.equal(rowsInto("map_telemetry_events").length, 0);
   });
 
-  test("the discard is RECORDED in map_telemetry_drops, not silent", async () => {
-    // The whole finding of commit 63772b76c was a silent discard. A flag that
-    // throws a batch away and writes nothing is indistinguishable, from the
-    // data, from a map nobody opened.
+  // ── COLLECTION OFF MEANS COLLECTION OFF ──────────────────────────────────
+  // 2202_map_telemetry.sql, the migration that seeds this flag, states the
+  // contract in one sentence: "Nothing is collected until switched on."
+  //
+  // The route used to write a `map_telemetry_drops` row here carrying
+  // `viewer_id` and `map_session_id` — WHICH ACCOUNT, in WHICH MAP SESSION,
+  // discarded HOW MANY events, at WHAT TIME. That is per-user behavioural data
+  // written while the control governing per-user behavioural data is FALSE, and
+  // the fact that `viewer_id` is NOT NULL is a reason the write had to name a
+  // user, not a reason it was permitted to. These two cases are the ones that
+  // fail if that write ever comes back, in any table, under any column name.
+
+  test("collection-off writes NO row naming the viewer, into any table", async () => {
     flagEnabled = false;
     await post({
       events: SPEC_35_ROWS.map(([, n], i) => event(n, i + 1)),
       meta: { schemaVersion: "1.0", mapSessionId: SESSION },
     });
-    const drops = rowsInto("map_telemetry_drops");
-    assert.equal(drops.length, 1, "a disabled flag must leave a drop counter behind");
-    assert.equal(drops[0].dropped, SPEC_35_ROWS.length, "every discarded event is counted");
-    assert.equal(drops[0].map_session_id, SESSION);
-    assert.equal(drops[0].viewer_id, USER);
+
+    // Not "no drops row" — no row at all. Naming one table would let the same
+    // record return under a different name, which is exactly how this defect
+    // was introduced.
+    assert.deepEqual(
+      inserts.map((w) => w.table),
+      [],
+      "with collection off the route must insert into nothing",
+    );
+
+    // And the identifiers must not have travelled by any other route either —
+    // including the RPC arguments, which are the one thing this path does send.
+    const everythingSent = JSON.stringify({ inserts, rpcCalls });
     assert.equal(
-      (drops[0].dropped_by_reason as Record<string, number>).flag_disabled,
-      SPEC_35_ROWS.length,
-      "the reason must say the flag, not just that something was lost",
+      everythingSent.includes(USER),
+      false,
+      "the viewer id must not appear in anything the collection-off path sends",
+    );
+    assert.equal(
+      everythingSent.includes(SESSION),
+      false,
+      "the map session id is a correlation key; it must not appear either",
     );
   });
 
-  test("anti-vacuity: an EMPTY batch with the flag off writes no drop row", async () => {
-    // Otherwise "a drop row exists" is satisfied by writing one unconditionally.
+  test("the discard is still COUNTED — an off flag stays distinguishable from an unused map", async () => {
+    // The whole finding of commit 63772b76c was a silent discard. A flag that
+    // throws a batch away and counts nothing is indistinguishable, from the
+    // data, from a map nobody opened. Removing the viewer-linked row must not
+    // re-create that blindness, so the count still goes somewhere — to 2964's
+    // hourly counter, which has no viewer column and no session column to fill.
+    flagEnabled = false;
+    await post({
+      events: SPEC_35_ROWS.map(([, n], i) => event(n, i + 1)),
+      meta: { schemaVersion: "1.0", mapSessionId: SESSION },
+    });
+
+    assert.equal(rpcCalls.length, 1, "a disabled flag must leave a count behind");
+    assert.equal(rpcCalls[0].fn, "record_map_telemetry_disabled_discard");
+    assert.deepEqual(
+      rpcCalls[0].args,
+      { p_events: SPEC_35_ROWS.length },
+      "the whole argument list is a count: anything else here is collection",
+    );
+  });
+
+  test("the count is the batch size, not a constant", async () => {
+    // Otherwise "the discard is counted" is satisfied by sending 1 every time,
+    // and the counter cannot size an outage.
+    flagEnabled = false;
+    await post({
+      events: [event("map_opened", 1), event("zone_selected", 2), event("place_opened", 3)],
+      meta: { schemaVersion: "1.0", mapSessionId: SESSION },
+    });
+    assert.deepEqual(rpcCalls[0].args, { p_events: 3 });
+  });
+
+  test("anti-vacuity: an EMPTY batch with the flag off counts nothing", async () => {
+    // Otherwise "a discard was counted" is satisfied by counting unconditionally.
     flagEnabled = false;
     await post({ events: [], meta: { schemaVersion: "1.0", mapSessionId: SESSION } });
     assert.equal(rowsInto("map_telemetry_drops").length, 0);
+    assert.equal(rpcCalls.length, 0, "a refusal that discarded nothing is not a discard");
   });
 });
 

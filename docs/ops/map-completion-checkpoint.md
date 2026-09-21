@@ -370,6 +370,16 @@ is not a licence.
   that false-positive reason — its only match is a docstring. The guard's
   sibling assertion already strips comments; this one does not. Test-infra
   owner's; costs one false entry on a debt list.
-- `map_telemetry_drops.viewer_id` is NOT NULL, so the disabled-flag drop count
-  is viewer-linked. The choice is between a viewer-linked count and an
-  invisible loss; a count without an identity needs a schema change.
+- ~~`map_telemetry_drops.viewer_id` is NOT NULL, so the disabled-flag drop
+  count is viewer-linked.~~ **RESOLVED — the framing was wrong, and so was the
+  behaviour.** This was filed as a choice between a viewer-linked count and an
+  invisible loss. It was not: the third option is the one that was taken. The
+  schema change it said was needed is `2964_map_telemetry_disabled_discards.sql`
+  — an hourly counter with no viewer column, no session column and no
+  per-request row, written through a SECURITY DEFINER function whose whole
+  argument list is an event count. `viewer_id` being NOT NULL was a reason the
+  write had to name a user, never a reason it was permitted to: 2202 seeds
+  `map_telemetry_enabled` with the sentence "Nothing is collected until switched
+  on", and a row saying which account, in which map session, discarded how many
+  events at what time is collection. The 63772b76c diagnostic is intact — an off
+  flag is still distinguishable from a map nobody opened, to the hour.
