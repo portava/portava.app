@@ -168,7 +168,7 @@ database credentials this environment does not have.
 | 1 | API bundle builds | **VERIFIED PASS** (exit 0) | ran step 1 in this worktree |
 | 2 | Built bundle boots and serves | **VERIFIED PASS** | see §3.1 |
 | 3 | Frontend static build | **ASSUMED** — not run | `travel-buddy-standalone/scripts/build.js:518#spawnSync` |
-| 3a | ⚠ 2970 applied to production BEFORE the next deploy of `main` | **REQUIRED — NOT DONE.** `buildStats` already selects `evidences_presence`; the column is on neither database | §1.7 |
+| 3a | ⚠ 2970 applied to production BEFORE the next deploy of `main` | **DONE 2026-09-21.** Applied to production from merged main `857ad9fb9`; column present and `NOT NULL`, 13 true / 47 false, zero over-claimers, ledger row written. The prior state of this row said the column was "on neither database" — that was **stale**: it has been live on `portava-ci` since 2026-09-15. See §1.7. | §1.7 |
 | 4 | `SUPABASE_SERVICE_ROLE_KEY` set | **UNKNOWN — human must confirm in Replit Secrets** | `artifacts/api-server/src/lib/envValidation.ts:9#REQUIRED_KEYS` |
 | 5 | `SESSION_SECRET` set | **UNKNOWN — human must confirm in Replit Secrets** | same |
 | 6 | Replit UI build/run commands match `.replit` | **UNKNOWN — human must confirm in the Deployments UI** | `.replit:11#Best-effort` |
@@ -193,7 +193,7 @@ READ; nothing was applied.
 | **files with NO production ledger row** | **156** |
 | rows with `applied_by='backfill'` | 382 (`0010_trip_plan.sql` … `2254_schema_migration_ledger.sql`) |
 | rows with `applied_by='manual'` | 11 (`2338_memory_location_precision.sql` … `2730_memory_derivative_registry.sql`) |
-| rows at or above `2890` | **zero** |
+| rows at or above `2890` | **19 — the "zero" previously recorded here was WRONG.** It is the literal result of querying `supabase_migrations.schema_migrations` (the Supabase CLI ledger) rather than `public.schema_migration_ledger`, compounded by a TEXT comparison on a column holding both bare serials and 14-digit timestamps, where collation orders `'289' < '20260915123045' < '2950'` so `>= '2890'` excludes every post-cutover row regardless of what is applied. Re-measured 2026-09-21 against the hand-rolled ledger. |
 
 **WHAT THE 393 DOES AND DOES NOT PROVE.** 382 of those rows carry
 `applied_by='backfill'` with the literal string `backfill` as their checksum.

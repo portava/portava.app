@@ -1,12 +1,37 @@
 -- 2950_input_assistance_telemetry_events.sql
 --
--- ⚠ NOT APPLIED ANYWHERE YET. This file is committed on a detached HEAD by the
---   Input Intelligence lane. It has NOT been applied to production
---   (ajrurzioarfkagpuxfnb) and, at the time of writing, NOT to portava-ci
---   (hwokxgbmezheskbzskfr) either. Until it is applied, every write this lane's
---   new code issues against this table fails at PostgREST and is answered as a
---   RETRYABLE REFUSAL -- never as a successful empty result. See
---   src/lib/inputAssistance/telemetry.ts.
+-- APPLIED TO PRODUCTION 2026-09-21 12:11:18 UTC (ajrurzioarfkagpuxfnb), and to
+--   portava-ci (hwokxgbmezheskbzskfr). VERIFIED BY OBJECT PROBE, not by a
+--   ledger row alone: the table exists and all nine constraints are present in
+--   production, including `iate_event_name_known`, whose CHECK was read back
+--   from pg_constraint carrying all fourteen event names in the ARRAY below.
+--   `public.schema_migration_ledger` also carries the row.
+--
+--   THE HEADER THIS REPLACES SAID "NOT APPLIED ANYWHERE YET", AND IT WAS FALSE
+--   FROM 12:11 ON 2026-09-21. It is corrected rather than deleted because it
+--   actively misled a later reader into reporting production as unmigrated.
+--
+--   WHY THE CONFUSION AROSE, WRITTEN DOWN SO IT DOES NOT RECUR. This project
+--   has TWO migration ledgers with disjoint columns:
+--     public.schema_migration_ledger        -- hand-rolled; `filename`, no `version`
+--     supabase_migrations.schema_migrations -- Supabase CLI; `version`, no `filename`
+--   The CLI table's `version` is TEXT holding two formats at once -- bare
+--   serials ('2272') and 14-digit timestamps ('20260921101005') -- and text
+--   collation orders them '289' < '20260915123045' < '2950'. So `version >=
+--   '2890'` excludes EVERY post-cutover row no matter what is applied, and
+--   MAX(version) returns a pre-cutover serial. The CLI table also stores the
+--   migration serial in `name`, not `version`. A query written for one table
+--   and run against the other answers zero and looks authoritative.
+--
+--   AND LEDGER ABSENCE IS NOT EVIDENCE OF NON-APPLICATION. Probed on the same
+--   day, 2890, 2900 and 2958 are all live in production with NO hand-ledger
+--   row; 2958 has no row in either ledger and its column exists. Only an object
+--   probe settles whether a migration ran. Migration 2298 is the precedent for
+--   the inverse -- a ledger row whose effects were absent.
+--
+--   Before it was applied, every write this lane's code issued against this
+--   table failed at PostgREST and was answered as a RETRYABLE REFUSAL -- never
+--   as a successful empty result. See src/lib/inputAssistance/telemetry.ts.
 --
 -- POST-CUTOVER CANONICAL FORWARD MIGRATION (2100-2999 band). Input
 -- Intelligence lane, band 2950-2959.
