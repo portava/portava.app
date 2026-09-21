@@ -380,13 +380,34 @@ function sqlState(err: unknown): string {
   return typeof code === 'string' ? code : '';
 }
 
+/**
+ * PostgreSQL's wording for a failed CHECK, which carries the constraint's name:
+ *   new row for relation "…" violates check constraint "iate_props_no_raw_text"
+ * Measured against PostgreSQL 16 rather than taken from the documentation.
+ */
+const CHECK_CONSTRAINT_IN_MESSAGE = /violates check constraint "([^"]+)"/;
+
+/**
+ * The constraint a write failure names, or '' when it names none.
+ *
+ * TWO SOURCES, AND THE SECOND IS NOT A GUESS. `err.constraint` is read when it
+ * is present; PostgREST does not always surface it, and PostgreSQL puts the
+ * name in the message text, so the message is parsed GENERICALLY when the field
+ * is missing.
+ *
+ * Generically matters. An earlier version matched only this file's own
+ * `RAW_TEXT_CONSTRAINT` in the message and returned '' for anything else, which
+ * made every other constraint indistinguishable from an unidentifiable one —
+ * and 2950 declares EIGHT checks, seven of which have nothing to do with
+ * privacy. Returning the real name lets the caller tell "a different rule
+ * refused this" from "I cannot tell which rule refused this", which are
+ * different situations deserving different alarms.
+ */
 function constraintName(err: unknown): string {
   const e = err as { constraint?: unknown; message?: unknown } | null;
-  if (typeof e?.constraint === 'string') return e.constraint;
-  // PostgREST does not always surface `constraint`; the name appears in the
-  // message when it does not.
+  if (typeof e?.constraint === 'string' && e.constraint.length > 0) return e.constraint;
   const msg = typeof e?.message === 'string' ? e.message : '';
-  return msg.includes(RAW_TEXT_CONSTRAINT) ? RAW_TEXT_CONSTRAINT : '';
+  return CHECK_CONSTRAINT_IN_MESSAGE.exec(msg)?.[1] ?? '';
 }
 
 /**
@@ -448,6 +469,16 @@ function classifyWriteFailure(
   const state = sqlState(err);
   const constraint = constraintName(err);
 
+  // A 23514 whose constraint CANNOT be identified is treated as the privacy
+  // guard, deliberately. It is the noisier of the two errors and the safe one:
+  // a false alarm sends someone to look at a log line that names no values,
+  // while a missed alarm means the one signal that the rebuild allow-list and
+  // the database disagree went out as a shrug. What is NOT done is treat every
+  // unnamed 23514 that way — a named, different constraint (2950 declares seven
+  // besides this one, from `iate_props_bounded` to `iate_event_name_known`)
+  // falls through to the permanent-refusal branch below and raises no privacy
+  // alarm at all, because claiming a leak scare for an oversized blob would
+  // train the next reader to ignore the real one.
   if (constraint === RAW_TEXT_CONSTRAINT || (state === '23514' && constraint === '')) {
     // The loudest thing this subsystem can say. The server REBUILDS every event
     // from a per-name allow-list before it reaches here, so this constraint

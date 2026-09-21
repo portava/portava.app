@@ -77,6 +77,73 @@ test('a raw-text constraint violation is PERMANENT, not retryable', async () => 
   assert.equal((out as any).refusal.reason, 'forbidden_props_key');
 });
 
+test('the constraint is recognised from the MESSAGE when no `constraint` field arrives', async () => {
+  // THE BRANCH THIS COVERS EXISTS BECAUSE THE FIELD IS NOT GUARANTEED.
+  // `constraintName` reads `err.constraint` when it is there and matches the
+  // name inside the message when it is not. The first branch was covered from
+  // the start; this one was NOT, and the gap was found by trying to write down
+  // which of the two fires in production — and discovering that question is
+  // unanswerable from here (production's PostgREST answers 403 to CONNECT at
+  // the egress gateway, as does the CI project's). The honest response to an
+  // unverifiable branch is to TEST it, not to assert which one runs.
+  //
+  // THE MESSAGE IS NOT INVENTED. It is verbatim what PostgreSQL 16 returned on
+  // the throwaway cluster where 2950 is applied, when an insert carried a
+  // forbidden key. A hand-written approximation would pin this test to my
+  // guess at the wording rather than to the database's.
+  const r = recorder();
+  const out = await recordTelemetryEvents(
+    failingDb({
+      code: '23514',
+      message:
+        'new row for relation "input_assistance_telemetry_events" violates check constraint "iate_props_no_raw_text"',
+    }),
+    [row({ props: { count: 5, rawText: 'where is the secret bar' } })],
+    r.log,
+  );
+
+  assert.ok('refusal' in out);
+  assert.equal((out as any).refusal.reason, 'forbidden_props_key', 'the message alone must identify the guard');
+  assert.equal((out as any).refusal.retryable, false);
+  assert.equal(r.errors.length, 1, 'it still reaches the error channel, not the warn channel');
+  assert.deepEqual(r.errors[0].obj.forbiddenKeysPresent, ['rawText']);
+  // And still no values.
+  assert.equal(JSON.stringify(r.errors[0].obj).includes('secret bar'), false);
+});
+
+test('a DIFFERENT 23514 constraint is permanent but raises NO privacy alarm', async () => {
+  // THE FALSE-ALARM CASE, and it is the one that makes the branch above worth
+  // discriminating. 2950 declares EIGHT check constraints and only one is about
+  // raw text; the other seven bound lengths and the event-name vocabulary. An
+  // earlier version of `constraintName` matched only this file's own constraint
+  // in the message and returned '' for everything else — which sent an
+  // oversized props blob out as "PRIVACY GUARD FIRED: the serve-log rebuild
+  // allow-list admitted a key migration 2950 forbids". That is false, and a
+  // privacy alarm that cries wolf is worse than none, because it trains the
+  // next reader to skip the real one.
+  const r = recorder();
+  const out = await recordTelemetryEvents(
+    failingDb({
+      code: '23514',
+      message:
+        'new row for relation "input_assistance_telemetry_events" violates check constraint "iate_props_bounded"',
+    }),
+    [row({ props: { count: 5 } })],
+    r.log,
+  );
+
+  assert.ok('refusal' in out);
+  assert.equal((out as any).refusal.retryable, false, 'still permanent — a CHECK is a CHECK');
+  assert.equal(
+    (out as any).refusal.reason,
+    'constraint_violation:23514',
+    'refused, but NOT as the raw-text guard',
+  );
+  assert.equal(r.errors.length, 0, 'no error-channel privacy alarm for a non-privacy constraint');
+  assert.equal(r.warns.length, 1, 'it is still reported, as a warn');
+  assert.equal(r.warns[0].obj.constraint, 'iate_props_bounded', 'and it names the rule that actually refused');
+});
+
 test('the privacy guard is reported LOUDLY and without the payload', async () => {
   const r = recorder();
   await recordTelemetryEvents(

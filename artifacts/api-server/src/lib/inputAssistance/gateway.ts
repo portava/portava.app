@@ -23,7 +23,8 @@
  * → privacy gateway → rank/dedupe → project.
  */
 import { fetchBlockedSet } from '../blocks';
-import { normalizeLocationName } from '../canonicalLocations';
+import { normalizeLocationName, type CanonicalRow } from '../canonicalLocations';
+import { logger } from '../logger';
 import type { SearchQueryContext } from '../../routes/discoverySearchHelpers';
 import {
   dispatchSearch,
@@ -32,7 +33,13 @@ import {
   mergeCitySuggestions,
   type SearchResult,
 } from '../../routes/discoverySearch';
-import { resolveGeoCandidates, zeroCharGeoDefaults, type GeoResolution } from './geoResolver';
+import {
+  resolveGeoCandidates,
+  zeroCharGeoDefaults,
+  venueBinding,
+  type GeoResolution,
+  type CanonicalVenueBinding,
+} from './geoResolver';
 import { entityToSearchType, type DispatchSearchType } from './entityMap';
 import {
   resolveRecipientSuggestions,
@@ -120,6 +127,76 @@ const GEO_PICKER_CONTEXTS: ReadonlySet<InputContext> = new Set<InputContext>([
 ]);
 
 const EMPTY_GEO: GeoResolution = { rows: [], ambiguous: false, airport: null };
+
+// ── §17 venue bindings for picker contexts (G109) ─────────────────────────────
+//
+// A place SearchResult carries everything the binding needs EXCEPT the country,
+// which lives on `canonical_locations` rather than on `discovery_places`. One
+// batched read per request resolves it for every linked place at once.
+//
+// FAIL-CLOSED, AND THE DISTINCTION IS THE WHOLE POINT. A place with no
+// `canonical_location_id` genuinely has no canonical link, and a binding
+// carrying `country: null` is a true statement about it. A place that HAS a
+// link whose read FAILED is a different thing entirely, and it gets NO binding
+// at all — because §17 prefills dependent fields from this value, so an outage
+// rendered as `country: null` would write "this venue is in no country" into a
+// field the user can see. Absent prefill is a smaller harm than wrong prefill.
+export async function resolveVenueBindings(
+  sc: any,
+  places: readonly SearchResult[],
+): Promise<Map<string, CanonicalVenueBinding>> {
+  const out = new Map<string, CanonicalVenueBinding>();
+  if (places.length === 0) return out;
+
+  const linkIds = [
+    ...new Set(
+      places
+        .map((p) => (p.metadata as { livingPageId?: string } | undefined)?.livingPageId)
+        .filter((x): x is string => typeof x === 'string' && x.length > 0),
+    ),
+  ];
+
+  let canonicalById: Map<string, CanonicalRow> | null = new Map();
+  if (linkIds.length > 0) {
+    const { data, error } = await sc
+      .from('canonical_locations')
+      .select('id, kind, name, display_name, country, country_code')
+      .in('id', linkIds);
+    if (error || !data) {
+      // The read failed. Mark it so linked places are SKIPPED below rather than
+      // bound with a null country they did not earn.
+      canonicalById = null;
+      logger.warn(
+        { err: error ?? 'no rows object', linked: linkIds.length },
+        'venue bindings: canonical_locations read failed — linked places get no §17 binding this request',
+      );
+    } else {
+      for (const row of data as CanonicalRow[]) canonicalById.set(row.id, row);
+    }
+  }
+
+  for (const p of places) {
+    const linkId = (p.metadata as { livingPageId?: string } | undefined)?.livingPageId;
+    if (linkId && canonicalById === null) continue; // the failed-read case
+    const md = p.metadata as { lat?: number | null; lng?: number | null } | undefined;
+    out.set(
+      p.id,
+      venueBinding(
+        {
+          id: p.id,
+          name: p.title,
+          city: p.locationPreview ?? null,
+          lat: md?.lat ?? null,
+          lng: md?.lng ?? null,
+        },
+        linkId ? (canonicalById?.get(linkId) ?? null) : null,
+      ),
+    );
+  }
+  return out;
+}
+
+
 
 // §26: free-text writing fields where an @mention / #hashtag is INSERTED as a
 // structured reference (not searched-for as an entity page). When one of these
@@ -530,6 +607,18 @@ export async function generateSuggestions(
         const allCandidates = perTypeResults.flat();
         const verdict = classifyFeasibility(allCandidates, taskConstraint);
 
+        // §17/G109 venue bindings. Only for GEO PICKER contexts: a picker is a
+        // field whose SELECTION prefills dependents, which is the premise the
+        // binding exists to serve. global_search is a navigation surface — a row
+        // there opens an entity page and fills nothing, so binding it would ship
+        // a structured value with no consumer.
+        const venueBindings = GEO_PICKER_CONTEXTS.has(context)
+          ? await resolveVenueBindings(
+              sc,
+              allCandidates.filter((r) => r.type === 'places'),
+            )
+          : new Map<string, CanonicalVenueBinding>();
+
         const seenIds = new Set<string>();
         dispatchTypes.forEach((t, idx) => {
           let items = perTypeResults[idx] ?? [];
@@ -544,6 +633,7 @@ export async function generateSuggestions(
                 temporalWindow,
                 demoted: verdict.demotedIds.has(r.id),
                 tripFit: verdict.tripFitIds.has(r.id),
+                venueBinding: venueBindings.get(r.id) ?? null,
               }),
             );
           }
