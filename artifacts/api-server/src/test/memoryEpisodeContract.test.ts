@@ -614,9 +614,15 @@ describe("the spine is inert by construction", () => {
     const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
     let out = "";
     try {
-      out = execFileSync("grep", ["-rl", "memoryEpisodeContract", root, "--include=*.ts"], {
-        encoding: "utf8",
-      });
+      // Match the IMPORT SPECIFIER, not the bare name: a prose mention of the
+      // file (checkProductionDrift.ts carries one, recording where 2320 came
+      // from) is not a wiring, and matching it would make this assertion fail
+      // for a reason that has nothing to do with the claim.
+      out = execFileSync(
+        "grep",
+        ["-rlE", 'from "[^"]*memoryEpisodeContract|import\\("[^"]*memoryEpisodeContract', root, "--include=*.ts"],
+        { encoding: "utf8" },
+      );
     } catch {
       out = "";
     }
