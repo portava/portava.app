@@ -8,6 +8,9 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   buildUnifiedStamps,
   getUnifiedStampCount,
@@ -17,6 +20,8 @@ import {
 } from "../services/passport/UnifiedStampService.js";
 
 const U = "user-1";
+
+const API_SERVER_SRC = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 /**
  * Fake Supabase covering the three tables the service reads:
@@ -214,5 +219,118 @@ describe("UnifiedStampService — TABLE 16 provenance + verification (§12)", ()
     const stamp = r.stamps.find((s) => s.source === "v2_achievement")!;
     assert.equal(stamp.verification, "verified");
     assert.equal(stamp.stampSource, "buddy_derived");
+  });
+});
+
+/**
+ * §12's eleven stamp types — the CONTRIBUTOR half, pinned.
+ *
+ * WHY THIS EXISTS. `docs/architecture/census-passport.md` P61 said there is
+ * "no Contributor stamp type at all (contributions surface as a credential via
+ * PassportReputationService, never as a stamp)". That was measured false on
+ * 2026-09-14: the catalog carries three `place_contributor` definitions
+ * (`src/migrations/0198_place_contributor_stamps.sql`), a live worker awards
+ * them at 10/50/100 posts (`src/lib/places/placeCollectionsWorker.ts:172`),
+ * and `readV2` joins `stamp_definitions(stamp_type)` so the label reaches the
+ * Passport's own stamp collection verbatim.
+ *
+ * What this suite pins is the READ SEAM, which is the part that had no test
+ * and the part whose loss would make the census's old sentence true again: if
+ * `stamp_type` stops coming through that join, every Contributor stamp arrives
+ * on the Passport as `stampType: null` and the type disappears from the
+ * vocabulary without a single row changing.
+ *
+ * MUTATION PROOF, measured rather than assumed. Hard-coding `stampType: null`
+ * on readV2's v2 branch turns cases 1 and 3 RED. Dropping `stamp_type` from the
+ * `stamp_definitions(name, rarity, stamp_type)` SELECT does NOT — this file's
+ * fake Supabase ignores the select string and hands back whatever the fixture
+ * declares, so the behavioural cases are blind to the join that feeds them in
+ * production. That is the exact shape of a test that cannot fail, so the last
+ * case reads the select string out of the shipped source instead; deleting
+ * `stamp_type` from it turns THAT one RED. Changing `mapStampSource("posts")`
+ * away from `contribution_earned` turns case 2 RED.
+ */
+describe("UnifiedStampService — §12 Contributor stamps reach the Passport (census-passport P61)", () => {
+  const contributorRow = (over: any = {}) =>
+    v2Row({
+      id: "us-contrib",
+      // Location-less: the award carries metadata.placeId, not a city/country.
+      city: null,
+      country: null,
+      stamp_definition_id: "def-place-contributor-bronze",
+      source_type: "posts",
+      stamp_definitions: {
+        name: "Local Contributor — Bronze",
+        rarity: "common",
+        stamp_type: "place_contributor",
+      },
+      ...over,
+    });
+
+  it("carries the catalog's Contributor label through the unified read", async () => {
+    const sc = makeSc({ v2: [contributorRow()] });
+    const r = await buildUnifiedStamps(sc, U);
+    const stamp = r.stamps.find((s) => s.userStampId === "us-contrib");
+    assert.ok(stamp, "the place_contributor award must appear in the unified collection");
+    assert.equal(
+      stamp.stampType,
+      "place_contributor",
+      "the Contributor label must survive the read — a null here deletes §12's Contributor " +
+        "type from the Passport vocabulary without touching a single row",
+    );
+  });
+
+  it("gives it TABLE 16 provenance contribution_earned, and verified", async () => {
+    const sc = makeSc({ v2: [contributorRow()] });
+    const r = await buildUnifiedStamps(sc, U);
+    const stamp = r.stamps.find((s) => s.userStampId === "us-contrib")!;
+    assert.equal(
+      stamp.stampSource,
+      "contribution_earned",
+      "a stamp earned by posting is §12's `contribution_earned`, not `system_observed`",
+    );
+    assert.equal(stamp.verification, "verified", "v2 awards are service-role only (§12)");
+  });
+
+  it("keeps two location-less Contributor tiers apart rather than collapsing them", async () => {
+    // dedupKey falls back to `def:{definitionId}` for location-less rows. Bronze
+    // and Silver are two definitions, so a traveller who has crossed both
+    // thresholds must show two stamps, not one.
+    const sc = makeSc({
+      v2: [
+        contributorRow(),
+        contributorRow({
+          id: "us-contrib-silver",
+          stamp_definition_id: "def-place-contributor-silver",
+          stamp_definitions: {
+            name: "Local Contributor — Silver",
+            rarity: "rare",
+            stamp_type: "place_contributor",
+          },
+        }),
+      ],
+    });
+    const r = await buildUnifiedStamps(sc, U);
+    const contributors = r.stamps.filter((s) => s.stampType === "place_contributor");
+    assert.equal(contributors.length, 2, "bronze and silver are distinct definitions");
+  });
+
+  it("readV2 still ASKS the database for stamp_type (the fake cannot see this)", () => {
+    // The three cases above run against a fake that ignores the select string.
+    // In production the label exists only because readV2 embeds it; drop it
+    // from the join and every Contributor stamp arrives as stampType null with
+    // every behavioural test above still green. Read the shipped source.
+    const src = fs.readFileSync(
+      path.join(API_SERVER_SRC, "services/passport/UnifiedStampService.ts"),
+      "utf8",
+    );
+    const v2Select = /from\("user_stamps"\)[\s\S]{0,400}?\.select\(([\s\S]*?)\)\n/.exec(src);
+    assert.ok(v2Select, "could not find readV2's user_stamps select at all");
+    assert.match(
+      v2Select[1],
+      /stamp_definitions\([^)]*\bstamp_type\b/,
+      "readV2's stamp_definitions embed must still request stamp_type — without it the " +
+        "Passport loses §12's Contributor label and nothing else changes",
+    );
   });
 });

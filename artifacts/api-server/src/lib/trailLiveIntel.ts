@@ -26,6 +26,7 @@
  */
 import { readLiveClaimEnvelopes, type LiveClaimEnvelope } from "./liveClaimRead.js";
 import { logger } from "./logger.js";
+import { requireTripMember } from "./http.js";
 
 export type TrailLiveIntelRefusal = "no_service_client" | "unknown_trail" | "read_failed";
 
@@ -82,20 +83,30 @@ export async function readTrailLiveIntel(
     if (!plan) return empty("unknown_trail");
 
     // 2. Authorize: owner, or an ACCEPTED member of the trail's trip. Fail-closed.
+    //
+    // THIS DELEGATES RATHER THAN RE-DERIVING. It used to hand-roll the
+    // membership read, filtering on an accepted status and nothing else, which
+    // admitted a viewer requireTripMember refuses: role 'invited' carrying an
+    // accepted status is a PENDING INVITE under the legacy role encoding
+    // (routes/invites flip role 'invited'->'member' on accept; see
+    // inviteUpdateFailure.test.ts), and two such rows existed in production when
+    // this was written. Membership is one question with one answer, and
+    // requireTripMember is where that answer lives — it also treats a trip owner
+    // holding no trip_members row as a member, which the hand-rolled read could
+    // not see. Migration 2334 made the RLS policies on these same tables
+    // delegate for exactly this reason; this is the reader half of that.
     let authorized = plan.owner_user_id === viewerId;
     if (!authorized && plan.trip_id) {
-      const { data: member, error: memberErr } = await sc
-        .from("trip_members")
-        .select("user_id")
-        .eq("trip_id", plan.trip_id)
-        .eq("user_id", viewerId)
-        .eq("status", "accepted")
-        .maybeSingle();
-      if (memberErr) {
-        logger.warn({ err: memberErr }, "trailLiveIntel: membership read failed");
+      try {
+        authorized = (await requireTripMember(sc, plan.trip_id, viewerId)) !== null;
+      } catch (err) {
+        // requireTripMember THROWS TripAccessUnavailableError when the read
+        // itself fails, precisely so an outage cannot be mistaken for "not a
+        // member". Preserve this reader's fail-closed contract: read_failed,
+        // never a silent deny that looks like the trail does not exist.
+        logger.warn({ err }, "trailLiveIntel: membership read failed");
         return empty("read_failed");
       }
-      authorized = !!member;
     }
     if (!authorized) return empty("unknown_trail");
 

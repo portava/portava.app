@@ -108,3 +108,6 @@ _incoming/
 
 # Claude Code config + credentials (persisted here because ~ is ephemeral on Replit)
 .claude-home/
+
+# scripts/local-db/up.sh writes the throwaway database URL here
+.env.local-db

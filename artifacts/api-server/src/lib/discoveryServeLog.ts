@@ -41,7 +41,18 @@
 import { randomUUID } from "node:crypto";
 import { isFlagEnabled } from "./featureFlags.js";
 import { logger } from "./logger.js";
+// `12` "Stop conditions" — this writer is the only instrument that knows whether
+// an event actually landed, so it is the only place that can feed the two stop
+// conditions Discovery can enforce. Recording is in-process and cannot throw.
+import { recordServeLogOutcome } from "./discoveryStopConditions.js";
 import { recordImpressionDistributionStats } from "../services/ranking/DiscoveryRankingService.js";
+// `04` §5 "Recommendation denominator" — every served item must have a
+// recommendation_id, and the nine-field minimum record must be recoverable from
+// the row. Six fields were already columns here; these complete the other
+// three without a migration. See lib/discoveryRecommendationId for why the
+// Compass token could not be reused as-is.
+import { recommendationIdFor } from "./discoveryRecommendationId.js";
+import { DISCOVERY_MODEL_VERSION } from "./discoveryRankProvenance.js";  import { isMissingRecommendationIdSchema, noteRecommendationIdAbsent, recommendationIdSchemaAbsent, reportRankEventsRejection } from "./rankEventsProvenance.js";  /* DV-40 / §41.1. ON ONE LINE ON PURPOSE: eleven anchored doc citations point at fixed line numbers in this file (`:70`, `:415`, `:421`, `:426`, `:430`, `:444`, `:450`, `:466`, `:475`, `:477`), most of them in docs/architecture/census-discovery.md, and check:doc-citations fails an anchor whose text has moved. Inserting a line here would red that guard with no fix available in this lane. See the note at the foot of this file. */
 
 /** Feature flag gating every write in this module. Absent row ⇒ disabled. */
 export const DISCOVERY_SERVE_LOG_FLAG = "discovery_serve_log_enabled";
@@ -122,6 +133,130 @@ const RANKED_IN_REQUEST = new Set<number>([
  */
 export type RankItemKind = "post" | "event" | "plan" | "buddy" | "place" | "gem";
 
+/**
+ * The same six values as a RUNTIME array.
+ *
+ * `04` §10.5 asks for the CHECK/enum constraints to be TESTED. A TypeScript
+ * union cannot be tested: it is erased before anything runs, so no assertion can
+ * compare it with the vocabulary `migrations/0153_add_rank_events.sql:18`
+ * declares. The array is what makes the comparison possible, and the union above
+ * is derived from it so the two cannot drift apart.
+ */
+export const RANK_ITEM_KINDS = [
+  "post", "event", "plan", "buddy", "place", "gem",
+] as const satisfies readonly RankItemKind[];
+
+// ── `04` §3's last two required properties ───────────────────────────────────
+//
+// §3: "Every event write must be: schema-valid, attributable to a surface,
+// observable on failure, idempotent where retried, VERSIONED, PRIVACY-
+// CLASSIFIED." The first three are satisfied above and by the module header;
+// idempotency needs a unique key this lane may not add (census-discovery
+// DV-37 — a migration). These two do not.
+
+/**
+ * `04` §6 `schema_version` — which RECORD SHAPE produced this row.
+ *
+ * NOT the column §6 names: `rank_events` has thirteen columns and adding a
+ * fourteenth is a migration (census-discovery DV-38). This is the same
+ * accommodation §13.3 made for `04` §5's three missing fields and for the same
+ * reason — `04` §6's own instruction is *"if the current table cannot represent
+ * this safely, extend it by migration rather than introducing a competing event
+ * store"*, and a competing store is the one outcome nobody wants. The jsonb the
+ * row already writes is not a competing store.
+ *
+ * Why it matters even without a column: since §13.3 a row may or may not carry
+ * `recommendationId`, `modelVersion` and `reasonCodes`, and an absent
+ * `reasonCodes` means EITHER "written before that shape existed" OR "this serve
+ * grounded no reason". Without a version stamp those two are the same row.
+ *
+ * BUMP THIS when the meaning of an existing key in `features` changes, or when
+ * a key is removed. Adding a key does not require a bump — a reader that does
+ * not know the key ignores it — but removing or REDEFINING one does, because a
+ * reader that does know it will be wrong.
+ */
+export const DISCOVERY_EVENT_SCHEMA_VERSION = 1;
+
+/**
+ * `04` §3 "privacy-classified", named with `04` §11's own first layer.
+ *
+ * §11 lists four suggested layers — raw recent events, durable
+ * aggregates/features, audit/security events, anonymised long-term statistics —
+ * and then says *"exact retention must be decided with privacy/legal review"*.
+ * So this is deliberately a CLASSIFICATION and not a retention rule: it states
+ * which of §11's layers the row belongs to, which is a fact about the row, and
+ * says nothing about how long it is kept, which is not this lane's to decide.
+ *
+ * The label is only worth having if it is TRUE, which is what
+ * `classifyServeContext` below is for: a row claiming to be a plain behavioural
+ * event while carrying a viewer's coordinates would be a worse artefact than an
+ * unlabelled row, because a retention or export rule would then be applied to it
+ * on the strength of a label nothing enforced.
+ */
+export const DISCOVERY_EVENT_PRIVACY_CLASS = "raw_behavioral_event";
+
+/**
+ * Context keys that carry, or could carry, a precise position.
+ *
+ * `lib/rankLog.ts:66-67` strips the same class of key from ITS features for
+ * `04` §12 / spec §8, and this writer — which now feeds ten call sites across
+ * four route files — did not. The rule lived here only as a JSDoc sentence on
+ * `context` ("Never coordinates") and as a comment at two of the ten call sites.
+ * A rule enforced by whoever remembers it is enforced until somebody does not.
+ *
+ * `distanceKm` is in the set because `rankLog` strips it: a distance from a
+ * viewer to a known venue reconstructs the viewer. `radiusKm` is NOT — a search
+ * radius is a request parameter, not a position, and it is the only spatial
+ * diagnostic the baseline has.
+ */
+export const PRECISE_LOCATION_CONTEXT_KEYS: ReadonlySet<string> = new Set([
+  "lat", "lng", "latitude", "longitude", "distancekm",
+  "coords", "coordinates", "geo", "gps", "position", "point", "bbox",
+]);
+
+/** Suffixes that make a key a coordinate whatever it is prefixed with. */
+const PRECISE_LOCATION_SUFFIXES = ["lat", "lng", "latitude", "longitude"] as const;
+
+export interface ClassifiedServeContext {
+  /** Context safe to store on a `raw_behavioral_event` row. */
+  kept: Record<string, string | number | boolean | null>;
+  /**
+   * Keys withheld, under the CALLER'S OWN SPELLING so the offending call site
+   * can be found by grep. Names only — never the values, which are the thing
+   * being withheld.
+   */
+  dropped: string[];
+}
+
+/**
+ * Split a caller's context into what may be stored and what may not.
+ *
+ * Pure, synchronous and total: no clock, no client, no throw.
+ *
+ * THE BIAS IS STATED. Matching is on the normalised key name, so a key whose
+ * name does not say it is a coordinate is not caught — this is a vocabulary,
+ * not an oracle, and it cannot inspect values. Where it errs it errs toward
+ * dropping: a key ending in "lat" that is not a latitude loses a diagnostic,
+ * and losing a diagnostic is recoverable in a way that storing a position is
+ * not.
+ */
+export function classifyServeContext(
+  context?: Record<string, string | number | boolean | null> | null,
+): ClassifiedServeContext {
+  const kept: Record<string, string | number | boolean | null> = {};
+  const dropped: string[] = [];
+  if (!context) return { kept, dropped };
+  for (const [key, value] of Object.entries(context)) {
+    const norm = key.toLowerCase().replace(/[^a-z0-9]/g, "");
+    const precise =
+      PRECISE_LOCATION_CONTEXT_KEYS.has(norm) ||
+      PRECISE_LOCATION_SUFFIXES.some((s) => norm.endsWith(s));
+    if (precise) dropped.push(key);
+    else kept[key] = value;
+  }
+  return { kept, dropped };
+}
+
 /** Minimal shape this module needs from a served item. */
 export interface ServedItem {
   id: string;
@@ -177,9 +312,16 @@ export interface DiscoveryServeLogParams {
   items:       readonly ServedItem[];
   /** Route path, for when Stage 0b widens this beyond GET /discovery. */
   route?:      string;
-  sessionId?:  string;
+  sessionId?:  string;  /** The serve clock, when the CALLER already minted one (DC-22): the route derives the recommendation ids it puts on the RESPONSE from the same instant, and two clocks would mint two ids for one exposure. Omitted ⇒ read here, exactly as before. */ servedAt?: string;
   /** Free-form context, e.g. { destination, category }. Never coordinates. */
   context?:    Record<string, string | number | boolean | null>;
+  /**
+   * `04` §5 "reason codes" — the GROUNDED codes the ranker produced for each
+   * item, keyed by item id. Absent for a serve point that ran no ranker, and an
+   * item the ranker said nothing about gets `[]` rather than an invented code:
+   * a reason nothing backs is worse on a denominator than no reason at all.
+   */
+  reasonCodesById?: Readonly<Record<string, readonly string[]>>;
 }
 
 // ── Flag read, with a short TTL cache ─────────────────────────────────────────
@@ -227,23 +369,43 @@ export async function logDiscoveryServe(
   sc:     any,
   params: DiscoveryServeLogParams,
 ): Promise<void> {
+  // Declared OUTSIDE the try so the catch can see it, and LOCAL rather than
+  // module-level because several serves are in flight at once — a module-level
+  // counter would be clobbered by an interleaved call and attribute one serve's
+  // item count to another's throw.
+  let attemptedItems = 0;
   try {
     if (!sc) return;
-    const { userId, servePoint, items, route, sessionId, context } = params;
+    const { userId, servePoint, items, route, sessionId, context, reasonCodesById } = params;  const servedAtIn = params.servedAt;
     if (!userId || items.length === 0) return;
 
     if (!(await serveLogEnabled(sc))) return;
 
-    const servedAt = new Date().toISOString();
+    const servedAt = servedAtIn ?? new Date().toISOString();
     // One session id for the whole batch — mirrors the "single open" semantics
     // callers rely on for funnel reconstruction (lib/rankLog.ts:97-100).
     const effectiveSessionId = sessionId ?? randomUUID();
+
+    // `04` §3 "privacy-classified", enforced before anything is built. Done
+    // ONCE per batch rather than per row: the context is one object shared by
+    // every row of the serve, and classifying it per item would re-derive the
+    // same answer N times and log the same warning N times.
+    const classified = classifyServeContext(context);
+    if (classified.dropped.length > 0) {
+      // Same rule as the insert-rejection branch below: a refusal nobody can
+      // see is how a defect survives. Key NAMES only — the values are the thing
+      // being withheld, and a warning that printed them would be the leak.
+      logger.warn(
+        { servePoint, route, droppedKeys: classified.dropped },
+        "discoveryServeLog: precise-location keys withheld from features (04 §12)",
+      );
+    }
 
     const rows = items.map((item, idx) => ({
       user_id:    userId,
       item_id:    item.id,
       item_kind:  item.kind !== undefined ? item.kind : itemKindFor(item.id),
-      position:   idx,
+      position:   idx,  ...(recommendationIdSchemaAbsent() ? {} : { recommendation_id: recommendationIdFor({ userId, sessionId: effectiveSessionId, servedAt, surface: "discovery", position: idx, itemId: item.id }) }),  // `04` §5 / census DV-40, DV-46, DSV2-12 — 2891's COLUMN, carrying exactly the token features.recommendationId carries below. A token in a jsonb key is a VALUE; a token in a column is a JOIN KEY that an index can arbitrate. 2891 was applied to portava-ci and to production on 2026-09-14, and that deployment record measured what a column with no writer is worth: "rows carrying a recommendation_id — 0". features.recommendationId is KEPT rather than moved, because every row written before this line carries it there and routes/rankEvents.ts reads column -> features -> derived in that order. The conditional spread is the same idiom routes/rankEvents.ts uses at its two update sites: once the latch says 2891 is absent here, the column is OMITTED from the payload rather than sent and retried, so the failed round-trip is paid once per process and not once per serve.
       features: {
         servePoint,
         route:  route ?? "GET /discovery",
@@ -251,7 +413,26 @@ export async function logDiscoveryServe(
         // stored Compass order and is deliberately `false`: the order came from
         // a ranker, but not from this request.
         rankedInRequest: RANKED_IN_REQUEST.has(servePoint),
-        ...(context ?? {}),
+        ...classified.kept,
+        // `04` §5 — placed AFTER the context spread ON PURPOSE. These three are
+        // the record, not decoration: a caller passing a `context` key of the
+        // same name must not be able to overwrite the denominator with its own
+        // value, and putting them first would let it.
+        recommendationId: recommendationIdFor({
+          userId, sessionId: effectiveSessionId, servedAt,
+          surface: "discovery", position: idx, itemId: item.id,
+        }),
+        modelVersion: DISCOVERY_MODEL_VERSION,
+        reasonCodes: reasonCodesById?.[item.id] ?? [],
+        // `04` §3's last two properties, after the context spread for the same
+        // reason the three above are: a caller must not be able to restate
+        // which shape wrote the row or what class it belongs to.
+        schemaVersion: DISCOVERY_EVENT_SCHEMA_VERSION,
+        privacyClass: DISCOVERY_EVENT_PRIVACY_CLASS,
+        // Present ONLY when something was withheld, so a present key always
+        // means a call site sent a coordinate and an absent one is not an
+        // ambiguous silence.
+        ...(classified.dropped.length > 0 ? { privacyDropped: classified.dropped } : {}),
       },
       outcome:    "impression",
       served_at:  servedAt,
@@ -259,13 +440,24 @@ export async function logDiscoveryServe(
       session_id: effectiveSessionId,
     }));
 
+    attemptedItems = rows.length;
     const { error } = await sc.from("rank_events").insert(rows);
-    if (error) {
-      // Deliberately NOT silent — see the module header.
-      logger.warn(
-        { err: error, servePoint, route, count: rows.length },
-        "discoveryServeLog: impression insert rejected",
-      );
+    // DV-40's degrade path, and it is load-bearing: on a database WITHOUT 2891 the
+    // column above is a PGRST204 and EVERY row of this serve is lost, which would
+    // make adding a join key cost the telemetry it was added to make joinable. So
+    // the batch is redone ONCE in the pre-2891 shape — column omitted, not nulled.
+    const settled = error && isMissingRecommendationIdSchema(error) ? await retryServeRowsWithoutToken(sc, rows, { servePoint, route }) : { error };
+    recordServeLogOutcome({
+      outcome: settled.error ? "rejected" : "landed",
+      servedItems: rows.length,
+      landedRows: settled.error ? 0 : rows.length,
+    });  // `12` stop-condition evidence, recorded ONLY here and ONLY after an insert was actually attempted: a serve that wrote nothing because the flag was off returned above and is not a logging gap — it is the flag doing its job, and counting it would make the stop trip hardest while the feature is disabled.
+    if (settled.error) {
+      // Deliberately NOT silent — see the module header — and since census-discovery
+      // §41.1, deliberately not merely LOUD. A warn is not a measurement, and every
+      // writer of this table is fire-and-forget, so a constraint refusing a whole
+      // surface reads like a surface nobody uses. COUNTED by the constraint that caused it:
+      reportRankEventsRejection(logger, { writer: SERVE_LOG_WRITER, err: settled.error, rows: rows.length, extra: { servePoint, route } });
     } else {
       // Exposure denominator — content_distribution_stats.eligible_impressions
       // mirrors the impression rows that landed (lib/rankLog.ts does the same
@@ -274,6 +466,93 @@ export async function logDiscoveryServe(
       await recordImpressionDistributionStats(sc, rows.map((r) => r.item_id), userId);
     }
   } catch (err) {
+    // A throw AFTER the rows were built is an attempt that produced nothing, and
+    // it is the failure mode most likely to be invisible: no `error` object, no
+    // rejected row, no count anywhere. `attemptedItems` is set immediately before
+    // the insert and reset after it, so a throw from anywhere else — the flag
+    // read, the client lookup — records nothing and cannot manufacture a gap.
+    if (attemptedItems > 0) {
+      recordServeLogOutcome({ outcome: "threw", servedItems: attemptedItems, landedRows: 0 });
+    }
     logger.warn({ err }, "discoveryServeLog: impression insert threw");
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NOTE ON THE SHAPE OF THIS FILE'S RECENT EDITS
+//
+// The import at the top of this file and the `recommendation_id` key inside the
+// row literal are crammed onto existing lines, which is not this repository's
+// style and is not carelessness. ELEVEN anchored doc citations point at fixed
+// line numbers here — `:70`, `:415`, `:421`, `:426`, `:430`, `:444`, `:450`,
+// `:466`, `:475`, `:477` — across docs/discovery/ROADMAP.md,
+// docs/discovery/compliance-v1.md and docs/architecture/census-discovery.md.
+// `check:doc-citations` fails an anchor whose text is no longer at its line, and
+// the census file is owned by another lane in this pass, so inserting a single
+// line above 477 would red a guard with no fix available here.
+//
+// It is one edit to undo once those citations are re-anchored, and the proposed
+// re-anchorings are filed with the census text this change ships with.
+//
+// WHAT COULD NOT BE DONE FOR THE SAME REASON, stated because it is the larger
+// half of DV-37 and a reader should not have to infer the gap:
+//
+//   The write at line 444 is still a plain `.insert(rows)`. 2891's UNIQUE index
+//   over (recommendation_id, outcome) is now WRITABLE from here — every row
+//   carries the token — but it is not yet the ARBITER, because an `ON CONFLICT`
+//   needs `.upsert(rows, { onConflict: ... })` and the anchor at :444 is the
+//   literal text `const { error } = await sc.from("rank_even`, which pins both
+//   the statement's line AND its first forty-two characters. routes/rankEvents.ts
+//   HAS the arbiter on all three of its write paths, so the index has one caller;
+//   this writer is the second, and the change is four lines once :444 is free.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** This module's name in the rejection counter and in the schema latch. */
+const SERVE_LOG_WRITER = "lib/discoveryServeLog.ts";
+
+/**
+ * Redo a refused serve batch in the pre-2891 shape.
+ *
+ * Called ONLY after `isMissingRecommendationIdSchema` has said that the refusal
+ * was 42703 / PGRST204 / 42P10 — "this database has no `recommendation_id`" —
+ * and never for a timeout, an RLS denial or a CHECK violation, each of which is
+ * a real failure that must keep its own treatment.
+ *
+ * The column is OMITTED rather than sent as `null`: re-sending it is the same
+ * failure a second time, and PostgREST rejects the payload on the key, not the
+ * value. The rows are rebuilt as an explicit literal rather than spread-minus-a-
+ * key so that `check:write-path-columns` can resolve the column list — a payload
+ * the AST cannot read is invisible to the one check that compares a write list
+ * against the live schema.
+ *
+ * Says so ONCE per process, naming the migration, then latches: a line per serve
+ * would train a reader out of the one signal that says the migration is missing.
+ */
+async function retryServeRowsWithoutToken(
+  sc:   any,
+  rows: readonly any[],
+  ctx:  { servePoint: number; route?: string },
+): Promise<{ error: unknown }> {
+  if (!recommendationIdSchemaAbsent()) {
+    logger.warn(
+      { ...ctx, migration: "2891_rank_events_recommendation_id.sql" },
+      "discoveryServeLog: rank_events.recommendation_id is unavailable — exposures are being " +
+      "written WITHOUT a join key, so no outcome can be attributed to a ranking run until " +
+      "2891 is applied here",
+    );
+  }
+  noteRecommendationIdAbsent(SERVE_LOG_WRITER);
+  const legacy = rows.map((r) => ({
+    user_id:    r.user_id,
+    item_id:    r.item_id,
+    item_kind:  r.item_kind,
+    position:   r.position,
+    features:   r.features,
+    outcome:    r.outcome,
+    served_at:  r.served_at,
+    surface:    r.surface,
+    session_id: r.session_id,
+  }));
+  const { error } = await sc.from("rank_events").insert(legacy);
+  return { error };
 }

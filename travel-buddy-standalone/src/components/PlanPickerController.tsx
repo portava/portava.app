@@ -18,10 +18,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { X, Check, MapPin, ChevronLeft, Plus } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow, layout, avatar } from '../theme/tokens.ts';
-import { fetchPlanEditableTrips, createPlanItem, addMeetupToPlan, addPlaceToPlan } from '../services/tripPlan.ts';
-import type { EditableTripRow } from '../services/tripPlan.ts';
+import { fetchPlanEditableTrips, createPlanItem, addMeetupToPlan, addPlaceToPlan } from '../features/trips/planning/tripPlan.ts';
+import type { EditableTripRow } from '../features/trips/planning/tripPlan.ts';
 import type { TripPlanCategory, TripPlanLockType } from '../types/models.ts';
 import { useSession } from '../context/SessionContext.tsx';
+import { useRankOutcome, type RankSurface } from '../hooks/useRankOutcome.ts';
 import { DatePickerField } from './DateTimePickerField';
 import { LockTypeSelector } from './itinerary/LockTypeSelector.tsx';
 
@@ -40,6 +41,19 @@ export interface PlanPickerSource {
   lat?: number | null;
   /** Longitude for itinerary map pin placement. Null when coordinates are unavailable. */
   lng?: number | null;
+  /**
+   * The rank_events surface this item's IMPRESSION was written under, when the
+   * item reached the picker from a served feed. Discovery hands 'discovery';
+   * anything opened from a surface that served nothing hands nothing, and the
+   * trip_add report is then a no-op — an outcome with no impression to match is
+   * noise the server would 404 or attach to a stale row.
+   *
+   * It is the surface of the SERVE, never the screen the sheet is drawn on —
+   * the same contract PlaceCard's `rankSurface` prop carries.
+   */
+  rankSurface?: RankSurface | null;
+  /** Session UUID from the originating feed response, when that feed returns one. */
+  rankSessionId?: string | null;
 }
 
 // ── Context ───────────────────────────────────────────────────────────────────
@@ -99,6 +113,9 @@ export function PlanPickerControllerProvider({ children }: { children: React.Rea
   const [source, setSource]       = useState<PlanPickerSource | null>(null);
   const [trips, setTrips]         = useState<EditableTripRow[]>([]);
   const [loadingTrips, setLoadingTrips] = useState(false);
+  // "No trips with edit access yet" is a PERMISSION claim. A read that failed
+  // has not established it, and this state is what keeps the two apart.
+  const [tripsLoadError, setTripsLoadError] = useState<string | null>(null);
   const [selectedTrip, setSelectedTrip] = useState<EditableTripRow | null>(null);
 
   const [dayDate, setDayDate]   = useState<Date | null>(null);
@@ -107,6 +124,14 @@ export function PlanPickerControllerProvider({ children }: { children: React.Rea
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError]           = useState<string | null>(null);
+
+  // The trip_add rung of the Discovery funnel (migration 2894). `source` carries
+  // the surface its impression was served under, so a source that came from no
+  // served feed leaves this null and every report is a no-op.
+  const { reportTripAdd } = useRankOutcome({
+    surface:   source?.rankSurface ?? null,
+    sessionId: source?.rankSessionId ?? null,
+  });
 
   // Per-source added tracking — persists across open() calls in this session
   const [addedSourceIds, setAddedSourceIds] = useState<Set<string>>(new Set());
@@ -127,9 +152,13 @@ export function PlanPickerControllerProvider({ children }: { children: React.Rea
   useEffect(() => {
     if (!sheetOpen || !isAuthed) return;
     setLoadingTrips(true);
+    setTripsLoadError(null);
     fetchPlanEditableTrips()
-      .then(setTrips)
-      .catch(() => setTrips([]))
+      .then((rows) => { setTrips(rows); })
+      .catch(() => {
+        setTrips([]);
+        setTripsLoadError("Couldn't load the trips you can add to. Please try again.");
+      })
       .finally(() => setLoadingTrips(false));
   }, [sheetOpen, isAuthed]);
 
@@ -205,6 +234,16 @@ export function PlanPickerControllerProvider({ children }: { children: React.Rea
         }
       }
 
+      // The add COMMITTED — report the funnel rung. Fire-and-forget by
+      // construction (useRankOutcome swallows everything), so a failed report
+      // can never turn a successful add into a visible error.
+      //
+      // Deliberately not reported on the duplicate branch below: that path means
+      // the item was already in the trip, so nothing was added and the intent it
+      // would record was recorded the first time. Reporting there would count
+      // one commitment twice on a table whose other outcomes are counted once.
+      reportTripAdd(source.id);
+
       setAddedSourceIds((prev) => {
         const next = new Set(prev);
         next.add(source.id);
@@ -228,7 +267,7 @@ export function PlanPickerControllerProvider({ children }: { children: React.Rea
     } finally {
       setSubmitting(false);
     }
-  }, [source, selectedTrip, dayDate, startsAt, lockType, submitting, close, showToast]);
+  }, [source, selectedTrip, dayDate, startsAt, lockType, submitting, close, showToast, reportTripAdd]);
 
   const contextValue = useMemo<PlanPickerContextValue>(() => ({
     open,
@@ -286,6 +325,10 @@ export function PlanPickerControllerProvider({ children }: { children: React.Rea
             /* ── Step 1: pick a trip ── */
             loadingTrips ? (
               <ActivityIndicator color={color.signal} style={{ marginVertical: space.xl }} />
+            ) : tripsLoadError ? (
+              <View style={s.emptyWrap}>
+                <Text style={s.emptyText}>{tripsLoadError}</Text>
+              </View>
             ) : trips.length === 0 ? (
               <View style={s.emptyWrap}>
                 <Text style={s.emptyText}>

@@ -52,6 +52,29 @@ const SHARED_GUARD = join(__dir, "..", "lib", "requireAdmin.ts");
 const sharedGuardSource = readFileSync(SHARED_GUARD, "utf8");
 
 /**
+ * Shared modules a route may have hoisted a guarded query INTO, keyed by the
+ * import specifier that proves the route uses it.
+ *
+ * `services/trust/TrustRestrictionService.ts` is here because census-trust C15
+ * moved trust-admin.ts's `trust_restrictions` read into it: the service owns
+ * every read of that table now, so route code names none. This test caught the
+ * move on the very next run — its sanity check said "the route no longer queries
+ * this table", which was exactly true — and that is a REAL loss of coverage, not
+ * a false alarm: the columns still have to exist, they are just selected
+ * somewhere else now.
+ *
+ * Deleting the trust_restrictions entry would have made a coverage gap silent,
+ * which is the mistake the requireAdmin note above already records having nearly
+ * made once.
+ */
+const SHARED_QUERY_MODULES: Array<{ importedAs: string; path: string }> = [
+  {
+    importedAs: "services/trust/TrustRestrictionService.js",
+    path: join(__dir, "..", "services", "trust", "TrustRestrictionService.ts"),
+  },
+];
+
+/**
  * Source to extract from for a given route: the route itself, plus the shared
  * admin guard when the route imports it.
  *
@@ -62,9 +85,11 @@ const sharedGuardSource = readFileSync(SHARED_GUARD, "utf8");
  */
 function sourceFor(file: string): string {
   const src = readFileSync(routePath(file), "utf8");
-  return src.includes("lib/requireAdmin.js")
-    ? src + "\n" + sharedGuardSource
-    : src;
+  let out = src.includes("lib/requireAdmin.js") ? src + "\n" + sharedGuardSource : src;
+  for (const m of SHARED_QUERY_MODULES) {
+    if (src.includes(m.importedAs)) out += "\n" + readFileSync(m.path, "utf8");
+  }
+  return out;
 }
 
 // ── Live schema (generated snapshot — refresh with:

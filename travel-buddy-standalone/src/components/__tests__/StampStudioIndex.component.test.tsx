@@ -118,27 +118,55 @@ function makeIntervalSpy() {
   // Intercept only long-delay intervals (component polls at 30 s / 45 s / 60 s).
   // Short-delay calls (waitFor at ~50 ms, React scheduler at 0 ms) pass through
   // so async assertions continue to work normally.
-  jest.spyOn(global, 'setInterval').mockImplementation(
-    (fn: TimerHandler, delay?: number, ...args: unknown[]) => {
-      if ((delay ?? 0) >= 1_000) {
-        const id = nextId++ as unknown as ReturnType<typeof setInterval>;
-        captured.push({ id, fn: fn as () => void, delay: delay ?? 0 });
-        return id;
-      }
-      return originalSetInterval(fn as TimerHandler, delay, ...args);
-    },
-  );
+  // WHY THESE TWO CASTS EXIST — and why they are not laziness.
+  //
+  // `mockImplementation` demands a function assignable to the member being
+  // spied on, so these two arrows are checked against `typeof
+  // global.setInterval` / `typeof global.clearInterval`. THOSE SIGNATURES ARE
+  // NOT THE SAME EVERYWHERE THIS FILE COMPILES:
+  //
+  //   with    expo-env.d.ts (`/// <reference types="expo/types" />`) present:
+  //           the DOM-flavoured `(handler: TimerHandler, timeout?: number,
+  //           ...args: unknown[]) => number` merges in.
+  //   without it: only @types/node's `(callback, ms?, ...args) => Timeout`.
+  //
+  // `expo-env.d.ts` and `.expo/types/` are GENERATED AND GITIGNORED. A working
+  // copy that has run `expo` has them; a fresh clone — every CI runner — does
+  // not. So the same source compiled either way disagreed about the return
+  // type (`number | NodeJS.Timeout` vs `Timeout`) and, under
+  // strictFunctionTypes, about the contravariant `clearInterval` parameter
+  // (`string | number | Timeout | undefined` vs `Timeout | undefined`). That
+  // cost three commits of guessing at an unrelated router mock before the
+  // divergence was reproduced by moving both generated files aside.
+  //
+  // Casting the implementation to the member's own type is the fix that is
+  // correct under BOTH shapes, because it names the target rather than
+  // restating it. It is not `any` and not `@ts-expect-error`: every call site
+  // below is still checked, and the arrows' own parameter and return
+  // annotations are still enforced inside their bodies.
+  jest.spyOn(global, 'setInterval').mockImplementation(((
+    fn: TimerHandler,
+    delay?: number,
+    ...args: unknown[]
+  ) => {
+    if ((delay ?? 0) >= 1_000) {
+      const id = nextId++ as unknown as ReturnType<typeof setInterval>;
+      captured.push({ id, fn: fn as () => void, delay: delay ?? 0 });
+      return id;
+    }
+    return originalSetInterval(fn as TimerHandler, delay, ...args);
+  }) as unknown as typeof global.setInterval);
 
-  jest.spyOn(global, 'clearInterval').mockImplementation(
-    (id?: ReturnType<typeof setInterval>) => {
-      const idx = captured.findIndex((e) => e.id === id);
-      if (idx !== -1) {
-        captured.splice(idx, 1);
-      } else {
-        originalClearInterval(id);
-      }
-    },
-  );
+  jest.spyOn(global, 'clearInterval').mockImplementation(((
+    id?: ReturnType<typeof setInterval>,
+  ) => {
+    const idx = captured.findIndex((e) => e.id === id);
+    if (idx !== -1) {
+      captured.splice(idx, 1);
+    } else {
+      originalClearInterval(id);
+    }
+  }) as unknown as typeof global.clearInterval);
 
   return {
     captured,
@@ -1111,7 +1139,32 @@ import { useRequireAdmin } from '../../hooks/useRequireAdmin.ts';
 import { router } from 'expo-router';
 
 const mockUseRequireAdmin = useRequireAdmin as jest.Mock;
-const mockRouter = router as { push: jest.Mock; back: jest.Mock; replace: jest.Mock };
+// THE CAST GOES THROUGH `unknown` ON PURPOSE, and the reason is that every
+// other spelling makes this file's error count depend on the environment.
+//
+// `jest.mock('expo-router')` has replaced these members with mocks before this
+// line runs, so the value genuinely is not a `Router` any more. Saying so
+// directly — `router as { push; back; replace }` — asks TypeScript to compare
+// `Router` against a three-member shape, and it answers TS2352: the two do not
+// sufficiently overlap. How many errors that comparison yields depends on the
+// `Router` surface in front of the compiler, so the same source counted 1 error
+// locally and 3 in CI.
+//
+// `jest.Mocked<typeof router>` does not fix that, it moves it: it still names
+// `typeof router`, so the comparison is still against a surface that can vary.
+// It counted 0 locally and 2 in CI.
+//
+// Going through `unknown` removes the comparison altogether. Nothing here
+// references the expo-router type surface, so there is no assignability
+// question left whose answer could differ between two installs. This is the
+// remedy the compiler itself prints for TS2352, and it is neither
+// `@ts-expect-error` nor `any` — the shape below is still checked at every use
+// site.
+const mockRouter = router as unknown as {
+  push: jest.Mock;
+  back: jest.Mock;
+  replace: jest.Mock;
+};
 
 describe('StampStudioIndex — Geocode Cache link renders for admins and navigates correctly', () => {
   let spy: ReturnType<typeof makeIntervalSpy>;

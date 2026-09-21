@@ -21,6 +21,7 @@ import {
   MAX_TAGS_PER_HOUR,
   checkHourlyTagLimit,
 } from './tagPolicy.js';
+import { readBlockExclusions, isExcluded } from '../../lib/exclusionSet.js';
 
 // ─── Regex ────────────────────────────────────────────────────────────────────
 
@@ -265,16 +266,21 @@ async function processMentions(
     return [];
   }
 
-  // Fetch block-list for the author (both directions) once
-  const { data: blockRows } = await db
-    .from('blocks')
-    .select('blocker_id, blocked_id')
-    .or(`blocker_id.eq.${authorId},blocked_id.eq.${authorId}`);
-
-  const blockedSet = new Set<string>();
-  for (const b of (blockRows ?? []) as any[]) {
-    if (b.blocker_id === authorId) blockedSet.add(b.blocked_id);
-    else blockedSet.add(b.blocker_id);
+  // Fetch block-list for the author (both directions) once.
+  //
+  // FAIL-CLOSED, shape 2 (lib/exclusionSet.ts): this decides which of the
+  // mentioned handles actually get a tag row WRITTEN. `isExcluded` reports every
+  // candidate as excluded when the set is unreadable, so the loop below tags
+  // nobody and processMentions returns [] — the same answer it already gives
+  // when the hourly budget cannot be counted or the profile lookup fails ("an
+  // uncountable budget is not an unlimited one"). Writing no tags is recoverable
+  // by re-editing; notifying someone the author blocked is not.
+  //
+  // `(blockRows ?? [])` previously made a resolved DB error an empty block set,
+  // so a blocked user was tagged and notified.
+  const blockedSet = await readBlockExclusions(db, authorId);
+  if (!blockedSet.ok) {
+    logger?.error({ authorId, reason: blockedSet.reason }, 'processMentions: block list unreadable — tagging nobody');
   }
 
   // Prefetch follows for interacted/friends_only checks
@@ -311,7 +317,7 @@ async function processMentions(
 
   for (const profile of (profiles as any[]).slice(0, remainingSlots)) {
     if (profile.id === authorId) continue;
-    if (blockedSet.has(profile.id)) continue;
+    if (isExcluded(blockedSet, profile.id)) continue;
     // For messages: only tag users who are thread members (content-visibility guard)
     if (allowedUserIds !== null && !allowedUserIds.has(profile.id)) continue;
 
@@ -350,13 +356,25 @@ async function processMentions(
 
     // Dedup guard: if this (source, tagged_user) pair already exists,
     // skip — callers should not dispatch a second notification for re-processing.
-    const { data: existing } = await db
+    const { data: existing, error: dedupErr } = await db
       .from('tags')
       .select('id')
       .eq('source_type', sourceType)
       .eq('source_id', sourceId)
       .eq('tagged_user_id', profile.id)
       .maybeSingle();
+
+    // The upsert below is ignoreDuplicates, so a failed read cannot write a
+    // second tags row — but it CAN push the profile onto `taggedIds`, and
+    // taggedIds is what the caller dispatches mention notifications from. So an
+    // unreadable tags table re-notifies everyone mentioned in a post every time
+    // that post is re-processed (an edit, a retry), which is exactly the
+    // "at-most-once notification guaranteed" promise on the line below. Skip
+    // this profile — the same `continue` the upsert failure below takes.
+    if (dedupErr) {
+      logger?.warn({ err: dedupErr, handle: profile.handle }, 'tag dedup lookup failed — skipping mention');
+      continue;
+    }
 
     if (existing) continue; // Already tagged — at-most-once notification guaranteed
 

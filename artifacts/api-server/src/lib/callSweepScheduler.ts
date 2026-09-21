@@ -18,6 +18,80 @@ import { emitCallAnalytics } from "./calls/callSignaling";
 
 let _timer: ReturnType<typeof setTimeout> | null = null;
 
+/**
+ * CONSECUTIVE FAILED SWEEPS.
+ *
+ * There was no such counter, and until listOpenSessions began observing its
+ * `.error` there was nothing for one to count: an unreadable `call_sessions`
+ * resolved to an empty list, so a tick that swept NOTHING BECAUSE IT COULD NOT
+ * READ ANYTHING was byte-for-byte the same observation as a tick with nothing
+ * to sweep — `{ missed: 0, capped: 0, ghosted: 0 }`, logged by neither. The
+ * failure shapes most likely to be SUSTAINED (a renamed column, an RLS or grant
+ * change) are exactly the ones that would have gone unnoticed indefinitely
+ * while overdue rings never became `missed` and no call ever hit the 4h cap.
+ *
+ * The counter resets ONLY on a tick that actually completed a sweep. A tick
+ * that threw, and a tick that could not get a client at all, both COUNT — a
+ * pass in which everything failed is not a pass.
+ */
+let _consecutiveFailures = 0;
+
+/** Consecutive failed sweeps, and the last failure — for tests and health. */
+export function callSweepFailureState(): { consecutiveFailures: number; lastError: string | null } {
+  return { consecutiveFailures: _consecutiveFailures, lastError: _lastError };
+}
+let _lastError: string | null = null;
+
+/** Test seam: forget the failure history (does not touch the timer). */
+export function _resetCallSweepFailureState(): void {
+  _consecutiveFailures = 0;
+  _lastError = null;
+}
+
+/** Escalate once the failure looks sustained rather than transient. */
+const SUSTAINED_FAILURE_TICKS = 3;
+
+/**
+ * Run one tick and keep the failure ledger. Separated from the timer so a test
+ * can drive a tick without a scheduler; `sweep` is the injectable seam this
+ * module's header has always promised, and is the only way to reach the
+ * "no client" branch below in a test (getServiceClient() answers from the
+ * environment, so a null client cannot be forced through `opts`).
+ */
+export async function runCallSweepTick(
+  opts: Parameters<typeof runCallSweep>[0] = {},
+  sweep: typeof runCallSweep = runCallSweep,
+): Promise<
+  { ok: true; result: { missed: number; capped: number; ghosted: number } | null } | { ok: false; error: unknown }
+> {
+  try {
+    const result = await sweep(opts);
+    if (result === null) {
+      // No service client: the sweep did not run. Reporting this as a clean
+      // pass is the same lie the unreadable-table case used to tell.
+      recordFailure("no supabase client available for call sweep");
+      return { ok: false, error: new Error("no supabase client available for call sweep") };
+    }
+    _consecutiveFailures = 0;
+    _lastError = null;
+    return { ok: true, result };
+  } catch (err) {
+    recordFailure(String((err as any)?.message ?? err));
+    return { ok: false, error: err };
+  }
+}
+
+function recordFailure(message: string): void {
+  _consecutiveFailures += 1;
+  _lastError = message;
+  const payload = { consecutiveFailures: _consecutiveFailures, err: message };
+  if (_consecutiveFailures >= SUSTAINED_FAILURE_TICKS) {
+    logger.error(payload, "call sweep has failed on consecutive ticks — ring timeouts and the 4h cap are not being applied");
+  } else {
+    logger.warn(payload, "call sweep failed");
+  }
+}
+
 export async function runCallSweep(opts: {
   client?: any;
   admin?: RoomAdminPort;
@@ -63,11 +137,12 @@ export function startCallSweepScheduler(): void {
     "CallSweepScheduler scheduled",
   );
   _timer = setTimeout(function tick() {
-    void runCallSweep()
-      .catch((err) => logger.warn({ err }, "call sweep failed"))
-      .finally(() => {
-        _timer = setTimeout(tick, CALL_CONFIG.SWEEP_INTERVAL_MS);
-      });
+    // runCallSweepTick never rejects — it records the failure instead — so the
+    // reschedule below is unconditional by construction rather than by a
+    // `.catch()` that a resolved PostgREST error would have walked straight past.
+    void runCallSweepTick().finally(() => {
+      _timer = setTimeout(tick, CALL_CONFIG.SWEEP_INTERVAL_MS);
+    });
   }, CALL_CONFIG.SWEEP_STARTUP_DELAY_MS);
 }
 

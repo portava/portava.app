@@ -34,6 +34,12 @@ const MAX_CLAIMS_PER_PASS = 5000;
 
 let _timer: ReturnType<typeof setTimeout> | null = null;
 
+/**
+ * Thrown ONLY to abandon the reconciliation block after a rejected expiry update
+ * that has already been logged with its cause. Never escapes this module.
+ */
+class SnapshotExpiryRejected extends Error {}
+
 export interface ProjectionPassResult {
   subjects: number;
   written: number;
@@ -86,7 +92,8 @@ export async function runIntelProjectionPass(opts: { client?: SupabaseClient | n
     // subjects — the set the projection can move. Orphan snapshots of subjects
     // that left live-eligibility entirely are handled as "went dark" below.
     const groupSubjectIds = [...new Set([...groups.values()].map((g) => g.subjectId))];
-    const priorStates = await captureSnapshotStates(db, groupSubjectIds);
+    const priorCapture = await captureSnapshotStates(db, groupSubjectIds);
+    const priorStates = priorCapture.states;
     const groupSubjectSet = new Set(groupSubjectIds);
     const wentDarkRows: Pick<SnapshotRow, "id" | "subject_id" | "zone_id" | "claim_type">[] = [];
 
@@ -164,9 +171,29 @@ export async function runIntelProjectionPass(opts: { client?: SupabaseClient | n
           .filter((s) => !liveKeys.has(JSON.stringify([s.subject_id, s.zone_id ?? "", s.claim_type])));
         const orphanIds = orphans.map((s) => s.id);
         if (orphanIds.length > 0) {
-          await db.from("intel_state_snapshots")
+          // OBSERVE THE WRITE. supabase-js RESOLVES on a database error, so this
+          // update used to be awaited and its `.error` never looked at — and the
+          // two things that follow it both ASSERT it succeeded: the §24
+          // `intel.correction.invalidation.completed` log line says N snapshots
+          // were expired, and the wentDark rows below emit an `intel.state.changed
+          // / expired` transition onto the append-only spine for each of them. A
+          // rejected update (RLS, a constraint, a missing column) therefore
+          // produced an operator record and a permanent domain event for an
+          // invalidation that never happened, while the snapshots kept serving as
+          // live. Nothing downstream re-checks. So: on an error, say so and claim
+          // nothing.
+          const { error: expireErr } = await db.from("intel_state_snapshots")
             .update({ privacy_eligible: false, expires_at: now.toISOString() })
             .in("id", orphanIds);
+          if (expireErr) {
+            logger.warn(
+              { err: expireErr, targeted: orphanIds.length },
+              "intelProjection pass: snapshot expiry update was REJECTED — these snapshots are still serving; no completion recorded",
+            );
+            // Fall through WITHOUT the completion log and WITHOUT queuing the
+            // "expired" transitions. The next pass re-derives the same orphans.
+            throw new SnapshotExpiryRejected();
+          }
           // §24 completion status: these are the invalidation targets a correction
           // (IntelCaptureService.correctClaim → `intel.correction.invalidation`)
           // or a retraction/expiry named; this pass has now expired them. Snapshot
@@ -194,14 +221,28 @@ export async function runIntelProjectionPass(opts: { client?: SupabaseClient | n
         }
       }
     } catch (err) {
-      logger.warn({ err }, "intelProjection pass: snapshot reconciliation failed (non-fatal)");
+      // A rejected expiry has already been logged with its cause; do not log it
+      // twice under a name that suggests something else went wrong.
+      if (!(err instanceof SnapshotExpiryRejected)) {
+        logger.warn({ err }, "intelProjection pass: snapshot reconciliation failed (non-fatal)");
+      }
     }
 
     // §21 intel.state.changed — emitted only on a real diff (spec §11). Fully
     // fail-closed: never throws into the pass, so a spine hiccup cannot corrupt
     // the projection result the caller relies on.
-    const postStates = await captureSnapshotStates(db, groupSubjectIds);
-    await emitStateChangedEvents(db, priorStates, postStates, wentDarkRows, { now });
+    const postCapture = await captureSnapshotStates(db, groupSubjectIds);
+    if (!postCapture.ok) {
+      logger.warn({}, "intelProjection pass: post-pass snapshot state unreadable; state diff skipped this pass");
+    }
+    await emitStateChangedEvents(db, priorStates, postCapture.states, wentDarkRows, {
+      now,
+      // The diff is only meaningful when BOTH sides were read. An unreadable
+      // prior makes every snapshot look newly "appeared"; an unreadable post
+      // silently emits nothing. Neither is allowed to masquerade as a real
+      // transition on a spine that cannot be corrected afterwards.
+      priorComplete: priorCapture.ok && postCapture.ok,
+    });
 
     if (tally.written > 0 || tally.suppressed > 0) {
       logger.info({ subjects: groups.size, ...tally }, "intelProjection pass complete");

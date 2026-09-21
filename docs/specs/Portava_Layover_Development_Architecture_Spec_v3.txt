@@ -1,0 +1,892 @@
+
+PORTAVA LAYOVER
+Development Architecture Specification
+Temporal Freedom Engine · Airport Intelligence · Real-World Orchestration
+
+PurposeThis document is the build contract for turning Layover into a first-class Portava subsystem. It defines domain boundaries, canonical data, state machines, deterministic safety rules, event contracts, APIs, Compass integration, Map behavior, social controls, offline behavior, observability, certification, and rollout sequencing. It is intentionally implementation-oriented: developers should be able to create epics, migrations, services, tests, and release gates directly from it.
+
+Core product thesisLayover is not “things near the airport.” It is a temporary Portava operating mode that understands what a traveler must do next, how much real-world freedom remains, what is possible under current conditions, who can participate, and how to convert that opportunity into a safe real-world action.
+
+Document
+Value
+Version
+3.0
+Status
+Architecture / implementation specification
+Primary consumer
+Portava engineering + QA
+Primary surfaces
+Trips, Compass, Discovery, Map, Telegraph, Passport, Safe Return, Rent a Buddy
+First implementation
+Airport layovers / flight connections
+Generalized platform primitive
+Temporal Freedom Engine + Real-World Orchestration Engine
+
+
+Contents
+1. Architectural mandate
+2. Scope and non-goals
+3. System context and domain boundaries
+4. Canonical domain model
+5. State machines
+6. Deterministic feasibility and safety engine
+7. Temporal Freedom Engine
+8. Reachability, routing and safe-envelope geometry
+9. Experience Compiler and recommendation contracts
+10. Airport Intelligence and truth reconciliation
+11. Event-driven replanning architecture
+12. Compass / AI contract
+13. Map architecture and UI semantics
+14. Social, Layover Crew and Presence
+15. Safe Return and disruption recovery
+16. Offline, battery and degraded-mode architecture
+17. Privacy, permissions and data lifecycle
+18. APIs and service interfaces
+19. Storage and migration plan
+20. Observability and decision ledger
+21. Testing, replay and certification
+22. Rollout and airport maturity model
+23. Security and abuse controls
+24. Performance, scaling and reliability
+25. Portava integration points
+26. Delivery phases and engineering epics
+27. Definition of done
+Appendix A. Reason codes
+Appendix B. Example end-to-end sessions
+Appendix C. Developer rules / invariants
+
+1. Architectural mandate
+Layover must be implemented as a dedicated domain with one canonical operational truth. Trips may detect the connection, Compass may converse about it, Map may visualize it, and Safe Return may escalate it, but none of those surfaces owns feasibility. The Layover domain owns the active session and publishes certified outputs.
+2. Scope and non-goals
+The first production scope covers connection detection/manual creation, time budget calculation, entry/baggage/terminal constraints, airport-side vs landside eligibility, reachable experiences, dynamic return deadline, replanning, airport intelligence provenance, social presence/crew boundaries, offline fallback, and post-session outcomes. It does not require global airline booking, fully autonomous purchases, guaranteed immigration advice, or exact live airport coverage everywhere.
+2.1 Non-negotiable architecture rules
+Hard safety constraints are deterministic and cannot be overridden by Compass/LLM output.
+Unknown critical facts reduce confidence and may fail closed for landside recommendations.
+Every consequential recommendation is versioned, explainable, and replayable.
+All surfaces consume the same certified LayoverSnapshot / RecommendationContract; no duplicate time-budget logic.
+Commercial ranking happens only after eligibility, safety and time feasibility.
+Precise social location is opt-in, temporary and automatically expires.
+Missing live intelligence must degrade visibly to historical/conservative fallback; never fabricate freshness.
+The system optimizes successful real-world action and safe completion, not screen time.
+3. System context and domain boundaries
+Trips / Flight Inputs ─────┐
+                           ├─> Layover Detection / Session Domain
+Airport / Mobility Feeds ──┤              │
+Portava Live Intelligence ─┤              ▼
+User Context / Passport ───┘      Constraint + Truth Layer
+                                          │
+                                          ▼
+                              Temporal Freedom Engine
+                                          │
+                        ┌─────────────────┼────────────────┐
+                        ▼                 ▼                ▼
+                 Feasibility        Reachability     Risk / Return
+                        └─────────────────┼────────────────┘
+                                          ▼
+                                  Experience Compiler
+                                          │
+              ┌───────────────┬───────────┼─────────────┬─────────────┐
+              ▼               ▼           ▼             ▼             ▼
+           Compass        Discovery       Map          Social       Safe Return
+                                          │
+                                          ▼
+                                    Real-world action
+                                          │
+                                          ▼
+                                     Outcome / Memory
+Domain
+Owns
+Must not own
+Trips
+Flight segments, itinerary relationships, user trip context
+Layover safety calculations
+Layover Session
+Active connection lifecycle, constraints, snapshots, state
+Generic city content catalog
+Temporal Freedom Engine
+Usable time, next commitment, freedom window
+LLM prose
+Airport Intelligence
+Airport operational facts + provenance + TTL
+User social identity
+Experience Compiler
+Executable plans from feasible actions
+Visa/entry legal truth
+Compass
+Conversation, explanation, preference expression, tool orchestration
+Return deadlines or safety overrides
+Map
+Visualization of certified envelope/recommendations/routes
+Independent feasibility logic
+Safe Return
+Escalation, return-state UX, notification priority
+Recompute core feasibility independently
+Passport / Memory
+Post-session durable artifacts if user chooses
+Temporary operational location data
+
+4. Canonical domain model
+Implementation ruleUse normalized operational tables plus immutable/versioned snapshots. Avoid a single JSON blob as the source of truth. JSON is acceptable for provenance/reason detail, not for fields used in safety predicates or relational joins.
+
+Table
+Purpose / key fields
+layover_sessions
+id, user_id, trip_id, airport_place_id, arrival_segment_id, departure_segment_id, state, connection_type, detected_source, started_at, expires_at, active_snapshot_id, confidence_band, created_at, updated_at
+layover_constraints
+session_id, arrival_terminal_id, departure_terminal_id, immigration_required, customs_required, baggage_mode, baggage_recheck_required, airport_change_required, entry_permission_state, mobility_profile_id, buffer_profile, minimum_boarding_buffer_minutes, critical_unknowns_json, version
+layover_time_budgets
+session_id, snapshot_version, scheduled_connection_minutes, deplane_minutes, immigration_minutes, baggage_minutes, exit_minutes, outbound_minutes, return_minutes, security_minutes, terminal_transfer_minutes, boarding_buffer_minutes, contingency_minutes, usable_minutes
+layover_return_plans
+session_id, snapshot_version, hard_return_by, recommended_return_by, latest_activity_departure_at, risk_band, confidence, reason_codes_json
+layover_snapshots
+id, session_id, version, input_hash, computed_at, engine_version, state, usable_minutes, risk_band, confidence, safe_envelope_ref, candidate_set_version, sources_json, reason_codes_json
+layover_recommendations
+id, session_id, snapshot_id, candidate_type, candidate_id, status, plan_json, utility_score, risk_band, confidence, expires_at
+layover_presence
+session_id, visibility_scope, available_from, available_until, intents_json, max_travel_minutes, precise_location_enabled, expires_at
+layover_crews
+id, airport_place_id, state, shared_return_by, meeting_place_id, created_by, expires_at
+layover_crew_members
+crew_id, session_id, role, joined_at, location_share_until, split_plan_json
+layover_checkpoints
+id, session_id, checkpoint_type, observed_at, source_class, confidence, place_id, metadata_json
+layover_events
+id, session_id, event_type, occurred_at, source, source_event_id, payload_json, dedup_key, processed_at
+layover_outcomes
+session_id, completed_at, left_airport, completed_experience, met_people_count, actual_airport_return_at, boarding_outcome, comfort_rating, plan_change_reason, anonymization_state
+
+4.1 Core enums
+LayoverState = DETECTED | NEEDS_INFO | EVALUATING | AIRPORT_ONLY |
+               LANDSIDE_AVAILABLE | PLAN_SELECTED | EXECUTING |
+               RETURN_SOON | RETURN_NOW | RETURNING |
+               AIRPORT_REENTERED | BOARDING | COMPLETED |
+               DISRUPTED | CANCELLED | ABANDONED | EXPIRED
+
+EntryPermissionState = CONFIRMED_ALLOWED | CONFIRMED_NOT_ALLOWED | UNKNOWN
+BaggageMode = CHECKED_THROUGH | COLLECT_RECHECK | CARRY_ON_ONLY | UNKNOWN
+RiskBand = LOW | MODERATE | HIGH | UNSAFE
+ConfidenceBand = HIGH | MEDIUM | LOW | INSUFFICIENT
+RecommendationStatus = ELIGIBLE | TIGHT | BLOCKED | STALE | EXPIRED
+5. State machines
+DETECTED
+  ├─ critical facts missing ─> NEEDS_INFO
+  └─ enough facts ───────────> EVALUATING
+
+EVALUATING
+  ├─ landside forbidden / insufficient time ─> AIRPORT_ONLY
+  └─ landside feasible ───────────────────────> LANDSIDE_AVAILABLE
+
+LANDSIDE_AVAILABLE ─ plan chosen ─> PLAN_SELECTED ─ departure ─> EXECUTING
+EXECUTING ─ threshold crossed ─> RETURN_SOON ─ hard threshold ─> RETURN_NOW
+RETURN_SOON / RETURN_NOW ─ return begins ─> RETURNING
+RETURNING ─ airport detected ─> AIRPORT_REENTERED ─ gate/boarding ─> BOARDING
+BOARDING ─ departure confirmed ─> COMPLETED
+
+Any active state ─ material disruption ─> DISRUPTED
+Any active state ─ departure cancelled ─> CANCELLED
+Any active state ─ timeout ─> EXPIRED
+Transition
+Guard
+Required side effects
+EVALUATING → LANDSIDE_AVAILABLE
+entry allowed; critical unknowns empty; usable time ≥ configured floor; return contract satisfiable
+Create snapshot + safe envelope + candidate set
+EXECUTING → RETURN_SOON
+recommended return threshold reached OR risk worsened beyond threshold
+High-priority notification; de-emphasize discovery
+RETURN_SOON → RETURN_NOW
+latest safe activity departure reached OR certified return contract threatened
+Switch primary CTA to Return to Airport
+RETURNING → AIRPORT_REENTERED
+checkpoint confirms airport/terminal re-entry
+Stop landside discovery; refresh gate/security
+* → DISRUPTED
+delay/cancellation/route failure materially changes action universe
+Invalidate stale recommendations; replan; preserve audit trail
+
+6. Deterministic feasibility and safety engine
+This service is the safety authority. It receives normalized constraints and estimates and returns a certified time/risk envelope. No LLM call is part of this calculation.
+scheduled_connection
+- deplane
+- immigration/customs
+- baggage/recheck
+- airport exit friction
+- outbound transport
+- return transport (future conditions, not symmetric)
+- security/re-entry
+- terminal/gate transfer
+- boarding buffer
+- contingency
+= usable experience time
+6.1 Hard invariants
+recommendation.expected_airport_return_at <= return_plan.hard_return_by
+
+if entry_permission_state != CONFIRMED_ALLOWED:
+    forbid_landside_recommendations()
+
+if critical_unknowns contains safety-critical unknown:
+    confidence = INSUFFICIENT
+    forbid_landside_recommendations()
+
+if risk_band == UNSAFE:
+    recommendation.status = BLOCKED
+
+security_wait ↑ must never increase usable_time
+return_travel_time ↑ must never expand safe_envelope
+departure_time earlier must never expand safe_envelope
+6.2 Time estimate representation
+Estimate {
+  valueMinutes
+  p50Minutes
+  p75Minutes
+  p90Minutes
+  confidence
+  sourceClass
+  observedAt
+  expiresAt
+  fallbackLevel
+  sourceRefs[]
+}
+Safety-critical calculations should use a configurable conservative percentile based on data maturity and consequence. Do not collapse all estimates to a single average.
+7. Temporal Freedom Engine
+Generalized engine answering: “Given current position, next commitment, constraints and world conditions, what can this user realistically do before they must be somewhere else?” Layover is its first high-stakes adapter.
+Commitment {
+  type
+  startsAt
+  requiredArrivalAt
+  location
+  preparationTime
+  latenessTolerance
+  hardConstraints
+  confidence
+}
+
+FreedomWindow {
+  beginsAt
+  endsAt
+  origin
+  requiredDestination
+  usableMinutes
+  hardConstraints
+  softConstraints
+  riskBudget
+  uncertaintyBudget
+  confidence
+}
+Future reuseThe same engine should later support before check-in, after checkout, event gaps, train connections, cruise-port stops, road trips, and “I have 2 hours free.” Keep airport-specific logic in the Layover adapter, not in the generalized engine.
+
+8. Reachability, routing and safe-envelope geometry
+Compute bidirectional reachability: airport → candidate and candidate → airport under future return-time conditions.
+Use time-based isochrone/envelope geometry, not a fixed radius.
+Incorporate transport reliability, route alternatives, queue friction, weather and airport re-entry cost.
+Envelope edges must contract as confidence drops or return risk rises.
+Every recommendation stores the envelope/snapshot version under which it was certified.
+candidate_feasible iff:
+  outbound_arrival
+  + minimum_experience_duration
+  + conservative_return_duration
+  <= hard_return_by
+
+SafeEnvelope = union(points satisfying feasibility constraint)
+
+Map bands:
+  SAFE          = LOW risk
+  TIGHT         = MODERATE/HIGH but within configured policy
+  BLOCKED       = outside certified envelope
+8.1 Route robustness
+Signal
+Effect
+Multiple independent return routes
+Increase robustness / candidate preference
+Single fragile corridor
+Increase risk penalty
+Non-interruptible transport/activity
+Increase risk penalty
+Transfer count
+Increase plan complexity / uncertainty
+Return traffic forecast
+Use future-time estimate, not outbound time
+Offline risk
+Require cached route + deadline before departure where possible
+
+9. Experience Compiler and recommendation contracts
+The planner should generate executable experiences, not place cards. A recommendation is a contract containing time, return, risk and failure information.
+ExperiencePrimitive {
+  type: EAT | SEE | MEET | DRINK | SHOP | WALK | REST | PHOTO |
+        EXPLORE | PLAY | LEARN | NIGHTLIFE | TRANSIT
+  minDuration
+  idealDuration
+  compressibility
+  interruptibility
+  reversibility
+  costRange
+  energyCost
+  weatherCompatibility
+  reservationRequirement
+}
+
+LayoverRecommendationContract {
+  snapshotId
+  candidateIds[]
+  departBy
+  estimatedArrival
+  minExperienceMinutes
+  idealExperienceMinutes
+  leaveActivityBy
+  expectedAirportReturn
+  hardReturnBy
+  returnBufferMinutes
+  riskBand
+  confidence
+  fallbackPlan
+  abortThreshold
+  failureModes[]
+  reasonCodes[]
+}
+9.1 Candidate ranking
+HARD GATE: eligibility + entry + time + safety
+
+Then optimize:
+  preference_fit
++ local_uniqueness
++ opportunity_scarcity
++ social_value
++ experience_density
++ memory_value
+- monetary_cost
+- energy_cost
+- uncertainty
+- stress/complexity
+- return_risk
+Commercial/sponsored value may only be considered after the hard gate and should never expand the eligible universe.
+10. Airport Intelligence and truth reconciliation
+Fact class
+Examples
+Typical freshness
+Static topology
+terminal, gate, checkpoint, walking link
+weeks/months; invalidate on authoritative change
+Operational semi-live
+security layout, lounge hours, transport schedules
+hours/days
+Fast live
+security wait, immigration wait, taxi queue, disruption
+minutes
+Traveler observation
+checkpoint timing, queue report, closure
+minutes; confidence-weighted
+Historical model
+time-of-day distributions
+longer-lived but recalibrated
+
+TruthValue<T> {
+  value
+  confidence
+  conflict: boolean
+  sourceClass
+  sourceRefs[]
+  observedAt
+  expiresAt
+  fallbackLevel
+}
+10.1 Source hierarchy and contradiction handling
+Never silently merge contradictory gate/terminal/queue facts.
+Preserve source provenance and conflict flag.
+For safety calculations, prefer conservative values when credible sources disagree.
+Community observations require plausibility checks, corroboration and decay.
+Official data is not automatically “truth” when fresh contradictory evidence exists; contradiction increases uncertainty.
+11. Event-driven replanning architecture
+Canonical event envelope:
+{
+  eventId
+  eventType
+  occurredAt
+  receivedAt
+  source
+  sourceEventId
+  subjectRefs
+  payload
+  dedupKey
+  confidence
+}
+
+Examples:
+flight.arrival_delayed
+flight.departure_delayed
+flight.gate_changed
+flight.cancelled
+airport.security_wait_changed
+airport.immigration_wait_changed
+mobility.route_degraded
+weather.condition_changed
+layover.checkpoint_observed
+layover.return_started
+layover.airport_reentered
+11.1 Replanner pipeline
+1.  Normalize and deduplicate the external/internal event.
+2.  Identify impacted active sessions.
+3.  Recompute only the affected constraint nodes.
+4.  Create a new immutable snapshot.
+5.  Diff previous vs new action universe.
+6.  Invalidate recommendations whose snapshot is stale or no longer feasible.
+7.  Emit an OpportunityEvent only if the user’s actionable options materially changed.
+8.  Notify only when user action should change.
+12. Compass / AI contract
+BoundaryCompass is an orchestrator and explainer. It can ask the minimum useful clarifying question, compare certified plans, personalize wording and invoke deterministic tools. It cannot invent or widen the certified safe envelope, return deadline, visa/entry status, operational state, or risk band.
+
+Compass tools:
+getLayoverContext(sessionId)
+getConnectionState(sessionId)
+getTimeWallet(sessionId)
+getSafeEnvelope(sessionId)
+getReachableExperiences(sessionId)
+simulatePlan(sessionId, candidateSet)
+getReturnContract(sessionId)
+getAirportState(sessionId)
+getCrewCandidates(sessionId)
+requestConstraintClarification(sessionId, field)
+replan(sessionId, trigger)
+explainDecision(snapshotId | recommendationId)
+12.1 Value-of-information rule
+Before asking the user a question, determine whether the answer could materially change eligibility, safety, risk band, or the top plan. Ask the smallest number of questions required to cross the confidence threshold. Example: baggage-through status may be decisive; favorite cuisine may not be.
+13. Map architecture and UI semantics
+Map consumes the active snapshot and safe-envelope geometry; it does not recalculate feasibility.
+Show safe/tight/blocked geography based on certified envelope versions.
+Pins outside the certified action universe are hidden or visibly blocked depending on UX context.
+Changing time-budget chips triggers simulation/replanning, not local visual filtering alone.
+Primary route always includes return leg and return deadline.
+When RETURN_NOW is active, suppress exploration-first affordances and prioritize airport route/gate.
+Map element
+Behavior
+Safe envelope
+Dynamic isochrone/polygon; contracts as conditions worsen
+Candidate pin
+Carries feasibility state from recommendation contract
+Airport
+Always visible; return CTA anchor
+Crew member
+Only with explicit temporary location permission
+Blocked area
+Explain reason, never imply safe fit
+Offline state
+Show last-certified envelope timestamp + stale badge
+
+14. Social, Layover Crew and Presence
+Layover introduces temporary real-world availability. Aggregate presence should be the default; identity and precise location are progressively disclosed only with user consent.
+Visibility levels:
+L0 aggregate only        “14 travelers connecting here”
+L1 opt-in intent         “5 open to food”
+L2 mutual discovery      profiles visible under policy
+L3 crew formed           shared chat / meeting point
+L4 temporary location    explicit, scoped, auto-expiring
+14.1 Crew constraint solving
+shared_return_by = min(member.required_return_by)
+
+Unless an explicit split plan exists:
+  member A leaves at T1
+  members B/C continue until T2
+
+Crew plan must be certified against every member branch.
+No precise stranger location by default.
+Crew location sharing expires on crew dissolution, airport re-entry, boarding, session expiry, or user revocation.
+Traveler pins should not expose an unsafe “meet here” action without the established social/safety gate.
+Shared rides require opt-in and should avoid revealing full itinerary to unrelated users.
+15. Safe Return and disruption recovery
+NORMAL
+  ↓
+RETURN_SOON
+  ↓
+RETURN_NOW
+  ↓
+CONNECTION_AT_RISK
+
+At CONNECTION_AT_RISK:
+- exploration surfaces collapse
+- fastest return route is primary
+- terminal/gate context is pinned
+- crew/buddy is notified if policy + user settings allow
+- rebooking / airline / airport help becomes available
+15.1 One-tap abort
+Every active landside plan must expose RETURN TO AIRPORT. The action cancels optional itinerary state, marks the session RETURNING, surfaces fastest certified route, notifies relevant crew/buddy flows, preserves offline route/deadline, and records the transition in the decision ledger.
+15.2 Disruption mode
+CONNECTION → DELAYED → SEVERE_DELAY → OVERNIGHT
+           ↘ CANCELLED → REBOOKING / RECOVERY
+
+Disruption may expand or shrink the FreedomWindow. Recompute; do not simply append delay minutes.
+16. Offline, battery and degraded-mode architecture
+Capability
+Offline requirement
+Return deadline
+Persist latest certified value + snapshot timestamp
+Map
+Cache airport + selected route/area
+Route
+Cache outbound/return instructions and airport address
+Flight/gate
+Cache last confirmed values with stale indicator
+Crew
+Cache meeting point; optional peer proximity if enabled
+Translation
+Cache context phrases required by active plan
+Replanning
+Local conservative fallback only if deterministic inputs sufficient; otherwise show unavailable/stale
+
+Battery strategy should use adaptive sensing: low frequency when safe/stationary, moderate near decision boundaries, and navigation-appropriate updates during RETURNING. Avoid continuous GPS when semantic checkpoints or significant-location changes are sufficient.
+17. Privacy, permissions and data lifecycle
+Data
+Default retention intent
+Precise crew/live location
+Session scoped; expire automatically
+Operational checkpoints
+Short-lived operational + bounded diagnostics
+Raw flight operational cache
+Expire after travel usefulness/diagnostic window
+Aggregate airport timing
+May persist after de-identification / aggregation
+Completed places/stamps
+Durable only when user elects Passport/Memory behavior
+Decision ledger
+Retain according to safety/diagnostic policy; minimize direct personal data
+
+17.1 Permission prompting
+Location: request when enabling live return assistance / map context, not solely because Layover exists.
+Notifications: explain that they are needed to warn when the safe return window changes.
+Precise crew sharing: separate explicit control, off by default.
+Calendar/flight import: only if used for detection; manual session creation must remain possible where practical.
+Photos/contacts: not required for core safety operation.
+18. APIs and service interfaces
+LayoverSessionService
+  detectFromTrip(userId, tripId)
+  createManual(input)
+  getActive(userId)
+  updateConstraint(sessionId, patch)
+  recordCheckpoint(sessionId, checkpoint)
+  close(sessionId, outcome)
+
+LayoverFeasibilityService
+  evaluate(sessionId)
+  simulate(sessionId, overrides)
+  certifyRecommendation(sessionId, candidatePlan)
+
+TemporalFreedomService
+  buildFreedomWindow(context)
+  calculateCommitmentEnvelope(context)
+
+LayoverReplanner
+  handleEvent(event)
+  replan(sessionId, reason)
+
+AirportTruthService
+  getTruth(subject, factType, atTime)
+  reconcile(observations)
+
+LayoverExperienceService
+  getCandidates(sessionId)
+  compile(sessionId, candidateIds)
+  rank(sessionId, contracts)
+
+LayoverCrewService
+  discover(sessionId)
+  join(sessionId, crewId)
+  create(sessionId, input)
+  updatePresence(sessionId, input)
+  leave(sessionId, crewId)
+
+LayoverDecisionService
+  explain(snapshotId)
+  diff(previousSnapshotId, nextSnapshotId)
+  replay(sessionId, engineVersion)
+19. Storage and migration plan
+1.  Create enum types and core layover_sessions table with RLS.
+2.  Create constraints, snapshots, time budgets and return plans.
+3.  Create events + checkpoints with dedup indexes.
+4.  Create recommendations + outcome tables.
+5.  Create presence/crew tables with restrictive policies and expiration jobs.
+6.  Create airport intelligence observation/truth tables if existing Portava intelligence schema cannot represent the required TTL/provenance cleanly.
+7.  Add indexes for active-session lookup, session event ordering, unexpired presence, snapshot versioning, and impacted-session event fanout.
+8.  Add migration postconditions and authorization-contract tests for every client-writable table.
+19.1 RLS expectations
+Users may read/write their own layover session inputs within allowed fields.
+Computed snapshots, risk, return plans and certification fields are server-controlled.
+Presence is only readable according to visibility scope and safety policy.
+Crew membership/location rows require membership and explicit permission.
+Aggregated airport intelligence must not leak raw user identifiers.
+Service-role processing should be narrow and auditable.
+20. Observability and decision ledger
+Every material recomputation creates a deterministic snapshot and decision record. This is required for debugging time-sensitive guidance and for preventing silent schema/fixture drift.
+DecisionRecord {
+  sessionId
+  snapshotId
+  engineVersion
+  inputHash
+  inputFacts[]
+  sourceRefs[]
+  rulesApplied[]
+  result
+  reasonCodes[]
+  computedAt
+}
+Metric
+Meaning
+layover_sessions_detected
+Connections discovered/created
+layover_sessions_evaluated
+Sessions receiving a certified snapshot
+critical_unknown_rate
+Sessions blocked by missing critical facts
+landside_eligible_rate
+Sessions allowed to consider landside plans
+replan_rate
+Material session recomputations
+return_warning_rate
+Sessions reaching RETURN_SOON/RETURN_NOW
+safe_return_completion_rate
+Landside sessions returning within contract
+stale_fallback_rate
+How often live intelligence was unavailable
+recommendation_contract_violation
+Any generated recommendation that violates certified return contract; target = 0
+decision_replay_mismatch
+Replay divergence for identical engine/input; target = 0
+
+21. Testing, replay and certification
+Certification ruleDo not certify Layover because cards render or example itineraries look plausible. Certification must prove hard invariants across deterministic scenarios, synthetic disruption, replay, database authorization, and end-to-end lifecycle behavior.
+
+21.1 Minimum deterministic scenario matrix
+Scenario
+Expected invariant
+2h domestic
+Airport-only expected
+4h international visa allowed
+Potential landside depending on airport model
+6h visa-free
+Landside + return contract
+5h self-transfer
+Recheck friction included
+Overnight
+Overnight state / expanded options
+Airport change
+Exploration subordinate to transfer
+Arrival delay
+Freedom shrinks
+Departure delay
+Freedom may expand after recompute
+Security spike
+Envelope contracts monotonically
+Traffic spike
+Return deadline moves earlier
+Unknown baggage
+Fail closed if critical
+Unknown entry permission
+No landside recommendation
+Flight cancellation
+Transition to disruption/recovery
+Crew mixed departures
+Shared constraint = earliest or explicit split
+Offline after leaving
+Cached return plan remains visible with stale indicator
+
+21.2 Test layers
+Pure unit tests for time math, monotonicity, risk/uncertainty rules and reason codes.
+Property-based tests for “worse input cannot produce safer/larger output” classes.
+Database tests against a real CI schema for column names, enum literals, RLS and migration postconditions.
+Contract tests proving Compass cannot override deterministic safety fields.
+Integration tests for event → replan → snapshot → invalidation → notification.
+E2E tests for detection → evaluation → plan → execution → return → completion.
+Deterministic replay tests for recorded sessions.
+Decision-diff CI comparing old/new engine behavior over historical/synthetic corpora.
+Shadow mode in real environments before high-confidence rollout.
+22. Rollout and airport maturity model
+Level
+Capability
+L0 Generic
+Static airport + conservative generic timing; airport-side guidance only by default
+L1 Mapped
+Terminal/topology and known transport modeled
+L2 External live
+Reliable flight/transport/airport live signals
+L3 Portava observed
+Recent Portava operational observations available
+L4 Calibrated
+Prediction errors measured and model calibrated by airport/time band
+L5 Dense live intelligence
+High-confidence dynamic replanning and rich safe envelopes
+
+Enable features per airport maturity. Do not imply equivalent intelligence globally. “Limited intelligence” is a valid product state.
+23. Security and abuse controls
+Rate-limit and trust-weight community operational observations.
+Outlier detection for implausible queue/transport claims.
+No stranger precise location by default.
+Verified/trusted requirements for high-risk Buddy/marketplace interactions.
+Public-meetup and in-app-payment controls inherited from Rent a Buddy where applicable.
+Prevent sponsored/merchant inputs from modifying safety constraints.
+Validate all external event payloads and deduplicate by stable source keys.
+Audit all server-side changes to certification fields and return contracts.
+24. Performance, scaling and reliability
+Concern
+Design
+Replan fanout
+Index active sessions by airport/route/flight subjects; recompute impacted sessions only
+Candidate explosion
+Pre-filter by envelope/time/category before expensive ranking
+Snapshot growth
+Immutable snapshots with bounded retention/compaction policy
+Live feed outages
+Explicit fallback ladder + confidence reduction
+Duplicate events
+Unique dedup key / source event id
+Race conditions
+Version/compare-and-swap active snapshot; reject stale writes
+Notification storm
+Material-change threshold + suppression/debounce
+AI outage
+Core flight/return/map/route remains functional without Compass
+
+25. Portava integration points
+Portava area
+Integration
+Trips
+Detect connection; show Layover card/status; pass flight segments into session creation
+Compass
+Tool access to certified context; proactive OpportunityEvents; explanation / clarification
+Discovery
+Only show experiences from certified action universe in Layover mode
+Map
+Safe envelope, plan route, return state, airport digital-twin layers
+Telegraph
+Crew chat, return coordination, buddy communication
+Safe Return
+Reuse escalation/return UX; Layover provides certified deadlines and state
+Rent a Buddy
+Layover-specialist services after safety/time gate; strict boundaries
+Visa Buddy
+Human assistance path for complex visa/entry questions; not an automatic legal override
+Passport / Memories
+Convert completed session into optional stamp/postcard/memory
+Live Intelligence
+Consume crowd/queue/mobility signals; publish de-identified airport observations where appropriate
+Locate My Friends
+Optional crew peer-proximity/offline assistance after explicit opt-in
+
+26. Delivery phases and engineering epics
+Epic
+Deliverable
+Phase 0 — Contracts and schema
+Enums, migrations, RLS, reason codes, snapshots, service interfaces, feature flags/airport maturity controls, CI migration postconditions.
+Phase 1 — Deterministic MVP
+Manual/session detection, constraint capture, time budget, airport-only/landside gate, return plan, basic certified recommendations, Trips/Compass/Map read surfaces.
+Phase 2 — Dynamic replanning
+Canonical events, flight changes, transport/queue updates, snapshot diffing, notifications, RETURN_SOON/RETURN_NOW, decision ledger.
+Phase 3 — Airport intelligence
+Truth model, provenance/TTL, reconciliation, observations, calibration, airport maturity levels, shadow mode.
+Phase 4 — Experience Compiler
+Micro-routes, compressibility/interruptibility/reversibility, Plan A/B/abort thresholds, opportunity bundles and time/risk wallet.
+Phase 5 — Social Layover
+Presence, overlapping-session matching, crews, shared constraints, meeting points, optional temporary location, Telegraph integration.
+Phase 6 — Disruption / recovery
+Cancellation, severe delay, overnight, airport transfer, rebooking/help surfaces, social rescue mesh.
+Phase 7 — Generalize platform
+Extract Temporal Freedom Engine / Commitment / OpportunityEvent primitives for non-airport contexts.
+
+26.1 Recommended implementation order within Phase 1
+1.  Data model + RLS + migrations + live-DB schema checks.
+2.  Pure deterministic feasibility library with property tests.
+3.  LayoverSessionService + snapshot creation.
+4.  Trips adapter for connection detection/manual launch.
+5.  Basic airport constraint input and confidence model.
+6.  ReturnPlan certification and reason codes.
+7.  Experience candidate adapter using existing Portava place/discovery data.
+8.  Compass read-only tool contract.
+9.  Map safe-envelope/pin semantics.
+10.  E2E lifecycle test against CI database.
+27. Definition of done
+One canonical LayoverSnapshot drives Trips, Compass, Discovery, Map and Safe Return.
+No client or LLM path can write certified risk/return fields.
+Critical unknowns fail closed for landside recommendations according to policy.
+All recommended plans satisfy the certified return contract under the configured conservative percentile.
+Every material external change produces deterministic replan behavior and invalidates stale recommendations.
+Offline mode clearly distinguishes cached/stale state from live state.
+Crew location is explicit, temporary and revocable.
+All new tables have RLS/authorization-contract coverage and migration postconditions.
+Engine changes pass decision-diff CI with zero unexplained safety regressions.
+At least the minimum scenario matrix passes end-to-end.
+Airport maturity is visible and limits capability rather than silently inventing confidence.
+Outcome telemetry measures real-world completion/safe return, not just clicks.
+
+Appendix A. Reason codes
+Code
+Meaning
+ENTRY_NOT_CONFIRMED
+Landside entry permission is not confirmed
+BAGGAGE_STATUS_CRITICAL_UNKNOWN
+Baggage handling can materially change available time
+INSUFFICIENT_USABLE_TIME
+No certified landside plan meets minimum usable duration
+SECURITY_WAIT_HIGH
+Return-side security time materially constrains plan
+RETURN_ROUTE_UNRELIABLE
+Return route reliability below configured threshold
+AIRPORT_CHANGE_REQUIRED
+Airport transfer is a dominant constraint
+SELF_TRANSFER_FRICTION
+Separate-ticket/recheck behavior reduces freedom
+DATA_STALE
+Required operational signal exceeded TTL
+SOURCE_CONFLICT
+Credible sources disagree on material operational fact
+TRAFFIC_DEGRADED
+Future return travel worsened
+FLIGHT_MOVED_EARLIER
+Departure/boarding obligation moved earlier
+FLIGHT_DELAY_CREATED_OPPORTUNITY
+Delay expanded action universe
+RETURN_THRESHOLD_REACHED
+User must begin return according to contract
+RECOMMENDATION_EXPIRED
+Recommendation certified under stale snapshot
+AIRPORT_MATURITY_LIMITED
+Airport data maturity prevents high-confidence guidance
+
+
+Appendix B. Example end-to-end sessions
+B.1 Normal 6-hour international layover
+1.  Trips detects HND connection and creates DETECTED session.
+2.  Entry permission, baggage-through status and terminals resolve; session enters EVALUATING.
+3.  Feasibility engine creates Snapshot 1: 214 usable minutes, LOW risk, landside allowed.
+4.  Experience Compiler certifies three plans; Compass presents “Best Experience / Lowest Stress / Most Social.”
+5.  User selects plan; session becomes PLAN_SELECTED then EXECUTING after airport exit checkpoint.
+6.  Traffic worsens; mobility event triggers Snapshot 2 and moves latest activity departure 17 minutes earlier.
+7.  OpportunityEvent is material; user receives “Leave 17 minutes earlier.”
+8.  User taps Return to Airport; session becomes RETURNING.
+9.  Airport re-entry checkpoint transitions to AIRPORT_REENTERED; gate context replaces exploration.
+10.  Boarding completes; outcome records safe return and optional Memory/Stamp.
+B.2 Unknown baggage blocks landside plan
+1.  Session has a 4h45m connection but baggage mode is UNKNOWN.
+2.  Value-of-information check determines baggage status can change landside eligibility.
+3.  Compass asks exactly one question: “Is your checked bag tagged through to the final destination?”
+4.  Until resolved, the engine returns AIRPORT_ONLY / INSUFFICIENT confidence for landside recommendations.
+5.  If confirmed CHECKED_THROUGH, a new snapshot is created and landside feasibility is evaluated.
+B.3 Cancellation becomes temporary community
+1.  Flight cancellation event transitions affected sessions to CANCELLED.
+2.  Replanner invalidates connection-specific recommendations and computes recovery context.
+3.  Compass surfaces airline/airport help, hotel/transport options, and opt-in aggregate count of similarly stranded Portava travelers.
+4.  Users may opt into a rescue crew by intent (hotel, taxi share, translation).
+5.  No individual identity/location is exposed until mutual opt-in / crew membership.
+
+Appendix C. Developer rules / invariants
+1.  Never query a semantic substitute for a missing field and pretend it is the requested fact. Unknown is preferable to fabricated certainty.
+2.  Never swallow a schema/data error and turn it into plausible empty operational state without structured logging and degraded confidence.
+3.  Never let a test fixture assert impossible production joins. Live-schema/literal checks must cover safety-critical query paths.
+4.  Never duplicate safety calculations across UI surfaces.
+5.  Never certify a recommendation against a snapshot other than the one returned with it.
+6.  Never update the active snapshot with a stale engine result; use version/CAS semantics.
+7.  Never allow commercial ranking before the safety/time gate.
+8.  Never keep temporary precise crew location beyond its explicit scope.
+9.  Never describe cached intelligence as live.
+10.  Never allow Compass prose to expand deterministic safety boundaries.
+11.  Always persist reason codes and provenance for consequential decisions.
+12.  Always test monotonic safety properties and actual CI schema compatibility.
+13.  Always make graceful degradation truthful: null/unknown/stale are valid states.
+14.  Always keep the generalized Temporal Freedom Engine free of airport-specific assumptions; use adapters.
+Engineering north starA successful Layover implementation should be able to answer, deterministically and explainably: “What can this traveler safely do before the next obligation, what changed since the last answer, and what must they do now?” All Portava surfaces should agree because they are reading the same certified operational truth.
+

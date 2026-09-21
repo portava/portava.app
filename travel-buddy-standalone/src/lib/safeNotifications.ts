@@ -72,6 +72,34 @@ export async function getPermissionsAsync(): Promise<{ granted?: boolean }> {
   }
 }
 
+/**
+ * Would scheduling a notification RIGHT NOW put an OS permission dialog in
+ * front of the traveller?
+ *
+ * §17.1 asks a caller to explain a permission before the system asks for it,
+ * and a caller cannot explain what is not about to happen: showing a rationale
+ * when permission is already granted, or when there is no native module to
+ * prompt with (web, Expo Go without the module), is noise that teaches people
+ * to dismiss the sheet that matters.
+ *
+ * FAILS TOWARDS NO SHEET, deliberately. `getPermissionsAsync` already swallows
+ * its own error and answers `{}`, and `{}` is indistinguishable from "denied".
+ * Treating unknown as "needs a prompt" would show the explanation on every tap
+ * for anyone whose permission state cannot be read; treating it as "no prompt"
+ * costs at most a missing explanation on a dialog the OS may not even raise.
+ * The prompt itself is unaffected either way — `scheduleLocalNotificationAt`
+ * owns it and is untouched.
+ */
+export async function notificationPromptWouldAppear(): Promise<boolean> {
+  if (!getModule()) return false;
+  try {
+    const perms = await getModule()?.getPermissionsAsync();
+    return perms?.granted === false;
+  } catch {
+    return false;
+  }
+}
+
 export async function requestPermissionsAsync(): Promise<{ granted?: boolean }> {
   try {
     return (await getModule()?.requestPermissionsAsync()) ?? {};

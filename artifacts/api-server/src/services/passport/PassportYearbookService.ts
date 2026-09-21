@@ -74,7 +74,7 @@ import {
   type TravelDnaPrefs,
   type TravelTrait,
 } from "./PassportTravelIdentityService.js";
-import { deriveTravelSignals, loadCollectionVisibility } from "./PassportProjectionService.js";
+import { deriveTravelSignals, loadCollectionVisibility, type PassportCollectionVisibility } from "./PassportProjectionService.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shape
@@ -678,7 +678,7 @@ export async function buildYearbook(
     loadCollectionVisibility(sc, userId, perms.callerCtx).catch(() => {
       failed.add("stamps");
       failed.add("memories");
-      return { stamps: false, memories: false };
+      return { stamps: false, memories: false, readFailed: true } as PassportCollectionVisibility;
     }),
     buildJourneys(sc, userId, journeyPerms).catch(() => {
       failed.add("journeys");
@@ -696,6 +696,19 @@ export async function buildYearbook(
     // can see, so it is not a collection-level exclusion.
     loadTravelDnaPrefs(sc, userId).catch(() => ({ prefs: new Map(), applied: false }) as TravelDnaPrefs),
   ]);
+
+  // An unreadable preference row is a READ failure, not a visibility choice.
+  // `loadCollectionVisibility` fails closed on it, and without this the
+  // yearbook would tell the viewer the owner had hidden the collection — a
+  // statement about a person assembled from a database hiccup. (The `.catch`
+  // arm above cannot carry this: a PostgREST failure RESOLVES, so that arm
+  // fires only on a genuine throw.) The owner's own view is unaffected:
+  // `readFailed` still leaves `visibility.stamps === true` for the owner, and
+  // only a collection actually WITHHELD is marked unavailable.
+  if (visibility.readFailed === true) {
+    if (visibility.stamps !== true) failed.add("stamps");
+    if (visibility.memories !== true) failed.add("memories");
+  }
 
   const canSeeStamps = visibility.stamps === true && !failed.has("stamps");
   const canSeeMemories = visibility.memories === true && !failed.has("memories");

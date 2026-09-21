@@ -21,9 +21,9 @@ import type { ScoredCandidate, RankCandidate } from "./portavaRank";
 
 // ── Fatigue tracking ──────────────────────────────────────────────────────────
 // Fire-and-forget upsert into viewer_creator_fatigue for impression batches.
-// Gated by the CREATOR_FATIGUE_ENABLED feature flag (fail-open: skipped when flag
-// is unreachable). Deduplicates creator IDs within each batch (batch-at-most-once
-// per session per creator) to avoid write amplification.
+// Gated by the CREATOR_FATIGUE_ENABLED feature flag. An unreadable flag read is
+// REPORTED and keeps the last known value — never cached as an answer (DV-01).
+// Dedupes creator IDs per batch (at-most-once per session) to limit write amplification.
 
 let _fatigueFlagCachedAt   = 0;
 let _fatigueFlagEnabled    = false;
@@ -32,14 +32,14 @@ const FATIGUE_FLAG_TTL_MS  = 60_000; // 60 s TTL matching rankingConfig cache
 async function isFatigueEnabled(sc: any): Promise<boolean> {
   if (Date.now() - _fatigueFlagCachedAt < FATIGUE_FLAG_TTL_MS) return _fatigueFlagEnabled;
   try {
-    const { data } = await sc
+    const { data, error } = await sc
       .from("feature_flags")
       .select("enabled")
       .eq("flag", "CREATOR_FATIGUE_ENABLED")
       .maybeSingle();
-    _fatigueFlagEnabled  = Boolean((data as any)?.enabled);
-    _fatigueFlagCachedAt = Date.now();
-  } catch { /* fail-open: keep previous value */ }
+    if (error) { reportFatigueFlagReadFailure(error); return _fatigueFlagEnabled; } // uncached
+    _fatigueFlagEnabled = Boolean((data as any)?.enabled); _fatigueFlagCachedAt = Date.now();
+  } catch (err) { reportFatigueFlagReadFailure(err); }
   return _fatigueFlagEnabled;
 }
 
@@ -60,7 +60,7 @@ function upsertCreatorFatigueAsync(
       p_viewer_id:  viewerId,
       p_creator_ids: uuidIds,
     })
-    .then(() => {}, () => {});
+    .then((r: any) => { if (r?.error) reportFatigueWriteFailure(r.error); }, (e: unknown) => reportFatigueWriteFailure(e));
 }
 
 /** Feature keys that carry or could carry raw GPS coordinates — strip on log. */
@@ -78,8 +78,8 @@ function stripCoordinateKeys(features: Record<string, number>): Record<string, n
  * Bulk-insert one `impression` row per scored candidate into `rank_events`.
  *
  * Fire-and-forget: call without `await` so a logging failure never blocks a
- * feed response.  All errors are swallowed silently.
- *
+ * feed response.  Every failure is REPORTED (logger.warn), never rethrown, and
+ * never silent — a PostgREST rejection resolves, so its `error` is bound below.
  * @param scored    Output of rankCandidates() — position is inferred from array order.
  * @param userId    Authenticated viewer.
  * @param surface   "pulse" | "discovery" | "events"
@@ -252,8 +252,8 @@ const COMPASS_ITEM_KIND: Record<string, string> = {
  * out) so that fire-and-forget behaviour can be verified in timing tests.
  *
  * Fire-and-forget: call without `await` so a logging failure never blocks the
- * recommendations response.  All errors are swallowed silently.
- *
+ * recommendations response.  Every failure is REPORTED (logger.warn), never
+ * rethrown — the insert's `error` is bound below, exactly as in logImpression.
  * @param items     Served recommendations — id + type from the Compass feed.
  * @param userId    Authenticated viewer.
  * @param sessionId Optional session UUID for grouping a single open.
@@ -556,4 +556,52 @@ export async function logLivePulseServe(
     // rejection on the response path.
     try { onError?.(err); } catch { /* the error sink itself failed — swallow */ }
   }
+}
+
+// ── Fatigue-tracking error sinks (census DV-01) ───────────────────────────────
+//
+// DECLARED AT THE FOOT OF THE MODULE ON PURPOSE. Their only callers are
+// isFatigueEnabled and upsertCreatorFatigueAsync at the very top of the file,
+// which sits ABOVE every anchored doc citation into it (`lib/rankLog.ts:9-12`,
+// `:81`, `:142`, `:143-148`, `:154`, `:255`, `:298`). A declaration inserted up
+// there would move all seven. Function declarations hoist, so the call sites
+// bind to these regardless of position, and the citations stay where they are.
+//
+// WHY THESE EXIST AT ALL. supabase-js RESOLVES a failed read: a statement
+// timeout, a dropped connection pooled away, an RLS denial and a missing row
+// all arrive as the SAME `{ data: null }` once `error` is discarded. The flag
+// read below the header used to discard it and then CACHE the fabricated
+// `false` for the full 60 s TTL, so an outage did not merely look like "the
+// flag is off" — it HELD the flag off for a minute, in a process where nothing
+// had been read. Binding the error is what makes the two distinguishable; not
+// caching it is what stops one unreadable read from deciding the next minute.
+
+/**
+ * An unreadable CREATOR_FATIGUE_ENABLED read.
+ *
+ * Fail-closed in the sense that matters here: the caller returns the LAST KNOWN
+ * value (initially `false`, i.e. the gate stays shut) and leaves the TTL cache
+ * untouched, so the next call re-reads rather than serving an answer nobody
+ * obtained. Never throws — `logImpression` is on the feed path.
+ */
+function reportFatigueFlagReadFailure(err: unknown): void {
+  logger.warn(
+    { err, flag: "CREATOR_FATIGUE_ENABLED" },
+    "rankLog: CREATOR_FATIGUE_ENABLED read failed — flag value not refreshed, not cached",
+  );
+}
+
+/**
+ * A rejected `increment_creator_fatigue_batch`.
+ *
+ * The call is voided rather than awaited, and it used to be `.then(() => {},
+ * () => {})` — which discards the resolved `{ error }` AND the rejection, so a
+ * dropped RPC and a successful one were byte-identical from outside. Reported
+ * here at warn level; the impression path continues either way.
+ */
+function reportFatigueWriteFailure(err: unknown): void {
+  logger.warn(
+    { err, rpc: "increment_creator_fatigue_batch" },
+    "rankLog: creator fatigue upsert rejected",
+  );
 }

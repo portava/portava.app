@@ -491,13 +491,44 @@ async function doResolve(db: SupabaseClient, place: PlaceInput, retried = false)
   return { canonicalId: row.id, canonical: rowToCanonicalFields(row) };
 }
 
+// ── D11: an unread canonical registry is not an empty one ─────────────────────
+//
+// swallowed-read-inventory.md, SILENT column — the site that inventory calls
+// "the one worth reading first". `suggestCanonicalLocations` refused only when
+// BOTH of its reads failed, so a single-source failure silently HALVED the
+// candidate pool and the caller got a short list that looked complete; and a
+// total failure returned the same `[]` a genuine no-match returns.
+//
+// The caller is routes/discoverySearch.ts:2727 (GET /discovery/suggest), which
+// merges these rows into the `cities` group of a route whose stated doctrine
+// (discoverySearch.ts:2710-2714) is that a REJECTED source must not become an
+// empty group indistinguishable from one that was read and matched nothing.
+// Rejecting hands this read to the refusal envelope that route already sends,
+// which keeps the fail-closed direction (empty groups) and puts the difference
+// on the wire. A MISSING TABLE is not a failed read — it is the permanent
+// structural absence `isMissingTable` already treats as "no registry", so that
+// still degrades to [].
+export class CanonicalReadUnavailableError extends Error {
+  /** The postgrest error object the read resolved with. */
+  readonly readError: unknown;
+  constructor(which: string, readError: unknown) {
+    super(`canonical_locations ${which} read failed`);
+    this.name = "CanonicalReadUnavailableError";
+    this.readError = readError;
+  }
+}
+
 // ── Typeahead: canonical city/admin suggestions ───────────────────────────────
 //
 // Powers the global search bar's Cities group so location suggestions come
 // from the normalized canonical registry (not raw profile text). Venue-class
 // rows are excluded — venue typeahead belongs to /api/places/search.
 // Prefix matches are listed ahead of contains matches; rows are deduped by
-// normalized_name. Fail-soft: any error returns [].
+// normalized_name.
+//
+// D11: NOT fail-soft any more. Either read erroring throws
+// `CanonicalReadUnavailableError` so the caller can tell an unread registry
+// from an empty one; a MISSING table still degrades to [].
 export async function suggestCanonicalLocations(
   db: SupabaseClient,
   q: string,
@@ -511,7 +542,15 @@ export async function suggestCanonicalLocations(
       db.from(TABLE).select("*").ilike("normalized_name", `${esc}%`).limit(limit * 3),
       db.from(TABLE).select("*").ilike("normalized_name", `%${esc}%`).limit(limit * 3),
     ]);
-    if (prefix.error && contains.error) return [];
+    // Either half erroring is refused, not just both: `contains` (%x%) is a
+    // superset of `prefix` (x%), so losing one silently halves the pool the
+    // caller ranks and dedupes — a short list that looks complete. A missing
+    // table is the one absence that is honestly [] (see isMissingTable).
+    const readErrs = [prefix.error, contains.error].filter((e) => e != null);
+    if (readErrs.length > 0) {
+      if (readErrs.every((e) => isMissingTable(e))) return [];
+      throw new CanonicalReadUnavailableError(prefix.error ? "prefix" : "contains", readErrs[0]);
+    }
     const rows = [
       ...((prefix.data ?? []) as CanonicalRow[]),
       ...((contains.data ?? []) as CanonicalRow[]),
@@ -530,7 +569,8 @@ export async function suggestCanonicalLocations(
       if (out.length >= limit) break;
     }
     return out;
-  } catch {
+  } catch (e) {
+    if (e instanceof CanonicalReadUnavailableError) throw e;
     return [];
   }
 }

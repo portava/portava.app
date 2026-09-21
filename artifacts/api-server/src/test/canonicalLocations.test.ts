@@ -13,6 +13,8 @@ import {
   providerKeyOf,
   matchCanonical,
   haversineKm,
+  suggestCanonicalLocations,
+  CanonicalReadUnavailableError,
   type CanonicalRow,
   type PlaceInput,
 } from "../lib/canonicalLocations";
@@ -218,4 +220,97 @@ test("canonicalCityKey keeps legitimate distinct cities separate", () => {
   assert.notEqual(canonicalCityKey("San Francisco"), canonicalCityKey("San Diego"));
   assert.equal(canonicalCityKey("San Francisco"), "san francisco");
   assert.equal(canonicalCityKey("Mexico City"), "mexico"); // suffix strip, matches registry behavior
+});
+
+// ── D11 / swallowed-read inventory: suggestCanonicalLocations ────────────────
+//
+// The site: `if (prefix.error && contains.error) return []` (canonicalLocations
+// .ts:514, SILENT column of docs/architecture/swallowed-read-inventory.md, and
+// the one that inventory names "worth reading first").
+//
+// Owner's question — may the caller act on this emptiness as if it were an
+// answer? NO. The caller is routes/discoverySearch.ts:2727, which merges these
+// rows into the `cities` group of GET /discovery/suggest. That route's whole
+// doctrine (discoverySearch.ts:2710-2714) is that a REJECTED source must not
+// become an empty group indistinguishable from a source that was read and
+// matched nothing — it carries `unreadableAt` and refuses through
+// `sendDiscoveryRefusal` for exactly that reason. The canonical city read was
+// the one source in that fan-out not wired into it.
+//
+// TWO ABSENCES MUST NOT READ ALIKE: a failed read and a genuine no-match.
+// Fail-closed is preserved — the route's existing outer catch turns the
+// rejection into a refusal envelope with empty groups.
+//
+// A MISSING TABLE is not a failed read: it is a permanent structural absence
+// this file already treats as "no registry" (isMissingTable → NULL_RESULT at
+// :481), so it keeps returning [].
+
+function suggestFake(opts: {
+  prefixError?: unknown;
+  containsError?: unknown;
+  rows?: CanonicalRow[];
+}) {
+  let call = 0;
+  const build = (err: unknown, rows: CanonicalRow[]) => {
+    const b: any = {};
+    for (const fn of ["select", "ilike", "limit"]) b[fn] = () => b;
+    b.then = (onF: any, onR: any) =>
+      Promise.resolve(err ? { data: null, error: err } : { data: rows, error: null }).then(onF, onR);
+    return b;
+  };
+  return {
+    from() {
+      // suggestCanonicalLocations issues prefix first, then contains.
+      const isPrefix = call++ === 0;
+      const err = isPrefix ? opts.prefixError : opts.containsError;
+      return build(err ?? null, err ? [] : (opts.rows ?? []));
+    },
+  } as any;
+}
+
+const CEBU_ROW = makeRow({ id: "canon-cebu", kind: "city" });
+
+test("suggestCanonicalLocations: a genuine no-match still returns []", async () => {
+  const out = await suggestCanonicalLocations(suggestFake({ rows: [] }), "cebu", 5);
+  assert.deepEqual(out, []);
+});
+
+test("suggestCanonicalLocations: a healthy read returns the city rows", async () => {
+  const out = await suggestCanonicalLocations(suggestFake({ rows: [CEBU_ROW] }), "cebu", 5);
+  assert.equal(out.length, 1);
+  assert.equal(out[0]!.id, "canon-cebu");
+});
+
+test("D11: BOTH reads failing is not the same answer as a genuine no-match", async () => {
+  const err = { code: "57014", message: "canceling statement due to statement timeout" };
+  await assert.rejects(
+    () => suggestCanonicalLocations(suggestFake({ prefixError: err, containsError: err }), "cebu", 5),
+    (e: unknown) => e instanceof CanonicalReadUnavailableError,
+    "a failed canonical read must not be byte-identical to 'no such city'",
+  );
+});
+
+test("D11: a SINGLE failed read is refused too — a half-read pool is not an answer", async () => {
+  // The inventory's specific finding: `prefix.error && contains.error` means one
+  // source failing silently HALVES the candidate pool and the caller gets a
+  // short list that looks complete.
+  const err = { code: "57014", message: "canceling statement due to statement timeout" };
+  await assert.rejects(
+    () => suggestCanonicalLocations(suggestFake({ prefixError: err, rows: [CEBU_ROW] }), "cebu", 5),
+    (e: unknown) => e instanceof CanonicalReadUnavailableError,
+    "prefix unread while contains answered must not serve a silently halved pool",
+  );
+  await assert.rejects(
+    () => suggestCanonicalLocations(suggestFake({ containsError: err, rows: [CEBU_ROW] }), "cebu", 5),
+    (e: unknown) => e instanceof CanonicalReadUnavailableError,
+    "contains unread while prefix answered must not serve a silently halved pool",
+  );
+});
+
+test("a MISSING canonical_locations table is a real empty registry, not a failed read", async () => {
+  const missing = { code: "42P01", message: 'relation "canonical_locations" does not exist' };
+  const out = await suggestCanonicalLocations(
+    suggestFake({ prefixError: missing, containsError: missing }), "cebu", 5,
+  );
+  assert.deepEqual(out, [], "pre-migration deploys keep degrading to an empty registry");
 });

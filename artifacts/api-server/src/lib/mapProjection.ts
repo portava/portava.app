@@ -96,6 +96,8 @@ import {
   type Trajectory,
 } from "./intelContracts.js";
 import type { LiveClaimEnvelope, SourceCountBucket } from "./liveClaimRead.js";
+import type { ConflictState } from "./intelConflict.js";
+import { buildExperienceState } from "./mapExperienceState.js";
 import { canonicalCityKey } from "./canonicalLocations.js";
 import type { CityGeography } from "./mapProducers/cityModelProducer.js";
 
@@ -544,6 +546,12 @@ export interface LiveClaimLike {
   observedAt: string;
   validUntil: string;
   state: string;
+  /**
+   * §10 conflict state, carried for Sensing §5.1's `conflicting` truth class.
+   * OPTIONAL so a hand-built claim (tests, future providers) still type-checks;
+   * the envelope always supplies it. Absent reads as `none`.
+   */
+  conflictState?: ConflictState | null;
 }
 
 /**
@@ -673,11 +681,24 @@ export function countAdjacentActiveEvents(
  * see the guard: no claims ⇒ no panel ⇒ no evidence line, so contextual evidence
  * can never manufacture a live claim or move a band (§37).
  */
+export interface ApplyLiveClaimsOptions {
+  /**
+   * Sensing §7 (SX-02 / SX-07): fold the same claims into a server-built
+   * `ExperienceState` on `payload.experienceState`, and stamp the §5.1
+   * `truthClass` and §4.4 `coverage` on the object. OFF by default and gated
+   * by `map_experience_state_enabled` at the route: with it off this function
+   * is byte-for-byte what it was before the option existed — the test
+   * src/test/mapExperienceState.test.ts pins that.
+   */
+  experienceState?: boolean;
+}
+
 export function applyLiveClaims(
   obj: MapObject,
   claims: readonly LiveClaimLike[],
   now: number = Date.now(),
   evidence?: MapClaimEvidence | null,
+  opts?: ApplyLiveClaimsOptions,
 ): MapObject {
   if (!claims || claims.length === 0) return obj;
 
@@ -732,7 +753,9 @@ export function applyLiveClaims(
     if (activity !== undefined && trend !== undefined) break;
   }
 
-  return {
+  const sourceClass = attributedSourceClass(claims);
+
+  const folded: MapObject = {
     ...obj,
     observedAt: primary.observedAt,
     expiresAt: primary.validUntil,
@@ -740,7 +763,7 @@ export function applyLiveClaims(
     confidence: primary.band,
     activity,
     trend,
-    sourceClass: attributedSourceClass(claims),
+    sourceClass,
     sourceRefs: claims.map((c) => c.id),
     provenance: {
       lines,
@@ -753,6 +776,30 @@ export function applyLiveClaims(
       freshness === "live" && (primary.band === "live" || primary.band === "strong")
         ? Math.max(obj.renderingPriority, RENDERING_PRIORITY.high_confidence_live_zone)
         : obj.renderingPriority,
+  };
+
+  if (opts?.experienceState !== true) return folded;
+
+  // Sensing §7: the SAME claims, folded once more into §5.3's tree. Nothing
+  // above is recomputed — the axes, the band, the freshness and the attributed
+  // class are handed in, so the tree and the object can never disagree.
+  const experienceState = buildExperienceState({
+    claims,
+    activity,
+    trend,
+    confidence: primary.band,
+    freshness,
+    sourceClass,
+  });
+  const basePayload =
+    folded.payload && typeof folded.payload === "object" && !Array.isArray(folded.payload)
+      ? (folded.payload as Record<string, unknown>)
+      : {};
+  return {
+    ...folded,
+    truthClass: experienceState.truth.truthClass,
+    coverage: experienceState.truth.coverage,
+    payload: { ...basePayload, experienceState },
   };
 }
 
@@ -1053,6 +1100,8 @@ export async function enrichWithLiveClaims(
     max?: number;
     now?: number;
     evidence?: (obj: MapObject) => MapClaimEvidence | null | undefined;
+    /** Sensing §7 fold; see ApplyLiveClaimsOptions. Default off. */
+    experienceState?: boolean;
   } = {},
 ): Promise<LiveEnrichmentResult> {
   const max = opts.max ?? LIVE_ENRICHMENT_MAX_SUBJECTS;
@@ -1090,7 +1139,9 @@ export async function enrichWithLiveClaims(
           evidence = null;
         }
       }
-      out[i] = applyLiveClaims(out[i], claims, now, evidence);
+      out[i] = applyLiveClaims(out[i], claims, now, evidence, {
+        experienceState: opts.experienceState === true,
+      });
       enriched += 1;
     }),
   );
