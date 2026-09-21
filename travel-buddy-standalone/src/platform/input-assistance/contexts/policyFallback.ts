@@ -50,6 +50,12 @@ import type {
   PrivacyClass,
 } from '../types/inputContext.ts';
 import type { InputAssistanceMode } from '../types/fieldPolicy.ts';
+// The conservative VALUES live in `inputContexts.ts`, which must stay a leaf
+// module — see its header for the cross-workspace load that requires it. This
+// module derives the policy form from them, so there is still one definition.
+import { CONSERVATIVE_DEFAULTS, FALLBACK_DEBOUNCE_MS, UNREACHABLE_MIN_CHARS } from './inputContexts.ts';
+
+export { FALLBACK_DEBOUNCE_MS, UNREACHABLE_MIN_CHARS };
 
 /**
  * The shape the authority serves per context (`routes/inputAssistance.ts`
@@ -142,20 +148,6 @@ const KNOWN_PRIVACY_CLASSES: ReadonlySet<string> = new Set<PrivacyClass>([
 ]);
 
 /**
- * §33's recommended debounce band is 100–150ms. Used only to replace a served
- * value that is not a usable number — never to override one that is.
- */
-export const FALLBACK_DEBOUNCE_MS = 120;
-
-/**
- * A `minChars` no typed text can reach. Deliberately not `Infinity`: this value
- * is compared against `text.trim().length` and is also JSON-round-tripped in
- * tests, and `Infinity` does not survive `JSON.stringify` (it becomes `null`),
- * which would turn an unreachable threshold into a reachable one.
- */
-export const UNREACHABLE_MIN_CHARS = Number.MAX_SAFE_INTEGER;
-
-/**
  * The single local policy this client still carries.
  *
  * Returned whenever the authority has not been heard from, is stale, belongs to
@@ -164,19 +156,19 @@ export const UNREACHABLE_MIN_CHARS = Number.MAX_SAFE_INTEGER;
  * since this object is shared by every unresolved context in the process.
  */
 export const CONSERVATIVE_POLICY: Readonly<Omit<ServedContextPolicy, 'context'>> = Object.freeze({
-  mode: 'no_assistance' as InputAssistanceMode,
+  mode: CONSERVATIVE_DEFAULTS.defaultMode,
   allowedSuggestionTypes: Object.freeze([]) as unknown as AssistanceType[],
   entityTypes: Object.freeze([]) as unknown as EntityType[],
-  allowPersonalization: false,
-  allowLiveContext: false,
-  allowMemoryContext: false,
-  allowAI: false,
-  minChars: UNREACHABLE_MIN_CHARS,
-  maxSuggestions: 0,
-  debounceMs: FALLBACK_DEBOUNCE_MS,
-  offlinePolicy: 'unavailable' as OfflineInputPolicy,
-  privacyClass: 'private_message' as PrivacyClass,
-  zeroStateAssistance: false,
+  allowPersonalization: CONSERVATIVE_DEFAULTS.allowPersonalization,
+  allowLiveContext: CONSERVATIVE_DEFAULTS.allowLiveContext,
+  allowMemoryContext: CONSERVATIVE_DEFAULTS.allowMemoryContext,
+  allowAI: CONSERVATIVE_DEFAULTS.allowAI,
+  minChars: CONSERVATIVE_DEFAULTS.minChars,
+  maxSuggestions: CONSERVATIVE_DEFAULTS.maxSuggestions,
+  debounceMs: CONSERVATIVE_DEFAULTS.debounceMs,
+  offlinePolicy: CONSERVATIVE_DEFAULTS.offlinePolicy,
+  privacyClass: CONSERVATIVE_DEFAULTS.privacyClass,
+  zeroStateAssistance: CONSERVATIVE_DEFAULTS.zeroStateAssistance,
 });
 
 /** The conservative policy as a full record for one context. */

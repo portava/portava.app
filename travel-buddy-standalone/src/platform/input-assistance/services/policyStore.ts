@@ -46,6 +46,7 @@ import {
   sanitizeServedPolicy,
   type ServedContextPolicy,
 } from '../contexts/policyFallback.ts';
+import { _bindDefaultPolicyStore } from '../contexts/inputContexts.ts';
 
 /** A snapshot's age ceiling. Twelve hours: long enough that a normal session
  *  refetches roughly once, short enough that a tightening cannot be missed for
@@ -238,6 +239,11 @@ export class PolicyStore {
  * cleared by the same sign-out path, in `installInputPolicySync.ts`.
  */
 export const sharedPolicyStore = new PolicyStore();
+
+// Bind the singleton into the resolvers. The edge points THIS way on purpose —
+// see `contexts/inputContexts.ts#_bindDefaultPolicyStore` for the cross-workspace
+// module-resolution failure the other direction caused.
+_bindDefaultPolicyStore(sharedPolicyStore);
 
 // ── TEST SEAM ────────────────────────────────────────────────────────────────
 //
