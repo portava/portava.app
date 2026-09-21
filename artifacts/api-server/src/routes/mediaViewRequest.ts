@@ -79,10 +79,27 @@ router.post("/v1/media/view-requests", asyncHandler(async (req, res) => {
 
   // recipients are opted-in + eligible + un-blocked ONLY; we return the COUNT,
   // never the recipient ids (a view request must not reveal who was asked).
+  //
+  // `recipientsDetermined` is the COUNT'S PROVENANCE, and it is on the wire for
+  // the same reason `planGateDetermined` is (routes/mediaActions.ts:73, :204,
+  // which reach it only because those handlers spread the whole service result
+  // — this handler enumerates its fields, so the flag had to be named here).
+  // `recipientCount: 0` has two causes: the opt-in registry was read and nobody
+  // was eligible (the normal pre-launch answer), or it could not be read at all.
+  // The service already tells them apart; dropping the flag here put them back
+  // together, and the client then rendered the unread case as the positive claim
+  // "No contributors are nearby yet".
+  //
+  // `=== true` and not `!== false`: an absent flag is a determination that was
+  // never recorded, and this field may only ever be true when it was. NOTE that
+  // the two spellings are equivalent for every input reachable today — the
+  // service always sets a real boolean on its ok:true path — so this choice is
+  // defensive and is deliberately NOT claimed as mutation-covered.
   res.status(201).json({
     requestId: out.requestId,
     missionCandidateId: out.missionCandidateId,
     recipientCount: out.recipientCount ?? 0,
+    recipientsDetermined: out.recipientsDetermined === true,
   });
 }));
 

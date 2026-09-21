@@ -51,6 +51,7 @@ import { logger as rootLogger } from "./logger.js";
 import { notifyBookingParty } from "./bookingNotify.js";
 import { isFlagEnabled } from "./featureFlags.js";
 import { AWAITING_BUDDY_STATUSES } from "./rentBuddyBookingStatus.js";
+import { affectedIds, affectedRows } from "./affectedRows.js";
 
 /** Master feature flag that gates the whole Rent-a-Buddy surface. */
 const RAB_MASTER_FLAG = "rent_buddy_enabled";
@@ -62,6 +63,37 @@ const RAB_MASTER_FLAG = "rent_buddy_enabled";
 const OFFER_EXPIRY_BATCH_LIMIT = 500;
 
 const logger = rootLogger.child({ service: "RentBuddyRequestSweeper" });
+
+/**
+ * Append one row to `buddy_booking_events`.
+ *
+ * Phases 1 and 2 used to write `void serviceClient.from(…).insert({…})`.
+ * `PostgrestBuilder` is a THENABLE, not a promise — it calls `_fetch` inside
+ * `then()` — so that statement built a request object and discarded it. No HTTP
+ * call, no row: `request_expired` and `auto_completed` were never in the log
+ * that GET /rent-a-buddy/bookings/:bookingId/events serves to both parties.
+ *
+ * Issued and awaited (the sweeper is a background job, so ordering costs
+ * nothing), with its own try/catch and a logged failure — the same shape phase
+ * 3's `no_show_escalated` write already used. Never throws, so an unwritable
+ * audit row cannot abort a sweep phase.
+ */
+async function writeBookingEvent(serviceClient: any, row: Record<string, unknown>): Promise<void> {
+  try {
+    const { error } = await serviceClient.from("buddy_booking_events").insert(row);
+    if (error) {
+      logger.error(
+        { err: error, bookingId: row.booking_id, event: row.event },
+        "buddy_booking_events insert failed — booking event unaudited",
+      );
+    }
+  } catch (err) {
+    logger.error(
+      { err, bookingId: row.booking_id, event: row.event },
+      "buddy_booking_events insert threw — booking event unaudited",
+    );
+  }
+}
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 
@@ -163,20 +195,41 @@ export async function runBuddyRequestSweep(client?: any): Promise<BuddyRequestSw
   let expiredCount = 0;
   if (staleRequests && staleRequests.length > 0) {
     const ids = staleRequests.map((r: any) => r.id as string);
-    const { error: expireErr } = await serviceClient
+    // The status guard is repeated on the WRITE, not just the read. Without it
+    // a booking a buddy accepted between the SELECT and the UPDATE was still
+    // stomped to 'expired'; with it, that booking simply drops out of the
+    // match — and the RETURNING rows below are then the honest answer to
+    // "which of these did this sweep actually expire?".
+    const { data: expiredRows, error: expireErr } = await serviceClient
       .from("rent_buddy_bookings")
       .update({ status: "expired", updated_at: now })
-      .in("id", ids);
+      .in("id", ids)
+      .in("status", [...AWAITING_BUDDY_STATUSES])
+      .select("id");
 
     if (!expireErr) {
+      // Drive the events, the notifications AND the count off the rows the
+      // WRITE changed, not the rows the READ found. supabase-js resolves a
+      // partial (or empty) match as `{ error: null }`, so the old code — which
+      // looped over `staleRequests` and set `expiredCount = staleRequests.length`
+      // — told every traveler in the read set that their booking had expired
+      // even when the update moved none of them.
+      const expiredIds = affectedIds(expiredRows);
+      if (expiredIds.size < staleRequests.length) {
+        logger.warn(
+          { selected: staleRequests.length, expired: expiredIds.size },
+          "request-expiry matched fewer rows than it selected — notifying only the bookings that really expired",
+        );
+      }
       for (const bk of staleRequests) {
-        void serviceClient.from("buddy_booking_events").insert({
+        if (!expiredIds.has(bk.id as string)) continue;
+        await writeBookingEvent(serviceClient, {
           booking_id: bk.id, actor_user_id: bk.traveler_id, event: "request_expired",
           from_status: bk.status as string, to_status: "expired", metadata: {},
         });
-        notifyBookingParty(serviceClient, bk.traveler_id as string, "rent_buddy.booking_expired", bk.id as string);
+        await notifyBookingParty(serviceClient, bk.traveler_id as string, "rent_buddy.booking_expired", bk.id as string);
       }
-      expiredCount = staleRequests.length;
+      expiredCount = expiredIds.size;
     }
   }
 
@@ -193,10 +246,15 @@ export async function runBuddyRequestSweep(client?: any): Promise<BuddyRequestSw
 
   if (pendingConfirm && pendingConfirm.length > 0) {
     const ids2 = pendingConfirm.map((r: any) => r.id as string);
-    const { error: autoCompleteErr } = await serviceClient
+    // Status guard repeated on the write (see phase 1): a booking that was
+    // DISPUTED between the select and the update must not be auto-completed
+    // out of its dispute, and the RETURNING rows are then the real set.
+    const { data: completedRows, error: autoCompleteErr } = await serviceClient
       .from("rent_buddy_bookings")
       .update({ status: "completed", updated_at: now })
-      .in("id", ids2);
+      .in("id", ids2)
+      .eq("status", "completed_pending_traveler_confirmation")
+      .select("id");
 
     if (!autoCompleteErr) {
       // Resolve buddy user IDs in one batch for completion notifications.
@@ -221,19 +279,29 @@ export async function runBuddyRequestSweep(client?: any): Promise<BuddyRequestSw
         logger.error({ err }, "buddy-profile lookup threw during auto-completion — traveler notifications still proceed");
       }
 
+      // Same rule as phase 1: both parties are told a booking COMPLETED, and
+      // that claim may only be made about bookings this update actually moved.
+      const completedIds = affectedIds(completedRows);
+      if (completedIds.size < pendingConfirm.length) {
+        logger.warn(
+          { selected: pendingConfirm.length, completed: completedIds.size },
+          "auto-completion matched fewer rows than it selected — notifying only the bookings that really completed",
+        );
+      }
       for (const bk of pendingConfirm) {
-        void serviceClient.from("buddy_booking_events").insert({
+        if (!completedIds.has(bk.id as string)) continue;
+        await writeBookingEvent(serviceClient, {
           booking_id: bk.id, actor_user_id: bk.traveler_id, event: "auto_completed",
           from_status: "completed_pending_traveler_confirmation", to_status: "completed",
           metadata: { reason: "dispute_window_expired" },
         });
-        notifyBookingParty(serviceClient, bk.traveler_id as string, "rent_buddy.booking_completed", bk.id as string);
+        await notifyBookingParty(serviceClient, bk.traveler_id as string, "rent_buddy.booking_completed", bk.id as string);
         const buddyUserId = buddyUserIdMap[bk.buddy_id as string];
         if (buddyUserId) {
-          notifyBookingParty(serviceClient, buddyUserId, "rent_buddy.booking_completed", bk.id as string);
+          await notifyBookingParty(serviceClient, buddyUserId, "rent_buddy.booking_completed", bk.id as string);
         }
       }
-      autoCompletedCount = pendingConfirm.length;
+      autoCompletedCount = completedIds.size;
     }
   }
   } catch (err) {
@@ -254,7 +322,7 @@ export async function runBuddyRequestSweep(client?: any): Promise<BuddyRequestSw
     for (const bk of staleNoShows) {
       // Derive the original reporter from the no_show_reported event —
       // do NOT assume traveler; either party can file a no-show report.
-      const { data: noShowEvent } = await serviceClient
+      const { data: noShowEvent, error: noShowEventErr } = await serviceClient
         .from("buddy_booking_events")
         .select("actor_user_id")
         .eq("booking_id", bk.id as string)
@@ -262,18 +330,86 @@ export async function runBuddyRequestSweep(client?: any): Promise<BuddyRequestSw
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
-      // Fall back to traveler_id only if the event row is missing (data inconsistency)
-      const reporterUserId: string = (noShowEvent as any)?.actor_user_id ?? (bk.traveler_id as string);
+      // The fallback below is for a MISSING event row. A failed read returns
+      // `{ data: null }` too, and taking the fallback then does the one thing
+      // the comment says not to do: it assumes the traveler. `reporterUserId`
+      // is written to rent_buddy_disputes.raised_by, so when it was the BUDDY
+      // who filed the no-show, an unreadable buddy_booking_events opens a
+      // dispute in the traveler's name against themselves — a false attribution
+      // in the record a human moderator adjudicates from, and one no later
+      // sweep corrects because the booking is already 'disputed'. Skip the
+      // booking; it stays no_show_pending and the next pass retries it.
+      if (noShowEventErr) {
+        console.error("[sweep] no_show_reported event lookup failed for booking", bk.id, noShowEventErr);
+        continue;
+      }
+
+      // SECOND SOURCE, before the fallback.
+      //
+      // `buddy_booking_events` is written fire-and-forget by both no-show
+      // routes, and — for every booking reported through
+      // rentABuddySpec's POST /bookings/:id/report-no-show before that route
+      // gained its producer — was never written at all. An ABSENT row therefore
+      // does not mean "the traveller reported it"; it means the primary record
+      // is missing, and taking the fallback on it does the one thing the comment
+      // above forbids.
+      //
+      // rent_buddy_safety_events IS written on that path, awaited, and its error
+      // is checked before the booking is moved, so a no_show row there is a
+      // reliable record of WHO filed. Consult it before assuming.
+      let reporterUserId: string | null = (noShowEvent as any)?.actor_user_id ?? null;
+      let reporterAssumed = false;
+      if (!reporterUserId) {
+        const { data: safetyEvent, error: safetyEventErr } = await serviceClient
+          .from("rent_buddy_safety_events")
+          .select("actor_user_id")
+          .eq("booking_id", bk.id as string)
+          .eq("event_type", "no_show")
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        // Same rule as the primary read: an unreadable table is not evidence of
+        // anything, so skip rather than attribute. The next pass retries.
+        if (safetyEventErr) {
+          console.error("[sweep] rent_buddy_safety_events no-show lookup failed for booking", bk.id, safetyEventErr);
+          continue;
+        }
+        reporterUserId = (safetyEvent as any)?.actor_user_id ?? null;
+      }
+      if (!reporterUserId) {
+        // Neither record exists. The dispute still has to be opened — the
+        // booking cannot sit in no_show_pending forever — but the attribution is
+        // an ASSUMPTION, and it is marked as one in the escalation event so the
+        // moderator adjudicating from this record can see that `raised_by` was
+        // not evidenced.
+        reporterUserId = bk.traveler_id as string;
+        reporterAssumed = true;
+        logger.warn(
+          { bookingId: bk.id },
+          "no-show escalation found no report record — raised_by assumed to be the traveller",
+        );
+      }
 
       // Resolve or create the dispute row FIRST. If the insert fails we skip the
       // booking update entirely, so the booking stays no_show_pending and
       // noShowEscalatedCount is never incremented.
-      const { data: existingDispute } = await serviceClient
+      const { data: existingDispute, error: existingDisputeErr } = await serviceClient
         .from("rent_buddy_disputes")
         .select("id")
         .eq("booking_id", bk.id as string)
         .eq("reason", "no_show")
         .maybeSingle();
+
+      // "Resolve or create" only resolves if the read is trusted. An unreadable
+      // rent_buddy_disputes reads as "no dispute for this booking yet" and the
+      // insert below files a SECOND open no_show dispute for the same booking —
+      // two moderation cases over one incident, which can be adjudicated
+      // independently and in opposite directions. Skip, exactly as the insert
+      // failure a few lines down does.
+      if (existingDisputeErr) {
+        console.error("[sweep] existing-dispute lookup failed for booking", bk.id, existingDisputeErr);
+        continue;
+      }
 
       let disputeId: string | null = (existingDispute as any)?.id ?? null;
 
@@ -291,13 +427,24 @@ export async function runBuddyRequestSweep(client?: any): Promise<BuddyRequestSw
       }
 
       // Dispute row is confirmed — now promote the booking to disputed.
-      const { error: updateError } = await serviceClient
+      const { data: promoted, error: updateError } = await serviceClient
         .from("rent_buddy_bookings")
         .update({ status: "disputed", updated_at: now })
-        .eq("id", bk.id as string);
+        .eq("id", bk.id as string)
+        .eq("status", "no_show_pending")
+        .select("id");
 
       if (updateError) {
         console.error("[sweep] failed to promote booking to disputed after dispute insert", bk.id, updateError);
+        continue;
+      }
+      // Zero matched rows: the booking left no_show_pending (resolved, cancelled
+      // or deleted) between the select and this write. Nothing was escalated, so
+      // it must not be counted as an escalation nor written into the booking's
+      // event log as one — the dispute row above is idempotent and the next pass
+      // reuses it if the booking really is still pending.
+      if (affectedRows(promoted) === 0) {
+        console.error("[sweep] no-show escalation matched no row — booking left no_show_pending concurrently", bk.id);
         continue;
       }
 
@@ -307,7 +454,7 @@ export async function runBuddyRequestSweep(client?: any): Promise<BuddyRequestSw
         const { error: eventInsertError } = await serviceClient.from("buddy_booking_events").insert({
           booking_id: bk.id, actor_user_id: reporterUserId, event: "no_show_escalated",
           from_status: "no_show_pending", to_status: "disputed",
-          metadata: { reason: "grace_period_expired", dispute_id: disputeId },
+          metadata: { reason: "grace_period_expired", dispute_id: disputeId, raised_by_assumed: reporterAssumed },
         });
         if (eventInsertError) {
           console.error("[sweep] failed to write no_show_escalated event for booking", bk.id, eventInsertError);
@@ -380,17 +527,28 @@ async function expireStaleOpenRows(
   if (rows.length === 0) return 0;
 
   const ids = rows.map((r) => r.id);
-  const { error: updErr } = await serviceClient
+  // `.eq(openStatus)` on the write as well as the read, and `.select()` so the
+  // count returned is the number of rows this call EXPIRED — not the number it
+  // had selected a moment earlier. The count feeds the sweep status and the
+  // scheduler log; reporting the read set there made a write that moved
+  // nothing look like a drained backlog.
+  const { data: updated, error: updErr } = await serviceClient
     .from(table)
     .update({ status: "expired", updated_at: now })
-    .in("id", ids);
+    .in("id", ids)
+    .eq("status", openStatus)
+    .select("id");
 
   if (updErr) {
     logger.error({ err: updErr, table }, "stale open-row expire update failed");
     return 0;
   }
 
-  return ids.length;
+  const expired = affectedRows(updated);
+  if (expired < ids.length) {
+    logger.warn({ table, selected: ids.length, expired }, "stale open-row expiry matched fewer rows than selected");
+  }
+  return expired;
 }
 
 // ── Scheduler ─────────────────────────────────────────────────────────────────

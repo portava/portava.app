@@ -32,7 +32,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const pkgRoot = path.resolve(__dirname, "..");
 
 const pkg = JSON.parse(readFileSync(path.join(pkgRoot, "package.json"), "utf8"));
-const testScript = pkg.scripts?.test ?? "";
+// npm/pnpm runs `pretest` immediately before `test` and aborts the run if it
+// fails, so BOTH lifecycle scripts are part of `pnpm test` and a file named in
+// either one really does execute in CI. Focused `test:*` scripts are
+// deliberately NOT counted: nothing runs those on their own, so a file reachable
+// only from `test:foo` is exactly the silently-never-runs case this guard exists
+// to catch.
+const testScript = [pkg.scripts?.pretest, pkg.scripts?.test].filter(Boolean).join(" ");
 const registered = new Set(
   (testScript.match(/src\/[^\s'"]+\.test\.ts/g) ?? []).map((p) => p.trim()),
 );

@@ -16,11 +16,23 @@ import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isUuid } from "../lib/followDecisions.js";
-import { resolveAppeal } from "../services/appeals/resolveAppeal.js";
+import { resolveAppeal, isDeferred } from "../services/appeals/resolveAppeal.js";
+import { listPendingRestorations } from "../services/appeals/pendingRestorations.js";
 
 import { requireAdmin } from "../lib/requireAdmin.js";
 
 const router = Router();
+
+/**
+ * What the appellant is told when the appeal is upheld but the restoration did
+ * not happen. It must never be omitted from a deferred approval — "your appeal
+ * was approved" alone reads as "you have your trip back".
+ */
+const RESTORATION_PENDING_SENTENCE =
+  "A moderator still needs to restore this by hand.";
+
+/** Where an admin can see every restoration an approved appeal still owes. */
+const RESTORATION_QUEUE_PATH = "/api/appeals/restorations/pending";
 
 // ── POST /api/appeals ─────────────────────────────────────────────────────────
 
@@ -126,6 +138,49 @@ router.get("/appeals/me", asyncHandler(async (req, res) => {
     })),
     page,
     limit,
+  });
+}));
+
+// ── GET /api/appeals/restorations/pending ─────────────────────────────────────
+// Admin-only — the restorations an APPROVED appeal owes and the database does
+// not show.
+//
+// This is the operator surface for `restore_requires_policy`. Before it, a
+// deferred restoration existed only as a `req.log.error` line at the moment the
+// appeal was approved: nobody could ask "what are we still holding?" and get an
+// answer, so the debt was real, unbounded and invisible. Being unable to
+// perform the restoration is a decision; being unable to SEE the ones we owe is
+// just a missing endpoint.
+//
+// Declared before GET /api/appeals so no future `/appeals/:something` route can
+// swallow it.
+router.get("/appeals/restorations/pending", asyncHandler(async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc } = admin;
+
+  const page   = Math.max(1, parseInt((req.query.page as string) ?? "1"));
+  const limit  = Math.min(200, Math.max(1, parseInt((req.query.limit as string) ?? "50")));
+  const offset = (page - 1) * limit;
+
+  const result = await listPendingRestorations(sc, { limit, offset });
+
+  // A failed read is NOT an empty queue. Returning `pending: []` here would tell
+  // an operator that nothing is owed, which is the same lie one layer up as the
+  // appeal that reported a restoration it never performed.
+  if (!result.ok) {
+    req.log.error({ reason: result.reason }, "pending restoration queue read failed");
+    sendError(res, "db_error", result.reason);
+    return;
+  }
+
+  res.json({
+    pending: result.pending,
+    page,
+    limit,
+    // `scanned` larger than `pending.length` is the honest statement that the
+    // rest of the page was checked and found already restored.
+    scanned: result.scanned,
   });
 }));
 
@@ -243,6 +298,7 @@ router.patch("/appeals/:id", asyncHandler(async (req, res) => {
   // Gate the state write on a successful reversal: if it fails, hold the appeal
   // in its current state and surface an error instead.
   let reversal: Awaited<ReturnType<typeof resolveAppeal>> | null = null;
+  let restorationDeferred = false;
   if (state === "approved") {
     reversal = await resolveAppeal(sc, {
       id:              (appeal as any).id,
@@ -254,7 +310,29 @@ router.patch("/appeals/:id", asyncHandler(async (req, res) => {
 
     req.log.info({ appealId: id, reversal }, "appeal reversal");
 
-    if (!reversal.ok) {
+    // ── Restoration owed, appeal still resolves ───────────────────────────
+    // A DEFERRED reversal is not a failure of the appeal: the appeal is upheld
+    // and must be allowed to reach its terminal state (holding it under_review
+    // forever is not "truthful", it is a queue that can never be closed). What
+    // failed is the RESTORATION, and that must not be dressed up as a success:
+    // the action recorded is `restore_requires_policy`, the appellant is NOT
+    // told the action was reversed, and an operator gets the ids they need to
+    // do it by hand.
+    if (isDeferred(reversal)) {
+      req.log.error(
+        {
+          appealId:    id,
+          action:      reversal.action,
+          reason:      reversal.reason,
+          targetType:  (appeal as any).target_type,
+          targetId:    (appeal as any).target_id,
+          appellantId: (appeal as any).appellant_id,
+          evidence:    reversal.evidence,
+        },
+        "appeal approved but the restoration did NOT happen — manual restoration required",
+      );
+      restorationDeferred = true;
+    } else if (!reversal.ok) {
       // Do NOT commit 'approved' and do NOT notify the appellant that the
       // action was reversed. Leave the appeal in under_review so a moderator
       // can retry once the underlying cause is fixed.
@@ -287,30 +365,70 @@ router.patch("/appeals/:id", asyncHandler(async (req, res) => {
 
   // ── Notify on approval (reversal already succeeded above) ─────────────────
 
+  // ── THE APPELLANT'S ONLY NOTICE, WRITTEN INTO A VOID ──────────────────────
+  // Both notification inserts below were `.then(() => {}).catch(() => {})`.
+  // supabase-js RESOLVES on a database error, so the `.catch` was dead code for
+  // the failure that actually happens, and the `.then(() => {})` threw away the
+  // `{ error }` that WAS delivered. The result: the one message telling a person
+  // their appeal was approved (and, when restoration is deferred, that their
+  // content still has to be restored by hand) or denied could fail to write with
+  // no log line, no response field, and no exception -- while the moderator's
+  // response said the appeal was resolved.
+  //
+  // Direction unchanged and deliberately so: the appeal state transition is
+  // already committed above and a notification failure must not undo or block
+  // it. NOTHING here touches what "approved" does or what gets restored -- that
+  // is a separate, open decision (APPEAL_RESTORE_SEMANTICS) and this change does
+  // not enter it. The only thing that changes is that a failure to notify is now
+  // observed, logged at ERROR, and reported to the moderator in `notified`, so
+  // "the appellant was told" stops being an assumption.
+  let notified: boolean | undefined = undefined;
+
   if (state === "approved") {
     // Notify appellant
-    await sc.from("notifications").insert({
+    const { error: notifyErr } = await sc.from("notifications").insert({
       user_id:           (appeal as any).appellant_id,
       actor_id:          adminId,
       event_type:        "appeal.approved",
       category:          "admin",
       title:             "Appeal approved",
-      body:              resolutionNote
-        ? `Your appeal was approved. ${resolutionNote}`
-        : "Your appeal was approved and the action has been reversed.",
+      // A deferred restoration ALWAYS says so, note or no note. The previous
+      // wording dropped the "still needs to be restored" sentence the moment a
+      // moderator supplied a resolution note — so the appellant most likely to
+      // be reassured by a personal note was the one who never learned the
+      // removal had not actually been undone.
+      body:              restorationDeferred
+        ? `Your appeal was approved.${resolutionNote ? ` ${resolutionNote}` : ""} ${RESTORATION_PENDING_SENTENCE}`
+        : (resolutionNote
+            ? `Your appeal was approved. ${resolutionNote}`
+            : "Your appeal was approved and the action has been reversed."),
       action_url:        "/appeals",
       metadata: {
         appealId:       id,
         targetType:     (appeal as any).target_type,
         resolutionNote: resolutionNote ?? null,
         reversalAction: reversal!.action,
+        // Explicit, so an audit reader never has to infer restoration from the
+        // appeal reaching 'approved'.
+        restored:       !restorationDeferred,
+        ...(restorationDeferred ? { restorationPending: (reversal as any).reason } : {}),
       },
-    }).then(() => {}).catch(() => {});
+    });
+    notified = !notifyErr;
+    if (notifyErr) {
+      req.log?.error?.(
+        { err: notifyErr, appealId: id, appellantId: (appeal as any).appellant_id, restorationDeferred },
+        "appeal APPROVED but the appellant was NOT notified — " +
+          (restorationDeferred
+            ? "they have not been told the restoration is still outstanding"
+            : "they have not been told the action was reversed"),
+      );
+    }
   }
 
   if (state === "denied") {
     // Notify appellant of denial
-    await sc.from("notifications").insert({
+    const { error: notifyErr } = await sc.from("notifications").insert({
       user_id:           (appeal as any).appellant_id,
       actor_id:          adminId,
       event_type:        "appeal.denied",
@@ -325,7 +443,14 @@ router.patch("/appeals/:id", asyncHandler(async (req, res) => {
         targetType:     (appeal as any).target_type,
         resolutionNote: resolutionNote ?? null,
       },
-    }).then(() => {}).catch(() => {});
+    });
+    notified = !notifyErr;
+    if (notifyErr) {
+      req.log?.error?.(
+        { err: notifyErr, appealId: id, appellantId: (appeal as any).appellant_id },
+        "appeal DENIED but the appellant was NOT notified — they do not know the outcome",
+      );
+    }
   }
 
   res.json({
@@ -333,6 +458,24 @@ router.patch("/appeals/:id", asyncHandler(async (req, res) => {
     state:          (updated as any).state,
     resolutionNote: (updated as any).resolution_note ?? null,
     updatedAt:      (updated as any).updated_at,
+    ...(notified === undefined ? {} : { notified }),
+    ...(reversal
+      ? {
+          reversalAction: reversal.action,
+          // The admin who approved must see, in the response to their own
+          // request, that the restoration is still owed.
+          restored:       !restorationDeferred,
+          ...(restorationDeferred
+            ? {
+                restorationRequired: (reversal as any).reason,
+                // Point the admin who just approved it at the queue, so the
+                // owed restoration is something they can go and look at rather
+                // than a sentence that scrolls past once.
+                restorationQueue:    RESTORATION_QUEUE_PATH,
+              }
+            : {}),
+        }
+      : {}),
   });
 }));
 

@@ -83,6 +83,7 @@ function makeClient() {
     return {
       _table:       table,
       _filters:     [] as Array<[string, string, any]>,
+      _inFilters:   [] as Array<[string, any[]]>,
       _insertData:  null as any,
       _updateData:  null as any,
       _maybeSingle: false,
@@ -91,6 +92,9 @@ function makeClient() {
       insert(data: any)     { this._insertData = data; return this; },
       update(data: any)     { this._updateData = data; return this; },
       eq(col: string, val: any) { this._filters.push(["eq", col, val]); return this; },
+      in(col: string, vals: any[]) { this._inFilters.push([col, vals]); return this; },
+      order()               { return this; },
+      limit()               { return this; },
       maybeSingle()         { this._maybeSingle = true; return this; },
       single()              { this._maybeSingle = true; return this; },
 
@@ -112,11 +116,20 @@ function makeClient() {
 
         if (this._updateData !== null) {
           if (t === "rent_buddy_bookings") {
-            for (const [, col, val] of this._filters) {
-              if (col === "id" && state.bookings[val]) {
-                Object.assign(state.bookings[val], this._updateData);
-              }
-            }
+            // PostgREST applies EVERY predicate and, when the statement is
+            // RETURNING, answers with the rows it CHANGED. report-no-show now
+            // compare-and-sets on the reportable statuses, so a fake that
+            // honoured only `.eq("id")` and always answered `{data: null}` could
+            // not distinguish "matched nothing" from "applied" — the exact
+            // ambiguity the CAS exists to remove.
+            const eqId = this._filters.find(([, col]) => col === "id");
+            const row: any = eqId ? state.bookings[eqId[2]] ?? null : null;
+            const matches = !!row
+              && this._filters.every(([, col, val]) => col === "id" || row[col] === val)
+              && this._inFilters.every(([col, vals]) => vals.includes(row[col]));
+            if (!matches) return { data: this._maybeSingle ? null : [], error: null };
+            Object.assign(row, this._updateData);
+            return { data: this._maybeSingle ? { id: row.id } : [{ id: row.id }], error: null };
           }
           return { data: null, error: null };
         }
@@ -333,7 +346,14 @@ describe("POST /api/rent-a-buddy/bookings/:id/report-no-show — spec router", (
     state.bookings[BOOKING_ID].status = "completed";
     const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/report-no-show`);
     assert.equal(r.status, 409, `expected 409 for completed booking, got ${r.status}: ${JSON.stringify(r.body)}`);
-    assert.equal(r.body.error, "already_reported");
+    // `invalid_transition`, not `already_reported`: a completed booking has not been
+    // reported, it is simply not a state a no-show can be filed from. The route
+    // now uses the SAME allowlist as the canonical POST /bookings/:id/no-show
+    // (NO_SHOW_REPORTABLE_STATUSES) instead of a hand-written denylist, and
+    // that route has always answered invalid_transition here. `already_reported`
+    // stays reserved for no_show_pending / disputed, which is what it means.
+    assert.equal(r.body.error, "invalid_transition");
+    assert.equal(r.body.currentStatus, "completed");
     assert.equal(state.safetyEvents.length, 0, "no safety event should be inserted for a completed booking");
   });
 
@@ -341,7 +361,14 @@ describe("POST /api/rent-a-buddy/bookings/:id/report-no-show — spec router", (
     state.bookings[BOOKING_ID].status = "cancelled";
     const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/report-no-show`);
     assert.equal(r.status, 409, `expected 409 for cancelled booking, got ${r.status}: ${JSON.stringify(r.body)}`);
-    assert.equal(r.body.error, "already_reported");
+    // `invalid_transition`, not `already_reported`: a cancelled booking has not been
+    // reported, it is simply not a state a no-show can be filed from. The route
+    // now uses the SAME allowlist as the canonical POST /bookings/:id/no-show
+    // (NO_SHOW_REPORTABLE_STATUSES) instead of a hand-written denylist, and
+    // that route has always answered invalid_transition here. `already_reported`
+    // stays reserved for no_show_pending / disputed, which is what it means.
+    assert.equal(r.body.error, "invalid_transition");
+    assert.equal(r.body.currentStatus, "cancelled");
     assert.equal(state.safetyEvents.length, 0, "no safety event should be inserted for a cancelled booking");
   });
 });

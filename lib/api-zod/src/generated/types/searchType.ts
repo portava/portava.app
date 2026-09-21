@@ -28,4 +28,5 @@ export const SearchType = {
   languages: 'languages',
   interests: 'interests',
   vibes: 'vibes',
+  saved: 'saved',
 } as const;

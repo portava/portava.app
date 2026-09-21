@@ -6,8 +6,14 @@
  * aggregates to CITY level and — by invariant — never returns exact lat/lng
  * (see api-server services/passport/PassportMapService.ts). This hook does not
  * invent a new endpoint and does not merge with the live Map truth model
- * (spec §26): it only re-shapes the flat marker list into the
- * WORLD → Country → City hierarchy My World renders.
+ * (spec §26): it only re-shapes the server's payload into the
+ * WORLD → Country → City → Trip → Places → Memories / Stamps hierarchy §26 names.
+ *
+ * THE DEEPER THREE LEVELS ARE THE SERVER'S, NOT THIS HOOK'S. Trip, Places and
+ * Memories arrive already grouped and already privacy-filtered on the marker
+ * (`PassportMapMarker.trips`); this file carries them through and derives only
+ * counts. Nothing here decides what a viewer may see, and nothing here has a
+ * coordinate to leak — the payload has none by server invariant.
  *
  * `buildWorld` is a pure function exported for direct unit/component testing.
  */
@@ -15,7 +21,17 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   getPassportMap,
   type PassportMapPayload,
+  type PassportWorldTrip,
+  type PassportWorldPlace,
+  type PassportWorldMemory,
 } from '../../services/passportStamps.ts';
+
+/** §26 level 4 — one Trip inside a city, as the server grouped it. */
+export type WorldTrip = PassportWorldTrip;
+/** §26 level 5 — a named place inside a Trip. */
+export type WorldPlace = PassportWorldPlace;
+/** §26 level 6 — a Memory filed under a Trip. */
+export type WorldMemory = PassportWorldMemory;
 
 /** A single city aggregate (one server marker), rooted under its country. */
 export interface WorldCity {
@@ -30,6 +46,16 @@ export interface WorldCity {
   verificationLevel: string;
   /** Coarse "City, Country" label produced by the server. */
   displayLabel: string;
+  /**
+   * §26 levels 4-6, straight from the server. Empty when the server sent none
+   * (an older build, or a viewer permitted nothing deeper) — in which case the
+   * hierarchy stops at City exactly as it used to.
+   */
+  trips: WorldTrip[];
+  /** Distinct places named across this city's Trips. */
+  placeCount: number;
+  /** Memories filed under this city's Trips. */
+  memoryCount: number;
 }
 
 /** A country group with its visited cities. */
@@ -43,6 +69,8 @@ export interface WorldCountry {
   cities: WorldCity[];
   cityCount: number;
   stampCount: number;
+  /** Distinct Trips (never the untripped bucket) across this country's cities. */
+  tripCount: number;
 }
 
 /** The full My World model derived from the passport map payload. */
@@ -54,6 +82,8 @@ export interface PassportWorld {
   totalCities: number;
   /** Total stamps rooted to a place across the whole world. */
   totalStamps: number;
+  /** Distinct Trips across the whole world (§26 level 4). */
+  totalTrips: number;
   isEmpty: boolean;
 }
 
@@ -69,6 +99,10 @@ export function buildWorld(
 ): PassportWorld {
   const markers = payload?.markers ?? [];
   const byCountry = new Map<string, WorldCountry>();
+  // Trip ids are counted DISTINCTLY: one Trip that touched three cities is one
+  // journey, not three, at both the country and the world level.
+  const tripKeys = new Set<string>();
+  const countryTrips = new Set<string>();
 
   for (const m of markers) {
     if (!m || !m.city) continue;
@@ -84,11 +118,24 @@ export function buildWorld(
         cities: [],
         cityCount: 0,
         stampCount: 0,
+        tripCount: 0,
       };
       byCountry.set(groupKey, group);
     }
 
     const stampCount = Number.isFinite(m.stampCount) ? m.stampCount : 0;
+    // §26 levels 4-6 arrive already grouped and already filtered. An absent
+    // `trips` field is an older payload, not an empty city — either way the
+    // deeper sections simply do not render.
+    const trips = Array.isArray(m.trips) ? m.trips : [];
+    const placeKeys = new Set<string>();
+    let memoryCount = 0;
+    for (const tr of trips) {
+      for (const p of tr?.places ?? []) if (p?.key) placeKeys.add(p.key);
+      memoryCount += (tr?.memories ?? []).length;
+      // The untripped bucket is a holder for what has no Trip; it is not one.
+      if (tr?.tripId) tripKeys.add(tr.tripId);
+    }
     group.cities.push({
       key: `${groupKey}|${m.city}`,
       city: m.city,
@@ -97,8 +144,12 @@ export function buildWorld(
       stampCount,
       verificationLevel: m.verificationLevel ?? 'unverified',
       displayLabel: m.displayLabel ?? m.city,
+      trips,
+      placeCount: placeKeys.size,
+      memoryCount,
     });
     group.stampCount += stampCount;
+    for (const tr of trips) if (tr?.tripId) countryTrips.add(`${groupKey}|${tr.tripId}`);
   }
 
   const countries = [...byCountry.values()].map((g) => {
@@ -107,6 +158,7 @@ export function buildWorld(
       (a, b) => b.stampCount - a.stampCount || a.city.localeCompare(b.city),
     );
     g.cityCount = g.cities.length;
+    g.tripCount = [...countryTrips].filter((k) => k.startsWith(`${g.key}|`)).length;
     return g;
   });
 
@@ -129,6 +181,7 @@ export function buildWorld(
     totalCountries,
     totalCities,
     totalStamps,
+    totalTrips: tripKeys.size,
     isEmpty: markers.length === 0,
   };
 }

@@ -31,6 +31,7 @@ import {
   fetchVisualCoverage,
   fetchContributorReputation,
   requestView,
+  viewRequestOutcomeLine,
   setContributorViewOptIn,
   _setTestFreshToken,
   _clearTestFreshToken,
@@ -465,4 +466,91 @@ test('setContributorViewOptIn: missing token → auth (no fetch attempted)', asy
   } finally {
     _clearTestFreshToken();
   }
+});
+
+// ── D11: a zero that was never counted is not a zero ─────────────────────────
+//
+// The server can now say whether `recipientCount` was MEASURED
+// (`recipientsDetermined`, POST /v1/media/view-requests). Before that reached
+// the client, `recipientCount: 0` was rendered as the positive claim "No
+// contributors are nearby yet" whether the opt-in registry said so or could not
+// be read at all.
+//
+// MUTATION: in services/viewRequest.ts, map `recipientsDetermined: true`
+// unconditionally, or collapse `viewRequestOutcomeLine` back to a two-way branch
+// on `recipientCount` — the tests below go RED.
+
+test('requestView: maps recipientsDetermined from the server', async () => {
+  _setTestFreshToken('tok');
+  const restore = stubFetch(async () =>
+    json({ requestId: 'req-3', missionCandidateId: null, recipientCount: 0, recipientsDetermined: true }, 201));
+  try {
+    const r = await requestView({ placeId: PLACE, question: 'Show me' });
+    assert.equal(r.ok && r.recipientsDetermined, true, 'a measured zero');
+  } finally {
+    restore();
+    _clearTestFreshToken();
+  }
+});
+
+test('requestView: recipientsDetermined false is carried, not flattened into the count', async () => {
+  _setTestFreshToken('tok');
+  const restore = stubFetch(async () =>
+    json({ requestId: 'req-4', missionCandidateId: null, recipientCount: 0, recipientsDetermined: false }, 201));
+  try {
+    const r = await requestView({ placeId: PLACE, question: 'Show me' });
+    assert.equal(r.ok, true, 'still a graceful success — nothing failed for the traveller');
+    assert.equal(r.ok && r.recipientCount, 0);
+    assert.equal(r.ok && r.recipientsDetermined, false, 'the count was never taken');
+  } finally {
+    restore();
+    _clearTestFreshToken();
+  }
+});
+
+test('requestView: a server that omits recipientsDetermined withholds the claim (defaults false)', async () => {
+  _setTestFreshToken('tok');
+  const restore = stubFetch(async () =>
+    json({ requestId: 'req-5', missionCandidateId: null, recipientCount: 0 }, 201));
+  try {
+    const r = await requestView({ placeId: PLACE, question: 'Show me' });
+    assert.equal(
+      r.ok && r.recipientsDetermined, false,
+      'a missing field is a determination that was never recorded — same direction as mapVisualCoverage.stale',
+    );
+  } finally {
+    restore();
+    _clearTestFreshToken();
+  }
+});
+
+test('viewRequestOutcomeLine: an unmeasured zero never claims "no contributors are nearby"', () => {
+  const measured = viewRequestOutcomeLine({
+    ok: true, requestId: 'r', missionCandidateId: null, recipientCount: 0, recipientsDetermined: true,
+  });
+  const unmeasured = viewRequestOutcomeLine({
+    ok: true, requestId: 'r', missionCandidateId: null, recipientCount: 0, recipientsDetermined: false,
+  });
+
+  assert.match(measured, /No contributors are nearby yet/);
+  assert.doesNotMatch(
+    unmeasured, /No contributors are nearby/,
+    'the UI may not assert an empty registry out of a read that never ran',
+  );
+  assert.match(unmeasured, /couldn’t check/);
+  assert.notEqual(measured, unmeasured, 'the two zeroes must not render alike');
+});
+
+test('viewRequestOutcomeLine: a real ask and a refusal are unchanged', () => {
+  assert.match(
+    viewRequestOutcomeLine({
+      ok: true, requestId: 'r', missionCandidateId: 'm', recipientCount: 2, recipientsDetermined: true,
+    }),
+    /Asked nearby contributors/,
+  );
+  assert.equal(
+    viewRequestOutcomeLine({ ok: false, reason: 'rate_limited', message: refusalMessage('rate_limited') }),
+    refusalMessage('rate_limited'),
+    'a refusal still renders its own calm message',
+  );
 });

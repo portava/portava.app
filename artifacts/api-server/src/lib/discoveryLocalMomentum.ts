@@ -55,6 +55,15 @@
  */
 import { pruneAndBound } from "./boundedMapCache.js";
 import { logger as rootLogger } from "./logger.js";
+// `03` §9's six place-momentum stages, computed from the SAME rows this module
+// already pages in. Separate module, separate function, and the scalar above is
+// not touched: a number the ranker consumes must not move because a diagnostic
+// was added beside it.
+import { computeTrendStates, type TrendReading } from "./discoveryTrendState.js";
+// census-discovery DC-17's four facts, and the version constants `06` §5's rank
+// provenance already uses. Imported rather than redeclared: a momentum reading
+// and a ranked page must never claim different versions of the same pipeline.
+import { derivedStoreProvenance, type DerivedStoreProvenance } from "./discoveryRankProvenance.js";
 
 const logger = rootLogger.child({ mod: "localMomentum" });
 
@@ -110,8 +119,29 @@ export interface MomentumRow {
   outcome_at?: string | null;
 }
 
-/** place id → momentum in [0, 1]. Absent id ⇒ 0. */
-export type MomentumMap = Readonly<Record<string, number>>;
+/**
+ * The momentum store's output: the numbers, and what computed them.
+ *
+ * census-discovery DC-17 — provenance as a SIBLING FIELD, not as a widened
+ * value type. The choice is deliberate and the alternative was rejected on two
+ * grounds. First, the four facts describe ONE computation over ONE window at
+ * ONE moment, not one place: pushing them into every value would store N
+ * identical copies of the same sentence. Second, every consumer of this map
+ * does arithmetic on the bare number — `ctx.localMomentum?.[c.id]` in
+ * portavaRank, `perItem[r.source_id] ?? 0` in TrailService, the scaling loop in
+ * discoveryModifiers — and a `{ value, provenance }` per key would make all of
+ * them unwrap a number to multiply it, which is the shape of change that
+ * eventually moves one.
+ *
+ * The values keep their old meaning exactly: place id → momentum in [0, 1],
+ * absent id ⇒ 0.
+ */
+export interface MomentumMap {
+  /** place id → momentum in [0, 1]. Absent id ⇒ 0. */
+  values: Readonly<Record<string, number>>;
+  /** DC-17: the source event window, the two versions, and the computation clock. */
+  provenance: DerivedStoreProvenance;
+}
 
 function weightFor(outcome: string): number {
   if (outcome === "save") return MOMENTUM_EVENT_WEIGHTS.save;
@@ -119,10 +149,11 @@ function weightFor(outcome: string): number {
 }
 
 /**
- * Pure: rows → momentum map. Only places with momentum > 0 appear, so an
- * empty map means "no surge anywhere", never "the read failed".
+ * Pure: rows → momentum map. Only places with momentum > 0 appear, so empty
+ * `values` mean "no surge anywhere", never "the read failed" — and the
+ * provenance beside them says over which window that was established.
  */
-export function computeLocalMomentum(rows: readonly MomentumRow[], nowMs: number): Record<string, number> {
+export function computeLocalMomentum(rows: readonly MomentumRow[], nowMs: number): MomentumMap {
   const recentSince   = nowMs - MOMENTUM_RECENT_WINDOW_MS;
   const baselineSince = nowMs - MOMENTUM_BASELINE_WINDOW_MS;
 
@@ -153,12 +184,28 @@ export function computeLocalMomentum(rows: readonly MomentumRow[], nowMs: number
     const m = Math.min(1, Math.max(0, velocity / MOMENTUM_SATURATION));
     if (m > 0) out[id] = Math.round(m * 1000) / 1000;
   }
-  return out;
+  // `baselineSince` is the oldest row the bucket filter admits, so it IS the
+  // window start rather than a label for it — the bounds cannot drift from the
+  // arithmetic they describe because they are the same two numbers. Stamped
+  // even when `out` is empty: "this window was read and nothing surged" is a
+  // measurement, and the bare `{}` it used to return could not say it.
+  return { values: out, provenance: derivedStoreProvenance({ kind: "bounded", startMs: baselineSince, endMs: nowMs }, nowMs) };
 }
 
 // ── Loader, with a bounded per-key cache ──────────────────────────────────────
 
-interface CacheEntry { at: number; map: Record<string, number> }
+interface CacheEntry {
+  at: number;
+  /**
+   * The provenanced map, cached WHOLE. A replay therefore reports the clock the
+   * computation ran on, not the clock it was read back on — the same rule
+   * discoveryRankProvenance states for `rankedAt`, and the reason `provenance`
+   * is stored here rather than re-stamped on the way out.
+   */
+  map: MomentumMap;
+  /** `03` §9 stages for the same places. Empty when the read failed, exactly like `map.values`. */
+  trends: Record<string, TrendReading>;
+}
 const _cache = new Map<string, CacheEntry>();
 
 /** Test hook: drop every cached momentum map. */
@@ -169,7 +216,8 @@ export function _resetLocalMomentumCacheForTest(): void {
 /**
  * Load momentum for a candidate set. Never throws; a failed read is an empty
  * map (no surge anywhere — see the module header on why that is the honest
- * degradation and not a fabricated penalty).
+ * degradation and not a fabricated penalty), still carrying the provenance of
+ * the window it would have read.
  *
  * `cacheKey` should be the candidate-set key (destination:category) so that
  * every viewer of the same cached candidates shares one read.
@@ -178,14 +226,19 @@ export async function loadLocalMomentum(
   sc: any,
   placeIds: readonly string[],
   opts: { cacheKey: string; nowMs?: number },
-): Promise<Record<string, number>> {
+): Promise<MomentumMap> {
   const nowMs = opts.nowMs ?? Date.now();
-  if (!sc || placeIds.length === 0) return {};
+  // No client and no candidates are both "nothing was read", which is still an
+  // empty map over the window this call would have used — DC-17: the degraded
+  // answer is provenanced too, or a caller cannot tell it from a real one.
+  const empty = (): MomentumMap => computeLocalMomentum([], nowMs);
+  if (!sc || placeIds.length === 0) return empty();
 
   const hit = _cache.get(opts.cacheKey);
   if (hit && nowMs - hit.at < MOMENTUM_CACHE_TTL_MS) return hit.map;
 
-  let map: Record<string, number> = {};
+  let map: MomentumMap = empty();
+  let trends: Record<string, TrendReading> = {};
   try {
     const since = new Date(nowMs - MOMENTUM_BASELINE_WINDOW_MS).toISOString();
     const ids = [...new Set(placeIds)];
@@ -229,14 +282,39 @@ export async function loadLocalMomentum(
         "localMomentum: row ceiling reached — baseline window is bounded to the most recent rows",
       );
     }
-    if (!failed) map = computeLocalMomentum(rows, nowMs);
+    if (!failed) {
+      map = computeLocalMomentum(rows, nowMs);
+      // Same rows, second pass. Cheap relative to the read that produced them,
+      // and computed here rather than at the call site so the two can never be
+      // derived from different corpora and then compared.
+      trends = computeTrendStates(rows, nowMs);
+    }
   } catch {
     // resolves-not-throws-ok: a momentum read failure degrades to "no surge",
     // which is the documented honest default; the ranker must never throw here.
-    map = {};
+    map = empty();
+    trends = {};
   }
 
-  _cache.set(opts.cacheKey, { at: nowMs, map });
+  _cache.set(opts.cacheKey, { at: nowMs, map, trends });
   pruneAndBound(_cache, { max: MOMENTUM_CACHE_MAX, ttlMs: MOMENTUM_CACHE_TTL_MS, timestampOf: (e) => e.at, now: nowMs });
   return map;
+}
+
+/**
+ * `03` §9 stages for a candidate set already loaded by `loadLocalMomentum`.
+ *
+ * A READ-ONLY companion: it never issues a query of its own, so it cannot make
+ * the stages diverge from the momentum scalar by measuring a different corpus,
+ * and it cannot add a round trip to a serve path. An entry that is absent or
+ * expired returns `{}` — "not computed", which is what the caller must treat it
+ * as, and never a set of stages inferred from nothing.
+ */
+export function readLocalTrendStates(
+  cacheKey: string,
+  nowMs: number = Date.now(),
+): Record<string, TrendReading> {
+  const hit = _cache.get(cacheKey);
+  if (!hit || nowMs - hit.at >= MOMENTUM_CACHE_TTL_MS) return {};
+  return hit.trends;
 }

@@ -15,7 +15,7 @@ import { useBlockedIds } from '../context/BlockedIdsContext.tsx';
 import { HighlightRing } from './HighlightRing.tsx';
 import { HighlightViewer } from './HighlightViewer.tsx';
 import { useHighlightRingState } from '../hooks/useHighlightRingState.ts';
-import { color, space, radius, type as t, avatar } from '../theme/tokens.ts';
+import { color, space, radius, type as t, typography, avatar } from '../theme/tokens.ts';
 import { TG, TG_AVATAR } from '../theme/telegraphTokens.ts';
 import { TelegraphAvatar, TelegraphRow } from './telegraph/TelegraphPrimitives.tsx';
 import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
@@ -24,8 +24,13 @@ import { useScreenTiming } from '../hooks/useScreenTiming.ts';
 import type { ThreadSummary, MessageRequest } from '../services/messaging.ts';
 import { circleCardInboxPreview } from './CircleStatusCardMessage.logic';
 import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity.ts';
+import { originLabel } from '../features/telegraph/lib/requestOriginLabel.ts';
 import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
-import { errorCopy } from '../lib/errorCopy.ts';
+import { errorCopy } from '../lib/errorCopy.ts'; import { typedKindPreviewLabel } from '../features/telegraph/inbox/typedPreviewLabels.ts'; // one line, on purpose: census-telegraph cites this file at :33, :222, :226 and :457.
+// Telegraph §21 — object-aware, authorization-scoped message search. A
+// different question from this screen's own thread filter; see the row that
+// opens it.
+import { TelegraphSearchScreen } from '../features/telegraph/components/TelegraphSearchScreen.tsx';
 
 type FilterKey = 'all' | 'direct' | 'trips' | 'circles' | 'unread' | 'requests';
 
@@ -49,20 +54,20 @@ const SYSTEM_MESSAGE_LABELS: Record<string, string> = {
 };
 
 /**
- * Resolves the inbox row preview text for a thread's last message. System
- * message types (post_card, discovery_card, compass_card, meetup,
- * meetup_confirmed, ai_recommendation, circle_status_card) carry a
+ * Resolves the inbox row preview text for a thread's last message. Shared cards
+ * (post_card, discovery_card, compass_card, meetup, meetup_confirmed,
+ * ai_recommendation, circle_status_card) AND Telegraph §6.2's typed kinds carry a
  * structured JSON `body` — showing it raw leaks `{"postId":"..."}` into the
  * conversation list, so each gets a short human-readable label instead.
  */
-function systemMessageInboxPreview(
+export function systemMessageInboxPreview(
   lmp: NonNullable<ThreadSummary['lastMessagePreview']>,
   isMine: boolean,
 ): string {
-  // Shared cards are stored with msgType 'system' and the real card kind in
-  // `subtype` (e.g. post_card, discovery_card, meetup). A few older/simple
-  // system messages key off msgType directly (circle_status_card,
-  // ai_recommendation), so check subtype first, then fall back to msgType.
+  // §6.2's typed kinds FIRST, keyed on msgType: their `subtype` is a discriminator WITHIN the kind and
+  // COLLIDES with this table's keys — an ACTION proposing a meetup would otherwise read "Created a
+  // meetup". Argument in features/telegraph/inbox/typedPreviewLabels.ts. Shared cards below store msgType 'system' with the card kind in `subtype`; a few older ones key off msgType instead.
+  const typed = typedKindPreviewLabel(lmp.msgType, lmp.subtype); if (typed) return isMine ? `You: ${typed}` : typed;
   const kind = lmp.subtype ?? lmp.msgType;
   if (kind === 'circle_status_card') {
     return circleCardInboxPreview(lmp.body);
@@ -186,6 +191,11 @@ function ThreadRow({ item, userId }: { item: ThreadSummary; userId: string | nul
   const lastAt = lmp?.createdAt;
   const isMuted = !!item.mutedAt;
   const unread = item.unreadCount ?? 0;
+  // The server OMITS this field when its inputs were unreadable, and sends a
+  // real 0 when it measured nothing outstanding. Both render NOTHING here — the
+  // badge appears only above zero, so the inbox never prints a reassurance
+  // ("0 needs action") that nobody verified.
+  const needsAction = typeof item.needsActionCount === 'number' ? item.needsActionCount : 0;
   const isAi = item.isAiLastMessage ?? (lmp?.msgType === 'ai_recommendation');
 
   return (
@@ -197,18 +207,53 @@ function ThreadRow({ item, userId }: { item: ThreadSummary; userId: string | nul
         <View style={s.nameRow}>
           <View style={s.nameLeft}>
             <Text style={[s.name, unread > 0 && s.nameBold]} numberOfLines={1}>{displayName}</Text>
-            {isMuted && <BellOff size={12} color={color.faint} style={{ marginLeft: 4 }} />}
+            {isMuted && (
+              // Muting decides whether a conversation can reach you at all, and
+              // the whole of that was a 12px glyph.
+              <View
+                accessible
+                accessibilityLabel="Muted"
+                style={{ marginLeft: 4 }}
+                testID="telegraph-row-muted"
+              >
+                <BellOff size={12} color={color.faint} />
+              </View>
+            )}
             <TypeBadge threadType={item.threadType} />
           </View>
           <View style={s.nameMeta}>
             {unread > 0 && (
-              <View style={s.unreadBubble}>
-                <Text style={s.unreadText}>{unread > 99 ? '99+' : unread}</Text>
+              // The row read "mira, 3, 2h ago". The 3 is the most important
+              // thing on it and was the one thing that did not say what it was.
+              // The LABEL is not capped at 99+ — the bubble caps because the
+              // digits do not fit, which is not a reason to throw away a number
+              // we are holding.
+              <View
+                style={s.unreadBubble}
+                accessible
+                accessibilityLabel={`${unread} unread ${unread === 1 ? 'message' : 'messages'}`}
+                testID="telegraph-row-unread"
+              >
+                <Text
+                  style={s.unreadText}
+                  accessibilityElementsHidden
+                  importantForAccessibility="no-hide-descendants"
+                >
+                  {unread > 99 ? '99+' : unread}
+                </Text>
               </View>
             )}
             {lastAt ? <Text style={s.time}>{timeAgo(lastAt)}</Text> : null}
           </View>
         </View>
+
+        {needsAction > 0 ? (
+          <View style={s.needsActionTag}>
+            <Text style={s.needsActionText}>
+              {needsAction === 1 ? '1 needs action' : `${needsAction} need action`}
+            </Text>
+          </View>
+        ) : null}
 
         {previewText ? (
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
@@ -338,6 +383,8 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
   } = useIncomingMessageRequests();
 
   const [search, setSearch] = useState('');
+  /** Telegraph §21 — the server-backed message search, opened from the row below. */
+  const [messageSearchOpen, setMessageSearchOpen] = useState(false);
   const [filter, setFilter] = useState<FilterKey>('all');
   const [blockedIds, setBlockedIds] = useState<Set<string>>(new Set());
   const { blockerIds } = useBlockedIds();
@@ -438,6 +485,46 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
             />
           </View>
 
+          {/*
+            Telegraph §21. The box above filters the conversations already
+            loaded on this device — that is what census T272 measured, and it
+            is still the right behaviour for "find that thread". Searching the
+            MESSAGES inside them is a different question with a different
+            authorization story, so it is a different surface, and the handoff
+            carries what the person already typed.
+          */}
+          {search.trim().length >= 2 && (
+            <Pressable
+              testID="telegraph-open-message-search"
+              accessibilityRole="button"
+              accessibilityLabel={`Search messages for ${search.trim()}`}
+              style={s.messageSearchRow}
+              onPress={() => setMessageSearchOpen(true)}
+            >
+              <Search size={14} color={color.signal} />
+              <Text style={s.messageSearchText} numberOfLines={1}>
+                {`Search messages for “${search.trim()}”`}
+              </Text>
+            </Pressable>
+          )}
+
+          <Modal
+            visible={messageSearchOpen}
+            animationType="slide"
+            onRequestClose={() => setMessageSearchOpen(false)}
+          >
+            <View style={s.messageSearchModal}>
+              <TelegraphSearchScreen
+                initialQuery={search.trim()}
+                onClose={() => setMessageSearchOpen(false)}
+                onOpenMessage={(hit) => {
+                  setMessageSearchOpen(false);
+                  router.push(`/messages/${hit.conversationId}`);
+                }}
+              />
+            </View>
+          </Modal>
+
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -452,10 +539,28 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
                   key={f.key}
                   style={[s.chip, active && s.chipActive]}
                   onPress={() => setFilter(f.key)}
+                  accessibilityRole="button"
+                  // ACTIVE was a background fill and nothing else, so the screen
+                  // could name the six filters and could not say which one you
+                  // were on — the one fact you need to read every row below.
+                  accessibilityState={{ selected: active }}
+                  // The badge is a separate node reading as a naked number
+                  // beside a word; "Requests" then "3" is as likely to be heard
+                  // as an ordinal as a count.
+                  accessibilityLabel={
+                    badge > 0
+                      ? `${f.label}, ${badge} pending ${badge === 1 ? 'request' : 'requests'}`
+                      : f.label
+                  }
+                  testID={`telegraph-filter-${f.key}`}
                 >
                   <Text style={[s.chipText, active && s.chipTextActive]}>{f.label}</Text>
                   {badge > 0 && (
-                    <View style={s.chipBadge}>
+                    <View
+                      style={s.chipBadge}
+                      accessibilityElementsHidden
+                      importantForAccessibility="no-hide-descendants"
+                    >
                       <Text style={s.chipBadgeText}>{badge > 99 ? '99+' : badge}</Text>
                     </View>
                   )}
@@ -645,6 +750,10 @@ function RequestCard({
   }
 
   const { sender, previewText, createdAt } = request;
+  // §22: why this person is reaching out. `originLabel` decides whether the
+  // product states it or attributes it — a stranger who wants to be trusted
+  // asserts "Trip", so an unverified claim must read as a claim.
+  const origin = originLabel(request.origin);
   const senderName = primaryIdentityText({ name: sender?.name, handle: sender?.handle });
   const senderHandleSub = secondaryIdentityText({ name: sender?.name, handle: sender?.handle });
   const initial = (senderName.replace(/^@/, '')[0] ?? '?').toUpperCase();
@@ -678,6 +787,15 @@ function RequestCard({
         </UserIdentityLink>
         <Text style={rc.time}>{timeAgo(createdAt)}</Text>
       </View>
+
+      {/* §22 contextual origin — stated when verified, attributed when not */}
+      {origin ? (
+        <View style={origin.verified ? rc.originVerified : rc.originClaimed}>
+          <Text style={origin.verified ? rc.originVerifiedText : rc.originClaimedText}>
+            {origin.text}
+          </Text>
+        </View>
+      ) : null}
 
       {/* City / language metadata */}
       {(sender?.city || sender?.language) ? (
@@ -817,6 +935,29 @@ const rc = StyleSheet.create({
   handle: { ...t.small, color: color.mute, fontSize: 12, marginTop: 1 },
   time: { ...t.small, color: color.faint, fontSize: 11 },
   metaRow: { flexDirection: 'row', gap: 6, flexWrap: 'wrap' },
+  // §22: two different claims, two different weights. The verified one is
+  // solid because it is a fact the server checked; the claimed one is outlined
+  // and muted because it is somebody's word.
+  originVerified: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    backgroundColor: color.signal,
+    marginTop: 8,
+  },
+  originVerifiedText: { fontSize: 11, fontWeight: '700', color: color.onInk },
+  originClaimed: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: color.haze,
+    marginTop: 8,
+  },
+  originClaimedText: { fontSize: 11, fontWeight: '600', color: color.mute },
+
   metaChip: {
     fontSize: 11,
     fontWeight: '600',
@@ -961,6 +1102,16 @@ const s = StyleSheet.create({
     height: 40,
   },
   searchIcon: { marginRight: space.sm },
+  messageSearchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    marginHorizontal: space.xl,
+    marginBottom: space.sm,
+    paddingVertical: space.sm,
+  },
+  messageSearchText: { ...(typography.caption as object), color: color.signal, flexShrink: 1 },
+  messageSearchModal: { flex: 1, backgroundColor: color.paper },
   searchInput: {
     flex: 1,
     height: 40,
@@ -1032,6 +1183,19 @@ const s = StyleSheet.create({
     paddingHorizontal: 4,
   },
   unreadText: { fontSize: 10, fontWeight: '700', color: color.onInk },
+
+  // §19's "needs action" is deliberately NOT the unread colour: an unread
+  // message is something to read, and this is something to answer. Same row,
+  // different claim.
+  needsActionTag: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: color.signal,
+  },
+  needsActionText: { fontSize: 10, fontWeight: '700', color: color.signal },
 
   preview: { ...t.small, color: color.mute, flex: 1 },
   previewBold: { color: color.ink, fontWeight: '600' },

@@ -1,0 +1,664 @@
+
+PORTAVA
+TELEGRAPH
+Design Architecture + Developer Specification
+Version 1.0 · September 2026
+Product mandateTelegraph is Portava’s private social-action layer: a messenger that carries platform content, reveals shared real-world context, surfaces nearby opt-in availability, coordinates plans, and turns conversation into safe real-world action.
+
+Concept visual reference — dark mobile system showing Inbox, Nearby & Available, conversation shared context, rich messaging, universal share, availability creation, plan invitation, Who’s Around, and end-of-night recap.
+
+Document Map
+Part
+Scope
+A. Product & Design Architecture
+Positioning, information architecture, surfaces, interaction states, visual rules, content and proximity UX.
+B. Domain & Data Architecture
+Canonical objects, schemas, policies, commands/events, projections, access model.
+C. Delivery & Realtime Architecture
+Ordering, delivery, seen, unsend, offline, media, translation, calls, notifications, load shedding.
+D. Integrations
+Trips, Plans, Events, Places, Memories, Discovery, Compass, Buddy, Safety, Map and Availability.
+E. Security, Privacy & Safety
+RLS, location scope, nearby eligibility, blocking, abuse, media retention, revocation.
+F. Migration, Testing & Rollout
+Phase 0 inventory, compatibility, migrations, CI, live-DB certification, staged rollout and DoD.
+Primary invariantA Telegraph surface may display, discuss and orchestrate Portava objects, but Telegraph must never invent or silently mutate canonical truth owned by Trips, Plans, Events, Memories, Buddy, Safety, Map or other source domains.
+1. Product Architecture
+1.1 Product thesis
+Telegraph should not be designed as a conventional DM product with travel attachments. It is the private coordination protocol that connects people, context and action across Portava.
+PORTAVA CONTENT + PEOPLE + TIME + PLACE + AVAILABILITY                       ↓                   TELEGRAPH                       ↓         TALK → DECIDE → PLAN → COORDINATE                       ↓                REAL-WORLD ACTION                       ↓                    MEMORY
+1.2 North-star behavior
+Optimize for successful coordinated real-world actions, not message volume, streaks, time in chat or endless engagement. A conversation ending because everyone met is a successful outcome.
+1.3 Core product pillars
+Pillar
+Definition
+Talk
+Reliable text, rich media, voice, GIFs, replies, reactions, seen states and safe message lifecycle.
+Share
+Any eligible Portava object can move through Telegraph using a safe, permission-aware share projection.
+Together
+Every conversation can expose shared Trips, plans, events, places, Memories and history.
+Nearby
+Opt-in availability and approximate proximity reveal actionable social opportunities without covert tracking.
+Act
+Messages and shared objects can become plans, votes, meetups, navigation and coordination sessions.
+Remember
+Completed real-world outcomes can explicitly become Memories or recaps without ingesting whole private chats.
+2. Information Architecture
+2.1 Telegraph Home
+TELEGRAPHYOUR STATUSAvailable tonight · until 1:00 AMAVAILABLE NEARBYMarcus · 8 min · FoodNina · Nearby · DrinksKenji · 1.4 km · ExploringNOWDinner with Marcus · 42 minDa Nang Crew · 3 nearby · 4 availableUPCOMINGHoi An tomorrowBeach FridayMESSAGESMarcus                 2Da Nang Crew           8Nina                 SeenKenji             🎤 0:24
+The inbox is not a generic notification feed. It contains communication plus shared real-world context that materially affects communication.
+2.2 Conversation layout
+HEADERUser / Crew name · availability · safe presenceSHARED CONTEXT RAILNOW | UPCOMING | WANT TO DO | PASTOPTIONAL COORDINATION PANELmeeting point · ETA · arrivals · return stateMESSAGE STREAMtext · media · voice · GIF · Portava objects · actionsCOMPOSER+  Message…  Voice
+2.3 Semantic layers
+Layer
+Purpose
+TALK
+Normal conversation and expressive content.
+PLAN
+Plans, decisions, shared places, attendance, invitations and unresolved actions.
+NOW
+Active coordination: on the way, arrived, meet here, live location scope, safety and return.
+3. Shared Context Rail
+At the top of each conversation, show mutually relevant events, plans, Trips and related Portava objects created or joined by both sides. This is the key answer to “what are we doing together?”
+3.1 Eligibility
+Created by me and joined/saved/attended by the other participant.
+Created by them and joined/saved/attended by me.
+Both are members/participants in the same Trip, Plan, Crew, Event or booking.
+Both deliberately promoted an item into a shared wishlist or “Want to Do” state.
+Past shared objects remain available in the historical view only when still authorized.
+3.2 Never infer mutuality from chat alone
+A place that one person merely sent in a message is shared content, not a mutual plan. Promotion into the Shared Context Rail requires canonical mutual state, explicit pinning, or a shared-object rule.
+3.3 Ordering
+HAPPENING NOWSTARTING SOONTODAYUPCOMINGACTIVE TRIPUNRESOLVED / WANT TO DOPAST
+3.4 Projection contract
+type TelegraphSharedContextProjection = {  conversationId: UUID  generatedAt: Timestamp  now: SharedContextItem[]  upcoming: SharedContextItem[]  unresolved: SharedContextItem[]  past: SharedContextItem[]}type SharedContextItem = {  objectType: TelegraphObjectType  objectId: UUID  currentVersion?: string  title: string  startsAt?: Timestamp  endsAt?: Timestamp  relationship: SharedRelationship  status: string  availableActions: TelegraphAction[]}
+4. Nearby & Available
+Nearby is an opt-in social opportunity layer. Availability, presence, proximity and location sharing are separate concepts and permissions.
+Hard ruleAVAILABLE ≠ ONLINE ≠ NEARBY ≠ SHARING LOCATION. Never collapse these states into one permission.
+4.1 Availability primitive
+type AvailabilitySignal = {  id: UUID  userId: UUID  state: 'FREE_NOW' | 'FREE_TONIGHT' | 'FREE_TODAY' | 'AVAILABLE_WINDOW' | 'IM_AROUND' | 'OPEN_TO_JOINING'  intents: AvailabilityIntent[]  startsAt: Timestamp  expiresAt: Timestamp  audiencePolicyId: UUID  proximityVisibility: 'HIDDEN' | 'NEARBY' | 'DISTANCE_BUCKET' | 'ETA_IF_MUTUAL'  geographyScope?: GeographyScope}
+4.2 Nearby ranking
+nearbyRank = f(  activeAvailability,  relationshipStrength,  intentCompatibility,  sharedContext,  overlappingFreedomWindow,  travelTime,  proximityBucket,  freshness,  safetyEligibility)
+4.3 Privacy safeguards
+Use approximate proximity or controlled distance buckets by default.
+Do not allow repeated refreshes to become a movement-tracking side channel.
+Exact ETA/location requires stronger mutual coordination permissions.
+Availability expires automatically and revokes across Telegraph, Discovery and Compass.
+Invisible mode suppresses Nearby/Bump/public availability while allowing private Map use.
+Blocking is absolute and removes both parties from each other’s proximity surfaces.
+Privacy zones can suppress discovery around home, lodging or user-defined sensitive places.
+4.4 Who’s Around
+Provide a focused surface for people, open plans and events that are actionable right now. Existing social graph should be separated from discoverable strangers. Stranger flows use safe profile preview → Wave/Request → accepted Telegraph thread; no automatic unrestricted messaging.
+5. Universal Portava Sharing
+All eligible Portava content should be shareable into Telegraph through one consistent share contract.
+Object family
+Examples
+Social
+Profile, post, Highlight, public Memory derivative, Memory Note, Stamp.
+Travel
+Trip, Trip stage, plan, event, route, reservation-safe derivative, layover plan.
+Places
+Place, Hidden Gem, map pin, neighborhood, meetup point.
+Services
+Buddy profile/service, eligible booking card, Visa Buddy operational card.
+Media
+Photo, video, voice, GIF, file where enabled.
+5.1 Share contract
+interface TelegraphShareable {  getSharePreview(viewerId: UUID): Promise<TelegraphShareProjection>  getCurrentState(viewerId: UUID): Promise<TelegraphObjectState>  getAvailableActions(viewerId: UUID, conversationId: UUID): Promise<TelegraphAction[]>  getDeepLink(): string}
+5.2 Four-layer content model
+Layer
+Meaning
+Message content
+What the sender actually sent.
+Source object
+The canonical Portava object being referenced.
+Share projection
+What the recipient is currently authorized to see.
+Derived enrichment
+Thumbnail, translation, transcript, preview, captions, embeddings.
+5.3 Revocation
+If the source becomes deleted, private or unauthorized, the Telegraph reference must degrade to an unavailable state. Telegraph is never a backdoor into revoked source content. Explicit message-owned media may follow separate retention semantics.
+6. Rich Messaging Design
+6.1 Composer
+[ + ]  Message…                         [🎤]+ menu:Camera        PhotosVideo         GIFVoice         Memory NoteLocation      Portava
+The composer remains visually calm; rich actions live behind the + menu. Recent content types may be surfaced adaptively without changing the canonical information architecture.
+6.2 Message kinds
+TEXTIMAGEVIDEOMEDIA_ALBUMGIFVOICEMEMORY_NOTEPORTAVA_OBJECTLOCATIONACTIONANNOUNCEMENTSYSTEMSAFETY
+6.3 Inline playback
+Videos play in-thread with poster frame, play/pause, scrub, mute, fullscreen and caption support.
+Picture-in-picture or compact playback can continue while the user scrolls.
+Voice supports waveform, seek, playback speed and optional transcript/translation.
+GIFs are distinct lightweight looping content with data-saver/accessibility controls.
+Mixed-media albums support one reply target and one seen lifecycle while retaining independent asset references.
+6.4 Message gallery and content drawer
+MEDIA | PLACES | PORTAVA | VOICE | GIFS | LINKS | FILES
+The content drawer is a structured index over exchanged content, not a second storage copy. Object-aware search must respect current authorization and unsent/deleted state.
+7. Message Lifecycle: Seen, Unsend, Edit
+7.1 Delivery lifecycle
+SENDING → SENT → DELIVERED → SEEN    ↘ FAILEDSENT/DELIVERED + no eligible recipient has seen    → UNSENT
+7.2 Seen semantics
+Seen means the message crossed the approved visibility threshold in an active foreground conversation. Push delivery, app launch or background rendering do not count as seen.
+7.3 Scalable receipts
+conversation_members.lastDeliveredSequenceconversation_members.lastSeenSequence
+For direct chats, show Sent/Delivered/Seen. For groups, derive “Seen by N” and optionally list viewers when policy allows. Do not create permanent row-per-message-per-user receipt explosions unless a specialized audit case requires it.
+7.4 Unsend-before-seen
+A sender may unsend only while no eligible recipient has seen the message. In a group, one recipient seeing the message closes the unseen-unsend window for everyone. The server resolves read-vs-unsend races transactionally.
+UNSEND_MESSAGE(messageId, expectedVersion)  authorize sender  lock message/conversation receipt state  assert maxRecipientSeenSequence < message.sequence  set lifecycle = UNSENT  emit message.unsent  preserve sequence tombstone internally  remove from normal retrieval/search/projections
+7.5 Edit
+Text edits retain an Edited marker and version history as required. Editing message prose never silently mutates a canonical Plan/Event/Trip object previously created from the message.
+8. Plans, Decisions & Action Objects
+Telegraph should promote structured action over repeatedly parsing prose.
+Object
+Purpose
+ConversationDecision
+Question, options, voters, resolution rule, deadline and final result.
+ConversationCommitment
+Who agreed to do what, by when, and whether it was completed.
+CoordinationSession
+Temporary operational mode for assembling, meeting, active experience and return.
+Rendezvous
+Meeting checkpoint, landmark, time window, fallback point and proximity state.
+8.1 Native actions
+ADD_TO_TRIP · CREATE_PLAN · JOIN_PLAN · LEAVE_PLANMEET_HERE · SHARE_PLACE · SHARE_ROUTE · VOTESHARE_AVAILABILITY · SHARE_LOCATION · SPLIT_RIDECHECK_IN_SAFE · RETURN_TO_GROUP · DO_THIS_NOW
+8.2 Message-to-action rule
+AI/entity extraction may suggest a structured action from text or voice, but canonical creation requires user confirmation unless a pre-authorized deterministic shortcut explicitly exists.
+9. Coordination Mode
+PREPARING → ASSEMBLING → ACTIVE → RETURNING → COMPLETE                  ↘ DISRUPTED / CANCELLED
+When a shared plan approaches its leave-by/start window, the thread can temporarily transform from normal conversation into a coordination surface.
+State
+Primary UI
+Preparing
+Plan card, attendance, leave-by, route, availability conflicts.
+Assembling
+On my way, running late, meet here, ETA, pickup, arrival counts.
+Active
+Minimal conversation, next step, crew state, optional location scope.
+Returning
+Heading back, Safe Return, shared transport, return checkpoint.
+Complete
+Closeout, media grouping, explicit Memory/recap options.
+9.1 Quick states
+ON_MY_WAY · ARRIVED · RUNNING_LATE · CANT_MAKE_ITSTART_WITHOUT_ME · HEADING_BACK · NEED_HELP
+User-declared status must remain distinguishable from system-derived ETA or location-derived estimates.
+10. Memory Notes & Post-Experience Content
+10.1 Memory Note
+type MemoryNoteShare = {  memoryNoteId: UUID  authorId: UUID  text?: string  voiceAssetId?: UUID  placeId?: UUID  occurredAt?: Timestamp  mediaAssetIds: UUID[]  shareProjectionVersion: string}
+A Memory Note is shareable, saveable and actionable without exposing the sender’s canonical private Memory graph.
+10.2 Save to Memory
+A user may explicitly save a message, voice note, place share or media item as a private Memory draft. Telegraph never automatically converts whole conversations into Memories.
+10.3 End-of-night recap
+4 places · 6 people · 18 photos · 2 videos[ Create Memory ] [ Share Photos ] [ Follow People You Met ] [ Done ]
+Recap is derived from confirmed session context and shared content references. It is an invitation to curate, not automatic historical truth.
+11. Design System & Interaction Rules
+11.1 Visual character
+Dark-first visual system may be used for the Telegraph concept, but components must support Portava light/dark themes.
+Use restrained teal/cyan as operational emphasis; reserve stronger attention states for safety and urgent changes.
+Cards should be compact and contextual. Telegraph should not visually resemble a social feed inside a chat.
+Use horizontal rails only for short, high-value context sets; provide “See all” for expansion.
+Message bubbles remain visually dominant once the user scrolls into the conversation.
+11.2 Shared Context Rail behavior
+Condition
+Behavior
+Active plan
+Expanded “NOW” card at top.
+Upcoming only
+Compact horizontal cards.
+No active/upcoming
+Collapsed summary such as “3 shared plans · 1 past trip”.
+User scrolls down
+Rail collapses/sticks minimally; messages get priority.
+Critical plan change
+Temporary promoted change card until acknowledged.
+11.3 Accessibility
+Do not encode delivery/availability solely by color.
+Provide reduced-motion behavior for media, GIFs and animations.
+Voice/video controls require screen-reader labels and predictable hit targets.
+Captions/transcripts must be optional derivatives; original media remains accessible.
+Nearby/proximity labels should be understandable without map-only representation.
+12. Canonical Domain Model
+Table / aggregate
+Responsibility
+conversations
+Conversation identity, type, lifecycle, current policy/version.
+conversation_members
+Membership intervals, role, visible sequence bounds, delivered/seen sequences.
+conversation_requests
+Request provenance, intent, acceptance/decline state.
+messages
+Stable envelope, sender, sequence, kind, lifecycle and content reference.
+message_edits
+Versioned text edits where retained.
+message_reactions
+Reaction metadata.
+message_attachments
+Typed media/file attachment references.
+message_translations
+Recipient-language derived translation.
+conversation_decisions
+Structured polls/decisions.
+conversation_action_refs
+References to canonical Plans, Trips, Events, Places, etc.
+availability_signals
+Opt-in scoped availability.
+location_shares
+Purpose/audience/precision/expiry scoped location capability.
+coordination_sessions
+Temporary active real-world coordination state.
+presence_sessions
+Ephemeral online/recent activity state.
+call_sessions / call_participants
+Voice/video call subsystem state.
+conversation_reports / blocks
+Moderation and block policy inputs.
+conversation_outbox
+Transactional domain-event outbox.
+conversation_snapshots
+Rebuild/replay checkpoints where useful.
+12.1 Message envelope
+type Message = {  id: UUID  conversationId: UUID  senderId: UUID  sequence: bigint  kind: MessageKind  contentRef?: string  body?: string  replyToMessageId?: UUID  createdAt: Timestamp  editedAt?: Timestamp  unsentAt?: Timestamp  clientMessageId: string  idempotencyKey: string  lifecycleState: MessageLifecycle  sourceLanguage?: string}
+Avoid a giant unversioned metadata_json field and avoid dozens of nullable foreign keys on messages. Structured payload types use versioned schemas and explicit reference tables.
+13. Commands & Events
+13.1 Commands
+SEND_MESSAGEEDIT_MESSAGEUNSEND_MESSAGEDELETE_MESSAGEADD_REACTIONACCEPT_REQUESTDECLINE_REQUESTCREATE_DECISIONCAST_VOTECREATE_COORDINATION_SESSIONSET_COORDINATION_STATUSSHARE_LOCATIONSTOP_LOCATION_SHARESET_AVAILABILITYSTOP_AVAILABILITYBLOCK_USERMUTE_THREADREPORT_MESSAGE
+13.2 Events
+message.sentmessage.deliveredmessage.seenmessage.editedmessage.unsentmessage.deletedthread.requestedthread.acceptedmember.joinedmember.leftavailability.startedavailability.expiredlocation.startedlocation.expiredcoordination.startedcoordination.completeduser.blockedsafety.reported
+13.3 Outbox invariant
+Transactional requirementCanonical mutation and event-outbox write occur in the same database transaction. Push, realtime fanout, indexing, translation, moderation, analytics and projections consume asynchronously and idempotently.
+14. Authorization & Conversation Policy
+14.1 Capability model
+type ConversationCapabilities = {  canSendMessage: boolean  canCall: boolean  canCreatePlan: boolean  canShareExactLocation: boolean  canInvite: boolean  canRequestPayment: boolean  canCreateBooking: boolean  canBroadcast: boolean  canViewPreMembershipHistory: boolean  canSeeGroupReadReceipts: boolean}
+Capabilities are derived server-side from membership, block state, Trip/Crew membership, booking state, age/policy, location scope, safety state and conversation type. UI renders capabilities; it does not invent authorization.
+14.2 Read authorization is dynamic
+Authorization must be checked both when sending and when reading because membership, revocation, source-object privacy and blocking can change after a message was created.
+14.3 Group history bounds
+conversation_member.visibleFromSequenceconversation_member.visibleUntilSequence
+New members do not automatically receive pre-membership history. Adding a third person to a DM creates a new group; it does not expose the old DM history. Explicitly selected Plans/Places may be carried forward as new share objects.
+15. Location, Proximity & Safety
+15.1 Purpose-bound location
+type LocationShare = {  id: UUID  ownerId: UUID  audiencePolicyId: UUID  purpose: 'MEETUP' | 'TRIP_CREW' | 'SAFE_RETURN' | 'EVENT_FIND_FRIENDS' | 'BUDDY_BOOKING'  precision: 'EXACT' | 'APPROXIMATE' | 'ARRIVAL_STATUS_ONLY'  startsAt: Timestamp  expiresAt: Timestamp  lifecycle: 'LIVE' | 'RECENT' | 'LAST_KNOWN' | 'EXPIRED'}
+A meetup location grant cannot be silently reused for general Nearby discovery or future tracking. Expired location becomes inaccessible, not merely hidden in UI.
+15.2 Safety mode
+NORMAL → SAFETY_ATTENTION → SAFETY_EVENT
+Safety mode promotes trusted contact, current status, official help, route/return, call, block/report and relevant location scope while de-prioritizing entertainment actions.
+15.3 Block cascade
+Blocking must cascade across direct delivery, location, presence, Nearby, Bump discovery, shared-memory resurfacing, Crew suggestions and Compass retrieval. No subsystem may independently “rediscover” a blocked relationship.
+16. Media Pipeline
+16.1 Media asset separation
+MediaAsset != Message != MemoryMessageAttachment → MediaAssetMemory media link → MediaAssetPortava object share → source object + share projection
+16.2 Progressive upload
+LOCAL PREVIEW   ↓THUMBNAIL / POSTER   ↓STREAMABLE RENDITION   ↓ORIGINAL COMPLETES
+Resumable/chunked upload for poor travel connectivity.
+Poster/frame generation and adaptive renditions for video.
+Waveform generation for voice as derived metadata.
+Media scanning/moderation pipeline must not block basic text delivery.
+Data-saver mode prioritizes text/status/coordinates over media/AI.
+17. Offline, Realtime & Multi-Device
+17.1 Ordering
+Require per-conversation server sequence ordering, not global ordering. Client timestamps are advisory only.
+17.2 Offline commands
+clientMessageIdidempotencyKeycreatedAtClientsyncState: LOCAL_ONLY | QUEUED | SENT | CONFIRMED | FAILED
+Offline resend must be idempotent. Tombstones preserve sequence continuity for unsent/deleted messages. Reconnect resumes from last acknowledged conversation/event sequence.
+17.3 Multi-device convergence
+Seen/delivery state, message edits and canonical thread state converge server-side. Active precise location is device-specific and must not automatically transfer to a newly logged-in device.
+17.4 Degraded mode
+Realtime gateway failure → polling/delta fallback.
+Push failure → no loss of canonical messages; push is wakeup/fallback, not consistency authority.
+Translation/AI/maps failure → core messaging continues.
+Low bandwidth → deprioritize typing, reactions, media preview and AI before text or safety coordination.
+18. Translation, Voice & Compass
+18.1 Translation derivative
+type MessageTranslation = {  messageId: UUID  targetLanguage: string  translatedText: string  providerVersion: string  generatedAt: Timestamp  confidence?: number}
+Store original text/audio. Translation never replaces it. Low-confidence operational translation should show original + translation instead of pretending certainty.
+18.2 Voice pipeline
+AUDIO → TRANSCRIPT → OPTIONAL TRANSLATION ^ authoritative          ^ derived
+18.3 Compass tool boundary
+getConversationContext()getSharedPlans()getParticipantAvailability()getSharedPlaces()suggestMeetingPoint()createPlanDraft()findSafePublicMeetup()searchAuthorizedConversationContent()
+Compass sees only data authorized to the conversational context. It cannot reveal one participant’s private Memory/preferences to another, impersonate participants, or silently create canonical plans from uncertain prose.
+19. Notifications & Attention
+Priority
+Examples
+Behavior
+P0 Safety
+SOS, safety escalation
+Interruptive; bypass ordinary batching where policy requires.
+P1 Coordination
+Meetup moved, pickup, return state
+Immediate/high priority.
+P2 Message
+Normal direct/group messages
+Standard notification policy.
+P3 Media
+Large upload completion
+Passive/batched.
+P4 Ephemeral
+Typing, lightweight presence
+Realtime only; no persistent push.
+P5 AI
+Summaries/suggestions
+Lowest priority; degrade first.
+Inbox can display “12 unread · 1 needs action”. Acknowledgment for important operational changes is distinct from passive Seen state.
+20. Source-Domain Integrations
+Domain
+Telegraph integration
+Trips
+Crew threads, shared Trip cards, today/next context, membership authorization, Trip Kernel commands.
+Plans
+Invitation, RSVP, changes, dependencies, coordination session trigger.
+Events
+Share card, attendance, live status, timing changes.
+Places / Hidden Gems
+Share, save, meet here, add to Trip, current intelligence display.
+Discovery
+Discover Together; shared opportunity set from availability/time/context.
+Compass
+Authorized thread context, meeting/recommendation tools, catch-up.
+Memories
+Safe share derivatives, Memory Notes, explicit Save to Memory, post-experience recap.
+Buddy / Visa Buddy
+Protected booking/operational layer; no chat mutation of price/terms.
+Safety
+Safe Return, help states, location scope, block/report.
+Map
+Meet points, routes, contextual shared map; no historical movement trail.
+21. Search & Retrieval
+Telegraph search is object-aware and authorization-scoped.
+SEARCH "sky36"MESSAGES      3PLACES        1MEDIA         2 videosPLANS         1MEMORIES      1
+Index message text, permitted voice/video transcripts, object titles and safe metadata.
+Private semantic indexes require access filtering before retrieval, not post-filtering after unrestricted search.
+Unsent/deleted/revoked objects must be removed from normal user search and Compass retrieval.
+“Ask this conversation” should prefer structured plans/decisions/actions over inferred prose.
+22. Abuse, Moderation & Travel Scam Safety
+Control
+Requirement
+Requests
+Contextual origin: Event, Trip, Nearby, Bump, Buddy, profile, etc.
+Rate limits
+Adaptive to relationship, verification, trust, account age and reports.
+Stranger media
+Can be blurred/no autoplay until accepted.
+Links/files
+Reputation/scanning; reserved official identities.
+Travel scam signals
+Off-platform payment, fake taxi, visa help, ticket resale, fake hotel, urgent money request.
+Evidence
+Store minimum necessary reported content/context under restricted policy.
+Deletion
+Reported deleted content may remain in restricted moderation storage but not normal retrieval.
+23. Backend Package Boundaries
+src/domain/telegraph/  contracts/  commands/  events/  policies/  invariants/  services/  projections/  replay/src/features/telegraph/  home/  conversation/  nearby/  shared-context/  coordination/  composer/  media/  search/server/telegraph/  commandRoutes/  readRoutes/  realtimeGateway/  outboxWorker/  projectionWorkers/  notificationWorker/  mediaAdapters/  integrationAdapters/
+Trips, Buddy, Safety, Memories, Discovery and Compass remain integrations. Telegraph does not embed their canonical business logic.
+24. Projection Architecture
+Projection
+Purpose
+TelegraphHomeProjection
+Conversation list + contextual badges + Now + nearby summary.
+ConversationProjection
+Renderable ordered thread with current permissions.
+SharedContextProjection
+Mutually relevant Now/Upcoming/Want-to-Do/Past objects.
+NearbyAvailableProjection
+Eligible nearby users and open opportunities.
+CoordinationProjection
+Meeting, attendance, ETA/status and safety-relevant operational state.
+ConversationContentIndex
+Media/Places/Portava/Voice/GIF/Links/Files drawer.
+Mobile clients consume server-built projections instead of independently joining raw tables and reimplementing authorization/business logic.
+25. Migration & Compatibility Strategy
+25.1 Phase 0 — mandatory inventory
+Inspect existing messaging schema, migrations, RLS, client routes, realtime subscriptions, push flow, media upload paths, translation paths and current enum literals.
+Compare production and CI schemas before writing migrations.
+Identify direct client writes and legacy JSON fields; create ratchets before introducing new paths.
+Inventory current Trips/Plans/Events/Places/Memories/Buddy foreign-key identities; never substitute semantically similar IDs.
+Capture baseline tests and message delivery behavior before mutation.
+Repository safety ruleDo not invent schema fields. Do not substitute home_country for current_country, a hidden-gem ID for a place ID, or any other semantically “close” field. Unknown remains null/unresolved until an explicit bridge exists.
+25.2 Migration sequence
+Phase
+Scope
+1
+Conversation Kernel, member visibility bounds, message envelope, outbox, policy service.
+2
+Reliable DM/group, requests, blocking, seen/delivery, unseen-unsend, offline/idempotency.
+3
+Universal Portava share contract, rich media, content drawer, object-aware search.
+4
+Shared Context Rail and live source-object cards.
+5
+Availability/Nearby, Who’s Around, privacy zones and instant revocation.
+6
+Plans/decisions/coordination sessions, meeting points, temporary location.
+7
+Translation, voice transcript, Compass thread tools and catch-up.
+8
+Buddy/Safety operational modes, calls, captions and advanced offline/proximity.
+9
+Post-experience recap, collaborative media and opportunity graph optimization.
+26. RLS & Authorization Test Matrix
+Case
+Expected
+Non-member reads conversation
+DENY
+Removed member reads future sequence
+DENY
+New member reads pre-membership history without policy
+DENY
+Blocked sender sends DM
+DENY
+Expired exact location read
+DENY
+Availability audience excludes viewer
+DENY
+Private Memory source shared without derivative authorization
+DENY
+Authorized user reads current safe share projection
+ALLOW
+Trip member loses Trip membership
+Capabilities downgrade immediately
+Buddy booking cancelled
+Booking-only actions disabled immediately
+27. Certification & Test Plan
+27.1 Property invariants
+permission decreases → accessible set never increaseslocation precision decreases → recipient precision never increasesparticipant removed → future accessible sequences never increaseblock activated → future direct delivery impossiblethread/availability/location expiry → temporary scopes terminatemessage unseen → unsend may succeedany eligible recipient seen → unseen-unsend impossible
+27.2 Adversarial fixtures
+Stranger spam and request flooding.
+Blocked sender retrying on stale device.
+Duplicate send and offline resend.
+Out-of-order realtime events.
+Location expires while owner device is offline.
+Edit while translation/transcript is generating.
+Participant removed mid-send.
+Trip membership revoked while thread is open.
+Buddy booking cancelled during coordination.
+AI summary sees conflicting messages.
+Unsend races recipient seen update.
+Source object revoked while cached share card is open.
+27.3 Live-DB contract checks
+Every selected/written column exists in CI and production schema.
+Every enum literal exists in live database.
+Every RLS role has intended positive and negative access.
+Migrations are additive/idempotent where designed and include postconditions.
+No silent catch converts schema/permission failures into plausible empty inbox/context.
+Direct-write ratchets can only shrink.
+28. Observability & SLOs
+Metric
+Target / intent
+message command success
+High availability; safety/coordination prioritized.
+duplicate canonical messages
+0 under idempotency contract.
+unsend-after-seen violations
+0.
+expired precise-location leakage
+0.
+blocked direct deliveries
+0.
+projection lag
+Bounded; alert on material stale shared context.
+realtime reconnect recovery
+No lost confirmed messages.
+share-revocation latency
+Fast enough to prevent stale authorization bypass.
+successful coordinated real-world actions
+Primary product outcome metric.
+29. Non-Negotiable Developer Invariants
+No AI, translation, transcription, maps or push dependency in the core message-delivery path.
+No exact location without explicit purpose/audience/precision/expiry authorization.
+No stale location labeled live.
+No private canonical Memory exposed through a Telegraph share.
+No source-object revocation bypass via cached Telegraph card/search/Compass.
+No direct mutation of canonical Trip/Plan/Event/Buddy terms from message prose.
+No semantic ID substitution across domains.
+No group-add operation that leaks prior DM history.
+No silent schema failures that become plausible empty state.
+No hidden client-side authorization replacing server policy.
+No derived translation/transcript overwriting original content.
+No automatic Memory creation from private conversation history.
+No Nearby exposure merely because GPS indicates physical proximity.
+Blocked relationships never reappear through Nearby, Compass, Bump or shared-memory suggestions.
+Derived projections are rebuildable from canonical state + events.
+30. Definition of Done
+Area
+Done when
+Core messaging
+DM/group send, reply, reactions, delivery/seen, unseen-unsend, edit and offline resend are deterministic.
+Rich content
+Image/video/GIF/voice/Memory Note/Portava object share render inline and survive poor-network conditions.
+Shared context
+Conversation top rail accurately shows authorized mutual Now/Upcoming/Want-to-Do/Past state.
+Nearby
+Only opt-in eligible users appear; availability and proximity revoke immediately; exact location remains separate.
+Action
+Plan/invite/vote/meet/coordination flows use canonical source-domain commands.
+Privacy
+RLS negative tests, block cascade, membership history, revocation and source-object authorization pass.
+Reliability
+Outbox/idempotency/reconnect/backpressure tests pass; degraded dependencies do not break text/safety.
+CI/live DB
+Schema/enum/write-path/RLS checks green on isolated branch/PR with final diff reviewed.
+Appendix A — Recommended Initial Schema Names
+telegraph_conversationstelegraph_conversation_memberstelegraph_conversation_requeststelegraph_messagestelegraph_message_editstelegraph_message_reactionstelegraph_message_attachmentstelegraph_message_translationstelegraph_conversation_decisionstelegraph_conversation_action_refstelegraph_availability_signalstelegraph_location_sharestelegraph_coordination_sessionstelegraph_presence_sessionstelegraph_call_sessionstelegraph_call_participantstelegraph_reportstelegraph_blockstelegraph_event_outboxtelegraph_snapshots
+Use existing repository naming conventions where established. These are architectural names, not permission to create duplicate tables if equivalent canonical structures already exist.
+Appendix B — Suggested Migration / PR Breakdown
+PR
+Purpose
+T0
+Inventory report only: current schema, paths, RLS, enums, realtime, media, direct writes, source-domain bridges.
+T1
+Kernel + message envelope + membership bounds + outbox + policy interfaces.
+T2
+Seen/delivery + unseen-unsend + edit + offline/idempotency + tests.
+T3
+Universal share contract + media/voice/GIF + content drawer.
+T4
+Shared Context Rail projections and source-domain adapters.
+T5
+Availability/Nearby/privacy zones/proximity policy.
+T6
+Coordination sessions + plan actions + scoped location + safety integration.
+T7
+Translation/transcripts/Compass/search derivatives.
+T8
+Calls/advanced offline/load testing/post-experience recap.
+Each PR should remain narrowly scoped, include migrations/postconditions where needed, preserve unknown/null semantics, run the relevant live-DB lane, and show final diff/stat/checks before merge.
+
+30. Production Architecture Completion Addendum
+This addendum closes the remaining platform-level gaps required for Telegraph to move from feature-complete product architecture to production-complete messaging, coordination, proximity, content, and real-world action infrastructure.
+30.1 Canonical Relationship Context
+Introduce a canonical TelegraphRelationship model so messaging eligibility, requests, calling, Nearby, location sharing, invitations, and temporary connections do not independently infer relationship state.
+Relationship origins include FOLLOW, MUTUAL_FOLLOW, TRIP, CREW, EVENT, BUMP, NEARBY, BUDDY, PLAN, and MANUAL. Relationship states include REQUEST_ONLY, ACTIVE, TEMPORARY, RESTRICTED, BLOCKED, and EXPIRED.
+Relationship policy is an input to ConversationPolicy; it is not a replacement for block, age, safety, membership, or object-specific authorization.
+30.2 Reachable People Projection
+Add a server-built ReachablePersonProjection that combines relationship, active availability, permitted proximity, shared context, privacy, and safety eligibility.
+Nearby is geographical; availability is temporal; reachability is contextual. Clients must not recompute this eligibility from raw tables.
+Availability never implies permission to call, bypass message requests, expose exact location, or access private plans.
+30.3 Message Mutation and Deletion Semantics
+Support text editing with an Edited marker and internal version history. Editing message text never mutates a canonical Plan, Event, Trip, booking, or other source-domain object.
+Model UNDO_SEND, UNSEND_BEFORE_SEEN, DELETE_FOR_ME, DELETE_FOR_EVERYONE, REMOVE_ATTACHMENT, SOURCE_OBJECT_REVOKED, and ACCOUNT_DELETED as distinct operations.
+UNSEND_BEFORE_SEEN is race-safe and server-authoritative. In groups it succeeds only while no eligible recipient has seen the message.
+Deleted and unsent content must be removed from normal search, Compass retrieval, inbox projections, and content drawers according to the operation's semantics.
+30.4 Group Membership, Roles, and History Windows
+Conversation membership records must include joined_at, left_at, removed_at, visible_from_sequence, visible_until_sequence, and role.
+New members do not automatically gain access to pre-membership history. Adding a third person to a direct conversation creates a new group and never exposes prior DM history by default.
+Supported policy roles should include OWNER, ADMIN, HOST, MEMBER, and GUEST, with capability-based authorization for invitations, removals, pins, announcements, group settings, and shared operational state.
+30.5 Announcements and Explicit Acknowledgement
+Add an ANNOUNCEMENT message/object type for operational changes such as meeting-point changes, Trip instructions, and host notices.
+Seen and Acknowledged are separate. Seen means the content satisfied the read-visibility rule; Acknowledged means the user explicitly confirmed the operational notice.
+Do not overload passive read receipts to represent acceptance, agreement, or acknowledgement.
+30.6 Notification and Attention Architecture
+Define notification causes including MESSAGE, MENTION, PLAN_CHANGED, INVITATION, COORDINATION, LOCATION, CALL, and SAFETY.
+Prioritize P0 SAFETY, P1 ACTIVE_COORDINATION, P2 DIRECT_OR_MENTION, P3 PLAN_OR_TRIP, P4 NORMAL_GROUP, and P5 REACTION_OR_PASSIVE.
+Deduplicate notifications by underlying causal event. A single Plan change must not create redundant Plan, Trip, Telegraph, and Compass notifications.
+Thread notification policy may support ALL, MENTIONS, IMPORTANT, temporary mute, and MUTED. Safety-critical delivery remains governed by the safety policy rather than ordinary mute.
+30.7 Device, Session, and Compromise Model
+Maintain a TelegraphDevice registry containing platform, push capability, voice/video capability, proximity capability, background-location capability, trust state, and last activity.
+Precise location sharing is device-specific and must not silently transfer to a newly authenticated device.
+Device revocation terminates realtime sessions, invalidates location capabilities and proximity identities, stops push, and rotates sensitive session credentials without destroying canonical conversation history.
+30.8 Attachment and External Preview Security
+Media uploads pass through quarantine, file-type verification, security scanning, metadata policy, transcoding, and approved-asset publication. Never trust a client-provided MIME type as authoritative.
+Define EXIF handling explicitly, especially GPS metadata, capture time, and device metadata, so forwarding a photo does not unintentionally disclose where it was captured.
+External URL previews are fetched through a controlled server-side preview service. Recipients must not silently contact arbitrary sender-provided domains simply to render a preview.
+GIF and other external media providers use the same isolation and attribution boundary.
+30.9 Forwarding Provenance and Restrictions
+Track whether a message derivative is FORWARDED, RESHARED_FROM_SOURCE, or COPIED_ATTACHMENT without exposing private conversation lineage to recipients.
+Content capabilities may specify ALLOW, NO_FORWARD, SOURCE_POLICY, or EXPIRES_WITH_SOURCE.
+Screenshot detection, if later supported by a platform, is informational only and is never presented as a guarantee against copying.
+30.10 Content and Action Capability Registries
+Every shareable Portava domain registers preview, authorization, current state, actions, search behavior, and revocation through a Telegraph content capability contract.
+Every executable Telegraph action registers authorize, preview, execute, and optional compensate behavior. Telegraph orchestrates; Trips, Events, Buddy, Memories, Discovery, and other source domains retain canonical business truth.
+Action buttons are derived from current capabilities. An old rendered card must not authorize a stale action.
+30.11 Transactional Action Confirmation
+Rich-card actions follow tap -> command -> owning domain authorization/write -> domain event -> projection update.
+Do not permanently render Going, Joined, Booked, Paid, or similar canonical state from optimistic UI alone.
+Current source-domain capability is rechecked at execution time so expired events, revoked invitations, changed bookings, and removed memberships fail safely.
+30.12 Conversation Scale Classes
+Explicitly distinguish PRIVATE_CONVERSATION, SMALL_GROUP, LARGE_GROUP, and BROADCAST transport classes.
+Large Event conversations must not use small-group fanout, presence, or per-recipient Seen UI without bounded strategies.
+Large groups may support slow mode, host-only posting, media/link restrictions, member moderation, and bounded acknowledgement semantics.
+30.13 Anti-Abuse and Nearby Integrity
+Use private policy signals such as request acceptance, spam reports, block rate, burst behavior, duplicate-message behavior, and malicious-link behavior to constrain abuse. Never expose these as a public messaging score.
+New accounts receive gradual outreach capabilities. Nearby must never become mass-DM infrastructure.
+Proximity defenses include coarse distance buckets, update throttling, privacy-zone suppression, purpose-bound access, and no historical proximity endpoint.
+BLOCK overrides Nearby in both directions. Unavailable or Invisible revokes Nearby, Discovery, and Compass availability projections promptly.
+30.14 Accessibility and Internationalization
+Treat accessibility as an architecture requirement: screen-reader labels, dynamic type, reduced motion, high contrast, captions/transcripts, non-color-only status, large touch targets, and accessible alternatives for maps, voice waveforms, video, proximity, and coordination states.
+Internationalization must support RTL layouts, locale-sensitive timestamps, 12/24-hour clocks, pluralization, Unicode names/handles, long translations, mixed-language threads, and destination/user timezone semantics.
+Timezone and date-line behavior must be covered by automated tests.
+30.15 Connectivity, Retention, and Rebuildability
+Expose truthful ONLINE, POOR_CONNECTION, OFFLINE, and RECONNECTING states. Distinguish local unsent, server accepted, recipient offline, and receipt unavailable.
+Define storage tiers for thumbnails, streamable media, originals, archival data, and deletion. Temporary precise-location data has a much shorter lifecycle than ordinary user media.
+Canonical conversations and messages must survive loss of realtime caches, search indexes, translations, notification queues, AI artifacts, and read projections.
+ConversationProjection, InboxProjection, SharedContextProjection, ContentIndexProjection, SearchIndex, and seen-state derivatives must be rebuildable from canonical state and events.
+30.16 Structured Content Versioning and Client Compatibility
+Maintain versioned structured-message schemas such as place.share.v1, event.share.v1, trip.share.v1, memory_note.v1, location.scope.v1, and coordination.status.v1.
+Unknown future message types render a safe generic fallback on older clients rather than crashing or silently disappearing.
+Use client capability negotiation when an interaction requires a minimum supported schema or action version.
+30.17 Analytics, SLOs, and Internal Support
+Measure delivery latency, failed sends, unsend outcomes, seen-state convergence, media processing, plan conversion, coordination success, Nearby-to-conversation conversion, conversation-to-plan conversion, and completed real-world outcomes.
+Do not indiscriminately copy private message text into analytics. The product north star is successful coordinated real-world interactions, not time spent messaging.
+Define SLOs for message acceptance, realtime delivery, offline recovery, seen convergence, block enforcement, location revocation, media availability, and projection freshness. Safety/privacy operations receive the strictest requirements.
+Internal support tooling should expose delivery and projection diagnostics, event IDs, conversation IDs, and authorized moderation context with purpose-scoped access and audit logging rather than casual access to private content.
+30.18 Replay, Concurrency, and Adversarial Certification
+Build a Telegraph replay simulator that permutes message send, disconnect, unsend, reconnect, member removal, location expiry, Plan changes, blocking, translation completion, and media completion, then verifies deterministic final state.
+Property tests include: permission decreases never increase accessible data; lower location precision never increases recipient precision; removed participants gain no future sequences; block prevents future direct delivery; temporary scopes terminate at expiry.
+Live-DB contracts verify selected/written columns and enum literals against the actual schema and verify RLS role behavior. Schema/permission failures must never be swallowed into plausible empty inboxes.
+30.19 Telegraph Context Kernel
+Formalize a Context Kernel above the transport layer. Inputs are Relationship, Time, Proximity, Intent, and Shared Objects. These feed Policy + Capabilities, which determine what the Telegraph surface may reveal and what actions it may offer.
+Messaging transport answers what was sent. Conversation context answers what is happening between these people. World context answers what is happening around them. Policy answers what each participant may know or do. Actions execute through owning domains.
+This separation is mandatory so messaging infrastructure does not become the canonical owner of Trips, Events, Buddy bookings, Memories, availability, location, or other domain truth.
+30.20 Additional Non-Negotiable Invariants
+Availability is user intent, not permission to contact or track.
+Online presence, availability, proximity, and precise location sharing are separate capabilities.
+A newly added group participant cannot read history outside the authorized sequence window.
+A source object shared in Telegraph cannot grant broader access than its authorized share projection.
+External previews cannot cause recipient-side network disclosure to arbitrary sender-controlled domains.
+AI, translation, transcription, GIF providers, maps, search, and push are never required for core text-message correctness.
+Canonical operational state always outranks historical conversation text.
+All consequential cross-domain actions pass through the owning domain's command/authorization path.
+Derived Telegraph projections are rebuildable; caches and indexes are never the sole authoritative copy.
+31. Updated Architecture Summary
+Telegraph is Portava's private social-action and coordination layer. Its final architecture is divided into five responsibilities: reliable messaging transport; authorized relationship and shared-context assembly; world-context inputs such as availability and proximity; capability/policy evaluation; and cross-domain actions that remain authoritative in their owning services.
+Transport: messages, media, voice, delivery, Seen, Unsend, offline recovery, realtime, and multi-device convergence.
+Context Kernel: relationship, time, proximity, intent, shared plans/events/trips/content, and active coordination.
+Policy: block, privacy, audience, membership, age/safety, history windows, content capabilities, and purpose-bound location.
+Action orchestration: create/join plans, RSVP, meet, navigate, share, save, coordinate, and other typed commands routed to owning domains.
+Outcome loop: conversation -> decision -> plan -> coordination -> real-world interaction -> optional Memory, without optimizing for endless chat.

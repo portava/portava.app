@@ -6,7 +6,7 @@ import {
   MapPin, Clock, MoreHorizontal, CheckCircle2, Pencil, Trash2, AlertTriangle, Tag, GripVertical,
 } from 'lucide-react-native';
 import type { TripPlanItem, TripPlanCategory, TripPlanItemStatus } from '../../types/models.ts';
-import { removePlanItem, updatePlanItem, reorderPlanItem } from '../../services/tripPlan.ts';
+import { removePlanItem, updatePlanItem, reorderPlanItem } from '../../features/trips/planning/tripPlan.ts';
 import { LOCK_LABEL, LOCK_STYLE } from './LockTypeSelector.tsx';
 import { color, space, radius, type as t, dot } from '../../theme/tokens.ts';
 

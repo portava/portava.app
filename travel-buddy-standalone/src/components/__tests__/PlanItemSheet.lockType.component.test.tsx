@@ -9,7 +9,7 @@
 import React from 'react';
 import { render, fireEvent, waitFor } from '@testing-library/react-native';
 import { PlanItemSheet } from '../itinerary/PlanItemSheet.tsx';
-import { updatePlanItem } from '../../services/tripPlan.ts';
+import { updatePlanItem } from '../../features/trips/planning/tripPlan.ts';
 import type { TripPlanItem } from '../../types/models.ts';
 
 // Modal leaves a floating async act() scope; replace with a synchronous View.
@@ -28,8 +28,8 @@ jest.mock('react-native', () => {
   });
 });
 
-jest.mock('../../services/tripPlan.ts', () => ({
-  ...jest.requireActual('../../services/tripPlan.ts'),
+jest.mock('../../features/trips/planning/tripPlan.ts', () => ({
+  ...jest.requireActual('../../features/trips/planning/tripPlan.ts'),
   updatePlanItem: jest.fn(async (_tripId: string, itemId: string, patch: any) => ({
     id: itemId,
     ...patch,

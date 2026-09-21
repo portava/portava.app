@@ -57,6 +57,33 @@ function makePayload() {
         stampCount: 4,
         verificationLevel: 'gps',
         displayLabel: 'Tokyo, Japan',
+        // §26 levels 4-6 (census-passport P126). The server has already grouped
+        // and already filtered these; the screen renders what it is handed.
+        trips: [
+          {
+            tripId: 'trip-jp',
+            title: 'Cherry Blossom Run',
+            startDate: '2025-04-01',
+            endDate: '2025-04-12',
+            stampCount: 3,
+            places: [
+              { key: 'pl-1', name: 'Meiji Shrine', placeId: 'pl-1', neighborhood: 'Shibuya', stampCount: 2, memoryCount: 1 },
+              { key: 'n:Shinjuku', name: 'Shinjuku', placeId: null, neighborhood: 'Shinjuku', stampCount: 1, memoryCount: 0 },
+            ],
+            memories: [
+              { id: 'm1', title: 'Blossoms at dawn', category: 'nature', placeKey: 'pl-1', earnedAt: '2025-04-03T00:00:00Z' },
+            ],
+          },
+          {
+            tripId: null,
+            title: null,
+            startDate: null,
+            endDate: null,
+            stampCount: 1,
+            places: [],
+            memories: [],
+          },
+        ],
       },
       {
         country: 'Japan',
@@ -103,6 +130,41 @@ describe('MyWorldScreen', () => {
     expect(screen.getByText('Cities')).toBeTruthy();
     expect(screen.getByText('Stamps')).toBeTruthy();
     expect(screen.getAllByText('7').length).toBeGreaterThan(0); // total stamps
+  });
+
+  it('renders §26 levels 4-6 — Trip → Places → Memories — under the city (P126)', async () => {
+    mockGetPassportMap.mockResolvedValue({ ok: true, data: makePayload() });
+
+    await render(<MyWorldScreen />);
+
+    // 4 Trip
+    await waitFor(() => expect(screen.getByText('Cherry Blossom Run')).toBeTruthy());
+    expect(screen.getByTestId('my-world-trip-trip-jp')).toBeTruthy();
+    // 5 Places — both the named place and the neighbourhood-only one.
+    expect(screen.getByText('Meiji Shrine')).toBeTruthy();
+    expect(screen.getByText('Shinjuku')).toBeTruthy();
+    // 6 Memories
+    expect(screen.getByText('Blossoms at dawn')).toBeTruthy();
+    // The untripped bucket is rendered, not hidden — its stamp is not lost.
+    expect(screen.getByText('Not on a trip')).toBeTruthy();
+    expect(screen.getByTestId('my-world-trip-untripped')).toBeTruthy();
+    // A distinct Trip count reaches the world stats and the country line.
+    expect(screen.getByText('Trips')).toBeTruthy();
+  });
+
+  it('stops cleanly at City when the server sends no deeper levels (P126)', async () => {
+    // An older server omits `trips` entirely. Nothing below City renders, and
+    // nothing above it changes.
+    const payload = makePayload();
+    for (const m of payload.markers) delete (m as Record<string, unknown>).trips;
+    mockGetPassportMap.mockResolvedValue({ ok: true, data: payload });
+
+    await render(<MyWorldScreen />);
+
+    await waitFor(() => expect(screen.getByText('Tokyo')).toBeTruthy());
+    expect(screen.queryByText('Cherry Blossom Run')).toBeNull();
+    expect(screen.queryByTestId('my-world-trip-untripped')).toBeNull();
+    expect(screen.getByText('Japan')).toBeTruthy();
   });
 
   it('shows coarse place but never renders exact coordinates (§23)', async () => {

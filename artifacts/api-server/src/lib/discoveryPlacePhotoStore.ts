@@ -277,12 +277,28 @@ export async function markStoredPlacePhotoInvalid(placeKey: string): Promise<voi
   try {
     const sc = getServiceClient();
     if (!sc) return;
-    await sc
+    // supabase-js resolves on a database error, so this `catch` never fired for
+    // a refused write. The cost is specific: this row is how a photo that turned
+    // out to be wrong or dead stops being served. A silently-failed stamp means
+    // the store keeps handing the SAME broken or mismatched image back for that
+    // place on every subsequent request, and the retry that was supposed to
+    // follow never happens. Non-fatal (the caller is on a serve path and must
+    // not fail because of it), now reported.
+    const { error } = await sc
       .from("discovery_place_photos")
       .update({ invalid_at: new Date().toISOString() })
       .eq("place_key", placeKey);
-  } catch {
-    /* non-fatal by design */
+    if (error) {
+      logger.warn(
+        { err: error, placeKey, code: "place_photo_invalidate_failed" },
+        "discoveryPlacePhotoStore: could not mark photo invalid — it will keep being served",
+      );
+    }
+  } catch (err) {
+    logger.warn(
+      { err, placeKey, code: "place_photo_invalidate_failed" },
+      "discoveryPlacePhotoStore: marking photo invalid threw — it will keep being served",
+    );
   }
 }
 

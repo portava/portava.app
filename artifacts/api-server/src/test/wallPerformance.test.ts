@@ -26,6 +26,18 @@
  * unbounded fan-out — on any machine, at any speed. The timing number tells you
  * how bad it is; the read count tells you that it happened.
  *
+ * AND WHY THERE IS NOW A THIRD MEASUREMENT
+ * ========================================
+ * Neither of the two above can fail because the page got slow against a REAL
+ * database, which is what TABLE 4's 500 ms is about. A read COUNT does not
+ * become milliseconds on its own: 343 reads issued concurrently cost one round
+ * trip and 343 issued in single file cost 343. The last block in this file
+ * measures which — the SERIALIZED round-trip depth — by giving every fake query
+ * a known latency and differencing two runs. It is still not a production
+ * number, and it does not claim to be; it is the number that says what
+ * per-round-trip latency the 500 ms target implies. See the census entry for
+ * W146 for what a real-Postgres benchmark would take.
+ *
  * WHAT STILL NEEDS A DEVICE
  * =========================
  * TABLE 4's other rows — 60 fps scroll, immediate first paint, mode-switch
@@ -195,6 +207,20 @@ const FLAGS: Record<string, boolean> = {
 
 /** Supabase calls issued since the last reset — the hardware-independent half. */
 let readCount = 0;
+/**
+ * Artificial per-call latency, in milliseconds, applied to EVERY supabase call
+ * the page makes. Zero for the benchmarks above (they measure our own CPU work);
+ * set by the round-trip-depth test below, which is the only thing in this file
+ * that can speak about the 500 ms target as a LATENCY number rather than a
+ * quantity of work. See the `W146` block at the end of the file.
+ */
+let CALL_DELAY_MS = 0;
+
+/** Resolve a fake query after the currently-configured artificial latency. */
+function settle<T>(value: T): Promise<T> {
+  if (CALL_DELAY_MS <= 0) return Promise.resolve(value);
+  return new Promise<T>((resolve) => setTimeout(() => resolve(value), CALL_DELAY_MS));
+}
 /** Which tables those calls hit. Printed only under WALL_BENCH_DIAG=1, so a
  *  failure can be attributed to a table without re-instrumenting anything. */
 const readTables: string[] = [];
@@ -230,17 +256,17 @@ function corpusClient() {
       delete: () => ({ eq: () => Promise.resolve({ error: null }) }),
       maybeSingle() {
         if (table === "feature_flags") {
-          return Promise.resolve({ data: { enabled: !!FLAGS[String(filters["flag"])] }, error: null });
+          return settle({ data: { enabled: !!FLAGS[String(filters["flag"])] }, error: null });
         }
         if (table === "profiles") {
-          return Promise.resolve({ data: CORPUS.profiles[String(filters["id"])] ?? null, error: null });
+          return settle({ data: CORPUS.profiles[String(filters["id"])] ?? null, error: null });
         }
-        return Promise.resolve({ data: null, error: null });
+        return settle({ data: null, error: null });
       },
       then(onF: any, onR: any) {
         const rows = rowsFor(table);
         const data = rows.length > cap ? rows.slice(0, cap) : rows;
-        return Promise.resolve({ data, error: null }).then(onF, onR);
+        return settle({ data, error: null }).then(onF, onR);
       },
     };
     return b;
@@ -411,6 +437,133 @@ describe("Wall first-page performance (spec §33 / TABLE 4)", () => {
     assert.ok(
       large > small,
       "the two page sizes cost the same — the counter is not observing page-size work",
+    );
+  });
+
+  // ── W146: the 500 ms target as LATENCY, not as a quantity of work ──────────
+  //
+  // Everything above measures the page with a zero-latency client, so it bounds
+  // OUR CPU work and the NUMBER of reads. Neither can fail because the page got
+  // slow against a real database — the thing TABLE 4's 500 ms is actually about.
+  // What decides that number is not how many reads the page issues (343 issued
+  // concurrently cost one round trip) but how many of them are SERIALIZED: the
+  // depth of the longest await-chain of database calls on the critical path.
+  // Elapsed ≈ cpu + depth × round-trip-latency, so depth is measurable from here
+  // by giving every fake query a known artificial latency and differencing.
+  //
+  // This is a measurement that CAN fail on a slow path: awaiting one more query
+  // inside a per-item loop adds ~21 to the depth and moves both numbers below.
+  // It is NOT a substitute for a benchmark against real Postgres — see the census
+  // entry for W146 for exactly what that would take and why it is not available
+  // here — and it deliberately does not claim the target is met in production.
+
+  /**
+   * Per-round-trip latency the model is evaluated at, in milliseconds. A
+   * same-region PostgREST call is a few milliseconds; 4 ms is the round number
+   * inside that band and is the figure the ceiling below is quoted at. Changing
+   * it changes what the test means, so it is named rather than inlined.
+   */
+  const MODELLED_RTT_MS = 4;
+  /** TABLE 4's own number: "First server page: aim < 500 ms backend". */
+  const FIRST_PAGE_TARGET_MS = 500;
+  /**
+   * Serialized supabase round trips on the critical path of ONE first page.
+   *
+   * MEASURED at the commit that introduced this block: 92-93, reproducibly —
+   * three runs of this file alone and three runs inside the full 89-file suite
+   * all landed in that range. The ratchet is 110, and it was SIZED AGAINST THE
+   * REGRESSION rather than guessed: adding ONE awaited read per feed item to
+   * `routes/wall.ts` was measured to move the depth to ~113 and the modelled
+   * time from ~378 ms to ~459 ms — a change the 375-read ratchet (363 reads) and
+   * the 9-per-item slope ratchet (8.3) both still PASS. This line is the only
+   * guard in the file that catches it, which is the reason it exists.
+   *
+   * WHAT THIS NUMBER MEANS. At depth ~92 the first page can only clear 500 ms if
+   * the average database round trip is under ~5.4 ms. That is achievable in-region
+   * and is NOT achievable across a region boundary or through a saturated pooler.
+   * The 343-read ratchet above says the page does a lot of work; this says how
+   * much of that work the page waits for in single file, which is the half that
+   * turns into milliseconds. Lower it when a fan-out is batched; raise it only
+   * with a reason, never to make a red build green.
+   */
+  const ROUND_TRIP_DEPTH_RATCHET = 110;
+
+  it("the first page's serialized round-trip depth stays inside its ratchet", async () => {
+    _clearPromotedScopeCache();
+    await get("/api/wall?mode=for_you"); // warm any per-process cache first
+
+    const timeAt = async (delayMs: number): Promise<number> => {
+      CALL_DELAY_MS = delayMs;
+      try {
+        const t0 = performance.now();
+        const res = await get("/api/wall?mode=for_you");
+        const elapsed = performance.now() - t0;
+        // A 500 error path would be fast and would measure nothing.
+        if (res.status !== 200 || res.json?.items?.length !== 20) {
+          throw new Error(`the modelled page was not a real full page (status ${res.status})`);
+        }
+        return elapsed;
+      } finally {
+        CALL_DELAY_MS = 0;
+      }
+    };
+
+    // THE SLOPE IS MEASURED AT TWO LARGE, NON-ZERO DELAYS, and the reason is a
+    // measured flake, not caution. Each awaited call carries a fixed scheduling
+    // overhead on top of the delay it asks for, and a busy runner inflates that
+    // overhead: measured inside the full 89-file suite, one 4 ms timer took
+    // ~6.8 ms, so a page timed AT 4 ms/round-trip read 600 ms against a 500 ms
+    // line while the structure had not changed at all. Differencing two runs
+    // that issue the SAME number of timers cancels the overhead exactly —
+    // (d·2N + kN) − (d·N + kN) = d·N — and doing it at 8/16 ms rather than 4/8
+    // makes whatever does not cancel a smaller fraction of the answer.
+    const SLOPE_LOW_MS = 8;
+    const SLOPE_HIGH_MS = 16;
+
+    const cpuOnly = await timeAt(0);
+    const atLow = await timeAt(SLOPE_LOW_MS);
+    const atHigh = await timeAt(SLOPE_HIGH_MS);
+    const depth = (atHigh - atLow) / (SLOPE_HIGH_MS - SLOPE_LOW_MS);
+
+    // The spec's number, DERIVED from the two robust measurements rather than
+    // read off a stopwatch. An absolute wall-clock reading at 4 ms/round-trip is
+    // what the comment above says it is: a hostage to the runner's timer queue.
+    const modelledMs = cpuOnly + depth * MODELLED_RTT_MS;
+
+    console.log(
+      `[bench] first page modelled at ${MODELLED_RTT_MS}ms/round-trip: ${modelledMs.toFixed(0)}ms ` +
+        `(cpu ${cpuOnly.toFixed(1)}ms + ~${depth.toFixed(0)} serialized round trips; ` +
+        `ratchet ${ROUND_TRIP_DEPTH_RATCHET}) — implies a per-round-trip budget of ` +
+        `${(FIRST_PAGE_TARGET_MS / Math.max(depth, 1)).toFixed(1)}ms to hold ${FIRST_PAGE_TARGET_MS}ms. ` +
+        `[raw: ${atLow.toFixed(0)}ms at ${SLOPE_LOW_MS}ms, ${atHigh.toFixed(0)}ms at ${SLOPE_HIGH_MS}ms]`,
+    );
+
+    // Vacuity guard: if the latency injection ever stops reaching the page, the
+    // slope collapses to noise and every assertion below becomes free.
+    assert.ok(
+      depth > 20,
+      `only ~${depth.toFixed(1)} serialized round trips observed — the injected latency is ` +
+        `not reaching the page, so this test is measuring nothing`,
+    );
+
+    assert.ok(
+      depth <= ROUND_TRIP_DEPTH_RATCHET,
+      `the first page now waits on ~${depth.toFixed(0)} serialized database round trips, over ` +
+        `the recorded ratchet of ${ROUND_TRIP_DEPTH_RATCHET}. Something new is awaited in a ` +
+        `loop. At this depth the ${FIRST_PAGE_TARGET_MS}ms target needs every round trip to ` +
+        `land inside ${(FIRST_PAGE_TARGET_MS / Math.max(depth, 1)).toFixed(1)}ms.`,
+    );
+
+    // …and the same run, stated as the spec states it. This is the MODELLED
+    // number, not the production number: it excludes network, real query time and
+    // cold starts, and assumes every round trip costs exactly MODELLED_RTT_MS.
+    // It is quoted because TABLE 4's requirement is a millisecond figure and a
+    // depth count alone never has to answer it.
+    assert.ok(
+      modelledMs <= FIRST_PAGE_TARGET_MS,
+      `modelled at ${MODELLED_RTT_MS}ms per round trip the first page takes ` +
+        `${modelledMs.toFixed(0)}ms, over TABLE 4's ${FIRST_PAGE_TARGET_MS}ms — the serialized ` +
+        `depth grew to ~${depth.toFixed(0)}.`,
     );
   });
 });

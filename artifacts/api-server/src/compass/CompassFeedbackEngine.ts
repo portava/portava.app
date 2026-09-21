@@ -328,11 +328,20 @@ export async function processFeedback(
             return req.recommendationId;
           }
         })();
-        const { data: ctxRow } = await db
+        // Read-modify-write of the whole `signals` JSON column: the upsert
+        // below writes `sigs` back in full. An unchecked failed read arrives as
+        // `{ data: null }`, collapses to `{}`, and the upsert then replaces the
+        // user's entire signals blob with a one-element
+        // session_suppressed_ids list — dropping every other key POST
+        // /api/compass/context stored there, and un-suppressing every item the
+        // user already dismissed this session, so the feed serves them back.
+        // Best-effort means "may fail to record", not "may destroy the record".
+        const { data: ctxRow, error: ctxErr } = await db
           .from("compass_recent_context")
           .select("signals")
           .eq("user_id", userId)
           .maybeSingle();
+        if (ctxErr) break;
         const sigs = ((ctxRow?.signals ?? {}) as Record<string, unknown>);
         const suppressed: string[] = (sigs.session_suppressed_ids as string[]) ?? [];
         if (!suppressed.includes(notNowItemId)) suppressed.push(notNowItemId);

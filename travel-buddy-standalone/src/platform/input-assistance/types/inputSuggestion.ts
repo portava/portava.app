@@ -54,6 +54,22 @@ export interface InputSuggestion {
   confidence?: number;
   freshness?: FreshnessState;
 
+  /**
+   * §20 display context — verification / trust, where appropriate. Mirrors the
+   * server's `InputSuggestion` (`artifacts/api-server/src/lib/inputAssistance/types.ts`).
+   * Present only when TRUE: an absent key is "not applicable", never a negative
+   * claim about a person.
+   */
+  verified?: boolean;
+  official?: boolean;
+
+  /**
+   * §20/§24 Hidden Gem protection label. `'hidden'` means the gem's sensitivity
+   * level denies placement entirely; `'approximate'` means it may carry a
+   * centroid. Never a coordinate, and `'exact'` is not producible.
+   */
+  locationPrecision?: 'approximate' | 'hidden';
+
   source:
     | 'canonical'
     | 'recent'
@@ -153,5 +169,20 @@ export interface SuggestResponse {
  * `aborted` flag lets the hook's sequence guard ignore superseded requests.
  */
 export type SuggestResult =
-  | { ok: true; requestId: string; policyVersion: string; suggestions: InputSuggestion[] }
+  | {
+      ok: true;
+      requestId: string;
+      policyVersion: string;
+      suggestions: InputSuggestion[];
+      /**
+       * §44/§57 — the SERVE's own wall-clock cost, measured on the server and
+       * carried on the envelope. Optional: an older deployment omits it.
+       *
+       * Census G372 read "No latency instrumentation anywhere; the response
+       * carries no server timing". Subtracting it from the round trip the
+       * device measured gives the network, which is the part neither side can
+       * see alone.
+       */
+      serverMs?: number;
+    }
   | { ok: false; aborted: boolean; unavailable: boolean; error: string };

@@ -1,0 +1,17 @@
+{
+  "//": "Shrink-only ratchet for src/scripts/checkTelegraphCertification.ts.",
+  "//why": "Counts the Telegraph §26/§27 certification entries whose status is NOT 'enforced' — the cases, properties, fixtures and contracts where this tree does not produce the outcome the spec asks for. The checker refuses an increase. Lowering a number is a deliberate, reviewable edit made in the same commit as the fix; raising one is refused, so a divergence cannot be introduced by reclassifying an entry instead of repairing it.",
+  "//recorded": "2026-09-12, against the first execution of the matrix, the property suite and the fixture suite.",
+  "//what_is_unenforced_today": {
+    "rlsMatrix": "RLS-03 flag_gated (the §14.3 history bound is built and seeded OFF), RLS-08 vacuous (no share projection exists to authorize), RLS-09 divergent (the gate is immediate, the fire-and-forget propagation is not), RLS-10 divergent (call eligibility re-derives, every rendered booking action does not)",
+    "propertyInvariants": "P-06 and P-07 vacuous — there is no unsend operation in this tree to quantify over",
+    "adversarialFixtures": "F-01 divergent (no per-sender limit across recipients), F-03 divergent (no idempotency — a resent clientId duplicates), F-07 divergent (membership is not re-checked at the insert), F-09 divergent (the rendered booking card re-checks nothing), F-11 vacuous (no unsend), F-12 divergent (share cards render frozen payloads)",
+    "liveDbContracts": "LDB-05 divergent — route handlers in the messaging tree still drop read errors into plausible-but-wrong context"
+  },
+  "unenforced": {
+    "rlsMatrix": 4,
+    "propertyInvariants": 2,
+    "adversarialFixtures": 6,
+    "liveDbContracts": 1
+  }
+}

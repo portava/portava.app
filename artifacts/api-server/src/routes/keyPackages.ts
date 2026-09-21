@@ -76,12 +76,48 @@ router.post("/me/devices/:deviceId/key-packages", async (req, res) => {
     return;
   }
 
-  // Update pool count on the device row
+  // ── THE POOL COUNTER IS WHAT MAKES THE DEVICE REACHABLE ────────────────────
+  // This update was issued blind: no `.select()`, no `{ error }`. supabase-js
+  // RESOLVES on a database error, so a counter that never advanced looked
+  // exactly like one that did, and the route answered HTTP 201
+  // `{ totalPool: <the number it hoped for> }`.
+  //
+  // devices.key_package_count is not decoration. GET
+  // /users/:userId/key-packages/consume selects the target's device with
+  // `.gt("key_package_count", 0)`, so a device whose counter stayed at 0 is
+  // INVISIBLE to every peer trying to start an E2EE thread with this user —
+  // while its key_packages rows sit in the table, uploaded and unusable. The
+  // peer is told "No KeyPackages available for this user", the owner was told
+  // their pool is full, and nothing in either answer points at the counter.
+  //
+  // A zero-row match is the same outcome by a different cause (the device row
+  // disappeared between the ownership read above and this write), so it is
+  // refused too.
   const newCount = ((device as any).key_package_count ?? 0) + keyPackages.length;
-  await sc
+  const { data: countedRows, error: countErr } = await sc
     .from("devices")
     .update({ key_package_count: newCount })
-    .eq("id", deviceId);
+    .eq("id", deviceId)
+    .select("id");
+
+  if (countErr || !countedRows || (countedRows as any[]).length === 0) {
+    // The KeyPackages themselves are already stored; only the counter is behind,
+    // so this is reported rather than rolled back. The caller must know the
+    // upload did not complete — a client that believes its pool is full will not
+    // refill, and the device stays unreachable until something else moves the
+    // counter.
+    req.log.error(
+      { err: countErr, deviceId, uploaded: keyPackages.length, matched: (countedRows as any[] | null)?.length ?? 0 },
+      "key-packages: pool counter update did not land — device will be invisible to consume despite stored KeyPackages",
+    );
+    sendError(
+      res,
+      "db_error",
+      "KeyPackages were stored but the device pool counter could not be updated",
+      { exposeDetail: true },
+    );
+    return;
+  }
 
   res.status(201).json({ uploaded: keyPackages.length, totalPool: newCount });
 });

@@ -23,6 +23,10 @@ import { createSuggestedMemory } from "../services/passport/PassportMemoryServic
 import { recordTrustEvent } from "../services/trust/TrustEventService.js";
 import { recordActivityEvent } from "../compass/CompassActiveUserRewardEngine.js";
 import { endFairExposure } from "../compass/CompassFairExposureEngine.js";
+import { logger as rootLogger } from "../lib/logger.js";
+import { affectedRows } from "../lib/affectedRows.js";
+
+const logger = rootLogger.child({ route: "geofence" });
 
 const router = Router();
 
@@ -69,41 +73,79 @@ const overrideSchema = z.object({
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-async function isFeatureEnabled(db: ReturnType<typeof getServiceClient>): Promise<boolean> {
-  if (!db) return false;
+/**
+ * Is plan geofencing on?
+ *
+ * `unknown` exists for the same reason it does in routes/safeReturn.ts: an
+ * unreadable `feature_flags` used to answer FALSE, and every caller renders
+ * false as a 404 "Plan geofencing is not enabled". A member standing at the
+ * meetup trying to check in was told the feature does not exist, when a retry
+ * would have worked.
+ */
+type FlagState = "on" | "off" | "unknown";
+
+async function readFeatureFlag(db: ReturnType<typeof getServiceClient>): Promise<FlagState> {
+  if (!db) return "unknown";
   try {
-    const { data } = await db
+    const { data, error } = await db
       .from("feature_flags")
       .select("enabled")
       .eq("flag", "plan_geofence_enabled")
       .maybeSingle();
-    return Boolean((data as any)?.enabled);
-  } catch {
-    return false;
+    if (error) {
+      logger.error({ err: error }, "geofence: feature flag unreadable");
+      return "unknown";
+    }
+    return (data as any)?.enabled ? "on" : "off";
+  } catch (err) {
+    logger.error({ err }, "geofence: feature flag read threw");
+    return "unknown";
   }
 }
 
-/** Returns 'owner' | 'member' | null (non-accepted / not found). */
+async function isFeatureEnabled(db: ReturnType<typeof getServiceClient>): Promise<boolean> {
+  return (await readFeatureFlag(db)) === "on";
+}
+
+/**
+ * Returns 'owner' | 'member' | 'invited' | null (non-accepted / not found), or
+ * 'unknown' when an AUTHORIZATION INPUT could not be read.
+ *
+ * `null` and `unknown` both DENY — nothing is served on an unreadable gate, and
+ * that posture does not change. What changes is what the caller is allowed to
+ * SAY. `null` supports "you are not an accepted member of this trip"; a failed
+ * read supports no claim about this person's membership at all, and answering
+ * it with that sentence is a confident statement assembled from a query that
+ * did not run. This is the rule lib/http.ts states for TripAccessUnavailableError.
+ */
 async function getMemberRole(
   db: ReturnType<typeof getServiceClient>,
   tripId: string,
   userId: string,
-): Promise<"owner" | "member" | "invited" | null> {
-  if (!db) return null;
+): Promise<"owner" | "member" | "invited" | "unknown" | null> {
+  if (!db) return "unknown";
   try {
-    const { data: trip } = await db
+    const { data: trip, error: tripErr } = await db
       .from("trips")
       .select("owner_id")
       .eq("id", tripId)
       .maybeSingle();
+    if (tripErr) {
+      logger.error({ err: tripErr, tripId }, "geofence: trips read failed — membership NOT determined");
+      return "unknown";
+    }
     if ((trip as any)?.owner_id === userId) return "owner";
 
-    const { data: member } = await db
+    const { data: member, error: memberErr } = await db
       .from("trip_members")
       .select("user_id, role, status")
       .eq("trip_id", tripId)
       .eq("user_id", userId)
       .maybeSingle();
+    if (memberErr) {
+      logger.error({ err: memberErr, tripId, userId }, "geofence: trip_members read failed — membership NOT determined");
+      return "unknown";
+    }
     if (!member) return null;
 
     // Mirror circleAccessGuard's acceptance rule: role must be in the accepted
@@ -114,31 +156,86 @@ async function getMemberRole(
     const roleAccepted = ACCEPTED_TRIP_ROLES.has(m.role ?? "");
     const statusAccepted = m.status == null || m.status === "accepted";
     return roleAccepted && statusAccepted ? "member" : "invited";
-  } catch {
-    return null;
+  } catch (err) {
+    logger.error({ err, tripId, userId }, "geofence: getMemberRole threw — membership NOT determined");
+    return "unknown";
   }
 }
 
-/** Admin default radius — returns 150 if table missing. */
-async function getAdminDefaults(db: ReturnType<typeof getServiceClient>) {
-  try {
-    const { data } = await db!
-      .from("geofence_admin_settings")
-      .select("default_radius_m, min_radius_m, max_radius_m, no_show_affects_reliability")
-      .eq("id", 1)
-      .maybeSingle();
-    return {
-      defaultRadiusM:           (data as any)?.default_radius_m             ?? 150,
-      minRadiusM:               (data as any)?.min_radius_m                 ?? 50,
-      maxRadiusM:               (data as any)?.max_radius_m                 ?? 5000,
-      noShowAffectsReliability: (data as any)?.no_show_affects_reliability  ?? false,
-    };
-  } catch {
-    return { defaultRadiusM: 150, minRadiusM: 50, maxRadiusM: 5000, noShowAffectsReliability: false };
-  }
+export interface AdminGeofenceDefaults {
+  defaultRadiusM: number;
+  minRadiusM: number;
+  maxRadiusM: number;
+  noShowAffectsReliability: boolean;
 }
 
-/** Write an attendance event (never auto-punishes). */
+/**
+ * Admin-configured geofence policy (the singleton `geofence_admin_settings`
+ * row, id = 1).
+ *
+ * ── EMPTY vs UNREADABLE ─────────────────────────────────────────────────────
+ * NO ROW is a real, legitimate state: nobody has configured the singleton, and
+ * the shipped defaults (150 / 50 / 5000 m) are the policy. That still returns
+ * `ok: true`.
+ *
+ * An ERROR is not that. supabase-js RESOLVES on a DB error, so the old
+ * `const { data } = await …; (data as any)?.min_radius_m ?? 50` collapsed both
+ * into the hardcoded numbers — and the numbers are a POLICY CLAMP, not a
+ * cosmetic default. An admin who tightened `max_radius_m` to, say, 200 m so a
+ * check-in cannot be claimed from half a city away had that clamp silently
+ * widened back to 5000 m for the duration of any read blip, and the geofence
+ * was written with the loose radius and kept it permanently. The failure is not
+ * transient the way the read is.
+ *
+ * So the result is a discriminated union — deliberately NOT a nullable settings
+ * object, which invites the same `?? DEFAULTS` coercion one call site later
+ * (the reasoning lib/exclusionSet.ts spells out for `ExclusionSet`). The one
+ * caller refuses the write with `degraded_unavailable` (503, retryable), which
+ * denies exactly one geofence save and nothing else.
+ */
+export type AdminGeofenceDefaultsResult =
+  | { ok: true; defaults: AdminGeofenceDefaults }
+  | { ok: false; reason: string };
+
+export const GEOFENCE_FALLBACK_DEFAULTS: AdminGeofenceDefaults = {
+  defaultRadiusM: 150,
+  minRadiusM: 50,
+  maxRadiusM: 5000,
+  noShowAffectsReliability: false,
+};
+
+async function getAdminDefaults(
+  db: ReturnType<typeof getServiceClient>,
+): Promise<AdminGeofenceDefaultsResult> {
+  const { data, error } = await db!
+    .from("geofence_admin_settings")
+    .select("default_radius_m, min_radius_m, max_radius_m, no_show_affects_reliability")
+    .eq("id", 1)
+    .maybeSingle();
+  if (error) {
+    return { ok: false, reason: String((error as any)?.message ?? (error as any)?.code ?? error) };
+  }
+  return {
+    ok: true,
+    defaults: {
+      defaultRadiusM:           (data as any)?.default_radius_m             ?? GEOFENCE_FALLBACK_DEFAULTS.defaultRadiusM,
+      minRadiusM:               (data as any)?.min_radius_m                 ?? GEOFENCE_FALLBACK_DEFAULTS.minRadiusM,
+      maxRadiusM:               (data as any)?.max_radius_m                 ?? GEOFENCE_FALLBACK_DEFAULTS.maxRadiusM,
+      noShowAffectsReliability: (data as any)?.no_show_affects_reliability  ?? GEOFENCE_FALLBACK_DEFAULTS.noShowAffectsReliability,
+    },
+  };
+}
+
+/**
+ * Write an attendance event (never auto-punishes).
+ *
+ * Advisory, but no longer SILENT. `await db.from(…).insert(…)` bound nothing, so
+ * the resolved `{ error }` was discarded and the `catch` could never see it —
+ * supabase-js resolves rather than throws. `plan_attendance_events` is the trail
+ * that explains a `suspicious_check_in` or a host's `host_manual_override`
+ * after the fact, so a write that vanishes takes the explanation with it.
+ * Returns whether the row landed; callers that report an outcome use it.
+ */
 async function writeAttendanceEvent(
   db: ReturnType<typeof getServiceClient>,
   opts: {
@@ -149,9 +246,9 @@ async function writeAttendanceEvent(
     actorId?: string;
     metadata?: Record<string, unknown>;
   },
-): Promise<void> {
+): Promise<boolean> {
   try {
-    await db!.from("plan_attendance_events").insert({
+    const { error } = await db!.from("plan_attendance_events").insert({
       geofence_id: opts.geofenceId,
       trip_id:     opts.tripId,
       user_id:     opts.userId,
@@ -159,8 +256,17 @@ async function writeAttendanceEvent(
       actor_id:    opts.actorId ?? null,
       metadata:    opts.metadata ?? {},
     });
-  } catch {
-    // non-fatal
+    if (error) {
+      logger.error(
+        { err: error, geofenceId: opts.geofenceId, eventType: opts.eventType },
+        "geofence: attendance event write failed — this action is not in the audit trail",
+      );
+      return false;
+    }
+    return true;
+  } catch (err) {
+    logger.error({ err, geofenceId: opts.geofenceId, eventType: opts.eventType }, "geofence: attendance event write threw");
+    return false;
   }
 }
 
@@ -219,13 +325,24 @@ router.get("/trips/:tripId/geofence", async (req, res) => {
   if (!auth) return;
   const { client: db, user } = auth;
 
-  if (!await isFeatureEnabled(db)) {
-    res.status(200).json({ geofence: null, featureEnabled: false });
+  {
+    const flag = await readFeatureFlag(db);
+    if (flag === "unknown") {
+    sendError(res, "degraded_unavailable", "Plan geofencing availability could not be confirmed. Please try again.");
     return;
+    }
+    if (flag === "off") { res.status(200).json({ geofence: null, featureEnabled: false }); return; }
   }
 
   const { tripId } = req.params;
   const role = await getMemberRole(db, tripId, user.id);
+  if (role === "unknown") {
+    // Refuse rather than serve the non-member preview: the preview is narrower,
+    // but which shape a viewer gets is an authorization answer and there is no
+    // evidence for either one.
+    sendError(res, "degraded_unavailable", "We could not check your access to this trip. Please try again.");
+    return;
+  }
 
   const { data, error } = await db
     .from("plan_geofences")
@@ -363,9 +480,13 @@ router.post("/trips/:tripId/geofence", async (req, res) => {
   if (!auth) return;
   const { client: db, user } = auth;
 
-  if (!await isFeatureEnabled(db)) {
-    sendError(res, "feature_disabled", "Plan geofencing is not enabled");
+  {
+    const flag = await readFeatureFlag(db);
+    if (flag === "unknown") {
+    sendError(res, "degraded_unavailable", "Plan geofencing availability could not be confirmed. Please try again.");
     return;
+    }
+    if (flag === "off") { sendError(res, "feature_disabled", "Plan geofencing is not enabled"); return; }
   }
 
   const parsed = createSchema.safeParse(req.body);
@@ -387,8 +508,21 @@ router.post("/trips/:tripId/geofence", async (req, res) => {
     return;
   }
 
-  // Validate radius against admin settings
-  const adminDefaults = await getAdminDefaults(db);
+  // Validate radius against admin settings. An unreadable settings row refuses
+  // the save rather than clamping to the shipped defaults — see the doc on
+  // getAdminDefaults: the clamp an admin configured is a policy, and silently
+  // substituting the wide built-in bounds writes a geofence that outlives the
+  // blip.
+  const adminSettings = await getAdminDefaults(db);
+  if (!adminSettings.ok) {
+    (req as any).log?.error?.(
+      { reason: adminSettings.reason, where: "POST /trips/:tripId/geofence" },
+      "geofence admin settings unreadable — refusing rather than clamping to built-in defaults",
+    );
+    sendError(res, "degraded_unavailable", "Geofence settings could not be verified right now. Please try again.");
+    return;
+  }
+  const adminDefaults = adminSettings.defaults;
   const radiusM = Math.max(
     adminDefaults.minRadiusM,
     Math.min(adminDefaults.maxRadiusM, parsed.data.checkInRadiusM),
@@ -416,12 +550,25 @@ router.post("/trips/:tripId/geofence", async (req, res) => {
     updated_at:                 new Date().toISOString(),
   };
 
-  // Upsert on trip_id (UNIQUE added in migration 0039)
-  const { data: existing } = await db
+  // Upsert on trip_id (UNIQUE added in migration 0039).
+  // supabase-js RESOLVES on a DB error, so an unbound `error` read an
+  // unreadable plan_geofences row as "no geofence set yet" and took the INSERT
+  // branch against a trip that already has one: the unique index rejects it and
+  // the host's edit to the meeting point — radius, check-in window, exact
+  // visibility — is reported as a raw db_error while the OLD geofence stays
+  // live. The same "refuse rather than guess" rule the admin-settings read
+  // above already follows.
+  const { data: existing, error: existingErr } = await db
     .from("plan_geofences")
     .select("id")
     .eq("trip_id", tripId)
     .maybeSingle();
+
+  if (existingErr) {
+    req.log.error({ err: existingErr, tripId }, "geofence: existing-row lookup failed — refusing to insert over a possible existing geofence");
+    sendError(res, "db_error", existingErr.message);
+    return;
+  }
 
   let writeError: any = null;
   if ((existing as any)?.id) {
@@ -454,29 +601,57 @@ router.post("/trips/:tripId/geofence/reveal", async (req, res) => {
   if (!auth) return;
   const { client: db, user } = auth;
 
-  if (!await isFeatureEnabled(db)) {
-    sendError(res, "feature_disabled", "Plan geofencing is not enabled");
+  {
+    const flag = await readFeatureFlag(db);
+    if (flag === "unknown") {
+    sendError(res, "degraded_unavailable", "Plan geofencing availability could not be confirmed. Please try again.");
     return;
+    }
+    if (flag === "off") { sendError(res, "feature_disabled", "Plan geofencing is not enabled"); return; }
   }
 
   const { tripId } = req.params;
-  const { data: trip } = await db
+  const { data: trip, error: tripErr } = await db
     .from("trips")
     .select("owner_id")
     .eq("id", tripId)
     .maybeSingle();
 
+  if (tripErr) {
+    req.log.error({ err: tripErr, tripId }, "geofence reveal: trips read failed");
+    sendError(res, "degraded_unavailable", "We could not verify trip ownership. Please try again.");
+    return;
+  }
   if (!trip || (trip as any).owner_id !== user.id) {
     sendError(res, "forbidden", "Only the trip owner can reveal the exact location");
     return;
   }
 
-  const { error } = await db
+  // `.select("trip_id")` so a zero-row UPDATE is visible.
+  //
+  // Without RETURNING, PostgREST answers a matched-nothing UPDATE with 204 —
+  // the same answer as a successful one — so a host with no `plan_geofences`
+  // row got `{ ok: true }` and a UI that says the exact address is now shared
+  // with their group, while `host_revealed` was never set on anything. This is
+  // the safe direction for the members' privacy and the WRONG one for the
+  // host's understanding: they believe people can find the meetup and stop
+  // telling them where it is.
+  const { data: revealed, error } = await db
     .from("plan_geofences")
     .update({ host_revealed: true, updated_at: new Date().toISOString() })
-    .eq("trip_id", tripId);
+    .eq("trip_id", tripId)
+    .select("trip_id");
 
-  if (error) { sendError(res, "db_error", error.message); return; }
+  if (error) {
+    req.log.error({ err: error, tripId }, "geofence reveal: update failed");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+  if (affectedRows(revealed) === 0) {
+    req.log.warn({ tripId }, "geofence reveal: no geofence row matched — nothing was revealed");
+    sendError(res, "not_found", "No geofence configured for this trip");
+    return;
+  }
   res.json({ ok: true });
 });
 
@@ -495,9 +670,13 @@ router.post("/trips/:tripId/geofence/check-in", async (req, res) => {
   if (!auth) return;
   const { client: db, user } = auth;
 
-  if (!await isFeatureEnabled(db)) {
-    sendError(res, "feature_disabled", "Plan geofencing is not enabled");
+  {
+    const flag = await readFeatureFlag(db);
+    if (flag === "unknown") {
+    sendError(res, "degraded_unavailable", "Plan geofencing availability could not be confirmed. Please try again.");
     return;
+    }
+    if (flag === "off") { sendError(res, "feature_disabled", "Plan geofencing is not enabled"); return; }
   }
 
   const parsed = checkInSchema.safeParse(req.body);
@@ -511,6 +690,12 @@ router.post("/trips/:tripId/geofence/check-in", async (req, res) => {
 
   // Must be an accepted member (owner or member) — invited/pending users cannot check in
   const role = await getMemberRole(db, tripId, user.id);
+  if (role === "unknown") {
+    // Still denied — but "you are not an accepted trip member" is a claim about
+    // this person, and it must not be made out of a read that failed.
+    sendError(res, "degraded_unavailable", "We could not check your trip membership. Please try again.");
+    return;
+  }
   if (role !== "owner" && role !== "member") {
     sendError(res, "not_member", "You must be an accepted trip member to check in");
     return;
@@ -692,31 +877,45 @@ router.get("/trips/:tripId/geofence/attendance", async (req, res) => {
   if (!auth) return;
   const { client: db, user } = auth;
 
-  if (!await isFeatureEnabled(db)) {
-    sendError(res, "feature_disabled", "Plan geofencing is not enabled");
+  {
+    const flag = await readFeatureFlag(db);
+    if (flag === "unknown") {
+    sendError(res, "degraded_unavailable", "Plan geofencing availability could not be confirmed. Please try again.");
     return;
+    }
+    if (flag === "off") { sendError(res, "feature_disabled", "Plan geofencing is not enabled"); return; }
   }
 
   const { tripId } = req.params;
 
   // Must be trip owner to see full attendance
-  const { data: trip } = await db
+  const { data: trip, error: tripErr } = await db
     .from("trips")
     .select("owner_id")
     .eq("id", tripId)
     .maybeSingle();
 
+  if (tripErr) {
+    req.log.error({ err: tripErr, tripId }, "geofence attendance: trips read failed");
+    sendError(res, "degraded_unavailable", "We could not verify trip ownership. Please try again.");
+    return;
+  }
   if (!trip || (trip as any).owner_id !== user.id) {
     sendError(res, "forbidden", "Only the trip owner can view attendance");
     return;
   }
 
-  const { data: gf } = await db
+  const { data: gf, error: gfErr } = await db
     .from("plan_geofences")
     .select("id, check_in_radius_m, check_in_window_start, check_in_window_end")
     .eq("trip_id", tripId)
     .maybeSingle();
 
+  if (gfErr) {
+    req.log.error({ err: gfErr, tripId }, "geofence attendance: geofence read failed");
+    sendError(res, "degraded_unavailable", "Attendance could not be loaded. Please try again.");
+    return;
+  }
   if (!gf) {
     res.status(200).json({ attendance: null, message: "No geofence configured" });
     return;
@@ -724,32 +923,56 @@ router.get("/trips/:tripId/geofence/attendance", async (req, res) => {
 
   const geofenceId = (gf as any).id;
 
-  // Accepted members
-  const { data: members } = await db
+  // ── THE TWO READS THAT MAKE THIS PAGE A SAFETY SURFACE ────────────────────
+  //
+  // This is the host's answer to "who has actually turned up, and who has not".
+  // Both reads were unchecked, so an unreadable `trip_members` produced an
+  // EMPTY roster (nobody is expected — so nobody is missing) and an unreadable
+  // `plan_checkins` marked every expected member "Not checked in". Either way
+  // the totals rendered cleanly and confidently out of nothing, and the second
+  // is worse than the first: a host scanning for who has not arrived would see
+  // the whole group flagged, or an empty list, with no indication that the
+  // page was guessing.
+  const { data: members, error: membersErr } = await db
     .from("trip_members")
     .select("user_id")
     .eq("trip_id", tripId)
     .eq("role", "member");
 
+  if (membersErr) {
+    req.log.error({ err: membersErr, tripId }, "geofence attendance: trip_members read failed");
+    sendError(res, "degraded_unavailable", "Attendance could not be loaded. Please try again.");
+    return;
+  }
+
   const memberIds: string[] = (members ?? []).map((m: any) => m.user_id);
 
   // Check-in rows
-  const { data: checkins } = await db
+  const { data: checkins, error: checkinsErr } = await db
     .from("plan_checkins")
     .select("user_id, status, checked_in_at, updated_at")
     .eq("geofence_id", geofenceId);
 
+  if (checkinsErr) {
+    req.log.error({ err: checkinsErr, geofenceId }, "geofence attendance: plan_checkins read failed");
+    sendError(res, "degraded_unavailable", "Attendance could not be loaded. Please try again.");
+    return;
+  }
+
   const checkinMap: Record<string, any> = {};
   for (const c of checkins ?? []) checkinMap[(c as any).user_id] = c;
 
-  // Profiles for attendees
+  // Profiles for attendees. Cosmetic only — a missing profile costs a handle,
+  // not an attendance status — so a failure degrades the labels and is logged
+  // rather than refusing the whole page.
   const allIds = [...memberIds];
   const profileMap: Record<string, any> = {};
   if (allIds.length > 0) {
-    const { data: profiles } = await db
+    const { data: profiles, error: profilesErr } = await db
       .from("profiles")
       .select("id, handle, name, avatar_url")
       .in("id", allIds);
+    if (profilesErr) req.log.warn({ err: profilesErr, tripId }, "geofence attendance: profiles read failed — names omitted");
     for (const p of profiles ?? []) profileMap[(p as any).id] = p;
   }
 
@@ -811,9 +1034,13 @@ router.post("/trips/:tripId/geofence/attendance/:userId/override", async (req, r
   if (!auth) return;
   const { client: db, user } = auth;
 
-  if (!await isFeatureEnabled(db)) {
-    sendError(res, "feature_disabled", "Plan geofencing is not enabled");
+  {
+    const flag = await readFeatureFlag(db);
+    if (flag === "unknown") {
+    sendError(res, "degraded_unavailable", "Plan geofencing availability could not be confirmed. Please try again.");
     return;
+    }
+    if (flag === "off") { sendError(res, "feature_disabled", "Plan geofencing is not enabled"); return; }
   }
 
   const parsed = overrideSchema.safeParse(req.body);
@@ -824,42 +1051,76 @@ router.post("/trips/:tripId/geofence/attendance/:userId/override", async (req, r
 
   const { tripId, userId } = req.params;
 
-  const { data: trip } = await db
+  const { data: trip, error: tripErr } = await db
     .from("trips")
     .select("owner_id")
     .eq("id", tripId)
     .maybeSingle();
 
+  if (tripErr) {
+    req.log.error({ err: tripErr, tripId }, "geofence override: trips read failed");
+    sendError(res, "degraded_unavailable", "We could not verify trip ownership. Please try again.");
+    return;
+  }
   if (!trip || (trip as any).owner_id !== user.id) {
     sendError(res, "forbidden", "Only the trip owner can override attendance");
     return;
   }
 
-  const { data: gf } = await db
+  const { data: gf, error: gfErr } = await db
     .from("plan_geofences")
     .select("id")
     .eq("trip_id", tripId)
     .maybeSingle();
 
+  if (gfErr) {
+    req.log.error({ err: gfErr, tripId }, "geofence override: geofence read failed");
+    sendError(res, "degraded_unavailable", "We could not load this trip's geofence. Please try again.");
+    return;
+  }
   if (!gf) { sendError(res, "not_found", "No geofence configured for this trip"); return; }
 
   const geofenceId = (gf as any).id;
 
-  // Upsert check-in with override
-  await db.from("plan_checkins").upsert(
-    {
-      geofence_id:  geofenceId,
-      trip_id:      tripId,
-      user_id:      userId,
-      status:       parsed.data.status,
-      override_by:  user.id,
-      override_note: parsed.data.note ?? null,
-      updated_at:   new Date().toISOString(),
-    },
-    { onConflict: "geofence_id,user_id" },
-  );
+  // ── THE WRITE WHOSE RESULT WAS NEVER LOOKED AT ────────────────────────────
+  //
+  // `await db.from("plan_checkins").upsert(…)` bound nothing at all. supabase-js
+  // RESOLVES on a database error, so a failed upsert was indistinguishable from
+  // a successful one, and the handler answered `{ ok: true, newStatus }` either
+  // way. Worse, the `no_show` branch below then fed `recordActivityEvent` and
+  // `endFairExposure` — a reliability penalty against the member — off a status
+  // change that may never have been stored. A host who marks someone present
+  // after a dispute must be able to trust that the record changed.
+  //
+  // `.select("user_id")` makes a zero-row upsert visible too. Zero here is a
+  // FAILURE, not an idempotent no-op: an upsert is supposed to insert when it
+  // does not update, so nothing matching means nothing was written.
+  const { data: overridden, error: overrideErr } = await db
+    .from("plan_checkins")
+    .upsert(
+      {
+        geofence_id:  geofenceId,
+        trip_id:      tripId,
+        user_id:      userId,
+        status:       parsed.data.status,
+        override_by:  user.id,
+        override_note: parsed.data.note ?? null,
+        updated_at:   new Date().toISOString(),
+      },
+      { onConflict: "geofence_id,user_id" },
+    )
+    .select("user_id");
 
-  await writeAttendanceEvent(db, {
+  if (overrideErr || affectedRows(overridden) === 0) {
+    req.log.error(
+      { err: overrideErr, tripId, geofenceId, userId, status: parsed.data.status },
+      "geofence override: attendance status NOT changed",
+    );
+    sendError(res, "db_error", "Attendance status could not be updated. Please try again.");
+    return;
+  }
+
+  const auditWritten = await writeAttendanceEvent(db, {
     geofenceId,
     tripId,
     userId,
@@ -867,15 +1128,29 @@ router.post("/trips/:tripId/geofence/attendance/:userId/override", async (req, r
     actorId:   user.id,
     metadata:  { newStatus: parsed.data.status, note: parsed.data.note ?? null },
   });
-
-  // Compass activity ingestion for no-show: record event + end fair-exposure
-  if (parsed.data.status === "no_show") {
-    const sc = getServiceClient();
-    recordActivityEvent(sc, userId, "no_show");
-    endFairExposure(sc, userId, "no_show");
+  if (!auditWritten) {
+    req.log.error({ tripId, geofenceId, userId }, "geofence override: applied but NOT recorded in the attendance audit trail");
   }
 
-  res.json({ ok: true, userId, newStatus: parsed.data.status });
+  // Compass activity ingestion for no-show: record event + end fair-exposure.
+  // Reached only now that the status change is confirmed stored — this is a
+  // reliability penalty and must never be applied for a write that failed.
+  if (parsed.data.status === "no_show") {
+    const sc = getServiceClient();
+    void Promise.resolve(recordActivityEvent(sc, userId, "no_show")).catch((err: unknown) =>
+      req.log.warn({ err, userId }, "geofence override: recordActivityEvent failed (non-fatal)"),
+    );
+    void Promise.resolve(endFairExposure(sc, userId, "no_show")).catch((err: unknown) =>
+      req.log.warn({ err, userId }, "geofence override: endFairExposure failed (non-fatal)"),
+    );
+  }
+
+  res.json({
+    ok: true,
+    userId,
+    newStatus: parsed.data.status,
+    ...(auditWritten ? {} : { auditIncomplete: true }),
+  });
 });
 
 export default router;

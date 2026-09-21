@@ -110,6 +110,16 @@ export const ALLOWED_PAYLOAD_KEYS = [
   "touch",
   "counterfactual_same_choice",
   "traveler_mode",
+  // Sensing §5.4's ExperienceSession — the bridge from an opportunity to an
+  // outcome. EXACTLY lib/experienceSession.ExperienceSessionEnvelope: the
+  // session id, ONE subject, the opportunity kind acted on, the claim refs it
+  // rested on, its bounded window, and on a close the outcome and optional
+  // 1..5 rating. It is a sibling of `intel`, not a member of it, so the I4a/I4b
+  // outcome contract stays exact. No new table and no new verb: a session is
+  // two rows on this spine (an opening `direction` and the outcome's own verb)
+  // and its state is the fold over them. The deep GPS strip above applies to it
+  // like any other object-valued key.
+  "experience_session",
 ] as const;
 
 const ALLOWED_SET = new Set<string>(ALLOWED_PAYLOAD_KEYS);
