@@ -119,7 +119,7 @@ code-answerable and the code half is now done (3).
 
 | Claim | Measured 2026-09-07 |
 |---|---|
-| census S26 / reuse map §12: flag `intel_retention` **absent** from production | No such flag name. The sweep reads `intel_retention_sweep_enabled` (`intelRetentionScheduler.ts:342#intel_retention_sweep_enabled`) = **TRUE** in production; the raw purge reads `intel_contribution_retention_enabled` (`:358`) = **FALSE, present** (not absent). |
+| census S26 / reuse map §12: flag `intel_retention` **absent** from production | No such flag name. The sweep reads `intel_retention_sweep_enabled` (`intelRetentionScheduler.ts:350#intel_retention_sweep_enabled`) = **TRUE** in production; the raw purge reads `intel_contribution_retention_enabled` (`intelRetentionScheduler.ts:395#intel_contribution_retention_enabled`) = **FALSE, present** (not absent). |
 | reuse map §12: `intel_coverage` absent | **Present**, `false`. |
 | census / inventory / brief: "three intel flags TRUE in production" | **Eight**: `intel_capture_quick_signal`, `intel_claim_projection_crowd`, `intel_limited_live`, `intel_live_label_crowd`, `intel_missions`, `intel_retention_sweep_enabled`, `intel_rewards`, `intel_trail_followup`. |
 | reuse map §12: `map_world_intelligence_enabled` "seeded false" | Seeded false in **CI**; the row **does not exist** in production (reads false either way). |

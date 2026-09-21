@@ -3085,7 +3085,7 @@ conversations, and writes its first `system-event` — the assistant being unava
 five mutations red (columns named regardless, archived resumed, event written without the schema,
 event handed to the model, outage read as absent — the last two survived a first fake that could
 not tell a refusal at the database from one in the service, and the fake was strengthened until
-they died). `artifacts/api-server/src/scripts/checkMissingLiveColumns.ts:112#compass_conversations.trip_id` names the two columns pending live apply.
+they died). `artifacts/api-server/src/scripts/checkMissingLiveColumns.ts:113#compass_conversations.trip_id` names the two columns pending live apply.
 
 **Stays W**, on the same standard §O of census-highlights-memories applies to a migration in the
 tree and on CI but not on production: the schema is stated, rehearsed and guarded, and the shipped
@@ -3383,7 +3383,7 @@ The repo's production snapshot was refreshed to match (493 tables, 160 functions
 the flag-schema ratchet's `COMPASS_ENABLED` entry was struck under the file's own STALE rule rather
 than narrowed — `artifacts/api-server/src/scripts/checkFlagSchemaPrerequisites.ts:312#content_trails` keeps the history as a comment, the way
 the `media_canonical_enabled` strike did. Five entries left the PENDING LIVE APPLY allowlist for the
-same reason (`artifacts/api-server/src/scripts/checkMissingLiveColumns.ts:112#compass_conversations.trip_id`), because the columns are
+same reason (`artifacts/api-server/src/scripts/checkMissingLiveColumns.ts:113#compass_conversations.trip_id`), because the columns are
 present now — not because they are excused.
 
 ### 27.2 The access limitations, each tested rather than assumed

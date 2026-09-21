@@ -233,7 +233,7 @@ the finding that most changes the shape of the question, so each is cited indivi
 
 | Scheduler | `start…()` defined | Registered at | Flag it reads |
 |---|---|---|---|
-| `intelRetentionScheduler` | `lib/intelRetentionScheduler.ts:501#export function startIntelRetentionScheduler` | **`src/index.ts:139#startIntelRetentionScheduler()`** | `intel_retention_sweep_enabled`, `intel_contribution_retention_enabled` (`:358`) |
+| `intelRetentionScheduler` | `lib/intelRetentionScheduler.ts:509#export function startIntelRetentionScheduler` | **`src/index.ts:139#startIntelRetentionScheduler()`** | `intel_retention_sweep_enabled`, `intel_contribution_retention_enabled` (`:358`) |
 | `intelPromotionScheduler` | `lib/intelPromotionScheduler.ts:80` | **`src/index.ts:136`** | `intel_claim_projection_crowd` (`:83`) |
 | `intelProjectionScheduler` | `lib/intelProjectionScheduler.ts:216` | **`src/index.ts:137`** | `intel_claim_projection_crowd` (`:219`) |
 | `intelCoverageScheduler` | `lib/intelCoverageScheduler.ts:262` | **`src/index.ts:145`** | `intel_coverage` (`:29`) |
