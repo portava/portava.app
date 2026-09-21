@@ -381,7 +381,7 @@ a finding that the work was done for something else. See `docs/architecture/attr
 | G10 | Low-confidence interpretation preserves raw user input | C | `semanticParser.ts:600-607` `shouldProjectStructured` gates on `SEMANTIC_MIN_CONFIDENCE = 0.6` (`:133`); below it the parse adds nothing and the raw query row survives. |
 | G11 | Privacy and eligibility filtering occur before projection | C | `gateway.ts:373-402` — the gate runs, then `projectSearchResult`. Fail-closed comment at `:402`. |
 | G12 | Live suggestions carry freshness and are never fabricated when live state is unavailable | C | `liveSuggestions.ts:177-223` `buildFreshnessState` returns `null` for an empty envelope list and every label maps from a real claim value; unknown values return `null` (`:120`, `:138`) rather than a default. |
-| G13 | Offline mode degrades gracefully and must not present stale data as live | W | The "never stale-as-live" half is exact (`components/freshnessDisplay.ts:55-58#state === 'stale'` drops the label and keeps only the age). The "degrades gracefully" half still has no substrate, and the readers are now enumerated rather than asserted: `offlinePolicy` is read at `contexts/inputPolicies.ts:120#offlinePolicy` and `contexts/fieldInventory.ts:427#offlinePolicy`, which only copy it into a descriptor, and at `test/inputPolicyContractParity.test.ts:98#offlinePolicy`, which REPORTS the client/server divergence instead of asserting it (`:41-45` states that omission and why). No consumer branches on it, and no local dictionary or city index ships. `contexts/fieldInventory.ts:362` records the consequence for one context in as many words — the country picker's policy is `static_dictionary` "and the client ships no country list, so an offline country picker would return nothing — but nothing can reach it to find out." WHAT WOULD TURN THIS RED: one consumer that branches on `offlinePolicy` while the device is offline, plus a shipped artifact for at least `static_dictionary`, proven by a test that runs the hook with the network down and gets rows. |
+| G13 | Offline mode degrades gracefully and must not present stale data as live | W | The "never stale-as-live" half is exact (`components/freshnessDisplay.ts:55-58#state === 'stale'` drops the label and keeps only the age). The "degrades gracefully" half still has no substrate, and the readers are now enumerated rather than asserted: `offlinePolicy` is read at `contexts/inputPolicies.ts:120#offlinePolicy` and `contexts/fieldInventory.ts:427#offlinePolicy`, which only copy it into a descriptor, and at `test/inputPolicyContractParity.test.ts:122#offlinePolicy`, which copies it out of the client registry for comparison. **That comparison is now an ASSERTION rather than a report** (`test/inputPolicyContractParity.test.ts:412#agrees with the server on offlinePolicy for EVERY context`, with the vocabulary itself pinned at `test/inputPolicyContractParity.test.ts:398#uses ONE offline vocabulary`); §29.1 has the measurement that retired the old excuse, and the 26 divergent contexts now carry the authority's value. That closes the CONTRACT half of this row and not the behavioural half: no consumer branches on it, and no local dictionary or city index ships. `contexts/fieldInventory.ts:362` records the consequence for one context in as many words — the country picker's policy is `static_dictionary` "and the client ships no country list, so an offline country picker would return nothing — but nothing can reach it to find out." WHAT WOULD TURN THIS RED: one consumer that branches on `offlinePolicy` while the device is offline, plus a shipped artifact for at least `static_dictionary`, proven by a test that runs the hook with the network down and gets rows. |
 | G14 | Suggestions should accelerate real-world outcomes, not increase keystrokes or engagement for its own sake | W | Unchanged where it matters: `personalization.ts:223#boostFor` still scales the boost by `selection_count`, and it is still the only signal that moves rank. The COUNTER-signals exist as events (`suggestion_dismissed`, `manual_value_kept`, `raw_search_submitted` — G313/G315/G314), but calling them measurable overstates it: `platform/input-assistance/index.ts:124#setTelemetrySink` has no app-side caller, so every one of them is delivered to `let sink: TelemetrySink = () => {}` and nobody can count them. WHAT WOULD TURN THIS RED: an outcome or task-completion term weighed against the acceptance boost. Who can supply it: whoever owns the screens that COMPLETE the task (Trips / Events / Telegraph), by calling `services/inputTelemetry.ts:284#emitDownstreamTaskCompleted` — after the sink is attached, since until then the call would change nothing observable. |
 | G15 | Every accepted suggestion resolves to a valid canonical destination, structured value, or explicit user-approved action | C | `projection.ts:478-493` `isResolvable`/`dropDeadRows` — a row without an action, entity id or routable destination is dropped at the boundary, on every return path in `gateway.ts` (`:273`, `:314`, `:352`, `:385`, `:414`, `:785`). |
 
@@ -414,7 +414,7 @@ of the field→mode table.
 | G20 | `mode` gates how aggressively a field assists | C | `gateway.ts:153` (`no_assistance` ⇒ `[]`); `SmartInput.tsx:97`. |
 | G21 | `allowedSuggestionTypes` gates which assistance types a field may emit | C | `gateway.ts:170-172`, `:413`, `:423`, `:437`, `:483`, `:587`. |
 | G22 | `entityTypes` gates which entity classes are queried | C | `gateway.ts:327-330` — only the policy's declared types reach `entityToSearchType`/`dispatchSearch`. |
-| G23 | `allowPersonalization` gates memory read and write | C | Read `gateway.ts:304`; write refused at `personalization.ts:464-466`; the client's mirror is pinned to the server's by `test/inputPolicyContractParity.test.ts:110`. |
+| G23 | `allowPersonalization` gates memory read and write | C | Read `gateway.ts:304`; write refused at `personalization.ts:464-466`; the client's mirror is pinned to the server's by `test/inputPolicyContractParity.test.ts:248#agrees with the server on allowPersonalization for EVERY context`. |
 | G24 | `allowLiveContext` gates the live lane | C | `liveSuggestions.ts:258` — a field that does not declare it gets zero flag reads and zero snapshot reads. |
 | G25 | `allowMemoryContext` | **N** | **NOT MOVED. Re-measured on this branch and unchanged:** declared, defaulted, set true on exactly one context (`compass_prompt`), and read by nothing on either side. **WHY IT WAS NOT CLOSED THIS PASS, stated so the next reader does not re-derive it:** unlike `privacyClass` (G31) this member has no existing behaviour to attach to. `privacyClass` closed because three client paths and one server write path were ALREADY branching on a privacy classification and only needed the authority's copy to reach them; `allowMemoryContext` names a retrieval that does not exist — there is no memory-context lane in `gateway.ts` for a policy to gate. Giving it a consumer means building the retrieval first, which is §16/§35 work, not §6 work. **WHAT WOULD TURN THIS RED:** a gateway lane that reads prior-session memory for `compass_prompt`, gated on this member, with a test proving a `false` policy produces zero reads. Inventing a gate over a lane that does not exist would be a second inert member, not a fix. |
 | G26 | `allowAI` gates AI assistance | C | `gateway.ts:676`, `:722`; `aiWriting.ts` requires it plus the per-request opt-in plus the flag. |
@@ -422,9 +422,9 @@ of the field→mode table.
 | G28 | `maxSuggestions` caps the response | C | `routes/inputAssistance.ts:144` (`Math.min(requestedLimit, policy.maxSuggestions)`); `gateway.ts:676`. |
 | G29 | `debounceMs` | C | `policyRegistry.ts:86` defaults to 120 ms; consumed at `useInputAssistance.ts:277`. |
 | G30 | `offlinePolicy` declares per-field offline degradation | **N** | **NOT MOVED**, and the divergence this row names is now the LAST of its kind in §6: `privacyClass`'s two taxonomies were unified and pinned this pass (G31) and `telemetryPolicy`'s two shapes were unified and pinned (G33), while `offlinePolicy` still has five server values and a different, device-side client vocabulary, both unread. `artifacts/api-server/src/test/inputPolicyContractParity.test.ts` still REPORTS it rather than asserting it, and the reason it gives is the honest one: pinning two vocabularies that mean different things freezes the debt instead of describing it. **WHAT WOULD TURN THIS RED:** §32's substrate — a local dictionary or cached entity index that a field falls back to — plus a reader that picks the fallback by this member. There is no such store on the device today, so this member has nothing to select between. It is the §32 dependency, not a §6 oversight. |
-| G31 | `privacyClass` classifies the field's privacy posture | **N** → **C** | **THE ROW'S SENTENCE WAS TRUE OF THIS SIDE AND FALSE OF THE OTHER, AND THE DIFFERENCE WAS A LATENT LEAK.** "Read by nothing" held for the server. On the CLIENT the same member was already gating three things: whether a field's suggestions may live in the process-global cache (`travel-buddy-standalone/src/platform/input-assistance/services/suggestionCache.ts:77#CACHEABLE_PRIVACY_CLASSES` (this pointer named a member of the DENYLIST that used to live here; §21.2 replaced that denylist with an allowlist because it answered "cacheable" for any class it did not recognise, so the anchor is now the allowlist itself — the classification this row grades is unchanged, and the gate reading it is strictly tighter)), whether a select payload carrying the user's raw typed text may be SENT (`services/selectBody.ts`), and what telemetry policy the field derives (`contexts/inputPolicies.ts`). And the two sides were not speaking the same language: the client declared a FOUR-member taxonomy — `public \| personal \| sensitive \| private_message` — of which exactly two members existed here. **Measured before the fix, 14 of 29 contexts disagreed, and two ran the wrong way: `hidden_gem_name` (server `sensitive_location`, client `public`) and `comment` (server `viewer_scoped`, client `public`).** `public` was the client's own condition for capturing raw text into telemetry, so the client's gate said "log the typed text" for a Hidden Gem name and a comment body while the authority said sensitive. Latent only because `setTelemetrySink` is called from no non-test file (§3.5) — the same shape as the `allowPersonalization` finding `d4db6009` made, one member over. FIXED, taking the STRICTER side on both registries and never the looser: one vocabulary (`travel-buddy-standalone/src/platform/input-assistance/types/inputContext.ts`, the server's union verbatim), values pinned context-for-context (`artifacts/api-server/src/test/inputPolicyContractParity.test.ts:307#agrees with the server on privacyClass for EVERY context`), the vocabulary itself pinned (`artifacts/api-server/src/test/inputPolicyContractParity.test.ts:334#uses ONE privacy vocabulary`), and — the part this row actually asked for — **a server-side reader**: `artifacts/api-server/src/lib/inputAssistance/personalization.ts:473#if (!MEMORABLE_PRIVACY_CLASSES.has(policy.privacyClass))` fail-closes the one write path into `input_selection_history`. That gate is not redundant with `allowPersonalization`: it is the one that holds when `allowPersonalization` is WRONG, and the test drives it with a policy the registry does not contain (personalization-enabled AND sensitive) because that is precisely the combination no fixture built from the live registry can produce. An allowlist, not a denylist, so a member added to `PrivacyClass` tomorrow is refused rather than admitted. Two mutations turn it red. ☠prod applies to the SERVER half only — `input_record_selection` is absent from production (§3.1), so the gate there refuses a write that would already have failed soft; the three client readers run on every device. |
+| G31 | `privacyClass` classifies the field's privacy posture | **N** → **C** | **THE ROW'S SENTENCE WAS TRUE OF THIS SIDE AND FALSE OF THE OTHER, AND THE DIFFERENCE WAS A LATENT LEAK.** "Read by nothing" held for the server. On the CLIENT the same member was already gating three things: whether a field's suggestions may live in the process-global cache (`travel-buddy-standalone/src/platform/input-assistance/services/suggestionCache.ts:77#CACHEABLE_PRIVACY_CLASSES` (this pointer named a member of the DENYLIST that used to live here; §21.2 replaced that denylist with an allowlist because it answered "cacheable" for any class it did not recognise, so the anchor is now the allowlist itself — the classification this row grades is unchanged, and the gate reading it is strictly tighter)), whether a select payload carrying the user's raw typed text may be SENT (`services/selectBody.ts`), and what telemetry policy the field derives (`contexts/inputPolicies.ts`). And the two sides were not speaking the same language: the client declared a FOUR-member taxonomy — `public \| personal \| sensitive \| private_message` — of which exactly two members existed here. **Measured before the fix, 14 of 29 contexts disagreed, and two ran the wrong way: `hidden_gem_name` (server `sensitive_location`, client `public`) and `comment` (server `viewer_scoped`, client `public`).** `public` was the client's own condition for capturing raw text into telemetry, so the client's gate said "log the typed text" for a Hidden Gem name and a comment body while the authority said sensitive. Latent only because `setTelemetrySink` is called from no non-test file (§3.5) — the same shape as the `allowPersonalization` finding `d4db6009` made, one member over. FIXED, taking the STRICTER side on both registries and never the looser: one vocabulary (`travel-buddy-standalone/src/platform/input-assistance/types/inputContext.ts`, the server's union verbatim), values pinned context-for-context (`artifacts/api-server/src/test/inputPolicyContractParity.test.ts:358#agrees with the server on privacyClass for EVERY context`), the vocabulary itself pinned (`artifacts/api-server/src/test/inputPolicyContractParity.test.ts:385#uses ONE privacy vocabulary`), and — the part this row actually asked for — **a server-side reader**: `artifacts/api-server/src/lib/inputAssistance/personalization.ts:473#if (!MEMORABLE_PRIVACY_CLASSES.has(policy.privacyClass))` fail-closes the one write path into `input_selection_history`. That gate is not redundant with `allowPersonalization`: it is the one that holds when `allowPersonalization` is WRONG, and the test drives it with a policy the registry does not contain (personalization-enabled AND sensitive) because that is precisely the combination no fixture built from the live registry can produce. An allowlist, not a denylist, so a member added to `PrivacyClass` tomorrow is refused rather than admitted. Two mutations turn it red. ☠prod applies to the SERVER half only — `input_record_selection` is absent from production (§3.1), so the gate there refuses a write that would already have failed soft; the three client readers run on every device. |
 | G32 | `validationRules` declares the field's non-blocking checks | **N** | **NOT MOVED**, re-measured and unchanged: no registry entry sets it and `hooks/useInputValidation.ts` still marks the resolver an unbuilt extension point. **WHY NOT CLOSED:** the §23 validations that exist are hard-wired by context in `creation.ts`, and making them policy-driven is a REWRITE of a working, tested lane — every rule would have to move from a switch into a declared rule with the same semantics, and the §23 rows (G147–G153, another lane's) are the ones that would have to be re-proven afterwards. Declaring rules that the hard-wired path continues to ignore would produce a third inert member rather than a fix. **WHAT WOULD TURN THIS RED:** `creation.ts`'s validation switch replaced by a resolver over `policy.validationRules`, with the §23 suite green against rules declared in the registry — one lane's whole pass, and it belongs with §23 rather than here. |
-| G33 | `telemetryPolicy` governs event emission and raw-text capture | **C** | **MOVED `W` → `C` BY THE §48 PASS; the transition now reads in the evidence rather than in the verdict cell.** The cell said `W → **C**`, which is two verdict tokens where `check:census-integrity` can parse one — so this row, `G33`, `G341` and `G343` between them, was counted by a human and invisible to the tool (it reported "3 counted where this tool cannot read" for this census, against 0 before the wave). Re-read at this commit before the cell was rewritten; no verdict is changed by the rewrite. The two shapes are one shape. The client now declares the server's members verbatim — `travel-buddy-standalone/src/platform/input-assistance/types/fieldPolicy.ts:81#logRawText: boolean;` and `events` as a plain list — and the `'all'` sentinel is gone, because it had no server counterpart and so a server policy that NARROWED a field's vocabulary could not be expressed on the client at all. Pinned at `artifacts/api-server/src/test/inputPolicyContractParity.test.ts:347#agrees with the server on the SHAPE of telemetryPolicy (census G33)`, which also asserts `captureRawText` survives nowhere in the client contract. **THE RENAME WAS NOT COSMETIC AND THIS IS THE PART WORTH READING.** Two names for one gate is why nothing could compare the two sides on the member that decides whether the user's typed text enters an analytics event — and when they were finally compared they disagreed. The client's derivation read `captureRawText = (privacyClass === 'public')` against the CLIENT's own taxonomy, in which `hidden_gem_name` and `comment` were `public` (see G31). It now derives `logRawText: false` for every class, which is what the server's registry has always said on all 29 contexts, and narrows the event list for `private_message` to mirror `METADATA_ONLY_TELEMETRY` — not the same list with a flag off, the narrowed list. `travel-buddy-standalone/src/platform/input-assistance/contexts/inputPolicies.ts:81#logRawText: false`. The scrub itself is unchanged and still proven policy-driven: its unit test keeps a constructed `logRawText: true` policy on purpose, since a scrubber that dropped everything unconditionally would pass every other assertion in the file. |
+| G33 | `telemetryPolicy` governs event emission and raw-text capture | **C** | **MOVED `W` → `C` BY THE §48 PASS; the transition now reads in the evidence rather than in the verdict cell.** The cell said `W → **C**`, which is two verdict tokens where `check:census-integrity` can parse one — so this row, `G33`, `G341` and `G343` between them, was counted by a human and invisible to the tool (it reported "3 counted where this tool cannot read" for this census, against 0 before the wave). Re-read at this commit before the cell was rewritten; no verdict is changed by the rewrite. The two shapes are one shape. The client now declares the server's members verbatim — `travel-buddy-standalone/src/platform/input-assistance/types/fieldPolicy.ts:81#logRawText: boolean;` and `events` as a plain list — and the `'all'` sentinel is gone, because it had no server counterpart and so a server policy that NARROWED a field's vocabulary could not be expressed on the client at all. Pinned at `artifacts/api-server/src/test/inputPolicyContractParity.test.ts:468#agrees with the server on the SHAPE of telemetryPolicy (census G33)`, which also asserts `captureRawText` survives nowhere in the client contract. **THE RENAME WAS NOT COSMETIC AND THIS IS THE PART WORTH READING.** Two names for one gate is why nothing could compare the two sides on the member that decides whether the user's typed text enters an analytics event — and when they were finally compared they disagreed. The client's derivation read `captureRawText = (privacyClass === 'public')` against the CLIENT's own taxonomy, in which `hidden_gem_name` and `comment` were `public` (see G31). It now derives `logRawText: false` for every class, which is what the server's registry has always said on all 29 contexts, and narrows the event list for `private_message` to mirror `METADATA_ONLY_TELEMETRY` — not the same list with a flag off, the narrowed list. `travel-buddy-standalone/src/platform/input-assistance/contexts/inputPolicies.ts:81#logRawText: false`. The scrub itself is unchanged and still proven policy-driven: its unit test keeps a constructed `logRawText: true` policy on purpose, since a scrubber that dropped everything unconditionally would pass every other assertion in the file. |
 | G34 | `discovery.search` → `search` | C | `policyRegistry.ts:97-107`. |
 | G35 | `trip.destination` → `canonical_picker` | C | `policyRegistry.ts:139-146`. |
 | G36 | `event.location` → `canonical_picker` | C | `policyRegistry.ts:166-172`. |
@@ -4276,4 +4276,108 @@ fetch, a cache keyed on `policyVersion`, and a cold-start fallback behind those
 two functions.
 
 No verdict moves in this section. The headline is unchanged at
+**279 C / 49 W / 41 N / 4 X of 373**.
+
+---
+
+## §29 — One vocabulary on the wire: the prerequisite G340 turned up
+
+§28.3 said the remaining G340 work was "a fetch, a cache keyed on
+`policyVersion`, and a cold-start fallback." Before writing the fetch I compared
+the two sides' **type unions**, because a fetch only works if the client can
+name what the authority sends. Two of the six could not.
+
+| union on the wire | client | server | verdict |
+| --- | ---: | ---: | --- |
+| `InputContext` | 29 | 29 | identical |
+| `AssistanceType` | 10 | 10 | identical |
+| `PrivacyClass` | 5 | 5 | identical (fixed 2026-09-21, §27) |
+| mode (`InputAssistanceMode` / `InputMode`) | 6 | 6 | identical |
+| `EntityType` | 13 | 18 | **server superset by 5** |
+| `OfflineInputPolicy` | 4 | 5 | **only 2 members shared** |
+
+### 29.1 `offlinePolicy` — a dialect, not a second vocabulary
+
+`inputPolicyContractParity.test.ts` had already MEASURED this drift — its header
+says `offlinePolicy` differed "on 26 (the two unions are not even the same
+taxonomy)". What was new was not the number but the EXCUSE attached to it: the
+file left the field unasserted because the client's was "a different,
+device-side vocabulary", and pinning it "would freeze that debt instead of
+describing it."
+
+Taken apart context by context, that did not hold. Of the 29:
+
+* **7 were a pure rename** — `cached_entities` here is `cached_local` there, and
+  the three `static_dictionary` contexts already agreed outright.
+* **12 were a collapsed distinction** — the client's `none` stood in for both
+  `server_required` (the field IS assisted, but only with a network) and
+  `unavailable` (never assisted). The authority draws a line the client could
+  not express.
+* **10 were genuine disagreement**, and **9 ran the same direction**: the client
+  declared it could serve suggestions offline — `cached_entities` or
+  `recent_only` — for a field the authority marks `server_required`. Those nine
+  are `place_picker`, `trip_stop_place`, `event_location`,
+  `hidden_gem_location`, `buddy_service_area`, `address`, `hashtag`,
+  `telegraph_recipient`, `telegraph_message`. `global_search` was the only one
+  running the other way.
+
+One renamed member and one lost distinction is a dialect. Nine over-claims are a
+defect. **Nothing on the client branches on the field**, so none of it was ever
+live — the same "latent only because nothing consumes it" shape as the
+`allowPersonalization` and `privacyClass` findings, and the same argument for
+fixing it while it is still free.
+
+What changed the urgency is G340 itself. Once `GET /input-assistance/policies`
+serves `offlinePolicy`, the client's local copy stops being a private opinion
+and becomes a **prediction of what the authority will hand it** — and a wrong
+prediction changes behaviour on the first fetch, before any of the fetch code is
+written. The client union was widened to the authority's five members and all 26
+disagreeing contexts took the authority's value. The parity suite now asserts
+both the vocabulary and the per-context value, failing-first proven and
+mutation-proven.
+
+`global_search` is the one context where adopting the authority made the client
+declaration **looser** (`recent_only` → `cached_local`). It is recorded here
+rather than quietly taken, because whoever first wires offline behaviour should
+see that this one was not a tightening.
+
+### 29.2 `EntityType` — and a latent mis-route the widening exposed
+
+The server can serve five entity classes the client could not name: `activity`,
+`circle`, `post`, `stamp`, `vibe`. Four are in served `entityTypes` today —
+`circle`/`post`/`stamp` on `global_search`, `activity` on `plan_title` and
+`buddy_service`. The client union was widened to the authority's whole set,
+`vibe` included, so the next server addition is the thing that drifts rather
+than this list.
+
+Widening it immediately reddened the client typecheck at
+`search/globalSearch.ts`, on a `Record<EntityType, string>` whose own comment
+reads: *"Kept exhaustive so a new entity type is a compile error here rather
+than a silently mis-iconed row."* That promise was real but was only ever
+exhaustive over the **client's narrower union**. A served `stamp` never reached
+the map as a compile error — it fell through the `|| 'places'` default beneath
+it and rendered as a **Place, with a MapPin, in the Places group**. Widening the
+union converted a latent mis-route into the compile error the comment always
+promised, which is the guard working, one union late.
+
+`circles`, `posts` and `stamps` map to strings the panel already speaks —
+`searchNav.tsx#TypeIcon` has a case for each and `resolveRoute` documents all
+three. `activities` and `vibes` have no icon case and no route rule, so they
+fall to `TypeIcon`'s `default` (a neutral Sparkles). That is deliberate: a
+generic icon is honest about an unrecognised row and a MapPin is not, and the
+row only renders at all when the server supplied a real destination route.
+
+### 29.3 What is asserted, and what is only disclosed
+
+`offlinePolicy` moved from REPORTED to ASSERTED for every context — there was a
+single authority answer to adopt. `entityTypes` did not: its **13**
+disagreements run in both directions and each needs its own product judgement,
+so it enters the suite as a **ceiling of 13**, newly disclosed. Nothing measured
+it before; the parity suite covered `allowedSuggestionTypes` and `defaultMode`
+and never the entity classes that decide which tables a suggestion request may
+search. `minChars` remains reported and unasserted, unchanged.
+
+No verdict moves in this section. **G340 stays `W`** — the vocabulary is now one
+vocabulary and the endpoint exists, but the client still declares all 29
+contexts locally and reads its own copy. The headline is unchanged at
 **279 C / 49 W / 41 N / 4 X of 373**.

@@ -37,12 +37,36 @@
  * MUTATION-PROOF: flip `allowPersonalization` on either side for any single
  * context and this test goes RED naming that context.
  *
- * The other two dimensions are REPORTED, not asserted. They are real §48 debt,
- * but `minChars` and `offlinePolicy` are legitimately allowed to be tuned per
- * side today (the client's offline taxonomy is a different, device-side
- * vocabulary), and pinning them here would freeze that debt instead of
- * describing it. Asserting only the privacy-load-bearing field is the honest
- * line.
+ * `minChars` is REPORTED, not asserted. It is real §48 debt, but it is
+ * legitimately tunable per side today and pinning it here would freeze that
+ * debt instead of describing it.
+ *
+ * ── 2026-09-21: `offlinePolicy` LEAVES THAT SENTENCE AND JOINS THE ASSERTED
+ *    SET, and the sentence it leaves behind was wrong about it ───────────────
+ *
+ * This paragraph used to cover `offlinePolicy` too, excusing it as "a
+ * different, device-side vocabulary". Measured, it was not one. Of the 29
+ * contexts, 7 differed by a pure RENAME (`cached_entities` ⇄ `cached_local`),
+ * 12 by this side collapsing a distinction the client did not draw (`none`
+ * standing in for both `server_required` and `unavailable`), and 10 by genuine
+ * disagreement — 9 of which ran the SAME way: the client declared it could
+ * serve suggestions offline for a field this side marks `server_required`.
+ * One renamed member and one lost distinction is a dialect, not a vocabulary,
+ * and nine over-claims are a defect.
+ *
+ * It was latent for the usual reason — no client branch reads the field — and
+ * that is exactly why it was worth fixing before one does. G340's
+ * `GET /input-assistance/policies` now serves `offlinePolicy` from this
+ * registry, so the client's local copy stopped being a private opinion the
+ * moment the endpoint existed: it is now a PREDICTION of what the authority
+ * will hand it, and a wrong prediction changes behaviour on the first fetch.
+ * The client's union was widened to this one member for member and all 26
+ * disagreeing contexts took the authority's value.
+ *
+ * `entityTypes` is newly measured here and carries a CEILING rather than an
+ * equality: its 13 disagreements run in both directions and each needs its own
+ * product judgement, so there is no single authority answer to adopt wholesale
+ * the way there was for `offlinePolicy`.
  *
  * ── 2026-09-21: `privacyClass` JOINS THE ASSERTED SET (census G31, G33) ──────
  *
@@ -97,6 +121,8 @@ interface ClientDescriptor {
   minChars: string;
   offlinePolicy: string;
   defaultMode: string;
+  /** null when the entry's list could not be resolved — reported, never silently []. */
+  entityTypes: string[] | null;
   /** null when the entry's list could not be resolved — reported, never silently 0. */
   allowedSuggestionTypes: string[] | null;
 }
@@ -108,6 +134,16 @@ const SERVER_PRIVACY_CLASSES = [
   "owner_only",
   "sensitive_location",
   "private_message",
+] as const;
+
+/** This side's offline union, restated here so the client's is compared to a
+ *  named list rather than to whatever the client happens to declare. */
+const SERVER_OFFLINE_POLICIES = [
+  "static_dictionary",
+  "cached_local",
+  "recent_only",
+  "server_required",
+  "unavailable",
 ] as const;
 
 const CLIENT_POLICY_TYPES = path.join(
@@ -130,6 +166,16 @@ function readClientPrivacyClassUnion(): Set<string> {
   assert.ok(m, "the client must declare a PrivacyClass union");
   const members = [...m![1]!.matchAll(/'([a-z_]+)'/g)].map((x) => x[1]!);
   assert.ok(members.length > 0, "the PrivacyClass union parsed to nothing — the declaration's shape changed");
+  return new Set(members);
+}
+
+/** Parse the client's `OfflineInputPolicy` union members out of its declaration. */
+function readClientOfflineUnion(): Set<string> {
+  const src = fs.readFileSync(CLIENT_CONTEXT_TYPES, "utf8");
+  const m = /export type OfflineInputPolicy =([\s\S]*?);/.exec(src);
+  assert.ok(m, "the client must declare an OfflineInputPolicy union");
+  const members = [...m![1]!.matchAll(/'([a-z_]+)'/g)].map((x) => x[1]!);
+  assert.ok(members.length > 0, "the OfflineInputPolicy union parsed to nothing — the declaration's shape changed");
   return new Set(members);
 }
 
@@ -178,6 +224,10 @@ function readClientRegistry(): Map<string, ClientDescriptor> {
       offlinePolicy: field("offlinePolicy") ?? "(default)",
       defaultMode: field("defaultMode") ?? "(default)",
       allowedSuggestionTypes: types,
+      entityTypes: (() => {
+        const raw = /entityTypes:\s*(\[[^\]]*\])/.exec(body)?.[1];
+        return raw === undefined ? null : [...raw.matchAll(/'([^']+)'/g)].map((x) => x[1]!);
+      })(),
     });
   }
   return out;
@@ -255,6 +305,7 @@ describe("§48 — the client policy registry mirrors the server authority", () 
   // `display_name` MANUAL and the server was brought to the client's shape.
   // That is the ratchet working as its comment instructs: lower it on each
   // fix, never raise it. The remaining 26 are the ones G340 deletes.
+  const MAX_ENTITY_TYPE_DRIFT = 13;
   const MAX_SUGGESTION_TYPE_DRIFT = 26;
   const MAX_DEFAULT_MODE_DRIFT = 2;
 
@@ -341,6 +392,76 @@ describe("§48 — the client policy registry mirrors the server authority", () 
       [...clientUnion].sort(),
       [...SERVER_PRIVACY_CLASSES].sort(),
       "the client's PrivacyClass union must be this side's, member for member",
+    );
+  });
+
+  it("uses ONE offline vocabulary — the client declares no member this side has never heard of", () => {
+    // Promoted from REPORTED to ASSERTED on 2026-09-21, when G340's policy
+    // endpoint made the old justification untenable. This file used to say the
+    // client's offline taxonomy was "a different, device-side vocabulary" and
+    // that pinning it "would freeze that debt instead of describing it". That
+    // was too generous to it, and the measurement is in the case below.
+    const clientUnion = readClientOfflineUnion();
+    assert.deepEqual(
+      [...clientUnion].sort(),
+      [...SERVER_OFFLINE_POLICIES].sort(),
+      "the client's OfflineInputPolicy union must be this side's, member for member — /input-assistance/policies now SERVES this field, so a member the client cannot name is a value it will be handed and cannot act on",
+    );
+  });
+
+  it("agrees with the server on offlinePolicy for EVERY context", () => {
+    const client = readClientRegistry();
+    const mismatches: string[] = [];
+    for (const ctx of KNOWN_CONTEXTS) {
+      const server = resolvePolicy(ctx)!;
+      const c = client.get(ctx);
+      assert.ok(c, `client descriptor missing for ${ctx}`);
+      if (c!.offlinePolicy !== server.offlinePolicy) {
+        mismatches.push(`${ctx}: server=${server.offlinePolicy} client=${c!.offlinePolicy}`);
+      }
+    }
+    assert.deepEqual(
+      mismatches,
+      [],
+      "offlinePolicy declares how a field degrades with no network. The server's copy is the authority and is what /input-assistance/policies serves:\n  " +
+        mismatches.join("\n  "),
+    );
+
+    // Not vacuous: the authority genuinely spreads across the union.
+    const distinct = new Set(KNOWN_CONTEXTS.map((c) => resolvePolicy(c)!.offlinePolicy));
+    assert.ok(
+      distinct.size >= 3,
+      `the server registry must use at least three offline policies (got ${[...distinct].join(", ")})`,
+    );
+  });
+
+  it(`drifts from the server on entityTypes in at most ${MAX_ENTITY_TYPE_DRIFT} contexts`, () => {
+    // NEWLY DISCLOSED 2026-09-21. Nothing measured this before: the parity
+    // suite covered allowedSuggestionTypes and defaultMode but never the
+    // ENTITY classes a context resolves into, and `entityTypes` is what decides
+    // which tables a suggestion request is allowed to search. A ceiling rather
+    // than an equality because the 13 disagreements run in BOTH directions and
+    // each needs its own product judgement — unlike offlinePolicy above, there
+    // is no single authority answer to adopt wholesale. LOWER it on each fix.
+    const client = readClientRegistry();
+    const drifted: string[] = [];
+    for (const ctx of KNOWN_CONTEXTS) {
+      const server = resolvePolicy(ctx)!;
+      const c = client.get(ctx);
+      assert.ok(c, `client descriptor missing for ${ctx}`);
+      const ce = c!.entityTypes;
+      if (ce === null) continue; // unparsed is reported by the count assertion, not silently counted as agreement
+      // `?? []` rather than a non-null assertion: the FIELD is optional on
+      // `InputFieldPolicy`, but `policyRegistry.ts:108` normalises every seed
+      // through `seed.entityTypes ?? []`, so a resolved policy always carries a
+      // real array and absent would mean the same thing as empty anyway.
+      const a = [...(server.entityTypes ?? [])].sort().join(",");
+      const b = [...ce].sort().join(",");
+      if (a !== b) drifted.push(`${ctx}: server=[${a}] client=[${b}]`);
+    }
+    assert.ok(
+      drifted.length <= MAX_ENTITY_TYPE_DRIFT,
+      `entityTypes drift grew to ${drifted.length} (ceiling ${MAX_ENTITY_TYPE_DRIFT}). LOWER the ceiling when you fix one; never raise it:\n  ${drifted.join("\n  ")}`,
     );
   });
 
