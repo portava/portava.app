@@ -58,6 +58,7 @@ import {
   filterInfeasibleCandidates,
   getCreationDraftContexts,
   buildCreationAssistance,
+  buildUnresolvedAddress,
   DUPLICATE_SCAN_UNREADABLE_POLICY_GAP,
 } from "../lib/inputAssistance/creation.js";
 import { isResolvable } from "../lib/inputAssistance/projection.js";
@@ -476,6 +477,92 @@ describe("city_picker never offers a create/drop-pin fallback (§37 context-depe
     const sc = makeFakeClient(baseTables());
     const out = await gen(sc, "city_picker", "Xzqwptown", { city: null });
     assert.ok(!out.some((s) => s.action?.type === "drop_pin"), "a city picker must not offer drop-pin");
+  });
+});
+
+// ── §37 NEW-ENTITY CREATION (census G240) ────────────────────────────────────
+// The row's complaint, verbatim: "Map-point and raw-text fallbacks exist.
+// NEW-ENTITY CREATION DOES NOT: nothing emits an 'Add a new Place'/'Add a new
+// Gem' row, so the spec's own empty-state mock cannot be rendered from platform
+// output." The mock is
+//   [Search instead][Drop a pin][Add a new Place][Ask Compass][Search nearby]
+// and these tests assert the third element exists, carries a resolvable §43
+// action, and is still refused for the picker §37 names as the counter-example.
+//
+// MUTATION-PROOFS (each applied, watched go red, reverted):
+//   - creation.ts: pass `createEntity: null` unconditionally
+//       → "offers Add a new Place" and "offers Add a new Gem" go red.
+//   - creation.ts: drop the `policy.entityTypes.includes(...)` half of the gate
+//       → "a policy that does not name the entity type offers no creation" red.
+//   - creation.ts: add `city_picker` to CREATABLE_ENTITY_BY_CONTEXT *and* to
+//     ADDRESS_FALLBACK_CONTEXTS → the city-picker refusal below STAYS GREEN.
+//     Recorded rather than hidden: `city_picker`'s policy declares no `action`
+//     type, so `canAction` refuses before either of the other two gates is
+//     consulted. That is §12.5's "one gate masked another" — the refusal is
+//     real and mutation-proof through the POLICY, and the context map is a
+//     second, currently-unobservable gate for that context. The gate that IS
+//     observable is the entityTypes one, pinned by "under policy" below.
+function createRows(out: any[]) {
+  return out.filter(
+    (s) => (s.action as any)?.type === "set_structured_value"
+      && (s.action as any)?.value?.kind === "create_entity",
+  );
+}
+
+describe("§37 new-entity creation under policy (G240)", () => {
+  it("event_location offers 'Add a new Place' when nothing canonical resolves", async () => {
+    const sc = makeFakeClient(baseTables());
+    const out = await gen(sc, "event_location", "Some Unlisted Alley Spot", {
+      city: "Da Nang", draft: { city: "Da Nang" },
+    });
+    const rows = createRows(out);
+    assert.equal(rows.length, 1, "exactly one creation row");
+    assert.equal(rows[0].label, "Add a new Place");
+    assert.equal((rows[0].action as any).value.entityType, "place");
+    assert.equal((rows[0].action as any).value.name, "Some Unlisted Alley Spot");
+    // §13 — it is not a dead row.
+    assert.ok(rows[0].action != null);
+  });
+
+  it("hidden_gem_location offers 'Add a new Gem', not 'Add a new Place'", async () => {
+    const sc = makeFakeClient(baseTables());
+    const out = await gen(sc, "hidden_gem_location", "Unlisted Rooftop Ladder", {
+      city: "Da Nang", draft: { city: "Da Nang" },
+    });
+    const rows = createRows(out);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].label, "Add a new Gem");
+    assert.equal((rows[0].action as any).value.entityType, "hidden_gem");
+  });
+
+  it("a city picker still offers NO creation row (§37's own counter-example)", async () => {
+    const sc = makeFakeClient(baseTables());
+    const out = await gen(sc, "city_picker", "Xzqwptown", { city: null });
+    assert.equal(createRows(out).length, 0, "a city picker must not offer 'create city'");
+  });
+
+  it("the creation row is UNDER POLICY: a policy that does not name the entity type offers none", () => {
+    const policy = resolvePolicy("hidden_gem_location");
+    // Same context, same text — only the policy's declared entityTypes change.
+    const withGem = buildUnresolvedAddress("hidden_gem_location", policy, POLICY_VERSION, "Unlisted Rooftop");
+    const withoutGem = buildUnresolvedAddress(
+      "hidden_gem_location",
+      { ...policy, entityTypes: (policy.entityTypes ?? []).filter((e) => e !== "hidden_gem") },
+      POLICY_VERSION,
+      "Unlisted Rooftop",
+    );
+    assert.equal(createRows(withGem).length, 1);
+    assert.equal(createRows(withoutGem).length, 0);
+    // and nothing ELSE changed — the other fallbacks are untouched by the gate
+    assert.equal(
+      withGem.filter((s) => s.action?.type === "drop_pin").length,
+      withoutGem.filter((s) => s.action?.type === "drop_pin").length,
+    );
+  });
+
+  it("an empty query produces no creation row (nothing to name)", () => {
+    const policy = resolvePolicy("place_picker");
+    assert.equal(createRows(buildUnresolvedAddress("place_picker", policy, POLICY_VERSION, "   ")).length, 0);
   });
 });
 

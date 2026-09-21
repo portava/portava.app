@@ -23,7 +23,7 @@ import { parseSearchIntent, intentSummary } from '../src/lib/compassIntent';
 import { SearchSuggestionsPanel } from '../src/components/search/SearchSuggestionsPanel';
 import { useGlobalSearchSuggestions } from '../src/hooks/useGlobalSearchSuggestions';
 import { getSubmitQuery } from '../src/platform/input-assistance/search/globalSearch';
-import { getAddToTripTarget } from '../src/platform/input-assistance/search/smartActions';
+import { getAddToTripTarget, getOpenCompassTarget } from '../src/platform/input-assistance/search/smartActions';
 import type { InputSuggestion } from '../src/platform/input-assistance/types/inputSuggestion';
 import { TripWishlistPicker, type AddToTripPayload } from '../src/components/discovery/TripWishlistPicker';
 import { usePlainBottomInset } from '../src/hooks/useBottomInset';
@@ -459,6 +459,17 @@ export default function SearchScreen() {
   const [addToTripPayload, setAddToTripPayload] = useState<AddToTripPayload | null>(null);
 
   function handleSuggestionAction(suggestion: InputSuggestion) {
+    // §43 `open_compass` — the server's structured interpretation of what was
+    // typed, handed to Compass as the user's OWN question. Until now this row
+    // was produced by `semanticIntent.buildCompassStructuredRow` and discarded
+    // by every client surface (census G305); `prefillMessage` is the handoff
+    // the Compass screen already accepts from Layover's "Ask locals", reused
+    // rather than a second mechanism invented beside it.
+    const compass = getOpenCompassTarget(suggestion);
+    if (compass) {
+      router.push({ pathname: '/(tabs)/ai', params: { prefillMessage: compass.prompt } } as any);
+      return;
+    }
     const target = getAddToTripTarget(suggestion);
     if (target) {
       setAddToTripPayload({

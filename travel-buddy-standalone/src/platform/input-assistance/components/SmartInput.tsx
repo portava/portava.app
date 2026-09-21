@@ -70,6 +70,14 @@ export interface SmartInputProps extends Omit<TextInputProps, 'onChange'> {
   overlayMaxHeight?: number;
   /** Empty/no-match content (§37 fallback actions). */
   emptyState?: React.ReactNode;
+  /**
+   * §27 zero-state panel heading. When the field is EMPTY the rows the gateway
+   * returned are the pre-typing set (§14 recents / defaults), and they are
+   * framed as such rather than rendered as if they had matched something.
+   */
+  zeroStateTitle?: string;
+  /** §27 pre-typing hint shown when the zero-state set is empty. */
+  zeroStateHint?: string;
   /** Optional leading renderer for entity rows (e.g. sanctioned avatar). */
   renderLeading?: (s: InputSuggestion) => React.ReactNode;
 }
@@ -111,6 +119,8 @@ export const SmartInput = forwardRef<TextInput, SmartInputProps>(function SmartI
     assist = true,
     overlayMaxHeight,
     emptyState,
+    zeroStateTitle,
+    zeroStateHint,
     renderLeading,
     style,
     onFocus,
@@ -151,6 +161,15 @@ export const SmartInput = forwardRef<TextInput, SmartInputProps>(function SmartI
   );
 
   const assistEnabled = assist && !!policy && policy.mode !== 'no_assistance';
+  // §27 — nothing typed, so whatever is in front of the user is the zero-state
+  // set. The distinction is the surface's whole point: a result list asserts
+  // "these matched", and there is nothing to match yet.
+  const zeroState = value.trim().length === 0;
+  // NOT widened to "focused && zeroState": whether an empty focused field opens
+  // a panel at all is the FIELD's call (§2 "the field owns behaviour"), and
+  // making every assisted field in the app pop a panel on focus is a product
+  // decision this component does not get to take on its own. The panel is the
+  // surface the zero-char rows land in when the gateway returns them.
   const overlayVisible = assistEnabled && focused && (loading || suggestions.length > 0 || unavailable);
   const activeId = activeIndex >= 0 && activeIndex < suggestions.length ? suggestions[activeIndex].id : null;
 
@@ -326,6 +345,9 @@ export const SmartInput = forwardRef<TextInput, SmartInputProps>(function SmartI
             renderLeading={renderLeading}
             grouped={policy?.mode === 'search'}
             emptyState={emptyState}
+            zeroState={zeroState}
+            zeroStateTitle={zeroStateTitle}
+            zeroStateHint={zeroStateHint}
             maxHeight={overlayMaxHeight}
           />
         </View>

@@ -3226,7 +3226,7 @@ an EMPTY page. `app/search.tsx` closed that gap with *"No results found. /
 Nothing matched «q»."* — true of sixteen sources and unknown of the
 seventeenth. It now carries the failed source names
 (`app/search.tsx:117#const [partialSources, setPartialSources] = useState<string[] | null>(null);`)
-and says the search was incomplete (`app/search.tsx:677#Some of this search could not run.`).
+and says the search was incomplete (`app/search.tsx:688#Some of this search could not run.`).
 The Compass fallback is deliberately LEFT firing: it offers alternatives, it
 does not assert an absence, and suppressing it would delete a feature rather
 than fix a claim.
