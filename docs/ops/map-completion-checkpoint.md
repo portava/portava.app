@@ -218,6 +218,33 @@ keeping:
    unverified flag activation is not completion; each row still needs an event
    observed end to end.
 
+### The highest-value work that is genuinely unblocked
+
+**M256(a) — a server-side projection latency harness.** The census names it as
+the one measurement blocked by nothing but nobody having written it: p50 and
+p95 of request-receipt to response-flush for `GET /api/map/projection` over 50
+warm-cache requests on a seeded `portava-ci`. No production access, no handset.
+It is the half that would catch a slow projection, and there is no perf harness
+anywhere under `artifacts/api-server/src/test/`.
+
+Two things to know before starting it, neither of which is a reason not to:
+
+1. **It does not close M256.** The device half (camera-settle to first object
+   painted) still needs a handset, and the row stays `?` until both halves
+   exist. M258 is the precedent — half of it is asserted in this tree and the
+   row is still `?`, deliberately.
+2. **It needs a flag flip and seeding on the SHARED CI database.**
+   `map_projection_enabled` is FALSE on portava-ci, so measuring the route as
+   it stands would time the refusal path, not the projection. Lane C did this
+   correctly and restored everything; Lane D stalled mid-seed and left rows
+   behind. Follow Lane C: flip, seed, measure, restore the flag to FALSE, and
+   delete seeded rows BY PREDICATE. Check the `live DB · acquire the
+   shared-database slot` job is not holding the slot first.
+
+It was NOT started in this session. Starting a database-touching harness
+unattended, an hour after another lane stalled doing exactly that and left
+residue, is the wrong trade for work that closes no row.
+
 ## Open owner decisions — none of these is takeable by a lane
 
 `docs/map/scope-ruling-phases-6-7.md:44` already ruled that a two-word mention
