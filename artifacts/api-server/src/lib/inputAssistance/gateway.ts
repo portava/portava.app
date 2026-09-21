@@ -23,7 +23,8 @@
  * → privacy gateway → rank/dedupe → project.
  */
 import { fetchBlockedSet } from '../blocks';
-import { normalizeLocationName } from '../canonicalLocations';
+import { normalizeLocationName, type CanonicalRow } from '../canonicalLocations';
+import { logger } from '../logger';
 import type { SearchQueryContext } from '../../routes/discoverySearchHelpers';
 import {
   dispatchSearch,
@@ -32,7 +33,13 @@ import {
   mergeCitySuggestions,
   type SearchResult,
 } from '../../routes/discoverySearch';
-import { resolveGeoCandidates, zeroCharGeoDefaults, type GeoResolution } from './geoResolver';
+import {
+  resolveGeoCandidates,
+  zeroCharGeoDefaults,
+  venueBinding,
+  type GeoResolution,
+  type CanonicalVenueBinding,
+} from './geoResolver';
 import { entityToSearchType, type DispatchSearchType } from './entityMap';
 import {
   resolveRecipientSuggestions,
@@ -57,7 +64,7 @@ import {
   EMPTY_TASK_CONSTRAINT,
   type TaskConstraint,
 } from './taskContext';
-import { applyDiversity } from './rankingSignals';
+import { applyDiversity, applyImpersonationRisk } from './rankingSignals';
 import { extractTemporal } from './semanticParser';
 import type { TemporalWindow } from './rankingSignals';
 import { buildAiAssistedWriting, isAiTextContext } from './aiWriting';
@@ -71,6 +78,7 @@ import {
   emptyMemory,
   type SelectionMemory,
 } from './personalization';
+import { buildSavedPlaceSuggestions } from './savedEntities';
 import {
   projectSearchResult,
   projectCanonicalCity,
@@ -119,6 +127,76 @@ const GEO_PICKER_CONTEXTS: ReadonlySet<InputContext> = new Set<InputContext>([
 ]);
 
 const EMPTY_GEO: GeoResolution = { rows: [], ambiguous: false, airport: null };
+
+// ── §17 venue bindings for picker contexts (G109) ─────────────────────────────
+//
+// A place SearchResult carries everything the binding needs EXCEPT the country,
+// which lives on `canonical_locations` rather than on `discovery_places`. One
+// batched read per request resolves it for every linked place at once.
+//
+// FAIL-CLOSED, AND THE DISTINCTION IS THE WHOLE POINT. A place with no
+// `canonical_location_id` genuinely has no canonical link, and a binding
+// carrying `country: null` is a true statement about it. A place that HAS a
+// link whose read FAILED is a different thing entirely, and it gets NO binding
+// at all — because §17 prefills dependent fields from this value, so an outage
+// rendered as `country: null` would write "this venue is in no country" into a
+// field the user can see. Absent prefill is a smaller harm than wrong prefill.
+export async function resolveVenueBindings(
+  sc: any,
+  places: readonly SearchResult[],
+): Promise<Map<string, CanonicalVenueBinding>> {
+  const out = new Map<string, CanonicalVenueBinding>();
+  if (places.length === 0) return out;
+
+  const linkIds = [
+    ...new Set(
+      places
+        .map((p) => (p.metadata as { livingPageId?: string } | undefined)?.livingPageId)
+        .filter((x): x is string => typeof x === 'string' && x.length > 0),
+    ),
+  ];
+
+  let canonicalById: Map<string, CanonicalRow> | null = new Map();
+  if (linkIds.length > 0) {
+    const { data, error } = await sc
+      .from('canonical_locations')
+      .select('id, kind, name, display_name, country, country_code')
+      .in('id', linkIds);
+    if (error || !data) {
+      // The read failed. Mark it so linked places are SKIPPED below rather than
+      // bound with a null country they did not earn.
+      canonicalById = null;
+      logger.warn(
+        { err: error ?? 'no rows object', linked: linkIds.length },
+        'venue bindings: canonical_locations read failed — linked places get no §17 binding this request',
+      );
+    } else {
+      for (const row of data as CanonicalRow[]) canonicalById.set(row.id, row);
+    }
+  }
+
+  for (const p of places) {
+    const linkId = (p.metadata as { livingPageId?: string } | undefined)?.livingPageId;
+    if (linkId && canonicalById === null) continue; // the failed-read case
+    const md = p.metadata as { lat?: number | null; lng?: number | null } | undefined;
+    out.set(
+      p.id,
+      venueBinding(
+        {
+          id: p.id,
+          name: p.title,
+          city: p.locationPreview ?? null,
+          lat: md?.lat ?? null,
+          lng: md?.lng ?? null,
+        },
+        linkId ? (canonicalById?.get(linkId) ?? null) : null,
+      ),
+    );
+  }
+  return out;
+}
+
+
 
 // §26: free-text writing fields where an @mention / #hashtag is INSERTED as a
 // structured reference (not searched-for as an entity page). When one of these
@@ -252,9 +330,26 @@ export async function generateSuggestions(
           existingEntityIds: existingIds,
         }).catch(() => [])
       : [];
+    // §35 SAVED entities — the half of "Saved and Trip-related entities" that
+    // read nothing. Gated inside savedEntities.ts on the policy's entity types,
+    // so it fires for place_picker / trip_stop_place and is inert for the
+    // city-and-country pickers. Unlike the recents above it reads a table
+    // production HAS, so this arm is live rather than ☠prod.
+    const savedIds = new Set<string>([
+      ...existingIds,
+      ...recents.map((s) => s.entityId).filter((x): x is string => !!x),
+    ]);
+    const saved = await buildSavedPlaceSuggestions(sc, {
+      userId,
+      context,
+      policy,
+      policyVersion: POLICY_VERSION,
+      max: policy.maxSuggestions,
+      existingEntityIds: savedIds,
+    }).catch(() => []);
     return dropDeadRows(
       orderSuggestions(
-        applySessionBias([...projected, ...recents], sessionContext, normalized),
+        applySessionBias([...projected, ...recents, ...saved], sessionContext, normalized),
         Math.min(limit, policy.maxSuggestions),
       ),
     );
@@ -280,10 +375,22 @@ export async function generateSuggestions(
       policyVersion: POLICY_VERSION,
       max: policy.maxSuggestions,
     }).catch(() => []);
-    if (recents.length > 0) {
+    // §35 SAVED entities (G228) — the production-live arm of the same zero-state.
+    // `global_search` names `place` in its entity types, so a user who has saved
+    // a place is offered it before the first keystroke even where the §35
+    // selection-memory table is absent (the ☠prod case).
+    const saved = await buildSavedPlaceSuggestions(sc, {
+      userId,
+      context,
+      policy,
+      policyVersion: POLICY_VERSION,
+      max: policy.maxSuggestions,
+      existingEntityIds: new Set(recents.map((s) => s.entityId).filter((x): x is string => !!x)),
+    }).catch(() => []);
+    if (recents.length > 0 || saved.length > 0) {
       return dropDeadRows(
         orderSuggestions(
-          applySessionBias(recents, sessionContext, normalized),
+          applySessionBias([...recents, ...saved], sessionContext, normalized),
           Math.min(limit, policy.maxSuggestions),
         ),
       );
@@ -304,9 +411,24 @@ export async function generateSuggestions(
       q,
       max: policy.maxSuggestions,
     }).catch(() => [] as InputSuggestion[]);
+    // §15 PriorSelection on the recipient path. This branch is a full TAKEOVER
+    // that returns before the generic `applyPriorSelectionBoost` below, so a
+    // recorded recipient pick used to feed NOTHING — the write had no reader
+    // here, which is why the §35 writer-coverage guard carried
+    // `useTelegraphRecipients.ts` as a KNOWN GAP with "boost-only benefit" as
+    // the benefit that did not exist yet. It exists now.
+    //
+    // It can only ever REORDER what `resolveRecipientSuggestions` already
+    // returned — the eligibility/enumeration gate (§47/§54) runs first and this
+    // adds nobody to its output. That is the same contract personalization.ts
+    // states for every remembered person: re-ranked among candidates that are
+    // already there, never surfaced on its own.
+    const boostedRecips = personalizationOn
+      ? applyPriorSelectionBoost(recips, memory, personalQueryKey)
+      : recips;
     return dropDeadRows(
       orderSuggestions(
-        applySessionBias(recips, sessionContext, normalized),
+        applySessionBias(boostedRecips, sessionContext, normalized),
         Math.min(limit, policy.maxSuggestions),
       ),
     );
@@ -485,6 +607,18 @@ export async function generateSuggestions(
         const allCandidates = perTypeResults.flat();
         const verdict = classifyFeasibility(allCandidates, taskConstraint);
 
+        // §17/G109 venue bindings. Only for GEO PICKER contexts: a picker is a
+        // field whose SELECTION prefills dependents, which is the premise the
+        // binding exists to serve. global_search is a navigation surface — a row
+        // there opens an entity page and fills nothing, so binding it would ship
+        // a structured value with no consumer.
+        const venueBindings = GEO_PICKER_CONTEXTS.has(context)
+          ? await resolveVenueBindings(
+              sc,
+              allCandidates.filter((r) => r.type === 'places'),
+            )
+          : new Map<string, CanonicalVenueBinding>();
+
         const seenIds = new Set<string>();
         dispatchTypes.forEach((t, idx) => {
           let items = perTypeResults[idx] ?? [];
@@ -499,6 +633,7 @@ export async function generateSuggestions(
                 temporalWindow,
                 demoted: verdict.demotedIds.has(r.id),
                 tripFit: verdict.tripFitIds.has(r.id),
+                venueBinding: venueBindings.get(r.id) ?? null,
               }),
             );
           }
@@ -717,14 +852,23 @@ export async function generateSuggestions(
   // removal — two real venues can share a name.
   const diversified = applyDiversity(withLive);
 
+  // ── §36 Impersonation (within-response) ─────────────────────────────────────
+  // A person row that is neither verified nor official, whose handle folds to
+  // the same confusable signature as a verified/official row IN THIS ANSWER, is
+  // demoted below it. Applied AFTER diversity and BEFORE the rank so the
+  // demotion reaches the ordering; identity on every response that contains no
+  // verified person row, which is almost all of them. See rankingSignals.ts for
+  // what this deliberately does not cover (census G233).
+  const antiImpersonation = applyImpersonationRisk(diversified);
+
   // ── Rank + cap (§9 trust order, §15 tie-break by confidence) ────────────────
   // When the field carries query completions (§13 "SEARCH FOR" rows — global_
   // search, buddy_service, hashtag), reserve a slot so a submittable-search row
   // is never capped out by a full page of entity matches. Otherwise a plain cap.
   const cap = Math.min(limit, policy.maxSuggestions);
   const ranked = policy.allowedSuggestionTypes.includes('completion')
-    ? orderSuggestionsReserving(diversified, cap, COMPLETION_RESERVED_TYPES, 1)
-    : orderSuggestions(diversified, cap);
+    ? orderSuggestionsReserving(antiImpersonation, cap, COMPLETION_RESERVED_TYPES, 1)
+    : orderSuggestions(antiImpersonation, cap);
 
   // §13 "no dead rows": final safety net — every returned row must resolve to an
   // action, a canonical entity, or a routable destination.

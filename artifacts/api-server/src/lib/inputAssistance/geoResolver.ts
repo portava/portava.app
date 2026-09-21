@@ -80,6 +80,92 @@ export function cityBinding(row: CanonicalRow): CanonicalCityBinding {
   };
 }
 
+// ── §17 VENUE binding (G109) ──────────────────────────────────────────────────
+//
+// The spec's worked example for "selecting a structured field prefills
+// dependents" runs from a VENUE: Sky36 → Da Nang → Vietnam → coordinates →
+// Asia/Ho_Chi_Minh. The city binding above covers the case where the thing
+// selected IS a city; this covers the case where it is a place inside one.
+//
+// THREE RULES, and each exists because its opposite would put a false value in
+// a dependent field the user can see:
+//
+//  1. THE COORDINATES ARE THE VENUE'S, never the city's. A venue's position is
+//     the more specific fact and the one a map pin needs; substituting the city
+//     centroid would silently move the pin to the middle of town.
+//  2. THE TIMEZONE IS DERIVED FROM THE VENUE'S OWN COORDINATES, through the
+//     same `timezoneForCoords` the city binding uses, so the two paths cannot
+//     disagree about the same point on the map.
+//  3. COUNTRY IS NEVER INFERRED FROM THE CITY NAME. It comes from the linked
+//     `canonical_locations` row or it stays null. "Springfield" names places in
+//     dozens of countries, and a prefilled country the user did not choose is
+//     worse than an empty one they will.
+
+export interface CanonicalVenueBinding {
+  entityType: 'venue';
+  /** discovery_places uuid — the VENUE id-space (never a city id). */
+  venueId: string;
+  venue: string;
+  /**
+   * canonical_locations uuid for the venue's city, or null when the place
+   * carries no canonical link (or carries one to something that is not a
+   * city-class row — a landmark's parent is not a city).
+   */
+  cityId: string | null;
+  /**
+   * The city NAME may be known from the place row even when `cityId` is null:
+   * `discovery_places.city` is free text and does not require a canonical link.
+   * A name without an id is still useful to prefill and is honest about what it
+   * is — which is why the two are separate fields rather than one.
+   */
+  city: string | null;
+  country: string | null;
+  countryCode: string | null;
+  /** The VENUE's coordinates. See rule 1. */
+  lat: number | null;
+  lng: number | null;
+  /** IANA zone derived from the VENUE's coordinates. See rule 2. */
+  timezone: string | null;
+}
+
+/**
+ * `canonical_locations.kind` values that denote a CITY for binding purposes.
+ * `place`, `landmark` and `airport` are deliberately absent: a venue linked to
+ * another venue does not thereby acquire a city, and claiming one would put a
+ * landmark's name in a field labelled City.
+ */
+const CITY_KINDS: ReadonlySet<string> = new Set(['city', 'town', 'municipality']);
+
+/**
+ * Build the §17 binding for a place row and the canonical row it links to.
+ *
+ * `canonical` is the resolved `canonical_locations` row, or null when the place
+ * has no link. It is NOT a way to say "the lookup failed" — a failed read must
+ * suppress the binding at the call site rather than arrive here as null, or an
+ * outage would render as "this venue is in no country".
+ */
+export function venueBinding(
+  place: { id: string; name: string; city: string | null; lat: number | null; lng: number | null },
+  canonical: CanonicalRow | null,
+): CanonicalVenueBinding {
+  const isCity = canonical != null && CITY_KINDS.has((canonical.kind ?? '').toLowerCase());
+  return {
+    entityType: 'venue',
+    venueId: place.id,
+    venue: place.name,
+    cityId: isCity ? canonical!.id : null,
+    city: (isCity ? canonical!.name || canonical!.display_name : null) ?? place.city ?? null,
+    // Country comes off the canonical row whatever its kind — a landmark row
+    // still knows which country it is in, and that is a fact about the venue's
+    // location rather than a claim about its city.
+    country: canonical?.country ?? null,
+    countryCode: canonical?.country_code ?? null,
+    lat: place.lat,
+    lng: place.lng,
+    timezone: timezoneForCoords(place.lat, place.lng),
+  };
+}
+
 /** Binding derived from a curated airport row (the airport's CITY, not the airport). */
 export function airportCityBinding(a: StaticAirport): CanonicalCityBinding {
   return {
