@@ -9,6 +9,16 @@
  * - Location (coarse city/country only — never exact coordinates)
  * - Like / comment counts
  * - Action row: View Post → opens /post/[id]
+ *
+ * TELEGRAPH §5.3 — REVOCATION. This card used to be a frozen snapshot: the
+ * JSON the sender serialised, rendered forever, with no refetch and no
+ * authorization call, so a post deleted or made private after sharing still
+ * showed in full inside the thread. When a `threadId` is supplied the card now
+ * re-resolves the post FOR THIS VIEWER on every mount
+ * (`features/telegraph/sharing/useShareRevocation.ts`) and renders a revoked
+ * notice instead of the snapshot when the source is gone. Without a threadId —
+ * a surface that has not been wired yet — behaviour is byte-identical to
+ * before, which is why this is additive rather than a rewrite.
  */
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
@@ -20,6 +30,7 @@ import { DisplayMediaImage } from './ui/DisplayMediaImage.tsx';
 import { Avatar } from './ui/Avatar.tsx';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 import { TG } from '../theme/telegraphTokens.ts';
+import { useShareRevocation, revokedLabel } from '../features/telegraph/sharing/useShareRevocation.ts';
 
 export interface PostCardPayload {
   postId: string;
@@ -59,10 +70,27 @@ function locationLabel(p: PostCardPayload): string | null {
 interface Props {
   body: string;
   mine: boolean;
+  /** §5.3: supply this and the card becomes revocable. Omit it and nothing changes. */
+  threadId?: string | null;
+  messageId?: string | null;
 }
 
-export function PostCardMessage({ body, mine }: Props) {
+export function PostCardMessage({ body, mine, threadId = null, messageId = null }: Props) {
   const payload = parsePayload(body);
+  const revocation = useShareRevocation(
+    threadId,
+    payload ? { objectType: 'POST', objectId: payload.postId, messageId } : null,
+  );
+
+  if (revocation.state === 'unavailable') {
+    return (
+      <View style={[card.wrap, card.wrapRevoked, mine && card.wrapMine]} testID="post-card-revoked">
+        <Text style={[card.fallback, mine && { color: color.onInk + 'AA' }]}>
+          {revokedLabel(revocation.reason)}
+        </Text>
+      </View>
+    );
+  }
 
   if (!payload) {
     return (
@@ -190,6 +218,11 @@ const card = StyleSheet.create({
     borderColor: color.signal,
     borderBottomLeftRadius: radius.lg,
     borderBottomRightRadius: 4,
+  },
+  /** §5.3 revoked state — dashed, unfilled, and carrying nothing from the source. */
+  wrapRevoked: {
+    borderStyle: 'dashed',
+    backgroundColor: 'transparent',
   },
   fallback: { ...t.small, color: color.mute, fontStyle: 'italic' },
 

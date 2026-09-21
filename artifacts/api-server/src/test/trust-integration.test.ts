@@ -19,7 +19,7 @@ import trustAdminRouter from "../routes/trust-admin.js";
 
 import { recordTrustEvent, recordAdjudicatedTrustEvent } from "../services/trust/TrustEventService.js";
 import { recalculateTrustScore, getTrustProfile } from "../services/trust/TrustScoreService.js";
-import { getActiveCaps } from "../services/trust/TrustCapService.js";
+import { getActiveCaps, createCap, expireOldCaps } from "../services/trust/TrustCapService.js";
 import { getRestrictionState } from "../services/trust/TrustRestrictionService.js";
 import {
   confirmEvent, dismissEvent,
@@ -264,6 +264,55 @@ function setClients(opts: { role?: string; tables?: FakeTables }) {
   _setTestServiceClient(c);
 }
 
+/**
+ * A builder that answers one table with a RESOLVED `{ data: null, error }` —
+ * the shape supabase-js actually returns on a database error, and the shape
+ * every fail-closed reader in this package is written against. Used to prove a
+ * route separates "could not read" from "nothing there".
+ */
+function unreadableBuilder(table: string): any {
+  const error = { message: `${table} unreadable (injected)`, code: "57014" };
+  const b: any = {};
+  for (const m of ["select", "insert", "upsert", "update", "delete", "eq", "in",
+                   "is", "gt", "lt", "not", "or", "order", "limit", "range"]) {
+    b[m] = () => b;
+  }
+  b.maybeSingle = async () => ({ data: null, error });
+  b.single      = async () => ({ data: null, error });
+  b.then = (onF: any, onR: any) =>
+    Promise.resolve({ data: null, error, count: null }).then(onF, onR);
+  return b;
+}
+
+/** Route-test clients with ONE table made unreadable (profiles stays readable
+ *  so the admin guard still passes and the 403 does not mask the case). */
+function setClientsWithUnreadable(opts: { tables: FakeTables; table: string }) {
+  const base = makeRouteFakeClient({ tables: opts.tables });
+  const c: any = {
+    ...base,
+    from: (t: string) => (t === opts.table ? unreadableBuilder(opts.table) : base.from(t)),
+  };
+  _setTestClient(c, true);
+  _setTestServiceClient(c);
+}
+
+/** An active cap row, ready to push into `tables.trust_caps`. */
+function capRow(over: Record<string, any>) {
+  return {
+    user_id: USER_A, category: "location_honesty", ceiling_score: 30,
+    reason_code: "admin_override", lifted_at: null, lifted_by: null,
+    expires_at: null, created_at: new Date().toISOString(),
+    ...over,
+  };
+}
+
+/** Every `trust_admin_actions` row written during a test, for audit assertions. */
+function auditRows(tables: FakeTables, actionType?: string) {
+  return tables.trust_admin_actions.filter(
+    (a: any) => actionType === undefined || a.action_type === actionType,
+  );
+}
+
 before(async () => {
   const app = express();
   app.use(express.json());
@@ -497,26 +546,183 @@ describe("trust-admin routes — restrict / remove restriction", () => {
 
 // ── POST /admin/trust/users/:userId/cap/override ──────────────────────────────
 
-describe("trust-admin routes — cap override (lift cap early)", () => {
-  it("lifts an active cap and returns ok:true with capId", async () => {
+// ── C22: THE FOUR DEFECTS OF THE ONE OVERRIDE-ADJACENT ROUTE ─────────────────
+//
+// `POST /admin/trust/users/:userId/cap/override` is, despite its name, the
+// REMOVAL half of the admin ceiling. It carried four defects and they are one
+// family: reporting success without confirming it.
+//
+//   1. no type check      — it lifted ANY cap by id, a `behavior_confirmed`
+//                           moderation ceiling included, which is relief an
+//                           admin does not have the authority to grant
+//   2. no user scoping    — `liftCap` filtered on the cap id ALONE, so cap X
+//                           belonging to user B could be lifted through user A's
+//                           URL: B's ceiling gone, the audit row filed against
+//                           A, and B's compass cache never invalidated. This is
+//                           the one that was not written down anywhere
+//   3. no observed effect — the update carried no `.select()`, so lifting a
+//                           nonexistent or already-lifted cap resolved and the
+//                           route answered `ok`
+//   4. fire-and-forget    — the recalculation's failure was swallowed and the
+//                           route returned `{ ok: true }` anyway, so the ceiling
+//                           could be lifted with the score never recomputed
+//
+// Each `it` below pins exactly one of them, and each names the mutation that
+// turns it red again.
+describe("trust-admin routes — cap/override (C22: removal must be observed)", () => {
+  it("DEFECT 1 — refuses to lift a MODERATION ceiling, and says why", async () => {
+    // Mutation that turns this red: drop the `reason_code !== "admin_override"`
+    // check from the route, i.e. restore "lift any cap by id".
     const tables = makeTables();
-    const capId = "00000000-0000-0000-0000-000000000c01";
-    tables.trust_caps.push({
-      id: capId, user_id: USER_A, category: "location_honesty",
-      ceiling_score: 30, reason_code: "fake_gps_severe",
-      lifted_at: null, lifted_by: null, expires_at: null, created_at: new Date().toISOString(),
+    const capId = "00000000-0000-0000-0000-0000000000c1";
+    tables.trust_caps.push(capRow({
+      id: capId, user_id: USER_A, category: "respect_safety",
+      ceiling_score: 40, reason_code: "behavior_confirmed",
+    }));
+    setClients({ tables });
+
+    const { status, body } = await httpReq("POST", `/admin/trust/users/${USER_A}/cap/override`, {
+      capId, reason: "Appeal granted",
     });
+
+    assert.equal(status, 403, "relief from a moderation ceiling is not built");
+    assert.match(String(body.message ?? ""), /behavior_confirmed/,
+      "the refusal names the kind of ceiling, so the admin is not left guessing");
+    const cap = tables.trust_caps.find((c: any) => c.id === capId) as any;
+    assert.equal(cap.lifted_at, null, "the moderation ceiling still stands");
+    assert.equal(auditRows(tables).length, 0, "and nothing was audited as if it had been lifted");
+  });
+
+  it("DEFECT 2 — cannot lift another user's cap through this user's URL", async () => {
+    // THE ONE NOBODY HAD WRITTEN DOWN. Mutation that turns this red: remove the
+    // `.eq("user_id", userId)` from the route's cap lookup, or from `liftCap`.
+    const tables = makeTables();
+    const capId = "00000000-0000-0000-0000-0000000000c2";
+    tables.trust_caps.push(capRow({ id: capId, user_id: USER_B, category: "communication" }));
+    setClients({ tables });
+
+    const { status } = await httpReq("POST", `/admin/trust/users/${USER_A}/cap/override`, {
+      capId, reason: "Lifting A's override",
+    });
+
+    assert.equal(status, 404, "a cap that is not this user's does not exist for this route");
+    const cap = tables.trust_caps.find((c: any) => c.id === capId) as any;
+    assert.equal(cap.lifted_at, null, "USER_B's ceiling is untouched");
+    assert.equal(auditRows(tables).length, 0,
+      "and no audit row claims USER_A had an override removed");
+  });
+
+  it("DEFECT 3 — a cap that does not exist is 404, not ok", async () => {
+    // Mutation that turns this red: drop `.select("id")` from liftCap and let
+    // the route answer on a matched-nothing update.
+    const tables = makeTables();
     setClients({ tables });
     const { status, body } = await httpReq("POST", `/admin/trust/users/${USER_A}/cap/override`, {
-      capId,
-      reason: "GPS sensor confirmed faulty — lifting cap",
+      capId: "00000000-0000-0000-0000-0000000000c9", reason: "Undo",
     });
+    assert.equal(status, 404);
+    assert.notEqual(body.ok, true);
+    assert.equal(auditRows(tables).length, 0);
+  });
+
+  it("DEFECT 3 — an ALREADY-lifted cap is a conflict, not a second success", async () => {
+    const tables = makeTables();
+    const capId = "00000000-0000-0000-0000-0000000000c3";
+    tables.trust_caps.push(capRow({
+      id: capId, user_id: USER_A, lifted_at: new Date().toISOString(), lifted_by: ADMIN,
+    }));
+    setClients({ tables });
+    const { status } = await httpReq("POST", `/admin/trust/users/${USER_A}/cap/override`, {
+      capId, reason: "Undo again",
+    });
+    assert.equal(status, 409);
+    assert.equal(auditRows(tables).length, 0);
+  });
+
+  it("an UNREADABLE trust_caps is a 500, never a clean 404", async () => {
+    // The fail-closed rule: a failed read must not be reported as "nothing
+    // there". Mutation that turns this red: drop the `capErr` branch.
+    const tables = makeTables();
+    setClientsWithUnreadable({ tables, table: "trust_caps" });
+    const { status } = await httpReq("POST", `/admin/trust/users/${USER_A}/cap/override`, {
+      capId: "00000000-0000-0000-0000-0000000000c4", reason: "Undo",
+    });
+    assert.equal(status, 500, "an outage is not an answer about this cap");
+  });
+
+  it("DEFECT 4 — a failed recalculation is NOT reported as a successful lift", async () => {
+    // trust_events unreadable makes `recalculateTrustScore` fail closed and
+    // THROW. Before the fix the throw was swallowed by a fire-and-forget
+    // `.catch(() => {})` and the route answered `{ ok: true }` regardless.
+    // Mutation that turns this red: restore the fire-and-forget call —
+    //   `await recalculateTrustScore(db, targetUserId).catch(() => {});`
+    // in TrustAdminService.adminRemoveOverride.
+    //
+    // ── WHY THIS FIXTURE SEEDS trust_profiles, AND WHY IT HAD TO ────────────
+    // THE PIN WAS A LIE. This case stayed GREEN under the very mutation its own
+    // comment names, and passed for a reason that has nothing to do with
+    // recalculation: `makeTables()` starts `trust_profiles` EMPTY, and the only
+    // thing that ever puts a row there is `recalculateTrustScore`'s own upsert.
+    // So with the recalculation swallowed, the NEXT step —
+    // `confirmOverrideRemoved`'s read-back — found no profile, read `absent`,
+    // and threw on its own account. The route 500'd either way and every
+    // assertion below passed either way.
+    //
+    // Seeding the profile removes that second reason to fail. Now the ONLY
+    // thing standing between this request and a `{ ok: true }` is the thrown
+    // recalculation, which is precisely the property the title claims. Measured
+    // by applying the mutation: red with the seed, green without it.
+    const tables = makeTables();
+    const capId = "00000000-0000-0000-0000-0000000000c5";
+    tables.trust_caps.push(capRow({ id: capId, user_id: USER_A, category: "communication" }));
+    tables.trust_profiles.push({
+      user_id: USER_A, overall_score: 40, public_level: "reliable",
+      plan_attendance: 40, host_quality: 40, communication: 40, respect_safety: 40,
+      location_honesty: 40, content_quality: 40, community_value: 40,
+      guide_accuracy: 40, passport_auth: 40,
+    });
+    setClientsWithUnreadable({ tables, table: "trust_events" });
+
+    const { status, body } = await httpReq("POST", `/admin/trust/users/${USER_A}/cap/override`, {
+      capId, reason: "Undo",
+    });
+
+    assert.notEqual(status, 200, "the caller must not be told the removal landed");
+    assert.notEqual(body.ok, true);
+    assert.equal(auditRows(tables, "score_override").length, 0,
+      "and no audit row claims a removal the engine never applied");
+  });
+
+  it("the happy path lifts the RIGHT user's admin_override and reports the score it observed", async () => {
+    const tables = makeTables();
+    const capId = "00000000-0000-0000-0000-0000000000c6";
+    tables.trust_caps.push(capRow({ id: capId, user_id: USER_A, category: "communication", ceiling_score: 20 }));
+    // A second user with the same kind of cap, so a rule that ignored scoping
+    // would have something to hit by accident.
+    tables.trust_caps.push(capRow({ id: "00000000-0000-0000-0000-0000000000c7", user_id: USER_B, category: "communication" }));
+    setClients({ tables });
+
+    const { status, body } = await httpReq("POST", `/admin/trust/users/${USER_A}/cap/override`, {
+      capId, reason: "Override no longer warranted",
+    });
+
     assert.equal(status, 200);
     assert.equal(body.ok, true);
     assert.equal(body.capId, capId);
-    // Cap should be lifted in the store
-    const cap = tables.trust_caps.find((c: any) => c.id === capId);
-    assert.ok(cap?.lifted_at, "cap.lifted_at should be set after override");
+    assert.deepEqual(body.liftedCapIds, [capId], "the response names the cap it actually lifted");
+    assert.equal(typeof body.persistedScore, "number",
+      "and the score it READ BACK from trust_profiles, not one it computed");
+
+    const lifted = tables.trust_caps.find((c: any) => c.id === capId) as any;
+    assert.ok(lifted.lifted_at, "the cap is lifted");
+    const other = tables.trust_caps.find((c: any) => c.user_id === USER_B) as any;
+    assert.equal(other.lifted_at, null, "and only that user's cap is");
+
+    const audit = auditRows(tables, "score_override");
+    assert.equal(audit.length, 1, "exactly one audit row");
+    assert.equal((audit[0] as any).target_user, USER_A,
+      "filed against the user whose ceiling was actually lifted");
+    assert.equal((audit[0] as any).source_id, capId);
   });
 
   it("returns 400 if capId is not a UUID", async () => {
@@ -526,6 +732,97 @@ describe("trust-admin routes — cap override (lift cap early)", () => {
       reason: "test",
     });
     assert.equal(status, 400);
+  });
+
+  it("is admin-only", async () => {
+    setClients({ role: "user" });
+    const { status } = await httpReq("POST", `/admin/trust/users/${USER_A}/cap/override`, {
+      capId: "00000000-0000-0000-0000-0000000000c8", reason: "test",
+    });
+    assert.equal(status, 403);
+  });
+});
+
+// ── IDF-50: the APPLY half was unreachable from any route ────────────────────
+//
+// `adminOverrideScore` had no caller outside its own tests, so the owner's
+// ruling — CAP NOW, PIN LATER BEHIND A FLAG — governed a capability no admin
+// had. These cases exist because "the ceiling persists" is worth nothing while
+// nothing can set one.
+describe("trust-admin routes — score/override (C22: an admin can set a ceiling)", () => {
+  it("applies a downward ceiling and reports the value it READ BACK", async () => {
+    const tables = makeTables();
+    const tablesClient = makeTrustClient(tables);
+    for (let i = 0; i < 5; i++) {
+      await tablesClient.from("trust_events").insert({
+        user_id: USER_A, event_type: "PLAN_ATTENDED", category: "plan_attendance",
+        delta: 10, severity: "minor", status: "applied", source_type: "user_action",
+      });
+    }
+    setClients({ tables });
+
+    const { status, body } = await httpReq("POST", `/admin/trust/users/${USER_A}/score/override`, {
+      category: "plan_attendance", score: 20, reason: "Watchlist",
+    });
+
+    assert.equal(status, 200);
+    assert.equal(body.ok, true);
+    assert.equal(body.persistedScore, 20, "the value on trust_profiles, not the value requested");
+    assert.equal(body.ceilingBinding, true, "and the fact that it is what is holding the score down");
+
+    const cap = tables.trust_caps.find((c: any) => c.user_id === USER_A) as any;
+    assert.equal(cap?.reason_code, "admin_override", "the ceiling is durable in trust_caps");
+    const profile = tables.trust_profiles.find((r: any) => r.user_id === USER_A) as any;
+    assert.equal(Number(profile.plan_attendance), 20, "and it reached the row the product gates on");
+  });
+
+  it("an UPWARD override is reported as binding nothing — CAP semantics, on the wire", async () => {
+    // Mutation that turns this red: making the route answer a bare `{ ok: true }`
+    // again, which reads identically for an override that withheld standing and
+    // one that did nothing at all.
+    const tables = makeTables();
+    const seed = makeTrustClient(tables);
+    await seed.from("trust_events").insert({
+      user_id: USER_B, event_type: "PLAN_NO_SHOW", category: "plan_attendance",
+      delta: -20, severity: "minor", status: "applied", source_type: "user_action",
+    });
+    setClients({ tables });
+
+    const { status, body } = await httpReq("POST", `/admin/trust/users/${USER_B}/score/override`, {
+      category: "plan_attendance", score: 90, reason: "Restoring standing",
+    });
+
+    assert.equal(status, 200);
+    assert.equal(body.ceilingBinding, false, "an override cannot grant standing, and says so");
+    assert.ok(body.persistedScore < 90, "the natural score stands");
+  });
+
+  it("refuses an unknown category rather than writing a cap nothing reads", async () => {
+    const tables = makeTables();
+    setClients({ tables });
+    const { status } = await httpReq("POST", `/admin/trust/users/${USER_A}/score/override`, {
+      category: "vibes", score: 10, reason: "test",
+    });
+    assert.equal(status, 400);
+    assert.equal(tables.trust_caps.length, 0, "and no cap row was created");
+  });
+
+  it("refuses a score outside 0–100", async () => {
+    const tables = makeTables();
+    setClients({ tables });
+    const { status } = await httpReq("POST", `/admin/trust/users/${USER_A}/score/override`, {
+      category: "communication", score: 140, reason: "test",
+    });
+    assert.equal(status, 400);
+    assert.equal(tables.trust_caps.length, 0);
+  });
+
+  it("is admin-only", async () => {
+    setClients({ role: "user" });
+    const { status } = await httpReq("POST", `/admin/trust/users/${USER_A}/score/override`, {
+      category: "communication", score: 10, reason: "test",
+    });
+    assert.equal(status, 403);
   });
 });
 
@@ -727,7 +1024,7 @@ describe("Service: admin restrict blocks hosting seam, lift restores it", () => 
 // ── Override cap → remove override ────────────────────────────────────────────
 
 describe("Service: adminOverrideScore → adminRemoveOverride restores score", () => {
-  it("cap override locks score; removing it allows natural recalc", async () => {
+  it("a DOWNWARD cap override binds; removing it allows natural recalc", async () => {
     const tables = makeTables();
     const db = makeTrustClient(tables);
 
@@ -742,6 +1039,83 @@ describe("Service: adminOverrideScore → adminRemoveOverride restores score", (
     await adminRemoveOverride(db, ADMIN, USER_A, "plan_attendance", "Restoring");
     const restored = await recalculateTrustScore(db, USER_A);
     assert.ok(restored.categories.plan_attendance >= capped.categories.plan_attendance);
+  });
+});
+
+// ── D-OVERRIDE: an override is a CEILING, and a ceiling is not a pin ──────────
+//
+// `adminOverrideScore` creates a `trust_caps` row with `ceiling_score = newScore`
+// and ALSO upserts `trust_profiles` directly "for immediate effect". Those two
+// writes disagree the moment anything recalculates, and they disagree in ONE
+// direction only:
+//
+//   override BELOW the natural score -> the cap binds, the override survives.
+//   override ABOVE the natural score -> the cap does not bind, recalculation
+//                                       returns the natural score, and the
+//                                       admin's number is silently gone.
+//
+// `loadCaps` folds caps with `Math.min` (TrustScoreService.ts:186) and
+// `trust_caps` has no floor column at all, so this is structural rather than a
+// bug in one branch. The tests below PIN that asymmetry so the product decision
+// — does an admin override mean PIN or CAP? — has to change an assertion to be
+// made, instead of being made by accident. Nothing here says which answer is
+// right; it says what today's answer is.
+describe("D-OVERRIDE: adminOverrideScore caps, and a cap only binds downward", () => {
+  it("an override BELOW the natural score survives recalculation", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+    for (let i = 0; i < 5; i++) {
+      await db.from("trust_events").insert({ user_id: USER_A, event_type: "PLAN_ATTENDED", category: "plan_attendance", delta: 10, severity: "minor", status: "applied", source_type: "user_action" });
+    }
+    const natural = (await recalculateTrustScore(db, USER_A)).categories.plan_attendance;
+    assert.ok(natural > 20, `fixture must earn a natural score well above the override; got ${natural}`);
+
+    await adminOverrideScore(db, ADMIN, USER_A, "plan_attendance", 20, "Downward");
+    const after = (await recalculateTrustScore(db, USER_A)).categories.plan_attendance;
+    assert.equal(after, 20, "a downward override is a binding ceiling");
+  });
+
+  it("an override ABOVE the natural score does NOT survive recalculation", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+    // One negative event, so the natural score sits below the neutral 50.
+    await db.from("trust_events").insert({ user_id: USER_B, event_type: "PLAN_NO_SHOW", category: "plan_attendance", delta: -20, severity: "minor", status: "applied", source_type: "user_action" });
+    const natural = (await recalculateTrustScore(db, USER_B)).categories.plan_attendance;
+    assert.ok(natural < 90, `fixture must sit below the override; got ${natural}`);
+
+    await adminOverrideScore(db, ADMIN, USER_B, "plan_attendance", 90, "Upward");
+
+    // WORSE THAN "it does not persist": the override never lands at all.
+    // `adminOverrideScore` upserts `trust_profiles` "for immediate effect" and
+    // then, on its own last line before the audit write, awaits
+    // `recalculateTrustScore` — which recomputes from events, applies the cap
+    // as a CEILING, and overwrites the upsert. The admin's number is gone
+    // before the function returns, so there is no window in which it was true.
+    const persisted = tables.trust_profiles.find((r: any) => r.user_id === USER_B);
+    assert.equal(
+      (persisted as any)?.plan_attendance, natural,
+      "the trailing recalculate inside adminOverrideScore overwrites its own upsert",
+    );
+
+    // And it stays gone on every later recalculation, because a ceiling of 90
+    // cannot lift a score of `natural`. No event, no audit line, no error.
+    const after = (await recalculateTrustScore(db, USER_B)).categories.plan_attendance;
+    assert.equal(after, natural, "an upward override is discarded — a cap is not a pin");
+    assert.notEqual(after, 90, "the admin's number is nowhere in the result");
+  });
+
+  it("trust_caps records the override as a ceiling, with no floor anywhere", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+    await adminOverrideScore(db, ADMIN, USER_A, "communication", 30, "Ceiling shape");
+    const cap = tables.trust_caps.find((c: any) => c.user_id === USER_A && c.category === "communication");
+    assert.ok(cap, "an override must leave a cap row");
+    assert.equal((cap as any).ceiling_score, 30, "the override value is stored as a CEILING");
+    assert.equal((cap as any).reason_code, "admin_override");
+    assert.ok(
+      !Object.keys(cap as any).some((k) => /floor/i.test(k)),
+      "trust_caps has no floor column — an override can only ever pull a score down",
+    );
   });
 });
 
@@ -1234,5 +1608,468 @@ describe("Moderation → trust: reversing the sanction reverses the consequence"
 
     const prof = tables.trust_profiles.find((p) => p.user_id === USER_A);
     if (prof) assert.notEqual(prof.on_probation, true, "a reversed finding must not leave probation running");
+  });
+});
+
+// ── D-OVERRIDE, part 2: the three questions the v2 spec asks and no row answers ──
+//
+// `Portava_Trust_Architecture_Upgrade_v2.md` does not only ask "pin or cap?".
+// It asks for "the selected semantics, PRECEDENCE WITH RESTRICTIONS, EXPIRY and
+// REMOVAL behavior". Those three are separately observable and none of them was
+// pinned anywhere, so any of them could have drifted without a test noticing.
+//
+// Nothing below chooses an answer. Each assertion records what the code does
+// TODAY so that the owner's decision (census-trust D-OVERRIDE) has a concrete
+// before-state, and so that converting ceiling into pin cannot happen quietly:
+// it would have to rewrite these assertions by name.
+describe("D-OVERRIDE precedence, expiry and removal — characterization, not a verdict", () => {
+  it("EXPIRY: an admin override never expires on its own", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+    await adminOverrideScore(db, ADMIN, USER_A, "communication", 30, "No expiry");
+
+    const cap = tables.trust_caps.find((c: any) => c.user_id === USER_A && c.category === "communication");
+    assert.ok(cap, "an override must leave a cap row");
+    assert.equal(
+      (cap as any).expires_at, null,
+      "adminOverrideScore passes no expiresAt, so the ceiling is permanent until an admin lifts it",
+    );
+
+    // expireOldCaps only touches rows whose expires_at has PASSED, so a null
+    // one is never swept. A 'pin' product would probably want a review date;
+    // a 'cap' product may well want permanence. Today it is permanence, by
+    // omission rather than by decision.
+    const lifted = await expireOldCaps(db);
+    assert.equal(lifted, 0, "the sweeper cannot expire a null-expiry override");
+    const stillActive = await getActiveCaps(db, USER_A);
+    assert.equal(stillActive.length, 1, "the override is still in force after an expiry sweep");
+  });
+
+  it("PRECEDENCE vs other caps: an upward override cannot loosen a moderation ceiling", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+
+    // A confirmed serious finding capped respect_safety at 40.
+    await createCap(db, {
+      userId: USER_A, category: "respect_safety", ceilingScore: 40,
+      reasonCode: "behavior_confirmed", sourceEventId: "evt-serious-1",
+    });
+
+    // An admin tries to restore standing by overriding to 90.
+    await adminOverrideScore(db, ADMIN, USER_A, "respect_safety", 90, "Restoring standing");
+
+    // TrustScoreService.loadCaps folds caps with Math.min, so the two ceilings
+    // combine as 40 — the admin's 90 is inert. Under PIN semantics this is the
+    // single most visible behavioural change: the admin would win.
+    const after = (await recalculateTrustScore(db, USER_A)).categories.respect_safety;
+    assert.ok(after <= 40, `the moderation ceiling still binds; got ${after}`);
+    assert.notEqual(after, 90, "an override cannot grant relief from another cap today");
+  });
+
+  it("PRECEDENCE vs restrictions: an override is a SCORE ceiling and touches no restriction", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+
+    const before = await getRestrictionState(db, USER_A);
+    await adminOverrideScore(db, ADMIN, USER_A, "respect_safety", 0, "Zero the score");
+    const after = await getRestrictionState(db, USER_A);
+
+    // Zeroing every point of a user's safety score does not stop them doing
+    // anything: restrictions live in trust_restrictions and nothing reads caps
+    // to derive one. Whichever semantics is chosen, this stays a separate
+    // decision — and it is worth the owner knowing that "override to 0" is NOT
+    // a way to withhold access.
+    assert.equal(tables.trust_restrictions.length, 0, "no restriction row was created");
+    assert.deepEqual(
+      { canMessage: after.canMessage, canHost: after.canHost },
+      { canMessage: before.canMessage, canHost: before.canHost },
+      "an override changes no eligibility",
+    );
+  });
+
+  it("REMOVAL: adminRemoveOverride lifts every admin_override in the category and nothing else", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+
+    // Two admins each set an override on the same category…
+    await adminOverrideScore(db, ADMIN, USER_A, "communication", 30, "First admin");
+    await adminOverrideScore(db, "admin-two", USER_A, "communication", 20, "Second admin");
+    // …and an unrelated moderation cap stands in the same category.
+    await createCap(db, {
+      userId: USER_A, category: "communication", ceilingScore: 45,
+      reasonCode: "message_report", sourceEventId: "evt-msg-1",
+    });
+
+    await adminRemoveOverride(db, ADMIN, USER_A, "communication", "Undo");
+
+    const active = await getActiveCaps(db, USER_A);
+    const reasons = active.map((c) => c.reasonCode).sort();
+    // One admin's removal clears BOTH admins' overrides — the lift is keyed on
+    // (user, category, reason_code), not on which admin set it. The moderation
+    // cap is untouched, which is the half that must not change under either
+    // semantics.
+    assert.deepEqual(reasons, ["message_report"], `expected only the moderation cap to survive; got ${reasons.join(",")}`);
+  });
+});
+
+// ── D-OVERRIDE, part 3: THE OWNER RULED — CAP NOW, and the ceiling must PERSIST ──
+//
+// census-trust §14.4 asked one question and the owner answered it: **CAP now,
+// PIN later behind a flag.** An admin override is a MAXIMUM. It withholds
+// standing and cannot grant it; it does not take precedence over a moderation
+// ceiling; it does not expire; and PIN semantics (a floor column, an upward
+// override, a relief path) is named as later work and is NOT built.
+//
+// The parts 1 and 2 blocks above pin the semantics and stay exactly as they
+// were — the ruling ratified them, so not one of those assertions moves. What
+// the ruling DID change is one defect, and it is not the one the census cell
+// described. The cell said an upward override "never lands at all — there is no
+// window in which it was true". That is right only while `recalculateTrustScore`
+// SUCCEEDS. It is fail-closed by design (an unreadable trust_settings,
+// trust_events or trust_caps makes it THROW and write nothing), the throw was
+// swallowed by `.catch(() => {})`, and `adminOverrideScore` wrote the admin's
+// raw number into `trust_profiles` BEFORE it. So on that path the raw number did
+// not merely land — it STAYED, uncapped by anything, on a row whose
+// `overall_score` and `public_level` still described the old score, while the
+// admin was told `{ ok: true }` and a `score_override` audit row recorded an
+// override the engine had never applied.
+//
+// That is the reverse of a cap: an upward 90 against a `behavior_confirmed`
+// ceiling of 40 granted, permanently, exactly the relief the ruling says an
+// admin does not have today. The fix is the narrow one the ruling asked for:
+// the raw write is gone, `recalculateTrustScore` is the only writer of a scored
+// column, its failure is no longer swallowed, and the persisted value is READ
+// BACK so "the ceiling is in force" is a measurement rather than a claim.
+describe("D-OVERRIDE: the ceiling the owner ruled for must PERSIST", () => {
+  // A client that answers one table with a database error, everything else
+  // normally. supabase-js RESOLVES on a database error, which is the shape the
+  // fail-closed loaders in TrustScoreService are written against.
+  function unreadable(table: string): any {
+    const error = { message: `${table} unreadable (injected)`, code: "57014" };
+    const b: any = {};
+    for (const m of ["select", "insert", "upsert", "update", "delete", "eq", "in",
+                     "is", "gt", "lt", "not", "or", "order", "limit", "range"]) {
+      b[m] = () => b;
+    }
+    b.maybeSingle = async () => ({ data: null, error });
+    b.single      = async () => ({ data: null, error });
+    b.then = (onF: any, onR: any) =>
+      Promise.resolve({ data: null, error, count: null }).then(onF, onR);
+    return b;
+  }
+
+  function makeClientWithUnreadableTable(tables: FakeTables, table: string): any {
+    const real = makeTrustClient(tables);
+    return {
+      ...real,
+      from: (t: string) => (t === table ? unreadable(table) : real.from(t as any)),
+    };
+  }
+
+  it("a downward ceiling reaches trust_profiles, and the call REPORTS that it bound", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+    for (let i = 0; i < 5; i++) {
+      await db.from("trust_events").insert({
+        user_id: USER_A, event_type: "PLAN_ATTENDED", category: "plan_attendance",
+        delta: 10, severity: "minor", status: "applied", source_type: "user_action",
+      });
+    }
+    const before = await recalculateTrustScore(db, USER_A);
+    assert.ok(before.categories.plan_attendance > 20,
+      `fixture must earn a natural score well above the ceiling; got ${before.categories.plan_attendance}`);
+
+    const result = await adminOverrideScore(db, ADMIN, USER_A, "plan_attendance", 20, "Watchlist");
+
+    // The measurement, not the computation: read the row.
+    const persisted = tables.trust_profiles.find((r: any) => r.user_id === USER_A) as any;
+    assert.equal(persisted.plan_attendance, 20,
+      "the ceiling survives adminOverrideScore's own recalculation");
+    assert.ok(Number(persisted.overall_score) < Number(before.overall_score),
+      `the ceiling reached the weighted number the product gates on; ${persisted.overall_score} vs ${before.overall_score}`);
+
+    // And the caller is TOLD what happened, rather than told `{ ok: true }` and
+    // left to read the table to find out.
+    assert.equal(result.persistedScore, 20, "persistedScore is read back from trust_profiles");
+    assert.equal(result.ceilingBinding, true, "the admin's number is what is holding the score down");
+  });
+
+  it("an UPWARD override reports that it bound NOTHING — CAP semantics, said out loud", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+    await db.from("trust_events").insert({
+      user_id: USER_B, event_type: "PLAN_NO_SHOW", category: "plan_attendance",
+      delta: -20, severity: "minor", status: "applied", source_type: "user_action",
+    });
+    const natural = (await recalculateTrustScore(db, USER_B)).categories.plan_attendance;
+
+    const result = await adminOverrideScore(db, ADMIN, USER_B, "plan_attendance", 90, "Upward");
+
+    // Unchanged from the characterization block above: a cap is not a pin, and
+    // the ruling ratified that. What is new is that the admin is no longer told
+    // "ok" about a number that did nothing.
+    assert.equal(result.persistedScore, natural, "the natural score stands");
+    assert.equal(result.ceilingBinding, false, "an upward override withholds nothing, and says so");
+    const audit = tables.trust_admin_actions.find((a: any) => a.action_type === "score_override") as any;
+    assert.equal(audit?.metadata?.ceilingBinding, false,
+      "the audit records what HAPPENED, not what was asked for");
+  });
+
+  // ── THE DEFECT ────────────────────────────────────────────────────────────
+  it("a failed recalculation leaves NO raw admin number on the row, and is never audited as applied", async () => {
+    const tables = makeTables();
+    const seed = makeTrustClient(tables);
+
+    // A confirmed serious finding has capped respect_safety at 40, and the
+    // persisted profile reflects that ceiling.
+    await createCap(seed, {
+      userId: USER_A, category: "respect_safety", ceilingScore: 40,
+      reasonCode: "behavior_confirmed", sourceEventId: "evt-serious-2",
+    });
+    tables.trust_profiles.push({
+      user_id: USER_A, overall_score: 48.5, public_level: "reliable_traveler",
+      plan_attendance: 50, host_quality: 50, communication: 50, respect_safety: 40,
+      location_honesty: 50, content_quality: 50, community_value: 50,
+      guide_accuracy: 50, passport_authenticity: 50,
+      on_probation: false, probation_ends_at: null,
+      last_recalculated_at: new Date().toISOString(),
+    });
+
+    // trust_events cannot be read, so recalculateTrustScore is fail-closed and
+    // throws — the exact state its own header says must write nothing.
+    const db = makeClientWithUnreadableTable(tables, "trust_events");
+
+    await assert.rejects(
+      () => adminOverrideScore(db, ADMIN, USER_A, "respect_safety", 90, "Restoring standing"),
+      /trust_events read failed|did not take effect|NOT confirmed/,
+      "an override whose recalculation did not happen must not be reported as applied",
+    );
+
+    const persisted = tables.trust_profiles.find((r: any) => r.user_id === USER_A) as any;
+    // THE ASSERTION THAT WAS RED. The raw upsert used to write 90 here and the
+    // swallowed throw used to leave it standing: an admin granting themselves
+    // relief from a moderation ceiling, permanently, by accident.
+    assert.equal(persisted.respect_safety, 40,
+      "no raw admin number is written to a scored column — only a recalculation writes one");
+    assert.equal(persisted.overall_score, 48.5,
+      "and the row stays internally consistent: the category and the weighted number still agree");
+
+    assert.equal(
+      tables.trust_admin_actions.filter((a: any) => a.action_type === "score_override").length, 0,
+      "no audit row may claim an override the engine never applied",
+    );
+
+    // The ceiling itself is durable and is NOT rolled back: trust_caps is where
+    // it lives, and the next successful recalculation applies it.
+    const capRow = tables.trust_caps.find((c: any) => c.user_id === USER_A && c.reason_code === "admin_override") as any;
+    assert.equal(capRow?.ceiling_score, 90, "the cap row stands; only the claim of effect is withheld");
+  });
+
+  // ── IDF-51: THE REMOVAL PATH HAD THE DEFECT THE APPLY PATH NO LONGER HAS ──
+  //
+  // `adminRemoveOverride` swallowed the lift with `.catch(() => {})`, swallowed
+  // the recalculation with another, then wrote the audit row and returned
+  // `{ ok: true }` unconditionally, with no read-back. So a removal that lifted
+  // nothing — or that lifted the cap and never got the score back up — was
+  // reported and audited as done. Ceiling persistence was confirmed on apply and
+  // unconfirmed on remove, which is half a guarantee.
+  //
+  // The shape these assert is the apply path's own, deliberately: every step
+  // awaited, nothing swallowed, and the outcome READ BACK before it is claimed.
+
+  /**
+   * A client whose `trust_caps` SELECT works and whose UPDATE matches nothing —
+   * the race where the cap is lifted by someone else between the read and the
+   * write, and the state in which the old `liftCap` (no `.select()`) was
+   * indistinguishable from success.
+   */
+  function makeClientWhereLiftMatchesNothing(tables: FakeTables): any {
+    const real = makeTrustClient(tables);
+    return {
+      ...real,
+      from: (t: string) => {
+        const b = real.from(t as any);
+        if (t !== "trust_caps") return b;
+        const origUpdate = b.update.bind(b);
+        b.update = (patch: any) => { origUpdate(patch); return b.eq("__no_such_column__", "x"); };
+        return b;
+      },
+    };
+  }
+
+  it("REMOVAL: a lift that matched nothing REJECTS, and is not audited as a removal", async () => {
+    const tables = makeTables();
+    const seed = makeTrustClient(tables);
+    await adminOverrideScore(seed, ADMIN, USER_A, "communication", 30, "Set the ceiling");
+    const auditBefore = tables.trust_admin_actions.length;
+
+    const db = makeClientWhereLiftMatchesNothing(tables);
+    await assert.rejects(
+      () => adminRemoveOverride(db, ADMIN, USER_A, "communication", "Undo"),
+      /were not lifted|still in force/,
+      "a removal that lifted nothing must say so instead of returning ok",
+    );
+
+    assert.equal(
+      tables.trust_admin_actions.length, auditBefore,
+      "no audit row claims an override was removed",
+    );
+    const cap = tables.trust_caps.find((c: any) => c.user_id === USER_A && c.reason_code === "admin_override") as any;
+    assert.ok(!cap.lifted_at, "and the ceiling is still standing, which is the truth");
+  });
+
+  it("REMOVAL: a failed recalculation REJECTS, and is not audited as a removal", async () => {
+    const tables = makeTables();
+    const seed = makeTrustClient(tables);
+    await adminOverrideScore(seed, ADMIN, USER_A, "communication", 30, "Set the ceiling");
+    const auditBefore = tables.trust_admin_actions.length;
+
+    // recalculateTrustScore is fail-closed: an unreadable trust_events makes it
+    // THROW and write nothing. That throw used to be swallowed.
+    const db = makeClientWithUnreadableTable(tables, "trust_events");
+    await assert.rejects(
+      () => adminRemoveOverride(db, ADMIN, USER_A, "communication", "Undo"),
+      /trust_events|not confirmed|NOT confirmed/i,
+      "a removal whose recalculation did not run has not taken effect",
+    );
+
+    assert.equal(
+      tables.trust_admin_actions.length, auditBefore,
+      "no audit row claims a removal the engine never applied",
+    );
+  });
+
+  it("REMOVAL: removing an override that is not there REJECTS rather than reporting a removal", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+    await assert.rejects(
+      () => adminRemoveOverride(db, ADMIN, USER_A, "communication", "Undo"),
+      /nothing was removed/,
+      "an empty result is not a completed removal",
+    );
+    assert.equal(auditRows(tables).length, 0);
+  });
+
+  it("REMOVAL: an unreadable trust_caps REJECTS — a failed read is not an empty one", async () => {
+    const tables = makeTables();
+    const db = makeClientWithUnreadableTable(tables, "trust_caps");
+    await assert.rejects(
+      () => adminRemoveOverride(db, ADMIN, USER_A, "communication", "Undo"),
+      /trust_caps read failed/,
+    );
+    assert.equal(auditRows(tables).length, 0);
+  });
+
+  it("REMOVAL: the success path returns what it OBSERVED, and the score comes back", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+    for (let i = 0; i < 5; i++) {
+      await db.from("trust_events").insert({
+        user_id: USER_A, event_type: "PLAN_ATTENDED", category: "plan_attendance",
+        delta: 10, severity: "minor", status: "applied", source_type: "user_action",
+      });
+    }
+    const natural = (await recalculateTrustScore(db, USER_A)).categories.plan_attendance;
+    await adminOverrideScore(db, ADMIN, USER_A, "plan_attendance", 20, "Watchlist");
+    assert.equal(
+      (tables.trust_profiles.find((r: any) => r.user_id === USER_A) as any).plan_attendance, 20,
+      "precondition: the ceiling is in force",
+    );
+
+    const result = await adminRemoveOverride(db, ADMIN, USER_A, "plan_attendance", "Undo");
+
+    assert.equal(result.ok, true);
+    assert.equal(result.liftedCapIds.length, 1, "it names the cap it actually lifted");
+    assert.equal(result.persistedScore, natural,
+      "and the score is READ BACK from trust_profiles, not computed and asserted");
+    const persisted = tables.trust_profiles.find((r: any) => r.user_id === USER_A) as any;
+    assert.equal(Number(persisted.plan_attendance), natural, "the ceiling is gone from the scored row");
+    assert.equal(
+      auditRows(tables, "score_override").filter((a: any) => a.metadata?.action === "remove_override").length, 1,
+      "exactly one removal audit row, written only after all of that",
+    );
+  });
+});
+
+// ── D-REVERSAL (census-trust TRV2-10): what reversal does NOT reach today ─────
+//
+// TRV2-10 is this census's one CANNOT-VERIFY: its correctness is defined by
+// "the DEFINED reversal/retention policy" and no approved document defines one.
+// Three mechanisms exist and they disagree about scope. The cell describing
+// them was prose; this block makes the load-bearing half of it a MEASUREMENT,
+// so the owner's decision has a tested before-state and so a future change to
+// the scope cannot happen without an assertion going red.
+//
+// Nothing here says what SHOULD happen. It says what does.
+describe("D-REVERSAL: revocation reverses moderation consequences and nothing else", () => {
+  it("dismisses moderation-sourced events and leaves an identity_verified award standing", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+
+    // Two events on the same user from two different provenances.
+    //   - a confirmed behaviour report, source_type 'moderation'
+    //   - the +10 identity_verified award, source_type 'identity_verification'
+    //     (routes/verification.ts writes exactly that source_type)
+    await db.from("trust_events").insert({
+      user_id: USER_A, event_type: "behavior_report_confirmed", category: "respect_safety",
+      delta: -20, severity: "severe", status: "applied", source_type: "moderation",
+    });
+    await db.from("trust_events").insert({
+      user_id: USER_A, event_type: "identity_verified", category: "respect_safety",
+      delta: 10, severity: "minor", status: "applied", source_type: "identity_verification",
+    });
+
+    await revokeModerationTrustConsequences(db, ADMIN, USER_A, "Ban lifted on appeal");
+
+    const byType = (t: string) =>
+      tables.trust_events.find((e: any) => e.user_id === USER_A && e.event_type === t);
+
+    assert.equal(
+      (byType("behavior_report_confirmed") as any)?.status, "dismissed",
+      "the moderation finding's trust consequence is reversed — this half is C14 and works",
+    );
+    // THE MEASUREMENT. `revokeModerationTrustConsequences` selects on
+    // source_type = 'moderation', so an award that came from the identity
+    // provider is outside its reach by construction. Revoking a user's
+    // verification therefore clears profiles.verification_level (TV-4c) and
+    // leaves the +10 it earned in the ledger, scoring, indefinitely.
+    //
+    // Whether that is right is D-REVERSAL and is NOT decided here. What is
+    // recorded is that the two halves of "verified" — the displayed level and
+    // the trust award — currently come apart on revocation, and that nothing in
+    // the code expresses an intention either way.
+    assert.equal(
+      (byType("identity_verified") as any)?.status, "applied",
+      "the identity award is untouched by moderation reversal — the D-REVERSAL gap, measured",
+    );
+  });
+
+  it("keys the reversal on the source EVENT, so one reversed finding cannot clear another", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+
+    // Two independent moderation findings, each with its own cap.
+    const e1 = await db.from("trust_events").insert({
+      user_id: USER_B, event_type: "behavior_report_confirmed", category: "respect_safety",
+      delta: -20, severity: "severe", status: "applied", source_type: "moderation",
+    }).select("id").single();
+    await createCap(db, {
+      userId: USER_B, category: "respect_safety", ceilingScore: 40,
+      reasonCode: "behavior_confirmed", sourceEventId: (e1 as any).data.id,
+    });
+    // A cap from an event that is NOT being reversed (a different provenance).
+    await createCap(db, {
+      userId: USER_B, category: "content_quality", ceilingScore: 50,
+      reasonCode: "content_removed", sourceEventId: "some-other-event-id",
+    });
+
+    await revokeModerationTrustConsequences(db, ADMIN, USER_B, "Restored");
+
+    const active = await getActiveCaps(db, USER_B);
+    assert.deepEqual(
+      active.map((c) => c.reasonCode),
+      ["content_removed"],
+      "only the cap whose SOURCE EVENT was reversed is lifted; an unrelated standing finding survives",
+    );
   });
 });

@@ -217,20 +217,61 @@ export function toLiveClaimEnvelope(c: LiveClaim): LiveClaimEnvelope {
 // Which (zone × claim) scopes are promoted for Live. Cached briefly so the
 // per-place read path does not query the table on every call. Fail-closed: an
 // error yields an empty set (nothing serves) and is NOT cached.
-let _promotedScopeCache: { at: number; keys: Set<string> } | null = null;
+//
+// THIS IS A READER ONLY. The table's one writer is lib/intelLiveScopePromotion
+// (migration 2430's service functions); nothing here ever inserts, and an empty
+// allowlist is answered with [] — never self-populated.
+//
+// EXPIRY / WITHDRAWAL (2430). A row is promoted only while `withdrawn_at` is
+// NULL and `expires_at` is NULL or in the future. The ROWS are cached and the
+// active set is derived per call at `now`, so a scope that lapses mid-cache
+// stops serving at its horizon, not up to 30 s later. A row from a schema
+// predating 2430 has neither column: it reads as unconditionally promoted,
+// which is exactly 2179's behaviour (see PROMOTED_SCOPE_COLUMNS_PRE_2430).
+let _promotedScopeCache: { at: number; rows: PromotedScopeRow[] } | null = null;
 const PROMOTED_SCOPE_TTL_MS = 30_000;
+
+interface PromotedScopeRow { scope_key: string; expires_at?: string | null; withdrawn_at?: string | null }
+
+/** The allowlist projection (2430 columns included — the read path must see them). */
+export const PROMOTED_SCOPE_COLUMNS = "scope_key, expires_at, withdrawn_at";
+/** The same projection for a schema predating migration 2430. */
+export const PROMOTED_SCOPE_COLUMNS_PRE_2430 = "scope_key";
+
+/** True iff the row promotes its scope at `nowMs`: not withdrawn, not past its horizon. */
+export function isPromotedScopeActive(row: PromotedScopeRow, nowMs: number): boolean {
+  if (row.withdrawn_at != null) return false;
+  if (row.expires_at != null) {
+    const t = Date.parse(String(row.expires_at));
+    // An unparseable horizon is not a valid promotion — fail closed.
+    if (!Number.isFinite(t) || t <= nowMs) return false;
+  }
+  return true;
+}
 
 async function loadPromotedScopes(sc: any, now: Date): Promise<Set<string>> {
   const t = now.getTime();
+  const activeKeys = (rows: PromotedScopeRow[]) =>
+    new Set(rows.filter((r) => isPromotedScopeActive(r, t)).map((r) => String(r.scope_key)));
   if (_promotedScopeCache && t - _promotedScopeCache.at < PROMOTED_SCOPE_TTL_MS) {
-    return _promotedScopeCache.keys;
+    return activeKeys(_promotedScopeCache.rows);
   }
   try {
-    const { data, error } = await sc.from("intel_live_promoted_scopes").select("scope_key");
+    let { data, error } = await sc.from("intel_live_promoted_scopes").select(PROMOTED_SCOPE_COLUMNS);
+    if (error && isUndefinedColumnError(error)) {
+      // 2430 not applied here: no row can carry a horizon or a withdrawal, so
+      // the pre-2430 projection is the honest read and the behaviour is 2179's.
+      logger.warn({ err: error }, "liveClaimRead: promoted-scope expiry columns not present; reading without them");
+      ({ data, error } = await sc.from("intel_live_promoted_scopes").select(PROMOTED_SCOPE_COLUMNS_PRE_2430));
+    }
     if (error || !data) return new Set(); // fail-closed; do not cache an error
-    const keys = new Set(((data as any[]) ?? []).map((r) => String(r.scope_key)));
-    _promotedScopeCache = { at: t, keys };
-    return keys;
+    const rows = ((data as any[]) ?? []).map((r) => ({
+      scope_key: String(r.scope_key),
+      expires_at: r.expires_at ?? null,
+      withdrawn_at: r.withdrawn_at ?? null,
+    }));
+    _promotedScopeCache = { at: t, rows };
+    return activeKeys(rows);
   } catch {
     return new Set();
   }
@@ -291,7 +332,8 @@ function isUndefinedColumnError(err: unknown): boolean {
   const code = typeof e.code === "string" ? e.code : "";
   if (code === "42703" || code === "PGRST204") return true;
   const msg = typeof e.message === "string" ? e.message.toLowerCase() : "";
-  return msg.includes("source_class") && (msg.includes("does not exist") || msg.includes("could not find"));
+  const namesColumn = msg.includes("source_class") || msg.includes("expires_at") || msg.includes("withdrawn_at");
+  return namesColumn && (msg.includes("does not exist") || msg.includes("could not find"));
 }
 
 export async function readLiveClaims(

@@ -579,3 +579,222 @@ describe("CI architecture — an unexecuted certification is not a pass", () => 
     }
   });
 });
+
+/**
+ * THE THREE NAMED VERDICTS — one guard, applied uniformly.
+ *
+ * WHY THIS BLOCK EXISTS
+ * ---------------------
+ * `live-db-verdict` was guarded above from the day it was written. `ci-verdict`
+ * and `unwired-verdict` were not: before this block, their names appeared
+ * NOWHERE in the repository outside the YAML that defines them. Deleting
+ * `ci-verdict` from `ci.yml`, or quietly dropping `api-server-tests` from its
+ * `needs:` list, broke nothing that anything could notice.
+ *
+ * That is the same failure one level up from the one the verdict jobs exist to
+ * catch. A verdict job's whole claim is *"every job in this workflow ran and
+ * succeeded"*. The claim is only true while its `needs:` list is COMPLETE — and
+ * `needs:` is a list a human maintains by hand, in a different part of the file
+ * from the job it must track. Add a job to a workflow, forget the verdict, and
+ * the verdict goes green while reporting on a strictly smaller workflow than the
+ * one that ran. Nothing is red. Nothing is skipped. The check simply stopped
+ * covering the thing it is named for.
+ *
+ * So the job list is DERIVED from each workflow rather than restated here. A
+ * hardcoded list is a second copy that rots in the same silence.
+ *
+ * PROSE IS NOT EVIDENCE
+ * ---------------------
+ * These assertions deliberately do NOT grep for a job name anywhere in the
+ * verdict body. `ci-verdict`'s own `::error::` string contains the word
+ * "preflight", so a naive containment check is satisfied by an error message
+ * about a job the verdict no longer inspects — exactly the trap that let the
+ * NOT_EXECUTED collapse survive a mutation further up this file. Each job must
+ * appear in two STRUCTURAL positions instead: bound to a real
+ * `needs.<job>.result` expression, and inspected as a `"<job>:$…"` / `"<job>=…"`
+ * operand.
+ *
+ * WHAT THIS DOES NOT COVER
+ * ------------------------
+ *   * It cannot observe branch protection FROM HERE. The tests are offline, so
+ *     no assertion below can tell a verdict that gates `main` from one that gates
+ *     nothing. What this block CAN do — and now does — is pin the string that
+ *     setting is expressed in; see the `name:` assertion below.
+ *
+ *     The setting itself is NOT unreadable, which is worth recording because the
+ *     opposite was assumed. `GET /repos/portava/portava.app/rules/branches/main`
+ *     and `GET /repos/portava/portava.app/rulesets` are both readable by a
+ *     read-only token, and on 2026-09-15 they returned, respectively, `[]` and a
+ *     single ruleset — id 20680634, "bughunt-20260805 protection", enforcement
+ *     `active`, `conditions.ref_name.include = ["refs/heads/bughunt-20260805"]`.
+ *     That ruleset requires exactly these three contexts, and it applies to a
+ *     one-off August branch rather than to `main`. `GET .../branches/main`
+ *     reported `protected: false` with classic protection `enabled: false`, and
+ *     the same token read `protected: true` for `bughunt-20260805`, so the
+ *     `false` is a real read and not a permissions mask.
+ *
+ *     So as of that date the three verdicts gate NOTHING on `main`: the jobs are
+ *     correct, complete and wired, and the required-check setting that would make
+ *     them load-bearing points at the wrong ref. Moving it is a GitHub settings
+ *     change, not a code change, and nothing in this tree can make it.
+ *   * It does not re-prove the classifier behaviour for `live-db-verdict`; that
+ *     is executed as a real process above.
+ *   * It does not execute `ci-verdict`'s or `unwired-verdict`'s inline bash.
+ *     Those bodies are inline YAML and therefore untested by construction — the
+ *     same objection recorded against the live-DB classifier before it was
+ *     extracted to `.github/scripts/live-db-verdict.sh`. This block asserts the
+ *     wiring is complete and that the body cannot exit 0 on a non-success; it
+ *     does not prove the loop's arithmetic.
+ *   * It says nothing about whether the jobs a verdict names are the RIGHT jobs
+ *     to run. Completeness against the workflow is not adequacy of the workflow.
+ */
+describe("CI architecture — each workflow's verdict covers every job in it", () => {
+  /** Top-level job ids of a workflow, in file order. */
+  function jobIds(src: string): string[] {
+    const start = src.indexOf("\njobs:\n");
+    assert.ok(start >= 0, "no top-level `jobs:` block found");
+    const body = src.slice(start + "\njobs:\n".length);
+    return [...body.matchAll(/^ {2}([A-Za-z0-9_-]+):$/gm)].map((m) => m[1]!);
+  }
+
+  /** One job's block, from its id line to the next top-level job id. */
+  function jobBlock(src: string, id: string): string {
+    const i = src.indexOf(`\n  ${id}:\n`);
+    if (i < 0) return "";
+    const rest = src.slice(i + 1);
+    const end = rest.slice(1).search(/\n {2}[A-Za-z0-9_-]+:\n/);
+    return end === -1 ? rest : rest.slice(0, end + 1);
+  }
+
+  /** The job ids listed under the block's `needs:`. */
+  function needsOf(block: string): string[] {
+    const m = block.match(/needs:\n((?:\s+- .*\n)+)/);
+    return m ? [...m[1]!.matchAll(/- ([A-Za-z0-9_-]+)/g)].map((x) => x[1]!) : [];
+  }
+
+  const rx = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+  /**
+   * `context` is the CHECK RUN NAME, which is the job's `name:` value — NOT its
+   * job id. A required status check is matched by that string and by nothing
+   * else, so it is the load-bearing identifier of the three, and these literals
+   * are the exact contexts ruleset 20680634 names (verified byte-for-byte against
+   * the REST response on 2026-09-15; the separator is U+00B7 MIDDLE DOT).
+   */
+  const VERDICTS = [
+    {
+      file: "ci.yml", src: ci, id: "ci-verdict",
+      context: "CI \u00b7 verdict (skipped or cancelled is not a pass)",
+    },
+    {
+      file: "live-db.yml", src: liveDb, id: "live-db-verdict",
+      context: "live DB \u00b7 verdict (cancelled or skipped is not a pass)",
+    },
+    {
+      file: "unwired-checks.yml", src: unwired, id: "unwired-verdict",
+      context: "unwired \u00b7 verdict (skipped or cancelled is not a pass)",
+    },
+  ] as const;
+
+  for (const { file, src, id, context } of VERDICTS) {
+    describe(`${file} · ${id}`, () => {
+      const block = jobBlock(src, id);
+      const steps = block.slice(block.indexOf("steps:"));
+      const needs = needsOf(block);
+
+      it("exists under exactly that name", () => {
+        assert.ok(
+          block.length > 0,
+          `${file} has no '${id}' job. This is one of the three verdicts the ` +
+            "CI phase is defined by; without it, a failed `preflight` SKIPS the " +
+            "jobs that need it, and GitHub scores a skipped required status " +
+            "check as SUCCESSFUL. Renaming it also silently unbinds it from " +
+            "branch protection, which matches required checks by name.",
+        );
+      });
+
+      it("publishes under the exact check-run name a required check is matched by", () => {
+        // THE GAP THIS CLOSES, found by mutation on 2026-09-15. Every other
+        // assertion in this block keys off the JOB ID. Branch protection does
+        // not: it matches a required status check against the CHECK RUN NAME,
+        // which GitHub takes from the job's `name:`. The two are unrelated
+        // strings here — job id `ci-verdict` publishes as
+        // "CI · verdict (skipped or cancelled is not a pass)".
+        //
+        // So rewriting `name:` while leaving the job id alone silently unbinds
+        // the job from every ruleset that requires it, and a mutation doing
+        // exactly that passed all 36 assertions. The check simply disappears
+        // from the branch's required set — and a required check that no longer
+        // reports is not red, it is ABSENT, which is the same
+        // "nothing ran, nothing is red" failure the verdict jobs exist to catch,
+        // one level up.
+        //
+        // This is pinned to a literal rather than derived, because the whole
+        // point is that the string is shared with a setting stored OUTSIDE the
+        // repository. A derived assertion would follow the rename and prove
+        // nothing. Changing `name:` must therefore be a deliberate two-place
+        // edit: this literal, and the required-checks setting.
+        assert.match(
+          block, new RegExp(`^ {4}name: ${rx(context)}$`, "m"),
+          `${id}'s \`name:\` is not exactly ${JSON.stringify(context)}. That string — not ` +
+            `the job id '${id}' — is the context a required status check is matched by, so ` +
+            "changing it unbinds the job from branch protection without turning anything " +
+            "red. If the rename is intended, update the required-checks setting in the same " +
+            "change and then update this literal.",
+        );
+      });
+
+      it("runs even when an upstream job failed, was skipped or was cancelled", () => {
+        assert.match(
+          block, /if:\s*\$\{\{\s*always\(\)\s*\}\}/,
+          `${id} is not \`if: always()\`. A verdict that is itself skipped when ` +
+            "an upstream job dies is the one check that can never report the " +
+            "outage it exists to report.",
+        );
+      });
+
+      it("needs every other job the workflow defines", () => {
+        const all = jobIds(src);
+        assert.ok(all.includes(id), `${id} is not a top-level job of ${file}`);
+        const uncovered = all.filter((j) => j !== id && !needs.includes(j));
+        assert.deepEqual(
+          uncovered, [],
+          `${id} does not list ${JSON.stringify(uncovered)} in \`needs:\`. A job ` +
+            "the verdict does not need is a job it cannot see, and a job it " +
+            "cannot see is one it will report success without. Every job added " +
+            "to this workflow must be added to the verdict in the same commit.",
+        );
+      });
+
+      it("binds and inspects a real result for every job it needs", () => {
+        assert.ok(needs.length > 0, `${id} declares no \`needs:\` at all`);
+        for (const job of needs) {
+          assert.match(
+            steps,
+            new RegExp(`needs(?:\\.${rx(job)}|\\[.${rx(job)}.\\])\\.result`),
+            `${id} needs '${job}' but never reads \`needs.${job}.result\`. ` +
+              "Waiting for a job is not checking it: the verdict would block on " +
+              `'${job}' and then pass regardless of how it ended.`,
+          );
+          assert.match(
+            steps, new RegExp(`"${rx(job)}[:=]`),
+            `${id} binds '${job}' but never passes it to the comparison. Note ` +
+              "this asserts an OPERAND, not a mention — the job name appears in " +
+              "this verdict's own error prose, so a containment check would be " +
+              "satisfied by a job that is merely talked about.",
+          );
+        }
+      });
+
+      it("cannot conclude successfully when a needed job did not succeed", () => {
+        const delegates = /live-db-verdict\.sh/.test(steps);
+        assert.ok(
+          delegates || (/!=\s*"success"/.test(steps) && /exit 1/.test(steps)),
+          `${id} neither delegates to the unit-tested classifier nor compares ` +
+            "against 'success' and exits non-zero. Some upstream state must be " +
+            "able to turn this job red, or it is a green light wired to nothing.",
+        );
+      });
+    });
+  }
+});

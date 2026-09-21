@@ -24,6 +24,8 @@ import express, { type Express } from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _clearPromotedScopeCache, resolvePlaceIntelState } from "../lib/liveClaimRead.js";
 import { PRIVACY_THRESHOLD_V1 } from "../lib/intelContracts.js";
+import { truthOfEnvelope, truthOfEnvelopes } from "../lib/liveEnvelopeTruth.js";
+import { TRUTH_CLASSES } from "../lib/truthClass.js";
 
 const USER_ID = "11111111-1111-4111-8111-111111111111";
 const PLACE_ID = "22222222-2222-4222-8222-222222222222";
@@ -438,6 +440,133 @@ describe("§19 live-state — privacy floor of the served body", () => {
     const serialized = JSON.stringify(body);
     for (const forbidden of ["distinct_actors", "actor_id", "\"lat\"", "\"lng\"", "sourceCount\":", USER_ID]) {
       assert.ok(!serialized.includes(forbidden), `body must not carry ${forbidden}`);
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sensing §5.1 / census S49 — the truth block on the spec-literal read model.
+//
+// S49: "Every server-built state consumed by Map / Discovery / Wall / Compass
+// carries truth class, confidence, freshness AND coverage." census-sensing §8
+// recorded ONE remaining gap (DiscoveryCandidate's missing coverage) and did not
+// examine the §19 read models. This endpoint IS the spec-literal "what is true
+// at this experience right now?" surface and served none of the four in the
+// §5.1 vocabulary: `band` and `sourceCountBucket` are the intel vocabulary, not
+// the truth vocabulary, and there was no truth class at all.
+//
+// THE PROPERTY UNDER TEST IS AGREEMENT, NOT PRESENCE. A second derivation that
+// happened to produce plausible values would be exactly the "four unrelated
+// vocabularies" defect S48 was opened for, so every assertion below compares the
+// served block against lib/liveEnvelopeTruth — the ONE derivation seven other
+// production modules already use (compassDecision, crowdState, safetyCandidate,
+// liveReference, wallMoments, contextKernelRead, telegraphLiveReferences) —
+// evaluated at the response's
+// own `generated_at`. Presence alone would pass against a hand-rolled copy;
+// equality cannot.
+//
+// PUBLISHES NOTHING NEW (the §24 objection §8 raised for Discovery, answered
+// here): `coverage` is coverageFromBucket(sourceCountBucket), and
+// sourceCountBucket is ALREADY in every served claim. The bucket is restated in
+// the truth vocabulary, not disclosed for the first time — which is why the
+// protected-zone argument that blocks copying coverage onto DiscoveryCandidate
+// does not apply to this surface.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("§19 live-state — §5.1 truth block (census S49)", () => {
+  before(async () => { app = await makeApp(); });
+  after(() => { _setTestClient(null, false); });
+
+  it("every served claim carries the four §5.1 fields, value-for-value from lib/liveEnvelopeTruth", async () => {
+    const opts: FixtureOpts = { snapshots: [liveSnapshot] };
+    const reader = await resolvePlaceIntelState(makeClient(opts), PLACE_ID, { now: new Date() });
+    assert.equal(reader.state, "live");
+    assert.equal(reader.claims.length, 1, "premise: the fixture serves exactly one claim");
+
+    _setTestClient(makeClient(opts), true);
+    const { status, body } = await req(app, PATH);
+    assert.equal(status, 200);
+
+    const nowMs = Date.parse(body.generated_at);
+    assert.ok(!Number.isNaN(nowMs), "premise: generated_at is the instant the block was derived at");
+
+    for (const served of body.claims) {
+      const source = reader.claims.find((c) => c.claimType === served.claimType);
+      assert.ok(source, `the route served a claim the reader did not: ${served.claimType}`);
+      assert.deepEqual(
+        served.truth,
+        truthOfEnvelope(source, nowMs),
+        "the served truth block must BE lib/liveEnvelopeTruth's, not a second derivation of it",
+      );
+      // The four §5.1 axes, named, so a block that drops one is a red test and
+      // not a silently narrower object.
+      for (const axis of ["truthClass", "confidence", "freshness", "coverage"]) {
+        assert.ok(axis in served.truth, `the §5.1 block is missing ${axis}`);
+      }
+      assert.ok(
+        TRUTH_CLASSES.includes(served.truth.truthClass),
+        `${served.truth.truthClass} is not one of the spec's seven truth classes`,
+      );
+    }
+  });
+
+  it("the served class is the SPEC's vocabulary — seven values, CORROBORATED among them", () => {
+    // Checked against the spec's list (Sensing §5.1, the .txt at line 107), not
+    // against a list this endpoint declares about itself.
+    assert.deepEqual(
+      [...TRUTH_CLASSES],
+      ["observed", "corroborated", "inferred", "predicted", "conflicting", "stale", "unknown"],
+      "the truth vocabulary drifted from the spec's seven",
+    );
+  });
+
+  it("a many-source firsthand cohort reads CORROBORATED and carries the cohort as coverage", async () => {
+    _setTestClient(makeClient({ snapshots: [liveSnapshot] }), true);
+    const { body } = await req(app, PATH);
+    assert.equal(body.claims[0].truth.truthClass, "corroborated");
+    // The same bucket the envelope already served, restated in the truth
+    // vocabulary — never a new disclosure.
+    assert.equal(body.claims[0].truth.coverage, body.claims[0].sourceCountBucket);
+  });
+
+  it("the response carries the composite truth, weakest on every axis", async () => {
+    const second = {
+      ...liveSnapshot,
+      id: "7e7e7e7e-7777-4777-8777-777777777777",
+      claim_type: "queue.wait",
+      value: { minutes_bucket: "5_15" },
+      source_count: 1,            // ⇒ bucket 'few' ⇒ coverage 'few', class 'observed'
+    };
+    const opts: FixtureOpts = { snapshots: [liveSnapshot, second], promoted: ["|crowd.level", "|queue.wait"] };
+    const reader = await resolvePlaceIntelState(makeClient(opts), PLACE_ID, { now: new Date() });
+    assert.equal(reader.claims.length, 2, "premise: both claims are served");
+
+    _setTestClient(makeClient(opts), true);
+    const { body } = await req(app, PATH);
+    const nowMs = Date.parse(body.generated_at);
+    assert.deepEqual(body.truth, truthOfEnvelopes(reader.claims, nowMs));
+    // The weak member decides: 'few' coverage and 'observed' cannot be lifted by
+    // the corroborated one sitting next to it.
+    assert.equal(body.truth.coverage, "few");
+    assert.equal(body.truth.truthClass, "observed");
+  });
+
+  it("no coverage is not quiet — an 'unknown' answer says unknown on every axis", async () => {
+    _setTestClient(makeClient({ snapshots: [] }), true);
+    const { body } = await req(app, PATH);
+    assert.equal(body.state, "unknown");
+    assert.deepEqual(body.claims, []);
+    assert.equal(body.truth.truthClass, "unknown");
+    assert.equal(body.truth.coverage, "unknown");
+  });
+
+  it("the truth block adds no contributor id, coordinate or exact cohort", async () => {
+    _setTestClient(makeClient({
+      snapshots: [{ ...liveSnapshot, distinct_actors: 31, actor_id: USER_ID, lat: 16.05, lng: 108.2 }],
+    }), true);
+    const { body } = await req(app, PATH);
+    const serialized = JSON.stringify(body.claims.map((c: any) => c.truth)) + JSON.stringify(body.truth);
+    for (const forbidden of ["distinct_actors", "actor_id", "\"lat\"", "\"lng\"", "sourceCount\":", USER_ID, "31"]) {
+      assert.ok(!serialized.includes(forbidden), `the truth block must not carry ${forbidden}`);
     }
   });
 });

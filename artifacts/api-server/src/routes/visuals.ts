@@ -11,6 +11,7 @@ import { asyncHandler } from "../lib/asyncHandler.js";
 import { sendError } from "../lib/http.js";
 import { requireUser } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
+import { isAdmin } from "../lib/requireAdmin.js";
 import { coerceStyle } from "../lib/visuals/styles.js";
 import {
   requestGeneration,
@@ -56,9 +57,13 @@ async function canEditEntity(
   entityId: string,
   userId: string,
 ): Promise<boolean> {
-  // Admins can always manage visuals.
-  const { data: prof } = await sc.from("profiles").select("role").eq("id", userId).maybeSingle();
-  if (prof?.role === "admin") return true;
+  // Admins can always manage visuals. The role question goes through the shared
+  // predicate (lib/requireAdmin) rather than a local read: `isAdmin` sends
+  // nothing, so this function keeps returning a plain boolean and its callers
+  // keep owning their own 403. Fails closed on a query error, as before —
+  // supabase-js resolves `{ data: null, error }`, so the previous `prof?.role`
+  // read produced `undefined` and fell through to the ownership checks too.
+  if (await isAdmin(sc, userId)) return true;
 
   if (entityType === "event") {
     const { data } = await sc.from("events").select("host_id").eq("id", entityId).maybeSingle();

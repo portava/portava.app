@@ -6,7 +6,7 @@
  * Three independent country-name → ISO maps live in this repo:
  *   lib/stamps/countryLookup.ts  ~120 countries + stamp aliases ("uk" → "GB")
  *   lib/countryCodes.ts          the full ISO-3166-1 list
- *   lib/tripBudgetIntel.ts       an inline map for budget intel
+ *   domain/trips/services/tripBudgetIntel.ts       an inline map for budget intel
  *
  * `countryCodeFromName` reads the first. Anything only in the full list —
  * Senegal, for one — resolved to null and the caller fell back to "XX", which

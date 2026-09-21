@@ -22,8 +22,9 @@ import { registerField, isFieldRegistered } from '../contexts/fieldRegistry.ts';
 
 /**
  * Canonical fieldIds for the social-identity surfaces. `telegraph.recipient`
- * matches the id used in the client audit's §50 field table for the (previously
- * missing) new-conversation recipient picker.
+ * matches the id used in the §50 field table for the (previously missing)
+ * new-conversation recipient picker — `contexts/fieldInventory.ts`, which exists as
+ * of Phase 9; this comment cited it for months while it did not.
  */
 export const SOCIAL_FIELD_IDS = {
   telegraphRecipient: 'telegraph.recipient',

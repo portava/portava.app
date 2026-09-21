@@ -12,8 +12,10 @@
  * POST   /api/airport/sessions/:id/plan              — create a layover plan (stub)
  * POST   /api/airport/sessions/:id/return-deadline   — set return deadline reminder
  * POST   /api/airport/sessions/:id/telegraph         — send Telegraph layover suggestion
+ * GET    /api/airport/sessions/:id/observations      — §10 reconciled traveller reports for this airport
+ * POST   /api/airport/sessions/:id/observations      — §10 report a queue / checkpoint / closure
  * GET    /api/airport/pulse                          — Airport Pulse feed
- * DELETE /api/airport/sessions/:id                   — end/cancel session
+ * DELETE /api/airport/sessions/:id                   — end session (body/query outcome: completed|cancelled, default cancelled)
  *
  * Admin routes under /api/admin/airport:
  *   POST /api/admin/airport/profiles                 — upsert airport profile
@@ -23,9 +25,17 @@
  * Privacy: exact GPS NEVER in responses. All location info is city-level only.
  */
 import { Router } from "express";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { requireUser, sendError, isAcceptedTripMember, canEditPlan } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
+import {
+  tripKernelClient,
+  readCommandEnvelope,
+  executeTripCommand,
+  sendKernelRejection,
+  setTripVersionHeader,
+} from "../domain/trips/commands/tripKernel.js";
 // Capability gates are read through the SHARED fail-closed helper. This file
 // used to define its own `isFlagEnabled` under the same name that failed OPEN
 // (`if (error) return true; if (data == null) return true;`) as a dev-env
@@ -37,35 +47,105 @@ import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { logger } from "../lib/logger.js";
 import { resolveMediaForPosts } from "../lib/postMediaResolve.js";
+import { postPlainThreadMessage } from "../lib/threadMessage.js";
 import { isPostPublished } from "../lib/postVisibility.js";
 import { nameVisibilitySet, presentedName } from "../lib/publicIdentity.js";
+import {
+  planFitTotals,
+  planFitVerdict,
+} from "../services/airport/LayoverPlanFit.js";
 import {
   resolveByIata,
   resolveByGps,
   resolveByCity,
   searchAirports,
-  buildFallbackProfile,
+  lookupByIata,
+  lookupByGps,
+  lookupByCity,
+  lookupAirports,
   upsertAirportProfile,
+  type AirportProfile,
 } from "../services/airport/AirportProfileService.js";
 import {
-  createSession,
+  createSessionWrite,
   updateSession,
-  endSession,
+  endSessionWrite,
   getSession,
   getActiveSession,
   listSessions,
   setShareStatus,
   setReturnReminder,
   expireOldSessions,
+  expirySweepDisclosure,
   emitLayoverEvent,
+  // §14 crew: the first reader that needs OTHER travellers' sessions, because
+  // `shared_return_by` is a minimum over the whole crew. Not an authorization
+  // decision — see that function's own comment.
+  readSessionsByIds,
+  LAYOVER_LIVE_SESSION_STATUSES,
   type LayoverSession,
+  LAYOVER_RETURNING_READERS_WIDENED,
 } from "../services/airport/LayoverSessionService.js";
+// §14 / §14.1 Layover Crew. The constraint solver is pure and already existed
+// (census L28/L29/L131/L185/L186/L188 were never about the arithmetic); these
+// two imports are the storage and the routes that finally give it members.
 import {
-  assess,
-  safetyLabel,
-  computeWindow,
-  adviseLeaving,
-} from "../services/airport/LayoverSafetyEngine.js";
+  certifyCrewPlan,
+  unsplitPlan,
+  type CrewMember,
+} from "../services/airport/LayoverCrewService.js";
+import {
+  CREW_TTL_MINUTES,
+  activeCrewForUser,
+  crewMembers,
+  createCrew,
+  joinCrew,
+  leaveCrew,
+  openCrewsInCity,
+} from "../services/layover/LayoverCrewStore.js";
+import { safetyLabel, type TravelTimeSource } from "../services/airport/LayoverSafetyEngine.js";
+// §10 the traveller observation channel (census L82). The DECISION rules live
+// in services/airport/LayoverAirportTruth.ts and are pure; this import is the
+// persistence half — the handle derivation, the corpus read and the screened
+// write — which is what that module deliberately does not own.
+import {
+  OBSERVATION_RATE_LIMIT,
+  TRAVELLER_SUBMITTABLE_FACT_TYPES,
+  isTravellerSubmittableFactType,
+  reconcileAirportFact,
+  submitTravellerObservation,
+} from "../services/layover/LayoverObservationService.js";
+import type { ReconciliationOutcome } from "../services/airport/LayoverAirportTruth.js";
+// §8's outer envelope edge. Published beside the window because it is the one
+// piece of envelope GEOMETRY this tree can certify, and because it is what
+// `generateRecommendations` blocks landside cards on — a traveller who loses a
+// card to it should be able to read the bound that removed it.
+import { safeEnvelope } from "../services/airport/LayoverEnvelope.js";
+// §24 L265 / §11.1 L99 — whether the reminder a traveller already asked for is
+// still pointing at the deadline it was scheduled against. Decided in the §15
+// ladder's own module, never here: "how loud" and "is this still worth saying"
+// are one decision at a rung.
+import { reminderDisposition } from "../services/airport/LayoverReturnEscalation.js";
+import { airportPoint } from "../services/airport/LayoverTravelTime.js";
+// The session→airport lookup itself, published by the Layover contract. This
+// router had its own copy of the rule until it was collapsed into that one;
+// see `resolveAirportForSession` below.
+import { resolveSessionAirport } from "../services/airport/LayoverSnapshot.js";
+// Every feasibility number this file publishes comes from ONE call to
+// `certifySessionFeasibility` per request. `assess`, `computeWindow` and
+// `adviseLeaving` are deliberately NOT imported here any more: four handlers
+// each assembling their own combination of the three is how the census's
+// headline defect 2 happened (a buffer from one anchor published beside a
+// deadline from another). See services/airport/LayoverFeasibility.ts.
+import {
+  certifySessionFeasibility,
+  certificationHeader,
+  airportIntelligence,
+  type LayoverFeasibilityRecord,
+  // `LandsideProbe` is deliberately NOT imported any more: census L293c deleted
+  // the only probe this file built, and an import kept "for later" is how a
+  // fabricated literal finds its way back into a handler.
+} from "../services/airport/LayoverFeasibility.js";
 import {
   wallTimeToUtc,
   formatLocalTime,
@@ -76,13 +156,59 @@ import { resolveCanonicalLocation } from "../lib/canonicalLocations.js";
 import {
   generateRecommendations,
   getRecommendations,
+  USER_HIDDEN_RECOMMENDATION_STATUS,
 } from "../services/airport/LayoverRecommendationService.js";
 import { answerLayoverQuestion } from "../services/airport/LayoverCompassService.js";
+// §11's pipeline had no caller outside its own test. This is the caller: a
+// traveller's own flight-time edit, normalised into a canonical event and run
+// through steps 1-8. See services/airport/LayoverReplanService.ts.
+import {
+  replanForWindowChange,
+  recordReplanDecision,
+  candidatesFromStops,
+} from "../services/airport/LayoverReplanService.js";
+import { notifyLayoverOpportunity } from "../services/airport/LayoverOpportunityNotifier.js";
+import {
+  evaluateSharingGate,
+  publishableUserIds,
+  disclosePresence,
+} from "../services/airport/LayoverPrivacyGuard.js";
+// abortToAirport ships now that 2741 is APPLIED TO PRODUCTION (20260908133347),
+// which is what makes its 'safe_return_aborted' ledger insert legal.
+import {
+  safeReturnPosture,
+  abortToAirport,
+  nextDisruptionState,
+  recomputeForDisruption,
+  type DisruptionEvent,
+  type DisruptionState,
+} from "../services/airport/LayoverSafeReturnService.js";
+// §15.2's state machine had no memory. `handleEvent` reads the prior state from
+// `ctx.disruptionStates` (LayoverEventReplanner.ts:884) and nothing has ever
+// populated it, so every request restarted at CONNECTION and the first window
+// edit after a cancellation published `disruptionState: "DELAYED"` — the API
+// telling a traveller whose flight is cancelled that it is merely late. The
+// decision ledger is the memory; these four are the read, the write, the
+// window-edit correction and the honest recovery posture.
+import {
+  readDisruptionState,
+  recordDisruptionState,
+  disruptionAfterWindowEdit,
+  recoveryPosture,
+} from "../services/airport/layoverSafeReturnDisruption.js";
+import {
+  layoverBuddyDecision,
+  filterLayoverCompatible,
+  applyBuddyTrustRequirement,
+  isLayoverCompatibleBuddy,
+} from "../services/airport/LayoverBuddyGate.js";
+import { buildOfflineBundle } from "../services/airport/LayoverDegradedService.js";
 import {
   shouldSuggestSafeReturn,
   suggestSafeReturn,
 } from "../services/airport/LayoverNotificationService.js";
 import { createStamp } from "../services/passport/PassportStampService.js";
+import { declaredOccurrenceHasHappened } from "../services/memory/occurrenceGate.js";
 import { detectIntent } from "../services/telegraphIntent.js";
 
 import { requireAdmin } from "../lib/requireAdmin.js";
@@ -91,47 +217,47 @@ const router = Router();
 
 // ── Airport profile resolution helper ────────────────────────────────────────
 /**
+ * "Which airport is this?" has three answers, not two: the profile row, the
+ * manual-field fallback when there is no row, and "the table could not be
+ * read". Only the first two are an airport.
+ */
+type AirportResolution =
+  | { ok: true; airport: AirportProfile }
+  | { ok: false; message: string };
+
+/**
  * Resolves airport profile from session.airportId (real DB row with admin-
  * configured buffers), falling back to a defaults profile built from manual
  * fields. Used by safety, compass, return-deadline, and plan endpoints.
+ *
+ * ONE IMPLEMENTATION, AND IT IS NOT THIS ONE. The forty lines that used to sit
+ * here — bind the `error`, refuse on it, map the row through
+ * `airportRowToProfile`, fall back to the manual fields — were a second copy of
+ * `services/airport/LayoverSnapshot.ts`'s `resolveSessionAirport`, identical
+ * branch for branch and differing only in one log string. A duplicated lookup
+ * that decides a hard-return deadline drifts, and the drift is invisible until
+ * a traveller is handed the wrong "head back at" time; so the published
+ * contract owns the rule and this router is one of its callers. The three
+ * answers, the fail-closed posture on an unreadable table, and the `data ==
+ * null` fallback are unchanged — `services/airport/__tests__/
+ * layoverAirportResolutionParity.test.ts` pins all three against both doors.
  */
-async function resolveAirportForSession(sc: any, session: any) {
-  if (session.airportId) {
-    try {
-      const { data } = await sc
-        .from("airport_profiles")
-        .select("*")
-        .eq("id", session.airportId)
-        .maybeSingle();
-      if (data) {
-        return {
-          id: (data as any).id,
-          iataCode: (data as any).iata_code,
-          name: (data as any).name,
-          city: (data as any).city,
-          country: (data as any).country,
-          countryCode: (data as any).country_code,
-          timezone: (data as any).timezone ?? "UTC",
-          lat: Number((data as any).lat),
-          lng: Number((data as any).lng),
-          domesticBufferMin: (data as any).domestic_buffer_min ?? 60,
-          domesticBufferMax: (data as any).domestic_buffer_max ?? 90,
-          internationalBufferMin: (data as any).international_buffer_min ?? 120,
-          internationalBufferMax: (data as any).international_buffer_max ?? 180,
-          immigrationExtraMin: (data as any).immigration_extra_min ?? 30,
-          checkedBagsExtraMin: (data as any).checked_bags_extra_min ?? 15,
-          trafficExtraMin: (data as any).traffic_extra_min ?? 20,
-          verified: Boolean((data as any).verified),
-        };
-      }
-    } catch { /* fall through to fallback */ }
+async function resolveAirportForSession(sc: any, session: any): Promise<AirportResolution> {
+  return resolveSessionAirport(sc, session);
+}
+
+/**
+ * `resolveAirportForSession` or 503. Every deadline-bearing surface goes
+ * through this: a return time computed from default buffers, served without a
+ * word, is the one failure mode this route family cannot have.
+ */
+async function airportOr503(sc: any, res: any, session: any): Promise<AirportProfile | null> {
+  const r = await resolveAirportForSession(sc, session);
+  if (!r.ok) {
+    sendError(res, "degraded_unavailable", "Your airport's timings could not be loaded. Please try again.");
+    return null;
   }
-  return buildFallbackProfile({
-    iataCode: session.manualIata    ?? "UNK",
-    city:     session.manualCity    ?? "Unknown",
-    country:  session.manualCountry ?? "Unknown",
-    name:     session.manualAirportName ?? "Unknown Airport",
-  });
+  return r.airport;
 }
 
 // ── Trip timeline mirror ──────────────────────────────────────────────────────
@@ -169,7 +295,14 @@ async function mirrorSessionToTrip(
       location_name: airport?.name ?? session.manualAirportName ?? null,
       updated_at:    new Date().toISOString(),
     };
-    const { data: existing } = await sc
+    // This read chooses UPDATE_PLAN vs ADD_PLAN below. supabase-js RESOLVES on
+    // a DB error, so an unbound `error` turned an unreadable trip_plan_items
+    // into "no mirror row exists" and took the ADD branch — inserting a SECOND
+    // "Layover in <city>" row into the trip timeline every time the session was
+    // written while the table was unreadable (the mirror has no idempotency key
+    // of its own). Skipping the mirror is the recoverable side: the next
+    // session write re-runs it.
+    const { data: existing, error: existingErr } = await sc
       .from("trip_plan_items")
       .select("id")
       .eq("trip_id", session.tripId)
@@ -177,12 +310,70 @@ async function mirrorSessionToTrip(
       .eq("source_id", session.id)
       .is("removed_at", null)
       .maybeSingle();
+
+    if (existingErr) {
+      logger.warn(
+        { err: existingErr, sessionId: session.id, tripId: session.tripId },
+        "layover trip mirror: existing-row lookup failed — skipping the mirror rather than risking a duplicate timeline row",
+      );
+      return;
+    }
+
+    // Trip Kernel path (§4.1 UPDATE_PLAN when the mirror row exists, ADD_PLAN
+    // when it does not; capability crew — isAcceptedTripMember above). No
+    // request envelope here (this is a side effect of a session write), so the
+    // key is fresh per call: the mirror is not idempotent today either. The
+    // UPDATE_PLAN patch names the seven columns the direct update rewrites
+    // besides its identity columns (trip_id / creator_id / source_type /
+    // source_id are the lookup keys and cannot differ); updated_at rides in the
+    // payload. The kernel refuses a done/cancelled item re-confirming where the
+    // direct update overwrote it — best-effort either way. Off => the direct
+    // update / insert below.
+    const kernel = await tripKernelClient(sc);
+    if (kernel) {
+      const r = await executeTripCommand(kernel, {
+        commandId: randomUUID(),
+        tripId: session.tripId,
+        actorUserId: userId,
+        expectedTripVersion: null,
+        idempotencyKey: randomUUID(),
+        type: (existing as any)?.id ? "UPDATE_PLAN" : "ADD_PLAN",
+        payload: (existing as any)?.id
+          ? {
+              item_id: (existing as any).id,
+              patch: {
+                title, category: "layover", status: "confirmed",
+                day_date: record.day_date, starts_at: record.starts_at, ends_at: record.ends_at,
+                location_name: record.location_name,
+              },
+              updated_at: record.updated_at,
+            }
+          : {
+              title, category: "layover", status: "confirmed",
+              source_type: "layover_session", source_id: session.id,
+              day_date: record.day_date, starts_at: record.starts_at, ends_at: record.ends_at,
+              location_name: record.location_name,
+              location_is_private: true,
+            },
+      });
+      if (!r.ok) logger.warn({ reason: r.reason, sessionId: session.id, tripId: session.tripId }, "layover trip mirror refused by the trip kernel");
+      return;
+    }
+
     if ((existing as any)?.id) {
+      // trip-kernel:legacy-path — flag-off twin of UPDATE_PLAN above.
       await sc.from("trip_plan_items").update(record).eq("id", (existing as any).id);
     } else {
+      // trip-kernel:legacy-path — flag-off twin of ADD_PLAN above.
       await sc.from("trip_plan_items").insert(record);
     }
-  } catch { /* best-effort */ }
+  } catch (err) {
+    // L294/C2: best-effort is not silent. The trip timeline mirror failing is
+    // survivable — the session itself is committed — but a swallowed write that
+    // nobody can see is how "the layover never appeared in my trip" becomes
+    // unexplainable.
+    logger.warn({ err, sessionId: session.id, tripId: session.tripId }, "layover trip mirror write threw — the timeline row was not written");
+  }
 }
 
 // ── Schemas ───────────────────────────────────────────────────────────────────
@@ -236,6 +427,39 @@ const returnDeadlineSchema = z.object({
   minutesBefore: z.number().int().min(5).max(120).optional().default(30),
 });
 
+/**
+ * §15.2 disruption input.
+ *
+ * `delayMinutes` is the TOTAL delay against the original schedule, not the slip
+ * since the last report — that is what `nextDisruptionState` reads, and a
+ * client sending increments would silently escalate a 90-minute delay into a
+ * SEVERE_DELAY on its second report. When the caller sends a new departure and
+ * no `delayMinutes`, the server derives the total itself from the ledger
+ * baseline, which is the shape that cannot be got wrong from outside.
+ *
+ * The new departure is accepted as an airport-local wall time as well as a UTC
+ * instant, because everything else on this surface is (`*Local` on POST/PATCH)
+ * and a traveller reading a departure board is reading local time.
+ */
+const disruptionSchema = z
+  .object({
+    kind: z.enum(["delay", "cancellation", "rebooking_offered", "rebooking_confirmed", "on_time"]),
+    delayMinutes: z.number().int().min(0).max(72 * 60).optional(),
+    newDepartureTime: z.string().datetime().optional(),
+    newDepartureLocal: z.string().min(1).max(40).optional(),
+    newBoardingTime: z.string().datetime().nullish(),
+    newBoardingLocal: z.string().min(1).max(40).optional(),
+  })
+  .refine((v) => !(v.newDepartureTime && v.newDepartureLocal), {
+    message: "Send newDepartureTime or newDepartureLocal, not both",
+  })
+  .refine((v) => !(v.newBoardingTime && v.newBoardingLocal), {
+    message: "Send newBoardingTime or newBoardingLocal, not both",
+  })
+  .refine((v) => v.kind !== "delay" || v.delayMinutes !== undefined || v.newDepartureTime !== undefined || v.newDepartureLocal !== undefined, {
+    message: "A delay needs delayMinutes (total against the original schedule) or a new departure time",
+  });
+
 const telegraphLayoverSchema = z.object({
   message: z.string().min(1).max(600),
 });
@@ -280,21 +504,30 @@ router.get("/airport/search", async (req, res) => {
   }
   const { iata, lat, lng, city, q } = parsed.data;
 
-  let results: Awaited<ReturnType<typeof searchAirports>> = [];
+  // census L294/C2. The lookups answer a RECORD now, so an unreadable
+  // `airport_profiles` is distinguishable from an airport this product has
+  // never curated. Both still serve the static dataset — taking the picker away
+  // would cost more than a label — but only one of them is a fault, and the
+  // buffers a degraded answer carries are generic constants rather than the
+  // curated figures this airport actually has.
+  let results: AirportProfile[] = [];
+  let degraded = false;
+  let degradedReasons: string[] = [];
   if (q) {
-    results = await searchAirports(sc, q);
+    const r = await lookupAirports(sc, q);
+    results = r.airports; degraded = r.degraded; degradedReasons = r.degradedReasons;
   } else if (iata) {
-    const r = await resolveByIata(sc, iata);
-    results = r ? [r] : [];
+    const r = await lookupByIata(sc, iata);
+    results = r.airport ? [r.airport] : []; degraded = r.degraded; degradedReasons = r.degradedReasons;
   } else if (lat != null && lng != null) {
-    const r = await resolveByGps(sc, lat, lng);
-    results = r ? [r] : [];
+    const r = await lookupByGps(sc, lat, lng);
+    results = r.airport ? [r.airport] : []; degraded = r.degraded; degradedReasons = r.degradedReasons;
   } else if (city) {
-    const r = await resolveByCity(sc, city);
-    results = r ? [r] : [];
+    const r = await lookupByCity(sc, city);
+    results = r.airport ? [r.airport] : []; degraded = r.degraded; degradedReasons = r.degradedReasons;
   }
 
-  res.json({ airports: results, featureEnabled: true });
+  res.json({ airports: results, featureEnabled: true, degraded, degradedReasons });
 });
 
 // ── POST /api/airport/sessions ────────────────────────────────────────────────
@@ -323,13 +556,41 @@ router.post("/airport/sessions", async (req, res) => {
   let airport: Awaited<ReturnType<typeof resolveByIata>> = null;
   if (p.airportId) {
     const resolved = await resolveAirportForSession(sc, { airportId: p.airportId });
-    airport = resolved.iataCode === "UNK" ? null : resolved;
+    // Refuse rather than create the session anyway. A session created while
+    // `airport_profiles` was unreadable is stored with airport_id = null, and
+    // EVERY later hard-return time for it is computed from the generic buffer
+    // defaults — permanently, long after the database recovers. The transient
+    // failure would have been baked into the row.
+    if (!resolved.ok) {
+      sendError(res, "degraded_unavailable", "Airport details could not be loaded. Please try again.");
+      return;
+    }
+    airport = resolved.airport.iataCode === "UNK" ? null : resolved.airport;
   }
+  // census L294/C2 — THE SAME REFUSAL THE `airportId` BRANCH ABOVE ALREADY
+  // MAKES, now made on the other two. `lookupBy*` degrades ONLY when the table
+  // could not be read; an airport that is genuinely not curated reads cleanly,
+  // answers from the static set, and still creates the session (the §22 L0
+  // tier, which is a designed state and must not become a refusal). What is
+  // refused is creating a layover whose generic default buffers came from an
+  // outage — `upsertAirportProfile` below WRITES those defaults into
+  // `airport_profiles` and links the session to them, so the transient failure
+  // would otherwise be permanent for that traveller's whole layover.
   if (!airport && (p.iata ?? p.manualIata)) {
-    airport = await resolveByIata(sc, (p.iata ?? p.manualIata)!);
+    const looked = await lookupByIata(sc, (p.iata ?? p.manualIata)!);
+    if (looked.degraded) {
+      sendError(res, "degraded_unavailable", "Airport details could not be loaded. Please try again.");
+      return;
+    }
+    airport = looked.airport;
   }
   if (!airport && p.manualCity) {
-    airport = await resolveByCity(sc, p.manualCity);
+    const looked = await lookupByCity(sc, p.manualCity);
+    if (looked.degraded) {
+      sendError(res, "degraded_unavailable", "Airport details could not be loaded. Please try again.");
+      return;
+    }
+    airport = looked.airport;
   }
 
   // Ensure a DB profile row exists so the session can reference it (static and
@@ -406,10 +667,14 @@ router.post("/airport/sessions", async (req, res) => {
         lng:         airport.lng,
       });
       canonicalCityId = r.canonicalId ?? null;
-    } catch { /* non-fatal */ }
+    } catch (err) {
+      // L294/C2. A missing canonical city costs city-level grouping, not the
+      // session; logged so the loss is attributable.
+      logger.warn({ err, city: airport?.city }, "layover canonical city resolution threw — session created without a canonical city");
+    }
   }
 
-  const session = await createSession(sc, {
+  const created = await createSessionWrite(sc, {
     userId:              user.id,
     airportId:           airport?.id ?? null,
     tripId:              p.tripId ?? null,
@@ -429,6 +694,14 @@ router.post("/airport/sessions", async (req, res) => {
     manualIata:          p.manualIata ?? airport?.iataCode ?? null,
     canonicalCityId,
   });
+  // L294/C2: a refused INSERT and "the insert matched nothing" are different
+  // answers, and only the second is the caller's fault. A database that could
+  // not take the write is retryable, so say so.
+  if (!created.ok) {
+    sendError(res, "degraded_unavailable", "Your layover could not be started. Please try again.");
+    return;
+  }
+  const session = created.session;
   if (!session) {
     sendError(res, "db_error", "Failed to create layover session", { exposeDetail: true });
     return;
@@ -446,27 +719,31 @@ router.post("/airport/sessions", async (req, res) => {
     await suggestSafeReturn(sc, session, reasons);
   }
 
-  // Passport seam: emit layover stamp
-  void (async () => {
-    try {
-      const { data: flagRow } = await sc.from("feature_flags").select("enabled").eq("flag", "passport_stamps_enabled").maybeSingle();
-      if ((flagRow as any)?.enabled) {
-        const airportCity = (airport?.city && airport.city !== "Unknown" ? airport.city : null) ?? session.manualCity ?? null;
-        if (airportCity) {
-          await createStamp(sc, {
-            userId: user.id, stampType: "activity",
-            city: airportCity, tripId: session.tripId ?? null,
-            sourceType: "layover_session", verificationLevel: "checkin",
-          });
-          await emitLayoverEvent(sc, session.id, user.id, "passport_seam_emitted", { type: "layover_start" });
-        }
-      }
-    } catch (err) {
-      // Best-effort seam, but a silently lost layover stamp is a product-integrity
-      // gap — make the failure visible in the server log.
-      logger.warn({ err, sessionId: session.id, userId: user.id }, "layover passport seam failed — stamp not emitted");
-    }
-  })();
+  // NO PASSPORT SEAM HERE (census L19, L162).
+  //
+  // This handler used to mint a durable `passport_stamps` row the instant a
+  // traveller typed two flight times into a form — for a city they had not been
+  // to, before anything had been completed, with no election of any kind and no
+  // path that ever removed it. §3's requirement is *"post-session durable
+  // artifacts IF THE USER CHOOSES"* and §17's is *"durable only when the user
+  // elects Passport/Memory behaviour"*; a stamp at creation is neither half.
+  //
+  // The seam now lives on `DELETE /airport/sessions/:id`, where there is an
+  // outcome to be post- and an election to be made. Deleting it here is a
+  // REDUCTION a reviewer should see coming: a traveller who starts a layover
+  // and never closes it out now gets no stamp at all, where before they got one
+  // for turning up.
+  //
+  // AND IT IS ALSO GATED ON OCCURRENCE, which is not the same requirement and
+  // was very nearly lost in the merge that produced this file. A sibling lane
+  // fixed this seam from the Memories side, by keeping the stamp here and
+  // refusing when the declared ARRIVAL was still in the future (§1: *"planned,
+  // saved, or nearby must never be represented as experienced without
+  // occurrence evidence or user confirmation"*). Moving the seam to
+  // end-of-session answers §3 and §17 but does NOT answer §1 by itself:
+  // `endSession` is not temporal, so "completed" is a claim the caller makes,
+  // not something that happened. Both requirements are now enforced together,
+  // at the one site — see the FOUR TERMS on `writeElectedLayoverStamp`.
 
   // Trip timeline mirror (best-effort)
   await mirrorSessionToTrip(sc, auth.client, session, airport, user.id);
@@ -493,22 +770,207 @@ router.patch("/airport/sessions/:id", async (req, res) => {
     return;
   }
 
-  const session = await updateSession(sc, req.params.id, user.id, parsed.data);
+  // The window is validated as a WHOLE against the session it edits. This
+  // route used to hand the patch straight to updateSession: departure before
+  // arrival, boarding outside the window and a 3-day layover were all
+  // accepted (POST refuses every one), and the *Local wall-time fields the
+  // schema accepts were silently dropped, so an edit sent in airport-local
+  // time changed nothing and reported ok.
+  const currentRead = await getSession(sc, req.params.id, user.id);
+  if (!currentRead.ok) {
+    sendError(res, "degraded_unavailable", "Your layover could not be loaded. Please try again.");
+    return;
+  }
+  const current = currentRead.session;
+  if (!current || current.status !== "active") {
+    sendError(res, "not_found", "Session not found or already closed");
+    return;
+  }
+  const p = parsed.data;
+  const patch: Parameters<typeof updateSession>[3] = { ...p };
+  delete (patch as any).arrivalLocal;
+  delete (patch as any).departureLocal;
+  delete (patch as any).boardingLocal;
+  delete (patch as any).iata;
+
+  if (p.arrivalLocal || p.departureLocal || p.boardingLocal) {
+    const tzAirport = await airportOr503(sc, res, current);
+    if (!tzAirport) return;
+    if (tzAirport.iataCode === "UNK") {
+      sendError(res, "invalid_payload", "This session has no resolved airport — send UTC instants, not local wall times");
+      return;
+    }
+    const tz = tzAirport.timezone;
+    if (p.arrivalLocal) {
+      const d = wallTimeToUtc(tz, p.arrivalLocal);
+      if (!d) { sendError(res, "invalid_payload", "arrivalLocal is not a valid local time"); return; }
+      patch.arrivalTime = d.toISOString();
+    }
+    if (p.departureLocal) {
+      const d = wallTimeToUtc(tz, p.departureLocal);
+      if (!d) { sendError(res, "invalid_payload", "departureLocal is not a valid local time"); return; }
+      patch.departureTime = d.toISOString();
+    }
+    if (p.boardingLocal) {
+      const d = wallTimeToUtc(tz, p.boardingLocal);
+      if (!d) { sendError(res, "invalid_payload", "boardingLocal is not a valid local time"); return; }
+      patch.boardingTime = d.toISOString();
+    }
+  }
+
+  const arrivalMs   = new Date(patch.arrivalTime   ?? current.arrivalTime).getTime();
+  const departureMs = new Date(patch.departureTime ?? current.departureTime).getTime();
+  const boardingIso = patch.boardingTime === undefined ? current.boardingTime : patch.boardingTime;
+  if (departureMs <= arrivalMs) {
+    sendError(res, "invalid_payload", "Departure must be after arrival"); return;
+  }
+  if (departureMs <= Date.now()) {
+    sendError(res, "invalid_payload", "This layover has already departed — set a departure time in the future"); return;
+  }
+  if (departureMs - arrivalMs > 48 * 3_600_000) {
+    sendError(res, "invalid_payload", "A layover window cannot exceed 48 hours"); return;
+  }
+  if (boardingIso) {
+    const boardingMs = new Date(boardingIso).getTime();
+    if (boardingMs <= arrivalMs || boardingMs > departureMs) {
+      sendError(res, "invalid_payload", "Boarding time must fall between arrival and departure"); return;
+    }
+  }
+
+  const edited = await updateSession(sc, req.params.id, user.id, patch);
+  // L294/C2. "Session not found or already closed" is a claim about the row.
+  // A write the database refused teaches the server nothing about the row, so
+  // it may not make that claim — 503 retryable, not 404.
+  if (!edited.ok) {
+    sendError(res, "degraded_unavailable", "Your layover could not be updated. Please try again.");
+    return;
+  }
+  const session = edited.session;
   if (!session) {
     sendError(res, "not_found", "Session not found or already closed");
     return;
   }
 
   // Keep the trip timeline mirror in sync with the updated window.
+  // The session update already committed. An unreadable airport profile here
+  // skips the timeline mirror rather than failing the edit the traveller just
+  // made; the next session write re-runs the mirror (see mirrorSessionToTrip).
   const airportForMirror = await resolveAirportForSession(sc, session);
-  await mirrorSessionToTrip(
-    sc, auth.client, session,
-    airportForMirror.iataCode === "UNK" ? null : airportForMirror,
-    user.id,
-  );
+  if (airportForMirror.ok) {
+    await mirrorSessionToTrip(
+      sc, auth.client, session,
+      airportForMirror.airport.iataCode === "UNK" ? null : airportForMirror.airport,
+      user.id,
+    );
+  } else {
+    logger.warn({ sessionId: session.id }, "layover trip mirror skipped — airport profile unreadable");
+  }
 
-  res.json({ ok: true, session });
+  // §11.1, driven by the one event producer that exists on this tree: the
+  // traveller. An edit that moved the window IS `flight.arrival_delayed` or
+  // `flight.departure_delayed`, and the replanner decides what changed rather
+  // than the client re-deriving it from two overviews. Everything below is
+  // ADDITIVE to the response and cannot fail the edit, which has committed.
+  const replan = await replanAfterSessionEdit({
+    sc, userId: user.id, before: current, after: session,
+    airport: airportForMirror.ok ? airportForMirror.airport : null,
+  });
+
+  res.json({ ok: true, session, replan });
 });
+
+/**
+ * The §11 ingest: one traveller edit → one canonical event → steps 1-8 → a
+ * decision the traveller can read and a §20 record the ledger keeps.
+ *
+ * Never throws and never fails the edit. Every path that cannot produce an
+ * honest replan returns a NAMED refusal instead of a partial one, because the
+ * client renders what it is given and "nothing changed" is a claim.
+ */
+async function replanAfterSessionEdit(args: {
+  sc: any;
+  userId: string;
+  before: LayoverSession;
+  after: LayoverSession;
+  airport: AirportProfile | null;
+}): Promise<{ ran: false; reason: string; detail: string } | { ran: true } & Record<string, unknown>> {
+  if (!args.airport) {
+    return { ran: false, reason: "airport_unreadable", detail: "the airport profile could not be read" };
+  }
+  const stopsRead = await loadStops(args.sc, args.after.id);
+  if (!stopsRead.ok) {
+    return { ran: false, reason: "plan_unreadable", detail: "the plan stops could not be read" };
+  }
+  const result = replanForWindowChange({
+    airport: args.airport,
+    airportRef: args.airport.iataCode,
+    before: args.before,
+    after: args.after,
+    status: args.after.status,
+    candidates: candidatesFromStops(stopsRead.stops),
+    nowMs: Date.now(),
+  });
+  if (!result.ran) return { ran: false, reason: result.reason, detail: result.detail };
+
+  // ── §15.2 continuity ───────────────────────────────────────────────────────
+  // `replanForWindowChange` cannot see prior state: `handleEvent` reads it from
+  // `ctx.disruptionStates` and nothing populates that map, so `publication.
+  // disruptionState` is ALWAYS a transition out of CONNECTION. For a session
+  // already in the cancellation chain that publishes "DELAYED" — the delay
+  // chain re-entered from the cancellation chain, which `nextDisruptionState`
+  // exists to forbid. Correct it here, from the ledger, or refuse to publish
+  // it at all: an unreadable history is not a CONNECTION.
+  const prior = await readDisruptionState(args.sc, args.after.id, args.userId);
+  let disruptionCorrection: Record<string, unknown>;
+  if (!prior.ok) {
+    logger.warn(
+      { sessionId: args.after.id },
+      "disruption ledger unreadable during replan — publishing no state rather than CONNECTION",
+    );
+    (result.publication as any).disruptionState = null;
+    disruptionCorrection = {
+      disruptionState: null,
+      disruptionStateUnavailableReason: "ledger_unreadable",
+    };
+  } else {
+    const carried = disruptionAfterWindowEdit({
+      prior: prior.state,
+      baselineDepartureTime: prior.baselineDepartureTime,
+      beforeDepartureTime: args.before.departureTime,
+      afterDepartureTime: args.after.departureTime,
+    });
+    (result.publication as any).disruptionState = carried.state;
+    disruptionCorrection = {
+      disruptionState: carried.state,
+      disruptionPreviousState: prior.state,
+      disruptionPreviousStateSource: prior.source,
+      disruptionTotalDelayMinutes: carried.delayMinutes,
+      disruptionBaselineDepartureTime: carried.baselineDepartureTime,
+    };
+    // ── WHAT THIS PATH DELIBERATELY DOES NOT DO ──────────────────────────────
+    // It does not RECORD the transition. A window edit is not a disruption
+    // report, and writing a second `session_updated` row here would make this
+    // route's ledger output depend on whether a replan ran —
+    // `src/test/layoverSessionEditReplan.test.ts:262` pins that row count for
+    // exactly that reason. The consequence is stated rather than hidden: with
+    // no `/disruption` report ever made there is no stored baseline, so
+    // successive edits each measure their delay from the PRE-EDIT departure and
+    // two 90-minute slips read as DELAYED twice instead of escalating to
+    // SEVERE_DELAY. Carrying a baseline across edits needs either
+    // `layover_sessions.original_departure_time TIMESTAMPTZ` or a
+    // `'disruption_recorded'` value added to the `layover_events.event_type`
+    // CHECK — both migrations, and neither is this lane's to write.
+    disruptionCorrection.disruptionStateRecorded = false;
+    disruptionCorrection.disruptionStateNotRecordedReason = "no_disruption_state_storage";
+  }
+
+  await recordReplanDecision(args.sc, args.userId, result.publication, result.decision);
+  // §25 / census CL-04: a notify-worthy OpportunityEvent reaches Compass as a
+  // world change (services/airport/LayoverOpportunityNotifier) and is routed by
+  // the Attention Engine. Best-effort; the DecisionRecord above is the fact.
+  const opportunityNotification = await notifyLayoverOpportunity(args.sc, args.userId, args.after.id, result.publication);
+  return { ran: true, ...result.publication, ...disruptionCorrection, opportunityNotification };
+}
 
 // ── GET /api/airport/sessions/:id/recommendations ────────────────────────────
 
@@ -523,46 +985,41 @@ router.get("/airport/sessions/:id/recommendations", async (req, res) => {
     res.json({ recommendations: [], featureEnabled: false }); return;
   }
 
-  const session = await getSession(sc, req.params.id, user.id);
-  if (!session) { sendError(res, "not_found", "Session not found"); return; }
+  const session = await ownedSessionOr(res, sc, req.params.id, user.id);
+  if (!session) return;
 
-  // Resolve airport profile
-  const airportId = session.airportId;
-  let airport = null;
-  if (airportId) {
-    const { data } = await sc.from("airport_profiles").select("*").eq("id", airportId).maybeSingle();
-    if (data) {
-      airport = {
-        id: (data as any).id, iataCode: (data as any).iata_code, name: (data as any).name,
-        city: (data as any).city, country: (data as any).country, countryCode: (data as any).country_code,
-        timezone: (data as any).timezone ?? "UTC", lat: Number((data as any).lat), lng: Number((data as any).lng),
-        domesticBufferMin: (data as any).domestic_buffer_min ?? 60,
-        domesticBufferMax: (data as any).domestic_buffer_max ?? 90,
-        internationalBufferMin: (data as any).international_buffer_min ?? 120,
-        internationalBufferMax: (data as any).international_buffer_max ?? 180,
-        immigrationExtraMin: (data as any).immigration_extra_min ?? 30,
-        checkedBagsExtraMin: (data as any).checked_bags_extra_min ?? 15,
-        trafficExtraMin: (data as any).traffic_extra_min ?? 20,
-        verified: Boolean((data as any).verified),
-      };
-    }
-  }
-
-  if (!airport) {
-    airport = buildFallbackProfile({
-      iataCode:    session.manualIata    ?? "UNK",
-      city:        session.manualCity    ?? "Unknown",
-      country:     session.manualCountry ?? "Unknown",
-      name:        session.manualAirportName ?? "Unknown Airport",
-    });
-  }
+  // Was a byte-for-byte second copy of resolveAirportForSession — same read,
+  // same field mapping, same manual-field fallback — carrying the same unbound
+  // `error`, so this route had its own way of computing a hard_return_time
+  // from default buffers when airport_profiles was unreadable. One helper now,
+  // and it refuses instead.
+  const airport = await airportOr503(sc, res, session);
+  if (!airport) return;
 
   const isSafetyEnabled = await isFlagEnabled(sc, "layover_safety_engine_enabled");
+  // Seeded FALSE (migration 2410). Off: the legacy regenerate path, which
+  // deletes and re-inserts every card and returns them WITHOUT ids — so the
+  // client's "Add to plan" control (gated on rec.id) never renders. On: cards
+  // keep their id across regenerations and the control becomes reachable.
+  const stableIds = await isFlagEnabled(sc, "layover_stable_recommendation_ids_enabled");
 
-  // Try persisted recs first; regenerate if empty or safety engine is enabled
-  let recs = await getRecommendations(sc, session.id);
+  // Try persisted recs first; regenerate if empty or safety engine is enabled.
+  // Both reads now answer "could not look" separately from "nothing to show",
+  // and this route refuses on the former. "There is nothing to do on your
+  // layover" is a claim about a city, not a description of a failed query.
+  const stored = await getRecommendations(sc, session.id);
+  if (!stored.ok) {
+    sendError(res, "degraded_unavailable", "Layover ideas could not be loaded. Please try again.");
+    return;
+  }
+  let recs = stored.recommendations;
   if (recs.length === 0 || isSafetyEnabled) {
-    recs = await generateRecommendations(sc, airport, session);
+    const generated = await generateRecommendations(sc, airport, session, Date.now(), { stableIds });
+    if (!generated.ok) {
+      sendError(res, "degraded_unavailable", "Layover ideas could not be loaded. Please try again.");
+      return;
+    }
+    recs = generated.recommendations;
   }
 
   res.json({ recommendations: recs, featureEnabled: true });
@@ -585,36 +1042,78 @@ router.get("/airport/sessions/:id/safety", async (req, res) => {
     res.json({ featureEnabled: false }); return;
   }
 
-  const session = await getSession(sc, req.params.id, user.id);
-  if (!session) { sendError(res, "not_found", "Session not found"); return; }
+  const session = await ownedSessionOr(res, sc, req.params.id, user.id);
+  if (!session) return;
 
-  const airport = await resolveAirportForSession(sc, session);
+  const airport = await airportOr503(sc, res, session);
+  if (!airport) return;
 
-  // Assess a generic "leaving airport" activity to get overall safety
-  const a = assess(airport, session, {
-    title:          "Leaving airport",
-    travelTimeMin:  20,
-    activityTimeMin: 30,
-    insideAirport:  false,
+  // NO PROBE (census-layover L293c). This handler used to invent a candidate —
+  // `travelTimeMin: 20, activityTimeMin: 30`, the same two numbers for every
+  // session at every airport on earth — purely so `assess` had something to
+  // score, and published that score as the session's OVERALL safety. §7 made
+  // the literal a named input of the certified record so it landed in the
+  // inputHash and carried `travelTimeSource: "category_default"`; the finding
+  // of L293 is that naming a fabrication and labelling its provenance does not
+  // stop it being one. A traveller reading "safe" here was reading the output
+  // of a twenty-minute journey nobody had ever measured, to a place that does
+  // not exist.
+  //
+  // The question this endpoint actually answers is about the WINDOW — "given my
+  // timings, can I go out at all?" — and `record.windowOnly` answers it with no
+  // journey in it, against the same certified deadline as everything else in
+  // this response. Its bands are `adviseLeaving`'s own, so `overallRating` and
+  // `advice.verdict` below cannot contradict each other.
+  const record = certifySessionFeasibility(airport, session, {
+    nowMs: Date.now(),
   });
-
-  const window = computeWindow(airport, session);
-  const advice = adviseLeaving(airport, session, window);
+  const a = record.windowOnly;
 
   res.json({
     featureEnabled:  true,
     overallRating:   a.rating,
     overallLabel:    safetyLabel(a.rating),
+    // There is no journey in this answer, so there is no figure whose
+    // provenance could be anything else. The field stays on the response
+    // because the client reads it; what it now reports is the truth — nobody
+    // measured a way out of this airport.
+    travelTimeSource: "unmeasured" as TravelTimeSource,
     availableMinutes: a.availableMinutes,
-    usableMinutes:   window.usableMinutes,
+    usableMinutes:   record.envelope.usableMinutes,
+    // One computation, one buffer, one deadline: both of these come out of
+    // `record.deadline`, which is the only place either was derived.
     returnBufferMin: a.returnBufferMin,
-    hardReturnTime:  window.hardReturnTime.toISOString(),
+    hardReturnTime:  record.deadline.hardReturnTime.toISOString(),
     warningReason:   a.warningReason,
     breakdown:       a.breakdown,
     layoverMinutes:  session.layoverMinutes,
-    tier:            window.tier,
-    tierLabel:       window.tierLabel,
-    advice,
+    tier:            record.envelope.tier,
+    tierLabel:       record.envelope.tierLabel,
+    advice:          {
+      verdict:     record.verdict,
+      reasons:     record.reasons,
+      unknowns:    record.unknowns,
+      reasonCodes: record.reasonCodes,
+      disclaimer:  record.disclaimer,
+      engineVersion: record.engineVersion,
+    },
+    // Spec §2.1 "versioned, explainable and replayable" — the fields that let
+    // a stored answer be traced to the rules and inputs that produced it.
+    certification: certificationHeader(record),
+    estimates:     record.estimates,
+    // §2.1 "degrades VISIBLY" / §22 "do not imply equivalent intelligence
+    // globally" — census L9 and L250. `estimates` above has carried the
+    // provenance per term since the certified record landed and no client has
+    // ever read it; this is the same truth in the one shape a surface can say
+    // out loud. Derived from the record, never from a second read of the
+    // profile.
+    airportIntelligence: airportIntelligence(record),
+    // §15: the posture the client should take now — what this verdict MEANS for
+    // getting back, rather than leaving each caller to re-derive it from the
+    // envelope. Derived from the same certified record, so it cannot disagree.
+    safeReturn: safeReturnPosture(record),
+    // §8 — the outer edge of the safe envelope, cut from the window above.
+    safeEnvelope: safeEnvelopeFor(airport, record),
   });
 });
 
@@ -640,12 +1139,33 @@ router.post("/airport/sessions/:id/compass", async (req, res) => {
     return;
   }
 
-  const session = await getSession(sc, req.params.id, user.id);
-  if (!session) { sendError(res, "not_found", "Session not found"); return; }
+  const session = await ownedSessionOr(res, sc, req.params.id, user.id);
+  if (!session) return;
 
-  const airport = await resolveAirportForSession(sc, session);
+  const airport = await airportOr503(sc, res, session);
+  if (!airport) return;
 
-  const answer = await answerLayoverQuestion(sc, { question: parsed.data.question, session, airport });
+  // ── §12 — the tool context, assembled HERE and nowhere else ───────────────
+  //
+  // `LayoverCompassService` reads no database, so the two list-shaped tools
+  // (`getReachableExperiences`, `simulatePlan`) can only see what this handler
+  // hands them. Both reads are NON-FATAL: a compass answer about the return
+  // deadline is still worth giving when the shortlist is unreadable, so the
+  // failure travels as a REASON rather than as a 503 or as an empty array.
+  // Passing `[]` on a failed read is what would make the model say "there is
+  // nothing to do here" and "your plan fits" out of a connection reset
+  // (census L294, census L47).
+  const recsRead = await getRecommendations(sc, session.id);
+  const stopsRead = await loadStops(sc, session.id);
+  const answer = await answerLayoverQuestion(sc, {
+    question: parsed.data.question,
+    session,
+    airport,
+    recommendations: recsRead.ok ? (recsRead.recommendations as unknown as Array<Record<string, unknown>>) : undefined,
+    recommendationsUnavailableReason: recsRead.ok ? null : "layover_recommendations_unreadable",
+    stops: stopsRead.ok ? stopsRead.stops : undefined,
+    stopsUnavailableReason: stopsRead.ok ? null : "layover_plan_stops_unreadable",
+  });
 
   await emitLayoverEvent(sc, session.id, user.id, "compass_question_asked", {
     involvesLeaving: answer.involvesLeaving,
@@ -679,8 +1199,8 @@ router.post("/airport/sessions/:id/plan", async (req, res) => {
     sendError(res, "feature_disabled", "Layover plan creation is not yet enabled"); return;
   }
 
-  const session = await getSession(sc, req.params.id, user.id);
-  if (!session) { sendError(res, "not_found", "Session not found"); return; }
+  const session = await ownedSessionOr(res, sc, req.params.id, user.id);
+  if (!session) return;
 
   const parsed = layoverPlanSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -697,7 +1217,40 @@ router.post("/airport/sessions/:id/plan", async (req, res) => {
   if (permitted === null) { sendError(res, "not_found", "Trip not found"); return; }
   if (!permitted) { sendError(res, "forbidden", "You don't have permission to add items to this plan"); return; }
 
-  const { data: item, error } = await sc.from("trip_plan_items").insert({
+  // Trip Kernel path (§4.1 ADD_PLAN, capability crew). The membership and
+  // plan-edit checks above are the authorization; the kernel re-checks crew.
+  // The payload is the direct insert's column set plus location_is_private =
+  // true, the table default the insert relies on. Off => the insert below.
+  const kernel = await tripKernelClient(sc);
+  let kernelItemId: string | null = null;
+  if (kernel) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const r = await executeTripCommand(kernel, {
+      commandId: randomUUID(),
+      tripId,
+      actorUserId: user.id,   // always from token
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: "ADD_PLAN",
+      payload: {
+        title:               parsed.data.title,
+        starts_at:           parsed.data.startsAt ?? null,
+        location_name:       parsed.data.locationName ?? parsed.data.city ?? session.manualCity ?? null,
+        notes:               parsed.data.notes ?? null,
+        category:            "layover",
+        source_type:         "layover_activity",
+        source_id:           `${session.id}:${Date.now()}`,
+        location_is_private: true,
+      },
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    kernelItemId = r.result.id;
+  }
+
+  // trip-kernel:legacy-path — flag-off twin of ADD_PLAN above.
+  const { data: item, error } = kernelItemId ? { data: { id: kernelItemId }, error: null } : await sc.from("trip_plan_items").insert({
     trip_id:       tripId,
     creator_id:    user.id,
     title:         parsed.data.title,
@@ -714,6 +1267,322 @@ router.post("/airport/sessions/:id/plan", async (req, res) => {
   await emitLayoverEvent(sc, session.id, user.id, "plan_created", { planItemId: (item as any)?.id });
 
   res.status(201).json({ ok: true, planItemId: (item as any)?.id });
+});
+
+// ── POST /api/airport/sessions/:id/return-now ────────────────────────────────
+/**
+ * Spec §15.1, the one-tap abort. "Every active landside plan must expose RETURN
+ * TO AIRPORT. The action cancels optional itinerary state, marks the session
+ * returning, surfaces the fastest certified route, notifies relevant crew/buddy
+ * flows, preserves offline route/deadline, and records the transition in the
+ * decision ledger."
+ *
+ * ── FLAG AND CAPABILITY ARE SEPARATE QUESTIONS ───────────────────────────────
+ * `statusEnabled` is the conjunction of two things that are NOT the same:
+ *
+ *   layover_safe_return_status_enabled   what an operator WANTS
+ *   LAYOVER_RETURNING_READERS_WIDENED    what this BUILD can survive
+ *
+ * A flag flipped on a deployment whose readers still filter `status = 'active'`
+ * would mark the session returning and then hide it from GET /sessions/active,
+ * setReturnReminder and endSession — the traveller loses the countdown at the
+ * exact moment they are running for a plane. So the flag alone may not reach
+ * the status write. The migration is a third, independent prerequisite, and it
+ * is the reason this route did not exist until 2741 was applied: the ledger
+ * insert below uses event_type 'safe_return_aborted', which the CHECK on
+ * layover_events rejected in full on any database without that migration.
+ *
+ * ── WHAT SURVIVES WHEN A PIECE IS MISSING ────────────────────────────────────
+ * The abort is not all-or-nothing, and that is deliberate. With the flag off,
+ * the landside stops are still cancelled and the decision ledger is still
+ * written — the ledger is the only durable evidence the traveller pressed
+ * abort, and it must not depend on a rollout. Only the STATUS write is gated.
+ * Every effect that ran, successful or not, is reported in `effects`; nothing
+ * is swallowed.
+ */
+router.post("/airport/sessions/:id/return-now", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+  if (!await isFlagEnabled(sc, "airport_mode_enabled")) {
+    sendError(res, "feature_disabled"); return;
+  }
+
+  // ownedSessionOr answers 404 for someone else's session and 503 for an
+  // unreadable one — an unauthorized caller and an outage must not look alike.
+  const session = await ownedSessionOr(res, sc, req.params.id, user.id);
+  if (!session) return;
+
+  // Aborting a session that has already ended is not an error to retry; it is a
+  // no-op the client should stop asking about. A DOUBLE TAP therefore lands
+  // here on the second press only if the status write is enabled and took
+  // effect; with the flag off the session stays `active` and the second press
+  // repeats the abort, which is safe — cancelLandsideStops matches nothing the
+  // second time and the ledger records both presses, which is the truth.
+  if (session.status === "completed" || session.status === "cancelled" || session.status === "expired") {
+    sendError(res, "invalid_payload", `This layover is already ${session.status}.`);
+    return;
+  }
+
+  const airport = await airportOr503(sc, res, session);
+  if (!airport) return;
+
+  const nowMs = Date.now();
+  const record = certifySessionFeasibility(airport, session, { nowMs });
+
+  const flagOn = await isFlagEnabled(sc, "layover_safe_return_status_enabled");
+  const statusEnabled = flagOn && LAYOVER_RETURNING_READERS_WIDENED;
+
+  const result = await abortToAirport(sc, {
+    session, airport, record, userId: user.id, nowMs, statusEnabled,
+  });
+
+  if (!result.ok) {
+    // Something the abort promised did not happen. Say so, and keep the parts
+    // that did in the body: the traveller still needs the return contract even
+    // when the ledger write failed, and "head to the airport now" is the one
+    // instruction that must survive any partial failure.
+    req.log.error(
+      { sessionId: session.id, effects: result.effects },
+      "return-now: abort completed with failed effects",
+    );
+    res.status(500).json({
+      ok: false,
+      error: "db_error",
+      message: "Your plan could not be fully cleared. Head to the airport now.",
+      returnContract: result.returnContract,
+      posture: result.posture,
+      effects: result.effects,
+    });
+    return;
+  }
+
+  // `result.ok` is already true on this path — spreading it is the single
+  // source of that field rather than restating it beside the spread.
+  res.json({
+    ...result,
+    statusCapability: statusEnabled
+      ? "enabled"
+      : flagOn ? "flag_on_readers_not_widened" : "flag_off",
+  });
+});
+
+// ── POST /api/airport/sessions/:id/disruption ────────────────────────────────
+
+/**
+ * §15.2 — the disruption input the state machine never had.
+ *
+ * `DISRUPTION_STATES`, `nextDisruptionState` and `recomputeForDisruption` were
+ * built, swept and tested, and nothing outside `src/test/` could reach them
+ * with a real disruption. This is that caller. As with §11's replanner, the
+ * only event producer this tree has is the traveller — there is no flight feed
+ * — and saying so on the wire (`source: "traveller"`) is the difference
+ * between an honest input and a claim of detection.
+ *
+ * Three properties this handler has that the pre-existing window-edit path
+ * does not:
+ *
+ *  1. **It remembers.** The prior state comes from the ledger, and a ledger
+ *     that cannot be READ is a 503, not a CONNECTION. Defaulting on an outage
+ *     is how a cancelled flight becomes a delayed one.
+ *  2. **It recomputes, it does not append.** A moved departure goes through
+ *     `recomputeForDisruption`, a full re-certification, and the response
+ *     carries `recomputedNotAppended` — the §15.2 requirement as a fact about
+ *     THIS request rather than a property of a function nobody called.
+ *  3. **It does not record a schedule it failed to save.** The session write
+ *     happens first; if it fails, no transition is recorded, because a ledger
+ *     entry naming a departure the table never took is worse than no entry.
+ */
+router.post("/airport/sessions/:id/disruption", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+  if (!await isFlagEnabled(sc, "airport_mode_enabled")) {
+    sendError(res, "feature_disabled"); return;
+  }
+
+  const parsed = disruptionSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
+    return;
+  }
+  const body = parsed.data;
+
+  const session = await ownedSessionOr(res, sc, req.params.id, user.id);
+  if (!session) return;
+  if (session.status !== "active" && session.status !== "returning") {
+    sendError(res, "invalid_payload", `This layover is already ${session.status}.`);
+    return;
+  }
+
+  const airport = await airportOr503(sc, res, session);
+  if (!airport) return;
+
+  // (1) The memory. A failed read is refused, never defaulted.
+  const prior = await readDisruptionState(sc, session.id, user.id);
+  if (!prior.ok) {
+    sendError(
+      res, "degraded_unavailable",
+      "We could not read this layover's disruption history, so we will not guess at it. Please try again.",
+    );
+    return;
+  }
+
+  // The new departure, if one was sent. Local wall times need a real timezone;
+  // a session on a fallback profile has none, and converting against UTC would
+  // move the traveller's flight by hours without telling them.
+  let newDepartureIso: string | null = body.newDepartureTime ?? null;
+  let newBoardingIso: string | null | undefined =
+    body.newBoardingTime === undefined ? undefined : body.newBoardingTime;
+  if (body.newDepartureLocal || body.newBoardingLocal) {
+    if (airport.iataCode === "UNK") {
+      sendError(res, "invalid_payload", "This session has no resolved airport — send UTC instants, not local wall times");
+      return;
+    }
+    if (body.newDepartureLocal) {
+      const d = wallTimeToUtc(airport.timezone, body.newDepartureLocal);
+      if (!d) { sendError(res, "invalid_payload", "newDepartureLocal is not a valid local time"); return; }
+      newDepartureIso = d.toISOString();
+    }
+    if (body.newBoardingLocal) {
+      const d = wallTimeToUtc(airport.timezone, body.newBoardingLocal);
+      if (!d) { sendError(res, "invalid_payload", "newBoardingLocal is not a valid local time"); return; }
+      newBoardingIso = d.toISOString();
+    }
+  }
+
+  const nowMs = Date.now();
+  const baseline = prior.baselineDepartureTime ?? session.departureTime;
+
+  if (newDepartureIso !== null) {
+    // The same whole-window validation the PATCH edit applies. A disruption is
+    // not a licence to store a departure before arrival.
+    const arrivalMs = new Date(session.arrivalTime).getTime();
+    const departureMs = new Date(newDepartureIso).getTime();
+    if (!Number.isFinite(departureMs)) { sendError(res, "invalid_payload", "The new departure time is not a valid instant"); return; }
+    if (departureMs <= arrivalMs) { sendError(res, "invalid_payload", "Departure must be after arrival"); return; }
+    if (departureMs <= nowMs) { sendError(res, "invalid_payload", "This layover has already departed — set a departure time in the future"); return; }
+    if (departureMs - arrivalMs > 48 * 3_600_000) { sendError(res, "invalid_payload", "A layover window cannot exceed 48 hours"); return; }
+    const boardingIso = newBoardingIso === undefined ? session.boardingTime : newBoardingIso;
+    if (boardingIso) {
+      const boardingMs = new Date(boardingIso).getTime();
+      if (!Number.isFinite(boardingMs) || boardingMs <= arrivalMs || boardingMs > departureMs) {
+        sendError(res, "invalid_payload", "Boarding time must fall between arrival and departure"); return;
+      }
+    }
+  }
+
+  // The event. `delayMinutes` is a TOTAL against the baseline; when the caller
+  // sent a departure instead of a number, the server derives that total rather
+  // than trusting a client to subtract two timestamps consistently.
+  const derivedDelay =
+    newDepartureIso !== null
+      ? Math.round((new Date(newDepartureIso).getTime() - new Date(baseline).getTime()) / 60_000)
+      : null;
+  const event: DisruptionEvent =
+    body.kind === "delay"
+      ? { kind: "delay", delayMinutes: body.delayMinutes ?? derivedDelay ?? 0 }
+      : { kind: body.kind };
+
+  const state: DisruptionState = nextDisruptionState(prior.state, event);
+
+  // (2) Recompute, do not append.
+  let recompute: ReturnType<typeof recomputeForDisruption> | null = null;
+  let record = certifySessionFeasibility(airport, session, { nowMs });
+
+  if (newDepartureIso !== null) {
+    recompute = recomputeForDisruption(airport, session, {
+      state,
+      newDepartureTime: newDepartureIso,
+      newBoardingTime: newBoardingIso === undefined ? undefined : newBoardingIso,
+      nowMs,
+    });
+    record = recompute.after;
+
+    // (3) Persist the schedule BEFORE recording the transition.
+    const edited = await updateSession(sc, session.id, user.id, {
+      departureTime: newDepartureIso,
+      ...(newBoardingIso === undefined ? {} : { boardingTime: newBoardingIso }),
+    });
+    if (!edited.ok) {
+      sendError(res, "degraded_unavailable", "Your new flight time could not be saved. Please try again.");
+      return;
+    }
+    if (!edited.session) {
+      sendError(res, "not_found", "Session not found or already closed");
+      return;
+    }
+  }
+
+  const written = await recordDisruptionState(sc, {
+    sessionId: session.id,
+    userId: user.id,
+    previousState: prior.state,
+    state,
+    event,
+    baselineDepartureTime: baseline,
+    departureTime: newDepartureIso,
+    nowMs,
+    certification: certificationHeader(record),
+  });
+
+  const disruption = {
+    source: "traveller" as const,
+    previousState: prior.state,
+    previousStateSource: prior.source,
+    state,
+    event,
+    baselineDepartureTime: baseline,
+    stateRecorded: written.ok,
+  };
+
+  const payload = {
+    disruption,
+    recompute: recompute
+      ? {
+          scheduleDeltaMinutes: recompute.scheduleDeltaMinutes,
+          usableMinutesDelta: recompute.usableMinutesDelta,
+          recomputedNotAppended: recompute.recomputedNotAppended,
+          returnStateChanged: recompute.returnStateChanged,
+          before: {
+            usableMinutes: recompute.before.envelope.usableMinutes,
+            returnState: recompute.before.envelope.returnState,
+            hardReturnTime: recompute.before.deadline.hardReturnTime.toISOString(),
+          },
+          after: {
+            usableMinutes: recompute.after.envelope.usableMinutes,
+            returnState: recompute.after.envelope.returnState,
+            hardReturnTime: recompute.after.deadline.hardReturnTime.toISOString(),
+            hardReturnLocal: formatLocalTime(airport.timezone, recompute.after.deadline.hardReturnTime),
+          },
+        }
+      : null,
+    recovery: recoveryPosture(state),
+    safeReturn: safeReturnPosture(record),
+    certification: certificationHeader(record),
+  };
+
+  if (!written.ok) {
+    // The transition happened; the memory of it did not. Saying `ok: true` here
+    // would make the next request's stale read look like a server bug rather
+    // than the consequence it is.
+    req.log?.error?.({ sessionId: session.id, state }, "disruption transition not recorded");
+    res.status(500).json({
+      ok: false,
+      error: "db_error",
+      message: "We applied this change but could not record it. Check your flight status again in a moment.",
+      ...payload,
+    });
+    return;
+  }
+
+  res.json({ ok: true, ...payload });
 });
 
 // ── POST /api/airport/sessions/:id/return-deadline ───────────────────────────
@@ -734,24 +1603,30 @@ router.post("/airport/sessions/:id/return-deadline", async (req, res) => {
     sendError(res, "invalid_payload"); return;
   }
 
-  const session = await getSession(sc, req.params.id, user.id);
-  if (!session) { sendError(res, "not_found", "Session not found"); return; }
+  const session = await ownedSessionOr(res, sc, req.params.id, user.id);
+  if (!session) return;
 
-  const airport = await resolveAirportForSession(sc, session);
+  const airport = await airportOr503(sc, res, session);
+  if (!airport) return;
 
-  const window     = computeWindow(airport, session);
-  const hardReturn = window.hardReturnTime;
+  const record     = certifySessionFeasibility(airport, session, { nowMs: Date.now() });
+  const hardReturn = record.deadline.hardReturnTime;
   const remindAt   = new Date(hardReturn.getTime() - parsed.data.minutesBefore * 60000);
 
   // Persist the reminder instant so the client can (re)schedule local
   // notifications after restarts, and other surfaces can render it.
   const saved = await setReturnReminder(sc, session.id, user.id, remindAt.toISOString());
-  if (!saved) { sendError(res, "db_error", "Could not save the reminder", { exposeDetail: true }); return; }
+  // A reminder the database refused is a reminder that will not fire. Retryable
+  // and said so, rather than an opaque db_error (L294/C2).
+  if (!saved.ok) { sendError(res, "degraded_unavailable", "Your reminder could not be saved. Please try again."); return; }
 
   await emitLayoverEvent(sc, session.id, user.id, "return_deadline_set", {
     minutesBefore: parsed.data.minutesBefore,
     hardReturnTime: hardReturn.toISOString(),
     reminderAt: remindAt.toISOString(),
+    // The deadline persisted above is a certification field: record which
+    // rules and which inputs produced it (spec §20 decision ledger).
+    ...certificationHeader(record),
   });
 
   res.json({
@@ -759,8 +1634,10 @@ router.post("/airport/sessions/:id/return-deadline", async (req, res) => {
     hardReturnTime: hardReturn.toISOString(),
     hardReturnLocal: formatLocalTime(airport.timezone, hardReturn),
     reminderAt: remindAt.toISOString(),
-    bufferMinutes: window.returnBufferMin,
+    bufferMinutes: record.deadline.breakdown.totalBuffer,
     reminderMinutesBefore: parsed.data.minutesBefore,
+    certification: certificationHeader(record),
+    safeReturn: safeReturnPosture(record),
   });
 });
 
@@ -782,8 +1659,8 @@ router.post("/airport/sessions/:id/telegraph", async (req, res) => {
     sendError(res, "invalid_payload"); return;
   }
 
-  const session = await getSession(sc, req.params.id, user.id);
-  if (!session) { sendError(res, "not_found", "Session not found"); return; }
+  const session = await ownedSessionOr(res, sc, req.params.id, user.id);
+  if (!session) return;
 
   // Detect intent — layover messages get a layover_activity intent
   const intent = detectIntent(parsed.data.message);
@@ -795,24 +1672,67 @@ router.post("/airport/sessions/:id/telegraph", async (req, res) => {
     try {
       const member = await isAcceptedTripMember(auth.client, session.tripId, user.id);
       if (member) {
-        const { data: thread } = await sc
+        // threadId null means "no chat to open", which the client renders as a
+        // missing button rather than a wrong statement — so this one degrades
+        // rather than refusing. Bound and logged so it is not silent.
+        const { data: thread, error: threadErr } = await sc
           .from("message_threads")
           .select("id")
           .eq("thread_type", "trip")
           .eq("trip_id", session.tripId)
           .maybeSingle();
+        if (threadErr) logger.warn({ err: threadErr, tripId: session.tripId }, "layover telegraph: trip thread unreadable — no chat offered");
         threadId = (thread as any)?.id ?? null;
       }
-    } catch { /* thread stays null */ }
+    } catch (err) {
+      logger.warn({ err, tripId: session.tripId }, "layover telegraph: trip thread lookup threw — no chat offered");
+    }
   }
 
-  const airport = await resolveAirportForSession(sc, session);
+  const airport = await airportOr503(sc, res, session);
+  if (!airport) return;
 
-  // Emit Telegraph suggestion event (no private location in payload)
+  // ── census-layover L271 — THE MESSAGE IS NOT DISCARDED ─────────────────────
+  //
+  // This route used to classify the intent, resolve `threadId`, emit an event
+  // NAMING that thread, and return `ok: true` — without writing the message
+  // anywhere. The client then pushed the traveller into that very chat, where
+  // their own text was not. The event claimed a send; the thread was empty; the
+  // thread was right.
+  //
+  // The write goes through lib/threadMessage.ts rather than being inlined
+  // because one of its rules is a privacy rule, not a convenience: an E2EE
+  // thread REFUSES a plaintext body, and an unreadable `is_e2ee` refuses too
+  // rather than guessing `false`. Membership is already proved above — a
+  // threadId is only non-null for an ACCEPTED member of the linked trip — so
+  // the helper is asked to write, not to decide who may.
+  //
+  // `posted` is on the wire because the client's next move depends on it: it
+  // navigates to the chat, and navigating someone to a conversation their
+  // message did not reach is the defect this closes, not a lesser version of it.
+  let posted = false;
+  let postFailure: string | null = null;
+  if (threadId) {
+    const sent = await postPlainThreadMessage(sc, {
+      threadId,
+      senderId: user.id,
+      body: parsed.data.message,
+      subtype: "layover_suggestion",
+    });
+    posted = sent.ok;
+    if (!sent.ok) postFailure = sent.reason;
+  }
+
+  // Emit Telegraph suggestion event (no private location in payload).
+  // `posted` travels with it: a suggestion that was composed and one that
+  // reached a thread are different facts, and the event is the only durable
+  // record of which happened.
   await emitLayoverEvent(sc, session.id, user.id, "telegraph_suggestion_sent", {
     intent:   intent?.intent ?? "layover_activity",
     city:     airport.city !== "Unknown" ? airport.city : session.manualCity ?? null,
     threadId,
+    posted,
+    postFailure,
     // NOTE: no coords, no neighborhood — city-level only
   });
 
@@ -822,6 +1742,8 @@ router.post("/airport/sessions/:id/telegraph", async (req, res) => {
     confidence: intent?.confidence ?? 0.7,
     city: airport.city !== "Unknown" ? airport.city : session.manualCity ?? null,
     threadId,
+    posted,
+    postFailure,
   });
 });
 
@@ -839,15 +1761,44 @@ function publicAirport(a: any) {
     lat:         a.lat ?? null,
     lng:         a.lng ?? null,
     verified:    Boolean(a.verified),
+    // §15 pinned terminal context. The column has existed since 0127 and no
+    // session route has ever published it; production holds 0 rows with a
+    // value, so this is null everywhere today and says so honestly rather than
+    // being absent from the contract.
+    terminalInfo: a.terminalInfo ?? null,
   };
 }
 
-function serializeWindow(w: ReturnType<typeof computeWindow>) {
+function serializeEnvelope(record: LayoverFeasibilityRecord) {
+  const w = record.envelope;
   return {
     ...w,
     hardReturnTime:  w.hardReturnTime.toISOString(),
     earliestOutTime: w.earliestOutTime.toISOString(),
   };
+}
+
+/**
+ * §8 `SafeEnvelope`, for the response.
+ *
+ * The SAME pure function `generateRecommendations` blocks cards with, given the
+ * same two arguments — the certified window's `usableMinutes` and the airport's
+ * coordinate — so the bound a traveller reads here is the bound that removed
+ * the card they are not seeing. It is not a second derivation of a number: the
+ * window it is cut from is `record.envelope`, this request's one certification.
+ *
+ * `null` when the airport has no usable coordinate, which is what the fallback
+ * profile's `(0, 0)` means. There is then no envelope, nothing is blocked, and
+ * the response says so rather than publishing a disc centred on the ocean.
+ */
+function safeEnvelopeFor(airport: AirportProfile, record: LayoverFeasibilityRecord) {
+  // census L63 — the third argument is the half of the row §18 left open: the
+  // edge now contracts as CONFIDENCE drops as well as when return risk rises.
+  // It is `record.confidence`, the weakest of the record's own §6.2 estimates,
+  // so the envelope and the verdict on the same response cannot be hedged
+  // against different uncertainty. It contracts the PLANNING edge only; the
+  // proved outer bound (`radiusMetres`) is arithmetic and does not move.
+  return safeEnvelope(record.envelope.usableMinutes, airportPoint(airport), record.confidence);
 }
 
 function stopRowToJson(row: any) {
@@ -856,8 +1807,13 @@ function stopRowToJson(row: any) {
     title:            row.title,
     description:      row.description ?? null,
     stopOrder:        row.stop_order ?? 0,
-    durationMin:      row.duration_min ?? 30,
-    travelMin:        row.travel_min ?? 0,
+    // 0 means NOBODY SAID, and nothing downstream may read it as a measured
+    // figure. `duration_min ?? 30` used to hand a row with no duration a
+    // thirty-minute one; `computePlanFit` refuses to certify a plan on either
+    // of these instead (census L47). Both columns are NOT NULL today, so this
+    // is the defensive half of the same rule the landside zero carries.
+    durationMin:      row.duration_min != null ? Number(row.duration_min) : 0,
+    travelMin:        row.travel_min   != null ? Number(row.travel_min)   : 0,
     placeId:          row.place_id ?? null,
     recommendationId: row.recommendation_id ?? null,
     lat:              row.lat != null ? Number(row.lat) : null,
@@ -868,37 +1824,102 @@ function stopRowToJson(row: any) {
   };
 }
 
-async function loadStops(sc: any, sessionId: string): Promise<any[]> {
-  try {
-    const { data } = await sc
-      .from("layover_plan_stops")
-      .select("*")
-      .eq("session_id", sessionId)
-      .order("stop_order", { ascending: true })
-      .order("created_at", { ascending: true });
-    return (data ?? []).map(stopRowToJson);
-  } catch {
-    return [];
+/**
+ * The stops of a layover plan, or the fact that they could not be read.
+ *
+ * An empty list is load-bearing in FOUR places and every one of them read a
+ * failed query as a genuine empty plan:
+ *   1. `computePlanFit` — no stops means neededMin 0, which means
+ *      `fitsWindow: true`. An unreadable table told a traveller their
+ *      itinerary fits inside the window before the flight leaves. It is the
+ *      one answer this surface must never guess.
+ *   2. POST /stops — `existing.length` is the new row's `stop_order`, so a
+ *      failed read writes a second stop at order 0.
+ *   3. POST /stops — `existing.length >= MAX_STOPS` is the 12-stop cap.
+ *   4. DELETE /stops/:id — the order-compaction pass.
+ * supabase-js resolves on a database error, so `const { data } = await` could
+ * not tell any of them apart. The try/catch it replaced was dead code.
+ */
+type StopsRead =
+  | { ok: true; stops: any[] }
+  | { ok: false; message: string };
+
+async function loadStops(sc: any, sessionId: string): Promise<StopsRead> {
+  const { data, error } = await sc
+    .from("layover_plan_stops")
+    .select("*")
+    .eq("session_id", sessionId)
+    .order("stop_order", { ascending: true })
+    .order("created_at", { ascending: true });
+  if (error) {
+    logger.warn({ err: error, sessionId }, "layover plan stops unreadable — refusing rather than serving an empty plan that 'fits'");
+    return { ok: false, message: String(error.message ?? "layover_plan_stops unreadable") };
   }
+  return { ok: true, stops: (data ?? []).map(stopRowToJson) };
 }
 
-/** Does the planned itinerary fit inside the usable window? */
-function computePlanFit(window: ReturnType<typeof computeWindow>, stops: any[]) {
-  const totalPlannedMin = stops.reduce(
-    (sum, s) => sum + (s.durationMin ?? 0) + (s.travelMin ?? 0), 0,
-  );
-  // Approximate the ride back as the travel time of the last outside stop.
-  const lastOutside = [...stops].reverse().find((s) => !s.insideAirport);
-  const returnTravelMin = lastOutside ? (lastOutside.travelMin ?? 0) : 0;
-  const neededMin = totalPlannedMin + returnTravelMin;
+/**
+ * The session this request is about, or the reply already sent.
+ *
+ * Three outcomes, three answers: a row (continue), no row (404 "Session not
+ * found" — unchanged), and "layover_sessions could not be read" (503
+ * `degraded_unavailable`, retryable). Before this, the third was reported as
+ * the second on eight routes, `/safety` and `/return-deadline` among them.
+ */
+async function ownedSessionOr(
+  res: any, sc: any, sessionId: string, userId: string,
+): Promise<LayoverSession | null> {
+  const r = await getSession(sc, sessionId, userId);
+  if (!r.ok) {
+    sendError(res, "degraded_unavailable", "Your layover could not be loaded. Please try again.");
+    return null;
+  }
+  if (!r.session) { sendError(res, "not_found", "Session not found"); return null; }
+  return r.session;
+}
+
+/** `loadStops` or 503. */
+async function stopsOr503(sc: any, res: any, sessionId: string): Promise<any[] | null> {
+  const r = await loadStops(sc, sessionId);
+  if (!r.ok) {
+    sendError(res, "degraded_unavailable", "Your layover plan could not be loaded. Please try again.");
+    return null;
+  }
+  return r.stops;
+}
+
+/**
+ * Does the planned itinerary fit inside the usable window?
+ *
+ * §6.1's invariant is `expected_airport_return_at <= hard_return_by`, and this
+ * is the only place the layover surface answers it for a whole plan. It used
+ * to sum `(s.durationMin ?? 0) + (s.travelMin ?? 0)`, which charged an unstated
+ * journey ZERO MINUTES — twice, because the ride back is approximated from the
+ * same leg — and then reported `fitsWindow: true`. That is a certification made
+ * out of a figure nobody measured, on the verdict a traveller uses to decide
+ * whether a stop fits (census L47).
+ *
+ * The arithmetic and the three-valued answer live in `LayoverPlanFit` so that
+ * this route, the Compass `simulatePlan` tool and the crew branch solver cannot
+ * hold three different opinions about the same plan. `fitsWindow` is kept on
+ * the wire because clients read it; it now carries the narrower claim.
+ */
+function computePlanFit(record: LayoverFeasibilityRecord, stops: any[]) {
+  const window = record.envelope;
+  const totals = planFitTotals(stops);
+  const fit = planFitVerdict(totals, window.usableMinutes);
   return {
-    totalPlannedMin,
-    returnTravelMin,
-    neededMin,
-    usableMinutes: window.usableMinutes,
-    fitsWindow:    neededMin <= window.usableMinutes,
-    overflowMin:   Math.max(0, neededMin - window.usableMinutes),
-    backByTime:    window.hardReturnTime.toISOString(),
+    totalPlannedMin: totals.totalPlannedMin,
+    returnTravelMin: totals.returnTravelMin,
+    neededMin:       totals.neededMin,
+    usableMinutes:   window.usableMinutes,
+    fitsWindow:      fit === "fits",
+    fit,
+    unstatedTravelStops:   totals.unstatedTravelStops,
+    unstatedDurationStops: totals.unstatedDurationStops,
+    neededMinIsLowerBound: totals.neededMinIsLowerBound,
+    overflowMin:     Math.max(0, totals.neededMin - window.usableMinutes),
+    backByTime:      window.hardReturnTime.toISOString(),
   };
 }
 
@@ -906,12 +1927,37 @@ function computePlanFit(window: ReturnType<typeof computeWindow>, stops: any[]) 
  * Other travelers with an active, opted-in layover in the same city.
  * City-level only, block-filtered both directions, fail-closed to empty.
  */
-async function cityPresence(
+/**
+ * census L294/C2 — the presence answer, WITH the confidence of the reads behind
+ * it.
+ *
+ * Every refusal below still serves nobody, which is the right direction for a
+ * presence surface. What changed is that a refusal caused by an UNREADABLE
+ * TABLE is now distinguishable from a measured zero: `degraded` says the count
+ * is not a measurement and `degradedReasons` says which read failed. Before
+ * this, an outage rendered as "nobody else is here".
+ *
+ * Exported for `services/airport/__tests__/layoverPresenceDegraded.test.ts`:
+ * the presence query and the ownership check read the SAME table, so the route
+ * double cannot fail one without failing the other, and the degradation of the
+ * presence read has to be exercised here.
+ */
+export interface CityPresence {
+  count: number;
+  travelers: Array<{ id: string; handle: string | null; name: string | null; avatarUrl: string | null }>;
+  degraded: boolean;
+  degradedReasons: string[];
+}
+
+export async function cityPresence(
   sc: any,
   userId: string,
   city: string | null,
-): Promise<{ count: number; travelers: Array<{ id: string; handle: string | null; name: string | null; avatarUrl: string | null }> }> {
-  const empty = { count: 0, travelers: [] as Array<{ id: string; handle: string | null; name: string | null; avatarUrl: string | null }> };
+): Promise<CityPresence> {
+  const empty: CityPresence = { count: 0, travelers: [], degraded: false, degradedReasons: [] };
+  const refuse = (reason: string): CityPresence => ({
+    count: 0, travelers: [], degraded: true, degradedReasons: [reason],
+  });
   if (!city || city === "Unknown") return empty;
   try {
     const nowIso = new Date().toISOString();
@@ -923,7 +1969,10 @@ async function cityPresence(
       .neq("user_id", userId)
       .gt("departure_time", nowIso)
       .limit(100);
-    if (error) return empty;
+    if (error) {
+      logger.warn({ err: error, city }, "layover city presence: layover_sessions unreadable — serving nobody, and saying so");
+      return refuse("presence_unreadable");
+    }
 
     const target = city.trim().toLowerCase();
     const userIds: string[] = Array.from(new Set(
@@ -941,21 +1990,45 @@ async function cityPresence(
       .from("blocks")
       .select("blocker_id, blocked_id")
       .or(`blocker_id.eq.${userId},blocked_id.eq.${userId}`);
-    if (blockErr) return empty;
+    if (blockErr) {
+      logger.warn({ err: blockErr, userId }, "layover city presence: blocks unreadable — serving nobody, and saying so");
+      return refuse("blocks_unreadable");
+    }
     const excluded = new Set<string>();
     for (const b of (blockRows ?? []) as any[]) {
       excluded.add(b.blocker_id === userId ? b.blocked_id : b.blocker_id);
     }
-    const visible = userIds.filter((id) => !excluded.has(id));
-    if (visible.length === 0) return empty;
+    const notBlocked = userIds.filter((id) => !excluded.has(id));
+    // A candidate's own sharing opt-out is checked HERE, not only at the
+    // session flag. `share_city_status` on the session is what the traveller
+    // chose when the session began; `location_preferences` and ghost mode are
+    // what they have chosen since. Publishing on the stale one is how someone
+    // who paused sharing stays on the list. An unreadable table publishes
+    // NOBODY -- for a presence surface the empty answer is the safe one.
+    const publishable = await publishableUserIds(sc, notBlocked);
+    const visible = publishable.allowed;
+    // `publishableUserIds` fails CLOSED on an unreadable preferences table and
+    // reports it; an empty list that came from an outage is not a measured zero.
+    if (visible.length === 0) {
+      return publishable.degraded ? refuse("sharing_preferences_unreadable") : empty;
+    }
 
     let travelers: Array<{ id: string; handle: string | null; name: string | null; avatarUrl: string | null }> = [];
+    const profileDegraded: string[] = [];
     try {
       const shown = visible.slice(0, 6);
-      const { data: profiles } = await sc
+      // Decoration, not a claim: `count` above is the answer this endpoint
+      // makes, and it is already computed. An unreadable `profiles` costs the
+      // avatars and names of up to six travellers, not the number of them, so
+      // this one degrades on purpose — logged, not silent.
+      const { data: profiles, error: profErr } = await sc
         .from("profiles")
         .select("id, handle, name, avatar_url")
         .in("id", shown);
+      if (profErr) {
+        logger.warn({ err: profErr }, "layover city presence: profiles unreadable — count served without traveller cards");
+        profileDegraded.push("traveller_cards_unreadable");
+      }
       const allowedNames = await nameVisibilitySet(sc, shown);
       travelers = ((profiles ?? []) as any[]).map((p) => ({
         id: p.id,
@@ -963,11 +2036,25 @@ async function cityPresence(
         name: (p.id === userId || allowedNames.has(p.id as string)) ? (p.name ?? null) : null,
         avatarUrl: p.avatar_url ?? null,
       }));
-    } catch { /* count-only */ }
+    } catch (err) {
+      logger.warn({ err }, "layover city presence: traveller cards threw — count served without them");
+      profileDegraded.push("traveller_cards_unreadable");
+    }
 
-    return { count: visible.length, travelers };
-  } catch {
-    return empty;
+    return {
+      count: visible.length,
+      travelers,
+      degraded: profileDegraded.length > 0 || publishable.degraded,
+      degradedReasons: [
+        ...profileDegraded,
+        ...(publishable.degraded ? ["sharing_preferences_unreadable"] : []),
+      ],
+    };
+  } catch (err) {
+    // Not dead code the way a supabase-js catch is: `publishableUserIds` and
+    // `nameVisibilitySet` are ordinary async functions and either may throw.
+    logger.warn({ err, userId, city }, "layover city presence threw — serving nobody, and saying so");
+    return refuse("presence_threw");
   }
 }
 
@@ -989,9 +2076,25 @@ router.get("/airport/sessions", async (req, res) => {
     ? statusParam as "active" | "completed" | "cancelled" | "expired"
     : undefined;
 
-  if (status === "active") await expireOldSessions(sc);
-  const sessions = await listSessions(sc, user.id, status);
-  res.json({ sessions, featureEnabled: true });
+  // census L294/C2. The sweep's answer is no longer discarded: `null` means it
+  // could not run, and the rows it would have retired are still being listed as
+  // live layovers. `swept === null` is the only case that degrades; a sweep that
+  // ran and expired nothing is a measurement.
+  const swept = status === "active" ? await expireOldSessions(sc) : 0;
+  const listed = await listSessions(sc, user.id, status);
+  // "You have no layovers" is a claim. An unreadable table cannot make it.
+  if (!listed.ok) {
+    sendError(res, "degraded_unavailable", "Your layovers could not be loaded. Please try again.");
+    return;
+  }
+  const sweep = expirySweepDisclosure(swept, listed.sessions);
+  res.json({
+    sessions: listed.sessions,
+    featureEnabled: true,
+    degraded: sweep.degraded,
+    degradedReasons: sweep.degradedReasons,
+    possiblyExpiredSessions: sweep.possiblyExpired,
+  });
 });
 
 // ── GET /api/airport/sessions/active ──────────────────────────────────────────
@@ -1007,15 +2110,45 @@ router.get("/airport/sessions/active", async (req, res) => {
     res.json({ session: null, featureEnabled: false }); return;
   }
 
-  await expireOldSessions(sc);
-  const session = await getActiveSession(sc, user.id);
-  if (!session) { res.json({ session: null, featureEnabled: true }); return; }
+  // census L294/C2 — see the `/sessions` handler above. This endpoint is the
+  // one that matters most: `session` is what mounts the whole Layover surface,
+  // hard-return countdown included, so a session the sweep failed to retire is
+  // a countdown to a flight that has already departed.
+  const swept = await expireOldSessions(sc);
+  const activeRead = await getActiveSession(sc, user.id);
+  // `session: null` is what the client reads as "you are not in a layover
+  // right now" and it hides the whole Layover surface — hard-return countdown
+  // included. An unreadable table must not produce it.
+  if (!activeRead.ok) {
+    sendError(res, "degraded_unavailable", "Your active layover could not be loaded. Please try again.");
+    return;
+  }
+  const session = activeRead.session;
+  const sweep = expirySweepDisclosure(swept, session ? [session] : []);
+  if (!session) {
+    res.json({
+      session: null,
+      featureEnabled: true,
+      degraded: sweep.degraded,
+      degradedReasons: sweep.degradedReasons,
+      possiblyExpiredSessions: sweep.possiblyExpired,
+    });
+    return;
+  }
 
-  const airport = await resolveAirportForSession(sc, session);
+  const airport = await airportOr503(sc, res, session);
+  if (!airport) return;
+  // The session is SERVED, not withheld. Hiding a possibly-stale layover would
+  // take the countdown from a traveller whose flight has not gone in every case
+  // where the flag is wrong, and there is no reading of the flag that is worse
+  // than the silence it replaces.
   res.json({
     session,
     airport: publicAirport(airport),
     featureEnabled: true,
+    degraded: sweep.degraded,
+    degradedReasons: sweep.degradedReasons,
+    possiblyExpiredSessions: sweep.possiblyExpired,
   });
 });
 
@@ -1034,35 +2167,99 @@ router.get("/airport/sessions/:id/overview", async (req, res) => {
     res.json({ featureEnabled: false }); return;
   }
 
-  const session = await getSession(sc, req.params.id, user.id);
-  if (!session) { sendError(res, "not_found", "Session not found"); return; }
+  const session = await ownedSessionOr(res, sc, req.params.id, user.id);
+  if (!session) return;
 
-  const airport = await resolveAirportForSession(sc, session);
-  const window  = computeWindow(airport, session);
-  const advice  = adviseLeaving(airport, session, window);
-  const stops   = await loadStops(sc, session.id);
-  const planFit = computePlanFit(window, stops);
+  const airport = await airportOr503(sc, res, session);
+  if (!airport) return;
+  // No landside probe: nothing on this tree measures a route from the airport,
+  // and the certified advice reads an absent provenance as "not measured" and
+  // says so in `advice.unknowns` (fail-closed by design — see LeaveAdviceFacts).
+  // ONE clock read for the whole response. The certified record is FOR an
+  // instant, and `localTimes.airportNow` below must be that same instant —
+  // two independent reads would let the dashboard's "now" and the deadline it
+  // is measured against come from different moments (src/test/splitClockGuard).
+  const nowMs   = Date.now();
+  const now     = new Date(nowMs);
+  const record  = certifySessionFeasibility(airport, session, { nowMs });
+  const stops   = await stopsOr503(sc, res, session.id);
+  if (!stops) return;
+  const planFit = computePlanFit(record, stops);
   const tz      = airport.timezone ?? "UTC";
-  const now     = new Date();
 
-  const presence = session.shareCityStatus
+  // Same gate as GET /presence, for the same reason: `share_city_status` is the
+  // session-time choice and the gate is the current one. The overview published
+  // othersInCity off the stale flag alone.
+  const overviewGate = await evaluateSharingGate(sc, { userId: user.id, tripId: session.tripId });
+  const ladderEnabled = await isFlagEnabled(sc, "layover_presence_ladder_enabled");
+  const rawPresence = overviewGate.allowed && session.shareCityStatus
     ? await cityPresence(sc, user.id, airport.city !== "Unknown" ? airport.city : session.manualCity)
     : { count: 0, travelers: [] };
+  const presence = disclosePresence({
+    gate: overviewGate,
+    sessionOptedIn: session.shareCityStatus,
+    ladderEnabled,
+    count: rawPresence.count,
+    travelers: rawPresence.travelers,
+  });
 
   res.json({
     ok: true,
     featureEnabled: true,
     session,
     airport: publicAirport(airport),
-    window: serializeWindow(window),
-    advice,
+    window: serializeEnvelope(record),
+    advice: {
+      verdict:     record.verdict,
+      reasons:     record.reasons,
+      unknowns:    record.unknowns,
+      reasonCodes: record.reasonCodes,
+      disclaimer:  record.disclaimer,
+      engineVersion: record.engineVersion,
+    },
+    certification: certificationHeader(record),
+    estimates:     record.estimates,
+    // The dashboard's copy of the §2.1/§22 disclosure — see GET /:id/safety.
+    airportIntelligence: airportIntelligence(record),
     stops,
     planFit,
     share: {
       enabled: session.shareCityStatus,
       othersInCity: presence.count,
     },
+    // The server half of §15 and §16, which had no server half at all: the
+    // posture the client should take now, and a bundle that carries its own
+    // certifiedAt/staleAfter/inputHash so an offline client can say how old its
+    // answer is instead of presenting a stale deadline as current.
+    safeReturn: safeReturnPosture(record),
+    // §8 — the same outer edge, from the same certified window. The dashboard's
+    // copy: a traveller who sees fewer landside cards than a city has places
+    // can read the bound that removed them.
+    safeEnvelope: safeEnvelopeFor(airport, record),
+    offlineBundle: buildOfflineBundle({
+      session,
+      airport,
+      record,
+      hardReturnLocal: formatLocalTime(tz, record.deadline.hardReturnTime),
+      stops,
+    }),
     returnReminderAt: session.returnReminderAt,
+    // §24 L265 — the material-change threshold, published on the read the
+    // dashboard performs on every mount and every pull-to-refresh.
+    //
+    // A reminder is scheduled 30 minutes before the certified hard return and
+    // then never re-examined, so a traveller who moves their flight 15 minutes
+    // EARLIER keeps a notification that fires fifteen minutes into the window
+    // it was meant to open — while the footer still reads "Reminder set". The
+    // server stores the fire time, so the server is where the drift is visible.
+    // Below the threshold this answers `keep`, which is the suppression half of
+    // the same requirement.
+    reminder: reminderDisposition({
+      reminderAt: session.returnReminderAt,
+      hardReturnTime: record.deadline.hardReturnTime,
+      returnState: record.envelope.returnState,
+      nowMs,
+    }),
     localTimes: {
       timezone:       tz,
       airportNow:     formatLocalTime(tz, now),
@@ -1072,7 +2269,7 @@ router.get("/airport/sessions/:id/overview", async (req, res) => {
       departureLocal: formatLocalTime(tz, new Date(session.departureTime)),
       departureDay:   localDayString(tz, new Date(session.departureTime)),
       boardingLocal:  session.boardingTime ? formatLocalTime(tz, new Date(session.boardingTime)) : null,
-      hardReturnLocal: formatLocalTime(tz, window.hardReturnTime),
+      hardReturnLocal: formatLocalTime(tz, record.deadline.hardReturnTime),
     },
   });
 });
@@ -1083,7 +2280,11 @@ const stopCreateSchema = z.object({
   title:         z.string().min(1).max(200),
   description:   z.string().max(500).optional().nullable(),
   durationMin:   z.number().int().min(5).max(720),
-  travelMin:     z.number().int().min(0).max(240).optional().default(0),
+  // NO `.default(0)`. That default is where a journey nobody had measured
+  // became a measured zero (census L47): the column is NOT NULL, so the
+  // unknown had to die somewhere, and it died here silently. It is now absent
+  // until `landsideTravelRefusal` decides whether absence is allowed.
+  travelMin:     z.number().int().min(0).max(240).optional(),
   locationLabel: z.string().max(300).optional().nullable(),
   insideAirport: z.boolean().optional().default(false),
   lat:           z.number().min(-90).max(90).optional().nullable(),
@@ -1092,6 +2293,25 @@ const stopCreateSchema = z.object({
 });
 const stopUpdateSchema = stopCreateSchema.partial();
 const MAX_STOPS = 12;
+
+/**
+ * The one rule that keeps `layover_plan_stops` free of fabricated legs: a stop
+ * OUTSIDE the airport must arrive with a travel time.
+ *
+ * `travel_min INTEGER NOT NULL DEFAULT 0` cannot store "unstated", so the
+ * choice at the write boundary is between storing a zero that later reads as a
+ * measurement and refusing the write. Refusing is the honest one — the stop is
+ * the traveller's own, they know roughly how far it is, and `computePlanFit`
+ * would otherwise be asked to certify a plan whose journeys were never stated.
+ * Airside stops need nothing: their zero is a fact.
+ *
+ * Returns the message to refuse with, or `null` when the write may proceed.
+ */
+function landsideTravelRefusal(insideAirport: boolean, travelMin: number | null | undefined): string | null {
+  if (insideAirport) return null;
+  if (typeof travelMin === "number" && travelMin > 0) return null;
+  return "A stop outside the airport needs a travel time — how long it takes to get there.";
+}
 
 /** Shared guard: flag on, session exists & owned. Returns null after replying. */
 async function requireOwnedSession(req: any, res: any): Promise<{ sc: any; user: any; session: LayoverSession } | null> {
@@ -1103,16 +2323,23 @@ async function requireOwnedSession(req: any, res: any): Promise<{ sc: any; user:
   if (!await isFlagEnabled(sc, "airport_mode_enabled")) {
     sendError(res, "feature_disabled"); return null;
   }
-  const session = await getSession(sc, req.params.id, user.id);
-  if (!session) { sendError(res, "not_found", "Session not found"); return null; }
+  const session = await ownedSessionOr(res, sc, req.params.id, user.id);
+  if (!session) return null;
   return { sc, user, session };
 }
 
 async function respondWithStops(res: any, sc: any, session: LayoverSession) {
-  const airport = await resolveAirportForSession(sc, session);
-  const window  = computeWindow(airport, session);
-  const stops   = await loadStops(sc, session.id);
-  res.json({ ok: true, stops, planFit: computePlanFit(window, stops) });
+  const airport = await airportOr503(sc, res, session);
+  if (!airport) return;
+  const record  = certifySessionFeasibility(airport, session, { nowMs: Date.now() });
+  const stops   = await stopsOr503(sc, res, session.id);
+  if (!stops) return;
+  res.json({
+    ok: true,
+    stops,
+    planFit: computePlanFit(record, stops),
+    certification: certificationHeader(record),
+  });
 }
 
 router.get("/airport/sessions/:id/stops", async (req, res) => {
@@ -1135,7 +2362,13 @@ router.post("/airport/sessions/:id/stops", async (req, res) => {
     return;
   }
 
-  const existing = await loadStops(sc, session.id);
+  const travelRefusal = landsideTravelRefusal(parsed.data.insideAirport, parsed.data.travelMin);
+  if (travelRefusal) { sendError(res, "invalid_payload", travelRefusal); return; }
+
+  // `existing.length` is BOTH the cap check and the new row's stop_order, so an
+  // unreadable read would bypass the 12-stop limit and write a duplicate order.
+  const existing = await stopsOr503(sc, res, session.id);
+  if (!existing) return;
   if (existing.length >= MAX_STOPS) {
     sendError(res, "invalid_payload", `A layover plan can have at most ${MAX_STOPS} stops`);
     return;
@@ -1147,7 +2380,8 @@ router.post("/airport/sessions/:id/stops", async (req, res) => {
     description:    parsed.data.description ?? null,
     stop_order:     existing.length,
     duration_min:   parsed.data.durationMin,
-    travel_min:     parsed.data.travelMin,
+    // Airside: 0 is the fact. Landside: the refusal above guarantees a figure.
+    travel_min:     parsed.data.insideAirport ? 0 : parsed.data.travelMin,
     location_label: parsed.data.locationLabel ?? null,
     inside_airport: parsed.data.insideAirport,
     lat:            parsed.data.lat ?? null,
@@ -1172,15 +2406,25 @@ router.post("/airport/sessions/:id/stops/from-recommendation", async (req, res) 
   const recId = typeof req.body?.recommendationId === "string" ? req.body.recommendationId : null;
   if (!recId) { sendError(res, "invalid_payload", "recommendationId is required"); return; }
 
-  const { data: rec } = await sc
+  // Same moderation boundary as the list read: an admin-hidden recommendation
+  // must not be addable to a plan either, or the suppression is one API call
+  // wide. A client holding an id from before the hide would otherwise still get
+  // the row. `.error` is checked because supabase-js resolves on a DB error,
+  // which would otherwise read as "not found" and mask a real fault.
+  const { data: rec, error: recError } = await sc
     .from("layover_recommendations")
     .select("*")
     .eq("id", recId)
     .eq("session_id", session.id)
+    .neq("status", USER_HIDDEN_RECOMMENDATION_STATUS)
     .maybeSingle();
+  if (recError) { sendError(res, "db_error", recError.message); return; }
   if (!rec) { sendError(res, "not_found", "Recommendation not found for this session"); return; }
 
-  const existing = await loadStops(sc, session.id);
+  // `existing.length` is BOTH the cap check and the new row's stop_order, so an
+  // unreadable read would bypass the 12-stop limit and write a duplicate order.
+  const existing = await stopsOr503(sc, res, session.id);
+  if (!existing) return;
   if (existing.length >= MAX_STOPS) {
     sendError(res, "invalid_payload", `A layover plan can have at most ${MAX_STOPS} stops`);
     return;
@@ -1190,13 +2434,30 @@ router.post("/airport/sessions/:id/stops/from-recommendation", async (req, res) 
     return;
   }
 
+  // The card's own silence must not become the plan's measured zero. A landside
+  // recommendation with no travel time is refused for the same reason a manual
+  // landside stop without one is (census L47); the `?? 0` / `?? 30` here were
+  // the from-recommendation copy of that laundering.
+  const recInside = Boolean((rec as any).inside_airport);
+  const recTravel = Number((rec as any).travel_time_min);
+  const recDwell  = Number((rec as any).activity_time_min);
+  const recRefusal = landsideTravelRefusal(recInside, Number.isFinite(recTravel) ? recTravel : null);
+  if (recRefusal) {
+    sendError(res, "invalid_payload", "This idea has no travel time yet, so it cannot be timed into a plan.");
+    return;
+  }
+  if (!Number.isFinite(recDwell) || recDwell <= 0) {
+    sendError(res, "invalid_payload", "This idea has no duration yet, so it cannot be timed into a plan.");
+    return;
+  }
+
   const { error } = await sc.from("layover_plan_stops").insert({
     session_id:        session.id,
     title:             (rec as any).title,
     description:       (rec as any).description ?? null,
     stop_order:        existing.length,
-    duration_min:      Math.min(720, Math.max(5, (rec as any).activity_time_min ?? 30)),
-    travel_min:        Math.min(240, Math.max(0, (rec as any).travel_time_min ?? 0)),
+    duration_min:      Math.min(720, Math.max(5, recDwell)),
+    travel_min:        recInside ? 0 : Math.min(240, recTravel),
     location_label:    (rec as any).location_label ?? null,
     inside_airport:    Boolean((rec as any).inside_airport),
     place_id:          (rec as any).place_id ?? null,
@@ -1222,6 +2483,32 @@ router.patch("/airport/sessions/:id/stops/:stopId", async (req, res) => {
 
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
   const d = parsed.data;
+
+  // The landside rule has to be checked against the MERGED row, not the patch:
+  // `insideAirport: false` on its own turns a lawful airside 0 into an unstated
+  // landside one, and `travelMin: 0` on its own erases a stated leg. Either
+  // would put the plan-fit verdict back on a journey nobody measured (L47), so
+  // the current row is read first and the rule applied to what the row WOULD
+  // become. An unreadable read refuses rather than guessing at the merge.
+  const existingStop = await sc
+    .from("layover_plan_stops")
+    .select("travel_min, inside_airport")
+    .eq("id", req.params.stopId)
+    .eq("session_id", session.id)
+    .maybeSingle();
+  if (existingStop.error) {
+    sendError(res, "degraded_unavailable", "Your layover plan could not be loaded. Please try again."); return;
+  }
+  if (!existingStop.data) { sendError(res, "not_found", "Stop not found"); return; }
+  const mergedInside = d.insideAirport !== undefined
+    ? d.insideAirport : Boolean((existingStop.data as any).inside_airport);
+  const mergedTravelRaw = d.travelMin !== undefined
+    ? d.travelMin : Number((existingStop.data as any).travel_min);
+  const patchRefusal = landsideTravelRefusal(
+    mergedInside, Number.isFinite(Number(mergedTravelRaw)) ? Number(mergedTravelRaw) : null,
+  );
+  if (patchRefusal) { sendError(res, "invalid_payload", patchRefusal); return; }
+
   if (d.title         !== undefined) patch.title          = d.title;
   if (d.description   !== undefined) patch.description    = d.description;
   if (d.durationMin   !== undefined) patch.duration_min   = d.durationMin;
@@ -1230,6 +2517,9 @@ router.patch("/airport/sessions/:id/stops/:stopId", async (req, res) => {
   if (d.insideAirport !== undefined) patch.inside_airport = d.insideAirport;
   if (d.lat           !== undefined) patch.lat            = d.lat;
   if (d.lng           !== undefined) patch.lng            = d.lng;
+  // Moving a stop airside makes its landside leg meaningless; leaving the old
+  // figure would keep charging the plan for a journey that is no longer taken.
+  if (d.insideAirport === true && d.travelMin === undefined) patch.travel_min = 0;
 
   const { data: updated, error } = await sc
     .from("layover_plan_stops")
@@ -1261,7 +2551,12 @@ router.delete("/airport/sessions/:id/stops/:stopId", async (req, res) => {
   if (!removed) { sendError(res, "not_found", "Stop not found"); return; }
 
   // Compact remaining order.
-  const remaining = await loadStops(sc, session.id);
+  const remainingRead = await loadStops(sc, session.id);
+  // The stop is already deleted. A failed compaction leaves a gap in
+  // stop_order, which is cosmetic and self-heals on the next successful pass —
+  // so this one logs and carries on rather than 503-ing a completed delete.
+  const remaining = remainingRead.ok ? remainingRead.stops : [];
+  if (!remainingRead.ok) logger.warn({ sessionId: session.id }, "stop-order compaction skipped — layover_plan_stops unreadable");
   for (let i = 0; i < remaining.length; i++) {
     if (remaining[i].stopOrder !== i) {
       await sc.from("layover_plan_stops").update({ stop_order: i }).eq("id", remaining[i].id);
@@ -1284,8 +2579,9 @@ router.post("/airport/sessions/:id/stops/reorder", async (req, res) => {
     sendError(res, "invalid_payload", "orderedIds is required"); return;
   }
 
-  const current = await loadStops(sc, session.id);
-  const currentIds = new Set(current.map((s) => s.id));
+  const current = await stopsOr503(sc, res, session.id);
+  if (!current) return;
+  const currentIds = new Set(current.map((s: any) => s.id));
   const sameSet = orderedIds.length === current.length && orderedIds.every((id) => currentIds.has(id));
   if (!sameSet) {
     sendError(res, "invalid_payload", "orderedIds must contain exactly the current stop ids");
@@ -1303,6 +2599,656 @@ router.post("/airport/sessions/:id/stops/reorder", async (req, res) => {
   await respondWithStops(res, sc, session);
 });
 
+// ── §10 TRAVELLER OBSERVATIONS ────────────────────────────────────────────────
+//
+// GET  /api/airport/sessions/:id/observations  — reconciled truth for this airport
+// POST /api/airport/sessions/:id/observations  — report what you can see
+//
+// Census-layover L82 ("Traveler observation — checkpoint timing, queue report,
+// closure; confidence-weighted") has read, every pass: "The class exists and is
+// confidence-weighted the way the spec asks (trust × decay), with a
+// corroboration floor above it. There is NO SUBMISSION SURFACE — no route, no
+// screen, nothing a traveller can report from." These two routes are that
+// surface, and `services/layover/LayoverObservationService.ts` is the writer
+// migration 2860's ORDERING section said would come after it.
+//
+// ── WHY THESE HANG OFF A SESSION AND NOT OFF A BARE AIRPORT ──────────────────
+// An observation is a claim about a place, and the cheapest way to make a false
+// one is from an armchair. Scoping the write to the reporter's OWN LAYOVER
+// SESSION means the server already knows, without asking and without a location
+// permission, that this person told us they are at this airport inside this
+// window. It is not proof of presence — nothing here is — but it raises the
+// cost of a fabricated queue report from "send a POST" to "run a layover", and
+// it costs the honest traveller nothing, because the only surface that shows
+// these reports is the layover dashboard they are already on.
+//
+// It also supplies the airport ref without a second lookup, and it reuses
+// `requireOwnedSession`, so the authorization story is the one every other
+// session-scoped route in this file already has.
+//
+// ── WHAT A TRAVELLER MAY WRITE, AND WHAT THEY MAY NOT ────────────────────────
+// `TRAVELLER_SUBMITTABLE_FACT_TYPES` is derived from the fact vocabulary as
+// exactly the TRAVELER_OBSERVATION class — checkpoint timing, queue report,
+// closure. A traveller cannot write a FAST_LIVE or OPERATIONAL_SEMI_LIVE fact:
+// those carry a shorter TTL and a place in `liveConditionsFrom` that were
+// designed for an instrumented feed, and a community reading filed under one
+// would reach the safety buffer with a freshness it has not earned.
+//
+// `observerKind` is forced to "community" by the service and is NOT a request
+// field. A client that could name its own observer kind could claim to be an
+// official feed, whose trust weight is 1.0 against community's 0.3.
+//
+// ── WHAT THIS DELIBERATELY DOES NOT DO ───────────────────────────────────────
+// It does not feed `liveConditionsFrom`, so no reported queue moves a return
+// deadline today. That wiring is L81's ("Fast live … no producer"), it changes
+// a SAFETY number, and it is an owner decision rather than a side effect of
+// giving travellers somewhere to report. Recorded in docs/BUILD-BACKLOG.md.
+
+const observationSubmitSchema = z.object({
+  factType: z.string().min(1).max(64),
+  // No `.default(...)` anywhere in here. Every field is a measurement the
+  // traveller makes; a default would be this route inventing one, which is the
+  // defect census L47 and L293 were both opened for.
+  value: z.number().finite(),
+  // The idempotency key of migration 2982. Client-supplied and REQUIRED: a
+  // server-minted one would be a fresh value on every retry and would dedupe
+  // nothing, which is the whole reason the column exists.
+  submissionToken: z.string().min(8).max(128),
+});
+
+/**
+ * The string an observation about this airport is filed under.
+ *
+ * 2860: "IATA code, or a profile id. Whatever it is, it must be the same
+ * string." IATA first because it is the readable one and the one a second
+ * producer (an operator feed) would naturally use; the profile id is the
+ * fallback for a row without a code.
+ *
+ * `null` when the airport is the generic fallback profile — `UNK` is not an
+ * airport, it is the absence of one, and pooling every unidentified airport's
+ * reports under a single ref would let a queue reported in one country
+ * corroborate a queue in another.
+ */
+function observationAirportRef(airport: AirportProfile): string | null {
+  if (airport.iataCode && airport.iataCode !== "UNK") return airport.iataCode;
+  if (airport.id) return airport.id;
+  return null;
+}
+
+/** The shape both routes publish, so the client has one thing to parse. */
+function observationFactPayload(outcome: ReconciliationOutcome) {
+  return {
+    factType: outcome.factType,
+    factClass: outcome.factClass,
+    truthVersion: outcome.truthVersion,
+    // null is an HONEST ABSENCE and is rendered as one. It means either that
+    // nothing unexpired exists, or that what exists sits below the
+    // corroboration floor — `reconcile` does not publish a value it will not
+    // stand behind, and this route does not invent one.
+    truth: outcome.truth,
+    corroboration: outcome.corroboration,
+    conflictBetween: outcome.conflictBetween,
+    rulesApplied: outcome.rulesApplied,
+  };
+}
+
+router.get("/airport/sessions/:id/observations", async (req, res) => {
+  const ctx = await requireOwnedSession(req, res);
+  if (!ctx) return;
+  const { sc, session } = ctx;
+
+  const airport = await airportOr503(sc, res, session);
+  if (!airport) return;
+  const airportRef = observationAirportRef(airport);
+  if (!airportRef) {
+    sendError(res, "degraded_unavailable", "We do not have this airport on file yet, so reports cannot be grouped for it.");
+    return;
+  }
+
+  const nowMs = Date.now();
+  const facts = [];
+  for (const factType of TRAVELLER_SUBMITTABLE_FACT_TYPES) {
+    const read = await reconcileAirportFact(sc, airportRef, factType, nowMs);
+    // A FAILED READ IS A REFUSAL, NOT AN EMPTY LIST. Serving `truth: null` here
+    // would tell a traveller "nobody has reported anything" on the strength of
+    // an outage — the exact defect §21.4 and §23.1 of the census found four
+    // times over on this domain.
+    if (!read.ok) {
+      sendError(res, "degraded_unavailable", "Live reports for this airport could not be loaded. Please try again.");
+      return;
+    }
+    facts.push(observationFactPayload(read.outcome));
+  }
+
+  res.json({
+    ok: true,
+    airportRef,
+    submittableFactTypes: TRAVELLER_SUBMITTABLE_FACT_TYPES,
+    rateLimit: OBSERVATION_RATE_LIMIT,
+    facts,
+  });
+});
+
+router.post("/airport/sessions/:id/observations", async (req, res) => {
+  const ctx = await requireOwnedSession(req, res);
+  if (!ctx) return;
+  const { sc, user, session } = ctx;
+
+  const parsed = observationSubmitSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid report");
+    return;
+  }
+  // Checked here rather than in the zod schema so the refusal can name the
+  // types that ARE allowed; a bare enum mismatch tells the client nothing.
+  if (!isTravellerSubmittableFactType(parsed.data.factType)) {
+    sendError(
+      res,
+      "invalid_payload",
+      `factType must be one of: ${TRAVELLER_SUBMITTABLE_FACT_TYPES.join(", ")}`,
+    );
+    return;
+  }
+
+  const airport = await airportOr503(sc, res, session);
+  if (!airport) return;
+  const airportRef = observationAirportRef(airport);
+  if (!airportRef) {
+    sendError(res, "degraded_unavailable", "We do not have this airport on file yet, so reports cannot be grouped for it.");
+    return;
+  }
+
+  const result = await submitTravellerObservation(
+    sc,
+    {
+      userId: user.id,
+      airportRef,
+      factType: parsed.data.factType,
+      value: parsed.data.value,
+      submissionToken: parsed.data.submissionToken,
+    },
+    Date.now(),
+  );
+
+  if (!result.ok) {
+    if (result.kind === "unavailable") {
+      // Retryable and said so. The report was NOT stored — in particular it was
+      // not stored unscreened, because the rate limit is a property of the
+      // corpus and a write without the corpus is a write without the limit.
+      sendError(res, "degraded_unavailable", "Your report could not be checked just now. Please try again.");
+      return;
+    }
+    if (result.kind === "write_failed") {
+      sendError(res, "db_error", result.message);
+      return;
+    }
+    // A screening rejection is the traveller's answer, not a server fault, so
+    // each one gets a sentence rather than a code. `rate_limited` is 429; the
+    // rest are the client having sent something the channel will not hold.
+    const REJECTION_MESSAGE: Record<string, string> = {
+      implausible_value: "That reading is outside the range this channel accepts.",
+      not_finite: "That reading is not a number.",
+      unknown_fact_type: "That is not something travellers can report here.",
+      bad_timestamp: "Your report could not be timed.",
+      future_dated: "Your report is dated in the future.",
+      expired: "Your report is older than this kind of fact stays useful for.",
+      duplicate_id: "That report has already been recorded.",
+      rate_limited: `You have reported this recently. This channel accepts ${OBSERVATION_RATE_LIMIT.maxPerWindow} reports of the same kind every ${OBSERVATION_RATE_LIMIT.windowMinutes} minutes.`,
+    };
+    const message = REJECTION_MESSAGE[result.reason] ?? "That report could not be accepted.";
+    // `rate_limited` is a first-class code in lib/http (429); everything else
+    // here is the client having sent something this channel will not hold.
+    // Routed through sendError rather than a hand-built body so the refusal
+    // envelope is the same one every other route in this file emits.
+    sendError(res, result.reason === "rate_limited" ? "rate_limited" : "invalid_payload", message);
+    return;
+  }
+
+  // The audit trail this file keeps for every consequential layover action. The
+  // VALUE is recorded; the observer handle is NOT, because layover_events
+  // carries `user_id NOT NULL` and writing the handle beside the user id would
+  // reconstruct, in a second table, exactly the link migration 2860 keeps out
+  // of the first one.
+  await emitLayoverEvent(sc, session.id, user.id, "airport_observation_reported", {
+    airportRef,
+    factType: parsed.data.factType,
+    value: parsed.data.value,
+    duplicate: result.duplicate,
+  });
+
+  res.json({
+    ok: true,
+    airportRef,
+    // TRUE when migration 2982's idempotency key caught a retry. The report was
+    // already stored, so this is a success, not an error — a client shown an
+    // error here would retry a write that had already succeeded.
+    duplicate: result.duplicate,
+    fact: observationFactPayload(result.outcome),
+  });
+});
+
+// ── §14 LAYOVER CREW ──────────────────────────────────────────────────────────
+//
+// GET  /api/airport/sessions/:id/crew             — my crew + certified plan, or open crews here
+// POST /api/airport/sessions/:id/crew             — form a crew
+// POST /api/airport/sessions/:id/crew/:crewId/join
+// POST /api/airport/sessions/:id/crew/leave
+//
+// census-layover L28/L29 (`layover_crews`, `layover_crew_members`) read
+// "Absent."; L185/L186/L188 score `LayoverCrewService.create/join/leave`
+// NOT-BUILT with the one-word reason "No crew."; L131 (§14 "L3 crew formed")
+// likewise. The §14.1 CONSTRAINT SOLVER was never the missing part —
+// `services/airport/LayoverCrewService.ts` has implemented `sharedReturnBy`,
+// `certifyCrewPlan`, per-branch feasibility and split plans for a year of
+// census passes, purely, with members as an argument. These routes give it
+// members. Storage is migration 2984; the store is
+// `services/layover/LayoverCrewStore.ts`.
+//
+// ── THE SHARED DEADLINE IS A MINIMUM, AND IT IS NOT COMPUTED HERE ────────────
+// §14.1: `shared_return_by = min(member.required_return_by)`. Each member's
+// `required_return_by` comes from `certifySessionFeasibility` over THEIR OWN
+// session and airport — the same single canonical derivation every other
+// surface in this file uses. This route assembles records and hands them to
+// `certifyCrewPlan`; it does not compare a time to another time anywhere.
+//
+// A member whose record could not be produced is passed as `record: null`, NOT
+// dropped. `sharedReturnBy` then returns null for the whole crew, deliberately:
+// a minimum taken over the members we happened to be able to read is a LATER
+// deadline than the truth, and that is the one direction a safety minimum must
+// never move. Absent is refusable; a wrong later time is not.
+//
+// ── WHO A MEMBER MAY SEE ─────────────────────────────────────────────────────
+// Membership is the FIRST of three gates, not the only one. Names and avatars
+// go through exactly the pipeline `cityPresence` uses — blocks in both
+// directions, `publishableUserIds` (sharing paused / ghost mode), and
+// `nameVisibilitySet` — so a crewmate who has since paused sharing is a
+// participant in the arithmetic and not a face on a card. The crew tables
+// themselves carry no policy and no client grant (2984), so this route layer is
+// the only answer to the question rather than the stricter of two.
+//
+// ── WHAT IS NOT HERE ─────────────────────────────────────────────────────────
+// No chat: §14's "shared chat" belongs to Telegraph's threads, which exist and
+// already handle E2EE. No location of any precision: L124 gates a crew member's
+// position on an explicit temporary permission whose grant store does not
+// exist, and `meeting_point_label` is a label ("Terminal 2 food court"), not a
+// position. Neither table has a coordinate column and 2984 asserts it.
+
+const crewCreateSchema = z.object({
+  title: z.string().min(1).max(120),
+  meetingPointLabel: z.string().min(1).max(200).optional().nullable(),
+  maxMembers: z.number().int().min(2).max(12).optional(),
+});
+
+/**
+ * THE CREW FEATURE'S ONE CERTIFICATION SITE.
+ *
+ * Both crew paths need a certified record — the founder's, to bound the crew's
+ * life by their layover, and every member's, to take §14.1's minimum — and both
+ * go through here rather than each calling `certifySessionFeasibility`
+ * directly.
+ *
+ * That is not tidiness. `src/test/layoverFeasibilityRecord.test.ts` pins the
+ * number of certification call sites in this file to a NAMED list of handlers,
+ * and its comment says why a bare count was not enough: "it cannot tell a NEW
+ * handler that certifies once from an OLD handler that started certifying
+ * twice". A crew is the first thing in this file that legitimately certifies
+ * more than one session in one request — once per member — so it is given ONE
+ * site that the ratchet can name, instead of scattering call sites that would
+ * each have to be argued for separately.
+ */
+function certifyCrewMemberRecord(
+  airport: AirportProfile,
+  session: LayoverSession,
+  nowMs: number,
+): LayoverFeasibilityRecord {
+  return certifySessionFeasibility(airport, session, { nowMs });
+}
+
+/** The crew's own life, bounded by the founder's layover. */
+function crewExpiryFor(record: LayoverFeasibilityRecord, nowMs: number): string {
+  // The founder's hard return, not `nowMs + TTL`: a crew that outlives the
+  // layover that created it is discoverable by travellers who would be
+  // certifying against a deadline that has passed. The TTL is only a ceiling.
+  const hard = record.deadline.hardReturnTime.getTime();
+  return new Date(Math.min(hard, nowMs + CREW_TTL_MINUTES * 60_000)).toISOString();
+}
+
+/**
+ * Turn crew membership rows into the §14.1 solver's input.
+ *
+ * Returns `ok: false` when the SESSIONS could not be read at all — an
+ * unreadable `layover_sessions` must not become "a crew of members with no
+ * deadlines", which certifies as infeasible for a reason that is not true.
+ * A session that is simply MISSING (ended, expired, deleted) is a real
+ * `record: null` and is passed through as one.
+ */
+async function crewSolverMembers(
+  sc: any,
+  members: Array<{ userId: string; sessionId: string }>,
+  nowMs: number,
+): Promise<{ ok: true; members: CrewMember[] } | { ok: false }> {
+  const read = await readSessionsByIds(sc, members.map((m) => m.sessionId));
+  if (!read.ok) return { ok: false };
+  const byId = new Map(read.sessions.map((s) => [s.id, s]));
+
+  const out: CrewMember[] = [];
+  for (const m of members) {
+    const session = byId.get(m.sessionId);
+    if (!session || !LAYOVER_LIVE_SESSION_STATUSES.includes(session.status as any)) {
+      out.push({ userId: m.userId, sessionId: m.sessionId, record: null });
+      continue;
+    }
+    const resolved = await resolveAirportForSession(sc, session);
+    if (!resolved.ok) {
+      // Fail closed, per member. `certifyCrewPlan` turns one null record into
+      // an infeasible plan for everybody, which is the conservative answer.
+      out.push({ userId: m.userId, sessionId: m.sessionId, record: null });
+      continue;
+    }
+    out.push({
+      userId: m.userId,
+      sessionId: m.sessionId,
+      record: certifyCrewMemberRecord(resolved.airport, session, nowMs),
+    });
+  }
+  return { ok: true, members: out };
+}
+
+/**
+ * The crew, as a traveller may see it: the certified §14.1 solution plus the
+ * members they are actually entitled to see a face for.
+ */
+async function crewPayload(
+  sc: any,
+  viewerId: string,
+  crew: { id: string; title: string; city: string; meetingPointLabel: string | null; status: string; maxMembers: number; expiresAt: string; createdBy: string },
+  members: Array<{ userId: string; sessionId: string; role: string }>,
+  nowMs: number,
+): Promise<{ ok: true; body: Record<string, unknown> } | { ok: false }> {
+  const solver = await crewSolverMembers(sc, members, nowMs);
+  if (!solver.ok) return { ok: false };
+
+  // The crew has no itinerary of its own yet, so the plan certified here is the
+  // EMPTY unsplit plan: one branch, everybody, no stops. That is not a
+  // placeholder — it is the question "can this group be together at all and
+  // when must they be back", which is exactly `sharedReturnBy` plus a
+  // zero-minute branch, and it is the honest thing to publish before anyone has
+  // proposed a stop. A crew itinerary is a further build; see BUILD-BACKLOG.
+  const solution = certifyCrewPlan(unsplitPlan(solver.members, []), solver.members, { nowMs });
+
+  const otherIds = members.map((m) => m.userId).filter((id) => id !== viewerId);
+  const cards = await crewMemberCards(sc, viewerId, otherIds);
+
+  return {
+    ok: true,
+    body: {
+      crew: {
+        id: crew.id,
+        title: crew.title,
+        city: crew.city,
+        meetingPointLabel: crew.meetingPointLabel,
+        status: crew.status,
+        maxMembers: crew.maxMembers,
+        expiresAt: crew.expiresAt,
+        youAreOwner: crew.createdBy === viewerId,
+        memberCount: members.length,
+      },
+      // §14.1, server-certified. Every field here is `certifyCrewPlan`'s.
+      solution: {
+        crewVersion: solution.crewVersion,
+        sharedReturnBy: solution.sharedReturnBy,
+        bindingMemberIds: solution.bindingMemberIds,
+        feasible: solution.feasible,
+        reasons: solution.reasons,
+        split: solution.split,
+        members: solution.members.map((m) => ({
+          userId: m.userId,
+          requiredReturnBy: m.requiredReturnBy,
+          usableMinutes: m.usableMinutes,
+          returnState: m.returnState,
+        })),
+      },
+      members: cards.cards,
+      degraded: cards.degraded,
+      degradedReasons: cards.degradedReasons,
+    },
+  };
+}
+
+/**
+ * Names and avatars for the people in a crew, through the SAME three gates
+ * `cityPresence` uses. Membership alone is not entitlement.
+ *
+ * A card that cannot be shown is DROPPED, and the drop is reported as degraded
+ * rather than passed off as a smaller crew — `memberCount` above is taken from
+ * the membership rows, so the count stays true even when the faces do not.
+ */
+async function crewMemberCards(
+  sc: any,
+  viewerId: string,
+  otherIds: string[],
+): Promise<{ cards: Array<Record<string, unknown>>; degraded: boolean; degradedReasons: string[] }> {
+  if (otherIds.length === 0) return { cards: [], degraded: false, degradedReasons: [] };
+  const reasons: string[] = [];
+  try {
+    const { data: blockRows, error: blockErr } = await sc
+      .from("blocks")
+      .select("blocker_id, blocked_id")
+      .or(`blocker_id.eq.${viewerId},blocked_id.eq.${viewerId}`);
+    if (blockErr) {
+      // FAIL CLOSED. An unreadable block list served as "nobody is blocked" is
+      // precisely the defect census §23.1 found on /buddies.
+      logger.warn({ err: blockErr }, "layover crew: blocks unreadable — no member cards published");
+      return { cards: [], degraded: true, degradedReasons: ["blocks_unreadable"] };
+    }
+    const excluded = new Set<string>();
+    for (const b of (blockRows ?? []) as any[]) {
+      excluded.add(b.blocker_id === viewerId ? b.blocked_id : b.blocker_id);
+    }
+    const notBlocked = otherIds.filter((id) => !excluded.has(id));
+
+    const publishable = await publishableUserIds(sc, notBlocked);
+    if (publishable.degraded) reasons.push("sharing_preferences_unreadable");
+    const visible = publishable.allowed;
+    if (visible.length === 0) return { cards: [], degraded: reasons.length > 0, degradedReasons: reasons };
+
+    const { data: profiles, error: profErr } = await sc
+      .from("profiles")
+      .select("id, handle, name, avatar_url")
+      .in("id", visible);
+    if (profErr) {
+      logger.warn({ err: profErr }, "layover crew: profiles unreadable — crew served without member cards");
+      return { cards: [], degraded: true, degradedReasons: [...reasons, "member_cards_unreadable"] };
+    }
+    const allowedNames = await nameVisibilitySet(sc, visible);
+    return {
+      cards: ((profiles ?? []) as any[]).map((p) => ({
+        id: p.id,
+        handle: p.handle ?? null,
+        name: allowedNames.has(p.id as string) ? (p.name ?? null) : null,
+        avatarUrl: p.avatar_url ?? null,
+      })),
+      degraded: reasons.length > 0,
+      degradedReasons: reasons,
+    };
+  } catch (err) {
+    logger.warn({ err, viewerId }, "layover crew member cards threw — crew served without them");
+    return { cards: [], degraded: true, degradedReasons: ["member_cards_unreadable"] };
+  }
+}
+
+/** The city a crew at this session is scoped to, or null when unknown. */
+function crewCityFor(airport: AirportProfile, session: LayoverSession): string | null {
+  const city = airport.city && airport.city !== "Unknown" ? airport.city : session.manualCity ?? null;
+  return city && city.trim() ? city : null;
+}
+
+router.get("/airport/sessions/:id/crew", async (req, res) => {
+  const ctx = await requireOwnedSession(req, res);
+  if (!ctx) return;
+  const { sc, user, session } = ctx;
+
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+
+  const mine = await activeCrewForUser(sc, user.id, nowIso);
+  // A failed read is NOT "you are in no crew". A traveller told that walks away
+  // from people who are waiting for them.
+  if (!mine.ok) { sendError(res, "degraded_unavailable", "Your crew could not be loaded. Please try again."); return; }
+
+  if (mine.value) {
+    const members = await crewMembers(sc, mine.value.crew.id);
+    if (!members.ok) { sendError(res, "degraded_unavailable", "Your crew could not be loaded. Please try again."); return; }
+    const payload = await crewPayload(sc, user.id, mine.value.crew, members.value, nowMs);
+    if (!payload.ok) { sendError(res, "degraded_unavailable", "Your crew could not be certified just now. Please try again."); return; }
+    res.json({ ok: true, inCrew: true, ...payload.body });
+    return;
+  }
+
+  const airport = await airportOr503(sc, res, session);
+  if (!airport) return;
+  const city = crewCityFor(airport, session);
+  if (!city) {
+    // Not an error: a crew is a CITY-level thing and we do not know the city.
+    res.json({ ok: true, inCrew: false, city: null, crews: [], reason: "city_unknown" });
+    return;
+  }
+
+  const open = await openCrewsInCity(sc, city, nowIso);
+  if (!open.ok) { sendError(res, "degraded_unavailable", "Crews here could not be loaded. Please try again."); return; }
+
+  res.json({
+    ok: true,
+    inCrew: false,
+    city,
+    crews: open.value.map((c) => ({
+      id: c.id,
+      title: c.title,
+      meetingPointLabel: c.meetingPointLabel,
+      maxMembers: c.maxMembers,
+      expiresAt: c.expiresAt,
+    })),
+  });
+});
+
+router.post("/airport/sessions/:id/crew", async (req, res) => {
+  const ctx = await requireOwnedSession(req, res);
+  if (!ctx) return;
+  const { sc, user, session } = ctx;
+
+  const parsed = crewCreateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid crew"); return;
+  }
+  // A crew is formed by a traveller who is still on their layover. A completed
+  // or cancelled session has no deadline to certify anyone against.
+  if (!LAYOVER_LIVE_SESSION_STATUSES.includes(session.status as any)) {
+    sendError(res, "invalid_payload", "This layover has ended, so a crew cannot be formed for it."); return;
+  }
+
+  const airport = await airportOr503(sc, res, session);
+  if (!airport) return;
+  const city = crewCityFor(airport, session);
+  if (!city) {
+    sendError(res, "invalid_payload", "We do not know which city this layover is in, so a crew cannot be formed for it.");
+    return;
+  }
+
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const record = certifyCrewMemberRecord(airport, session, nowMs);
+
+  const created = await createCrew(sc, {
+    userId: user.id,
+    sessionId: session.id,
+    city,
+    airportRef: airport.iataCode && airport.iataCode !== "UNK" ? airport.iataCode : null,
+    title: parsed.data.title,
+    meetingPointLabel: parsed.data.meetingPointLabel ?? null,
+    maxMembers: parsed.data.maxMembers ?? 6,
+    expiresAt: crewExpiryFor(record, nowMs),
+  }, nowIso);
+
+  if (!created.ok) {
+    if (created.reason === "already_in_a_crew") {
+      sendError(res, "invalid_payload", "You are already in a crew for this layover."); return;
+    }
+    if (created.reason === "read_failed") {
+      sendError(res, "degraded_unavailable", "Your crew could not be created just now. Please try again."); return;
+    }
+    sendError(res, "db_error", "Your crew could not be saved."); return;
+  }
+
+  await emitLayoverEvent(sc, session.id, user.id, "crew_created", {
+    crewId: created.value.crew.id, city, title: parsed.data.title,
+  });
+
+  const payload = await crewPayload(sc, user.id, created.value.crew, created.value.members, nowMs);
+  if (!payload.ok) { sendError(res, "degraded_unavailable", "Your crew was created but could not be certified. Please refresh."); return; }
+  res.json({ ok: true, inCrew: true, ...payload.body });
+});
+
+router.post("/airport/sessions/:id/crew/:crewId/join", async (req, res) => {
+  const ctx = await requireOwnedSession(req, res);
+  if (!ctx) return;
+  const { sc, user, session } = ctx;
+
+  if (!LAYOVER_LIVE_SESSION_STATUSES.includes(session.status as any)) {
+    sendError(res, "invalid_payload", "This layover has ended, so you cannot join a crew from it."); return;
+  }
+
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+
+  const joined = await joinCrew(sc, { userId: user.id, sessionId: session.id, crewId: req.params.crewId }, nowIso);
+  if (!joined.ok) {
+    if (joined.reason === "already_in_a_crew") {
+      sendError(res, "invalid_payload", "You are already in another crew. Leave it first."); return;
+    }
+    if (joined.reason === "crew_full") {
+      sendError(res, "invalid_payload", "That crew is full."); return;
+    }
+    if (joined.reason === "crew_unavailable") {
+      sendError(res, "not_found", "That crew is no longer open."); return;
+    }
+    if (joined.reason === "read_failed") {
+      // The capacity limit is enforced from a READ, so an unreadable member
+      // list is an unenforced limit. Refusing is the only safe answer.
+      sendError(res, "degraded_unavailable", "That crew could not be checked just now. Please try again."); return;
+    }
+    sendError(res, "db_error", "You could not be added to that crew."); return;
+  }
+
+  await emitLayoverEvent(sc, session.id, user.id, "crew_joined", { crewId: joined.value.crew.id });
+
+  const payload = await crewPayload(sc, user.id, joined.value.crew, joined.value.members, nowMs);
+  if (!payload.ok) { sendError(res, "degraded_unavailable", "You joined, but the crew could not be certified. Please refresh."); return; }
+  res.json({ ok: true, inCrew: true, ...payload.body });
+});
+
+router.post("/airport/sessions/:id/crew/leave", async (req, res) => {
+  const ctx = await requireOwnedSession(req, res);
+  if (!ctx) return;
+  const { sc, user, session } = ctx;
+
+  const nowIso = new Date().toISOString();
+  const mine = await activeCrewForUser(sc, user.id, nowIso);
+  if (!mine.ok) { sendError(res, "degraded_unavailable", "Your crew could not be loaded. Please try again."); return; }
+  if (!mine.value) { sendError(res, "not_found", "You are not in a crew."); return; }
+
+  const left = await leaveCrew(sc, { userId: user.id, crewId: mine.value.crew.id }, nowIso);
+  if (!left.ok) {
+    if (left.reason === "crew_unavailable") { sendError(res, "not_found", "You are not in a crew."); return; }
+    if (left.reason === "read_failed") { sendError(res, "degraded_unavailable", "Your crew could not be loaded. Please try again."); return; }
+    sendError(res, "db_error", "You could not be removed from that crew."); return;
+  }
+
+  await emitLayoverEvent(sc, session.id, user.id, "crew_left", {
+    crewId: mine.value.crew.id, disbanded: left.value.disbanded,
+  });
+  res.json({ ok: true, inCrew: false, disbanded: left.value.disbanded });
+});
+
 // ── PATCH /api/airport/sessions/:id/share ─────────────────────────────────────
 
 router.patch("/airport/sessions/:id/share", async (req, res) => {
@@ -1313,10 +3259,11 @@ router.patch("/airport/sessions/:id/share", async (req, res) => {
   const enabled = typeof req.body?.enabled === "boolean" ? req.body.enabled : null;
   if (enabled === null) { sendError(res, "invalid_payload", "enabled (boolean) is required"); return; }
 
-  const updated = await setShareStatus(sc, session.id, user.id, enabled);
-  if (!updated) { sendError(res, "db_error", "Could not update sharing", { exposeDetail: true }); return; }
+  const shared = await setShareStatus(sc, session.id, user.id, enabled);
+  if (!shared.ok) { sendError(res, "degraded_unavailable", "Your sharing setting could not be saved. Please try again."); return; }
+  if (!shared.session) { sendError(res, "not_found", "Session not found or already closed"); return; }
 
-  res.json({ ok: true, session: updated });
+  res.json({ ok: true, session: shared.session });
 });
 
 // ── GET /api/airport/sessions/:id/presence ────────────────────────────────────
@@ -1327,17 +3274,39 @@ router.get("/airport/sessions/:id/presence", async (req, res) => {
   if (!ctx) return;
   const { sc, user, session } = ctx;
 
-  // Reciprocity: you only see others when you're sharing too.
-  if (!session.shareCityStatus) {
-    res.json({ ok: true, sharing: false, count: 0, travelers: [] });
+  // Reciprocity is only half the gate. `share_city_status` is what the
+  // traveller chose when the session began; the sharing GATE is what they have
+  // chosen since -- location mode, paused sharing, ghost mode. This route
+  // consulted only the first, so pausing sharing did not stop the route from
+  // publishing this traveller's own presence back to them as "sharing: true"
+  // while cityPresence went on publishing them to others. The gate is NOT
+  // behind the ladder flag: it applies the traveller's own stored opt-out, and
+  // an opt-out that waits for a rollout is not an opt-out.
+  const gate = await evaluateSharingGate(sc, { userId: user.id, tripId: session.tripId });
+  const ladderEnabled = await isFlagEnabled(sc, "layover_presence_ladder_enabled");
+
+  if (!gate.allowed || !session.shareCityStatus) {
+    const d = disclosePresence({ gate, sessionOptedIn: session.shareCityStatus, ladderEnabled, count: 0, travelers: [] });
+    // Byte-identical to the previous refusal for every field it used to carry;
+    // level/withheld/degraded are additive.
+    res.json({ ok: true, sharing: d.sharing, count: d.count, travelers: d.travelers, level: d.level, withheld: d.withheld, degraded: d.degraded, degradedReasons: d.degradedReasons });
     return;
   }
 
-  const airport = await resolveAirportForSession(sc, session);
+  const airport = await airportOr503(sc, res, session);
+  if (!airport) return;
   const city = airport.city !== "Unknown" ? airport.city : session.manualCity;
   const presence = await cityPresence(sc, user.id, city ?? null);
+  const d = disclosePresence({
+    gate, sessionOptedIn: true, ladderEnabled,
+    count: presence.count, travelers: presence.travelers,
+    presenceRead: { degraded: presence.degraded, reasons: presence.degradedReasons },
+  });
 
-  res.json({ ok: true, sharing: true, city: city ?? null, ...presence });
+  res.json({
+    ok: true, city: city ?? null, sharing: d.sharing, count: d.count, travelers: d.travelers,
+    level: d.level, degraded: d.degraded, degradedReasons: d.degradedReasons,
+  });
 });
 
 // ── GET /api/airport/sessions/:id/buddies ─────────────────────────────────────
@@ -1349,11 +3318,42 @@ router.get("/airport/sessions/:id/buddies", async (req, res) => {
   if (!ctx) return;
   const { sc, user, session } = ctx;
 
-  const airport = await resolveAirportForSession(sc, session);
+  const airport = await airportOr503(sc, res, session);
+  if (!airport) return;
   const city = airport.city !== "Unknown" ? airport.city : session.manualCity;
   if (!city) { res.json({ ok: true, city: null, buddies: [] }); return; }
 
-  try {
+  // The marketplace's own master gate. Every other reader of
+  // rent_buddy_profiles goes through `rent_buddy_enabled` (lib/buddyMapRead.ts,
+  // routes/rentABuddy.ts); this route read the table behind the layover flag
+  // alone and served buddy profiles while the marketplace was switched OFF in
+  // production. Same fail-closed reader, same empty answer.
+  if (!await isFlagEnabled(sc, "rent_buddy_enabled")) {
+    res.json({ ok: true, city, buddies: [], reason: "rent_buddy_not_enabled" });
+    return;
+  }
+
+  // ── census L273: THE SAFETY/TIME GATE, AND IT COMES FIRST ──────────────────
+  //
+  // "layover-specialist services AFTER the safety/time gate". Until now this
+  // endpoint asked the marketplace flag, the city and the block list, and
+  // nothing about the layover itself — so a traveller whose certified window
+  // said they could not leave the airport and get back in time was handed a
+  // list of people to go and meet in the city, by the same server that had
+  // already computed `verdict: "no"` for them in the same session.
+  //
+  // §9.1's "HARD GATE … before any optimisation" is an ORDER as much as a rule,
+  // so this runs before the profiles are read. The decision belongs to the
+  // layover domain (services/airport/LayoverBuddyGate.ts) and certifies the
+  // session exactly once, so this list and the countdown on the same screen
+  // cannot disagree about whether leaving is possible.
+  const { safetyGate, trustRequirement } = layoverBuddyDecision(airport, session);
+  if (!safetyGate.passed) {
+    res.json({ ok: true, city, buddies: [], reason: "safety_gate_not_passed", safetyGate });
+    return;
+  }
+
+  {
     const { data: buddies, error } = await sc
       .from("rent_buddy_profiles")
       .select(
@@ -1365,23 +3365,54 @@ router.get("/airport/sessions/:id/buddies", async (req, res) => {
       .ilike("city", `%${city}%`)
       .order("review_count", { ascending: false })
       .limit(12);
-    if (error) { res.json({ ok: true, city, buddies: [] }); return; }
+    // L294/C2: an unreadable marketplace is not "there is nobody here". The old
+    // `res.json({ ok: true, city, buddies: [] })` made that claim from a read
+    // that never happened.
+    if (error) {
+      logger.warn({ err: error, city }, "layover buddies: rent_buddy_profiles unreadable — refusing rather than reporting an empty city");
+      sendError(res, "degraded_unavailable", "Local buddies could not be loaded. Please try again.");
+      return;
+    }
 
     let rows = (buddies ?? []) as any[];
     rows = rows.filter((b) => b.user_id !== user.id);
 
-    // Exclude blocked users in both directions.
+    // L294/C2, the half §21.6 of docs/architecture/census-layover.md recorded as
+    // already closed on this endpoint. Two of this handler's three reads answer
+    // AFTER failing rather than refusing, and until now both answered with a
+    // confident sentence: an unreadable `blocks` served `buddies: []`, which is
+    // "there is nobody in this city", and an unreadable
+    // `rent_buddy_availability` published `availableDuringLayover: false` for
+    // every person, which is a claim about each of them. Failing closed is the
+    // right SAFETY posture and it is not an answer; these reasons are what make
+    // the emptiness readable as unmeasured. Same shape as `cityPresence` above.
+    const degradedReasons: string[] = [];
+
+    // Exclude blocked users in both directions — fail CLOSED. supabase-js
+    // resolves `{ data: null, error }` on a failed read; `?? []` on that turned
+    // an outage into "nobody is blocked" and recommended meeting a blocked
+    // person. Matches cityPresence above (routes/airport.ts cityPresence).
     try {
-      const { data: blockRows } = await sc
+      const { data: blockRows, error: blockErr } = await sc
         .from("blocks")
         .select("blocker_id, blocked_id")
         .or(`blocker_id.eq.${user.id},blocked_id.eq.${user.id}`);
-      const excluded = new Set<string>();
-      for (const b of (blockRows ?? []) as any[]) {
-        excluded.add(b.blocker_id === user.id ? b.blocked_id : b.blocker_id);
+      if (blockErr) {
+        logger.warn({ err: blockErr, userId: user.id }, "layover buddies: blocks unreadable — serving none");
+        rows = [];
+        degradedReasons.push("blocks_unreadable");
+      } else {
+        const excluded = new Set<string>();
+        for (const b of (blockRows ?? []) as any[]) {
+          excluded.add(b.blocker_id === user.id ? b.blocked_id : b.blocker_id);
+        }
+        rows = rows.filter((b) => !excluded.has(b.user_id));
       }
-      rows = rows.filter((b) => !excluded.has(b.user_id));
-    } catch { rows = []; }
+    } catch (err) {
+      logger.warn({ err, userId: user.id }, "layover buddies: blocks read threw — serving none");
+      rows = [];
+      degradedReasons.push("blocks_unreadable");
+    }
 
     // Availability during the layover's airport-local day(s).
     const tz = airport.timezone ?? "UTC";
@@ -1396,16 +3427,40 @@ router.get("/airport/sessions/:id/buddies", async (req, res) => {
     if (!days.includes(lastDay)) days.push(lastDay);
 
     const availableSet = new Set<string>();
+    // FALSE and UNKNOWN are different sentences about a person. A successful
+    // read that found no row means this buddy is not marked available during
+    // the layover; a failed read means nobody asked. The old code spelled both
+    // `false`, so an outage in `rent_buddy_availability` published a negative
+    // fact about every profile on the list — and `availableDuringLayover` is
+    // also the sort key that chooses which six of up to twelve are served.
+    let availabilityMeasured = true;
     if (rows.length > 0) {
       try {
-        const { data: avail } = await sc
+        // An unreadable availability table leaves every buddy's availability
+        // UNKNOWN. The list is still served; only the ordering hint is lost.
+        // Bound so the degradation is in the log AND on the wire.
+        const { data: avail, error: availErr } = await sc
           .from("rent_buddy_availability")
           .select("buddy_id, date")
           .in("buddy_id", rows.map((b) => b.id))
           .in("date", days);
+        if (availErr) {
+          logger.warn({ err: availErr, city }, "layover buddies: availability unreadable — availability published as unknown");
+          availabilityMeasured = false;
+          degradedReasons.push("buddy_availability_unreadable");
+        }
         for (const a of (avail ?? []) as any[]) availableSet.add(a.buddy_id);
-      } catch { /* availability unknown */ }
+      } catch (err) {
+        logger.warn({ err, city }, "layover buddies: availability read threw — availability published as unknown");
+        availabilityMeasured = false;
+        degradedReasons.push("buddy_availability_unreadable");
+      }
     }
+
+    // L273 strict boundaries, then L254's requirement. Both are defined in the
+    // layover domain; this handler applies them, it does not own them.
+    rows = filterLayoverCompatible(rows);
+    rows = applyBuddyTrustRequirement(rows, trustRequirement);
 
     const result = rows
       .map((b) => ({
@@ -1423,14 +3478,27 @@ router.get("/airport/sessions/:id/buddies", async (req, res) => {
         coverPhotoUrl:         b.cover_photo_url ?? null,
         buddyLevel:            b.buddy_level ?? null,
         availableNow:          Boolean(b.available_now),
-        availableDuringLayover: availableSet.has(b.id),
+        availableDuringLayover: availabilityMeasured ? availableSet.has(b.id) : null,
+        /**
+         * TRUE when the profile positively declares a service a layover can
+         * use. FALSE for a profile that declared nothing — an unknown, served
+         * with the unknown visible rather than dressed as a specialism.
+         */
+        layoverCompatible:     isLayoverCompatibleBuddy(b),
       }))
-      .sort((a, b) => Number(b.availableDuringLayover) - Number(a.availableDuringLayover))
+      // Order on the availability hint ONLY when it was measured. `Number(null)`
+      // is 0, so an unmeasured field would sort every buddy equal anyway — this
+      // says so rather than relying on that coincidence surviving an edit.
+      .sort((a, b) => (availabilityMeasured
+        ? Number(b.availableDuringLayover) - Number(a.availableDuringLayover)
+        : 0))
       .slice(0, 6);
 
-    res.json({ ok: true, city, buddies: result });
-  } catch {
-    res.json({ ok: true, city, buddies: [] });
+    res.json({
+      ok: true, city, buddies: result, safetyGate, trustRequirement,
+      degraded: degradedReasons.length > 0,
+      degradedReasons,
+    });
   }
 });
 
@@ -1518,6 +3586,126 @@ router.get("/airport/pulse", async (req, res) => {
 
 // ── DELETE /api/airport/sessions/:id ─────────────────────────────────────────
 
+/**
+ * §3 L19 · §17 L162 — the Passport seam, where the spec puts it.
+ *
+ * It used to fire from `POST /airport/sessions`: a durable, deduplicated
+ * `passport_stamps` row for a city the traveller had not yet been to, written
+ * because they had typed two flight times into a form. Nothing removed it if
+ * they stayed airside, and nothing asked them first. §3 asks for *"post-session
+ * durable artifacts IF THE USER CHOOSES"*; §17 for *"durable only when the user
+ * elects Passport/Memory behaviour"*.
+ *
+ * FOUR TERMS, AND ALL FOUR ARE REQUIRED, in this order:
+ *   1. the session was CLOSED AS COMPLETED — not cancelled, not expired;
+ *   2. the traveller ELECTED it on the way out;
+ *   3. `passport_stamps_enabled` is on — the kill switch outranks an election,
+ *      because a flag that a user's choice can override is not a kill switch;
+ *   4. the layover HAD ACTUALLY BEGUN. Terms 1 and 2 are things the caller
+ *      SAYS; `endSession` checks neither against a clock, so without this the
+ *      seam would still mint a "you were here" stamp for a city nobody had
+ *      reached — the same defect, moved one route along.
+ *
+ * IT RETURNS A REASON RATHER THAN A BOOLEAN, and the reason is published.
+ * "Nothing was written" has six different meanings here and a client that has
+ * to guess which one applies will tell the traveller the wrong thing — the same
+ * rule `replanAfterSessionEdit` follows for its named refusals.
+ *
+ * AWAITED, NOT FIRE-AND-FORGET. The creation-time seam was `void (async () => …)`,
+ * which is why nobody could ever be told whether their stamp existed. A
+ * response that reports the outcome has to have the outcome.
+ */
+type ElectedStampReason =
+  | "written"
+  | "already_stamped"
+  | "not_elected"
+  | "not_completed"
+  | "not_occurred"
+  | "feature_disabled"
+  | "no_city"
+  | "write_failed";
+
+async function writeElectedLayoverStamp(
+  sc: any,
+  args: { userId: string; session: LayoverSession; outcome: "completed" | "cancelled"; elected: boolean },
+): Promise<{ requested: boolean; written: boolean; reason: ElectedStampReason }> {
+  const requested = args.elected;
+  if (!requested) return { requested, written: false, reason: "not_elected" };
+  if (args.outcome !== "completed") return { requested, written: false, reason: "not_completed" };
+
+  try {
+    if (!await isFlagEnabled(sc, "passport_stamps_enabled")) {
+      return { requested, written: false, reason: "feature_disabled" };
+    }
+
+    // ── THE FOURTH TERM: IT ALSO HAS TO HAVE HAPPENED ────────────────────────
+    // ADDED AT INTEGRATION, because two lanes fixed this seam independently and
+    // each closed a limb the other left open. Completion and election are
+    // statements the CALLER makes; neither is evidence. `endSession` is not
+    // temporal — it sets `status` to whatever the caller named, gated only on
+    // the row still being live — so a traveller who books next Tuesday's
+    // connection can close it as `completed`, elect the stamp, and be handed a
+    // durable `verification_level: 'checkin'` row for a city they have never
+    // been to. That is §1 of the Highlights/Memories spec verbatim: *"planned,
+    // saved, or nearby must never be represented as experienced without
+    // occurrence evidence or user confirmation."*
+    //
+    // Moving the seam from creation to completion did not fix that; it RELOCATED
+    // it, and the relocation is what hid it, because each lane's tests only
+    // covered its own half. Proven red before this line existed — see
+    // src/test/layoverStampOccurrence.test.ts.
+    //
+    // It reuses `declaredOccurrenceHasHappened` rather than an inline `<`, so
+    // this route and §6's candidate pipeline refuse on ONE predicate with one
+    // policy version — see services/memory/occurrenceGate.ts for why it allows
+    // no clock skew in this direction.
+    //
+    // It sits AFTER the flag read deliberately: `feature_disabled` is a kill
+    // switch and outranks every other account of why nothing was written.
+    const occurrence = declaredOccurrenceHasHappened(args.session.arrivalTime, Date.now());
+    if (!occurrence.occurred) {
+      logger.info(
+        {
+          sessionId: args.session.id,
+          userId: args.userId,
+          reason: occurrence.reason,
+          detail: occurrence.detail,
+          policyVersion: occurrence.policyVersion,
+        },
+        "layover passport stamp withheld — the layover had not begun (§1: planned is not experienced)",
+      );
+      return { requested, written: false, reason: "not_occurred" };
+    }
+
+    // The city is read the same way every other layover surface reads it, and
+    // "Unknown" is the fallback profile's placeholder rather than a place — a
+    // stamp for it would be exactly the fabricated artifact Appendix C1 forbids.
+    const resolved = await resolveAirportForSession(sc, args.session);
+    const airportCity = resolved.ok && resolved.airport.city !== "Unknown" ? resolved.airport.city : null;
+    const city = airportCity ?? args.session.manualCity ?? null;
+    if (!city) return { requested, written: false, reason: "no_city" };
+
+    const result = await createStamp(sc, {
+      userId: args.userId, stampType: "activity",
+      city, tripId: args.session.tripId ?? null,
+      sourceType: "layover_session", verificationLevel: "checkin",
+    });
+    if (!result) return { requested, written: false, reason: "write_failed" };
+
+    await emitLayoverEvent(sc, args.session.id, args.userId, "passport_seam_emitted", {
+      type: "layover_completed",
+      elected: true,
+      isNew: result.isNew,
+    });
+    return { requested, written: true, reason: result.isNew ? "written" : "already_stamped" };
+  } catch (err) {
+    // A silently lost layover stamp is a product-integrity gap — it is logged,
+    // and now it is also REPORTED, so the traveller is not told it worked.
+    logger.warn({ err, sessionId: args.session.id, userId: args.userId }, "layover passport seam failed — stamp not emitted");
+    return { requested, written: false, reason: "write_failed" };
+  }
+}
+
 router.delete("/airport/sessions/:id", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
@@ -1529,14 +3717,43 @@ router.delete("/airport/sessions/:id", async (req, res) => {
     sendError(res, "feature_disabled"); return;
   }
 
-  const session = await endSession(sc, req.params.id, user.id, "cancelled");
+  // `completed` was unreachable: this was the only close path and it passed
+  // the literal "cancelled", so a traveller who came back and boarded was
+  // recorded as having abandoned the layover. The default is unchanged; a
+  // caller that knows the outcome may now say so (body or query `outcome`).
+  const rawOutcome = (req.body?.outcome ?? req.query?.outcome) as unknown;
+  const outcome: "completed" | "cancelled" = rawOutcome === "completed" ? "completed" : "cancelled";
+
+  // §3 L19 / §17 L162: the traveller's ELECTION to keep a durable artifact.
+  // Positive-only — an absent field is not consent, and the query-string form
+  // requires the literal "true" rather than any truthy string, because
+  // `?passportStamp=false` arriving as the string "false" would otherwise read
+  // as a yes.
+  const rawElection = (req.body?.passportStamp ?? req.query?.passportStamp) as unknown;
+  const electedStamp = rawElection === true || rawElection === "true";
+
+  const closed = await endSessionWrite(sc, req.params.id, user.id, outcome);
+  // L294/C2 — and this is the worst place the old collapse landed: a traveller
+  // ending a layover at the gate was told the layover did not exist because the
+  // UPDATE failed.
+  if (!closed.ok) {
+    sendError(res, "degraded_unavailable", "Your layover could not be closed. Please try again.");
+    return;
+  }
+  const session = closed.session;
   if (!session) {
     sendError(res, "not_found", "Session not found or already closed");
     return;
   }
 
-  // Passport seam: safe layover completed only on explicit completion
-  res.json({ ok: true, session });
+  const passportStamp = await writeElectedLayoverStamp(sc, {
+    userId: user.id,
+    session,
+    outcome,
+    elected: electedStamp,
+  });
+
+  res.json({ ok: true, session, outcome, passportStamp });
 });
 
 // ── Admin: POST /api/admin/airport/profiles ───────────────────────────────────
@@ -1565,7 +3782,19 @@ router.get("/admin/airport/profiles", async (req, res) => {
   if (!admin) return;
   const { sc } = admin;
 
-  const { data } = await sc.from("airport_profiles").select("*").order("name");
+  // 3,206 rows in production. An unbound `error` here served the admin an
+  // empty list, which reads as "no airport is configured" — the state an
+  // operator would respond to by creating profiles that already exist.
+  const { data, error } = await sc.from("airport_profiles").select("*").order("name");
+  if (error) {
+    // census L294/C2 has TWO clauses. The 503 below is the "degraded
+    // confidence" half and was already right; the log is the "structured
+    // logging" half, and without it an operator gets a refusal nobody can
+    // explain — on the one screen whose job is diagnosing airport data.
+    logger.warn({ err: error }, "admin airport profiles list failed — refusing rather than serving an empty configuration");
+    sendError(res, "degraded_unavailable", "Airport profiles could not be listed. Please try again.");
+    return;
+  }
   res.json({ profiles: data ?? [] });
 });
 

@@ -61,7 +61,9 @@ const s = StyleSheet.create({
     paddingVertical: space.md,
   },
   tabActive: {},
-  label: { ...t.bodyStrong, color: color.faint, fontWeight: '600' },
+  // §36 contrast: the INACTIVE tab is still a control the user must be able to
+  // read before choosing it. `faint` is 2.73:1 on paper; `mute` is 5.27:1.
+  label: { ...t.bodyStrong, color: color.mute, fontWeight: '600' },
   labelActive: { color: color.ink, fontWeight: '800' },
   underline: {
     position: 'absolute',

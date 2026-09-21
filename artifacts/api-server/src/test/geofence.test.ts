@@ -548,10 +548,6 @@ describe("Host attendance dashboard", () => {
         return {
           ...b,
           select: () => ({
-            // requireUser's account-status guard: .select("account_status").eq(id).maybeSingle()
-            eq: () => ({
-              maybeSingle: async () => ({ data: { account_status: "active" }, error: null }),
-            }),
             in: () => ({
               then: (f: any) => Promise.resolve({ data: [{ id: MEMBER_ID, handle: "alice", name: "Alice", avatar_url: null }], error: null }).then(f),
             }),

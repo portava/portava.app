@@ -104,6 +104,10 @@ function setupHook(overrides: Partial<ReturnType<typeof useTripSavedPlaces>> = {
   mockUseTripSavedPlaces.mockReturnValue({
     places: [makePlace('p1'), makePlace('p2')],
     loading: false,
+    // `error` is part of the hook's contract: `places: []` alone means the list
+    // is empty, and it may not be used to mean the read did not answer. A
+    // fixture that omits it describes a shape the hook never returns.
+    error: null,
     toggle,
     clearAll,
     remove,

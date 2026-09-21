@@ -247,6 +247,42 @@ jobs:
         shell: bash
         run: bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server check:doc-citations
 
+      # check:citation-targets — the sub-case doc-citations provably cannot
+      # judge. It splits the corpus in two: an ANCHORED citation is re-read and
+      # fails when the code moves; an UNANCHORED one is checked only for "is the
+      # file long enough", and its own error text says "nothing here can tell you
+      # it names the right code". The ceiling on those stops the class growing
+      # and does nothing about the 6,443 already there.
+      #
+      # One case has an answer without reading the claim: a SINGLE-LINE citation
+      # whose line is blank, or is nothing but a bracket or a comment fence, is
+      # not a citation that might be wrong — no census claim is evidenced by
+      # `});`. Those are stale pointers left where code moved. Ranges, `:1`, and
+      # the commit-pinned mobile-reachability-ledger.md are excluded by name and
+      # for stated reasons; see the script header.
+      - name: 'check:citation-targets (static; unanchored citations that land on nothing)'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server check:citation-targets
+
+      # check:citation-symbols — the SECOND sub-case of the same hole, and it is
+      # answerable for the same reason: this corpus often writes the answer down
+      # next to the question. The convention is
+      # `lib/mapProjection.ts:1166` `rankObjects` — a pointer AND the symbol it
+      # points at — so "is this the right line?" stops needing a human.
+      #
+      # Two classes, and only the first is a gate. ABSENT means the named symbol
+      # is nowhere in the cited file: no reading of the code makes that citation
+      # correct. MISPLACED means it is in the file but not near the cited line;
+      # that one carries a KNOWN false-positive class (a citation may name a
+      # COLLECTION and point at a MEMBER of it), so it is held under a ceiling
+      # rather than gated. Gating on a number known to contain false positives
+      # would assert a defect this check cannot establish.
+      - name: 'check:citation-symbols (static; a citation that names the symbol it misses)'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server check:citation-symbols
+
       - name: 'check:async-handlers'
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         shell: bash
@@ -643,6 +679,89 @@ jobs:
   # the Android SDK or Xcode — every native module is stubbed in
   # jest.config.js's moduleNameMapper.
   # ───────────────────────────────────────────────────────────────────────────
+  api-server-local-db:
+    name: api-server · kernel SQL executed on a throwaway database
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: preflight
+    # scripts/local-db/up.sh restores baseline/20260819_baseline_structure.sql
+    # and replays the canonical chain into THIS container, then
+    # src/test/db/*.db.test.ts run trip_kernel_execute, the outbox drain, the
+    # snapshot fold/replay and RLS as functions. The same files sit in the
+    # ordinary `test` list and skip there for want of a database; here
+    # run-tests.sh refuses skipped > 0, so the skip cannot be mistaken for a
+    # pass in the one job whose purpose it is to run them.
+    #
+    # A throwaway container, never the CI project: docs/ci/BOOTSTRAP.md §1
+    # explains why replaying the chain into portava-ci would make the drift
+    # audits vacuous. Nothing here is audited for drift and nothing holds data.
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Enable corepack
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          echo "pnpm $(pnpm --version)"
+          node --version
+
+      - name: psql client present
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v psql >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq postgresql-client
+          fi
+          psql --version
+
+      - name: Resolve pnpm store path
+        id: pnpm-store
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-root-${{ runner.os }}-node${{ env.NODE_VERSION }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-root-${{ runner.os }}-node${{ env.NODE_VERSION }}-
+
+      - name: Install (root workspace, frozen lockfile)
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+
+      - name: Restore baseline, replay the chain, run the database suites
+        shell: bash
+        env:
+          LOCAL_DB_URL: postgresql://postgres:postgres@localhost:5432/portava_local
+        run: |
+          set -euo pipefail
+          bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server test:db-local
+
   standalone-checks:
     name: standalone · check:all (guards + node:test + jest)
     runs-on: ubuntu-latest
@@ -1317,6 +1436,7 @@ jobs:
       - preflight
       - api-server-static
       - api-server-tests
+      - api-server-local-db
       - standalone-checks
       - ci-self-check
     steps:
@@ -1326,6 +1446,7 @@ jobs:
           R_PREFLIGHT: ${{ needs.preflight.result }}
           R_API_STATIC: ${{ needs['api-server-static'].result }}
           R_API_TESTS: ${{ needs['api-server-tests'].result }}
+          R_API_LOCAL_DB: ${{ needs['api-server-local-db'].result }}
           R_STANDALONE: ${{ needs['standalone-checks'].result }}
           R_SELF_CHECK: ${{ needs['ci-self-check'].result }}
         run: |
@@ -1342,6 +1463,7 @@ jobs:
             "preflight:$R_PREFLIGHT" \
             "api-server-static:$R_API_STATIC" \
             "api-server-tests:$R_API_TESTS" \
+            "api-server-local-db:$R_API_LOCAL_DB" \
             "standalone-checks:$R_STANDALONE" \
             "ci-self-check:$R_SELF_CHECK"
           do

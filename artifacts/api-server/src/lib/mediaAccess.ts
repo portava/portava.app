@@ -19,6 +19,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { fetchBlockedSet } from "./blocks.js";
 import { resolveProfileVisibility } from "./profileVisibility.js";
+import {
+  authorizeMediaAttachment,
+  authorizeMediaContext,
+} from "./mediaVisibility.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -117,6 +121,29 @@ async function isTripMember(
   } catch { return false; }
 }
 
+/**
+ * How many `post_media` rows one object may be attached to before this module
+ * refuses to reason about it. `post_media` carries no UNIQUE constraint on
+ * `storage_path`, so the row count is genuinely unbounded; a bound is needed
+ * both to cap the per-row `posts` reads and to keep the deny-if-any scan from
+ * running over a truncated page.
+ */
+const POST_MEDIA_ATTACHMENT_CAP = 50;
+
+/**
+ * `post_media.moderation_status` values that deny the bytes. IDENTICAL to what
+ * this branch has always denied. `post_media_moderation_status_check` is
+ * `CHECK (moderation_status = ANY (ARRAY['pending','approved','flagged','rejected']))`
+ * in both databases (lib/media/mediaProjection.ts:187-193 records the
+ * pg_constraint read), so this set is the whole unservable half of that
+ * vocabulary. It is NOT widened to the §36 canonical values — that is a
+ * MEDIA_CANONICAL_FLAG question and this file does not answer it.
+ */
+const UNSERVABLE_ATTACHMENT_MODERATION: ReadonlySet<string> = new Set([
+  "rejected",
+  "flagged",
+]);
+
 function postVisible(post: any, viewerId: string): "allow" | "deny" | "trip" {
   if (post.status && post.status !== "active") return "deny";
   // Delayed-publish gate (audit 1e): unpublished post media is owner-only.
@@ -139,10 +166,18 @@ export async function authorizeMediaAccess(
 ): Promise<boolean> {
   const cacheKey = `${viewerId}:${bucket}/${path}`;
   const hit = allowCache.get(cacheKey);
-  if (hit && Date.now() - hit < ALLOW_TTL_MS) return true;
+  // ONLY `profile-media` is cached. The `post-media` decision now depends on
+  // lib/mediaVisibility — per-attachment `visibility_override` rows and
+  // directional `circle_member_visibility_overrides` rows — which a DIFFERENT
+  // process writes. A 60 s allow-cache there would keep serving the bytes for
+  // up to a minute after the owner revoked them, and "I hid this from them and
+  // they could still open it" is the one outcome a circle override exists to
+  // prevent. profile-media's inputs (profile visibility, follows, blocks) have
+  // no such contextual layer, so its cache is left alone.
+  if (bucket === "profile-media" && hit && Date.now() - hit < ALLOW_TTL_MS) return true;
 
   const allow = await decide(sc, viewerId, bucket, path);
-  if (allow) allowCache.set(cacheKey, Date.now());
+  if (allow && bucket === "profile-media") allowCache.set(cacheKey, Date.now());
   if (allowCache.size > 5000) {
     const oldest = allowCache.keys().next().value as string | undefined;
     if (oldest) allowCache.delete(oldest);
@@ -233,10 +268,19 @@ async function decide(
   if (pathOwner === viewerId) return true;
 
   let owner = pathOwner;
+  /**
+   * The canonical `media_assets.id` for this object, when the canonical layer
+   * is lit. It is the key `media_attachments` is filed under, so branches 3a/3b
+   * need it to ask lib/mediaVisibility about a per-attachment override. Null
+   * means "no canonical row" — `authorizeMediaAttachment` treats a null asset id
+   * as "no attachment to narrow by" and leaves the decision to the post rules,
+   * which is the pre-canonical behaviour unchanged.
+   */
+  let canonicalAssetId: string | null = null;
   try {
     const { data: asset, error: assetErr } = await sc
       .from("media_assets")
-      .select("owner_user_id")
+      .select("id, owner_user_id")
       .eq("storage_bucket", bucket)
       .eq("storage_path", path)
       .maybeSingle();
@@ -244,6 +288,7 @@ async function decide(
     // that makes branches 3d/3e deny outright ("cannot attribute the object").
     noteLookupFailure("media_assets owner", assetErr, { bucket, path });
     if ((asset as any)?.owner_user_id) {
+      canonicalAssetId = (asset as any).id ?? null;
       owner = (asset as any).owner_user_id;
       if (owner === viewerId) return true;
     }
@@ -293,40 +338,106 @@ async function decide(
   const inList = `(${urlForms.map((u) => `"${u.replace(/"/g, '\\"')}"`).join(",")})`;
 
   // 3a. Postcard media (post_media.storage_path → parent post rules).
+  //
+  // THIS BRANCH IS THE ONLY MODERATION CARRIER ON THE post-media PATH, so it is
+  // the one branch where falling through is not the safe outcome. Every other
+  // branch that fails to read denies (§4). This one used to hand the decision to
+  // 3b, which reads `posts.media_urls` — an array of strings carrying no
+  // moderation column at all — and allows a public post. MEASURED, three ways,
+  // with a request-counting fake:
+  //
+  //   healthy read, moderation_status='rejected'          → denied   (correct)
+  //   same rows, post_media read resolves {error:57P01}   → ALLOWED  (leak)
+  //   two post_media rows on one storage_path (PGRST116)  → ALLOWED  (leak)
+  //
+  // The third needs no injected failure. `post_media_storage_path_idx`
+  // (2027_media_private_buckets_prep.sql:31) is a PLAIN index and NO migration
+  // puts a UNIQUE constraint on post_media — only `media_assets` has
+  // `UNIQUE (storage_bucket, storage_path)` (0191:39). One object attached to
+  // two posts is therefore ordinary data, and `.maybeSingle()` answers it with a
+  // RESOLVED PGRST116, which read as "no row" exactly like a healthy miss. A
+  // moderator's rejection was undone by a second attachment, or by an outage.
+  //
+  // So: read the rows as a LIST, bind the error, and deny on it.
+  //
+  // The moderation deny-list is deliberately UNCHANGED (`rejected` | `flagged`).
+  // Whether it should also carry the §36 canonical values is a
+  // MEDIA_CANONICAL_FLAG question and is not taken here.
   try {
-    const { data: pm, error: pmErr } = await sc
+    const { data: pms, error: pmErr } = await sc
       .from("post_media")
       .select("post_id, moderation_status, processing_status")
       .eq("storage_path", path)
-      .maybeSingle();
+      .limit(POST_MEDIA_ATTACHMENT_CAP);
     noteLookupFailure("3a post_media", pmErr, { bucket, path });
-    if (pm) {
-      if (
-        (pm as any).moderation_status === "rejected" ||
-        (pm as any).moderation_status === "flagged"
-      )
+    // The moderation carrier could not be read. Nothing later in this function
+    // can answer the question it was asked, so deny rather than fall through.
+    if (pmErr) return false;
+    const pmRows = ((pms as any[]) ?? []);
+    if (pmRows.length > 0) {
+      // A truncated page cannot support a deny-if-any scan: an unservable row
+      // could be the one that did not fit. Deny instead of guessing.
+      if (pmRows.length >= POST_MEDIA_ATTACHMENT_CAP) return false;
+      // ANY attachment moderated away denies the object. A rejection is recorded
+      // per attachment, and this function answers about the BYTES — one post's
+      // clean row is not authority to serve what another post's row removed.
+      if (pmRows.some((r) => UNSERVABLE_ATTACHMENT_MODERATION.has(String(r?.moderation_status ?? ""))))
         return false;
-      const { data: post, error: postErr } = await sc
-        .from("posts")
-        .select("author_id, visibility, status, post_status, trip_id")
-        .eq("id", (pm as any).post_id)
-        .maybeSingle();
-      // Here the deny is returned, not fallen through: a rejected read denies
-      // the object as firmly as a deleted parent post does.
-      noteLookupFailure("3a parent post", postErr, { bucket, path, postId: (pm as any).post_id });
-      if (!post) return false;
       // Only a post that OWNS the object may authorize it via post rules. If this
       // post_media row points at an object owned by someone else (or ownership
       // can't be attributed), the post has no authority to publish it — fall
       // through to the other branches (it may be legitimately reachable as e.g. a
       // generated_visual, and if not, §4 denies). This is the trap branches 3d/3e
       // already guard against.
-      if (owner && owner === (post as any).author_id) {
+      let decidable = false;
+      for (const pm of pmRows) {
+        const { data: post, error: postErr } = await sc
+          .from("posts")
+          .select("author_id, visibility, status, post_status, trip_id")
+          .eq("id", (pm as any).post_id)
+          .maybeSingle();
+        // Here the deny is returned, not fallen through: a rejected read denies
+        // the object as firmly as a deleted parent post does.
+        noteLookupFailure("3a parent post", postErr, { bucket, path, postId: (pm as any).post_id });
+        if (!post) return false;
+        if (!(owner && owner === (post as any).author_id)) continue;
+        decidable = true;
         const v = postVisible(post, viewerId);
-        if (v === "allow") return true;
-        if (v === "trip") return isTripMember(sc, (post as any).trip_id, viewerId);
-        return false;
+        if (v !== "allow" && v !== "trip") continue;
+        // The two CONTEXTUAL layers, both of which narrow what the post's own
+        // visibility would allow (§6.1 + circle overrides). They are applied on
+        // the "allow" arm too, not only on "trip": a directional override is a
+        // statement about a PERSON inside a trip, so a PUBLIC post attached to
+        // that trip is exactly the case it has to cover, and gating it on
+        // `trip_only` would leave the override trivially bypassable.
+        const tripContext = (post as any).trip_id
+          ? { contextType: "trip" as const, contextId: String((post as any).trip_id) }
+          : undefined;
+        if (!(await authorizeMediaContext(sc, viewerId, owner, tripContext))) continue;
+        if (v === "trip" && !(await isTripMember(sc, (post as any).trip_id, viewerId))) continue;
+        // The attachment key is `canonicalAssetId` — the `media_assets` row for
+        // THIS (bucket, path), resolved in §1. NOT a `post_media.media_asset_id`:
+        // `post_media` has no such column in either database (0103 created the
+        // table and nothing since has added one), so naming it in the select list
+        // above would fail the WHOLE 3a read with PGRST100 — and 3a now binds its
+        // error and denies, which would have taken every post-media object with it.
+        // media_assets carries UNIQUE (storage_bucket, storage_path), so the id
+        // resolved by storage key is the only canonical id this object has.
+        if (!(await authorizeMediaAttachment(
+          sc, viewerId, owner, canonicalAssetId,
+          { entityType: "post", entityId: String((pm as any).post_id) },
+          tripContext,
+        ))) continue;
+        return true;
       }
+      // At least one row was the object owner's own post and none of them
+      // authorized this viewer — that is a decision, not a miss.
+      //
+      // `continue`, not `return false`, above: one attachment being narrowed by
+      // an override is not authority over a SECOND attachment of the same
+      // object that carries none. The loop's own `decidable` gate still denies
+      // once every owner-post row has been asked and refused.
+      if (decidable) return false;
     }
   } catch { /* fall through */ }
 
@@ -334,7 +445,7 @@ async function decide(
   try {
     const { data: posts, error: postsErr } = await sc
       .from("posts")
-      .select("author_id, visibility, status, post_status, trip_id")
+      .select("id, author_id, visibility, status, post_status, trip_id")
       .overlaps("media_urls", urlForms)
       .limit(1);
     noteLookupFailure("3b posts.media_urls", postsErr, { bucket, path });
@@ -347,13 +458,24 @@ async function decide(
     // object may be legitimately reachable via a later branch, else §4 denies.
     if (post && owner && owner === post.author_id) {
       const v = postVisible(post, viewerId);
-      if (v === "allow") return true;
-      if (v === "trip") return isTripMember(sc, post.trip_id, viewerId);
-      return false;
+      if (v !== "allow" && v !== "trip") return false;
+      // Same two contextual layers as 3a. This branch has no `post_media` row,
+      // so the only attachment key available is the canonical asset id; a null
+      // one means "nothing to narrow by" and the post rules stand alone.
+      const tripContext = post.trip_id
+        ? { contextType: "trip" as const, contextId: String(post.trip_id) }
+        : undefined;
+      if (!(await authorizeMediaContext(sc, viewerId, owner, tripContext))) return false;
+      if (v === "trip" && !(await isTripMember(sc, post.trip_id, viewerId))) return false;
+      return authorizeMediaAttachment(
+        sc, viewerId, owner, canonicalAssetId,
+        { entityType: "post", entityId: String((post as any).id ?? "") },
+        tripContext,
+      );
     }
   } catch { /* fall through */ }
 
-  // 3c. Message media → thread membership.
+  // 3c. Message media → the SENDER owns the object, AND the viewer is in the thread.
   try {
     // `deleted_at IS NULL`: an unsent message must not keep granting access to
     // its attachment. The DELETE handler now nulls the media columns, so a
@@ -362,24 +484,44 @@ async function decide(
     // would go on authorising a signed URL for a picture the sender unsent.
     const { data: msgs, error: msgsErr } = await sc
       .from("messages")
-      .select("thread_id")
+      .select("thread_id, sender_id")
       .or(`media_url.in.${inList},media_thumbnail_url.in.${inList}`)
       .is("deleted_at", null)
       .limit(1);
     noteLookupFailure("3c messages", msgsErr, { bucket, path });
     const msg = (msgs as any[])?.[0];
     if (msg) {
-      const { data: member, error: memberErr } = await sc
-        .from("message_thread_members")
-        .select("user_id")
-        .eq("thread_id", msg.thread_id)
-        .eq("user_id", viewerId)
-        .is("left_at", null)
-        .maybeSingle();
-      // Returned directly: an unreadable membership table denies a member's own
-      // thread media exactly as it denies a non-member's.
-      noteLookupFailure("3c thread membership", memberErr, { bucket, path, threadId: msg.thread_id });
-      return Boolean(member);
+      // OWNERSHIP FIRST — this branch was the last of the four to get it, and it
+      // is the same trap 3b, 3d and 3e each carry a comment about. The message is
+      // found BY its media_url, so the row claiming "this is my media" is the same
+      // row asking for it to be served. Without this test, anyone who can write a
+      // `messages` row carrying somebody else's storage key turns a thread they
+      // control into a reader for that person's private object: `post-media` is a
+      // PRIVATE bucket, so branch 3c is not merely deciding whether to show a
+      // thumbnail, it is deciding whether to hand over bytes.
+      //
+      // `owner` is the canonical media_assets owner where that layer is lit,
+      // falling back to the path owner (§1 above). Null means the object cannot be
+      // attributed at all, and an unattributable object is denied here exactly as
+      // it is in 3d and 3e rather than being given the benefit of the doubt.
+      //
+      // FALL THROUGH rather than return false on a mismatch: the object may still
+      // be legitimately reachable through a later branch, and if it is not, §4
+      // denies it. Returning false here would let a forged message row SUPPRESS an
+      // object its real owner is entitled to publish elsewhere.
+      if (owner && owner === (msg as any).sender_id) {
+        const { data: member, error: memberErr } = await sc
+          .from("message_thread_members")
+          .select("user_id")
+          .eq("thread_id", msg.thread_id)
+          .eq("user_id", viewerId)
+          .is("left_at", null)
+          .maybeSingle();
+        // Returned directly: an unreadable membership table denies a member's own
+        // thread media exactly as it denies a non-member's.
+        noteLookupFailure("3c thread membership", memberErr, { bucket, path, threadId: msg.thread_id });
+        return Boolean(member);
+      }
     }
   } catch { /* fall through */ }
 
@@ -516,7 +658,14 @@ async function decide(
             .in("role", ["host", "co_host", "moderator"])
             .maybeSingle(),
         ]);
-        return !!(rsvp as any).data || !!(role as any).data;
+        if (!(rsvp as any).data && !(role as any).data) return false;
+        // An RSVP/role is membership of the EVENT, not permission to see a
+        // particular host's media inside it. The directional circle override
+        // is the second half and is applied here, not left to the caller.
+        return authorizeMediaContext(sc, viewerId, hostId, {
+          contextType: "event",
+          contextId: String(gv.entity_id),
+        });
       }
       if (gv.entity_type === "trip") {
         // Fetch owner for block check — ownerFromPath() returns null for
@@ -532,7 +681,11 @@ async function decide(
         const trBlocked = await fetchBlockedSet(sc, viewerId);
         if (trBlocked === null) return false;
         if (trBlocked.has(tripOwnerId)) return false;
-        return isTripMember(sc, gv.entity_id, viewerId);
+        if (!(await isTripMember(sc, gv.entity_id, viewerId))) return false;
+        return authorizeMediaContext(sc, viewerId, tripOwnerId, {
+          contextType: "trip",
+          contextId: String(gv.entity_id),
+        });
       }
       return false;
     }

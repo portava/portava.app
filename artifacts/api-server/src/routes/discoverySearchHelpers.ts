@@ -14,6 +14,13 @@
 // ── Search query context ───────────────────────────────────────────────────────
 
 export interface SearchQueryContext {
+  /**
+   * Trips §7.3 (census-trips TR133): when set, event results are placed
+   * against this trip's freedom windows (the engine's windows, never a local
+   * notion of free time) and the ones that fit lead. The viewer must be an
+   * accepted member; otherwise the windows are reported as not consulted.
+   */
+  tripId?: string | null;
   lat?: number | null;
   lng?: number | null;
   tz?: string | null;

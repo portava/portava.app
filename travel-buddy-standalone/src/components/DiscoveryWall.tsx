@@ -24,6 +24,7 @@ import { saveCommunityPlace, reportCommunityPlace, getPlaceLiveStatusCached } fr
 import { removeSaved } from '../services/discoveryBookmarks.ts';
 import type { PlaceReportReason, PlaceLiveStatus } from '../services/discovery.ts';
 import { PlaceQuickActions } from './PlaceQuickActions.tsx';
+import { communityBylineText } from '../features/discovery/communityByline.ts';
 
 /**
  * Live open-now status for community place cards. Reuses the shared
@@ -404,7 +405,10 @@ export function HiddenGemCard({ gem, onAddToRoute }: { gem: DiscoveryItem; onAdd
                 hitSlop={layout.hitSlop}
                 onPress={gem.submittedBy.handle ? () => router.push(`/u/${encodeURIComponent(gem.submittedBy!.handle!)}` as any) : undefined}
               >
-                <Text style={g.by}>By {gem.submittedBy.name}</Text>
+                {/* C19: resolved from (displayName, handle) only — never the legacy `name`,
+                    which carries `@username` when the server withheld the name and can
+                    contradict the server's one `nameAllowed` decision. */}
+                <Text style={g.by}>By {communityBylineText(gem.submittedBy)}</Text>
               </Pressable>
             </View>
           ) : null}
@@ -512,7 +516,8 @@ export function TravelerPickCard({ pick, onAddToRoute }: { pick: TravelerPick; o
             hitSlop={layout.hitSlop}
             onPress={pick.user.handle ? () => router.push(`/u/${encodeURIComponent(pick.user.handle!)}` as any) : undefined}
           >
-            <Text style={tpk.user}>{pick.user.name}</Text>
+            {/* C19 — the same one rule as the hidden-gem byline above. */}
+            <Text style={tpk.user}>{communityBylineText(pick.user)}</Text>
           </Pressable>
           <Text style={tpk.time}>{pick.timeAgo}</Text>
         </View>

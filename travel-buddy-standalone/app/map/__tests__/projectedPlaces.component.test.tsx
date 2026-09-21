@@ -191,13 +191,25 @@ jest.mock('../../../src/components/discovery/DiscoveryMapView', () => {
   };
 });
 
+// NOTE: the carousel is where the legacy places layer reports itself — it takes
+// `placesError` and `placesEmpty` from the screen and draws the error card or the
+// zero-results state. The stub renders both as text so a test can tell the two
+// apart; no earlier assertion in this file reads the carousel's output, so
+// exposing them adds coverage without changing any existing case.
 jest.mock('../../../src/components/map/MapCarousel', () => {
   const React = require('react');
-  const { View } = require('react-native');
-  const MapCarousel = React.forwardRef((_p: unknown, ref: React.Ref<unknown>) => {
-    React.useImperativeHandle(ref, () => ({ scrollToIndex: jest.fn() }));
-    return <View testID="map-carousel" />;
-  });
+  const { View, Text } = require('react-native');
+  const MapCarousel = React.forwardRef(
+    (p: { placesError?: string | null; placesEmpty?: boolean }, ref: React.Ref<unknown>) => {
+      React.useImperativeHandle(ref, () => ({ scrollToIndex: jest.fn() }));
+      return (
+        <View testID="map-carousel">
+          <Text testID="places-error">{p.placesError ?? ''}</Text>
+          <Text testID="places-empty">{String(p.placesEmpty ?? false)}</Text>
+        </View>
+      );
+    },
+  );
   MapCarousel.displayName = 'MapCarousel';
   return { MapCarousel };
 });
@@ -332,5 +344,89 @@ describe('legacy places (source === legacy)', () => {
     await mount();
     await act(async () => { await Promise.resolve(); });
     expect(mockGetDiscoveryPlaces).not.toHaveBeenCalled();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// A REFUSED legacy fetch is not an empty map
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// census-discovery §18 audited the refusal envelope's consumers and recorded this
+// screen as one of four that cannot read it:
+//
+//   "**Defect.** A refusal takes the `ok` branch with `places: []`, clears the
+//    pins, and the screen's own `placesEmpty` then renders 'no places here' for
+//    an outage."
+//
+// The branch is `if (res.ok && Array.isArray(res.data?.places))`. A
+// `coverage: "nothing"` refusal satisfies BOTH halves — it is `ok: true` and its
+// `places` really is an array — so it took the success path, emptied the pins and
+// CLEARED `placesError`. Clearing the error is what turns `placesEmpty` on, since
+// that flag is `… && !placesError && legacyPlaces.length === 0`. The outage
+// therefore rendered as a confident statement that this area has nothing in it.
+//
+// The honest destination already exists on this screen: `placesError`, which
+// draws the error card with a retry. `partial` is deliberately NOT routed there —
+// the places it carries are real.
+
+describe('legacy places — a refusal is not a zero-results map', () => {
+  const REFUSAL_NOTHING = {
+    class: 'transient_db',
+    code: 'discovery_places_read_failed',
+    route: 'GET /discovery',
+    coverage: 'nothing' as const,
+  };
+
+  it('OUTAGE: does not render the zero-results state for a read that never happened', async () => {
+    mockGetDiscoveryPlaces.mockResolvedValue({
+      ok: true, data: { places: [], refusal: REFUSAL_NOTHING },
+    });
+    hookAnswers({ source: 'legacy', stage: 'canonical' });
+    await mount();
+    await waitFor(() => expect(mockGetDiscoveryPlaces).toHaveBeenCalled());
+
+    await waitFor(() => {
+      expect(screen.getByTestId('places-empty').props.children).toBe('false');
+    });
+  });
+
+  it('OUTAGE: surfaces it as an error the viewer can retry', async () => {
+    mockGetDiscoveryPlaces.mockResolvedValue({
+      ok: true, data: { places: [], refusal: REFUSAL_NOTHING },
+    });
+    hookAnswers({ source: 'legacy', stage: 'canonical' });
+    await mount();
+    await waitFor(() => expect(mockGetDiscoveryPlaces).toHaveBeenCalled());
+
+    // Asserted on "an error is set", not on its wording — the message is prose.
+    await waitFor(() => {
+      expect(screen.getByTestId('places-error').props.children).not.toBe('');
+    });
+  });
+
+  it('CONTROL: a genuinely empty area STILL renders the zero-results state', async () => {
+    // Without this, "never show empty" is satisfied by deleting the empty state.
+    mockGetDiscoveryPlaces.mockResolvedValue({ ok: true, data: { places: [] } });
+    hookAnswers({ source: 'legacy', stage: 'canonical' });
+    await mount();
+    await waitFor(() => expect(mockGetDiscoveryPlaces).toHaveBeenCalled());
+
+    await waitFor(() => {
+      expect(screen.getByTestId('places-empty').props.children).toBe('true');
+    });
+    expect(screen.getByTestId('places-error').props.children).toBe('');
+  });
+
+  it('CONTROL: a PARTIAL refusal draws the real places it carries', async () => {
+    mockGetDiscoveryPlaces.mockResolvedValue({
+      ok: true,
+      data: { places: [LEGACY_PLACE], refusal: { ...REFUSAL_NOTHING, coverage: 'partial' } },
+    });
+    hookAnswers({ source: 'legacy', stage: 'canonical' });
+    await mount();
+    await waitFor(() => {
+      expect(screen.getByTestId('map-legacy-place-ids').props.children).toBe('db/legacy-1');
+    });
+    expect(screen.getByTestId('places-error').props.children).toBe('');
   });
 });

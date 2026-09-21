@@ -16,7 +16,8 @@ import { registerField, isFieldRegistered } from '../contexts/fieldRegistry.ts';
 /**
  * Canonical fieldIds for the search surfaces. Stable keys shared by the
  * registry, cache, and telemetry. `discovery.search` matches the id used in the
- * client audit's §50 field table for the global search bar.
+ * §50 field table (`contexts/fieldInventory.ts`, which exists as of Phase 9 — this
+ * comment cited it for months while it did not) for the global search bar.
  */
 export const SEARCH_FIELD_IDS = {
   globalSearch: 'discovery.search',

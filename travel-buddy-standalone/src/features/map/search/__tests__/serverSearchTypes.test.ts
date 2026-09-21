@@ -69,6 +69,19 @@ function locateServerRoute(): string {
 
 const serverSource = readFileSync(locateServerRoute(), 'utf8');
 
+/** Resolve a repo-relative path the same way, from this module rather than cwd. */
+function locateRepoFile(rel: string): string {
+  let dir = dirname(fileURLToPath(import.meta.url));
+  for (let i = 0; i < 12; i++) {
+    const candidate = join(dir, rel);
+    if (existsSync(candidate)) return candidate;
+    const parent = resolve(dir, '..');
+    if (parent === dir) break;
+    dir = parent;
+  }
+  throw new Error(`Could not find ${rel} above ${fileURLToPath(import.meta.url)}.`);
+}
+
 /** `SEARCH_TYPES` as the server declares it — the source of `SearchType`. */
 function parseSearchTypes(source: string): string[] {
   const block = /const\s+SEARCH_TYPES\s*=\s*\[([\s\S]*?)\]\s*as\s+const;/.exec(source);
@@ -251,15 +264,67 @@ describe('a deliberate drop is distinguishable from an unrecognised one', () => 
   });
 });
 
-// ── What the server does not send at all ─────────────────────────────────────
+// ── §27's ninth heading, which used to have no producer ──────────────────────
 
-describe('§27 headings with no producer', () => {
-  test('Saved items has no SearchType — it is a server gap, not a mapping gap', () => {
-    // §27's ninth type. The adapter keeps a 'saved' branch (the Areas
-    // degradation path uses it), but nothing on the wire can reach it, so no
-    // mapping is invented for a type that cannot arrive.
-    assert.ok(!WIRE_TYPES.includes('saved'), 'a saved SearchType now exists — map it');
+describe('§27 Saved items', () => {
+  // This block used to assert the OPPOSITE — `!WIRE_TYPES.includes('saved')`,
+  // under the heading "§27 headings with no producer" — and its failure message
+  // was "a saved SearchType now exists — map it". That is what happened:
+  // routes/discoverySearch.ts grew a `searchSaved` lane over wishlist_places +
+  // discovery_place_saves, so the branch the adapter had carried since map
+  // search was written is reachable. census-map M201 recorded the whole heading
+  // as BUILT-BUT-WRONG for exactly the gap this test used to pin.
+  test('saved is WIRE vocabulary now, and the adapter maps it to the §27 heading', () => {
+    assert.ok(WIRE_TYPES.includes('saved'), 'the server stopped declaring a saved SearchType');
+    assert.deepEqual(classifyServerType('saved'), { kind: 'mapped', mapType: 'saved' });
+  });
+
+  test('the route actually emits it — a declared type nothing produces is the old gap', () => {
+    // Derived from the server source, like everything else here: a `saved`
+    // member of SEARCH_TYPES with no `type: "saved"` literal anywhere in the
+    // route would be the same unreachable branch under a new name.
+    assert.ok(
+      parseEmittedTypes(serverSource).includes('saved'),
+      'SEARCH_TYPES declares "saved" but no lane in the route emits it',
+    );
+  });
+
+  test('the map search sheet actually ASKS for it — the last link in the chain', () => {
+    // A wire type nothing requests is the same dead branch under a new name.
+    // `saved` is deliberately NOT in the server's `all` fan-out (that fan-out
+    // also feeds the app's one global search, and folding a private
+    // always-matching bucket into "All" everywhere is an owner's call), so the
+    // map's own sheet has to ask for it. Read as source: the sheet pulls
+    // MapLibre-adjacent chrome this runner cannot render.
+    const sheet = readFileSync(locateRepoFile('travel-buddy-standalone/src/components/map/MapSearchSheet.tsx'), 'utf8');
+    assert.match(sheet, /searchUnified\(/, 'the sheet no longer calls searchUnified — update this guard');
+    assert.match(
+      sheet,
+      /searchUnified\(q, 'saved'/,
+      'the map search sheet never requests the saved type, so §27 Saved items cannot appear on the map',
+    );
+  });
+
+  test('wishlist is still only an alias — the server has never sent one', () => {
     assert.ok(!WIRE_TYPES.includes('wishlist'), 'a wishlist SearchType now exists — map it');
+  });
+
+  test('savedKind comes from the wire, and an unknown kind does not pass through', () => {
+    const withKind = toMapSearchResult({
+      id: 's1', type: 'saved', title: 'Cafe Lumina',
+      metadata: { lat: 16.05, lng: 108.2, savedKind: 'trip' },
+    });
+    assert.ok(withKind && withKind.type === 'saved');
+    assert.equal(withKind.savedKind, 'trip');
+
+    const bogus = toMapSearchResult({
+      id: 's2', type: 'saved', title: 'Cafe Lumina',
+      metadata: { lat: 16.05, lng: 108.2, savedKind: 'podcast' },
+    });
+    assert.ok(bogus && bogus.type === 'saved');
+    // Falls back rather than passing an unknown discriminant through: savedKind
+    // drives both the icon and the detail route.
+    assert.equal(bogus.savedKind, 'place');
   });
 });
 

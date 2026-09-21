@@ -9,7 +9,7 @@
  *   category     string  for_you | places | food | nightlife | activities |
  *                        events | beaches | transport   (default: for_you)
  *   radiusKm     number  search radius 1–100 km  (default: 10)
- *   page         number  1-based page (default: 1); PAGE_SIZE=20
+ *   page         number  1-based page (default: 1); PAGE_SIZE=20.  cursor  string  base64url offset — GET /discovery/feed's spelling, decoded by decodeOffset — selecting the same window without the page arithmetic. Additive: `page` is untouched when it is absent, and it takes precedence when both are sent.  RESPONSE (`11` §5 Outputs): `cursor` — base64url offset of the NEXT window, or null at the end of the set; the key is always present, and its value feeds straight back into the `cursor` input above.
  *
  * Response: { places: DiscoveryPlace[], destination: string, total: number }
  *
@@ -29,7 +29,7 @@ import { buildDiscoveryContext } from "../services/location/DiscoveryLocationCon
 import { loadPreferences } from "../services/location/LocationPermissionService";
 import { toCanonicalCategory } from "../lib/placeCategories";
 import type { DiscoveryContext, DiscoveryContextMode } from "../services/location/DiscoveryLocationContext";
-import { calculateUserAge } from "../lib/ageEligibility";
+import { resolveGateAge, type GateAge } from "../lib/gateAge.js";
 import { discoveryPlaceToCompassItem } from "../compass/CompassDiscoveryAdapter";
 import { getCompassProfile } from "../compass/CompassProfileService";
 import { buildCompassContext, defaultSignals } from "../compass/CompassContextEngine";
@@ -38,13 +38,22 @@ import { fetchUserTimezone, localHourFor, nowUtcInstant } from "../lib/localTime
 import { isEnabled } from "../compass/flags";
 import type { RankCandidate, ScoredCandidate } from "../lib/portavaRank";
 import { logImpression } from "../lib/rankLog";
-import { logDiscoveryServe, DiscoveryServePoint } from "../lib/discoveryServeLog.js";
+import { logDiscoveryServe, DiscoveryServePoint } from "../lib/discoveryServeLog.js";  import { recommendationIdFor } from "../lib/discoveryRecommendationId.js";  // DC-22 — the id the serve log mints is now also handed to the client; see newServeExposure at the foot of this file.
+// D11 / `11` §9 — "A failure must not masquerade as success." One vocabulary for
+// every Discovery refusal; lib/discoveryRefusal.ts documents why the status stays
+// 200 and the named refusal rides inside the existing envelope instead.
+import {
+  discoveryRefusal,
+  sendDiscoveryRefusal,
+  logServeUnlessRefused, classifyRefusal, upstreamCall, UpstreamUnavailableError,
+} from "../lib/discoveryRefusal.js";  import { discoveryLayoverGate, serveUnderLayoverGate, type DiscoveryLayoverSummary } from "../lib/discoveryLayoverMode.js";  import type { DiscoveryRefusal } from "../lib/discoveryRefusal.js";  // A14 / census-layover §25 L269 — Discovery's Layover mode. Declared on this line, not its own, because docs/ anchors routes/discovery.ts up to :3477 and check:doc-citations re-reads every one of them.
 import { resolveDiscoveryEngineMode } from "../lib/discoveryEngineMode.js";
 // The PDE ranking pipeline (D5=B, ranking half). portavaRank, the
 // DiscoveryRankingService re-rank and the assembly analytics all moved behind
 // this module; the route no longer imports them directly, which is what keeps
 // "one ranking pipeline in the tree" checkable rather than aspirational.
 import { loadPdeViewer, rankForViewer } from "../lib/discoveryPde.js";
+import { loadDismissedPlaceIds, withoutDismissed } from "../lib/discoveryDismissed.js";
 import { logDiscoveryShadowServe } from "../lib/discoveryShadow.js";
 import { isInDiscoveryCohort } from "../lib/discoveryCohort.js";
 import { fetchBlockedSet, submitterIsVisible } from "../lib/blocks.js";
@@ -65,6 +74,38 @@ import {
 // to the discovery_places.id space place memory keys on, then annotate the served
 // page. Additive + fail-safe + flag-gated (memory_projection) — see placeIdBridge.
 import { annotateNewToMe, recordDiscoveryAlreadyKnown } from "../lib/placeIdBridge.js";
+// Sensing §8 DiscoveryCandidate projection (census-discovery A03/A25). Attached
+// to the OUTGOING slice only, behind discovery_candidate_projection_enabled
+// (2361, seeded OFF): with the flag off withDiscoveryCandidates returns the very
+// array it was handed, so the served JSON is byte-identical.
+import { withDiscoveryCandidates } from "../lib/discoveryCandidate.js";
+// `06` §5 cache metadata / `01` §7 "Cache B problem" — the five fields a cached
+// final order must not be stored without. Built once when the Compass ranker
+// returns, stored beside the page, and replayed verbatim on a hit.
+import {
+  buildRankProvenance,
+  candidateSourceMap,
+  DISCOVERY_MODEL_VERSION,
+  DISCOVERY_FEATURE_VERSION,
+  type DiscoveryRankProvenance,
+} from "../lib/discoveryRankProvenance.js";
+// `04` §5's eighth field. The provenance carries the ranker's own signal keys;
+// the exposure record wants `01` §11's vocabulary, and this is the only bridge
+// between them — see lib/discoveryReasonCodes.
+import { reasonCodesByIdFromProvenance } from "../lib/discoveryReasonCodes.js";
+// Sensing §8 live ranking (census-sensing S68/S66/S70/S72). Re-orders the HEAD
+// WINDOW of an already-ranked feed on the live claims lib/liveClaimRead serves,
+// behind discovery_live_rank_enabled (2850, seeded OFF): with the flag off
+// withDiscoveryLiveRank returns the very array it was handed, same reference,
+// having read no claim — so the served order and JSON are byte-identical.
+import { parseIntentMode, withDiscoveryLiveRank } from "../lib/discoveryLiveRankRead.js";
+import {
+  blockFingerprint,
+  cacheBEntryUsable,
+  rankVersionKey,
+  CACHE_B_TTL_MS,
+} from "../lib/discoveryCacheEligibility.js";
+import { logger } from "../lib/logger.js";
 
 const router = Router();
 
@@ -223,8 +264,33 @@ const GEOCODE_MAX_ENTRIES            = 2_000;
 // rankItemsForDiscovery) on repeated For You requests within the TTL window
 // — e.g. the user swipes away to another tab and back within a few minutes.
 // 10-minute TTL matches the Compass feed TTL used elsewhere.
-const COMPASS_CANDIDATE_CACHE_TTL_MS = 10 * 60 * 1_000;
-const _compassCandidateCache = new Map<string, { places: DiscoveryPlace[]; at: number }>();
+// The TTL now lives beside the rest of the acceptance rule (DSV2-06); this
+// alias keeps the local call sites reading as they did.
+const COMPASS_CANDIDATE_CACHE_TTL_MS = CACHE_B_TTL_MS;
+
+/** The model/feature shape a cache-B page must have been ranked under to be replayed. */
+const CURRENT_RANK_VERSION = rankVersionKey(DISCOVERY_MODEL_VERSION, DISCOVERY_FEATURE_VERSION);
+// `blockKey` binds the stored FINAL ORDER to the block set it was ranked under.
+// The hit path below runs only applyFilters, which applies no block rule and
+// re-reads nothing, so without this a block taken inside the TTL would not reach
+// the viewer's own results (lib/discoveryCacheEligibility.ts states the rule).
+// `provenanceById` is the `06` §5 half: model/feature version, candidate source,
+// recommendation reasons, the raw feature vector and the RANKING TIMESTAMP for
+// the rank that produced `places`. `01` §7 names storing the order without them
+// as the Cache B defect — "caching final ranked order without feature vectors
+// makes re-ranking, diagnostics, and counterfactual analysis impossible". It is
+// stored alongside the order, not derived from it, and the hit path replays it
+// rather than re-stamping: `at` is when the CACHE was written, and each
+// provenance record's `rankedAt` is when the RANKER ran. Those are different
+// facts and a cache hit must not report the second as the first.
+const _compassCandidateCache = new Map<string, {
+  places: DiscoveryPlace[];
+  at: number;
+  blockKey: string;
+  /** `06` §5 — the model/feature shape this page was ranked under (DSV2-06). */
+  rankVersion: string;
+  provenanceById: Map<string, DiscoveryRankProvenance>;
+}>();
 
 function compassCandidateCacheKey(userId: string, destination: string, radiusKm: number, sortBy: string | null): string {
   return `${userId}:${destination.toLowerCase().trim()}:r${radiusKm}:s${sortBy ?? "default"}`;
@@ -301,13 +367,13 @@ async function fetchWithTimeout(url: string, init?: RequestInit): Promise<Respon
 
 async function geocode(location: string): Promise<{ lat: number; lng: number; display: string } | null> {
   const url = `${NOMINATIM_URL}?q=${encodeURIComponent(location)}&format=json&limit=1`;
-  const res = await fetchWithTimeout(url, {
+  const res = await upstreamCall("nominatim", () => fetchWithTimeout(url, {
     headers: { "User-Agent": "TravelBuddy/1.0 (travel-buddy-app; discovery)" },
-  });
-  if (!res.ok) return null;
-  const data = (await res.json()) as Array<{ lat: string; lon: string; display_name: string }>;
+  }));
+  if (!res.ok) throw new UpstreamUnavailableError("nominatim", `nominatim_http_${res.status}`);
+  const data = await upstreamCall("nominatim", async () => (await res.json()) as Array<{ lat: string; lon: string; display_name: string }>);
   const r = data?.[0];
-  if (!r) return null;
+  if (!r) return null; // THE ONLY null: Nominatim answered and knows no such place — a fact, and cacheable. See GEOCODE OUTAGES at the foot of this file.
   return { lat: parseFloat(r.lat), lng: parseFloat(r.lon), display: r.display_name };
 }
 
@@ -809,6 +875,37 @@ export function _testCacheKeys(): string[] {
 /** Test hook: expose enrichOsmSavedCounts for unit testing without going through the route. */
 export const _testEnrichOsmSavedCounts = enrichOsmSavedCounts;
 
+/** Test hooks: READ / CLEAR cache B. The blockKey is exposed because the thing
+ * worth asserting is WHICH block set a stored page was ranked under, not merely
+ * that an entry exists — that is what separates a real invalidation from luck. */
+export function _testCompassCacheEntry(key: string): {
+  ids: string[];
+  at: number;
+  blockKey: string;
+  rankVersion: string;
+  provenanceById: ReadonlyMap<string, DiscoveryRankProvenance>;
+} | null {
+  const e = _compassCandidateCache.get(key);
+  return e
+    ? {
+        ids: e.places.map((p) => p.id), at: e.at, blockKey: e.blockKey,
+        rankVersion: e.rankVersion, provenanceById: e.provenanceById,
+      }
+    : null;
+}
+
+/**
+ * Test hook: stand in for "this page was ranked before the ranker changed".
+ * A deploy is the only real producer of a version mismatch, and a test cannot
+ * deploy; poking the stored version is the smallest faithful stand-in.
+ */
+export function _testPokeCompassCacheRankVersion(key: string, rankVersion: string): void {
+  const e = _compassCandidateCache.get(key);
+  if (e) _compassCandidateCache.set(key, { ...e, rankVersion });
+}
+export function _clearTestCompassCache(): void { _compassCandidateCache.clear(); }
+export const _testCompassCandidateCacheKey = compassCandidateCacheKey;
+
 /**
  * Evict all L1 in-memory cache entries that contain an OSM place with the
  * given osmId (stored directly as place.id, e.g. "node/12345678").  Called
@@ -891,13 +988,28 @@ export { submitterIsVisible };
  * and community rows are re-queried per request, so one viewer's block list can
  * never be cached into another viewer's feed.
  */
+/**
+ * D11 — the RETURN TYPE is the fix, not the logging.
+ *
+ * `null` means "discovery_places could not be read". `[]` means "there are no
+ * community places here". Before D11 both were `[]`, so every caller — the feed,
+ * the counts fan-out, the category surface — received the same value for "the
+ * table is down" as for "this city is new", and every one of them then answered
+ * a user with an empty collection and a 200. That is the masquerade the owner
+ * ruled on, at its source: the two answers were made identical HERE, and no
+ * amount of care at the serve point could tell them apart again.
+ *
+ * Same discipline as `loadProtectedZones` / `loadFlowZones`
+ * (routes/mapProjection.ts:193-217, :262-271): null for unreadable, [] for
+ * empty, and the caller decides what to do about it.
+ */
 async function queryDbPlaces(
   destination: string,
   category: string,
   centerLat: number | null,
   centerLng: number | null,
   blockedIds: Set<string> | null,
-): Promise<DiscoveryPlace[]> {
+): Promise<DiscoveryPlace[] | null> {
   if (_testDbOverride) return _testDbOverride(destination, category, centerLat, centerLng);
 
   const sc = getServiceClient();
@@ -934,7 +1046,26 @@ async function queryDbPlaces(
       // size. Cap to 60 AFTER filtering (discovery_places is small, so 200 is cheap).
       .limit(200);
 
-    if (error || !data) return [];
+    // This comment used to end "The refusal stands; it now says so" — and it said
+    // so only to the SERVER LOG. The direction it defends is still right: the
+    // discovery feed merges this half with OSM/Foursquare results, so an
+    // unreadable community table must not fail the whole request. But the caller
+    // was told nothing, and `[]` here is what made "the table is down"
+    // indistinguishable from "this city has no community places" at every serve
+    // point downstream.
+    //
+    // D11 keeps the non-fatal direction and removes the silence: `null` travels
+    // to the caller, which serves what it has and NAMES the half it could not
+    // read. The log line stays — an operator should still see it without having
+    // to read a response body.
+    if (error) {
+      logger.warn(
+        { err: error, code: "discovery_places_read_failed", city: cityBase, category },
+        "discovery: discovery_places read failed — this request serves external results only",
+      );
+      return null;
+    }
+    if (!data) return [];
 
     const dbPlaces = (data as any[])
       .filter((row: any) => {
@@ -982,7 +1113,7 @@ async function queryDbPlaces(
           lat,
           lng,
           tags: [row.category, row.tag].filter(Boolean) as string[],
-          address: (row.neighborhood ?? null) as string | null,
+          address: (row.neighborhood ?? null) as string | null, neighborhood: (row.neighborhood ?? null) as string | null, // DV-54: the same column also reaches the ranker as a geography key — see the note at the end of lib/discoveryPde.ts. `address` is unchanged; the client still reads it.
           website: null,
           phone: null,
           openingHours: null,
@@ -1010,7 +1141,9 @@ async function queryDbPlaces(
       return a ? { ...p, worthItCount: a.worthItCount, avgRating: a.avgRating, reviewCount: a.reviewCount } : p;
     });
   } catch {
-    return [];
+    // Same reasoning as the `error` branch above: a throw is a failed read, and
+    // a failed read is not an empty city.
+    return null;
   }
 }
 
@@ -1056,7 +1189,7 @@ async function queryCanonicalPlaces(
   category: string,
   centerLat: number | null,
   centerLng: number | null,
-): Promise<DiscoveryPlace[]> {
+): Promise<DiscoveryPlace[] | null> {
   const sc = getServiceClient();
   if (!sc) return [];
 
@@ -1080,7 +1213,18 @@ async function queryCanonicalPlaces(
     // Deterministic order so pagination/results are stable across requests.
     const { data, error } = await q.order("normalized_name", { ascending: true }).limit(400);
 
-    if (error || !data) return [];
+    // Same call as queryDbPlaces above, on the canonical `places` table, and now
+    // with the same RETURN TYPE for the same reason: `null` = "the registry could
+    // not be read", `[]` = "this city has no canonical rows". Still NON-FATAL —
+    // the merge serves what it has — but no longer SILENT, which is all of D11.
+    if (error) {
+      logger.warn(
+        { err: error, code: "canonical_places_read_failed", city: cityBase, category },
+        "discovery: places read failed — this request serves external results only",
+      );
+      return null;
+    }
+    if (!data) return [];
 
     return (data as any[])
       .filter((row: any) => {
@@ -1105,7 +1249,7 @@ async function queryCanonicalPlaces(
           lat,
           lng,
           tags: [row.primary_category].filter(Boolean) as string[],
-          address: (row.neighborhood ?? row.address ?? null) as string | null,
+          address: (row.neighborhood ?? row.address ?? null) as string | null, neighborhood: (row.neighborhood ?? null) as string | null, // DV-54, same as queryDbPlaces: the geography key is the `neighborhood` column, never the street `address` fallback.
           website: null,
           phone: null,
           openingHours: null,
@@ -1122,7 +1266,7 @@ async function queryCanonicalPlaces(
         };
       });
   } catch {
-    return [];
+    return null;   // a throw is a failed read; see the `error` branch above.
   }
 }
 
@@ -1132,7 +1276,7 @@ async function queryCanonicalPlaces(
  * images/ratings/save counts the canonical table lacks). Used by BOTH the
  * cache-miss path and the warm-cache serve path — previously only the miss path
  * merged canonical rows, so every cache HIT silently dropped them and a warm
- * Da Nang feed fell back to OSM-only.
+ * Da Nang feed fell back to OSM-only. Returns what it read AND what it could not.
  */
 async function loadCuratedAndCanonicalPlaces(
   destination: string,
@@ -1140,18 +1284,28 @@ async function loadCuratedAndCanonicalPlaces(
   centerLat: number | null,
   centerLng: number | null,
   blockedIds: Set<string> | null,
-): Promise<DiscoveryPlace[]> {
+): Promise<CuratedAndCanonicalPlaces> {
   const [curated, canonical] = await Promise.all([
     // Only the curated half takes the block set: canonical `places` rows carry
     // no author column, so there is nobody to have blocked.
     queryDbPlaces(destination, category, centerLat, centerLng, blockedIds),
     queryCanonicalPlaces(destination, category, centerLat, centerLng),
   ]);
-  const curatedNames = new Set(curated.map((p) => p.name.toLowerCase().trim()));
-  return [
-    ...curated,
-    ...canonical.filter((p) => !curatedNames.has(p.name.toLowerCase().trim())),
-  ];
+  // D11 — THE RESIDUAL, CLOSED FOR BOTH HALVES. `queryDbPlaces` AND
+  // `queryCanonicalPlaces` each distinguish "unreadable" (null) from "empty"
+  // ([]); this absorbed BOTH — curated in a `curated ?? []`, canonical before it
+  // was expressible at all. The merge is untouched; new is the report beside it,
+  // which `sendDiscoveryPlacesEnvelope` (foot of file) turns into failedSources.
+  const curatedRows   = curated   ?? [];
+  const canonicalRows = canonical ?? [];
+  const curatedNames = new Set(curatedRows.map((p) => p.name.toLowerCase().trim()));
+  return {
+    places: [...curatedRows, ...canonicalRows.filter((p) => !curatedNames.has(p.name.toLowerCase().trim()))],
+    // `=== null`, never falsiness: `[]` is a real and trustworthy answer, and an
+    // empty city never acquires a refusal. MERGE ORDER. Controls pin both ways.
+    failedSources: [...(curated   === null ? [DISCOVERY_CURATED_SOURCE]   : []),
+                    ...(canonical === null ? [DISCOVERY_CANONICAL_SOURCE] : [])],
+  };
 }
 
 // ── OSM saved-count enrichment ────────────────────────────────────────────────
@@ -1377,6 +1531,21 @@ const ADULT_OSM_VENUE_TYPES = new Set([
 ]);
 
 /**
+ * The wire name for what the age seam actually answered.
+ *
+ * Three values, and the third is the whole point: `not_verified_adult` says a
+ * provider result contradicts the birthday on file, `unavailable` says the
+ * check could not run, and neither is `callerDobMissing` — which for years was
+ * the only thing this response could say and was wrong in both cases.
+ */
+function describeCallerAgeState(state: GateAge["state"] | null): string | null {
+  if (state === null) return null;
+  if (state === "verified_minor") return "not_verified_adult";
+  if (state === "unreadable") return "unavailable";
+  return "ok";
+}
+
+/**
  * Context mode labels returned to the client. Never includes exact coords.
  */
 function contextModeLabel(mode: string, city: string | null): string {
@@ -1475,7 +1644,7 @@ router.get("/discovery", async (req, res) => {
     ? (req.query.category as string)
     : "for_you";
   const radiusKm  = Math.max(1, Math.min(100, parseFloat(req.query.radiusKm as string) || defaultRadius));
-  const page      = Math.max(1, parseInt(req.query.page as string) || 1);
+  const { page, offset } = resolveDiscoveryPaging(req.query.page, req.query.cursor, PAGE_SIZE), exposure = newServeExposure(callerUserId);  // DC-22 — `page` keeps its exact old meaning; `cursor` is the second, additive vocabulary. Both resolve to ONE offset, so no serve path can disagree with another about which window it served.
   const radiusM   = Math.round(radiusKm * 1000);
   const openNow   = req.query.openNow === "1";
   const minRating = req.query.minRating ? parseFloat(req.query.minRating as string) : null;
@@ -1494,20 +1663,35 @@ router.get("/discovery", async (req, res) => {
   const customMinAge = req.query.customMinAge ? parseInt(req.query.customMinAge as string) : null;
   const customMaxAge = req.query.customMaxAge ? parseInt(req.query.customMaxAge as string) : null;
 
-  // Resolve caller age when ageFilter = open_to_me
+  // Resolve caller age when ageFilter = open_to_me — THROUGH THE SEAM
+  // (lib/gateAge.ts), and only on this filter, so no other request pays for it.
+  //
+  // `open_to_me` is not a preference here: fifteen lines down it is what
+  // decides whether ADULT_OSM_VENUE_TYPES — bars, nightclubs, casinos — are
+  // filtered out of the results. A caller whose government document says they
+  // are under 18 was being served that list because the typed birthday said
+  // otherwise.
+  //
+  // `callerAdultUnconfirmed` is the fail-closed flag rather than a substituted
+  // age, because there IS no age to substitute: the product knows the person is
+  // not a confirmed adult and does not know what they are instead. Inventing 17
+  // to make the arithmetic work would be the fabrication this change exists to
+  // remove.
   let callerAge: number | null = null;
   let callerDobMissing = false;
+  let callerAdultUnconfirmed = false;
+  let callerAgeState: GateAge["state"] | null = null;
   if (ageFilter === "open_to_me" && callerUserId) {
     const sc = getServiceClient();
     if (sc) {
-      const { data: profileRow } = await sc
-        .from("profiles")
-        .select("date_of_birth")
-        .eq("id", callerUserId)
-        .maybeSingle();
-      const dob = (profileRow as any)?.date_of_birth ?? null;
-      callerAge = calculateUserAge(dob);
-      if (callerAge === null) callerDobMissing = true;
+      const gate = await resolveGateAge(sc, callerUserId);
+      callerAgeState = gate.state;
+      if (gate.state === "ok") {
+        callerAge = gate.age;
+        if (callerAge === null) callerDobMissing = true;
+      } else {
+        callerAdultUnconfirmed = true;
+      }
     }
   }
 
@@ -1584,6 +1768,15 @@ router.get("/discovery", async (req, res) => {
     // effective caller age resolves to < 18 (e.g. open_to_me for a minor, or
     // custom range capped below 18).
     const ageBounds = ageFilterBounds();
+    if (callerAdultUnconfirmed) {
+      // The caller asked for "places open to me" and the product cannot treat
+      // them as an adult — either a document contradicts the birthday they
+      // typed, or the check could not run. Either way adult-only venue types
+      // come out. This is deliberately OUTSIDE the `ageBounds !== null` branch:
+      // there are no bounds to compute when there is no trustworthy age, which
+      // is precisely when the filter matters most.
+      list = list.filter((p) => !ADULT_OSM_VENUE_TYPES.has((p.category ?? "").toLowerCase()));
+    }
     if (ageBounds !== null) {
       const effectiveMin = ageBounds.min ?? (ageBounds.max !== null && ageBounds.max < 18 ? ageBounds.max : null);
       if (effectiveMin !== null && effectiveMin < 18) {
@@ -1618,7 +1811,12 @@ router.get("/discovery", async (req, res) => {
 
   const ageFilterMeta = {
     ageFilter,
+    // `callerDobMissing` keeps its original, narrow meaning — the read
+    // succeeded and there is no date of birth on the profile. It is no longer
+    // the catch-all it became, because it was being sent to users whose date of
+    // birth IS on file and who were told to go add one.
     callerDobMissing: ageFilter === "open_to_me" ? callerDobMissing : false,
+    callerAgeState: ageFilter === "open_to_me" ? describeCallerAgeState(callerAgeState) : null,
     bounds: ageFilterBounds(),
   };
 
@@ -1626,10 +1824,10 @@ router.get("/discovery", async (req, res) => {
   // Shared by L1 (in-memory) and L2 (Postgres) hit paths.  OSM places are
   // served from cache; community DB places are always re-queried (they change
   // more often and are not part of the OSM cache key).
-  async function serveCachedPlaces(osmPlaces: DiscoveryPlace[], cacheLevel: string): Promise<void> {
+  async function serveCachedPlaces(osmPlaces: DiscoveryPlace[], cacheLevel: string, cachedAt: number | null): Promise<void> {
     const distRef = userCoords ?? clientCoords;
     // destination! — narrowed by the guard above; TypeScript can't see it through the closure.
-    const dbPlaces = await loadCuratedAndCanonicalPlaces(destination!, category, distRef?.lat ?? null, distRef?.lng ?? null, viewerBlockedIds);
+    const { places: dbPlaces, failedSources: dbFailedSources } = await loadCuratedAndCanonicalPlaces(destination!, category, distRef?.lat ?? null, distRef?.lng ?? null, viewerBlockedIds);
     const osmWithDist = sortBy === "nearest" && distRef
       ? osmPlaces.map((p) =>
           p.lat != null && p.lng != null
@@ -1675,16 +1873,35 @@ router.get("/discovery", async (req, res) => {
       }
     }
 
-    const slice    = servedFiltered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(toPublic);
+    // Sensing §8 — the live ranking layer, over the FULL filtered list's head
+    // window and BEFORE the page slice, so it decides what page 1 contains
+    // rather than only shuffling what page 1 already held. Flag OFF ⇒
+    // `liveRanked.places` IS `servedFiltered` (same reference, no claim read).
+    const liveRanked = await withDiscoveryLiveRank(getServiceClient(), servedFiltered, {
+      mode: parseIntentMode(req.query.intentMode),
+    });
+    const dismA = await dismissGatedPlaces(callerUserId, liveRanked.places, dbFailedSources);  // "Not interested" — serve path 1 of 4.
+    const gateA = await layoverGatedPlaces(callerUserId, dismA.places, "GET /discovery"); if (!gateA.ok) { sendDiscoveryRefusal(res, emptyDiscoveryPlacesEnvelope(destination ?? null, ctxLabel ?? null), gateA.refusal); return; } const slice    = gateA.places.slice(offset, offset + PAGE_SIZE).map(toPublic);  // A14 — the certified action universe gates the WHOLE set before the page slice, so pagination walks the gated set and `total` counts what was served. See lib/discoveryLayoverMode.ts.
     const totalMs  = Date.now() - t0;
     req.log.info({ cacheLevel, destination, category, totalMs, pdeServed: pdeScoredById !== null }, "discovery: cache hit");
     // §7 New-to-Me annotation — additive, order-preserving, flag-gated, fail-safe.
     const annotatedSlice = await annotateNewToMe(getServiceClient(), callerUserId, slice);
-    res.json({
-      places: annotatedSlice, total: servedFiltered.length, destination, context: ctxLabel, cached: true, ageFilterMeta,
-      sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 },
-      meta: { cacheLevel, timings: { totalMs } },
+    const candidateSlice = await withDiscoveryCandidates(getServiceClient(), withRecommendationIds(annotatedSlice, exposure), {
+      cacheLevel, cachedAt, scoredById: pdeScoredById, rankedBy: pdeScoredById ? "pde" : "none",
+      liveRankById: liveRanked.applied ? liveRanked.byId : null,
     });
+    sendDiscoveryPlacesEnvelope(res, {
+      places: candidateSlice, total: gateA.places.length, destination, context: ctxLabel, cached: true, ageFilterMeta,
+      sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 },
+      meta: {
+        cacheLevel, timings: { totalMs },
+        // Present only when 2850's flag is on. `readable: false` says the live
+        // gates refused the read — a different fact from "no place was live".
+        ...(liveRanked.applied
+          ? { liveRank: { mode: liveRanked.mode, readable: liveRanked.readable, windowSize: liveRanked.windowSize, demoted: liveRanked.demoted } }
+          : {}),
+      },
+    }, dismA.failedSources, offset, gateA.summary);   // D11 serve path 1 of 4 — the cache-A serve. A14 — the `layover` key is attached in the send helper, beside `cursor` and for the same reason: four paths physically cannot disagree about its name or its position.
     // Stage 0 instrumentation — serve points 1/2/3. Fire-and-forget, after the
     // response. These three paths ran no ranker; before this they wrote nothing
     // at all, which is why the 'discovery' surface had no rows.
@@ -1709,7 +1926,7 @@ router.get("/discovery", async (req, res) => {
         });
       } else {
         void logDiscoveryServe(getServiceClient(), {
-          userId: callerUserId, servePoint, items: slice,
+          userId: callerUserId, servePoint, items: slice, sessionId: exposure.sessionId, servedAt: exposure.servedAt,  // DC-22 — the SAME exposure the response was stamped with, so an outcome reported against a served id lands on this row.
           context: {
             destination: destination!, category, cacheLevel,
             engineMode: engineMode.mode, modeReason: engineMode.reason,
@@ -1756,15 +1973,20 @@ router.get("/discovery", async (req, res) => {
             // against a filtered page would report divergence that filtering
             // caused and ranking did not.
             const pdeFiltered = applyFilters(outcome.ranked);
-            const pdeSlice    = pdeFiltered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+            const pdeSlice    = pdeFiltered.slice(offset, offset + PAGE_SIZE);
             await logDiscoveryShadowServe(shadowSc, {
               userId: callerUserId,
               destination: destination!, category, radiusKm, page, pageSize: PAGE_SIZE, sortBy,
               servePoint, cacheLevel,
               legacyIds:   slice.map((p) => p.id),
+              // `12` Phase 9's diversity / place-diversity / save-rate axes are
+              // computed from the PAGES, and both pages are in hand right here.
+              // Passing ids alone is what made five of the six axes unanswerable.
+              legacyItems: slice,
               legacyTotal: filtered.length,
               legacyMs:    totalMs,
               pdeIds:      pdeSlice.map((p) => p.id),
+              pdeItems:    pdeSlice,
               pdeTotal:    pdeFiltered.length,
               pdeMs:       Date.now() - shadowT0,
               pdeStages:   outcome.stages as unknown as Record<string, unknown>,
@@ -1784,7 +2006,7 @@ router.get("/discovery", async (req, res) => {
 
   // ── L1: in-process memory (fastest — zero network) ─────────────────────────
   if (cached && isFresh(cached)) {
-    await serveCachedPlaces(cached.places, "L1");
+    await serveCachedPlaces(cached.places, "L1", cached.cachedAt);
     return;
   }
 
@@ -1800,7 +2022,7 @@ router.get("/discovery", async (req, res) => {
     setCacheA(key, { places: dbCacheEntry.entry.places as DiscoveryPlace[], cachedAt: dbCacheEntry.entry.cachedAt });
 
     if (!dbCacheEntry.isStale) {
-      await serveCachedPlaces(dbCacheEntry.entry.places as DiscoveryPlace[], "L2_fresh");
+      await serveCachedPlaces(dbCacheEntry.entry.places as DiscoveryPlace[], "L2_fresh", dbCacheEntry.entry.cachedAt);
       return;
     }
 
@@ -1821,7 +2043,7 @@ router.get("/discovery", async (req, res) => {
       } catch { /* non-fatal background revalidation */ }
     })();
 
-    await serveCachedPlaces(dbCacheEntry.entry.places as DiscoveryPlace[], "L2_stale");
+    await serveCachedPlaces(dbCacheEntry.entry.places as DiscoveryPlace[], "L2_stale", dbCacheEntry.entry.cachedAt);
     return;
   }
 
@@ -1832,7 +2054,7 @@ router.get("/discovery", async (req, res) => {
     const geocodeMs = clientCoords ? 0 : Date.now() - geocodeT0;
     if (!coords) {
       res.json({ places: [], total: 0, destination, context: ctxLabel, cached: false, ageFilterMeta,
-        sourceSummary: { seededDbCount: 0, osmCount: 0, userCreatedCount: 0 } });
+        sourceSummary: { seededDbCount: 0, osmCount: 0, userCreatedCount: 0 }, cursor: nextDiscoveryCursor(offset, PAGE_SIZE, 0) });  // DC-22 — not one of the four serve paths, but one envelope shape: an un-geocodable destination answers with `cursor: null`, not a missing key.
       return;
     }
 
@@ -1842,7 +2064,7 @@ router.get("/discovery", async (req, res) => {
     // the destination centre — this is what gets cached and must not use user coords.
     const distRef = userCoords ?? coords;
     const osmT0 = Date.now();
-    const [osmPlaces, dbPlaces] = await Promise.all([
+    const [osmPlaces, { places: dbPlaces, failedSources: dbFailedSources }] = await Promise.all([
       queryOverpassDeduped(coords.lat, coords.lng, radiusM, category),
       loadCuratedAndCanonicalPlaces(destination, category, distRef.lat, distRef.lng, viewerBlockedIds),
     ]);
@@ -1893,22 +2115,50 @@ router.get("/discovery", async (req, res) => {
             // return stale ordering with incorrect distances.
             const cCacheKey = compassCandidateCacheKey(callerUserId, destination, radiusKm, sortBy);
             const skipCache = sortBy === "nearest";
-            const cCacheHit = skipCache ? undefined : _compassCandidateCache.get(cCacheKey);
-            if (cCacheHit && Date.now() - cCacheHit.at < COMPASS_CANDIDATE_CACHE_TTL_MS) {
+            const cBlockKey = blockFingerprint(viewerBlockedIds);
+            const cStored   = skipCache ? undefined : _compassCandidateCache.get(cCacheKey);
+            // A page ranked under a DIFFERENT block set, or by a DIFFERENT
+            // model/feature version, is not this request's to reuse; either
+            // mismatch is a miss, so it falls through and re-ranks. The whole
+            // rule — absence, freshness, authorization, version — is one pure
+            // function so its precedence is testable (lib/discoveryCacheEligibility).
+            const cAcceptance = cacheBEntryUsable(cStored ?? null, {
+              nowMs: Date.now(),
+              blockKey: cBlockKey,
+              rankVersion: CURRENT_RANK_VERSION,
+              ttlMs: COMPASS_CANDIDATE_CACHE_TTL_MS,
+            });
+            const cCacheHit = cAcceptance.usable ? cStored : undefined;
+            if (cCacheHit) {
               const cFiltered = applyFilters(cCacheHit.places);
-              const cSlice = cFiltered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(toPublic);
+              const dismB = await dismissGatedPlaces(callerUserId, cFiltered, dbFailedSources);  // "Not interested" — serve path 2 of 4.
+              const gateB = await layoverGatedPlaces(callerUserId, dismB.places, "GET /discovery"); if (!gateB.ok) { sendDiscoveryRefusal(res, emptyDiscoveryPlacesEnvelope(destination ?? null, ctxLabel ?? null), gateB.refusal); return; } const cSlice = gateB.places.slice(offset, offset + PAGE_SIZE).map(toPublic);  // A14 — see serve path 1.
               req.log.info({ destination, cacheLevel: "compass_candidate_hit" }, "discovery: compass candidate cache hit");
               const cAnnotated = await annotateNewToMe(getServiceClient(), callerUserId, cSlice);
-              res.json({ places: cAnnotated, total: cFiltered.length, destination, context: ctxLabel, cached: true, ageFilterMeta,
-                sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 } });
+              // 06 §5: cachedAt is the entry's own write clock, which the TTL
+              // check above already reads. Passing null discarded it.
+              const cCandidates = await withDiscoveryCandidates(getServiceClient(), withRecommendationIds(cAnnotated, exposure), {
+                cacheLevel: "compass_candidate_hit", cachedAt: cCacheHit.at, scoredById: null, rankedBy: "compass",
+                // `06` §5 / DSV2-06 — the stored provenance is REPLAYED, not
+                // rebuilt. `rankedAt` inside it is the moment the ranker ran;
+                // re-stamping it here would report a rank that never happened.
+                provenanceById: cCacheHit.provenanceById,
+              });
+              sendDiscoveryPlacesEnvelope(res, { places: cCandidates, total: gateB.places.length, destination, context: ctxLabel, cached: true, ageFilterMeta,
+                sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 } }, dismB.failedSources, offset, gateB.summary);  // D11 serve path 2 of 4 — the Compass cache-B hit
               // Stage 0 — serve point 4. Replays a stored Compass order; no
               // ranker ran in this request, so rankedInRequest is false.
               void logDiscoveryServe(compassSc, {
-                userId: callerUserId, servePoint: DiscoveryServePoint.CACHE_B_HIT, items: cSlice,
+                userId: callerUserId, servePoint: DiscoveryServePoint.CACHE_B_HIT, items: cSlice, sessionId: exposure.sessionId, servedAt: exposure.servedAt,
                 context: {
                   destination, category, cacheLevel: "compass_candidate_hit",
                   engineMode: engineMode.mode, modeReason: engineMode.reason,
                 },
+                // The stored provenance is the SAME record the fresh rank wrote
+                // (DV-04), so a replayed page reports the reasons the ranker
+                // actually produced rather than none. `rankedInRequest` stays
+                // false: the codes came from a ranker, not from this request.
+                reasonCodesById: reasonCodesByIdFromProvenance(cCacheHit.provenanceById),
               });
               return;
             }
@@ -1925,6 +2175,23 @@ router.get("/discovery", async (req, res) => {
             const scored = await rankItemsForDiscovery(
               compassItems, compassProfile, compassContext, compassSc,
             );
+
+            // `06` §5 candidate source — recorded from the READS that produced
+            // the rows, before the merge loses the distinction. An id shape is
+            // a guess; which retrieval returned the row is a fact.
+            const cSourceById = candidateSourceMap(
+              dbPlaces.map((p) => p.id),
+              osmForMerge.map((p) => p.id),
+            );
+            // `06` §5 ranking timestamp — read ONCE, when the ranker returned,
+            // and stamped identically on every row of this page.
+            const cRankedAt = Date.now();
+            const cProvenanceById = buildRankProvenance(scored, cSourceById, cRankedAt, {
+              // rankItemsForDiscovery namespaces ids as `discovery:<id>`; the
+              // served rows do not. Normalise so the provenance keys are the
+              // ids the projection will look up.
+              normalize: (id) => id.replace(/^discovery:/, ""),
+            });
 
             // Build lookup so we can restore all original DiscoveryPlace fields
             const placeById = new Map(places.map((p) => [p.id, p]));
@@ -1943,7 +2210,11 @@ router.get("/discovery", async (req, res) => {
             // requests within the TTL skip the full scoring pipeline.
             // Skip storage for nearest sort — position-dependent results must not be cached.
             if (!skipCache) {
-              _compassCandidateCache.set(cCacheKey, { places: compassRanked, at: Date.now() });
+              _compassCandidateCache.set(cCacheKey, {
+                places: compassRanked, at: Date.now(), blockKey: cBlockKey,
+                rankVersion: CURRENT_RANK_VERSION,
+                provenanceById: cProvenanceById,
+              });
               // Keyed per USER, so this is the Map that grows with adoption
               // rather than with content. Reclaim on every write.
               pruneAndBound(_compassCandidateCache, {
@@ -1956,23 +2227,31 @@ router.get("/discovery", async (req, res) => {
             // Only pipeline-passed items appear when the flag is enabled.
             const merged = compassRanked;
             const cFiltered  = applyFilters(merged);
-            const cSlice     = cFiltered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(toPublic);
+            const dismC = await dismissGatedPlaces(callerUserId, cFiltered, dbFailedSources);  // "Not interested" — serve path 3 of 4.
+            const gateC = await layoverGatedPlaces(callerUserId, dismC.places, "GET /discovery"); if (!gateC.ok) { sendDiscoveryRefusal(res, emptyDiscoveryPlacesEnvelope(destination ?? null, ctxLabel ?? null), gateC.refusal); return; } const cSlice     = gateC.places.slice(offset, offset + PAGE_SIZE).map(toPublic);  // A14 — see serve path 1.
             const cFreshAnnotated = await annotateNewToMe(getServiceClient(), callerUserId, cSlice);
-            res.json({ places: cFreshAnnotated, total: cFiltered.length, destination, context: ctxLabel, cached: false, ageFilterMeta,
-              sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 } });
+            const cFreshCandidates = await withDiscoveryCandidates(getServiceClient(), withRecommendationIds(cFreshAnnotated, exposure), {
+              cacheLevel: "compass_fresh_rank", cachedAt: Date.now(), scoredById: null, rankedBy: "compass",
+              provenanceById: cProvenanceById,
+            });
+            sendDiscoveryPlacesEnvelope(res, { places: cFreshCandidates, total: gateC.places.length, destination, context: ctxLabel, cached: false, ageFilterMeta,
+              sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 } }, dismC.failedSources, offset, gateC.summary);  // D11 serve path 3 of 4 — the Compass fresh rank
             // Stage 0 — serve point 5. The Compass ranker DID run here, but
             // this path has never written a rank_events row: it returns before
             // the logImpression call on the cold path below.
             void logDiscoveryServe(compassSc, {
-              userId: callerUserId, servePoint: DiscoveryServePoint.COMPASS_FRESH_RANK, items: cSlice,
+              userId: callerUserId, servePoint: DiscoveryServePoint.COMPASS_FRESH_RANK, items: cSlice, sessionId: exposure.sessionId, servedAt: exposure.servedAt,
               context: {
                 destination, category, cacheLevel: "compass_fresh_rank",
                 engineMode: engineMode.mode, modeReason: engineMode.reason,
               },
+              // `04` §5 reason codes. The Compass pipeline ran in THIS request,
+              // so its grounded factors are the honest source for them.
+              reasonCodesById: reasonCodesByIdFromProvenance(cProvenanceById),
             });
             return;
           }
-        } catch { /* fall through to normal rule-based path */ }
+        } catch (err) { /* DV-07 — KEEP the fall-through (a ranker failure degrades to the rule-based path, never a 500) but SAY SO: a degraded serve and a healthy one were indistinguishable from outside the process. */ req.log.warn({ err, destination, category, engineMode: engineMode.mode }, "discovery: compass rank path failed — degrading to the rule-based path"); }
       }
     }
 
@@ -2007,7 +2286,13 @@ router.get("/discovery", async (req, res) => {
     }
 
     const filtered = applyFilters(ranked);
-    const slice = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(toPublic);
+    // Sensing §8 — same live layer, same contract, on the cold path. Flag OFF ⇒
+    // `coldLiveRanked.places` IS `filtered` (same reference, no claim read).
+    const coldLiveRanked = await withDiscoveryLiveRank(getServiceClient(), filtered, {
+      mode: parseIntentMode(req.query.intentMode),
+    });
+    const dismD = await dismissGatedPlaces(callerUserId, coldLiveRanked.places, dbFailedSources);  // "Not interested" — serve path 4 of 4.
+    const gateD = await layoverGatedPlaces(callerUserId, dismD.places, "GET /discovery"); if (!gateD.ok) { sendDiscoveryRefusal(res, emptyDiscoveryPlacesEnvelope(destination ?? null, ctxLabel ?? null), gateD.refusal); return; } const slice = gateD.places.slice(offset, offset + PAGE_SIZE).map(toPublic);  // A14 — see serve path 1.
     // Log impressions for exactly the items that were served — after filter + page slice.
     if (callerUserId && scoredByPlaceId.size > 0) {
       const servedScored = slice
@@ -2036,16 +2321,41 @@ router.get("/discovery", async (req, res) => {
       "discovery: cold fetch",
     );
     const coldAnnotated = await annotateNewToMe(getServiceClient(), callerUserId, slice);
-    res.json({ places: coldAnnotated, total: filtered.length, destination, context: ctxLabel, cached: false, ageFilterMeta,
-      sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 },
-      meta: { cacheLevel: "miss", timings: { geocodeMs, osmMs, totalMs } },
+    const coldCandidates = await withDiscoveryCandidates(getServiceClient(), withRecommendationIds(coldAnnotated, exposure), {
+      // scoredByPlaceId is always a Map here; it is EMPTY when no per-user
+      // ranker ran (anonymous caller, or a ranker failure). Empty ⇒ "none".
+      cacheLevel: "miss", cachedAt: Date.now(),
+      scoredById: scoredByPlaceId.size > 0 ? scoredByPlaceId : null,
+      rankedBy:   scoredByPlaceId.size > 0 ? "pde" : "none",
+      liveRankById: coldLiveRanked.applied ? coldLiveRanked.byId : null,
     });
+    sendDiscoveryPlacesEnvelope(res, { places: coldCandidates, total: gateD.places.length, destination, context: ctxLabel, cached: false, ageFilterMeta,
+      sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 },
+      meta: {
+        cacheLevel: "miss", timings: { geocodeMs, osmMs, totalMs },
+        ...(coldLiveRanked.applied
+          ? { liveRank: { mode: coldLiveRanked.mode, readable: coldLiveRanked.readable, windowSize: coldLiveRanked.windowSize, demoted: coldLiveRanked.demoted } }
+          : {}),
+      },
+    }, dismD.failedSources, offset, gateD.summary);   // D11 serve path 4 of 4 — the cold fetch's legacy/PDE tail
   } catch (err) {
     req.log.error({ err }, "discovery route failed");
-    res.json({ places: [], total: 0, destination, context: ctxLabel ?? null, cached: false, ageFilterMeta: null,
-      sourceSummary: { seededDbCount: 0, osmCount: 0, userCreatedCount: 0 },
-      meta: { cacheLevel: "error", timings: { totalMs: Date.now() - t0 } },
-    });
+    // D11 / `11` §9. `meta.cacheLevel: "error"` was already here and was ALMOST
+    // the fix — but it is a cache annotation, not a failure class, and no
+    // consumer reads it as one. The named refusal is additive on top of it and
+    // says the thing the envelope never said: `places: []` below is not a
+    // result. Reachable on the shipping route by a Nominatim timeout or DNS
+    // failure inside `geocodeCached` (routes/discovery.ts:378-421 — fetch
+    // rejects, it does not return null), and by any throw out of the Compass
+    // ranking or cache paths.
+    sendDiscoveryRefusal(
+      res,
+      { places: [], total: 0, destination, context: ctxLabel ?? null, cached: false, ageFilterMeta: null,
+        sourceSummary: { seededDbCount: 0, osmCount: 0, userCreatedCount: 0 },
+        meta: { cacheLevel: "error", timings: { totalMs: Date.now() - t0 } },
+      },
+      classifyRefusal(err, "GET /discovery", "discovery_assembly_failed"),
+    );
   }
 });
 
@@ -2156,11 +2466,11 @@ router.get("/discovery/counts", async (req, res) => {
       : null;
 
   // Resolve coords — one geocode call with full dedup, or skip if supplied.
-  const coords = clientCoords ?? await geocodeCached(destination);
-  if (!coords) {
-    res.json({ counts: {}, destination, cached: false });
-    return;
-  }
+  const geo: GeocodeOutcome = clientCoords ? { ok: true, coords: { ...clientCoords, display: destination } } : await geocodeOutcome(destination);
+  if (!geo.ok) { sendGeocodeRefusal(res, geo.err, "GET /discovery/counts", { counts: {}, destination, cached: false }); return; }
+  const coords = geo.coords;
+  // `null` here is a GENUINE "no such city" — plain empty answer, no refusal. See GEOCODE OUTAGES at the foot of this file.
+  if (!coords) { res.json({ counts: {}, destination, cached: false }); return; }
 
   const radiusM = Math.round(radiusKm * 1_000);
 
@@ -2182,22 +2492,67 @@ router.get("/discovery/counts", async (req, res) => {
           // never place content.
           queryDbPlaces(destination, cat, coords.lat, coords.lng, new Set<string>()),
         ]);
+        // D11: `null` is "discovery_places could not be read", not "no rows". A
+        // count taken over the OSM half alone is not a smaller number, it is a
+        // DIFFERENT number — and a category badge reading 12 when the real
+        // answer is unknown is exactly the corrupt accounting the ruling names.
+        // Rejecting routes it into the failed-category set below.
+        if (dbPlaces === null) throw new Error(`discovery_places unreadable for ${cat}`);
         const enriched = osmPlaces.length > 0 ? await enrichOsmSavedCounts(osmPlaces) : osmPlaces;
         if (enriched.length > 0) setCacheA(k, { places: enriched, cachedAt: Date.now() });
         return { cat, total: mergeAndDedup(enriched, dbPlaces).length };
       }),
     );
 
+    // WHY THE FAILED CATEGORIES ARE TRACKED AND NOT JUST SKIPPED.
+    // `Promise.allSettled` never rejects, so the `catch` below is all but dead
+    // and the real masquerade was HERE: every category could reject and this
+    // route would still answer `200 { counts: {}, cached: true }` — the exact
+    // body a city with nothing in it gets, plus a five-minute cache header
+    // pinning the lie in every CDN between here and the user.
     const counts: Partial<Record<string, number>> = {};
-    for (const r of results) {
+    const failedCats: string[] = [];
+    results.forEach((r, i) => {
       if (r.status === "fulfilled") counts[r.value.cat] = r.value.total;
+      else failedCats.push(COUNTABLE_CATS[i]);
+    });
+
+    if (failedCats.length === COUNTABLE_CATS.length) {
+      // Nothing was counted. No Cache-Control: a failure must not be cached.
+      sendDiscoveryRefusal(
+        res,
+        { counts: {}, destination, cached: false },
+        discoveryRefusal("transient_db", "category_counts_failed", "GET /discovery/counts", "nothing", failedCats),
+      );
+      return;
+    }
+
+    if (failedCats.length > 0) {
+      // Some counts are real and are served. The absent keys are NOT zeros, and
+      // `failedSources` says which ones so a client can render them as unknown
+      // instead of as none. Again no Cache-Control — half a count set is not
+      // something to keep for five minutes.
+      sendDiscoveryRefusal(
+        res,
+        { counts, destination, cached: true },
+        discoveryRefusal("transient_db", "category_counts_partial", "GET /discovery/counts", "partial", failedCats),
+      );
+      return;
     }
 
     res.set("Cache-Control", "public, max-age=300"); // 5-minute browser/CDN cache
     res.json({ counts, destination, cached: true });
   } catch (err) {
     req.log.error({ err }, "discovery/counts failed");
-    res.json({ counts: {}, destination, cached: false });
+    // Kept for the synchronous throw that `allSettled` cannot absorb (a throw
+    // from COUNTABLE_CATS.map itself, or from res.set). Same class and code as
+    // the all-categories-failed arm above: from the caller's side they are the
+    // same event — no count could be produced.
+    sendDiscoveryRefusal(
+      res,
+      { counts: {}, destination, cached: false },
+      classifyRefusal(err, "GET /discovery/counts", "category_counts_failed"),
+    );
   }
 });
 
@@ -2244,18 +2599,18 @@ router.get("/discovery/feed", async (req, res) => {
   let coords = clientCoords;
 
   if (!coords) {
-    const geo = await geocodeCached(destination!);
-    if (!geo) {
-      res.json({
-        places: [], events: [], posts: [], memories: [], sections: [],
-        nextCursor: null, total: 0, destination: destination ?? null, context: null,
-        sourceSummary: { seededDbCount: 0, osmCount: 0, userCreatedCount: 0 },
-        sessionId: feedSessionId,
-      });
+    const geo = await geocodeOutcome(destination!);
+    // An outage is refused and cached nowhere; a genuine miss keeps its plain empty answer. See GEOCODE OUTAGES at the foot of this file.
+    if (!geo.ok) {
+      sendGeocodeRefusal(res, geo.err, "GET /discovery/feed", emptyFeedEnvelope(destination ?? null, feedSessionId));
       return;
     }
-    coords = { lat: geo.lat, lng: geo.lng };
-    if (!destination) destination = geo.display.split(",")[0]?.trim();
+    if (!geo.coords) {
+      res.json(emptyFeedEnvelope(destination ?? null, feedSessionId));
+      return;
+    }
+    coords = { lat: geo.coords.lat, lng: geo.coords.lng };
+    if (!destination) destination = geo.coords.display.split(",")[0]?.trim();
   }
 
   // ── Viewer identity for event-post pipeline ───────────────────────────────
@@ -2325,7 +2680,13 @@ router.get("/discovery/feed", async (req, res) => {
               ])
             : [[], [] as DiscoveryPlace[]];
           const osmPlaces = await enrichOsmSavedCounts(rawOsmPlaces);
-          return { osmPlaces, dbPlaces, merged: mergeAndDedup(osmPlaces, dbPlaces) };
+          // D11: null is "discovery_places could not be read". The feed still
+          // serves its OSM half — that half is a real result and withholding it
+          // would be its own lie — but the category is recorded so the envelope
+          // can say the community rows are missing rather than absent.
+          const dbReadFailed = dbPlaces === null;
+          const dbRows = dbPlaces ?? [];
+          return { cat, osmPlaces, dbPlaces: dbRows, dbReadFailed, merged: mergeAndDedup(osmPlaces, dbRows) };
         }),
       ),
       // Event-post pipeline — only runs when we have a viewer identity for block-checking;
@@ -2352,22 +2713,24 @@ router.get("/discovery/feed", async (req, res) => {
     const allPlaces: DiscoveryPlace[] = [];
     let totalOsm = 0;
     let totalDb  = 0;
-    for (const { osmPlaces, dbPlaces, merged } of categoryResults) {
+    const failedCats: string[] = [];
+    for (const { cat, osmPlaces, dbPlaces, dbReadFailed, merged } of categoryResults) {
       totalOsm += osmPlaces.length;
       totalDb  += dbPlaces.length;
+      if (dbReadFailed) failedCats.push(cat);
       for (const p of merged) {
         if (!seen.has(p.id)) { seen.add(p.id); allPlaces.push(p); }
       }
     }
 
-    const total     = allPlaces.length;
-    const slice     = allPlaces.slice(offset, offset + limit).map(toPublic);
+    const gateF = await layoverGatedPlaces(viewerId, allPlaces, "GET /discovery/feed"); if (!gateF.ok) { sendDiscoveryRefusal(res, emptyFeedEnvelope(destination ?? null, feedSessionId), gateF.refusal); return; } const total     = gateF.places.length;  // A14 — the feed serves the SAME merged discovery_places + OSM rows as GET /discovery, to the same traveller; see layoverGatedPlaces for what is NOT gated here and why.
+    const slice     = gateF.places.slice(offset, offset + limit).map(toPublic);
     const nextOff   = offset + limit;
     const nextCursor = nextOff < total ? encodeOffset(nextOff) : null;
 
     // §7 New-to-Me annotation — additive, order-preserving, flag-gated, fail-safe.
     const feedAnnotated = await annotateNewToMe(getServiceClient(), viewerId, slice);
-    res.json({
+    const feedEnvelope = {
       places: feedAnnotated,
       events:   [],
       posts:    eventPosts,
@@ -2382,8 +2745,22 @@ router.get("/discovery/feed", async (req, res) => {
         osmCount:         totalOsm,
         userCreatedCount: eventPosts.length,
       },
-      sessionId: feedSessionId,
-    });
+      sessionId: feedSessionId, ...(gateF.summary ? { layover: gateF.summary } : {}),
+    };
+    if (failedCats.length > 0) {
+      // "nothing" only when the failure is the whole answer. If OSM or the event
+      // posts produced anything, those items really were served and really are
+      // exposure, so the refusal is "partial" and the serve below still logs
+      // them — under-counting a real serve corrupts the denominator in the other
+      // direction just as surely.
+      const coverage = feedAnnotated.length === 0 && eventPosts.length === 0 ? "nothing" : "partial";
+      sendDiscoveryRefusal(
+        res, feedEnvelope,
+        discoveryRefusal("transient_db", "feed_places_read_failed", "GET /discovery/feed", coverage, failedCats),
+      );
+    } else {
+      res.json(feedEnvelope);
+    }
     // Stage 0b — serve point 7. This route ranks nothing and caches nothing;
     // it is instrumented because the baseline must describe everything users
     // receive (D4=C), not only what the flag governs (D4=A). Both the places
@@ -2391,7 +2768,10 @@ router.get("/discovery/feed", async (req, res) => {
     // the same one returned in the envelope above, so an outcome the client
     // reports against it upgrades exactly these rows.
     if (viewerId) {
-      void logDiscoveryServe(getServiceClient(), {
+      // D11, second half of the ruling: a REFUSED response must not enter the
+      // exposure denominator. `logServeUnlessRefused` is the guard that is about
+      // that invariant — see lib/discoveryRefusal.ts.
+      logServeUnlessRefused(res, getServiceClient(), {
         userId: viewerId,
         servePoint: DiscoveryServePoint.FEED,
         route: "GET /discovery/feed",
@@ -2405,12 +2785,16 @@ router.get("/discovery/feed", async (req, res) => {
     }
   } catch (err) {
     req.log.error({ err }, "discovery/feed failed");
-    res.json({
-      places: [], events: [], posts: [], memories: [], sections: [],
-      nextCursor: null, total: 0, destination: destination ?? null, context: null,
-      sourceSummary: { seededDbCount: 0, osmCount: 0, userCreatedCount: 0 },
-      sessionId: feedSessionId,
-    });
+    sendDiscoveryRefusal(
+      res,
+      {
+        places: [], events: [], posts: [], memories: [], sections: [],
+        nextCursor: null, total: 0, destination: destination ?? null, context: null,
+        sourceSummary: { seededDbCount: 0, osmCount: 0, userCreatedCount: 0 },
+        sessionId: feedSessionId,
+      },
+      classifyRefusal(err, "GET /discovery/feed", "feed_assembly_failed"),
+    );
   }
 });
 
@@ -2431,7 +2815,28 @@ export interface CommunityDiscoveryItem {
   neighborhood: string | null;
   blurb: string | null;
   imageUrl: string | null;
-  submittedBy: { id: string; name: string; avatarUrl: string | null } | null;
+  submittedBy: {
+    id: string;
+    /**
+     * LEGACY byline. Carries the real name when the viewer may see it, else the
+     * literal `@username` — a redaction SHAPE no other surface uses (the rule
+     * everywhere else is a null name + a separate handle; see displayName).
+     * Kept verbatim because travel-buddy-standalone renders it raw
+     * (`components/DiscoveryWall.tsx` "By {submittedBy.name}") and this route
+     * is live: changing this field changes what a user sees. Retire it once the
+     * client resolves the byline through displayIdentity(displayName, handle).
+     */
+    name: string;
+    /**
+     * CANONICAL byline, .agents/memory/display-name-privacy.md shape: the real
+     * name iff the submitter is the viewer or opted in via
+     * profile_privacy_settings.show_real_name; otherwise null. Never a handle.
+     * The handle travels separately in `handle`.
+     */
+    displayName: string | null;
+    avatarUrl: string | null;
+    handle: string | null;
+  } | null;
   savedCount: number;
   tag: string | null;
   note: string | null;
@@ -2514,21 +2919,19 @@ router.get("/discovery/community", async (req, res) => {
   // Optional auth — needed only for open_to_me to resolve caller DOB
   let commCallerAge: number | null = null;
   let commCallerDobMissing = false;
+  let commCallerAdultUnconfirmed = false;
+  let commCallerAgeState: GateAge["state"] | null = null;
   if (ageFilterComm === "open_to_me") {
     const ageSc    = getServiceClient();
     const viewerId = await resolveCommunityViewer();
     if (ageSc && viewerId) {
-      try {
-        const { data: profileRow } = await ageSc
-          .from("profiles")
-          .select("date_of_birth")
-          .eq("id", viewerId)
-          .maybeSingle();
-        const dob = (profileRow as any)?.date_of_birth ?? null;
-        commCallerAge = calculateUserAge(dob);
-      } catch { /* degrade gracefully */ }
+      // Through the seam, same as the OSM route above.
+      const gate = await resolveGateAge(ageSc, viewerId);
+      commCallerAgeState = gate.state;
+      if (gate.state === "ok") commCallerAge = gate.age;
+      else commCallerAdultUnconfirmed = true;
     }
-    if (commCallerAge === null) commCallerDobMissing = true;
+    if (commCallerAge === null && !commCallerAdultUnconfirmed) commCallerDobMissing = true;
   }
 
   function communityAgeBounds(): { min: number | null; max: number | null } | null {
@@ -2597,6 +3000,12 @@ router.get("/discovery/community", async (req, res) => {
     //   min_age IS NULL OR min_age <= X  (place doesn't require more than X years)
     //   max_age IS NULL OR max_age >= X  (place doesn't cap at below X years)
     const ageBoundsComm = communityAgeBounds();
+    if (commCallerAdultUnconfirmed) {
+      // Not a confirmed adult, and no age to stand in for one. The only honest
+      // answer to "places open to me" is the places that are open to everyone:
+      // those with no minimum age at all. No number is invented to get there.
+      query = query.is("min_age", null);
+    }
     if (ageBoundsComm) {
       if (ageBoundsComm.min !== null) {
         query = query.or(`min_age.is.null,min_age.lte.${ageBoundsComm.min}`);
@@ -2610,7 +3019,14 @@ router.get("/discovery/community", async (req, res) => {
 
     if (error) {
       req.log.error({ err: error }, "discovery/community query failed");
-      res.json({ items: [], city, total: 0 });
+      // D11 / `11` §9. This is serve point 10's single read: if it fails there is
+      // no community half at all, so the empty body below is the failure and not
+      // a city without curated places.
+      sendDiscoveryRefusal(
+        res,
+        { items: [], city, total: 0 },
+        discoveryRefusal("transient_db", "community_places_read_failed", "GET /discovery/community"),
+      );
       return;
     }
 
@@ -2639,6 +3055,20 @@ router.get("/discovery/community", async (req, res) => {
       rows.map((r: any) => r.submitted_by).filter(Boolean),
     );
 
+    // SELF-EXEMPTION, applied before the opt-in check.
+    // .agents/memory/display-name-privacy.md: "The viewer must always see their
+    // own name (self-exemption before the opt-in check)." Without this a user
+    // who has not opted in, looking at a place THEY submitted, sees their own
+    // byline rendered as `@username` — the redaction rule turned on its author.
+    // Not a leak (it withholds rather than reveals), but it is the same rule
+    // behaving differently here than in discoverySearch.ts:539, compass.ts and
+    // safeReturn.ts, all of which exempt the viewer.
+    // resolveCommunityViewer() is memoised (commViewerPromise), so this costs no
+    // extra auth round trip when the block filter above already resolved it.
+    // Guarded on rows.length to preserve the property documented above: a
+    // request whose query came back empty still resolves no viewer.
+    const selfSubmitterId = rows.length > 0 ? await resolveCommunityViewer() : null;
+
     const items: CommunityDiscoveryItem[] = rows.map((row: any) => {
       const profile = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
       return {
@@ -2651,14 +3081,23 @@ router.get("/discovery/community", async (req, res) => {
         blurb:        row.blurb ?? null,
         imageUrl:     row.image_url ?? null,
         submittedBy:  profile
-          ? {
-              id:        profile.id as string,
-              name:      (allowedSubmitterNames.has(profile.id as string)
-                ? (profile.name ?? "Traveler")
-                : (profile.username ? `@${profile.username}` : "Traveler")) as string,
-              avatarUrl: (profile.avatar_url ?? null) as string | null,
-              handle:    (profile.username ?? null) as string | null,
-            }
+          ? (() => {
+              // One decision, two presentations. `nameAllowed` is the whole
+              // privacy rule (self-exemption first, then opt-in); the two
+              // fields below differ only in the SHAPE they give a withheld
+              // name, never in whether it is withheld.
+              const nameAllowed = (profile.id as string) === selfSubmitterId
+                || allowedSubmitterNames.has(profile.id as string);
+              return {
+                id:          profile.id as string,
+                name:        (nameAllowed
+                  ? (profile.name ?? "Traveler")
+                  : (profile.username ? `@${profile.username}` : "Traveler")) as string,
+                displayName: nameAllowed ? ((profile.name ?? null) as string | null) : null,
+                avatarUrl:   (profile.avatar_url ?? null) as string | null,
+                handle:      (profile.username ?? null) as string | null,
+              };
+            })()
           : null,
         savedCount: (row.saved_count as number) ?? 0,
         // `tag` doubles as an internal OSM dedup key on seeded rows
@@ -2676,9 +3115,9 @@ router.get("/discovery/community", async (req, res) => {
         lng:       row.lng != null ? parseFloat(row.lng) : null,
       };
     });
-
+    const layoverGate = items.length > 0 ? await discoveryLayoverGate(sc, await resolveCommunityViewer(), items, "GET /discovery/community") : null;  if (layoverGate && !layoverGate.ok) { sendDiscoveryRefusal(res, { items: [], city, total: 0 }, layoverGate.refusal); return; }  const servedItems = layoverGate ? serveUnderLayoverGate(layoverGate, items) : items;  // A14 — only the certified action universe may be shown; a FAILED read refuses instead of shipping a shorter list. See lib/discoveryLayoverMode.ts.
     // Batch-fetch saved state and vote/review aggregates in parallel (both non-fatal)
-    const placeIds = items.map((i) => i.id);
+    const placeIds = servedItems.map((i) => i.id);
     const savedPlaceIds = new Set<string>();
     // Identity comes from resolveCommunityViewer above — this block used to own
     // the route's single auth.getUser, and the serve log below reads the same
@@ -2711,7 +3150,7 @@ router.get("/discovery/community", async (req, res) => {
     ]);
 
     res.json({
-      items: items.map((i) => {
+      items: servedItems.map((i) => {
         const a = voteAgg.get(i.id);
         return {
           ...i,
@@ -2720,12 +3159,13 @@ router.get("/discovery/community", async (req, res) => {
         };
       }),
       city,
-      total: items.length,
+      total: servedItems.length,
       ageFilterMeta: {
         ageFilter:         ageFilterComm,
         callerDobMissing:  ageFilterComm === "open_to_me" ? commCallerDobMissing : false,
+        callerAgeState:    ageFilterComm === "open_to_me" ? describeCallerAgeState(commCallerAgeState) : null,
         bounds:            communityAgeBounds(),
-      },
+      }, ...(layoverGate?.summary ? { layover: layoverGate.summary } : {}),
     });
 
     // Serve point 10 — ruling D4=C: the baseline must describe everything users
@@ -2737,16 +3177,20 @@ router.get("/discovery/community", async (req, res) => {
     // discovery_serve_log_enabled, so this adds no latency and cannot fail the
     // request. It no-ops for anonymous callers, because rank_events.user_id is
     // NOT NULL — a limit of the table, not of this call site.
-    void logDiscoveryServe(getServiceClient(), {
+    logServeUnlessRefused(res, getServiceClient(), {
       userId:     communityViewerId ?? "",
       servePoint: DiscoveryServePoint.COMMUNITY,
-      items:      items.map((i) => ({ id: i.id })),
+      items:      servedItems.map((i) => ({ id: i.id })),
       route:      "/discovery/community",
       context:    { city, ageFilter: ageFilterComm },
     });
   } catch (err) {
     req.log.error({ err }, "discovery/community route failed");
-    res.json({ items: [], city, total: 0 });
+    sendDiscoveryRefusal(
+      res,
+      { items: [], city, total: 0 },
+      discoveryRefusal("transient_db", "community_assembly_failed", "GET /discovery/community"),
+    );
   }
 });
 
@@ -2996,10 +3440,25 @@ router.get("/discovery/community/saved-ids", async (req, res) => {
       .from("discovery_place_saves")
       .select("place_id")
       .eq("user_id", user.id);
-    if (error) { res.json({ ids: [] }); return; }
+    // D11 / `11` §9. `{ ids: [] }` is what a user who has saved nothing gets, and
+    // it was also what a user got when the save table could not be read. The
+    // mobile client uses this list to pre-fill the bookmark state, so the two
+    // answers differ by exactly "every bookmark you own silently disappears".
+    if (error) {
+      sendDiscoveryRefusal(
+        res,
+        { ids: [] },
+        discoveryRefusal("transient_db", "saved_ids_read_failed", "GET /discovery/community/saved-ids"),
+      );
+      return;
+    }
     res.json({ ids: (data ?? []).map((r: { place_id: string }) => r.place_id) });
   } catch {
-    res.json({ ids: [] });
+    sendDiscoveryRefusal(
+      res,
+      { ids: [] },
+      discoveryRefusal("transient_db", "saved_ids_read_failed", "GET /discovery/community/saved-ids"),
+    );
   }
 });
 
@@ -3196,5 +3655,629 @@ router.get("/discovery/wikidata/:wikidataId", async (req, res) => {
   _wikidataCache.set(wikidataId, { data: enrichment, cachedAt: Date.now() });
   res.json(enrichment);
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GEOCODE OUTAGES — the seventh refusal class at its call sites.
+//
+// OWNER RULING, 2026-09-14, verbatim:
+//   "Add upstream_unavailable for upstream dependency failures. Do not cache
+//    rate limits or outages as 'this location does not exist.'"
+//
+// WHAT WAS WRONG
+// ==============
+// `geocode()` answered a Nominatim 429/503 with `return null`, which is also
+// what it answers when Nominatim is healthy and simply has no such place. Two
+// different facts, one value. `geocodeCached` then stored that null for TWENTY-
+// FOUR HOURS in L1 (`_geocodeMemory`) and, for a truthy result, in L2
+// (`discovery_geocode_cache`). Downstream, three routes read the null and
+// answered `200 { counts: {} }` / `200 { places: [] }` — the body a genuinely
+// empty city gets, with `/discovery/counts` adding `Cache-Control: max-age=300`
+// so every CDN in the path kept a copy.
+//
+// Net effect of one rate-limit response: the city stopped existing, for
+// everyone, for a day, from cache, with nothing in the response saying so.
+//
+// THE FIX IS A TYPE DISTINCTION, NOT A FLAG
+// =========================================
+// `geocode()` now THROWS `UpstreamUnavailableError` for an outage and still
+// returns `null` — and ONLY null — for a genuine miss.
+//
+// The throw does the caching half by itself and that is the point of choosing a
+// throw over a sentinel: in `geocodeCached` the two `_geocodeMemory.set` calls
+// and the `writeGeocodeToDb` call all sit AFTER the `await geocode(...)`, so a
+// rejection skips every one of them structurally. There is no "do not cache
+// this" flag anyone can forget to pass, and `_geocodePending.delete` still runs
+// in the `.finally`, so the next caller retries instead of joining a dead
+// promise. `geocodeCached` therefore needed no edit at all — which is the
+// strongest form this fix could take: the invariant holds because of the shape
+// of the code rather than because of a rule written next to it.
+//
+// A genuine miss is UNCHANGED and still caches. It is a fact about the world,
+// it is what the 24-hour cache is for, and Nominatim's 1 req/s fair-use policy
+// is the reason not to re-ask a settled question. Marking it as a refusal would
+// be the same lie inverted, and it has its own control in the test file.
+//
+// WHERE THE CLASS IS EMITTED
+// ==========================
+//   GET /discovery/counts  — `sendGeocodeRefusal` below, reached from the
+//                            coords resolution (the `geo.ok` branch).
+//   GET /discovery/feed    — same, from the destination resolution.
+//   GET /discovery         — its existing catch, via `classifyRefusal`: the
+//                            geocode call is inside that try, so the route
+//                            already refused; it refused with the WRONG CLASS.
+//
+// The fourth `geocodeCached` caller is the background L2 revalidation inside
+// GET /discovery, whose own `catch` already swallows failures by design — it
+// serves nothing and holds no response, so there is nobody to refuse to. The
+// fifth is `geocode()` direct in POST /discovery/community, which races a 4s
+// timeout and inserts the place without coordinates on failure; that is a write
+// path, it already degrades honestly, and no empty collection is served.
+//
+// RESIDUAL, STATED RATHER THAN HIDDEN
+// ===================================
+// Overpass is the OTHER upstream on these routes and it has the SAME defect:
+// `queryOverpass` returns `[]` on a non-ok response (see the comment on
+// `queryOverpassDeduped`, which records that a real egress-IP throttle "silently
+// served {places: [], total: 0}"). It is NOT fixed here. Making it throw changes
+// the contract of four call sites including the per-category `allSettled` fan-out
+// in `/discovery/counts`, where an Overpass outage would currently surface as
+// `transient_db` on every category — i.e. the same wrong-class defect, one
+// dependency over. It is a separate change with a separate blast radius and is
+// reported as this lane's outstanding residual rather than half-done here.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The result of asking the geocoder, with the two failure modes kept apart.
+ *
+ * `ok: true, coords: null` is "the geocoder answered: no such place".
+ * `ok: false`              is "we could not ask".
+ * Collapsing those two back into one nullable is the whole defect, so the type
+ * is written so that a caller must name which one it is handling.
+ */
+type GeocodeOutcome =
+  | { readonly ok: true;  readonly coords: { lat: number; lng: number; display: string } | null }
+  | { readonly ok: false; readonly err: unknown };
+
+/** `geocodeCached`, with an outage turned into a value the caller must branch on. */
+async function geocodeOutcome(location: string): Promise<GeocodeOutcome> {
+  try {
+    return { ok: true, coords: await geocodeCached(location) };
+  } catch (err) {
+    return { ok: false, err };
+  }
+}
+
+/**
+ * Send the empty envelope WITH the refusal that says why it is empty.
+ *
+ * Deliberately routed through `classifyRefusal` rather than hard-coding
+ * `upstream_unavailable`: an error that reaches here without being an
+ * `UpstreamUnavailableError` is a genuine internal fault, and it must keep
+ * saying `transient_db` rather than borrow a class that would send an operator
+ * to look at somebody else's service.
+ */
+function sendGeocodeRefusal<T extends object>(
+  // `Response` is the fetch Response in this module (see fetchWithTimeout), so
+  // the express one is taken from the function this forwards to rather than by
+  // adding a second, shadowing import of the same name.
+  res: Parameters<typeof sendDiscoveryRefusal>[0],
+  err: unknown,
+  route: string,
+  envelope: T,
+): void {
+  logger.warn({ route, err }, "discovery: geocoder unavailable — refusing rather than answering 'no such city'");
+  sendDiscoveryRefusal(res, envelope, classifyRefusal(err, route, "geocode_failed"));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /discovery's curated half — the last D11 residual, and its emitter.
+//
+// WHY THIS BLOCK IS HERE AND NOT BESIDE `loadCuratedAndCanonicalPlaces`, WHICH
+// IS WHERE A READER WILL LOOK FOR IT FIRST.
+// This file is cited 78 times by ANCHORED census citations of the form
+// `routes/discovery.ts:<line>#<symbol>`, which `npm run check:doc-citations`
+// re-reads and fails the moment the named symbol is no longer on the named
+// line. The highest such citation is at :3477. Inserting this block at its
+// natural home — around :1290 — would have moved 61 of those anchors, 48 of
+// them in `docs/architecture/`, which this lane does not own. So the CHANGE at
+// :1272-1310 is exactly line-neutral and the new declarations live below the
+// last anchor. It is also, as it happens, the right neighbourhood: this is
+// where the file already keeps `sendGeocodeRefusal`, the other helper whose
+// whole job is sending a refusal in a 200 envelope.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The name `GET /discovery` gives the curated retrieval on `refusal.failedSources`.
+ *
+ * A SOURCE, not a category. `GET /discovery/search` names the buckets of its
+ * fan-out (routes/discoverySearch.ts `FAN_SOURCES` — "places", "hidden_gems", …)
+ * because the reader of a refusal has to know WHICH PART of the answer is not
+ * usable, and on this route the unusable part is one retrieval, not one tab.
+ * It is the same string `queryDbPlaces` already logs as its failure `code`, so
+ * the server log and the wire agree about what broke.
+ */
+const DISCOVERY_CURATED_SOURCE = "discovery_places";
+
+/**
+ * The name `GET /discovery` gives the CANONICAL retrieval on `failedSources`.
+ *
+ * `public.places` — the registry the FSQ backfill populates, and the source that
+ * carries essentially every row in every city outside the eight demo cities
+ * `discovery_places` covers. §30.5's third open item was that this half "cannot
+ * report failure at all — it returns `[]` for unreadable and empty alike, so
+ * `failedSources` can only ever name the curated half", and named it as the next
+ * instance of the class §30.1 closed. It is the table name, for the same reason
+ * `DISCOVERY_CURATED_SOURCE` is: the wire and the server log agree about what
+ * broke, and `queryCanonicalPlaces` already logs `canonical_places_read_failed`.
+ */
+const DISCOVERY_CANONICAL_SOURCE = "places";
+
+/**
+ * The name `GET /discovery` gives the viewer's dismissal list on `failedSources`.
+ *
+ * NOT a retrieval like the two above — no place ever came from it. It names a
+ * FILTER that could not be applied, and it is on the same wire key because the
+ * question a client asks of `failedSources` is the same in both cases: which
+ * part of this answer is not what it should be. The DIRECTION of the error
+ * differs, and that is worth stating rather than leaving to be discovered: a
+ * failed retrieval means the page may be MISSING places; a failed dismissal read
+ * means the page may CONTAIN places the viewer asked to be rid of. Both are
+ * "this page is not right", and neither is a reason to serve nothing.
+ *
+ * `rank_events` is the table, on the same principle as the other two: the server
+ * log and the wire agree about what broke.
+ */
+const DISCOVERY_DISMISSED_SOURCE = "rank_events";
+
+/**
+ * The refusal `code` for a given set of failed retrievals.
+ *
+ * ONE frozen code would have made a canonical-only failure indistinguishable on
+ * the wire from a curated-only one — the same collapse this whole block exists
+ * to undo, one level up: `failedSources` would name the difference while `code`
+ * denied it, and a consumer keying on `code` (the cheaper thing to do) would
+ * read them as the same event.
+ *
+ * The curated-only string is UNCHANGED. Four serve-path cases and one control in
+ * `src/test/discoveryCuratedSourceRefusal.test.ts` assert it, and D11's contract
+ * as shipped says `discovery_places_read_failed` for that case; broadening it to
+ * cover both halves would silently re-label every refusal already in flight.
+ */
+function discoveryPlaceSourcesCode(failedSources: readonly string[]): string {
+  const curated   = failedSources.includes(DISCOVERY_CURATED_SOURCE);
+  const canonical = failedSources.includes(DISCOVERY_CANONICAL_SOURCE);
+  if (curated && canonical) return "discovery_place_sources_read_failed";
+  if (canonical) return "canonical_places_read_failed";
+  // The dismissal list failing ALONE. Previously unreachable — this function is
+  // only called with a non-empty `failedSources`, and the only two members were
+  // the two retrievals — so nothing that works today changes. Without this
+  // branch a dismissal-only failure would fall through to
+  // `discovery_places_read_failed` and tell a client the curated retrieval
+  // broke, which is a false statement about a healthy read.
+  if (!curated && failedSources.includes(DISCOVERY_DISMISSED_SOURCE)) {
+    return "dismissed_set_read_failed";
+  }
+  return "discovery_places_read_failed";
+}
+
+/**
+ * What `loadCuratedAndCanonicalPlaces` produced, and what it could not read.
+ *
+ * The second field is the reason the type exists. A bare `DiscoveryPlace[]`
+ * cannot express "these rows, and one source that never answered", so returning
+ * one made a half-failed read arithmetically identical to a small city — at the
+ * single funnel every `GET /discovery` serve path draws from.
+ */
+interface CuratedAndCanonicalPlaces {
+  /** The merged, deduped rows. Exactly what the previous return value was. */
+  places: DiscoveryPlace[];
+  /**
+   * Retrievals whose read FAILED, in `refusal.failedSources` spelling. EMPTY on
+   * the healthy path AND on a genuinely empty city — an empty result is not a
+   * refused one, and a `failedSources` that is always populated names nothing.
+   *
+   * BOTH DB halves can appear here, in merge order. The curated half could from
+   * the start; the canonical half could not, because `queryCanonicalPlaces`
+   * answered `[]` for an unreadable table and an empty one alike — §30.5's third
+   * open item, and the reason an earlier revision of this comment said a
+   * canonical failure "is not representable and is deliberately NOT guessed at".
+   * It is representable now and is read, not guessed: `null` from the reader,
+   * never falsiness. A source that ANSWERED is still never named, including a
+   * tab whose vocabulary maps to no canonical rows, where the registry is not
+   * consulted at all — naming a healthy source is the same untruth inverted.
+   */
+  failedSources: string[];
+}
+
+/**
+ * Send one of `GET /discovery`'s four serve-path envelopes, naming the curated
+ * source when this request could not read it.
+ *
+ * THE FOUR PATHS: the cache-A serve (`serveCachedPlaces`, L1/L2_fresh/L2_stale),
+ * the Compass cache-B hit, the Compass fresh rank, and the cold fetch's
+ * legacy/PDE tail. Each is marked at its call site. There is no fifth, so the
+ * choice here is one helper or four copies of the same decision — and four
+ * copies is how three of them stay right and the fourth quietly stops refusing.
+ *
+ * WHY THE COVERAGE IS "partial" AND NEVER "nothing". This route reads three
+ * retrievals: Overpass, the canonical `places` registry, and curated
+ * `discovery_places`. The two DB halves can now BOTH report that they failed —
+ * `places` could not until §30.5's third open item was closed — and Overpass
+ * cannot, so a request never reaches here knowing that every source refused.
+ * That is `GET /discovery/search`'s rule verbatim — "partial as long
+ * as ANY source answered, even when this page happens to be empty". It is also
+ * what keeps the second half of D11 intact: `sendDiscoveryRefusal` marks a
+ * response refused, suppressing its serve log, only at coverage "nothing", and
+ * these four paths really did serve their items. Calling a served page "nothing"
+ * would UNDER-count the exposure denominator, which is the corruption the ruling
+ * names, inverted.
+ *
+ * ADDITIVE. With `failedSources` empty — which includes a genuinely empty city —
+ * this is `res.json(envelope)` and nothing else. Not one key of a successful
+ * response moves, and the `refusal` key an existing client has never seen is
+ * simply ignored by it.
+ */
+function sendDiscoveryPlacesEnvelope<T extends { total: number }>(
+  // `Response` is the fetch Response in this module (see fetchWithTimeout), so
+  // the express one is taken from the function this forwards to — the same
+  // spelling `sendGeocodeRefusal` above uses, for the same reason.
+  res: Parameters<typeof sendDiscoveryRefusal>[0],
+  envelope: T,
+  failedSources: readonly string[],
+  // DC-22 leg 2 — the window this response served, so the envelope can name the
+  // NEXT one. Required rather than optional: a fifth serve path that forgot it
+  // must fail to compile, not quietly answer with a cursor stuck at page 1.
+  offset: number,
+  // A14 — the Layover-mode summary, or null when the mode is not active. See
+  // the note beside `cursor` below for why it is attached HERE and not in the
+  // four envelope literals.
+  layover: DiscoveryLayoverSummary | null,
+): void {
+  // `cursor` is attached HERE, above the success/refusal branch, and that
+  // position is the whole design:
+  //
+  //   - ONE place. The four paths physically cannot disagree about the key's
+  //     name, its value, or where it sits in the key order — which is the same
+  //     reason this helper exists at all.
+  //   - BEFORE the branch. `sendDiscoveryRefusal` ships `{ ...envelope, refusal }`,
+  //     so a refused body is the successful body plus exactly one key. Adding
+  //     the cursor only on the healthy branch would have broken that invariant:
+  //     a client could tell the two apart by a second, undesigned signal, and a
+  //     walk crossing a transient PARTIAL failure would lose its place in a set
+  //     it was still being served rows from.
+  //
+  // `layover` is attached in the same place and for all three of the same
+  // reasons. It is ADDITIVE and present only when the mode is ACTIVE, so an
+  // ordinary serve — every serve on this tree while the flag is off — is
+  // byte-identical to what it was, which is what lets
+  // `src/test/discoveryCuratedSourceRefusal.test.ts` CONTROL 2 keep pinning the
+  // exact key set and the exact order without being touched.
+  const body = {
+    ...envelope,
+    cursor: nextDiscoveryCursor(offset, PAGE_SIZE, envelope.total),
+    ...(layover ? { layover } : {}),
+  };
+  if (failedSources.length === 0) {
+    res.json(body);
+    return;
+  }
+  sendDiscoveryRefusal(
+    res,
+    body,
+    discoveryRefusal(
+      "transient_db", discoveryPlaceSourcesCode(failedSources), "GET /discovery", "partial", failedSources,
+    ),
+  );
+}
+
+/**
+ * A14 / census-layover §25 L269 — the Layover gate for the two `DiscoveryPlace`
+ * surfaces, in ONE place.
+ *
+ * `GET /discovery` has four serve paths and `GET /discovery/feed` a fifth, and
+ * the rule §25 L269 states is one rule. So this is the only place any of them
+ * calls the gate, for the same reason `sendDiscoveryPlacesEnvelope` is the only
+ * place any of them serialises: five hand-written copies of "refuse, then
+ * filter" is five chances for one of them to drift into serving the ungated
+ * list, and the drift would be invisible from outside.
+ *
+ * WHY IT GATES THE WHOLE SET AND NOT THE PAGE. Each caller hands over the full
+ * ranked list and slices the RESULT. Gating the page instead would make
+ * `total`, the `cursor` arithmetic and the set actually being walked three
+ * different things, so a traveller paging through would be shown a set that
+ * shrinks unpredictably per page. The cost is one travel-time port call per
+ * candidate rather than per page; on this deployment the port is
+ * `noRoutedProvider`, which answers without leaving the process, and it is paid
+ * only by a signed-in traveller with a live layover and the flag on.
+ *
+ * WHY IT CANNOT THROW. Serve paths 2 and 3 sit inside a `try` whose `catch`
+ * DELIBERATELY falls through to the cold path (DV-07). A throw out of the gate
+ * there would degrade to a path that then served the UNGATED list — the gate
+ * failing open by way of someone else's error handler. So every failure becomes
+ * a refusal instead, which is the same answer the gate gives for a failed read.
+ *
+ * WHAT IS NOT GATED, SAID OUT LOUD. `GET /discovery/feed` also serves `posts`
+ * (`lib/eventPostsDiscovery.ts`), and those are left alone. They are not places:
+ * their ids are `posts.id`, they carry no `discovery_places` row, and
+ * `layover_plan_stops.place_id` therefore has nothing it could ever hold for
+ * one — so gating them would mean inventing a subject, not applying a rule.
+ * `events` and `memories` are `[]` on every response this route sends.
+ */
+async function layoverGatedPlaces<T extends { id: string; lat?: number | null; lng?: number | null }>(
+  userId: string | null,
+  places: T[],
+  route: string,
+): Promise<
+  | { ok: false; refusal: DiscoveryRefusal }
+  | { ok: true; places: T[]; summary: DiscoveryLayoverSummary | null }
+> {
+  // Nothing to withhold from an empty page, and nothing to refuse about it
+  // either. Mirrors what GET /discovery/community does with `items.length > 0`.
+  if (places.length === 0) return { ok: true, places, summary: null };
+  try {
+    const gate = await discoveryLayoverGate(getServiceClient(), userId, places, route);
+    if (!gate.ok) return { ok: false, refusal: gate.refusal };
+    return { ok: true, places: serveUnderLayoverGate(gate, places), summary: gate.summary };
+  } catch (err) {
+    // See the header: a throw must not reach DV-07's catch, because that arm
+    // degrades to a path which would serve the ungated list. `transient_db` and
+    // `coverage: "nothing"` are the same answer a failed read gets — this IS a
+    // failed read, arriving by a different door.
+    logger.warn({ err, route }, "discovery: layover gate threw — refusing rather than serving ungated");
+    return {
+      ok: false,
+      refusal: discoveryRefusal(
+        "transient_db", "layover_gate_failed", route, "nothing", ["layover_sessions"],
+      ),
+    };
+  }
+}
+
+/**
+ * "Not interested", applied — the viewer's dismissals removed from a page, in
+ * ONE place, for the same reason `layoverGatedPlaces` and
+ * `sendDiscoveryPlacesEnvelope` are each one place.
+ *
+ * `GET /discovery` has four serve paths. A dismissal that is honoured on the
+ * cold path and forgotten on a cache hit is worse than one that is never
+ * honoured at all: the place disappears, the person believes the control works,
+ * and then it comes back on a request that differs only in which cache answered
+ * — behaviour they cannot predict, reproduce or report. So all four call this,
+ * and a fifth that forgot would be visible as a missing call rather than as an
+ * intermittent bug.
+ *
+ * WHY IT GATES THE WHOLE SET AND NOT THE PAGE — the same reason the Layover gate
+ * does, quoted there: each caller hands over the full ranked list and slices the
+ * RESULT, so filtering the page instead would make `total`, the cursor
+ * arithmetic and the set being walked three different things.
+ *
+ * WHY IT CANNOT REFUSE. Unlike the Layover gate, a failure here is NOT a reason
+ * to serve nothing. The Layover gate withholds places a traveller must not be
+ * shown, so failing open there would breach the rule it exists to enforce. This
+ * gate applies a personal preference: failing open shows places the viewer did
+ * not want, which is a bad page, while failing closed shows an EMPTY Discovery
+ * tab because a preference list was briefly unreadable, which is a broken app.
+ * The failure is carried out on `failedSources` instead, so the response says
+ * the page may contain dismissed places rather than pretending it cannot.
+ *
+ * ANONYMOUS CALLERS pass straight through: no viewer, no dismissals, nothing to
+ * read and nothing to report.
+ */
+async function dismissGatedPlaces<T extends { id: string }>(
+  userId: string | null,
+  places: T[],
+  failedSources: readonly string[],
+): Promise<{ places: T[]; failedSources: string[] }> {
+  // Nothing to remove from an empty page, and no reason to spend a read on it.
+  if (!userId || places.length === 0) return { places, failedSources: [...failedSources] };
+  const dismissed = await loadDismissedPlaceIds(getServiceClient(), userId);
+  return {
+    places: withoutDismissed(places, dismissed.ids),
+    // Appended, never replacing: a retrieval that failed AND a dismissal read
+    // that failed are two facts, and the envelope names both.
+    failedSources: dismissed.degraded
+      ? [...failedSources, DISCOVERY_DISMISSED_SOURCE]
+      : [...failedSources],
+  };
+}
+
+/**
+ * The `GET /discovery` empty body, for the arm that refuses before any page
+ * exists. Same shape as the assembly-error arm at the foot of the handler, so a
+ * Layover refusal and an assembly refusal differ in their `refusal` and in
+ * nothing else.
+ */
+function emptyDiscoveryPlacesEnvelope(destination: string | null, context: string | null) {
+  return {
+    places: [], total: 0, destination, context, cached: false, ageFilterMeta: null,
+    sourceSummary: { seededDbCount: 0, osmCount: 0, userCreatedCount: 0 },
+  };
+}
+
+/**
+ * The `cursor` `11` §5 lists under **Outputs** — the token for the NEXT window.
+ *
+ * `null` once this window reaches the end of the set; the KEY is always present.
+ * Absence would make the envelope's key list depend on which window was asked
+ * for, and `src/test/discoveryCuratedSourceRefusal.test.ts` CONTROL 2 pins that
+ * list exactly. `null` is the terminator a client tests for; a missing key is
+ * a shape change.
+ *
+ * Same rule and same alphabet as `GET /discovery/feed`'s `nextCursor`
+ * (`nextOff < total ? encodeOffset(nextOff) : null`), so both Discovery routes
+ * mint cursors `decodeOffset` reads — and this route's OUTPUT round-trips
+ * straight back into its own `cursor` INPUT with no arithmetic in between.
+ */
+function nextDiscoveryCursor(offset: number, pageSize: number, total: number): string | null {
+  const next = offset + pageSize;
+  return next < total ? encodeOffset(next) : null;
+}
+
+/**
+ * The GET /discovery/feed empty body, in one place.
+ *
+ * Extracted because the refusal arm and the genuine-miss arm must ship the SAME
+ * envelope — identical but for the `refusal` key. Two hand-written copies is how
+ * they drift, and a drift here would hand the client a second way to tell the
+ * two apart that nobody designed.
+ */
+function emptyFeedEnvelope(destination: string | null, sessionId: string) {
+  return {
+    places: [], events: [], posts: [], memories: [], sections: [],
+    nextCursor: null, total: 0, destination, context: null,
+    sourceSummary: { seededDbCount: 0, osmCount: 0, userCreatedCount: 0 },
+    sessionId,
+  };
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+ * DC-22 — the two things `GET /discovery` computed and never told the client.
+ *
+ * Declared HERE, at the foot of the file, and not beside the handler that uses
+ * them. That is not stylistic: docs/ carries anchored `routes/discovery.ts:NNN`
+ * citations up to :3477 which `check:doc-citations` re-reads, so a declaration
+ * inserted above that line silently repoints every citation below it. Function
+ * declarations hoist, so the call sites above read exactly as if these were
+ * local — and the citations stay true.
+ *
+ * The two answers travel together because they are the same kind of fact: both
+ * describe THE SERVE rather than any place in it, and both fall out of the two
+ * numbers a serve is made of — which window was served, and when.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The identity of one serve, minted ONCE per request.
+ *
+ * `04` §5's recommendation id binds an EXPOSURE — (viewer, session, instant,
+ * surface, position, item) — and not an item, because the same place served to
+ * the same viewer twice is two exposures and a denominator that collapses them
+ * under-counts by exactly the repeats. `lib/discoveryRecommendationId.ts` makes
+ * that argument in full.
+ *
+ * Which is why this is minted here and then handed BOTH ways — onto the
+ * response through `withRecommendationIds`, and into `logDiscoveryServe` as its
+ * `sessionId` + `servedAt`. The writer would otherwise read its own clock and
+ * mint its own session id, and the client would be holding an id that joins to
+ * no row in `rank_events`: two ids for one exposure, which is worse than none,
+ * because it looks joinable.
+ */
+interface ServeExposure {
+  /**
+   * NULL for an anonymous caller, deliberately. The serve log writes no row
+   * without a `user_id`, so an id minted for an anonymous serve would name an
+   * exposure record that does not exist. `withRecommendationIds` therefore
+   * emits nothing at all rather than a well-formed id that joins to nothing.
+   */
+  userId:    string | null;
+  /** One session id for the whole serve — the same "single open" semantics the serve log documents. */
+  sessionId: string;
+  /** ISO-8601. The instant the serve is stamped with, and the one written to `rank_events.served_at`. */
+  servedAt:  string;
+}
+
+/** Mint the exposure identity for this request. Called once, before any serve path runs. */
+function newServeExposure(userId: string | null): ServeExposure {
+  return { userId, sessionId: randomUUID(), servedAt: new Date().toISOString() };
+}
+
+/**
+ * Stamp each served item with the recommendation id of ITS exposure.
+ *
+ * `position` is the item's index in the page as served, which is the same index
+ * `logDiscoveryServe` writes to `rank_events.position` — the four serve paths
+ * all log the very array they serve, in order, so the two agree by construction
+ * rather than by coincidence.
+ *
+ * CALLED ON THE `annotate*` ARRAY, one step BEFORE `withDiscoveryCandidates`,
+ * and not on the array the envelope names. That ordering is deliberate twice
+ * over: the projection spreads its input (`{ ...p, candidate }`) so the id
+ * survives untouched, and `src/test/discoveryCandidate.test.ts`'s source guard
+ * reads every `places: <name>` site and demands `<name>` be assigned directly
+ * from `await withDiscoveryCandidates(`. Wrapping at the envelope would have
+ * made that guard unreadable-by-construction — the guard would have had to be
+ * loosened to accept a wrapper, which is a worse trade than calling this one
+ * line earlier.
+ *
+ * Additive: one new key on each place. A client that has never heard of it is
+ * unaffected, exactly as with the `refusal` key.
+ */
+function withRecommendationIds<T extends { id: string }>(
+  items: readonly T[],
+  exposure: ServeExposure,
+): Array<T & { recommendationId?: string }> {
+  const userId = exposure.userId;
+  if (!userId) return items as Array<T & { recommendationId?: string }>;
+  return items.map((item, position) => ({
+    ...item,
+    recommendationId: recommendationIdFor({
+      userId,
+      sessionId: exposure.sessionId,
+      servedAt:  exposure.servedAt,
+      surface:   "discovery",
+      position,
+      itemId:    item.id,
+    }),
+  }));
+}
+
+/**
+ * Resolve the served window from `page` OR `cursor`, into ONE offset.
+ *
+ * ADDITIVE, and the shape of this function is the guarantee. With no `cursor`
+ * in the query the `page` arithmetic is character-for-character what it always
+ * was — `Math.max(1, parseInt(...) || 1)`, then `(page - 1) * pageSize` — so
+ * every existing client selects exactly the items it selected before.
+ *
+ * `cursor` wins when present and is read through `decodeOffset`, the helper
+ * `GET /discovery/feed` already uses, so the two Discovery routes speak one
+ * cursor vocabulary instead of two. It is honoured as a true OFFSET rather than
+ * rounded to a page boundary: rounding would silently drop or repeat items for
+ * a client that paged from anywhere but a multiple of `pageSize`.
+ *
+ * `page` is still returned because the shadow observation records which page it
+ * compared; a cursor-driven request reports the page its offset falls in.
+ */
+function resolveDiscoveryPaging(
+  rawPage: unknown, rawCursor: unknown, pageSize: number,
+): { page: number; offset: number } {
+  const page = Math.max(1, parseInt(rawPage as string) || 1);
+  if (typeof rawCursor !== "string" || rawCursor.length === 0) {
+    return { page, offset: (page - 1) * pageSize };
+  }
+  const offset = decodeOffset(rawCursor);
+  return { page: Math.floor(offset / pageSize) + 1, offset };
+}
+
+/* THE `cursor` KEY ON THIS ROUTE'S ENVELOPE — what it is called, and why.
+ *
+ * `11` §5 "Recommendation API" lists `cursor` under BOTH Inputs
+ * ("pagination/cursor") and **Outputs**. An earlier pass shipped only the input
+ * half and recorded the reason here: `src/test/discoveryCuratedSourceRefusal.test.ts`
+ * CONTROL 2 pins this envelope's exact key list on all four serve paths, and
+ * emitting a key breaks that pin. That was a compromise against the spec rather
+ * than a reading of it — the pin exists to catch ACCIDENTAL shape drift, and an
+ * argued, spec-mandated key is not drift. CONTROL 2 has been updated to include
+ * `cursor`, with the reasoning written at the assertion, and it is still an
+ * exact set-and-order `deepEqual`: no future accident gets through it either.
+ *
+ * NAME: `cursor`, which is the word `11` §5 uses. `GET /discovery/feed` in this
+ * same file emits `nextCursor` for the identical value, so the two routes do
+ * differ by a word — but on THIS route the input is already spelled `cursor`,
+ * so one word covers both directions and `?cursor=<body.cursor>` is the whole
+ * walk. `src/test/discoveryServeExposureCursor.test.ts` C4 also pins, from
+ * DC-22 leg 1's side, that no `nextCursor` key appears here.
+ *
+ * SEMANTICS: the base64url offset of the NEXT window (`encodeOffset`, the same
+ * alphabet `decodeOffset` reads), or `null` once the served window reaches the
+ * end of the set. The KEY IS ALWAYS PRESENT — `null` terminates a walk, and a
+ * key that came and went would make the pinned key list depend on which window
+ * was requested. Minted once, in `sendDiscoveryPlacesEnvelope`, so the four
+ * serve paths cannot disagree; attached above the refusal branch, so a PARTIAL
+ * refusal still tells a paging client where it is.
+ *
+ * `page` is untouched. With no `cursor` in the query the arithmetic above is
+ * character-for-character what it always was, and a `page` client that ignores
+ * the new key reads exactly the body it read before plus one field.
+ */
 
 export default router;

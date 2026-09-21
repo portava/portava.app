@@ -33,7 +33,7 @@
  *
  * Response shape (backward-compatible — new fields added, none removed):
  * {
- *   period_days, impressions, taps, saves, joins, rsvps, attended,
+ *   period_days, impressions, taps, saves, joins, rsvps, trip_adds, attended,
  *   realized_connection_rate,
  *   tap_through_rate,
  *   tap_through_by_kind: { [kind]: { impressions, taps, rate } },
@@ -236,7 +236,33 @@ router.get("/admin/ranking/metrics", asyncHandler(async (req, res) => {
   const nonLivePulse = all.filter((r) => r.surface !== "live_pulse");
 
   // ── Totals ────────────────────────────────────────────────────────────────
-  const totals = { impressions: 0, taps: 0, saves: 0, joins: 0, rsvps: 0, attended: 0 };
+  //
+  // This chain is the ONLY aggregate on this endpoint that enumerates the whole
+  // outcome vocabulary, so it is the only one where a missing arm loses a whole
+  // outcome class rather than answering a narrower question. (kindMap, explRows,
+  // surfaceMap and impRows below match on 'impression'/'tap' ALONE and always
+  // have — they compute tap-through, not a census, so every other outcome is
+  // out of their scope by construction and not a drop.)
+  //
+  // It has no `else` arm and never has had one: an outcome the chain does not
+  // name is counted nowhere and reported nowhere. That is silent, and it is what
+  // 'trip_add' walked into. Migration 2894 admits 'trip_add' to
+  // rank_events.outcome and routes/rankEvents.ts accepts it at rung 3, so a
+  // traveller adding a served item to a trip now produces rows this dashboard
+  // was about to aggregate into nothing — indistinguishable from nobody ever
+  // doing it.
+  //
+  // `trip_adds` is therefore an ADDED response field; no existing field changes
+  // value, because these rows were previously counted in no bucket at all.
+  //
+  // 'dismiss' (migration 2297, written by POST /api/rank-events/outcome) is
+  // dropped by this same chain and is still dropped after this change: it is a
+  // NEGATIVE outcome and belongs with `negative_feedback`, whose hide/report/
+  // block rates are hard-coded zeros pending their own wiring. Counting it as a
+  // seventh positive total here would be the wrong home for it, so it is named
+  // as an open gap rather than quietly folded in. 'analytics' is excluded by the
+  // query itself (.neq) and must never appear here.
+  const totals = { impressions: 0, taps: 0, saves: 0, joins: 0, rsvps: 0, trip_adds: 0, attended: 0 };
   for (const r of nonLivePulse) {
     const o: string = r.outcome ?? "";
     if      (o === "impression") totals.impressions++;
@@ -244,6 +270,7 @@ router.get("/admin/ranking/metrics", asyncHandler(async (req, res) => {
     else if (o === "save")       totals.saves++;
     else if (o === "join")       totals.joins++;
     else if (o === "rsvp")       totals.rsvps++;
+    else if (o === "trip_add")   totals.trip_adds++;
     else if (o === "attended")   totals.attended++;
   }
 

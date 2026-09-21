@@ -1,0 +1,13 @@
+# db/harness/authz.txt — the authz functions the kernel calls, SLICED from the
+# real migrations rather than restubbed here, so the crew rule the probes
+# exercise is the deployed one.
+#
+# Format: file | first line | last line
+#
+# 2334 and 2337 are large RLS migrations that touch most of the schema; running
+# them whole would need a schema this harness does not have and does not need.
+# What the kernel actually calls is three functions, and those are taken
+# verbatim.
+artifacts/api-server/src/migrations/2337_trip_crew_rls_membership_convergence.sql | 320 | 343
+artifacts/api-server/src/migrations/2337_trip_crew_rls_membership_convergence.sql | 350 | 360
+artifacts/api-server/src/migrations/2334_route_plan_crew_visibility.sql | 153 | 177

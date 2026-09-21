@@ -48,13 +48,38 @@ function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): nu
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
+/**
+ * A zone read that says WHETHER IT RAN.
+ *
+ * ── WHY THE SHAPE, NOT AN ARRAY ─────────────────────────────────────────────
+ * supabase-js RESOLVES on a read failure, so `if (error || !data) return []`
+ * made "geo_zones was unreadable" byte-identical to "no zone covers this
+ * coordinate" / "that city has no zones". Both of those are perfectly ordinary
+ * answers on a lookup surface, which is precisely what made the failure
+ * invisible — there is no shape of an empty array that a caller could have
+ * inspected to tell the two apart.
+ *
+ * `ok: false` carries the reason and cannot be spent as a zone list: a caller
+ * that wants to treat an unperformed read as "no zones" has to write that down.
+ * This mirrors `PrivateStayProximity` below, which is the same ruling reached
+ * for the private-stay lookup in this file.
+ */
+export type GeoZoneRead =
+  | { ok: true; zones: GeoZone[] }
+  | { ok: false; reason: string };
+
+const readFailure = (e: unknown): { ok: false; reason: string } => ({
+  ok: false,
+  reason: String((e as any)?.message ?? (e as any)?.code ?? e ?? "db_error"),
+});
+
 /** Find neighborhood zones containing a given coordinate. */
 export async function findZonesAt(
   db: SupabaseClient,
   lat: number,
   lng: number,
   maxResults = 5,
-): Promise<GeoZone[]> {
+): Promise<GeoZoneRead> {
   try {
     const { data, error } = await db
       .from("geo_zones")
@@ -67,19 +92,24 @@ export async function findZonesAt(
       .in("zone_type", ["neighborhood"])
       .limit(100);
 
-    if (error || !data) return [];
+    if (error) return readFailure(error);
+    if (!Array.isArray(data)) return { ok: false, reason: "geo_zones read returned no rows array" };
 
     // Client-side radius check — no PostGIS required
-    return (data as any[])
-      .filter((z) => {
-        if (!z.center_lat || !z.center_lng || !z.radius_meters) return false;
-        const km = haversineKm(lat, lng, z.center_lat, z.center_lng);
-        return km * 1000 <= z.radius_meters;
-      })
-      .slice(0, maxResults)
-      .map(mapZone);
-  } catch {
-    return [];
+    return {
+      ok: true,
+      zones: (data as any[])
+        .filter((z) => {
+          if (!z.center_lat || !z.center_lng || !z.radius_meters) return false;
+          const km = haversineKm(lat, lng, z.center_lat, z.center_lng);
+          return km * 1000 <= z.radius_meters;
+        })
+        .slice(0, maxResults)
+        .map(mapZone),
+    };
+  } catch (err) {
+    // Transport-level rejection only; PostgREST failures arrive via `error`.
+    return readFailure(err);
   }
 }
 
@@ -87,7 +117,7 @@ export async function findZonesAt(
 export async function findZonesByCity(
   db: SupabaseClient,
   city: string,
-): Promise<GeoZone[]> {
+): Promise<GeoZoneRead> {
   try {
     const { data, error } = await db
       .from("geo_zones")
@@ -95,14 +125,37 @@ export async function findZonesByCity(
       .ilike("city", city.trim())
       .order("featured", { ascending: false });
 
-    if (error || !data) return [];
-    return (data as any[]).map(mapZone);
-  } catch {
-    return [];
+    if (error) return readFailure(error);
+    if (!Array.isArray(data)) return { ok: false, reason: "geo_zones read returned no rows array" };
+    return { ok: true, zones: (data as any[]).map(mapZone) };
+  } catch (err) {
+    return readFailure(err);
   }
 }
 
-/** Get verified/featured place profiles for a city. */
+/**
+ * Get verified/featured place profiles for a city.
+ *
+ * ── D11 RULING: THE CALLER MAY ACT ON THIS EMPTINESS ────────────────────────
+ * This one KEEPS its `[]`-on-failure, deliberately, and the reason is the
+ * callers, not the function. Every call site
+ * (DiscoveryLocationContext ×5, CompassLocationContext ×1) spends the result as
+ * `verifiedPlaceIds` — an ADDITIVE ranking boost (`routes/discovery.ts`
+ * scoreWithContext: `if (verifiedSet.has(p.id)) s += w.verifiedPlaces`). An
+ * empty set removes a boost; it excludes nothing, certifies nothing, and puts
+ * no claim on the wire. The un-boosted ordering is a legitimate ordering, so a
+ * caller that ranks without the boost has not been told anything false.
+ *
+ * Two things keep this ruling honest rather than convenient:
+ *   • `place_profiles` is a WRITERLESS legacy decoy, superseded by
+ *     discovery_places (`scripts/checkWriterlessReads.ts` grades it so). It
+ *     returns zero rows on every successful read, so the emptiness a failed
+ *     read produces is the emptiness production already has.
+ *   • If that ever changes — a writer lands, and `safe_nearby` (weights
+ *     verifiedPlaces 0.8 under a safety label) starts DEPENDING on the boost —
+ *     this ruling must be re-taken. A surface that leans on the signal is not
+ *     the surface this ruling was made for.
+ */
 export async function getVerifiedPlaces(
   db: SupabaseClient,
   city: string,
@@ -116,20 +169,46 @@ export async function getVerifiedPlaces(
       .in("status", ["verified", "featured"])
       .limit(limit);
 
-    if (error || !data) return [];
+    if (error || !data) return []; // ruled above: a missing boost is not a false answer
     return (data as any[]).map(mapProfile);
   } catch {
     return [];
   }
 }
 
-/** Is this coordinate within ~200 m of a known private stay? */
-export async function isNearPrivateStay(
+/**
+ * Is this coordinate within ~200 m of a known private stay?
+ *
+ * ── WHY THE THIRD ANSWER EXISTS ─────────────────────────────────────────────
+ * The one caller is PulseGeoTagService's hotel blur: `true` caps the stored
+ * `location_visibility` at `neighborhood`, so a post made from where someone
+ * SLEEPS is not published at venue precision. supabase-js RESOLVES on a
+ * database error, so `if (error || !data) return false` answered "not near a
+ * private stay" for a read that never happened — and `false` is the answer that
+ * SKIPS the blur. An unreadable `location_sessions` therefore published a
+ * hotel-precision pin, silently, exactly for the users whose accommodation the
+ * table would have named.
+ *
+ * "We could not check" is not "we checked and they are not there", so the
+ * result is a three-state union rather than a boolean. `unknown` is a distinct
+ * value precisely so a caller cannot spend it as `false` by writing `?? false`
+ * — the caller decides, in the open, what an unperformed check means for it,
+ * and for the blur that is: BLUR ANYWAY.
+ *
+ * `near: false` is still a real answer: the read succeeded and found no live
+ * private-stay session.
+ */
+export type PrivateStayProximity =
+  | { near: true }
+  | { near: false }
+  | { near: "unknown"; reason: string };
+
+export async function checkNearPrivateStay(
   db: SupabaseClient,
   userId: string,
   lat: number,
   lng: number,
-): Promise<boolean> {
+): Promise<PrivateStayProximity> {
   try {
     const { data, error } = await db
       .from("location_sessions")
@@ -139,15 +218,42 @@ export async function isNearPrivateStay(
       .is("ended_at", null)
       .limit(10);
 
-    if (error || !data) return false;
+    if (error) {
+      return {
+        near: "unknown",
+        reason: String((error as any)?.message ?? (error as any)?.code ?? "db_error"),
+      };
+    }
+    if (!Array.isArray(data)) {
+      return { near: "unknown", reason: "location_sessions read returned no rows array" };
+    }
 
-    return (data as any[]).some((row) => {
+    const near = (data as any[]).some((row) => {
       if (!row.lat || !row.lng) return false;
       return haversineKm(lat, lng, row.lat, row.lng) * 1000 < 200;
     });
-  } catch {
-    return false;
+    return near ? { near: true } : { near: false };
+  } catch (err) {
+    // Transport-level rejection only; PostgREST failures arrive via `error`.
+    return { near: "unknown", reason: String((err as any)?.message ?? err) };
   }
+}
+
+/**
+ * Boolean form, for callers that have no way to represent "unknown".
+ *
+ * It resolves `unknown` to TRUE — the blur-applying direction — so the boolean
+ * is safe by construction. Callers that can distinguish should use
+ * `checkNearPrivateStay` and log the reason.
+ */
+export async function isNearPrivateStay(
+  db: SupabaseClient,
+  userId: string,
+  lat: number,
+  lng: number,
+): Promise<boolean> {
+  const result = await checkNearPrivateStay(db, userId, lat, lng);
+  return result.near !== false;
 }
 
 // ── Mappers ───────────────────────────────────────────────────────────────────

@@ -156,19 +156,42 @@ router.get("/circle-age-settings/:ownerId", async (req, res) => {
     return;
   }
 
+  // `ageLimitEnabled: false` IS THE PERMISSIVE ANSWER, so it may only ever be
+  // said by a read that succeeded. Two paths used to say it without one:
+  //
+  //   no service client -> the shape was returned outright, so a boot-order or
+  //     configuration problem silently reported "this circle has no age limit"
+  //     to the invite-accept path that asks this question to decide eligibility.
+  //   an unbound `.error` -> supabase-js RESOLVES on a database error, so an
+  //     unreadable `circle_age_settings` fell into `if (!data)` and answered the
+  //     same way. A row that is genuinely absent and a row that could not be
+  //     read are opposite facts here: one means the owner set no limit, the
+  //     other means we do not know whether they did.
+  //
+  // Both now refuse with a retryable 503 rather than disabling an age gate on a
+  // guess. An owner who set no limit still gets the permissive shape below —
+  // from a read that answered.
   const sc = getServiceClient();
   if (!sc) {
-    res.json({ ageLimitEnabled: false, minAge: null, maxAge: null, label: null, updatedAt: null });
+    req.log.error({ ownerId }, "circle-age-settings: no service client — refusing to report 'no age limit'");
+    sendError(res, "degraded_unavailable", "Age settings are temporarily unavailable");
     return;
   }
 
-  const { data } = await sc
+  const { data, error } = await sc
     .from("circle_age_settings")
     .select("age_limit_enabled, min_age, max_age, updated_at")
     .eq("owner_id", ownerId)
     .maybeSingle();
 
+  if (error) {
+    req.log.error({ err: error, ownerId }, "circle-age-settings: owner read failed — refusing to report 'no age limit'");
+    sendError(res, "degraded_unavailable", "Age settings are temporarily unavailable");
+    return;
+  }
+
   if (!data) {
+    // A SUCCESSFUL read that found no row: the owner has set no age limit.
     res.json({ ageLimitEnabled: false, minAge: null, maxAge: null, label: null, updatedAt: null });
     return;
   }

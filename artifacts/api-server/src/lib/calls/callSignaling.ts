@@ -411,8 +411,25 @@ export function emitCallAnalytics(
 }
 
 /**
- * Force-end any open direct call between two users (block hook). Terminates
- * the LiveKit room server-side and notifies both parties. Never throws.
+ * Force-end any open direct call between two users (block hook). Terminates the
+ * LiveKit room server-side and notifies both parties. Never throws — the block
+ * itself has already been written and must not be rolled back by a teardown
+ * failure — but it no longer fails QUIETLY.
+ *
+ * ── WHY THE LOG LEVEL CHANGED ───────────────────────────────────────────────
+ * "non-critical" was wrong. This is the only thing that ends a call in progress
+ * when one participant blocks the other; if it does not run, the blocker stays
+ * on a live audio/video connection with the person they just blocked. Until
+ * `findOpenDirectSessionsBetween` began observing its `.error`, the commonest
+ * failure could not even reach this catch: supabase-js resolves on a database
+ * error, so an unreadable table returned an empty session list, the loop ran
+ * zero times, and this function returned success having ended nothing.
+ *
+ * ── WHY THE ANNOUNCEMENTS MOVED INSIDE THE `applied` CHECK ──────────────────
+ * `applyEvent` no-ops when the transition is illegal or when it loses the CAS
+ * race, and its result was being discarded. Both parties were then told
+ * `call.ended, reason: "blocked"` — and analytics got a second `ended` row —
+ * for a call this code did not end. Announce only what was actually applied.
  */
 export async function forceEndDirectCallsBetween(
   sc: SupabaseClient,
@@ -425,12 +442,16 @@ export async function forceEndDirectCallsBetween(
     const sessions = await store.findOpenDirectSessionsBetween(userA, userB);
     const nowIso = new Date().toISOString();
     for (const session of sessions) {
-      await applyEvent(store, admin, session, { type: "END" }, nowIso);
+      const applied = await applyEvent(store, admin, session, { type: "END" }, nowIso);
+      if (!applied) continue;
       const ended: StoredCallSession = { ...session, status: "ended", endedAt: nowIso };
       publishCallEvent("call.ended", [userA, userB], ended, { reason: "blocked" });
       emitCallAnalytics("ended", ended); // use post-transition object so endedAt is populated
     }
   } catch (err) {
-    logger.warn({ err }, "forceEndDirectCallsBetween failed (non-critical)");
+    logger.error(
+      { err, userA, userB },
+      "block hook could not end calls between these users — a blocked call may still be live",
+    );
   }
 }

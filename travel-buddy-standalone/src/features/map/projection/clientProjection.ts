@@ -41,6 +41,142 @@ import {
   type MapObjectKind,
   type PrivacyClass,
 } from '../../../types/mapObjects.ts';
+import type { ToggleableEntityType } from '../../../types/mapTypes.ts';
+
+// ── The place_intel cache identity (§28, §33) ───────────────────────────
+//
+// THESE TWO FUNCTIONS ARE A PRIVACY BOUNDARY, NOT A PERFORMANCE TUNING KNOB.
+//
+// `useMapEntities` used to write its whole merged object list into the
+// `place_intel` cache under the bare CITY NAME:
+//
+//     if (city && merged.length > 0) mapCache.write('place_intel', city, merged)
+//
+// `merged` contains the viewer's own trip stops (`trips` -> trip_stop) and
+// crew members (`friends` -> crew_member), plus, when the §16 options are on,
+// their saved places, memory pins and personal-city objects. The key's only
+// variable was the city.
+//
+// THE BLAST RADIUS IS ONE DEVICE, AND IT IS WORTH STATING PRECISELY. The store
+// is AsyncStorage, so nothing here is reachable over the network and no server
+// ever serves one account's entry to another. What it is, is a cross-account
+// leak BETWEEN THE ACCOUNTS THAT USE THE SAME PHONE: an account switch, a
+// sign-out and sign-in (which does not clear this store — SessionContext's
+// clearScopedStorageForUser enumerates a fixed prefix list the map cache is
+// not on), or a shared handset. The next account to open the map in the same
+// city was seeded from the previous account's private objects, and
+// `mapObjectsToEntities` rendered them as if the gateway had just served them.
+// A city name is not an identity.
+//
+// The fix is both halves together, because each alone is insufficient:
+//
+//   `mapProjectionCacheScope` puts the ACCOUNT in the key, so one viewer's
+//   entry can never be read back as another's. It also puts the camera, zoom,
+//   radius and layer set in the key, because a city label does not describe a
+//   viewport: coordinate-only deep links all collapsed onto the single scope
+//   `'unknown'`, and two cameras in the same city requesting different layers
+//   rehydrated each other's object sets.
+//
+//   `isPlaceIntelCacheSafe` keeps viewer-scoped objects OUT of a
+//   cross-session store at all, so the blast radius of any future keying
+//   mistake is public place intelligence rather than somebody's trip.
+//
+// MAP_CACHE_VERSION is bumped to 'v2' in the same change, because every v1
+// `place_intel` entry already on a device was written under the old key and
+// must be discarded rather than re-read under the new one.
+
+/**
+ * The kinds that may enter the cross-session `place_intel` cache.
+ *
+ * An ALLOWLIST, deliberately. A denylist of viewer-scoped kinds would mean
+ * every kind added to MAP_OBJECT_KINDS later is cached by default, and the
+ * failure mode of forgetting to add one is a privacy leak that nothing fails
+ * on. With an allowlist the failure mode of forgetting is a cache miss.
+ *
+ * Everything here describes A PLACE rather than a person or a plan: it is the
+ * same answer for every viewer standing in the same viewport, so nothing about
+ * who asked can be recovered from a cached copy.
+ */
+export const PLACE_INTEL_CACHEABLE_KINDS: readonly MapObjectKind[] = [
+  'place',
+  'event',
+  'activity_zone',
+  'crowd_flow',
+  'hidden_gem',
+  'safety_notice',
+  'world_pulse',
+  'traveler_flow',
+  'city_model',
+];
+
+/**
+ * Deliberately EXCLUDED, each for a stated reason — kept beside the allowlist
+ * so a future reader can tell "considered and refused" from "forgotten":
+ *
+ *   crew_member, social_zone, buddy_zone  people, resolved against the
+ *                                         viewer's own block list
+ *   trip_stop, meeting_point              the viewer's own itinerary
+ *   memory, saved_place, personal_city    the viewer's own history
+ *   prediction                            derived from the above; fail-closed
+ */
+export function isPlaceIntelCacheSafe(object: { kind: MapObjectKind }): boolean {
+  return PLACE_INTEL_CACHEABLE_KINDS.includes(object.kind);
+}
+
+/**
+ * Stable cache identity for ONE projected viewport, for ONE account — or
+ * `null`, meaning THIS PROJECTION MAY NOT BE CACHED AT ALL.
+ *
+ * NULL WHEN THERE IS NO ACCOUNT, AND THAT IS THE IMPORTANT CASE.
+ * ==============================================================
+ * The obvious alternative is to fold a missing id into a literal `anonymous`
+ * bucket. That is wrong here, and not only for signed-out viewers:
+ * SessionContext initialises `userId` to null and resolves it asynchronously,
+ * so EVERY signed-in viewer is momentarily identity-less on a cold mount. A
+ * shared `anonymous` scope would therefore be written by one account during
+ * its hydration window and read by the next account during theirs — the
+ * original defect, restored precisely when identity is least certain.
+ *
+ * So there is no fallback bucket. No account, no key, no cache; the map simply
+ * paints from the network, which is what it does today on a cache miss. This
+ * matches hooks/useSnapshotCache.ts, which builds `snap:v1:<key>:<userId>` and
+ * refuses to build a key at all without a `userId`, and callers must honour the
+ * null on BOTH the read and the write.
+ *
+ * Coordinates are rounded to 3 decimals (~110 m) so that a camera that has not
+ * meaningfully moved still hits its own entry; callers should pass the
+ * QUANTISED camera they actually fetched with, not the raw one.
+ */
+export function mapProjectionCacheScope(input: {
+  accountId: string | null;
+  city: string | null;
+  lat: number | null;
+  lng: number | null;
+  zoom: number;
+  radiusKm: number;
+  enabledLayers: readonly ToggleableEntityType[];
+  /**
+   * The §16 layers that ride BESIDE `enabledLayers` on their own options.
+   * They change which kinds the gateway is asked for, so two viewports that
+   * differ only in these are different answers and must not share an entry.
+   */
+  optionalLayers?: readonly string[];
+}): string | null {
+  const account = input.accountId?.trim();
+  if (!account) return null;
+  const place =
+    input.lat != null && input.lng != null
+      ? `${input.lat.toFixed(3)},${input.lng.toFixed(3)}`
+      : (input.city?.trim().toLowerCase() || 'unknown');
+  // Sorted, so a caller reordering its layer array is not a different cache
+  // entry for an identical request.
+  const layers = [...input.enabledLayers].sort().join(',');
+  const optional = [...(input.optionalLayers ?? [])].sort().join(',');
+  return (
+    `account:${account}|${place}|z${input.zoom.toFixed(1)}` +
+    `|r${input.radiusKm.toFixed(1)}|${layers}|${optional}`
+  );
+}
 
 // ── Buddies (Rent-a-Buddy availability) ───────────────────────────────────────
 

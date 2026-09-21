@@ -124,15 +124,44 @@ async function loadFollowingSet(sc: SupabaseClient, userId: string): Promise<Set
   }
 }
 
-/** Distinct stamp cities for a user (used as "cities visited"). */
+/**
+ * Distinct cities a user has actually BEEN TO, from their stamps.
+ *
+ * Feeds the "N shared cities" fact, whose own comment below reads "places both
+ * have been" — so a city only belongs here on evidence of PRESENCE.
+ *
+ * Only stamps whose definition sets `evidences_presence` (migration 2970)
+ * contribute. Without that filter this counted the destination of every trip
+ * the user had merely CREATED: `POST /api/trips` awards `first_trip_created`
+ * and `trip_planner` at creation with `city: destinationCity` attached, so two
+ * strangers who had each planned a trip to Lisbon and taken neither were told
+ * they shared a city they had both never been to. Same rows, same defect, as
+ * the Passport's "Countries" number — census-highlights-memories §K.4.
+ *
+ * Note this file ALREADY draws the line correctly one function down:
+ * `loadUpcomingCities` reads planned destinations from `trips` and feeds a
+ * SEPARATE fact. Planned and visited were already meant to be two things here.
+ *
+ * `=== true`, not truthiness: an embed that came back without the column reads
+ * `undefined`, and absent must mean "not presence".
+ */
 async function loadStampCities(sc: SupabaseClient, userId: string): Promise<Set<string>> {
   try {
     const { data } = await sc
       .from("user_stamps")
-      .select("city")
+      .select("city, stamp_definitions(evidences_presence)")
       .eq("user_id", userId)
       .eq("is_revoked", false);
-    return new Set(((data as any[]) ?? []).map((r) => norm(r.city)).filter(Boolean));
+    const out = new Set<string>();
+    for (const r of ((data as any[]) ?? [])) {
+      // PostgREST returns an embedded to-one either as an object or as a
+      // single-element array; handle both, as buildStats does.
+      const def = Array.isArray(r.stamp_definitions) ? r.stamp_definitions[0] : r.stamp_definitions;
+      if (def?.evidences_presence !== true) continue;
+      const city = norm(r.city);
+      if (city) out.add(city);
+    }
+    return out;
   } catch {
     return new Set();
   }
