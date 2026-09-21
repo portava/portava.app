@@ -231,17 +231,6 @@ const ANY_IMPORT_RE = /^[ \t]*import[ \t]+(?:["']|[A-Za-z_$*{])/;
 // ─────────────────────────────────────────────────────────────────────────────
 const READ_ONLY_AUDIT_ENTRY_POINTS = [
   {
-    file: 'src/scripts/reportInputMetrics.ts',
-    reason:
-      'Reads §57\'s nine Product Success Metrics off the §44 serve log: one `.from(TELEMETRY_TABLE)' +
-      '.select("session_id,event_name,context,field_id,occurred_at,props")` page loop and nothing else. ' +
-      'Measured on this file: zero .insert/.update/.upsert/.delete/.rpc, zero auth.admin, zero storage call. ' +
-      'Reading a real deployment IS its purpose — a metric definition nothing can RUN is not a metric, and the ' +
-      'census says so — so the read-only audit door is the right one rather than the strict door, on the same ' +
-      'grounds auditLiveVsCanonical.ts uses it. If a write is ever added, the import moves to ' +
-      'src/lib/ciSupabaseGuard.mjs and this entry is deleted, in the same change.',
-  },
-  {
     file: 'src/scripts/auditMigrationsVsLive.ts',
     reason:
       'Reads the live schema through the Management API with SELECTs on pg_class, information_schema.columns, ' +
@@ -279,6 +268,17 @@ const READ_ONLY_AUDIT_ENTRY_POINTS = [
       'pde_suppressed_writes) filtered to an observed_at window, aggregated in memory. It answers the P1 ' +
       'Stage-3 question — how differently would PDE order discovery, and at what cost — which is a question ' +
       'about production. It writes nothing and prints numbers for a human to weigh before Stage 4 flips pde.',
+  },
+  {
+    file: 'src/scripts/reportInputMetrics.ts',
+    reason:
+      'Reads §57\'s nine Product Success Metrics off the §44 serve log: one `.from(TELEMETRY_TABLE)' +
+      '.select("session_id,event_name,context,field_id,occurred_at,props")` page loop and nothing else. ' +
+      'Measured on this file: zero .insert/.update/.upsert/.delete/.rpc, zero auth.admin, zero storage call. ' +
+      'Reading a real deployment IS its purpose — a metric definition nothing can RUN is not a metric, and the ' +
+      'census says so — so the read-only audit door is the right one rather than the strict door, on the same ' +
+      'grounds auditLiveVsCanonical.ts uses it. If a write is ever added, the import moves to ' +
+      'src/lib/ciSupabaseGuard.mjs and this entry is deleted, in the same change.',
   },
   {
     file: 'src/scripts/reportIntelFunnel.ts',
