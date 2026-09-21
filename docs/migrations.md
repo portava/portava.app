@@ -2202,6 +2202,74 @@ armed from a Management API session (`LOAD 'safeupdate'` is refused), so
 sufficiency is established by the live memory suites on the first `main` run
 after 2965 lands — not by anything runnable before it.
 
+### 2965 IS PROVEN SUFFICIENT — measured, not argued
+
+The open question on 2965 was never whether the reasoning was good. It was that
+**nothing had executed the qualified body under an armed `safeupdate` guard**,
+because the Management API session both applies ran through does not preload
+`supautils` — precisely how 2963 got through in the first place.
+
+That is now settled. On **run `35582952474`, job `106283034190`** (`live DB · RLS
++ role/is_official write boundaries`), against a `portava-ci` carrying the
+qualified form, through PostgREST, with the guard armed:
+
+| step | result |
+|---|---|
+| 12 · `test:memory-lifecycle` (derived-memory privacy, retraction, erasure) | **success** |
+| 15 · `test:memory-projection-lifecycle` (idempotency, concurrency, negative cases) | **success** |
+
+Those are the nine-plus cases that failed with *"DELETE requires a WHERE clause"*
+on every run from #511's merge onward. `WHERE true` is enough.
+
+**And it transfers to production as evidence rather than inference**, because the
+two databases are running *the same bytes*:
+
+| | `pg_get_functiondef` md5 | length |
+|---|---|---|
+| `portava-ci` (hwokxgbmezheskbzskfr) | `d44959054ec4299a97c90eb60c96341b` | 10525 |
+| production (ajrurzioarfkagpuxfnb) | `d44959054ec4299a97c90eb60c96341b` | 10525 |
+
+Identical, and production was separately confirmed to run the same
+`session_preload_libraries = supautils`. So what the suites exercised on CI is
+byte-for-byte what production will execute. That is the strongest statement
+available without running fixtures against production, and it is deliberately
+the one made here rather than "production is fine".
+
+### A TRAP IN `certify:migrations` THAT 2965 SPRANG, worth the next author's time
+
+Getting to that proof took an extra CI round for a reason nothing warns about,
+and it will catch the next surgery migration too.
+
+`certify:migrations` **stage 4 re-runs every `DO` block** of the migrations that
+run applied (`stagePostconditions`, `certifyMigrations.ts:887`). Its model is
+that every `DO` block in a migration is a *postcondition*. A surgery-pattern
+migration breaks that model twice over:
+
+- 2965's `$pre$` is a **precondition**, and an explicitly non-idempotent one —
+  it raises once the delete is qualified, which is exactly the state stage 4
+  re-runs it in. Reproduced verbatim against `portava-ci`:
+  *"2965: the installed definition already qualifies the `_canon_saves` delete;
+  this migration is not idempotent by design."*
+- 2965's `$mig$` contains `EXECUTE`, so `isAssertionOnlyDoBlock` refuses it —
+  *"a postcondition block is not read-only; REFUSED rather than run"* — which is
+  the right call by that stage, and still counts as a problem.
+
+So `certify` failed on run `35581577283`, and because the schema-drift job
+failed, `live DB · RLS` was **skipped** — the memory suites did not run at all.
+The apply itself had succeeded. A red certify there meant "this run's migration
+has a non-re-runnable block", not "the apply is bad", and the two look identical
+from the job list.
+
+**It self-clears**, which is why no fix is proposed here: scope is resolved from
+ledger rows tagged with `GITHUB_RUN_ID` (`resolveScope`,
+`certifyMigrations.ts:556`), so a later run applies nothing, scope is empty, and
+stages 2-4 pass. Confirmed on the very next run.
+
+The cost is one wasted CI round and a red `main` that looks like a bad apply.
+The cheap avoidance, for whoever writes the next one: **make the precondition
+tolerate the post-state** — return quietly instead of raising when the work is
+already done — so the same block is honest run once and run twice.
+
 ### The same defect class, looked for rather than assumed unique
 
 2963 was not searched for in isolation. Every non-extension function in
@@ -2239,19 +2307,6 @@ It wants an owner and a deliberate decision, not a drive-by `WHERE true`.
   the section directly above. Whoever owns the journey-shadow programme should
   decide whether it is repaired, replaced or dropped; it is not this lane's to
   guess at.
-- **2965's sufficiency is still unproven, and that is the one thing left on it.**
-  It merged to `main` as #515 at 09:08 UTC (`2c982d5eb`), so `portava-ci` gets
-  the qualified form on the first apply run from `main` after that merge.
-  Production already had it — applied ahead of the merge, because production was
-  actively broken and waiting for a merge is still waiting. But **nothing has yet
-  executed the qualified body under an armed `safeupdate` guard**, in either
-  database: the Management API session both applies ran through does not preload
-  `supautils`, which is precisely how 2963 got through. The live memory suites on
-  that post-merge `main` run are the first and only thing that can confirm
-  `WHERE true` is enough. Until that run is read, "fixed" is a well-argued
-  expectation rather than a measurement. If it is still red, #515's own header
-  names the next move (`TRUNCATE`, rejected there only for being untestable from
-  the authoring session, not for locking — `_canon_saves` is session-private).
 - **Neither migration's feature is switched on in production.** 2963 changes a
   projector body and is live the moment it is applied; 2964's counter is written
   only on the `map_telemetry_enabled = FALSE` path, so the table exists and holds
