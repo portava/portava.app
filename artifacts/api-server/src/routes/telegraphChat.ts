@@ -115,6 +115,38 @@ function refuseUnlessMember(res: any, membership: ThreadMembership, deniedMessag
   return true;
 }
 
+/**
+ * Retire a suggestion after its action succeeded.
+ *
+ * The action's primary side effect (plan item, prefill, poll message) has
+ * already been committed by the time this runs, so a failure here must NOT turn
+ * into a refusal: the caller would retry and duplicate that side effect. It must
+ * also not be swallowed — an un-retired card stays on screen and invites exactly
+ * that duplicate. So the failure is logged and reported to the caller as
+ * `suggestionRetired: false` alongside the successful primary result.
+ *
+ * This is the one silent write in this file that `refuseUnlessMember`'s
+ * `degraded_unavailable` posture does NOT fit: everything else here fails before
+ * it has changed anything, and may honestly ask the client to retry. This one
+ * cannot.
+ */
+async function markSuggestionActed(
+  client: any,
+  suggestionId: string,
+  userId: string,
+): Promise<boolean> {
+  const { error } = await client
+    .from("telegraph_chat_suggestions")
+    .update({ status: "acted", acted_on_at: new Date().toISOString() })
+    .eq("id", suggestionId)
+    .eq("user_id", userId);
+  if (error) {
+    chatLogger.error({ err: error, suggestionId, userId }, "suggestion acted-status update failed");
+    return false;
+  }
+  return true;
+}
+
 // ── GET /api/threads/:threadId/telegraph/suggestions ─────────────────────────
 
 router.get("/threads/:threadId/telegraph/suggestions", async (req, res) => {
@@ -250,17 +282,18 @@ router.post(
         "dismiss preference read failed — no preference event will be written, and that is a failure, not an absent suggestion");
     }
 
-    if (lookupErr) {
-      chatLogger.error({ err: lookupErr, suggestionId }, "dismiss suggestion lookup failed");
-      sendError(res, "db_error", "Failed to load suggestion", { exposeDetail: true });
-      return;
-    }
-
     // The UPDATE below is scoped by (id, user_id, thread_id) and matches zero
     // rows when the suggestion does not exist or belongs to someone else — no
     // error, so the handler used to answer `ok: true` for a dismissal that
     // never happened. Every sibling action already 404s here; so does this one.
-    if (!suggestion) {
+    //
+    // `!suggestionErr &&` is load-bearing, and it is what the branch above buys:
+    // a FAILED read ALSO leaves `suggestion` null, and 404-ing on that would
+    // trade one false report ("dismissed") for another ("no such suggestion"),
+    // both made from a read that never happened. An unreadable suggestion is not
+    // an absent one, so the dismiss proceeds and answers for its own write —
+    // which is the posture main chose for this handler deliberately.
+    if (!suggestionErr && !suggestion) {
       sendError(res, "not_found", "Suggestion not found");
       return;
     }

@@ -329,11 +329,15 @@ describe("A. Telegraph suggestions — swallowed DB results", () => {
     const r = await req(server, "GET", `/api/threads/${THREAD_ID}/telegraph/suggestions`, TOK_A);
 
     assert.notEqual(r.status, 200, "a failed read must not be reported as 'no suggestions'");
-    assert.equal(r.status, 500);
-    assert.equal(r.body?.error, "db_error");
+    // main fixed this same read on its own side and chose `degraded_unavailable`
+    // (503) over `db_error` (500), because it is the one code lib/http.ts marks
+    // RETRYABLE — a client told 500 gives up, a client told 503 comes back when
+    // the table does. The claim above is unchanged; only the refusal's name is.
+    assert.equal(r.status, 503);
+    assert.equal(r.body?.error, "degraded_unavailable");
   });
 
-  it("returns db_error, not a false 403, when the membership lookup itself fails", async () => {
+  it("refuses retryably, not with a false 403, when the membership lookup itself fails", async () => {
     const client = makeClient(telegraphTables(), {
       fail: [{ table: "message_thread_members", op: "select", message: "membership lookup down" }],
     });
@@ -346,8 +350,12 @@ describe("A. Telegraph suggestions — swallowed DB results", () => {
       403,
       "a DB failure must not tell an actual thread member they are not in the thread",
     );
-    assert.equal(r.status, 500);
-    assert.equal(r.body?.error, "db_error");
+    // Same substitution as the read above: main's verifyThreadMember returns a
+    // third outcome ("unreadable") and refuseUnlessMember answers it with
+    // `degraded_unavailable`. The point of this test — that an unreadable
+    // membership table never becomes a 403 — is what it always was.
+    assert.equal(r.status, 503);
+    assert.equal(r.body?.error, "degraded_unavailable");
   });
 
   it("still 403s a genuine non-member (the honest-error fix must not open access)", async () => {
