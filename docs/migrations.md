@@ -2050,21 +2050,35 @@ was only unsafe *before* because erasure was guaranteed to raise.
 2965's surgery pattern sprang `certify:migrations` stage 4 twice (see *"A TRAP IN
 `certify:migrations` THAT 2965 SPRANG"*). 2976 avoids **both** halves:
 
-- the replacement is a **top-level `CREATE OR REPLACE FUNCTION`**, not a `DO`
-  block, so stage 4 never re-runs it and there is no `$mig$` containing `EXECUTE`;
-- the only two `DO` blocks are assertion-only and **tolerate the post-state** —
-  `$pre$` accepts the pre-image *and* the post-image and returns quietly on the
-  latter, raising only on an unrecognised body.
+— and #516 has since made the reasoning exact, which also corrected what this
+section used to claim. Stage 4 does **not** re-run "every `DO` block": it
+collects only blocks `isAssertionOnlyDoBlock()` accepts, then holds back the
+ones `isPreconditionDoBlock()` recognises. So of 2976's three blocks:
 
-Both were checked against the real rule by replicating
-`isAssertionOnlyDoBlock` (`certifyMigrations.ts:279`): both **ACCEPTED**.
+| block | contains | stage 4 |
+|---|---|---|
+| `$pre$` | assertions only, tagged a precondition | **held back** by #516 |
+| `$mig$` | the guarded apply, via `EXECUTE` | **never collected** — not assertion-only |
+| `$post$` | assertions only, not a precondition | **re-run**, and it tolerates every state the file can leave |
+
+`$pre$` is nonetheless written to tolerate the post-state as well — it accepts
+the pre-image *and* the post-image and returns quietly on the latter, raising
+only on an unrecognised body — so it is correct inside the applier's own
+transaction on a second apply, rather than relying on #516 to excuse it.
+
+This is asserted, not asserted-about: `journeyShadowGlobalStopDeleteScope.test.ts`
+case (7) **imports** `isAssertionOnlyDoBlock` and `isPreconditionDoBlock` from
+`src/scripts/lib/migrationSqlBlocks.ts` and classifies 2976's real blocks with
+them. An earlier version of that test *replicated* those functions, because they
+were unreachable inside `certifyMigrations.ts`; #516 lifted them out precisely so
+they could be exercised, so the copy is gone.
 
 Spelling the definition out in full is also the point: **a live object no file
 describes is its own defect, and is half of why this happened.** The safety of
 replacing rather than patching comes from the `$pre$` **md5 gate** — the body is
 replaced only if what is installed is byte-for-byte the body the file was
 written against (`05e711b9fb218e42171988c1c56b8d26`, 2891 bytes, captured
-verbatim in `docs/sql/global_journey_shadow_stop_v1.preimage.sql`).
+verbatim in `artifacts/api-server/src/test/fixtures/global_journey_shadow_stop_v1.preimage.sql`).
 
 ### Applied to production 2026-09-21, and verified independently
 
@@ -2122,10 +2136,74 @@ that cost this project a production outage on 2026-09-21, and no check run there
 is presented here as evidence about a guarded session.
 
 **`portava-ci` could not rehearse this at all**: the function does not exist
-there, and `2976`'s precondition correctly **refused** — *"global_journey_shadow_stop_v1
-is absent … will not create one from nothing."* That refusal is the design
-working, and it is also why the sufficiency argument rests on the byte-identity
-above rather than on a CI suite.
+there (`count(*)` over `pg_proc` is **0**, verified 2026-09-21), so the
+sufficiency argument rests on the byte-identity above rather than on a CI suite.
+
+That absence was first written up here as *the design working* — `2976`'s
+precondition **refused**, *"global_journey_shadow_stop_v1 is absent … will not
+create one from nothing."* **That reading was half right, and the wrong half
+was a defect.** See below.
+
+### The refusal on an absent object was ALSO a chain-replayability defect
+
+**The invariant:** every file in the canonical chain must replay cleanly onto a
+database built from that chain. A migration that **aborts** the replay is broken
+however right it is about production, because it stops every later file running.
+
+2976 failed that, and the failure was not hypothetical — CI caught it:
+
+    ##[error]local-db: 2976_journey_shadow_global_stop_delete_scope.sql failed
+             and is not in KNOWN_UNREPLAYABLE.json
+    ERROR: 2976: public.global_journey_shadow_stop_v1 is absent.
+
+The object is absent from a chain-built database **by construction**: it was
+authored in `2127` SECTION 9 on a branch that never merged, so no file in the
+chain creates it. The same abort would have hit `live-db.yml`'s apply to
+`portava-ci` after merge, turning `main` red for the same reason.
+
+**The fix is a quiet skip, in all three blocks, from one observation.** Each
+block re-derives the same catalog fact itself, so the skip and the assertions
+can never disagree about what happened:
+
+| block | on an absent object |
+|---|---|
+| `$pre$` | `RAISE NOTICE`, `RETURN` |
+| `$mig$` | `RAISE NOTICE`, `RETURN` — so nothing is created from nothing, and the `REVOKE`/`GRANT`/`COMMENT` cannot raise either |
+| `$post$` | `RAISE NOTICE`, `RETURN` — there is nothing to assert |
+
+**A postcondition that fires on a deliberate no-op is the same class of false
+failure as the `certify:migrations` `$pre$` trap** — a guard reporting a
+migration that worked as a migration that broke. That is why `$post$` had to
+move too, and why it skips on the *same* observation rather than a second one.
+
+**What is deliberately NOT weakened.** *Absent → skip* and *present but
+unrecognised → refuse* are different branches and stay different. If the
+function exists but its body is neither the recorded pre-image nor the
+post-state, `$pre$` still **raises** and still refuses to overwrite a body it has
+not read. The md5 gate is untouched; the header's reasoning about not creating
+the object from nothing is still true, and is now enforced by the `$mig$` gate in
+behaviour rather than by an abort.
+
+**Why not `KNOWN_UNREPLAYABLE.json`.** That registry exists and 2976 would have
+been accepted into it. It was rejected for two reasons. Its own `_rule` says an
+entry is *"a fact about the replay, not permission to ignore the file"* — and
+this failure was avoidable, not inherent. And it is read only by
+`scripts/local-db/up.sh`: an entry would have silenced the throwaway CI job while
+leaving the `portava-ci` apply to abort exactly as before. **It would have hidden
+half the defect.**
+
+**Proven on a real PostgreSQL 16.13**, all four branches, and the original
+failure reproduced first:
+
+| database state | original 2976 | repaired 2976 |
+|---|---|---|
+| function **absent** | `ERROR: … is absent` (exit 3) | 3 × `NOTICE`, `COMMIT`, exit 0, function still absent |
+| **pre-image** installed (md5 `05e711b9…`, 2891) | — | applies; installed body is **md5 `ff476d88…`, 4218 — byte-identical to production** |
+| **post-state** (re-apply) | — | `NOTICE: already applied`, exit 0, bytes unchanged |
+| **unrecognised body** | — | `ERROR: … REFUSING rather than overwriting` (exit 3) |
+
+The pre-image fixture reproducing production's exact `pg_get_functiondef` md5 on
+a *local* PostgreSQL 16 is itself the check that the capture is faithful.
 
 ### Still open
 
@@ -2137,6 +2215,33 @@ above rather than on a CI suite.
   this lane's to take. **2976 deliberately does not retire the function**: the
   contract for retiring it is a verified canonical replacement covering its
   callers, and there is none.
+
+  Bringing the object into the repository made it visible to
+  `check:security-definer-oracles`, which had never seen it, and it failed — a
+  SECURITY DEFINER function nothing references. **That finding is correct and is
+  now ledgered**, not silenced: `src/scripts/SECURITY_DEFINER_ORACLES.json` gains
+  a `PENDING-OWNER` entry. The check's standing warning — that Supabase default
+  privileges leave `EXECUTE` with `anon` and `authenticated` — **does not hold
+  here**, and the entry says so with the measurement: production's `proacl` reads
+  exactly `postgres=X/postgres | service_role=X/postgres`, and
+  `has_function_privilege` returns `anon` **false**, `authenticated` **false**,
+  `service_role` **true** (2026-09-21). So it is not reachable with a user token
+  and answers nobody's authorization question. A **`REVOKE` was not** used as the
+  fix — the check forbids it, and it was already done anyway.
+
+  One thing that entry records is stronger than its neighbours': a fresh replay
+  of the chain does not produce a narrowly-granted function, **it produces no
+  function at all** (see the no-op above). Production is the only database that
+  has it.
+
+  **The test must not manufacture a caller for it.** That check resolves a
+  reference edge from any quoted `"<name>"` token in `src/`, so a test asserting
+  *about* this function can accidentally register as something *calling* it —
+  the weakest reference kind, and the one the check's own report calls "the one a
+  stale test fixture produces". `journeyShadowGlobalStopDeleteScope.test.ts`
+  therefore writes that one pattern's quotes as `\x27`, with the reason in a
+  comment beside it. Suppressing the finding by accident would have been worse
+  than the finding.
 - **The rest of 2127 is still out-of-band.** This lane brought ONE object into
   the repository. The other ~30 `journey_*` functions in production, and the nine
   tables, remain described by no file on `main`.

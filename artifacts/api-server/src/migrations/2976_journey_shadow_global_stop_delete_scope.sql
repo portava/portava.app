@@ -135,18 +135,76 @@
 -- precondition raises on the post-state, and a DO block containing EXECUTE is
 -- refused as not read-only.
 --
--- This file avoids BOTH. The replacement is a TOP-LEVEL `CREATE OR REPLACE
--- FUNCTION` -- not a DO block -- so stage 4 never re-runs it. The only two DO
--- blocks are assertion-only and both TOLERATE the post-state: `$pre$` accepts
--- the pre-image and the post-image and raises only on an unrecognised body, and
--- `$post$` asserts facts that remain true on every re-run.
+-- This file avoids BOTH, and #516 has since made the reasoning exact. Stage 4
+-- does not in fact re-run "every DO block": it collects only the blocks that
+-- isAssertionOnlyDoBlock() accepts (scripts/lib/migrationSqlBlocks.ts), and a
+-- block containing EXECUTE is not one of them -- it is never collected, so it
+-- is never re-run and never "refused" either. #516 additionally holds back
+-- `$pre$`-tagged blocks via isPreconditionDoBlock(), because a precondition
+-- describes the state BEFORE the apply.
+--
+-- So of this file's three DO blocks, stage 4 re-runs exactly one:
+--   `$mig$`  -- contains EXECUTE, therefore not assertion-only: not collected.
+--   `$pre$`  -- assertion-only but tagged as a precondition: held back by #516.
+--   `$post$` -- assertion-only, re-run, and it TOLERATES every state this file
+--              can leave: the repaired body, a re-apply, and the deliberate
+--              no-op where the object is absent.
+-- `$pre$` is nonetheless written to tolerate the post-state as well, so it is
+-- correct inside the applier's own transaction on a second apply rather than
+-- relying on #516 to excuse it.
 --
 -- Spelling out the canonical definition in full (rather than patching the
 -- installed text) is also the point: a live object that no file describes is its
 -- own defect, and is half of why this happened. From this migration on, the
--- function IS in the repository. The safety of doing it this way comes from the
+-- function IS in the repository -- verbatim, inside the `$mig$` block's
+-- dollar-quoted `EXECUTE` literal rather than at top level, because the repair
+-- has to be conditional (see "CHAIN REPLAYABILITY" below). The text is the same
+-- text; it is still readable and greppable in this file, and it is still what
+-- `check:security-definer-oracles` reads the object out of. The safety of doing it this way comes from the
 -- `$pre$` md5 gate -- the body is replaced only if what is installed is exactly
 -- the body this file was written against, byte for byte.
+--
+-- ── CHAIN REPLAYABILITY: THE ABSENT CASE IS A NO-OP, NOT AN ERROR ───────
+-- Every file in the canonical chain must replay cleanly onto a database built
+-- from that chain. A migration that ABORTS the replay is broken however right
+-- it is about production, because it stops every later file from running.
+--
+-- This file's first version failed that. It RAISED when the function was
+-- absent, and the function is absent from any chain-built database BY
+-- CONSTRUCTION: it was authored in 2127 SECTION 9 on a branch that was never
+-- merged, so no file in the chain creates it. Measured, not assumed:
+--   * CI, `kernel SQL executed on a throwaway database` (run 35587567086):
+--     "local-db: 2976_... failed and is not in KNOWN_UNREPLAYABLE.json /
+--      ERROR: 2976: public.global_journey_shadow_stop_v1 is absent."
+--   * portava-ci, the project `live-db.yml` applies to: the function is
+--     absent there too (count(*) = 0 over pg_proc, verified 2026-09-21), so
+--     the same abort would have turned `main` red after merge. This was NOT
+--     only a rehearsal limitation; it was a defect in this file.
+--
+-- THE FIX IS A QUIET SKIP, IN ALL THREE BLOCKS, FROM ONE OBSERVATION:
+--   `$pre$`  -- absent: RAISE NOTICE and RETURN.
+--   `$mig$`  -- absent: RAISE NOTICE and RETURN, so nothing is created from
+--              nothing and the REVOKE/GRANT/COMMENT cannot raise either.
+--   `$post$` -- absent: RAISE NOTICE and RETURN; there is nothing to assert.
+-- They agree because each re-derives the same fact from the same catalog, so
+-- the skip and the assertions can never disagree about what happened.
+--
+-- WHAT IS DELIBERATELY NOT WEAKENED. Absence and an unrecognised body are
+-- DIFFERENT branches and stay different. If the function EXISTS but its body is
+-- neither the recorded pre-image (md5 05e711b9fb218e42171988c1c56b8d26) nor the
+-- post-state, `$pre$` still RAISES and still refuses to overwrite a body this
+-- file has not read. The md5 gate is untouched. Only "there is no object here"
+-- became a no-op, and on a chain-built database that is the correct outcome:
+-- this file repairs an existing object, and there is no existing object.
+--
+-- WHY NOT `KNOWN_UNREPLAYABLE.json`. That registry exists (9 entries) and 2976
+-- would have been accepted into it. It was rejected as the remedy for two
+-- reasons. Its own `_rule` says an entry is "a measured failure with the
+-- migration's own message" -- a fact about the replay, not permission to ignore
+-- the file -- and this failure is avoidable rather than inherent. And it is
+-- read only by `scripts/local-db/up.sh`: it would have silenced the throwaway
+-- CI job while leaving `live-db.yml`'s apply to portava-ci to abort exactly as
+-- before. A registry entry would have hidden half the defect.
 --
 -- ── DELIVERY NOTE ───────────────────────────────────────────────────────────
 -- Applied to production through the Supabase Management API
@@ -170,8 +228,18 @@ BEGIN
      AND p.prokind  = 'f'
      AND p.proname  = 'global_journey_shadow_stop_v1';
 
+  -- ABSENT: nothing to repair, and that is a CORRECT outcome, not an error.
+  -- The object this file repairs was authored out of band (2127 SECTION 9 on an
+  -- unmerged branch) and is therefore NOT in the canonical chain. A database
+  -- built from the chain alone -- the throwaway PostgreSQL in CI, and
+  -- portava-ci, where this function is measurably absent -- has no such object.
+  -- This file still REFUSES to create one from nothing (see the apply block
+  -- below, which is gated on the same fact); it simply does so quietly, because
+  -- a migration that aborts the replay of its own chain is broken however right
+  -- it is about production. See the header, "CHAIN REPLAYABILITY".
   IF d IS NULL THEN
-    RAISE EXCEPTION '2976: public.global_journey_shadow_stop_v1 is absent. This migration repairs an existing out-of-band object and will not create one from nothing.';
+    RAISE NOTICE '2976: public.global_journey_shadow_stop_v1 is absent; this migration repairs an existing out-of-band object and will not create one from nothing. Nothing to repair -- skipping (no-op).';
+    RETURN;
   END IF;
 
   -- The exact body this file was written against.
@@ -201,6 +269,47 @@ $pre$;
 -- ── THE CANONICAL DEFINITION ────────────────────────────────────────────────
 -- Identical to the body installed in production except for the three DELETE
 -- statements, which gain the programme-scope predicate, and their comments.
+--
+-- GATED ON PRESENCE -- and this gate is the same fact the `$pre$` block reports,
+-- not a second opinion about it. The DDL below runs ONLY if the object is
+-- already installed. That is what keeps "this migration repairs an existing
+-- out-of-band object and will not create one from nothing" TRUE while letting
+-- the file replay cleanly onto a database built from the canonical chain, where
+-- the object is absent and there is genuinely nothing to repair.
+--
+-- WHY THIS IS A `DO` BLOCK AND NOT TOP-LEVEL SQL. Top-level SQL has no
+-- conditional, and every statement here needs the same guard: a bare
+-- `CREATE OR REPLACE` would create the object from nothing, and the REVOKE,
+-- GRANT and COMMENT would each raise "function does not exist". Wrapping them
+-- is the only way to make the whole repair one decision.
+--
+-- IT IS STILL SAFE FROM THE `certify:migrations` STAGE 4 TRAP, for a better
+-- reason than the top-level form had. Stage 4 collects a file's assertion
+-- blocks via isAssertionOnlyDoBlock() (scripts/lib/migrationSqlBlocks.ts): a
+-- `DO` block containing EXECUTE is not assertion-only, so it is never collected
+-- and never re-run. The `$pre$` block is additionally held back by
+-- isPreconditionDoBlock(), added by #516. Only `$post$` is re-run, and it
+-- tolerates every state this file can leave behind, including the no-op.
+--
+-- THE CANONICAL TEXT IS STILL IN THIS FILE, VERBATIM, which was the point of
+-- spelling it out: `EXECUTE` takes a dollar-quoted literal, so the definition
+-- below is byte-for-byte the definition installed in production, readable and
+-- greppable, not assembled at runtime from the installed text the way 2965 had
+-- to do it.
+DO $mig$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+      FROM pg_proc p JOIN pg_namespace ns ON ns.oid = p.pronamespace
+     WHERE ns.nspname = 'public'
+       AND p.prokind  = 'f'
+       AND p.proname  = 'global_journey_shadow_stop_v1'
+  ) THEN
+    RAISE NOTICE '2976: global_journey_shadow_stop_v1 is absent; refusing to create it from nothing. No-op -- nothing to repair on a database built from the canonical chain.';
+    RETURN;
+  END IF;
+
+  EXECUTE $def$
 CREATE OR REPLACE FUNCTION public.global_journey_shadow_stop_v1(p_actor uuid)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -309,23 +418,32 @@ BEGIN
   );
 END;
 $function$;
+$def$;
 
--- Authorization, restated verbatim from 2127 SECTION 9 so this file is the
--- complete description of the object. CREATE OR REPLACE preserves the existing
--- ACL; these are belt-and-braces and must not widen it.
-REVOKE ALL ON FUNCTION public.global_journey_shadow_stop_v1(uuid)
-  FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.global_journey_shadow_stop_v1(uuid)
-  TO service_role;
+  -- Authorization, restated verbatim from 2127 SECTION 9 so this file is the
+  -- complete description of the object. CREATE OR REPLACE preserves the existing
+  -- ACL; these are belt-and-braces and must not widen it.
+  EXECUTE $def$
+  REVOKE ALL ON FUNCTION public.global_journey_shadow_stop_v1(uuid)
+    FROM PUBLIC, anon, authenticated;
+$def$;
+  EXECUTE $def$
+  GRANT EXECUTE ON FUNCTION public.global_journey_shadow_stop_v1(uuid)
+    TO service_role;
+$def$;
 
-COMMENT ON FUNCTION public.global_journey_shadow_stop_v1(uuid) IS
-  'INTERNAL SHADOW ONLY. Admin-only. Immediate global stop: disables all Journey flags, '
-  'deactivates stages, revokes assignments (with admin as revoked_by), revokes issuances, '
-  'ends issued sessions, and erases the observations, segment revisions and ground-truth '
-  'rows collected under the programme (scoped to journey_purpose = ''journey_observation_v1'' '
-  'and, for segment revisions, to programme participants). Atomic: a failure anywhere leaves '
-  'the stop unapplied rather than half-applied. Repaired by 2976 -- the 2127 body carried '
-  'three unqualified DELETEs that supautils safeupdate refuses, which made the stop inoperative.';
+  EXECUTE $def$
+  COMMENT ON FUNCTION public.global_journey_shadow_stop_v1(uuid) IS
+    'INTERNAL SHADOW ONLY. Admin-only. Immediate global stop: disables all Journey flags, '
+    'deactivates stages, revokes assignments (with admin as revoked_by), revokes issuances, '
+    'ends issued sessions, and erases the observations, segment revisions and ground-truth '
+    'rows collected under the programme (scoped to journey_purpose = ''journey_observation_v1'' '
+    'and, for segment revisions, to programme participants). Atomic: a failure anywhere leaves '
+    'the stop unapplied rather than half-applied. Repaired by 2976 -- the 2127 body carried '
+    'three unqualified DELETEs that supautils safeupdate refuses, which made the stop inoperative.';
+$def$;
+END
+$mig$;
 
 -- ── POSTCONDITIONS (assertion-only; true on every re-run) ───────────────────
 DO $post$
@@ -341,8 +459,22 @@ BEGIN
      AND p.prokind  = 'f'
      AND p.proname  = 'global_journey_shadow_stop_v1';
 
+  -- ABSENT. This is the no-op branch, and it must NOT fail here: the `$pre$`
+  -- block and the apply block above are gated on this exact fact, so "absent
+  -- after" is the outcome this file deliberately produces on a database built
+  -- from the canonical chain. A postcondition that fired on a deliberate skip
+  -- would be a false failure of precisely the kind #516 removed from stage 4 --
+  -- a guard reporting a migration that worked as a migration that broke.
+  --
+  -- THIS DOES NOT WEAKEN THE ASSERTIONS BELOW. They are skipped only when there
+  -- is no object to assert about, which is observable here and is the same
+  -- observation that skipped the repair. Wherever the object EXISTS -- production,
+  -- and any database that has the out-of-band 2127 object -- every assertion
+  -- below runs in full and unchanged. "Absent -> skip" and "present but
+  -- unrecognised -> refuse" stay different branches.
   IF d IS NULL THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (2976): global_journey_shadow_stop_v1 vanished.';
+    RAISE NOTICE '2976: global_journey_shadow_stop_v1 is absent and this migration no-opped; there is nothing to assert. Postconditions skipped.';
+    RETURN;
   END IF;
 
   IF v_args IS DISTINCT FROM 'p_actor uuid' THEN

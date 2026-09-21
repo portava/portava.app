@@ -27,10 +27,20 @@
  * `safeupdate` refuses — is a fact about TEXT and is decidable with no network,
  * so it is asserted here rather than left to an environment that does not exist.
  *
+ * THE STAGE-4 PREDICATES ARE IMPORTED, NOT MIRRORED
+ * -------------------------------------------------
+ * Case (7) asserts 2976's block shape against `isAssertionOnlyDoBlock` and
+ * `isPreconditionDoBlock` IMPORTED from `src/scripts/lib/migrationSqlBlocks.ts`.
+ * An earlier version of this file copied those functions in, because they lived
+ * inside `certifyMigrations.ts`, which cannot be imported (its first import is
+ * the strict CI front door and its last line is `await main()`). #516 lifted
+ * them out precisely so they could be exercised, so this file now asserts
+ * against THE REAL RULE rather than a copy of it that can drift.
+ *
  * FAILING-FIRST, HONESTLY
  * -----------------------
  * A detector that cannot detect is worse than no detector. Case (1) runs this
- * file's matcher against `docs/sql/global_journey_shadow_stop_v1.preimage.sql`
+ * file's matcher against `artifacts/api-server/src/test/fixtures/global_journey_shadow_stop_v1.preimage.sql`
  * — the verbatim `pg_get_functiondef` output captured from production BEFORE
  * the repair, md5 `05e711b9fb218e42171988c1c56b8d26` — and requires it to find
  * exactly the three unqualified deletes. If the matcher ever stops matching the
@@ -43,6 +53,11 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  isAssertionOnlyDoBlock,
+  isPreconditionDoBlock,
+  topLevelStatements,
+} from "../scripts/lib/migrationSqlBlocks.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "../../../..");
@@ -52,7 +67,7 @@ const MIGRATION = resolve(
 );
 const PREIMAGE = resolve(
   repoRoot,
-  "docs/sql/global_journey_shadow_stop_v1.preimage.sql",
+  "artifacts/api-server/src/test/fixtures/global_journey_shadow_stop_v1.preimage.sql",
 );
 
 /** The md5 of the pre-repair `pg_get_functiondef` output, gated by 2976's `$pre$`. */
@@ -71,65 +86,6 @@ const SCOPE_PREDICATE = "journey_purpose = 'journey_observation_v1'";
 /** Strip `--` line comments so prose can neither create nor hide a match. */
 function stripComments(sql: string): string {
   return sql.replace(/--[^\n]*/g, "");
-}
-
-/**
- * `maskForKeywordScan` / `isAssertionOnlyDoBlock`, mirrored from
- * `src/scripts/certifyMigrations.ts:146,279`. Mirrored rather than imported
- * because that module is a script with side effects and exports neither; the
- * point is to assert against THE REAL RULE — which blanks comments, quoted
- * literals and dollar-quoted bodies — and not a stricter invention of this test.
- * A naive /\bEXECUTE\b/ scan fails here on `has_function_privilege(..., 'EXECUTE')`,
- * which is a string literal the real rule masks.
- */
-function maskForKeywordScan(sql: string): string {
-  let out = "";
-  let i = 0;
-  while (i < sql.length) {
-    const ch = sql[i];
-    if (ch === "-" && sql[i + 1] === "-") {
-      while (i < sql.length && sql[i] !== "\n") i++;
-      out += " ";
-      continue;
-    }
-    if (ch === "'") {
-      i++;
-      while (i < sql.length) {
-        if (sql[i] === "'" && sql[i + 1] === "'") i += 2;
-        else if (sql[i] === "'") {
-          i++;
-          break;
-        } else i++;
-      }
-      out += " ";
-      continue;
-    }
-    if (ch === "$") {
-      const m = /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/.exec(sql.slice(i));
-      if (m) {
-        const tag = m[0];
-        const bodyStart = i + tag.length;
-        const end = sql.indexOf(tag, bodyStart);
-        const bodyEnd = end === -1 ? sql.length : end;
-        out += " " + maskForKeywordScan(sql.slice(bodyStart, bodyEnd)) + " ";
-        i = end === -1 ? sql.length : end + tag.length;
-        continue;
-      }
-    }
-    out += ch;
-    i++;
-  }
-  return out;
-}
-
-const MUTATION_KEYWORD_RE =
-  /\b(CREATE|ALTER|DROP|INSERT|UPDATE|DELETE|TRUNCATE|GRANT|REVOKE|COMMENT|REFRESH|REINDEX|CALL|COPY|EXECUTE)\b/i;
-
-function isAssertionOnlyDoBlock(stmt: string): boolean {
-  const masked = maskForKeywordScan(stmt);
-  if (!/^\s*DO\b/i.test(masked)) return false;
-  if (!/\bRAISE\b/i.test(masked)) return false;
-  return !MUTATION_KEYWORD_RE.test(masked);
 }
 
 /**
@@ -279,42 +235,146 @@ describe("global_journey_shadow_stop_v1 delete scope (2976)", () => {
     }
   });
 
-  it("(7) the preconditions tolerate the post-state, so certify:migrations stage 4 can re-run them", () => {
-    // docs/migrations.md, "A TRAP IN `certify:migrations` THAT 2965 SPRANG":
-    // stage 4 re-runs every DO block as if it were a postcondition, and refuses
-    // any block that is not read-only. 2965 sprang it twice — a precondition that
-    // raised on the post-state, and a `$mig$` block containing EXECUTE. 2976 keeps
-    // the replacement at TOP LEVEL (stage 4 never re-runs a non-DO statement) and
-    // both DO blocks assertion-only and re-runnable.
+  it("(7) the three DO blocks are classified by stage 4 exactly as this file intends", () => {
+    // WHAT STAGE 4 ACTUALLY DOES, since the earlier version of this test had it
+    // wrong and #516 settled it. `certifyMigrations.ts` does NOT re-run "every DO
+    // block": it collects only blocks that `isAssertionOnlyDoBlock()` accepts, and
+    // then holds back the ones `isPreconditionDoBlock()` recognises. So:
+    //   $mig$  — contains EXECUTE, so not assertion-only: never collected.
+    //   $pre$  — assertion-only, but tagged a precondition: held back by #516.
+    //   $post$ — assertion-only and NOT a precondition: this is the one re-run.
+    // Asserted with the real predicates, imported. A change to either side of
+    // this contract — 2976's shape, or the classification rule — fails here.
     const file = readFileSync(MIGRATION, "utf8");
 
     const doBlocks = [...file.matchAll(/DO \$(\w+)\$([\s\S]*?)\$\1\$;/g)];
     assert.deepEqual(
       doBlocks.map(([, tag]) => tag),
-      ["pre", "post"],
-      "2976 must have exactly the $pre$ and $post$ blocks — a $mig$ block doing the work " +
-        "is the shape stage 4 refuses",
+      ["pre", "mig", "post"],
+      "2976 is a gate, a guarded apply and an assertion — the $mig$ block is what makes " +
+        "the repair conditional on the object existing",
     );
 
-    for (const [block, tag] of doBlocks.map(([b, t]) => [b, t] as const)) {
+    const blocks = new Map(doBlocks.map(([whole, tag]) => [tag, whole]));
+
+    assert.ok(
+      !isAssertionOnlyDoBlock(blocks.get("mig")!),
+      "$mig$ performs the repair via EXECUTE; if it ever became assertion-only, stage 4 " +
+        "would start re-running the apply against the committed database",
+    );
+    for (const tag of ["pre", "post"]) {
       assert.ok(
-        isAssertionOnlyDoBlock(block),
-        `$${tag}$ must satisfy certifyMigrations' isAssertionOnlyDoBlock, or stage 4 refuses it`,
+        isAssertionOnlyDoBlock(blocks.get(tag)!),
+        `$${tag}$ must be assertion-only, or it is not a guard at all`,
       );
     }
+    assert.ok(
+      isPreconditionDoBlock(blocks.get("pre")!),
+      "$pre$ must be recognised as a precondition, or stage 4 re-runs a claim about the " +
+        "state BEFORE the apply against the state AFTER it — the false failure #516 removed",
+    );
+    assert.ok(
+      !isPreconditionDoBlock(blocks.get("post")!),
+      "$post$ must NOT be held back: it is the one block whose whole job is to be re-run",
+    );
 
-    const pre = doBlocks.find(([, tag]) => tag === "pre")![2];
-    assert.match(
-      pre,
-      /already applied/,
-      "$pre$ must return quietly on the post-state rather than raising, or certify stage 4 " +
-        "fails on the very run that applies this migration",
+    // The apply is not a top-level statement that would run unconditionally.
+    const topLevel = topLevelStatements(file);
+    assert.ok(
+      !topLevel.some((s) => /^\s*CREATE\s+OR\s+REPLACE\s+FUNCTION/i.test(s)),
+      "the CREATE OR REPLACE must live INSIDE the guarded $mig$ block; at top level it " +
+        "would create the function from nothing on any database built from the chain",
     );
 
     assert.ok(
       file.includes(PREIMAGE_MD5),
       "$pre$ must gate on the recorded pre-image md5, so the canonical body replaces only " +
         "the exact body this file was written against",
+    );
+  });
+
+  it("(8) an ABSENT object is a quiet no-op in all three blocks, and the md5 gate is not weakened", () => {
+    // THE CHAIN-REPLAYABILITY DEFECT THIS COVERS. 2976 repairs an object that is
+    // NOT in the canonical chain — it was authored in 2127 SECTION 9 on a branch
+    // that never merged and reached production out of band. So on any database
+    // built from the chain alone (CI's throwaway PostgreSQL, and portava-ci,
+    // where it is measurably absent) there is no such function. The first version
+    // of this file RAISED in that case, which aborted the whole chain replay and
+    // turned the `kernel SQL executed on a throwaway database` job red. A
+    // migration that aborts the replay of its own chain is broken however right
+    // it is about production.
+    //
+    // The fix is that absence is a NO-OP — and it has to be a no-op in all three
+    // blocks from the SAME observation, or they disagree: a $pre$ that returns
+    // quietly while $post$ still asserts is the same false failure in a new place.
+    const file = readFileSync(MIGRATION, "utf8");
+    const doBlocks = new Map(
+      [...file.matchAll(/DO \$(\w+)\$([\s\S]*?)\$\1\$;/g)].map(([, tag, body]) => [tag, body]),
+    );
+
+    for (const tag of ["pre", "mig", "post"]) {
+      const body = doBlocks.get(tag)!;
+      // Each block decides on its own lookup of the same catalog fact.
+      // `\x27` is the `'` this pattern needs, written as an escape ON PURPOSE.
+      // check:security-definer-oracles resolves a reference edge from any
+      // quoted `"<name>"` token in src/, and treats that as something calling
+      // the function. This function has NO caller — its callers are on an
+      // unmerged branch, which is exactly what SECURITY_DEFINER_ORACLES.json
+      // records — so a test asserting ABOUT it must not manufacture the
+      // weakest, most misleading kind of reference to it. The check's own
+      // report calls a bare string literal "the one a stale test fixture
+      // produces". This keeps the assertion exact and the reference graph honest.
+      assert.match(
+        body,
+        /proname\s*=\s*\x27global_journey_shadow_stop_v1\x27/,
+        `$${tag}$ must derive the presence of the object itself, so the skip and the ` +
+          "assertions can never disagree about what happened",
+      );
+      const absent = tag === "mig" ? /IF NOT EXISTS \(/ : /IF d IS NULL THEN/;
+      assert.match(body, absent, `$${tag}$ must have an explicit absent branch`);
+
+      // The absent branch must NOTICE-and-RETURN, never RAISE EXCEPTION.
+      const at = body.search(absent);
+      const branch = body.slice(at, body.indexOf("END IF;", at));
+      assert.match(
+        branch,
+        /RAISE NOTICE/,
+        `$${tag}$'s absent branch must say out loud that it skipped — a silent skip is ` +
+          "indistinguishable from a guard that did not run",
+      );
+      assert.match(
+        branch,
+        /\bRETURN;/,
+        `$${tag}$'s absent branch must RETURN, not fall through`,
+      );
+      assert.ok(
+        !/RAISE EXCEPTION/.test(branch),
+        `$${tag}$ must not raise when the object is absent: on a chain-built database ` +
+          "there is genuinely nothing to repair, and that is a correct outcome",
+      );
+    }
+
+    // NOT WEAKENED: absent and unrecognised are different branches. A body that is
+    // neither the pre-image nor the post-state must still be REFUSED outright.
+    const pre = doBlocks.get("pre")!;
+    assert.match(
+      pre,
+      /RAISE EXCEPTION[\s\S]*REFUSING rather than overwriting a body this file has not read/,
+      "the md5 gate must still refuse an unrecognised installed body — 'absent -> skip' " +
+        "and 'present but unrecognised -> refuse' are different branches and must stay different",
+    );
+    assert.match(
+      pre,
+      /already applied/,
+      "$pre$ must also return quietly on the post-state, so a second apply is a no-op",
+    );
+
+    // And the guarded apply must refuse to conjure the object.
+    assert.match(
+      doBlocks.get("mig")!,
+      /refusing to create it from nothing/i,
+      "the apply block is what makes 'will not create one from nothing' true in behaviour " +
+        "rather than only in the header",
     );
   });
 });
