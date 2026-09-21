@@ -334,9 +334,24 @@ export async function generateSuggestions(
       q,
       max: policy.maxSuggestions,
     }).catch(() => [] as InputSuggestion[]);
+    // §15 PriorSelection on the recipient path. This branch is a full TAKEOVER
+    // that returns before the generic `applyPriorSelectionBoost` below, so a
+    // recorded recipient pick used to feed NOTHING — the write had no reader
+    // here, which is why the §35 writer-coverage guard carried
+    // `useTelegraphRecipients.ts` as a KNOWN GAP with "boost-only benefit" as
+    // the benefit that did not exist yet. It exists now.
+    //
+    // It can only ever REORDER what `resolveRecipientSuggestions` already
+    // returned — the eligibility/enumeration gate (§47/§54) runs first and this
+    // adds nobody to its output. That is the same contract personalization.ts
+    // states for every remembered person: re-ranked among candidates that are
+    // already there, never surfaced on its own.
+    const boostedRecips = personalizationOn
+      ? applyPriorSelectionBoost(recips, memory, personalQueryKey)
+      : recips;
     return dropDeadRows(
       orderSuggestions(
-        applySessionBias(recips, sessionContext, normalized),
+        applySessionBias(boostedRecips, sessionContext, normalized),
         Math.min(limit, policy.maxSuggestions),
       ),
     );
