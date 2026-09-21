@@ -43,9 +43,9 @@ export type { SuggestionAction, SuggestionActionType } from './types/suggestionA
 
 // ── contexts / registry ──────────────────────────────────────────────────────
 export {
-  INPUT_CONTEXT_REGISTRY,
-  INPUT_POLICY_VERSION,
+  inputPolicyVersion,
   getContextDescriptor,
+  conservativeDescriptor,
   type InputContextDescriptor,
 } from './contexts/inputContexts.ts';
 export {
@@ -81,6 +81,34 @@ export {
 export { requestSuggestions } from './services/inputAssistance.ts';
 export { buildSuggestBody } from './services/suggestBody.ts';
 export { SuggestionCache, sharedSuggestionCache } from './services/suggestionCache.ts';
+// ── §48 / G340 — the policy authority ────────────────────────────────────────
+export {
+  PolicyStore,
+  sharedPolicyStore,
+  DEFAULT_MAX_AGE_MS,
+  type PolicySnapshot,
+  type PolicyReadResult,
+  type PolicyMissReason,
+} from './services/policyStore.ts';
+export {
+  CONSERVATIVE_POLICY,
+  conservativePolicyFor,
+  sanitizeServedPolicy,
+  offlineSurfaceAllowed,
+  UNREACHABLE_MIN_CHARS,
+  type ServedContextPolicy,
+} from './contexts/policyFallback.ts';
+export {
+  installInputPolicySync,
+  refreshInputPolicies,
+} from './services/installInputPolicySync.ts';
+export {
+  refreshPolicies,
+  applyAccountChange,
+  type PolicySyncDeps,
+  type PolicyRefreshOutcome,
+} from './services/policySync.ts';
+export { fetchInputPolicies, type PolicyFetchResult } from './services/policyClient.ts';
 export { createSequenceGuard, type SequenceGuard } from './services/raceGuard.ts';
 export {
   dedupeSuggestions,

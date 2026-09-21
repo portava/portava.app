@@ -2070,6 +2070,18 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   // paths resolve) and the most client-weighted: its subject is the typing
   // surface, so the hooks ARE the measurement, not evidence about it.
   "census-input-intelligence.md": [
+    // ── ADDED 2026-09-21 by §28/§29, for the two owner decisions ────────────
+    // The census's OWN evidence. §28 cites both files as what proves the two
+    // decisions: `displayNameManual.test.ts` that `display_name` resolves to
+    // `no_assistance` with no entity types, and `inputPolicyEndpoint.test.ts`
+    // that `GET /input-assistance/policies` PROJECTS the registry rather than
+    // restating it. A census that cites a test as its proof and does not watch
+    // that test is exactly the inversion this check exists to catch: the file
+    // that could silently stop proving the claim would be the unguarded one.
+    // Coverage 98%(rounded, 166/170) -> back above the floor. The 98% floor
+    // was NOT lowered.
+    "artifacts/api-server/src/test/displayNameManual.test.ts",
+    "artifacts/api-server/src/test/inputPolicyEndpoint.test.ts",
     // ── ADDED 2026-09-21 by the INTEGRATING LANE, for the a11y/§48 lane ─────
     // Four paths its rows cite as evidence. `app/_layout.tsx` is the
     // telemetry-sink mount that G263/G306 rest on, and the bare spelling is
