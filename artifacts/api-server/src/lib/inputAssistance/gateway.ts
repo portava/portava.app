@@ -71,6 +71,7 @@ import {
   emptyMemory,
   type SelectionMemory,
 } from './personalization';
+import { buildSavedPlaceSuggestions } from './savedEntities';
 import {
   projectSearchResult,
   projectCanonicalCity,
@@ -252,9 +253,26 @@ export async function generateSuggestions(
           existingEntityIds: existingIds,
         }).catch(() => [])
       : [];
+    // §35 SAVED entities — the half of "Saved and Trip-related entities" that
+    // read nothing. Gated inside savedEntities.ts on the policy's entity types,
+    // so it fires for place_picker / trip_stop_place and is inert for the
+    // city-and-country pickers. Unlike the recents above it reads a table
+    // production HAS, so this arm is live rather than ☠prod.
+    const savedIds = new Set<string>([
+      ...existingIds,
+      ...recents.map((s) => s.entityId).filter((x): x is string => !!x),
+    ]);
+    const saved = await buildSavedPlaceSuggestions(sc, {
+      userId,
+      context,
+      policy,
+      policyVersion: POLICY_VERSION,
+      max: policy.maxSuggestions,
+      existingEntityIds: savedIds,
+    }).catch(() => []);
     return dropDeadRows(
       orderSuggestions(
-        applySessionBias([...projected, ...recents], sessionContext, normalized),
+        applySessionBias([...projected, ...recents, ...saved], sessionContext, normalized),
         Math.min(limit, policy.maxSuggestions),
       ),
     );
@@ -280,10 +298,22 @@ export async function generateSuggestions(
       policyVersion: POLICY_VERSION,
       max: policy.maxSuggestions,
     }).catch(() => []);
-    if (recents.length > 0) {
+    // §35 SAVED entities (G228) — the production-live arm of the same zero-state.
+    // `global_search` names `place` in its entity types, so a user who has saved
+    // a place is offered it before the first keystroke even where the §35
+    // selection-memory table is absent (the ☠prod case).
+    const saved = await buildSavedPlaceSuggestions(sc, {
+      userId,
+      context,
+      policy,
+      policyVersion: POLICY_VERSION,
+      max: policy.maxSuggestions,
+      existingEntityIds: new Set(recents.map((s) => s.entityId).filter((x): x is string => !!x)),
+    }).catch(() => []);
+    if (recents.length > 0 || saved.length > 0) {
       return dropDeadRows(
         orderSuggestions(
-          applySessionBias(recents, sessionContext, normalized),
+          applySessionBias([...recents, ...saved], sessionContext, normalized),
           Math.min(limit, policy.maxSuggestions),
         ),
       );
