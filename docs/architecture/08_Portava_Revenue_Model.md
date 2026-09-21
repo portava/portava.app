@@ -113,7 +113,7 @@ The same commission is expressed as three different constants in three files:
 | **per-level 25/22/15/12/12** | `rent_buddy_fee_rules` seed | the ledger writer, per booking |
 | **22 %** | `DEFAULT_PLATFORM_FEE_PERCENT` (`lib/rentBuddyEarningsLedger.ts:37`) | fallback when the buddy's level has no fee row |
 | **22 %** | `defaultFeePercent` (`routes/rentABuddyMarketplace.ts:2192`) | the buddy dashboard's fee estimate when the ledger is empty |
-| **15 %** | `platformFeePct = 0.15` (`routes/rentABuddy.ts:6237`, applied `:6251`, published to the client `:6290`) | `GET /rent-a-buddy/dashboard/earnings/summary` — **for every buddy, at every level** |
+| **15 %** | `platformFeePct = 0.15` (`routes/rentABuddy.ts:6250#isNightlife`, applied `:6251`, published to the client `:6290`) | `GET /rent-a-buddy/dashboard/earnings/summary` — **for every buddy, at every level** |
 
 So a `new` buddy is quoted **15 %** by the earnings-summary screen, has **25 %** written to their
 ledger row, and sees **22 %** on the dashboard if their ledger is empty. Nothing reconciles them
@@ -121,7 +121,7 @@ and nothing fails when they diverge.
 
 **This must be resolved before any money is charged, and the resolution is one-directional:**
 `rent_buddy_fee_rules` is the schedule of record because it is the only one an operator can
-change without a deploy; the two literals are drift. `routes/rentABuddy.ts:6237` in particular is
+change without a deploy; the two literals are drift. `routes/rentABuddy.ts:6250#isNightlife` in particular is
 not a default — it ignores the buddy's level entirely.
 
 ### 2.4 The traveller-side fee is structurally zero

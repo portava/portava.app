@@ -5878,7 +5878,7 @@ and the column §17.4 needed.
   (CHECK: needs a trip); `POST /me/safe-return/sessions` accepts
   `subgroupId` and verifies, under the operational gate, that it names an
   active subgroup of that trip the caller is currently in
-  (`routes/safeReturn.ts:312#parsed.data.subgroupId`); the crew alert goes to
+  (`routes/safeReturn.ts:342#parsed.data.subgroupId`); the crew alert goes to
   that subgroup's current members rather than the whole crew
   (`services/safeReturn/SafeReturnNotificationService.ts:396#trip_subgroup_members`).
   The column is written only when named, so a database without 2794 still
@@ -8135,7 +8135,7 @@ the work.
 | TR108 | `tripReservations.ts` line 497 is the stricter delete rule | a **blank line** | `artifacts/api-server/src/routes/tripReservations.ts:680#sendTripRefusal` |
 | TR109 | `tripCrewLocation.ts` line 170 is where `buildCrewCard` calls the predicate | a comment about a legacy bucket name | `artifacts/api-server/src/domain/trips/services/tripCrewLocation.ts:210#canSeePresence` |
 | TR111 | `tripPolicy.ts` line 310 is `canManageSafety` | the body of `canSeePrivateContributions` | `artifacts/api-server/src/domain/trips/policies/tripPolicy.ts:435#export async function canManageSafety(` |
-| TR111 | `routes/safeReturn.ts` line 306 is the call | a comment about a 503 | `artifacts/api-server/src/routes/safeReturn.ts:309#canManageSafety` |
+| TR111 | `routes/safeReturn.ts` line 306 is the call | a comment about a 503 | `artifacts/api-server/src/routes/safeReturn.ts:331#canManageSafety` |
 | TR113 | `trips-expansion.ts` lines 1798-1948 gate documents separately | invite-link slot release — no document code in the range | `artifacts/api-server/src/routes/trips-expansion.ts:2275#router.get` |
 | TR118 | `routes/trips.ts` line 1531 gates private coordinates | a `planEditPermits` filter; `location_is_private` does not occur in that file until much later | `artifacts/api-server/src/routes/trips.ts:1812#location_is_private` |
 | TR120 | `tripCrewLocation.ts` lines 154-156 is the safe-return opt-in | a doc comment about `exactCoords` | `artifacts/api-server/src/domain/trips/services/tripCrewLocation.ts:286#shareSafeReturnStatus` |

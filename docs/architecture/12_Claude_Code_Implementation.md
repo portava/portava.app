@@ -142,7 +142,7 @@ Every row was re-verified at this commit. **Severity is about what is wrong now,
 
 | # | Defect | Sev | R/C | Citation |
 |---|---|---|---|---|
-| **M1** | **Three disagreeing take rates.** `rent_buddy_fee_rules` seeds 25/22/15/12/12 per level (`artifacts/api-server/migrations/0048_rent_buddy_marketplace.sql:418-424`); the ledger falls back to `DEFAULT_PLATFORM_FEE_PERCENT = 22` (`lib/rentBuddyEarningsLedger.ts:37`); the buddy dashboard falls back to `defaultFeePercent = 22` (`routes/rentABuddyMarketplace.ts:2192`); the earnings summary hard-codes `platformFeePct = 0.15` **for every buddy at every level** (`routes/rentABuddy.ts:6237`). A `new` buddy is quoted 15 %, ledgered at 25 %, dashboarded at 22 %. Nothing reconciles them and nothing fails when they diverge. | **S1** | R | verified above; `08` §2.3, `09` §1.3.3 |
+| **M1** | **Three disagreeing take rates.** `rent_buddy_fee_rules` seeds 25/22/15/12/12 per level (`artifacts/api-server/migrations/0048_rent_buddy_marketplace.sql:418-424`); the ledger falls back to `DEFAULT_PLATFORM_FEE_PERCENT = 22` (`lib/rentBuddyEarningsLedger.ts:37`); the buddy dashboard falls back to `defaultFeePercent = 22` (`routes/rentABuddyMarketplace.ts:2192`); the earnings summary hard-codes `platformFeePct = 0.15` **for every buddy at every level** (`routes/rentABuddy.ts:6250#isNightlife`). A `new` buddy is quoted 15 %, ledgered at 25 %, dashboarded at 22 %. Nothing reconciles them and nothing fails when they diverge. | **S1** | R | verified above; `08` §2.3, `09` §1.3.3 |
 | **M2** | **`rent_buddy_payouts` has no INSERT anywhere in the repository.** The only two references in `src/` are UPDATEs — hold (`routes/rentABuddySpec.ts:2170`) and release (`:2208`). The table can only ever be empty; two admin routes operate on rows no code creates. | **S2** | C | `09` §1.4 |
 | **M3** | **Payout transitions are unguarded.** Both are a bare `.update({ status: … }).eq("id", payoutId)` with no predicate on the current status, so releasing an already-released or held-under-investigation payout succeeds silently. | **S2** | R | `routes/rentABuddySpec.ts:2169-2178`, `:2207-2215` |
 | **M4** | **The traveller service fee is structurally always zero.** The ledger reads `traveler_service_fee_usd` (`lib/rentBuddyEarningsLedger.ts:67`); both seeds populate only `traveler_service_fee_pct`; **no code anywhere reads `_pct`** — the only non-type references are the admin write (`routes/rentABuddyMarketplace.ts:2579`) and the admin screen (`travel-buddy-standalone/app/(rent-a-buddy)/admin/fee-rules.tsx:54`). The 5 % in the seed is a number nothing can act on. | **S2** | R (mismatch) / C (charging) | `08` §2.4 |
@@ -267,7 +267,7 @@ record say what its own code already claims.
 6. **M1 + M10 — one take rate, read from one place.** Requires **V2**. `08` §2.3 states the
    resolution direction and it is not a judgement call: `rent_buddy_fee_rules` is the schedule of
    record *because it is the only one an operator can change without a deploy*; the two literals are
-   drift, and `routes/rentABuddy.ts:6237` in particular is not a default — it ignores the buddy's
+   drift, and `routes/rentABuddy.ts:6250#isNightlife` in particular is not a default — it ignores the buddy's
    level entirely. Delete the second reader, not the first.
 7. **M5 — stop booking uncollected money.** `in_app_amount_collected` must be 0 until a payment
    path exists; `09` §1.3.1 is the reasoning, and the field currently contradicts the module's own

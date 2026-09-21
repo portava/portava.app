@@ -169,6 +169,9 @@ function withAdminGuard(c: any) {
 before(async () => {
   const app = express();
   app.use(express.json());
+  // The routes log through `req.log`, which pino-http binds in the real app and
+  // nothing binds here. Shimmed the way every other suite in src/test does it.
+  app.use((req, _res, next) => { (req as any).log = { info() {}, warn() {}, error() {}, debug() {} }; next(); });
   app.use("/", adminRouter);
   app.use("/api", rentABuddyRouter);
   await new Promise<void>((resolve) => { server = app.listen(0, "127.0.0.1", () => resolve()); });
@@ -179,86 +182,18 @@ after(() => new Promise<void>((resolve) => server.close(() => resolve())));
 
 // ── Site 3 — admin: a clean moderation record fabricated from a failed read ───
 
-describe("admin moderation record: an unreadable table must not render as clean", () => {
-  it("GET /admin/users/:id/moderation-summary marks the section unavailable, not empty", async () => {
-    const c = withAdminGuard(adminClient({ failTables: new Set(["moderation_actions", "reports"]) }));
-    _setTestClient(c, true);
-    _setTestServiceClient(c);
-
-    const r = await request("GET", `/admin/users/${TARGET_ID}/moderation-summary`);
-    assert.equal(r.status, 200, JSON.stringify(r.body));
-
-    // OLD BEHAVIOUR: moderationActions === [] and reportsReceived === [], i.e.
-    // a user with a moderation history rendered as one with none.
-    assert.equal(
-      r.body.sections.moderationActions.status, "unavailable",
-      "an unreadable moderation_actions must be reported unavailable",
-    );
-    assert.equal(r.body.sections.moderationActions.rows, null, "never an empty array on failure");
-    assert.equal(r.body.sections.reportsReceived.status, "unavailable");
-    assert.equal(r.body.moderationActions, null, "the legacy key must not fabricate []");
-    assert.equal(r.body.reportsReceived, null);
-    assert.equal(r.body.degraded, true);
-    assert.deepEqual(
-      [...(r.body.unavailableSections as string[])].sort(),
-      ["moderationActions", "reportsFiled", "reportsReceived"],
-    );
-
-    // A section that DID read must still say so.
-    assert.equal(r.body.sections.accountStates.status, "ok");
-    assert.ok(Array.isArray(r.body.accountStates));
-  });
-
-  it("GET /admin/users/:id/summary marks counts unavailable, not zero", async () => {
-    const c = withAdminGuard(adminClient({ failTables: new Set(["blocks", "moderation_actions"]) }));
-    _setTestClient(c, true);
-    _setTestServiceClient(c);
-
-    const r = await request("GET", `/admin/users/${TARGET_ID}/summary`);
-    assert.equal(r.status, 200, JSON.stringify(r.body));
-    assert.equal(r.body.sections.blockCount.status, "unavailable");
-    assert.equal(r.body.blockCount, null, "a fabricated 0 is the number a moderator unbans on");
-    assert.equal(r.body.sections.moderationActions.status, "unavailable");
-    assert.equal(r.body.moderationActions, null);
-    assert.equal(r.body.degraded, true);
-
-    // Sections that read fine keep their real values.
-    assert.equal(r.body.sections.muteCount.status, "ok");
-    assert.equal(typeof r.body.muteCount, "number");
-  });
-
-  it("GET /admin/users?handle= must not report openReports: 0 off an unread reports table", async () => {
-    const c = withAdminGuard(adminClient({ failTables: new Set(["reports"]) }));
-    _setTestClient(c, true);
-    _setTestServiceClient(c);
-
-    const r = await request("GET", `/admin/users?handle=target`);
-    assert.equal(r.status, 200, JSON.stringify(r.body));
-    assert.equal(
-      r.body.openReports, null,
-      "openReports: 0 on an unread table is the single most dangerous value here",
-    );
-    assert.equal(r.body.sections.openReports.status, "unavailable");
-    assert.equal(r.body.degraded, true);
-  });
-
-  it("a fully readable record is still reported ok and degraded:false", async () => {
-    const c = withAdminGuard(adminClient({
-      rows: { moderation_actions: [{ id: "m1", action_type: "warn" }] },
-    }));
-    _setTestClient(c, true);
-    _setTestServiceClient(c);
-
-    const r = await request("GET", `/admin/users/${TARGET_ID}/moderation-summary`);
-    assert.equal(r.status, 200);
-    assert.equal(r.body.degraded, false);
-    assert.deepEqual(r.body.unavailableSections, []);
-    assert.equal(r.body.sections.moderationActions.status, "ok");
-    assert.equal((r.body.moderationActions as any[]).length, 1);
-  });
-});
-
-// ── Sites 4 & 5 — Rent-a-Buddy risk scan and safety queue ─────────────────────
+// ── Site 1 — admin moderation record: COVERED ON MAIN, not duplicated here ───
+//
+// This branch marked each unreadable section "unavailable" and returned the
+// record with degraded:true. main arrived at the same property by refusing the
+// whole response — failedModerationReads(), a db_error naming the sections that
+// could not be read, and a test that admin.ts must consult that helper. That is
+// strictly the stronger answer to the same question ("an unread table must not
+// render as clean"), so the four cases that lived here were re-pointed rather
+// than re-implemented: see test/failOpenReadBoundaries.test.ts, "admin
+// moderation record cannot degrade to clean" (four cases, including the control
+// that a genuinely clean user still renders 200). Removed 2026-09-21 while
+// bringing this branch onto main; nothing is left unpinned.
 
 describe("rent-a-buddy risk scan: never a clean scan off an unread table", () => {
   it("POST /admin/run-risk-scan ABORTS with scan_incomplete instead of ok:true, flagged:[]", async () => {

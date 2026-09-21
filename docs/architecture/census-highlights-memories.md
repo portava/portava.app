@@ -2904,10 +2904,10 @@ listed with the occurrence evidence it requires:
 
 | seam | what it requires before it mints | verdict at `6d4fd1a06` |
 |---|---|---|
-| `POST /api/trips/:tripId/geofence/check-in` | a GPS fix inside the meetup radius, inside the window, by an ACCEPTED member, whose check-in row actually persisted (`artifacts/api-server/src/routes/geofence.ts:761#if (distanceM > radiusM) {`) | enforces |
+| `POST /api/trips/:tripId/geofence/check-in` | a GPS fix inside the meetup radius, inside the window, by an ACCEPTED member, whose check-in row actually persisted (`artifacts/api-server/src/routes/geofence.ts:773#if (distanceM > radiusM) {`) | enforces |
 | `POST /api/me/passport-stamps/gps` | `artifacts/api-server/src/routes/location.ts:390#if (stampType === "city_visit" && city && trustLevel === "gps_verified") {` — GPS-verified or nothing | enforces |
 | `POST /api/hidden-gems/:id/verify-visit` | `artifacts/api-server/src/routes/hiddenGems.ts:957#const result = await recordGpsCheckin` and then only when the check-in is not flagged suspicious | enforces |
-| `POST /api/me/safe-return/sessions/:id/confirm` | the traveller's own explicit "I am safe" (`artifacts/api-server/src/routes/safeReturn.ts:562#stampType: "safe_return",`), which is §1's *user confirmation* limb | enforces |
+| `POST /api/me/safe-return/sessions/:id/confirm` | the traveller's own explicit "I am safe" (`artifacts/api-server/src/routes/safeReturn.ts:592#stampType: "safe_return",`), which is §1's *user confirmation* limb | enforces |
 | `POST /api/airport/sessions` | **nothing.** The session is created and the stamp follows | **does not enforce** |
 
 Four of five held. The fifth is the one nobody had opened, and it was the only one whose

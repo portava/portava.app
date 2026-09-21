@@ -129,6 +129,9 @@ const FLAG_ON = { enabled: true };
 before(async () => {
   const app = express();
   app.use(express.json());
+  // The routes log through `req.log`, which pino-http binds in the real app and
+  // nothing binds here. Shimmed the way every other suite in src/test does it.
+  app.use((req, _res, next) => { (req as any).log = { info() {}, warn() {}, error() {}, debug() {} }; next(); });
   app.use("/", safeReturnRouter);
   app.use("/", geofenceRouter);
   await new Promise<void>((resolve) => { server = app.listen(0, "127.0.0.1", () => resolve()); });
@@ -258,40 +261,52 @@ describe("accountDeletion: an unreadable moderation_reports must not hard-delete
     };
   }
 
-  it("TOMBSTONES rather than hard-deletes when moderation_reports is unreadable", async () => {
+  // WHAT CHANGED, 2026-09-21. This branch's own fix TOMBSTONED on an unreadable
+  // precondition and put the over-preservation on the receipt. main arrived at
+  // the same property by a stricter route — hasThirdPartyInterest THROWS, the
+  // caller records the post as failed, and the deletion request is reported as
+  // failed rather than complete — so the two cases below assert main's mechanism
+  // instead of this branch's. The property they pin is unchanged and is the
+  // whole point: an unread precondition destroys nothing. main's own
+  // failOpenAccountDeletionReads.test.ts covers the same ground from the service
+  // side; these keep it pinned from the route-level fake this suite uses.
+  it("hard-deletes NOTHING when moderation_reports is unreadable", async () => {
     const sc = deletionClient({ posts: ["p-under-report"], failTables: new Set(["moderation_reports"]) });
-    const out = await executeAccountDeletion(sc as any, USER_ID, {} as any);
 
     // On the old code this post was hard-deleted: `data === undefined` → `[]`
     // → "no third-party interest" → DELETE. The moderator's evidence is gone
     // and there is no way to get it back.
-    assert.deepEqual(
-      sc._rpcCalls.filter((c) => c.fn === "tombstone_post").map((c) => c.args.p_post_id),
-      ["p-under-report"],
-      "an unreadable report table must be treated as third-party interest present",
-    );
+    const out = await executeAccountDeletion(sc as any, USER_ID, {} as any);
+
     assert.equal(
       sc._deletes.some((d) => d.table === "posts" && d.eq.id === "p-under-report"), false,
       "the post must NOT be hard-deleted — the deletion is irreversible",
     );
-    assert.equal(out.tombstonedCounts.posts, 1);
-    assert.equal(out.deletedCounts.posts, 0);
+    assert.equal(out.deletedCounts.posts ?? 0, 0);
+    // The deletion is reported FAILED rather than complete, which is the half
+    // that stops an operator reading a survivor as an erasure.
+    const postsStep = out.steps.find((st) => st.step === "tombstone_or_delete_posts");
     assert.ok(
-      out.warnings.some((w) => w.includes("p-under-report") && /moderation-report check failed/.test(w)),
-      `the over-preservation must be visible on the receipt; warnings: ${JSON.stringify(out.warnings)}`,
+      postsStep && postsStep.ok === false,
+      `the posts step must be recorded failed; steps: ${JSON.stringify(out.steps)}`,
     );
+    assert.match(String(postsStep!.error), /refusing to hard-delete/);
+    // NOT ASSERTED, and it is a gap rather than an omission: `out.ok` is still
+    // true here. executeAccountDeletion computes `ok = profileOk && authOk &&
+    // markedOk` and marks the request completed regardless of a failed step, so
+    // a deletion that left this post behind is reported complete — which is the
+    // claim the service's own comment above hasThirdPartyInterest makes and does
+    // not keep ("recorded as failed instead of reported complete"). Fixing that
+    // changes account-deletion completion semantics and belongs in its own
+    // change, not in bringing this branch up to date. Reported 2026-09-21.
   });
 
-  it("TOMBSTONES rather than hard-deletes when posts_comments is unreadable", async () => {
+  it("hard-deletes NOTHING when posts_comments is unreadable", async () => {
     const sc = deletionClient({ posts: ["p-maybe-replied"], failTables: new Set(["posts_comments"]) });
     const out = await executeAccountDeletion(sc as any, USER_ID, {} as any);
-
-    assert.deepEqual(
-      sc._rpcCalls.filter((c) => c.fn === "tombstone_post").map((c) => c.args.p_post_id),
-      ["p-maybe-replied"],
-    );
     assert.equal(sc._deletes.some((d) => d.table === "posts"), false);
-    assert.equal(out.deletedCounts.posts, 0);
+    assert.equal(out.deletedCounts.posts ?? 0, 0);
+    assert.equal(out.steps.find((st) => st.step === "tombstone_or_delete_posts")?.ok, false);
   });
 
   it("still hard-deletes a post when BOTH checks genuinely read clean", async () => {
