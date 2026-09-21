@@ -6037,7 +6037,7 @@ requirement, still read `W`, and that this lane would not move another census's
 verdict. **`G277` is now graded at `a97bfdac0` in `census-input-intelligence.md`
 §13 and moves `W` to `C`**, on all five of its stated clauses read one at a time
 and on a walk of the whole path from `country_picker` through
-`artifacts/api-server/src/lib/inputAssistance/gateway.ts:200#const isGeoPicker` and
+`artifacts/api-server/src/lib/inputAssistance/gateway.ts:201#const isGeoPicker` and
 `dispatchSearch` into `searchCountries` — the reachability leg §43.6 did not owe
 and did not take. §43.6's paragraph is discharged, not superseded: it was right
 about what it owed and it paid it.
