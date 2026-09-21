@@ -90,6 +90,25 @@ export interface PlaceBridgeResult {
   toCanonical: Map<string, Set<string>>;
   /** discovery_places.id -> a served id that references it (first match wins). */
   toServed: Map<string, string>;
+  /**
+   * TRUE when the `discovery_places` lookup did not run to completion, so an
+   * ABSENT mapping in `toCanonical` means "not known" rather than "does not
+   * exist". Additive and non-breaking: every caller that ignores it behaves
+   * exactly as it did before this field existed.
+   *
+   * WHY IT HAD TO EXIST. This function resolved EVERY `discovery_places` error
+   * — the bound `error` and the thrown one alike — to "no mapping", which is
+   * the same value it returns for a place that genuinely has no row. Two
+   * different facts arrived as one value, in a library with four callers and
+   * no single owner, and neither `searchSaved` nor `annotateNewToMe` could tell
+   * them apart even though both change what a user sees.
+   *
+   * Callers are NOT obliged to refuse on it. A degraded bridge is a real
+   * half-answer for `searchSaved` (the save still lists from its own snapshot)
+   * and a reason to stay inert for `annotateNewToMe` (which is fail-safe by
+   * contract). What the flag removes is the obligation to GUESS.
+   */
+  degraded: boolean;
 }
 
 // ── Structural cache (per served id → discovery_places.ids). NOT per user. ──────
@@ -121,6 +140,7 @@ export async function resolvePlaceIdBridge(
 ): Promise<PlaceBridgeResult> {
   const toCanonical = new Map<string, Set<string>>();
   const toServed = new Map<string, string>();
+  let degraded = false;
 
   const add = (served: string, dpId: string): void => {
     let set = toCanonical.get(served);
@@ -181,7 +201,13 @@ export async function resolvePlaceIdBridge(
         .from("discovery_places")
         .select("id, canonical_location_id, osm_id")
         .or(orParts.join(","));
-      if (!error && Array.isArray(data)) {
+      // supabase-js RESOLVES on a DB error, so `error` set and `data` null is
+      // how an unreadable `discovery_places` arrives — it does not throw. It is
+      // bound here rather than folded into the `!error &&` guard so that the
+      // failure has somewhere to go.
+      if (error || !Array.isArray(data)) {
+        degraded = true;
+      } else {
         for (const row of data as Array<{ id?: string | null; canonical_location_id?: string | null; osm_id?: string | null }>) {
           const dpId = row.id;
           if (!dpId) continue;
@@ -204,12 +230,20 @@ export async function resolvePlaceIdBridge(
       }
     } catch {
       // Non-fatal: leave unresolved served ids with no mapping (⇒ treated new).
+      degraded = true;
     }
   }
 
   // Write structural results back to the cache — including known-empties, so a
   // place with no discovery_places row is not re-queried every page.
-  if (!opts.noCache) {
+  //
+  // NOT WHEN THE READ FAILED. Caching a known-empty derived from a FAILED read
+  // is the swallowed error becoming durable: every served id on the failed page
+  // was written as "no discovery_places row" and then answered from that cache
+  // for the next five minutes WITHOUT a query, so one transient error made a
+  // real venue look new-to-everyone long after the database recovered. The
+  // known-empty is only knowledge when the query actually answered.
+  if (!opts.noCache && !degraded) {
     for (const servedId of needQuery) {
       const set = toCanonical.get(servedId);
       _bridgeCache.set(servedId, { dpIds: set ? [...set] : [], at: Date.now() });
@@ -221,7 +255,7 @@ export async function resolvePlaceIdBridge(
     });
   }
 
-  return { toCanonical, toServed };
+  return { toCanonical, toServed, degraded };
 }
 
 /**

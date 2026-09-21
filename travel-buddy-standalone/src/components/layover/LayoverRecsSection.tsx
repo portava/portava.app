@@ -72,10 +72,18 @@ export function LayoverRecsSection({
                 <View style={[styles.safetyBadge, { backgroundColor: sc.bg }]}>
                   <Text style={[styles.safetyText, { color: sc.fg }]}>{rec.safetyLabel}</Text>
                 </View>
-                {!rec.insideAirport && rec.travelTimeMin > 0 && (
-                  <Text style={styles.metaStamp}>{rec.travelTimeMin}m away</Text>
+                {/* census-layover L293 / spec §2.1 "degrades VISIBLY". A card
+                    with no measured journey used to render NOTHING here, which
+                    on a row that otherwise says "15m away" reads as "no travel
+                    needed". The absence is now stated in words. */}
+                {!rec.insideAirport && (
+                  rec.travelTimeMin !== null && rec.travelTimeMin > 0
+                    ? <Text style={styles.metaStamp}>{rec.travelTimeMin}m away</Text>
+                    : <Text style={styles.metaStamp}>travel time not measured</Text>
                 )}
-                <Text style={styles.metaStamp}>{fmtDur(rec.activityTimeMin)} there</Text>
+                {rec.activityTimeMin !== null && (
+                  <Text style={styles.metaStamp}>{fmtDur(rec.activityTimeMin)} there</Text>
+                )}
               </View>
               {rec.warningReason ? <Text style={styles.warning}>{rec.warningReason}</Text> : null}
             </View>

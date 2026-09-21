@@ -886,6 +886,111 @@ describe("(e) a non-member gets nothing, checked server-side per request", () =>
     assert.deepEqual(result.members, [], "fetchBlockedSet null must mean nobody");
   });
 
+  /**
+   * ── THE §24 ASYMMETRY ─────────────────────────────────────────────────────
+   * `loadProtectedZones` returns null for an unreadable policy and documents
+   * the contract: "null means 'policy unknown', which the caller must answer
+   * with nothing." `readSessionForViewer`'s own docstring lists that as gate
+   * (5): "the §24 policy must be readable; null means nobody."
+   *
+   * That gate did not exist. `zones` was passed straight into `projectMember`,
+   * and the refusal lived one level down inside `protectionCeiling` — which is
+   * only CONSULTED for a member who has a coordinate:
+   *
+   *     rawPoint ? protectionCeiling(rawPoint, zones) : "precise"
+   *
+   * So with the policy unreadable, a member carrying a coordinate correctly
+   * collapsed to `notSharing`, while a member carrying NO coordinate — a
+   * `manual_checkpoint`, whose lat/lng are always stored null because
+   * positionRowFor keeps a point only at `precise` — sailed past §24 entirely
+   * and had their `checkpointLabel` and `proximityBucket` served. A checkpoint
+   * label is a place name; it is exactly the disclosure §24 governs.
+   *
+   * This matters in production RIGHT NOW rather than hypothetically:
+   * `protected_zones` does not exist there (migration 2217 unapplied, measured
+   * 2026-09-07 — see src/test/mapProtectionUnreadable.test.ts), so this is the
+   * branch every locate-friends read takes today.
+   *
+   * The two cases below are a PAIR: the first pins the refusal, the second
+   * pins that a READABLE (even empty) policy still serves the same member. A
+   * fix that simply stopped serving checkpoints would fail the second.
+   */
+  it("an unreadable §24 policy serves nobody — including a member with NO coordinate", async () => {
+    const d = makeDb({
+      sessions: [session()],
+      members: [member(ALICE), member(BOB)],
+      // manual_checkpoint: positionRowFor stores lat/lng null for every rung
+      // below `precise`, so this member reaches projectMember with rawPoint
+      // null and used to bypass the zone check completely.
+      positions: [position(BOB, {
+        rung: "manual_checkpoint",
+        precision: "venue",
+        lat: null,
+        lng: null,
+        checkpoint_label: "Sunrise Hostel",
+        proximity_bucket: "very_close",
+      })],
+      profiles: [{ id: BOB, display_name: "Bob" }],
+      failReads: ["protected_zones"],
+    });
+    const result = await readSessionForViewer(d as any, SESSION, ALICE, NOW);
+    assert.equal(result.status, "ok");
+    // The member is still LISTED — `notSharing` is deliberately the same shape
+    // as "no signal", so a reader cannot tell suppression from unreachability.
+    // What must not survive is any DISCLOSURE.
+    assert.equal(result.members.length, 1);
+    const m = result.members[0];
+    assert.equal(m.memberId, BOB);
+    assert.equal(m.precision, "none", "an unknown §24 policy cannot license any precision");
+    assert.equal(
+      m.checkpointLabel, null,
+      "a checkpoint label is a PLACE NAME — the disclosure §24 governs — and it was being served with the policy unreadable",
+    );
+    assert.equal(m.proximityBucket, null, "the proximity bucket is a disclosure too");
+    assert.equal(m.position, null);
+    assert.equal(m.ring, null);
+    assert.equal(m.displayName, null, "identity may not be rendered at precision none");
+  });
+
+  it("a READABLE (empty) §24 policy still serves that same checkpoint member", async () => {
+    const d = makeDb({
+      sessions: [session()],
+      members: [member(ALICE), member(BOB)],
+      positions: [position(BOB, {
+        rung: "manual_checkpoint",
+        precision: "venue",
+        lat: null,
+        lng: null,
+        checkpoint_label: "Sunrise Hostel",
+        proximity_bucket: "very_close",
+      })],
+      profiles: [{ id: BOB, display_name: "Bob" }],
+      // No failReads: the policy reads cleanly and is simply empty.
+    });
+    const result = await readSessionForViewer(d as any, SESSION, ALICE, NOW);
+    assert.equal(result.status, "ok");
+    assert.equal(result.members.length, 1, "an empty policy is a real answer — this is not an off switch");
+    assert.equal(result.members[0].memberId, BOB);
+    assert.equal(result.members[0].checkpointLabel, "Sunrise Hostel");
+  });
+
+  it("an unreadable §24 policy also serves nobody for a member WITH a coordinate", async () => {
+    const d = makeDb({
+      sessions: [session()],
+      members: [member(ALICE), member(BOB)],
+      positions: [position(BOB)],
+      profiles: [{ id: BOB, display_name: "Bob" }],
+      failReads: ["protected_zones"],
+    });
+    const result = await readSessionForViewer(d as any, SESSION, ALICE, NOW);
+    assert.equal(result.members.length, 1);
+    assert.equal(
+      result.members[0].precision, "none",
+      "this half was already correct (protectionCeiling refuses a null policy) — pinned so it stays correct",
+    );
+    assert.equal(result.members[0].position, null);
+  });
+
   it("a blocked member is excluded in BOTH directions", async () => {
     const forward = makeDb({
       sessions: [session()],

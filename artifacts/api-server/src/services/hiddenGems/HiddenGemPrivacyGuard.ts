@@ -13,6 +13,9 @@
  * Coordinates are NEVER passed to the LLM or Telegraph for protected gems.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { logger as rootLogger } from "../../lib/logger.js";
+
+const logger = rootLogger.child({ service: "HiddenGemPrivacyGuard" });
 
 export type SensitivityLevel =
   | "public"
@@ -75,12 +78,28 @@ export async function resolveGemCoords(
 
     case "reveal_after_save": {
       if (!callerId || !db) break;
-      const { data: saveRow } = await db
+      // supabase-js RESOLVES on a database error, so an unreadable
+      // hidden_gem_saves arrives as `saveRow === null` — indistinguishable from
+      // "this caller has not saved the gem". The direction that falls out is the
+      // SAFE one (break -> approximate/hidden: nothing is revealed that was not
+      // already permitted), and that is deliberate, not incidental: this guard
+      // exists to withhold. What was accidental is the SILENCE — a caller who
+      // HAS earned the exact coordinates is quietly handed the neighbourhood
+      // centroid and no one, including operations, can tell that from a caller
+      // who never saved the gem. So the error is bound and reported, and the
+      // refusal stands.
+      const { data: saveRow, error: saveErr } = await db
         .from("hidden_gem_saves")
         .select("gem_id")
         .eq("gem_id", (gem as any).id)
         .eq("user_id", callerId)
         .maybeSingle();
+      if (saveErr) {
+        logger.warn(
+          { err: saveErr, gemId: (gem as any).id, callerId, code: "gem_coords_reveal_check_failed" },
+          "resolveGemCoords: hidden_gem_saves unreadable — withholding exact coords (fail-closed)",
+        );
+      }
       if (saveRow) {
         return { lat: latitude, lng: longitude, coordsRevealed: true, coordsPrecision: "exact" };
       }
@@ -93,7 +112,16 @@ export async function resolveGemCoords(
       // explicitly linked to that specific trip via trip_plan_items.
       // Without the gem↔trip binding check, any accepted trip membership would
       // reveal coordinates — a caller-controlled over-disclosure vector.
-      const [{ data: memberRow }, { data: planRow }] = await Promise.all([
+      // Both reads bind their error for the same reason as reveal_after_save:
+      // a failed read resolves as `null`, which reads as "not a member" /
+      // "not linked to this trip". The refusal is correct — an unverifiable
+      // claim must not unlock exact coordinates — but it must not be silent,
+      // because it is otherwise identical to a caller who simply is not
+      // entitled.
+      const [
+        { data: memberRow, error: memberErr },
+        { data: planRow, error: planErr },
+      ] = await Promise.all([
         db
           .from("trip_members")
           .select("user_id")
@@ -109,6 +137,16 @@ export async function resolveGemCoords(
           .eq("source_id", gem.id)
           .maybeSingle(),
       ]);
+      if (memberErr || planErr) {
+        logger.warn(
+          {
+            err: memberErr ?? planErr, memberErr, planErr,
+            gemId: gem.id, callerId, callerTripId,
+            code: "gem_coords_reveal_check_failed",
+          },
+          "resolveGemCoords: trip membership/link unreadable — withholding exact coords (fail-closed)",
+        );
+      }
       if (memberRow && planRow) {
         return { lat: latitude, lng: longitude, coordsRevealed: true, coordsPrecision: "exact" };
       }

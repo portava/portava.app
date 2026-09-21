@@ -106,10 +106,13 @@ export async function evaluateAndAwardCriteria(
   let defs: any[] = [];
   try {
     const { data, error } = await query;
-    if (error || !Array.isArray(data)) return [];
+    // D11: an unread definition table is NOT "nothing to award" — see
+    // CriteriaDefinitionsUnavailableError at the bottom of this file.
+    if (error || !Array.isArray(data)) throw new CriteriaDefinitionsUnavailableError(error ?? null);
     defs = data;
-  } catch {
-    return [];
+  } catch (e) {
+    if (e instanceof CriteriaDefinitionsUnavailableError) throw e;
+    throw new CriteriaDefinitionsUnavailableError(e);
   }
 
   const awardFn =
@@ -139,4 +142,28 @@ export async function evaluateAndAwardCriteria(
     }
   }
   return outcomes;
+}
+
+/**
+ * D11 (docs/architecture/swallowed-read-inventory.md, SILENT column):
+ * `evaluateAndAwardCriteria`'s `stamp_definitions` read used to answer a
+ * failure with the same `[]` that "the engine flag is off" and "no active
+ * automatic definition has authored criteria" legitimately return. The caller
+ * could not tell an outage from a quiet day: routes/stampCatalog.ts:1472
+ * serialises the result straight into the admin response as
+ * `{ dryRun: false, outcomes: [] }`, which reads as "there was nothing to
+ * award"; routes/events.ts:2954 and routes/posts.ts:771 decide from it which
+ * stamps to award and notify.
+ *
+ * Rejecting keeps the fail-closed direction exactly — nothing is awarded, and
+ * now nothing is CLAIMED awarded either.
+ */
+export class CriteriaDefinitionsUnavailableError extends Error {
+  /** The postgrest error object the read resolved with, when there was one. */
+  readonly readError: unknown;
+  constructor(readError: unknown) {
+    super("stamp_definitions read failed — criteria engine cannot say what is awardable");
+    this.name = "CriteriaDefinitionsUnavailableError";
+    this.readError = readError;
+  }
 }

@@ -194,8 +194,18 @@ function makeClient() {
             return { data: null, error: null };
           }
           if (t === "rent_buddy_bookings") {
-            for (const h of this._match(Object.values(state.bookings))) Object.assign(h, this._update);
-            return { data: null, error: null };
+            // The booking transitions are COMPARE-AND-SET: the required source
+            // status rides in the same UPDATE as the write, and `.select("id")`
+            // makes it RETURNING. `_match` already applies every predicate, so
+            // the honest answer is the rows it changed — `{data: null}` made a
+            // statement that matched nothing indistinguishable from one that
+            // applied, which is the ambiguity the CAS exists to remove.
+            const hits = this._match(Object.values(state.bookings));
+            for (const h of hits) Object.assign(h, this._update);
+            return {
+              data: this._single ? (hits[0] ? { id: hits[0].id } : null) : hits.map((h: any) => ({ id: h.id })),
+              error: null,
+            };
           }
           return { data: null, error: null };
         }

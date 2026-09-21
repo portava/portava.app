@@ -17,6 +17,10 @@
 
 import type { MediaProjection } from "../../lib/media/mediaProjection.js";
 import { aggregateFreshness, countFresh, type FreshnessState } from "../../lib/media/mediaFreshness.js";
+import {
+  clusterByIndependence,
+  type IndependenceObservation,
+} from "../../lib/intelIndependence.js";
 
 export interface PerspectiveGroup {
   /** Stable bucket key derived from the media category (or 'general'). */
@@ -37,7 +41,13 @@ export interface PerspectiveSummary {
   totalPerspectives: number;
   freshPerspectives: number;
   contributorCount: number;
-  /** Distinct contributors AND distinct source variety — §12 "3 independent sources". */
+  /**
+   * §18 Independent Sources — `lib/intelIndependence.clusterByIndependence` over
+   * these perspectives, NOT a synonym for `contributorCount`. Coordinated
+   * contributions collapse: three accounts posting one file are one source, and
+   * a party travelling together is one party. Merging can only ever REDUCE this
+   * number, so it is bounded above by `contributorCount` by construction.
+   */
   independentSourceCount: number;
   freshness: FreshnessState;
   groups: PerspectiveGroup[];
@@ -68,6 +78,67 @@ function bucketKey(p: MediaProjection): string {
   return c.length > 0 ? c : "general";
 }
 
+export interface PerspectiveSummaryOptions {
+  samplePerGroup?: number;
+  /**
+   * §18 ACTOR-RELATIONSHIP side channel: projection id → party token
+   * (`posts.trip_id`). A SIDE CHANNEL on purpose — `MediaProjection` is a
+   * privacy whitelist and trip membership is not on it, so the token is an
+   * INPUT to clustering and never an output. Absent ⇒ every perspective is its
+   * own solo unit, which is the conservative direction (more sources, never
+   * fewer... and merging is the only thing that reduces the count).
+   */
+  groupKeyById?: ReadonlyMap<string, string | null>;
+}
+
+/**
+ * §18 Independent Sources — the count `contributorCount` was standing in for.
+ *
+ * WHAT IS FED, AND WHAT IS DELIBERATELY NOT.
+ * `clusterByIndependence` merges on shared evidence media, common source, and
+ * unusually synchronised behaviour. Media carries the first two signals' inputs
+ * for one of them and genuinely lacks the other:
+ *
+ *  - `mediaRefs` = the SERVED URL. That url is the asset key: two posts that
+ *    resolve to one stored file are one source however many accounts hold them.
+ *  - `groupKey` = the party token from `opts.groupKeyById`, when the caller has
+ *    one. A trip crew is one party, which is exactly §11's actor-relationship
+ *    signal.
+ *  - `sourceRefs` = ALWAYS EMPTY, and that is a statement rather than a gap: no
+ *    media perspective is ever produced by an official feed or a partner API,
+ *    so there is no common-source reference for a photograph to carry.
+ *  - `valueKey` = the perspective's OWN id, which cannot collide. This makes the
+ *    synchronised-behaviour detector INERT by construction, deliberately: a
+ *    photograph asserts no value, so two strangers shooting the same bar
+ *    seconds apart are two witnesses and collapsing them would destroy honest
+ *    corroboration. Mapping that detector onto `placeId` would do exactly that.
+ *
+ * An anonymous perspective has no actor and contributes no source — the module
+ * skips observations with an empty `actorId`, so this matches `contributorCount`
+ * at the bottom end too.
+ */
+export function countIndependentSources(
+  media: MediaProjection[],
+  groupKeyById?: ReadonlyMap<string, string | null>,
+): number {
+  const observations: IndependenceObservation[] = [];
+  for (const m of media) {
+    const actorId = m.contributor?.id;
+    if (!actorId) continue;
+    const groupKey = groupKeyById?.get(m.id) ?? null;
+    observations.push({
+      actorId,
+      groupKey: groupKey != null && groupKey !== "" ? groupKey : null,
+      valueKey: `perspective:${m.id}`,
+      observedAtMs: Date.parse(m.capturedAt),
+      mediaRefs: m.url ? [m.url] : [],
+      sourceRefs: [],
+    });
+  }
+  if (observations.length === 0) return 0;
+  return clusterByIndependence(observations).clusterCount;
+}
+
 /**
  * Group projected media into perspective groups + a summary, newest-first,
  * capping the sample media per group. Empty input yields a well-formed empty
@@ -76,7 +147,7 @@ function bucketKey(p: MediaProjection): string {
 export function buildPerspectiveSummary(
   media: MediaProjection[],
   nowMs: number,
-  opts: { samplePerGroup?: number } = {},
+  opts: PerspectiveSummaryOptions = {},
 ): PerspectiveSummary {
   const samplePerGroup = opts.samplePerGroup ?? 12;
 
@@ -119,9 +190,7 @@ export function buildPerspectiveSummary(
     totalPerspectives: media.length,
     freshPerspectives: countFresh(allCapturedAts, nowMs),
     contributorCount: contributors.size,
-    // "Independent sources" is a coarser, honest proxy: the number of distinct
-    // contributors is the ceiling on independence. We do not overstate it.
-    independentSourceCount: contributors.size,
+    independentSourceCount: countIndependentSources(media, opts.groupKeyById),
     freshness: aggregateFreshness(allCapturedAts, nowMs),
     groups,
   };

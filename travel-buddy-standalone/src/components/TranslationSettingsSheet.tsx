@@ -16,6 +16,8 @@ import {
 } from 'react-native';
 import { X } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
+// Telegraph §16.2 — data saver, placed in the sheet a person is already in.
+import { DataSaverRow } from '../features/telegraph/components/DataSaverRow.tsx';
 
 interface Props {
   visible: boolean;
@@ -94,6 +96,14 @@ export function TranslationSettingsSheet({
             ios_backgroundColor={color.haze}
           />
         </View>
+
+        {/*
+          Telegraph §16.2 data saver. It lives here rather than in a settings
+          screen because this sheet is where a person already is when they
+          notice media eating their data — and because §17.4's ladder puts AI
+          and media exactly where this thread's own controls are.
+        */}
+        <DataSaverRow />
       </View>
     </Modal>
   );

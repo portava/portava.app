@@ -458,12 +458,23 @@ router.get("/places/:id/living", asyncHandler(async (req, res) => {
   const { id } = req.params;
   if (!UUID_RE.test(id)) { sendError(res, "invalid_payload", "Invalid place id"); return; }
 
-  // 1. Check cache
-  const { data: cached } = await sc
+  // 1. Check cache.
+  // Genuinely best-effort — a cache miss is always a legal answer, and the
+  // recompute + upsert below is idempotent on place_id, so proceeding is safe.
+  // But supabase-js RESOLVES on a DB error, so an unreadable
+  // place_living_cache was indistinguishable from a real miss: every request
+  // for every place silently fell through to a full assembleLivingPayload
+  // rebuild with no signal anywhere that the cache had stopped working. Log it
+  // so the stampede has a visible cause.
+  const { data: cached, error: cachedErr } = await sc
     .from("place_living_cache")
     .select("payload, cached_at, sparse")
     .eq("place_id", id)
     .maybeSingle();
+
+  if (cachedErr) {
+    req.log?.warn({ err: cachedErr, place_id: id }, "placeLiving: cache read failed — serving as a cache miss and rebuilding");
+  }
 
   const nowMs = Date.now();
 

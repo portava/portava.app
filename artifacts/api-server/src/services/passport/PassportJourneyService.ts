@@ -21,6 +21,7 @@ import { loadMemories } from "./PassportMemoryService.js";
 import { filterMemories, type CallerContext } from "./PassportPrivacyGuard.js";
 import { fetchBlockedSet } from "../../lib/blocks.js";
 import { nameVisibilitySet, sanitizeIdentity } from "../../lib/publicIdentity.js";
+import { mayDiscloseGemIdentity } from "../hiddenGems/HiddenGemPrivacyGuard.js";
 
 export interface JourneyMemory {
   id: string;
@@ -51,6 +52,60 @@ export interface JourneyPerson {
   avatarUrl: string | null;
 }
 
+/**
+ * An event that happened ON this Trip (§14 "events").
+ *
+ * Read from canonical event storage — this service creates none of its own
+ * (§34 "Not a duplicate database for …"). Two links reach it, and both are
+ * facts the events feature already records:
+ *
+ *   `trip_id`   the event is ROOTED to the Trip — an FK, the strongest link.
+ *   `rsvp`      the owner RSVP'd "going" and the event happened INSIDE the
+ *               Trip's own date window. A "going" RSVP to something three
+ *               seasons later is not part of this journey.
+ *
+ * `role` is the owner's real relationship to the event (they hosted it, or they
+ * attended it), never an inference.
+ */
+export interface JourneyEvent {
+  id: string;
+  title: string | null;
+  city: string | null;
+  country: string | null;
+  startsAt: string | null;
+  endsAt: string | null;
+  role: "host" | "attendee";
+}
+
+/**
+ * Something the traveller RECOMMENDS out of this Trip (§14 "recommendations").
+ *
+ * The canonical Portava artifact for "a place I am recommending" is a Hidden
+ * Gem the traveller submitted, so that is the producer — not a new store, and
+ * not a second opinion about who may see one. Disclosure runs through
+ * `mayDiscloseGemIdentity`, the shipped predicate that restates the database's
+ * own `hidden_gems_public_read` policy (`status = 'active' AND
+ * sensitivity_level = 'public'`, plus the submitter's bypass). Journeys
+ * therefore cannot become the surface that names a gem Compass and the media
+ * surfaces refuse to name.
+ *
+ * ATTRIBUTION IS NOT A JOIN, AND SAYS SO. `hidden_gems` carries no `trip_id`,
+ * so a gem is attributed to a Trip by the two coarse facts both records hold:
+ * the Trip's destination city/country, and the Trip's own date window. That is
+ * a PRESENTATION rule; it decides only WHICH journey a permitted gem appears
+ * under, never WHETHER the viewer may see it.
+ */
+export interface JourneyRecommendation {
+  id: string;
+  kind: "hidden_gem";
+  name: string | null;
+  category: string | null;
+  city: string | null;
+  country: string | null;
+  neighborhood: string | null;
+  createdAt: string | null;
+}
+
 /** One Trip projected into the Journeys view. */
 export interface JourneyProjection {
   tripId: string;
@@ -69,6 +124,10 @@ export interface JourneyProjection {
   stamps: JourneyStamp[];
   /** Coarse, block-filtered companions on this Trip (§14). */
   people: JourneyPerson[];
+  /** Events that happened on this Trip, at the viewer's permitted visibility (§14). */
+  events: JourneyEvent[];
+  /** Hidden Gems the traveller contributed out of this Trip (§14). */
+  recommendations: JourneyRecommendation[];
   featured: boolean;
 }
 
@@ -265,12 +324,31 @@ function norm(s: unknown): string {
   return typeof s === "string" ? s.trim().toLowerCase() : "";
 }
 
-/** Project one trip row + its memories/stamps/people into a JourneyProjection. */
+/**
+ * Everything that hangs off a Trip, already gathered per trip id.
+ *
+ * One bundle rather than one positional argument per element: `buildJourneys`,
+ * `buildFeaturedJourney` and `pickFeatured` all pass the SAME set, so adding an
+ * element must not be able to reach one of the three and miss another — which
+ * is exactly how a featured card comes to disagree with the list it is drawn
+ * from.
+ */
+interface JourneyAttachments {
+  memories: Map<string, JourneyMemory[]>;
+  stamps: Map<string, JourneyStamp[]>;
+  people: Map<string, JourneyPerson[]>;
+  events: Map<string, JourneyEvent[]>;
+  recommendations: Map<string, JourneyRecommendation[]>;
+}
+
+/** Project one trip row + everything attached to it into a JourneyProjection. */
 function projectTrip(
   trip: any,
   memories: JourneyMemory[],
   stamps: JourneyStamp[],
   people: JourneyPerson[],
+  events: JourneyEvent[],
+  recommendations: JourneyRecommendation[],
   perms: JourneyPermissions,
 ): JourneyProjection {
   const showDates = perms.isSelf || trip.show_exact_dates !== false;
@@ -291,8 +369,27 @@ function projectTrip(
     memories,
     stamps,
     people,
+    events,
+    recommendations,
     featured: false,
   };
+}
+
+/** Pull one trip's slice out of an attachment bundle. */
+function attachmentsFor(a: JourneyAttachments, tripId: string) {
+  return {
+    memories: a.memories.get(tripId) ?? [],
+    stamps: a.stamps.get(tripId) ?? [],
+    people: a.people.get(tripId) ?? [],
+    events: a.events.get(tripId) ?? [],
+    recommendations: a.recommendations.get(tripId) ?? [],
+  };
+}
+
+/** Project a trip with its bundled attachments — the ONE way a trip is projected. */
+function projectWith(trip: any, a: JourneyAttachments, perms: JourneyPermissions): JourneyProjection {
+  const at = attachmentsFor(a, trip.id);
+  return projectTrip(trip, at.memories, at.stamps, at.people, at.events, at.recommendations, perms);
 }
 
 /**
@@ -422,6 +519,274 @@ async function loadTripPeople(
   return out;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// §14 EVENTS — the two canonical links from an event to a Trip
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Event states in which an event ACTUALLY HAPPENED (or is happening).
+ *
+ * `event_state` is draft|open|full|waitlist|started|completed|cancelled|archived
+ * (`baseline/20260819_baseline_structure.sql:173`). A journey is a record of what
+ * happened, so the three that record a non-event — never planned, called off,
+ * withdrawn — are on nobody's journey INCLUDING THE OWNER'S. That is stricter
+ * than the ordinary event read, which hides those three from non-hosts only, and
+ * deliberately so: "a cancelled boat trip" is not a thing that happened to you.
+ */
+const JOURNEY_EVENT_STATES = new Set(["open", "full", "waitlist", "started", "completed"]);
+
+/** RSVP statuses that mean the owner actually went. */
+const JOURNEY_ATTENDING_STATUSES = new Set(["going"]);
+
+/**
+ * May this viewer be told this event was part of the owner's journey?
+ *
+ * `event_visibility` is public|friends_only|invite_only
+ * (`baseline/20260819_baseline_structure.sql:189`). The ladder is the SAME one
+ * `tripVisibleToViewer` already applies to the trip that contains it — public to
+ * anyone permitted to see the trip, the restricted tier only to a viewer with the
+ * relationship, and the closed tier to the owner alone — so an event can never be
+ * a wider disclosure than the journey it hangs on. An unrecognised visibility
+ * falls through to the owner-only arm (fail-closed).
+ */
+function eventVisibleToViewer(visibility: unknown, perms: JourneyPermissions): boolean {
+  if (perms.isSelf) return true;
+  const v = norm(visibility);
+  if (v === "public") return true;
+  if (v === "friends_only") return perms.canSeeRestricted;
+  return false;
+}
+
+/** Inclusive [start, end] day window of a trip, as raw date strings. */
+function tripWindow(trip: any): { start: string; end: string } | null {
+  const start = typeof trip.start_date === "string" ? trip.start_date : null;
+  const end = typeof trip.end_date === "string" ? trip.end_date : null;
+  if (!start || !end || end < start) return null;
+  return { start, end };
+}
+
+/** Does an ISO timestamp fall inside a trip's inclusive day window? */
+function withinTripWindow(ts: unknown, win: { start: string; end: string } | null): boolean {
+  if (!win || typeof ts !== "string" || ts.length < 10) return false;
+  const day = ts.slice(0, 10);
+  return day >= win.start && day <= win.end;
+}
+
+/**
+ * Events that happened on each visible Trip (§14).
+ *
+ * TWO reads, both batched, neither inventing storage:
+ *   1. `events.trip_id IN (…)` — events rooted to the Trip.
+ *   2. the owner's "going" `event_rsvps`, resolved against `events`, kept only
+ *      when the event's start falls inside that Trip's own date window.
+ *
+ * The window is read from the RAW trip row, never from the viewer's coarsened
+ * projection: date coarsening is about what the viewer is TOLD, and letting it
+ * change which events are attributed would make the same event appear on
+ * different journeys for different viewers.
+ *
+ * FAIL-CLOSED: an unreadable `events` or `event_rsvps` read yields NO events for
+ * anyone rather than a journey that silently lost half of what happened.
+ */
+async function loadTripEvents(
+  sc: SupabaseClient,
+  ownerId: string,
+  trips: any[],
+  perms: JourneyPermissions,
+): Promise<Map<string, JourneyEvent[]>> {
+  const empty = new Map<string, JourneyEvent[]>();
+  if (trips.length === 0) return empty;
+  const tripIds = trips.map((t) => t.id).filter(Boolean);
+  if (tripIds.length === 0) return empty;
+
+  const COLUMNS = "id, trip_id, host_id, title, city, country, starts_at, ends_at, state, visibility";
+  let rooted: any[] = [];
+  let rsvped: any[] = [];
+  try {
+    const [rootedRes, rsvpRes] = await Promise.all([
+      sc.from("events").select(COLUMNS).in("trip_id", tripIds),
+      sc.from("event_rsvps").select("event_id, status, user_id").eq("user_id", ownerId),
+    ]);
+    if ((rootedRes as any).error || (rsvpRes as any).error) return empty;
+    rooted = ((rootedRes as any).data as any[]) ?? [];
+    const attendedIds = (((rsvpRes as any).data as any[]) ?? [])
+      .filter((r) => JOURNEY_ATTENDING_STATUSES.has(norm(r.status)))
+      .map((r) => r.event_id)
+      .filter(Boolean);
+    if (attendedIds.length > 0) {
+      const res = await sc.from("events").select(COLUMNS).in("id", attendedIds);
+      if ((res as any).error) return empty;
+      rsvped = ((res as any).data as any[]) ?? [];
+    }
+  } catch {
+    return empty;
+  }
+
+  const out = new Map<string, JourneyEvent[]>();
+  const seen = new Map<string, Set<string>>(); // tripId → event ids already attached
+  const attach = (tripId: string, row: any, role: JourneyEvent["role"]) => {
+    if (!tripId || !row?.id) return;
+    if (!JOURNEY_EVENT_STATES.has(norm(row.state))) return;
+    if (!eventVisibleToViewer(row.visibility, perms)) return;
+    const already = seen.get(tripId) ?? new Set<string>();
+    if (already.has(row.id)) return;
+    already.add(row.id);
+    seen.set(tripId, already);
+    const list = out.get(tripId) ?? [];
+    list.push({
+      id: row.id,
+      title: row.title ?? null,
+      city: row.city ?? null,
+      country: row.country ?? null,
+      startsAt: row.starts_at ?? null,
+      endsAt: row.ends_at ?? null,
+      role,
+    });
+    out.set(tripId, list);
+  };
+
+  // Rooted first, so an event the owner both hosted and RSVP'd to reads "host".
+  const tripIdSet = new Set(tripIds);
+  for (const row of rooted) {
+    if (!tripIdSet.has(row.trip_id)) continue;
+    attach(row.trip_id, row, norm(row.host_id) === norm(ownerId) ? "host" : "attendee");
+  }
+  for (const trip of trips) {
+    const win = tripWindow(trip);
+    if (!win) continue;
+    for (const row of rsvped) {
+      if (!withinTripWindow(row.starts_at, win)) continue;
+      attach(trip.id, row, norm(row.host_id) === norm(ownerId) ? "host" : "attendee");
+    }
+  }
+
+  for (const [tripId, list] of out) {
+    list.sort((a, b) => String(a.startsAt ?? "").localeCompare(String(b.startsAt ?? "")));
+    out.set(tripId, list.slice(0, 12));
+  }
+  return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §14 RECOMMENDATIONS — the traveller's own Hidden Gems, at the gem policy
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Hidden Gems the owner contributed out of each visible Trip (§14).
+ *
+ * WHO MAY SEE ONE is not decided here. Every candidate goes through
+ * `mayDiscloseGemIdentity` (`services/hiddenGems/HiddenGemPrivacyGuard.ts`),
+ * the predicate that restates migration 0043's `hidden_gems_public_read` policy
+ * for surfaces reading past RLS on the service client. Journeys get the same
+ * answer Compass and the media surfaces get, from the same function, so there
+ * is no fourth copy of the rule to drift.
+ *
+ * A merged gem is excluded on top of that: `merged_into` means the gem has been
+ * folded into another and is no longer a thing to hand anyone — the same
+ * exclusion `services/telegraph/shareables.ts` applies before it will share one.
+ *
+ * WHICH journey a permitted gem lands on is decided here, and only that: the
+ * Trip's destination city (or, failing a city, its country) plus the Trip's own
+ * date window. A gem the traveller filed in another country, or years either
+ * side of the Trip, is somebody's recommendation but not this journey's.
+ *
+ * FAIL-CLOSED: an unreadable `hidden_gems` read yields no recommendations.
+ */
+async function loadTripRecommendations(
+  sc: SupabaseClient,
+  ownerId: string,
+  trips: any[],
+  perms: JourneyPermissions,
+): Promise<Map<string, JourneyRecommendation[]>> {
+  const empty = new Map<string, JourneyRecommendation[]>();
+  if (trips.length === 0) return empty;
+
+  let rows: any[] = [];
+  try {
+    const res = await sc
+      .from("hidden_gems")
+      .select(
+        "id, submitted_by, name, category, city, country, neighborhood, status, sensitivity_level, merged_into, created_at",
+      )
+      .eq("submitted_by", ownerId);
+    if ((res as any).error) return empty;
+    rows = ((res as any).data as any[]) ?? [];
+  } catch {
+    return empty;
+  }
+  if (rows.length === 0) return empty;
+
+  // The gem policy's own viewer. The owner reading their own passport is the
+  // submitter, so the guard's submitter bypass applies exactly as it does
+  // everywhere else; `isSelf` is never used to widen it by a second route.
+  const gemViewerId = perms.isSelf ? ownerId : (perms.viewerId ?? null);
+  const disclosable = rows.filter(
+    (g) => !g.merged_into && mayDiscloseGemIdentity(g, gemViewerId),
+  );
+  if (disclosable.length === 0) return empty;
+
+  const out = new Map<string, JourneyRecommendation[]>();
+  for (const trip of trips) {
+    const win = tripWindow(trip);
+    if (!win) continue;
+    const city = norm(trip.destination_city);
+    const country = norm(trip.destination_country);
+    if (!city && !country) continue;
+    const list: JourneyRecommendation[] = [];
+    for (const g of disclosable) {
+      if (!withinTripWindow(g.created_at, win)) continue;
+      const matches = city ? norm(g.city) === city : norm(g.country) === country;
+      if (!matches) continue;
+      list.push({
+        id: g.id,
+        kind: "hidden_gem",
+        name: g.name ?? null,
+        category: g.category ?? null,
+        city: g.city ?? null,
+        country: g.country ?? null,
+        neighborhood: g.neighborhood ?? null,
+        createdAt: g.created_at ?? null,
+      });
+    }
+    if (list.length > 0) {
+      list.sort((a, b) => String(a.createdAt ?? "").localeCompare(String(b.createdAt ?? "")));
+      out.set(trip.id, list.slice(0, 12));
+    }
+  }
+  return out;
+}
+
+/**
+ * Gather every per-trip attachment ONCE, for one set of visible trips.
+ *
+ * `buildJourneys` and `buildFeaturedJourney` both call this, which is what keeps
+ * the featured card and the list it is drawn from telling the same story.
+ */
+async function loadAttachments(
+  sc: SupabaseClient,
+  ownerId: string,
+  visible: any[],
+  allMemories: any[],
+  stamps: Map<string, JourneyStamp[]>,
+  perms: JourneyPermissions,
+): Promise<JourneyAttachments> {
+  const [people, events, recommendations] = await Promise.all([
+    loadTripPeople(sc, ownerId, visible.map((t) => t.id), perms.viewerId ?? null),
+    loadTripEvents(sc, ownerId, visible, perms),
+    loadTripRecommendations(sc, ownerId, visible, perms),
+  ]);
+  return {
+    // §29 step 9: gate EACH memory by its own visibility before it is attached to
+    // a trip — a public trip must not leak its private/circle_only/trip_crew
+    // memories.
+    memories: memoriesByTrip(filterMemories(allMemories as any[], effectiveCallerCtx(perms)) as any[]),
+    stamps,
+    people,
+    events,
+    recommendations,
+  };
+}
+
 /**
  * Build the full grouped Journeys projection for `userId` as seen by a viewer.
  */
@@ -442,12 +807,8 @@ export async function buildJourneys(
   const visible = trips.filter((t) => tripVisibleToViewer(t, perms));
   if (visible.length === 0) return empty;
 
-  // §29 step 9: gate EACH memory by its own visibility before it is attached to a
-  // trip — a public trip must not leak its private/circle_only/trip_crew memories.
-  const memMap = memoriesByTrip(filterMemories(allMemories as any[], effectiveCallerCtx(perms)) as any[]);
-  // §14 people context — coarse, block-filtered companions on the visible trips.
-  const peopleMap = await loadTripPeople(sc, userId, visible.map((t) => t.id), perms.viewerId ?? null);
-  const journeys = visible.map((t) => projectTrip(t, memMap.get(t.id) ?? [], stampMap.get(t.id) ?? [], peopleMap.get(t.id) ?? [], perms));
+  const attachments = await loadAttachments(sc, userId, visible, allMemories as any[], stampMap, perms);
+  const journeys = visible.map((t) => projectWith(t, attachments, perms));
 
   // Newest first.
   journeys.sort((a, b) => {
@@ -457,7 +818,7 @@ export async function buildJourneys(
   });
 
   // Featured pick uses full (unfiltered-date) weight from the raw trips.
-  const featured = pickFeatured(visible, memMap, stampMap, peopleMap, perms);
+  const featured = pickFeatured(visible, attachments, perms);
   if (featured) {
     const match = journeys.find((j) => j.tripId === featured.tripId);
     if (match) match.featured = true;
@@ -483,11 +844,11 @@ export async function buildFeaturedJourney(
   ]);
   const visible = trips.filter((t) => tripVisibleToViewer(t, perms));
   if (visible.length === 0) return null;
-  // Same per-memory visibility gate as buildJourneys — the featured trip's private
-  // memories must not reach a non-owner viewer either.
-  const memMap = memoriesByTrip(filterMemories(allMemories as any[], effectiveCallerCtx(perms)) as any[]);
-  const peopleMap = await loadTripPeople(sc, userId, visible.map((t) => t.id), perms.viewerId ?? null);
-  return pickFeatured(visible, memMap, stampMap, peopleMap, perms);
+  // Same attachment gather as buildJourneys — same per-memory visibility gate,
+  // same block-filtered people, same events and recommendations — so the
+  // aggregate's featured card can never disagree with the Journeys list.
+  const attachments = await loadAttachments(sc, userId, visible, allMemories as any[], stampMap, perms);
+  return pickFeatured(visible, attachments, perms);
 }
 
 /**
@@ -496,18 +857,19 @@ export async function buildFeaturedJourney(
  */
 function pickFeatured(
   trips: any[],
-  memMap: Map<string, JourneyMemory[]>,
-  stampMap: Map<string, JourneyStamp[]>,
-  peopleMap: Map<string, JourneyPerson[]>,
+  attachments: JourneyAttachments,
   perms: JourneyPermissions,
 ): JourneyProjection | null {
   let best: { trip: any; weight: number } | null = null;
   for (const t of trips) {
-    const mems = memMap.get(t.id) ?? [];
-    const stamps = stampMap.get(t.id) ?? [];
+    const at = attachmentsFor(attachments, t.id);
+    // Deliberately UNCHANGED by §14's two new elements: the pick weight stays
+    // memories/stamps/duration/completed. Events and recommendations are things
+    // a journey CARRIES, not evidence about which journey was the richest, and
+    // folding them in would silently re-rank every traveller's Featured Journey.
     const weight = journeyWeight({
-      memoryCount: mems.length,
-      stampCount: stamps.length,
+      memoryCount: at.memories.length,
+      stampCount: at.stamps.length,
       durationDays: durationDaysOf(t.start_date, t.end_date) ?? 0,
       completed: t.status === "completed",
     });
@@ -515,7 +877,7 @@ function pickFeatured(
     if (!best || weight > best.weight) best = { trip: t, weight };
   }
   if (!best) return null;
-  const j = projectTrip(best.trip, memMap.get(best.trip.id) ?? [], stampMap.get(best.trip.id) ?? [], peopleMap.get(best.trip.id) ?? [], perms);
+  const j = projectWith(best.trip, attachments, perms);
   j.featured = true;
   return j;
 }

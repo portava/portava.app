@@ -54,6 +54,8 @@ const SCHEMA = `${BASELINE}\n${MIGRATIONS}`;
 
 const TRAIL_LIVE_INTEL = SRC("lib/trailLiveIntel.ts");
 const TRAIL_SERVE = SRC("lib/trailServe.ts");
+/** trailLiveIntel delegates its membership question here (migration 2334). */
+const HTTP = SRC("lib/http.ts");
 
 // ── Tiny schema model ────────────────────────────────────────────────────────
 
@@ -139,17 +141,51 @@ describe("Trails · trailLiveIntel filters only on literals the schema admits", 
     );
   });
 
-  it("the membership filter uses a value trip_members_status_check admits", () => {
-    const literal = eqLiteral(TRAIL_LIVE_INTEL, "status");
+  // THE MEMBERSHIP QUESTION MOVED, SO THE GUARD FOLLOWS IT. trailLiveIntel used
+  // to filter trip_members itself on an accepted status and nothing else, which
+  // admitted a role='invited' row carrying status='accepted' — a pending invite
+  // under the legacy role encoding, which requireTripMember refuses. It now
+  // delegates, so RLS (migration 2334), the route-plan API and this read all
+  // answer "is this viewer crew" from one definition. The literals still have to
+  // be ones the schema admits; they just live in lib/http.ts now.
+  it("the membership status literal requireTripMember authorises on is one trip_members_status_check admits", () => {
+    assert.match(
+      TRAIL_LIVE_INTEL,
+      /requireTripMember\(/,
+      "trailLiveIntel no longer delegates membership — re-point this guard at whatever it filters instead",
+    );
+    const m = /row\.status\s*!==\s*"([^"]+)"/.exec(HTTP);
+    assert.ok(m, 'no `row.status !== "<literal>"` found in lib/http.ts — the guard has lost its target');
     const allowed = checkLiterals("trip_members_status_check");
     assert.ok(
-      allowed.has(literal),
-      `trip_members.status admits ${[...allowed].join("|")} — '${literal}' would silently authorise nobody`,
+      allowed.has(m![1]!),
+      `trip_members.status admits ${[...allowed].join("|")} — '${m![1]}' would silently authorise nobody`,
     );
   });
 
-  it("every column the read references exists on route_plans / route_stops / trip_members", () => {
-    for (const table of ["route_plans", "route_stops", "trip_members"]) {
+  it("every role requireTripMember accepts is a real member_role label", () => {
+    const rm = /const\s+acceptedRoles\s*=\s*\[([^\]]+)\]/.exec(HTTP);
+    assert.ok(rm, "no `acceptedRoles` array found in lib/http.ts — the guard has lost its target");
+    const roles = [...rm![1]!.matchAll(/"([a-z_]+)"/g)].map((x) => x[1]!);
+    assert.ok(roles.length > 0, "acceptedRoles parsed empty");
+    const labels = enumLabels("member_role");
+    for (const role of roles)
+      assert.ok(
+        labels.has(role),
+        `member_role is (${[...labels].join("|")}) — '${role}' would 22P02 the whole membership read`,
+      );
+  });
+
+  it("every trip_members column requireTripMember references exists in the schema", () => {
+    const cols = tableColumns("trip_members");
+    const refs = extractColumnRefs(HTTP, "trip_members");
+    assert.ok(refs.length > 0, "no column references extracted for trip_members — the guard has lost its target");
+    for (const ref of refs)
+      assert.ok(cols.has(ref.column), `trip_members.${ref.column} (.${ref.method}) does not exist in the schema`);
+  });
+
+  it("every column the read references exists on route_plans / route_stops", () => {
+    for (const table of ["route_plans", "route_stops"]) {
       const cols = tableColumns(table);
       const refs = extractColumnRefs(TRAIL_LIVE_INTEL, table);
       assert.ok(refs.length > 0, `no column references extracted for ${table} — the guard has lost its target`);

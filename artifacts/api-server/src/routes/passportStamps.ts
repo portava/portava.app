@@ -42,7 +42,7 @@ import {
   buildStats,
 } from "../services/passport/PassportMapService.js";
 import { countContentStampsReceived } from "../services/stamps/ContentStampService.js";
-import { countUserTrips } from "../lib/tripCounts.js";
+import { countUserTrips } from "../domain/trips/services/tripCounts.js";
 import { recordContribution } from "../services/passport/PassportContributionService.js";
 import type { VisibilityTier, CallerContext } from "../services/passport/PassportPrivacyGuard.js";
 import { filterStamps, filterMemories } from "../services/passport/PassportPrivacyGuard.js";

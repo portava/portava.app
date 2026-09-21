@@ -43,7 +43,7 @@ import type {
 } from '../types/mediaExperience.ts';
 import type { HiddenGemMediaProjection, HiddenGemState, GemLocationPrecision } from '../types/hiddenGemMedia.ts';
 import type { ConfidenceState } from '../types/media.ts';
-import type { PeopleLensGroup, PeopleLensProjection } from '../types/peopleLens.ts';
+import type { PeopleLensGroup, PeopleLensProjection, PeopleLensRelation } from '../types/peopleLens.ts';
 import type {
   MyWorldBucket,
   MyWorldLibrary,
@@ -713,6 +713,16 @@ function mapContributor(raw: unknown): MediaContributor | null {
   };
 }
 
+/**
+ * §27's population vocabulary, narrowed from the wire. An unknown or absent
+ * value becomes `null` rather than a guess — the lens still renders the group,
+ * it just does not claim a relationship the server did not state.
+ */
+function peopleRelation(raw: unknown): PeopleLensRelation | null {
+  const v = asString(raw);
+  return v === 'followed' || v === 'trip_crew' || v === 'shared_moment' ? v : null;
+}
+
 /** Map one server PeopleGroup → PeopleLensGroup, or null when unusable. */
 function mapPeopleGroup(raw: unknown): PeopleLensGroup | null {
   if (!isObj(raw)) return null;
@@ -722,6 +732,7 @@ function mapPeopleGroup(raw: unknown): PeopleLensGroup | null {
   if (!contributor || media.length === 0) return null;
   return {
     contributor,
+    relation: peopleRelation(raw.relation),
     perspectiveCount: asNumber(raw.perspectiveCount) ?? media.length,
     freshness: freshnessClass(raw.freshness),
     media,

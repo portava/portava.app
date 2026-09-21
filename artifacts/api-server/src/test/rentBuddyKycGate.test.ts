@@ -50,15 +50,31 @@ describe("identityProviderStatus", () => {
     assert.equal(s.operational, false);
   });
 
-  it("stripe and persona are NOT operational while their adapters are stubs", () => {
-    // Even with the credential present — the adapter still throws on every call.
+  it("stripe and persona are NOT operational, and the reason says why ACCURATELY", () => {
+    // The load-bearing half is `operational === false`: it is what keeps the
+    // Rent-a-Buddy booking gate closed while no real verification can complete.
+    //
+    // The REASON is load-bearing too, and it used to be wrong. It read "that
+    // adapter in providers.ts is still a stub (every method throws)", and this
+    // test asserted /stub/i against it. Both adapters were then implemented
+    // (census-trust §14, TV-6b) — so the probe an operator reads to find out
+    // what is missing, and the test guarding that probe, would together have
+    // kept telling them to go write an adapter that already exists, while the
+    // actual blocker (no sandbox transcript, so the payload mapping is
+    // unverified) went unnamed.
+    //
+    // Asserting "not a stub" AND "names the certification that is missing" is
+    // what stops the message drifting back into a description of the code
+    // rather than of the gap.
     const stripe = identityProviderStatus({
       IDENTITY_PROVIDER: "stripe",
       STRIPE_IDENTITY_SECRET_KEY: "sk_test_x",
       NODE_ENV: "production",
     } as any);
     assert.equal(stripe.operational, false);
-    assert.match(stripe.reason, /stub/i);
+    assert.doesNotMatch(stripe.reason, /stub/i, "the adapters are no longer stubs — say what IS missing");
+    assert.match(stripe.reason, /sandbox/i, "the reason must name the evidence that would open the gate");
+    assert.match(stripe.reason, /IMPLEMENTED_PROVIDERS/, "and the switch that would open it");
 
     const persona = identityProviderStatus({
       IDENTITY_PROVIDER: "persona",
@@ -66,6 +82,8 @@ describe("identityProviderStatus", () => {
       NODE_ENV: "production",
     } as any);
     assert.equal(persona.operational, false);
+    assert.doesNotMatch(persona.reason, /stub/i);
+    assert.match(persona.reason, /sandbox/i);
   });
 
   it("rejects an unknown provider name", () => {

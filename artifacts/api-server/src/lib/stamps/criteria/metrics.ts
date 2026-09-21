@@ -58,17 +58,50 @@ async function countRows(sc: any, table: string, filters: Array<[string, any]>):
   }
 }
 
-/** Distinct non-null values of a column for the user's non-revoked stamps. */
+/**
+ * Distinct non-null values of a place column for the user's non-revoked stamps
+ * — counting ONLY stamps whose definition evidences that the traveller was
+ * actually there.
+ *
+ * ITS TWO CALLERS ARE `cities_visited` AND `countries_visited`, and both are
+ * been-there claims: migration 0192 seeds `globe_trotter_5` as
+ * `{"metric":"countries_visited","gte":5}` under the description "Visit 5
+ * different countries", and `globe_trotter_10` at 10.
+ *
+ * WITHOUT THE JOIN THIS FUNCTION LAUNDERED A PLANNED TRIP INTO A VISIT STAMP.
+ * `POST /api/trips` awards `first_trip_created` and `trip_planner` AT CREATION
+ * with the destination attached and no occurrence of any kind. Migration 2970
+ * and `PassportMapService#buildStats` excluded exactly those rows from the
+ * Passport's Countries/Cities numbers — and this read selected one bare column
+ * off the same table with no join and no filter, so five trips planned and none
+ * taken MINTED Globe Trotter. 2970 marks `globe_trotter_5` and
+ * `globe_trotter_10` `evidences_presence = true`, because a GPS-verified
+ * postcard was supposed to be the only thing awarding them, so the minted stamp
+ * was then admitted by the very filter 2970 added. The fix went around itself,
+ * and 2970's own header named this site as the first thing it did not fix.
+ *
+ * `!== true` and not falsiness: the column is NOT NULL in the database, but a
+ * row read through a path that did not select it, or an embed that came back
+ * without it, arrives `undefined`. A missing join is not evidence of a visit,
+ * so absent MUST read as "not presence" — over-claiming is the defect this
+ * repairs, under-claiming is a stamp that does not show up.
+ */
 async function distinctStampField(sc: any, userId: string, field: string): Promise<number> {
   try {
     const { data, error } = await sc
       .from("user_stamps")
-      .select(field)
+      .select(`${field}, stamp_definitions(evidences_presence)`)
       .eq("user_id", userId)
       .eq("is_revoked", false);
     if (error || !Array.isArray(data)) return 0;
     const set = new Set<string>();
     for (const row of data as any[]) {
+      // PostgREST returns an embedded to-one either as an object or, on some
+      // shapes, as a single-element array — the same handling buildStats does.
+      const def = Array.isArray(row.stamp_definitions)
+        ? row.stamp_definitions[0]
+        : row.stamp_definitions;
+      if (def?.evidences_presence !== true) continue;
       const v = row[field];
       if (typeof v === "string" && v.trim()) set.add(v.trim().toLowerCase());
     }

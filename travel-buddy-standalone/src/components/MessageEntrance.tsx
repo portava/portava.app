@@ -8,10 +8,19 @@
  *
  * The animation only touches opacity + translateY (transform), never layout,
  * so scrollToEnd and rapid message arrival stay glitch-free.
+ *
+ * TELEGRAPH §11.3 — "Provide reduced-motion behavior for media, GIFs and
+ * animations." The `animate` gate above is a PAGINATION rule (do not replay
+ * entrances for backfilled history); it says nothing about accessibility, and
+ * until this change nothing in the Telegraph tree consulted the OS setting at
+ * all. `useReducedMotionSetting` — already in the tree, already the Wall's
+ * mechanism for the same requirement — is now consulted here, and a viewer who
+ * has asked for reduced motion gets the static View on every message.
  */
 import React, { useRef, useCallback } from 'react';
 import { View, type StyleProp, type ViewStyle } from 'react-native';
 import Animated, { FadeInUp } from 'react-native-reanimated';
+import { useReducedMotionSetting } from '../features/wall/hooks/useReducedMotionSetting.ts';
 
 /** Short, snappy spring: slight rise + fade, ~250ms perceived. */
 const ENTERING = FadeInUp.springify().damping(18).stiffness(240).mass(0.7);
@@ -43,7 +52,8 @@ export function MessageEntrance({
   style?: StyleProp<ViewStyle>;
   children: React.ReactNode;
 }) {
-  if (!animate) {
+  const reduceMotion = useReducedMotionSetting();
+  if (!animate || reduceMotion) {
     return <View style={style}>{children}</View>;
   }
   return (

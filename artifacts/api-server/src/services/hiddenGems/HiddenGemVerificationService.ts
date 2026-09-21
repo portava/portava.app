@@ -77,7 +77,13 @@ export async function recordGpsCheckin(
   // Anti-spoofing: (1) snapshot-based coordinate-jump / impossible-speed check at check-in time,
   // (2) historical trust-event review. Either flagging makes the check-in suspicious.
   const [snapshotCheck, userTrust] = await Promise.all([
-    checkAndRecordSnapshot(db, userId, userLat, userLng).catch(() => ({ trusted: true })),
+    // The catch is fail-CLOSED for the same reason checkAndRecordSnapshot's own
+    // read is: a plausibility check that could not run has not produced a clean
+    // verdict, and `{ trusted: true }` here would have re-opened the hole the
+    // service just closed one layer down.
+    checkAndRecordSnapshot(db, userId, userLat, userLng).catch(
+      () => ({ trusted: false, suspicionReason: "plausibility_check_unavailable" }),
+    ),
     getUserTrustLevel(db, userId),
   ]);
   const isSuspicious = !snapshotCheck.trusted || userTrust !== "trusted";
@@ -197,8 +203,21 @@ export async function recordGuideVerification(
   result: "approved" | "rejected",
   notes?: string,
 ): Promise<void> {
+  // THE AUDIT ROW for a moderation decision. supabase-js resolves on a database
+  // error, so this `catch` never fired for the failure that matters, and
+  // `.single()` additionally resolves PGRST116 when the insert returns no row.
+  // Both were invisible — and the gem's status flips below either way, so a
+  // failed insert leaves a gem published or hidden with no record of WHO decided
+  // it or WHY.
+  //
+  // The decision is NOT blocked on the audit row: refusing to moderate while
+  // hidden_gem_verifications is unwritable would leave reported content live.
+  // That ordering (record-then-act vs act-then-record) is a product call and is
+  // in the lane report, not decided here. What changes here is that the hole is
+  // now counted instead of silent, at ERROR — an unrecorded moderation decision
+  // is not a warning.
   try {
-    await db
+    const { error: auditErr } = await db
       .from("hidden_gem_verifications")
       .insert({
         gem_id: gemId,
@@ -209,7 +228,18 @@ export async function recordGuideVerification(
       })
       .select("id")
       .single();
-  } catch { /* ignore */ }
+    if (auditErr) {
+      logger.error(
+        { err: auditErr, gemId, guideId, result, code: "verification_audit_row_lost" },
+        "recordGuideVerification: audit row NOT written — the gem's status still changes below",
+      );
+    }
+  } catch (err) {
+    logger.error(
+      { err, gemId, guideId, result, code: "verification_audit_row_lost" },
+      "recordGuideVerification: audit row insert threw",
+    );
+  }
 
   if (result === "approved") {
     await db
@@ -227,9 +257,14 @@ export async function recordGuideVerification(
     void recordTrustEvent(db, {
       userId: guideId,
       eventType: "gem_verified_by_guide",
-      category: "guide_accuracy",
-      delta: 5,
-      severity: "minor",
+      // Read from the vocabulary rather than restated. These three fields said
+      // delta 5 while TRUST_EVENT_TYPES declared 4 — the one place the
+      // declaration was actively FALSE, found by check:trust-event-vocabulary.
+      // The declaration was corrected to 5 (what the system does), and reading
+      // it here is what stops the two drifting apart again.
+      category: TRUST_EVENT_TYPES.GEM_VERIFIED_BY_GUIDE.category,
+      delta: TRUST_EVENT_TYPES.GEM_VERIFIED_BY_GUIDE.delta,
+      severity: TRUST_EVENT_TYPES.GEM_VERIFIED_BY_GUIDE.severity,
       sourceType: "hidden_gem",
       sourceId: gemId,
       dedupWindowHours: 24,
@@ -278,8 +313,9 @@ export async function recordAdminVerification(
   result: "approved" | "rejected" | "hidden",
   notes?: string,
 ): Promise<void> {
+  // Same audit row, same reasoning as recordGuideVerification above.
   try {
-    await db
+    const { error: auditErr } = await db
       .from("hidden_gem_verifications")
       .insert({
         gem_id: gemId,
@@ -290,7 +326,18 @@ export async function recordAdminVerification(
       })
       .select("id")
       .single();
-  } catch { /* ignore */ }
+    if (auditErr) {
+      logger.error(
+        { err: auditErr, gemId, adminId, result, code: "verification_audit_row_lost" },
+        "recordAdminVerification: audit row NOT written — the gem's status still changes below",
+      );
+    }
+  } catch (err) {
+    logger.error(
+      { err, gemId, adminId, result, code: "verification_audit_row_lost" },
+      "recordAdminVerification: audit row insert threw",
+    );
+  }
 
   const newStatus = result === "approved" ? "active" : result === "hidden" ? "hidden" : "hidden";
   const newVerificationLevel = result === "approved" ? "admin" : undefined;

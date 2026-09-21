@@ -20,6 +20,15 @@ import type { CanonicalCityBinding, GeoDefault } from './geoResolver';
 import { cityBinding, airportCityBinding } from './geoResolver';
 import type { StaticAirport } from '../../services/airport/StaticAirportData';
 import { searchTypeToEntity, type DispatchSearchType } from './entityMap';
+import {
+  applyTemporalFit,
+  applyTrustConfidence,
+  applyFeasibility,
+  applyTripFit,
+  applySpamRisk,
+  gemLocationPrecision,
+  type TemporalWindow,
+} from './rankingSignals';
 import type {
   InputContext,
   InputSuggestion,
@@ -39,6 +48,22 @@ function tierConfidence(tier: number): number {
   }
 }
 
+/** §15 signals the caller resolved once per request and passes down. */
+export interface ProjectionSignals {
+  /**
+   * §18 normalized temporal window parsed from the user's own text, or null
+   * when the text carries no time operator. Feeds TemporalFit (§15).
+   */
+  temporalWindow?: TemporalWindow | null;
+  /**
+   * §18 task feasibility: the ACTIVE TASK (session city / Trip window) makes
+   * this row less appropriate. A demotion, never a removal — see taskContext.ts.
+   */
+  demoted?: boolean;
+  /** §15 TripFit: this row sits inside the active Trip's city. */
+  tripFit?: boolean;
+}
+
 /**
  * Project one internal SearchResult into a UI-ready InputSuggestion.
  *
@@ -46,15 +71,43 @@ function tierConfidence(tier: number): number {
  * canonical destination, so nothing is a dead row (§13). `freshness` is left
  * UNSET — Phase 1 does not wire the LiveSuggestionService, and a live label must
  * never be fabricated when live state is unavailable (§31).
+ *
+ * §15 ranking signals (Phase 9). The base confidence is still the match tier —
+ * ExactMatch/PrefixMatch, unchanged — and TrustConfidence then TemporalFit are
+ * applied on top by `rankingSignals.ts`. Both are no-ops on a row that carries
+ * neither a trust flag nor a start time, so every existing row's confidence is
+ * byte-identical to its pre-Phase-9 value.
  */
 export function projectSearchResult(
   r: SearchResult,
   context: InputContext,
   policyVersion: string,
   q: string,
+  signals: ProjectionSignals = {},
 ): InputSuggestion {
   const entityType = searchTypeToEntity(r.type as DispatchSearchType);
-  const confidence = tierConfidence(matchTier(r.title, q, r.subtitle));
+  // §15 signal stack. Order is deliberate: the boosts (Trust, Temporal, TripFit)
+  // are applied first and each is clamped by SIGNAL_CEILING, then the penalties
+  // (SpamRisk, task infeasibility) subtract from the result — so a stuffed or
+  // out-of-task row cannot boost its way back above a clean one.
+  const confidence = applyFeasibility(
+    applySpamRisk(
+      applyTripFit(
+        applyTemporalFit(
+          applyTrustConfidence(
+            tierConfidence(matchTier(r.title, q, r.subtitle)),
+            r.verified,
+            r.isOfficial,
+          ),
+          r.startsAt,
+          signals.temporalWindow ?? null,
+        ),
+        signals.tripFit === true,
+      ),
+      `${r.title} ${r.subtitle ?? ''}`,
+    ),
+    signals.demoted === true,
+  );
 
   // Canonical registry rows carry source:"canonical" in metadata; every other
   // entity from dispatchSearch is likewise a canonical Portava entity match.
@@ -82,6 +135,14 @@ export function projectSearchResult(
   // Only copy display-safe optional fields — NEVER internal metadata (§42).
   if (r.subtitle) suggestion.subtitle = r.subtitle;
   if (r.matchedReason) suggestion.reason = r.matchedReason;
+  // §20 verification / trust context. Set only when TRUE, so a row that is not
+  // a person carries neither key and no reader can mistake an absent flag for a
+  // negative claim about somebody.
+  if (r.verified === true) suggestion.verified = true;
+  if (r.isOfficial === true) suggestion.official = true;
+  // §20/§24 Hidden Gem protection label — a precision word, never a position.
+  const precision = entityType === 'hidden_gem' ? gemLocationPrecision(r.metadata) : undefined;
+  if (precision) suggestion.locationPrecision = precision;
   if (r.destinationRoute) {
     suggestion.destination = { route: r.destinationRoute, entityType, entityId: r.id };
     suggestion.canonicalUri = `portava:${r.destinationRoute}`;
@@ -233,12 +294,24 @@ export function buildQueryCompletion(
 // Real model-generated AI writing/continuation (§22) is produced separately in
 // aiWriting.ts and is opt-in + flag-gated. Starters resolve to an editable
 // replace_text action so nothing is ever silently inserted (§22).
-const COMPASS_STARTERS = [
-  'Where should I go tonight?',
-  'Where should I eat nearby?',
-  'Where should we go after this?',
-  'Find a hidden gem.',
+/**
+ * THE curated starter set — one list, served through the gateway to every
+ * surface (census-compass CG-01 / census-input-intelligence G359: the client
+ * used to carry its own copy in compassPrompt.ts and never asked). Each entry
+ * is a short chip label plus the full prompt the tap seeds.
+ */
+export const COMPASS_STARTER_SET: ReadonlyArray<{ id: string; label: string; prompt: string }> = [
+  { id: 'right_now', label: 'Right now', prompt: 'What should I do right now?' },
+  { id: 'tonight', label: 'Tonight', prompt: 'What should I do tonight?' },
+  { id: 'meet', label: 'Meet people', prompt: "Help me meet people nearby — who's around and what's social right now?" },
+  { id: 'build_day', label: 'Build my day', prompt: 'Build my day — plan out the rest of today for me.' },
+  { id: 'surprise', label: 'Surprise me', prompt: "Surprise me with something I wouldn't have thought of." },
+  { id: 'my_trip', label: 'My trip', prompt: "What's the status of my trip and what should I do next on it?" },
+  { id: 'eat_nearby', label: 'Eat nearby', prompt: 'Where should I eat nearby?' },
+  { id: 'after_this', label: 'After this', prompt: 'Where should we go after this?' },
+  { id: 'hidden_gem', label: 'Hidden gem', prompt: 'Find a hidden gem.' },
 ];
+const COMPASS_STARTERS = COMPASS_STARTER_SET.map((s) => s.prompt);
 
 /** Context Compass starters can tailor to (surface / Trip), coarse only (§56). */
 export interface CompassStarterContext {
@@ -286,16 +359,30 @@ export function buildCompassStarters(
   if (ctx.cityId) structured.cityId = ctx.cityId;
   if (ctx.tripId) structured.tripId = ctx.tripId;
 
+  // A curated starter is served under its short chip label; a contextual one
+  // under a label of the same shape, so a client renders one vocabulary.
+  const labelOf = (text: string): string => {
+    const curated = COMPASS_STARTER_SET.find((s) => s.prompt === text);
+    if (curated) return curated.label;
+    if (city && text === `Where should I go in ${city} tonight?`) return `Tonight in ${city}`;
+    if (city && text === `Where should I eat in ${city}?`) return `Eat in ${city}`;
+    if (text === 'What should I plan next for my trip?') return 'Next on my trip';
+    return text;
+  };
+  const starterIdOf = (text: string): string | null => COMPASS_STARTER_SET.find((s) => s.prompt === text)?.id ?? null;
+
   return matched.slice(0, Math.max(0, max)).map((text, i): InputSuggestion => ({
     id: `${context}:ai:${i}`,
     type: 'ai_suggestion',
     context,
-    label: text,
+    label: labelOf(text),
     replacementText: text,
     action: { type: 'replace_text', text },
     // Structured refs travel with the suggestion so Compass is handed intent +
-    // permitted entities, not just the prompt string.
-    structuredValue: structured,
+    // permitted entities, not just the prompt string. `starterId` names the
+    // curated starter (null for a contextual one) so a client keys chips
+    // stably across serves.
+    structuredValue: { ...structured, starterId: starterIdOf(text) },
     confidence: 0.5,
     source: 'ai',
     reason: 'Suggested prompt',

@@ -1,0 +1,23 @@
+# db/harness/kernel_chain.txt — the CANONICAL KERNEL ANCESTRY, in order.
+#
+# Every one of these is the REAL migration file, run whole, with its own
+# preconditions and postconditions. The harness used to slice 2590's function
+# body out and install that alone; it does not any more, because slicing a body
+# proves nothing about the migration that installs it.
+#
+# Measured 2026-09-09 against both databases:
+#   production (ajrurzioarfkagpuxfnb)  — 2420, and its prosrc md5 is EXACTLY the
+#     repo's: d621c513ef2093054aea014702733649. Production is not drifted.
+#   portava-ci (hwokxgbmezheskbzskfr)  — 2420 with all nine whole-line `--`
+#     comments stripped (md5 ed202dc5664f7f46e3b27c7810fb1a2e; proven by
+#     reproducing it from the repo's body by removing comment lines and nothing
+#     else). Same logic, same commands, same reasons. The 11,314 vs 11,976
+#     figure quoted earlier is a COMMENT difference, not a capability one.
+#
+# Neither database has 2450, 2500 or 2590. Each of those files' own headers
+# records being rehearsed on portava-ci inside a transaction that ended in
+# ROLLBACK — correct at the time, and never followed by an apply.
+artifacts/api-server/src/migrations/2420_trip_kernel_foundation.sql
+artifacts/api-server/src/migrations/2450_trip_kernel_trip_and_participant_families.sql
+artifacts/api-server/src/migrations/2500_trip_kernel_join_via_link_and_host.sql
+artifacts/api-server/src/migrations/2590_trip_kernel_add_plan_attachment_columns.sql

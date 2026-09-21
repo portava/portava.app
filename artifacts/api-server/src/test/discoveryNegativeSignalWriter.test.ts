@@ -58,6 +58,7 @@ import express, { type Express } from "express";
 import { _setTestClient } from "../lib/http.js";
 import { upgradableOutcomesFor } from "../routes/rankEvents.js";
 import { recordNegativeDistributionSignal } from "../services/ranking/DiscoveryRankingService.js";
+import { loadDismissedPlaceIds, withoutDismissed, DISMISSED_MAX_IDS } from "../lib/discoveryDismissed.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -528,5 +529,235 @@ describe("migration 2297 — dismiss outcome + numerator-only RPC", () => {
       /expected exactly 1 record_distribution_negative_signal/,
       "a postcondition must prove the new name is not itself an overload set",
     );
+  });
+});
+
+// ── E. THE READ SIDE — a dismissal that changes nothing is not a dismissal ────
+//
+// Sections A-D above pin the WRITER. They were complete and they were not
+// enough: census-discovery §12.6 recorded that "the writer exists and is
+// unexercised", and the half it did not say out loud is that NOTHING READ THE
+// ROWS BACK either. A dismiss landed in rank_events, moved the cross-viewer
+// `negative_signal_count`, and left the person who sent it looking at exactly
+// the same Discovery results. The one thing "Not interested" plainly promises —
+// that this place stops coming back — was the one thing it did not do.
+//
+// `lib/discoveryDismissed.ts` is that reader and `routes/discovery.ts` applies
+// it on all four serve paths. These cases pin the reader's own contract: what it
+// returns, who it returns it for, and — the part with the most weight on it —
+// that it never reports a failed read as an absence of dismissals.
+
+describe("the dismissal READ — suppression, and the failure it refuses to swallow", () => {
+  /**
+   * A fake postgrest chain that records the filters it was given, so a case can
+   * assert the read is VIEWER-SCOPED rather than merely that it returned rows.
+   * Any operator it does not model throws, so a filter silently matching
+   * everything surfaces as an error instead of a pass.
+   */
+  function dismissClient(
+    rows: Array<{ user_id: string; surface: string; outcome: string; item_id: string }>,
+    opts: { unreadable?: boolean; throws?: boolean } = {},
+  ) {
+    const filters: Array<[string, unknown]> = [];
+    let limitArg: number | null = null;
+    const client = {
+      from(table: string) {
+        if (table !== "rank_events") throw new Error(`fake: unexpected table ${table}`);
+        let out = [...rows];
+        const q: any = {
+          select() { return q; },
+          eq(col: string, val: unknown) {
+            filters.push([col, val]);
+            out = out.filter((r) => (r as any)[col] === val);
+            return q;
+          },
+          order() { return q; },
+          limit(n: number) { limitArg = n; out = out.slice(0, n); return q; },
+          then(resolve: (v: unknown) => void, reject?: (e: unknown) => void) {
+            if (opts.throws) return Promise.reject(new Error("boom")).then(resolve, reject);
+            const result = opts.unreadable
+              ? { data: null, error: { message: "simulated unreadable rank_events" } }
+              : { data: out.map((r) => ({ item_id: r.item_id })), error: null };
+            return Promise.resolve(result).then(resolve, reject);
+          },
+        };
+        return q;
+      },
+    };
+    return { client, filters: () => filters, limitArg: () => limitArg };
+  }
+
+  const BOB_ID = "b0b0b0b0-bbbb-bbbb-bbbb-000000000002";
+
+  function corpus() {
+    return [
+      { user_id: ALICE_ID, surface: "discovery", outcome: "dismiss",    item_id: "node/1" },
+      { user_id: ALICE_ID, surface: "discovery", outcome: "dismiss",    item_id: "node/2" },
+      // Same person, same surface, a POSITIVE outcome — must not suppress.
+      { user_id: ALICE_ID, surface: "discovery", outcome: "impression", item_id: "node/3" },
+      // Same person, a dismiss on ANOTHER surface — must not suppress here.
+      { user_id: ALICE_ID, surface: "pulse",     outcome: "dismiss",    item_id: "node/4" },
+      // SOMEBODY ELSE's dismissal. The load-bearing row of this fixture.
+      { user_id: BOB_ID,   surface: "discovery", outcome: "dismiss",    item_id: "node/5" },
+    ];
+  }
+
+  it("E1. returns exactly the viewer's own discovery dismissals", async () => {
+    const f = dismissClient(corpus());
+    const got = await loadDismissedPlaceIds(f.client as any, ALICE_ID);
+    assert.equal(got.degraded, false, "a readable table is not a degraded read");
+    assert.deepEqual(
+      [...got.ids].sort(), ["node/1", "node/2"],
+      "the set must be this viewer's discovery-surface dismissals and nothing else",
+    );
+  });
+
+  it("E2. PRIVACY — another person's dismissal never reaches this viewer's set", async () => {
+    // Stated as its own case rather than left implicit in E1. A dismissal set
+    // that leaked across viewers would let one person's taps shrink another
+    // person's Discovery results, which is both a privacy defect and a
+    // suppression primitive handed to anyone who wants one.
+    const f = dismissClient(corpus());
+    const got = await loadDismissedPlaceIds(f.client as any, ALICE_ID);
+    assert.ok(!got.ids.has("node/5"), "BOB's dismissal must not suppress anything for ALICE");
+    assert.ok(
+      f.filters().some(([col, val]) => col === "user_id" && val === ALICE_ID),
+      "the read must be keyed to the viewer at the QUERY, not filtered afterwards",
+    );
+    assert.ok(
+      f.filters().some(([col, val]) => col === "surface" && val === "discovery"),
+      "the read must be scoped to the discovery surface",
+    );
+    assert.ok(
+      f.filters().some(([col, val]) => col === "outcome" && val === "dismiss"),
+      "the read must select dismissals, not every outcome",
+    );
+  });
+
+  it("E3. an UNREADABLE table is degraded, NOT an empty dismissal list", async () => {
+    // The whole reason the flag exists. supabase-js RESOLVES on a DB error, so
+    // an unreadable table and a viewer who has dismissed nothing arrive
+    // identically. Reporting the first as the second would serve dismissed
+    // places back with nothing on the response to say why.
+    const f = dismissClient(corpus(), { unreadable: true });
+    const got = await loadDismissedPlaceIds(f.client as any, ALICE_ID);
+    assert.equal(got.degraded, true, "a failed read must be reported, never resolved into an emptiness");
+    assert.equal(got.ids.size, 0);
+  });
+
+  it("E4. a THROWING read is degraded too", async () => {
+    const f = dismissClient(corpus(), { throws: true });
+    const got = await loadDismissedPlaceIds(f.client as any, ALICE_ID);
+    assert.equal(got.degraded, true, "the throw arm must report, not swallow");
+  });
+
+  it("E5. VACUITY GUARD — a viewer with no dismissals is NOT degraded", async () => {
+    // Without this, "reports degraded on failure" is satisfied by reporting
+    // degraded always, which would put `coverage: "partial"` on every Discovery
+    // response and make the word meaningless.
+    const f = dismissClient([]);
+    const got = await loadDismissedPlaceIds(f.client as any, ALICE_ID);
+    assert.equal(got.degraded, false, "an empty-but-READ dismissal list is a complete answer");
+    assert.equal(got.ids.size, 0);
+  });
+
+  it("E6. an anonymous caller reads nothing and is not degraded", async () => {
+    const f = dismissClient(corpus());
+    const got = await loadDismissedPlaceIds(f.client as any, null);
+    assert.equal(got.degraded, false, "there is no viewer to have dismissed anything — that is complete, not failed");
+    assert.equal(got.ids.size, 0);
+    assert.deepEqual(f.filters(), [], "no read should have been issued at all");
+  });
+
+  it("E7. the read is bounded", async () => {
+    const f = dismissClient(corpus());
+    await loadDismissedPlaceIds(f.client as any, ALICE_ID);
+    assert.equal(
+      f.limitArg(), DISMISSED_MAX_IDS,
+      "an unbounded read on rank_events is a request-time hazard on a table that only grows",
+    );
+  });
+
+  it("E8. withoutDismissed removes exactly the dismissed places and keeps order", async () => {
+    const page = [{ id: "node/1" }, { id: "node/3" }, { id: "node/2" }, { id: "node/9" }];
+    const out = withoutDismissed(page, new Set(["node/1", "node/2"]));
+    assert.deepEqual(
+      out.map((p) => p.id), ["node/3", "node/9"],
+      "the filter must remove the dismissed ids and disturb nothing else",
+    );
+  });
+
+  it("E9. withoutDismissed with an empty set is the IDENTITY, by reference", async () => {
+    // Almost every request. Returning a copy would silently re-allocate every
+    // page on a route that already has four serve paths, and — more to the point
+    // — a filter that rebuilds the array is a filter that could reorder it.
+    const page = [{ id: "node/1" }, { id: "node/2" }];
+    assert.equal(withoutDismissed(page, new Set()), page, "an empty dismissal set must not touch the page at all");
+  });
+
+  it("E10. a dismissal CANNOT resurrect itself on a window — there is none", () => {
+    // `lib/discoveryPde.ts` bounds its SEEN set to 24 hours because "recently
+    // shown" is a claim about recency. "Not interested" is not, and an expiring
+    // dismissal would quietly bring every rejected place back on a schedule the
+    // person was never told about. Read from the source rather than asserted, so
+    // adding a window later turns this red instead of passing silently.
+    const src = readFileSync(
+      resolve(dirname(fileURLToPath(import.meta.url)), "../lib/discoveryDismissed.ts"),
+      "utf8",
+    );
+    const read = /loadDismissedPlaceIds[\s\S]*?^}/m.exec(src);
+    assert.ok(read, "loadDismissedPlaceIds must be present");
+    assert.ok(
+      !/\bgte\(|\blte\(|served_at.*since|SEEN_WINDOW/i.test(read![0]!),
+      "the dismissal read must not acquire a time window — see the module header",
+    );
+  });
+});
+
+// ── F. Migration 2995 — the index the read depends on ─────────────────────────
+
+describe("migration 2995 — the dismissal read's index", () => {
+  const sql = readFileSync(resolve(MIGRATIONS_DIR, "2995_rank_events_discovery_dismissed_index.sql"), "utf8");
+
+  it("F1. creates a PARTIAL index on the read's own predicate", () => {
+    assert.match(sql, /CREATE INDEX IF NOT EXISTS rank_events_discovery_dismissed/);
+    const stmt = /CREATE INDEX IF NOT EXISTS rank_events_discovery_dismissed[\s\S]*?;/.exec(sql);
+    assert.ok(stmt, "the CREATE INDEX statement must be present");
+    assert.match(stmt![0]!, /WHERE outcome = 'dismiss' AND surface = 'discovery'/,
+      "a non-partial index would span every rank_events row and defeat the file");
+    assert.match(stmt![0]!, /\(user_id, served_at DESC, item_id\)/,
+      "the key must serve the viewer predicate, the ordering and the projection");
+  });
+
+  it("F2. is additive and idempotent", () => {
+    assert.match(sql, /^BEGIN;/m);
+    assert.match(sql, /^COMMIT;/m);
+    assert.match(sql, /IF NOT EXISTS/, "re-running the file must be a no-op");
+    assert.ok(
+      !/(ALTER TABLE[^\n;]*DROP|DROP TABLE|DELETE FROM|UPDATE\s+rank_events)/i.test(
+        sql.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n"),
+      ),
+      "an index migration must not drop, delete or rewrite anything",
+    );
+  });
+
+  it("F3. REFUSES to apply if 2297 has not — an index over an illegal value indexes nothing", () => {
+    assert.match(sql, /PRECONDITION FAILED[\s\S]*?apply 2297 first/,
+      "a predicate naming a value the CHECK forbids succeeds and silently indexes nothing");
+  });
+
+  it("F4. its postconditions are absolute and re-runnable", () => {
+    // certify:migrations re-executes the postcondition block standalone, so it
+    // may not depend on anything this run did — no temp tables, no before/after.
+    const post = /DO \$post\$[\s\S]*?\$post\$;/.exec(sql);
+    assert.ok(post, "a postcondition block must exist");
+    assert.ok(
+      !/CREATE TEMP|pg_temp|\bbefore_\w+|\bafter_\w+/i.test(post![0]!),
+      "the postconditions must be answerable from the catalog alone",
+    );
+    assert.match(post![0]!, /POSTCONDITION FAILED[\s\S]*?is not partial/,
+      "an index created without the WHERE clause must FAIL the file, not pass it");
+    assert.match(post![0]!, /rank_events_features_gin[\s\S]*?rank_events_user_item/,
+      "the three 0153 indexes must be proved still present — this file adds, it never removes");
   });
 });

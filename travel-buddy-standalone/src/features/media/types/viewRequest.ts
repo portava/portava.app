@@ -55,8 +55,22 @@ export interface ViewRequestSuccess {
   /**
    * How many opted-in + eligible + un-blocked contributors were asked. Zero is a
    * normal, graceful outcome pre-launch (nobody opted in yet) — never an error.
+   *
+   * READ IT WITH `recipientsDetermined`. Zero alone does not mean "nobody is
+   * nearby"; it also happens when the opt-in registry could not be read.
    */
   recipientCount: number;
+  /**
+   * Whether `recipientCount` is a MEASUREMENT. False when the server could not
+   * read the contributor opt-in registry, so the zero it returned is a count
+   * that was never taken (server field `recipientsDetermined`).
+   *
+   * Defaults to FALSE when the server does not send it, in the same direction as
+   * `VisualCoverage.stale` — a missing field withholds the claim rather than
+   * fabricating one. The UI may only say "nobody is nearby yet" when this is
+   * true.
+   */
+  recipientsDetermined: boolean;
 }
 
 export interface ViewRequestRefused {

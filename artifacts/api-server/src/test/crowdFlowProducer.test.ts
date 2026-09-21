@@ -862,3 +862,172 @@ describe("the producer publishes nothing the shared gate would not", () => {
     assert.equal(result.rejected[0]?.reason, "publication_delay_not_elapsed");
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// M5 / M67 / M279 — what the producer must yield, named by requirement
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// The cases above prove the §10 rules in detail. None of them states the thing
+// M5 is actually graded on, which is not a rule but an OUTPUT:
+//
+//   "a `GET /api/map/projection` response over a backfilled viewport carries
+//    at least one `objects[].kind === \"crowd_flow\"`."
+//
+// The route half of that sentence is `routes/mapProjection.ts` and belongs to
+// another lane. The half that decides whether such an object can exist at all
+// is here, and it was unasserted: the end-to-end case above reaches into
+// `result.flows[0].payload` and never looks at `.kind`. A producer that
+// published its flows under any other kind would satisfy every existing case
+// in this file and render nothing, because `LAYER_FOR_KIND` would not place it.
+//
+// `MAP_OBJECT_KINDS` is imported for the same reason the §35 suite reads the
+// telemetry CHECK out of its migration: the kind union is closed, it lives in
+// a file this lane does not own, and "crowd_flow" being spelled identically in
+// two places is a fact worth one assertion rather than an assumption.
+import { MAP_OBJECT_KINDS } from "../lib/mapObjects.js";
+
+describe("M5 — the producer's output is a crowd_flow MAP OBJECT, not just a payload", () => {
+  it("a publishable cohort yields an object whose kind is exactly `crowd_flow`", () => {
+    const { transitions } = derive(publishableCohort());
+    const result = deriveCrowdFlow(transitions, { now: NOW });
+
+    assert.equal(result.flows.length, 1, JSON.stringify(result.rejected));
+    const obj = result.flows[0] as unknown as { kind: string; geometry: { type: string } };
+    assert.equal(
+      obj.kind,
+      "crowd_flow",
+      "M5 is graded on objects[].kind === 'crowd_flow'; anything else renders nowhere",
+    );
+    // The §16 layer draws a line between two zone centroids. A point geometry
+    // would still carry the right kind and still draw nothing recognisable.
+    assert.equal(obj.geometry.type, "LineString");
+  });
+
+  it("`crowd_flow` is a member of the CLOSED kind union, not a private string", () => {
+    // §18's union is closed and lives in lib/mapObjects.ts. A kind the producer
+    // emits but the union does not list is filtered out downstream, silently.
+    assert.ok(
+      (MAP_OBJECT_KINDS as readonly string[]).includes("crowd_flow"),
+      "the producer emits a kind §18's union does not declare",
+    );
+  });
+
+  it("anti-vacuity: a ONE-family cohort yields ZERO crowd_flow objects", () => {
+    // Without this, the case above is also satisfied by a producer that emits a
+    // crowd_flow object for any input at all — which is the failure mode §10's
+    // whole multi-family rule exists to prevent.
+    const oneFamily = publishableCohort().map((s) => ({
+      ...s,
+      family: "next_stop_contribution" as const,
+    }));
+    const { transitions } = derive(oneFamily);
+    const result = deriveCrowdFlow(transitions, { now: NOW });
+    assert.equal(
+      result.flows.filter((f) => (f as unknown as { kind: string }).kind === "crowd_flow").length,
+      0,
+      "one family must publish nothing — a single sensor's artefact is not a crowd",
+    );
+    assert.ok(result.rejected.length > 0, "and the refusal must be reported, not silent");
+  });
+});
+
+describe("M67 — the two arms of the multi-family rule, named", () => {
+  it("POSITIVE: with MIN_SIGNAL_FAMILIES observed families wired, the producer can publish", () => {
+    // Asserted through `canProduceFlow` against the REAL register rather than a
+    // fixture, so wiring or unwiring a family moves this case.
+    assert.equal(canProduceFlow(), true);
+    const observedWired = WIRED_SIGNAL_SOURCES.filter((f) =>
+      OBSERVED_SIGNAL_FAMILIES.includes(f),
+    );
+    assert.ok(
+      observedWired.length >= MIN_SIGNAL_FAMILIES,
+      `§10 needs ${MIN_SIGNAL_FAMILIES} observed families; ${observedWired.length} are wired`,
+    );
+    const { transitions } = derive(publishableCohort());
+    assert.equal(deriveCrowdFlow(transitions, { now: NOW }).flows.length, 1);
+  });
+
+  it("NEGATIVE: with one family wired it refuses BEFORE reading, issuing no query", async () => {
+    // The census's wording is "refuses before reading", and the reason is not
+    // efficiency: assembling a cohort of consent-scoped contribution rows for
+    // an outcome that cannot exist is processing personal data for nothing.
+    const reads: string[] = [];
+    const spy = {
+      from: (t: string) => {
+        reads.push(t);
+        throw new Error("readCrowdFlowSignals issued a query it promised not to issue");
+      },
+    };
+    const r = await readCrowdFlowSignals(spy as any, {
+      now: NOW,
+      wired: ["next_stop_contribution"],
+    });
+    assert.equal(r.refusal, "insufficient_wired_families");
+    assert.deepEqual(r.signals, []);
+    assert.deepEqual(reads, [], "not one table may be touched before the family gate");
+  });
+
+  it("anti-vacuity: the spy WOULD have recorded a read had one been issued", async () => {
+    // Otherwise `reads` being empty above proves only that the spy is inert.
+    const reads: string[] = [];
+    const spy = {
+      from: (t: string) => {
+        reads.push(t);
+        throw new Error("stop");
+      },
+    };
+    await readCrowdFlowSignals(spy as any, { now: NOW, wired: WIRED_SIGNAL_SOURCES }).catch(
+      () => undefined,
+    );
+    assert.ok(
+      reads.length > 0,
+      "with enough families wired the read must actually happen, or the negative case is vacuous",
+    );
+    assert.ok(
+      reads.includes("feature_flags"),
+      `expected the ${CROWD_FLOW_FLAG} read; saw ${reads.join(", ")}`,
+    );
+  });
+});
+
+describe("M279 — Phase 4 cannot be called closed while M65 is open", () => {
+  // census-map M279: "a geo_zones backfill plus 2218/2224 lights the surface
+  // (M5, M67) and STILL leaves this phase W on M65". That sentence is a
+  // standing condition, and a phase row is exactly the kind of thing that gets
+  // ticked off because its two visible dependencies went green. So the
+  // condition is asserted rather than remembered.
+  it("unfed §10 families remain, so Phase 4 is not complete", () => {
+    assert.ok(
+      DECLARED_BUT_UNFED_FAMILIES.length > 0,
+      "if this is ever empty, M65's own criterion — a producer run observing each " +
+        "family — must be met before M279 may be read as closed. Do not delete this " +
+        "case to make it pass; delete it when every family has a capture.",
+    );
+    // Each remaining family must still carry its named blocker. A family that
+    // quietly lost its finding is a family somebody could wire without argument.
+    for (const family of DECLARED_BUT_UNFED_FAMILIES) {
+      assert.ok(
+        UNFED_FAMILY_BLOCKERS[family],
+        `${family} is unfed with no recorded blocker — see B11`,
+      );
+    }
+  });
+
+  it("the seven §10 families are fully accounted for: wired, cause-only, or blocked", () => {
+    // No family may be simply unmentioned. This is the shape of the false
+    // green the census names: moving a family into WIRED_SIGNAL_SOURCES without
+    // its capture turns M65 green while producing nothing.
+    const wired = new Set<string>(WIRED_SIGNAL_SOURCES);
+    const causeOnly = new Set<string>(CAUSE_ONLY_SIGNAL_FAMILIES);
+    const unfed = new Set<string>(DECLARED_BUT_UNFED_FAMILIES);
+    const unaccounted = CROWD_FLOW_SIGNAL_FAMILIES.filter(
+      (f) => !wired.has(f) && !causeOnly.has(f) && !unfed.has(f),
+    );
+    assert.deepEqual(unaccounted, [], "a §10 family in no register at all");
+    assert.equal(
+      wired.size + causeOnly.size + unfed.size,
+      CROWD_FLOW_SIGNAL_FAMILIES.length,
+      "the three registers must partition §10's families exactly — no overlap, no gap",
+    );
+  });
+});

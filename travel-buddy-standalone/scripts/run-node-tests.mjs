@@ -165,9 +165,43 @@ if (toRun.length === 0) {
 
 console.log(`Running ${toRun.length} node:test files (${broken.size} known-broken excluded).`);
 
+// ── THE LOADER IS CHOSEN BY NODE MAJOR, AND THE REASON IS WORTH THE LINES ────
+//
+// On NODE 24 — what CI pins (`NODE_VERSION: '24'` in ci.yml) — `tsx/esm` is the
+// right loader and this suite is green.
+//
+// On NODE 22 IT IS NOT, AND THE FAILURE IS CATASTROPHIC AND UNINFORMATIVE.
+// Measured on Node v22.22.2, 2026-09-14: **269 of 272 files fail**, every one
+// with `ERR_REQUIRE_CYCLE_MODULE — Cannot require() ES Module … in a cycle`,
+// thrown before a single test body runs. The same files pass 272/272 under
+// `--import tsx`. It is not the tree: `require(esm)` cycle handling changed
+// between 22 and 24, and `tsx/esm` trips it.
+//
+// WHY THIS MATTERS MORE THAN AN ERGONOMIC ANNOYANCE. A developer or agent on
+// Node 22 sees 269 red files and has two readings available: "the client test
+// suite is broken" or "the client test suite does not run here". Those lead to
+// opposite actions, and the first one is wrong. It has already cost this
+// project twice — once recorded as "a property of this container's module
+// resolution rather than of the tree", and once as a lane reporting that the
+// standalone runner was dark and every client assertion across several censuses
+// might be unexecuted. It is not dark in CI. It was dark on that lane's Node.
+//
+// So: pick the loader that works, and SAY SO, rather than letting the version
+// difference surface as 269 stack traces.
+const nodeMajor = Number.parseInt(process.versions.node.split('.')[0], 10);
+const loader = nodeMajor >= 24 ? 'tsx/esm' : 'tsx';
+if (loader !== 'tsx/esm') {
+  console.log(
+    `Node ${process.versions.node} < 24: using --import tsx instead of tsx/esm. ` +
+      'On Node 22 the tsx/esm loader fails every file with ERR_REQUIRE_CYCLE_MODULE ' +
+      'before any test runs — a loader artefact, not a defect in these tests. ' +
+      "CI pins Node 24 and uses tsx/esm; this is the local equivalent, not a weaker run.",
+  );
+}
+
 const result = spawnSync(
   process.execPath,
-  ['--import', 'tsx/esm', '--test', ...toRun],
+  ['--import', loader, '--test', ...toRun],
   { stdio: 'inherit' },
 );
 process.exit(result.status ?? 1);

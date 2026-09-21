@@ -9,10 +9,11 @@
  */
 import { Router } from "express";
 import { requireUser, sendError } from "../lib/http";
+import { affectedRows } from "../lib/affectedRows.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { readCircleLocations } from "../lib/circleLocationsRead.js";
 import { nameVisibilitySet } from "../lib/publicIdentity.js";
-import { isKillSwitchEngaged } from "../lib/featureFlags.js";
+import { isKillSwitchEngaged, killSwitchStateUnknown, KILL_SWITCH_UNKNOWN_MESSAGE } from '../lib/featureFlags.js';
 import { coarsenPosition, effectiveDiscoveryVisibility } from "../lib/mapTravelers.js";
 import { fetchBlockedSet } from "../lib/blocks.js";
 import { reverseGeocode } from "../services/geocodingService";
@@ -33,6 +34,17 @@ function isValidLat(v: unknown): v is number {
 function isValidLng(v: unknown): v is number {
   return typeof v === "number" && isFinite(v) && v >= -180 && v <= 180;
 }
+/** A client-stated observation instant: ISO, not in the future beyond clock skew, else null (server time applies). */
+const OBSERVED_AT_FUTURE_SKEW_MS = 5 * 60 * 1000;
+export function observedAtOf(v: unknown, nowIso: string): string | null {
+  if (typeof v !== "string") return null;
+  const ms = Date.parse(v);
+  if (!Number.isFinite(ms)) return null;
+  const now = Date.parse(nowIso);
+  if (ms > now + OBSERVED_AT_FUTURE_SKEW_MS) return null;
+  return new Date(ms).toISOString();
+}
+
 function sanitizeText(v: unknown, maxLen = 128): string | null {
   if (typeof v !== "string") return null;
   return v.trim().slice(0, maxLen) || null;
@@ -93,7 +105,15 @@ router.post("/me/location-state", async (req, res) => {
 
   // Emergency stop: disable_location_sharing — fail-CLOSED on DB error
   const flagSc = getServiceClient();
-  if (flagSc && await isKillSwitchEngaged(flagSc, 'disable_location_sharing')) {
+  // An ABSENT service client is the same unknown as an unreadable
+  // feature_flags, and until this line it was not treated as one: the stop
+  // was skipped and the write went through with a 2xx. degraded_unavailable
+  // rather than feature_disabled, because nobody engaged a stop.
+  if (killSwitchStateUnknown(flagSc)) {
+    sendError(res, 'degraded_unavailable', KILL_SWITCH_UNKNOWN_MESSAGE);
+    return;
+  }
+  if (await isKillSwitchEngaged(flagSc!, 'disable_location_sharing')) {
     sendError(res, 'feature_disabled', 'Location sharing is temporarily disabled');
     return;
   }
@@ -135,7 +155,38 @@ router.post("/me/location-state", async (req, res) => {
 
   if (permissionStatus) patch.permission_status = permissionStatus;
   if (source) patch.source = source;
-  if (lat != null) { patch.lat = lat; patch.lng = lng; patch.accuracy_meters = accuracyMeters; patch.last_known_at = now; }
+  // Trips spec §18.3 — presence is "the newest valid observation with
+  // expiry/confidence; never simple last-write-wins across stale devices"
+  // (census-trips TR351). A client that says WHEN it observed the fix
+  // (`coords.observedAt`) gets that instant as `last_known_at`, and a fix
+  // older than the one already stored is NOT written over it: a phone that
+  // was offline for an hour and replays its last fix on reconnect must not
+  // move the traveller back in time. The rest of the patch (permission,
+  // place, manual city) still applies. A client that sends no observedAt is
+  // the legacy shape: the server's receipt time, exactly as before.
+  let staleObservation: { observedAt: string; storedLastKnownAt: string } | null = null;
+  if (lat != null) {
+    const observedAt = observedAtOf(body.coords?.observedAt, now);
+    if (observedAt !== null) {
+      const { data: current, error: currentErr } = await sc
+        .from("user_location_state")
+        .select("last_known_at")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      if (currentErr) {
+        req.log.error({ err: currentErr }, "location-state: current observation unreadable — refusing the write rather than overwriting blind");
+        sendError(res, "db_error", currentErr.message);
+        return;
+      }
+      const stored = typeof current?.last_known_at === "string" ? Date.parse(current.last_known_at) : NaN;
+      if (Number.isFinite(stored) && Date.parse(observedAt) < stored) {
+        staleObservation = { observedAt, storedLastKnownAt: current!.last_known_at as string };
+      }
+    }
+    if (!staleObservation) {
+      patch.lat = lat; patch.lng = lng; patch.accuracy_meters = accuracyMeters; patch.last_known_at = observedAt ?? now;
+    }
+  }
   if (city !== undefined) patch.city = city;
   if (district !== undefined) patch.district = district;
   if (country !== undefined) patch.country = country;
@@ -165,7 +216,9 @@ router.post("/me/location-state", async (req, res) => {
   }
 
   // Anti-fake GPS: run safety checks asynchronously for GPS fixes — non-blocking
-  if (source === "gps" && lat != null && lng != null) {
+  // A stale observation was not written, so it is not snapshotted either: the
+  // anti-fake check reads what the row holds, and the row still holds the newer fix.
+  if (!staleObservation && source === "gps" && lat != null && lng != null) {
     checkAndRecordSnapshot(sc, user.id, lat, lng).catch((err) => {
       req.log.warn({ err }, "location-state: safety check failed (non-fatal)");
     });
@@ -179,7 +232,21 @@ router.post("/me/location-state", async (req, res) => {
     });
   }
 
-  res.status(200).json({ ok: true });
+  if (staleObservation) {
+    // 200, not an error: the request was understood and the rest of it was
+    // applied. The observation itself was older than the one held, so it was
+    // not written, and the client is told with Appendix B's reason.
+    res.status(200).json({
+      ok: true,
+      observation: "stale_ignored",
+      reasonCode: "TRIP_PRESENCE_STALE",
+      observedAt: staleObservation.observedAt,
+      storedLastKnownAt: staleObservation.storedLastKnownAt,
+      detail: "an observation older than the stored one is not written over it (§18.3: newest valid observation, never last-write-wins across stale devices)",
+    });
+    return;
+  }
+  res.status(200).json({ ok: true, observation: lat != null ? "written" : "no_fix" });
 });
 
 // ── POST /api/location/reverse-geocode ───────────────────────────────────────
@@ -435,18 +502,46 @@ router.post("/location/exit-geofence", async (req, res) => {
   const eligibleAt = new Date(now.getTime() + GEOFENCE_CONFIRMATION_MINUTES * 60 * 1_000).toISOString();
   const exitedAt = now.toISOString();
 
-  const { error: updateErr } = await sc
+  // `.select("id")` so a zero-row UPDATE is distinguishable from a real one.
+  //
+  // PostgREST answers both with 204, so `if (updateErr)` alone could not tell
+  // "the post moved to pending_delay" from "nothing matched". The post is the
+  // author's own delayed-publish state — it holds back a post made AT a
+  // location until the author has left it — and a zero-row update leaves it
+  // stuck in `pending_location_exit` forever while this endpoint reports a
+  // `publishEligibleAt` the worker will never honour. The status was read and
+  // asserted a few lines above, so zero rows here means a concurrent change:
+  // real, rare, and not something to report as done.
+  const { data: updated, error: updateErr } = await sc
     .from("posts")
     .update({
       exited_geofence_at: exitedAt,
       publish_eligible_at: eligibleAt,
       post_status: "pending_delay", // worker picks it up on next tick
     })
-    .eq("id", postId);
+    .eq("id", postId)
+    .eq("post_status", "pending_location_exit")
+    .select("id");
 
-  if (updateErr) { sendError(res, "db_error", updateErr.message); return; }
+  if (updateErr) {
+    req.log.error({ err: updateErr, postId }, "exit-geofence: post update failed");
+    sendError(res, "db_error", updateErr.message);
+    return;
+  }
+  if (affectedRows(updated) === 0) {
+    req.log.warn({ postId }, "exit-geofence: no post row matched — status changed concurrently, nothing was scheduled");
+    sendError(res, "conflict", "This post is no longer awaiting a geofence exit");
+    return;
+  }
 
-  // Append exit_detected event (non-fatal)
+  // Append exit_detected event (non-fatal, but ISSUED).
+  //
+  // This was a bare `void sc.from(…).insert({…})`. PostgrestBuilder is a
+  // THENABLE, not a promise — it calls `_fetch` inside `then()` — so that
+  // statement built a request object and discarded it, and no exit_detected row
+  // was ever written. The `.then(…)` below is what sends it. Failures are logged
+  // and never fail the response: the geofence exit is already recorded on the
+  // post itself, and this row is the trail, not the state.
   void sc
     .from("delayed_post_location_events")
     .insert({
@@ -456,7 +551,20 @@ router.post("/location/exit-geofence", async (req, res) => {
       lat,
       lng,
       metadata: { confirmation_window_minutes: GEOFENCE_CONFIRMATION_MINUTES },
-    });
+    })
+    .then(
+      (r: { error?: unknown } | null | undefined) => {
+        if (r?.error) {
+          req.log?.warn?.(
+            { err: r.error, postId },
+            "exit_detected event write failed (non-fatal)",
+          );
+        }
+      },
+      (err: unknown) => {
+        req.log?.warn?.({ err, postId }, "exit_detected event write threw (non-fatal)");
+      },
+    );
 
   res.status(200).json({ ok: true, publishEligibleAt: eligibleAt });
 });

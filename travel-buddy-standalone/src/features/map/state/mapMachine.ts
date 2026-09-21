@@ -303,6 +303,94 @@ export function enterableModes(capabilities: MapCapabilities | null | undefined)
   return MAP_MODES.filter((mode) => canEnterMode(mode, capabilities));
 }
 
+// ── Reading the gates off the wire (census-map M221, M223) ────────────────────
+//
+// `deriveMapCapabilities` (src/stores/mapStore.tsx) answers each gate from an
+// input record. Until now NOTHING answered the step before that: turning a
+// served projection response into those inputs was an inline expression in
+// `app/map/index.tsx` — a `useMemo` reduce for Crowd Flow and a string compare
+// for Time Machine — which meant the two census rows that are ABOUT that step
+// (M221 "Mode CROWD_FLOW", M223 "Mode TIME_MACHINE") had no addressable code to
+// test. The derivation lives here, beside the gate it feeds.
+//
+// These take STRUCTURAL shapes rather than importing the service types, so this
+// module keeps its "no React, no I/O, no SDK" property (see the header). They
+// also read a response the client did not author, so both fail closed: only a
+// literal `true`, only a real `crowd_flow` string.
+
+/** The part of a projection response these derivations read. */
+export interface ServedProjection {
+  objects?: readonly { kind?: unknown }[] | null;
+}
+
+/**
+ * §10 — how many aggregate-movement objects the gateway actually served.
+ *
+ * Presence is the honest gate, and the reason is worth stating: the server only
+ * emits `crowd_flow` once `map_crowd_flow_enabled` is on AND the zone model has
+ * rows AND the cohort/k-anonymity gates pass. A non-zero count is therefore
+ * evidence that all of that held for this viewport — which no client-side flag
+ * read could establish.
+ *
+ * It counts on the GATEWAY's objects, not on the post-layer, post-zoom set:
+ * whether the city is moving is a fact about the world, not about which toggles
+ * the user has switched on. Switching the Crowd Flow layer off must hide the
+ * lines, never make the mode vanish from the rail.
+ */
+export function crowdFlowObjectCount(projection: ServedProjection | null | undefined): number {
+  const objects = projection?.objects;
+  if (!Array.isArray(objects)) return 0;
+  let n = 0;
+  for (const o of objects) {
+    if (o && o.kind === 'crowd_flow') n += 1;
+  }
+  return n;
+}
+
+/**
+ * The envelope `GET /api/map/projection/temporal` answers with, reduced to the
+ * one field this gate reads. `enabled: false` is the route's FAIL-SOFT refusal
+ * — it rides `map_projection_enabled` — and it means "the temporal source is
+ * unreachable", never "there is no history here".
+ */
+export interface TemporalEnvelopeLike {
+  enabled?: unknown;
+  forecast?: unknown;
+  history?: unknown;
+}
+
+/** What the temporal service hands back: a result, or a refusal, or nothing. */
+export type TemporalProbe =
+  | { ok?: unknown; data?: TemporalEnvelopeLike | null }
+  | null
+  | undefined;
+
+/**
+ * §15 — is the per-offset temporal producer reachable for this session?
+ *
+ * ## Why this is NOT gated on a non-null `forecast`
+ *
+ * M223's criterion is stated as "`enabled: true` + non-null `forecast` →
+ * TIME_MACHINE is enterable; the refusal envelope → it is not", and both of
+ * those arms are asserted. But the gate itself must not REQUIRE the forecast,
+ * and making it do so would be a regression with a green test: a PAST offset
+ * answers `forecast: null` with a `history` block, and §15's mode is meaningful
+ * for it. Requiring a forecast would close Time Machine for every historical
+ * scrub — exactly the "open onto nothing" failure `deriveMapCapabilities`'s
+ * header warns about, inverted.
+ *
+ * So: reachability turns on the PRODUCER answering, which is `enabled === true`.
+ * Fail-closed on everything else, including a truthy non-boolean, because this
+ * value crossed a network boundary.
+ */
+export function temporalProducerReachable(probe: TemporalProbe): boolean {
+  if (probe == null || typeof probe !== 'object') return false;
+  if (probe.ok !== true) return false;
+  const data = probe.data;
+  if (data == null || typeof data !== 'object') return false;
+  return (data as TemporalEnvelopeLike).enabled === true;
+}
+
 // ── Layers (spec §16) ──────────────────────────────────────────────────────────
 
 /**

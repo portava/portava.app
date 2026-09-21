@@ -82,12 +82,22 @@ router.post("/stamps/:userStampId/admire", asyncHandler(async (req, res) => {
   }
 
   // Idempotent: duplicate admires are a silent 200.
-  const { data: existing } = await sc
+  // supabase-js RESOLVES on a DB error, so an unbound `error` read an
+  // unreadable stamp_admires as "not admired yet" and fell through to the
+  // INSERT — re-firing the passport.stamp_admired push at the stamp owner for
+  // an admire they were already told about, once per tap, on top of turning the
+  // intended silent 200 into a unique-violation db_error.
+  const { data: existing, error: existingErr } = await sc
     .from("stamp_admires")
     .select("id")
     .eq("user_stamp_id", id)
     .eq("admirer_id", user.id)
     .maybeSingle();
+  if (existingErr) {
+    req.log?.error({ err: existingErr, stampId: id }, "stamp_admires duplicate check failed — refusing to re-admire");
+    sendError(res, "db_error", existingErr.message);
+    return;
+  }
   if (existing) {
     res.json({ admired: true, duplicate: true });
     return;

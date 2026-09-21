@@ -69,6 +69,40 @@ export interface PassportMemory {
   createdAt: string;
 }
 
+/** A named place inside one Trip's city — §26 level 5. Coarse only, never coordinates. */
+export interface PassportWorldPlace {
+  key: string;
+  name: string;
+  placeId: string | null;
+  neighborhood: string | null;
+  stampCount: number;
+  memoryCount: number;
+}
+
+/** One Memory filed under a Trip — §26 level 6. */
+export interface PassportWorldMemory {
+  id: string;
+  title: string | null;
+  category: string | null;
+  placeKey: string | null;
+  earnedAt: string | null;
+}
+
+/**
+ * One Trip inside a city — §26 level 4. `tripId: null` is the server's explicit
+ * untripped bucket: stamps and memories in this city that belong to no Trip. It
+ * is rendered, not skipped, so the levels never appear to lose a stamp.
+ */
+export interface PassportWorldTrip {
+  tripId: string | null;
+  title: string | null;
+  startDate: string | null;
+  endDate: string | null;
+  stampCount: number;
+  places: PassportWorldPlace[];
+  memories: PassportWorldMemory[];
+}
+
 export interface PassportMapMarker {
   country: string;
   city: string;
@@ -76,6 +110,12 @@ export interface PassportMapMarker {
   stampCount: number;
   verificationLevel: string;
   displayLabel: string;
+  /**
+   * §26 levels 4-6 for this city. OPTIONAL: an older server sends a marker with
+   * no deeper levels at all, and the hierarchy simply stops at City as it did
+   * before, rather than rendering an empty Trip section.
+   */
+  trips?: PassportWorldTrip[];
 }
 
 export interface PassportMapPayload {
