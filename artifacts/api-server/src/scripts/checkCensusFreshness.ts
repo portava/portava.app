@@ -2070,6 +2070,15 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   // paths resolve) and the most client-weighted: its subject is the typing
   // surface, so the hooks ARE the measurement, not evidence about it.
   "census-input-intelligence.md": [
+    // ── ADDED 2026-09-21 by the INTEGRATING LANE, for the a11y/§48 lane ─────
+    // Four paths its rows cite as evidence. `app/_layout.tsx` is the
+    // telemetry-sink mount that G263/G306 rest on, and the bare spelling is
+    // what the census writes; both spellings are listed so the coverage check
+    // resolves whichever it reads.
+    "artifacts/api-server/src/test/inputAssistanceCompatibility.test.ts",
+    "artifacts/api-server/src/lib/circleResponseShaper.ts",
+    "artifacts/api-server/src/lib/locationPurposes.ts",
+    "app/_layout.tsx",
     // ── ADDED 2026-09-21 by the INTEGRATING LANE, for the §44/§57 lane ───────
     // Cited as evidence by rows that lane moved. `routes/locations.ts` enters
     // because G232's own account names it as the entry point the alias-append
