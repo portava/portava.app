@@ -44,6 +44,7 @@ import { makeConfidence, type Confidence } from "../lib/liveIntelligence.js";
 import { isQuietHours } from "./CompassNotificationEngine.js";
 import { getWeatherContext } from "../lib/weatherCache.js";
 import { NotificationService } from "../services/notifications/NotificationService.js";
+import { freeGapFromPlan } from "../domain/trips/invariants/TripFreedomEngine.js";
 import { NotificationRouter } from "../services/notifications/NotificationRouter.js";
 import { fetchUserTimezone, localHourFor, nowUtcInstant } from "../lib/localTime.js";
 import { resolveCurrentTrip } from "./CompassCurrentTrip.js";
@@ -475,17 +476,17 @@ async function evalFreeTimeBlock(
   if (!trip) return [];
   const today = new Date(nowMs).toISOString().slice(0, 10);
   const items = await fetchTodayPlanItems(sc, trip.id, today);
-  // A free block is only meaningful on a day that HAS a plan — an entirely
-  // unplanned day is normal, not a signal.
-  const timed = items.filter((i) => i.starts_at).map((i) => new Date(i.starts_at!).getTime());
-  if (timed.length === 0) return [];
-  const upcoming = timed.filter((t) => t > nowMs).sort((a, b) => a - b);
-  const nextMs = upcoming[0] ?? null;
-  const gapMs = nextMs === null ? Infinity : nextMs - nowMs;
+  // census-compass CT-03: the gap is the Temporal Freedom Engine's answer
+  // (domain/trips/invariants/TripFreedomEngine `freeGapFromPlan`), not a
+  // derivation of this engine's own. A day with no timed plan claims no gap —
+  // an entirely unplanned day is normal, not a signal.
+  const gap = freeGapFromPlan(items.map((i) => ({ id: i.id, startsAt: i.starts_at })), nowMs);
+  if (gap.timedCount === 0) return [];
+  const gapMs = gap.gapMinutes === null ? Infinity : gap.gapMinutes * 60_000;
   if (gapMs < FREE_BLOCK_MIN_GAP_MS) return [];
-  const gapLabel = nextMs === null
+  const gapLabel = gap.gapMinutes === null
     ? "the rest of today"
-    : `about ${Math.floor(gapMs / 3_600_000)} hours`;
+    : `about ${Math.floor(gap.gapMinutes / 60)} hours`;
   return [{
     type: "free_time_block",
     category: "free_time",

@@ -283,7 +283,24 @@ export async function startRouterApp(
   state: FakeState,
   opts: FakeMapDbOptions,
 ): Promise<ProjectionApp> {
-  const client = makeFakeMapDb(state, opts);
+  return mountRouterApp(router, makeFakeMapDb(state, opts), opts);
+}
+
+/**
+ * The same mount, over a client the CALLER built.
+ *
+ * Split out of `startRouterApp` so a harness can drive the identical router
+ * over a REAL Supabase-shaped client instead of the fake — which is what
+ * M256(a)'s live arm needs, and what its header claimed the harness supported
+ * while nothing actually consumed the two environment variables. Everything
+ * below the client is byte-identical between the arms, so a difference in the
+ * numbers is a difference in the database and not in the harness.
+ */
+export async function mountRouterApp(
+  router: express.Router,
+  client: any,
+  opts: FakeMapDbOptions,
+): Promise<ProjectionApp> {
   _setTestClient(client, true);
 
   const app = express();

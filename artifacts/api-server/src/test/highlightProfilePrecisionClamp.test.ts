@@ -137,14 +137,26 @@ describe("GET /users/:userId/highlights — §10 precision clamp", () => {
     } finally { await app.close(); }
   });
 
-  it("clamps to HIDDEN when the policy table is deployed and UNREADABLE", async () => {
+  it("withholds a stranger's view and clamps the owner's own to HIDDEN when the policy table is deployed and UNREADABLE", async () => {
     // Fail closed: the control exists and we cannot show we are inside it.
+    //
+    // Until 2026-09-18 this read "an unreadable policy table withholds the
+    // LOCATION, not the Highlight" — right while the table carried only a
+    // precision rung. It also carries the §10 consent columns, enforced on this
+    // surface since highlightPublicProjection.ts, and a `consent_share = false`
+    // we cannot read has no safe answer that serves. The OWNER is never gated
+    // by their own consent, so their view is the one that still shows the
+    // location clamp.
     const app = await startApp({ failTables: new Set(["highlight_projection_policies"]) });
     try {
-      const { status, body } = await call(app, "GET", `/api/users/${OWNER}/highlights`, VIEWER);
+      const stranger = await call(app, "GET", `/api/users/${OWNER}/highlights`, VIEWER);
+      assert.equal(stranger.status, 200);
+      assert.equal(byId(stranger.body, H_PUB), null, "a stranger was served a Highlight whose consent could not be read");
+
+      const { status, body } = await call(app, "GET", `/api/users/${OWNER}/highlights`, OWNER);
       assert.equal(status, 200);
       const h = byId(body, H_PUB);
-      assert.ok(h, "an unreadable policy table withholds the LOCATION, not the Highlight");
+      assert.ok(h, "the owner's own record is never withheld by an outage on their own controls");
       assert.equal(h.location_name, null, "unreadable ⇒ HIDDEN");
       assert.equal(h.location_city, null, "unreadable ⇒ HIDDEN");
       assert.equal(h.location_country, null, "unreadable ⇒ HIDDEN");

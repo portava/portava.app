@@ -41,6 +41,16 @@
  * and a correct one; the alternative is a backdoor.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { mayDiscloseGemIdentity } from "../hiddenGems/HiddenGemPrivacyGuard.js";
+import {
+  readProjectionInputs,
+  publicProjectionVerdict,
+} from "../highlights/highlightPublicProjection.js";
+import {
+  readProjectionPolicies,
+  resolveLocationDisclosure,
+  type ProjectionPolicyRead,
+} from "../highlights/highlightProjectionPolicy.js";
 import {
   type TelegraphAction,
   type TelegraphObjectType,
@@ -425,7 +435,28 @@ const loadHiddenGem: Loader = async (client, id) => {
   // (baseline/20260819_baseline_structure.sql:237). Only `active` is a gem
   // anyone may be handed; `hidden` is a moderation state and `pending` is not
   // yet a gem at all.
-  if (r.status !== "active") {
+  //
+  // STATUS IS HALF THE POLICY, AND THIS USED TO BE THE ONLY HALF CHECKED.
+  // `sensitivity_level` was already SELECTed above and then never read, so a
+  // `protected` / `reveal_after_save` / `reveal_after_acceptance` gem — whose
+  // whole point is that its existence and place are earned, or never given —
+  // was shareable into a thread by name, neighbourhood and city, with a
+  // /gems/:id deep link. RLS does not cover this: the route reads
+  // `const { client } = await requireUser(...)`, which looks user-scoped and is
+  // not — lib/http.ts's requireUser verifies the bearer token and returns
+  // getServiceClient(), so the identity is the caller's and the privileges are
+  // the service role's. mayDiscloseGemIdentity IS migration 0043's
+  // `hidden_gems_public_read` written as a predicate, for exactly this case.
+  //
+  // The viewer passed is `null`, NOT viewerId, and that is deliberate. The
+  // predicate's owner bypass answers "may THIS VIEWER be told the gem exists",
+  // and for the submitter that is yes. But a share does not disclose to the
+  // sharer — it discloses to everyone else in the thread, none of whom has
+  // earned a reveal_after_save gem or may ever see a protected one. So the
+  // bypass is kept out of this surface on purpose.
+  if (!mayDiscloseGemIdentity(
+        { status: r.status as string, sensitivity_level: r.sensitivity_level as any, submitted_by: null },
+        null)) {
     return { state: UNAVAILABLE("unauthorized"), projection: null };
   }
   return {
@@ -597,13 +628,39 @@ const loadHighlight: Loader = async (client, id, viewerId) => {
   if (expiresAt <= Date.now()) return { state: UNAVAILABLE("deleted"), projection: null };
   const mine = r.owner_id === viewerId;
   if (!mine && r.visibility !== "public") return { state: UNAVAILABLE("private"), projection: null };
+  // §10/§11 — dropping a Highlight into a thread is `public_projection`, the
+  // destination KEEP_PRIVATE_FOREVER and a refused SHARE consent are declared
+  // to reach. A control we cannot read is `unknown`, not a share: the owner's
+  // refusal may be sitting in the row we failed to load.
+  let policies: ProjectionPolicyRead;
+  if (!mine) {
+    const inputs = await readProjectionInputs(client, [r.owner_id as string], [id]);
+    const verdict = publicProjectionVerdict({ id, owner_id: r.owner_id as string }, viewerId, "public_projection", inputs);
+    if (!verdict.allow) {
+      return { state: UNAVAILABLE(verdict.kind === "unreadable" ? "unknown" : "private"), projection: null };
+    }
+    policies = inputs.policies;
+  } else {
+    policies = await readProjectionPolicies(client, [id]);
+  }
+  // §10 — "Publishing location must never exceed the owner's selected
+  // precision", and a thread is publishing: the card's subtitle used to carry
+  // `location_name` verbatim past a CITY rung. Same clamp as the three
+  // Highlight reads in routes/highlights.ts, owner's own share included —
+  // the recipients are the audience, not the sharer. Unreadable ⇒ HIDDEN.
+  const stored = policies.state === "ready" ? policies.byHighlightId.get(id)?.location_precision ?? null : null;
+  const loc = resolveLocationDisclosure(
+    { location_name: r.location_name as string | null, location_city: r.location_city as string | null, location_country: null },
+    stored,
+    policies,
+  );
   return {
     state: AVAILABLE("live"),
     projection: proj(
       "HIGHLIGHT",
       id,
       (r.caption as string) || "Highlight",
-      [r.location_name, r.location_city].filter(Boolean).join(", ") || null,
+      [loc.location_name, loc.location_city].filter(Boolean).join(", ") || null,
       (r.media_url as string) ?? null,
       (r.updated_at as string) ?? null,
     ),

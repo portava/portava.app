@@ -11,9 +11,9 @@ Five things, each named at the line that reads it. Only the first is a secret.
 
 | # | What | Read at | Without it |
 |---|---|---|---|
-| 1 | `AI_INTEGRATIONS_OPENAI_API_KEY` and `AI_INTEGRATIONS_OPENAI_BASE_URL` | `artifacts/api-server/src/lib/openai.ts:3-4` | the client is constructed with `apiKey: "not-configured"` (`:14`), every model call fails, and each of the nine answers comes back `fallback: true, fallbackReason: "ai_error"` (`routes/compass.ts:1812`). **Not set in this environment.** |
-| 2 | The `COMPASS_ENABLED` feature flag, true | `compass/flags.ts:180-182`, gate at `routes/compass.ts:1384-1394` | `/compass/ask` returns the honest fallback with `fallbackReason: "compass_disabled"` and never reaches a model. **Flag activation is the owner's, not mine.** |
-| 3 | `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` for a **writable** project | `scripts/src/compass-answer-quality-eval.mjs:41-42#SUPABASE_URL`, asserted at `:86#!SERVICE_KEY` | the script exits immediately. Note it **writes**: it creates an ephemeral auth user (`:92#/auth/v1/admin/users`), inserts a `profiles` row (`:99#/rest/v1/profiles`) and deletes the user in a `finally` (`:238#finally`). Production is therefore excluded by the standing read-only rule — this needs a dev or CI project. |
+| 1 | `AI_INTEGRATIONS_OPENAI_API_KEY` and `AI_INTEGRATIONS_OPENAI_BASE_URL` | `artifacts/api-server/src/lib/openai.ts:3-4` | the client is constructed with `apiKey: "not-configured"` (`:14`), every model call fails, and each of the nine answers comes back `fallback: true, fallbackReason: "ai_error"` (`routes/compass.ts:1821`). **Not set in this environment.** |
+| 2 | The `COMPASS_ENABLED` feature flag, true | `compass/flags.ts:180-182`, gate at `routes/compass.ts:1389-1399` | `/compass/ask` returns the honest fallback with `fallbackReason: "compass_disabled"` and never reaches a model. **Flag activation is the owner's, not mine.** |
+| 3 | `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` for a **writable** project | `scripts/src/compass-answer-quality-eval.mjs:58#const SUPABASE_URL`, asserted at `:130#!SERVICE_KEY` | the script exits immediately. Note it **writes**: it creates an ephemeral auth user (`:136#/auth/v1/admin/users`), inserts a `profiles` row (`:143#/rest/v1/profiles`) and deletes the user in a `finally` (`:324#finally`). Production is therefore excluded by the standing read-only rule — this needs a dev or CI project. |
 | 4 | An API server answering on `http://localhost:80/api` | `scripts/src/compass-answer-quality-eval.mjs:10` | every question fails to connect. The URL is **hardcoded**, not env-configurable, and port 80 needs privilege or a proxy. |
 | 5 | `SESSION_SECRET`, `COMPASS_TOKEN_SECRET` | server boot | the server does not start. |
 
@@ -284,3 +284,125 @@ Four of §1's five items are missing and none is this lane's to supply. The only
 real-model measurement on record remains 2026-07-21, `compass-v1.1`, 7 of 9
 returning no text. **`CPH-EVAL` and `CPH-01` stay `W`.** Criteria that can name
 which question broke are still criteria, not a measurement.
+
+---
+
+## 8. The result history — 2026-09-20
+
+*`CPH-EVAL` asks for the nine run **"against every phase from Phase 1 on"**, measuring eight
+dimensions each time. Four of the eight are now measured from the per-turn record and four are
+adjudicated (census-compass §26.10). This section is the other half: the store that lets run N be
+compared with run N-1. **It changes nothing about the past.***
+
+### 8.1 What was NOT built, said first
+
+**No historical run was fabricated.** The eval has been run against a real model once, on
+2026-07-21, and Phases 1 through 15 are in the past. There is no way to measure a phase that has
+already shipped, and there is no honest way to guess what the nine would have returned against it.
+So:
+
+- **The store ships empty.** `docs/compass/eval-history.jsonl` is **not in the repository**; it is
+  created the first time a real run appends to it. There is no seed, no fixture, no "estimated"
+  Phase 1..15 row, and no code path that writes one — `appendRun`
+  (`scripts/src/compass-eval-history.mjs:188#export function appendRun`) is the only writer and the
+  runner is its only caller.
+- **Fewer than two runs is stated, not smoothed over.** `compareHistory`
+  (`scripts/src/compass-eval-history.mjs:255#export function compareHistory`) returns `no_history`
+  for an empty store and `single_run` for one run, both with an **empty** movements array, and the
+  printed report says so in a sentence and prints no table, no arrow and no percentage. A "0%
+  change across all dimensions" line computed from an empty store is indistinguishable from a
+  measured no-op, and that is the failure this module is shaped against.
+- **An unjudged dimension is `not_comparable`, never "unchanged".** Subtracting two absent numbers
+  and getting zero would report a stability nobody observed.
+
+The gap for Phases 1..15 therefore stays a gap, visibly. What is now true is forward-looking and
+only that: **from the next run on, the history can accumulate.**
+
+### 8.2 How an operator runs the eval for a phase
+
+§1's five configuration items are still required and still not mine to supply. Given them:
+
+```bash
+# 1. Read the transcript's verdicts into an adjudication file (76 slots, all null).
+node scripts/src/compass-answer-quality-eval.mjs --emit-adjudication adj-phase16.json
+
+# 2. Fill each slot with "pass" or "fail" — the four measured dimensions are
+#    overwritten by the measurement and a reader cannot overrule them.
+
+# 3. Run for the phase, and FILE the result.
+node scripts/src/compass-answer-quality-eval.mjs \
+    --adjudication adj-phase16.json \
+    --phase 16 --record-history
+```
+
+`--phase <n>` is **required** with `--record-history` and is not guessed from the branch:
+`buildRunEntry` (`scripts/src/compass-eval-history.mjs:149#export function buildRunEntry`) throws
+without it, and throws again without a commit sha from `git rev-parse HEAD`. A score filed under a
+guessed phase, or with no code behind it, is a row in the history that cannot be acted on.
+
+**Where the result lands:** `docs/compass/eval-history.jsonl`, in the repository, beside this
+runbook (`scripts/src/compass-eval-history.mjs:82#export const DEFAULT_HISTORY_PATH`). It is
+committed, because the point of the history is that it survives branches and phases; a path under a
+build or temp directory is a history that lasts until the next clean. `--history <file>` points a
+dry run at a scratch store instead.
+
+One JSON object per line, opened `a`. Appending does not read, parse or rewrite the runs before it,
+so a bug here can add a bad line but cannot silently shorten the record. A malformed line makes
+`readHistoryFile` **throw, naming the line number**
+(`scripts/src/compass-eval-history.mjs:219#export function readHistoryFile`) rather than skip it: a
+corrupt store must not read as a shorter, tidier one.
+
+Every real run is filed, **PASS or FAIL**. A failing run is the measurement that makes the next
+regression visible, and a store that kept only the good runs could not show a regression at all.
+
+### 8.3 Reading the comparison
+
+```bash
+node scripts/src/compass-answer-quality-eval.mjs --history-report
+node scripts/src/compass-answer-quality-eval.mjs --history-report --from-phase 16 --to-phase 17
+```
+
+`--history-report` runs **nothing** — no ephemeral user, no server, no model — so the history can
+be read on a machine that has none of §1's five items. It exits on the same convention as the eval:
+`0` compared with no regression, `1` at least one dimension regressed, `2` **could not be
+determined**, which is the state of this store today and the exit code says so rather than looking
+clean.
+
+Per dimension it reports the movement between the two runs over the slots that were actually
+judged, and flags the ones that got worse:
+
+| direction | when |
+|---|---|
+| `regressed` | the pass rate over judged slots fell — collected into `regressions` and printed `REGRESSED` |
+| `improved` | it rose |
+| `unchanged` | it is the same |
+| `not_comparable` | the dimension was unjudged on one side or both. **Never counted as unchanged.** |
+
+A dimension whose rate held but over **fewer** judged slots is not a quality regression and is not
+nothing either; it is reported separately as lost coverage. Named phases are compared with
+`--from-phase` / `--to-phase`, and a phase with no recorded run returns `phase_not_recorded` and
+compares nothing — it does not quietly fall back to some other pair.
+
+### 8.4 Mutations, all twelve red
+
+Baseline **80 / 0** (`cd scripts && node --test src/compass-eval-criteria.test.mjs`). Each applied
+alone, suite re-run, source restored; the full log with counts is the comment block at the top of
+`scripts/src/compass-eval-criteria.test.mjs`. Empty history reports "compared" 76/3 · a single run
+compared with itself 78/1 · `not_comparable` collapsed to "unchanged" 78/1 · `appendRun` overwrites
+78/1 · a malformed line silently skipped 78/1 · a missing phase filed as "unknown" 78/1 · a missing
+commit accepted 78/1 · the rate taken over all slots rather than the judged ones 78/1 · regressions
+computed but never collected 77/2 · the empty report prints "0% change" 78/1 · **a backfilled
+Phase 1 entry planted in the shipped store** 78/1 · one named phase silently paired with whatever
+ran last 79/1. Restored **80 / 0**. (M1–M11 were run against a 79-case baseline; M12 and its case
+came later and M1–M11 were not re-run for it.)
+
+The last one is the one that matters: the suite pins that every entry in the shipped store carries
+a real commit sha and a real ISO timestamp, so the fabrication this section refuses cannot be added
+later without turning the suite red.
+
+### 8.5 `CPH-EVAL` does not move
+
+The store exists and is empty. *"Run against every phase from Phase 1 on"* is still unsatisfied and
+will be until runs accumulate in it, which cannot start before §1's five items are supplied. What
+changed is that the row now has somewhere for the answer to go, and that a regression between two
+future phases will be visible per dimension instead of being a diff of two transcripts nobody kept.

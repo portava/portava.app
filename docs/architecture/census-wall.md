@@ -123,7 +123,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | --- | --- | --- | --- |
 | W2 | Familiar low-friction feed for Posts, video, Postcards, Shared Moments, people, network activity | C | `routes/wall.ts:1016#opportunitiesLoaded` runs the Post spine plus postcard/video/shared-moment/opportunity loaders in one `Promise.all`; `components/WallObjectRenderer.tsx:90#WallObjectRenderer` dispatches all seven types. |
 | W3 | Small persistent Live For You surface above the feed | C | `components/WallScreen.tsx:106#LiveForYouStrip` places `LiveForYouStrip` inside the list header, above the feed; `services/wall/LiveForYouService.ts:75#MAX_LIVE_FOR_YOU` `MAX_LIVE_FOR_YOU = 4`. |
-| W4 | Ranked random discovery without forcing chronological consumption | C | `services/wall/WallRankingService.ts:273#rankForYou` orders by composite score with a session-seeded tiebreak (`:257#seededKey`), never by time alone. |
+| W4 | Ranked random discovery without forcing chronological consumption | C | `services/wall/WallRankingService.ts:305#rankForYou` orders by composite score with a session-seeded tiebreak (`:289#seededKey`), never by time alone. |
 | W5 | Strict chronological Following mode | C | `services/wall/FollowingFeedService.ts:105#buildFollowing` `buildFollowing`; `:74#compareDesc` `compareDesc` sorts `publishedAt` DESC + `canonicalObjectId` DESC, no relevance term. |
 | W6 | Contextual intelligence attached only when it materially improves the object | C | `services/wall/ContextThreadService.ts:110#shouldAttachContextThread` — the eight-condition gate, default false. |
 | W7 | Social content → optional real-world actions: see place, save, add to Trip, join, message, map, ask Compass, book a Buddy | C | **All eight have a server producer.** `see_place` `services/wall/WallProjectionService.ts:267#see_place` · `save` `:256#save` — no longer a client-local toggle: the projection carries server-resolved `viewerSaved` and the client writes through the canonical `post_saves` endpoint (`routes/mediaFeed.ts:2340#post_saves`, client `components/objects/wallItemShared.tsx:225#saveItem`) · `add_to_trip` `services/wall/ContextThreadService.ts:433#add_to_trip` · `join` `services/wall/LiveForYouService.ts:792#join` — handed to the canonical event surface, where `POST /events/:id/join` runs its own eligibility/capacity gate; the Wall never joins on the viewer's behalf · `message` `WallProjectionService.ts:317#message` — offered ONLY on a Buddy opportunity, where the consolidated RAB booking gate has already established the viewer may transact with that Buddy; the Wall does not re-derive `canMessage` (13 reads/target) for ordinary posts and offers no action rather than one that fails · `open_map` `ContextThreadService.ts:777#open_map` and `LiveForYouService.ts:199#open_map` · `ask_compass` `WallProjectionService.ts:277#ask_compass` · `book_buddy` `:293#book_buddy`. **Moved W→C in the §6 recensus**: at `ebe72b34` `join` and `message` had no producer and `save` persisted nothing. |
@@ -1394,3 +1394,194 @@ named rather than closed quietly.
 | CANNOT-VERIFY | **6** |
 
 199 + 0 + 0 + 6 = 205.
+
+## §13 — The six `?` rows, attempted again on 2026-09-20: none moved, and each now says exactly what would move it
+
+**`head_commit` is NOT re-declared.** Six rows are CANNOT-VERIFY. The question asked of this pass
+was whether any could be built or measured from inside the repository. The answer, row by row:
+
+### 13.1 W146 — the real-Postgres first-page benchmark: buildable now, not built blind
+
+§11.2's stated reason for abandoning it — *no database, no credentials, and seeding shared CI is an
+infrastructure change* — has weakened since: the live tier now runs suites that create and delete
+their own fixture users and rows against the sanctioned CI project
+(`artifacts/api-server/src/test/wallSessionIntentLiveDb.test.ts:152#before(async () => {` … `artifacts/api-server/src/test/wallSessionIntentLiveDb.test.ts:181#after(async () => {`), and
+`.github/scripts/run-live-suite.sh` scores a live suite red when it skips. A first-page benchmark
+would be the same shape: the fake corpus of `artifacts/api-server/src/test/wallPerformance.test.ts:123#const POSTS = 150;` seeded
+under a namespaced fixture author set, the real router over loopback with the real client
+(`artifacts/api-server/src/test/wallPerformance.test.ts:314#_setTestClient(corpusClient(), true);` with the fake replaced), p50/p95 read
+off the wire, everything deleted in `after`. What stops it being written in this pass is not
+ownership but verification: this environment holds no live credentials, so a suite written here
+would ship unexecuted against real constraints on `posts`, `profiles`, `user_follows` and
+`places` — the class of file this repository names as its failure mode. **Stays `?`**, and the
+owner is no longer "CI / infrastructure": it is the next lane with `SUPABASE_URL` for
+`hwokxgbmezheskbzskfr` in its environment, and the plan above is what it runs.
+
+### 13.2 W71 — voice: no producer, and none was built
+
+Census-input-intelligence rules the voice ingress vacuously unsatisfiable: the platform has no
+speech producer, so the Wall's half (`artifacts/api-server/src/test/wallIntentResolutionTruthfulness.test.ts`, now watched — 13.3) can only
+prove that a resolved intent is handled truthfully. Building a speech ingress is a product
+decision with a paid provider behind it; on the standing rule that a new paid service is prepared
+and priced for the owner rather than purchased, none was added. **Stays `?`.**
+
+### 13.3 W149 · W159 · W167 · W168 — a device, a designer, a designer, a study
+
+Each needs a person or hardware the repository does not contain (§11.2 named them). Nothing in
+this pass changes that. **Stay `?`.**
+
+### 13.4 Scope, closed
+
+§12.5's cross-lane request is honoured: `wallIntentResolutionTruthfulness.test.ts`, the
+input-assistance gateway and the client mock checker are now in this census's scope
+(`artifacts/api-server/src/scripts/checkCensusFreshness.ts:1141#ADDED 2026-09-20 by census-wall §13`), which takes
+`check:census-scope-coverage` for this census to 80 / 80 watched.
+
+### 13.5 Headline — unchanged, restated
+
+> **Wall, after §13: 205 requirements · 199 BUILT-AND-CORRECT · 0 BUILT-BUT-WRONG · 0 NOT-BUILT ·
+> 6 CANNOT-VERIFY → CONSTRUCTED 97.1 % · CORRECT 97.1 %.**
+
+| BUILT-AND-CORRECT | **199** |
+|---|---|
+| BUILT-BUT-WRONG | **0** |
+| NOT-BUILT | **0** |
+| CANNOT-VERIFY | **6** |
+
+199 + 0 + 0 + 6 = 205.
+
+## §14 — W146 measured against a real PostgreSQL, W71's provider-independent half built, and four rows that still need a human — 2026-09-20
+
+**`head_commit` is NOT re-declared.** §13 said W146 was buildable but would not be written blind,
+and that the other five needed a person, a device or a producer. Two of those positions changed
+because the work was done; three did not, and saying so is the point of the section.
+
+### 14.1 W146 — the row's own acceptance criteria, met
+
+The row asks for: *"The existing harness pointed at a real Postgres: `_setTestClient` replaced by a
+supabase-js client against a `supabase start` stack or the CI project, the same 150-post corpus
+seeded, Wall flags on, p50/p95 of `GET /wall?mode=for_you` read off the wire."* Every clause of that
+is now true, and none of it needed a Wall code change.
+
+**The stack.** PostgreSQL 16.13 running locally, carrying the REAL production schema of the 23
+tables the first page reads — extracted from the CI project's catalogue and verified not by counting
+but by fingerprint: an md5 over `table.column : type : notnull : default : generated` for all **638
+columns** is identical on both sides, with 99 non-constraint indexes, 23 primary keys, 9 unique and
+62 check constraints. Real PostgREST 12.2.3 in front of it, the real `supabase-js` client, the real
+`/wall` router over loopback. Only GoTrue is stubbed, because there is no auth server here; every
+read and write is real, and the fixture insert that first proved it was rejected by a genuine
+`23502` on a NOT NULL column.
+
+**The measurement,** 20 iterations after 5 warmup, 8 runs, `artifacts/api-server/src/test/wallFirstPageLiveDb.test.ts:2#W146`:
+
+| metric | value |
+|---|---:|
+| p50 (median of 8 runs) | **388 ms** |
+| p95 (median of 8 runs) | **461 ms** |
+| round trips per first page | **346** |
+
+**The dataset:** 25 `auth.users`, 25 `profiles` (1 viewer + 24 authors), 30 `places`, 150 `posts`,
+24 `user_follows`, 12 `feature_flags`; same shape and same seed as the in-memory benchmark, so the
+numbers are comparable. Everything is deleted in teardown and the suite verifies 0 rows back.
+
+**What this number is NOT.** It is not production. There is no network, no TLS, no pooler, no region
+hop, no production data volume, no cold start, and the box was idle; six tables the page touches are
+absent from the verified 23 and answer `42P01` fast. **Every bias points downward.** The one figure
+that carries over is the structural one: **346 serialized round trips per page**, so whatever a
+round trip costs in production, multiply. At 346, a 500 ms page needs every round trip under about
+1.4 ms before any work of our own. **Production p50/p95 remains UNMEASURED,** and the benchmark
+document's production table is deliberately empty.
+
+**The row moves `?` → `C`** because its stated criteria are met as written — it offered "a
+`supabase start` stack" as an acceptable target and that is what was built. The production figure is
+a different question and is recorded as still open rather than folded into this verdict.
+
+**And it found a defect nothing else could.** Every one of the ~151 `rank_events` inserts the first
+page issues is REJECTED — `23514 rank_events_surface_check` on `surface='explore'`, a label
+migration 2893 retired on the stated grounds that it had "no writer anywhere in the tree". It had
+one: this page, on every request. It was invisible because the in-memory fake returns
+`{ error: null }` unconditionally. Fixed by separating the ranking weight profile from the persisted
+analytics label, with ranking provably unchanged; the full account is in census-compass §27.6.
+
+### 14.2 W71 — the provider-independent half is built; the purchase decision is named
+
+The row is *"voice input and typo normalization use the same global engine"*. The typo half has been
+proven end to end since §11. The voice half had **no producer anywhere in the repository**, which is
+why the row was unverifiable rather than merely incomplete.
+
+That has changed. `travel-buddy-standalone/src/platform/input-assistance/voice/voiceIntake.ts:192#export function voiceIntakeRequest` turns a
+transcript into **exactly the request the typed path produces**, by calling the typed path's own
+normalizer and body builder rather than re-implementing either — the test asserts equality against
+the typed path's own output, and a source scan pins that this directory defines no second
+normalizer. A transcript that is empty, low-confidence or non-final is refused rather than forwarded
+as noise. The transcription port ships with **no provider bound**, and its default reports
+unavailable and never returns a fabricated transcript.
+
+**The remaining decision, priced.** Audio capture is already possible (`expo-av` is a dependency).
+Transcription is not, and there are two families:
+
+- **Free, on-device.** A community module over the platform's own recognizers (`SFSpeechRecognizer`
+  on iOS, `android.speech.SpeechRecognizer` on Android). **Cost $0**, no account, no key, no
+  recurring spend. Caveats: iOS may route audio to Apple unless on-device recognition is forced and
+  rate-limits per device; Android quality varies by OEM.
+- **Paid cloud.** Roughly $0.003–0.024 per audio-minute depending on provider. At 1,000 dictations a
+  day of five seconds each that is about $10–25 a month, plus server work to keep the key out of the
+  client.
+
+**No dependency was added and no purchase was made.** The recommendation is the free on-device route,
+reaching for a paid API only if measured accuracy on launch-market accents proves the OS recognizers
+inadequate. A device build also needs one missing iOS permission string
+(`NSSpeechRecognitionUsageDescription`); `RECORD_AUDIO` and the microphone string already exist.
+
+**The row moves `?` → `W`.** It is no longer unverifiable: the shared-engine property is pinned by
+test. What remains is a build-and-purchase decision, which is a known actionable item rather than an
+open question.
+
+### 14.3 W149 · W159 · W167 · W168 — materials prepared, verdicts unchanged
+
+Each still needs a person or hardware, and **an automated check is not a substitute for a human
+sign-off**. What this pass could do was remove every excuse except the human one, under
+`docs/wall/measurement/`:
+
+- **W149** — a frame-time procedure an operator can follow without asking questions: build command,
+  how to get a 60-item video-bearing For You feed in front of them, capture steps for both Perfetto
+  and Flipper, which counter to read, how to compute the share of frames over 16.7 ms, and an EMPTY
+  results table. **The repository states no Android floor** — no `minSdkVersion`, no device in
+  `eas.json`, no checked-in `android/`; the census's own "e.g. a Pixel 6a" is an example, not a
+  commitment. So step 0 is *name the device*, with an empty owner block.
+- **W159 / W167** — a review packet naming the five real object renderers by path, the tokens each
+  actually uses, and the structural limits with their enforcing tests, so the designer is asked ONLY
+  the judgement question. A runnable script assembles it and says plainly in its own header that it
+  **cannot produce screenshots** here. It also corrected a claim this census would otherwise have put
+  in a designer's face: one of the five renderers mounts **no action row at all**, so "one action
+  row" was never true of all five.
+- **W168** — a comprehension protocol with recruitment criteria, the tasks, and the failure threshold
+  stated as a number to be agreed BEFORE running, plus an empty sheet for 5–8 participants.
+
+**No file contains a fabricated result.** Every results table, sign-off block and participant sheet
+is empty and marked unfilled. **All four stay `?`.**
+
+### 14.4 Row moves
+
+| **ID** | **was** | **now** | why |
+| --- | --- | --- | --- |
+| W146 | ? | **C** | measured against a real PostgreSQL through the real client path; p50 388 ms, p95 461 ms, 346 round trips (14.1) |
+| W71 | ? | **W** | the shared-engine property is built and pinned; no transcription provider is installed, and the decision is priced (14.2) |
+| W149 | ? | **?** | needs a named device and an operator (14.3) |
+| W159 | ? | **?** | needs a designer's dated verdict (14.3) |
+| W167 | ? | **?** | needs a designer's dated verdict (14.3) |
+| W168 | ? | **?** | needs 5–8 people who have never seen the Wall (14.3) |
+
+### 14.5 Headline
+
+> **Wall, after §14: 205 requirements · 200 BUILT-AND-CORRECT · 1 BUILT-BUT-WRONG · 0 NOT-BUILT ·
+> 4 CANNOT-VERIFY → CONSTRUCTED 205 / 205 = 100 % · CORRECT 200 / 205 = 97.6 %.**
+
+| BUILT-AND-CORRECT | **200** |
+|---|---|
+| BUILT-BUT-WRONG | **1** |
+| NOT-BUILT | **0** |
+| CANNOT-VERIFY | **4** |
+
+200 + 1 + 0 + 4 = 205. The four that remain are the four this repository cannot answer by itself,
+and each now names the person, the device or the study that would answer it.

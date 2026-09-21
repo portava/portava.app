@@ -308,7 +308,7 @@ places it touches them are called out rather than left to be discovered.
   contract gap; deliberately **not changed here**.
 - **#467, #453, #454, #455 — display side.** They stop the constant 50 being presented as a
   measurement — today `buildTrust` falls back to a literal `50` for the per-domain projection when
-  no profile is readable (`services/passport/PassportProjectionService.ts:1038`) — and render the
+  no profile is readable (`services/passport/PassportProjectionService.ts:1043`) — and render the
   server's real per-domain strengths and recovery hints instead of client constants.
   *Consequence here:* **do not design a creator-facing "trust tier" or "impact tier"
   chip.** The tier vocabulary that exists (`new_inactive` … `highly_active`,

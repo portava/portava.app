@@ -4,13 +4,16 @@
  * interruption cost and attention budget before NOTIFY / WALL / SILENT / IGNORE."
  *
  * ── WHAT IT DECIDES, AND WHAT IT DOES NOT DO ─────────────────────────────────
- * It takes ONE world change (a WallMoment) and ONE viewer's context and answers
- * where the change goes for that viewer — and why, with every factor the spec
- * names on the decision. It sends nothing: NOTIFY is a routing decision the
- * notification path would consume, and no dispatcher consumes it yet (stated
- * in the census, not hidden here). WALL means the moment may be shown on the
- * Wall; SILENT means it is recorded and not surfaced; IGNORE means it is not
- * for this viewer at all.
+ * It takes ONE world change and ONE viewer's context and answers where the
+ * change goes for that viewer — and why, with every factor the spec names on
+ * the decision. It sends nothing: NOTIFY is a routing decision the notification
+ * path consumes. TWO callers consume it: `routes/wallMoments.ts` routes a
+ * WallMoment through `routeAttention`, and `compass/CompassNotificationEngine.ts`
+ * routes every world-change push (a Compass recommendation, a discovery) through
+ * `routeAttentionSubject` BEFORE it may become a push — the "mandatory" the
+ * spec's sentence begins with. WALL means the change stays on the durable
+ * in-app surface without interrupting; SILENT means it is recorded and not
+ * surfaced; IGNORE means it is not for this viewer at all.
  *
  * ── THE FACTORS ──────────────────────────────────────────────────────────────
  *   relevance          the viewer's relation to the subject, declared by the
@@ -118,14 +121,54 @@ export interface AttentionDecision {
   factors: AttentionFactors;
 }
 
+/**
+ * The one world change, reduced to what the routing reads: an identity for
+ * novelty, an urgency, whether it is a safety activation, and the window it
+ * is news within. A WallMoment is one such subject (`routeAttention` builds
+ * it); a Compass notification is another (`CompassNotificationEngine`).
+ */
+export interface AttentionSubject {
+  id: string;
+  /** 0..1; a WallMoment's comes from its transition kind (`URGENCY_OF`). */
+  urgency: number;
+  /** A safety activation outranks availability and the budget for a related viewer. */
+  safety: boolean;
+  /**
+   * The window the change is news within. `null` DECLARES no window — a
+   * notification that carries none is not decayed, because a message whose
+   * age nobody stated is not thereby stale. A window that is present but
+   * unreadable is treated as expired (fail-closed), as it always was for a
+   * moment.
+   */
+  relevanceWindow: { from: string; until: string } | null;
+}
+
 export function routeAttention(moment: WallMoment, viewer: AttentionViewer, nowMs: number): AttentionDecision {
+  return routeAttentionSubject(
+    {
+      id: moment.id,
+      urgency: URGENCY_OF[moment.transition.kind] ?? 0,
+      safety: moment.transition.kind === "safety_notice_activated",
+      relevanceWindow: moment.relevanceWindow,
+    },
+    viewer,
+    nowMs,
+  );
+}
+
+export function routeAttentionSubject(subject: AttentionSubject, viewer: AttentionViewer, nowMs: number): AttentionDecision {
   const relevance = RELEVANCE_WEIGHT[viewer.relevance] ?? 0;
-  const novelty = !viewer.seenMomentIds.has(moment.id);
-  const urgency = URGENCY_OF[moment.transition.kind] ?? 0;
-  const from = Date.parse(moment.relevanceWindow.from);
-  const until = Date.parse(moment.relevanceWindow.until);
-  const window = Number.isFinite(from) && Number.isFinite(until) && until > from ? until - from : NaN;
-  const halfLife = Number.isFinite(window) ? (nowMs - from) / window : Number.POSITIVE_INFINITY;
+  const novelty = !viewer.seenMomentIds.has(subject.id);
+  const urgency = Math.min(1, Math.max(0, Number.isFinite(subject.urgency) ? subject.urgency : 0));
+  let halfLife: number;
+  if (subject.relevanceWindow === null) {
+    halfLife = 0;
+  } else {
+    const from = Date.parse(subject.relevanceWindow.from);
+    const until = Date.parse(subject.relevanceWindow.until);
+    const window = Number.isFinite(from) && Number.isFinite(until) && until > from ? until - from : NaN;
+    halfLife = Number.isFinite(window) ? (nowMs - from) / window : Number.POSITIVE_INFINITY;
+  }
   const budget = viewer.budgetPerWindow ?? ATTENTION_BUDGET_PER_WINDOW;
   const interruptionCost = Math.max(0, viewer.notifiesInWindow);
   const factors: AttentionFactors = { relevance, novelty, urgency, halfLife, availability: viewer.available, interruptionCost, budget };
@@ -135,8 +178,7 @@ export function routeAttention(moment: WallMoment, viewer: AttentionViewer, nowM
   if (!(halfLife < 1)) return done("IGNORE", "expired");
   if (relevance <= 0) return done("IGNORE", "not_relevant");
 
-  const safety = moment.transition.kind === "safety_notice_activated";
-  if (safety && relevance >= NOTIFY_RELEVANCE_FLOOR) return done("NOTIFY", "safety_override");
+  if (subject.safety && relevance >= NOTIFY_RELEVANCE_FLOOR) return done("NOTIFY", "safety_override");
 
   if (halfLife > HALF_LIFE_STALE_RATIO) return done(relevance >= WALL_RELEVANCE_FLOOR ? "SILENT" : "IGNORE", "decayed");
 

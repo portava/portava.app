@@ -45,13 +45,49 @@
  *   5. NO COORDINATE, EVER. The envelope carries none, and the spine's
  *      sanitiser strips lat/lng/coords/accuracy at every depth even if one
  *      were added (§4.3).
+ *   6. NEVER LONGER THAN THE OPPORTUNITY. A session opened from a world
+ *      opportunity ends at the earlier of its own window and the
+ *      OPPORTUNITY's §18.2 window, and an opportunity whose window has
+ *      already passed opens nothing. A bridge cannot be parked on a place.
+ *
+ * ── CX-15: WHERE THE BRIDGE MAY START ────────────────────────────────────────
+ * census-compass CX-15 (`docs/architecture/census-compass.md:122`) found the
+ * only bridge in the tree started at a Compass SERVED RECOMMENDATION —
+ * *"It bridges a recommendation to an outcome, not a world opportunity;
+ * nothing outside Compass can start one."* Both halves are answered here:
+ *
+ *   SCOPE — `openSessionForOpportunity` bridges from the PLATFORM's world
+ *   opportunity, `lib/opportunityEngine.OpportunityProjection` (§5/§6's stage,
+ *   served by routes/opportunities), deriving the subject, the kind and the
+ *   claim refs FROM the projection. `SESSION_ORIGINS` records which origin a
+ *   session had, and `world_opportunity` cannot be self-asserted: the declared
+ *   path refuses it (`origin_not_earned`).
+ *
+ *   REACH — routes/experienceSessions exposes that as a public seam on a
+ *   router that is not Compass, authorized fail-closed.
+ *
+ * ── AND WHAT IS *NOT* CLOSED HERE, HONESTLY ──────────────────────────────────
+ * `canonical_events` is append-only by construction (migration 2120 blocks
+ * UPDATE, DELETE and TRUNCATE by trigger), so the rows a session writes are
+ * never deleted. Non-accumulation is therefore a property of the READ SEAM —
+ * no query in lib/experienceSessionStore or in the route reaches further back
+ * than one session lifetime, none is by-subject, and there is no list — rather
+ * than of the storage layer. A privileged reader of the spine itself could
+ * still assemble a sequence; that is the spine's own retention question, not
+ * this bridge's, and it is stated rather than implied.
  *
  * PURE. No I/O, no clock of its own (`nowMs` is injected), no randomness
  * (`sessionId` is supplied by the caller).
  */
 import type { CanonicalEventInput } from "./canonicalEvents.js";
 import { INTEL_OUTCOMES, EXPERIENCE_RATING_MAX, EXPERIENCE_RATING_MIN, OUTCOME_VERB, type IntelOutcome } from "./intelOutcomes.js";
-import { OPPORTUNITY_KINDS, type OpportunityKind } from "./opportunityEngine.js";
+import {
+  OPPORTUNITY_KINDS,
+  opportunityWorldValueKeys,
+  type OpportunityKind,
+  type OpportunityProjection,
+} from "./opportunityEngine.js";
+import type { CompassDecision } from "./compassDecision.js";
 
 /** The payload key this envelope rides under. Allow-listed in lib/canonicalEvents. */
 export const EXPERIENCE_SESSION_PAYLOAD_KEY = "experience_session";
@@ -71,6 +107,32 @@ export type SessionCloseReason = (typeof SESSION_CLOSE_REASONS)[number];
 export const SESSION_PHASES = ["opened", "closed"] as const;
 export type SessionPhase = (typeof SESSION_PHASES)[number];
 
+/**
+ * WHERE THE BRIDGE STARTED — census-compass CX-15.
+ *
+ * CX-15 read: *"It bridges a recommendation to an outcome, not a world
+ * opportunity; nothing outside Compass can start one."* The bridge is therefore
+ * ORIGIN-PLURAL, and the origin is recorded rather than assumed:
+ *
+ *   world_opportunity     — the PLATFORM's opportunity: an
+ *                           `opportunityEngine.OpportunityProjection`, the §5/§6
+ *                           stage's own output, reachable to every surface
+ *                           through routes/opportunities. Earned ONLY through
+ *                           `openSessionForOpportunity`, which derives the
+ *                           subject, the kind and the claims from the projection
+ *                           itself — never from what a caller asserts.
+ *   compass_recommendation — a Compass served recommendation. ONE origin among
+ *                           others now, which is exactly what CX-15 asked for.
+ *   declared              — a caller naming a kind it was not asked to prove.
+ *                           The weakest origin, and spelled as itself so no
+ *                           reader mistakes it for a world opportunity.
+ */
+export const SESSION_ORIGINS = ["world_opportunity", "compass_recommendation", "declared"] as const;
+export type SessionOrigin = (typeof SESSION_ORIGINS)[number];
+
+/** Origins a caller may name for itself. `world_opportunity` is not among them. */
+export const DECLARABLE_ORIGINS: readonly SessionOrigin[] = Object.freeze(["declared", "compass_recommendation"]);
+
 /** open → the window is live · expired → the window passed unclosed · closed → terminal. */
 export const SESSION_STATES = ["open", "expired", "closed"] as const;
 export type SessionState = (typeof SESSION_STATES)[number];
@@ -83,8 +145,22 @@ export type SessionState = (typeof SESSION_STATES)[number];
 export interface ExperienceSessionEnvelope {
   session_id: string;
   subject_id: string;
+  /** CX-15: WHERE this bridge started. See SESSION_ORIGINS. */
+  origin: SessionOrigin;
   /** The opportunity kind that was acted on — lib/opportunityEngine's vocabulary. */
   opportunity_kind: OpportunityKind;
+  /**
+   * `world_opportunity` only — the decision lib/compassDecision reached that
+   * lib/opportunityEngine translated into this opportunity. It is what makes
+   * the origin VERIFIABLE rather than a label: a declared session has none.
+   */
+  opportunity_decision?: CompassDecision;
+  /**
+   * `world_opportunity` only — the end of the opportunity's OWN §18.2 window.
+   * The session's `expires_at` is bounded by it, so a bridge cannot outlive the
+   * opportunity it bridges and become a long-lived marker on a place (S54).
+   */
+  opportunity_valid_until?: string;
   /** Snapshot ids the opportunity rested on. Opaque; never a contributor. */
   claim_refs: string[];
   opened_at: string;
@@ -137,6 +213,7 @@ export function sessionForbiddenKeys(value: unknown, path: string[] = []): strin
 
 const OUTCOME_SET = new Set<string>(INTEL_OUTCOMES);
 const KIND_SET = new Set<string>(OPPORTUNITY_KINDS);
+const ORIGIN_SET = new Set<string>(SESSION_ORIGINS);
 
 /** Type guard for readers. Fail-closed on any drift. */
 export function isExperienceSessionEnvelope(x: unknown): x is ExperienceSessionEnvelope {
@@ -144,7 +221,19 @@ export function isExperienceSessionEnvelope(x: unknown): x is ExperienceSessionE
   const p = x as Record<string, unknown>;
   if (typeof p.session_id !== "string" || p.session_id.length === 0) return false;
   if (typeof p.subject_id !== "string" || p.subject_id.length === 0) return false;
+  if (typeof p.origin !== "string" || !ORIGIN_SET.has(p.origin)) return false;
   if (typeof p.opportunity_kind !== "string" || !KIND_SET.has(p.opportunity_kind)) return false;
+  // CX-15: only a session built FROM a projection carries the opportunity's own
+  // decision and window, so a `declared` envelope cannot wear a world
+  // opportunity's evidence and a `world_opportunity` one cannot be without it.
+  if (p.origin === "world_opportunity") {
+    if (typeof p.opportunity_decision !== "string" || p.opportunity_decision.length === 0) return false;
+  } else if (p.opportunity_decision !== undefined || p.opportunity_valid_until !== undefined) {
+    return false;
+  }
+  if (p.opportunity_valid_until !== undefined) {
+    if (typeof p.opportunity_valid_until !== "string" || Number.isNaN(Date.parse(p.opportunity_valid_until))) return false;
+  }
   if (!Array.isArray(p.claim_refs) || p.claim_refs.some((r) => typeof r !== "string")) return false;
   for (const k of ["opened_at", "expires_at"]) {
     const v = p[k];
@@ -164,7 +253,15 @@ export type SessionOpenRefusal =
   | "no_opportunity_reference"
   | "invalid_subject"
   | "lifetime_exceeds_maximum"
-  | "trail_shaped_payload";
+  | "trail_shaped_payload"
+  /** CX-15: `world_opportunity` was asserted on a path that proves no opportunity. */
+  | "origin_not_earned"
+  /** CX-15: what was handed over is not an OpportunityProjection. */
+  | "not_an_opportunity"
+  /** CX-15: the opportunity's own §18.2 window has already ended. */
+  | "opportunity_window_passed"
+  /** §5: a projection carrying a world value is never made durable. */
+  | "opportunity_claims_world_truth";
 
 export type SessionCloseRefusal = "already_closed" | "expired" | "unknown_outcome" | "invalid_rating";
 
@@ -177,38 +274,70 @@ export interface OpenSessionInput {
   hours?: number;
   /** Optional surface label, for the spine's own allow-listed key. */
   surface?: string;
+  /**
+   * CX-15: what the caller is. `declared` (the default) or
+   * `compass_recommendation`. `world_opportunity` is NOT declarable here — it
+   * is earned in `openSessionForOpportunity` by handing over the projection.
+   */
+  origin?: SessionOrigin;
 }
 
 export type OpenResult =
   | { ok: true; envelope: ExperienceSessionEnvelope; event: CanonicalEventInput }
   | { ok: false; refusal: SessionOpenRefusal };
 
-/**
- * Build the OPENING event. Refuses rather than opening a session that would be
- * unbridgeable (no opportunity), unbounded (too long), or trail-shaped.
- */
-export function openExperienceSession(actorId: string, input: OpenSessionInput, nowMs: number): OpenResult {
-  if (!input.subjectId) return { ok: false, refusal: "invalid_subject" };
-  if (!KIND_SET.has(input.opportunityKind)) return { ok: false, refusal: "no_opportunity_reference" };
-  const hours = input.hours ?? DEFAULT_SESSION_HOURS;
+/** The shared builder both origins go through: one subject, one bound, no trail. */
+function buildOpenEvent(
+  actorId: string,
+  spec: {
+    sessionId: string;
+    subjectId: string;
+    origin: SessionOrigin;
+    opportunityKind: OpportunityKind;
+    claimRefs: readonly string[];
+    hours: number;
+    /** Hard ceiling in ms for the window, when the origin supplies one. */
+    validUntilMs?: number | null;
+    opportunityDecision?: CompassDecision;
+    surface?: string;
+  },
+  nowMs: number,
+): OpenResult {
+  if (!spec.subjectId) return { ok: false, refusal: "invalid_subject" };
+  if (!KIND_SET.has(spec.opportunityKind)) return { ok: false, refusal: "no_opportunity_reference" };
+  const hours = spec.hours;
   if (!Number.isFinite(hours) || hours <= 0 || hours > MAX_SESSION_HOURS) {
     return { ok: false, refusal: "lifetime_exceeds_maximum" };
   }
   const openedAt = new Date(nowMs).toISOString();
-  const expiresAt = new Date(nowMs + hours * 3_600_000).toISOString();
+  // S54 — A BOUNDED LIFE, and never longer than the thing it bridges: the
+  // session ends at the earlier of its own window and the opportunity's.
+  let endMs = nowMs + hours * 3_600_000;
+  if (typeof spec.validUntilMs === "number" && Number.isFinite(spec.validUntilMs)) {
+    if (spec.validUntilMs <= nowMs) return { ok: false, refusal: "opportunity_window_passed" };
+    endMs = Math.min(endMs, spec.validUntilMs);
+  }
+  const expiresAt = new Date(endMs).toISOString();
   const envelope: ExperienceSessionEnvelope = {
-    session_id: input.sessionId,
-    subject_id: input.subjectId,
-    opportunity_kind: input.opportunityKind,
-    claim_refs: [...input.claimRefs],
+    session_id: spec.sessionId,
+    subject_id: spec.subjectId,
+    origin: spec.origin,
+    opportunity_kind: spec.opportunityKind,
+    claim_refs: [...spec.claimRefs],
     opened_at: openedAt,
     expires_at: expiresAt,
     phase: "opened",
   };
+  if (spec.origin === "world_opportunity") {
+    if (spec.opportunityDecision) envelope.opportunity_decision = spec.opportunityDecision;
+    if (typeof spec.validUntilMs === "number" && Number.isFinite(spec.validUntilMs)) {
+      envelope.opportunity_valid_until = new Date(spec.validUntilMs).toISOString();
+    }
+  }
   if (sessionForbiddenKeys(envelope).length > 0) return { ok: false, refusal: "trail_shaped_payload" };
 
   const payload: Record<string, unknown> = { [EXPERIENCE_SESSION_PAYLOAD_KEY]: envelope };
-  if (input.surface) payload.surface = input.surface;
+  if (spec.surface) payload.surface = spec.surface;
   return {
     ok: true,
     envelope,
@@ -216,12 +345,115 @@ export function openExperienceSession(actorId: string, input: OpenSessionInput, 
       verb: SESSION_OPEN_VERB,
       actorId,
       subjectKind: "place",
-      subjectId: input.subjectId,
+      subjectId: spec.subjectId,
       occurredAt: openedAt,
       expiresAt,
       payload,
     },
   };
+}
+
+/**
+ * Build the OPENING event from a kind the CALLER names. Refuses rather than
+ * opening a session that would be unbridgeable (no opportunity), unbounded (too
+ * long), or trail-shaped.
+ *
+ * CX-15: this is the WEAK origin. It proves nothing about the world — the
+ * caller asserted a kind — so the envelope is stamped `declared` (or
+ * `compass_recommendation` when Compass says so) and can never wear
+ * `world_opportunity`. For that, hand over the projection:
+ * `openSessionForOpportunity`.
+ */
+export function openExperienceSession(actorId: string, input: OpenSessionInput, nowMs: number): OpenResult {
+  const origin: SessionOrigin = input.origin ?? "declared";
+  if (!DECLARABLE_ORIGINS.includes(origin)) return { ok: false, refusal: "origin_not_earned" };
+  return buildOpenEvent(
+    actorId,
+    {
+      sessionId: input.sessionId,
+      subjectId: input.subjectId,
+      origin,
+      opportunityKind: input.opportunityKind,
+      claimRefs: input.claimRefs,
+      hours: input.hours ?? DEFAULT_SESSION_HOURS,
+      surface: input.surface,
+    },
+    nowMs,
+  );
+}
+
+export interface OpenFromOpportunityInput {
+  sessionId: string;
+  /**
+   * The PLATFORM's world opportunity — lib/opportunityEngine's own projection,
+   * the object `routes/opportunities.ts` serves to every surface. Not a Compass
+   * recommendation, and not a kind somebody typed.
+   */
+  opportunity: OpportunityProjection;
+  /** A shorter life than the opportunity's window, if the caller wants one. */
+  hours?: number;
+  surface?: string;
+}
+
+/** Is this really an OpportunityProjection? Fail-closed: no coercion, no defaults. */
+function isOpportunityProjection(x: unknown): x is OpportunityProjection {
+  if (!x || typeof x !== "object") return false;
+  const p = x as Record<string, unknown>;
+  if (typeof p.subjectId !== "string" || p.subjectId.length === 0) return false;
+  if (typeof p.kind !== "string" || !KIND_SET.has(p.kind)) return false;
+  if (typeof p.decision !== "string" || p.decision.length === 0) return false;
+  if (!Array.isArray(p.claimRefs) || p.claimRefs.some((r) => typeof r !== "string")) return false;
+  if (!p.window || typeof p.window !== "object") return false;
+  return true;
+}
+
+/**
+ * CX-15 — THE BRIDGE FROM A WORLD OPPORTUNITY.
+ *
+ * The census found the only bridge in the tree began at a Compass SERVED
+ * RECOMMENDATION: *"It bridges a recommendation to an outcome, not a world
+ * opportunity."* This is the other origin, and the point of it is what it does
+ * NOT read: the subject, the kind and the claim refs come from the PROJECTION,
+ * never from the caller beside it, so a caller cannot open a session over a
+ * subject the opportunity engine did not offer or under a kind it did not
+ * reach. The decision the engine took is recorded with it, which is what makes
+ * the origin verifiable rather than a label.
+ *
+ * S54 — the session is additionally bounded by the OPPORTUNITY's own §18.2
+ * window: it ends when the evidence it rests on stops being servable. An
+ * opportunity whose window has already passed is refused outright, because a
+ * bridge to a moment that is over is not a bridge, it is a marker.
+ *
+ * §5 — a projection that carries a world value (a density, a trajectory, a
+ * vibe) is refused rather than copied into a durable envelope: an
+ * ExperienceSession must not become the place canonical world truth is stored.
+ *
+ * PURE. No I/O, no clock of its own, no randomness.
+ */
+export function openSessionForOpportunity(actorId: string, input: OpenFromOpportunityInput, nowMs: number): OpenResult {
+  const opp = input.opportunity;
+  if (!isOpportunityProjection(opp)) return { ok: false, refusal: "not_an_opportunity" };
+  if (opportunityWorldValueKeys(opp).length > 0) return { ok: false, refusal: "opportunity_claims_world_truth" };
+
+  const validUntilRaw = opp.window?.expiresAt ?? null;
+  const validUntilMs = validUntilRaw === null ? null : Date.parse(validUntilRaw);
+  if (validUntilMs !== null && Number.isNaN(validUntilMs)) return { ok: false, refusal: "not_an_opportunity" };
+
+  return buildOpenEvent(
+    actorId,
+    {
+      sessionId: input.sessionId,
+      subjectId: opp.subjectId,
+      origin: "world_opportunity",
+      opportunityKind: opp.kind,
+      claimRefs: opp.claimRefs,
+      hours: input.hours ?? DEFAULT_SESSION_HOURS,
+      validUntilMs,
+      opportunityDecision: opp.decision,
+      surface: input.surface,
+    },
+    nowMs,
+  );
 }
 
 /** open · expired · closed — the fold's answer, never a stored status. */

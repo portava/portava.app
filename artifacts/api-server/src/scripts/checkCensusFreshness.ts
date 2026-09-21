@@ -1138,6 +1138,18 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // the other censuses — package.json and check* machinery are named as tools,
     // not graded. See check:census-scope-coverage for why the ratio matters.
     "artifacts/api-server/src/test/wallRouteDegradation.test.ts",
+    // ADDED 2026-09-20 by census-wall §13, closing §12.5's cross-lane request
+    // and the two other files check:census-scope-coverage reported as cited but
+    // unwatched. The truthfulness suite carries W67's and W71's outage half; the
+    // gateway is what W71's voice half would have to reach; the mock checker is
+    // the client-side pin cited beside them.
+    "artifacts/api-server/src/test/wallIntentResolutionTruthfulness.test.ts",
+    "artifacts/api-server/src/lib/inputAssistance/gateway.ts",
+    "travel-buddy-standalone/scripts/check-test-mocks.mjs",
+    // ADDED 2026-09-20 by census-wall §14: the first-page benchmark this census
+    // now cites, and the build config it reads to say the repo names no device.
+    "artifacts/api-server/src/test/wallFirstPageLiveDb.test.ts",
+    "eas.json",
     "artifacts/api-server/src/lib/mediaAssets.ts",
     "artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts",
     "artifacts/api-server/src/routes/wallTelemetry.ts",
@@ -1976,6 +1988,68 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/lib/experienceTruth.ts",
     "artifacts/api-server/src/test/compassMemoryClientBoundary.test.ts",
     "artifacts/api-server/src/test/compass-tools.test.ts",
+    // WIDENED 2026-09-20 by census-compass §27. Nine more files this census now
+    // CITES: the two flag migrations and the Trails migration it applied to
+    // production (27.1), the model client that proves CPH-01 is unmeasurable
+    // here (27.2), the decision assembler named as branch-only, and the four the
+    // new rows reach through.
+    "artifacts/api-server/src/migrations/2840_opportunity_engine_flag.sql",
+    "artifacts/api-server/src/migrations/2910_discovery_trails.sql",
+    "artifacts/api-server/src/lib/openai.ts",
+    "artifacts/api-server/src/lib/compassDecisionAssembly.ts",
+    "artifacts/api-server/src/services/airport/LayoverTravelTime.ts",
+    "artifacts/api-server/src/routes/memories.ts",
+    "artifacts/api-server/src/routes/plan.ts",
+    "artifacts/api-server/src/routes/mediaFeed.ts",
+    "artifacts/api-server/src/test/verifyFlowHighlightControls.test.ts",
+    // WIDENED 2026-09-20 by census-compass §26. Sixteen rows were built in one
+    // pass and their evidence lives in files this list did not watch: the
+    // shared Attention Engine (CX-08), the §8 intent-mode vocabulary (CX-02),
+    // the truth-class stamp (CX-04), the Temporal Freedom gap (CT-03), the
+    // layover opportunity notifier (CL-04), the plan compiler (CM-02), the
+    // lineage migration (CPV2-11), the shared-layer starters on the client
+    // (CG-01), and the ten suites that pin them. Cited, therefore watched.
+    "artifacts/api-server/src/lib/attentionEngine.ts",
+    "artifacts/api-server/src/lib/intentModes.ts",
+    "artifacts/api-server/src/lib/sourceTruth.ts",
+    "artifacts/api-server/src/lib/discoveryLiveRank.ts",
+    "artifacts/api-server/src/lib/discoveryLiveRankRead.ts",
+    "artifacts/api-server/src/lib/layoverLiveIntersection.ts",
+    "artifacts/api-server/src/lib/liveIntelligence.ts",
+    "artifacts/api-server/src/services/airport/LayoverOpportunityNotifier.ts",
+    "artifacts/api-server/src/services/media/MediaActionResolver.ts",
+    "artifacts/api-server/src/services/notifications/NotificationRouter.ts",
+    "artifacts/api-server/src/domain/trips/invariants/TripFreedomEngine.ts",
+    "artifacts/api-server/src/migrations/2996_compass_conversations_phase1_schema.sql",
+    "artifacts/api-server/src/migrations/2997_compass_recommendation_lineage.sql",
+    "artifacts/api-server/src/scripts/checkFlagSchemaPrerequisites.ts",
+    "artifacts/api-server/src/scripts/checkMissingLiveColumns.ts",
+    "artifacts/api-server/src/test/compassNotificationAttention.test.ts",
+    "artifacts/api-server/src/test/compassPlatformChain.test.ts",
+    "artifacts/api-server/src/test/compassTruthClassSurfaces.test.ts",
+    "artifacts/api-server/src/test/intentModes.test.ts",
+    "artifacts/api-server/src/test/tripFreedomGap.test.ts",
+    "artifacts/api-server/src/test/compassSeasonDimension.test.ts",
+    "artifacts/api-server/src/test/compassRecommendationLineage.test.ts",
+    "artifacts/api-server/src/test/compassLayoverConsumption.test.ts",
+    "artifacts/api-server/src/test/compassPlanCompiler.test.ts",
+    "artifacts/api-server/src/test/compassOutcomeProducers.test.ts",
+    "travel-buddy-standalone/app/(tabs)/ai.tsx",
+    "travel-buddy-standalone/src/platform/input-assistance/compass/compassPrompt.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/compass/CompassStarters.tsx",
+    "travel-buddy-standalone/src/platform/input-assistance/compass/__tests__/compassPrompt.test.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/index.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/services/__tests__/selectionWriterCoverage.test.ts",
+    // Six more the coverage check reported as cited-but-unwatched once §26's
+    // citations were counted: two journey suites, the layover tool-loop suite,
+    // the travel-time module CL-03/CL-04 lean on, the `saved` producer CPH-14
+    // pins, and the operational-projections flag migration CT-01/CT-03 name.
+    "artifacts/api-server/src/test/compass-trip-context.test.ts",
+    "artifacts/api-server/src/test/compassDiscoveryTripsJourney.test.ts",
+    "artifacts/api-server/src/services/airport/__tests__/layoverCompassToolLoop.test.ts",
+    "artifacts/api-server/src/services/airport/LayoverTravelTime.ts",
+    "artifacts/api-server/src/routes/saves.ts",
+    "artifacts/api-server/src/migrations/2778_trip_operational_projections_flag.sql",
   ],
   // Input Intelligence is the thinnest-citing of the six (36 of 81 backticked
   // paths resolve) and the most client-weighted: its subject is the typing

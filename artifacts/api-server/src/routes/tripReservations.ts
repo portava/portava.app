@@ -165,6 +165,66 @@ router.post("/trips/:tripId/reservations/import", asyncHandler(async (req, res) 
     return;
   }
 
+  // ── §15.2: a RE-import is a new VERSION of a fact, not a second fact ──────
+  //
+  // census-trips TR290. §15.2 asks for cancellation / refund policies
+  // "imported as VERSIONED facts, treated with provenance and confidence".
+  // Provenance and confidence were already kept per row (0172's `raw_text`,
+  // `extraction`, `extraction_confidence`) and 2784 added the version:
+  // `trip_reservations.version`, bumped by trigger on every UPDATE, with an
+  // append-only `trip_reservation_events` row naming the keys that changed.
+  //
+  // What was missing was the writer. This route INSERTED unconditionally, so
+  // pasting the airline's "your booking has changed" email produced a SECOND
+  // reservation beside the first — two rows, two cancellation deadlines, no
+  // relation between them and nothing to say which is current. The policy had
+  // no history because it had no identity.
+  //
+  // THE MATCH, AND WHY IT IS THIS NARROW. `confirmation_ref` is the only
+  // identifier a booking carries that survives a reschedule (the times are
+  // exactly what changes). It is matched together with `type`, and ONLY when
+  // it resolves to exactly ONE live row: one PNR routinely covers an outbound
+  // and a return, and collapsing two flights into one is a worse outcome than
+  // a duplicate a member can delete. An ambiguous ref therefore inserts, and
+  // the response says so rather than picking.
+  //
+  // STATUS IS NEVER PATCHED. Re-reading the email does not un-confirm a
+  // booking the member already confirmed, and does not resurrect one they
+  // dismissed — only the FACTS move, and `updated_at` with them.
+  // One key per (reference, type). JSON rather than a joined string so a
+  // reference that happens to contain the separator cannot collide with a
+  // different pair — a booking reference is whatever the airline printed.
+  const refTypeKey = (ref: string, type: string) => JSON.stringify([ref.trim(), type]);
+  const refsWanted = [...new Set(
+    extraction.reservations
+      .map((r) => (typeof r.confirmationRef === "string" ? r.confirmationRef.trim() : ""))
+      .filter((ref) => ref.length > 0),
+  )];
+  const existingByKey = new Map<string, { id: string; version: number | null } | "ambiguous">();
+  if (refsWanted.length > 0) {
+    const { data: priorRows, error: priorErr } = await sc
+      .from("trip_reservations")
+      .select("id, type, confirmation_ref, status, version")
+      .eq("trip_id", (trip as any).id)
+      .in("confirmation_ref", refsWanted);
+    // FAIL CLOSED. supabase-js RESOLVES on a database error, so an unbound
+    // error here reads exactly like "no reservation has this reference" and
+    // the import would go on to insert a duplicate of every booking on the
+    // trip. The import is safe to retry; a duplicated itinerary is not.
+    if (priorErr) {
+      req.log?.error({ err: priorErr, tripId: (trip as any).id }, "reservation import: existing-reference lookup failed — refusing to import");
+      sendError(res, "degraded_unavailable", "We could not check this trip's existing bookings right now. Please try again shortly.");
+      return;
+    }
+    for (const row of ((priorRows ?? []) as any[])) {
+      if (String(row.status) === "cancelled") continue;
+      const key = refTypeKey(String(row.confirmation_ref), String(row.type));
+      const seen = existingByKey.get(key);
+      if (seen === undefined) existingByKey.set(key, { id: String(row.id), version: typeof row.version === "number" ? row.version : null });
+      else existingByKey.set(key, "ambiguous");
+    }
+  }
+
   // Every extracted row lands as pending_confirm — extraction NEVER
   // auto-commits to the plan; that only happens via explicit /confirm.
   const rows = extraction.reservations.map((r) => ({
@@ -184,14 +244,95 @@ router.post("/trips/:tripId/reservations/import", asyncHandler(async (req, res) 
     created_from:             "paste",
   }));
 
-  const { data: inserted, error } = await sc
-    .from("trip_reservations")
-    .insert(rows)
-    .select("*");
-  if (error) { sendError(res, "db_error", error.message); return; }
+  // Split the extraction into the rows that are a NEW version of a booking
+  // this trip already holds, and the rows that are new bookings.
+  type ImportRow = (typeof rows)[number];
+  const updates: { id: string; original: ImportRow }[] = [];
+  const inserts: ImportRow[] = [];
+  let ambiguousReferences = 0;
+  for (const row of rows) {
+    const ref = typeof row.confirmation_ref === "string" ? row.confirmation_ref.trim() : "";
+    const match = ref.length > 0 ? existingByKey.get(refTypeKey(ref, row.type)) : undefined;
+    if (match === "ambiguous") { ambiguousReferences += 1; inserts.push(row); continue; }
+    if (match === undefined) { inserts.push(row); continue; }
+    // The columns this update writes are named at the UPDATE itself, below.
+    updates.push({ id: match.id, original: row });
+  }
+
+  const written: any[] = [];
+  let updatedCount = 0;
+  // One statement per updated booking: 2784's history row is per row, and a
+  // bulk write would not tell these two cases apart in the history either.
+  for (const u of updates) {
+    // `status`, `created_from`, `user_id` and `trip_id` are deliberately NOT
+    // written: the booking keeps the state and the attribution it already has,
+    // and only the facts (and their provenance) take a new version.
+    //
+    // NAMED HERE, in the call, rather than spread from a four-key omission
+    // held in a variable. Two reasons, and the second is the substantive one:
+    //
+    //   - check:write-path-columns resolves the payload of an `.update()` only
+    //     when it is a literal at the call. A spread, or a variable built
+    //     earlier, makes this write a blind spot its live column check skips
+    //     entirely — this site was reported as exactly that.
+    //   - the omission was SUBTRACTIVE. Any column a later edit adds to the
+    //     extraction rows above would have been carried silently into this
+    //     UPDATE, including the next column whose whole point is that an
+    //     import must not overwrite it. Naming the ten fact columns makes the
+    //     rule above true by construction rather than by remembering to extend
+    //     a destructure.
+    const { data: updated, error: updErr } = await sc
+      .from("trip_reservations")
+      .update({
+        type:                     u.original.type,
+        title:                    u.original.title,
+        starts_at:                u.original.starts_at,
+        ends_at:                  u.original.ends_at,
+        location_name:            u.original.location_name,
+        confirmation_ref:         u.original.confirmation_ref,
+        cancellation_deadline_at: u.original.cancellation_deadline_at,
+        raw_text:                 u.original.raw_text,
+        extraction:               u.original.extraction,
+        extraction_confidence:    u.original.extraction_confidence,
+        updated_at:               new Date().toISOString(),
+      })
+      .eq("id", u.id)
+      .select("*")
+      .maybeSingle();
+    if (updErr) { sendError(res, "db_error", updErr.message); return; }
+    // A row that vanished between the lookup and the write (a concurrent
+    // delete) is not an error and is not silently dropped: it is imported as a
+    // new booking instead, which is what it now is.
+    if (updated) { written.push(updated); updatedCount += 1; }
+    else inserts.push(u.original);
+  }
+
+  if (inserts.length > 0) {
+    const { data: inserted, error } = await sc
+      .from("trip_reservations")
+      .insert(inserts)
+      .select("*");
+    if (error) { sendError(res, "db_error", error.message); return; }
+    written.push(...((inserted as any[]) ?? []));
+  }
 
   res.status(201).json({
-    reservations: (inserted as any[]) ?? [],
+    reservations: written,
+    /**
+     * §15.2 (census-trips TR290): how many of these were a new VERSION of a
+     * booking this trip already held rather than a new booking. A client that
+     * says "3 bookings imported" after a reschedule email is telling the
+     * member something false; this is what lets it say "2 updated, 1 added".
+     */
+    updatedCount,
+    createdCount: inserts.length,
+    /**
+     * References that matched more than one live booking of the same type and
+     * were therefore imported as new rows rather than merged into one of them.
+     * Named because the alternative to naming it is a duplicate the member
+     * cannot explain.
+     */
+    ambiguousReferences,
     needsConfirmation: true,
   });
 }));

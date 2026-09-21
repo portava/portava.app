@@ -85,6 +85,14 @@ export interface SweepResult {
  * lands." This is that adoption, and 2202 built map_telemetry_events_expiry_idx
  * and map_telemetry_drops_expiry_idx for exactly this DELETE.
  *
+ * 2964 later widened the same function to a third table,
+ * map_telemetry_disabled_discards — the hourly, viewer-less counter that
+ * replaced the viewer-linked drop row the route used to write while collection
+ * was off. Those rows name nobody, so they are not the behavioural history the
+ * 90-day promise exists to bound; they age out anyway, because an operational
+ * counter that grows forever stops being operational. Nothing changes here: the
+ * caller still makes one RPC and still reports one combined count.
+ *
  * COLLECTION AND RETENTION HAVE SEPARATE FLAGS ON PURPOSE. Turning telemetry
  * collection off is the reaction to a privacy concern, and if that also switched
  * the purge off it would strand exactly the rows someone just decided they did

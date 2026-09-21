@@ -39,9 +39,13 @@ function mockFetch(status: number, body: unknown): typeof fetch {
 }
 
 function countingFetch(counter: { calls: number }, inner: typeof fetch): typeof fetch {
-  return async (...args: Parameters<typeof fetch>) => {
+  // `Parameters<typeof fetch>` collapses to the LAST overload's parameters, so a
+  // rest-spread wrapper is not assignable to the whole overloaded `typeof fetch`.
+  // Naming the union every overload accepts keeps the wrapper assignable to all
+  // three without a cast.
+  return async (input: string | URL | Request, init?: RequestInit) => {
     counter.calls++;
-    return inner(...args);
+    return inner(input, init);
   };
 }
 

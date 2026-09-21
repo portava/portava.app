@@ -32,6 +32,7 @@ import { EntityMapLayers } from '../map/EntityMarkers.tsx';
 import { ActivityZoneLayer } from '../map/ActivityZone.tsx';
 import { CrowdFlowLayer } from '../map/CrowdFlowLine.tsx';
 import { TravelerFlowLayer } from '../map/TravelerFlowLine.tsx';
+import { UserPositionMarker, hasViewerPosition } from '../map/UserPositionMarker.tsx';
 import type { MapObject } from '../../types/mapObjects.ts';
 import type { MapEntity, ToggleableEntityType } from '../../types/mapTypes.ts';
 import { color, space, radius, type as t, avatar, icon, dot } from '../../theme/tokens.ts';
@@ -365,7 +366,16 @@ export function DiscoveryMapView({
   const fallback = (fallbackLat != null && fallbackLng != null)
     ? { center: [fallbackLng, fallbackLat] as [number, number], zoom: fallbackZoom ?? 11 }
     : null;
-  const vp = viewport ?? fallback;
+  // The viewer's own position is the LAST viewport source, and it has to be
+  // one. Without it, a viewport derived only from `places` is null whenever the
+  // map has no pins on it, the component returns the "No location set" empty
+  // state, and the whole canvas — including the §6 blue dot — never renders.
+  // A traveller standing somewhere with nothing indexed nearby could not see
+  // where they were. (census-map M43.)
+  const selfViewport = hasViewerPosition(userLat, userLng)
+    ? { center: [userLng as number, userLat as number] as [number, number], zoom: 14 }
+    : null;
+  const vp = viewport ?? fallback ?? selfViewport;
 
   const travelerCount = useMemo(() => mappable.filter((p) => isDbPlace(p.id)).length, [mappable]);
   const internalCameraRef = useRef<any>(null);
@@ -661,13 +671,11 @@ export function DiscoveryMapView({
             }}
           />
         )}
-        {hasUser && (
-          <Marker key="me-marker" lngLat={[userLng as number, userLat as number]}>
-            <View style={s.meDotOuter}>
-              <View style={s.meDot} />
-            </View>
-          </Marker>
-        )}
+        {/* §6 "blue dot = current user". Mounted UNCONDITIONALLY: where the
+            viewer is does not depend on how many other objects the projection
+            returned, and the component fails closed on its own for a missing
+            or degenerate position. (census-map M43.) */}
+        <UserPositionMarker lat={userLat} lng={userLng} />
       </Map>
 
       {/* ── Filter toggle ──────────────────────────────────────────────────── */}

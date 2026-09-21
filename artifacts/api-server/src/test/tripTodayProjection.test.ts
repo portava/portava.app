@@ -131,6 +131,44 @@ describe("§11.1 buildTripTodayProjection — composed, not re-derived", () => {
     assert.deepEqual([...tight.participantIds].sort(), [OWNER_ID, MEMBER_ID].sort(),
       "the accepted crew — an invited member is not on the trip yet and is not alerted");
   });
+  /**
+   * §5.1's plan participant relation (2771), consulted rather than only stored
+   * — census-trips TR150.
+   *
+   * `plans[].partySize` was the literal `null` on every input this projection
+   * built, so `TriggerPlan`'s own comment ("attendance count when known
+   * (2771), else the crew size") described a branch nothing could reach, and
+   * §8.4's weather trigger fired on an outdoor plan naming nobody to tell.
+   */
+  it("§8.4 weather (TR150): the party and the people to alert come from 2771's GOING/MAYBE attendance", async () => {
+    const tables = withStages(base());
+    tables.trip_members = [...tables.trip_members, { trip_id: TRIP_ID, user_id: OTHER_ID, role: "member", status: "accepted" }];
+    tables.trip_plan_items = [{ id: "pl-hike", trip_id: TRIP_ID, title: "Sintra hike", category: "activity", status: "planned", starts_at: T("15:00"), ends_at: T("18:00"), day_date: "2026-09-13", location_name: "Sintra", removed_at: null }];
+    tables.trip_plan_participants = [
+      { plan_id: "pl-hike", user_id: OWNER_ID, attendance_state: "going" },
+      { plan_id: "pl-hike", user_id: MEMBER_ID, attendance_state: "maybe" },
+      { plan_id: "pl-hike", user_id: OTHER_ID, attendance_state: "declined" },
+    ];
+    const r = await buildTripTodayProjection(makeClient(tables) as any, TRIP_ID, OWNER_ID, { now: NOW });
+    assert.ok(r.ok, JSON.stringify(r));
+    // The trigger itself needs a rain signal to fire and this fixture has no
+    // weather source; what is pinned here is the INPUT the projection now
+    // builds, which is where the relation was missing.
+    assert.deepEqual(r.projection.unreadSources, [], "2771 read cleanly");
+    const weather = r.projection.riskTriggers.find((t) => t.kind === "weather_sensitive")!;
+    assert.equal(weather.fired, false, "no forecast in this fixture");
+    // The party reaches the transport row through the same plan object.
+    const mismatch = r.projection.riskTriggers.find((t) => t.kind === "crew_transport_mismatch")!;
+    assert.equal(mismatch.fired, false, "no segments in this fixture");
+  });
+  it("§8.4 (TR150): an UNREADABLE 2771 falls back to the crew and SAYS so — it never reports that nobody is going", async () => {
+    const tables = withStages(base());
+    tables.trip_plan_items = [{ id: "pl-hike", trip_id: TRIP_ID, title: "Sintra hike", category: "activity", status: "planned", starts_at: T("15:00"), ends_at: T("18:00"), day_date: "2026-09-13", location_name: "Sintra", removed_at: null }];
+    const r = await buildTripTodayProjection(makeClient(tables, ["trip_plan_participants"]) as any, TRIP_ID, OWNER_ID, { now: NOW });
+    assert.ok(r.ok, "an optional refinement must not cost the whole day's projection");
+    assert.deepEqual(r.projection.unreadSources, ["trip_plan_participants"],
+      "the fallback is named, not silent");
+  });
   it("a conflict becomes an unresolvedAction and AT_RISK health; an unplaced commitment becomes a place_commitment action", async () => {
     const tables = withStages(base());
     tables.trip_commitments = [...tables.trip_commitments, { id: "C", trip_id: TRIP_ID, type: "other", starts_at: null, required_arrival_at: null, place_id: null, lateness_tolerance: null, prep_duration: null, flexibility: "flexible" }];

@@ -214,7 +214,7 @@ function hiddenUserIds(profile: CompassProfile | null): Set<string> {
  * Same visibility/state guards as the search_events Compass tool. Hidden
  * (blocked/blocker/muted) hosts are filtered out before anything surfaces.
  */
-interface HomeEvent {
+export interface HomeEvent {
   id: string;
   title: string;
   city: string | null;
@@ -287,7 +287,7 @@ function buildTonightVibe(events: HomeEvent[]): { headline: string; events: Home
 }
 
 /* ── Tomorrow's weather window ──────────────────────────────────────────────── */
-interface WeatherWindow {
+export interface WeatherWindow {
   city: string;
   date: string;
   summary: string;
@@ -364,7 +364,75 @@ router.get("/compass/home", asyncHandler(async (req, res) => {
   }
 
   try {
-    const profile = await getCompassProfile(sc, user.id);
+    const projection = await buildCompassHomeProjection(sc, user.id, { localHour });
+    const payload = { compassEnabled: true, fallback: false, ...projection };
+    // A DEGRADED PAYLOAD IS NOT CACHED. The cache exists to spare a repeat open
+    // an expensive rebuild, and caching an outage would pin it for the whole TTL
+    // — the traveller would keep being told a source is unavailable for up to
+    // 45 s after it recovered, and a retry could not clear it. The header above
+    // already restricts caching to "successful, non-fallback payloads"; a
+    // payload with a dead source is not one, and now says so.
+    if (!projection.degraded) setCachedHome(cacheKey, payload);
+    res.json(payload);
+  } catch (err) {
+    req.log.error({ err }, "compass/home: build failed, returning fallback");
+    res.json({ compassEnabled: true, fallback: true });
+  }
+}));
+
+/**
+ * The server-built current-context projection Compass Home renders — and, since
+ * census-compass CCL-06, the projection `/compass/ask` READS rather than
+ * rebuilding its own (`docs/specs/upgrades-v2/01-COMPASS-v2.md` "Home consumes
+ * a server-built UserNow … Compass consumes the current-context projection").
+ * ONE implementation: the route above is one caller of two.
+ *
+ * Honesty rule inherited from the route: every section is `Sourced` — a value
+ * with `ok: true`, or `unusable` when its source could not answer — and
+ * `sources` says which, so a consumer can tell "nobody is around" from "presence
+ * could not be resolved". A consumer that drops `sources` is lying by omission.
+ */
+export interface CompassHomeProjection {
+  timeOfDay: TimeOfDay;
+  contextState: string;
+  city: string | null;
+  bestNextMove: HomeBestNextMove | null;
+  circleActivity: { people: HomePerson[] } | null;
+  startingSoon: HomeEvent[] | null;
+  tonightVibe: ReturnType<typeof buildTonightVibe> | null;
+  weatherWindow: WeatherWindow | null;
+  sources: HomeSources;
+  degraded: boolean;
+}
+
+export interface HomeBestNextMove {
+  id: string;
+  type: string;
+  title: string | null;
+  category: string | null;
+  city: string | null;
+  data: unknown;
+  explanationKey: string | null;
+}
+
+export interface HomePerson {
+  label: string;
+  handle: string | null;
+  status: string;
+  statusLabel: string | null;
+  approximateArea: string | null;
+  venue: string | null;
+  context: string | null;
+}
+
+export async function buildCompassHomeProjection(
+  sc: any,
+  userId: string,
+  opts: { localHour: number },
+): Promise<CompassHomeProjection> {
+  const { localHour } = opts;
+  {
+    const profile = await getCompassProfile(sc, userId);
     const timeOfDay = timeOfDayForHour(localHour);
     const signals = { ...defaultSignals(profile), hourUtc: localHour };
     const context = buildCompassContext(profile, signals);
@@ -402,7 +470,7 @@ router.get("/compass/home", asyncHandler(async (req, res) => {
         // Circle activity — Phase 9 who's-around, consent-gated per target
         (async () => {
           try {
-            const { people } = await getWhosAround(sc, user.id, hiddenUserIds(profile));
+            const { people } = await getWhosAround(sc, userId, hiddenUserIds(profile));
             if (people.length === 0) return sourced(null);
             return sourced({
               people: people.slice(0, 5).map((p: any) => ({
@@ -444,9 +512,7 @@ router.get("/compass/home", asyncHandler(async (req, res) => {
     };
     const degraded = HOME_SECTIONS.some((k) => sources[k] === "unavailable");
 
-    const payload = {
-      compassEnabled: true,
-      fallback: false,
+    return {
       timeOfDay,
       contextState: context.contextState,
       city: profile.currentCity ?? null,
@@ -460,18 +526,7 @@ router.get("/compass/home", asyncHandler(async (req, res) => {
       /** True when at least one section is `unavailable`. */
       degraded,
     };
-    // A DEGRADED PAYLOAD IS NOT CACHED. The cache exists to spare a repeat open
-    // an expensive rebuild, and caching an outage would pin it for the whole TTL
-    // — the traveller would keep being told a source is unavailable for up to
-    // 45 s after it recovered, and a retry could not clear it. The header above
-    // already restricts caching to "successful, non-fallback payloads"; a
-    // payload with a dead source is not one, and now says so.
-    if (!degraded) setCachedHome(cacheKey, payload);
-    res.json(payload);
-  } catch (err) {
-    req.log.error({ err }, "compass/home: build failed, returning fallback");
-    res.json({ compassEnabled: true, fallback: true });
   }
-}));
+}
 
 export default router;

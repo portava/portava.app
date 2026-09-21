@@ -18,8 +18,14 @@ import { getServiceClient, isServiceClientReady } from "../lib/supabase";
 import { detectAndStoreLanguage, invalidateContentTranslations } from "../services/contentTranslation.js";
 import { requireUser, isAcceptedTripMember, requireTripMember, sendError, canEditPlanItem, canEditPlan, type PlanEditPermission } from "../lib/http.js";
 import { canEditTrip, canInviteParticipant, isTripOwner, planEditPermits } from "../domain/trips/policies/tripPolicy.js";
+import {
+  TRIP_PLAN_PRIVACY_SCOPES,
+  visibilityForPrivacyScope,
+  type TripPlanPrivacyScope,
+} from "../domain/trips/policies/tripPlanPrivacy.js";
+import { isMissingColumnError } from "../lib/capability/schemaCapability.js";
 import { sendTripRefusal } from "../domain/trips/contracts/tripReasonCodes.js";
-import { toCamel } from "./plan.js";
+import { toCamel, readPlanItemsInOrder } from "./plan.js";
 import { logTripActivity, findTripActivityByKey } from "../domain/trips/events/tripActivityLog.js";
 import { syncTripChatMembers } from "../lib/chatSync.js";
 import { getRestrictionState } from "../services/trust/TrustRestrictionService.js";
@@ -1568,6 +1574,13 @@ const CreatePlanItemSchema = z.object({
   notes:             z.string().max(1000).optional(),
   sortOrder:         z.number().int().default(0),
   lockType:          z.enum(["fixed", "flexible", "optional"]).default("flexible"),
+  // §6.3's six scopes (2770). OPTIONAL, with no default here on purpose: when
+  // the caller names none, the write below omits the column entirely and the
+  // row lands on 2770's own default — which is also what the kernel's
+  // `coalesce(v_payload->>'privacy_scope', 'crew')` does. A default in this
+  // schema would make every create name a column a pre-2770 database does not
+  // have, turning a new optional field into a hard dependency on a migration.
+  privacyScope:      z.enum(TRIP_PLAN_PRIVACY_SCOPES).optional(),
 });
 
 const UpdatePlanItemSchema = z.object({
@@ -1584,6 +1597,13 @@ const UpdatePlanItemSchema = z.object({
   notes:             z.string().max(1000).nullable().optional(),
   sortOrder:         z.number().int().optional(),
   lockType:          z.enum(["fixed", "flexible", "optional"]).optional(),
+  /**
+   * §6.3's six scopes (2770). There is deliberately NO `visibility` key beside
+   * it: 2770 ties the two by CHECK and 2772 makes UPDATE_PLAN refuse a direct
+   * `visibility` patch, so the only coherent thing a caller can send is the
+   * scope. `visibility` is derived from it below.
+   */
+  privacyScope:      z.enum(TRIP_PLAN_PRIVACY_SCOPES).optional(),
 });
 
 const ReorderSchema = z.object({
@@ -1717,19 +1737,15 @@ router.get("/trips/:tripId/plan", async (req, res) => {
   const canEdit = editAllowed === true;
 
   // perf-trim: explicit column list replaces SELECT * — only columns consumed by toCamel()
-  // are fetched; removed_at is a filter (WHERE), not needed in the result set
-  const { data, error } = await client
-    .from("trip_plan_items")
-    .select(
-      "id, trip_id, creator_id, title, category, status, source_type, source_id, " +
-      "day_date, starts_at, ends_at, location_name, notes, sort_order, visibility, " +
-      "lock_type, location_is_private, lat, lng, created_at, updated_at",
-    )
-    .eq("trip_id", tripId)
-    .is("removed_at", null)
-    .order("day_date", { ascending: true, nullsFirst: false })
-    .order("starts_at", { ascending: true, nullsFirst: false })
-    .order("sort_order", { ascending: true });
+  // are fetched; removed_at is a filter (WHERE), not needed in the result set.
+  //
+  // The select lives in plan.ts beside the column constants rather than here:
+  // this file IMPORTS them, and check:write-path-columns cannot resolve an
+  // imported identifier, so a `.select()` written here is a blind spot the
+  // live column check silently skips. See readPlanItemsInOrder's header.
+  const { data, error } = await readPlanItemsInOrder(client, tripId, () => {
+    req.log.warn({ tripId }, "trip plan: privacy_scope absent — 2770_trip_plans_spec_columns.sql is not applied to this database; serving the plan without §6.3 scopes");
+  });
 
   if (error) { req.log.error({ err: error }, "get trip plan"); sendError(res, "db_error", error.message); return; }
 
@@ -1840,6 +1856,15 @@ router.post("/trips/:tripId/plan/items", async (req, res) => {
     if (dup) { res.status(409).json({ error: "duplicate", message: "This item is already in the plan" }); return; }
   }
 
+  // §6.3 (2770, census-trips TR116). `visibility` is DERIVED, never asked for:
+  // 2770's CHECK makes a scope and a disagreeing visibility impossible, so a
+  // caller who named both could only be refused by the database. When no scope
+  // is named the column is omitted and the row lands on 2770's default
+  // (`crew`), which derives the same `members` this route has always written —
+  // so a client that has not been updated sees no change at all.
+  const scope: TripPlanPrivacyScope | null = b.privacyScope ?? null;
+  const derivedVisibility = scope === null ? "members" : visibilityForPrivacyScope(scope);
+
   // Trip Kernel path (§4.1 ADD_PLAN). Authorization above is unchanged; the
   // kernel writes the row, the event, the outbox row and the receipt in one
   // transaction and bumps trips.version. Off => the direct insert below.
@@ -1870,7 +1895,14 @@ router.post("/trips/:tripId/plan/items", async (req, res) => {
         notes:               b.notes ?? null,
         sort_order:          b.sortOrder,
         lock_type:           b.lockType,
-        visibility:          "members",
+        // Both keys, on purpose. A kernel carrying 2772 DERIVES `visibility`
+        // from `privacy_scope` and ignores the key sent here; a kernel that
+        // stops at 2590 has no `privacy_scope` branch and reads `visibility`.
+        // Sending the derived pair means the same command produces the same
+        // row on either, instead of silently widening a `private` plan to
+        // `members` on the older one.
+        ...(scope === null ? {} : { privacy_scope: scope }),
+        visibility:          derivedVisibility,
       },
     });
     if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
@@ -1900,12 +1932,27 @@ router.post("/trips/:tripId/plan/items", async (req, res) => {
       notes:               b.notes ?? null,
       sort_order:          b.sortOrder,
       lock_type:           b.lockType,
-      visibility:          "members",
+      ...(scope === null ? {} : { privacy_scope: scope }),
+      visibility:          derivedVisibility,
     })
     .select("*")
     .single();
 
-  if (error) { req.log.error({ err: error }, "create plan item"); sendError(res, "db_error", error.message); return; }
+  if (error) {
+    // A named scope on a database without 2770 is the one new failure this
+    // field can cause, and it must not read as a generic write fault: the
+    // request is well-formed and will succeed once the migration is applied,
+    // so it is retryable and the operator is told which file provides the
+    // column. Every other error keeps the shape it had.
+    if (scope !== null && isMissingColumnError(error)) {
+      req.log.error({ err: error, tripId, privacyScope: scope }, "plan item: privacy_scope absent — 2770_trip_plans_spec_columns.sql is not applied to this database");
+      sendError(res, "degraded_unavailable", "Plan privacy scopes are not available on this deployment yet. Please try again shortly.");
+      return;
+    }
+    req.log.error({ err: error }, "create plan item");
+    sendError(res, "db_error", error.message);
+    return;
+  }
 
   res.status(201).json(toCamel(item));
 });
@@ -1946,6 +1993,18 @@ router.patch("/trips/:tripId/plan/items/:itemId", async (req, res) => {
   if (patch.locationIsPrivate !== undefined) dbPatch.location_is_private = patch.locationIsPrivate;
   if (patch.notes             !== undefined) dbPatch.notes               = patch.notes;
   if (patch.sortOrder         !== undefined) dbPatch.sort_order          = patch.sortOrder;
+  // §6.3 (2770, census-trips TR116). The scope moves and `visibility` follows
+  // it in the same statement — 2770's CHECK refuses the pair apart, and 2772
+  // derives it on the kernel path, so writing both here is what makes the
+  // flag-off twin land on the row the command would have written.
+  // Both keys reach the kernel patch too: a kernel carrying 2772 derives
+  // `visibility` and ignores the key; one that stops at 2590 has no
+  // `privacy_scope` branch and applies `visibility`. Same command, same row,
+  // either way.
+  if (patch.privacyScope      !== undefined) {
+    dbPatch.privacy_scope = patch.privacyScope;
+    dbPatch.visibility    = visibilityForPrivacyScope(patch.privacyScope);
+  }
 
   // Trip Kernel path (§3.3: a status change is a command, not a column write).
   // The command type is derived from the patch; the kernel refuses a transition
@@ -2008,7 +2067,19 @@ router.patch("/trips/:tripId/plan/items/:itemId", async (req, res) => {
     .select("*")
     .single();
 
-  if (error) { req.log.error({ err: error }, "update plan item"); sendError(res, "db_error", error.message); return; }
+  if (error) {
+    // Same reasoning as the create path: a named scope on a database without
+    // 2770 is retryable and names the file that provides the column, and
+    // nothing else changes shape.
+    if (patch.privacyScope !== undefined && isMissingColumnError(error)) {
+      req.log.error({ err: error, tripId, itemId, privacyScope: patch.privacyScope }, "plan item: privacy_scope absent — 2770_trip_plans_spec_columns.sql is not applied to this database");
+      sendError(res, "degraded_unavailable", "Plan privacy scopes are not available on this deployment yet. Please try again shortly.");
+      return;
+    }
+    req.log.error({ err: error }, "update plan item");
+    sendError(res, "db_error", error.message);
+    return;
+  }
 
   await logTripActivity(client, tripId, user.id, "plan_item_updated", {
     item_id: itemId,

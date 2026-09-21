@@ -257,7 +257,21 @@ describe("the script", () => {
     // does not print is an exemption nobody re-reads — but which bucket it falls in
     // is the script's to decide and changes as migrations land.
     const known = Object.keys(KNOWN);
-    assert.ok(known.length > 0, "KNOWN is empty; this case has nothing left to prove");
+    // KNOWN REACHED ZERO ON 2026-09-17 and that is the ratchet SUCCEEDING, not a
+    // hole in this case. The script's own header says entries classified
+    // `unguarded` "MUST reach zero", and the last two — safe_return_enabled and
+    // safe_return_trusted_circle_alerts_enabled — were struck because 2780/2794
+    // landed on production, which is the one sanctioned way this list shrinks.
+    //
+    // So the assertion forks instead of demanding a non-empty list. Empty is a
+    // state with something to prove too: that the script still exits 0 and still
+    // REPORTS the empty ratchet rather than printing nothing and leaving a reader
+    // to guess whether it ran. And the moment an entry is added back, the loop
+    // below re-arms itself with no edit here.
+    if (known.length === 0) {
+      assert.match(r.stdout, /^OK — 0 unguarded \(all known\)/m,
+        "KNOWN is empty and the script does not say so — an empty ratchet that prints nothing is indistinguishable from a ratchet that did not run");
+    }
     for (const flag of known) {
       assert.ok(r.stdout.includes(flag), `KNOWN.${flag} is carried but never printed`);
     }
@@ -313,12 +327,28 @@ describe("the script", () => {
       }
       if (subject) break;
     }
-    assert.ok(
-      subject,
-      "no KNOWN entry names a table.column absent from the snapshot, so the STALE rule cannot be exercised. " +
-        "If KNOWN is empty the ratchet has nothing left to guard and this case should be retired deliberately, " +
-        "not left passing vacuously.",
-    );
+    // RETIRED DELIBERATELY WHILE KNOWN IS EMPTY, which is what the message below
+    // asked the next author to do rather than leave this passing vacuously.
+    //
+    // The STALE rule needs a real KNOWN entry naming an object production lacks,
+    // and as of 2026-09-17 there are no KNOWN entries at all. There is no honest
+    // way to exercise the rule without one: a synthetic entry would prove that a
+    // fixture works, not that the shipped list is watched.
+    //
+    // It is SKIPPED, not deleted, and the distinction is the whole point. The
+    // search above still runs on every invocation, so the day an entry is added
+    // back this case re-arms itself and proves the rule again with no edit here.
+    // Deleting it would retire the proof that the ratchet notices when a
+    // migration lands — the ONLY way this list is allowed to shrink — and that
+    // proof is exactly what makes an empty KNOWN trustworthy rather than merely
+    // convenient.
+    if (!subject) {
+      assert.equal(Object.keys(KNOWN).length, 0,
+        "no KNOWN entry names an object absent from the snapshot, yet KNOWN is NOT empty — " +
+        "that means every remaining entry is already stale and the ratchet should have failed. " +
+        "This case is only allowed to stand down when there is nothing left to guard.");
+      return;
+    }
 
     if (!Array.isArray(snap.tables[subject!.table])) snap.tables[subject!.table] = [];
     if (!snap.tables[subject!.table].includes(subject!.column)) {

@@ -64,6 +64,12 @@ export const TRIP_COMMAND_TYPES = [
   'ADD_TRANSPORT_SEGMENT', 'UPDATE_TRANSPORT_SEGMENT', 'SET_TRANSPORT_STATE', 'REMOVE_TRANSPORT_SEGMENT',
   'DECLARE_DISRUPTION', 'RESOLVE_DISRUPTION',
   'MARK_COMMITMENT_AT_RISK', 'CLEAR_COMMITMENT_RISK', 'OPEN_FREE_WINDOW', 'RECORD_OPPORTUNITY_CHANGE',
+  // 2797/2798: §23 long-stay recurring commitments. A RULE, not rows — the
+  // occurrences are computed per read and never stored, so there is no
+  // "materialise" command to send and an occurrence id (`rec:<rule>:<date>`)
+  // is never a valid commitment_id.
+  'ADD_RECURRING_COMMITMENT', 'UPDATE_RECURRING_COMMITMENT', 'REMOVE_RECURRING_COMMITMENT',
+  'SKIP_RECURRENCE_OCCURRENCE', 'UNSKIP_RECURRENCE_OCCURRENCE',
 ] as const;
 export type TripCommandType = (typeof TRIP_COMMAND_TYPES)[number];
 

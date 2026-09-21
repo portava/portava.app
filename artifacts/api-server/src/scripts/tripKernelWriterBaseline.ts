@@ -84,11 +84,19 @@
  *                        ONLY writer whose kernel row needs migration 2590
  *                        (added_by / description / city / country).
  *   routes/compass.ts    gated: proposal confirm -> ADD_PLAN (crew).
- *   compass/CompassAutopilotEngine.ts  gated: applyProposal's per-item update
- *                        -> MOVE_PLAN / UPDATE_PLAN / CONFIRM_PLAN / CANCEL_PLAN /
- *                        COMPLETE_ACTIVITY (planCommandTypeForPatch), crew, the
- *                        actor is the proposal's OWNER (applied on their behalf),
- *                        key autopilot:<proposal>:<item>.
+ *   compass/CompassAutopilotEngine.ts  KERNEL-ONLY: applyProposal's per-item
+ *                        change -> MOVE_PLAN / UPDATE_PLAN / CONFIRM_PLAN /
+ *                        CANCEL_PLAN / COMPLETE_ACTIVITY (planCommandTypeForPatch),
+ *                        crew, the actor is the proposal's OWNER (applied on
+ *                        their behalf), key autopilot:<proposal>:<item>.
+ *                        It has NO legacy twin: census-compass CT-01 removed it
+ *                        (sixth pass). With the flag off the confirm REFUSES and
+ *                        the proposal stays pending, because for THIS writer the
+ *                        "flag-off twin" was not a fallback — it was the only
+ *                        path any confirm took, and it is the direct canonical
+ *                        write CT-01 names. Safe because production has 0 rows in
+ *                        both autopilot tables. This is the first entry to reach
+ *                        direct: 0; every other file above still carries its twin.
  *   lib/visuals/service.ts  gated: finalizeVisual's trips.cover_url
  *                        -> SET_TRIP_COVER (system actor — a pipeline completing,
  *                        nobody asked at that moment), key visual:<job>.
@@ -239,7 +247,7 @@ export interface WriterBaseline {
 }
 
 export const TRIP_KERNEL_DIRECT_WRITERS: Record<string, WriterBaseline> = {
-  "compass/CompassAutopilotEngine.ts":     { direct: 1, ungated: 0 }, // KERNEL-GATED (fourth pass): applyProposal update -> MOVE_PLAN / UPDATE_PLAN / ... (crew, actor = proposal owner)
+  "compass/CompassAutopilotEngine.ts":     { direct: 0, ungated: 0 }, // KERNEL-ONLY (sixth pass, census-compass CT-01): the legacy twin is GONE — flag off => the confirm refuses and the proposal stays pending. Kept listed at 0 so a new direct write here fails the check as a re-introduction, not as a first offence.
   "server/trips/projectionWorkers/tripReminderScheduler.ts":          { direct: 3, ungated: 0, nonAggregate: 3 }, // DECLARED NON-AGGREGATE per column (fifth pass): reminder_sent_at / reminder_retry_count / reminder_delivered_at
   "lib/visuals/service.ts":                { direct: 1, ungated: 0 }, // KERNEL-GATED (fourth pass): finalizeVisual cover_url -> SET_TRIP_COVER (system)
   "routes/admin.ts":                       { direct: 3, ungated: 0, nonAggregate: 1 }, // 2 x visibility hide KERNEL-GATED (fourth pass) -> ADMIN_HIDE_TRIP (admin); 1 x reminder reset DECLARED NON-AGGREGATE per column (fifth pass)

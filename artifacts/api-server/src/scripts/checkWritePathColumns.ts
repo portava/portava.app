@@ -538,7 +538,7 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   // WHY A LITERAL IS THE WRONG FIX AT EACH OF THEM:
   //
   // `routes/highlights.ts` — the select list is `highlightColumns(sc).columns`,
-  // and that function is a RUNTIME SCHEMA PROBE (`routes/highlights.ts:102-110`).
+  // and that function is a RUNTIME SCHEMA PROBE (`routes/highlights.ts:106-114`).
   // It returns HIGHLIGHT_COLUMNS_WITH_CLASS when `probeHighlightObject` finds
   // the §12 class columns live, and the NARROW HIGHLIGHT_COLUMNS when it does
   // not — deliberately, so a transient probe failure degrades a badge instead of

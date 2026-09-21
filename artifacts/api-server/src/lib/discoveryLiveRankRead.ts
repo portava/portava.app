@@ -59,12 +59,8 @@ export interface LiveRankSourceRow {
   distanceKm?: number | null;
 }
 
-/** Parse a caller-supplied mode. Unknown / absent ⇒ null, and the caller decides the default. */
-export function parseIntentMode(raw: unknown): DiscoveryIntentMode | null {
-  if (typeof raw !== "string") return null;
-  const v = raw.trim().toLowerCase();
-  return (DISCOVERY_INTENT_MODES as readonly string[]).includes(v) ? (v as DiscoveryIntentMode) : null;
-}
+/** Parse a caller-supplied mode — the shared parser (lib/intentModes), re-exported under Discovery's name. */
+export { parseIntentMode } from "./intentModes.js";
 
 // ── Flag (cached 30 s, mirrors discoveryCandidate) ────────────────────────────
 

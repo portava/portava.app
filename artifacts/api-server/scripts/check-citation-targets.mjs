@@ -277,7 +277,7 @@ import {
  * after the merge rather than chosen between them. Both lanes' reasoning is
  * preserved above and below this note.
  *
- * RE-MEASURED 2026-09-16 at the V2 merge: 234. Neither lane's number described
+ * RE-MEASURED 2026-09-16 at the V2 merge: 232. Neither lane's number described
  * the merged tree, and the merge itself was not neutral — comparing the dead
  * list at 42a63bd40 against the merged tree named FIVE new entries at three
  * sites, four from the date lane's `nowMs` threading through
@@ -286,7 +286,7 @@ import {
  * :592, the thread-rollback case at :502) and given anchors, so doc-citations
  * now holds them. The ceiling is the measurement, not a choice between 235 and
  * 238. */
-export const MAX_DEAD_TARGETS = 234;
+export const MAX_DEAD_TARGETS = 223;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);

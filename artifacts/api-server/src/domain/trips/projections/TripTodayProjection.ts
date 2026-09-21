@@ -63,11 +63,23 @@ import type { PulseInterpretation } from "../services/TripSignals.js";
 import type { PrioritySwitch } from "../services/TripHealth.js";
 import { noSource, ok as okLayer, unread, type Layer } from "./TripMapProjection.js";
 import type { FreedomWindow } from "../invariants/TripFreedomEngine.js";
+import { nextRoutineOccurrence } from "../services/TripRoutineContext.js";
+import type { RoutineSummary } from "../invariants/TripRecurrence.js";
 import type { PhaseDecision } from "../services/TripOperationalPhase.js";
 import type { HealthReason, TripHealthLevel } from "../services/TripHealth.js";
 import { recordTripDecision, persistTripDecision, TRIP_ENGINE_VERSIONS } from "../services/TripDecisionLedger.js";
 
 const log = logger.child({ mod: "tripTodayProjection" });
+
+/**
+ * 2771's attendance vocabulary that counts as "on this plan", lowercased.
+ *
+ * Deliberately the SAME set `TripImpactState` uses for §9.4's affected
+ * participants: two readers of one relation that disagreed about whether MAYBE
+ * attends would give one plan two party sizes on one screen. DECLINED and
+ * anything unrecognised are out — an unknown state is not a quiet yes.
+ */
+const ATTENDING_STATES = new Set(["going", "maybe", "interested"]);
 
 export interface TodayCurrentPlan {
   id: string; title: string | null; category: string | null; status: string | null;
@@ -75,6 +87,16 @@ export interface TodayCurrentPlan {
 }
 export interface TodayNextCommitment {
   id: string; type: string; arriveBy: string; startsAt: string | null; placeId: string | null;
+  /**
+   * §23 long-stay: true when this is an OCCURRENCE of a standing rule (2797)
+   * rather than a `trip_commitments` row. Its `id` is then `rec:<rule>:<date>`
+   * and no command will accept it — the surface must offer "skip this one",
+   * not "edit this commitment". Kept as a flag rather than a separate field so
+   * that a consumer which does not care still gets the right next deadline.
+   */
+  routine: boolean;
+  recurrenceId: string | null;
+  label: string | null;
   /** From the §7.3 window that ends at this commitment; null when no window precedes it (or it is in conflict). */
   mustLeaveBy: string | null;
   windowId: string | null;
@@ -108,6 +130,17 @@ export interface TripTodayProjection extends TripProjectionEnvelope {
   healthReasons: HealthReason[];
   currentPlan: TodayCurrentPlan | null;
   nextCommitment: TodayNextCommitment | null;
+  /**
+   * §23 "Long-stay 45 days" (census-trips TR427) — the routine-aware half. The
+   * PATTERN in force, not its expansion: "every weekday at 09:00" said once,
+   * with the hours it claims and what is habitually free around it. Null when
+   * the rules could not be read, which the freedom projection's
+   * `routine.rules` explains; never an empty summary standing in for an
+   * unknown one.
+   */
+  routine: RoutineSummary | null;
+  /** How the routine was read: ok / no_source (no 2797 here) / unread. Three different facts that all look like "no routine". */
+  routineSource: { status: string; reason: string | null };
   freeWindows: FreedomWindow[];
   crewSummary: TodayCrewSummary;
   /** §13 — the current-or-next window's EXECUTABLE experiences, from the opportunity projection accepted against the same version. */
@@ -122,6 +155,13 @@ export interface TripTodayProjection extends TripProjectionEnvelope {
   attention: PrioritySwitch;
   /** §10.3 (TR172): how often a client should sample location right now, and why. */
   sensing: SensingPolicy;
+  /**
+   * Sources this projection could NOT read but did not refuse over, by table
+   * name. Empty is the normal case and it is a claim: every optional read
+   * succeeded. A name here says the projection is served on a documented
+   * fallback — never that the fallback is the truth.
+   */
+  unreadSources: string[];
   /** §11.2's five questions, in order, each naming the field that answers it. */
   answers: { now: string; next: string; who: string; canDo: string; changed: string };
   derivedFrom: { healthSourceTripVersion: number | null; freedomSourceTripVersion: number | null };
@@ -282,12 +322,31 @@ export async function buildTripTodayProjection(
     .map((c) => ({ c, deadline: Date.parse(c.required_arrival_at ?? c.starts_at ?? "") }))
     .filter((x) => Number.isFinite(x.deadline) && x.deadline > nowMs)
     .sort((a, b) => a.deadline - b.deadline)[0] ?? null;
+  // §23 long-stay: the next deadline is the earlier of the next COMMITMENT ROW
+  // and the next OCCURRENCE of a standing rule. Asking the rules directly
+  // (nextOccurrenceAfter walks forward to the first hit) rather than searching
+  // the freedom projection's expansion, because Today wants one answer and the
+  // expansion is a whole trip's worth — the bloat this subsystem exists to
+  // avoid applies to a read as much as to a write.
+  const routineNext = nextRoutineOccurrence(freedom.routine, new Date(nowMs));
+  const rowDeadline = upcoming ? upcoming.deadline : Number.POSITIVE_INFINITY;
+  const routineDeadline = routineNext ? routineNext.requiredArrivalAt.getTime() : Number.POSITIVE_INFINITY;
+
   let nextCommitment: TodayNextCommitment | null = null;
-  if (upcoming) {
+  if (routineNext && routineDeadline < rowDeadline) {
+    const w = freedom.windows.find((x) => x.beforeCommitmentId === routineNext.id) ?? null;
+    nextCommitment = {
+      id: routineNext.id, type: routineNext.type, arriveBy: routineNext.requiredArrivalAt.toISOString(),
+      startsAt: routineNext.startsAt.toISOString(), placeId: routineNext.placeId,
+      routine: true, recurrenceId: routineNext.recurrenceId, label: routineNext.label,
+      mustLeaveBy: w ? w.endsAt : null, windowId: w ? w.id : null,
+    };
+  } else if (upcoming) {
     const w = freedom.windows.find((x) => x.beforeCommitmentId === upcoming.c.id) ?? null;
     nextCommitment = {
       id: String(upcoming.c.id), type: String(upcoming.c.type), arriveBy: new Date(upcoming.deadline).toISOString(),
       startsAt: upcoming.c.starts_at ?? null, placeId: upcoming.c.place_id ?? null,
+      routine: false, recurrenceId: null, label: null,
       mustLeaveBy: w ? w.endsAt : null, windowId: w ? w.id : null,
     };
   }
@@ -327,6 +386,46 @@ export async function buildTripTodayProjection(
     .filter((m) => m.status == null || m.status === "accepted")
     .map((m) => String(m.user_id));
   const crewSize = acceptedCrewIds.length || 1;
+
+  // §5.1's plan participant relation (`trip_plan_participants`, 2771), used
+  // downstream rather than only stored (census-trips TR150). Until now
+  // `plans[].partySize` was the literal `null` on every input this projection
+  // built, so the trigger's own comment — "attendance count when known (2771),
+  // else the crew size" — described a branch nothing could reach, and the
+  // weather trigger fired on an outdoor plan naming nobody to tell.
+  //
+  // GOING and MAYBE both count. §9.4's impact preview already draws the line
+  // there (`TripImpactState`), and a member who said MAYBE is someone the rain
+  // concerns; DECLINED is not. The two readers use the same vocabulary on
+  // purpose — a plan whose party is four in the preview and three here would
+  // be two answers to one question.
+  //
+  // REFUSING IS WRONG HERE and the fallback is not a swallow. An unreadable
+  // 2771, or a database that does not have it yet, leaves the plan on the
+  // CREW — the set every other part of this projection already uses and the
+  // widest honest answer — and says so in `unreadSources`, rather than
+  // refusing a whole day's projection over an optional refinement or silently
+  // reporting that no one is going.
+  const planIds = ((items ?? []) as any[]).map((p) => String(p.id));
+  const attendanceByPlan = new Map<string, string[]>();
+  let attendanceUnread = false;
+  if (planIds.length > 0) {
+    const { data: attRows, error: attErr } = await sc
+      .from("trip_plan_participants")
+      .select("plan_id, user_id, attendance_state")
+      .in("plan_id", planIds);
+    if (attErr) {
+      attendanceUnread = true;
+      log.warn({ err: attErr.message, tripId }, "today: trip_plan_participants unreadable — plan parties fall back to the crew");
+    } else {
+      for (const a of ((attRows ?? []) as any[])) {
+        if (!ATTENDING_STATES.has(String(a.attendance_state).toLowerCase())) continue;
+        const list = attendanceByPlan.get(String(a.plan_id)) ?? [];
+        list.push(String(a.user_id));
+        attendanceByPlan.set(String(a.plan_id), list);
+      }
+    }
+  }
   const riskTriggers = evaluateRiskTriggers({
     now: nowMs,
     // §8.4 (TR146): the arrival estimate is the freedom projection's per-hop
@@ -344,7 +443,20 @@ export async function buildTripTodayProjection(
         participantIds: acceptedCrewIds,
       };
     }),
-    plans: ((items ?? []) as any[]).map((p) => ({ id: String(p.id), title: p.title ?? null, startsAt: p.starts_at ?? null, endsAt: p.ends_at ?? null, weatherSensitive: looksWeatherSensitive(p.title, p.category === "activity" ? p.location_name : null), partySize: null })),
+    plans: ((items ?? []) as any[]).map((p) => {
+      const attending = attendanceByPlan.get(String(p.id)) ?? null;
+      return {
+        id: String(p.id), title: p.title ?? null, startsAt: p.starts_at ?? null, endsAt: p.ends_at ?? null,
+        weatherSensitive: looksWeatherSensitive(p.title, p.category === "activity" ? p.location_name : null),
+        // A plan with no attendance ROW is not a plan nobody attends: 2771 is
+        // written when someone answers, and silence on a crew-wide plan is the
+        // trip's default, not a declination. So an absent relation falls back
+        // to the crew, and only a plan someone has actually answered on
+        // narrows.
+        partySize: attending ? attending.length : crewSize,
+        participantIds: attending ?? acceptedCrewIds,
+      };
+    }),
     transport: ((segRows ?? []) as any[]).map((t) => ({ id: String(t.id), mode: String(t.mode ?? ""), state: String(t.state ?? ""), plannedDepartureAt: t.planned_departure_at ?? null, partySize: typeof t.party_size === "number" ? t.party_size : null, capacity: null })),
     signals: pulseSignals.status === "ok" ? pulseSignals.items : [],
     crewSize,
@@ -374,7 +486,7 @@ export async function buildTripTodayProjection(
       nextCommitmentId: nextCommitment?.id ?? null, openWindows: freedom.windows.filter((w) => Date.parse(w.endsAt) > nowMs).length,
       crew: { total: crewSummary.total, featureEnabled: crewSummary.featureEnabled },
     },
-    sources: ["trips", "TripHealthProjection", "TripFreedomProjection", "TripPulseProjection", "TripOpportunityProjection", "trip_stages", "trip_transport_segments", "trip_plan_items", "trip_commitments", "trip_members", "trip_risks"],
+    sources: ["trips", "TripHealthProjection", "TripFreedomProjection", "TripPulseProjection", "TripOpportunityProjection", "trip_stages", "trip_transport_segments", "trip_plan_items", "trip_plan_participants", "trip_commitments", "trip_members", "trip_risks"],
     assumptions: ["composed from the health and freedom projections accepted against trips.version read first (§22.4)"],
     constraints: [`accepted sub-projections at version ${canonicalVersion ?? "unknown"}`],
     result: { phase: health.phase.phase, health: health.health, unresolvedActions: unresolvedActions.length, freeWindows: freedom.windows.length, firedTriggers: riskTriggers.filter((t) => t.fired).map((t) => t.kind) },
@@ -398,6 +510,11 @@ export async function buildTripTodayProjection(
       healthReasons: health.reasons,
       currentPlan,
       nextCommitment,
+      routine: freedom.routine.summary,
+      routineSource: {
+        status: freedom.routine.rules.status,
+        reason: freedom.routine.rules.status === "ok" ? null : freedom.routine.rules.reason,
+      },
       freeWindows: freedom.windows.filter((w) => Date.parse(w.endsAt) > nowMs),
       crewSummary,
       opportunities,
@@ -407,6 +524,7 @@ export async function buildTripTodayProjection(
       pulseSignals,
       attention: health.attention,
       sensing: decideSensing({ phase: health.phase.phase, attentionMode: health.attention.mode, mustLeaveBy: nextCommitment?.mustLeaveBy ?? null, safeReturnActive: crewSummary.safeReturnActive, now: nowMs }),
+      unreadSources: attendanceUnread ? ["trip_plan_participants"] : [],
       answers: { ...TODAY_ANSWERS },
       derivedFrom: { healthSourceTripVersion: health.sourceTripVersion, freedomSourceTripVersion: freedom.sourceTripVersion },
     },

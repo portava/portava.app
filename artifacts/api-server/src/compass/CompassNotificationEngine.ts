@@ -21,6 +21,14 @@
  *   - Any level is suppressed for nightlife content if user has nightlife muted.
  *   - Private location data (lat/lng, exact address) is stripped from all
  *     notification data fields AND redacted from body text (coordinate patterns).
+ *   - Sensing §15 (`:176`): a WORLD CHANGE — a Compass recommendation or a
+ *     discovery, levels 8–9 — that survives every filter above is NOT thereby
+ *     sent. It routes through lib/attentionEngine (relevance, novelty, urgency,
+ *     half-life, availability, interruption cost, attention budget) and only a
+ *     NOTIFY route becomes a push. WALL keeps it on the durable in-app surface
+ *     without interrupting; SILENT records it; IGNORE drops it for this
+ *     viewer. Person-to-person and operational classes (messages, bookings,
+ *     trip-critical, social) are not world changes and keep their send path.
  *
  * All decisions are logged to compass_notification_decisions (fire-and-forget).
  */
@@ -29,6 +37,15 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CompassItem, CompassProfile } from "./types.js";
 import { runSafetyFilter } from "./CompassSafetyFilter.js";
 import { localMinutesOfDay } from "../services/notifications/NotificationPreferenceService.js";
+import {
+  ATTENTION_BUDGET_PER_WINDOW,
+  ATTENTION_RELEVANCE,
+  routeAttentionSubject,
+  type AttentionDecision,
+  type AttentionRelevance,
+  type AttentionRoute,
+} from "../lib/attentionEngine.js";
+import { readDeliveredInWindow } from "../lib/contextKernelRead.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -87,14 +104,140 @@ export type NotificationOutcome =
   | "suppressed_safety_filter"
   | "suppressed_blocked_sender"
   | "suppressed_private_location"
-  | "suppressed_ignored_category";
+  | "suppressed_ignored_category"
+  /** Attention Engine routes for a world change that passed every filter (Sensing §15). */
+  | "wall"
+  | "silent"
+  | "ignore";
 
 export interface NotificationDecision {
   outcome:           NotificationOutcome;
   suppressionReason: string | null;
   priorityLevel:     number;
   strippedPayload:   NotificationPayload;
+  /** The Attention Engine's decision, for a world change; null for every other class. */
+  attention:         AttentionDecision | null;
 }
+
+// ── Attention Engine adapter (Sensing §15) ────────────────────────────────────
+
+/**
+ * The classes that are WORLD CHANGES in the spec's sense: something happened
+ * in the world that Compass or Discovery thinks this person should know.
+ * Messages, bookings, trip-critical and social activity are people acting, not
+ * the world changing, and the spec's sentence does not cover them.
+ */
+export const WORLD_CHANGE_TYPES = ["recommendation", "discovery"] as const satisfies readonly NotificationType[];
+
+export function isWorldChangeType(type: NotificationType): boolean {
+  return (WORLD_CHANGE_TYPES as readonly string[]).includes(type);
+}
+
+/**
+ * What a producer may DECLARE about a world change, under `data.attention`.
+ * Relevance is the viewer's relation to the subject "declared by the caller
+ * from what it knows" (lib/attentionEngine); a producer that knows the change
+ * is about a saved place or a trip stop says so. Everything is optional and
+ * everything is validated: an unknown relevance word is not a relevance.
+ */
+export interface AttentionDeclaration {
+  relevance?: AttentionRelevance;
+  /** 0..1 */
+  urgency?: number;
+  /** Identity for novelty; defaults to the notification id, then the type. */
+  subjectId?: string;
+  relevanceWindow?: { from: string; until: string };
+  /** The producer knows the viewer has already seen this change. */
+  alreadySeen?: boolean;
+}
+
+/**
+ * Urgency from the notification row's priority, when the producer declared
+ * no urgency of its own. `urgent` and `high` reach the NOTIFY floor (0.7 in
+ * lib/attentionEngine); `normal` and `low` do not, and go to the WALL unless
+ * a producer says otherwise.
+ */
+export const WORLD_CHANGE_URGENCY_BY_PRIORITY: Readonly<Record<string, number>> = Object.freeze({
+  urgent: 1.0,
+  high: 0.8,
+  normal: 0.5,
+  low: 0.3,
+});
+export const DEFAULT_WORLD_CHANGE_URGENCY = 0.5;
+
+/**
+ * An undeclared relation: the producer addressed this person, so the change
+ * is not "none" — but nobody said it is a saved place or a trip stop, so it
+ * may not interrupt. `followed` (0.6) reaches the WALL and stops there.
+ */
+export const DEFAULT_WORLD_CHANGE_RELEVANCE: AttentionRelevance = "followed";
+
+/**
+ * Per-event defaults for the Compass producers whose relation to the viewer
+ * is known from the event itself (a Sense nudge about YOUR saved event is
+ * about a saved place; "leave earlier" is about YOUR next trip stop). A
+ * producer's own `data.attention` declaration wins over this table; the table
+ * wins over the generic default. Digests never interrupt.
+ */
+export const ATTENTION_BY_EVENT_TYPE: Readonly<Record<string, Readonly<{ relevance: AttentionRelevance; urgency: number }>>> =
+  Object.freeze({
+    "compass.warning":                    { relevance: "trip_stop", urgency: 0.9 },
+    "compass.weather_alert":              { relevance: "trip_stop", urgency: 0.7 },
+    "compass.itinerary_ready":            { relevance: "trip_stop", urgency: 0.7 },
+    "compass.sense.leave_earlier":        { relevance: "trip_stop", urgency: 0.9 },
+    "compass.sense.saved_event_starting": { relevance: "saved",     urgency: 0.8 },
+    "compass.sense.circle_plan_change":   { relevance: "trip_stop", urgency: 0.7 },
+    "compass.sense.weather_change":       { relevance: "trip_stop", urgency: 0.6 },
+    "compass.sense.free_time_block":      { relevance: "trip_stop", urgency: 0.4 },
+    "compass.live.live_next_up":          { relevance: "trip_stop", urgency: 0.8 },
+    "compass.live.live_arriving_early":   { relevance: "trip_stop", urgency: 0.7 },
+    "compass.live.live_ride_home":        { relevance: "trip_stop", urgency: 0.7 },
+    "compass.recommendation":             { relevance: "followed",  urgency: 0.5 },
+    "compass.daily_brief":                { relevance: "followed",  urgency: 0.3 },
+    "digest.compass":                     { relevance: "followed",  urgency: 0.3 },
+  });
+
+function isRelevance(v: unknown): v is AttentionRelevance {
+  return typeof v === "string" && (ATTENTION_RELEVANCE as readonly string[]).includes(v);
+}
+
+/** Read `data.attention`, keeping only what validates. Never throws. */
+export function readAttentionDeclaration(data: Record<string, unknown> | undefined): AttentionDeclaration {
+  const raw = data?.attention;
+  if (!raw || typeof raw !== "object") return {};
+  const a = raw as Record<string, unknown>;
+  const out: AttentionDeclaration = {};
+  if (isRelevance(a.relevance)) out.relevance = a.relevance;
+  if (typeof a.urgency === "number" && Number.isFinite(a.urgency)) out.urgency = Math.min(1, Math.max(0, a.urgency));
+  if (typeof a.subjectId === "string" && a.subjectId.length > 0) out.subjectId = a.subjectId;
+  const w = a.relevanceWindow as Record<string, unknown> | undefined;
+  if (w && typeof w === "object" && typeof w.from === "string" && typeof w.until === "string") {
+    out.relevanceWindow = { from: w.from, until: w.until };
+  }
+  if (a.alreadySeen === true) out.alreadySeen = true;
+  return out;
+}
+
+/** Relevance and urgency for a world change: declaration → event table → defaults. */
+export function worldChangeFactors(payload: NotificationPayload): { relevance: AttentionRelevance; urgency: number } {
+  const declared = readAttentionDeclaration(payload.data);
+  const eventType = typeof payload.data?.eventType === "string" ? payload.data.eventType : null;
+  const byEvent = eventType ? ATTENTION_BY_EVENT_TYPE[eventType] : undefined;
+  const priority = typeof payload.data?.priority === "string" ? payload.data.priority : null;
+  const relevance = declared.relevance ?? byEvent?.relevance ?? DEFAULT_WORLD_CHANGE_RELEVANCE;
+  const urgency =
+    declared.urgency ??
+    byEvent?.urgency ??
+    (priority !== null && priority in WORLD_CHANGE_URGENCY_BY_PRIORITY ? WORLD_CHANGE_URGENCY_BY_PRIORITY[priority]! : DEFAULT_WORLD_CHANGE_URGENCY);
+  return { relevance, urgency };
+}
+
+const OUTCOME_OF_ROUTE: Readonly<Record<AttentionRoute, NotificationOutcome>> = Object.freeze({
+  NOTIFY: "sent",
+  WALL: "wall",
+  SILENT: "silent",
+  IGNORE: "ignore",
+});
 
 // ── Private-location strip ────────────────────────────────────────────────────
 
@@ -196,6 +339,8 @@ export function isQuietHours(
 // ── User prefs loader ─────────────────────────────────────────────────────────
 
 interface UserNotifPrefs {
+  /** True when a preferences read failed: availability is then UNKNOWN, never "available". */
+  readFailed:      boolean;
   quietStart:      string | null;
   quietEnd:        string | null;
   /** IANA timezone quiet hours are evaluated in; null → server time. */
@@ -209,7 +354,7 @@ async function loadUserNotifPrefs(
   userId: string,
 ): Promise<UserNotifPrefs> {
   try {
-    const [{ data }, { data: notifPrefsRow }] = await Promise.all([
+    const [{ data, error: prefsErr }, { data: notifPrefsRow, error: notifErr }] = await Promise.all([
       db
         .from("compass_user_preferences")
         .select("compass_enabled, exclude_budget_styles, muted_topics, category_weights")
@@ -269,6 +414,7 @@ async function loadUserNotifPrefs(
     ];
 
     return {
+      readFailed:      Boolean(prefsErr) || Boolean(notifErr),
       quietStart,
       quietEnd,
       timezone:        ((notifPrefsRow as any)?.timezone as string | null) ?? null,
@@ -276,7 +422,7 @@ async function loadUserNotifPrefs(
       compassEnabled:  row.compass_enabled !== false,
     };
   } catch {
-    return { quietStart: null, quietEnd: null, timezone: null, mutedCategories: [], compassEnabled: true };
+    return { readFailed: true, quietStart: null, quietEnd: null, timezone: null, mutedCategories: [], compassEnabled: true };
   }
 }
 
@@ -376,12 +522,14 @@ export async function evaluateNotification(
   const decide = (
     outcome: NotificationOutcome,
     reason:  string | null = null,
+    attention: AttentionDecision | null = null,
   ): NotificationDecision => {
     const d: NotificationDecision = {
       outcome,
       suppressionReason: reason,
       priorityLevel:     level,
       strippedPayload:   stripped,
+      attention,
     };
     logDecision(db, userId, payload, d);
     return d;
@@ -617,9 +765,9 @@ export async function evaluateNotification(
   }
 
   // ── User preferences (best-effort; fail-open for higher-priority levels) ─────
-  const prefs = db
+  const prefs: UserNotifPrefs = db
     ? await loadUserNotifPrefs(db, userId)
-    : { quietStart: null, quietEnd: null, timezone: null, mutedCategories: [], compassEnabled: true };
+    : { readFailed: false, quietStart: null, quietEnd: null, timezone: null, mutedCategories: [], compassEnabled: true };
 
   // ── Quiet hours check (levels 3–10) ──────────────────────────────────────────
   if (prefs.quietStart && prefs.quietEnd) {
@@ -648,6 +796,37 @@ export async function evaluateNotification(
     )
   ) {
     return decide("suppressed_ignored_category", "nightlife_preference");
+  }
+
+  // ── Attention Engine (Sensing §15 `:176`) — MANDATORY for a world change ─────
+  // Everything above is a hard filter: blocked, unsafe, muted, asleep. A world
+  // change that passed them all has not yet earned an interruption. It is
+  // routed on the seven factors the spec names, and only NOTIFY is a push.
+  if (isWorldChangeType(payload.type)) {
+    const declared = readAttentionDeclaration(payload.data);
+    const { relevance, urgency } = worldChangeFactors(payload);
+    const subjectId =
+      declared.subjectId ??
+      (typeof payload.data?.notificationId === "string" ? payload.data.notificationId : payload.type);
+    // Interruption cost: pushes already delivered this window. An UNREADABLE
+    // count is the budget spent — the same rule routes/wallMoments.ts applies —
+    // because "we could not tell how often we have interrupted you" is not a
+    // licence to interrupt again.
+    const delivered = db ? await readDeliveredInWindow(db, userId, new Date(nowMs)) : 0;
+    const attention = routeAttentionSubject(
+      { id: subjectId, urgency, safety: false, relevanceWindow: declared.relevanceWindow ?? null },
+      {
+        relevance,
+        seenMomentIds: declared.alreadySeen ? new Set([subjectId]) : new Set(),
+        // Quiet hours and push-off were answered above; what is left is whether
+        // the preferences could be READ. Unreadable consent is never consent.
+        available: prefs.readFailed ? null : true,
+        notifiesInWindow: delivered ?? ATTENTION_BUDGET_PER_WINDOW,
+      },
+      nowMs,
+    );
+    const outcome = OUTCOME_OF_ROUTE[attention.route];
+    return decide(outcome, outcome === "sent" ? null : `attention:${attention.route.toLowerCase()}:${attention.reasons.join(",")}`, attention);
   }
 
   return decide("sent");

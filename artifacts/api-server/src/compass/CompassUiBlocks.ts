@@ -24,6 +24,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ToolExecution } from "./CompassTools.js";
+import { isTruthClass, type TruthClass } from "../lib/truthClass.js";
 
 // ── Wire types (shared shape with the mobile client) ──────────────────────────
 
@@ -36,6 +37,8 @@ export type UiSourceClass =
 
 export interface UiConfidence {
   sourceClass: UiSourceClass;
+  /** §5.1 truth class, carried from the tool result when it stated one (CPV2-02). */
+  truthClass?: TruthClass;
   label: string;
   checkedAt?: string;
   dataNote?: string;
@@ -50,6 +53,9 @@ function pickConfidence(c: any): UiConfidence | null {
   if (!c || typeof c !== "object" || !VALID_SOURCE_CLASSES.has(c.sourceClass)) return null;
   return {
     sourceClass: c.sourceClass,
+    // The truth class survives to the client exactly as the tool stated it;
+    // an unrecognised word is dropped, never coerced into a stronger class.
+    ...(isTruthClass(c.truthClass) ? { truthClass: c.truthClass } : {}),
     label: typeof c.label === "string" ? c.label : c.sourceClass,
     ...(typeof c.checkedAt === "string" ? { checkedAt: c.checkedAt } : {}),
     ...(typeof c.dataNote === "string" ? { dataNote: c.dataNote } : {}),

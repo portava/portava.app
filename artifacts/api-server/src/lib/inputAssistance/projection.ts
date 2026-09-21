@@ -294,12 +294,24 @@ export function buildQueryCompletion(
 // Real model-generated AI writing/continuation (§22) is produced separately in
 // aiWriting.ts and is opt-in + flag-gated. Starters resolve to an editable
 // replace_text action so nothing is ever silently inserted (§22).
-const COMPASS_STARTERS = [
-  'Where should I go tonight?',
-  'Where should I eat nearby?',
-  'Where should we go after this?',
-  'Find a hidden gem.',
+/**
+ * THE curated starter set — one list, served through the gateway to every
+ * surface (census-compass CG-01 / census-input-intelligence G359: the client
+ * used to carry its own copy in compassPrompt.ts and never asked). Each entry
+ * is a short chip label plus the full prompt the tap seeds.
+ */
+export const COMPASS_STARTER_SET: ReadonlyArray<{ id: string; label: string; prompt: string }> = [
+  { id: 'right_now', label: 'Right now', prompt: 'What should I do right now?' },
+  { id: 'tonight', label: 'Tonight', prompt: 'What should I do tonight?' },
+  { id: 'meet', label: 'Meet people', prompt: "Help me meet people nearby — who's around and what's social right now?" },
+  { id: 'build_day', label: 'Build my day', prompt: 'Build my day — plan out the rest of today for me.' },
+  { id: 'surprise', label: 'Surprise me', prompt: "Surprise me with something I wouldn't have thought of." },
+  { id: 'my_trip', label: 'My trip', prompt: "What's the status of my trip and what should I do next on it?" },
+  { id: 'eat_nearby', label: 'Eat nearby', prompt: 'Where should I eat nearby?' },
+  { id: 'after_this', label: 'After this', prompt: 'Where should we go after this?' },
+  { id: 'hidden_gem', label: 'Hidden gem', prompt: 'Find a hidden gem.' },
 ];
+const COMPASS_STARTERS = COMPASS_STARTER_SET.map((s) => s.prompt);
 
 /** Context Compass starters can tailor to (surface / Trip), coarse only (§56). */
 export interface CompassStarterContext {
@@ -347,16 +359,30 @@ export function buildCompassStarters(
   if (ctx.cityId) structured.cityId = ctx.cityId;
   if (ctx.tripId) structured.tripId = ctx.tripId;
 
+  // A curated starter is served under its short chip label; a contextual one
+  // under a label of the same shape, so a client renders one vocabulary.
+  const labelOf = (text: string): string => {
+    const curated = COMPASS_STARTER_SET.find((s) => s.prompt === text);
+    if (curated) return curated.label;
+    if (city && text === `Where should I go in ${city} tonight?`) return `Tonight in ${city}`;
+    if (city && text === `Where should I eat in ${city}?`) return `Eat in ${city}`;
+    if (text === 'What should I plan next for my trip?') return 'Next on my trip';
+    return text;
+  };
+  const starterIdOf = (text: string): string | null => COMPASS_STARTER_SET.find((s) => s.prompt === text)?.id ?? null;
+
   return matched.slice(0, Math.max(0, max)).map((text, i): InputSuggestion => ({
     id: `${context}:ai:${i}`,
     type: 'ai_suggestion',
     context,
-    label: text,
+    label: labelOf(text),
     replacementText: text,
     action: { type: 'replace_text', text },
     // Structured refs travel with the suggestion so Compass is handed intent +
-    // permitted entities, not just the prompt string.
-    structuredValue: structured,
+    // permitted entities, not just the prompt string. `starterId` names the
+    // curated starter (null for a contextual one) so a client keys chips
+    // stably across serves.
+    structuredValue: { ...structured, starterId: starterIdOf(text) },
     confidence: 0.5,
     source: 'ai',
     reason: 'Suggested prompt',

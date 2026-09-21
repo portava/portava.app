@@ -150,6 +150,13 @@ export const TRIP_KERNEL_EXTENSION_CODES = [
   // §11.3 regroup: §14.3 recommended nothing the crew could meet at (routes/tripMeetingCheckpoints).
   "TRIP_MEETING_NO_CANDIDATE",
   "TRIP_TRANSPORT_NOT_FOUND", "TRIP_TRANSPORT_INVALID_TRANSITION",
+  // §23 long-stay recurrences (2798). Object identity and two POLICY refusals:
+  // a timezone tzdata does not know (no CHECK can ask), and a rule spanning
+  // more than 400 days (the write-time half of "no bloated itinerary model").
+  // Not Appendix B families for the reason this list exists — filing a
+  // range-too-long under TRIP_TEMPORAL_* would say a timeline was checked.
+  "TRIP_RECURRENCE_NOT_FOUND", "TRIP_RECURRENCE_TIMEZONE_UNKNOWN",
+  "TRIP_RECURRENCE_RANGE_TOO_LONG", "TRIP_RECURRENCE_DATE_OUT_OF_RANGE",
   // §22.2 replay verification could not run at all (domain/trips/replay/tripReplayVerify.ts:
   // the rpc errored). Distinct from the two snapshot refusals above, which
   // are the kernel's own answers; this one means no answer was obtained.

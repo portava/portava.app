@@ -290,6 +290,54 @@ type Known = {
  * trap, so the fixture now reads whichever entry happens to exist.
  */
 export const KNOWN: Record<string, Known> = {
+  // ── STRUCK OFF 2026-09-20: COMPASS_ENABLED ─────────────────────────────────
+  //
+  // The entry's own note said "Strike the 2996 objects when 2996 is applied to
+  // production and recorded; the trails objects when 2910 is." Both were applied
+  // on 2026-09-20 — 2996 at 19:46:26 UTC, 2997 at 19:49:28, 2910 at 19:56:45,
+  // each with a schema_migration_ledger row and each rehearsed on production in a
+  // rolled-back transaction first. Against snapshots/20260920-production-schema.json
+  // none of the twelve objects is absent any more, so the ratchet reported
+  // "STALE: KNOWN.COMPASS_ENABLED is no longer in the state" and the entry is
+  // struck here rather than rewritten or narrowed. That rule is the reason a
+  // resolved exemption cannot quietly outlive its cause; honouring it is the
+  // point rather than an inconvenience, and it is the only honest way this list
+  // shrinks.
+  //
+  // WHAT IT RECORDED, kept because the history is the useful part. Production had
+  // COMPASS_ENABLED TRUE while it lacked twelve objects two closures name:
+  //
+  //   compass_conversations.trip_id / .status            2996 (compass-phase1-spec §1)
+  //   trails, trails.id/.title/.lifecycle_status         2910 (Discovery Trails)
+  //   content_trails and its trail_id/source_type/       2910
+  //     source_id/content_state/created_at
+  //
+  // Nothing broke while it stood, because both readers probe before they name:
+  // services/compass/CompassConversationService.ts (conversationSchemaReady) used
+  // the legacy conversation shape when the two columns were missing, and
+  // services/media/MediaActionResolver.ts `compileExperiencePlan` probed `trails`
+  // with the lib/capability sentinel and refused `source_unavailable` rather than
+  // naming a column of a table that did not exist — which is what made the entry
+  // `guarded` rather than `unguarded`. The trails objects had entered this closure
+  // only on 2026-09-20, with census-compass CM-02, via the
+  // `compile_plan_from_experience` tool.
+  //
+  // WHAT THAT CLOSES, AND WHAT IT DOES NOT. It closes the SCHEMA half of
+  // `capability = FLAG_ENABLED && SCHEMA_CAPABILITY_READY` for COMPASS_ENABLED:
+  // the registry line now reads "missing in production: none", so the flag is no
+  // longer ON over a database that cannot answer it, and /api/v1/discovery/trails
+  // no longer reads a missing relation. It does NOT mean the Trail features run:
+  // 2910 created all six tables EMPTY, so a Trail plan compiles over no rows, and
+  // 2997's lineage columns are still only written by the probe-guarded path.
+  // Applied is not enabled.
+  //
+  // 2997's three columns (compass_served_recommendations.revoked_at /
+  // revocation_reason, compass_outcome_events.weight_nudge) were never listed
+  // here — they are named by compass/CompassOutcomeEngine.ts, reached from routes
+  // no flag gates, so the ratchet never saw them under this flag. They were
+  // carried in checkMissingLiveColumns' PENDING LIVE APPLY block and were struck
+  // from it on the same day and for the same reason.
+
   // ── Guarded: the contract refuses before the failing call ───────────────────
   //
   // `media_canonical_enabled` WAS HERE, and it was THE founding case of this whole
@@ -308,35 +356,37 @@ export const KNOWN: Record<string, Known> = {
   // 2470 was applied; see snapshots/20260916d-production-schema.json for the
   // measured before/after, including that all 8 existing rows survived.
 
-  // ── Unguarded: ON in production, the code runs and fails ────────────────────
+  // ── STRUCK OFF 2026-09-17: safe_return_enabled and
+  //    safe_return_trusted_circle_alerts_enabled ──────────────────────────────
   //
-  // Trips §52 (2794). Neither flag is in lib/capability/registry.ts, so the
-  // taxonomy here says "unguarded"; the RUNTIME guard is not the registry but
-  // tripOperationalProjectionsGate (domain/trips/policies/tripOperationalProjections.ts), whose
-  // schema probe names trip_subgroups / trip_subgroup_members (2780): the
-  // subgroup branch of POST /me/safe-return/sessions refuses feature_disabled
-  // before either table is read, and SafeReturnNotificationService reads
-  // trip_subgroup_members only for a session whose subgroup_id is set — a
-  // column 2794 adds and production's insert never carries. A solo or
-  // full-crew Safe Return on production runs exactly the pre-2794 code.
-  safe_return_enabled: {
-    classification: "unguarded",
-    objects: [
-      "trip_subgroup_members", "trip_subgroup_members.left_at", "trip_subgroup_members.subgroup_id", "trip_subgroup_members.user_id",
-      "trip_subgroups", "trip_subgroups.id", "trip_subgroups.state", "trip_subgroups.trip_id",
-    ],
-    note:
-      "§17.4 subgroup execution context (2794, census-trips §52 TR329). The subgroup branch runs only behind " +
-      "tripOperationalProjectionsGate, whose probe covers 2780's tables; production (flag FALSE, tables absent) never enters it. " +
-      "Remove once 2780/2794 are applied to production (owner's Batch C).",
-  },
-  safe_return_trusted_circle_alerts_enabled: {
-    classification: "unguarded",
-    objects: ["trip_subgroup_members", "trip_subgroup_members.left_at", "trip_subgroup_members.subgroup_id", "trip_subgroup_members.user_id"],
-    note:
-      "§17.4 (2794): notifyTripCrew alerts a subgroup's current members when the session carries subgroup_id, a column 2794 adds; " +
-      "on production no session carries it and the crew read is trip_members as before. Remove once 2780/2794 are applied there.",
-  },
+  // Both entries said, in their own notes, "Remove once 2780/2794 are applied to
+  // production (owner's Batch C)." They were applied — 2780 on 2026-09-16
+  // 20:51:19 UTC and 2794 at 21:00:38, both with ledger rows — so the ratchet
+  // reported them STALE on the next run and they are struck off here rather than
+  // rewritten. That is the only honest way to shrink this list: the entry is
+  // removed because the state it described ended, not because someone judged it
+  // no longer interesting.
+  //
+  // WHAT THAT CLOSES, AND WHAT IT DOES NOT. It closes the SCHEMA half for these
+  // two flags: production now has trip_subgroups, trip_subgroup_members and
+  // safe_return_sessions.subgroup_id, so a Safe Return session CAN carry a
+  // subgroup and SafeReturnNotificationService's read can resolve. It does not
+  // mean the subgroup branch runs. That branch is behind
+  // tripOperationalProjectionsGate, and trip_operational_projections_enabled is
+  // still FALSE in production, so POST /me/safe-return/sessions still refuses
+  // feature_disabled before either table is read and a solo or full-crew Safe
+  // Return still runs exactly the pre-2794 code. Applied is not enabled.
+  //
+  // The boundary those tables enforce was exercised on portava-ci 2026-09-17
+  // under a real `authenticated` role and a real auth.uid(), and it is narrower
+  // than "subgroup members only": trip_subgroups and trip_subgroup_members are
+  // readable by the WHOLE CREW (both policies gate on authz.is_trip_crew), so a
+  // crew member outside the subgroup sees the subgroup and its membership. What
+  // they do not see is the session: safe_return_sessions carries a single
+  // owner-only policy (srs_own, auth.uid() = user_id) and the crew member
+  // outside the subgroup read 0 rows, as did a non-member of the trip. So
+  // subgroup_id on that table is metadata for the notify path, NOT a read grant,
+  // and nothing about 2794 widened who can see a Safe Return session.
 };
 
 // ── Declared-by-a-migration ──────────────────────────────────────────────────

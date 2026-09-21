@@ -72,6 +72,32 @@ function stripLineComment(line: string): string {
 }
 
 /**
+ * The whole file with BOTH comment forms removed, for the assertions that ask
+ * "is this a map surface?".
+ *
+ * Those asked it of the raw text, and prose answered. `EntityMarkers.tsx` sat
+ * on the known-missing list below for months on the strength of one docstring
+ * sentence — "Renders all entity type markers inside the MapLibre <Map>
+ * component." — which `RENDERS_MAP` matched. It is a marker component; it
+ * renders no map and has no failure to handle. A debt list that names a file
+ * which does not carry the debt is a list nobody can trust.
+ *
+ * Block comments are the reason this exists rather than a reuse of
+ * `stripLineComment`: that one handles `//` only, and the false positive above
+ * lived inside a `/** … *\/` docstring.
+ *
+ * Order matters. Block comments go first, because a `//` inside one would
+ * otherwise truncate the line and leave the block's opener unbalanced.
+ */
+function codeWithoutComments(src: string): string {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .map(stripLineComment)
+    .join('\n');
+}
+
+/**
  * A hardcoded MAP STYLE URL — the thing that must live in one place only.
  *
  * Deliberately narrower than "any api.maptiler.com URL". The 403 documented in
@@ -145,7 +171,6 @@ describe('the shared style module is the only place a style URL is written', () 
     'src/components/gems/GemLocationPreview.tsx',
     'src/components/location/MapLocationPicker.tsx',
     'src/components/location/MeetupAreaPreview.tsx',
-    'src/components/map/EntityMarkers.tsx',
     'src/components/passport/DestinationsTab.tsx',
     'src/components/trip/LocationCheckMapPicker.tsx',
   ];
@@ -155,8 +180,14 @@ describe('the shared style module is the only place a style URL is written', () 
     for (const file of FILES) {
       if (!file.endsWith('.tsx')) continue; // components only
       const src = readFileSync(resolve(file), 'utf8');
-      if (!IMPORTS_MAPLIBRE.test(src) || !RENDERS_MAP.test(src)) continue;
-      if (!/onDidFailLoadingMap/.test(src)) missing.push(file);
+      // Comment-free, so a docstring that says the word <Map> cannot enrol a
+      // file as a map surface. The handler check stays on the raw source: a
+      // handler that only appears in a comment is not a handler, but this
+      // assertion is about which files are SCANNED, and a file whose only
+      // mention is commented out has already failed the gate above.
+      const code = codeWithoutComments(src);
+      if (!IMPORTS_MAPLIBRE.test(code) || !RENDERS_MAP.test(code)) continue;
+      if (!/onDidFailLoadingMap/.test(code)) missing.push(file);
     }
     const unexpected = missing.filter((f) => !KNOWN_MISSING_HANDLER.includes(f));
     assert.deepEqual(
@@ -171,11 +202,13 @@ describe('the shared style module is the only place a style URL is written', () 
     // A file that gained a handler must leave the list, or the list slowly
     // becomes a record of what used to be true rather than what is.
     const stale = KNOWN_MISSING_HANDLER.filter((f) => {
-      const src = readFileSync(resolve(f), 'utf8');
+      const code = codeWithoutComments(readFileSync(resolve(f), 'utf8'));
       // Two ways an entry goes stale: it gained a handler, or it stopped being
       // a map surface at all. Both mean the list no longer describes reality.
-      const stillAMapSurface = IMPORTS_MAPLIBRE.test(src) && RENDERS_MAP.test(src);
-      return /onDidFailLoadingMap/.test(src) || !stillAMapSurface;
+      // Comment-free for the same reason as the scan above — and it is this
+      // assertion that now REFUSES to let a prose-only match back onto the list.
+      const stillAMapSurface = IMPORTS_MAPLIBRE.test(code) && RENDERS_MAP.test(code);
+      return /onDidFailLoadingMap/.test(code) || !stillAMapSurface;
     });
     assert.deepEqual(
       stale,

@@ -384,11 +384,26 @@ describe("guard — every passport identity builder goes through the choke point
         while ((nm = nameField.exec(body)) !== null) {
           sawNameField = true;
           nameFieldsChecked++;
+          // The field must come from the SANITIZED binding. Two forms satisfy
+          // that, and only two:
+          //   `named.display_name ?? named.name`   — read off the binding
+          //   `presentedName(named, true)`         — the binding handed to the
+          //                                          canonical rule in
+          //                                          lib/publicIdentity, which
+          //                                          this file already names as
+          //                                          the choke point.
+          // The second was added 2026-09-20 (census-compass §27.6): buildIdentity
+          // had rebuilt the display-name rule with its own `??` chain and dropped
+          // the blank check, so a whitespace-only display_name reached every
+          // consumer as a nameless person. Composing presentedName fixes that and
+          // is STRICTLY stronger than the property-access form — it still reads
+          // only from `named`. Reading off the raw profile row remains a failure.
           assert.match(
             nm[2],
-            new RegExp(`\\b${sanitized}\\s*\\.`),
+            new RegExp(`\\b(?:${sanitized}\\s*\\.|presentedName\\s*\\(\\s*${sanitized}\\b)`),
             `${f}: the \`${nm[1]}\` field is not derived from \`${sanitized}\` (the sanitized ` +
-              `row) — a name-derived field must never be read off the raw profile.`,
+              `row) — a name-derived field must never be read off the raw profile. It must either ` +
+              `read off \`${sanitized}\` or hand \`${sanitized}\` to presentedName().`,
           );
         }
         assert.ok(

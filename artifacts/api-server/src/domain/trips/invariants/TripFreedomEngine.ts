@@ -352,6 +352,46 @@ export function computeFreedomWindows(inputs: FreedomInputs): FreedomResult {
   return { windows, conflicts, unplacedCommitmentIds: unplaced };
 }
 
+// ── §7.3 on the plan itself: the free gap before the next item ───────────────
+
+export interface PlanForGap {
+  id: string;
+  startsAt: string | null;
+}
+
+export interface PlanFreeGap {
+  /** Minutes until the next timed item, or null when nothing timed is ahead ("the rest of the day"). */
+  gapMinutes: number | null;
+  /** The next timed item, or null. */
+  nextPlanId: string | null;
+  nextStartsAt: string | null;
+  /** How many items carried a start time; 0 means the day has no timed plan and no gap is claimed. */
+  timedCount: number;
+}
+
+/**
+ * The free gap between `nowMs` and the next timed plan item — the §7.3 "gap
+ * between commitments" question asked of a DAY'S PLAN rather than of the
+ * commitment set. Owned here so no consumer derives free time on its own
+ * (census-compass CT-03: `CompassSenseEngine.free_time_block` used to). A day
+ * with no timed item claims no gap: an entirely unplanned day is normal, not a
+ * signal, and the caller decides what to do with `timedCount === 0`.
+ */
+export function freeGapFromPlan(items: readonly PlanForGap[], nowMs: number): PlanFreeGap {
+  const timed = items
+    .map((i) => ({ id: i.id, at: i.startsAt ? Date.parse(i.startsAt) : NaN, iso: i.startsAt }))
+    .filter((i) => Number.isFinite(i.at));
+  if (timed.length === 0) return { gapMinutes: null, nextPlanId: null, nextStartsAt: null, timedCount: 0 };
+  const upcoming = timed.filter((i) => i.at > nowMs).sort((a, b) => a.at - b.at);
+  const next = upcoming[0] ?? null;
+  return {
+    gapMinutes: next ? Math.floor((next.at - nowMs) / MS_PER_MIN) : null,
+    nextPlanId: next?.id ?? null,
+    nextStartsAt: next?.iso ?? null,
+    timedCount: timed.length,
+  };
+}
+
 // ── §7.2 on the plan itself ───────────────────────────────────────────────────
 
 export interface PlanForOverlap {

@@ -55,6 +55,8 @@
  */
 
 /** What kind of claim outran the turn's evidence. */
+import { isTruthClass, truthClassMayRenderAsObservation, weakestTruthClass, type TruthClass } from "../lib/truthClass.js";
+
 export type GroundingViolationKind =
   /** A current-conditions claim with no `verified_live` datum anywhere in the turn. */
   | "live_claim_without_verified_source"
@@ -63,7 +65,14 @@ export type GroundingViolationKind =
   /** "everyone is dancing" — a present-progressive crowd assertion with no crowd datum. */
   | "crowd_claim_without_observation"
   /** "it's a ten-minute walk" when no tool returned a travel term for any route. */
-  | "travel_duration_without_route";
+  | "travel_duration_without_route"
+  /**
+   * CPV2-02 — a state asserted about a subject whose evidence is PREDICTED,
+   * INFERRED, CONFLICTING, STALE or UNKNOWN, without the qualification the
+   * evidence carried. The datum kept its class through the tool result; the
+   * prose dropped it.
+   */
+  | "truth_class_not_qualified";
 
 export interface GroundingViolation {
   kind: GroundingViolationKind;
@@ -89,6 +98,14 @@ export interface GroundingEvidence {
   /** Every distinct `sourceClass` seen, sorted — for the log line and the note. */
   sourceClasses: string[];
   /**
+   * CPV2-02 — the WEAKEST §5.1 truth class any tool result declared this turn
+   * (lib/truthClass `weakestTruthClass`), or null when none declared one. An
+   * absent class is NOT read as `unknown`: a tool that says nothing leaves the
+   * source-class checks above to do their work; a tool that says `unknown` is
+   * making a claim, and the claim is kept.
+   */
+  truthClass: TruthClass | null;
+  /**
    * CCL-12 — the same four facts, attached to the SUBJECT each datum was read
    * under rather than pooled across the turn. A sentence that names a subject
    * is checked against that subject's own band; the turn-level booleans above
@@ -107,12 +124,14 @@ export interface SubjectEvidence {
   hasWaitDatum: boolean;
   hasCrowdDatum: boolean;
   hasRouteDatum: boolean;
+  /** The weakest truth class declared under this subject, or null when none was. */
+  truthClass: TruthClass | null;
 }
 
-/** The four bands a claim can be checked against, for a subject or for the turn. */
+/** The bands a claim can be checked against, for a subject or for the turn. */
 type EvidenceBand = Pick<
   GroundingEvidence,
-  "hasVerifiedLive" | "hasWaitDatum" | "hasCrowdDatum" | "hasRouteDatum"
+  "hasVerifiedLive" | "hasWaitDatum" | "hasCrowdDatum" | "hasRouteDatum" | "truthClass"
 >;
 
 export const EMPTY_GROUNDING_EVIDENCE: GroundingEvidence = Object.freeze({
@@ -121,6 +140,7 @@ export const EMPTY_GROUNDING_EVIDENCE: GroundingEvidence = Object.freeze({
   hasCrowdDatum: false,
   hasRouteDatum: false,
   sourceClasses: Object.freeze([]) as unknown as string[],
+  truthClass: null,
   subjects: Object.freeze([]) as readonly SubjectEvidence[],
 });
 
@@ -189,6 +209,7 @@ const MAX_NODES = 50_000;
  */
 export function readGroundingEvidence(toolResults: readonly unknown[]): GroundingEvidence {
   const sourceClasses = new Set<string>();
+  const turnTruth: TruthClass[] = [];
   let hasWaitDatum = false;
   let hasCrowdDatum = false;
   let hasRouteDatum = false;
@@ -199,7 +220,7 @@ export function readGroundingEvidence(toolResults: readonly unknown[]): Groundin
    * one and on its name otherwise, so the same place returned twice in a turn
    * accumulates rather than splitting into two half-evidenced subjects.
    */
-  const subjects = new Map<string, { subjectId: string | null; name: string } & EvidenceBand>();
+  const subjects = new Map<string, { subjectId: string | null; name: string; truth: TruthClass[] } & Omit<EvidenceBand, "truthClass">>();
 
   /** A datum counts only when it carries a reading; see the WAIT_KEYS note. */
   const present = (value: unknown): boolean => value !== null && value !== undefined && value !== false;
@@ -232,7 +253,7 @@ export function readGroundingEvidence(toolResults: readonly unknown[]): Groundin
       here = id ?? `name:${name.toLowerCase()}`;
       if (!subjects.has(here)) {
         subjects.set(here, {
-          subjectId: id, name,
+          subjectId: id, name, truth: [],
           hasVerifiedLive: false, hasWaitDatum: false, hasCrowdDatum: false, hasRouteDatum: false,
         });
       }
@@ -244,6 +265,12 @@ export function readGroundingEvidence(toolResults: readonly unknown[]): Groundin
       if (key === "sourceclass" && typeof value === "string" && value) {
         sourceClasses.add(value);
         if (bucket && value === "verified_live") bucket.hasVerifiedLive = true;
+      }
+      // CPV2-02 — a truth class is kept exactly as declared; an unrecognised
+      // word is not a class and is not silently read as one.
+      if (key === "truthclass" && isTruthClass(value)) {
+        turnTruth.push(value);
+        if (bucket) bucket.truth.push(value);
       }
       // A datum counts only when it actually carries a reading. `waitMinutes:
       // null` is a tool saying it could not measure one, and reading that as
@@ -263,7 +290,11 @@ export function readGroundingEvidence(toolResults: readonly unknown[]): Groundin
     hasCrowdDatum,
     hasRouteDatum,
     sourceClasses: [...sourceClasses].sort(),
-    subjects: [...subjects.values()].map((v) => ({ ...v })),
+    truthClass: turnTruth.length > 0 ? weakestTruthClass(turnTruth) : null,
+    subjects: [...subjects.values()].map(({ truth, ...v }) => ({
+      ...v,
+      truthClass: truth.length > 0 ? weakestTruthClass(truth) : null,
+    })),
   };
 }
 
@@ -273,6 +304,15 @@ export function readGroundingEvidence(toolResults: readonly unknown[]): Groundin
  */
 const HEDGE =
   /\b(?:last[- ]known|historical(?:ly)?|can(?:no|')?t be verified|cannot be verified|could not be verified|not verified|unverified|usually|typically|generally|often|may be|might be|probably|likely|community[- ]reported|reported by (?:app )?users|no live|without live|based on (?:past|history))\b/i;
+
+/**
+ * CPV2-02 — the words that ARE a truth-class qualification. A sentence that
+ * carries one has retained the evidence's class; flagging it would punish the
+ * exact compliance the clause asks for. The list is lib/compassDecision's
+ * TRUTH_WORDS plus the plain forms a model writes.
+ */
+const TRUTH_QUALIFIER =
+  /\b(?:predicted|prediction|forecast|expected to|inferred|inference|reports differ|conflicting reports|reports disagree|stale|out of date|no current evidence|not known|unknown|estimate[ds]?)\b/i;
 
 /** "right now", "currently", … — the marker that turns a statement into a live claim. */
 const NOW_MARKER =
@@ -321,6 +361,8 @@ const NOTE_FOR: Record<GroundingViolationKind, string> = {
     "no crowd reading was returned by any tool in this turn, so any statement above about how busy a place is right now is not a measurement.",
   travel_duration_without_route:
     "no route or travel time was returned by any tool in this turn, so any journey time above is an estimate rather than a measured route.",
+  truth_class_not_qualified:
+    "the evidence behind at least one place above is not an observation (a prediction, an inference, disagreeing reports, stale data, or no current evidence), so any state asserted about it above carries that qualification even where the sentence dropped it.",
 };
 
 export interface GroundingResult {
@@ -364,8 +406,10 @@ function bandForSentence(sentence: string, evidence: GroundingEvidence): Evidenc
       hasWaitDatum: evidence.hasWaitDatum,
       hasCrowdDatum: evidence.hasCrowdDatum,
       hasRouteDatum: evidence.hasRouteDatum,
+      truthClass: evidence.truthClass,
     };
   }
+  const declared = named.map((sub) => sub.truthClass).filter((c): c is TruthClass => c !== null);
   return {
     hasVerifiedLive: named.every((sub) => sub.hasVerifiedLive),
     hasWaitDatum: named.every((sub) => sub.hasWaitDatum),
@@ -373,6 +417,9 @@ function bandForSentence(sentence: string, evidence: GroundingEvidence): Evidenc
     // A route term is about a JOURNEY, not about a place, so a hop the turn
     // returned licenses the sentence whichever endpoint it names.
     hasRouteDatum: evidence.hasRouteDatum,
+    // The WEAKEST class among the named subjects governs the sentence: a claim
+    // covering an observed place and a predicted one is a predicted claim.
+    truthClass: declared.length > 0 ? weakestTruthClass(declared) : null,
   };
 }
 
@@ -430,6 +477,23 @@ export function enforceCompassGroundingEnvelope(
         available: "no route or travel-time datum",
       });
     }
+    // CPV2-02 — a state asserted over evidence that is not an observation must
+    // keep the qualification the evidence carried. Only a DECLARED class is
+    // judged (see GroundingEvidence.truthClass); a bare state word with no
+    // qualifier over a predicted / inferred / conflicting / stale / unknown
+    // class is the "inference upgraded into fact" the clause forbids.
+    if (
+      evidence.truthClass !== null &&
+      !truthClassMayRenderAsObservation(evidence.truthClass) &&
+      LIVE_STATE.test(s) &&
+      !TRUTH_QUALIFIER.test(s)
+    ) {
+      violations.push({
+        kind: "truth_class_not_qualified",
+        stated: s.slice(0, 200),
+        available: `truth class ${evidence.truthClass}`,
+      });
+    }
   }
 
   if (violations.length === 0) return { ok: true, text: answer, correction: null, violations };
@@ -441,6 +505,7 @@ export function enforceCompassGroundingEnvelope(
     "wait_time_without_source",
     "crowd_claim_without_observation",
     "travel_duration_without_route",
+    "truth_class_not_qualified",
   ];
   const seen = new Set(violations.map((v) => v.kind));
   const parts = kinds.filter((k) => seen.has(k)).map((k) => NOTE_FOR[k]);

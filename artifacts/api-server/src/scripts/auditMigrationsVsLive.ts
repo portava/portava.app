@@ -69,6 +69,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { FROZEN_LEGACY_FILES, findRogueFrozenFiles } from "./frozenLegacyFiles.js";
 import { FROZEN_ROOT_FILES } from "./frozenRootFiles.js";
 import { isMissing, type Claim, type LiveSchema } from "./lib/schemaClaimResolution.js";
+import { isOptionAInForce } from "./lib/sensingPostureOnDisk.js";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -199,6 +200,45 @@ const SKIP_FILES = new Set([
   // docs/architecture/sensing-auth-posture-decision.md.
   "2481_sensing_sessions_option_a_issuer.sql",
 ]);
+
+// ── 2481: A FILE THAT MUST NEVER RUN, AND A SKIP THAT EXPIRES BY ITSELF ──────
+//
+// 2481_sensing_sessions_option_a_issuer.sql adds `issued_to_profile_id` to
+// sensing_contribution_sessions and the CHECK that makes every session
+// profile-issued. Its own first line says "OPTION A ONLY ... Do NOT apply under
+// Option B; under Option B this file is never run and the column never exists."
+// The owner took Option B (`anonymous_capable`) in #510, so none of its objects
+// exist live and none of them should.
+//
+// This auditor is name-keyed to files on disk. It cannot know a file must never
+// run, so it reports five claimed objects as drift on every run, which is main's
+// standing red — not the fault of whatever branch happens to be measuring.
+//
+// WHY A CONDITION RATHER THAN A LINE IN SKIP_FILES ABOVE. A plain entry would be
+// permanent, and it would be WRONG the moment the posture changes: under Option A
+// those five objects must exist and their absence is exactly the drift this
+// auditor is for. So the skip is derived from the posture constant that decides
+// the question — lib/sensingAuthPosture.ts, a reviewed diff being the only way it
+// moves, no flag and no environment variable. Flip it back to
+// `authenticated_only` and this skip disappears on the next run without anybody
+// remembering to delete it.
+//
+// VERIFIED ON portava-ci 2026-09-21, not assumed: issued_to_profile_id (0),
+// sensing_contribution_sessions_issuer_fk (0), _option_a_check (0),
+// _issuer_idx (0), revoke_sensing_sessions_for_profile (0) — all five absent,
+// while 2480's table itself is present. Option B holds live.
+//
+// THE PART THAT SURPRISES PEOPLE, recorded because pruning it would re-apply
+// Option A: schema_migration_ledger DOES carry a 2481 row (applied_by='ci',
+// 2026-09-09 14:44:05Z, from the run that applied it before #510 reverted the
+// objects). scripts/src/apply-migrations.ts skips any file already in the
+// ledger, so that row is what currently stops 2481 from being re-applied on the
+// next CI migrate. It reads like stale bookkeeping and it is load-bearing.
+// Deleting it as "a ledger row for a migration that clearly did not run" would
+// reintroduce the Option A constraint #510 removed. Leave it.
+if (!isOptionAInForce()) {
+  SKIP_FILES.add("2481_sensing_sessions_option_a_issuer.sql");
+}
 
 /**
  * Objects the migration files claim but the live schema intentionally differs
@@ -416,6 +456,41 @@ const ALLOWLIST = new Set([
   // Delete these two if 2332 is ever reversed, in the same change.
   "grant:portava_featured.anon.select",
   "grant:portava_featured.authenticated.select",
+
+  // ── PENDING LIVE APPLY: 2964_map_telemetry_disabled_discards.sql ───────────
+  //
+  // Unlike every entry above, these three are NOT a case of live being
+  // deliberately different from what a migration claims. They are a migration
+  // that has not run anywhere yet, and the reason it has not is structural
+  // rather than an oversight: `live-db.yml` applies migrations only from `main`
+  // (its "apply to the sanctioned CI project" step is skipped on a branch), and
+  // hand-applying an unmerged branch's migrations to the shared CI database is
+  // the recorded root cause of `CI (live DB)` being red on main's own sha
+  // across five consecutive scheduled runs. Trading this visible red for that
+  // invisible one is not a fix. Same posture, and the same wording, as
+  // checkMissingLiveColumns.ts's 2745 and 2810/2813 entries.
+  //
+  // WHAT IS AND IS NOT BROKEN WHILE THESE ARE ALLOWLISTED, stated rather than
+  // implied — and here the answer is NOTHING, structurally. 2964's only caller
+  // is routes/mapTelemetry.ts on the path where `map_telemetry_enabled` is
+  // FALSE, and that call is `sc.rpc(...)` with the result checked: on a
+  // database that lacks the function PostgREST answers 404, the route logs a
+  // warning and still returns 200. So the collection-off path writes NOTHING,
+  // which is precisely the promise 2964 exists to keep — it simply keeps it
+  // without the operational counter until the apply lands. The failure mode of
+  // a missing table here is a lost diagnostic, never a lost request and never a
+  // widened collection.
+  //
+  // REHEARSED, not assumed: applied and re-applied on a throwaway PostgreSQL
+  // 16, with all four privacy guards armed (an added identity column, a
+  // non-hour bucket_hour, a direct service_role INSERT, an `authenticated`
+  // EXECUTE — each refused).
+  //
+  // Remove all three once the merge-to-main apply is certified in
+  // docs/migrations.md — NOT when the migration merges.
+  "table:map_telemetry_disabled_discards",
+  "function:record_map_telemetry_disabled_discard",
+  "index:map_telemetry_disabled_discards_expiry_idx",
 ]);
 
 // ── Environment ───────────────────────────────────────────────────────────────

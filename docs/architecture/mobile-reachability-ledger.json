@@ -6118,7 +6118,7 @@
       "methods": [
         "POST"
       ],
-      "handler": "artifacts/api-server/src/routes/compassAutopilot.ts:236",
+      "handler": "artifacts/api-server/src/routes/compassAutopilot.ts:240",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -7322,7 +7322,7 @@
       "methods": [
         "POST"
       ],
-      "handler": "artifacts/api-server/src/routes/compass.ts:2973",
+      "handler": "artifacts/api-server/src/routes/compass.ts:2982",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -7349,7 +7349,7 @@
       "methods": [
         "POST"
       ],
-      "handler": "artifacts/api-server/src/routes/compass.ts:1323",
+      "handler": "artifacts/api-server/src/routes/compass.ts:1328",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -7408,7 +7408,7 @@
         "GET",
         "POST"
       ],
-      "handler": "artifacts/api-server/src/routes/compass.ts:2710",
+      "handler": "artifacts/api-server/src/routes/compass.ts:2719",
       "handlerCount": 3,
       "classification": "WIRED",
       "chain": [
@@ -7441,7 +7441,7 @@
       "methods": [
         "POST"
       ],
-      "handler": "artifacts/api-server/src/routes/compass.ts:3955",
+      "handler": "artifacts/api-server/src/routes/compass.ts:3964",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -7465,7 +7465,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "artifacts/api-server/src/routes/compass.ts:4029",
+      "handler": "artifacts/api-server/src/routes/compass.ts:4038",
       "handlerCount": 1,
       "classification": "DEAD ENDPOINT",
       "chain": []
@@ -7475,7 +7475,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "artifacts/api-server/src/routes/compass.ts:413",
+      "handler": "artifacts/api-server/src/routes/compass.ts:416",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -7495,7 +7495,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "artifacts/api-server/src/routes/compass.ts:560",
+      "handler": "artifacts/api-server/src/routes/compass.ts:563",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -7517,7 +7517,7 @@
       "methods": [
         "POST"
       ],
-      "handler": "artifacts/api-server/src/routes/compass.ts:1971",
+      "handler": "artifacts/api-server/src/routes/compass.ts:1980",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -7539,7 +7539,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "artifacts/api-server/src/routes/compass.ts:745",
+      "handler": "artifacts/api-server/src/routes/compass.ts:748",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -7561,7 +7561,7 @@
       "methods": [
         "POST"
       ],
-      "handler": "artifacts/api-server/src/routes/compass.ts:814",
+      "handler": "artifacts/api-server/src/routes/compass.ts:817",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -7731,7 +7731,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "artifacts/api-server/src/routes/compass.ts:2651",
+      "handler": "artifacts/api-server/src/routes/compass.ts:2660",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -7754,7 +7754,7 @@
       "methods": [
         "PUT"
       ],
-      "handler": "artifacts/api-server/src/routes/compass.ts:850",
+      "handler": "artifacts/api-server/src/routes/compass.ts:853",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -7778,7 +7778,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "artifacts/api-server/src/routes/compass.ts:337",
+      "handler": "artifacts/api-server/src/routes/compass.ts:340",
       "handlerCount": 1,
       "classification": "DEAD ENDPOINT",
       "chain": []
@@ -7788,7 +7788,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "artifacts/api-server/src/routes/compass.ts:2133",
+      "handler": "artifacts/api-server/src/routes/compass.ts:2142",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -7813,7 +7813,7 @@
         "DELETE",
         "PATCH"
       ],
-      "handler": "artifacts/api-server/src/routes/compass.ts:2197",
+      "handler": "artifacts/api-server/src/routes/compass.ts:2206",
       "handlerCount": 2,
       "classification": "WIRED",
       "chain": [
@@ -7863,7 +7863,7 @@
       "methods": [
         "POST"
       ],
-      "handler": "artifacts/api-server/src/routes/compass.ts:2158",
+      "handler": "artifacts/api-server/src/routes/compass.ts:2167",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -7913,7 +7913,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "artifacts/api-server/src/routes/compass.ts:2243",
+      "handler": "artifacts/api-server/src/routes/compass.ts:2252",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -7937,7 +7937,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "artifacts/api-server/src/routes/compass.ts:2344",
+      "handler": "artifacts/api-server/src/routes/compass.ts:2353",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -7961,7 +7961,7 @@
       "methods": [
         "POST"
       ],
-      "handler": "artifacts/api-server/src/routes/compass.ts:2293",
+      "handler": "artifacts/api-server/src/routes/compass.ts:2302",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -7985,7 +7985,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "artifacts/api-server/src/routes/compass.ts:2264",
+      "handler": "artifacts/api-server/src/routes/compass.ts:2273",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -8007,7 +8007,7 @@
       "methods": [
         "POST"
       ],
-      "handler": "artifacts/api-server/src/routes/compass.ts:2366",
+      "handler": "artifacts/api-server/src/routes/compass.ts:2375",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -8031,7 +8031,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "artifacts/api-server/src/routes/compass.ts:2612",
+      "handler": "artifacts/api-server/src/routes/compass.ts:2621",
       "handlerCount": 1,
       "classification": "DEAD ENDPOINT",
       "chain": []
@@ -8041,7 +8041,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "artifacts/api-server/src/routes/compass.ts:2411",
+      "handler": "artifacts/api-server/src/routes/compass.ts:2420",
       "handlerCount": 1,
       "classification": "DEAD ENDPOINT",
       "chain": []
@@ -8051,7 +8051,7 @@
       "methods": [
         "POST"
       ],
-      "handler": "artifacts/api-server/src/routes/compass.ts:2523",
+      "handler": "artifacts/api-server/src/routes/compass.ts:2532",
       "handlerCount": 1,
       "classification": "DEAD ENDPOINT",
       "chain": []
@@ -8061,7 +8061,7 @@
       "methods": [
         "POST"
       ],
-      "handler": "artifacts/api-server/src/routes/compass.ts:2464",
+      "handler": "artifacts/api-server/src/routes/compass.ts:2473",
       "handlerCount": 1,
       "classification": "DEAD ENDPOINT",
       "chain": []
@@ -8072,7 +8072,7 @@
         "GET",
         "PATCH"
       ],
-      "handler": "artifacts/api-server/src/routes/compass.ts:2043",
+      "handler": "artifacts/api-server/src/routes/compass.ts:2052",
       "handlerCount": 2,
       "classification": "WIRED",
       "chain": [
@@ -8107,7 +8107,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "artifacts/api-server/src/routes/compass.ts:2585",
+      "handler": "artifacts/api-server/src/routes/compass.ts:2594",
       "handlerCount": 1,
       "classification": "DEAD ENDPOINT",
       "chain": []
@@ -8141,7 +8141,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "artifacts/api-server/src/routes/compass.ts:4291",
+      "handler": "artifacts/api-server/src/routes/compass.ts:4300",
       "handlerCount": 1,
       "classification": "DEAD ENDPOINT",
       "chain": []
@@ -8151,7 +8151,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "artifacts/api-server/src/routes/compass.ts:786",
+      "handler": "artifacts/api-server/src/routes/compass.ts:789",
       "handlerCount": 1,
       "classification": "DEAD ENDPOINT",
       "chain": []
@@ -8161,7 +8161,7 @@
       "methods": [
         "POST"
       ],
-      "handler": "artifacts/api-server/src/routes/compass.ts:1799",
+      "handler": "artifacts/api-server/src/routes/compass.ts:1804",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -8185,7 +8185,7 @@
       "methods": [
         "POST"
       ],
-      "handler": "artifacts/api-server/src/routes/compass.ts:1923",
+      "handler": "artifacts/api-server/src/routes/compass.ts:1932",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -8209,7 +8209,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "artifacts/api-server/src/routes/compass.ts:3208",
+      "handler": "artifacts/api-server/src/routes/compass.ts:3217",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -8259,7 +8259,7 @@
       "methods": [
         "POST"
       ],
-      "handler": "artifacts/api-server/src/routes/compass.ts:3125",
+      "handler": "artifacts/api-server/src/routes/compass.ts:3134",
       "handlerCount": 1,
       "classification": "DEAD ENDPOINT",
       "chain": []
@@ -8328,7 +8328,7 @@
         "GET",
         "PATCH"
       ],
-      "handler": "artifacts/api-server/src/routes/compass.ts:2844",
+      "handler": "artifacts/api-server/src/routes/compass.ts:2853",
       "handlerCount": 2,
       "classification": "WIRED",
       "chain": [
@@ -8365,7 +8365,7 @@
       "methods": [
         "POST"
       ],
-      "handler": "artifacts/api-server/src/routes/compass.ts:3036",
+      "handler": "artifacts/api-server/src/routes/compass.ts:3045",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -8385,7 +8385,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "artifacts/api-server/src/routes/compass.ts:4102",
+      "handler": "artifacts/api-server/src/routes/compass.ts:4111",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -8417,7 +8417,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "artifacts/api-server/src/routes/compass.ts:894",
+      "handler": "artifacts/api-server/src/routes/compass.ts:897",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -11602,7 +11602,7 @@
       "methods": [
         "POST"
       ],
-      "handler": "artifacts/api-server/src/routes/highlights.ts:262",
+      "handler": "artifacts/api-server/src/routes/highlights.ts:266",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -11624,7 +11624,7 @@
       "methods": [
         "DELETE"
       ],
-      "handler": "artifacts/api-server/src/routes/highlights.ts:646",
+      "handler": "artifacts/api-server/src/routes/highlights.ts:668",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -11667,7 +11667,7 @@
         "DELETE",
         "POST"
       ],
-      "handler": "artifacts/api-server/src/routes/highlights.ts:712",
+      "handler": "artifacts/api-server/src/routes/highlights.ts:734",
       "handlerCount": 2,
       "classification": "WIRED",
       "chain": [
@@ -11689,7 +11689,7 @@
       "methods": [
         "POST"
       ],
-      "handler": "artifacts/api-server/src/routes/highlights.ts:841",
+      "handler": "artifacts/api-server/src/routes/highlights.ts:878",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -11711,7 +11711,7 @@
       "methods": [
         "POST"
       ],
-      "handler": "artifacts/api-server/src/routes/highlights.ts:981",
+      "handler": "artifacts/api-server/src/routes/highlights.ts:1018",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -11733,7 +11733,7 @@
       "methods": [
         "POST"
       ],
-      "handler": "artifacts/api-server/src/routes/highlights.ts:681",
+      "handler": "artifacts/api-server/src/routes/highlights.ts:703",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -11755,7 +11755,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "artifacts/api-server/src/routes/highlights.ts:775",
+      "handler": "artifacts/api-server/src/routes/highlights.ts:797",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -11777,7 +11777,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "artifacts/api-server/src/routes/highlights.ts:475",
+      "handler": "artifacts/api-server/src/routes/highlights.ts:479",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -11808,7 +11808,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "artifacts/api-server/src/routes/highlights.ts:1032",
+      "handler": "artifacts/api-server/src/routes/highlights.ts:1069",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [
@@ -27879,7 +27879,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "artifacts/api-server/src/routes/highlights.ts:342",
+      "handler": "artifacts/api-server/src/routes/highlights.ts:346",
       "handlerCount": 1,
       "classification": "WIRED",
       "chain": [

@@ -167,6 +167,7 @@ import {
   recordReplanDecision,
   candidatesFromStops,
 } from "../services/airport/LayoverReplanService.js";
+import { notifyLayoverOpportunity } from "../services/airport/LayoverOpportunityNotifier.js";
 import {
   evaluateSharingGate,
   publishableUserIds,
@@ -964,7 +965,11 @@ async function replanAfterSessionEdit(args: {
   }
 
   await recordReplanDecision(args.sc, args.userId, result.publication, result.decision);
-  return { ran: true, ...result.publication, ...disruptionCorrection };
+  // §25 / census CL-04: a notify-worthy OpportunityEvent reaches Compass as a
+  // world change (services/airport/LayoverOpportunityNotifier) and is routed by
+  // the Attention Engine. Best-effort; the DecisionRecord above is the fact.
+  const opportunityNotification = await notifyLayoverOpportunity(args.sc, args.userId, args.after.id, result.publication);
+  return { ran: true, ...result.publication, ...disruptionCorrection, opportunityNotification };
 }
 
 // ── GET /api/airport/sessions/:id/recommendations ────────────────────────────

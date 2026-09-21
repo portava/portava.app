@@ -71,6 +71,28 @@ const LEGACY_SIDE = new Set([
   // nowhere.
   "migrations/2320_memory_episode_provenance_spine.sql",
   "migrations/2333_derived_memory_and_consent_grant_boundary.sql",
+  // ADDED 2026-09-21 by the Map integration owner, for M42. 2963 replaces
+  // project_user_memory(uuid, boolean) to fix its PLACE lane, which had been
+  // reading `saved_places` — a table with no writers, so the lane produced
+  // nothing. It is PROJECTION-side and not a borderline call: it is a
+  // CREATE OR REPLACE of the projection family's own projector, and it carries
+  // the other three lanes (episodic, semantic, social) forward BYTE-IDENTICAL
+  // from the live body, including their reads of public.memory_events and the
+  // `source_event_ids` write that links a projection row back to the events
+  // that produced it. Preserving those reads unchanged is the point of the
+  // migration rather than an incidental effect: its own postconditions RAISE if
+  // any of the four lane labels is missing from the replacement body, so a
+  // future edit that dropped the memory_events reads could not apply. It names
+  // memory_domain_events nowhere — the §17 command kernel is untouched.
+  "migrations/2963_memory_projector_place_lane_union.sql",
+  // The behavioural proof for the above, against a real PostgreSQL. It names
+  // public.memory_events for exactly one reason: 2963's PLACE-lane fix must not
+  // be allowed to become a silent regression of the other three lanes, so the
+  // suite asserts that episodic, semantic and social are all still non-empty in
+  // the same run that shows `place` becoming non-empty. That assertion IS a
+  // read of the projection family's log, and it is the case that would catch a
+  // PLACE-only body. PROJECTION-side; names memory_domain_events nowhere.
+  "test/db/memoryProjectorPlaceLane.db.test.ts",
   "lib/deletionDispositions.ts",
   "lib/memoryProjectionScheduler.ts",
   "services/accountDeletion/AccountDeletionService.ts",

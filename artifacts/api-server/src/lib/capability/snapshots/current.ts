@@ -22,7 +22,27 @@
  */
 
 /**
- * REFRESH OF 2026-09-16 17:43 UTC, the FOURTH capture dated 09-16 and the current
+ * REFRESH OF 2026-09-20 20:03 UTC, the current one, taken after the five
+ * migrations applied to production that day: 2996 and 2997 (the Compass
+ * conversation/lineage columns), 2800 and 2840 (two flag rows seeded FALSE that
+ * were previously ABSENT) and 2910 (the six Discovery Trails tables). Built as a
+ * proven DELTA on 20260917 by the same argument as that capture -- production
+ * located the delta itself with per-initial-letter digests over its own
+ * catalogue, only the `c` and `t` buckets disagreed, and it then recomputed all
+ * three checksums and returned exactly the three the new file records. 493
+ * tables, 160 functions, 69 enums, 198 flags. The notes below are kept as
+ * written because the same argument produced every capture before it.
+ *
+ * REFRESH OF 2026-09-17 04:17 UTC, then the current one, taken after the 37-migration
+ * Trips chain landed on production (2450/2500/2590 and 2750-2796). This capture
+ * was built as a proven DELTA rather than a full re-read -- 22 new tables, 8
+ * changed, 0 removed, 16 new functions, 3 new flags -- and production then
+ * recomputed all three digests over its own catalogue and returned exactly the
+ * three this file records. A delta that missed anything could not produce the
+ * same digest, so the shortcut is proven rather than trusted. The notes below
+ * are kept as written because the same argument produced every capture before it.
+ *
+ * REFRESH OF 2026-09-16 17:43 UTC, then the FOURTH capture dated 09-16 and the current
  * one, taken after the MEDIA_CANONICAL (2470) and Sensing Option B (2315/2340/2480)
  * owner decisions were applied. The notes below are kept as written because the
  * same argument produced `d`.
@@ -39,7 +59,7 @@
  * and this constant moves. That is the whole refresh.
  */
 /** The capture every reader should grade against. Change this on a refresh. */
-export const PRODUCTION_SNAPSHOT_FILENAME = "20260916d-production-schema.json";
+export const PRODUCTION_SNAPSHOT_FILENAME = "20260920-production-schema.json";
 
 /** Resolved against this directory, which is where the captures live. */
 export const PRODUCTION_SNAPSHOT_URL = new URL(

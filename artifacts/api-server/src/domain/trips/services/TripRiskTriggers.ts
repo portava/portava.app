@@ -48,6 +48,18 @@ export interface TriggerPlan {
   weatherSensitive: boolean;
   /** Attendance count when known (2771), else the crew size. */
   partySize: number | null;
+  /**
+   * §5.1's plan participant relation (`trip_plan_participants`, 2771): who is
+   * GOING or MAYBE on this plan.
+   *
+   * `undefined` means the attendance was NOT READ — a caller that has no 2771
+   * on its database, or has not asked. It is not "nobody": a trigger that
+   * named an empty set out of an unread relation would tell the crew a plan
+   * concerns no one, which is the same defect §68.3 closed for the tight
+   * arrival's commitments. An unread attendance falls back to the crew at the
+   * call site, where the crew is known, rather than being invented here.
+   */
+  participantIds?: string[];
 }
 
 export interface TriggerTransport {
@@ -125,7 +137,15 @@ export function evaluateRiskTriggers(inputs: RiskTriggerInputs): RiskTrigger[] {
   if (dependent.length > 0) {
     const conf = Math.max(...rain.map((s) => s.estimate.confidence));
     out.push({
-      kind: "weather_sensitive", fired: true, affectedIds: dependent.map((p) => p.id), participantIds: [],
+      // §8.4's mitigation for this trigger moves an OUTDOOR PLAN, and a plan is
+      // the one object in §5.1 that HAS a participant relation (2771). The
+      // people to tell are the plan's GOING / MAYBE attendance, not the crew:
+      // a member who declined the hike is not affected by rain on it, and
+      // §6.3's narrower scopes exist precisely so that not every plan is
+      // everyone's. A plan whose attendance was not read contributes nothing
+      // here and its caller supplies the crew instead (census-trips TR150).
+      kind: "weather_sensitive", fired: true, affectedIds: dependent.map((p) => p.id),
+      participantIds: [...new Set(dependent.flatMap((p) => p.participantIds ?? []))],
       evidence: `rain forecast at confidence ${conf.toFixed(2)} (threshold ${WEATHER_CONFIDENCE_THRESHOLD}) on ${dependent.length} weather-dependent plan(s)`,
       mitigation: RISK_MITIGATIONS.weather_sensitive, magnitude: Math.round(conf * 100) / 100,
     });
@@ -143,16 +163,32 @@ export function evaluateRiskTriggers(inputs: RiskTriggerInputs): RiskTrigger[] {
   } else out.push({ kind: "late_check_in", fired: false, affectedIds: [], participantIds: [], evidence: "no arrival estimate exceeds a desk policy", mitigation: RISK_MITIGATIONS.late_check_in, magnitude: null });
 
   // Crew transport mismatch: an upcoming segment whose party is larger than its seats.
+  //
+  // ONE definition of "the party", used by the filter AND by the magnitude.
+  // They were two before, and they disagreed: the filter consulted the served
+  // plan's party and the magnitude did not, so a segment with no stated party
+  // that was CAUGHT by a nine-person plan was REPORTED against the crew size —
+  // a true firing carrying a number from a different question.
+  const partyFor = (t: TriggerTransport) =>
+    t.partySize ?? inputs.plans.find((p) => p.id === t.servesId)?.partySize ?? inputs.crewSize;
   const mismatched = inputs.transport.filter((t) => {
     if (t.state === "completed" || t.state === "COMPLETED") return false;
     const dep = ms(t.plannedDepartureAt); if (dep !== null && dep < inputs.now) return false;
-    const party = t.partySize ?? inputs.plans.find((p) => p.id === t.servesId)?.partySize ?? inputs.crewSize;
     const cap = t.capacity ?? DEFAULT_VEHICLE_CAPACITY[t.mode.toLowerCase()] ?? null;
-    return cap !== null && party > cap;
+    return cap !== null && partyFor(t) > cap;
   });
   if (mismatched.length > 0) {
-    const worst = Math.max(...mismatched.map((t) => (t.partySize ?? inputs.crewSize) - (t.capacity ?? DEFAULT_VEHICLE_CAPACITY[t.mode.toLowerCase()] ?? 0)));
-    out.push({ kind: "crew_transport_mismatch", fired: true, affectedIds: mismatched.map((t) => t.id), participantIds: [], evidence: `${mismatched.length} segment(s) carry a party ${worst} over the vehicle's seats`, mitigation: RISK_MITIGATIONS.crew_transport_mismatch, magnitude: worst });
+    const worst = Math.max(...mismatched.map((t) => partyFor(t) - (t.capacity ?? DEFAULT_VEHICLE_CAPACITY[t.mode.toLowerCase()] ?? 0)));
+    // WHO is not named here, and that is a statement about 2782 rather than an
+    // oversight: a transport segment has `party_size` — an integer — and no
+    // participant relation, no plan link and no subgroup column, so the finest
+    // set this trigger could name is the whole crew, which would be a guess
+    // rather than the attendance §5.1 gives a PLAN. The party comes from the
+    // served plan's 2771 attendance whenever a caller can name one
+    // (`servesId`); until a segment names a plan or a subgroup — census-trips
+    // TR150 and TR152, both needing a column no migration in this tree adds —
+    // the alert is addressed to the segment, not to people.
+    out.push({ kind: "crew_transport_mismatch", fired: true, affectedIds: mismatched.map((t) => t.id), participantIds: [...new Set(mismatched.flatMap((t) => inputs.plans.find((p) => p.id === t.servesId)?.participantIds ?? []))], evidence: `${mismatched.length} segment(s) carry a party ${worst} over the vehicle's seats`, mitigation: RISK_MITIGATIONS.crew_transport_mismatch, magnitude: worst });
   } else out.push({ kind: "crew_transport_mismatch", fired: false, affectedIds: [], participantIds: [], evidence: "every upcoming segment's party fits its vehicle, or its capacity is unknown", mitigation: RISK_MITIGATIONS.crew_transport_mismatch, magnitude: null });
 
   return out;

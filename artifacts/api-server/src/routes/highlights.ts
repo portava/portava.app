@@ -38,6 +38,10 @@ import {
   type ControlWriteFailure,
 } from "../services/highlights/highlightControlWrites.js";
 import { executeRevocation } from "../services/highlights/highlightRevocation.js";
+import {
+  readProjectionInputs,
+  filterProjectable,
+} from "../services/highlights/highlightPublicProjection.js";
 import { probeHighlightObject } from "../services/highlights/highlightSchemaAvailability.js";
 import {
   HIGHLIGHT_LIFETIME_CLASSES,
@@ -573,6 +577,24 @@ async function resolveViewAccess(
     return null;
   }
 
+  // §10/§11 — the owner's stored decisions about OTHER people. Every route
+  // behind this gate (view, like, unlike, reply, report) is `public_projection`:
+  // the viewer came to a specific Highlight. Until 2026-09-18 none of it was
+  // consulted here, so KEEP_PRIVATE_FOREVER — which CONTROL_EFFECTS declares to
+  // suppress `public_projection` and highlightRevocation.ts promises the owner
+  // reaches it — held on the two feeds and on nothing a viewer could navigate
+  // to. Same answer as every other refusal above: not_found, so a control is
+  // indistinguishable from an absence. The owner is never refused their own
+  // record (see highlightPublicProjection.ts).
+  if (viewerId !== ownerId) {
+    const inputs = await readProjectionInputs(sc, [ownerId], [highlightId]);
+    const projectable = filterProjectable([record], viewerId, "public_projection", inputs, log, "resolveViewAccess");
+    if (projectable.length === 0) {
+      sendError(res, "not_found", "Highlight not found");
+      return null;
+    }
+  }
+
   return { h: record };
 }
 
@@ -832,9 +854,24 @@ router.get("/users/:userId/highlights", async (req, res) => {
   }
 
   // Filter by permission
-  const visible = highlights.filter((h) =>
+  const permitted = highlights.filter((h) =>
     canViewHighlight(user.id, h as any, { viewerFollowsOwner, sharesTrip }),
   );
+
+  // §10/§11 — the owner's stored decisions about OTHER people. A profile
+  // visit is `public_projection`: nothing was resurfaced, the viewer came
+  // here — so KEEP_PRIVATE_FOREVER and a refused SHARE consent withhold, and
+  // DO_NOT_RESURFACE / a refused RESURFACE consent deliberately do not (§21:
+  // "retain and search privately; suppress proactive resurfacing"). The owner's
+  // own profile skips the read: the owner is never refused their own record.
+  // The policy read is kept and reused for the §10 location clamp below.
+  const gateClient = getServiceClient();
+  const inputs = isOwnProfile
+    ? null
+    : await readProjectionInputs(gateClient, [targetId], permitted.map((h: any) => h.id as string));
+  const visible = inputs
+    ? filterProjectable(permitted as any[], user.id, "public_projection", inputs, req.log, "GET /users/:userId/highlights")
+    : permitted;
 
   if (visible.length === 0) {
     res.status(200).json({ highlights: [] });
@@ -877,7 +914,7 @@ router.get("/users/:userId/highlights", async (req, res) => {
   // `sc` may be null here — the author lookup above already tolerates that — and
   // `readProjectionPolicies` answers `unreadable` for a null client rather than
   // this handler inventing a state of its own. See that function's comment.
-  const policies: ProjectionPolicyRead = await readProjectionPolicies(sc, highlightIds);
+  const policies: ProjectionPolicyRead = inputs ? inputs.policies : await readProjectionPolicies(sc, highlightIds);
   const disclosed = applyLocationPrecision(visible as any[], policies, req.log, "GET /users/:userId/highlights");
 
   const result = disclosed.map((h: any) => ({
@@ -1050,12 +1087,23 @@ router.get("/highlights/active", async (req, res) => {
     return;
   }
 
-  const highlightIds = surviving.map((h: any) => h.id as string);
-  const ownerIds = [...new Set(surviving.map((h: any) => h.owner_id as string))];
+  // §10 — a refused RESURFACE or SHARE consent withholds from a proactive feed.
+  // The policy read doubles as the location-precision read below.
+  const policies = await readProjectionPolicies(sc, surviving.map((h: any) => h.id as string));
+  const consented = filterProjectable(
+    surviving as any[], user.id, "proactive_resurfacing", { controls: suppressed, policies }, req.log, "GET /highlights/active",
+  );
+
+  if (consented.length === 0) {
+    res.status(200).json({ highlights: [] });
+    return;
+  }
+
+  const highlightIds = consented.map((h: any) => h.id as string);
+  const ownerIds = [...new Set(consented.map((h: any) => h.owner_id as string))];
 
   // §10 — clamp each location to the owner's selected precision.
-  const policies = await readProjectionPolicies(sc, highlightIds);
-  const disclosed = applyLocationPrecision(surviving as any[], policies, req.log, "GET /highlights/active");
+  const disclosed = applyLocationPrecision(consented as any[], policies, req.log, "GET /highlights/active");
 
   // Batch metrics + author profiles
   const [viewRows, likeRows, viewedRows, likedRows, profileRows] = await Promise.all([
@@ -2298,7 +2346,14 @@ router.get("/highlights/following-feed", async (req, res) => {
   );
   const surviving = applyResurfacingControls(permitted as any[], suppressed, req.log, "GET /highlights/following-feed");
 
-  const visible = feedLimit != null ? surviving.slice(0, feedLimit) : surviving;
+  // 5c. §10 consent, ALSO before the page is cut, for the same reason. The
+  // policy read is over the pre-slice set and is reused for the location clamp.
+  const policies = await readProjectionPolicies(sc, surviving.map((h: any) => h.id as string));
+  const consented = filterProjectable(
+    surviving as any[], user.id, "proactive_resurfacing", { controls: suppressed, policies }, req.log, "GET /highlights/following-feed",
+  );
+
+  const visible = feedLimit != null ? consented.slice(0, feedLimit) : consented;
   const nextCursor = feedLimit != null && visible.length === feedLimit
     ? (visible[visible.length - 1]?.created_at ?? null)
     : null;
@@ -2313,7 +2368,6 @@ router.get("/highlights/following-feed", async (req, res) => {
   const ownerIds = [...new Set(visible.map((h: any) => h.owner_id as string))];
 
   // §10 — clamp each location to the owner's selected precision.
-  const policies = await readProjectionPolicies(sc, highlightIds);
   const disclosed = applyLocationPrecision(visible as any[], policies, req.log, "GET /highlights/following-feed");
 
   const [viewRows2, likeRows2, viewedRows2, likedRows2, profileRows] = await Promise.all([

@@ -23,8 +23,22 @@ directions.
 ## The work
 
 `docs/architecture/census-map.md` is the backlog: **293 requirements — 237
-correct, 46 withheld, 5 not built.** 51 rows unfinished, and the census is one of
-the better-anchored ones, so its evidence cells are usually trustworthy.
+correct, 46 withheld, 5 not built, 5 cannot-verify.** **56** rows unfinished, not
+51: the earlier figure added the withheld to the not-built and dropped the five
+`?` rows, which are unfinished in exactly the same sense. 46 + 5 + 5 = 56, which
+is the number `check:census-integrity` confirms and the number the census's own
+re-opening pass uses.
+
+Two counting traps, recorded so the next reader does not re-derive them. Five
+rows carry a qualified-C verdict cell rather than a bare `C` — they are correct
+and are NOT among the 56; a tokeniser once read four of them as prose and
+reported 231. And one row is double-listed across two blocker groups.
+
+The census is one of the better-anchored ones, so its evidence cells are usually
+trustworthy — with one caveat that matters more than the anchoring: **every
+"absent from production" verdict rests on a committed baseline snapshot, not on a
+live read.** A 2026-09-20 re-measurement found three of the four blocking objects
+had since reached production. Re-measure before trusting an absence.
 
 Build in this order:
 
@@ -69,8 +83,21 @@ unverified work is correct.
 `routes/discoverySearch.ts` (another lane is actively editing it) · anything under
 `src/migrations/` **except** a new file in your reserved band.
 
-**Reserved migration band: `3011`–`3020`.** Write migrations there; **do not apply
-one** — the coordinating session owns every database mutation. Follow the shape of
+**Reserved migration band: `2963`–`2969`.** Write migrations there; **do not apply
+one** — the coordinating session owns every database mutation.
+
+This band replaces the `3011`–`3020` one an earlier revision of this handoff
+reserved. **That band was invalid and no migration could ever have been accepted
+in it**: `src/scripts/checkMigrationPrefixes.ts` requires a new 4-digit prefix to
+land in **2100–2999**, and a 3xxx prefix is refused outright. The reason is
+ordering, not taste — the chain runs in lexicographic order, so a prefix outside
+the band does not sort where its author expects.
+
+`2963`–`2969` was chosen from the free interior of the band rather than the top of
+it. The top is not safe: `2996` and `2997` are taken on an unmerged branch, and
+`2959` was reserved without being committed, so "highest present prefix plus one"
+picks a number someone else already holds. Verify a number is free on **every**
+branch in flight before writing to it. Follow the shape of
 `2973_security_definer_execute_boundary.sql`: a header saying what and why,
 idempotent statements, and postconditions that fail loudly. A postcondition block
 is re-run standalone by `certify:migrations`, so it must be absolute and

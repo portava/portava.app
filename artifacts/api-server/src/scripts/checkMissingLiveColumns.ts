@@ -67,6 +67,7 @@ import "../lib/ciProdReadOnlyAuditGuard.mjs";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isOptionAInForce } from "./lib/sensingPostureOnDisk.js";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = resolve(__dir, "../migrations");
@@ -107,6 +108,24 @@ const ALLOWLIST = new Set<string>([
   "highlight_replies.user_id",          // live: replier_id
   "highlight_replies.body",             // does not exist live (thread-based replies)
   "highlight_replies.deleted_at",       // does not exist live
+  // 2996_compass_conversations_phase1_schema.sql AND
+  // 2997_compass_recommendation_lineage.sql USED TO BE ALLOWLISTED HERE — five
+  // entries: compass_conversations.trip_id / .status,
+  // compass_served_recommendations.revoked_at / .revocation_reason and
+  // compass_outcome_events.weight_nudge.
+  //
+  // REMOVED 2026-09-20 under this list's own rule ("Remove the entry once the
+  // migration is applied and verified live"). Both files were already on
+  // portava-ci (2026-09-19, ledger rows) and both reached PRODUCTION on
+  // 2026-09-20 — 2996 at 19:46:26 UTC, 2997 at 19:49:28, each rehearsed in a
+  // rolled-back transaction first and each carrying a schema_migration_ledger
+  // row. All five columns are read back in
+  // snapshots/20260920-production-schema.json, so this check now passes on them
+  // because they are PRESENT, not because they are excused — which is the only
+  // reason to remove an entry from this list, exactly as the 2970 note below
+  // states. 2997's validated cascading FK from compass_outcome_events to
+  // compass_served_recommendations is not this check's scope (columns only);
+  // audit:schema owns it.
   "plan_checkins.plan_item_id",         // live: plan_geofence_id
   "plan_attendance_events.plan_item_id", // live: plan_geofence_id
   "plan_attendance_events.metadata",    // live: details
@@ -246,6 +265,46 @@ const ALLOWLIST = new Set<string>([
   // docs/migrations.md — NOT when the migration merges.
   "layover_recommendations.travel_time_source",  // 2745 — where the row's travel figure came from
 ]);
+
+// ── 2481: NOT PENDING AN APPLY — PENDING NEVER ───────────────────────────────
+//
+// Every other entry above means "this column is coming; remove the entry when
+// the apply is certified". This one is the opposite and is kept separate so it
+// cannot be read as the same kind of promise.
+// `sensing_contribution_sessions.issued_to_profile_id` is declared by
+// 2481_sensing_sessions_option_a_issuer.sql, whose first line reads "OPTION A
+// ONLY ... Do NOT apply under Option B; under Option B this file is never run
+// and the column never exists." The owner took Option B in #510. The column is
+// absent live because it MUST be absent, and it is never coming while the
+// posture holds.
+//
+// The check reads migrations on disk and columns in the live schema and cannot
+// know a file must never run, so it reports this one as missing on every run —
+// the second half of main's standing 2481 red (the other half is
+// auditMigrationsVsLive.ts, which carries the same reasoning at more length,
+// including why the stale-looking schema_migration_ledger row for 2481 is
+// load-bearing and must not be pruned).
+//
+// DERIVED FROM THE POSTURE, NOT PINNED. Under Option A this column must exist
+// and its absence is a real finding, so the entry is conditional on the
+// constant that decides which posture is in force. Flip
+// lib/sensingAuthPosture.ts back to `authenticated_only` and this allowance
+// disappears on the next run rather than silently outliving the decision that
+// justified it. The constant is read as TEXT rather than imported — importing it
+// would widen the sensing stack's importer set, which §9.1 guards on purpose;
+// scripts/lib/sensingPostureOnDisk.ts carries the reasoning and fails closed.
+//
+// WHAT IS AND IS NOT BROKEN WHILE THIS IS ALLOWED: nothing, and structurally so
+// rather than by luck. Under Option B no session is profile-issued, so there is
+// no value this column would hold; §3's rule is that a contribution record must
+// not carry a permanent account key, and 2481 was the narrowly-justified
+// exception Option A needed. Without Option A the exception is not needed and
+// not taken. VERIFIED ON portava-ci 2026-09-21: the column, both constraints,
+// the index and revoke_sensing_sessions_for_profile are all absent, while
+// 2480's own table is present.
+if (!isOptionAInForce()) {
+  ALLOWLIST.add("sensing_contribution_sessions.issued_to_profile_id");
+}
 
 // ── Superseded / known-drifted migration files ────────────────────────────────
 //

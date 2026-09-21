@@ -74,6 +74,7 @@ interface DecisionBody {
   candidate?: { live: boolean; crowdLevel: string | null };
   current?: { live: boolean; crowdLevel: string | null } | null;
   liveIntelligenceReadable?: boolean;
+  confirmation?: { required: boolean; reason: string };
 }
 
 const ON = { flag: "compass_decision_enabled", enabled: true };
@@ -121,6 +122,8 @@ describe("GET /api/compass/decision", () => {
     // source_count 30 ⇒ the read path's "several" bucket ⇒ corroborated.
     assert.equal(r.body.grounding?.truthClass, "corroborated");
     assert.equal(r.body.grounding?.coverage, "several");
+    // CCL-08: the confirmation requirement travels on the wire with the decision.
+    assert.deepEqual(r.body.confirmation, { required: false, reason: "no_committed_plan_changes" });
     assert.equal(r.body.grounding?.confidence, "live");
     assert.equal(r.body.interception?.reachable, true);
     assert.equal(r.body.liveIntelligenceReadable, true);

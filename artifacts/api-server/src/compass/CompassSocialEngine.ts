@@ -22,7 +22,19 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CompassProfile } from "./types.js";
-import { canViewCirclePresenceBatch, type ContextType } from "../lib/circleAccessGuard.js";
+import {
+  canViewCirclePresenceBatch,
+  canBeSeenByViewersBatch,
+  type ContextType,
+} from "../lib/circleAccessGuard.js";
+// census-compass CTG-08 — §30A.1 "canonical relationship model; no independent
+// inference". `sharesSocialContext` below used to be a FOURTH relationship
+// resolver with its own vocabulary; it now consumes the canonical one and this
+// file infers no relationship of its own. See the function's header.
+import {
+  resolveInteractionPermissions,
+  type RelationshipLabel,
+} from "../services/interactionPermissions.js";
 import { nameVisibilitySet } from "../lib/publicIdentity.js";
 import { wrapUgc } from "./CompassStructuredContext.js";
 // The ONE place a date of birth becomes an age a gate may act on. This file
@@ -426,8 +438,47 @@ export async function getWhosAround(
   viewerId: string,
   hidden: Set<string>,
 ): Promise<{ people: WhosAroundEntry[]; contextsChecked: number }> {
+  const { found, contextsChecked } = await collectPresence(sc, viewerId, hidden);
+  return { people: found.map((f) => f.entry).slice(0, 20), contextsChecked };
+}
+
+/**
+ * One gated presence reading, with the two things `WhosAroundEntry` must NOT
+ * carry to the model: the target's user id, and the raw presence row.
+ *
+ * This type is NOT exported. It exists because CT-12 needs the target id to ask
+ * the second privacy question (can the target see the VIEWER?), and asking that
+ * question about a person whose id had already been dropped would mean
+ * re-deriving it — which is how a privacy-carrying identifier ends up being
+ * looked up twice through two different gates.
+ */
+interface PresenceFinding {
+  targetId: string;
+  entry: WhosAroundEntry;
+  ctx: ContextRef;
+  /** The guard's staleness verdict, not the row's `is_stale` column. */
+  isStale: boolean;
+  /** ISO, from the row the guard already read. */
+  lastSeenAt: string | null;
+  staleAfterSecs: number | null;
+  visibilityMode: string;
+}
+
+/**
+ * The gated walk both "who's around" and CT-12's meetup opportunities rest on.
+ *
+ * Unchanged in every privacy respect from the `getWhosAround` body it was
+ * extracted from: hidden users removed BEFORE any presence lookup, every target
+ * through `canViewCirclePresenceBatch`, fail-closed per target, approximate
+ * granularity only.
+ */
+async function collectPresence(
+  sc: SupabaseClient,
+  viewerId: string,
+  hidden: Set<string>,
+): Promise<{ found: PresenceFinding[]; contextsChecked: number }> {
   const contexts = await activeContexts(sc, viewerId);
-  const people: WhosAroundEntry[] = [];
+  const found: PresenceFinding[] = [];
   const seenUsers = new Set<string>();
 
   for (const ctx of contexts) {
@@ -470,73 +521,296 @@ export async function getWhosAround(
       const p = profById.get(r.targetId) ?? {};
       const handle = p.handle ? `@${p.handle}` : null;
       const realName = allowedNames.has(r.targetId) ? (p.display_name ?? p.name ?? null) : null;
+      const isStale = Boolean((r.access as any).isStale);
 
-      people.push({
-        label: realName ?? handle ?? "A traveler",
-        handle,
-        status: String(row["status"] ?? "active"),
-        statusLabel: row["status_label"] ? wrapUgc(String(row["status_label"])) : null,
-        approximateArea:
-          mode === "approximate_area" && row["approximate_label"]
-            ? wrapUgc(String(row["approximate_label"]))
-            : null,
-        venue:
-          mode === "venue_checkin" && row["checked_in"] && row["venue_label"]
-            ? wrapUgc(String(row["venue_label"]))
-            : null,
-        isStale: Boolean((r.access as any).isStale),
-        context: { type: ctx.type, title: wrapUgc(ctx.title) },
+      found.push({
+        targetId: r.targetId,
+        ctx,
+        isStale,
+        lastSeenAt: row["last_seen_at"] ? String(row["last_seen_at"]) : null,
+        staleAfterSecs:
+          typeof row["stale_after_secs"] === "number" ? (row["stale_after_secs"] as number) : null,
+        visibilityMode: mode,
+        entry: {
+          label: realName ?? handle ?? "A traveler",
+          handle,
+          status: String(row["status"] ?? "active"),
+          statusLabel: row["status_label"] ? wrapUgc(String(row["status_label"])) : null,
+          approximateArea:
+            mode === "approximate_area" && row["approximate_label"]
+              ? wrapUgc(String(row["approximate_label"]))
+              : null,
+          venue:
+            mode === "venue_checkin" && row["checked_in"] && row["venue_label"]
+              ? wrapUgc(String(row["venue_label"]))
+              : null,
+          isStale,
+          context: { type: ctx.type, title: wrapUgc(ctx.title) },
+        },
       });
       seenUsers.add(r.targetId);
     }
   }
 
-  return { people: people.slice(0, 20), contextsChecked: contexts.length };
+  return { found, contextsChecked: contexts.length };
+}
+
+// ── CT-12: presence → a meetup OPPORTUNITY ────────────────────────────────────
+
+/**
+ * A suggested meeting occasion with someone nearby.
+ *
+ * census-compass CT-12 recorded that `get_whos_around` "is real and
+ * privacy-correct … but produces presence, not an opportunity". This is the
+ * step it names: an OCCASION, carrying WHY it is one and WHEN it holds — and it
+ * exists only when BOTH parties' privacy allows it.
+ *
+ * Everything in here is derived from what the two people already chose to
+ * share. There is no place, no time and no reason in this structure that was
+ * not read off a gated presence row.
+ */
+export interface MeetupOpportunity {
+  /** @handle, or the opted-in real name — exactly the label the gate allowed. */
+  label: string;
+  handle: string | null;
+  /** The shared trip/event this meeting would happen inside. */
+  context: { type: ContextType; title: string };
+  /** The suggestion, phrased only from what they shared. */
+  occasion: string;
+  /** Where, at THEIR granularity. Null when they share only a status. */
+  where: string | null;
+  whereGranularity: "venue_checkin" | "approximate_area" | "none";
+  /** WHY this is an occasion — each line a fact, not an inference. */
+  why: string[];
+  /**
+   * WHEN. The window opens now and closes when their own sharing goes stale —
+   * their setting, not a number this module chose. `null` when the row does not
+   * state one, which is said rather than filled in.
+   */
+  when: { startsNow: true; expiresInMinutes: number | null; basis: string };
+  reasonCodes: string[];
+}
+
+/** The occasion's window, from the sharer's own staleness setting. */
+function meetupWindow(f: PresenceFinding, nowMs: number): MeetupOpportunity["when"] {
+  const lastSeen = f.lastSeenAt ? Date.parse(f.lastSeenAt) : NaN;
+  if (!Number.isFinite(lastSeen) || f.staleAfterSecs === null) {
+    return {
+      startsNow: true,
+      expiresInMinutes: null,
+      basis: "how long their sharing stays current is not stated",
+    };
+  }
+  const expiresAt = lastSeen + f.staleAfterSecs * 1000;
+  return {
+    startsNow: true,
+    expiresInMinutes: Math.max(0, Math.round((expiresAt - nowMs) / 60_000)),
+    basis: "until what they shared goes stale",
+  };
+}
+
+function buildMeetupOpportunity(f: PresenceFinding, nowMs: number): MeetupOpportunity {
+  const e = f.entry;
+  const why: string[] = [`you are both in ${e.context.title}`];
+  const reasonCodes = ["SHARED_CONTEXT", "BOTH_SHARING_PRESENCE"];
+
+  let where: string | null = null;
+  let whereGranularity: MeetupOpportunity["whereGranularity"] = "none";
+  let occasion: string;
+  if (e.venue) {
+    where = e.venue;
+    whereGranularity = "venue_checkin";
+    reasonCodes.push("VENUE_CHECKIN");
+    why.push(`they checked in at ${e.venue}`);
+    occasion = `join ${e.label} at ${e.venue}`;
+  } else if (e.approximateArea) {
+    where = e.approximateArea;
+    whereGranularity = "approximate_area";
+    reasonCodes.push("APPROXIMATE_AREA");
+    why.push(`they are sharing that they are around ${e.approximateArea}`);
+    occasion = `meet ${e.label} somewhere around ${e.approximateArea}`;
+  } else {
+    reasonCodes.push("STATUS_ONLY");
+    why.push(`they are sharing a status (${e.status}) and not a location`);
+    // No place is named, because none was shared. Proposing one would be this
+    // module inventing the only fact the occasion turns on.
+    occasion = `message ${e.label} to agree where and when`;
+  }
+  if (e.statusLabel) why.push(`their status: ${e.statusLabel}`);
+
+  return {
+    label: e.label,
+    handle: e.handle,
+    context: e.context,
+    occasion,
+    where,
+    whereGranularity,
+    why,
+    when: meetupWindow(f, nowMs),
+    reasonCodes,
+  };
+}
+
+/**
+ * CT-12 — "friend nearby → meetup opportunity, subject to BOTH parties'
+ * privacy".
+ *
+ * TWO GATES, AND NEITHER IS WIDENED TO MAKE THIS WORK.
+ *
+ *   viewer → target   `canViewCirclePresenceBatch`, exactly as `getWhosAround`
+ *                     runs it, fail-closed per target. A target who cannot be
+ *                     viewed never reaches this function's output at all: no
+ *                     entry, no placeholder, no redacted row. A redacted row is
+ *                     still a statement that a specific person is nearby, which
+ *                     is the fact the gate refused.
+ *
+ *   target → viewer   `canBeSeenByViewersBatch`, the inverse-shape guard the
+ *                     who-can-see-me screen already uses. A meetup is a
+ *                     two-sided proposal, so a one-sided sharing arrangement is
+ *                     not one. This is the same rule TripSignals applies to
+ *                     `friend_nearby` (`bothSharing`, dropped as
+ *                     `TRIP_PRIVACY_SCOPE`), reached here through the Circle
+ *                     guard rather than re-derived.
+ *
+ * A withheld person is counted and NEVER named: `withheldForPrivacy` is a
+ * number so a caller can say "some people aren't sharing" honestly, and it
+ * carries nothing about who — the count is the only thing this function will
+ * say about them.
+ *
+ * A STALE presence reading yields no occasion either. "They are there now" is
+ * not a fact a stale row carries, and a meetup suggestion is entirely that
+ * claim; staleness is surfaced in `getWhosAround` precisely because it is not
+ * something to act on.
+ */
+export async function getMeetupOpportunities(
+  sc: SupabaseClient,
+  viewerId: string,
+  hidden: Set<string>,
+  opts: { nowMs?: number } = {},
+): Promise<{ opportunities: MeetupOpportunity[]; contextsChecked: number; withheldForPrivacy: number }> {
+  const { found, contextsChecked } = await collectPresence(sc, viewerId, hidden);
+  const nowMs = opts.nowMs ?? Date.now();
+
+  // Group by context: the reciprocity guard is per-context, and one batched
+  // call per context is the same shape the forward guard already uses.
+  const byContext = new Map<string, PresenceFinding[]>();
+  for (const f of found) {
+    if (f.isStale) continue;
+    const key = `${f.ctx.type}:${f.ctx.id}`;
+    const list = byContext.get(key);
+    if (list) list.push(f);
+    else byContext.set(key, [f]);
+  }
+
+  const opportunities: MeetupOpportunity[] = [];
+  let withheldForPrivacy = 0;
+  for (const list of byContext.values()) {
+    const ctx = list[0]!.ctx;
+    let seenBy = new Map<string, { allowed: boolean; presenceRow?: Record<string, any> | null }>();
+    try {
+      seenBy = await canBeSeenByViewersBatch(sc, viewerId, list.map((f) => f.targetId), ctx.type, ctx.id);
+    } catch {
+      // Fail-closed: an unreadable reciprocity check is a closed one. Every
+      // person in this context is withheld, and none is named.
+      withheldForPrivacy += list.length;
+      continue;
+    }
+    for (const f of list) {
+      const access = seenBy.get(f.targetId) ?? { allowed: false };
+      // `allowed` alone is not enough: the guard allows a viewer with no
+      // presence row of their own, and someone who is not sharing presence in
+      // this context is not the other half of a mutual arrangement.
+      if (!(access.allowed && (access as any).presenceRow)) {
+        withheldForPrivacy += 1;
+        continue;
+      }
+      opportunities.push(buildMeetupOpportunity(f, nowMs));
+    }
+  }
+
+  return { opportunities: opportunities.slice(0, 20), contextsChecked, withheldForPrivacy };
 }
 
 // ── Relationship gate for compatibility lookups ───────────────────────────────
 
 /**
- * True when viewer and target share a Circle (either direction of ownership)
- * or an accepted trip. Compatibility is only computable within an existing
- * trusted relationship — never for arbitrary users.
+ * What the CANONICAL relationship model says about this pair, for the one
+ * question Compass asks of it: may compatibility be computed at all?
+ *
+ * `relationship` is `services/interactionPermissions.RelationshipLabel`
+ * verbatim. It is repeated, never translated — a local synonym is how a fourth
+ * vocabulary starts.
+ */
+export interface SocialContextVerdict {
+  /** True only when the canonical verdict shows a shared trip or Circle. */
+  shares: boolean;
+  /** The canonical label. `unavailable` when the canonical read failed. */
+  relationship: RelationshipLabel;
+  reason: "shared_trip" | "shared_circle" | "no_shared_context" | "unavailable";
+}
+
+/**
+ * census-compass CTG-08 — §30A.1 "canonical relationship model; no independent
+ * inference".
+ *
+ * THIS USED TO BE A FOURTH RESOLVER. The census's finding was precise and worth
+ * keeping: the old body "is a fourth relationship resolver with its own
+ * vocabulary — correct and fail-closed, not canonical". It read
+ * `circle_memberships` and `trip_members` itself, decided what "accepted"
+ * meant, and answered a bare boolean whose meaning existed nowhere else. Being
+ * correct was never the problem; being a SECOND OPINION was. A second opinion
+ * drifts — and while it drifts, the two answers disagree about the same pair
+ * and neither knows it.
+ *
+ * It now asks `resolveInteractionPermissions`, whose own header calls it the
+ * "canonical permission engine for all social actions" and which owns
+ * `RelationshipLabel`. Nothing about the relationship is inferred here.
+ *
+ * THE ANSWER IS STRICTLY MORE CLOSED THAN THE OLD ONE, in two ways that are
+ * consequences of consuming the canonical model rather than choices made here:
+ *
+ *   - a BLOCK in either direction now ends it. The canonical engine checks
+ *     blocks at priority 2, fail-closed, and returns `blocked` / `blocks_you` /
+ *     `mutual_block`. The old resolver had no concept of a block at all, so a
+ *     blocked pair who shared a trip answered `true`. (The tool's own hidden-user
+ *     filter already caught the common case; this closes it at the relationship,
+ *     which is where the fact lives.)
+ *   - a target whose profile the viewer may not view shares no context.
+ *
+ * FAIL-CLOSED, and the three states stay three. The canonical engine THROWS on
+ * a failed critical read (blocks) and on `DegradedPermissionCheckError` — by
+ * design, so that an outage is never reported as a fact about people. Compass
+ * catches it and answers `unavailable`, NOT `stranger`: "we could not check"
+ * and "you two are strangers" are different sentences, and only one of them is
+ * a claim about the pair. Both refuse the lookup.
  */
 export async function sharesSocialContext(
   sc: SupabaseClient,
   viewerId: string,
   targetId: string,
-): Promise<boolean> {
+): Promise<SocialContextVerdict> {
+  let verdict;
   try {
-    // Same circle: owner+member in either direction, or both members of one owner's circle.
-    const { data: rows } = await sc
-      .from("circle_memberships")
-      .select("user_id, other_id, status")
-      .in("other_id", [viewerId, targetId]);
-    const accepted = ((rows ?? []) as any[]).filter((r) => (r.status ?? "accepted") === "accepted");
-    const viewerOwners = new Set(accepted.filter((r) => r.other_id === viewerId).map((r) => r.user_id as string));
-    const targetOwners = new Set(accepted.filter((r) => r.other_id === targetId).map((r) => r.user_id as string));
-    if (viewerOwners.has(targetId) || targetOwners.has(viewerId)) return true;
-    for (const o of viewerOwners) if (targetOwners.has(o)) return true;
-  } catch { /* fall through to trips */ }
-  try {
-    const { data: mine } = await sc
-      .from("trip_members")
-      .select("trip_id, status")
-      .eq("user_id", viewerId);
-    const myTrips = new Set(
-      ((mine ?? []) as any[])
-        .filter((r) => r.status == null || r.status === "accepted")
-        .map((r) => r.trip_id as string),
-    );
-    if (myTrips.size === 0) return false;
-    const { data: theirs } = await sc
-      .from("trip_members")
-      .select("trip_id, status")
-      .eq("user_id", targetId);
-    return ((theirs ?? []) as any[])
-      .filter((r) => r.status == null || r.status === "accepted")
-      .some((r) => myTrips.has(r.trip_id as string));
+    verdict = await resolveInteractionPermissions(sc, viewerId, targetId);
   } catch {
-    return false; // fail-closed: no provable relationship → no compatibility lookup
+    // An unreadable canonical model is a closed gate, and says only that.
+    return { shares: false, relationship: "unavailable", reason: "unavailable" };
   }
+  // `canViewProfile` is the canonical engine's own precondition for any
+  // downstream capability ("canViewProfile=false → all downstream action
+  // capabilities are false"). Compatibility is such a capability.
+  if (!verdict.canViewProfile) {
+    return { shares: false, relationship: verdict.relationshipLabel, reason: "no_shared_context" };
+  }
+  // The shared-context FACTS the canonical engine computed. They are read
+  // rather than re-derived, and rather than matched against `relationshipLabel`
+  // alone — that label is a priority-ordered single value, so a friend who also
+  // shares a trip is labelled `friend`, and the trip is still a shared context.
+  if (verdict.context.sharedTrip) {
+    return { shares: true, relationship: verdict.relationshipLabel, reason: "shared_trip" };
+  }
+  if (verdict.context.sharedCircle) {
+    return { shares: true, relationship: verdict.relationshipLabel, reason: "shared_circle" };
+  }
+  return { shares: false, relationship: verdict.relationshipLabel, reason: "no_shared_context" };
 }

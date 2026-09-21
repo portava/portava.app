@@ -15,7 +15,12 @@
  *                          scored. UNGATED — no flag, no projection. See
  *                          CompassSafetyAttention.ts.
  *   3. Privacy Guard    → sanitise (strip GPS, hotel addr, admin notes, etc.)
- *   4. Scoring Engine   → rank (per-type weighted formula)
+ *   4. Scoring Engine   → rank (per-type weighted formula), plus the SHARED
+ *                          platform projections for the turn in flight
+ *                          (census-compass CCL-05): the nine-context kernel and,
+ *                          behind its own flag, the opportunity projections,
+ *                          as bounded named ranking factors. See the block at
+ *                          `askProjections` below.
  *   5. Plan B           → next-best same-category alternative for every pick a
  *                          live constraint took out or displaced.
  *
@@ -31,7 +36,8 @@ import type { CompassItem, CompassProfile, CompassContext } from "./types.js";
 import { runSafetyFilter } from "./CompassSafetyFilter.js";
 import { runEligibilityCheck } from "./CompassEligibilityEngine.js";
 import { sanitizeItem } from "./CompassPrivacyGuard.js";
-import { scoreItem, type ScoreResult } from "./CompassScoringEngine.js";
+import { kernelRankingForItem, scoreItem, type ScoreResult } from "./CompassScoringEngine.js";
+import { currentAskProjections, type AskRankingProjections } from "./CompassPlatformContext.js";
 import {
   annotateCandidate,
   loadMemoryPreferenceTags,
@@ -99,6 +105,25 @@ export interface PipelineLiveConstraintsSummary {
   planB:           PlanBEntry[];
 }
 
+/**
+ * CCL-05 — decision exposure for the shared projections, the same way
+ * `liveConstraints` exposes the live stage. `consumed` false means no turn
+ * established projections for this run (the feed, a job, a pre-CCL-05 caller):
+ * every count is 0 and the ranking is byte-for-byte the pre-CCL-05 ranking.
+ */
+export interface PipelineSharedProjectionsSummary {
+  consumed:          boolean;
+  /** Candidates the kernel carried a subject for. */
+  subjectsMatched:   number;
+  /** Candidates the projections actually moved (boost > 0). */
+  boosted:           number;
+  /**
+   * Opportunity projections available to the ranker — null when the caller's
+   * `opportunity_engine_enabled` read did not admit them. Null ≠ 0.
+   */
+  opportunitiesSeen: number | null;
+}
+
 export interface PipelineSummary {
   inputCount:    number;
   blockedCount:  number;
@@ -113,6 +138,8 @@ export interface PipelineSummary {
    * many commercial/entertainment candidates it withheld before scoring.
    */
   safetyAttention:   ReturnType<typeof safetyAttentionOnTheWire>;
+  /** CCL-05 — what the shared platform projections contributed to this ranking. */
+  sharedProjections: PipelineSharedProjectionsSummary;
 }
 
 /** Injectable gate overrides for testing (do not use in production). */
@@ -199,6 +226,31 @@ export async function runPipeline(
   // per pipeline call. Fail-soft: a missing model contributes zero boost.
   const worldModel = await getCityWorldModel(db, profile.currentCity ?? null);
   const now = new Date();
+
+  // CCL-05 — the shared platform projections for the turn in flight.
+  //
+  // `docs/specs/upgrades-v2/01-COMPASS-v2.md:13` puts them BETWEEN context
+  // assembly and this, the existing ranking owner; census-compass §26.3 held
+  // the row open on exactly that gap ("The ranking owner, CompassPipeline,
+  // still ranks without them"). `/compass/ask` establishes them around its
+  // tool-calling loop (routes/compass.ts, `runWithAskProjections`), so they
+  // arrive here without CompassTools — which merely forwards candidates — having
+  // to carry a kernel it has no use for.
+  //
+  // Read ONCE per batch: every candidate in this run is ranked against the same
+  // turn's world. A caller that established none reads null and ranks exactly as
+  // it did before CCL-05 — no boost, and no invented factor.
+  let askProjections: AskRankingProjections | null = null;
+  try {
+    askProjections = currentAskProjections();
+  } catch (err) {
+    // Not swallowed: the projections are an INPUT to the rank, so a failure to
+    // read them is reported and then degraded honestly to "no projections".
+    logger.warn({ err }, "Compass pipeline: shared projections unreadable — ranking without them (CCL-05)");
+    askProjections = null;
+  }
+  let kernelSubjectsMatched = 0;
+  let kernelBoosted = 0;
 
   const safetyFn     = _testOverrides?.safetyFilter     ?? runSafetyFilter;
   const eligibilityFn = _testOverrides?.eligibilityCheck ?? runEligibilityCheck;
@@ -298,6 +350,18 @@ export async function runPipeline(
       ? [...annotation.factors, wm.factor]
       : annotation.factors;
 
+    // CCL-05 — the shared world / experience / forecast / opportunity
+    // projections, valued for THIS candidate. Bounded and named, the same shape
+    // the world-model boost above uses; zero and factor-less whenever the
+    // kernel carries nothing about this candidate, could not look, or the
+    // viewer declared no preference to rank by.
+    const kernelRank = kernelRankingForItem(sanitized, askProjections);
+    if (kernelRank.subjectId !== null) kernelSubjectsMatched++;
+    if (kernelRank.boost > 0) {
+      kernelBoosted++;
+      rankingFactors = [...rankingFactors, ...kernelRank.factors];
+    }
+
     // IG-07 — a Live DEMOTION (queue above tolerance, packed vs quiet intent)
     // and any 'emerging' soft influence subtract a documented, bounded penalty;
     // the grounded live factors join the "Why this" factors.
@@ -312,7 +376,7 @@ export async function runPipeline(
 
     const result: PipelineResult = {
       item:             sanitized,
-      finalScore:       Math.max(0, scored.finalScore + annotation.memoryBoost + wm.boost - livePenalty),
+      finalScore:       Math.max(0, scored.finalScore + annotation.memoryBoost + wm.boost + kernelRank.boost - livePenalty),
       safetyPassed:     true,
       eligiblePassed:   true,
       privacySanitized: true,
@@ -384,5 +448,13 @@ export async function runPipeline(
       planB,
     },
     safetyAttention: safetyAttentionOnTheWire(safetyReading, safetyHeld.withheld),
+    sharedProjections: {
+      consumed:          askProjections !== null,
+      subjectsMatched:   kernelSubjectsMatched,
+      boosted:           kernelBoosted,
+      // null ≠ 0: null is "the flag did not admit the opportunity half",
+      // 0 is "it did, and nothing was promoted".
+      opportunitiesSeen: askProjections?.opportunities ? askProjections.opportunities.length : null,
+    },
   };
 }

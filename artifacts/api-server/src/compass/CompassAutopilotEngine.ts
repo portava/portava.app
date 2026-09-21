@@ -644,10 +644,91 @@ const APPLYABLE_FIELDS: Record<string, string> = {
   status: "status",
 };
 
+/**
+ * CCL-13 — what became of the EVIDENCE behind a proposal by the time it is
+ * confirmed. `holds`: the issue was recomputed from live inputs and is still
+ * there. `expired`: it was recomputed and is gone, so nothing executes.
+ * `not_revalidated`: it has no live source to recompute from (a simulated
+ * disruption, or a row written before proposals carried their key) — the
+ * change executes on the trip-state checks alone, and SAYS so.
+ */
+export type ProposalEvidence = "holds" | "expired" | "not_revalidated";
+
+/** The issue types whose evidence has a live source this engine can re-read. */
+const REVALIDATABLE_ISSUE_TYPES = new Set<string>(["timing_conflict", "weather_clash", "social_change"]);
+
+/**
+ * Recompute the issue a proposal repairs, from the same detectors that raised
+ * it, and answer whether it is still present. The proposal's `dedupe_key` is
+ * the identity of the issue (`timing:A:B`, `weather:item:day`,
+ * `social:item:cancelled`), so presence is a set lookup and not a judgement.
+ *
+ * A weather clash whose forecast cannot be re-read is `expired`, not
+ * `holds`: `detectWeatherClashes` answers an unreadable forecast with an empty
+ * issue list, and executing a repair because the evidence for it could not be
+ * checked is the exact thing this rule forbids.
+ */
+export async function revalidateProposalEvidence(
+  sc: SupabaseClient,
+  proposal: { trip_id: string; issue_type?: string | null; dedupe_key?: string | null },
+  items: PlanItem[],
+): Promise<{ evidence: ProposalEvidence; reason: string | null }> {
+  const type = proposal.issue_type ?? null;
+  // `buildRepairProposals` keys a proposal as `fix:<issue key>`; the issue's
+  // own key is what the detectors emit, so the prefix is dropped here.
+  const raw = proposal.dedupe_key ?? null;
+  const key = raw && raw.startsWith("fix:") ? raw.slice(4) : raw;
+  if (!type || !key || !REVALIDATABLE_ISSUE_TYPES.has(type)) {
+    return { evidence: "not_revalidated", reason: type && key ? `${type} has no live source to re-read` : "proposal carries no issue key" };
+  }
+  let present = false;
+  if (type === "timing_conflict") {
+    present = detectTimingConflicts(items).some((i) => i.dedupeKey === key);
+  } else if (type === "social_change") {
+    present = (await detectSocialChanges(sc, items)).some((i) => i.dedupeKey === key);
+  } else {
+    const { data: trip } = await sc
+      .from("trips")
+      .select("id, destination_city, start_date, end_date")
+      .eq("id", proposal.trip_id)
+      .maybeSingle();
+    const weather = await detectWeatherClashes(
+      items,
+      ((trip as any)?.destination_city as string | null) ?? null,
+      ((trip as any)?.start_date as string | null) ?? null,
+      ((trip as any)?.end_date as string | null) ?? null,
+    );
+    present = weather.issues.some((i) => i.dedupeKey === key);
+  }
+  return present
+    ? { evidence: "holds", reason: null }
+    : { evidence: "expired", reason: `the ${type.replace("_", " ")} this proposal repairs no longer holds at confirm time` };
+}
+
+/**
+ * The reason a change did not execute because the Trip Kernel was not
+ * available. Its own constant because it is the load-bearing sentence of
+ * census-compass CT-01: what used to happen here instead was a direct write.
+ */
+export const KERNEL_UNAVAILABLE_REASON =
+  "the Trip Kernel is unavailable, so this change was not made — Autopilot never writes trip plans itself";
+
+export interface ApplyProposalResult {
+  applied: number;
+  blocked: string[];
+  evidence: ProposalEvidence;
+  /**
+   * Whether the Trip Kernel was reachable for this proposal. FALSE means every
+   * change was refused for that reason alone and NOTHING was written anywhere;
+   * the caller must not record the confirm as having happened.
+   */
+  kernelAvailable: boolean;
+}
+
 export async function applyProposal(
   sc: SupabaseClient,
-  proposal: { id: string; trip_id: string; user_id: string; changes: any },
-): Promise<{ applied: number; blocked: string[] }> {
+  proposal: { id: string; trip_id: string; user_id: string; changes: any; issue_type?: string | null; dedupe_key?: string | null },
+): Promise<ApplyProposalResult> {
   // Re-verify at confirm time: permissions may have changed and items may
   // have been re-typed since the proposal was created.
   const settings = await getAutopilotSettings(sc, proposal.trip_id, proposal.user_id);
@@ -655,9 +736,36 @@ export async function applyProposal(
   const items = await fetchPlanItems(sc, proposal.trip_id);
   const byId = new Map(items.map((i) => [i.id, i]));
 
+  // CCL-13 — the EVIDENCE is re-verified too, before any change is looked at.
+  // Re-checking permissions and lock types answers "may this still be done";
+  // it never asked "is the reason for doing it still true".
+  const revalidated = await revalidateProposalEvidence(sc, proposal, items);
+  if (revalidated.evidence === "expired") {
+    return { applied: 0, blocked: [`evidence no longer holds: ${revalidated.reason}`], evidence: "expired", kernelAvailable: true };
+  }
+  const evidence = revalidated.evidence;
+
   // Trip Kernel gate, read once per proposal (Trips spec §4.1; domain/trips/commands/tripKernel.ts).
   // routes/compassAutopilot.ts authorized the actor (own pending proposal,
   // accepted member, canEditPlan) before calling; the kernel re-checks crew.
+  //
+  // census-compass CT-01 — "No Compass component may independently invent
+  // canonical trip state; consequential changes pass through the Trip Kernel."
+  // `trip_plan_items` is a canonical Trip aggregate table and this was the one
+  // place Compass wrote it directly. `trip_autopilot_settings` and
+  // `trip_autopilot_proposals` are Compass's OWN tables and are not that.
+  //
+  // NULL here means the kernel is unavailable — the flag is off (its seeded
+  // value, and its value on production and CI), or no service client is
+  // configured. There is deliberately NO flag-off twin below any more: a
+  // direct `trip_plan_items` update as the fallback IS the violation the row
+  // names, and with the flag off that fallback was not a fallback at all — it
+  // was the only path anything ever took. So the confirm refuses, says why,
+  // and leaves the proposal for a retry.
+  //
+  // Safe to ship refusing: the census records "Production: 0 rows in both
+  // autopilot tables", so no live user is mid-flight on this path and no
+  // confirm that works today begins to fail.
   const kernel = await tripKernelClient(sc);
 
   let applied = 0;
@@ -673,6 +781,12 @@ export async function applyProposal(
     }
     if (Object.keys(patch).length === 1) continue;
 
+    // CT-01: checked AFTER the lock-type and permission re-verification above,
+    // so a Fixed or unpermitted item is still refused by NAME with the flag off
+    // — the path CI runs. A kernel gate that short-circuited those checks would
+    // make them untestable on the only path anyone exercises.
+    if (!kernel) { blocked.push(`${c.title}: ${KERNEL_UNAVAILABLE_REASON}`); continue; }
+
     // Trip Kernel path: one command per changed item — MOVE_PLAN for a time /
     // day change, CONFIRM_PLAN / CANCEL_PLAN / COMPLETE_ACTIVITY / UPDATE_PLAN
     // for a status change (§3.3 names). The actor is the proposal's owner (the
@@ -680,38 +794,30 @@ export async function applyProposal(
     // the same confirm replays the receipt and moves nothing twice. The kernel
     // refuses a done/cancelled item changing status where the direct update did
     // not; that lands in `blocked` with the reason, never as a silent skip.
-    if (kernel) {
-      const { updated_at, ...columns } = patch;
-      const commandType = planCommandTypeForPatch({
-        status: columns.status as string | undefined,
-        dayDate: columns.day_date as string | null | undefined,
-        startsAt: columns.starts_at as string | null | undefined,
-        endsAt: columns.ends_at as string | null | undefined,
-      });
-      const r = await executeTripCommand(kernel, {
-        commandId: randomUUID(),
-        tripId: proposal.trip_id,
-        actorUserId: proposal.user_id,
-        expectedTripVersion: null,
-        idempotencyKey: `autopilot:${proposal.id}:${c.itemId}`,
-        type: commandType,
-        payload: { item_id: c.itemId, patch: columns, updated_at },
-      });
-      if (r.ok) { applied++; recordOpportunityCompletion(commandType, r.result, proposal.trip_id, r.duplicate); }
-      else blocked.push(`${c.title}: ${r.reason}`);
-      continue;
-    }
-
-    // trip-kernel:legacy-path — flag-off twin of the plan-item command above.
-    const { error } = await sc
-      .from("trip_plan_items")
-      .update(patch)
-      .eq("id", c.itemId)
-      .eq("trip_id", proposal.trip_id);
-    if (!error) applied++;
-    else blocked.push(`${c.title}: ${error.message}`);
+    const { updated_at, ...columns } = patch;
+    const commandType = planCommandTypeForPatch({
+      status: columns.status as string | undefined,
+      dayDate: columns.day_date as string | null | undefined,
+      startsAt: columns.starts_at as string | null | undefined,
+      endsAt: columns.ends_at as string | null | undefined,
+    });
+    const r = await executeTripCommand(kernel, {
+      commandId: randomUUID(),
+      tripId: proposal.trip_id,
+      actorUserId: proposal.user_id,
+      expectedTripVersion: null,
+      // The census pins this key at CompassAutopilotEngine.ts#autopilot:... and
+      // the receipt at tripKernel.ts#cmd.idempotencyKey. It is handed to the
+      // KERNEL rather than re-implemented beside it, so duplicate-execution
+      // protection is the kernel's one scheme and not a second, weaker twin.
+      idempotencyKey: `autopilot:${proposal.id}:${c.itemId}`,
+      type: commandType,
+      payload: { item_id: c.itemId, patch: columns, updated_at },
+    });
+    if (r.ok) { applied++; recordOpportunityCompletion(commandType, r.result, proposal.trip_id, r.duplicate); }
+    else blocked.push(`${c.title}: ${r.reason}`);
   }
-  return { applied, blocked };
+  return { applied, blocked, evidence, kernelAvailable: kernel !== null };
 }
 
 // ── Trip Heartbeat ────────────────────────────────────────────────────────────

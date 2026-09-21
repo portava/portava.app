@@ -70,6 +70,7 @@
  * response with 503, and the message names which input was missing.
  */
 import { decisionUrgency, byUrgency } from "../domain/trips/services/TripDecisionUrgency.js";
+import { readTripProposal } from "../domain/trips/contracts/TripProposalContract.js";
 import { Router } from "express";
 
 import { requireUser, requireTripMember, sendError } from "../lib/http.js";
@@ -195,6 +196,13 @@ router.get("/trips/:tripId/decisions", asyncHandler(async (req, res) => {
     };
   });
 
+  // §9.3's eight-field contract, read once per row (TripProposalContract.ts,
+  // census-trips TR153) and reused by both the engine's view below and the
+  // wire shape further down — so the two cannot disagree about what a
+  // proposal says, and neither has to know which of the eight are columns and
+  // which are documented payload keys.
+  const contracts = new Map(propRows.map((p) => [p.id as string, readTripProposal(p as any)]));
+
   const proposals: Proposal[] = propRows.map((p) => {
     const payload = (p.payload_json ?? {}) as Record<string, unknown>;
     const verdict = payload.feasibility_verdict;
@@ -203,8 +211,7 @@ router.get("/trips/:tripId/decisions", asyncHandler(async (req, res) => {
       decisionTaskId: typeof payload.decision_task_id === "string" ? payload.decision_task_id : null,
       status: p.status,
       servesGoalIds: stringArray(payload.serves_goal_ids),
-      // §9.3's documented `affectedObjects` key, under either spelling.
-      affectsElementIds: stringArray(payload.affected_objects ?? payload.affectedObjects),
+      affectsElementIds: contracts.get(p.id as string)?.affectedObjects ?? [],
       // NULL when unrecorded or unrecognised. Both are "no basis", and the
       // engine disqualifies on that — it does not default to optimism.
       feasibility: typeof verdict === "string" && FEASIBILITY_VERDICTS.has(verdict)
@@ -267,10 +274,22 @@ router.get("/trips/:tripId/decisions", asyncHandler(async (req, res) => {
       id: r.id, likelihood: r.likelihood, impact: r.impact, status: r.status,
       trigger: r.trigger_json ?? {}, mitigation: r.mitigation_json ?? {},
     })),
-    proposals: propRows.map((p) => ({
-      id: p.id, type: p.proposal_type, status: p.status,
-      decisionRule: p.decision_rule, proposedBy: p.proposed_by,
-      expiresAt: p.expires_at ?? null, payload: p.payload_json ?? {},
+    proposals: propRows.map((p) => {
+      // §9.3's contract, all eight fields, named (census-trips TR153).
+      // `rationale` and `impactSummary` were in the payload and unread by
+      // anything, so a crew deciding a proposal could not see WHY it was made
+      // or WHAT it costs without parsing the payload themselves and guessing
+      // the key. `payload` still carries the type-specific change, minus the
+      // three contract fields lifted out of it.
+      const c = contracts.get(p.id as string)!;
+      return {
+      id: c.id, type: c.type, status: c.status,
+      decisionRule: c.decisionRule, proposedBy: c.proposedBy,
+      affectedObjects: c.affectedObjects,
+      rationale: c.rationale,
+      impactSummary: c.impactSummary,
+      affectedVersion: c.affectedVersion,
+      expiresAt: c.expiresAt, payload: c.payload,
       /** §9.3 counts and whether each rule is met, straight from
        *  trip_proposal_tally. NULL means the tally could not be computed —
        *  never render it as zero votes. */
@@ -285,7 +304,8 @@ router.get("/trips/:tripId/decisions", asyncHandler(async (req, res) => {
        * the unanimous rule turns on.
        */
       myVote: myVotes.get(p.id) ?? null,
-    })),
+      };
+    }),
     /** How many tallies could not be computed. Present so a null tally is a
      *  visible absence rather than something a reader has to infer. */
     tallyFailures,

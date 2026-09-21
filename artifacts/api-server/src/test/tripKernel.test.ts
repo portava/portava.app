@@ -783,8 +783,12 @@ describe("check:trip-kernel-writers (§24 Phase 1 ratchet)", () => {
     assert.deepEqual(v.falseMarkers, []);
     assert.deepEqual(v.refusedExemptions, [], "a trip-kernel:non-aggregate declaration does not match the columns its statement writes");
     assert.deepEqual(v.shrank, [], "the baseline is stale: a file now writes less than it records — lower the entry");
-    assert.equal(rows.reduce((n, r) => n + r.count, 0), 47);
-    assert.equal(rows.reduce((n, r) => n + (r.importsKernel ? r.gated : 0), 0), 41, "kernel-gated writes");
+    // 46, not 47, and 40 gated, not 41, since census-compass CT-01 DELETED
+    // compass/CompassAutopilotEngine.ts's legacy twin rather than merely gating
+    // it: that writer is the first to reach direct 0. With the flag off its
+    // confirm now refuses and leaves the proposal pending.
+    assert.equal(rows.reduce((n, r) => n + r.count, 0), 46);
+    assert.equal(rows.reduce((n, r) => n + (r.importsKernel ? r.gated : 0), 0), 40, "kernel-gated writes");
     assert.equal(rows.reduce((n, r) => n + r.nonAggregate, 0), 5, "writes declared out of the aggregate, per column");
     // 4672f7ac routed routes/events.ts add-event-to-trip through ADD_PLAN, which
     // moved it from ungated to gated (2 -> 1, 40 -> 41). It updated
@@ -807,11 +811,21 @@ describe("check:trip-kernel-writers (§24 Phase 1 ratchet)", () => {
     assert.equal(requests.count, 3);
     assert.equal(ungatedOf(requests), 0, "every direct write in routes/requests.ts has a kernel path");
     // Fourth pass: the satellite plan-item writers keep their legacy twin and gain a kernel path.
-    for (const [file, direct] of [["routes/plan.ts", 2], ["routes/tripReservations.ts", 1], ["routes/telegraphChat.ts", 1], ["routes/hiddenGems.ts", 1], ["routes/compass.ts", 1], ["compass/CompassAutopilotEngine.ts", 1], ["lib/visuals/service.ts", 1], ["routes/airport.ts", 3], ["services/hiddenGems/HiddenGemService.ts", 1]] as const) {
+    for (const [file, direct] of [["routes/plan.ts", 2], ["routes/tripReservations.ts", 1], ["routes/telegraphChat.ts", 1], ["routes/hiddenGems.ts", 1], ["routes/compass.ts", 1], ["lib/visuals/service.ts", 1], ["routes/airport.ts", 3], ["services/hiddenGems/HiddenGemService.ts", 1]] as const) {
       const row = rows.find((r) => r.file === file)!;
       assert.equal(row.count, direct, `${file}: the legacy twin is still there for the flag-off path`);
       assert.equal(ungatedOf(row), 0, `every direct write in ${file} has a kernel path`);
     }
+    // The one that left the list, pinned so it cannot come back unnoticed.
+    // census-compass CT-01 removed CompassAutopilotEngine's legacy twin
+    // outright: `trip_plan_items` is canonical Trip state, the twin was the
+    // ONLY path its confirm ever took with the flag off, and a direct write as
+    // the fallback is precisely what the row forbids. Safe to delete rather
+    // than gate because production holds 0 rows in both autopilot tables.
+    // Pinned at 0 here — not merely absent from the loop — because "we fixed
+    // it" must fail if the write reappears.
+    assert.equal(rows.find((r) => r.file === "compass/CompassAutopilotEngine.ts"), undefined,
+      "compass/CompassAutopilotEngine.ts writes a canonical trip table again — CT-01");
     const admin = rows.find((r) => r.file === "routes/admin.ts")!;
     assert.equal(admin.count, 3);
     assert.equal(admin.gated, 2, "the two visibility hides go through ADMIN_HIDE_TRIP");

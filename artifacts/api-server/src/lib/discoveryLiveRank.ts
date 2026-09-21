@@ -88,6 +88,7 @@ import {
   type PeakInterception,
 } from "./compassDecision.js";
 import { isEmergingInfluenceEligible } from "../compass/CompassLiveConstraints.js";
+import { INTENT_MODES, INTENT_MODE_TO_DECISION_INTENT, type IntentMode } from "./intentModes.js";
 import type { TruthMetadata } from "./experienceTruth.js";
 import type { FreshnessState } from "./mapObjects.js";
 import type { LiveClaimEnvelope } from "./liveClaimRead.js";
@@ -95,11 +96,12 @@ import type { LiveClaimEnvelope } from "./liveClaimRead.js";
 /** The envelope fields this module reads. Structural, so a test double cannot drift. */
 type LiveClaimEnvelopeLike = Pick<LiveClaimEnvelope, "claimType" | "value">;
 
-/** §8's eight intent modes, in the spec's own order and wording. */
-export const DISCOVERY_INTENT_MODES = [
-  "right_now", "tonight", "explore", "quiet", "social", "high_energy", "nearby", "trip",
-] as const;
-export type DiscoveryIntentMode = (typeof DISCOVERY_INTENT_MODES)[number];
+/**
+ * §8's eight intent modes — declared ONCE in lib/intentModes (census-compass
+ * CX-02) and aliased here so Discovery keeps its name without a second list.
+ */
+export const DISCOVERY_INTENT_MODES = INTENT_MODES;
+export type DiscoveryIntentMode = IntentMode;
 
 /**
  * The most positions a row may move on live evidence, in either direction. A
@@ -151,18 +153,18 @@ export interface IntentModeProfile {
 
 export const INTENT_MODE_PROFILES: Readonly<Record<DiscoveryIntentMode, IntentModeProfile>> = {
   // "Right Now": reachable before the window closes, and reachable soon.
-  right_now: { intent: null, weights: { compatibility: 0, forecast: 0.1, travel: 0.3, friction: 0.3, freshness: 0.3, interception: 1, durability: 0 }, queueToleranceMinutes: 15 },
+  right_now: { intent: INTENT_MODE_TO_DECISION_INTENT.right_now, weights: { compatibility: 0, forecast: 0.1, travel: 0.3, friction: 0.3, freshness: 0.3, interception: 1, durability: 0 }, queueToleranceMinutes: 15 },
   // "Tonight": a building trajectory is the point; a fading one is not.
-  tonight:   { intent: null, weights: { compatibility: 0, forecast: 1, travel: 0.1, friction: 0.2, freshness: 0.2, interception: 0.2, durability: 0.3 }, queueToleranceMinutes: 45 },
+  tonight:   { intent: INTENT_MODE_TO_DECISION_INTENT.tonight, weights: { compatibility: 0, forecast: 1, travel: 0.1, friction: 0.2, freshness: 0.2, interception: 0.2, durability: 0.3 }, queueToleranceMinutes: 45 },
   // "Explore": no crowd preference at all; live evidence may only lower.
-  explore:   { intent: "explore", weights: { compatibility: 0, forecast: 0.1, travel: 0.1, friction: 0.3, freshness: 0.1, interception: 0.3, durability: 0 }, queueToleranceMinutes: 30 },
-  quiet:      { intent: "quiet",       weights: { compatibility: 1, forecast: 0.3, travel: 0.2, friction: 0.4, freshness: 0.3, interception: 0.3, durability: 0 }, queueToleranceMinutes: 10 },
-  social:     { intent: "social",      weights: { compatibility: 1, forecast: 0.3, travel: 0.2, friction: 0.3, freshness: 0.3, interception: 0.3, durability: 0 }, queueToleranceMinutes: 30 },
-  high_energy:{ intent: "high_energy", weights: { compatibility: 1, forecast: 0.4, travel: 0.2, friction: 0.2, freshness: 0.3, interception: 0.3, durability: 0 }, queueToleranceMinutes: 45 },
+  explore:   { intent: INTENT_MODE_TO_DECISION_INTENT.explore, weights: { compatibility: 0, forecast: 0.1, travel: 0.1, friction: 0.3, freshness: 0.1, interception: 0.3, durability: 0 }, queueToleranceMinutes: 30 },
+  quiet:      { intent: INTENT_MODE_TO_DECISION_INTENT.quiet,       weights: { compatibility: 1, forecast: 0.3, travel: 0.2, friction: 0.4, freshness: 0.3, interception: 0.3, durability: 0 }, queueToleranceMinutes: 10 },
+  social:     { intent: INTENT_MODE_TO_DECISION_INTENT.social,      weights: { compatibility: 1, forecast: 0.3, travel: 0.2, friction: 0.3, freshness: 0.3, interception: 0.3, durability: 0 }, queueToleranceMinutes: 30 },
+  high_energy:{ intent: INTENT_MODE_TO_DECISION_INTENT.high_energy, weights: { compatibility: 1, forecast: 0.4, travel: 0.2, friction: 0.2, freshness: 0.3, interception: 0.3, durability: 0 }, queueToleranceMinutes: 45 },
   // "Nearby": travel time dominates; nothing else may outrank distance.
-  nearby:    { intent: null, weights: { compatibility: 0, forecast: 0, travel: 1, friction: 0.3, freshness: 0.1, interception: 0.2, durability: 0 }, queueToleranceMinutes: 30 },
+  nearby:    { intent: INTENT_MODE_TO_DECISION_INTENT.nearby, weights: { compatibility: 0, forecast: 0, travel: 1, friction: 0.3, freshness: 0.1, interception: 0.2, durability: 0 }, queueToleranceMinutes: 30 },
   // "Trip": prefers what will STILL be true later over what is momentary.
-  trip:      { intent: null, weights: { compatibility: 0, forecast: 0.2, travel: 0.2, friction: 0.3, freshness: 0.1, interception: 0.2, durability: 1 }, queueToleranceMinutes: 45 },
+  trip:      { intent: INTENT_MODE_TO_DECISION_INTENT.trip, weights: { compatibility: 0, forecast: 0.2, travel: 0.2, friction: 0.3, freshness: 0.1, interception: 0.2, durability: 1 }, queueToleranceMinutes: 45 },
 };
 
 /** The label a mode declares to `experienceValue`; null ⇒ no crowd preference. */

@@ -196,6 +196,29 @@ export interface CompassDecisionResult {
   switchingCost: SwitchingCostReport;
   /** A sentence built from templates over the structured truth; never a model's. */
   summary: string;
+  /**
+   * §10 v2 (CCL-08): "the logical decision result carries … any confirmation
+   * requirement". A FIELD on every result, never an absence: a consumer that
+   * turns a decision into an action must be told, by the engine, whether the
+   * person has to confirm first. Only SWITCH away from a committed current
+   * place requires it — it is the one decision that changes something the
+   * person already chose. GO_NOW / GO_SOON with nothing current, WAIT, STAY,
+   * SKIP and RETURN change no committed plan.
+   */
+  confirmation: ConfirmationRequirement;
+}
+
+export type ConfirmationReason = "leaves_current_plan" | "no_committed_plan_changes";
+
+export interface ConfirmationRequirement {
+  required: boolean;
+  reason: ConfirmationReason;
+}
+
+/** CCL-08. Pure over the decision and whether a current place exists. */
+export function confirmationFor(decision: CompassDecision, hasCurrent: boolean): ConfirmationRequirement {
+  if (decision === "SWITCH" && hasCurrent) return { required: true, reason: "leaves_current_plan" };
+  return { required: false, reason: "no_committed_plan_changes" };
 }
 
 // ── Claim reading (the value vocabularies are the contracts', never re-spelt) ─
@@ -363,6 +386,7 @@ export function decideCompass(input: DecisionInput, nowMs: number): CompassDecis
     interception,
     switchingCost: switching,
     summary: summariseDecision(decision, reasons, candidate, interception),
+    confirmation: confirmationFor(decision, current !== null),
   });
 
   // 1. Safety outranks opportunity.
@@ -421,7 +445,8 @@ const VIBE_WORDS: Readonly<Record<string, string>> = {
 const DECISION_WORDS: Readonly<Record<CompassDecision, string>> = {
   GO_NOW: "Go now", GO_SOON: "Go soon", WAIT: "Wait", STAY: "Stay", SWITCH: "Switch", SKIP: "Skip", RETURN: "Return",
 };
-const TRUTH_WORDS: Readonly<Record<TruthMetadata["truthClass"], string>> = {
+/** The one word list for a truth class in prose; CompassRecommendationEngine reuses it rather than keeping a second. */
+export const TRUTH_WORDS: Readonly<Record<TruthMetadata["truthClass"], string>> = {
   observed: "observed", corroborated: "corroborated by several", inferred: "inferred", predicted: "predicted",
   conflicting: "reports differ", stale: "stale", unknown: "no current evidence",
 };

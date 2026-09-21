@@ -206,9 +206,20 @@ describe("§2 — it costs its adopters nothing new", () => {
 describe("§3 — both bulk lists actually route through it", () => {
   const read = (rel: string): string => readFileSync(new URL(rel, import.meta.url), "utf8");
 
-  it("3a — the Discovery search list and the Compass traveler list each call the projection", () => {
+  it("3a — the Discovery search list and the Compass traveler list each route identity through a projection", () => {
     assert.match(read("../routes/discoverySearch.ts"), /buildListIdentityProjections\(/);
-    assert.match(read("../routes/compass.ts"), /buildListIdentityProjections\(/);
+    // census-compass CP-02 (2026-09-20): the Compass traveler list moved OFF the
+    // batch list projection and onto the stricter per-person consumer one. The
+    // batch variant takes identity ROWS (display_name / avatar_url / …) and the
+    // candidate read no longer selects them — §35 says Compass must not rebuild
+    // person identity, and `buildConsumerProjection(…, "discovery_card", …)` is
+    // the canonical assembler behind the fail-closed `allowDiscoveryPersonCard`
+    // gate. So the claim this case defends is unchanged — the list does not
+    // assemble identity itself — while the symbol that satisfies it moved.
+    // Asserting the OLD symbol here would now require routes/compass.ts to keep
+    // a call it cannot feed.
+    assert.match(read("../routes/compass.ts"), /buildConsumerProjection\(/);
+    assert.match(read("../routes/compass.ts"), /"discovery_card"/);
   });
 
   it("3b — NEITHER list keeps a private copy of the display-name rule", () => {

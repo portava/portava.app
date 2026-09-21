@@ -28,14 +28,31 @@
  * that project, and a model provider. docs/compass/nine-query-eval-runbook.md
  * names all five and where each is read. NEVER point this at production.
  *
+ * ── THE RESULT HISTORY (census-compass CPH-EVAL) ─────────────────────────────
+ *
+ * The row asks for the nine run against EVERY PHASE from Phase 1 on. They have
+ * been run for real once. `--record-history --phase <n>` appends this run to
+ * `docs/compass/eval-history.jsonl`, keyed by phase, run time and commit, so
+ * the run after it can be compared against it and a per-dimension regression
+ * becomes visible. The store ships EMPTY and no run was backfilled into it:
+ * Phases 1..15 are in the past and the measurements nobody took are not
+ * reconstructible. See ./compass-eval-history.mjs and §8 of the runbook.
+ *
  * Usage: node scripts/src/compass-answer-quality-eval.mjs [--adjudication <file.json>]
  *        [--emit-adjudication <file.json>]   write the 76-slot skeleton, all null
+ *        [--phase <n> --record-history]      append this run to the history
+ *        [--history <file.jsonl>]            a store other than the default
+ *        [--history-report]                  print the comparison and exit; runs nothing
  */
 import {
-  evaluateTierA, evaluateTierB, verdictOf, formatReport, EXIT_CODE, EVAL_QUESTIONS,
+  evaluateTierA, evaluateTierB, evaluateTierC, verdictOf, formatReport, EXIT_CODE, EVAL_QUESTIONS,
   collectReferencedIds, blockItemCount,
   ROADMAP_MEASURES, RUN_LEVEL_MEASURES, ADJUDICATION_SIZE,
 } from "./compass-eval-criteria.mjs";
+import {
+  buildRunEntry, appendRun, readHistoryFile, compareHistory, formatHistoryComparison,
+  currentCommit, DEFAULT_HISTORY_PATH,
+} from "./compass-eval-history.mjs";
 import { readFileSync, writeFileSync } from "node:fs";
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -50,6 +67,33 @@ const API = process.env.COMPASS_EVAL_API_BASE_URL ?? "http://localhost:80/api"; 
 // `shape` checks the asked text against that same array, and a criterion that
 // checked a list this file also owned would be checking nothing.
 const QUESTIONS = EVAL_QUESTIONS;
+
+const flagValue = (name) => {
+  const i = process.argv.indexOf(name);
+  return i !== -1 && process.argv[i + 1] && !process.argv[i + 1].startsWith("--") ? process.argv[i + 1] : null;
+};
+const hasFlag = (name) => process.argv.includes(name);
+const HISTORY_PATH = flagValue("--history") ?? DEFAULT_HISTORY_PATH;
+
+/**
+ * `--history-report` reads the store and prints the comparison. It runs NOTHING
+ * — no user, no server, no model — so the history can be read on a machine that
+ * has none of §1's five configuration items.
+ *
+ * Exit codes follow the same convention as the eval itself, which is why this
+ * is not just a print: 2 means "could not be determined", and a store with
+ * fewer than two runs genuinely cannot determine a trend. It is the state this
+ * row is in today and the exit code says so rather than looking clean.
+ */
+if (hasFlag("--history-report")) {
+  const comparison = compareHistory(readHistoryFile(HISTORY_PATH), {
+    fromPhase: flagValue("--from-phase"),
+    toPhase: flagValue("--to-phase"),
+  });
+  console.log(formatHistoryComparison(comparison));
+  process.exit(!comparison.comparable ? EXIT_CODE.INCOMPLETE
+    : comparison.regressions.length ? EXIT_CODE.FAIL : EXIT_CODE.PASS);
+}
 
 async function sb(path, opts = {}) {
   const res = await fetch(`${SUPABASE_URL}${path}`, {
@@ -176,6 +220,11 @@ async function main() {
         quickActions: (body.quickActions ?? []).slice(0, 4),
         intent: body.intent ?? null,
         promptVersion: body.promptVersion ?? null,
+        // census-compass CPH-EVAL: the tools the turn actually executed, as the
+        // route now reports them (meta.toolsUsed), so `tool_selection` is a
+        // measurement against an expected table rather than a reader's guess.
+        // ABSENT (an older server) stays null and is reported, never []`.
+        toolsUsed: Array.isArray(body.meta?.toolsUsed) ? body.meta.toolsUsed : null,
         // Full body keys for debugging
         _bodyKeys: Object.keys(body),
       };
@@ -204,10 +253,47 @@ async function main() {
       adjudication = JSON.parse(readFileSync(process.argv[adjIdx + 1], "utf8"));
     }
     const tierA = evaluateTierA(results);
-    const tierB = evaluateTierB(adjudication);
+    const tierC = evaluateTierC(results);
+    const tierB = evaluateTierB(adjudication, tierC);
     const verdict = verdictOf(tierA, tierB);
-    console.log(formatReport(tierA, tierB, verdict));
+    console.log(formatReport(tierA, tierB, verdict, tierC));
     exitCode = EXIT_CODE[verdict];
+
+    // ── The result history: this run, filed, and compared with the one before ──
+    // Opt-in (`--record-history`), because a dry run against a scratch server
+    // is not a result and the store is append-only: there is no "undo the last
+    // entry". What IS recorded is every real run, PASS or FAIL — a failing run
+    // is the measurement that makes the next regression visible, and a store
+    // that kept only the good runs would be a store that cannot show a
+    // regression at all.
+    if (hasFlag("--record-history")) {
+      try {
+        const entry = buildRunEntry({
+          phase: flagValue("--phase"),
+          commit: currentCommit(),
+          verdict,
+          tierA,
+          tierB,
+          promptVersion: results[0]?.promptVersion ?? null,
+          apiBaseUrl: API,
+          note: flagValue("--note") ?? "",
+        });
+        const file = appendRun(entry, HISTORY_PATH);
+        console.log(`\nRecorded: phase ${entry.phase}, ${entry.ranAt}, commit ${entry.commit.slice(0, 8)}, ` +
+          `verdict ${entry.verdict} → ${file}`);
+        console.log(formatHistoryComparison(compareHistory(readHistoryFile(file))));
+      } catch (e) {
+        // A recording that was asked for and did not happen must not read as a
+        // clean run: the result exists nowhere and the next run has nothing to
+        // compare against. The eval's own verdict is not rewritten downward
+        // past FAIL, but a PASS that was never filed is INCOMPLETE.
+        console.error(`\nNOT RECORDED — this run is not in the history: ${e.message}`);
+        if (exitCode === EXIT_CODE.PASS) exitCode = EXIT_CODE.INCOMPLETE;
+      }
+    } else {
+      console.log(`\n(Not recorded. Re-run with --phase <n> --record-history to file this result in ` +
+        `${HISTORY_PATH} so the next phase can be compared against it.)`);
+    }
 
     // The adjudication is 76 verdicts and nobody is going to hand-write that
     // skeleton from the README. `--emit-adjudication <file>` writes it — every
