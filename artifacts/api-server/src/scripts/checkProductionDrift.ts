@@ -665,7 +665,39 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
   place_momentum: { classification: "unapplied", note: "Place momentum (2892). NO CONSUMER IN src/ AT ALL outside its own tests: grepping the tree for the name, excluding src/migrations, finds only test/placeMomentumSqlParity.test.ts and one table-name list. The classification function it ships is exercised by that parity test against the SQL, so it is not dead — but NOTHING READS THE TABLE, and by the Trips 5.1 rule above it satisfies nothing until something does. Stated here rather than discovered at deploy time." },
 
   // Input-assistance telemetry, migration 2950.
-  input_assistance_telemetry_events: { classification: "unapplied", note: "Input-assistance telemetry (2950). lib/inputAssistance/telemetry.ts names it as TELEMETRY_TABLE and routes/inputAssistance.ts is its door; the payload is REBUILT server-side rather than accepted from the client, which is the property that makes the table safe to have. Absent from production because the branch is unmerged." },
+  // input_assistance_telemetry_events — STRUCK 2026-09-21. It is no longer
+  // "absent from production because the branch is unmerged": 2950 was applied
+  // at 12:11:18 UTC in the same change that strikes this line.
+  //
+  // WHY IT WAS WORTH APPLYING AHEAD OF ITS MERGE. The §44 sink is attached at
+  // boot now (installInputTelemetry.ts + app/_layout.tsx), so events are
+  // produced; without this table the ingest answers 503 and the batcher drops
+  // and counts them. A destination that refuses is not a destination.
+  //
+  // WHAT LANDED: the table, four indexes, eight CHECK constraints, ZERO rows,
+  // and — by design, not omission — NO account id. Every §57 metric over it is
+  // a rate or a quantile, so it needs no column linking a row to a person.
+  //
+  // Verified independently of the file's own postconditions: RLS on with zero
+  // policies, anon and authenticated holding neither SELECT nor INSERT,
+  // service_role holding the writes, 0 account-link columns. Then probed with
+  // controlled data AFTER the apply and cleaned up: a well-formed event was
+  // accepted and read back through its `request_id` (the §44 linkage G355
+  // needs), all THIRTEEN forbidden raw-text prop keys were refused, an
+  // undeclared event name was refused, an oversized props blob was refused, and
+  // the probe left zero rows behind.
+  //
+  // RECORDED RATHER THAN CHANGED: 2950 REVOKEs from anon and authenticated but
+  // issues no explicit GRANT to service_role, which holds its privileges
+  // through Supabase's ALTER DEFAULT PRIVILEGES. That is implicit where the
+  // rest of this band is explicit. It was verified true in production rather
+  // than assumed, and the file was not edited because it is already applied on
+  // portava-ci and an edit would drift its checksum there.
+  //
+  // WHAT THIS DOES NOT CLOSE: G306. The table is one link. The deployed app
+  // host (portava.replit.app) is unreachable from this environment — the egress
+  // gateway answers 403 to CONNECT — so the end-to-end round trip through a
+  // running app has NOT been observed, and the row stays `W`.
 };
 
 /**

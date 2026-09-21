@@ -1,7 +1,7 @@
 # Production public-schema table snapshot
 # project ref : ajrurzioarfkagpuxfnb (travel-buddy, PRODUCTION)
-# captured    : 2026-09-21 11:10 UTC, read-only, via the Supabase MCP execute_sql channel
-# count       : 483 BASE TABLEs in schema public
+# captured    : 2026-09-21 12:12 UTC, read-only, via the Supabase MCP execute_sql channel
+# count       : 484 BASE TABLEs in schema public
 #
 # REFRESHED for 2963 and 2964, applied to production 2026-09-21 07:42-07:43 UTC
 # from merged main fd0b3a6f4, both already applied and certified on portava-ci
@@ -60,6 +60,13 @@
 # prerequisite in check:flag-schema-prerequisites, and because
 # 10_Database_Architecture.md section 8 cites 2217 as THE canonical
 # deny-by-default RLS + grant pattern that this database had no instance of.
+#
+# AND AT 12:12 UTC, for 2950_input_assistance_telemetry_events.sql: the section-44
+# serve log. It ships EMPTY and carries NO account id -- every section-57 metric
+# over it is a rate or a quantile -- with RLS on, zero policies, anon and
+# authenticated holding nothing, and 8 CHECK constraints of which one refuses
+# thirteen raw-text prop keys outright. All thirteen were probed and refused
+# after the apply, independently of the migration's own postconditions.
 activity_events
 admin_access_log
 age_limit_audit_log
@@ -216,6 +223,7 @@ highlight_sources
 highlight_views
 highlights
 identity_verifications
+input_assistance_telemetry_events
 input_selection_history
 intel_claims
 intel_confirmations

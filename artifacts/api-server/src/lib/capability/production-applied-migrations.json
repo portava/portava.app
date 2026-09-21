@@ -501,6 +501,10 @@
   {
    "version": "20260921110940",
    "name": "2217_protected_locations"
+  },
+  {
+   "version": "20260921121118",
+   "name": "2950_input_assistance_telemetry_events"
   }
  ]
 }
