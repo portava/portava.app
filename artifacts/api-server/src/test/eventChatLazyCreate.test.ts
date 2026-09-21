@@ -31,6 +31,7 @@ import eventsRouter from "../routes/events.js";
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
 const ATTENDER_TOKEN = "event-chat-attender-token";
+const HOST_TOKEN     = "event-chat-host-token";
 const ATTENDER_ID    = "aaaaaaaa-ec10-4000-a000-000000000001";
 const HOST_ID        = "bbbbbbbb-ec10-4000-a000-000000000002";
 const EVENT_ID       = "cccccccc-ec10-4000-a000-000000000003";
@@ -94,7 +95,23 @@ interface FakeState {
   trip_members?:          Record<string, any>[];
 }
 
-function makeFakeClient(initialState: FakeState, callerToken: string, callerId: string) {
+/**
+ * `fail` makes the named operation on the named table answer
+ * `{ data: null, error }` — the RESOLVED failure supabase-js really produces,
+ * never a throw. Without it this double modelled only success, so every error
+ * branch in createEventChatThread was unreachable from these tests.
+ */
+interface FailSpec { table: string; op: "insert" | "update" | "select" }
+
+function makeFakeClient(
+  initialState: FakeState,
+  callerToken: string,
+  callerId: string,
+  fail: readonly FailSpec[] = [],
+) {
+  const fails = (table: string, op: FailSpec["op"]): boolean =>
+    fail.some((f) => f.table === table && f.op === op);
+  const dbError = (table: string, op: string) => ({ message: `${table} ${op} failed`, code: "57014" });
   // Mutable state — updates persist within the request so createEventChatThread's
   // conditional-update + re-read pattern resolves correctly.
   const state: Required<FakeState> = {
@@ -144,6 +161,10 @@ function makeFakeClient(initialState: FakeState, callerToken: string, callerId: 
       },
       insert(row: any) {
         pendingInsert = row;
+        // A failing INSERT must not leave the row behind: a double that both
+        // reports an error and writes the row makes the rollback under test
+        // unobservable.
+        if (fails(table, "insert")) return b;
         const rows_to_add = Array.isArray(row) ? row : [row];
         const tbl: any[] = (state as any)[table] ?? [];
         for (const r of rows_to_add) {
@@ -207,7 +228,13 @@ function makeFakeClient(initialState: FakeState, callerToken: string, callerId: 
       then(onF: any, onR?: any)    { return resolveList().then(onF, onR); },
     };
 
-    async function resolve(): Promise<{ data: any; error: null }> {
+    async function resolve(): Promise<{ data: any; error: any }> {
+      if (pendingInsert !== null && fails(table, "insert")) return { data: null, error: dbError(table, "insert") };
+      if (pendingUpdate !== null && fails(table, "update")) return { data: null, error: dbError(table, "update") };
+      if (pendingInsert === null && pendingUpdate === null && pendingUpsert === null
+          && !pendingDelete && fails(table, "select")) {
+        return { data: null, error: dbError(table, "select") };
+      }
       if (pendingDelete) {
         const tbl: any[] = (state as any)[table] ?? [];
         (state as any)[table] = tbl.filter((r) => !filters.every((f) => f(r)));
@@ -229,7 +256,13 @@ function makeFakeClient(initialState: FakeState, callerToken: string, callerId: 
       return { data: _maybe ? (matched[0] ?? null) : (matched[0] ?? null), error: null };
     }
 
-    async function resolveList(): Promise<{ data: any[]; error: null; count: number }> {
+    async function resolveList(): Promise<{ data: any; error: any; count: number }> {
+      if (pendingInsert !== null && fails(table, "insert")) return { data: null, error: dbError(table, "insert"), count: 0 };
+      if (pendingUpdate !== null && fails(table, "update")) return { data: null, error: dbError(table, "update"), count: 0 };
+      if (pendingInsert === null && pendingUpdate === null && pendingUpsert === null
+          && !pendingDelete && fails(table, "select")) {
+        return { data: null, error: dbError(table, "select"), count: 0 };
+      }
       if (pendingDelete) {
         const tbl: any[] = (state as any)[table] ?? [];
         (state as any)[table] = tbl.filter((r) => !filters.every((f) => f(r)));
@@ -383,6 +416,102 @@ describe("Event Chat — lazy thread creation", () => {
         res.body.threadId,
         "events.chat_thread_id must be updated to the newly created threadId",
       );
+    });
+
+    it("the CREATOR is a member of the thread — proven on the path where NOTHING ELSE adds them", async () => {
+      // Deliberately driven through POST /events/:id/publish, not /chat/join.
+      // The join route calls addUserToChatThread(sc, threadId, user.id) right
+      // after createEventChatThread, so a membership assertion made there is
+      // satisfied by that second call and says nothing about the insert inside
+      // createEventChatThread — hand-reverting that insert left the join-path
+      // version of this case GREEN. The publish path has no such second writer:
+      // the only thing that can produce a member row is the insert under test.
+      //
+      // The insert's result was DISCARDED, so a live thread whose own creator
+      // could not see it was indistinguishable from a healthy one.
+      //
+      // REPORTED, not fixed here: createEventChatThread's fourth parameter is
+      // named `hostId` but receives `user.id`. On the JOIN path that is the
+      // attendee, so an event whose chat is first opened by an attendee has a
+      // thread the host is not a member of. Changing that is a chat-membership
+      // decision and touches addUserToChatThread, which is not this lane's file.
+      const client = makeFakeClient(
+        {
+          events: [{ ...BASE_EVENT_ROW, state: "draft" }],
+          event_roles: [{ event_id: EVENT_ID, user_id: HOST_ID, role: "host" }],
+        },
+        HOST_TOKEN,
+        HOST_ID,
+      );
+      _setTestClient(client, true);
+
+      const res = await apiReq("POST", `/api/events/${EVENT_ID}/publish`, undefined, port, HOST_TOKEN);
+      assert.equal(res.status, 200, `publish must succeed for this case to mean anything: ${JSON.stringify(res.body)}`);
+
+      const threads: any[] = client.__state.message_threads ?? [];
+      assert.equal(threads.length, 1, "publish with chat_enabled must create exactly one thread");
+      const threadId = threads[0]!.id;
+
+      const members: any[] = client.__state.message_thread_members ?? [];
+      // Non-zero AND the right row: a count assertion alone passes on a fake
+      // that inserts anything at all.
+      assert.equal(members.length, 1, `expected exactly one member row, got ${JSON.stringify(members)}`);
+      assert.equal(members[0]!.thread_id, threadId);
+      assert.equal(members[0]!.user_id, HOST_ID,
+        "the host who published the event is not a member of its chat thread");
+    });
+
+    it("ROLLS BACK the claim when the message_threads insert fails — no permanent dead end", async () => {
+      // The claim (`UPDATE events SET chat_thread_id = <new> WHERE chat_thread_id IS NULL`)
+      // can only ever be won once. If the thread insert then fails and the claim
+      // is not released, events.chat_thread_id points at a message_threads row
+      // that does not exist and NO later call can repair it — the "silent dead
+      // end" this whole file exists to prevent, arrived at from the other side.
+      const client = makeFakeClient(
+        {
+          events: [{ ...BASE_EVENT_ROW }],
+          event_rsvps: [{ event_id: EVENT_ID, user_id: ATTENDER_ID, status: "going" }],
+        },
+        ATTENDER_TOKEN,
+        ATTENDER_ID,
+        [{ table: "message_threads", op: "insert" }],
+      );
+      _setTestClient(client, true);
+
+      const res = await apiReq("POST", `/api/events/${EVENT_ID}/chat/join`, undefined, port, ATTENDER_TOKEN);
+
+      assert.notEqual(res.status, 200, `a thread that was not created must not be reported: ${JSON.stringify(res.body)}`);
+      assert.ok(!res.body?.threadId, "no threadId may be handed back for a thread that does not exist");
+      const evRow: any = client.__state.events?.find((e: any) => e.id === EVENT_ID);
+      assert.equal(evRow?.chat_thread_id, null,
+        "the claim must be released so a retry can win it — otherwise the event's chat is dead forever");
+      assert.equal((client.__state.message_threads ?? []).length, 0, "no orphan thread row");
+    });
+
+    it("a RETRY after a rolled-back failure succeeds — the healthy twin", async () => {
+      // Without this, "always roll back" or "never claim" would pass the case
+      // above and make chat un-creatable.
+      const state = {
+        events: [{ ...BASE_EVENT_ROW }],
+        event_rsvps: [{ event_id: EVENT_ID, user_id: ATTENDER_ID, status: "going" }],
+      };
+      const failing = makeFakeClient(state, ATTENDER_TOKEN, ATTENDER_ID,
+        [{ table: "message_threads", op: "insert" }]);
+      _setTestClient(failing, true);
+      await apiReq("POST", `/api/events/${EVENT_ID}/chat/join`, undefined, port, ATTENDER_TOKEN);
+
+      // Same event row, carried over with whatever the failed attempt left on it.
+      const healthy = makeFakeClient(
+        { events: failing.__state.events, event_rsvps: failing.__state.event_rsvps },
+        ATTENDER_TOKEN,
+        ATTENDER_ID,
+      );
+      _setTestClient(healthy, true);
+      const res = await apiReq("POST", `/api/events/${EVENT_ID}/chat/join`, undefined, port, ATTENDER_TOKEN);
+
+      assert.equal(res.status, 200, `the retry must succeed: ${JSON.stringify(res.body)}`);
+      assert.ok(res.body.threadId);
+      assert.equal((healthy.__state.message_threads ?? []).length, 1);
     });
 
     it("returns 403 when the user does not have a Going RSVP", async () => {

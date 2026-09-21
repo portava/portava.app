@@ -32,6 +32,12 @@ export function useSearchSuggestions(query: string, opts: UseSearchSuggestionsOp
   const { lat, lng, city, enabled = true } = opts;
   const [groups, setGroups] = useState<SuggestGroup[]>([]);
   const [loading, setLoading] = useState(false);
+  /**
+   * The last answer was a REFUSAL, not a result — the server did not read the
+   * sources. `groups` then holds whatever was on screen before, deliberately,
+   * so a consumer that renders "no matches" must consult this first.
+   */
+  const [refused, setRefused] = useState(false);
 
   const cacheRef = useRef<Map<string, CacheEntry>>(new Map());
   const abortRef = useRef<AbortController | null>(null);
@@ -52,6 +58,7 @@ export function useSearchSuggestions(query: string, opts: UseSearchSuggestionsOp
       seqRef.current++;
       setGroups([]);
       setLoading(false);
+      setRefused(false);
       return;
     }
 
@@ -64,6 +71,7 @@ export function useSearchSuggestions(query: string, opts: UseSearchSuggestionsOp
       seqRef.current++;
       setGroups(cached.groups);
       setLoading(false);
+      setRefused(false);
       return;
     }
 
@@ -84,6 +92,30 @@ export function useSearchSuggestions(query: string, opts: UseSearchSuggestionsOp
       if (mySeq !== seqRef.current) return; // superseded by a newer keystroke
 
       if (res.ok) {
+        // `ok: true` IS NOT "the server answered". A refusal arrives as
+        // `ok: true` with `groups: []` and a `refusal` on the body, which the
+        // service already parses off for us — so branching on `res.ok` alone
+        // treated an outage as a perfectly good empty typeahead.
+        //
+        // Owner ruling, 2026-09-14: "Do not cache rate limits or outages as
+        // 'this location does not exist.'" and "A distinguishable response body
+        // alone is insufficient if consumers still treat it as successful empty
+        // data." Both halves were being broken here, by one missing check.
+        //
+        // `coverage: "nothing"` means no source was read; the empty `groups` are
+        // padding. A `partial` refusal is NOT this case — the groups it carries
+        // are real, so it is cached and rendered like any other answer, the same
+        // line useCommunityDiscovery draws.
+        const refusedNow = res.refusal?.coverage === 'nothing';
+        setRefused(refusedNow);
+        if (refusedNow) {
+          // Identical handling to the transport-error arm below, and for the
+          // same stated reason: keep whatever was on screen, never flash empty.
+          // Caching this would freeze the outage in for 60s with no further
+          // request able to notice the server had recovered.
+          setLoading(false);
+          return;
+        }
         const cache = cacheRef.current;
         cache.set(key, { groups: res.groups, ts: Date.now() });
         while (cache.size > CACHE_MAX) {
@@ -107,5 +139,5 @@ export function useSearchSuggestions(query: string, opts: UseSearchSuggestionsOp
   // Abort any in-flight request on unmount
   useEffect(() => () => { abortRef.current?.abort(); }, []);
 
-  return { groups, loading };
+  return { groups, loading, refused };
 }

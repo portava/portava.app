@@ -1116,14 +1116,24 @@ function makeGetFallbackErrorClient() {
   let maybeSingleCallCount = 0;
 
   function makeBuilder(table: string) {
+    let lastSelect = "";
     const builder: any = {
-      select() { return builder; },
+      // `requireUser`'s ban gate reads `profiles.account_status` before the route
+      // body runs (lib/http.ts). That is a DIFFERENT read from the ones this
+      // suite is about, and it was silently consuming the first drift error
+      // here — call #1 was the GATE's, not the route's, so this suite was
+      // passing for the wrong reason. Answer the gate honestly and count only
+      // the route's own reads.
+      select(cols?: string) { lastSelect = String(cols ?? ""); return builder; },
       eq() { return builder; },
       neq() { return builder; },
       limit() { return builder; },
       update(patch: any) { void patch; return builder; },
       insert() { return builder; },
       maybeSingle() {
+        if (table === "profiles" && lastSelect.trim() === "account_status") {
+          return Promise.resolve({ data: { account_status: "active" }, error: null });
+        }
         if (table === "profiles") {
           maybeSingleCallCount++;
           if (maybeSingleCallCount === 1) {
@@ -1187,8 +1197,15 @@ function makeGetFallbackSuccessClient() {
   };
 
   function makeBuilder(table: string) {
+    let lastSelect = "";
     const builder: any = {
-      select() { return builder; },
+      // `requireUser`'s ban gate reads `profiles.account_status` before the route
+      // body runs (lib/http.ts). That is a DIFFERENT read from the ones this
+      // suite is about, and it was silently consuming the first drift error
+      // here — call #1 was the GATE's, not the route's, so this suite was
+      // passing for the wrong reason. Answer the gate honestly and count only
+      // the route's own reads.
+      select(cols?: string) { lastSelect = String(cols ?? ""); return builder; },
       eq() { return builder; },
       neq() { return builder; },
       limit() { return builder; },
@@ -1196,6 +1213,9 @@ function makeGetFallbackSuccessClient() {
       update(patch: any) { void patch; return builder; },
       insert() { return builder; },
       maybeSingle() {
+        if (table === "profiles" && lastSelect.trim() === "account_status") {
+          return Promise.resolve({ data: { account_status: "active" }, error: null });
+        }
         if (table === "profiles") {
           maybeSingleCallCount++;
           if (maybeSingleCallCount === 1) {

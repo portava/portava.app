@@ -62,6 +62,8 @@ function makeFakeClient() {
       neq() { return obj; },
       in() { return obj; },
       lt() { return obj; },
+      gt() { return obj; },
+      not() { return obj; },
       order() { return obj; },
       limit() { return obj; },
       maybeSingle() { return resolve(true); },

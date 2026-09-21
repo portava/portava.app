@@ -1,8 +1,9 @@
 /**
- * CompassStarters — the deterministic compass-prompt starter chips (spec §56, §14).
+ * CompassStarters — the compass-prompt starter chips (spec §56, §14).
  *
- * Presentational: renders a wrap of tappable starter prompts (built by
- * `buildCompassStarters`, which is deterministic and FLAG-INDEPENDENT). Tapping a
+ * Presentational: renders a wrap of tappable starter prompts (the server's
+ * `COMPASS_STARTER_SET`, served through the shared gateway and adapted by
+ * `startersFromSuggestions` — census-compass CG-01). Tapping a
  * chip hands its full prompt text up via `onSelect` — the screen decides what to
  * do with it (seed the input for the user to review, per §22 "never auto-submit").
  * Renders `null` when there are no starters. Reuses the shared `SuggestionChip`.

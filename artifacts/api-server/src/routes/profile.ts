@@ -4,6 +4,8 @@ import { requireUser, sendError, safeSecretEquals } from "../lib/http";
 import { nameVisibilitySet } from "../lib/publicIdentity.js";
 import { getServiceClient } from "../lib/supabase";
 import { resolveStoragePath } from "../lib/storagePath.js";
+import { readVerifiedAgeSignal } from "../lib/travelerVerification.js";
+import { gateAgeFrom } from "../lib/gateAge.js";
 import { executeAccountDeletion } from "../services/accountDeletion/AccountDeletionService.js";
 import { retranslateForUser } from "../services/messageTranslation";
 import { shouldRetranslateOnLanguageChange } from "../lib/retranslateGate";
@@ -14,7 +16,7 @@ import { sniffMedia, processImage, type ProcessedImage, type SniffResult } from 
 import { appMediaRef } from "../lib/postSchemas";
 import { computeTrustScore } from "../lib/trustScore.js";
 import { countContentStampsReceived } from "../services/stamps/ContentStampService.js";
-import { countUserTrips } from "../lib/tripCounts.js";
+import { countUserTrips } from "../domain/trips/services/tripCounts.js";
 import { validateUsername } from "../lib/usernameRules.js";
 
 /**
@@ -261,24 +263,24 @@ router.get("/me/profile/analytics", async (req, res) => {
     .eq("user_id", user.id)
     .gte("viewed_at", d7)
     .then(
-      (r: any) => (r.count as number | null) ?? 0,
+      (r: any) => countOrZero(r, "post_impressions_7d", req.log),
       () => 0,
     );
 
-  const profileViews7d   = views7Res.status    === "fulfilled" ? (views7Res.value.count    ?? 0) : 0;
-  const profileViews30d  = views30Res.status   === "fulfilled" ? (views30Res.value.count   ?? 0) : 0;
-  const followerDelta7d  = followers7Res.status === "fulfilled" ? (followers7Res.value.count ?? 0) : 0;
-  const followerDelta30d = followers30Res.status === "fulfilled" ? (followers30Res.value.count ?? 0) : 0;
-  const analyticsStampsEarned = analyticsStampsEarnedRes.status === "fulfilled"
-    ? ((analyticsStampsEarnedRes.value as any).count ?? 0)
-    : 0;
+  // settledCount / settledRows (foot of this file) BIND the `error` an allSettled
+  // `fulfilled` hides. Same answers; a failed read is no longer a silent zero.
+  const profileViews7d   = settledCount(views7Res,     "profile_views_7d",   req.log);
+  const profileViews30d  = settledCount(views30Res,    "profile_views_30d",  req.log);
+  const followerDelta7d  = settledCount(followers7Res, "follower_delta_7d",  req.log);
+  const followerDelta30d = settledCount(followers30Res, "follower_delta_30d", req.log);
+  const analyticsStampsEarned = settledCount(
+    analyticsStampsEarnedRes, "analytics_stamps_earned", req.log,
+  );
   const analyticsMilestones: Array<{ level: number; celebratedAt: string }> =
-    analyticsMilestonesRes.status === "fulfilled"
-      ? (((analyticsMilestonesRes.value as any).data ?? []) as any[]).map((m: any) => ({
-          level: m.milestone_level as number,
-          celebratedAt: m.celebrated_at as string,
-        }))
-      : [];
+    settledRows(analyticsMilestonesRes, "stamp_milestones", req.log).map((m: any) => ({
+      level: m.milestone_level as number,
+      celebratedAt: m.celebrated_at as string,
+    }));
 
   res.status(200).json({
     profileViews: { sevenDay: profileViews7d, thirtyDay: profileViews30d },
@@ -397,8 +399,8 @@ router.get("/me/profile", async (req, res) => {
     return;
   }
 
-  // Completeness score + trust score + stamp count: parallel queries (all fail-open)
-  const [stampRes, tripRes, followersRes, followingRes, trustRes, stampsEarnedRes, contentStampsReceivedRes] = await Promise.allSettled([
+  // Completeness + trust + stamp count: parallel queries, still fail-open, but read out below through settledCount (foot of this file) — which BINDS the `error` an allSettled `fulfilled` hides, so a failed count is no longer a silent zero.
+  const [stampRes, tripRes, followersRes, followingRes, trustRes, stampsEarnedRes, contentStampsReceivedRes, ageSignalRes] = await Promise.allSettled([
     sc ? sc.from("passport_stamps").select("user_id", { count: "exact", head: true }).eq("user_id", user.id).limit(1) : Promise.resolve({ count: 0 }),
     sc ? countUserTrips(sc, user.id) : Promise.resolve({ count: 0 }),
     sc ? sc.from("user_follows").select("follower_id", { count: "exact", head: true }).eq("following_id", user.id) : Promise.resolve({ count: 0 }),
@@ -411,35 +413,49 @@ router.get("/me/profile", async (req, res) => {
     // Uses the paginated/RPC counter so lifetime totals are exact for
     // high-post-count users rather than capped by a single-page query.
     sc ? countContentStampsReceived(sc, user.id) : Promise.resolve(0),
+    // THROUGH THE SEAM (lib/gateAge.ts), and inside the batch that was already
+    // being awaited — so `ageGateRequired` costs one more read and not one more
+    // round trip. The `profiles` row is already in hand as `data`, which is why
+    // this reads only the verification signal and folds the two with the seam's
+    // pure function rather than re-reading the profile.
+    sc ? readVerifiedAgeSignal(sc, user.id) : Promise.resolve(null),
   ]);
-  const hasStamp     = stampRes.status === "fulfilled" && ((stampRes.value as any).count ?? 0) > 0;
-  const tripCount    = tripRes.status === "fulfilled" ? ((tripRes.value as any).count ?? 0) : 0;
+  const hasStamp     = settledCount(stampRes, "passport_stamps", req.log) > 0;
+  const tripCount    = settledCount(tripRes, "trip_count", req.log);
   const hasTrip      = tripCount > 0;
-  const followersCount = followersRes.status === "fulfilled" ? ((followersRes.value as any).count ?? 0) : 0;
-  const followingCount = followingRes.status === "fulfilled" ? ((followingRes.value as any).count ?? 0) : 0;
+  const followersCount = settledCount(followersRes, "followers", req.log);
+  const followingCount = settledCount(followingRes, "following", req.log);
   const trustResult  = trustRes.status === "fulfilled" ? trustRes.value : null;
   // STAMPS reflects both passport milestones and content reactions (Roam/Watch
   // stamps placed by others on this user's posts/media) — counted exactly once
   // via the paginated countContentStampsReceived above.
   const contentStampsReceived = contentStampsReceivedRes.status === "fulfilled" ? contentStampsReceivedRes.value : 0;
-  const stampsEarned = (stampsEarnedRes.status === "fulfilled" ? ((stampsEarnedRes.value as any).count ?? 0) : 0) + contentStampsReceived;
+  const stampsEarned = settledCount(stampsEarnedRes, "user_stamps", req.log) + contentStampsReceived;
 
   const completeness = computeCompleteness(data, hasStamp, hasTrip);
 
-  const ageGateRequired = (() => {
-    const dob = (data as any).date_of_birth as string | null | undefined;
-    if (!dob) return true;
-    const birth = new Date(dob + 'T00:00:00');
-    if (isNaN(birth.getTime())) return true;
-    const now = new Date();
-    let age = now.getFullYear() - birth.getFullYear();
-    const m = now.getMonth() - birth.getMonth();
-    if (m < 0 || (m === 0 && now.getDate() < birth.getDate())) age--;
-    return age < 18;
-  })();
+  // THE FLAG THE CLIENT ACTS ON. It used to be computed from the typed date of
+  // birth alone, right here, with its own copy of the arithmetic — so a user
+  // whose government document says they are a minor was told by the server that
+  // no age gate applied to them, on every profile load.
+  //
+  // `ageSignal` is null only when there is no service client at all, which is
+  // the same "cannot check" state an errored read produces; both fail closed.
+  const ageSignal = ageSignalRes.status === "fulfilled" ? ageSignalRes.value : null;
+  const ageGate = gateAgeFrom(
+    (data as any).date_of_birth as string | null | undefined,
+    ageSignal ?? { verifiedMinor: false, verificationUnreadable: true },
+  );
+  const ageGateRequired = ageGate.state !== "ok" || ageGate.age === null || ageGate.age < 18;
+  // The DISTINCT THIRD ANSWER, on the wire. `ageGateRequired: true` alone
+  // cannot tell a client "this person is under 18" from "we could not check",
+  // and shipping the first when the second is true is a statement about the
+  // user that nothing supports.
+  const ageVerificationUnavailable = ageGate.state === "unreadable";
   res.status(200).json({
     ...mapProfile(data),
     ageGateRequired,
+    ageVerificationUnavailable,
     completeness,
     tripCount,
     followersCount,
@@ -625,12 +641,26 @@ router.patch("/me/profile", async (req, res) => {
       return;
     }
 
-    // 30-day cooldown: enforce via username_updated_at
-    const { data: currentProfile } = await client
+    // 30-day cooldown: enforce via username_updated_at.
+    //
+    // `error` is bound because supabase-js RESOLVES on a database error: an
+    // unreadable `profiles` and "this user has never changed their username"
+    // both arrive as `data: null`, and the guard below is written so that null
+    // means NO COOLDOWN. The restriction therefore disappeared exactly when the
+    // table could not be read — an unread restriction rendering as an absent
+    // one, which is the whole failure this route's rate limit exists to prevent
+    // (a username freed on a change is immediately claimable by anyone).
+    const { data: currentProfile, error: currentProfileErr } = await client
       .from("profiles")
       .select("username, username_updated_at")
       .eq("id", user.id)
       .maybeSingle();
+
+    if (currentProfileErr) {
+      req.log.error({ err: currentProfileErr, userId: user.id }, "profile PATCH: username cooldown read failed");
+      sendError(res, "db_error", "Could not verify your username change eligibility. Please try again.");
+      return;
+    }
 
     if (currentProfile?.username_updated_at && currentProfile.username !== p.username) {
       const lastChanged = new Date(currentProfile.username_updated_at);
@@ -643,12 +673,23 @@ router.patch("/me/profile", async (req, res) => {
       }
     }
 
-    const { data: takenBy } = await client
+    // Same shape: an unreadable `profiles` used to read as "nobody has this
+    // username". The database backstops the correctness half — the live schema
+    // carries `profiles_username_lower_unique`, so the UPDATE below would fail
+    // 23505 rather than mint a duplicate — but the user was then handed a raw
+    // constraint error instead of "that name is taken", and the 30-day cooldown
+    // above had already been skipped by the same failed read. Answer honestly.
+    const { data: takenBy, error: takenByErr } = await client
       .from("profiles")
       .select("id")
       .eq("username", p.username)
       .neq("id", user.id)
       .maybeSingle();
+    if (takenByErr) {
+      req.log.error({ err: takenByErr }, "profile PATCH: username availability read failed");
+      sendError(res, "db_error", "Could not check whether that username is available. Please try again.");
+      return;
+    }
     if (takenBy) {
       sendError(res, "invalid_payload", "Username is already taken");
       return;
@@ -667,14 +708,36 @@ router.patch("/me/profile", async (req, res) => {
     const sc = getServiceClient();
     if (sc) {
       try {
-        const { data: cur } = await sc
+        // RULED FAIL-OPEN, AND THE RULING IS NOW CHECKABLE. `error` was
+        // discarded here, and supabase-js RESOLVES on a database error, so an
+        // unreadable `profiles` arrived as `cur: null` and this block said
+        // "this user had no previous avatar or cover" about a user who had
+        // both. The `catch` above could never fire for that class — PostgREST
+        // failures arrive through `error`, not as a throw — so the failure was
+        // invisible in every direction.
+        //
+        // The ANSWER deliberately does not move: these two URLs decide only
+        // which old storage OBJECT gets deleted after the write commits.
+        // Null means "delete nothing", which orphans a file; a guess in the
+        // other direction would DELETE THE WRONG OBJECT, and that is
+        // unrecoverable. Fail-open is right here and stays. What changes is
+        // that the orphan is now reported rather than produced in silence —
+        // this is the highest-volume orphan producer in the codebase (see the
+        // cleanupOldMedia note below), so a silent one compounds.
+        const { data: cur, error: curErr } = await sc
           .from("profiles")
           .select("avatar_url, cover_photo_url")
           .eq("id", user.id)
           .maybeSingle();
+        if (curErr) {
+          req.log.warn(
+            { err: curErr, userId: user.id },
+            "profile PATCH: prior avatar/cover unreadable — skipping old-media cleanup, the replaced object will be ORPHANED (not deleted blind)",
+          );
+        }
         oldAvatarUrl = (cur as any)?.avatar_url ?? null;
         oldCoverUrl = (cur as any)?.cover_photo_url ?? null;
-      } catch { /* fail-open */ }
+      } catch { /* transport-level only; a PostgREST failure lands in curErr */ }
     }
   }
 
@@ -892,12 +955,43 @@ router.patch("/me/profile", async (req, res) => {
       // detection -- any present value re-fires it, even an unchanged one --
       // because the update has already run here and the prior language is not
       // in scope. Recorded rather than restructured.
-      const { data: prefRow } = await sc
+      // T344 (sibling of the four `routes/messaging.ts` reads): `error` was
+      // DISCARDED here. supabase-js RESOLVES on a database failure, so an
+      // unreadable `profiles` arrived as `prefRow: null`, and the gate was
+      // handed `autoTranslateMessages: undefined` — which it reads, correctly,
+      // as "the preference is unknown, fail closed". THE FALSE SENTENCE is
+      // therefore "this user has not enabled message translation", said about a
+      // user who has: they change their display language, get a 200, and their
+      // existing message translations stay in the OLD language permanently,
+      // because this sweep is fire-and-forget and is never retried.
+      //
+      // NOTE THE DIRECTION, because it is the OPPOSITE of the messaging.ts
+      // defect. There the swallow bound `before = null`, the gate read that as
+      // A CHANGE, and every failing save billed a ~200-message sweep to a PAID
+      // provider. Here the swallow suppresses a sweep the user is entitled to.
+      // Same swallow, same module, opposite blast radius — which is exactly why
+      // the discrimination belongs at each call site and not inside the gate.
+      //
+      // THE ANSWER DOES NOT MOVE, on purpose: "could not read the preference"
+      // must keep meaning "do not spend", and the profile write above has
+      // ALREADY COMMITTED, so turning this into a 503 would tell the client to
+      // retry a save that succeeded. What changes is that the loss is reported.
+      const { data: prefRow, error: prefErr } = await sc
         .from('profiles')
         .select('auto_translate_messages')
         .eq('id', user.id)
         .single();
-      if (shouldRetranslateOnLanguageChange({
+      if (prefErr) {
+        req.log.warn(
+          { err: prefErr, userId: user.id, newLanguage: p.preferredLanguage },
+          'profile PATCH: auto_translate_messages unreadable — language saved, NO retranslation sweep fired; a user with auto-translate ON keeps stale translations',
+        );
+      }
+      // `!prefErr` is redundant with the gate's own fail-closed read of an
+      // undefined preference, and is written anyway: it states at the CALL SITE
+      // that an unread preference is not evidence, so the property survives
+      // anyone later giving `autoTranslateMessages` a permissive default.
+      if (!prefErr && shouldRetranslateOnLanguageChange({
         newLanguage: p.preferredLanguage,
         autoTranslateMessages: (prefRow as any)?.auto_translate_messages,
       })) {
@@ -937,12 +1031,30 @@ router.patch("/me/profile", async (req, res) => {
         const sc = getServiceClient();
         if (!sc) return;
         // Look up the @portava account id.
-        const { data: portavaProfile } = await sc
+        // RULED FAIL-OPEN, AND THE RULING IS NOW CHECKABLE. `error` was
+        // discarded, so an unreadable `profiles` produced `null` and this
+        // returned — THE FALSE SENTENCE being "there is no @portava account",
+        // said about an account that exists. The new user's Pulse/Roam feed is
+        // then empty on day one and nothing ever retries. The answer stays
+        // (auto-following a row we could not read is not an option), but the
+        // two cases get different log lines, because they need different fixes:
+        // one is a DB blip, the other means the official account is missing.
+        const { data: portavaProfile, error: portavaErr } = await sc
           .from("profiles")
           .select("id")
           .eq("username", "portava")
           .maybeSingle();
-        if (!portavaProfile?.id) return;
+        if (portavaErr) {
+          req.log.warn(
+            { err: portavaErr, userId: user.id },
+            "onboarding auto-follow: @portava lookup UNREADABLE (not absent) — new user's feed will start empty",
+          );
+          return;
+        }
+        if (!portavaProfile?.id) {
+          req.log.warn({ userId: user.id }, "onboarding auto-follow: @portava account not found — new user's feed will start empty");
+          return;
+        }
         // Idempotent upsert — safe to call multiple times.
         await sc
           .from("user_follows")
@@ -980,12 +1092,24 @@ router.get("/users/check-username", async (req, res) => {
     return;
   }
 
-  const { data } = await client
+  // supabase-js RESOLVES on a database error, so an unreadable `profiles` used
+  // to fall through to `{ available: true }` — telling the caller a username is
+  // free when it may be taken. That is a wrong statement they will act on: the
+  // PATCH that follows is subject to a 30-day cooldown, so a name accepted here
+  // and rejected there costs them a month. "I could not check" is a different
+  // answer from "it is available" and it must be said out loud.
+  const { data, error } = await client
     .from("profiles")
     .select("id")
     .eq("username", username)
     .neq("id", user.id)
     .maybeSingle();
+
+  if (error) {
+    req.log.error({ err: error }, "check-username: availability read failed");
+    sendError(res, "db_error", "Could not check that username right now. Please try again.");
+    return;
+  }
 
   if (data) {
     res.status(200).json({ available: false, reason: "Username is already taken" });
@@ -1256,16 +1380,26 @@ router.get("/me/account-status", async (req, res) => {
   // request — if so, surface the more specific "pending_deletion" status so
   // the mobile client can show the correct interstitial.
   if (rawStatus === "deactivated") {
-    const { data: deletionRow } = await sc
+    // supabase-js RESOLVES on a database error, so `{ data: null, error }` and
+    // "there is no pending deletion request" arrived here as the same value and
+    // the second `.then` argument — a REJECTION handler — never fired. An
+    // unreadable `user_deletion_requests` therefore reported plain
+    // "deactivated" to a user whose account is in fact counting down to an
+    // irreversible deletion, which is the one status they most need to see (it
+    // is the interstitial that offers them the cancel). Distinguish it: an
+    // unread restriction is not an absent restriction.
+    const { data: deletionRow, error: deletionErr } = await sc
       .from("user_deletion_requests")
       .select("scheduled_at, status")
       .eq("user_id", user.id)
       .eq("status", "pending")
-      .maybeSingle()
-      .then(
-        (r: any) => r,
-        () => ({ data: null }),
-      );
+      .maybeSingle();
+
+    if (deletionErr) {
+      req.log.error({ err: deletionErr, userId: user.id }, "account-status: pending-deletion lookup failed");
+      sendError(res, "db_error", "Could not load account status");
+      return;
+    }
 
     if (deletionRow) {
       res.status(200).json({
@@ -1331,31 +1465,73 @@ router.post("/me/reactivate", async (req, res) => {
     return;
   }
 
-  // Cancel any pending deletion request (awaited so that a subsequent
-  // GET /me/account-status call does not race with the cancellation write).
-  // Fail-open: if the table doesn't exist yet (pre-migration 0094) or the
-  // update fails for any reason, the reactivation itself already succeeded.
-  await sc.from("user_deletion_requests")
+  // ── CANCELLING THE SCHEDULED DELETION IS NOT A SECONDARY WRITE ──────────
+  // A pending `user_deletion_requests` row is a standing instruction to DESTROY
+  // this account: lib/accountDeletionScheduler.ts selects `status = 'pending'
+  // AND scheduled_at <= now()` and runs executeAccountDeletion against every
+  // row it finds, with no human in the loop, and so does
+  // POST /internal/deletion-requests/execute-due below.
+  //
+  // WHAT THIS USED TO DO. `.then(undefined, () => {})`, under a comment calling
+  // the outcome "fail-open" because "the reactivation itself already
+  // succeeded". supabase-js RESOLVES on a database error, so the rejection
+  // handler never ran and the resolved `{ error }` was discarded unread and
+  // unlogged. The user was told `200 { reactivated: true }`, their
+  // account_status was genuinely restored to 'active' — and the deletion row
+  // stayed pending, so the worker deleted the account anyway on its original
+  // schedule. A silent DB error turned a successful reactivation into an
+  // irreversible deletion the user had explicitly cancelled and been told was
+  // cancelled. "Fail-open" is not a description of that outcome.
+  //
+  // So it fails CLOSED, and deliberately does not report success: the account
+  // is left 'active' (the harmless half), the operator gets a loud log, and the
+  // caller gets a retryable error instead of an assurance that is not true. The
+  // update is idempotent, so retrying converges.
+  const { error: cancelErr } = await sc
+    .from("user_deletion_requests")
     .update({ status: "cancelled", cancelled_at: now })
     .eq("user_id", user.id)
-    .eq("status", "pending")
-    .then(undefined, () => {});
+    .eq("status", "pending");
 
-  // Secondary writes are best-effort after the primary write succeeds.
-  // Note: user_account_states is unique on (user_id, state), so clear the
-  // 'deactivated' row rather than upserting on user_id alone. try/catch keeps
-  // this fire-and-forget even if the client shim lacks .delete().
+  if (cancelErr) {
+    req.log.error(
+      { err: cancelErr, userId: user.id },
+      "reactivate: could not cancel the pending deletion request — the account may still be deleted on schedule",
+    );
+    sendError(
+      res,
+      "db_error",
+      "Your account was reactivated but the scheduled deletion could not be cancelled. Please try again.",
+    );
+    return;
+  }
+
+  // Secondary writes are best-effort after the primary writes succeed, but the
+  // failure must be OBSERVABLE: `.then(undefined, cb)` never sees a RESOLVED DB
+  // error. Note: user_account_states is unique on (user_id, state), so clear
+  // the 'deactivated' row rather than upserting on user_id alone. try/catch
+  // keeps this fire-and-forget even if the client shim lacks .delete().
   try {
-    sc.from("user_account_states")
+    void sc.from("user_account_states")
       .delete()
       .eq("user_id", user.id)
       .eq("state", "deactivated")
-      .then(undefined, () => {});
+      .then(
+        ({ error: e }: any) => {
+          if (e) req.log.warn({ err: e }, "reactivate: failed to clear the deactivated account state (non-fatal)");
+        },
+        (err: unknown) => req.log.warn({ err }, "reactivate: account-state clear rejected (non-fatal)"),
+      );
   } catch { /* best-effort */ }
 
-  sc.from("profile_privacy_settings")
+  void sc.from("profile_privacy_settings")
     .upsert({ user_id: user.id, allow_profile_discovery: true, updated_at: now }, { onConflict: "user_id" })
-    .then(undefined, () => {});
+    .then(
+      ({ error: e }: any) => {
+        if (e) req.log.warn({ err: e }, "reactivate: failed to restore profile discovery (non-fatal)");
+      },
+      (err: unknown) => req.log.warn({ err }, "reactivate: discovery restore rejected (non-fatal)"),
+    );
 
   res.status(200).json({ reactivated: true });
 });
@@ -1385,36 +1561,85 @@ router.post("/me/deactivate", async (req, res) => {
     return;
   }
 
-  // Update profile-level account_status (awaited; fail-open if column not yet migrated)
-  await sc
+  // ── THE AUTHORITATIVE STATUS WRITE ──────────────────────────────────────
+  // `profiles.account_status` is the field every downstream restriction reads:
+  // the ban gate in lib/http.ts (`readAccountStatus`), the public map
+  // (lib/mapTravelers.ts `if (prof.account_status !== "active") continue`),
+  // Circle location serving (lib/circleLocationsRead.ts gate 7),
+  // lib/mediaAccess.ts, lib/profileVisibility.ts, and this file's own
+  // GET /me/account-status and POST /me/reactivate (which calls it "the
+  // authoritative field"). `user_account_states` above is a secondary record;
+  // it is NOT what those readers consult.
+  //
+  // WHAT THIS USED TO DO. `.then(undefined, () => {})`. supabase-js RESOLVES on
+  // a database error — it does not reject — so the rejection handler never
+  // fired and the resolved `{ error }` was dropped with no branch and no log. A
+  // failed write returned `200 { deactivated: true }` to a user who remained
+  // ACTIVE and fully visible on the public map, in Circle and through media
+  // access, with nothing anywhere recording that it had not happened. That is
+  // the account-status fail-open in its purest form: an unwritten restriction
+  // rendered to its subject as an applied one.
+  //
+  // The stale rationale that licensed it — "fail-open if column not yet
+  // migrated" — cannot hold on this path: requireUser SELECTed
+  // `profiles.account_status` for this very user microseconds ago and refuses
+  // the request outright when it is unreadable (lib/http.ts, the ban gate), so
+  // the column demonstrably exists on any request that reaches this line.
+  //
+  // Failing the request leaves the account MORE restricted than before, never
+  // less: `user_account_states` is already 'deactivated' and the upsert above
+  // is idempotent, so a retry converges.
+  const { error: statusErr } = await sc
     .from("profiles")
     .update({ account_status: "deactivated" })
-    .eq("id", user.id)
-    .then(undefined, () => {});
+    .eq("id", user.id);
 
-  // Suppress from discovery (fire-and-forget: non-critical)
-  sc.from("profile_privacy_settings")
+  if (statusErr) {
+    req.log.error(
+      { err: statusErr, userId: user.id },
+      "deactivate: profiles.account_status write failed — the account is NOT deactivated",
+    );
+    sendError(res, "db_error", "Could not deactivate your account. Please try again.");
+    return;
+  }
+
+  // Suppress from discovery. Best-effort, but the failure must be OBSERVABLE:
+  // `.then(undefined, cb)` alone never sees a RESOLVED DB error.
+  void sc.from("profile_privacy_settings")
     .upsert({ user_id: user.id, allow_profile_discovery: false, updated_at: now }, { onConflict: "user_id" })
-    .then(undefined, () => {});
+    .then(
+      ({ error: e }: any) => {
+        if (e) req.log.warn({ err: e }, "deactivate: failed to suppress profile discovery (non-fatal)");
+      },
+      (err: unknown) => req.log.warn({ err }, "deactivate: discovery suppression rejected (non-fatal)"),
+    );
 
   // Pause Circle sharing on deactivation — server-side, not client-dependent.
   // Sets paused=true on ALL circle_context_settings rows for this user so
   // their presence is hidden even if the client never calls pause-on-session-end.
   // Note: circle_context_settings uses "paused" (not "is_paused"); the global
   //       circle_visibility_settings uses "is_paused".
-  sc.from("circle_context_settings")
+  void sc.from("circle_context_settings")
     .update({ paused: true, updated_at: now })
     .eq("user_id", user.id)
-    .then(undefined, (err) => {
-      req.log.warn({ err }, "deactivate: failed to pause circle context settings (non-fatal)");
-    });
+    .then(
+      ({ error: e }: any) => {
+        if (e) req.log.warn({ err: e }, "deactivate: failed to pause circle context settings (non-fatal)");
+      },
+      (err: unknown) => req.log.warn({ err }, "deactivate: circle context pause rejected (non-fatal)"),
+    );
 
   // Also pause any active presence rows so they stop appearing on other members' maps.
-  sc.from("circle_presence")
+  void sc.from("circle_presence")
     .update({ status: "paused", updated_at: now })
     .eq("user_id", user.id)
     .eq("status", "active")
-    .then(undefined, () => {});
+    .then(
+      ({ error: e }: any) => {
+        if (e) req.log.warn({ err: e }, "deactivate: failed to pause circle presence (non-fatal)");
+      },
+      (err: unknown) => req.log.warn({ err }, "deactivate: circle presence pause rejected (non-fatal)"),
+    );
 
   res.status(200).json({ deactivated: true });
 });
@@ -1447,23 +1672,49 @@ router.post("/me/delete-request", async (req, res) => {
     return;
   }
 
-  // Deactivate so profile is unavailable to others during the hold period
-  await sc
-    .from("user_account_states")
-    .upsert({ user_id: user.id, state: "deactivated", updated_at: now }, { onConflict: "user_id,state" })
-    .then(undefined, () => {});
+  // Deactivate so profile is unavailable to others during the hold period.
+  // Secondary record; failure is logged but does not fail the request — the
+  // authoritative write is the `profiles.account_status` one below.
+  {
+    const { error: statesErr } = await sc
+      .from("user_account_states")
+      .upsert({ user_id: user.id, state: "deactivated", updated_at: now }, { onConflict: "user_id,state" });
+    if (statesErr) {
+      req.log.warn({ err: statesErr, userId: user.id }, "delete-request: user_account_states write failed (non-fatal)");
+    }
+  }
 
-  // Update profile-level account_status (awaited; fail-open if column not yet migrated)
-  await sc
+  // ── THE AUTHORITATIVE STATUS WRITE ──────────────────────────────────────
+  // Same field, same readers and the same defect as POST /me/deactivate above:
+  // `.then(undefined, () => {})` never observes a supabase-js DB error because
+  // supabase-js RESOLVES rather than rejecting. A failed write here returned
+  // `200 { deletionScheduled: true }` while the account stayed ACTIVE and fully
+  // visible for the entire 30-day hold the user was told it was hidden for.
+  // requireUser has already read this column on this request, so "the column
+  // might not be migrated" is not available as a rationale.
+  const { error: statusErr } = await sc
     .from("profiles")
     .update({ account_status: "deactivated" })
-    .eq("id", user.id)
-    .then(undefined, () => {});
+    .eq("id", user.id);
 
-  // Suppress from discovery (fire-and-forget: non-critical)
-  sc.from("profile_privacy_settings")
+  if (statusErr) {
+    req.log.error(
+      { err: statusErr, userId: user.id },
+      "delete-request: profiles.account_status write failed — the account is NOT hidden during the hold",
+    );
+    sendError(res, "db_error", "Your deletion is scheduled but the account could not be hidden. Please try again.");
+    return;
+  }
+
+  // Suppress from discovery. Best-effort, but the failure must be OBSERVABLE.
+  void sc.from("profile_privacy_settings")
     .upsert({ user_id: user.id, allow_profile_discovery: false, updated_at: now }, { onConflict: "user_id" })
-    .then(undefined, () => {});
+    .then(
+      ({ error: e }: any) => {
+        if (e) req.log.warn({ err: e }, "delete-request: failed to suppress profile discovery (non-fatal)");
+      },
+      (err: unknown) => req.log.warn({ err }, "delete-request: discovery suppression rejected (non-fatal)"),
+    );
 
   res.status(200).json({ deletionScheduled: true, scheduledAt });
 });
@@ -1561,21 +1812,32 @@ router.delete("/me/delete-request", async (req, res) => {
     return;
   }
 
-  // Secondary writes are best-effort after the primary write succeeds.
-  // Note: user_account_states is unique on (user_id, state), so clear the
-  // 'deactivated' row rather than upserting on user_id alone. try/catch keeps
-  // this fire-and-forget even if the client shim lacks .delete().
+  // Secondary writes are best-effort after the primary write succeeds, but the
+  // failure must be OBSERVABLE: `.then(undefined, cb)` never sees a RESOLVED DB
+  // error. Note: user_account_states is unique on (user_id, state), so clear
+  // the 'deactivated' row rather than upserting on user_id alone. try/catch
+  // keeps this fire-and-forget even if the client shim lacks .delete().
   try {
-    sc.from("user_account_states")
+    void sc.from("user_account_states")
       .delete()
       .eq("user_id", user.id)
       .eq("state", "deactivated")
-      .then(undefined, () => {});
+      .then(
+        ({ error: e }: any) => {
+          if (e) req.log.warn({ err: e }, "delete-request DELETE: failed to clear the deactivated state (non-fatal)");
+        },
+        (err: unknown) => req.log.warn({ err }, "delete-request DELETE: account-state clear rejected (non-fatal)"),
+      );
   } catch { /* best-effort */ }
 
-  sc.from("profile_privacy_settings")
+  void sc.from("profile_privacy_settings")
     .upsert({ user_id: user.id, allow_profile_discovery: true, updated_at: now }, { onConflict: "user_id" })
-    .then(undefined, () => {});
+    .then(
+      ({ error: e }: any) => {
+        if (e) req.log.warn({ err: e }, "delete-request DELETE: failed to restore profile discovery (non-fatal)");
+      },
+      (err: unknown) => req.log.warn({ err }, "delete-request DELETE: discovery restore rejected (non-fatal)"),
+    );
 
   res.status(200).json({ cancelled: true });
 });
@@ -1742,13 +2004,26 @@ const PRIVACY_DEFAULTS = {
  * Fetch the show_profile_picture_publicly flag from the profiles table.
  * Defaults to true (public) when the row or column is absent.
  */
-async function fetchShowProfilePicPublicly(sc: ReturnType<typeof getServiceClient>, userId: string): Promise<boolean> {
+async function fetchShowProfilePicPublicly(
+  sc: ReturnType<typeof getServiceClient>,
+  userId: string,
+  log?: { warn: (o: unknown, m: string) => void },
+): Promise<boolean> {
   if (!sc) return true;
-  const { data } = await sc
+  // supabase-js RESOLVES on a database error, so `error` has to be bound for the
+  // failure to be distinguishable from "no row / column absent". This value is
+  // an ECHO of the caller's OWN setting back to the caller — it gates nothing on
+  // this path — so `true` stays the documented default rather than failing the
+  // request, but the failure is no longer invisible.
+  const { data, error } = await sc
     .from("profiles")
     .select("show_profile_picture_publicly")
     .eq("id", userId)
     .maybeSingle();
+  if (error) {
+    log?.warn({ err: error, userId }, "privacy: show_profile_picture_publicly unreadable — echoing the default (true)");
+    return true;
+  }
   if (data && typeof data.show_profile_picture_publicly === "boolean") {
     return data.show_profile_picture_publicly;
   }
@@ -1771,7 +2046,7 @@ router.get("/me/privacy", async (req, res) => {
 
   if (error) {
     if ((error as any).code === "42P01" || (error as any).code === "PGRST205") {
-      const showPicPublicly = await fetchShowProfilePicPublicly(sc, user.id);
+      const showPicPublicly = await fetchShowProfilePicPublicly(sc, user.id, req.log);
       res.status(200).json({ ...PRIVACY_DEFAULTS, user_id: user.id, show_profile_picture_publicly: showPicPublicly });
       return;
     }
@@ -1780,14 +2055,19 @@ router.get("/me/privacy", async (req, res) => {
     return;
   }
 
-  const showPicPublicly = await fetchShowProfilePicPublicly(sc, user.id);
+  const showPicPublicly = await fetchShowProfilePicPublicly(sc, user.id, req.log);
 
   if (!data) {
     // First access: persist defaults so PATCH can merge against a real row
     const defaults = { ...PRIVACY_DEFAULTS, user_id: user.id };
-    sc.from("profile_privacy_settings")
+    void sc.from("profile_privacy_settings")
       .upsert(defaults, { onConflict: "user_id" })
-      .then(undefined, (e: any) => req.log.warn({ err: e }, "privacy/get: failed to seed defaults"));
+      .then(
+        ({ error: e }: any) => {
+          if (e) req.log.warn({ err: e }, "privacy/get: failed to seed defaults");
+        },
+        (err: unknown) => req.log.warn({ err }, "privacy/get: default seeding rejected"),
+      );
     res.status(200).json({ ...defaults, show_profile_picture_publicly: showPicPublicly });
     return;
   }
@@ -1843,14 +2123,35 @@ router.patch("/me/privacy", async (req, res) => {
 
   const now = new Date().toISOString();
 
-  // Fetch existing to merge (prevents overwriting fields not in this PATCH)
-  const existingRes = await sc
+  // Fetch existing to merge (prevents overwriting fields not in this PATCH).
+  //
+  // THE MERGE BASE IS LOAD-BEARING AND IT USED TO FAIL OPEN. This was
+  // `.maybeSingle().then(undefined, () => ({ data: null }))` — a REJECTION
+  // handler on a client that RESOLVES its errors, so an unreadable
+  // `profile_privacy_settings` produced `existing = null` indistinguishably
+  // from "this user has no row yet". `mergedRow` then spread PRIVACY_DEFAULTS
+  // as the base and upserted it, and those defaults are the PERMISSIVE ones
+  // (`allow_tagging: true`, `allow_profile_discovery: true`,
+  // `precise_location_visible` reset). So a one-field PATCH landing during a
+  // transient read failure silently REVERTED every privacy restriction the user
+  // had ever set, wrote the reversion to the database, and returned 200 with
+  // the reverted row as if the user had asked for it.
+  //
+  // A merge base that could not be read is not an empty merge base.
+  const { data: existing, error: existingErr } = await sc
     .from("profile_privacy_settings")
     .select("*")
     .eq("user_id", user.id)
-    .maybeSingle()
-    .then(undefined, () => ({ data: null }));
-  const existing = existingRes.data;
+    .maybeSingle();
+
+  if (existingErr && (existingErr as any).code !== "42P01" && (existingErr as any).code !== "PGRST205") {
+    // 42P01/PGRST205 = the table itself is absent (a legitimate pre-migration
+    // deploy state that GET /me/privacy already handles by serving defaults);
+    // anything else means the row may exist and we cannot see it.
+    req.log.error({ err: existingErr, userId: user.id }, "privacy/patch: could not read existing settings to merge");
+    sendError(res, "db_error", "Could not load your current privacy settings. Please try again.");
+    return;
+  }
 
   // show_profile_picture_publicly lives on `profiles`, not `profile_privacy_settings`.
   // Extract it before building the upsert row so it never reaches the wrong table.
@@ -1879,12 +2180,20 @@ router.patch("/me/privacy", async (req, res) => {
   // Sync show_profile_picture_publicly to the profiles table when the caller changed it.
   // Column added by migration 20260808_header_image_privacy.sql.
   // Fire-and-forget: a failure here is non-fatal — the caller still gets a 200.
+  // Each of these used `.then(undefined, cb)`, whose callback is a REJECTION
+  // handler. supabase-js RESOLVES on a database error, so those callbacks never
+  // ran: the two that "logged a warning" logged nothing for the failure that
+  // actually happens, and the third logged nothing at all. Read the resolved
+  // `{ error }` instead.
   if (showPicPublicly !== undefined) {
-    sc.from("profiles")
+    void sc.from("profiles")
       .update({ show_profile_picture_publicly: showPicPublicly, updated_at: now })
       .eq("id", user.id)
-      .then(undefined, (e: any) =>
-        req.log.warn({ err: e }, "privacy/patch: failed to sync show_profile_picture_publicly to profiles"),
+      .then(
+        ({ error: e }: any) => {
+          if (e) req.log.warn({ err: e }, "privacy/patch: failed to sync show_profile_picture_publicly to profiles");
+        },
+        (err: unknown) => req.log.warn({ err }, "privacy/patch: show_profile_picture_publicly sync rejected"),
       );
   }
 
@@ -1893,15 +2202,35 @@ router.patch("/me/privacy", async (req, res) => {
     const syncVisibility = parsed.data.profile_visibility === "followers_only"
       ? null   // user_privacy_settings encodes "followers_only" as null (falsy private)
       : parsed.data.profile_visibility;
-    sc.from("user_privacy_settings")
+    void sc.from("user_privacy_settings")
       .upsert({ user_id: user.id, profile_visibility: syncVisibility, updated_at: now }, { onConflict: "user_id" })
-      .then(undefined, () => {});
+      .then(
+        ({ error: e }: any) => {
+          if (e) req.log.warn({ err: e }, "privacy/patch: failed to sync user_privacy_settings.profile_visibility");
+        },
+        (err: unknown) => req.log.warn({ err }, "privacy/patch: user_privacy_settings sync rejected"),
+      );
 
-    // Keep profiles.is_private in sync so discovery/search exclusion is applied immediately
-    sc.from("profiles")
+    // Keep profiles.is_private in sync so discovery/search exclusion is applied
+    // immediately. This one is AWAITED AND CHECKED, unlike its two siblings
+    // above: `profiles.is_private` is the column discovery and search actually
+    // exclude on, so a user who sets their profile to private and is answered
+    // 200 while this write silently fails stays fully exposed in exactly the
+    // surfaces they just asked to leave. A false assurance about a privacy
+    // setting is worse than an error the caller can retry.
+    const { error: isPrivateErr } = await sc
+      .from("profiles")
       .update({ is_private: parsed.data.profile_visibility === "private", updated_at: now })
-      .eq("id", user.id)
-      .then(undefined, (e: any) => req.log.warn({ err: e }, "privacy/patch: failed to sync is_private to profiles"));
+      .eq("id", user.id);
+
+    if (isPrivateErr) {
+      req.log.error(
+        { err: isPrivateErr, userId: user.id },
+        "privacy/patch: failed to sync is_private to profiles — discovery/search exclusion NOT applied",
+      );
+      sendError(res, "db_error", "Your visibility setting could not be applied everywhere. Please try again.");
+      return;
+    }
   }
 
   invalidateCompassHomeCache(user.id);
@@ -1910,9 +2239,92 @@ router.patch("/me/privacy", async (req, res) => {
   // If the caller just changed it, use that value directly; otherwise fetch from profiles.
   const effectiveShowPicPublicly = showPicPublicly !== undefined
     ? showPicPublicly
-    : await fetchShowProfilePicPublicly(sc, user.id);
+    : await fetchShowProfilePicPublicly(sc, user.id, req.log);
 
   res.status(200).json({ ...data, show_profile_picture_publicly: effectiveShowPicPublicly });
 });
+
+/**
+ * COUNTER READS — the ruling for every `count` and every list this file reports
+ * out of a `Promise.allSettled` batch, written once instead of eleven times.
+ *
+ * ── THE DEFECT CLASS ────────────────────────────────────────────────────────
+ * supabase-js RESOLVES on a database error. A failed `{ count: "exact" }` read
+ * arrives as `{ count: null, error }` and a failed list read as
+ * `{ data: null, error }` — and `allSettled` reports both as `fulfilled`,
+ * because the promise did fulfil. Every counter on this file's two read paths
+ * then ran the result through `count ?? 0` / `data ?? []` with `error` NEVER
+ * BOUND, so "your profile views could not be read" and "you had no profile
+ * views" were the same number on the wire, and "your milestones could not be
+ * read" and "you have celebrated no milestones" were the same empty list.
+ *
+ * ── RULED HARMLESS, AND WHY THAT IS A RULING AND NOT A SHRUG ────────────────
+ * Every number and list routed through here is REPORTED, never ACTED ON: none
+ * gates a permission, none authorises a write, none is persisted, and none is
+ * read back by the server. `hasStamp` / `hasTrip` feed computeCompleteness,
+ * whose output is a progress percentage shown to the profile's OWN OWNER; an
+ * unreadable counter understates it, which grants nothing and takes nothing
+ * away. So the zero STAYS: turning these into a refusal would take down
+ * GET /me/profile — the app's primary read, which has already successfully
+ * loaded the profile row by this point — because an analytics table blipped.
+ * That trade is the wrong way round.
+ *
+ * ── WHAT ACTUALLY CHANGES ───────────────────────────────────────────────────
+ * The failure stops being INVISIBLE. `error` is bound here rather than
+ * discarded, so the ruling above is checkable at one point rather than
+ * re-derived at each call site, and an operator sees which read failed instead
+ * of a user's honest-looking zero.
+ *
+ * `countUserTrips` is the case that shows why binding matters even when the
+ * answer does not move: it already returns `{ count: null, unavailable: true,
+ * reason }` — the domain layer went to the trouble of distinguishing the third
+ * state — and this route discarded the discrimination one line later.
+ */
+function settledCount(
+  r: PromiseSettledResult<any>,
+  label: string,
+  log?: { warn?: (o: unknown, m: string) => void },
+): number {
+  if (r.status !== "fulfilled") {
+    log?.warn?.({ label, err: r.reason }, "profile counter read REJECTED — reporting 0");
+    return 0;
+  }
+  return countOrZero(r.value, label, log);
+}
+
+/** The settled-value half, shared with the one counter that is awaited directly. */
+function countOrZero(
+  v: any,
+  label: string,
+  log?: { warn?: (o: unknown, m: string) => void },
+): number {
+  if (v?.error) {
+    log?.warn?.({ label, err: v.error }, "profile counter UNREADABLE — reporting 0 (ruling: settledCount)");
+    return 0;
+  }
+  // countUserTrips' own third state, which this route used to discard.
+  if (v?.unavailable === true) {
+    log?.warn?.({ label, reason: v.reason }, "profile counter UNAVAILABLE — reporting 0 (ruling: settledCount)");
+    return 0;
+  }
+  return (v?.count as number | null) ?? 0;
+}
+
+/** The list half of the same ruling: an unreadable table is not an empty one. */
+function settledRows(
+  r: PromiseSettledResult<any>,
+  label: string,
+  log?: { warn?: (o: unknown, m: string) => void },
+): any[] {
+  if (r.status !== "fulfilled") {
+    log?.warn?.({ label, err: r.reason }, "profile list read REJECTED — reporting []");
+    return [];
+  }
+  if (r.value?.error) {
+    log?.warn?.({ label, err: r.value.error }, "profile list UNREADABLE — reporting [] (ruling: settledCount)");
+    return [];
+  }
+  return (r.value?.data as any[] | null) ?? [];
+}
 
 export default router;

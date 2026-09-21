@@ -30,6 +30,16 @@
  * honours the .eq()/.lt() filters on the marketplace tables so the
  * "fresh row untouched" assertion reflects the real query, not the fixture.
  *
+ * The fake also models RETURNING. It used to resolve EVERY update as
+ * `{ data: null, error: null }` — the one shape a zero-row update and a
+ * full-table update share — and `.select()` chained after `.update()` reset it
+ * to a SELECT, so a write's affected-row count was not merely unchecked but
+ * inexpressible. Now a mutation followed by `.select()` resolves to the rows it
+ * MATCHED (`[]` when its filters excluded them all) and every `.in()` is kept
+ * rather than only the last, because the writes carry an id list AND a status
+ * guard. src/test/zeroRowSweeper.test.ts is the suite that exercises the
+ * partial- and zero-match cases this makes visible.
+ *
  * Runtime: node:test + node:assert/strict
  * Run: node --import tsx/esm --test src/test/rentBuddyRequestSweeper.test.ts
  */
@@ -112,34 +122,61 @@ function makeClient(cfg: FakeClientConfig = {}): any {
       let patch: Record<string, unknown> = {};
       const eqs: Record<string, unknown> = {};
       const lts: Record<string, unknown> = {};
-      let inCol: string | null = null;
-      let inVals: string[] = [];
+      // Every .in() is kept, not just the last: the writes now carry BOTH an
+      // id list and a status guard (`.in("id", ids).in("status", [...])`), and
+      // a fake that remembered only the most recent one would record the wrong
+      // filter and mis-answer the RETURNING rows.
+      const ins: Array<{ col: string; vals: string[] }> = [];
+      const inFor = (col: string): string[] | null => ins.find((i) => i.col === col)?.vals ?? null;
       let didInsert = false;
+      // Set by a `.select()` chained AFTER a mutation: that makes the statement
+      // RETURNING, which is the ONLY way supabase-js reports how many rows an
+      // UPDATE matched. Without this the fake resolved every update as
+      // `{ data: null, error: null }` — the shape a zero-row update and a
+      // full-table update share — so it could not express the defect where a
+      // sweep counts and notifies rows its write never touched.
+      let returning = false;
 
       // Apply the captured .eq()/.lt() filters to a fixture set, then project to
       // the { id } shape the marketplace selects request. This is what makes a
       // fresh (future expires_at) row fall out of the result on its own.
+      const matches = (r: any): boolean => {
+        for (const [c, v] of Object.entries(eqs)) {
+          if (r[c] !== v) return false;
+        }
+        for (const [c, v] of Object.entries(lts)) {
+          if (!(r[c] < (v as any))) return false;
+        }
+        for (const { col, vals } of ins) {
+          if (!vals.includes(r[col])) return false;
+        }
+        return true;
+      };
+
       const filterMarket = (rows: MarketRow[]): Array<{ id: string }> =>
-        rows
-          .filter((r) => {
-            for (const [c, v] of Object.entries(eqs)) {
-              if ((r as any)[c] !== v) return false;
-            }
-            for (const [c, v] of Object.entries(lts)) {
-              if (!((r as any)[c] < (v as any))) return false;
-            }
-            return true;
-          })
-          .map((r) => ({ id: r.id }));
+        rows.filter(matches).map((r) => ({ id: r.id }));
 
       const resolveThen = (): Promise<{ data: any; error: any }> => {
         if (op === "update") {
-          updates.push({
-            table,
-            patch,
-            ids: inCol === "id" ? inVals : null,
-          });
-          return Promise.resolve({ data: null, error: null });
+          const ids = inFor("id");
+          updates.push({ table, patch, ids });
+          // The rows this statement MATCHED, which is what a RETURNING update
+          // resolves to. Fixture rows carry their pre-update status, so a write
+          // whose status guard excludes them comes back empty — exactly as
+          // PostgREST would answer, and `null` when no `.select()` was chained.
+          // `noShows` fixtures carry no `status` of their own — the fake answers
+          // phase 3's SELECT with them precisely BECAUSE they are the
+          // no_show_pending set, so that is the status they hold for matching.
+          // Without it, phase 3's write guard (`.eq("status","no_show_pending")`)
+          // would match nothing and the escalation would look like a lost race.
+          const pool: any[] =
+            table === "rent_buddy_bookings"
+              ? [...staleBookings, ...noShows.map((r) => ({ status: "no_show_pending", ...r }))]
+            : table === "rent_buddy_offers"   ? offers
+            : table === "rent_buddy_requests" ? requests
+            : [];
+          const matched = pool.filter(matches).map((r: any) => ({ id: r.id }));
+          return Promise.resolve({ data: returning ? matched : null, error: null });
         }
         if (op === "insert" || op === "delete") {
           return Promise.resolve({ data: null, error: null });
@@ -150,8 +187,9 @@ function makeClient(cfg: FakeClientConfig = {}): any {
           // phases 2/3 use .eq("status"). This used to answer phase 1 with a
           // hard-coded [] — which is why narrowing phase 1's status list changed
           // nothing anywhere in this file. It now applies the real predicates.
-          if (inCol === "status") {
-            const wanted = inVals;
+          const statusIn = inFor("status");
+          if (statusIn) {
+            const wanted = statusIn;
             const rows = staleBookings.filter((r) => {
               if (!wanted.includes(r.status)) return false;
               for (const [c, v] of Object.entries(lts)) {
@@ -201,14 +239,22 @@ function makeClient(cfg: FakeClientConfig = {}): any {
       };
 
       const builder: any = {
-        select() { if (!didInsert) op = "select"; return builder; },
+        select() {
+          // A `.select()` after insert/update/delete is RETURNING, not a new
+          // SELECT. Resetting `op` here is what made the fake blind to the
+          // difference between an update that matched everything and one that
+          // matched nothing.
+          if (op === "select" && !didInsert) op = "select";
+          else returning = true;
+          return builder;
+        },
         insert() { op = "insert"; didInsert = true; return builder; },
         update(p: Record<string, unknown>) { op = "update"; patch = p; return builder; },
         delete() { op = "delete"; return builder; },
         eq(col: string, val: unknown) { eqs[col] = val; return builder; },
         lt(col: string, val: unknown) { lts[col] = val; return builder; },
         gt() { return builder; },
-        in(col: string, vals: string[]) { inCol = col; inVals = vals; return builder; },
+        in(col: string, vals: string[]) { ins.push({ col, vals }); return builder; },
         not() { return builder; },
         is() { return builder; },
         order() { return builder; },

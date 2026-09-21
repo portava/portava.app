@@ -129,25 +129,34 @@ function ScoreHero({ view }: { view: TrustView }) {
 
 function DomainRow({ row }: { row: TrustDomainRow }) {
   const Glyph = domainIcon(row.key);
+  // §10 / census-passport P45 — when the word is NOT a measurement, say so beside
+  // the word. A substituted neutral 50 and a genuinely measured standing
+  // otherwise print identically, which is the conflation that kept P45 open.
+  const note = row.basisNote;
   return (
-    <View
-      style={s.domainRow}
-      accessibilityLabel={`${row.domain}: ${row.standing}`}
-    >
-      <Glyph size={icon.s16} color={row.applicable ? color.deep : color.faint} />
-      <Text style={[s.domainName, !row.applicable && s.domainNameMuted]} numberOfLines={1}>
-        {row.domain}
-      </Text>
+    <View style={s.domainBlock}>
       <View
-        style={[s.standingPill, row.applicable ? s.standingPillOn : s.standingPillOff]}
+        style={s.domainRow}
+        accessibilityLabel={
+          note ? `${row.domain}: ${row.standing}. ${note}` : `${row.domain}: ${row.standing}`
+        }
       >
-        <Text
-          style={[s.standingText, row.applicable ? s.standingTextOn : s.standingTextOff]}
-          numberOfLines={1}
-        >
-          {row.standing}
+        <Glyph size={icon.s16} color={row.applicable ? color.deep : color.faint} />
+        <Text style={[s.domainName, !row.applicable && s.domainNameMuted]} numberOfLines={1}>
+          {row.domain}
         </Text>
+        <View
+          style={[s.standingPill, row.applicable ? s.standingPillOn : s.standingPillOff]}
+        >
+          <Text
+            style={[s.standingText, row.applicable ? s.standingTextOn : s.standingTextOff]}
+            numberOfLines={1}
+          >
+            {row.standing}
+          </Text>
+        </View>
       </View>
+      {note ? <Text style={s.basisNote}>{note}</Text> : null}
     </View>
   );
 }
@@ -498,13 +507,21 @@ const s = StyleSheet.create({
   },
 
   // Domain rows
+  domainBlock: {
+    borderBottomWidth: 1,
+    borderBottomColor: color.haze,
+  },
   domainRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: space.sm,
     paddingVertical: space.md,
-    borderBottomWidth: 1,
-    borderBottomColor: color.haze,
+  },
+  basisNote: {
+    ...t.small,
+    color: color.mute,
+    paddingLeft: space.lg,
+    paddingBottom: space.sm,
   },
   domainName: {
     ...t.body,

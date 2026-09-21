@@ -28,7 +28,14 @@ interface Props {
 }
 
 const DUR_CHOICES = [30, 45, 60, 90, 120];
-const TRAVEL_CHOICES = [0, 10, 20, 30, 45];
+/**
+ * No zero. A stop outside the airport reached in no time is not a journey the
+ * traveller can pick; the chip that offered it wrote a measured `travel_min: 0`
+ * into the plan, and the fit meter then certified a window it had charged
+ * nothing to reach and nothing to come back from (census L47). The server
+ * refuses that write now, so offering it here would only produce an error.
+ */
+const TRAVEL_CHOICES = [10, 20, 30, 45, 60];
 
 export function LayoverPlanSection({
   sessionId, stops, planFit, timezone, canEdit, onChanged, onError,
@@ -86,19 +93,32 @@ export function LayoverPlanSection({
         {busy && <ActivityIndicator size="small" color={color.deep} />}
       </View>
 
-      {/* Fit meter */}
+      {/* Fit meter. THREE answers, not two: the server will not certify a total
+          that omits a journey nobody stated, and "Over by 0m" is what rendering
+          that refusal as a simple `false` used to say (census L47). */}
       {stops.length > 0 && (
-        <View style={styles.fitBox}>
+        <View style={styles.fitBox} testID="layover-plan-fit">
           <View style={styles.fitTrack}>
             <View style={[
               styles.fitFill,
-              { width: `${pct}%`, backgroundColor: planFit.fitsWindow ? color.success : color.signal },
+              {
+                width: `${pct}%`,
+                backgroundColor: planFit.fit === 'fits'
+                  ? color.success
+                  : planFit.fit === 'unknown' ? color.mute : color.signal,
+              },
             ]} />
           </View>
-          <Text style={styles.fitText}>
-            {planFit.fitsWindow
+          <Text style={styles.fitText} testID="layover-plan-fit-text">
+            {planFit.fit === 'fits'
               ? `Planned ${fmtDur(planFit.totalPlannedMin)} of ${fmtDur(planFit.usableMinutes)} usable — fits with room`
-              : `Over by ${fmtDur(planFit.overflowMin)} — trim ${stops.length > 1 ? 'a stop' : 'this stop'} or shorten it`}
+              : planFit.fit === 'over'
+                ? `Over by ${fmtDur(planFit.overflowMin)} — trim ${stops.length > 1 ? 'a stop' : 'this stop'} or shorten it`
+                : `At least ${fmtDur(planFit.neededMin)} of ${fmtDur(planFit.usableMinutes)} usable — ${
+                    planFit.unstatedTravelStops > 0
+                      ? `${planFit.unstatedTravelStops === 1 ? 'one stop has' : `${planFit.unstatedTravelStops} stops have`} no travel time yet, so this is not a fit we can promise`
+                      : 'part of this plan has no time on it yet, so this is not a fit we can promise'
+                  }`}
           </Text>
         </View>
       )}
@@ -186,7 +206,7 @@ export function LayoverPlanSection({
               <View style={styles.chipRow}>
                 {TRAVEL_CHOICES.map((d) => (
                   <Pressable key={d} style={[styles.chip, travelMin === d && styles.chipActive]} onPress={() => setTravelMin(d)}>
-                    <Text style={[styles.chipText, travelMin === d && styles.chipTextActive]}>{d === 0 ? 'none' : `${d}m`}</Text>
+                    <Text style={[styles.chipText, travelMin === d && styles.chipTextActive]}>{`${d}m`}</Text>
                   </Pressable>
                 ))}
               </View>

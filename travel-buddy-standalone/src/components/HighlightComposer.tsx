@@ -21,7 +21,11 @@ import { MediaPickerButton } from './ui/MediaPickerButton.tsx';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { color, space, radius, type as t, shadow, avatar } from '../theme/tokens.ts';
 import { uploadMedia, validateMedia } from '../services/media.ts';
-import { createHighlight, type HighlightVisibility } from '../services/highlights.ts';
+import { createHighlight, type HighlightVisibility, type HighlightLifetimeClass } from '../services/highlights.ts';
+// §4 / §12 — the five HighlightLifetime classes. The list, the spec's own
+// examples and what each class does all come from the server; see the
+// component header for why none of it is typed here.
+import { HighlightLifetimePicker } from '../features/highlights/HighlightLifetimePicker.tsx';
 import { useSession } from '../context/SessionContext.tsx';
 import { router } from 'expo-router';
 import { MediaFilterEditor, type FilterApplyResult } from './MediaFilterEditor.tsx';
@@ -78,6 +82,9 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
   const [mentionVisible, setMentionVisible] = useState(false);
   const [vis, setVis] = useState<HighlightVisibility>('public');
   const [expiresInHours, setExpiresInHours] = useState(24);
+  // NOT defaulted to a class. "No class" is a real state and the server
+  // stores no class when none is named.
+  const [lifetimeClass, setLifetimeClass] = useState<HighlightLifetimeClass | null>(null);
   const [loc, setLoc] = useState<LocState>({ source: 'none' });
   const [placePickerOpen, setPlacePickerOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -205,6 +212,7 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
         expiresInHours,
         filterId,
         filterIntensity,
+        lifetimeClass,
       });
 
       if (!result.ok) {
@@ -359,6 +367,8 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
                 ))}
               </View>
             </View>
+
+            <HighlightLifetimePicker value={lifetimeClass} onChange={setLifetimeClass} />
 
             {/* Duration */}
             <View style={s.field}>

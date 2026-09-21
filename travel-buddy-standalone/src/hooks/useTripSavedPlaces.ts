@@ -28,6 +28,9 @@ import {
 export interface UseTripSavedPlacesResult {
   places: BookmarkedPlace[];
   loading: boolean;
+  /** Non-null when the saved-places read FAILED. `places: []` alone means the
+   *  list is empty; it may not be used to mean the read did not answer. */
+  error: string | null;
   toggle: (place: BookmarkedPlace) => Promise<boolean>;
   refresh: () => void;
   /** Optimistically removes a single place from the list immediately.
@@ -42,12 +45,23 @@ export interface UseTripSavedPlacesResult {
 export function useTripSavedPlaces(tripId: string): UseTripSavedPlacesResult {
   const [places, setPlaces] = useState<BookmarkedPlace[]>([]);
   const [loading, setLoading] = useState(true);
+  // `places: []` with `loading: false` is what every consumer renders as "you
+  // have not saved anything on this trip". The catch below used to produce
+  // exactly that state from a storage read that failed, so a user whose saved
+  // places could not be read was told they had none. `error` is the third
+  // state, and it is distinct from both.
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(() => {
     setLoading(true);
+    setError(null);
     listSaved(tripId)
       .then((all) => { setPlaces(all); setLoading(false); })
-      .catch(() => { setLoading(false); });
+      .catch((e: any) => {
+        setPlaces([]);
+        setError(e?.message ?? "Couldn't load your saved places.");
+        setLoading(false);
+      });
   }, [tripId]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
@@ -95,5 +109,5 @@ export function useTripSavedPlaces(tripId: string): UseTripSavedPlacesResult {
     }
   }, [places]);
 
-  return { places, loading, toggle, remove, refresh: load, clearAll };
+  return { places, loading, error, toggle, remove, refresh: load, clearAll };
 }

@@ -45,9 +45,24 @@ function matchesCategory(stamp: PassportStampNew, cat: StampCategory): boolean {
   if (cat === 'location') {
     return (
       // stamp_type values: 'location' (v2) or legacy 'city'/'neighborhood'/'check_in'
-      // 'place_contributor' stamps are awarded at a specific place and therefore
-      // belong in the location category.
-      ['location', 'city', 'neighborhood', 'check_in', 'place_contributor'].includes(sType) ||
+      //
+      // TWO DIFFERENT §12 TYPES ARE BOTH ROUTED HERE, AND THEY ARE NOT THE SAME
+      // STAMP. Both belong under the Location pill; neither is an alias of the
+      // other, so both must be listed explicitly:
+      //   • 'place_contributor' — the CONTRIBUTOR type. A v2 catalog credential
+      //     earned from a POST COUNT at a place (10/50/100), provenance
+      //     contribution_earned. Awarded at a specific place, hence Location.
+      //   • 'place'            — the PLACE type. A v1 PRESENCE stamp carrying
+      //     place_id, same family as 'city'/'neighborhood'.
+      // Without 'place' listed, a Place stamp renders under All but vanishes
+      // under the Location pill — visible, filtered out, and hard to attribute.
+      //
+      // NOTE: 'place' has no producer yet. The vocabulary migration that makes
+      // it storable (api-server 2880_passport_stamps_place_vocabulary.sql) is
+      // STAGED and applied to nothing, and what EARNS a Place stamp is an open
+      // owner decision (D-STAMP). This label is therefore inert today and is
+      // here so the client does not have to change when the producer lands.
+      ['location', 'city', 'neighborhood', 'check_in', 'place_contributor', 'place'].includes(sType) ||
       definitionCat === 'location'
     );
   }

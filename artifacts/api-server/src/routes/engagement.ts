@@ -34,6 +34,7 @@ import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { nameVisibilitySet, presentedName } from "../lib/publicIdentity.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
+import { readBlockExclusions, isExcluded, sendExclusionsUnavailable } from "../lib/exclusionSet.js";
 
 const router = Router();
 
@@ -129,7 +130,7 @@ async function getLikerIds(
   targetType: TargetType,
   targetId: string,
   opts: { reactionType?: string; cursor?: string; limit: number },
-): Promise<{ userIds: string[]; likedAts: Map<string, string>; nextCursor: string | null; hasMore: boolean }> {
+): Promise<{ userIds: string[]; likedAts: Map<string, string>; nextCursor: string | null; hasMore: boolean; readFailed: boolean }> {
   const { reactionType, cursor, limit } = opts;
 
   let q: any;
@@ -159,7 +160,14 @@ async function getLikerIds(
   q = q.order("created_at", { ascending: false }).limit(limit + 1);
 
   const { data: rows, error } = await q;
-  if (error) return { userIds: [], likedAts: new Map(), nextCursor: null, hasMore: false };
+  // An unreadable likes table is NOT "nobody liked this". This function used to
+  // answer both questions with the same empty page, and the caller turned that
+  // into a 200 `{ users: [] }` — the exact false statement the block-set
+  // refusal below exists to prevent, made two functions earlier and about the
+  // same roster. The caller refuses instead; see the route.
+  if (error) {
+    return { userIds: [], likedAts: new Map(), nextCursor: null, hasMore: false, readFailed: true };
+  }
 
   const all = (rows ?? []) as any[];
   const hasMore = all.length > limit;
@@ -170,7 +178,7 @@ async function getLikerIds(
 
   const nextCursor = hasMore ? (page[page.length - 1]?.created_at ?? null) : null;
 
-  return { userIds: page.map((r: any) => r.user_id), likedAts, nextCursor, hasMore };
+  return { userIds: page.map((r: any) => r.user_id), likedAts, nextCursor, hasMore, readFailed: false };
 }
 
 // ── Main route ─────────────────────────────────────────────────────────────────
@@ -220,31 +228,58 @@ router.get("/engagement/likes", asyncHandler(async (req, res) => {
     return;
   }
 
-  const { userIds, likedAts, nextCursor, hasMore } = await getLikerIds(
+  const { userIds, likedAts, nextCursor, hasMore, readFailed } = await getLikerIds(
     sc,
     targetType as TargetType,
     targetId,
     { reactionType, cursor, limit },
   );
 
+  // FAIL-CLOSED, same reasoning as the block set below and the same answer:
+  // this response IS the roster, so `users: []` is not a narrower truth, it is
+  // a false statement that nobody liked this — which the client renders and
+  // caches as fact, and which no field on the response distinguishes from a
+  // genuinely unliked post. `degraded_unavailable` (503, retryable) says the
+  // read could not be PERFORMED, rather than db_error (500): nothing is wrong
+  // with the request and a retry is the correct recovery.
+  if (readFailed) {
+    req.log.error(
+      { targetType, targetId },
+      "engagement/likes: liker read failed — refusing rather than reporting an empty roster",
+    );
+    sendError(res, "degraded_unavailable", "Reactions are temporarily unavailable");
+    return;
+  }
+
   if (userIds.length === 0) {
     res.json({ ok: true, users: [], nextCursor: null, hasMore: false });
     return;
   }
 
-  // Build blocked-user set (both directions from viewer's perspective)
-  const { data: blockRows } = await sc
-    .from("blocks")
-    .select("blocker_id, blocked_id")
-    .or(`blocker_id.eq.${user.id},blocked_id.eq.${user.id}`);
-  const blockedSet = new Set<string>();
-  for (const b of (blockRows ?? []) as any[]) {
-    if (b.blocker_id === user.id) blockedSet.add(b.blocked_id);
-    else blockedSet.add(b.blocker_id);
+  // Build blocked-user set (both directions from viewer's perspective).
+  //
+  // FAIL-CLOSED, shape 3 (lib/exclusionSet.ts): this response IS a roster of
+  // other people — there is no part of it the block set does not scope. So an
+  // unreadable `blocks` table has no narrower honest answer available:
+  //   • the unfiltered list shows the viewer people they blocked (the defect);
+  //   • `users: []` is a false statement that nobody liked this, which the
+  //     client renders and caches as fact.
+  // It refuses with `degraded_unavailable` (503, retryable) — "the check could
+  // not be performed", the same code requireUser uses for an unreadable
+  // account_status — rather than db_error (500), because nothing is wrong with
+  // the request and a retry is the correct recovery. The scoped read (`among`)
+  // is used because the candidate ids are already known and bounded.
+  //
+  // Previously `(blockRows ?? [])` made a resolved DB error an empty set and
+  // this endpoint listed blocked users among the likers.
+  const blockedSet = await readBlockExclusions(sc, user.id, { among: userIds });
+  if (!blockedSet.ok) {
+    sendExclusionsUnavailable(req, res, blockedSet, "engagement/likes");
+    return;
   }
 
   // Filter: exclude viewer + blocked users
-  const filteredIds = userIds.filter((id) => id !== user.id && !blockedSet.has(id));
+  const filteredIds = userIds.filter((id) => id !== user.id && !isExcluded(blockedSet, id));
 
   if (filteredIds.length === 0) {
     res.json({ ok: true, users: [], nextCursor, hasMore });

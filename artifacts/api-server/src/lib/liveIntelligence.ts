@@ -21,6 +21,8 @@
  * makes every live venue lookup behave exactly like a source outage.
  */
 import { logger as rootLogger } from "./logger";
+import { truthClassOfSourceClass } from "./sourceTruth.js";
+import type { TruthClass } from "./truthClass.js";
 import { getFoursquareApiKey } from "./foursquareApiKey";
 
 const logger = rootLogger.child({ lib: "liveIntelligence" });
@@ -43,6 +45,12 @@ export const CONFIDENCE_LABELS: Record<SourceClass, string> = {
 
 export interface Confidence {
   sourceClass: SourceClass;
+  /**
+   * §5.1 truth class the source class implies (lib/sourceTruth). CPV2-02: a
+   * predicted / inferred / stale / unknown datum keeps that qualification on
+   * the tool result, so the UI blocks and the grounding envelope can carry it.
+   */
+  truthClass:  TruthClass;
   label:       string;
   /** ISO timestamp of when the datum was checked/read. */
   checkedAt:   string;
@@ -53,6 +61,7 @@ export interface Confidence {
 export function makeConfidence(sourceClass: SourceClass, note?: string): Confidence {
   return {
     sourceClass,
+    truthClass: truthClassOfSourceClass(sourceClass),
     label: CONFIDENCE_LABELS[sourceClass],
     checkedAt: new Date().toISOString(),
     ...(note ? { dataNote: note } : {}),

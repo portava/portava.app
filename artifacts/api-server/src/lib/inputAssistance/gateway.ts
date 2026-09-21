@@ -9,8 +9,10 @@
  *     paths /discovery/search and /discovery/suggest use.
  *   - Canonical city rows come from `suggestCanonicalLocations`
  *     (lib/canonicalLocations) merged via the existing `mergeCitySuggestions`.
- *   - Normalization reuses `normalizeLocationName` + `applyAliases` + the shared
- *     `sanitizeQuery` PostgREST guard.
+ *   - Normalization goes through the ONE §40 QueryNormalizer service
+ *     (`queryNormalizer.ts`), which still composes `applyAliases` and the
+ *     shared `sanitizeQuery` PostgREST guard and adds §10's transliteration,
+ *     emoji and keyboard-typo clauses on top.
  *   - The privacy/eligibility gateway (§29) runs BEFORE projection and is
  *     fail-closed: unknown block/age state ⇒ no entity suggestions (mirrors
  *     /discovery/suggest, which returns empty when block state is unknown).
@@ -22,11 +24,10 @@
  */
 import { fetchBlockedSet } from '../blocks';
 import { normalizeLocationName } from '../canonicalLocations';
-import { applyAliases, type SearchQueryContext } from '../../routes/discoverySearchHelpers';
+import type { SearchQueryContext } from '../../routes/discoverySearchHelpers';
 import {
   dispatchSearch,
   fetchAgeRestrictedSet,
-  sanitizeQuery,
   canonicalToCityResult,
   mergeCitySuggestions,
   type SearchResult,
@@ -39,6 +40,8 @@ import {
   resolveHashtagRefSuggestions,
   checkUsernameAvailability,
   buildUsernameValidation,
+  buildHashtagValidation,
+  canonicalizeHashtag,
 } from './socialIdentity';
 import { POLICY_VERSION } from './policyRegistry';
 import {
@@ -47,6 +50,16 @@ import {
   buildUnresolvedAddress,
 } from './creation';
 import { buildSemanticAssistance, isSemanticContext } from './semanticIntent';
+import { normalizeQuery, buildTypoCorrectionRow, type NormalizedQuery } from './queryNormalizer';
+import {
+  resolveTaskConstraint,
+  classifyFeasibility,
+  EMPTY_TASK_CONSTRAINT,
+  type TaskConstraint,
+} from './taskContext';
+import { applyDiversity } from './rankingSignals';
+import { extractTemporal } from './semanticParser';
+import type { TemporalWindow } from './rankingSignals';
 import { buildAiAssistedWriting, isAiTextContext } from './aiWriting';
 import { enrichSuggestionsWithLive } from './liveSuggestions';
 import {
@@ -152,19 +165,37 @@ export async function generateSuggestions(
   // no_assistance fields produce nothing (§6). generic_text lands here.
   if (policy.mode === 'no_assistance') return [];
 
-  // ── Normalization (§10, reused) ─────────────────────────────────────────────
-  // @handle queries target people; strip the sigil first, then alias-expand
-  // (typo tolerance) and apply the shared PostgREST-injection sanitizer.
-  const trimmed = (text ?? '').trim();
-  const isHandle = trimmed.startsWith('@');
-  const isHashSigil = trimmed.startsWith('#');
-  const sigilStripped = isHandle || isHashSigil ? trimmed.slice(1) : trimmed;
-  const aliased = applyAliases(sigilStripped);
-  const q = sanitizeQuery(aliased).slice(0, 80);
+  // ── Normalization (§10/§40, QueryNormalizer) ────────────────────────────────
+  // ONE service now owns every §10 clause — sigil handling, script
+  // transliteration, context-appropriate emoji handling, the Discovery alias
+  // table, and keyboard-weighted typo tolerance with a confidence measure. See
+  // queryNormalizer.ts for why the correction is a SECOND attempt rather than a
+  // rewrite: `norm.query` is always the user's own spelling, so a query that
+  // resolves today can never be rerouted by the corrector.
+  const norm: NormalizedQuery = normalizeQuery(text ?? '', { context, maxLength: 80 });
+  const trimmed = norm.raw;
+  const isHandle = norm.sigil === '@';
+  const isHashSigil = norm.sigil === '#';
+  const aliased = norm.aliased;
+  const q = norm.query;
   // normalizeLocationName is the canonical diacritic/case fold — kept for the
   // §16 session-bias comparison below (the stroke/alias-aware geographic fold
   // lives in the geoResolver / suggestCanonicalLocationsFolded path).
   const normalized = normalizeLocationName(q);
+
+  // ── §15 TemporalFit — the window the parser was already computing ───────────
+  // `extractTemporal` normalises "tonight" / "tomorrow morning" / "Friday after
+  // dinner" into an ISO window. Until Phase 9 that window went into a search
+  // STRING and was discarded; nothing ranked on it, which is why §15's
+  // TemporalFit had no producer. It is resolved ONCE here and handed to the
+  // projection as a ranking term — NOT as a filter. See rankingSignals.ts for
+  // the measured reason a hard filter was rejected ("Saturday Night Market").
+  // A deferred window ("when we arrive") carries no bounds and is dropped.
+  const temporalWindow: TemporalWindow | null = (() => {
+    const t = extractTemporal(aliased, tz ?? null).intent;
+    if (!t || (t.startsAfter === null && t.startsBefore === null)) return null;
+    return { startsAfter: t.startsAfter, startsBefore: t.startsBefore };
+  })();
 
   const isGeoPicker = GEO_PICKER_CONTEXTS.has(context);
   const wantsRecent = policy.allowedSuggestionTypes.includes('recent');
@@ -180,6 +211,18 @@ export async function generateSuggestions(
   // WITHOUT alias expansion, matching how the /select write path stores it, so a
   // user's own abbreviation ("bkk") maps even when the global alias dictionary
   // does not know it.
+  // ── §16/§17 ACTIVE TASK (Phase: carryover as a constraint) ──────────────────
+  // One bounded, fail-soft read of the task the field lives inside: the
+  // session's canonical city and the Trip's destination + date window. It is
+  // resolved ONCE and handed to every projection below as the §18 feasibility
+  // verdict and the §15 TripFit term, so a field inside a Bangkok Trip no
+  // longer behaves as though it exists in isolation. A session with no task
+  // issues no query and produces the identity transform.
+  const taskConstraint: TaskConstraint =
+    sessionContext?.cityId || sessionContext?.tripId
+      ? await resolveTaskConstraint(sc, sessionContext).catch(() => EMPTY_TASK_CONSTRAINT)
+      : EMPTY_TASK_CONSTRAINT;
+
   const personalizationOn = policy.allowPersonalization === true;
   const memory: SelectionMemory = personalizationOn
     ? await fetchSelectionMemory(sc, { userId, context, max: 200 }).catch(() => emptyMemory())
@@ -287,6 +330,12 @@ export async function generateSuggestions(
         raw: trimmed,
         max: policy.maxSuggestions,
       }).catch(() => [] as InputSuggestion[]);
+      // §10: an emoji/symbol tag body canonicalizes to nothing. Say so instead
+      // of returning an empty list the user cannot interpret.
+      if (refs.length === 0 && policy.allowedSuggestionTypes.includes('validation')) {
+        const v = buildHashtagValidation(context, POLICY_VERSION, trimmed);
+        if (v) refs = [v];
+      }
     }
     return dropDeadRows(orderSuggestions(refs, Math.min(limit, policy.maxSuggestions)));
   }
@@ -335,10 +384,38 @@ export async function generateSuggestions(
   // Public geo registry data with no user linkage, so it runs OUTSIDE the
   // person-privacy gate. Reused by BOTH the geo-picker path (binding +
   // disambiguation) and global_search (merged as SearchResults).
-  const geoRes: GeoResolution =
+  let geoRes: GeoResolution =
     wantsEntities && wantsCities && !isHandle && q.length >= 2
       ? await resolveGeoCandidates(sc, q, Math.max(4, policy.maxSuggestions)).catch(() => EMPTY_GEO)
       : EMPTY_GEO;
+
+  // ── §10 typo tolerance — a SECOND attempt, never a rewrite ──────────────────
+  // `norm.correctedQuery` is set only when the keyboard-weighted corrector found
+  // a UNIQUE vocabulary match above its apply threshold (queryNormalizer.ts).
+  // It is used only after the user's OWN spelling returned nothing, so a query
+  // that resolves today cannot be rerouted, and an ambiguous input is never
+  // guessed (§19). `correctionHelped` records whether the retry actually found
+  // something, so the correction ROW below is never a claim the results do not
+  // support.
+  let correctionHelped = false;
+  if (
+    norm.correctedQuery &&
+    wantsEntities &&
+    wantsCities &&
+    !isHandle &&
+    geoRes.rows.length === 0 &&
+    geoRes.airport === null
+  ) {
+    const retry = await resolveGeoCandidates(
+      sc,
+      norm.correctedQuery,
+      Math.max(4, policy.maxSuggestions),
+    ).catch(() => EMPTY_GEO);
+    if (retry.rows.length > 0) {
+      geoRes = retry;
+      correctionHelped = true;
+    }
+  }
 
   if (wantsEntities && dispatchTypes.length > 0 && q.length >= 2) {
     if (isGeoPicker) {
@@ -360,11 +437,17 @@ export async function generateSuggestions(
       // still flow through the existing per-type search behind the privacy gate.
       const otherTypes = dispatchTypes.filter((t) => t !== 'cities');
       if (otherTypes.length > 0) {
-        suggestions.push(
-          ...(await dispatchAndProject(sc, otherTypes, {
-            q, userId, context, policy, lat, lng, city,
-          })),
-        );
+        let other = await dispatchAndProject(sc, otherTypes, {
+          q, userId, context, policy, lat, lng, city, temporalWindow, taskConstraint,
+        });
+        // §10 second attempt — same rule as the city path above.
+        if (other.length === 0 && norm.correctedQuery) {
+          const retry = await dispatchAndProject(sc, otherTypes, {
+            q: norm.correctedQuery, userId, context, policy, lat, lng, city, temporalWindow, taskConstraint,
+          });
+          if (retry.length > 0) { other = retry; correctionHelped = true; }
+        }
+        suggestions.push(...other);
       }
     } else {
       // ── Generic mixed-entity path (global_search, username, hashtag, …) ─────
@@ -379,12 +462,28 @@ export async function generateSuggestions(
         const perType = Math.max(2, Math.ceil(policy.maxSuggestions / dispatchTypes.length));
         const ctx: SearchQueryContext = { lat, lng, userCity: city, nearbyIntent: false };
 
-        const perTypeResults = await Promise.all(
-          dispatchTypes.map((t) =>
-            dispatchSearch(sc, q, userId, blockedSet, ageRestrictedSet, t, 0, perType, ctx)
-              .catch(() => [] as SearchResult[]),
-          ),
-        );
+        const runDispatch = (key: string) =>
+          Promise.all(
+            dispatchTypes.map((t) =>
+              dispatchSearch(sc, key, userId, blockedSet, ageRestrictedSet, t, 0, perType, ctx)
+                .catch(() => [] as SearchResult[]),
+            ),
+          );
+        let perTypeResults = await runDispatch(q);
+        // §10 second attempt — same rule as the geographic path above.
+        if (norm.correctedQuery && perTypeResults.every((rows) => rows.length === 0)) {
+          const retry = await runDispatch(norm.correctedQuery);
+          if (retry.some((rows) => rows.length > 0)) {
+            perTypeResults = retry;
+            correctionHelped = true;
+          }
+        }
+
+        // §18 feasibility over the WHOLE candidate set for this request, so the
+        // verdict is consistent across types (an out-of-Trip-city event and an
+        // out-of-Trip-city place are demoted by the same rule).
+        const allCandidates = perTypeResults.flat();
+        const verdict = classifyFeasibility(allCandidates, taskConstraint);
 
         const seenIds = new Set<string>();
         dispatchTypes.forEach((t, idx) => {
@@ -395,7 +494,13 @@ export async function generateSuggestions(
           for (const r of items) {
             if (seenIds.has(r.id)) continue;
             seenIds.add(r.id);
-            suggestions.push(projectSearchResult(r, context, POLICY_VERSION, q));
+            suggestions.push(
+              projectSearchResult(r, context, POLICY_VERSION, q, {
+                temporalWindow,
+                demoted: verdict.demotedIds.has(r.id),
+                tripFit: verdict.tripFitIds.has(r.id),
+              }),
+            );
           }
         });
       }
@@ -546,6 +651,30 @@ export async function generateSuggestions(
     suggestions.push(...kept, ...creationRows);
   }
 
+  // ── §10 hashtag field: unsupported characters are stated, not swallowed ─────
+  if (
+    context === 'hashtag' &&
+    policy.allowedSuggestionTypes.includes('validation') &&
+    canonicalizeHashtag(trimmed) === null
+  ) {
+    const v = buildHashtagValidation(context, POLICY_VERSION, trimmed);
+    if (v) suggestions.push(v);
+  }
+
+  // ── §10 correction row (policy-gated) ───────────────────────────────────────
+  // Surfaced when the corrector ACTUALLY changed the result set ("showing
+  // results for …"), or when it is only an offer the user may take. It is a
+  // `replace_text` action, so the user's raw input is preserved and nothing is
+  // silently inserted (§2/§22). Contexts whose policy does not allow the
+  // `correction` type never see it (§6).
+  if (
+    norm.correction &&
+    policy.allowedSuggestionTypes.includes('correction') &&
+    (correctionHelped || norm.correction.disposition === 'offered')
+  ) {
+    suggestions.push(buildTypoCorrectionRow(context, POLICY_VERSION, norm.correction));
+  }
+
   // ── §16 context carryover (bounded, session-scoped) ─────────────────────────
   // When the active task carries a cityId, bias a matching city/place row to the
   // front so dependent fields inherit the task's city first. Bounded to this
@@ -579,14 +708,23 @@ export async function generateSuggestions(
     max: Math.min(limit, policy.maxSuggestions),
   }).catch(() => personalized);
 
+  // ── §15 Diversity (within-type) ─────────────────────────────────────────────
+  // The gateway's per-type fan-out and §13's reserved completion slot produce
+  // diversity ACROSS types as a side effect of slot allocation. This is the term
+  // §15 actually names: within one assistance type, each repeat of an
+  // already-seen display signature is demoted a little further, so a run of
+  // near-identical rows is spread instead of filling the cap. Demotion, not
+  // removal — two real venues can share a name.
+  const diversified = applyDiversity(withLive);
+
   // ── Rank + cap (§9 trust order, §15 tie-break by confidence) ────────────────
   // When the field carries query completions (§13 "SEARCH FOR" rows — global_
   // search, buddy_service, hashtag), reserve a slot so a submittable-search row
   // is never capped out by a full page of entity matches. Otherwise a plain cap.
   const cap = Math.min(limit, policy.maxSuggestions);
   const ranked = policy.allowedSuggestionTypes.includes('completion')
-    ? orderSuggestionsReserving(withLive, cap, COMPLETION_RESERVED_TYPES, 1)
-    : orderSuggestions(withLive, cap);
+    ? orderSuggestionsReserving(diversified, cap, COMPLETION_RESERVED_TYPES, 1)
+    : orderSuggestions(diversified, cap);
 
   // §13 "no dead rows": final safety net — every returned row must resolve to an
   // action, a canonical entity, or a routable destination.
@@ -609,6 +747,10 @@ async function dispatchAndProject(
     lat: number | null;
     lng: number | null;
     city: string | null;
+    /** §15 TemporalFit window resolved once by the caller (null when none). */
+    temporalWindow: TemporalWindow | null;
+    /** §16/§17 active-task bounds resolved once by the caller. */
+    taskConstraint: TaskConstraint;
   },
 ): Promise<InputSuggestion[]> {
   const [blockedSet, ageRestrictedSet] = await Promise.all([
@@ -627,13 +769,20 @@ async function dispatchAndProject(
     ),
   );
 
+  const verdict = classifyFeasibility(perTypeResults.flat(), p.taskConstraint);
   const out: InputSuggestion[] = [];
   const seen = new Set<string>();
   for (const items of perTypeResults) {
     for (const r of items) {
       if (seen.has(r.id)) continue;
       seen.add(r.id);
-      out.push(projectSearchResult(r, p.context, POLICY_VERSION, p.q));
+      out.push(
+        projectSearchResult(r, p.context, POLICY_VERSION, p.q, {
+          temporalWindow: p.temporalWindow,
+          demoted: verdict.demotedIds.has(r.id),
+          tripFit: verdict.tripFitIds.has(r.id),
+        }),
+      );
     }
   }
   return out;

@@ -28,7 +28,13 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "./database.types";
 import { normalizeLocationName } from "./canonicalLocations";
-import { nameVisibilitySet } from "./publicIdentity";
+// Spec §21/§35: the map does not rebuild identity — it REQUESTS the Passport's
+// map-presence projection. That projection is batch-only by construction (the
+// per-user consumer-variant path is ~34 reads per target and this is a polling
+// bulk surface); see buildMapPresenceProjections' header. It takes the profile
+// rows already loaded above, so adopting it costs no extra read: it takes over
+// the `nameVisibilitySet` call this file used to make itself.
+import { buildMapPresenceProjections } from "../services/passport/PassportConsumerProjections.js";
 
 /**
  * Compile-time schema guard: property access below type-checks against the
@@ -167,12 +173,27 @@ export function _clearMapTravelersCache(): void {
 
 // ── Candidate loading ─────────────────────────────────────────────────────────
 
+/**
+ * Candidate travelers for a viewport, or `null` when a read this function
+ * depends on FAILED.
+ *
+ * The null is the point. Every failure path here used to `return []`, which
+ * told the caller "there is nobody in this viewport" — a claim the function had
+ * no basis for. Callers then published that as an answer: routes/mapProjection
+ * named `travelers` in `sources`, so the client treated an outage as an
+ * authoritatively empty map and did NOT fall back; routes/mapSearch recorded
+ * the gap in a KNOWN GAP comment because it could not close it from outside.
+ *
+ * Failing CLOSED (show nobody) and failing HONESTLY (say the read failed) are
+ * different properties and both are required. Returning null does both: there
+ * is nothing to render, and nothing claims otherwise.
+ */
 async function loadCandidates(
   db: SupabaseClient,
   lat: number,
   lng: number,
   radiusKm: number,
-): Promise<MapTravelerPayload[]> {
+): Promise<MapTravelerPayload[] | null> {
   const cutoff = new Date(Date.now() - FRESH_MAX_MS).toISOString();
   const dLat = radiusKm / 111.32;
   const dLng = radiusKm / (111.32 * Math.max(0.2, Math.cos((lat * Math.PI) / 180)));
@@ -194,7 +215,9 @@ async function loadCandidates(
     .gte("lng", lng - dLng)
     .lte("lng", lng + dLng)
     .limit(SCAN_LIMIT);
-  if (locErr || !locsRaw || locsRaw.length === 0) return [];
+  // A failed read and an empty viewport are different answers.
+  if (locErr) return null;
+  if (!locsRaw || locsRaw.length === 0) return [];
   const locs = locsRaw as LocStateRow[];
 
   const ids = locs.map((l) => l.user_id);
@@ -215,8 +238,9 @@ async function loadCandidates(
       .in("user_id", ids),
   ]);
 
-  // Fail-closed: if ANY privacy-relevant query fails, show nobody.
-  if (prefsQ.error || profsQ.error || noDiscQ.error || upsQ.error) return [];
+  // Fail-closed: if ANY privacy-relevant query fails, show nobody — and say so,
+  // rather than presenting the refusal as an empty neighbourhood.
+  if (prefsQ.error || profsQ.error || noDiscQ.error || upsQ.error) return null;
 
   const prefsById = new Map<string, LocationPrefsRow>(
     (prefsQ.data ?? []).map((p: any) => [p.user_id as string, p as LocationPrefsRow]),
@@ -272,11 +296,19 @@ async function loadCandidates(
     }
   }
 
-  // Universal display-name rule: map pins show @handle unless opted in.
-  const allowedPinNames = await nameVisibilitySet(db, eligible.map((e) => e.loc.user_id));
+  // Identity (handle / displayName / avatarUrl / verified) and the two privacy
+  // rules that govern it — the universal display-name gate and the avatar
+  // opt-out — belong to the Passport, not here. This file keeps what is its own:
+  // eligibility, blocking, freshness and position coarsening.
+  const presence = await buildMapPresenceProjections(db, eligible.map((e) => e.prof as any));
 
-  const rows: MapTravelerPayload[] = eligible.map(({ loc, prof, vis, freshness }) => {
+  const rows: MapTravelerPayload[] = eligible.flatMap(({ loc, prof, vis, freshness }) => {
     const id = loc.user_id;
+    const ident = presence.get(id);
+    // A profile the Passport could not name does not exist; dropping the pin is
+    // correct and is why this is a flatMap. Substituting a default here would
+    // put an anonymous pin on the map for a row that is not a person.
+    if (!ident) return [];
     let pos: { lat: number; lng: number; precision: MapPrecision } | null = null;
     if (vis === "city_only" && loc.city) {
       const norm = normalizeLocationName(String(loc.city));
@@ -284,22 +316,14 @@ async function loadCandidates(
       if (cent) pos = { lat: cent.lat, lng: cent.lng, precision: "city" };
     }
     if (!pos) pos = coarsenPosition(id, loc.lat as number, loc.lng as number, vis);
-    return {
-      id,
-      handle: (prof.handle as string | null) ?? null,
-      displayName: allowedPinNames.has(id)
-        ? ((prof.display_name as string | null) ??
-          (prof.name as string | null) ??
-          (prof.handle as string | null) ??
-          "Traveler")
-        : (prof.handle ? `@${prof.handle as string}` : "Traveler"),
-      // Candidates are already private-excluded and viewer-independent (no
-      // follow/friend context), so this is a flag-only gate: a public profile's
-      // owner can still opt out via show_profile_picture_publicly (default true).
-      avatarUrl: (prof.show_profile_picture_publicly !== false)
-        ? ((prof.avatar_url as string | null) ?? null)
-        : null,
-      verified: prof.verified === true,
+    return [{
+      id: ident.id,
+      handle: ident.handle,
+      displayName: ident.displayName,
+      avatarUrl: ident.avatarUrl,
+      verified: ident.verified,
+      // NOT identity — `open_to_meet` is a map-eligibility signal this file owns
+      // and the Passport projection deliberately does not carry.
       openToMeet: prof.open_to_meet === true,
       city: (loc.city as string | null) ?? null,
       country: (loc.country as string | null) ?? null,
@@ -307,7 +331,7 @@ async function loadCandidates(
       precision: pos.precision,
       lat: pos.lat,
       lng: pos.lng,
-    };
+    }];
   });
 
   // Live users first, then stable name order — the cap keeps the most relevant.
@@ -328,11 +352,14 @@ export async function listMapTravelers(
     lat: number;
     lng: number;
     radiusKm: number;
-    /** null = block state unknown → fail-closed empty result. */
+    /** null = block state unknown → the layer is REFUSED, not empty. */
     blockedSet: Set<string> | null;
   },
-): Promise<MapTravelerPayload[]> {
-  if (opts.blockedSet === null) return [];
+): Promise<MapTravelerPayload[] | null> {
+  // Without the block set this function cannot honour blocking, so it cannot
+  // answer at all. It previously returned [], which a caller could not tell
+  // from "nobody is here".
+  if (opts.blockedSet === null) return null;
 
   const key = cacheKey(opts.lat, opts.lng, opts.radiusKm);
   const hit = candCache.get(key);
@@ -340,7 +367,12 @@ export async function listMapTravelers(
   if (hit && Date.now() - hit.at < CAND_TTL_MS) {
     rows = hit.rows;
   } else {
-    rows = await loadCandidates(db, opts.lat, opts.lng, opts.radiusKm);
+    const loaded = await loadCandidates(db, opts.lat, opts.lng, opts.radiusKm);
+    // A failed read is NOT cached. Caching it would turn one transient database
+    // error into CAND_TTL_MS of "nobody is anywhere near you" for every viewer
+    // sharing the viewport key.
+    if (loaded === null) return null;
+    rows = loaded;
     candCache.set(key, { at: Date.now(), rows });
     if (candCache.size > 80) {
       const oldest = [...candCache.entries()].sort((a, b) => a[1].at - b[1].at)[0];

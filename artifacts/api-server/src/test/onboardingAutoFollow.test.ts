@@ -285,10 +285,37 @@ describe("PATCH /api/me/profile — onboarding auto-follow", () => {
   let base: string;
   let req: ReturnType<typeof makeReq>;
   let state: FakeState;
+  const logs: Array<{ level: string; msg: string; obj?: any }> = [];
 
   before(async () => {
     const app = express();
     app.use(express.json());
+    // WHY THIS MIDDLEWARE EXISTS. `src/app.ts:103` installs pino-http, so every
+    // request the real server handles carries `req.log`. This harness mounted
+    // profileRouter on a BARE express app, so `req.log` was undefined here and
+    // nowhere else — and the router dereferences it 63 times.
+    //
+    // That was latent, not harmless. It only stayed quiet because the one
+    // `req.log` on this path sat in a `catch` no case reached; the first warn
+    // added to a reachable branch threw `Cannot read properties of undefined
+    // (reading 'warn')` INSIDE a fire-and-forget closure, where it surfaced as
+    // an unhandledRejection attributed to the `before` hook rather than to the
+    // line that failed. Every future log line on a fire-and-forget path had the
+    // same trap waiting.
+    //
+    // Capturing rather than discarding: these warnings are the deliverable of
+    // this change — the point is that a read failure STOPS BEING SILENT — so
+    // the harness that makes them possible should also let a test prove they
+    // were emitted. `logs` is asserted on below.
+    app.use((req: any, _res, next) => {
+      const record = (level: string) => (...args: any[]) => {
+        const obj = typeof args[0] === "object" ? args[0] : undefined;
+        const msg = typeof args[0] === "string" ? args[0] : args[1];
+        logs.push({ level, msg: String(msg ?? ""), obj });
+      };
+      req.log = { info: record("info"), warn: record("warn"), error: record("error"), debug: record("debug") };
+      next();
+    });
     app.use("/api", profileRouter);
     server = createServer(app);
     await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
@@ -380,6 +407,20 @@ describe("PATCH /api/me/profile — onboarding auto-follow", () => {
       followUpserts.length,
       0,
       "No user_follows upsert when @portava profile row does not exist",
+    );
+
+    // NOT-FOUND AND UNREADABLE NEED DIFFERENT FIXES, so they must not look the
+    // same in the log. This case is the ABSENT one: `maybeSingle` returned
+    // `{data: null, error: null}`. The route must say the account was not
+    // found, and must NOT say the lookup was unreadable.
+    const warns = logs.filter((l) => l.level === "warn" && /auto-follow/.test(l.msg));
+    assert.ok(
+      warns.some((l) => /not found/.test(l.msg)),
+      `absent @portava must be REPORTED, not swallowed — the new user's feed starts empty and nothing retries. warns: ${JSON.stringify(warns)}`,
+    );
+    assert.ok(
+      !warns.some((l) => /UNREADABLE/.test(l.msg)),
+      `a clean "no such row" must not be reported as UNREADABLE — that is the distinction this change exists to draw. warns: ${JSON.stringify(warns)}`,
     );
   });
 

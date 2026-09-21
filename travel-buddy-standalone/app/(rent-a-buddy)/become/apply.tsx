@@ -16,7 +16,21 @@ import { color, space, radius, type as t, icon, aspect, avatar } from '../../../
 import { useMediaComposer } from '../../../src/hooks/useMediaComposer';
 import * as rentABuddy from '../../../src/services/rentABuddy';
 import type { BuddyCategory, TrainingItem, ChecklistItem, ProfileSubmitResult } from '../../../src/services/rentABuddy';
-import { bookingErrorCopy } from '../../../src/services/rentABuddyBookingErrors';
+import { bookingErrorCopy, bookingRefusalAction } from '../../../src/services/rentABuddyBookingErrors';
+
+// census-trust TV-2a. Both verification refusals below told the applicant to
+// verify — one of them to "contact support to begin the verification process" —
+// while `app/profile/verification.tsx` had existed the whole time and nothing
+// under `app/(rent-a-buddy)/` pointed at it. The route comes from the refusal
+// registry rather than from a literal here, so there is one place a wrong path
+// can be, and `rentABuddy.verificationRoute.test.ts` checks it against the app's
+// own route table.
+const VERIFY_ACTION = bookingRefusalAction('verification_required');
+const verifyButtons = (): Array<{ text: string; style?: 'cancel'; onPress?: () => void }> =>
+  (VERIFY_ACTION
+    ? [{ text: 'Not now', style: 'cancel' as const },
+       { text: VERIFY_ACTION.label, onPress: () => router.push(VERIFY_ACTION.route as never) }]
+    : [{ text: 'OK' }]);
 
 const TOTAL_STEPS = 7;
 
@@ -379,8 +393,8 @@ export default function ApplyToBeBuddy() {
       } else if (result.error === 'verification_required') {
         Alert.alert(
           'Verification Required',
-          'ID verification is required before your nightlife buddy profile can be submitted for review. Please complete your verification first.',
-          [{ text: 'OK' }],
+          'ID verification is required before your nightlife buddy profile can be submitted for review.',
+          verifyButtons(),
         );
       } else if (result.error === 'incomplete_profile') {
         const missing: string[] = (result as any).missing ?? [];
@@ -423,8 +437,8 @@ export default function ApplyToBeBuddy() {
         const vr = result as Extract<rentABuddy.ProfileSubmitResult, { error: 'verification_required' }>;
         Alert.alert(
           'Verification Required',
-          `ID verification is required by your category policy before submitting for review.\n\nCurrent status: ${vr.verification_status ?? 'unverified'}. Please contact support to begin the verification process.`,
-          [{ text: 'OK' }],
+          `ID verification is required by your category policy before submitting for review.\n\nCurrent status: ${vr.verification_status ?? 'unverified'}.`,
+          verifyButtons(),
         );
       } else if (result.error === 'incomplete_profile') {
         const ip = result as Extract<rentABuddy.ProfileSubmitResult, { error: 'incomplete_profile' }>;

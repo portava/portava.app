@@ -24,6 +24,7 @@ import {
   type ConfidenceBand,
   type SourceClass as IntelSourceClass,
 } from "./intelContracts.js";
+import type { WallCoverage, WallTruthClass } from "./wallProjection.js";
 
 // ── Geometry ───────────────────────────────────────────────────────────────────
 
@@ -228,6 +229,59 @@ export type ConfidenceState = ConfidenceBand;
 export const SOURCE_CLASSES = INTEL_SOURCE_CLASSES;
 export type SourceClass = IntelSourceClass;
 
+// ── Truth class + coverage (Sensing §5.1, §7 "truth/freshness/coverage") ───────
+
+/**
+ * Sensing §5.1's seven canonical truth classes — OBSERVED, CORROBORATED,
+ * INFERRED, PREDICTED, CONFLICTING, STALE, UNKNOWN — and §4.4's coverage, at
+ * the coarse bucket the privacy gate permits.
+ *
+ * PINNED, NOT RETYPED. The Wall built this vocabulary first
+ * (lib/wallProjection.ts `WallTruthClass` / `WallCoverage`) and it is Portava's
+ * one declaration of Sensing §5.1. That module exports a type union rather than
+ * an `as const` array, so this file cannot `= WALL_TRUTH_CLASSES` the way
+ * CONFIDENCE_STATES borrows CONFIDENCE_BANDS; instead the two pins below make
+ * the map's arrays MUTUALLY ASSIGNABLE with the Wall's unions. Add a class on
+ * either side and this file stops compiling until the other side agrees —
+ * the same review gate the contract test gives the app mirror.
+ *
+ * THE OWNER DECISION THIS DEFERS: hoisting the vocabulary into
+ * lib/intelContracts.ts so both surfaces derive it. That file is not the map's
+ * to edit; until it is done the pin is what keeps the two from drifting.
+ *
+ * Sensing §5.1: "Prediction must never be rendered indistinguishably from
+ * observation." `predicted`, `inferred`, `stale` and `unknown` are the classes
+ * a renderer must NOT draw as a current observation
+ * (wallProjection.NON_OBSERVATION_TRUTH_CLASSES); the map re-exports that
+ * predicate rather than restating the list.
+ */
+export const TRUTH_CLASSES = [
+  "observed",
+  "corroborated",
+  "inferred",
+  "predicted",
+  "conflicting",
+  "stale",
+  "unknown",
+] as const;
+export type TruthClass = (typeof TRUTH_CLASSES)[number];
+
+/**
+ * Coverage — how much INDEPENDENT evidence stands behind a state, as a bucket.
+ * `unknown` is a first-class value and is NOT "none": Sensing §2 "No coverage
+ * ≠ quiet" depends on that distinction surviving to the wire.
+ */
+export const COVERAGE_STATES = ["few", "several", "many", "unknown"] as const;
+export type CoverageState = (typeof COVERAGE_STATES)[number];
+
+type MutuallyAssignable<A, B> = [A] extends [B] ? ([B] extends [A] ? true : never) : never;
+const _truthClassPin: MutuallyAssignable<TruthClass, WallTruthClass> = true;
+void _truthClassPin;
+const _coveragePin: MutuallyAssignable<CoverageState, WallCoverage> = true;
+void _coveragePin;
+
+export { truthClassMayRenderAsObservation } from "./wallProjection.js";
+
 // ── Trend + activity (spec §7) ─────────────────────────────────────────────────
 
 export const TREND_STATES = [
@@ -387,6 +441,18 @@ export interface MapObject<T = unknown> {
    * when several claims of different classes feed one object.
    */
   sourceClass?: SourceClass;
+  /**
+   * Sensing §5.1 truth class and §4.4 coverage — OPTIONAL for the same two
+   * reasons `sourceClass` is: an object with no server-built state has no
+   * truth class (absent is the only honest value), and §24's coarsening must
+   * be able to REMOVE both (`observed` on its own says a person observed this
+   * place; `coverage` restates the cohort `count` deletes). Set only by
+   * `mapProjection.applyLiveClaims` (places/events with live claims), the
+   * world-moment producer (Phase 7 cells) and the temporal route
+   * (`predicted`), each behind its own capability flag.
+   */
+  truthClass?: TruthClass;
+  coverage?: CoverageState;
   sourceRefs?: string[];
   provenance?: MapProvenance;
   privacyClass: PrivacyClass;

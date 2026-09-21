@@ -1,0 +1,510 @@
+
+PORTAVA
+Global Input Intelligence ArchitectureDeveloper Specification
+Canonical cross-app architecture for every meaningful typed input
+Typeahead · Autocomplete · Search Assistance · Intent Resolution · Smart Actions · Validation · AI Assistance
+“Every meaningful Portava input should help move a user from vague intent to a valid entity, clear decision, or real-world action with as little typing as possible.”
+Core rule: Anywhere the user types, Portava should intelligently assist without hijacking the user’s input.
+Status: Canonical platform architecture. This is not owned by Discovery, Media, Map, Trips, Telegraph, Compass, or Create. Those surfaces consume it through a shared platform layer.
+
+1. Product Definition
+Portava Global Input Intelligence is a shared platform layer that understands the field a user is typing into, the task they are trying to complete, the entities and constraints implied by their text, the context Portava is permitted to use, and the best valid suggestion or action that should come next.
+This system is larger than autocomplete. It is the typed-input control plane for Portava.
+Responsibility
+What it means
+Understand context
+Know whether the field is a city picker, caption, search box, message, Trip stop, Hidden Gem location, Compass prompt, username, etc.
+Assist
+Return entities, completions, actions, corrections, validations, or AI suggestions appropriate to that field.
+Structure
+Convert selected text into canonical entity IDs, time windows, categories, actions, and constraints.
+Protect
+Apply privacy, block, eligibility, trust, and location rules before suggestions reach the client.
+Learn
+Improve ranking from accepted/ignored suggestions and successful downstream outcomes without optimizing for typing volume.
+2. Non-Negotiable Principles
+One platform layer. Feature teams must not build independent autocomplete engines unless explicitly approved by architecture.
+The field owns behavior; the Input Intelligence platform owns suggestion intelligence.
+Canonical entities outrank AI guesses.
+AI assistance never silently replaces user text.
+Low-confidence interpretation must preserve raw user input.
+Privacy and eligibility filtering occur before projection to the client.
+Current/live suggestions must carry freshness and must never be fabricated when live state is unavailable.
+Offline mode must degrade gracefully and must not present stale data as live.
+Suggestions should accelerate real-world outcomes, not increase keystrokes or engagement for its own sake.
+Every accepted suggestion must resolve to a valid canonical destination, structured value, or explicit user-approved action.
+3. System Placement in Portava
+                            PORTAVA CLIENTS                                  │                    Global Input Intelligence SDK                                  │                  Input Assistance Gateway / API                                  │      ┌───────────────┬───────────┼───────────────┐      │               │           │               │ Entity Resolvers   Intent     Context        Policy / City/Place/User    Engine     Resolver        Privacy      │               │           │               │      └───────────────┴─────┬─────┴───────────────┘                            │                    Suggestion Ranker                            │                 Suggestion Projection                            │       ┌────────────────────┼────────────────────┐       ↓                    ↓                    ↓   Discovery              Trips              Telegraph   Media                  Create             Compass   Map                    Passport           Rent a Buddy   Pulse                  Events             Safety flows
+Portava already treats Search as cross-entity and requires search suggestions and location typeahead to function correctly. This architecture elevates that behavior into a single cross-app service rather than leaving it as per-screen implementation.
+4. End-to-End Input Loop
+TYPE / PASTE / DICTATE        ↓FIELD CLASSIFICATION        ↓TASK + SESSION CONTEXT        ↓NORMALIZATION        ↓INTENT + ENTITY DETECTION        ↓ASSISTANCE POLICY        ↓CANDIDATE GENERATION        ↓PRIVACY / TRUST / ELIGIBILITY        ↓RANKING + DEDUPE        ↓CONTEXTUAL UI PROJECTION        ↓USER ACCEPTS / IGNORES / EDITS        ↓CANONICAL ENTITY / ACTION / STRUCTURED VALUE        ↓OUTCOME TELEMETRY        ↓LEARNING
+5. Input Context Registry
+Every meaningful text field must register an InputContext. The registry is the central contract controlling what assistance is allowed.
+type InputContext =  | 'global_search'  | 'city_picker'  | 'country_picker'  | 'neighborhood_picker'  | 'place_picker'  | 'trip_destination'  | 'trip_title'  | 'trip_stop_place'  | 'event_location'  | 'event_title'  | 'event_description'  | 'plan_title'  | 'hidden_gem_name'  | 'hidden_gem_location'  | 'buddy_service'  | 'buddy_service_area'  | 'username'  | 'display_name'  | 'hashtag'  | 'caption'  | 'comment'  | 'telegraph_recipient'  | 'telegraph_message'  | 'compass_prompt'  | 'passport_homebase'  | 'language'  | 'interest'  | 'address'  | 'generic_text';
+6. Field Policy Contract
+interface InputFieldPolicy {  fieldId: string;  context: InputContext;  mode:    | 'no_assistance'    | 'canonical_picker'    | 'search'    | 'free_text_assisted'    | 'action_assisted'    | 'ai_assisted';  allowedSuggestionTypes: AssistanceType[];  entityTypes?: EntityType[];  allowPersonalization: boolean;  allowLiveContext: boolean;  allowMemoryContext: boolean;  allowAI: boolean;  minChars: number;  maxSuggestions: number;  debounceMs: number;  offlinePolicy: OfflineInputPolicy;  privacyClass: PrivacyClass;  validationRules?: ValidationRule[];  telemetryPolicy: InputTelemetryPolicy;}
+Field
+Mode
+Primary assistance
+discovery.search
+search
+Mixed entities, live opportunities, query completions, recents.
+trip.destination
+canonical_picker
+Cities/countries/regions, recent and upcoming Trip context.
+event.location
+canonical_picker
+Canonical Places, addresses, map pin, city-scoped results.
+telegraph.message
+action_assisted
+Mentions, share Place/Trip stop/meeting point, optional text help.
+post.caption
+free_text_assisted
+Hashtags, entity mentions, optional caption suggestions.
+compass.prompt
+ai_assisted
+Intent prompts, structured references, query continuation.
+passport.homebase
+canonical_picker
+Canonical city/country only.
+hiddenGem.location
+canonical_picker
+Canonical place/area, map pin, approximate area, protected-location policy.
+7. Assistance Types
+type AssistanceType =  | 'entity'  | 'completion'  | 'recent'  | 'personalized'  | 'structured_value'  | 'action'  | 'correction'  | 'validation'  | 'disambiguation'  | 'ai_suggestion';
+Type
+Example
+entity
+Da Nang, Vietnam; Sky36; @maya; #nightlife.
+completion
+Nightlife tonight; quiet beach nearby.
+recent
+Recently selected Bangkok or recent search.
+personalized
+Saved Place, current Trip destination, followed person.
+structured_value
+Friday 8-11 PM; English; Nightlife interest.
+action
+Share meeting point; Add to Trip; Drop a pin.
+correction
+Did you mean Phu Quoc?
+validation
+Username unavailable; duplicate Gem likely.
+disambiguation
+Paris, France vs Paris, Texas.
+ai_suggestion
+Optional caption/event description/Compass prompt suggestion.
+8. Canonical Suggestion Object
+interface InputSuggestion {  id: string;  type: AssistanceType;  context: InputContext;  label: string;  subtitle?: string;  replacementText?: string;  entityType?: EntityType;  entityId?: string;  canonicalUri?: string;  action?: SuggestionAction;  structuredValue?: unknown;  confidence?: number;  freshness?: FreshnessState;  source:    | 'canonical'    | 'recent'    | 'memory'    | 'live_intelligence'    | 'provider'    | 'local'    | 'ai';  reason?: string;  destination?: SearchDestination;  policyVersion: string;}
+9. Candidate Source Hierarchy
+Different fields may change weights, but the default trust order is deterministic:
+1. Exact canonical Portava entity2. Strong canonical prefix / alias match3. Current task and selected-field context4. Current / upcoming Trip context5. Nearby geographic relevance6. Recent user selection7. Saved / followed / explicit relationship8. Fresh Live Intelligence relevance9. Approved external provider candidate10. Generic query completion11. AI-generated suggestion
+AI must never outrank a strong canonical city, place, user, Trip, Event, Gem, or other real entity match.
+10. Query and Text Normalization
+Unicode normalization and safe whitespace folding.
+Case-insensitive matching.
+Diacritic-insensitive matching while preserving display spelling.
+Alias resolution and known abbreviations.
+Common misspelling tolerance.
+Local-language and English-name variants.
+Transliteration where supported.
+Punctuation and emoji handling appropriate to field context.
+Phone/keyboard typo tolerance where confidence is sufficient.
+Never normalize stored canonical display names destructively.
+Examples:  da nang  → Đà Nẵng  danang   → Đà Nẵng  hcmc     → Ho Chi Minh City  saigon   → Ho Chi Minh City  phu qouc → Phu Quoc
+11. Entity Resolution
+The system must resolve user text to canonical entities, not just return strings.
+Entity class
+Resolution notes
+City / Country / Neighborhood
+Aliases, transliterations, geocoding/provider reconciliation, canonical geographic ID.
+Place
+Canonical Place first, duplicate/alias handling, current operating state where available.
+Hidden Gem
+Separate Gem identity, protection and approximate-location rules.
+User
+Username/display name, block/privacy filtering, relationship context.
+Trip / Event / Plan
+Viewer eligibility before result exposure.
+Buddy
+Service category, availability, launch/safety/payment eligibility.
+Hashtag
+Canonical normalized hashtag plus visibility rules.
+Language / Interest
+Controlled dictionaries where possible.
+12. City and Destination Autocomplete
+User types: "da"CITIESDa Nang, VietnamDa Lat, VietnamDavao City, PhilippinesRECENTDa NangYOUR TRIPSDa Nang · Current Trip
+City suggestions should support zero-character defaults, recent destinations, current/upcoming Trip relevance, aliases, airport/city ambiguity handling, country display, and canonical timezone/geography binding after selection.
+13. Global Search Suggestions
+User types: "sky"PLACESSky36 · Da NangSky Bar · BangkokEXPERIENCESRooftop nightlife tonightPEOPLE@skylarHIDDEN GEMSHidden Rooftop · Son TraSEARCH FOR"sky nightlife""sky bars near me"
+Search suggestions are typed objects. Tapping an entity opens/resolves it; tapping a query completion submits a search. No dead suggestion rows.
+14. Zero-Character Assistance
+Useful inputs should be able to help before the first character.
+Context
+Zero-state suggestions
+City picker
+Current city, recent destinations, upcoming Trip cities.
+Place picker
+Nearby places, recent places, Trip places, saved places.
+Telegraph recipient
+Recent conversations, Trip Crew, relevant requests.
+Compass prompt
+Contextual starter prompts based on current surface.
+Global Search
+Recent searches, around-you-now, current Trip, Saved.
+Hidden Gem location
+Current area, map point, nearby canonical places, add-new flow.
+15. Context-Aware Ranking
+The same text should produce different rankings depending on the active field and task.
+SuggestionScore =    ExactMatch  + PrefixMatch  + ContextFit  + GeographicFit  + TripFit  + TemporalFit  + RelationshipFit  + Freshness  + PriorSelection  + TrustConfidence  + Diversity  - PrivacyRisk  - Staleness  - Ambiguity  - SpamRisk
+16. Context Carryover and Session State
+Inputs within the same task should share permitted context. A field must not behave as though it exists in isolation.
+Trip destination = Bangkok        ↓Trip stop place picker → Bangkok places firstEvent location inside Trip → Bangkok candidates firstCompass prompt → Bangkok Trip context attachedHidden Gem lookup → Bangkok Gems prioritized
+Context carryover must be bounded to the active task/session and must not silently change unrelated persistent preferences.
+17. Cross-Field Dependency Graph
+When one structured field is selected, dependent fields may use it as a constraint or prefill source.
+Venue = Sky36   ↓City = Da NangCountry = VietnamCoordinates = canonical Place coordinatesTimezone = Asia/Ho_Chi_Minh
+Autofilled fields must remain visible, attributable, and editable. No invisible field mutation.
+18. Semantic Query Parsing
+Natural-language search should become structured intent when confidence is sufficient.
+"rooftop bar near my hotel tonight"category = rooftop_barrelationship = nearanchor = current_hoteltime = tonight
+"food then somewhere busy"stage_1 = foodstage_2 = busy_social_placesequence = true
+Operator class
+Examples
+Temporal
+tonight; tomorrow morning; Friday after dinner; in two hours; when we arrive.
+Geographic
+near me; near my hotel; between us; along the way; close to airport.
+Experience
+quiet; social; luxury; cheap; local; hidden; busy; romantic; high energy.
+Sequence
+then; after; before; on the way; next.
+Relationship
+with my Trip Crew; people I follow; near our meeting point.
+19. Progressive Disambiguation
+Ambiguity must result in clarification choices, not silent guesses.
+User types: ParisParis, FranceParis, Texas, USAParis · saved Place collectionSearch "Paris" instead
+HIGH confidence   → direct entity suggestionMEDIUM confidence → multiple ranked choicesLOW confidence    → raw search remains prominentVERY LOW          → do not auto-replace
+20. Constraint-Aware Suggestions
+Relevance is not enough. Before ranking, the system should remove or demote options that are infeasible or inappropriate for the field.
+Closed or unavailable where current operating status is relevant.
+Outside Trip date/time window.
+Outside selected city/area where the field is constrained.
+Age, trust, membership, role, or invite restrictions.
+Unavailable Buddy category or required safety/payment gate.
+Blocked/private/ineligible people or content.
+Protected or sensitive locations whose exact position cannot be surfaced.
+Stale live states beyond allowed freshness.
+Duplicate Place/Gem/Event candidates when creation mode should resolve existing records first.
+21. Smart Action Suggestions
+Some typing should produce actions rather than text replacements.
+Telegraph message: "meet at..."[Share meeting point][Share current Place][Share Trip stop]
+Search: "add Bangkok to my trip"Recognized action:Add destination → Bangkok[Add to Trip]
+Context
+Possible action suggestions
+Telegraph
+Share Place, meeting point, Trip stop, Event, media, location when permitted.
+Search
+Add to Trip, Save, Open Map, Ask Compass, Start directions.
+Trip
+Add stop, reorder plan, add destination, invite Crew.
+Hidden Gem
+Drop pin, use approximate area, confirm existing Gem, add new Gem.
+Compass
+Convert phrase into structured request/action with referenced entities.
+22. AI-Assisted Writing
+AI assistance is opt-in, context-bound, and secondary to canonical assistance.
+Allowed use
+Examples
+Captions
+Optional caption variants using user-provided context.
+Event / Trip text
+Title and description suggestions.
+Postcards / Memories
+Writing assistance without inventing travel facts.
+Buddy listing text
+Description suggestions subject to category/policy.
+Compass
+Prompt continuation and reformulation.
+Never silently insert or publish AI-generated text. Generated text must remain editable and must not create canonical facts.
+23. Validation and Correction While Typing
+Validation
+Behavior
+Username unavailable
+Immediate non-blocking state plus alternatives.
+Duplicate Place/Gem
+Show probable existing entity before allowing duplicate creation.
+City-country mismatch
+Suggest canonical correction.
+Trip date conflict
+Explain conflict and preserve user control.
+Unresolved address
+Offer map pin, nearby candidates, or raw address fallback if allowed.
+Invalid hashtag/handle
+Explain normalization or reserved-name rules.
+Provider disagreement
+Show choices or canonical Portava record; do not silently overwrite.
+24. Paste Intelligence
+Pasted input should pass through the same classification and resolution pipeline.
+Place names and addresses.
+Map links where supported by configured parsers/providers.
+Coordinates.
+Event links.
+Flight/hotel text when the receiving field supports those objects.
+Itinerary blocks.
+Lists of stops or destinations.
+Pasted:Friday:Dinner at 7Rooftop at 9Club around 11Suggested action:Create 3 Trip stops from this text[Review]
+Bulk extraction must always lead to a review screen before persistent mutation.
+25. Voice and Dictation
+Speech-to-text is an input transport, not a separate intelligence system. Transcribed text must run through the same normalization, entity resolution, intent, privacy, and suggestion pipeline.
+26. Mention, Hashtag, and Entity Insertion
+Typing triggers such as @ and # should create canonical references where possible, not merely styled strings.
+@maya → user_id#nightlife → canonical hashtagPlace mention → place_idTrip mention → trip_id
+The rendered text can remain human-readable while the underlying attachment/reference is structured.
+27. Suggestion UI Surfaces
+Surface
+Use
+Dropdown
+Desktop/web or compact mobile pickers.
+Bottom sheet
+Rich mobile suggestions, disambiguation, entity previews.
+Inline chips
+Free-text completions and AI-assisted text.
+Action chips
+Meet here, share Place, add to Trip, etc.
+Correction banner
+Did you mean / validation issue.
+Entity preview row
+Place/user/event selection requiring context.
+Zero-state panel
+Useful suggestions before typing.
+All surfaces must support keyboard/screen-reader navigation, safe-area behavior, loading states, error states, empty states, and stable layout under the mobile keyboard.
+28. Entity Preview Anatomy
+Richer suggestions can expose enough context to choose correctly without opening the entity.
+Primary title and entity type.
+City/neighborhood or relevant location label.
+Distance where permitted.
+Open/closed or availability state where valid.
+Freshness/current-state badge where applicable.
+Current Trip or Saved relationship.
+User verification/trust context where appropriate.
+Hidden Gem protection/status labels.
+Why this is suggested when useful.
+29. Privacy and Eligibility Gateway
+No suggestion is returned merely because it matched text. Viewer eligibility is resolved first.
+Blocked users and blocked relationships suppressed.
+Private Trips/Events/Plans excluded unless viewer is eligible.
+Private captions/tags/metadata never enter public suggestion indexes.
+Precise private location never leaked through autocomplete.
+Presence/location inference cannot be exposed beyond current authorization.
+Memory-based suggestions remain owner-scoped unless deliberately shared.
+Sensitive location and protected-place rules applied before projection.
+AI must receive only the minimum permitted structured context needed for the requested assistance.
+30. Conflict Resolution Precedence
+Canonical identity    > verified/current authoritative state    > current eligible Portava community state    > approved provider state    > cached historical state    > user raw input    > AI guess
+This order is not a universal ranking score; it is a conflict-resolution rule for factual identity/state. If uncertainty remains, show disambiguation rather than inventing resolution.
+31. Freshness and Live Intelligence
+Live suggestions may enhance autocomplete, but they remain projections of the Live Intelligence system.
+An ThuongNightlife district↑ Getting busierUpdated 4m ago
+Hidden BeachHidden GemRecently confirmed
+If live intelligence is stale/unavailable, remove the live label or show the last-updated state. Never manufacture “busy now,” “available now,” or similar labels.
+32. Offline and Degraded Mode
+Data class
+Offline behavior
+Countries / languages / interests
+Local static dictionary.
+Cities
+Cached/local compact city index.
+Recent selections
+Device-local where allowed.
+Saved / Trip entities
+Cached subset where permitted.
+Places
+Cached recent and Trip-scoped entities.
+Live intelligence
+Unavailable or clearly stale; never represented as live.
+AI assistance
+Unavailable unless an approved on-device model exists in future.
+33. Performance Architecture
+0 chars  → immediate cached/default results1 char   → local/cache prefix match2+ chars → server-assisted suggestionsRecommended debounce: 100–150 msCancel stale requestsUse request sequence IDsStale-while-revalidatePrefetch likely dependent data
+Concern
+Requirement
+Race conditions
+Older response must never replace results for newer text.
+Cold start
+Local zero-state should render immediately.
+Network loss
+Retain local/cached suggestions and explicit degraded behavior.
+Rendering
+Virtualize large suggestion groups; cap visible results.
+Prefetch
+After canonical selection, prefetch likely next-field entities where useful.
+34. Local vs Server Processing
+Prefer local
+Prefer server
+Static dictionaries
+Canonical entity lookup requiring current DB state
+Recent selection history
+Privacy/eligibility filtering
+Cached city prefix matching
+Cross-entity search
+Simple normalization
+Live Intelligence suggestions
+Immediate zero-state
+Provider federation
+Request cancellation/state
+Personalized ranking requiring server-owned context
+The client should not send every keystroke when local resolution is sufficient. Use the smallest necessary server interaction.
+35. Selection Memory and Personalization
+The engine may learn from repeated explicit selections, not inferred private facts.
+Recently selected cities/places/users.
+Frequently selected abbreviations mapped to the same canonical entity for that user.
+Saved and Trip-related entities.
+Previously successful query completions.
+Context-specific selection patterns.
+Example: repeated “BKK” → Bangkok selection can improve that user’s future rank without changing the canonical city name.
+36. Anti-Spam and Manipulation Controls
+Keyword stuffing resistance in business/Buddy/user descriptions.
+Alias abuse detection.
+Impersonation protections for people and businesses.
+Duplicate entity suppression.
+Rate limits on suggestion-affecting submissions.
+No paid boost into factual confidence or canonical identity priority.
+Provider neutrality: do not favor a source merely because it was integrated first.
+37. Empty and No-Match States
+No exact Place found.[Search instead][Drop a pin][Add a new Place][Ask Compass][Search nearby]
+Available fallback actions are context-dependent. A city picker should not offer “create city”; a Hidden Gem/location flow may offer map-point or new-entity creation under policy.
+38. Failure Fallback Ladder
+Canonical Portava results        ↓Cached canonical results        ↓Approved provider candidates        ↓Local index / recent history        ↓Raw query submission
+Provider failure must not collapse the input UI. Preserve canonical records and valid local fallbacks.
+39. Client SDK Architecture
+/platform/input-assistance  /components    SmartInput.tsx    SuggestionOverlay.tsx    SuggestionList.tsx    SuggestionGroup.tsx    SuggestionChip.tsx    EntitySuggestionRow.tsx    ActionSuggestionRow.tsx    CorrectionBanner.tsx    DisambiguationSheet.tsx  /hooks    useInputAssistance.ts    useAutocomplete.ts    useEntitySuggestions.ts    useTextSuggestions.ts    useInputValidation.ts  /services    inputAssistance.ts    suggestionRanking.ts    queryNormalization.ts    entityResolution.ts    suggestionHistory.ts    suggestionCache.ts    inputTelemetry.ts  /contexts    inputContexts.ts    inputPolicies.ts    fieldRegistry.ts  /types    inputSuggestion.ts    inputContext.ts    fieldPolicy.ts    suggestionAction.ts
+40. Server Domain Services
+InputAssistanceGatewayInputContextResolverInputPolicyEngineQueryNormalizerEntitySuggestionServiceCityResolverCountryResolverPlaceResolverHiddenGemResolverUserResolverTripResolverEventResolverBuddyResolverIntentSuggestionServiceSemanticQueryParserPersonalSuggestionServiceLiveSuggestionServiceValidationServiceDuplicateDetectionServiceSuggestionRankerSuggestionDedupeServiceSuggestionTelemetryService
+41. API Contract
+Prefer one canonical suggest endpoint with context-sensitive projection, plus narrowly optimized endpoints only when justified by latency or offline packaging.
+POST /input-assistance/suggest{  "context": "trip_destination",  "fieldId": "trip.destination",  "text": "da",  "limit": 8,  "sessionContext": {    "tripId": "optional",    "cityId": "optional"  }}
+{  "requestId": "...",  "policyVersion": "input-2026-08",  "suggestions": [    {      "id": "...",      "type": "entity",      "entityType": "city",      "entityId": "city_da_nang",      "label": "Da Nang",      "subtitle": "Vietnam",      "source": "canonical",      "confidence": 0.99    }  ]}
+42. Internal Projection Contract
+The server should return a UI-ready projection, not expose raw trust vectors, private ranking features, or hidden policy decisions.
+Canonical Sources      ↓Candidate Generation      ↓Policy / Privacy      ↓Context + Feasibility      ↓Ranking + Dedupe      ↓Suggestion Projection      ↓Client
+43. Routing and Action Resolution
+Every suggestion that looks tappable must resolve through a canonical action/destination contract.
+type SuggestionAction =  | { type: 'open_entity'; entityType: EntityType; entityId: string }  | { type: 'replace_text'; text: string }  | { type: 'set_structured_value'; value: unknown }  | { type: 'submit_search'; query: string }  | { type: 'add_to_trip'; entityId: string }  | { type: 'share_entity'; entityType: EntityType; entityId: string }  | { type: 'drop_pin' }  | { type: 'open_compass'; context: unknown };
+44. Telemetry and Observability
+Telemetry should measure usefulness without unnecessarily capturing raw private text.
+input_openedquery_length_changedsuggestion_request_startedsuggestion_request_completedsuggestion_renderedsuggestion_selectedsuggestion_dismissedraw_search_submittedmanual_value_keptvalidation_showncorrection_accepteddisambiguation_selectedaction_completeddownstream_task_completed
+For private-message fields, prefer metadata events such as suggestion type selected and latency rather than logging raw message text.
+45. Learning Loop
+Suggestion shown    ↓Selected / ignored / edited    ↓Did downstream task succeed?    ↓Rank calibration    ↓Context-specific improvement
+Optimize for successful entity resolution, task completion, appropriate action, and useful real-world outcome. Do not optimize merely for suggestion acceptance rate.
+46. Accessibility
+Screen readers announce field purpose, suggestion count, active suggestion, and selection result.
+Arrow-key and keyboard navigation on web/desktop.
+VoiceOver/TalkBack focus management on mobile.
+No suggestion overlay trapped behind software keyboard.
+Dynamic type and large text support.
+High contrast and non-color-only state indicators.
+Reduced-motion support.
+Clear loading/error/empty states.
+Undo or edit path after replacement.
+47. Security and Abuse Boundaries
+Do not expose internal IDs unless required by client contract.
+Rate-limit high-volume prefix enumeration where it can reveal private entity existence.
+Protect recipient/user search from account enumeration abuse.
+Apply authentication and viewer scope before private entity lookup.
+Sanitize pasted URLs and untrusted text before rendering.
+AI-assisted paths must not bypass validation, moderation, or authorization.
+All action suggestions use the same authorization gate as the target action itself.
+48. Versioning and Compatibility
+Version field-policy registry independently from app releases.
+Version suggestion response schema.
+Preserve backward compatibility for active mobile versions.
+Feature-capability handshake for suggestion types unsupported by older clients.
+Allow server-side policy updates without requiring a client release where safe.
+Never change canonical entity semantics through ranking-only configuration.
+49. Testing and Certification Matrix
+Area
+Required certification
+Correctness
+Exact match, prefix, typo, alias, transliteration, ambiguous entity, duplicate suppression.
+Race safety
+Rapid typing, request cancellation, out-of-order responses, stale cache refresh.
+Routing
+Every suggestion opens correct entity/action; missing destination handled.
+Privacy
+Blocked user suppression, private Trip/Event exclusion, private metadata index exclusion, precise-location leakage tests.
+Offline
+Static dictionary, cache, no fake live labels, raw-query fallback.
+Accessibility
+Keyboard, screen reader, focus, dynamic type, reduced motion.
+Failure
+Provider timeout, API error, empty result, partial service degradation.
+AI
+No silent insertion, no canonical-fact invention, correct opt-in and provenance.
+Performance
+P50/P95 latency, cold start, render cost, large index behavior.
+Telemetry
+No prohibited raw private-text capture; action/result linkage works.
+50. Required Audit Before Adoption
+Before migrating existing inputs, inventory every current text field and classify it.
+For every field record:- screen / route- component file- fieldId- InputContext- current implementation- desired mode- entity types- current provider/API- zero-state behavior- offline behavior- privacy class- validation- current bugs- migration status
+Do not assume a UI field is safely migrated because it renders the shared SmartInput component. Verify routing, source, policy, and outcome behavior end to end.
+51. Suggested Migration Phases
+Phase
+Scope
+1 — Registry + SDK
+Create field registry, SmartInput primitives, shared types, request cancellation, common UI.
+2 — Geographic Core
+City, country, neighborhood, Place, Trip destination, Event location, Passport homebase.
+3 — Global Search
+Discovery, Map, Media, Pulse search access; mixed-entity suggestions.
+4 — Social Identity
+User search, recipient search, mentions, hashtags, block/privacy filtering.
+5 — Creation
+Trips, Events, Plans, Hidden Gems, Buddy services, duplicate detection and validation.
+6 — Semantic Intent
+Natural-language parsing, date/time/geographic operators, action suggestions.
+7 — Compass + AI
+Prompt assistance and opt-in writing assistance.
+8 — Personalization
+Recents, Trip/Save relevance, device-local selection memory.
+9 — Live Intelligence
+Fresh current-state suggestions with strict freshness/eligibility.
+10 — Certification
+Full cross-app interaction, privacy, offline, latency, accessibility, and routing audit.
+52. Feature-Team Adoption Rule
+Do not build a new autocomplete, predictive text system, recent-search list, entity typeahead, suggestion dropdown, AI writing helper, or input-specific resolver inside a feature until the Global Input Intelligence layer has been evaluated first.
+New fields are added by registering a policy and consuming shared primitives. Feature-specific behavior should be configuration or a narrowly scoped resolver extension, not a second architecture.
+53. Example: Trip Destination
+User opens Destination  ↓0-char suggestions: Current / Recent / Upcoming  ↓Types "ban"  ↓Local prefix cache immediately  ↓Server canonical city resolver  ↓Bangkok / Bandung / Bangalore  ↓User chooses Bangkok  ↓Store canonical city_id + country + timezone  ↓Prefetch Bangkok neighborhoods / airports / saved places  ↓Next Trip fields inherit Bangkok context
+54. Example: Telegraph Message
+User types "meet at"  ↓Context = telegraph_message  ↓No aggressive text autocomplete  ↓Action candidates:  Share meeting point  Share Trip stop  Share current Place  ↓Eligibility checks  ↓User taps action  ↓Structured entity share inserted into message composer
+55. Example: Hidden Gem Creation
+User types Gem name/location  ↓Entity + duplicate search  ↓Existing Gem / Place candidates  ↓Sensitive-location policy  ↓Exact location OR approximate area OR map point  ↓User confirms intended entity  ↓Creation continues with canonical location reference
+56. Example: Compass Prompt
+User types "where should"  ↓Context = compass_prompt  ↓Suggested prompts:  Where should I go tonight?  Where should I eat nearby?  Where should we go after this?  Find a hidden gem.  ↓Current surface + Trip context attached as structured refs  ↓User submits  ↓Compass receives intent + permitted entities, not just a raw string
+57. Product Success Metrics
+Metric
+Why it matters
+Time to valid selection
+Measures friction reduction.
+Valid entity resolution rate
+Measures canonical conversion success.
+Manual fallback rate
+Shows where suggestions fail.
+Wrong-selection reversal rate
+Measures ranking/disambiguation quality.
+Duplicate creation prevented
+Measures canonical integrity.
+Downstream task completion
+Measures whether assistance actually helped.
+Privacy incident count
+Must remain zero; explicit certification metric.
+P95 suggestion latency
+Measures perceived responsiveness.
+Offline completion rate
+Measures degraded-mode resilience.
+58. Final Architecture Principle
+TEXT  ↓MEANING  ↓ENTITY / CONSTRAINT / INTENT  ↓VALID SUGGESTION  ↓USER CHOICE  ↓ACTION  ↓REAL-WORLD OUTCOME
+Portava should not merely autocomplete words. It should progressively convert human intent into canonical entities, constraints, actions, and real-world plans while preserving user control, privacy, and uncertainty.

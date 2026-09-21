@@ -21,10 +21,42 @@
 import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
+import { COMPASS_QUICK_ACTION_TYPES } from "../lib/compassDecisionActions.js";
 import { requireUser, sendError, canEditPlan, isAcceptedTripMember } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
-import { nameVisibilitySet } from "../lib/publicIdentity.js";
+import {
+  tripKernelClient,
+  readCommandEnvelope,
+  executeTripCommand,
+  sendKernelRejection,
+  setTripVersionHeader,
+} from "../domain/trips/commands/tripKernel.js";
+import {
+  buildConsumerProjection,
+  explicitIntentBoost,
+  genericInterestWeight,
+  readVisibleExplicitIntent,
+  sharedItems,
+} from "../services/passport/PassportConsumerProjections.js";
+import { allowDiscoveryPersonCard } from "../services/passport/PassportConsumerAccess.js";
 import { isCompassEnabled, isEnabled } from "../compass/flags.js";
+import { isFlagEnabled as isPlatformFlagEnabled } from "../lib/featureFlags.js";
+import { buildCompassHomeProjection } from "./compassHome.js";
+import {
+  assembleAskKernel,
+  formatHomeProjectionLines,
+  formatKernelLines,
+  formatOpportunityLines,
+  runWithAskProjections,
+  type AskRankingProjections,
+} from "../compass/CompassPlatformContext.js";
+import { buildOpportunities, opportunityWorldValueKeys, projectForSurface } from "../lib/opportunityEngine.js";
+import { parseIntentMode } from "../lib/intentModes.js";
+import { certifiedLayoverSnapshot, isDegradedRefusal } from "../services/airport/LayoverSnapshot.js";
+import {
+  ALGORITHM_VERSION_KEY,
+  COMPASS_RANKING_ALGORITHM_VERSION,
+} from "../compass/CompassAlgorithmVersion.js";
 import { checkRateLimit } from "../lib/rateLimit.js";
 import { getCompassProfile } from "../compass/CompassProfileService.js";
 import { logCompassImpression } from "../lib/rankLog.js";
@@ -84,6 +116,7 @@ import {
   passesTripFilter,
   passesPassportFilter,
 } from "../compass/CompassSurfaceFilters.js";
+import { readTripAttention, applyAttentionSuppression, attentionOnTheWire, type AttentionReading } from "../domain/trips/policies/TripAttentionFilter.js";
 import { buildUiBlocks, type CompassUiBlock } from "../compass/CompassUiBlocks.js";
 import {
   listMemories,
@@ -106,11 +139,17 @@ import { getOpenAI }                             from "../lib/openai.js";
 import { COMPASS_ASK_PROMPT, COMPASS_ASK_PROMPT_VERSION } from "../lib/prompts/compass-v1.js";
 import {
   getOrCreateConversation,
+  appendSystemEvent,
+  modelTurns,
   loadHistory,
   appendMessage,
   touchConversation,
 }                                                from "../services/compass/CompassConversationService.js";
-import { classify as classifyIntent, type IntentClassification } from "../services/compass/CompassIntentClassifier.js";
+import {
+  classify as classifyIntent,
+  CLASSIFIER_CONTEXT_TURNS,
+  type IntentClassification,
+} from "../services/compass/CompassIntentClassifier.js";
 import { getWeatherContext as getWeatherForAsk }  from "../lib/weatherCache.js";
 import {
   COMPASS_TOOL_DEFINITIONS,
@@ -119,6 +158,11 @@ import {
   type AddToTripProposal,
   type ToolExecution,
 } from "../compass/CompassTools.js";
+import {
+  enforceCompassGroundingEnvelope,
+  readGroundingEvidence,
+  type GroundingResult,
+} from "../compass/CompassGroundingEnvelope.js";
 import { buildCompassContext as buildLocationCompassContext } from "../services/location/CompassLocationContext.js";
 import { buildCompassMediaContext, formatMediaContextLines } from "../compass/CompassMediaContext.js";
 import { resolveViewer as resolveMediaViewer } from "../services/media/MediaProjectionService.js";
@@ -210,8 +254,17 @@ export interface RecommendationRow {
   ranking_factors:   Record<string, unknown> | null;
 }
 
-/** Build the Phase 7 ranking snapshot stored alongside a served recommendation. */
-function rankingSnapshot(item: {
+/**
+ * Build the Phase 7 ranking snapshot stored alongside a served recommendation.
+ *
+ * Trips §18 (census-compass CT-13): the snapshot carries the stored INPUTS and,
+ * since this pass, the VERSIONED ALGORITHM that turned them into this pick. It
+ * goes in the existing `ranking_factors` JSONB rather than a new column — the
+ * reader below takes named keys, so an added key is additive and needs no
+ * migration — and it is what makes "why was I shown this?" answerable a month
+ * later, when the weights have moved.
+ */
+export function rankingSnapshot(item: {
   compassMatch?: number;
   communityScore?: number;
   rankingFactors?: unknown[];
@@ -221,6 +274,7 @@ function rankingSnapshot(item: {
     compassMatch:   item.compassMatch   ?? null,
     communityScore: item.communityScore ?? null,
     factors:        Array.isArray(item.rankingFactors) ? item.rankingFactors.slice(0, 8) : [],
+    [ALGORITHM_VERSION_KEY]: COMPASS_RANKING_ALGORITHM_VERSION,
   };
 }
 
@@ -912,12 +966,25 @@ router.get("/compass/why/:recommendationId", async (req, res) => {
     // Step 2: Authoritative DB lookup — recommendation must have been served via the feed.
     // The feed route pre-registers all served recommendations in compass_served_recommendations.
     // If the row doesn't exist, the recommendation was never served to this user.
-    const { data: row } = await sc
+    // This read IS the authorization: only a recommendation this server
+    // actually served to THIS user has a row here. supabase-js resolves on a
+    // DB error, so an unreadable compass_served_recommendations returns the
+    // same `null` an unserved recommendation does — the denial below is the
+    // right outcome either way (never serve an explanation we cannot attribute),
+    // but without observing `error` the outage is invisible and looks like a
+    // flood of users asking about recommendations they were never served.
+    const { data: row, error: rowErr } = await sc
       .from("compass_served_recommendations")
       .select("explanation_key, ranking_factors")
       .eq("recommendation_id", recommendationId)
       .eq("user_id", user.id)
       .maybeSingle();
+
+    if (rowErr) {
+      req.log?.warn({ err: rowErr, userId: user.id }, "compass/why: served-recommendation lookup unavailable; denying");
+      res.json({ explanation: "Recommendation not found or not available for your account." });
+      return;
+    }
 
     if (!row) {
       res.json({ explanation: "Recommendation not found or not available for your account." });
@@ -949,6 +1016,7 @@ router.get("/compass/why/:recommendationId", async (req, res) => {
         compassMatch?: number | null;
         communityScore?: number | null;
         factors?: { key: string; label: string; weight: number; detail?: string }[];
+        algorithmVersion?: string | null;
       } | null;
       if (snapshot && Array.isArray(snapshot.factors)) {
         const grounded = buildWhyThisText(snapshot.factors as any);
@@ -959,6 +1027,11 @@ router.get("/compass/why/:recommendationId", async (req, res) => {
           factors:        presentableFactors(snapshot.factors as any).slice(0, 5),
           compassMatch:   snapshot.compassMatch   ?? null,
           communityScore: snapshot.communityScore ?? null,
+          // §18 — the algorithm that produced this pick, as STORED with it.
+          // Read back from the row, never from the current constant: a
+          // recommendation served by an older rule set must not claim the
+          // current one. Null for rows written before the stamp existed.
+          algorithmVersion: snapshot.algorithmVersion ?? null,
         });
         return;
       }
@@ -987,11 +1060,10 @@ router.get("/compass/why/:recommendationId", async (req, res) => {
 // Deprecated: body.conversationContext is accepted but ignored when conversationId is present.
 // Deprecated: body.mode — replaced by classifier-derived intent routing.
 
-const ALLOWED_QUICK_ACTION_TYPES = new Set([
-  "addTrip", "buildItinerary", "askCommunity", "explore",
-  "viewEvent", "viewPlace", "startPoll", "shareTip",
-  "openMap", "viewPassport", "findBuddy", "viewTrips",
-]);
+// CCL-09: the twelve are declared ONCE, in lib/compassDecisionActions.ts, where
+// the decision → action mapping is pinned against them. A second copy here is
+// what let "no enum value added" go unmeasured.
+const ALLOWED_QUICK_ACTION_TYPES = new Set<string>(COMPASS_QUICK_ACTION_TYPES);
 
 const HONEST_FALLBACK_MESSAGE =
   "Compass AI assistant is temporarily unavailable. Please try again shortly.";
@@ -1015,9 +1087,14 @@ const ITINERARY_INTENT_DIRECTIVE =
   'The user is asking for an itinerary. Build a day-by-day plan and set payload to the "itinerary" type from the response format (destination + days, each day with a label and highlights). Use tools first when you need real places to ground the plan.';
 
 const askBodySchema = z.object({
+  /** Sensing §8 intent mode (lib/intentModes): right_now · tonight · explore · quiet · social · high_energy · nearby · trip. Validated THERE; off-vocabulary ⇒ no mode. */
+  intentMode: z.string().max(40).optional(),
   prompt:              z.string().min(1).max(1000),
   city:                z.string().max(80).optional(),
   conversationId:      z.string().uuid().optional(),
+  /** compass-phase1-spec §1 `trip_id`: the trip this conversation is about.
+   *  Recorded on a NEW conversation only where migration 2996 is applied. */
+  tripId:              z.string().uuid().optional(),
   /** Phase 6: circle context — circle memories are only injected when this is
    *  set AND the caller is a verified member of that circle. */
   circleOwnerId:       z.string().uuid().optional(),
@@ -1284,6 +1361,22 @@ async function runToolCallingLoop(
   return { finalRaw: "", toolLog, proposals };
 }
 
+/**
+ * Sensing `:148` output boundary — read the answer back against the confidence
+ * band of the turn's OWN tool results before publishing it.
+ *
+ * Called on both the streamed and the non-streamed branch, with the same tool
+ * log both branches already carry, so the two cannot drift. See
+ * `compass/CompassGroundingEnvelope.ts` for why a refusal appends rather than
+ * replaces, and for what it deliberately does not police.
+ */
+function groundCompassAnswer(message: string, toolLog: ToolExecution[]): GroundingResult {
+  return enforceCompassGroundingEnvelope(
+    message,
+    readGroundingEvidence(toolLog.map((t) => t.result)),
+  );
+}
+
 /** Truncate tool results so the persisted payload stays bounded. */
 function _boundedToolLog(toolLog: ToolExecution[]): Array<Record<string, unknown>> {
   return toolLog.map((t) => {
@@ -1302,6 +1395,10 @@ router.post("/compass/ask", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
+  // ONE clock read for the turn (splitClockGuard): every "now" below derives
+  // from it, so the media context, the kernel and the opportunity window
+  // cannot disagree about the time by a tick.
+  const turnNowMs = Date.now();
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
@@ -1327,12 +1424,12 @@ router.post("/compass/ask", async (req, res) => {
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid request");
     return;
   }
-  const { prompt, city, conversationId: incomingConvId, circleOwnerId, mediaId, stream } = parsed.data;
+  const { prompt, city, conversationId: incomingConvId, tripId, circleOwnerId, mediaId, stream, intentMode } = parsed.data;
 
   // ── Conversation resolve ──────────────────────────────────────────────────
   let conversationId: string;
   try {
-    conversationId = await getOrCreateConversation(sc, user.id, incomingConvId);
+    conversationId = await getOrCreateConversation(sc, user.id, incomingConvId, { tripId: tripId ?? null });
   } catch (err) {
     req.log.error({ err, userId: user.id }, "compass/ask: conversation resolve failed");
     res.json({
@@ -1358,9 +1455,18 @@ router.post("/compass/ask", async (req, res) => {
   // itinerary branch (structured day-by-day payload); everything else —
   // including classifier null/error/low confidence — falls through to the
   // normal conversation/tool loop.
+  //
+  // The classifier is given the last two turns as well as the new message, per
+  // compass-phase1-spec.md §2 ("input = last user message + last 2 turns").
+  // `history` is already loaded above and was previously not passed, which left
+  // the router resolving a pronoun with no antecedent — the standing evaluation
+  // set's "What did you mean?" and "Which one is closer?" are exactly that case.
   let intentResult: IntentClassification | null = null;
   try {
-    intentResult = await classifyIntent(prompt);
+    intentResult = await classifyIntent(
+      prompt,
+      modelTurns(history).slice(-CLASSIFIER_CONTEXT_TURNS),
+    );
   } catch { /* non-fatal — treated as no classification */ }
   const isItineraryIntent =
     intentResult !== null &&
@@ -1378,6 +1484,8 @@ router.post("/compass/ask", async (req, res) => {
   let weatherBrief:          string   | null = null;
   let followedHashtagSlugs:  string[]        = [];
   let topItemsContext:        string[]        = [];
+  /** Place ids among the top items — the subjects the shared context kernel is assembled for. */
+  let topPlaceIds:            string[]        = [];
   let structuredLines:        string[]        = [];
   let modeWeightingLines:     string[]        = [];
 
@@ -1408,6 +1516,14 @@ router.post("/compass/ask", async (req, res) => {
     const ctx        = buildCompassContext(effProfile, signals);
     const rawItems   = await hydrateCompassItems(sc, effProfile);
     const { section: feedSection } = await buildSection("for_you", rawItems, effProfile, ctx, sc);
+    // The kernel's subjects are canonical place ids (the id the live layer keys
+    // on), not the feed's `place:<id>` item keys.
+    topPlaceIds = feedSection.items
+      .slice(0, 5)
+      .map((itm: any) => (itm.item ?? {}) as Record<string, unknown>)
+      .filter((d) => d.type === "place")
+      .map((d) => String((d.data as Record<string, unknown> | null)?.id ?? String(d.id ?? "").replace(/^place:/, "")))
+      .filter((id) => id.length > 0);
     topItemsContext = feedSection.items.slice(0, 5).map((itm: any) => {
       const d    = (itm.item ?? {}) as Record<string, unknown>;
       // `title` here can be raw UGC (a post body, a host-entered event title), so
@@ -1481,7 +1597,7 @@ router.post("/compass/ask", async (req, res) => {
   if (mediaId) {
     try {
       const mediaViewer = await resolveMediaViewer(sc, user.id, { needFollows: true });
-      const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, Date.now());
+      const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, turnNowMs);
       if (mediaCtx) ctxLines.push(...formatMediaContextLines(mediaCtx));
     } catch { /* non-fatal — proceed without media context */ }
   }
@@ -1533,6 +1649,90 @@ router.post("/compass/ask", async (req, res) => {
     ctxLines.push(...projectedLines);
   } catch { /* non-fatal — proceed without projected memory */ }
 
+  // ── The shared platform layer (census-compass CCL-05 / CCL-06 / CX-10 / CX-11)
+  // `docs/specs/upgrades-v2/01-COMPASS-v2.md:13`: authorized request → EXISTING
+  // context assembly → shared world/experience/forecast/opportunity projections
+  // → the existing ranking owner (the "Verified nearby places" above) → grounded
+  // explanation. Three blocks, each additive, each fail-soft, each honest about
+  // a source it could not read. Never fatal.
+  //
+  // (a) CCL-06 — Home's server-built current-context projection is READ here,
+  //     not rebuilt: one builder (routes/compassHome.ts), two consumers.
+  try {
+    const home = await buildCompassHomeProjection(sc, user.id, {
+      localHour: await localHourForRequest(sc, user.id, req),
+    });
+    ctxLines.push(...formatHomeProjectionLines(home));
+  } catch { /* non-fatal — proceed without the Home projection */ }
+
+  // (a2) CL-03 — a traveller in a live layover is advised against the ONE
+  //      certified LayoverSnapshot (services/airport/LayoverSnapshot), never a
+  //      time budget of Compass's own. Proactive: the deadline must not depend
+  //      on the model electing to call the tool. A store that could not be read
+  //      is said so; "no live layover" is silent.
+  try {
+    const snap = await certifiedLayoverSnapshot(sc, user.id);
+    if (snap.ok) {
+      const s = snap.snapshot;
+      ctxLines.push(
+        "[Layover \u2014 certified snapshot]",
+        `Verdict ${s.verdict}; return state ${s.returnState}; tier ${s.tier}; usable ${s.usableMinutes} min; ` +
+          `hard return-by ${s.hardReturnBy} (${s.minutesToHardReturn} min from now); landside ${s.landsideOpen ? "open" : `closed (${s.landsideClosedReason ?? "unstated"})`}` +
+          (s.unknowns.length ? `; unknowns: ${s.unknowns.join(", ")}` : ""),
+      );
+    } else if (isDegradedRefusal(snap.reason)) {
+      ctxLines.push("[Layover \u2014 certified snapshot]", `Could not be read (${snap.reason}); do not assume the traveller is not in a layover.`);
+    }
+  } catch { /* non-fatal */ }
+
+  // (b) CX-10 — the platform Context Kernel (lib/contextKernel), assembled for
+  //     the subjects this turn already names. Pure; no flag. The live world read
+  //     inside it is gated by its own Live gates and REPORTS an unreadable world
+  //     rather than hiding it.
+  //
+  //     CCL-05: the kernel does not stop at the prompt. `askProjections` is what
+  //     the EXISTING ranking owner (CompassPipeline, reached through the model's
+  //     tool calls below) ranks with — established here, around the tool loop.
+  //     The kernel half is UNGATED, exactly as the assembler above is.
+  let askKernel: Awaited<ReturnType<typeof assembleAskKernel>> | null = null;
+  let askProjections: AskRankingProjections | null = null;
+  try {
+    askKernel = await assembleAskKernel(sc, user.id, topPlaceIds, {
+      utcOffsetMinutes: tzOffsetForRequest(req),
+      now: new Date(turnNowMs),
+      // §8 intent mode (CX-02): parsed by the shared parser; an off-vocabulary
+      // value is no mode, never a 400.
+      intentMode: parseIntentMode(intentMode),
+    });
+    ctxLines.push(...formatKernelLines(askKernel));
+    askProjections = { kernel: askKernel.kernel, readable: askKernel.readable };
+  } catch { /* non-fatal — proceed without the kernel */ }
+
+  // (c) CX-11 — downstream of the Opportunity Engine (lib/opportunityEngine),
+  //     which answers only behind its pilot flag (migration 2840, seeded
+  //     FALSE). Literal name so check-flag-polarity resolves the read;
+  //     `*_enabled` ⇒ capability, fail-closed. The §5 prohibition on world
+  //     values is enforced on what would reach the prompt, exactly as
+  //     routes/opportunities.ts enforces it on the wire.
+  try {
+    if (askKernel && (await isPlatformFlagEnabled(sc, "opportunity_engine_enabled"))) {
+      const nowMs = askKernel.kernel.temporal.nowIso ? Date.parse(askKernel.kernel.temporal.nowIso) : turnNowMs;
+      const { opportunities, refusals } = buildOpportunities(askKernel.kernel, nowMs);
+      const wire = projectForSurface(opportunities, "compass");
+      if (opportunityWorldValueKeys(wire).length === 0) {
+        ctxLines.push(...formatOpportunityLines(wire, refusals));
+        // CCL-05 — the opportunity half of what the ranker consumes. It is set
+        // ONLY inside this flag read, so with `opportunity_engine_enabled` off
+        // (every deployment) the field stays undefined and the ranker cannot
+        // read a promoted opportunity that was never admitted. A projection
+        // that failed the world-value guard above never reaches it either.
+        if (askProjections) askProjections = { ...askProjections, opportunities: wire };
+      } else {
+        req.log.error({ keys: opportunityWorldValueKeys(wire) }, "compass/ask: opportunity projection carried a world value — refused");
+      }
+    }
+  } catch { /* non-fatal — proceed without opportunities */ }
+
   // ── Phase 12: live-session grounding ──────────────────────────────────────
   // While a live session is active, chat answers are grounded in the rolling
   // session context (current stop, next plan item, timing). Fetched above so
@@ -1550,9 +1750,18 @@ router.post("/compass/ask", async (req, res) => {
     ...(isItineraryIntent
       ? [{ role: "system" as const, content: ITINERARY_INTENT_DIRECTIVE }]
       : []),
-    ...history.map((h) => ({ role: h.role as "user" | "assistant", content: h.content })),
+    ...modelTurns(history),
     { role: "user",   content: userMessageWithContext },
   ];
+
+  // CCL-05 — everything the tool-calling loop reaches (CompassTools →
+  // CompassPipeline, the EXISTING decision/ranking owner) runs with this turn's
+  // shared projections ambient, so the ranker ranks against the same world the
+  // prompt was given rather than a world of its own. A turn whose kernel could
+  // not be assembled establishes nothing and ranks exactly as it did before
+  // CCL-05 — never a partial or fabricated kernel.
+  const withAskProjections = <T>(fn: () => Promise<T>): Promise<T> =>
+    askProjections ? runWithAskProjections(askProjections, fn) : fn();
 
   // Persist user message (non-fatal)
   try { await appendMessage(sc, conversationId, "user", prompt); } catch { /* */ }
@@ -1588,13 +1797,25 @@ router.post("/compass/ask", async (req, res) => {
       // Tool rounds run silently server-side; the FINAL model round streams
       // its content token-by-token as delta events (same contract as before
       // Phase 4). The done event still carries the parsed message fields.
-      const { finalRaw, toolLog, proposals } = await runToolCallingLoop(
+      const { finalRaw, toolLog, proposals } = await withAskProjections(() => runToolCallingLoop(
         sc, user.id, guardProfile, messages as any, req.log,
         (delta) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify({ delta })}\n\n`); },
         clientAbort.signal,
-      );
+      ));
       const _parsed = _parseModelResponse(finalRaw);
-      const message      = finalRaw === "" ? SUMMARISE_EMPTY_FALLBACK_MESSAGE : _parsed.message;
+      const _rawMessage  = finalRaw === "" ? SUMMARISE_EMPTY_FALLBACK_MESSAGE : _parsed.message;
+      // Sensing `:148`. The tokens are already on the wire — the client rebuilds
+      // the bubble from the accumulated deltas — so the correction is sent as
+      // one more delta rather than by rewriting what was said.
+      const _grounded    = groundCompassAnswer(_rawMessage, toolLog);
+      const message      = _grounded.text;
+      if (_grounded.correction && !res.writableEnded) {
+        req.log.warn(
+          { userId: user.id, violations: _grounded.violations.map((v) => v.kind) },
+          "compass/ask stream: answer over-claimed against its own tool evidence",
+        );
+        res.write(`data: ${JSON.stringify({ delta: `\n\n${_grounded.correction}` })}\n\n`);
+      }
       const payload      = _parsed.payload;
       const quickActions = _parsed.quickActions;
       // Phase 5: validate + hydrate model-declared UI blocks against tool candidates.
@@ -1633,7 +1854,7 @@ router.post("/compass/ask", async (req, res) => {
       } catch { /* non-fatal */ }
       // Phase 6: bounded-cadence memory compression (fire-and-forget)
       compressConversationIfDue(sc, user.id, conversationId).catch(() => {});
-      res.write(`data: ${JSON.stringify({ done: true, conversationId, promptVersion: COMPASS_ASK_PROMPT_VERSION, payload, quickActions, pendingProposals: proposals, uiBlocks, meta: { droppedInventedIds: uiBlockMeta.droppedInventedIds }, intent: intentResult })}\n\n`);
+      res.write(`data: ${JSON.stringify({ done: true, conversationId, message, promptVersion: COMPASS_ASK_PROMPT_VERSION, payload, quickActions, pendingProposals: proposals, uiBlocks, meta: { droppedInventedIds: uiBlockMeta.droppedInventedIds, groundingViolations: _grounded.violations.map((v) => v.kind), toolsUsed: toolLog.map((t) => t.name) }, intent: intentResult })}\n\n`);
       res.end();
     } catch (err) {
       if (clientAbort.signal.aborted) {
@@ -1651,11 +1872,21 @@ router.post("/compass/ask", async (req, res) => {
 
   // ── Non-streaming (default) ───────────────────────────────────────────────
   try {
-    const { finalRaw, toolLog, proposals } = await runToolCallingLoop(
+    const { finalRaw, toolLog, proposals } = await withAskProjections(() => runToolCallingLoop(
       sc, user.id, guardProfile, messages as any, req.log,
-    );
+    ));
     const _parsed = _parseModelResponse(finalRaw);
-    const message      = finalRaw === "" ? SUMMARISE_EMPTY_FALLBACK_MESSAGE : _parsed.message;
+    const _rawMessage  = finalRaw === "" ? SUMMARISE_EMPTY_FALLBACK_MESSAGE : _parsed.message;
+    // Sensing `:148` — the same boundary the streamed branch applies, on the
+    // same tool log, so the two branches cannot publish different answers.
+    const _grounded    = groundCompassAnswer(_rawMessage, toolLog);
+    const message      = _grounded.text;
+    if (_grounded.correction) {
+      req.log.warn(
+        { userId: user.id, violations: _grounded.violations.map((v) => v.kind) },
+        "compass/ask: answer over-claimed against its own tool evidence",
+      );
+    }
     const payload      = _parsed.payload;
     const quickActions = _parsed.quickActions;
     // Phase 5: validate + hydrate model-declared UI blocks against tool candidates.
@@ -1694,9 +1925,13 @@ router.post("/compass/ask", async (req, res) => {
     } catch { /* non-fatal */ }
     // Phase 6: bounded-cadence memory compression (fire-and-forget)
     compressConversationIfDue(sc, user.id, conversationId).catch(() => {});
-    res.json({ conversationId, message, payload: payload ?? null, quickActions, pendingProposals: proposals, uiBlocks, meta: { droppedInventedIds: uiBlockMeta.droppedInventedIds }, promptVersion: COMPASS_ASK_PROMPT_VERSION, intent: intentResult });
+    res.json({ conversationId, message, payload: payload ?? null, quickActions, pendingProposals: proposals, uiBlocks, meta: { droppedInventedIds: uiBlockMeta.droppedInventedIds, groundingViolations: _grounded.violations.map((v) => v.kind), toolsUsed: toolLog.map((t) => t.name) }, promptVersion: COMPASS_ASK_PROMPT_VERSION, intent: intentResult });
   } catch (err) {
     req.log.error({ err, userId: user.id }, "compass/ask: LLM call failed");
+    // spec §1 `system-event`: the conversation records that the assistant was
+    // unavailable at this turn, so the history is honest about the gap. Never a
+    // model turn (modelTurns drops it); refused where 2996 is not applied.
+    appendSystemEvent(sc, conversationId, "assistant_unavailable", { fallbackReason: "ai_error" }).catch(() => {});
     res.json({
       conversationId,
       message:        HONEST_FALLBACK_MESSAGE,
@@ -1805,7 +2040,13 @@ router.post("/compass/proposals/:proposalId/confirm", async (req, res) => {
 
   // Duplicate guard for catalog places (same rule as the plan route).
   if (proposal.placeId) {
-    const { data: existing } = await sc
+    // The duplicate guard is the only thing between a confirmed proposal and a
+    // second copy of the same place in the itinerary: the legacy (kernel-off)
+    // INSERT below runs unconditionally. supabase-js resolves on a DB error, so
+    // an unreadable trip_plan_items gives `data: null` — indistinguishable from
+    // "not in the plan" — and the place gets added again. Refuse instead; the
+    // proposal is still pending and the confirm is safe to retry.
+    const { data: existing, error: existingErr } = await sc
       .from("trip_plan_items")
       .select("id")
       .eq("trip_id", proposal.tripId)
@@ -1813,10 +2054,50 @@ router.post("/compass/proposals/:proposalId/confirm", async (req, res) => {
       .eq("source_id", proposal.placeId)
       .is("removed_at", null)
       .maybeSingle();
+    if (existingErr) {
+      req.log?.warn({ err: existingErr, tripId: proposal.tripId, placeId: proposal.placeId }, "compass proposal confirm: duplicate check unavailable");
+      sendError(res, "degraded_unavailable", "We could not check your trip plan right now. Please try again shortly.");
+      return;
+    }
     if (existing) { sendError(res, "conflict", "This place is already in your trip plan"); return; }
   }
 
-  const { data: item, error } = await sc
+  // Trip Kernel path (§4.1 ADD_PLAN, capability crew). The re-authorization
+  // above (accepted member + canEditPlan, at execution time) is the
+  // authorization; the kernel re-checks crew. The payload is the direct
+  // insert's column set plus location_is_private = true, the table default the
+  // insert relies on. Off => the insert below.
+  const kernel = await tripKernelClient(sc);
+  let kernelItem: any = null;
+  if (kernel) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const r = await executeTripCommand(kernel, {
+      commandId: randomUUID(),
+      tripId: proposal.tripId,
+      actorUserId: user.id,   // always from token
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: "ADD_PLAN",
+      payload: {
+        title:               proposal.title,
+        category:            proposal.category || "activity",
+        status:              "tentative",
+        source_type:         proposal.placeId ? "place" : "compass",
+        source_id:           proposal.placeId ?? proposal.proposalId,
+        day_date:            proposal.dayDate ?? null,
+        location_is_private: true,
+        sort_order:          0,
+        visibility:          "members",
+      },
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    kernelItem = r.result;
+  }
+
+  // trip-kernel:legacy-path — flag-off twin of ADD_PLAN above.
+  const { data: item, error } = kernelItem ? { data: kernelItem, error: null } : await sc
     .from("trip_plan_items")
     .insert({
       trip_id:       proposal.tripId,
@@ -2039,11 +2320,18 @@ router.patch("/compass/me/preferences", async (req, res) => {
     return;
   }
 
-  const { data: updated } = await sc
+  // Read-back echo. The upsert above already succeeded, so this failing must
+  // NOT fail the request — but the `?? { user_id, ...parsed.data }` fallback
+  // hands the client a row built purely from what it just sent, hiding every
+  // stored field it did not touch. Log so the substituted echo is visible.
+  const { data: updated, error: readBackErr } = await sc
     .from("compass_user_preferences")
     .select("*")
     .eq("user_id", user.id)
     .maybeSingle();
+  if (readBackErr) {
+    req.log.warn({ err: readBackErr, userId: user.id }, "compass/me/preferences: saved, but read-back failed; echoing request body");
+  }
 
   res.json({ preferences: updated ?? { user_id: user.id, ...parsed.data } });
 });
@@ -2851,11 +3139,20 @@ router.patch("/compass/settings", async (req, res) => {
     return;
   }
 
-  const { data: updated } = await sc
+  // Read-back echo. The upsert already landed, so a failed read must not fail
+  // the request — but the fallback below renders every setting the caller did
+  // NOT send as the built-in DEFAULT, which for this table means showing
+  // default privacy/sharing toggles over whatever the user actually has stored.
+  // A client that then PATCHes the screen back would write those defaults in.
+  // Log it so the substitution is never silent.
+  const { data: updated, error: readBackErr } = await sc
     .from("compass_settings")
     .select(SETTINGS_SELECT_COLS)
     .eq("user_id", user.id)
     .maybeSingle();
+  if (readBackErr) {
+    req.log.warn({ err: readBackErr, userId: user.id }, "compass/settings PATCH: saved, but read-back failed; echoing defaults + request body");
+  }
 
   res.json({ settings: updated ?? { user_id: user.id, ...DEFAULT_COMPASS_SETTINGS, ...parsed.data } });
 });
@@ -2974,11 +3271,22 @@ router.post("/compass/signals/search", async (req, res) => {
 
   (async () => {
     try {
-      const { data } = await sc
+      // This is a read-modify-WRITE of the whole category_weights map. An
+      // unreadable compass_user_preferences resolves as `{ data: null }`, the
+      // same shape a user with no preferences row gives, so `?? {}` would make
+      // the upsert below overwrite EVERY learned category weight this user has
+      // accumulated with a single `{ [category]: 1 }` — destroying their
+      // personalisation permanently on a transient read failure. A skipped
+      // nudge costs one +1; a clobbered map cannot be recovered.
+      const { data, error: readErr } = await sc
         .from("compass_user_preferences")
         .select("category_weights")
         .eq("user_id", user.id)
         .maybeSingle();
+      if (readErr) {
+        req.log?.warn({ err: readErr, userId: user.id, category }, "compass/signals/search: weights unreadable; skipping nudge rather than clobbering the map");
+        return;
+      }
       const weights: Record<string, number> =
         ((data as any)?.category_weights as Record<string, number>) ?? {};
       // Nudge +1 toward the searched category, clamped to [-10, +10].
@@ -3365,11 +3673,23 @@ router.get("/compass/recommendations", async (req, res) => {
 
       const effectiveCity = city ?? profile.currentCity ?? null;
 
+      // §35 / census-compass CP-02 — this is the RANKING read, and only that.
+      // The person-identity columns this list used to select (`username`,
+      // `display_name`, `name`, `avatar_url`, `show_profile_picture_publicly`)
+      // are deliberately gone: WHO these people are is answered further down by
+      // the Passport `discovery_card` consumer projection — the same projection
+      // GET /compass/people/:userId/passport serves — so Compass consumes its
+      // Passport variant instead of rebuilding identity independently.
+      //
+      // What stays is what RANKS a candidate, and ranking runs over a pool far
+      // wider than the page, which cannot afford a per-person projection.
+      // `verified` is in that set as a +10 ranking term only; the verified BADGE
+      // the client renders comes from the projection, never from this column.
       const { data: travelerRows } = await sc
         .from("profiles")
         .select(
-          "id, username, display_name, name, avatar_url, show_profile_picture_publicly, home_city, home_country, " +
-          "spoken_languages, interests, verified, account_status, is_private, created_at",
+          "id, home_city, spoken_languages, interests, verified, " +
+          "account_status, is_private, created_at",
         )
         .neq("id", user.id)
         .in("account_status", ["active"])
@@ -3442,6 +3762,10 @@ router.get("/compass/recommendations", async (req, res) => {
       type TravelerEntry = {
         id: string; score: number; reasonCode: string;
         sharedInterests: string[]; row: any;
+        /** §8 explicit current intents this viewer and this traveler share. */
+        sharedExplicitIntents: string[];
+        /** The bounded §8 boost actually added to `score` (0 when none). */
+        intentBoost: number;
       };
       const scoredTravelers: TravelerEntry[] = [];
 
@@ -3455,15 +3779,21 @@ router.get("/compass/recommendations", async (req, res) => {
         // Destination overlap (15 pts — heading to the same city)
         if (destOverlapSet.has(p.id)) score += 15;
 
-        // Shared interest overlap (30 pts max)
+        // Shared GENERIC interest overlap, through Passport's exported weight.
+        //
+        // Passport `:94` (census-compass CP-01) requires explicit current intent
+        // to be weighted ABOVE generic interests. That comparison is only
+        // meaningful if both sides are on one scale, so this term is no longer a
+        // local `overlapRatio * 30`: it is `genericInterestWeight` from the same
+        // module that exports `explicitIntentBoost`, whose per-match and cap
+        // values are chosen so one explicit match always outweighs one generic
+        // one (4 vs 12 per match; 16 vs 36 capped). The person card and the
+        // ranking now read one truth, which is what the §35 comment on
+        // GET /compass/people/:userId/passport already claimed.
         const pInterests = ((p.interests ?? []) as string[]).map((i: string) => i.toLowerCase());
         const vStyles    = (profile.travelStyles ?? []).map((s: string) => s.toLowerCase());
         const sharedInterests = pInterests.filter((i: string) => vStyles.includes(i));
-        const overlapRatio =
-          vStyles.length > 0 && pInterests.length > 0
-            ? sharedInterests.length / Math.max(vStyles.length, pInterests.length)
-            : 0;
-        score += overlapRatio * 30;
+        score += genericInterestWeight(sharedInterests.length);
 
         // City overlap (20 pts)
         if (effectiveCity && p.home_city &&
@@ -3504,24 +3834,37 @@ router.get("/compass/recommendations", async (req, res) => {
           reasonCode,
           sharedInterests: sharedInterests.slice(0, 3),
           row:             p,
+          sharedExplicitIntents: [],
+          intentBoost:     0,
         });
       }
 
       scoredTravelers.sort((a, b) => b.score - a.score);
 
-      const topTravSlice = scoredTravelers.slice(0, limit);
-      const topTravIds   = topTravSlice.map((s) => s.id);
+      // Passport `:94` / §8 — the explicit-intent pass runs on a POOL wider than
+      // the page so an explicit match can promote someone the generic score put
+      // just below the fold, and bounded so a rare, real signal cannot turn one
+      // list request into fifty window reads. `readVisibleExplicitIntent` is one
+      // read per candidate and there is no batch variant to consume; 24 is the
+      // ceiling, and the whole pass is skipped entirely unless the VIEWER has an
+      // explicit, open-to-plans window of their own — with no viewer intent the
+      // overlap is empty for everyone and every boost is zero, so the reads
+      // would buy nothing. Ordering therefore changes only when an explicit
+      // window exists on both sides, which is §8's own condition.
+      const INTENT_POOL_MAX = 24;
+      const intentPool  = scoredTravelers.slice(0, Math.min(Math.max(limit * 2, limit), INTENT_POOL_MAX));
+      const poolTravIds = intentPool.map((s) => s.id);
 
       // Batch-check which travelers the viewer already follows
       const followingSet  = new Set<string>();
       const friendSet     = new Set<string>();
       const requestedSet  = new Set<string>();
-      if (topTravIds.length > 0) {
+      if (poolTravIds.length > 0) {
         const { data: followRows } = await sc
           .from("user_follows")
           .select("following_id")
           .eq("follower_id", user.id)
-          .in("following_id", topTravIds);
+          .in("following_id", poolTravIds);
         for (const r of (followRows ?? []) as any[]) followingSet.add(r.following_id);
 
         // Friend set — user_friendships stores the normalized (min, max) pair
@@ -3529,14 +3872,14 @@ router.get("/compass/recommendations", async (req, res) => {
         // side `user.id` lands on depends on UUID comparison; both directions
         // must be queried. Mirrors discoverySearch's friendSet construction.
         const [friendsAsA, friendsAsB] = await Promise.all([
-          sc.from("user_friendships").select("user_b").eq("user_a", user.id).in("user_b", topTravIds),
-          sc.from("user_friendships").select("user_a").eq("user_b", user.id).in("user_a", topTravIds),
+          sc.from("user_friendships").select("user_b").eq("user_a", user.id).in("user_b", poolTravIds),
+          sc.from("user_friendships").select("user_a").eq("user_b", user.id).in("user_a", poolTravIds),
         ]);
         for (const r of (friendsAsA.data ?? []) as any[]) friendSet.add(r.user_b as string);
         for (const r of (friendsAsB.data ?? []) as any[]) friendSet.add(r.user_a as string);
 
         // For private profiles not yet followed, check for a pending follow request
-        const privateUnfollowed = topTravSlice
+        const privateUnfollowed = intentPool
           .filter((s) => s.row.is_private && !followingSet.has(s.id))
           .map((s) => s.id);
         if (privateUnfollowed.length > 0) {
@@ -3550,50 +3893,150 @@ router.get("/compass/recommendations", async (req, res) => {
         }
       }
 
-      // Universal display-name rule: real names only for opted-in travelers.
-      const allowedTravNames = await nameVisibilitySet(sc, topTravSlice.map((s) => s.id));
-      const travelerRecommendations = topTravSlice.map((s) => {
-        const nameOk = allowedTravNames.has(s.id);
+      // ── Passport `:94` / §8 — explicit current intent, weighted ABOVE the
+      //    generic interest term (census-compass CP-01) ─────────────────────
+      //
+      // As found, this list scored `sharedInterests` and read no availability
+      // window at all, while `get_travel_compatibility` — the OTHER people-
+      // ranking surface in Compass — already read both parties' explicit
+      // windows through this exact seam. One surface honoured `:94` and the
+      // other did not. Both now read `readVisibleExplicitIntent`, at the
+      // visibility the viewer is actually entitled to, and add the same bounded
+      // `explicitIntentBoost`.
+      //
+      // Fail-quiet by construction: `readVisibleExplicitIntent` never throws and
+      // a degraded read yields no windows, which yields no overlap, which yields
+      // a zero boost — the list falls back to exactly its previous ordering
+      // rather than to a wrong one.
+      const nowMsIntent = Date.now();
+      const viewerIntentRead = await readVisibleExplicitIntent(sc, user.id, "self", nowMsIntent);
+      if (viewerIntentRead.intents.length > 0 && intentPool.length > 0) {
+        const reads = await Promise.all(
+          intentPool.map(async (entry) => {
+            // The window-visibility relationship the viewer actually has with
+            // this traveler. Anything the viewer is not provably a follower or
+            // friend of is read as `public`, which under-reads rather than
+            // over-reads — the safe direction for someone else's availability.
+            const ctx =
+              followingSet.has(entry.id) || friendSet.has(entry.id) ? "follower" as const : "public" as const;
+            const read = await readVisibleExplicitIntent(sc, entry.id, ctx, nowMsIntent);
+            return { entry, read };
+          }),
+        );
+        applyExplicitIntentWeighting(
+          intentPool,
+          viewerIntentRead.intents,
+          new Map(reads.map(({ entry, read }) => [entry.id, read] as const)),
+        );
+      }
+
+      // ── §35 / census-compass CP-02 ──────────────────────────────────────────
+      // "Compass consumes its Passport projection variant; §35 does not rebuild
+      // identity independently." Two things happen here, and both belong to the
+      // person-card endpoint below rather than to this list:
+      //
+      //  1. `allowDiscoveryPersonCard` — the very gate
+      //     GET /compass/people/:userId/passport applies, from the one module
+      //     that owns it — decides whether this viewer may ask about this person
+      //     AT ALL. A denial removes the person from the page ENTIRELY: not a
+      //     redacted row, not a stub, not even an id on the wire. The gate is
+      //     FAIL-CLOSED, so an unreadable opt-out table empties the page instead
+      //     of filling it: "we could not check" and "you may" must never render
+      //     alike, and a list is no exception to that.
+      //
+      //  2. `buildConsumerProjection(…, "discovery_card", …)` NAMES whoever
+      //     survives. The identity columns this list used to read for itself
+      //     (`username`, `display_name`, `name`, `avatar_url`,
+      //     `show_profile_picture_publicly`) are gone from the candidate select
+      //     above, so the Compass person CARD and the Compass person LIST now
+      //     have exactly one source for who someone is — which is the whole of
+      //     §35's canonical architecture rule.
+      //
+      // COST is bounded by the PAGE, never by the pool. The gate is two reads
+      // per ranked candidate (pool ≤ 24) and runs BEFORE the slice, so a denied
+      // person is replaced by the next-best candidate rather than silently
+      // shortening the page; the per-person projection — the expensive half,
+      // which `PassportConsumerProjections` warns must never be used in bulk —
+      // runs only for the ≤ `limit` (≤ 20) people actually returned.
+      const travGates = await Promise.all(
+        intentPool.map((s) => allowDiscoveryPersonCard(sc, s.id)),
+      );
+      const topTravSlice = intentPool.filter((_, i) => travGates[i].allowed).slice(0, limit);
+
+      const travCards = await Promise.all(
+        topTravSlice.map((s) =>
+          buildConsumerProjection(sc, "discovery_card", s.id, user.id, { nowMs })
+            .catch((err: unknown) => {
+              req.log.warn({ err, userId: s.id }, "compass traveler card projection failed");
+              return null;
+            }),
+        ),
+      );
+
+      const travelerRecommendations = topTravSlice.flatMap((s, i) => {
+        const card = travCards[i];
+        // Fail-closed on the projection as well as on the gate: a person the
+        // assembler cannot project at all, or projects only as the minimal
+        // restricted (blocked / account-unavailable) card, is DROPPED. There is
+        // no half-person shape for a list row to fall back to.
+        if (!card || card.restricted) return [];
         const isPrivate = s.row.is_private ?? false;
-        const isFollowing = followingSet.has(s.id);
-        const isFriend = friendSet.has(s.id);
-        // Avatar gate (mirrors discoverySearch): a private account the viewer
-        // already follows behaves like a public one, and a public account's
-        // owner can still opt out via show_profile_picture_publicly (default
-        // true). The !avatarPrivate term closes the private-avatar leak.
-        const avatarPrivate = isPrivate && !isFollowing;
-        const showAvatar = isFollowing || isFriend || s.row.show_profile_picture_publicly !== false;
+        // A private account this viewer does not follow is a locked preview.
+        // That wider suppression (handle, city, avatar, reason) is Compass's own
+        // product rule, not Discovery's, and is deliberately NOT folded into the
+        // shared projection — it narrows the projection, never widens it.
+        const lockedPreview = isPrivate && !followingSet.has(s.id);
+        // `identity.name` is already null unless the subject opted into
+        // `show_real_name` — the assembler's fail-closed choke point owns that.
+        // It is not blank-checked there, though (`presentedName` rejects a
+        // whitespace-only name, `buildIdentity` does not), so a display_name of
+        // "   " would render as a blank title. Falling through to the handle is
+        // the answer every other surface gives.
+        const projectedName =
+          typeof card.identity.name === "string" && card.identity.name.trim().length > 0
+            ? card.identity.name
+            : null;
+        const handle = card.identity.handle ?? null;
         const followStatus: "following" | "requested" | "not_following" =
           followingSet.has(s.id) ? "following"
           : requestedSet.has(s.id) ? "requested"
           : "not_following";
-        return {
+        return [{
           id:       s.id,
           type:     "traveler",
           category: "traveler",
-          // Universal display-name rule: hidden names fall back to @username
-          // (and to null for private non-followed profiles, which suppress it).
-          title: nameOk
-            ? ((s.row.display_name ?? s.row.name ?? s.row.username ?? null) as string | null)
-            : (isPrivate && !followingSet.has(s.id)
-              ? null
-              : ((s.row.username ?? null) as string | null)),
-          reason:   buildTravelerReasonText(s.reasonCode, isPrivate ? [] : s.sharedInterests, isPrivate ? null : (s.row.home_city ?? null)),
+          // Universal display-name rule: a name the viewer may not see falls
+          // back to the handle (and to null for a locked preview, which
+          // suppresses that too).
+          title: projectedName ?? (lockedPreview ? null : handle),
+          reason:   buildTravelerReasonText(
+            s.reasonCode,
+            isPrivate ? [] : s.sharedInterests,
+            isPrivate ? null : (s.row.home_city ?? null),
+            // A private profile suppresses its identifying detail here exactly
+            // as it does for interests and city; the intent is theirs, not ours.
+            isPrivate ? [] : s.sharedExplicitIntents,
+          ),
           city:     isPrivate ? null : ((s.row.home_city ?? null) as string | null),
           data: {
             userId:          s.id,
             // Private profiles: suppress identifying details until followed
-            username:        isPrivate ? null : ((s.row.username ?? null) as string | null),
-            displayName:     nameOk ? ((s.row.display_name ?? s.row.name ?? null) as string | null) : null,
-            avatarUrl:       (!avatarPrivate && showAvatar) ? ((s.row.avatar_url ?? null) as string | null) : null,
+            username:        isPrivate ? null : handle,
+            displayName:     projectedName,
+            avatarUrl:       lockedPreview ? null : (card.identity.avatarUrl ?? null),
             homeCity:        isPrivate ? null : ((s.row.home_city ?? null) as string | null),
             isPrivate,
-            verified:        s.row.verified ?? false,
+            verified:        card.identity.verified,
             sharedInterests: isPrivate ? [] : s.sharedInterests,
+            // §8 — the explicit current-intent overlap that outranked it, and
+            // the bounded weight it was worth, so "why this person" is
+            // answerable from stored inputs rather than from the sentence.
+            sharedExplicitIntents: isPrivate ? [] : s.sharedExplicitIntents,
+            explicitIntentWeight:  s.intentBoost,
             reasonCode:      s.reasonCode,
             followStatus,
           },
-        };
+        }];
       });
 
       void logCompassImpression(travelerRecommendations, user.id, effectiveSessionId);
@@ -3631,6 +4074,9 @@ router.get("/compass/recommendations", async (req, res) => {
     );
 
     let candidateItems: any[] = feedSection?.items ?? [];
+    // §17.2 (census-trips TR319): the trip surface consults the trip's priority switch.
+    let tripAttention: AttentionReading | null = null;
+    let attentionWithheld = 0;
 
     // ── Surface-specific post-filtering ──────────────────────────────────────
 
@@ -3668,6 +4114,23 @@ router.get("/compass/recommendations", async (req, res) => {
         } catch {
           // Non-fatal: member signal is best-effort; continue without it
         }
+
+        // §17.2 (census-trips TR319): the trip's priority switch decides whether
+        // commercial and entertainment items reach the brief at all. Safety and
+        // logistics items stay; the static safety note below is appended after
+        // this filter and is never withheld. A switch that cannot be read (the
+        // operational-projections gate is closed on every deployment today)
+        // withholds nothing and is reported as not consulted.
+        tripAttention = await readTripAttention(sc, tripId, user.id);
+        const held = applyAttentionSuppression(candidateItems, tripAttention, (fi: any) => {
+          const inner = fi.item ?? fi;
+          return [
+            inner.type ?? fi.type, inner.category ?? fi.category, inner.data?.category, inner.data?.primary_category,
+            ...(Array.isArray(inner.interestTags) ? inner.interestTags : []),
+          ];
+        });
+        candidateItems = held.kept;
+        attentionWithheld = held.withheld;
       }
     } else if (surface === "passport") {
       // Load block list — fail-CLOSED: on any error, return empty to prevent leaking blocked users
@@ -3804,7 +4267,10 @@ router.get("/compass/recommendations", async (req, res) => {
     }
 
     void logCompassImpression(recommendations, user.id, effectiveSessionId);
-    res.json({ recommendations, surface, sessionId: effectiveSessionId });
+    res.json({
+      recommendations, surface, sessionId: effectiveSessionId,
+      ...(tripAttention ? { attention: attentionOnTheWire(tripAttention, attentionWithheld) } : {}),
+    });
   } catch (err) {
     req.log.error({ err }, "compass/recommendations: build failed");
     res.json({ recommendations: [], surface });
@@ -3900,11 +4366,76 @@ function buildBuddyReasonText(
 }
 
 // ── Traveler reason text ──────────────────────────────────────────────────────
-function buildTravelerReasonText(
+/** The minimum shape `applyExplicitIntentWeighting` mutates. */
+export interface ExplicitIntentWeightable {
+  id: string;
+  score: number;
+  reasonCode: string;
+  sharedExplicitIntents: string[];
+  intentBoost: number;
+}
+
+/** What one traveler's visible explicit-intent read yields. */
+export interface ExplicitIntentReadLike {
+  intents: string[];
+  hasActiveWindow: boolean;
+}
+
+/**
+ * Passport `:94` / §8 — weight EXPLICIT CURRENT INTENT above generic interests,
+ * in place, and re-sort.
+ *
+ * Pure and separate from the route so the rule can be proven rather than
+ * inferred from an integration fixture. Three properties it must have, and
+ * each is a test:
+ *
+ *   1. A traveler with NO active open-to-plans window gets no boost, whatever
+ *      their intent list says. `explicitIntentBoost` enforces this; the loop
+ *      must not work around it.
+ *   2. One shared explicit intent outweighs one shared generic interest,
+ *      because INTENT_WEIGHT_PER_MATCH (12) > GENERIC_WEIGHT_PER_MATCH (4) and
+ *      the list's generic term is now `genericInterestWeight` too.
+ *   3. A boosted traveler's REASON changes to `explicit_intent`, so the list
+ *      says which of the two signals put them there.
+ *
+ * A traveler whose boost is zero is left completely untouched — same score,
+ * same reason code, same (empty) overlap — so ordering changes ONLY where an
+ * explicit window exists on both sides.
+ */
+export function applyExplicitIntentWeighting<T extends ExplicitIntentWeightable>(
+  entries: T[],
+  viewerIntents: readonly string[],
+  readByTravelerId: ReadonlyMap<string, ExplicitIntentReadLike>,
+): T[] {
+  if (viewerIntents.length === 0) return entries;
+  for (const entry of entries) {
+    const read = readByTravelerId.get(entry.id);
+    if (!read) continue;
+    const shared = sharedItems([...viewerIntents], read.intents);
+    const boost  = explicitIntentBoost(shared.length, read.hasActiveWindow);
+    if (boost <= 0) continue;
+    entry.sharedExplicitIntents = shared.slice(0, 3);
+    entry.intentBoost = boost;
+    entry.score += boost;
+    entry.reasonCode = "explicit_intent";
+  }
+  entries.sort((a, b) => b.score - a.score);
+  return entries;
+}
+
+export function buildTravelerReasonText(
   reasonCode: string,
   sharedInterests: string[],
   city: string | null,
+  /** §8 explicit current intents shared with the viewer, when that is the reason. */
+  sharedExplicitIntents: string[] = [],
 ): string {
+  // Passport `:94` — an explicit CURRENT intent is a different and stronger
+  // statement than a long-term interest, and it is named first so the traveller
+  // can see which of the two put this person in front of them.
+  if (reasonCode === "explicit_intent" && sharedExplicitIntents.length > 0) {
+    return `Open to plans right now: ${sharedExplicitIntents.slice(0, 2).join(", ")}`;
+  }
   if (reasonCode === "mutual_connections") return "People you both follow";
   if (reasonCode === "destination_overlap") return "Heading to the same destination";
   if (reasonCode === "shared_interests" && sharedInterests.length > 0) {
@@ -4176,6 +4707,56 @@ router.get("/compass/telegraph", async (req, res) => {
     req.log?.error({ err }, "compass/telegraph: build failed");
     // Always fail open — return empty cards rather than an error
     res.json({ cards: [], city: null });
+  }
+});
+
+// ── GET /api/compass/people/:userId/passport ──────────────────────────────────
+//
+// §21 TABLE 22, Compass row: "permitted identity, availability, intent, trust
+// capabilities, Trip/shared context". §8 pairs Compass person cards with
+// Discovery ones and the discovery_card variant serves both — it carries the
+// trust CAPABILITIES (`capabilities.owner`) Compass eligibility reads, and its
+// `intent` is the EXPLICIT current intent from the §8 availability-window
+// domain, which is precisely the signal §8 tells Compass to weight above
+// generic interests (`explicitIntentBoost` / `genericInterestWeight`, exported
+// from the same module so the weighting and the card read one truth).
+//
+// §35's loop — "Compass combines the two permitted Passport projections with
+// live Map intelligence" — is two calls to this, one per traveler, not a
+// Compass-local reconstruction of who those travelers are.
+router.get("/compass/people/:userId/passport", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { userId } = req.params;
+  if (!/^[0-9a-f-]{36}$/i.test(userId)) {
+    sendError(res, "invalid_payload", "Invalid user id");
+    return;
+  }
+
+  const rl = checkRateLimit("compass_person_card", user.id, 60, 60_000);
+  if (!rl.allowed) {
+    res.setHeader("Retry-After", Math.ceil(rl.retryAfterMs / 1000).toString());
+    sendError(res, "rate_limited", "Too many requests. Please wait.");
+    return;
+  }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  // Same gate as the Discovery card, from the same module: a traveler the
+  // people-recommendation list must not surface is not reachable by id either.
+  const gate = await allowDiscoveryPersonCard(sc, userId);
+  if (!gate.allowed) { sendError(res, "not_found", "User not found"); return; }
+
+  try {
+    const passport = await buildConsumerProjection(sc, "discovery_card", userId, user.id);
+    if (!passport) { sendError(res, "not_found", "User not found"); return; }
+    res.status(200).json({ passport });
+  } catch (err) {
+    req.log.warn({ err, userId }, "compass person card projection failed");
+    sendError(res, "db_error", "Could not load person card");
   }
 });
 

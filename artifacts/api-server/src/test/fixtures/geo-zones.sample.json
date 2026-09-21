@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "source": "SAMPLE — non-production fixture for src/test/geoZoneSeed.test.ts. Coordinates are approximate Da Nang areas chosen to coincide with src/test/mapCrowdFlowLayer.test.ts. DO NOT import into production.",
+  "zones": [
+    {
+      "name": "Da Nang",
+      "zoneType": "city",
+      "city": "Da Nang",
+      "countryCode": "VN",
+      "centerLat": 16.0544,
+      "centerLng": 108.2022,
+      "radiusMeters": 12000,
+      "metadata": { "sample": true }
+    },
+    {
+      "name": "An Thuong",
+      "zoneType": "neighborhood",
+      "city": "Da Nang",
+      "countryCode": "VN",
+      "centerLat": 16.05,
+      "centerLng": 108.2,
+      "radiusMeters": 600,
+      "metadata": { "sample": true }
+    },
+    {
+      "name": "Han Riverside",
+      "zoneType": "neighborhood",
+      "city": "Da Nang",
+      "countryCode": "VN",
+      "centerLat": 16.06,
+      "centerLng": 108.22,
+      "radiusMeters": 600,
+      "metadata": { "sample": true }
+    },
+    {
+      "name": "My Khe",
+      "zoneType": "neighborhood",
+      "city": "Da Nang",
+      "countryCode": "VN",
+      "polygonGeojson": {
+        "type": "Polygon",
+        "coordinates": [[
+          [108.235, 16.062],
+          [108.248, 16.062],
+          [108.248, 16.078],
+          [108.235, 16.078],
+          [108.235, 16.062]
+        ]]
+      },
+      "metadata": { "sample": true }
+    },
+    {
+      "name": "Da Nang International Airport",
+      "zoneType": "airport",
+      "city": "Da Nang",
+      "countryCode": "VN",
+      "centerLat": 16.0439,
+      "centerLng": 108.1994,
+      "radiusMeters": 1500,
+      "metadata": { "sample": true }
+    }
+  ]
+}

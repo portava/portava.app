@@ -2,17 +2,30 @@
  * Layover dashboard — the live command center for an active layover.
  *
  * Hero (countdown, tier, airport-local time) → Can-I-Leave guidance →
- * mini-plan with hard return marker → time-aware recommendations → map →
- * people (presence opt-in + Rent-a-Buddy) → sticky footer actions.
+ * mini-plan with hard return marker → Compass → the exploration block
+ * (time-aware recommendations → map → people) → sticky footer actions.
+ *
+ * ── THE LAYOUT IS THE CERTIFIED POSTURE, NOT A LOCAL GUESS ───────────────────
+ * Two fields of `overview.safeReturn` decide the shape of this screen, and both
+ * are derived server-side from the certified record by `safeReturnPosture`
+ * (`artifacts/api-server/src/services/airport/LayoverSafeReturnService.ts:102#export function safeReturnPosture`).
+ * Nothing here re-derives a return state from a clock:
+ *
+ *   returnRoutePrimary     → the abort card is hoisted above the hero (§15)
+ *   explorationCollapsed   → the exploration block collapses to a notice (§13)
+ *
+ * Collapsed is not hidden. "Show them anyway" is one press and the traveller
+ * keeps the whole city; what the posture buys is that the default answer at
+ * RETURN_NOW is the airport, not a restaurant.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator,
-  RefreshControl, Alert, Platform,
+  RefreshControl,
 } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ArrowLeft, Bell, BellRing, Power, Send } from 'lucide-react-native';
+import { ArrowLeft, Bell, BellRing, Plane, Power, Send } from 'lucide-react-native';
 import { color, space, radius, type as t, avatar } from '../../src/theme/tokens';
 import { ConfirmSheet } from '../../src/components/ui/ConfirmSheet';
 import {
@@ -33,15 +46,23 @@ import {
 } from '../../src/services/layover';
 import {
   cancelScheduledNotification,
+  notificationPromptWouldAppear,
   scheduleLocalNotificationAt,
 } from '../../src/lib/safeNotifications';
 import { AirportEssentialsCard } from '../../src/components/layover/AirportEssentialsCard';
+import { AirportConditionsCard } from '../../src/components/layover/AirportConditionsCard';
 import { LayoverHero } from '../../src/components/layover/LayoverHero';
 import { CanILeaveCard } from '../../src/components/layover/CanILeaveCard';
 import { LayoverPlanSection } from '../../src/components/layover/LayoverPlanSection';
 import { LayoverRecsSection } from '../../src/components/layover/LayoverRecsSection';
 import { LayoverMapCard } from '../../src/components/layover/LayoverMapCard';
 import { LayoverPeopleSection } from '../../src/components/layover/LayoverPeopleSection';
+import { LayoverCrewSection } from '../../src/components/layover/LayoverCrewSection';
+import { LayoverSafeReturnCard } from '../../src/components/layover/LayoverSafeReturnCard';
+import { LayoverEndSheet } from '../../src/components/layover/LayoverEndSheet';
+import { useSafeReturnAbort } from '../../src/components/layover/useSafeReturnAbort';
+import { LayoverCompassCard } from '../../src/components/layover/LayoverCompassCard';
+import { LayoverFlightChangeCard } from '../../src/components/layover/LayoverFlightChangeCard';
 import { fmtClock } from '../../src/components/layover/layoverFormat';
 import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
 
@@ -56,6 +77,11 @@ export default function LayoverDashboardScreen() {
   const [recsLoading, setRecsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState(false);
+  // Bumped once per completed load so cards that own their own fetch
+  // (AirportConditionsCard) re-read on the same pull-to-refresh as the
+  // rest of the screen, rather than holding a reading the traveller has
+  // just asked to refresh.
+  const [dataEpoch, setDataEpoch] = useState(0);
 
   const [presence, setPresence] = useState<{ count: number; travelers: PresenceTraveler[] }>({ count: 0, travelers: [] });
   const [buddies, setBuddies] = useState<LayoverBuddy[]>([]);
@@ -66,6 +92,11 @@ export default function LayoverDashboardScreen() {
   // QA round 2, minor F: drives the in-app confirm on web (see confirmEnd).
   const [endConfirmOpen, setEndConfirmOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  // §13 L120/L141 — the traveller's override of the certified collapse. False
+  // is the server's posture; true is "I know, show me anyway".
+  const [showExploration, setShowExploration] = useState(false);
+  // §17.1 L165 — the rationale that precedes the OS notification prompt.
+  const [notifRationaleOpen, setNotifRationaleOpen] = useState(false);
   const notifIdRef = useRef<string | null>(null);
 
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -87,6 +118,10 @@ export default function LayoverDashboardScreen() {
     return () => clearInterval(timer);
   }, [id, sessionStatus]);
 
+  // §15.1's abort, lifted out of `LayoverSafeReturnCard` so that more than one
+  // control can fire it (census L42, L123). Declared here, above every early
+  // return, because a hook may not be called conditionally. `reloadAfterAbort`
+  // is defined after `load` and read through a ref-free callback below.
   const showToast = useCallback((msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(null), 3200);
@@ -117,15 +152,53 @@ export default function LayoverDashboardScreen() {
     setRecs(recList);
     setLoading(false);
     setRefreshing(false);
+    setDataEpoch((n) => n + 1);
   }, [id, loadPresence]);
 
   useEffect(() => { load(); }, [load]);
 
+  // The abort cancels landside stops and may flip the session status, so the
+  // screen must re-read rather than keep rendering the plan it just cleared.
+  const reloadAfterAbort = useCallback(() => { void load(true); }, [load]);
+  const returnAbort = useSafeReturnAbort(id, reloadAfterAbort);
+
   const canEdit = overview?.session.status === 'active';
+
+  /**
+   * §24 L265 / §11.1 L99 — is the reminder this screen claims is set still
+   * pointing at the deadline it was set against?
+   *
+   * The server decides (`services/airport/LayoverReturnEscalation.ts`,
+   * `reminderDisposition`) and publishes it on the overview; this screen only
+   * forwards the answer. It is read with a local narrowing rather than through
+   * `LayoverOverview`, because that type lives in `services/layover.ts`, which
+   * this lane does not own — an older server that does not publish the member
+   * renders exactly what it rendered before.
+   *
+   * WHY THIS IS A BANNER AND NOT A SILENT RESCHEDULE. The local notification
+   * was scheduled by whichever app session pressed the button, and its
+   * identifier lives in a `useRef` that does not survive a remount, so this
+   * screen cannot cancel a notification it did not schedule. What it CAN stop
+   * doing is asserting "Reminder set" for a warning that has drifted — which is
+   * the half of the defect a traveller actually acts on.
+   */
+  const reminderDrift = (overview as { reminder?: {
+    action: string; reason: string; driftMinutes: number; materialChange: boolean;
+    firesAt: string | null; staleFiresAt: string | null;
+  } } | null)?.reminder ?? null;
+  const reminderStale = reminderDrift?.action === 'reschedule' || reminderDrift?.action === 'cancel';
   const city = overview
     ? (overview.airport.city !== 'Unknown' ? overview.airport.city : overview.session.manualCity)
     : null;
 
+  // §13 L122 — recommendation id → the band its PIN renders. Built here rather
+  // than inside the card so the card stays a consumer: L115 forbids the map
+  // recalculating feasibility, and a lookup table is not a calculation.
+  const candidateFeasibility = useMemo(() => {
+    const out: Record<string, NonNullable<LayoverRecommendation['feasibility']>> = {};
+    for (const r of recs) if (r.id && r.feasibility) out[r.id] = r.feasibility;
+    return out;
+  }, [recs]);
   const addedRecIds = useMemo(
     () => new Set(overview?.stops.map((s) => s.recommendationId).filter((x): x is string => !!x) ?? []),
     [overview?.stops],
@@ -164,7 +237,21 @@ export default function LayoverDashboardScreen() {
     }
   }, [id, overview, loadPresence, showToast]);
 
-  const handleReminder = useCallback(async () => {
+  /**
+   * §17.1 L165 — EXPLAIN THE PERMISSION BEFORE THE OS ASKS FOR IT.
+   *
+   * The request was already contextual (it only happens inside this tap), but
+   * nothing told the traveller WHY, and the OS dialog cannot: it says
+   * "Portava would like to send you notifications", which is a request without
+   * a reason and is the one people decline by reflex. The reason is specific
+   * and worth a sentence — this notification is how a safe return window that
+   * moves reaches someone who has walked away from their phone.
+   *
+   * The sheet is shown ONLY when a dialog is actually about to appear
+   * (`notificationPromptWouldAppear`), so a traveller who has already granted
+   * permission gets their reminder on one tap, as before.
+   */
+  const scheduleReminder = useCallback(async () => {
     if (!id || !overview) return;
     setReminderBusy(true);
     try {
@@ -191,27 +278,67 @@ export default function LayoverDashboardScreen() {
     }
   }, [id, overview, showToast]);
 
+  const handleReminder = useCallback(async () => {
+    if (!id || !overview) return;
+    if (await notificationPromptWouldAppear()) { setNotifRationaleOpen(true); return; }
+    await scheduleReminder();
+  }, [id, overview, scheduleReminder]);
+
+  /**
+   * census-layover L271 — NAVIGATE TO THE CHAT ONLY IF THE MESSAGE IS IN IT.
+   *
+   * This used to push to the trip chat whenever the session had a `tripId`,
+   * without looking at the response at all — so a failed send, and even a send
+   * the server never attempted, still landed the traveller in a conversation
+   * where their own text was missing and nothing said why. The server now
+   * writes the message and reports `posted`; this switches on that.
+   *
+   * The Compass fallback keeps its old job for a layover with no trip: there is
+   * no thread to post to, so the text is carried into /ai as a prefill instead
+   * of being lost.
+   */
   const handleTelegraph = useCallback(async () => {
     if (!id || !overview) return;
     const msg = `On a layover in ${city ?? 'town'} with about ${Math.round(overview.window.usableMinutes / 60)}h to spare — any quick tips?`;
     const res = await sendLayoverTelegraph(id, msg);
-    if (overview.session.tripId) {
-      router.push(`/trip/chat?id=${overview.session.tripId}` as any);
-    } else if (res) {
-      router.push({ pathname: '/ai', params: { prefillMessage: msg } } as any);
-    } else {
+    if (!res) {
       showToast('Telegraph is unavailable right now');
+    } else if (res.posted && overview.session.tripId) {
+      router.push(`/trip/chat?id=${overview.session.tripId}` as any);
+    } else if (res.threadId && !res.posted) {
+      // There IS a chat and the message did not reach it. Sending the traveller
+      // there would show them an absence they cannot explain.
+      showToast(
+        res.postFailure === 'e2ee'
+          ? 'That chat is end-to-end encrypted — send this from the chat itself'
+          : 'Could not post to your trip chat. Please try again.',
+      );
+    } else {
+      router.push({ pathname: '/ai', params: { prefillMessage: msg } } as any);
     }
   }, [id, overview, city, router, showToast]);
 
-  const doEndLayover = useCallback(async () => {
+  /**
+   * §3 L19 / §17 L162 — the close carries the OUTCOME and the ELECTION.
+   *
+   * It used to send neither: every close was `cancelled`, so a traveller who
+   * came back and boarded was recorded as having abandoned the layover, and the
+   * Passport stamp had already been written at session CREATION for a city they
+   * had not been to. Both answers now come from the sheet, and the server's own
+   * `passportStamp.reason` is what the toast says — this screen does not
+   * re-derive whether a stamp was written.
+   */
+  const doEndLayover = useCallback(async (choice: { outcome: 'completed' | 'cancelled'; passportStamp: boolean }) => {
     if (!id) return;
     setEndConfirmOpen(false);
     setEndBusy(true);
     try {
-      const ok = await endLayoverSession(id);
-      if (ok) {
+      const result = await endLayoverSession(id, choice);
+      if (result.ok) {
         await cancelScheduledNotification(notifIdRef.current);
+        if (choice.passportStamp && result.passportStamp && !result.passportStamp.written) {
+          showToast('Layover ended — the Passport stamp could not be saved');
+        }
         router.back();
       } else {
         showToast('Could not end the layover');
@@ -222,19 +349,13 @@ export default function LayoverDashboardScreen() {
   }, [id, router, showToast]);
 
   const confirmEnd = useCallback(() => {
-    // QA round 2, minor F: the web path used a raw window.confirm(), which drops
-    // the user out of the app's visual language and blocks the JS thread while
-    // it is open. ConfirmSheet is the in-app equivalent. Native keeps the OS
-    // alert, which is the platform idiom.
-    if (Platform.OS === 'web') {
-      setEndConfirmOpen(true);
-    } else {
-      Alert.alert('End layover?', 'Your plan stays saved in your history.', [
-        { text: 'Keep going', style: 'cancel' },
-        { text: 'End layover', style: 'destructive', onPress: doEndLayover },
-      ]);
-    }
-  }, [doEndLayover]);
+    // ONE SHEET ON BOTH PLATFORMS, which is a departure from this screen's own
+    // rule that native keeps the OS alert. The rule is about CONFIRMATIONS;
+    // ending a layover is now a form with two independent answers, and
+    // `Alert.alert` can only carry it as two chained dialogs — which would make
+    // "I made my flight" and "keep the stamp" look like one decision.
+    setEndConfirmOpen(true);
+  }, []);
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
@@ -266,6 +387,45 @@ export default function LayoverDashboardScreen() {
 
   const { session, airport, window: win, advice, stops, planFit, localTimes } = overview;
 
+  const returnCard = (
+    <LayoverSafeReturnCard
+      overview={overview}
+      nowMs={nowMs}
+      canAbort={!!canEdit}
+      abort={returnAbort}
+    />
+  );
+  // §13 L123 — what the map's airport element needs in order to be the return
+  // CTA's anchor. Every field is the server's certified posture; the action is
+  // the SAME controller the card holds, so a second entry point cannot produce
+  // a second contract.
+  const airportReturn = {
+    hardReturnTime: win.hardReturnTime,
+    minutesToHardReturn: overview.safeReturn?.minutesToHardReturn ?? null,
+    returnState: overview.safeReturn?.returnState ?? win.returnState ?? null,
+    canReturn: !!canEdit,
+    busy: returnAbort.busy,
+    onReturnNow: returnAbort.run,
+  };
+  // `?.` against a required field on purpose: the type says the server always
+  // sends `safeReturn`, and getLayoverOverview warns loudly when it does not —
+  // but a missing field must degrade the LAYOUT, not blank the whole dashboard.
+  const returnCardFirst = overview.safeReturn?.returnRoutePrimary === true;
+  // §13 L120 / L141 — the OTHER half of the same certified posture. The server
+  // derives `explorationCollapsed` from the certified return state
+  // (`safeReturnPosture`, RETURN_NOW or CONNECTION_AT_RISK) and has published
+  // it since the safe-return pass; until now the client read `returnRoutePrimary`
+  // beside it and dropped this one on the floor, so the card was HOISTED and
+  // exploration was never COLLAPSED.
+  //
+  // COLLAPSED, NOT HIDDEN, and the distinction is the requirement. §13 asks for
+  // exploration-first affordances to be SUPPRESSED when the traveller is due
+  // back; it does not ask for the app to decide on their behalf that a city no
+  // longer exists. `showExploration` is the traveller's own override and it
+  // survives until they leave the screen — one press, and everything is back.
+  const explorationCollapsed =
+    overview.safeReturn?.explorationCollapsed === true && !showExploration;
+
   return (
     <View style={styles.container}>
       <Stack.Screen options={{ headerShown: false }} />
@@ -295,9 +455,68 @@ export default function LayoverDashboardScreen() {
           </View>
         )}
 
+        {/* §15 "the fastest return route is primary": when the certified posture
+            says so (RETURN_NOW / CONNECTION_AT_RISK), the abort card is hoisted
+            above the hero instead of sitting with the plan. Nothing is hidden —
+            position is the only thing that changes. */}
+        {returnCardFirst && returnCard}
+
         <LayoverHero airport={airport} session={session} window={win} localTimes={localTimes} nowMs={nowMs} />
-        <CanILeaveCard advice={advice} window={win} airport={airport} />
+        {/* §24 L265 — a reminder that no longer matches the certified deadline,
+            said out loud. Below the material threshold the server answers
+            `keep` and nothing renders, which is the suppression half of the
+            same requirement: a two-minute drift must not produce a banner any
+            more than it should produce a notification. */}
+        {reminderDrift && reminderStale ? (
+          <Pressable
+            style={styles.driftCard}
+            testID="reminder-drift"
+            accessibilityRole="button"
+            onPress={reminderDrift.action === 'reschedule' ? handleReminder : undefined}
+            disabled={reminderDrift.action !== 'reschedule' || reminderBusy}
+          >
+            <Text style={styles.driftTitle} testID="reminder-drift-title">
+              {reminderDrift.action === 'cancel'
+                ? 'Your reminder can no longer warn you'
+                : 'Your reminder is out of date'}
+            </Text>
+            <Text style={styles.driftBody} testID="reminder-drift-body">
+              {reminderDrift.action === 'cancel'
+                ? 'Your flight moved and the moment it was set for has passed. Watch the countdown above.'
+                : `Your flight moved by ${Math.abs(reminderDrift.driftMinutes)} min. Tap to set it for ${fmtClock(reminderDrift.firesAt, airport.timezone)} instead.`}
+            </Text>
+          </Pressable>
+        ) : null}
+        {/* §2.1/§22 (census L9, L250): the card says which rung of the fallback
+            ladder these minutes came off. The server derives it from the
+            certified record; this screen only forwards it. */}
+        <CanILeaveCard
+          advice={advice}
+          window={win}
+          airport={airport}
+          airportIntelligence={overview.airportIntelligence ?? null}
+        />
+        {/* The one §11 event producer this tree has: the traveller. A flight
+            time the gate agent just announced is a fact no feed here carries,
+            and the server runs the whole §11.1 pipeline over it. */}
+        <LayoverFlightChangeCard
+          session={session}
+          canEdit={!!canEdit}
+          onChanged={() => load(true)}
+          onError={showToast}
+        />
         <AirportEssentialsCard countryCode={airport.countryCode} countryName={airport.country !== 'Unknown' ? airport.country : undefined} />
+
+        {/* §10 L82 — the traveller observation channel's submission surface.
+            Placed directly under the essentials because it answers the same
+            question ("what is this airport like right now") with the one kind
+            of evidence no feed in this tree carries: somebody standing in it. */}
+        <AirportConditionsCard sessionId={session.id} refreshKey={dataEpoch} />
+
+        {/* §15.1 "every active landside plan must expose RETURN TO AIRPORT" —
+            directly above the plan it cancels. */}
+        {!returnCardFirst && returnCard}
+
         <LayoverPlanSection
           sessionId={session.id}
           stops={stops}
@@ -307,42 +526,142 @@ export default function LayoverDashboardScreen() {
           onChanged={onStopsChanged}
           onError={showToast}
         />
-        <LayoverRecsSection
-          recs={recs}
-          loading={recsLoading}
-          canPlan={!!canEdit}
-          addedRecIds={addedRecIds}
-          addingRecId={addingRecId}
-          onAddToPlan={handleAddRec}
-        />
-        <LayoverMapCard airport={airport} stops={stops} />
-        <LayoverPeopleSection
-          city={city ?? null}
-          shareEnabled={overview.share.enabled}
-          shareBusy={shareBusy}
-          presenceCount={presence.count || overview.share.othersInCity}
-          travelers={presence.travelers}
-          buddies={buddies}
-          canEdit={!!canEdit}
-          onToggleShare={handleToggleShare}
-          onOpenBuddy={(b) => router.push(`/(rent-a-buddy)/buddy/${b.id}` as any)}
-        />
+        {/* Compass is the EXPLAINER, not an exploration affordance, so it sits
+            outside the block below and stays mounted in every posture. It moved
+            here from between the recommendations and the map only so that the
+            three exploration surfaces are contiguous and can be collapsed as
+            one; nothing about the panel itself changed. */}
+        <LayoverCompassCard sessionId={session.id} timezone={airport.timezone} />
+
+        {explorationCollapsed ? (
+          <View style={styles.collapsedNotice} testID="layover-exploration-collapsed">
+            <Text style={styles.collapsedTitle} testID="layover-exploration-collapsed-title">
+              {overview.safeReturn?.returnState === 'CONNECTION_AT_RISK'
+                ? 'Your connection is at risk'
+                : "It's time to head back"}
+            </Text>
+            <Text style={styles.collapsedBody}>
+              Ideas, the map and people nearby are collapsed while you return. The
+              return card above has your deadline.
+            </Text>
+            <Pressable
+              style={styles.collapsedBtn}
+              onPress={() => setShowExploration(true)}
+              testID="layover-exploration-show-anyway"
+            >
+              <Text style={styles.collapsedBtnText}>Show them anyway</Text>
+            </Pressable>
+          </View>
+        ) : (
+          <View style={styles.exploration} testID="layover-exploration">
+            <LayoverRecsSection
+              recs={recs}
+              loading={recsLoading}
+              canPlan={!!canEdit}
+              addedRecIds={addedRecIds}
+              addingRecId={addingRecId}
+              onAddToPlan={handleAddRec}
+            />
+            {/* §13 L116/L117/L119/L121/L122/L125/L126 — the map's three server
+                inputs, all of which the server was ALREADY publishing and this
+                screen was dropping on the floor:
+
+                  `overview.safeEnvelope`   the certified §8 geometry (L63)
+                  `rec.feasibility`         the per-candidate band (L122)
+                  `overview.offlineBundle`  certifiedAt / staleAfter (L126)
+
+                `candidateFeasibility` is keyed by RECOMMENDATION id because
+                that is what a plan stop carries (`stop.recommendationId`), and
+                because L122 names the recommendation contract as the source. A
+                stop a traveller typed in themselves has no key here and the
+                card renders it as unmeasured — which is the truth, and is not
+                the same as unblocked. */}
+            <LayoverMapCard
+              airport={airport}
+              stops={stops}
+              airportReturn={airportReturn}
+              envelope={overview.safeEnvelope ?? null}
+              candidateFeasibility={candidateFeasibility}
+              offline={overview.offlineBundle ?? null}
+              nowMs={nowMs}
+            />
+            <LayoverPeopleSection
+              city={city ?? null}
+              shareEnabled={overview.share.enabled}
+              shareBusy={shareBusy}
+              presenceCount={presence.count || overview.share.othersInCity}
+              travelers={presence.travelers}
+              buddies={buddies}
+              canEdit={!!canEdit}
+              onToggleShare={handleToggleShare}
+              onOpenBuddy={(b) => router.push(`/(rent-a-buddy)/buddy/${b.id}` as any)}
+            />
+
+            {/* §14 L28/L29/L131 — the crew. Placed with the other people, and
+                therefore inside the exploration block, which means it collapses
+                with it at RETURN_NOW. That is the certified posture doing its
+                job: at RETURN_NOW the default answer is the airport, and
+                "collapsed" is one press from open, not hidden. */}
+            <LayoverCrewSection
+              sessionId={session.id}
+              timezone={airport.timezone}
+              refreshKey={dataEpoch}
+            />
+          </View>
+        )}
       </ScrollView>
       </KeyboardSafeScrollView>
 
-      {/* Sticky footer */}
+      {/* Sticky footer.
+
+          §5 L42: *"RETURN_SOON → RETURN_NOW … side effect = switch primary CTA
+          to Return to Airport."* The primary slot held "Remind me" in every
+          posture, which is the wrong offer at the one moment it matters: a
+          reminder is a promise about the future, and the future has arrived.
+          The switch is keyed on the SERVER's `returnRoutePrimary` — the same
+          certified boolean that hoists the abort card — so the footer and the
+          layout cannot disagree, and nothing here re-derives a state from a
+          clock. It fires the screen's one abort controller, so the RETURN
+          CONTRACT still appears in exactly one place: the card above, which is
+          hoisted to the top in this very posture. */}
       {canEdit && (
         <View style={[styles.footer, { paddingBottom: insets.bottom + space.sm }]}>
-          <Pressable
-            style={[styles.footerBtn, reminderBusy && styles.footerBtnDim]}
-            onPress={handleReminder}
-            disabled={reminderBusy}
-          >
-            {overview.returnReminderAt
-              ? <BellRing size={17} color={color.success} />
-              : <Bell size={17} color={color.ink} />}
-            <Text style={styles.footerBtnText}>{overview.returnReminderAt ? 'Reminder set' : 'Remind me'}</Text>
-          </Pressable>
+          {returnCardFirst ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Return to airport now"
+              accessibilityState={{ disabled: returnAbort.busy }}
+              style={[styles.footerBtn, styles.footerReturn, returnAbort.busy && styles.footerBtnDim]}
+              onPress={returnAbort.run}
+              disabled={returnAbort.busy}
+              testID="layover-footer-return-now"
+            >
+              {returnAbort.busy
+                ? <ActivityIndicator size="small" color={color.signal} />
+                : <Plane size={17} color={color.signal} />}
+              <Text style={[styles.footerBtnText, { color: color.signal }]}>Return to airport</Text>
+            </Pressable>
+          ) : (
+            <Pressable
+              style={[styles.footerBtn, reminderBusy && styles.footerBtnDim]}
+              onPress={handleReminder}
+              disabled={reminderBusy}
+              testID="layover-remind-me"
+            >
+              {/* A stale reminder is NOT a set reminder. The green bell and the
+                  words "Reminder set" were the screen's assertion that a
+                  warning was in place, and it kept making it after the flight
+                  moved out from under it (census L265). */}
+              {overview.returnReminderAt && !reminderStale
+                ? <BellRing size={17} color={color.success} />
+                : <Bell size={17} color={reminderStale ? color.signal : color.ink} />}
+              <Text style={[styles.footerBtnText, reminderStale && { color: color.signal }]}>
+                {reminderStale
+                  ? 'Reminder out of date'
+                  : overview.returnReminderAt ? 'Reminder set' : 'Remind me'}
+              </Text>
+            </Pressable>
+          )}
           <Pressable style={styles.footerBtn} onPress={handleTelegraph}>
             <Send size={17} color={color.ink} />
             <Text style={styles.footerBtnText}>Ask locals</Text>
@@ -351,6 +670,7 @@ export default function LayoverDashboardScreen() {
             style={[styles.footerBtn, styles.footerEnd, endBusy && styles.footerBtnDim]}
             onPress={confirmEnd}
             disabled={endBusy}
+            testID="layover-end-open"
           >
             <Power size={17} color={color.signalDim} />
             <Text style={[styles.footerBtnText, { color: color.signalDim }]}>End</Text>
@@ -358,15 +678,31 @@ export default function LayoverDashboardScreen() {
         </View>
       )}
 
+      {/* §17.1 L165 — the explanation, in front of the OS dialog rather than
+          after it. "Not now" leaves the permission untouched: declining the
+          EXPLANATION must not be turned into declining the permission, because
+          the OS remembers the second answer and not the first. */}
       <ConfirmSheet
+        visible={notifRationaleOpen}
+        title="Let us warn you when to head back"
+        body={
+          `Your safe return time can move while you're out — a longer security queue, ` +
+          `traffic, or a flight change. A notification is the only way we can tell you ` +
+          `once you've put your phone away. Your phone will ask next; we only use it for ` +
+          `this layover's return warnings.`
+        }
+        confirmLabel="Continue"
+        cancelLabel="Not now"
+        onConfirm={() => { setNotifRationaleOpen(false); void scheduleReminder(); }}
+        onCancel={() => setNotifRationaleOpen(false)}
+      />
+
+      {/* §3 L19 / §17 L162 — outcome and election, asked once, on both platforms. */}
+      <LayoverEndSheet
         visible={endConfirmOpen}
-        title="End this layover?"
-        body="Your plan stays saved in your history."
-        confirmLabel="End layover"
-        loadingLabel="Ending…"
-        destructive
-        loading={endBusy}
-        onConfirm={doEndLayover}
+        stampCity={city}
+        busy={endBusy}
+        onEnd={doEndLayover}
         onCancel={() => setEndConfirmOpen(false)}
       />
 
@@ -394,8 +730,19 @@ const styles = StyleSheet.create({
   backLink:  { padding: space.sm },
   backLinkText: { ...t.small, color: color.mute, textDecorationLine: 'underline' },
 
+  footerReturn: { backgroundColor: 'rgba(255,77,46,0.10)', borderRadius: radius.md },
   endedBanner: { backgroundColor: 'rgba(200,133,26,0.12)', borderRadius: radius.md, padding: space.md },
   endedText: { ...t.small, color: color.warn, fontWeight: '600' },
+
+  // §13 L120/L141 — the exploration block and the notice that stands in its
+  // place. The wrapper repeats the ScrollView's own `gap` so that collapsing
+  // three siblings into one child does not change the spacing between them.
+  exploration:     { gap: space.md },
+  collapsedNotice: { backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, padding: space.md, gap: space.xs },
+  collapsedTitle:  { ...t.body, color: color.ink, fontWeight: '700' },
+  collapsedBody:   { ...t.small, color: color.mute },
+  collapsedBtn:    { alignSelf: 'flex-start', paddingVertical: space.xs, paddingHorizontal: space.sm, borderRadius: radius.sm, backgroundColor: color.haze },
+  collapsedBtnText:{ ...t.small, color: color.ink, fontWeight: '600' },
 
   footer:    { position: 'absolute', left: 0, right: 0, bottom: 0, flexDirection: 'row', gap: space.sm, paddingHorizontal: space.lg, paddingTop: space.md, backgroundColor: color.paper, borderTopWidth: 1, borderTopColor: color.haze },
   footerBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze, borderRadius: radius.md, paddingVertical: space.md },
@@ -403,6 +750,9 @@ const styles = StyleSheet.create({
   footerBtnDim: { opacity: 0.55 },
   footerBtnText: { ...t.small, fontWeight: '700', color: color.ink },
 
+  driftCard:  { backgroundColor: '#FFF4E5', borderRadius: radius.md, padding: space.md, marginHorizontal: space.xl, marginBottom: space.md, gap: 4 },
+  driftTitle: { ...t.small, fontWeight: '700', color: color.ink },
+  driftBody:  { ...t.small, color: color.mute },
   toast:     { position: 'absolute', left: space.xl, right: space.xl, backgroundColor: color.ink, borderRadius: radius.md, padding: space.md, alignItems: 'center' },
   toastText: { ...t.small, color: color.onInk, fontWeight: '600' },
 });

@@ -15,7 +15,10 @@ export {
   BOOKING_UNAVAILABLE_CODES,
   isBookingUnavailable,
   bookingErrorCopy,
+  bookingRefusalAction,
+  classifyBookingRefusal,
 } from './rentABuddyBookingErrors.ts';
+export type { BookingRefusalAction, BookingRefusal } from './rentABuddyBookingErrors.ts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

@@ -166,7 +166,18 @@ const DEF_GT10 = {
   criteria:      { version: 1, metric: "countries_visited", gte: 10 },
 };
 
-/** Build user_stamps rows for N distinct countries (is_revoked=false). */
+/**
+ * Build user_stamps rows for N distinct countries the traveller HAS VISITED
+ * (is_revoked=false).
+ *
+ * Each row carries an embedded definition with `evidences_presence: true`
+ * (migration 2970). That is not decoration and it is not a loosening: since
+ * `distinctStampField` began asking the presence question, a row WITHOUT it is
+ * a planning stamp, and staging "this traveller has visited 5 countries" as
+ * five bare rows would be staging five trips they planned and never took. The
+ * scenario these cases test is the visited one, so it is now written as such —
+ * `plannedStamps` below is the other one, and it has its own case.
+ */
 function countryStamps(n: number): any[] {
   const codes = ["US","GB","FR","DE","JP","AU","BR","CA","IT","ES","MX","IN","CN","ZA","NZ"];
   return codes.slice(0, n).map((code, i) => ({
@@ -175,7 +186,19 @@ function countryStamps(n: number): any[] {
     country:    code,
     city:       null,
     is_revoked: false,
+    stamp_definitions: { slug: "first_trip_completed", evidences_presence: true },
   }));
+}
+
+/** The same N countries, PLANNED and never taken — what POST /api/trips awards. */
+function plannedStamps(n: number): any[] {
+  const codes = ["US","GB","FR","DE","JP","AU","BR","CA","IT","ES","MX","IN","CN","ZA","NZ"];
+  return codes.slice(0, n).flatMap((code, i) => [
+    { id: `plan-a-${i}-${code}`, user_id: USER_ID, country: code, city: null, is_revoked: false,
+      stamp_definitions: { slug: "first_trip_created", evidences_presence: false } },
+    { id: `plan-b-${i}-${code}`, user_id: USER_ID, country: code, city: null, is_revoked: false,
+      stamp_definitions: { slug: "trip_planner", evidences_presence: false } },
+  ]);
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -343,8 +366,12 @@ describe("criteria engine flag guard", () => {
       user_stamps:        [
         // 4 valid + 2 revoked that would push count to 6
         ...countryStamps(4),
-        { id: "revoked-1", user_id: USER_ID, country: "NG", city: null, is_revoked: true },
-        { id: "revoked-2", user_id: USER_ID, country: "PL", city: null, is_revoked: true },
+        // Presence-evidencing on purpose: revocation is what must exclude these,
+        // not a missing definition, or the case would pass for the wrong reason.
+        { id: "revoked-1", user_id: USER_ID, country: "NG", city: null, is_revoked: true,
+          stamp_definitions: { slug: "first_trip_completed", evidences_presence: true } },
+        { id: "revoked-2", user_id: USER_ID, country: "PL", city: null, is_revoked: true,
+          stamp_definitions: { slug: "first_trip_completed", evidences_presence: true } },
       ],
       stamp_award_events: [],
       user_stamps_awarded: [],
@@ -363,6 +390,65 @@ describe("criteria engine flag guard", () => {
     assert.ok(gt5, "outcome for globe_trotter_5 expected");
     assert.equal(gt5!.met, false, "revoked stamps must not count; 4 valid < 5 threshold");
     assert.equal(awardLog.length, 0, "awardFn must not be called");
+  });
+
+  // ── The reason countryStamps now carries a definition ──────────────────────
+  //
+  // `POST /api/trips` awards `first_trip_created` and `trip_planner` AT
+  // CREATION with the destination attached and nothing having occurred, so five
+  // trips planned and never taken used to resolve `countries_visited` to 5 and
+  // MINT "Visit 5 different countries". This is the case that fails if the
+  // presence filter in `distinctStampField` is removed again — without it, the
+  // fixture change above would read as a loosening rather than as staging the
+  // scenario correctly.
+  it("PLANNED-NEVER-TAKEN: five planned trips do NOT award globe_trotter_5", async () => {
+    const db: FakeDB = {
+      feature_flags:      [CRITERIA_FLAG_ON],
+      stamp_definitions:  [DEF_GT5],
+      user_stamps:        plannedStamps(5),   // ten rows, five distinct countries
+      stamp_award_events: [],
+      user_stamps_awarded: [],
+    };
+    const sc = makeFakeClient(db);
+    const awardLog: string[] = [];
+    const outcomes = await evaluateAndAwardCriteria(sc as any, USER_ID, {
+      onlySlugs: ["globe_trotter_5"],
+      awardFn: async ({ definitionSlug }) => {
+        awardLog.push(definitionSlug);
+        return { awarded: true, reason: "awarded_new" };
+      },
+    });
+
+    const gt5 = outcomes.find((o) => o.slug === "globe_trotter_5");
+    assert.ok(gt5, "outcome for globe_trotter_5 expected");
+    assert.equal(
+      gt5!.met, false,
+      "five trips planned and none taken minted \"Visit 5 different countries\"",
+    );
+    assert.equal(awardLog.length, 0, "awardFn must not be called for planned trips");
+  });
+
+  it("POSITIVE CONTROL: the same five journeys COMPLETED do award it", async () => {
+    const db: FakeDB = {
+      feature_flags:      [CRITERIA_FLAG_ON],
+      stamp_definitions:  [DEF_GT5],
+      user_stamps:        countryStamps(5),
+      stamp_award_events: [],
+      user_stamps_awarded: [],
+    };
+    const sc = makeFakeClient(db);
+    const awardLog: string[] = [];
+    const outcomes = await evaluateAndAwardCriteria(sc as any, USER_ID, {
+      onlySlugs: ["globe_trotter_5"],
+      awardFn: async ({ definitionSlug }) => {
+        awardLog.push(definitionSlug);
+        return { awarded: true, reason: "awarded_new" };
+      },
+    });
+
+    const gt5 = outcomes.find((o) => o.slug === "globe_trotter_5");
+    assert.equal(gt5!.met, true, "five completed journeys must still award it");
+    assert.deepEqual(awardLog, ["globe_trotter_5"]);
   });
 });
 
